@@ -1,12 +1,36 @@
 # Vivado and Vitis Handoff
 
-Status: commands and review gates prepared; none has run yet.
+Status: the first diagnostic image and the PAL C64 UART-ROM/frozen-snapshot
+image have passed their initial board tests. The current four-bank live-video
+source passes focused XSim, a fresh routed PAL build in Vivado 2025.2, and its
+first complete board procedure using the matching Vitis/Bootgen package.
 
-Known handoff blocker: the public AK4493SEQ page identifies the controlled
-datasheet but gates the document behind a request form. `audio_i2s_lrck` and
-`audio_i2s_sdata` therefore have no guessed output-delay values. The timing
-coverage check is expected to reject them until the exact receiver setup/hold
-requirements and board skew are recorded. Do not suppress that failure.
+The fresh default build used Vivado 2025.2, part `xc7z020clg484-2`, shell build
+ID `20260829`, PAL generic `C64_NTSC_MODE=0`, base commit
+`fd554dbf46e22514bb132f3dc063ee0a892bdcc6`, and a dirty engineering tree. Its
+manifest timestamp is `2026-08-29T15:33:38Z`. Vivado generated the routed
+bitstream and XSA. Routed timing passes with WNS +0.675 ns, WHS +0.053 ns, WPWS
++1.749 ns, and zero failing endpoints. All 11,033 routable nets are fully
+routed with zero routing errors, and DRC reports zero errors.
+
+The final CDC report contains only 14 `CDC-3` informational crossings and one
+`CDC-9` informational reset crossing; the fatal critical-CDC gate passed.
+`check_timing` reports zero no-clock registers, unconstrained internal
+endpoints, missing input delays, and genuinely missing output delays. The
+SPDIF false path and the forwarded I2S/DVI clocks remain reported as
+informational exceptions.
+
+The routed live design uses 6,168 LUTs, 5,703 flip-flops, 85 RAMB36 blocks, one
+RAMB18 block, and seven DSP blocks. The four-bank bridge uses 543 LUTs, 335
+flip-flops, and 64 RAMB36 blocks. Total design use is 85.5 of 140 block-RAM
+tiles (61.07%), leaving 54.5 tiles. All four bus-skew constraints pass; the two
+live Gray-pointer crossings have actual skews 0.507 ns and 0.610 ns against a
+6.733 ns requirement. The DVI output path group passes with setup slack
++1.672 ns and hold slack +1.718 ns.
+
+The exact AK4493 datasheet was obtained and reviewed locally. The I2S LRCK and
+SDATA constraints now use a conservative +/-5 ns receiver window, and the
+routed build passes with those delays active.
 
 ## Required environment
 
@@ -47,11 +71,15 @@ Stop on every Tcl error. Confirm:
   its own synchronized reset;
 - the mixed VHDL/SystemVerilog compile order resolves `fpga64_sid_iec`, the
   Multitini bus logic/memory ports, SID compatibility ports, and adapter;
+- the selected C64 source includes the four-bank indexed live bridge and its
+  Gray-pointer crossing primitive;
 - all source and constraint files came from the tracked manifests; and
 - the block design validates.
 
-The default is the PAL C64 project. The same tracked manifest also contains the
-GBC sources, so they must parse cleanly even when inactive.
+The default is the PAL C64 project. The tracked manifest has explicit common,
+C64, and GBC sections; project creation loads only common sources plus the
+selected machine section. This keeps an inactive upstream core from becoming
+a build dependency for the selected image.
 
 Create a separate first-pass GBC project with:
 
@@ -85,8 +113,13 @@ or bitstream generation fails. Review, do not waive:
 - for the GBC project, the achieved machine frequency and error from
   33.554432 MHz;
 - C64 main RAM and writable ROM inference, port mode, and read latency;
+- all four 382x270x4 video-bank inferences, port modes, read latency, and total
+  block-RAM use;
 - XPM handshake constraints, the error-clear toggle synchronizer, and every
   control-to-machine CDC path;
+- both live-video `xpm_cdc_gray` pointer crossings, their monotonic source
+  behavior, the independent-reset grant/acknowledge barrier, and absence of a
+  simultaneous source-write/display-read bank;
 - GBC T80/mapper/audio/video mixed-language elaboration, the portable dual-port
   RAM modes and read latencies, the bootstrap hex initialization, and the
   one-line cartridge-cache stall path;
@@ -100,11 +133,22 @@ or bitstream generation fails. Review, do not waive:
 
 Save the exact reports and build manifest. A clean build is not hardware proof.
 
-The selected machine adapter is marked `DONT_TOUCH` and its raw video/audio
-outputs are kept so synthesis and timing cannot silently remove the integration.
-The physical DVI and audio pins still use the independent diagnostic generators.
-Confirm that the selected hierarchy is present and timed, but do not interpret
-this image as a machine display/audio test.
+The verified result above covers the current default PAL C64 live-video
+project. The corresponding packaged image also passes its first board test.
+The separate NTSC C64 and GBC vendor builds remain pending. GBC PSRAM remains
+disabled and unqualified.
+
+The selected machine adapter is marked `DONT_TOUCH` so synthesis and timing
+cannot silently remove the integration. Its registered PAL RGB output feeds an
+exact-frame bridge that recognizes the fixed 16-color palette and stores
+four-bit indices in four frame banks. Completed-frame and released-frame
+pointers cross through `xpm_cdc_gray`. The 1080p60 side acquires at most one
+approximately 50.123 Hz PAL frame at each vertical blank; if none is ready, it
+repeats the current bank. Diagnostic/machine source selection also changes only
+at vertical blank. A full ring drops an entire incoming source frame before
+capture. Physical audio still uses the independent diagnostic generator. This
+description is supported by source, focused XSim, and the completed PAL Vivado
+build and the recorded live-video board procedure.
 
 After the default PAL build is reviewed, recreate the project for NTSC with:
 
@@ -149,22 +193,36 @@ After a successful XSA export:
 vitis -s scripts/create_vitis_workspace.py
 ```
 
-Confirm the platform uses that exact XSA. Build the diagnostic firmware with a
-matching build ID. Do not enable writable media until the read-only path and
+Confirm the platform uses that exact XSA. For the current live test image,
+Vitis 2025.2 built both the FSBL and diagnostic ELF from the fresh XSA. Bootgen
+packaged and read back the expected FSBL, routed bitstream, and two application
+segments. The 4,241,740-byte `FIRMWARE.BIN` has SHA-256
+`a44943738448e3114e58c03a30a2210270684ecf849911621e045ae5771f8703` and
+CRC32 `01F764E0`. Do not enable writable media until the read-only path and
 power-loss rules are tested.
 
-The diagnostic starts with the core held in reset and both the shell and DAC
-muted. It probes the ABI, logs the TMP102 temperature when I2C works, initializes
-the DAC without unmuting, and accepts UART commands for status, ping, video,
-audio mute/unmute, and core reset. Portable firmware functions can validate and
-stream caller-supplied BASIC, KERNAL, and character ROM buffers, but SD file
-loading and a UART file-transfer command are not wired into the diagnostic.
+The diagnostic starts with the core held in reset and the DAC muted. It probes
+the ABI, logs the TMP102 temperature when I2C works, initializes the DAC without
+unmuting, and accepts UART commands for status, ping, video, audio mute/unmute,
+core reset, and reboot to the golden image. `:c64rx` receives an exact 20 KiB
+XMODEM-1K/CRC bundle from `scripts/serial_c64_rom_upload.py`, verifies the outer
+CRC32 and three ROM slices, streams them, and releases reset only after the core
+reports ready. The uploader defaults to the repository's selected three-file
+ROM set and retains explicit path overrides. SD loading remains absent.
 The portable GBC helper can stream a validated cartridge and optional bootstrap
 override; it is likewise not connected to SD or the diagnostic CLI.
 
-## First board program
+## Next step: physical input
 
-Use JTAG and a current-limited supply. Before release from reset, verify:
+The independent diagnostics, ROM-upload/frozen-frame image, and exact packaged
+live-video image have passed on the board. The live test produced a blinking
+BASIC cursor, a stable tear-free five-minute soak, clean whole-frame `v`
+switches, correct `r` reset/rearm behavior, and successful `:reboot` to golden.
+Preserve that firmware and report set as the PAL video baseline.
+
+Add physical input one subsystem at a time. Start with the USB keyboard path,
+then joystick/gamepad mapping. Before treating either as a machine result,
+retain the board safety checks:
 
 - the stand-alone power jumper and connector;
 - all Apple main transceiver OE pins are high;
@@ -174,6 +232,7 @@ Use JTAG and a current-limited supply. Before release from reset, verify:
 - W5100S CS and read/write strobes are high; and
 - audio output is muted.
 
-Then execute the Phase 1 and Phase 2 gates in `MULTITINI_ONE_PLAN.md`. Record
+Then execute the applicable Phase 1 and Phase 2 gates in
+`MULTITINI_ONE_PLAN.md`. Record
 board revision, jumper details, display, keyboard, gamepad, SD card, supply,
 ambient temperature, bitstream build ID, firmware build ID, and UART log.

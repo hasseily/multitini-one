@@ -35,6 +35,9 @@ vitis_workspace/
 *.log
 *.str
 *.wdb
+*.pb
+xsim.dir/
+dfx_runtime.txt
 *.elf
 *.bin
 *.hex
@@ -46,6 +49,11 @@ vitis_workspace/
 # Pinned, source-built SameBoy bootstrap inputs used by the GBC adapter.
 !third_party/gameboy/upstream/BootROMs/cgb_boot.mif
 !hdl/core/gameboy/boot/cgb_boot.hex
+
+# Exact C64 system ROMs included by explicit repository-owner decision.
+!third_party/c64/ROMs/basic.901226-01.bin
+!third_party/c64/ROMs/kernal.901227-03.bin
+!third_party/c64/ROMs/characters.901225-01.bin
 
 # System ROMs and user content. The repository policy check enforces these too.
 *.rom

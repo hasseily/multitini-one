@@ -1,6 +1,8 @@
 # Relative to hdl/. Order matters for packages and interfaces.
+[common]
 generated/multitini_regs_pkg.sv
 core/multitini_core_interface.sv
+[c64]
 core/c64/multitini_c64_defs_pkg.sv
 core/c64/multitini_c64_loader.sv
 core/c64/multitini_c64_input.sv
@@ -10,12 +12,13 @@ core/c64/ports/spram.vhd
 ../third_party/c64/upstream/rtl/t65/T65_ALU.vhd
 ../third_party/c64/upstream/rtl/t65/T65_MCode.vhd
 ../third_party/c64/upstream/rtl/t65/T65.vhd
-../third_party/c64/upstream/rtl/cpu_6510.vhd
+core/c64/ports/cpu_6510.vhd
 ../third_party/c64/upstream/rtl/fpga64_rgbcolor.vhd
 ../third_party/c64/upstream/rtl/fpga64_keyboard.vhd
 ../third_party/c64/upstream/rtl/video_vicII_656x.vhd
 core/c64/multitini_c64_buslogic.vhd
-../third_party/c64/upstream/rtl/mos6526.v
+# This source uses SystemVerilog block declarations despite its .v suffix.
+../third_party/c64/upstream/rtl/mos6526.v | systemverilog
 core/c64/ports/sid_dac.sv
 core/c64/ports/sid_filter.sv
 ../third_party/c64/upstream/rtl/sid/sid_envelope.sv
@@ -23,8 +26,10 @@ core/c64/ports/sid_tables.sv
 ../third_party/c64/upstream/rtl/sid/sid_voice.sv
 core/c64/ports/sid_top.sv
 ../third_party/c64/upstream/rtl/fpga64_sid_iec.vhd
-../third_party/c64/upstream/rtl/video_sync.vhd
+core/c64/ports/video_sync.vhd
 core/c64/multitini_c64_adapter.sv
+board/multitini_c64_video_bridge.sv
+[gbc]
 core/gameboy/multitini_gameboy_defs_pkg.sv
 core/gameboy/multitini_gameboy_loader.sv
 core/gameboy/multitini_gameboy_clock_enable.sv
@@ -71,6 +76,7 @@ core/gameboy/boot/cgb_boot.hex
 core/gameboy/ports/cart.v
 core/gameboy/ports/gb.v
 core/gameboy/multitini_gameboy_adapter.sv
+[common]
 ../third_party/appletini/hdl/reset_sync.sv
 ../third_party/appletini/hdl/cdc_bit_sync.sv
 ../third_party/appletini/hdl/cdc_bus_sampled.sv
@@ -88,7 +94,9 @@ common/multitini_psram_line_service.sv
 ../third_party/appletini/hdl/psram_driver.sv
 board/multitini_video_test.sv
 board/multitini_audio_test.sv
+[gbc]
 board/multitini_gameboy_psram_path.sv
+[common]
 board/multitini_one_top.sv
 ../third_party/appletini/constraints/multitini_pins.xdc
 board/multitini_timing.xdc

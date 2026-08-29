@@ -17,6 +17,13 @@ proc require_complete_run {run_name} {
     }
 }
 
+proc require_one_object {description objects} {
+    set count [llength $objects]
+    if {$count != 1} {
+        error "Expected exactly one $description; found $count"
+    }
+}
+
 if {![file isfile $project_file]} {
     error "Project is absent. Run scripts/create_project.tcl first: $project_file"
 }
@@ -46,11 +53,36 @@ wait_on_run impl_1
 require_complete_run impl_1
 open_run impl_1
 
+# XDC files cannot contain Tcl control flow. Enforce every hierarchical timing
+# query here, against the fully linked and implemented design, so hierarchy
+# drift cannot silently remove a generated clock or asynchronous group.
+require_one_object "audio BCLK divider source" [get_pins -hierarchical -quiet \
+    -regexp {.*audio_test/audio_bclk_div_reg\[1\]/Q}]
+require_one_object "DVI ODDR clock pin" [get_pins -hierarchical -quiet \
+    -filter {NAME =~ *video_test/dvi_clk_oddr/C}]
+foreach {description pattern} {
+    "control root clock" {*clk_out1*zynq_ps_bd_clk_wiz_control*}
+    "video root clock" {*clk_out1*zynq_ps_bd_clk_wiz_video*}
+    "selected machine root clock" {*clk_out1*zynq_ps_bd_clk_wiz_c64*}
+} {
+    require_one_object $description [get_clocks -quiet -filter "NAME =~ $pattern"]
+}
+require_one_object "audio BCLK generated clock" [get_clocks -quiet audio_bclk]
+require_one_object "forwarded audio BCLK" [get_clocks -quiet audio_bclk_out]
+require_one_object "forwarded DVI clock" [get_clocks -quiet dvi_clk_out]
+
 report_timing_summary -delay_type min_max -max_paths 100 -check_timing_verbose \
     -report_unconstrained \
     -file [file join $report_dir timing_summary.rpt]
 report_clock_interaction -file [file join $report_dir clock_interaction.rpt]
-report_cdc -details -file [file join $report_dir cdc.rpt]
+set cdc_report [file join $report_dir cdc.rpt]
+report_cdc -details -file $cdc_report
+set cdc_stream [open $cdc_report r]
+set cdc_text [read $cdc_stream]
+close $cdc_stream
+if {[regexp {CDC-[0-9]+[ \t]+Critical[ \t]+[1-9][0-9]*} $cdc_text]} {
+    error "CDC gate found one or more critical crossings"
+}
 report_bus_skew -warn_on_violation -file [file join $report_dir bus_skew.rpt]
 report_drc -file [file join $report_dir drc.rpt]
 report_methodology -file [file join $report_dir methodology.rpt]
@@ -69,8 +101,18 @@ set coverage_checks [check_timing -verbose -return_string -override_defaults \
 set coverage_stream [open [file join $report_dir timing_coverage_gate.rpt] w]
 puts -nonewline $coverage_stream $coverage_checks
 close $coverage_stream
-if {[regexp -nocase {There (are|is) [1-9][0-9]*} $coverage_checks]} {
-    error "Timing coverage gate found one or more unconstrained objects"
+set coverage_failures {
+    {There (are|is) [1-9][0-9]* register/latch pins with no clock}
+    {There (are|is) [1-9][0-9]* pins that are not constrained for maximum delay}
+    {There (are|is) [1-9][0-9]* input ports with no input delay specified}
+    {There (are|is) [1-9][0-9]* ports with no output delay specified\. \(HIGH\)}
+    {There (are|is) [1-9][0-9]* input ports with partial input delay specified}
+    {There (are|is) [1-9][0-9]* ports with partial output delay specified}
+}
+foreach pattern $coverage_failures {
+    if {[regexp -nocase $pattern $coverage_checks]} {
+        error "Timing coverage gate found one or more unconstrained objects"
+    }
 }
 
 foreach delay_type {max min} {

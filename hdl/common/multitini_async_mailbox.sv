@@ -28,9 +28,22 @@ module multitini_async_mailbox #(
     logic             destination_ack;
 
     assign src_ready = src_resetn && !source_busy && !source_received;
-    assign dst_valid = dst_resetn && destination_request;
+    assign dst_valid = dst_resetn && destination_request && !destination_ack;
     assign dst_data = destination_data;
-    assign destination_ack = dst_valid && dst_ready;
+
+    // XPM requires an external acknowledgement to be registered in the
+    // destination domain and held until dest_req is released.  Gating valid
+    // after acceptance also guarantees exactly one downstream transfer while
+    // the acknowledgement makes its round trip to the source clock.
+    always_ff @(posedge dst_clk) begin
+        if (!dst_resetn) begin
+            destination_ack <= 1'b0;
+        end else if (!destination_request) begin
+            destination_ack <= 1'b0;
+        end else if (!destination_ack && dst_ready) begin
+            destination_ack <= 1'b1;
+        end
+    end
 
     always_ff @(posedge src_clk) begin
         if (!src_resetn) begin

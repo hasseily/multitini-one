@@ -10,6 +10,7 @@ import json
 import re
 import subprocess
 import sys
+import zlib
 from pathlib import Path
 
 
@@ -21,11 +22,19 @@ RESTRICTED_SUFFIXES = {
 }
 SOURCE_SUFFIXES = {".c", ".h", ".py", ".sv", ".tcl", ".v", ".vhd", ".vhdl", ".xdc"}
 GENERATED_PREFIXES = ("build/", "build-", "project/", "vitis_workspace/", ".Xil/")
+C64_ROM_PATHS = (
+    "third_party/c64/ROMs/basic.901226-01.bin",
+    "third_party/c64/ROMs/kernal.901227-03.bin",
+    "third_party/c64/ROMs/characters.901225-01.bin",
+)
 ALLOWED_RESTRICTED_FILES = {
     # Open-source SameBoy-derived bootstrap, plus its deterministic Vivado/
     # readmemh representation. Both are pinned and covered by the MIT notice.
     "third_party/gameboy/upstream/BootROMs/cgb_boot.mif",
     "hdl/core/gameboy/boot/cgb_boot.hex",
+    # Exact C64 ROM set covered by provenance/c64_roms.json and the explicit
+    # repository-owner inclusion decision recorded there.
+    *C64_ROM_PATHS,
 }
 
 
@@ -60,6 +69,66 @@ def covered(path: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
 
 
+def check_c64_rom_provenance(errors: list[str]) -> None:
+    try:
+        record = json.loads(
+            (ROOT / "provenance" / "c64_roms.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as exc:
+        errors.append(f"invalid C64 ROM provenance: {exc}")
+        return
+
+    if record.get("schema_version") != 1:
+        errors.append("C64 ROM provenance has unsupported schema")
+
+    roms = record.get("roms")
+    if not isinstance(roms, list) or not all(isinstance(item, dict) for item in roms):
+        errors.append("C64 ROM provenance has no valid ROM list")
+        return
+    if [item.get("path") for item in roms] != list(C64_ROM_PATHS):
+        errors.append("C64 ROM provenance paths or order do not match the allowlist")
+
+    bundle_parts: list[bytes] = []
+    for item in roms:
+        relative = item.get("path")
+        if not isinstance(relative, str) or not relative:
+            errors.append("C64 ROM provenance contains an invalid path")
+            continue
+        target = ROOT / relative
+        expected_digest = item.get("sha256")
+        if not target.is_file():
+            errors.append(f"provenance-locked C64 ROM is absent: {relative}")
+            continue
+        if target.stat().st_size != item.get("size"):
+            errors.append(f"provenance-locked C64 ROM has wrong size: {relative}")
+        if (
+            not isinstance(expected_digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", expected_digest) is None
+        ):
+            errors.append(f"C64 ROM provenance has invalid digest: {relative}")
+        elif sha256(target) != expected_digest:
+            errors.append(f"provenance-locked C64 ROM changed: {relative}")
+        bundle_parts.append(target.read_bytes())
+
+    bundle = record.get("bundle")
+    if not isinstance(bundle, dict):
+        errors.append("C64 ROM provenance has no valid bundle record")
+        return
+    if bundle.get("order") != list(C64_ROM_PATHS):
+        errors.append("C64 ROM bundle order does not match the allowlist")
+    if len(bundle_parts) != len(C64_ROM_PATHS):
+        return
+    bundle_bytes = b"".join(bundle_parts)
+    if len(bundle_bytes) != bundle.get("size"):
+        errors.append("C64 ROM bundle size does not match its provenance")
+    crc32 = f"0x{zlib.crc32(bundle_bytes) & 0xFFFFFFFF:08X}"
+    if crc32 != bundle.get("crc32"):
+        errors.append("C64 ROM bundle CRC32 does not match its provenance")
+    digest = hashlib.sha256(bundle_bytes).hexdigest()
+    if digest != bundle.get("sha256"):
+        errors.append("C64 ROM bundle SHA-256 does not match its provenance")
+
+
 def main() -> int:
     errors: list[str] = []
     files = candidate_files()
@@ -81,6 +150,8 @@ def main() -> int:
     for path in files:
         if Path(path).suffix.lower() in SOURCE_SUFFIXES and not covered(path, patterns):
             errors.append(f"source has no license-list row: {path}")
+
+    check_c64_rom_provenance(errors)
 
     try:
         lock = json.loads((ROOT / "provenance" / "sources.lock.json").read_text(encoding="utf-8"))

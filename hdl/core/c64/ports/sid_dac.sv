@@ -1,7 +1,9 @@
 // Multitini compatibility port of MiSTer C64 commit
 // 62fc697e3c9b5982c9dc76aa8cd03db545d20803. The coefficient store is sized
 // for every supported BITS case so standards-based tools do not elaborate
-// out-of-range indices in unselected initial-case branches.
+// out-of-range indices in unselected initial-case branches. The input has an
+// explicit net type for Vivado, and this file restores the compiler's default
+// net type so its local lint directive cannot leak into later source files.
 // ----------------------------------------------------------------------------
 // This file is part of reDIP SID, a MOS 6581/8580 SID FPGA emulation platform.
 // Copyright (C) 2022  Dag Lem <resid@nimrod.no>
@@ -53,7 +55,7 @@ module sid_dac #(
     parameter  _2R_DIV_R  = 2.20,
     parameter  TERM       = 0
 )(
-    input  logic [BITS-1:0] vin,
+    input  wire logic [BITS-1:0] vin,
     output logic [BITS-1:0] vout
 );
     localparam SCALEBITS  = 4;
@@ -129,3 +131,5 @@ module sid_dac #(
         end
     end
 endmodule
+
+`default_nettype wire

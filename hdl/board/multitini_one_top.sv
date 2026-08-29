@@ -99,7 +99,6 @@ module multitini_one_top #(
     logic control_aresetn;
     logic video_aresetn;
     logic c64_aresetn;
-    logic [15:0] irq_bus;
     logic shell_irq;
     logic [31:0] shell_control;
 
@@ -150,10 +149,16 @@ module multitini_one_top #(
     logic [11:0] reg_rd_addr;
     logic [31:0] reg_rd_data;
     logic        video_enable;
+    logic [11:0] video_scan_x;
+    logic [11:0] video_scan_y;
+    logic        video_vblank_start;
+    logic        machine_video_active;
+    logic [15:0] machine_video_rgb565;
 
     logic        c64_core_reset_request;
     logic [31:0] c64_core_id;
     logic        c64_ready;
+    logic        c64_ready_launch;
     logic        c64_ready_control;
     logic        c64_load_error;
     logic        c64_load_error_control;
@@ -215,8 +220,6 @@ module multitini_one_top #(
     logic        gbc_memory_rvalid;
     logic        gbc_memory_fault;
 
-    assign irq_bus = {15'd0, shell_irq};
-
     zynq_ps_bd_wrapper zynq_ps_i (
         .DDR_addr(DDR_Addr), .DDR_ba(DDR_BankAddr),
         .DDR_cas_n(DDR_CAS_n), .DDR_ck_n(DDR_Clk_n), .DDR_ck_p(DDR_Clk),
@@ -253,7 +256,7 @@ module multitini_one_top #(
         .video_clk(video_clk), .c64_clk(c64_clk),
         .control_aresetn(control_aresetn),
         .video_aresetn(video_aresetn), .c64_aresetn(c64_aresetn),
-        .IRQ(irq_bus)
+        .IRQ(shell_irq)
     );
 
     multitini_axi3_regs axi_regs (
@@ -338,9 +341,18 @@ module multitini_one_top #(
         .dout(c64_core_reset_request)
     );
 
+    // Launch status from a machine-clocked register.  Feeding the combinational
+    // adapter status directly into a synchronizer creates a CDC-10 hazard.
+    always_ff @(posedge c64_clk) begin
+        if (!c64_aresetn)
+            c64_ready_launch <= 1'b0;
+        else
+            c64_ready_launch <= c64_ready;
+    end
+
     cdc_bit_sync c64_ready_sync (
         .clk(control_clk), .resetn(control_aresetn),
-        .din(c64_ready), .dout(c64_ready_control)
+        .din(c64_ready_launch), .dout(c64_ready_control)
     );
 
     cdc_bit_sync c64_load_error_sync (
@@ -354,8 +366,9 @@ module multitini_one_top #(
         .dst_resetn(c64_aresetn), .dst_pulse(c64_load_error_clear)
     );
 
-    // Build one complete machine at a time. Raw machine video and audio remain
-    // retained for Vivado inspection while physical outputs stay diagnostic.
+    // Build one complete machine at a time. The default PAL C64 additionally
+    // gets the live frame-rate bridge; NTSC and GBC retain diagnostics until
+    // they have separately verified capture geometry and output timing.
     generate
         if (ACTIVE_MACHINE == 0) begin : g_c64_machine
             assign gbc_cart_size = 32'd0;
@@ -382,12 +395,34 @@ module multitini_one_top #(
                 .video_valid(c64_video_valid), .audio_l(c64_audio_l),
                 .audio_r(c64_audio_r), .audio_valid(c64_audio_valid)
             );
+
+            if (!C64_NTSC_MODE) begin : g_pal_video
+                multitini_c64_video_bridge video_bridge (
+                    .source_clk(c64_clk), .source_resetn(c64_aresetn),
+                    .source_ready(c64_ready),
+                    .source_r(c64_video_r), .source_g(c64_video_g),
+                    .source_b(c64_video_b), .source_de(c64_video_de),
+                    .source_vsync(c64_video_vsync),
+                    .source_valid(c64_video_valid),
+                    .pixel_clk(video_clk), .pixel_resetn(video_aresetn),
+                    .diagnostic_request(video_enable),
+                    .scan_x(video_scan_x), .scan_y(video_scan_y),
+                    .vblank_start(video_vblank_start),
+                    .machine_active(machine_video_active),
+                    .machine_rgb565(machine_video_rgb565)
+                );
+            end else begin : g_ntsc_video_diagnostic
+                assign machine_video_active = 1'b0;
+                assign machine_video_rgb565 = 16'h0000;
+            end
             assign psram_a_io = 4'hz;
             assign psram_b_io = 4'hz;
             assign psram_ce_n = 1'b1;
             assign psram_clk  = 1'b0;
         end else begin : g_gameboy_machine
             assign c64_rom_loaded = {2'd0, gbc_cart_loaded};
+            assign machine_video_active = 1'b0;
+            assign machine_video_rgb565 = 16'h0000;
             (* DONT_TOUCH = "yes" *) multitini_gameboy_adapter machine_adapter (
                 .core_clk(c64_clk), .reset(!c64_aresetn),
                 .core_reset_request(c64_core_reset_request),
@@ -458,6 +493,10 @@ module multitini_one_top #(
 
     multitini_video_test video_test (
         .pixel_clk(video_clk), .resetn(video_aresetn), .enable(video_enable),
+        .machine_enable(machine_video_active),
+        .machine_rgb565(machine_video_rgb565),
+        .scan_x(video_scan_x), .scan_y(video_scan_y),
+        .vblank_start(video_vblank_start),
         .dvi_red(dvi_red), .dvi_grn(dvi_grn), .dvi_blu(dvi_blu),
         .dvi_clk(dvi_clk), .dvi_de(dvi_de),
         .dvi_hsync(dvi_hsync), .dvi_vsync(dvi_vsync)

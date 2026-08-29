@@ -15,6 +15,9 @@ typedef struct {
     uint32_t checksum;
     uint32_t completed_kinds;
     uint32_t reset_commands;
+    uint32_t fail_data_at;
+    int fail_data_enabled;
+    int failure_injected;
     int core_reset;
 } boot_shell_t;
 
@@ -39,6 +42,7 @@ static void respond(void *context)
     const uint32_t opcode = shell->registers[MT_REG_COMMAND_OPCODE / 4U];
     const uint32_t arg0 = shell->registers[MT_REG_COMMAND_ARG0 / 4U];
     const uint32_t arg1 = shell->registers[MT_REG_COMMAND_ARG1 / 4U];
+    uint32_t response_status = MT_RESPONSE_OK;
 
     if (sequence == shell->sequence) {
         return;
@@ -60,8 +64,14 @@ static void respond(void *context)
     case MT_COMMAND_STREAM_DATA:
         assert(shell->active_size != 0U);
         assert(shell->active_offset < shell->active_size);
-        shell->checksum += arg0;
-        ++shell->active_offset;
+        if (shell->fail_data_enabled != 0 && shell->failure_injected == 0 &&
+            shell->active_offset == shell->fail_data_at) {
+            response_status = MT_RESPONSE_INVALID_ARGUMENT;
+            shell->failure_injected = 1;
+        } else {
+            shell->checksum += arg0;
+            ++shell->active_offset;
+        }
         break;
     case MT_COMMAND_STREAM_END:
         assert(shell->active_offset == shell->active_size);
@@ -70,11 +80,16 @@ static void respond(void *context)
         shell->active_size = 0U;
         shell->active_offset = 0U;
         break;
+    case MT_COMMAND_STREAM_ABORT:
+        shell->active_kind = 0U;
+        shell->active_size = 0U;
+        shell->active_offset = 0U;
+        break;
     default:
         assert(0);
     }
 
-    shell->registers[MT_REG_RESPONSE_STATUS / 4U] = MT_RESPONSE_OK;
+    shell->registers[MT_REG_RESPONSE_STATUS / 4U] = response_status;
     shell->registers[MT_REG_RESPONSE_ARG0 / 4U] = 0U;
     shell->registers[MT_REG_RESPONSE_ARG1 / 4U] = 0U;
     shell->registers[MT_REG_RESPONSE_SEQ / 4U] = sequence;
@@ -127,5 +142,21 @@ int main(void)
            MT_LINK_BAD_ARGUMENT);
     assert(mt_c64_load_system_roms(&link, NULL, 2U, respond, &shell) ==
            MT_LINK_BAD_ARGUMENT);
+
+    {
+        boot_shell_t failing_shell = {0};
+        mt_core_link_t failing_link;
+        failing_shell.fail_data_at = 17U;
+        failing_shell.fail_data_enabled = 1;
+        mt_core_link_init(&failing_link, &failing_shell, read32, write32);
+        roms.basic.size = sizeof(basic);
+        assert(mt_c64_load_system_roms(&failing_link, &roms, 2U, respond,
+                                       &failing_shell) ==
+               MT_LINK_REMOTE_ERROR);
+        assert(failing_shell.failure_injected != 0);
+        assert(failing_shell.core_reset != 0);
+        assert(failing_shell.reset_commands == 2U);
+        assert(failing_shell.completed_kinds == 0U);
+    }
     return 0;
 }

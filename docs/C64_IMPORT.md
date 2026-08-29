@@ -1,7 +1,9 @@
 # MiSTer C64 Import Record
 
 Status: 34 allowlisted files imported, SHA-256 locked, and licensed in the
-repository ledger. Vivado and hardware validation remain pending.
+repository ledger. The default PAL integration has completed Vivado 2025.2
+elaboration, synthesis, implementation, and packaging; hardware and usable-C64
+validation remain pending.
 
 ## Pin
 
@@ -80,7 +82,11 @@ Use `--update-lock` only while intentionally restaging the pinned allowlist.
 ## First build boundary
 
 The Vivado manifest builds the FPGA64 machine boundary
-`rtl/fpga64_sid_iec.vhd`, not the MiSTer `c64.sv` platform top. Multitini
+`rtl/fpga64_sid_iec.vhd`, not the MiSTer `c64.sv` platform top. It explicitly
+compiles `mos6526.v` as SystemVerilog because that upstream file uses block
+declarations despite its `.v` suffix. The local `ports/cpu_6510.vhd` changes
+the T65 binding to direct entity instantiation because the upstream wrapper
+does not declare a component. Multitini
 replaces only the pieces needed for a ROM-free Xilinx build:
 
 - `multitini_c64_buslogic.vhd` removes embedded MIF selections and provides
@@ -95,3 +101,20 @@ replaces only the pieces needed for a ROM-free Xilinx build:
 The imported 1541 files are not in the first build. Their current wrapper also
 depends on excluded drive/platform pieces, so drive media requires a separate
 adapter and service contract.
+
+## Verified engineering-build boundary
+
+The recorded default PAL build used Vivado 2025.2, part
+`xc7z020clg484-2`, commit
+`fd554dbf46e22514bb132f3dc063ee0a892bdcc6`, and a dirty engineering tree. Its
+manifest timestamp is `2026-08-29T12:41:42Z`. Vivado generated a routed
+bitstream and XSA. Timing passed with WNS +0.278 ns, WHS +0.024 ns, WPWS +1.749
+ns, and zero failing endpoints; routing and DRC reported zero errors. The final
+CDC report contained only 11 `CDC-3` Info crossings and one `CDC-9` Info reset
+crossing, and the fatal critical-CDC gate passed.
+
+Vitis 2025.2 built the FSBL and diagnostic ELF, and Bootgen packaged them with
+the bitstream successfully. This is not a working-C64 result: no board test has
+run, the physical DVI/audio paths still carry shell diagnostics, and the
+diagnostic CLI does not load BASIC, KERNAL, or character ROMs. The core remains
+held in reset. A separate NTSC vendor build is still pending.

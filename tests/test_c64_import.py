@@ -34,7 +34,7 @@ class C64ImportTests(unittest.TestCase):
         }
         destination = ROOT / self.manifest["destination"]
         staged = {
-            str(path.relative_to(destination))
+            path.relative_to(destination).as_posix()
             for path in destination.rglob("*") if path.is_file()
         }
         locked = {
@@ -60,7 +60,7 @@ class C64ImportTests(unittest.TestCase):
         destination = ROOT / self.manifest["destination"]
         for path in destination.rglob("*"):
             if path.is_file():
-                relative = str(path.relative_to(ROOT))
+                relative = path.relative_to(ROOT).as_posix()
                 self.assertIn(relative, by_path)
                 self.assertEqual(by_path[relative]["commit"],
                                  self.manifest["source"]["commit"])
@@ -81,6 +81,54 @@ class C64ImportTests(unittest.TestCase):
         self.assertIn("core/c64/ports/spram.vhd", sources)
         self.assertNotIn("upstream/rtl/dprom.vhd", sources)
         self.assertNotIn("upstream/rtl/spram.vhd", sources)
+
+    def test_cpu_port_only_uses_direct_t65_entity_instantiation(self):
+        upstream = (ROOT / "third_party/c64/upstream/rtl/cpu_6510.vhd").read_text()
+        product = (ROOT / "hdl/core/c64/ports/cpu_6510.vhd").read_text()
+        marker = "-- BEGIN PINNED SOURCE BODY\n"
+        self.assertIn(marker, product)
+        expected = upstream.replace(
+            "\tcpu: work.T65", "\tcpu: entity work.T65", 1
+        )
+        self.assertEqual(product.split(marker, 1)[1], expected)
+        sources = (ROOT / "hdl/hdl_sources.txt").read_text()
+        self.assertIn("core/c64/ports/cpu_6510.vhd", sources)
+        self.assertNotIn("../third_party/c64/upstream/rtl/cpu_6510.vhd", sources)
+
+    def test_video_sync_port_only_exposes_locked_pixel_tick(self):
+        upstream = (
+            ROOT / "third_party/c64/upstream/rtl/video_sync.vhd"
+        ).read_text()
+        product = (
+            ROOT / "hdl/core/c64/ports/video_sync.vhd"
+        ).read_text()
+        marker = "-- BEGIN PINNED SOURCE BODY WITH PIXEL_TICK PORT\n"
+        self.assertIn(marker, product)
+        expected = upstream.replace(
+            "\tvblank : out std_logic\n",
+            "\tvblank : out std_logic;\n\tpixel_tick : out std_logic\n",
+            1,
+        ).replace(
+            "\nend architecture;",
+            "\npixel_tick <= '1' when clk_cnt = \"00\" and "
+            "pause = '0' else '0';\n\nend architecture;",
+            1,
+        )
+        self.assertEqual(
+            product.split(marker, 1)[1].rstrip("\n"), expected.rstrip("\n")
+        )
+        sources = (ROOT / "hdl/hdl_sources.txt").read_text()
+        self.assertIn("core/c64/ports/video_sync.vhd", sources)
+        self.assertNotIn(
+            "../third_party/c64/upstream/rtl/video_sync.vhd", sources
+        )
+        with (ROOT / "licenses/files.csv").open(
+            newline="", encoding="utf-8"
+        ) as stream:
+            by_path = {row["path"]: row for row in csv.DictReader(stream)}
+        row = by_path["hdl/core/c64/ports/video_sync.vhd"]
+        self.assertEqual(row["commit"], self.manifest["source"]["commit"])
+        self.assertIn("pixel phase", row["notes"])
 
 
 if __name__ == "__main__":

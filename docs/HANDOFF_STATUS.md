@@ -1,8 +1,13 @@
-# Mac-to-Vivado Handoff Status
+# Multitini One Handoff Status
 
-Status date: 2026-08-29. No Vivado, Vitis, or board result is claimed.
+Status date: 2026-08-29. The first independent diagnostic image and the second
+PAL C64 UART-ROM/frozen-snapshot image have both passed their initial board
+tests. The current source replaces the frozen buffer with a four-bank,
+four-bit-palette live frame ring. That bridge passes focused XSim, a fresh
+routed PAL build in Vivado 2025.2, and the complete first live-video board
+procedure. Physical input is the next subsystem gate.
 
-## Completed without vendor tools
+## Completed repository and portable validation
 
 - Repository layout, GPL-3.0-only project license, ignore policy, source pins,
   license ledger, and SHA-256 import lock.
@@ -19,13 +24,26 @@ Status date: 2026-08-29. No Vivado, Vitis, or board result is claimed.
   link, and PRG/D64/G64/CRT/ROM validation.
 - Destructive PSRAM BIST sequencer, not yet connected to the board PHY.
 - Exact 34-file C64 import at the pinned commit, per-file license rows, complete
-  applicable license texts, SHA-256 lock, and ROM/media exclusion checks.
+  applicable license texts, SHA-256 lock, and ROM/media policy checks.
 - ROM-free FPGA64 machine build list; writable BASIC/KERNAL/character stores;
   C64 adapter, RAM, raw video/audio, PS/2/joystick input bridge, coherent input
   event transport, and reproducible PAL/NTSC clock selection.
 - ARM ROM stream commands with bounded backpressure retry and abort, coherent
   XPM clock crossing, strict PL framing, sticky load errors, and a portable
   reset-safe three-ROM boot helper.
+- Portable XMODEM-1K/CRC receiver, UART `:c64rx` command, exact 20 KiB
+  BASIC/KERNAL/character uploader, target CRC32/ROM validation, and fail-closed
+  reset behavior. The selected three-file ROM set is now a tracked test/build
+  input and the uploader uses it by default.
+- Hardware-proven predecessor: exact 382x270 PAL capture into one RGB565
+  block-RAM buffer, 4x centered 1080p output, vblank-only source selection,
+  and one intentionally frozen coherent frame.
+- Current live source: four 382x270 banks of fixed-palette four-bit indices;
+  Gray-coded publish/release ring pointers; exact palette and geometry checks;
+  vblank-only acquisition; clean repeat when no new PAL frame is ready;
+  whole-frame drop when the ring is full; and fail-closed independent-reset
+  rearming. Focused XSim, the fresh PAL Vivado build, and the first live-video
+  board qualification all pass.
 - Exact 47-file Game Boy import at the pinned commit, per-file license rows,
   SHA-256 lock, open SameBoy-derived CGB bootstrap source/image, and deterministic
   strict-tool ports for the selected upstream `gb` and `cart` modules.
@@ -35,52 +53,127 @@ Status date: 2026-08-29. No Vivado, Vitis, or board result is claimed.
 - Tested control/machine memory CDC and PSRAM line service, plus a prepared
   optional GBC PSRAM PHY branch. That branch defaults off and is not accepted
   for hardware use.
-- Icarus tests for AXI, registers, video, audio, PSRAM BIST, asynchronous
-  mailbox, C64 loader/input, GBC loader/input/clock/cache, memory CDC, and PSRAM
-  service; board-shell elaboration for the selected GBC branch; Verilator lint
-  for selected C64 and GBC SystemVerilog; strict C and sanitizer tests;
+- Icarus tests for AXI, registers, video, audio, PSRAM BIST, C64 loader/input,
+  GBC loader/input/clock/cache, memory CDC, and PSRAM service; a Vivado XSim
+  replay of the final asynchronous-mailbox fix; board-shell elaboration for
+  the selected GBC branch; Verilator lint for selected C64 and GBC
+  SystemVerilog; strict C and sanitizer tests;
   malformed-content exercise; Tcl completeness; pin coverage; and host
-  compilation of the Xilinx entry point.
+  compilation of the Xilinx entry point. Focused XSim also passes the current
+  four-bank live bridge's swap, repeat, full-ring, rejection, diagnostic-toggle,
+  and independent-reset cases.
 
-## Requires vendor tools or hardware
+## Completed vendor flow for the current PAL live-video image
 
-- Mixed VHDL/SystemVerilog C64 elaboration, the inferred writable memories,
-  achieved PAL/NTSC clock, XPM constraints, resource use, and timing have not
-  been checked by Vivado.
+- Fresh default PAL C64 project creation, mixed VHDL/SystemVerilog
+  elaboration, synthesis, implementation, bitstream generation, and XSA export
+  completed in Vivado 2025.2 for `xc7z020clg484-2`.
+- The fresh manifest is `2026-08-29T15:33:38Z`; it records shell build ID
+  `20260829`, PAL generic `C64_NTSC_MODE=0`, base commit
+  `fd554dbf46e22514bb132f3dc063ee0a892bdcc6`, and a dirty engineering tree.
+- Routed timing passes with WNS +0.675 ns, WHS +0.053 ns, WPWS +1.749 ns, and
+  zero failing setup, hold, or pulse-width endpoints. The DVI output path group
+  passes with setup slack +1.672 ns and hold slack +1.718 ns.
+- All 11,033 routable nets are fully routed with zero routing errors. DRC has
+  zero errors; its 51 reported checks are warnings for report limits, DSP
+  pipelining, asynchronous BRAM controls, and one net with no routable load.
+- The final CDC report contains 14 `CDC-3` Info crossings and one `CDC-9` Info
+  crossing, with no Warning or Critical entries. The fatal critical-CDC gate
+  passed.
+- All four bus-skew constraints pass. The two live Gray-pointer crossings have
+  actual skews 0.507 ns and 0.610 ns against a 6.733 ns requirement.
+- The routed design uses 6,168 LUTs, 5,703 flip-flops, 85 RAMB36 blocks, one
+  RAMB18 block, and seven DSP blocks. The live bridge itself uses 543 LUTs, 335
+  flip-flops, and 64 RAMB36 blocks. Total block-RAM use is 85.5 of 140 tiles
+  (61.07%), leaving 54.5 tiles.
+- `check_timing` found zero no-clock registers, unconstrained internal
+  endpoints, missing input delays, or genuinely missing output delays. The
+  SPDIF false path and forwarded I2S/DVI clocks are informational exceptions.
+- The exact AK4493 datasheet was obtained and reviewed locally. Conservative
+  +/-5 ns I2S receiver-window constraints were applied and passed routed
+  timing.
+- Vitis 2025.2 built the FSBL and diagnostic application from the matching
+  `multitini_one.xsa`. Bootgen packaged and read back the expected FSBL, routed
+  bitstream, and two application segments.
+- The resulting `FIRMWARE.BIN` is 4,241,740 bytes, has SHA-256
+  `a44943738448e3114e58c03a30a2210270684ecf849911621e045ae5771f8703`
+  and CRC32 `01F764E0`, and leaves 10,372,788 bytes free in the firmware slot.
+  The test package is `Multitini-One-PAL-C64-live-video-20260829.zip`; its
+  source archive is `Multitini-One-source-C64-live-video-20260829.zip`.
+
+These are the current live-bridge vendor-tool results. The separate board
+observations below qualify the corresponding packaged image on hardware.
+
+## Completed first board observations
+
+- The golden UART updater loaded and booted the first PAL diagnostic image.
+- The monitor locked to the 1080p DVI color bars; the final half-width grey bar
+  matches the diagnostic generator's known grouping.
+- `v` disabled and restored DVI, `a` produced the fixed tone, and `:reboot`
+  returned to golden.
+- `r` had no visible effect because that image held the C64 in reset and its
+  bars/tone were independent of machine reset.
+
+## Completed PAL C64 snapshot board observations
+
+- The golden UART updater loaded and booted the preserved snapshot firmware.
+- The UART uploader transferred the exact 20 KiB BASIC/KERNAL/character bundle,
+  target validation succeeded, reset released, and the C64 reached its PAL
+  ready screen.
+- DVI showed a coherent centered frozen machine frame. Switching between bars
+  and the machine frame worked as intended.
+- `:reboot` returned to the golden image.
+- This result proves the ROM transport, loader/reset-release path, C64 boot,
+  exact-frame capture, and frozen display. It does not prove live refresh,
+  keyboard, joystick, storage, or SID audio.
+
+## Completed PAL C64 live-video board observations
+
+- The golden UART updater loaded and booted the exact packaged live firmware.
+- The bundled ROM uploader completed, and `v` displayed a live C64 BASIC
+  screen with a continuously blinking cursor.
+- The five-minute display soak remained locked and tear-free.
+- Repeated `v` source changes were clean whole-frame transitions.
+- `r` reset/fallback/rearm behavior passed, and the live machine returned.
+- `:reboot` returned to the golden image.
+- This qualifies the PAL live-frame path on the tested board/display
+  combination. It does not qualify physical input, storage, SID audio, NTSC,
+  or extended environmental operation.
+
+## Still requires vendor tools or hardware
+
+- The NTSC C64 project still needs its own clean vendor build and report review.
 - Mixed VHDL/SystemVerilog GBC elaboration, portable dual-port memory inference,
   achieved 33.554432 MHz clock, common-memory CDC constraints, resource fit,
   and timing have not been checked by Vivado.
-- AK4493 I2S output timing: exact receiver setup/hold values are not in the
-  publicly accessible product material. The timing gate must remain red.
 - PSRAM activation: PHY timing, IDELAYCTRL, calibration, constraints, command
   edge/count tuning, and board measurement are unresolved. The default build
   holds CE high; the prepared GBC branch is explicit opt-in only.
-- Physical machine video/audio selection is intentionally absent until
-  synthesis and diagnostic outputs pass. USB input, SD file I/O, DDR test, and all
-  cold/warm boot claims require a Vitis build and the modified board.
+- Physical keyboard and joystick input still need their first board tests.
+  Physical audio remains the independent diagnostic tone; SID is not routed.
+- Initial golden-slot boot, DVI timing, fixed-tone audio, and golden reboot have
+  observations. Pin-isolation measurements, DDR, SD, USB input, temperature,
+  cold/warm cycles, and the long-run DVI/audio gates remain open.
 
-## First vendor-machine sequence
+## Next validation sequence
 
-1. Run `make check` and require a clean result.
-2. Run `vivado -mode batch -source scripts/create_project.tcl`.
-3. Fix only source/Tcl defects. Commit them before assigning a release build ID.
-4. Build PAL first, then recreate with
-   `MULTITINI_C64_VIDEO_STANDARD=NTSC`; confirm the C64 VHDL/SV compile order,
-   inferred memories, achieved selected clock, XPM CDC constraints, and
-   resource estimate before implementation.
-5. Create a separate GBC project with `MULTITINI_MACHINE=GBC`; keep
+1. Add and qualify physical input one subsystem at a time, starting with USB
+   keyboard delivery and then joystick/gamepad mapping. Preserve the proven
+   live-video, reset, and golden-reboot behavior.
+2. Recreate and build C64 NTSC with
+   `MULTITINI_C64_VIDEO_STANDARD=NTSC`; retain and review a separate complete
+   report set.
+3. Create a separate GBC project with `MULTITINI_MACHINE=GBC`; keep
    `MULTITINI_ENABLE_GBC_PSRAM=0` for the first elaboration and synthesis review.
    Confirm the selected upstream hierarchy, open bootstrap initialization,
    inferred memories, requested machine clock, and resource estimate.
-6. Obtain and record AK4493SEQ timing; add reviewed I2S output delays.
-7. Run `vivado -mode batch -source scripts/build_and_export_xsa.tcl`.
-8. Review all reports in `build/vivado/reports`; do not rely only on run status.
-9. Run `vitis -s scripts/create_vitis_workspace.py` and retain its complete log.
-10. Execute the power, pin-isolation, boot, DDR, SD, DVI, audio, and USB gates in
+4. Route SID audio only after its own clock, reset, format, and mute gates
+   pass.
+5. Execute the remaining boot, DDR, SD, input, and machine gates in
    `MULTITINI_ONE_PLAN.md` and `docs/VIVADO_HANDOFF.md`.
 
 Only after the minimal board image passes should PSRAM be connected and its
 BIST exposed. Only after a dedicated PSRAM test passes should a GBC project set
-`MULTITINI_ENABLE_GBC_PSRAM=1`. Both machine integrations remain off the
-physical outputs until their clock, reset, video, and audio paths pass their
-corresponding gates.
+`MULTITINI_ENABLE_GBC_PSRAM=1`. GBC remains off the physical outputs. C64 DVI
+must pass the live gate above, and C64 audio remains the independent diagnostic
+source until the SID clock, reset, format, and mute gates pass.

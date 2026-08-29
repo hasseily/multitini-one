@@ -1,12 +1,17 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "multitini_ak4493.h"
+#include "multitini_c64_boot.h"
+#include "multitini_c64_interface.h"
+#include "multitini_content.h"
 #include "multitini_core_link.h"
 #include "multitini_regs.h"
 #include "multitini_tmp102.h"
+#include "multitini_xmodem.h"
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "platform.h"
 #include "sleep.h"
@@ -16,15 +21,37 @@
 #include "xil_printf.h"
 #include "xparameters.h"
 #include "xstatus.h"
+#include "xiltimer.h"
+#include "xuartps_hw.h"
 
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
 #define MT_I2C_CLOCK_HZ UINT32_C(100000)
 #define MT_I2C_BUSY_POLLS UINT32_C(1000000)
+#define MT_UART_DRAIN_POLLS UINT32_C(10000000)
+#define MT_UART_BYTE_TIMEOUT_MS UINT32_C(1000)
+#define MT_UART_XMODEM_RETRIES UINT32_C(20)
+#define MT_CORE_READY_POLLS UINT32_C(1000000)
+#define MT_LINK_COMMAND_POLLS UINT32_C(100000)
+#define MT_EXTENDED_COMMAND_CAPACITY 96U
+#define MT_EXTENDED_ARGUMENT_CAPACITY 4
+#define MT_C64_ROM_BUNDLE_SIZE \
+    (MT_SIZE_C64_BASIC + MT_SIZE_C64_KERNAL + MT_SIZE_C64_CHARACTER)
+
+/* Zynq-7000 UG585 multiboot and PS software-reset registers. */
+#define MT_DEVCFG_MULTIBOOT UINT32_C(0xF800702C)
+#define MT_DEVCFG_MULTIBOOT_MASK UINT32_C(0x00001FFF)
+#define MT_SLCR_LOCK UINT32_C(0xF8000004)
+#define MT_SLCR_UNLOCK UINT32_C(0xF8000008)
+#define MT_SLCR_LOCK_KEY UINT32_C(0x0000767B)
+#define MT_SLCR_UNLOCK_KEY UINT32_C(0x0000DF0D)
+#define MT_PS_RESET_CONTROL UINT32_C(0xF8000200)
+#define MT_PS_SOFTWARE_RESET UINT32_C(0x00000001)
 
 static XIicPs i2c_instance;
 static mt_core_link_t shell_link;
 static mt_ak4493_bus_t dac_bus;
 static bool dac_ready;
+static uint8_t c64_rom_bundle[MT_C64_ROM_BUNDLE_SIZE];
 
 static int board_i2c_write(void *context, uint8_t address, uint8_t reg,
                            uint8_t value)
@@ -85,10 +112,10 @@ static void print_temperature(void)
     } else {
         magnitude = (uint32_t)micro_c;
     }
-    xil_printf("temperature=%c%lu.%02lu C\r\n", sign,
-               (unsigned long)(magnitude / UINT32_C(1000000)),
-               (unsigned long)((magnitude % UINT32_C(1000000)) /
-                               UINT32_C(10000)));
+    xil_printf("temperature=%c%u.%02u C\r\n", sign,
+               (unsigned int)(magnitude / UINT32_C(1000000)),
+               (unsigned int)((magnitude % UINT32_C(1000000)) /
+                              UINT32_C(10000)));
 }
 
 static void board_delay_us(void *context, uint32_t microseconds)
@@ -119,16 +146,16 @@ static uint32_t shell_read(uint32_t offset)
 
 static void print_status(void)
 {
-    xil_printf("magic=%08lx abi=%08lx shell=%08lx build=%08lx\r\n",
-               (unsigned long)shell_read(MT_REG_MAGIC),
-               (unsigned long)shell_read(MT_REG_ABI_VERSION),
-               (unsigned long)shell_read(MT_REG_SHELL_ID),
-               (unsigned long)shell_read(MT_REG_SHELL_BUILD_ID));
-    xil_printf("core=%08lx status=%08lx error=%08lx control=%08lx\r\n",
-               (unsigned long)shell_read(MT_REG_CORE_ID),
-               (unsigned long)shell_read(MT_REG_STATUS),
-               (unsigned long)shell_read(MT_REG_ERROR),
-               (unsigned long)shell_read(MT_REG_CONTROL));
+    xil_printf("magic=%08x abi=%08x shell=%08x build=%08x\r\n",
+               (unsigned int)shell_read(MT_REG_MAGIC),
+               (unsigned int)shell_read(MT_REG_ABI_VERSION),
+               (unsigned int)shell_read(MT_REG_SHELL_ID),
+               (unsigned int)shell_read(MT_REG_SHELL_BUILD_ID));
+    xil_printf("core=%08x status=%08x error=%08x control=%08x\r\n",
+               (unsigned int)shell_read(MT_REG_CORE_ID),
+               (unsigned int)shell_read(MT_REG_STATUS),
+               (unsigned int)shell_read(MT_REG_ERROR),
+               (unsigned int)shell_read(MT_REG_CONTROL));
 }
 
 static int command(uint32_t opcode, uint32_t arg0, uint32_t arg1)
@@ -136,19 +163,20 @@ static int command(uint32_t opcode, uint32_t arg0, uint32_t arg1)
     const uint32_t args[4] = {arg0, arg1, 0U, 0U};
     mt_command_response_t response;
     const mt_link_result_t result = mt_core_link_command(
-        &shell_link, opcode, args, UINT32_C(100000), NULL, NULL, &response);
+        &shell_link, opcode, args, MT_LINK_COMMAND_POLLS, NULL, NULL,
+        &response);
     if (result != MT_LINK_OK) {
         xil_printf("command failed: %s", mt_link_result_name(result));
         if (result == MT_LINK_REMOTE_ERROR) {
-            xil_printf(" status=%lu", (unsigned long)response.status);
+            xil_printf(" status=%u", (unsigned int)response.status);
         }
         xil_printf("\r\n");
         return -1;
     }
-    xil_printf("response seq=%lu arg0=%08lx arg1=%08lx\r\n",
-               (unsigned long)response.sequence,
-               (unsigned long)response.arg0,
-               (unsigned long)response.arg1);
+    xil_printf("response seq=%u arg0=%08x arg1=%08x\r\n",
+               (unsigned int)response.sequence,
+               (unsigned int)response.arg0,
+               (unsigned int)response.arg1);
     return 0;
 }
 
@@ -180,10 +208,353 @@ static void set_audio(bool mute)
     }
 }
 
+static uint8_t hex_digit_value(char input, uint8_t *value)
+{
+    if (input >= '0' && input <= '9') {
+        *value = (uint8_t)(input - '0');
+        return 1U;
+    }
+    if (input >= 'a' && input <= 'f') {
+        *value = (uint8_t)(input - 'a' + 10);
+        return 1U;
+    }
+    if (input >= 'A' && input <= 'F') {
+        *value = (uint8_t)(input - 'A' + 10);
+        return 1U;
+    }
+    return 0U;
+}
+
+static int parse_u32(const char *text, uint32_t *value_out)
+{
+    uint32_t base = 10U;
+    uint64_t value = 0U;
+    uint32_t digits = 0U;
+
+    if (text == NULL || *text == '\0' || value_out == NULL) return -1;
+    if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
+        base = 16U;
+        text += 2;
+    }
+    while (*text != '\0') {
+        uint8_t digit;
+        if (hex_digit_value(*text, &digit) == 0U || digit >= base) return -1;
+        value = value * base + digit;
+        if (value > UINT32_MAX) return -1;
+        ++digits;
+        ++text;
+    }
+    if (digits == 0U) return -1;
+    *value_out = (uint32_t)value;
+    return 0;
+}
+
+static int split_arguments(char *line, char **arguments, int capacity)
+{
+    char *cursor = line;
+    int count = 0;
+
+    while (*cursor != '\0') {
+        while (*cursor == ' ' || *cursor == '\t') ++cursor;
+        if (*cursor == '\0') break;
+        if (count >= capacity) return -1;
+        arguments[count++] = cursor;
+        while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t') {
+            ++cursor;
+        }
+        if (*cursor != '\0') *cursor++ = '\0';
+    }
+    return count;
+}
+
+static XTime ticks_from_ms(uint32_t milliseconds)
+{
+    return (XTime)(((uint64_t)COUNTS_PER_SECOND * milliseconds) /
+                   UINT64_C(1000));
+}
+
+static int uart0_read_byte(void *context, uint8_t *value,
+                           uint32_t timeout_ms)
+{
+    XTime start = 0U;
+    XTime now = 0U;
+    const XTime timeout_ticks = ticks_from_ms(timeout_ms);
+    (void)context;
+
+    if (value == NULL) return -1;
+    XTime_GetTime(&start);
+    do {
+        const uint32_t status = XUartPs_ReadReg(
+            XPAR_XUARTPS_0_BASEADDR, XUARTPS_SR_OFFSET);
+        if ((status & XUARTPS_SR_RXEMPTY) == 0U) {
+            *value = (uint8_t)XUartPs_ReadReg(
+                XPAR_XUARTPS_0_BASEADDR, XUARTPS_FIFO_OFFSET);
+            return 1;
+        }
+        XTime_GetTime(&now);
+    } while ((now - start) < timeout_ticks);
+    return 0;
+}
+
+static int uart0_write_byte(void *context, uint8_t value)
+{
+    uint32_t poll;
+    (void)context;
+
+    for (poll = 0U; poll < MT_UART_DRAIN_POLLS; ++poll) {
+        const uint32_t status = XUartPs_ReadReg(
+            XPAR_XUARTPS_0_BASEADDR, XUARTPS_SR_OFFSET);
+        if ((status & XUARTPS_SR_TXFULL) == 0U) {
+            XUartPs_WriteReg(XPAR_XUARTPS_0_BASEADDR, XUARTPS_FIFO_OFFSET,
+                             value);
+            return 0;
+        }
+    }
+    return -1;
+}
+
+static int set_core_reset_request(bool asserted)
+{
+    return command(MT_COMMAND_CORE_RESET, asserted ? 1U : 0U, 0U);
+}
+
+static void leave_core_in_reset(void)
+{
+    if (set_core_reset_request(true) != 0) {
+        xil_printf("[C64] error: core reset request failed\r\n");
+    }
+}
+
+static bool validate_c64_rom_slice(mt_c64_rom_kind_t kind,
+                                   const uint8_t *data, size_t size,
+                                   const char *name)
+{
+    const mt_content_validation_t validation =
+        mt_c64_rom_validate(kind, data, size);
+    if (validation == MT_CONTENT_VALID) return true;
+    xil_printf("[C64] error: %s validation: %s\r\n", name,
+               mt_content_validation_name(validation));
+    return false;
+}
+
+static bool wait_for_c64_core_ready(uint32_t *status_out)
+{
+    uint32_t poll;
+    uint32_t status = 0U;
+
+    for (poll = 0U; poll < MT_CORE_READY_POLLS; ++poll) {
+        status = shell_read(MT_REG_STATUS);
+        if ((status & MT_STATUS_CORE_LOAD_ERROR) != 0U) break;
+        if ((status & MT_STATUS_CORE_READY) != 0U) {
+            if (status_out != NULL) *status_out = status;
+            return true;
+        }
+    }
+    if (status_out != NULL) *status_out = status;
+    return false;
+}
+
+static void handle_c64_rx_command(char *line)
+{
+    char *arguments[MT_EXTENDED_ARGUMENT_CAPACITY];
+    const int argument_count = split_arguments(
+        line, arguments, MT_EXTENDED_ARGUMENT_CAPACITY);
+    uint32_t requested_size = 0U;
+    uint32_t expected_crc32 = 0U;
+    uint32_t actual_crc32;
+    uint32_t core_status = 0U;
+    size_t received_size = 0U;
+    mt_xmodem_result_t receive_result;
+    mt_link_result_t load_result;
+    mt_c64_system_roms_t roms;
+    mt_xmodem_io_t io;
+
+    if (argument_count != 3 || strcmp(arguments[0], "c64rx") != 0 ||
+        parse_u32(arguments[1], &requested_size) != 0 ||
+        parse_u32(arguments[2], &expected_crc32) != 0 ||
+        requested_size != (uint32_t)sizeof(c64_rom_bundle)) {
+        leave_core_in_reset();
+        xil_printf("[C64] error: usage :c64rx 20480 0xXXXXXXXX\r\n");
+        return;
+    }
+
+    if (set_core_reset_request(true) != 0) {
+        xil_printf("[C64] error: cannot enter reset for upload\r\n");
+        return;
+    }
+    Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_ERROR, MT_ERROR_CORE_LOAD);
+
+    io.context = NULL;
+    io.read_byte = uart0_read_byte;
+    io.write_byte = uart0_write_byte;
+    xil_printf("[C64] XMODEM-CRC ready\r\n");
+    receive_result = mt_xmodem_receive_1k(
+        &io, c64_rom_bundle, sizeof(c64_rom_bundle),
+        MT_UART_BYTE_TIMEOUT_MS, MT_UART_XMODEM_RETRIES, &received_size);
+    if (receive_result != MT_XMODEM_OK ||
+        received_size != sizeof(c64_rom_bundle)) {
+        leave_core_in_reset();
+        xil_printf("[C64] error: receive %s count=%u\r\n",
+                   mt_xmodem_result_name(receive_result),
+                   (unsigned int)received_size);
+        return;
+    }
+
+    actual_crc32 = mt_xmodem_crc32_ieee(c64_rom_bundle,
+                                         sizeof(c64_rom_bundle));
+    if (actual_crc32 != expected_crc32) {
+        leave_core_in_reset();
+        xil_printf("[C64] error: CRC32 expected=%08x actual=%08x\r\n",
+                   (unsigned int)expected_crc32,
+                   (unsigned int)actual_crc32);
+        return;
+    }
+
+    if (!validate_c64_rom_slice(MT_C64_ROM_BASIC, c64_rom_bundle,
+                                MT_SIZE_C64_BASIC, "BASIC") ||
+        !validate_c64_rom_slice(
+            MT_C64_ROM_KERNAL, c64_rom_bundle + MT_SIZE_C64_BASIC,
+            MT_SIZE_C64_KERNAL, "KERNAL") ||
+        !validate_c64_rom_slice(
+            MT_C64_ROM_CHARACTER,
+            c64_rom_bundle + MT_SIZE_C64_BASIC + MT_SIZE_C64_KERNAL,
+            MT_SIZE_C64_CHARACTER, "character")) {
+        leave_core_in_reset();
+        return;
+    }
+
+    roms.basic.data = c64_rom_bundle;
+    roms.basic.size = MT_SIZE_C64_BASIC;
+    roms.kernal.data = c64_rom_bundle + MT_SIZE_C64_BASIC;
+    roms.kernal.size = MT_SIZE_C64_KERNAL;
+    roms.character.data =
+        c64_rom_bundle + MT_SIZE_C64_BASIC + MT_SIZE_C64_KERNAL;
+    roms.character.size = MT_SIZE_C64_CHARACTER;
+    load_result = mt_c64_load_system_roms(
+        &shell_link, &roms, MT_LINK_COMMAND_POLLS, NULL, NULL);
+    if (load_result != MT_LINK_OK) {
+        leave_core_in_reset();
+        xil_printf("[C64] error: ROM stream %s\r\n",
+                   mt_link_result_name(load_result));
+        return;
+    }
+    if (!wait_for_c64_core_ready(&core_status)) {
+        leave_core_in_reset();
+        xil_printf("[C64] error: core-ready timeout status=%08x\r\n",
+                   (unsigned int)core_status);
+        return;
+    }
+
+    xil_printf("[C64] boot ok crc32=%08x status=%08x\r\n",
+               (unsigned int)actual_crc32, (unsigned int)core_status);
+}
+
 static void print_help(void)
 {
     xil_printf("commands: h help, s status, p ping, a audio on, m mute, ");
     xil_printf("v toggle video, r toggle core reset\r\n");
+    xil_printf("extended: :c64rx 20480 0xCRC32, :reboot to golden\r\n");
+}
+
+static bool read_extended_command(char *buffer, size_t capacity)
+{
+    size_t length = 0U;
+    bool overflow = false;
+
+    for (;;) {
+        const char input = inbyte();
+        if (input == '\r' || input == '\n') {
+            break;
+        }
+        if (length + 1U < capacity) {
+            buffer[length++] = input;
+        } else {
+            overflow = true;
+        }
+    }
+    buffer[length] = '\0';
+    return !overflow;
+}
+
+static bool wait_uart0_transmit_idle(void)
+{
+    uint32_t poll;
+    for (poll = 0U; poll < MT_UART_DRAIN_POLLS; ++poll) {
+        const uint32_t status = XUartPs_ReadReg(
+            XPAR_XUARTPS_0_BASEADDR, XUARTPS_SR_OFFSET);
+        if ((status & XUARTPS_SR_TXEMPTY) != 0U &&
+            (status & XUARTPS_SR_TACTIVE) == 0U) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void reboot_to_golden(void)
+{
+    xil_printf("rebooting to golden at QSPI offset 0x00000000\r\n");
+    if (!wait_uart0_transmit_idle()) {
+        xil_printf("UART did not drain; reboot cancelled\r\n");
+        return;
+    }
+
+    Xil_Out32(MT_DEVCFG_MULTIBOOT, 0U);
+    DATA_SYNC;
+    if ((Xil_In32(MT_DEVCFG_MULTIBOOT) & MT_DEVCFG_MULTIBOOT_MASK) != 0U) {
+        xil_printf("multiboot readback failed; reboot cancelled\r\n");
+        return;
+    }
+
+    Xil_Out32(MT_SLCR_UNLOCK, MT_SLCR_UNLOCK_KEY);
+    DATA_SYNC;
+    Xil_Out32(MT_PS_RESET_CONTROL, MT_PS_SOFTWARE_RESET);
+    DATA_SYNC;
+    Xil_Out32(MT_SLCR_LOCK, MT_SLCR_LOCK_KEY);
+    for (;;) {
+#if defined(__arm__) || defined(__aarch64__)
+        __asm__ volatile("wfi");
+#endif
+    }
+}
+
+static void handle_extended_command(bool recovery_only)
+{
+    char extended[MT_EXTENDED_COMMAND_CAPACITY];
+
+    if (!read_extended_command(extended, sizeof(extended))) {
+        if (!recovery_only && strncmp(extended, "c64rx", 5U) == 0) {
+            leave_core_in_reset();
+        }
+        xil_printf("extended command is too long\r\n");
+    } else if (strcmp(extended, "reboot") == 0) {
+        reboot_to_golden();
+    } else if (!recovery_only &&
+               strncmp(extended, "c64rx", 5U) == 0 &&
+               (extended[5] == '\0' || extended[5] == ' ' ||
+                extended[5] == '\t')) {
+        handle_c64_rx_command(extended);
+    } else {
+        xil_printf("unknown extended command ':%s'\r\n", extended);
+    }
+
+    if (recovery_only) {
+        xil_printf("recovery command: :reboot return to golden updater\r\n");
+    } else {
+        print_help();
+    }
+}
+
+static void recovery_console(void)
+{
+    xil_printf("recovery command: :reboot return to golden updater\r\n");
+    for (;;) {
+        const char input = inbyte();
+        if (input == ':') {
+            handle_extended_command(true);
+        } else if (input != '\r' && input != '\n') {
+            xil_printf("shell unavailable; only :reboot is accepted\r\n");
+        }
+    }
 }
 
 int main(void)
@@ -196,12 +567,12 @@ int main(void)
     mt_core_link_init_mmio(&shell_link,
         (volatile void *)(uintptr_t)MT_SHELL_BASE_ADDRESS);
 
-    xil_printf("\r\nMultitini One source-only diagnostic firmware\r\n");
+    xil_printf("\r\nMultitini One diagnostic firmware\r\n");
     link_status = mt_core_link_probe(&shell_link);
     xil_printf("shell probe: %s\r\n", mt_link_result_name(link_status));
     if (link_status != MT_LINK_OK) {
-        xil_printf("halting with all diagnostic outputs in reset defaults\r\n");
-        for (;;) { }
+        xil_printf("shell unavailable; diagnostic outputs remain in reset defaults\r\n");
+        recovery_console();
     }
 
     status = initialize_i2c();
@@ -238,6 +609,7 @@ int main(void)
                           0U);
             print_status();
             break;
+        case ':': handle_extended_command(false); break;
         case '\r':
         case '\n':
             break;

@@ -1,6 +1,10 @@
 # Architecture Baseline
 
-Status: source design, not Vivado or hardware validated.
+Status: the independent PAL DVI, fixed-tone audio, UART, and golden-reboot
+diagnostics have passed on hardware. The PAL UART-ROM and coherent
+frozen-snapshot image also passed its board test. The current four-bank live
+video bridge passes focused XSim but has not yet completed a fresh vendor build
+or board test. SID audio and physical input remain later gates.
 
 ## Ownership boundaries
 
@@ -19,18 +23,21 @@ changes belong in the shell or adapter.
 
 One complete machine adapter is selected when the Vivado project is created.
 `MULTITINI_MACHINE=C64` is the default; `MULTITINI_MACHINE=GBC` selects the
-reuse-validation image. This is full-image selection, not partial
-reconfiguration.
+Game Boy Color reuse-validation image. Only the common and selected-machine
+sections of the HDL manifest enter that project, so an inactive core is not a
+build dependency. This is full-image selection, not partial reconfiguration.
 
 Each image is one full Zynq configuration containing:
 
 - the PS and its DDR, QSPI, SD, UART, I2C, and two ULPI controllers;
 - a small AXI control register bank;
-- an independently visible DVI test pattern;
+- an independent DVI test pattern and, for PAL C64, optional live machine
+  frames converted to the fixed C64 palette;
 - independently audible I2S and SPDIF test tones;
 - safe idle values on Apple, Ethernet, and PSRAM pins; and
-- one retained machine adapter/core integration whose outputs are not yet
-  selected onto the physical DVI and audio paths.
+- one retained machine adapter/core integration. The PAL C64 RGB output feeds
+  the live-frame bridge; machine audio is not selected onto the physical
+  output.
 
 Partial reconfiguration is deliberately outside this baseline.
 
@@ -53,7 +60,10 @@ Planned initial domains:
 
 Every asynchronous crossing must use a named synchronizer or handshake. Every
 generated clock and exception must bind to an existing object in the final
-Vivado design. These facts cannot be certified on this Mac.
+Vivado design. In the verified default PAL build, the fatal CDC gate passed and
+the final snapshot-build report contained only 15 `CDC-3` Info crossings and
+one `CDC-9` Info reset crossing. The live PAL, NTSC, and GBC vendor builds
+remain pending.
 
 Sparse ROM bytes and input event pairs move from the 133.333 MHz control domain
 to the C64 domain through separate one-entry `xpm_cdc_handshake` mailboxes. A
@@ -61,13 +71,49 @@ source holds every payload bit until the destination accepts it. Reset request,
 ready, and error levels
 use named bit synchronizers; the sparse error-clear event uses a tested
 three-stage toggle synchronizer. The behavioral CDC tests deliberately use
-unrelated clocks and backpressure. Vivado CDC reports and XPM handshake
-constraint binding remain mandatory.
+unrelated clocks and backpressure. The default PAL XPM and synchronizer paths
+passed the fatal CDC report gate; every other machine build must repeat that
+review.
 
 The C64 adapter holds machine reset until BASIC, KERNAL, and character ROMs have
 each completed a strictly framed transfer. The ARM command ABI supports begin,
 data, end, and abort. Firmware retries bounded mailbox backpressure and leaves
 the core in reset if a ROM set cannot be loaded.
+
+The current diagnostic firmware exposes `:c64rx` on UART0. The host uploader
+combines the repository's selected BASIC, KERNAL, and character ROMs into an
+exact 20 KiB XMODEM-1K/CRC transfer by default; explicit path overrides remain
+available. Firmware verifies the bundle CRC32 and each ROM's size and
+nonuniform content before using the portable stream helper. Failure leaves the
+C64 in reset.
+
+The PAL video adapter registers coherent RGB, data-enable, and sync values in
+the machine domain. The live bridge accepts only exact 382x270 frames whose
+pixels match the core's fixed 16-color palette. It stores four-bit palette
+indices in four independent dual-clock frame banks, then converts each index
+to RGB565 while scaling 4x into 1080p with 196-pixel black side borders.
+
+The source domain publishes completed banks through a three-bit Gray-coded
+ring pointer. The 1080p pixel domain acquires at most one bank at each output
+vertical blank and returns the previously displayed bank through a second Gray
+pointer. The read and write ports therefore never intentionally own the same
+bank. Invalid geometry or palette data rejects the entire source frame. If the
+consumer stops long enough to fill the ring, capture drops whole source frames
+before their first pixel rather than overwriting queued or displayed data.
+
+PAL produces approximately 50.123 frames per second while DVI remains fixed at
+60 frames per second. When no newly completed PAL frame is available, the DVI
+side repeats the current bank. All bank and diagnostic-source changes occur at
+output vertical blank, so rate conversion produces clean repeats without a
+mid-scan swap. A grant/acknowledge rearm barrier flushes pointer ownership after
+an independent source reset, pixel reset, or loss of C64 readiness and keeps
+machine video fail-closed until a new complete frame arrives. Focused XSim
+covers live swaps, repeats, queue-full frame drops, palette/geometry rejection,
+diagnostic switching, and independent resets. This is not yet a board result.
+
+The exact AK4493 datasheet was reviewed locally. The routed PAL build applies a
+conservative +/-5 ns receiver window to I2S LRCK and SDATA and passes timing.
+This is constraint validation, not an audible hardware result.
 
 The GBC adapter holds reset until a cartridge is strictly framed and accepted
 by the external-memory service. Its open CGB bootstrap is generated from a

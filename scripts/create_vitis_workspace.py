@@ -37,7 +37,9 @@ def add_include_directory(component: str, include_directory: Path) -> None:
     match = pattern.search(text)
     if match is None:
         raise RuntimeError(f"USER_INCLUDE_DIRECTORIES is absent from {config}")
-    entry = f'"{include_directory}"'
+    # CMake treats backslashes in quoted strings as escape introducers.  Vitis
+    # runs this script on Windows too, so always emit a portable slash path.
+    entry = f'"{include_directory.as_posix()}"'
     if entry in match.group("body"):
         return
     replacement = f"set(USER_INCLUDE_DIRECTORIES{match.group('body').rstrip()}\n{entry}\n)"
@@ -79,7 +81,7 @@ def main() -> int:
             is_skip_copy_sources=True,
         )
         add_include_directory(APP_NAME, ROOT / "firmware" / "include")
-        application.build()
+        require_success(application.build(), "diagnostic application build")
         require(WORKSPACE / APP_NAME / "build" / f"{APP_NAME}.elf",
                 "diagnostic ELF")
         print(f"Vitis diagnostic build completed: {WORKSPACE}")

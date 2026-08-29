@@ -33,7 +33,7 @@ class GameBoyImportTests(unittest.TestCase):
         }
         destination = ROOT / self.manifest["destination"]
         staged = {
-            str(path.relative_to(destination))
+            path.relative_to(destination).as_posix()
             for path in destination.rglob("*") if path.is_file()
         }
         locked = {
@@ -47,7 +47,7 @@ class GameBoyImportTests(unittest.TestCase):
         destination = ROOT / self.manifest["destination"]
         image_suffixes = {".bin", ".gb", ".gbc", ".mif", ".rbf", ".rom"}
         images = {
-            str(path.relative_to(destination))
+            path.relative_to(destination).as_posix()
             for path in destination.rglob("*")
             if path.is_file() and path.suffix.lower() in image_suffixes
         }
@@ -60,7 +60,7 @@ class GameBoyImportTests(unittest.TestCase):
         destination = ROOT / self.manifest["destination"]
         for path in destination.rglob("*"):
             if path.is_file():
-                relative = str(path.relative_to(ROOT))
+                relative = path.relative_to(ROOT).as_posix()
                 self.assertIn(relative, by_path)
                 self.assertEqual(by_path[relative]["commit"],
                                  self.manifest["source"]["commit"])

@@ -5,8 +5,13 @@ The first product target is a C64 built from the GPL MiSTer C64 core. Game Boy
 Color is the second adapter used to prove that the shell is reusable. Neither
 machine uses an Apple II host.
 
-The repository is in pre-hardware-validation development. Nothing here is a
-claim of working board support yet.
+The independent PAL DVI timing, fixed-tone audio, UART control, and golden
+reboot paths have passed their first board test. The following frozen-frame
+image proved UART ROM upload, reset release, C64 boot, and coherent scaling.
+The current four-bank live PAL image has now also passed its board gate: the
+BASIC cursor remained live and blinking, the five-minute display soak stayed
+locked and tear-free, repeated `v` switches were whole-frame, `r` reset and
+rearmed correctly, and `:reboot` returned to golden.
 
 ## Current state
 
@@ -17,12 +22,20 @@ Known:
 - The Game Boy source baseline is MiSTer Game Boy commit
   `7a5ff50528cd9c1d13ffb675e7df8506bffaa078`.
 - The common register ABI, host-testable firmware code, diagnostic FPGA shell,
-  and source-only Vivado flow live in this repository.
+  and scripted Vivado/Vitis flow live in this repository.
 - The 34-file C64 allowlist is imported exactly, SHA-256 locked, and covered by
   the per-file license ledger under the recorded redistribution assumption.
 - A ROM-free `fpga64_sid_iec` build boundary, writable ROM adapter, ARM byte
   stream, coherent clock-domain mailboxes, live C64 input mapping, and
   reset-safe ROM boot helper are implemented.
+- The UART diagnostic accepts an exact 20 KiB BASIC/KERNAL/character bundle
+  through XMODEM-1K/CRC, verifies an outer CRC32, and releases reset only after
+  all three FPGA ROM streams complete and the core reports ready.
+- A fail-closed dual-clock live bridge stores the fixed C64 palette as four-bit
+  indices in four 382x270 frame banks. Complete PAL frames enter a Gray-pointer
+  ring; the 1080p60 side changes display banks only at vertical blank. A missing
+  PAL frame is repeated cleanly, and a full ring drops a whole incoming frame
+  before capture rather than exposing a partial frame.
 - The 47-file Game Boy allowlist, open SameBoy-derived CGB bootstrap, generated
   strict-tool compatibility ports, GB/GBC content validation, cartridge boot
   helper, adapter, one-line cartridge cache, and shared external-memory ABI are
@@ -30,38 +43,62 @@ Known:
 - The board shell selects C64 or GBC at project creation. A GBC PSRAM CDC/PHY
   path is prepared but deliberately disabled by default pending Vivado timing
   and board validation.
-- The AXI register path, DVI timing generator, audio path, PSRAM BIST, C64 ROM
-  loader/input bridges, and asynchronous mailbox pass Icarus simulations. The
-  selected SystemVerilog C64 path passes Verilator lint.
-- Portable content, DAC, temperature, and shell-link code passes normal and
-  sanitizer-enabled host tests. The Vitis entry point compiles against strict
-  host stubs for the Xilinx APIs it uses.
-- Unapproved ROM/media and generated FPGA or firmware products are blocked from
-  source control. The allowlisted open GBC bootstrap is the current exception;
-  `docs/CONTENT_POLICY.md` applies the same rule to every core.
+- The AXI register path, DVI timing generator, audio path, PSRAM BIST, and C64
+  ROM loader/input bridges pass HDL simulations. The asynchronous mailbox,
+  frozen-frame predecessor, and four-bank live C64 bridge pass focused Vivado
+  XSim, and the selected SystemVerilog C64 path passes Verilator lint.
+- The current PAL C64 live-video project completed synthesis, implementation,
+  bitstream generation, and XSA export in Vivado 2025.2 with shell build ID
+  `20260829`. Routed timing passed with WNS +0.675 ns, WHS +0.053 ns, WPWS
+  +1.749 ns, and no failing endpoints. The final CDC report contains only 14
+  `CDC-3` and one `CDC-9` informational crossing.
+- The routed live design uses 6,168 LUTs, 5,703 flip-flops, 85 RAMB36 blocks,
+  one RAMB18 block, and seven DSP blocks. The four-bank video bridge accounts
+  for 543 LUTs, 335 flip-flops, and 64 RAMB36 blocks.
+- Vitis 2025.2 built the matching FSBL and diagnostic application from the
+  fresh live XSA. Bootgen packaged and read back the expected FSBL, routed
+  bitstream, and application partitions. The resulting 4,241,740-byte
+  `FIRMWARE.BIN` has SHA-256
+  `a44943738448e3114e58c03a30a2210270684ecf849911621e045ae5771f8703`.
+- That exact live firmware passed its first PAL board test. The blinking BASIC
+  cursor proves continuous delivery rather than a frozen capture; the
+  five-minute soak, whole-frame source toggles, reset/rearm, and golden reboot
+  all passed.
+- The exact AK4493 datasheet has been reviewed. Conservative I2S output delays
+  are now part of the implemented-design timing constraints.
+- For that snapshot XSA, the Vitis FSBL and diagnostic application ELF built
+  successfully. Bootgen packaged them with its routed bitstream as
+  `FIRMWARE.BIN`.
+- Portable content, XMODEM, DAC, temperature, and shell-link code passes the
+  normal strict host tests. The Vitis entry point compiles against strict host
+  stubs for the Xilinx APIs it uses. The current Windows GCC installation does
+  not provide the requested ASan/UBSan runtime libraries, so that optional
+  link was not part of this build's qualification.
+- The exact C64 BASIC, KERNAL, and character ROMs selected by the repository
+  owner are tracked build/test inputs with recorded hashes. Other unapproved
+  ROM/media and generated FPGA or firmware products remain blocked from source
+  control. See `docs/CONTENT_POLICY.md` for the per-core rule.
 
-Not yet proven:
+Hardware status and remaining gaps:
 
-- The current sources have not been opened, synthesized, implemented, or timed
-  in Vivado.
-- The firmware has not been built in Vitis.
-- AK4493 I2S receiver timing remains unavailable from the public product page;
-  the Vivado timing-coverage gate must not be waived to hide it.
-- The mixed-language C64 build has not been compiled by Vivado. macOS checks
-  do not validate VHDL elaboration, Xilinx memories, XPM CDC constraints, the
-  requested PAL/NTSC core clock, or resource/timing results.
-- The mixed-language GBC build has not been compiled by Vivado. Its portable
-  dual-port memories, requested 33.554432 MHz clock, common-memory CDC, PSRAM
-  I/O resources, external timing, and resource fit remain vendor-tool gates.
-- C64 video and audio are retained for synthesis but are not connected to the
-  physical outputs yet. The board top deliberately continues to show/play the
-  independent diagnostics.
-- SD file-system and USB input integration are not implemented. The portable
-  firmware can transfer caller-supplied C64 ROM buffers. The only embedded ROM
-  content is the pinned open GBC bootstrap.
-- No Multitini image has booted on the card.
-- DVI, audio, USB host, SD, DDR, PSRAM, and Apple-bus isolation still require
-  the hardware gates in `MULTITINI_ONE_PLAN.md`.
+- The first diagnostic PAL image booted through the golden updater; DVI bars,
+  DVI toggle, fixed audio tone, and `:reboot` were observed working. See
+  `docs/HARDWARE_RESULTS.md`.
+- The ROM-upload and frozen-C64-frame image passed on a card. That result proves
+  the upload, reset release, C64 boot, coherent snapshot, source switch, and
+  golden-reboot path. It does not prove live video, physical input, storage, or
+  SID audio.
+- The four-bank live-video source passes focused XSim, its fresh PAL Vivado
+  build, and its first board test. This qualifies live PAL C64 video on the
+  tested card/display combination, not physical input, storage, or SID audio.
+- NTSC and GBC Vivado builds remain pending. The GBC PSRAM path remains
+  disabled by default and awaits timing and board validation.
+- SD file-system and USB input integration are not implemented. The tracked
+  C64 ROM set is loaded over UART; the pinned open GBC bootstrap remains the
+  only ROM embedded in an FPGA image.
+- DVI timing and the fixed diagnostic tone have initial board observations.
+  Their long-run gates, plus USB host, SD, DDR, PSRAM, and Apple-bus isolation,
+  still require the hardware work in `MULTITINI_ONE_PLAN.md`.
 
 ## Host checks
 
@@ -89,6 +126,25 @@ vivado -mode batch -source scripts/build_and_export_xsa.tcl
 vitis -s scripts/create_vitis_workspace.py
 ```
 
+Package the exact generated artifacts from PowerShell with:
+
+```powershell
+New-Item -ItemType Directory -Force .\build\firmware
+.\scripts\make_firmware_bin.bat `
+  .\build\firmware\FIRMWARE.BIN `
+  .\build\vitis_workspace\multitini_platform\export\multitini_platform\sw\boot\fsbl.elf `
+  .\build\vivado\multitini_one.runs\impl_1\multitini_one_top.bit `
+  .\build\vitis_workspace\diagnostic\build\diagnostic.elf
+```
+
+The completed independent diagnostic and frozen-snapshot tests are recorded in
+[`docs/HARDWARE_RESULTS.md`](docs/HARDWARE_RESULTS.md). The preserved snapshot
+procedure is in
+[`docs/C64_SNAPSHOT_HARDWARE_TEST.md`](docs/C64_SNAPSHOT_HARDWARE_TEST.md).
+For the packaged live test image, use
+[`docs/C64_LIVE_VIDEO_HARDWARE_TEST.md`](docs/C64_LIVE_VIDEO_HARDWARE_TEST.md).
+None of these engineering images is a complete C64 release.
+
 Project creation defaults to PAL. Set
 `MULTITINI_C64_VIDEO_STANDARD=NTSC` while running `create_project.tcl` to make
 the independently reproducible NTSC build.
@@ -102,7 +158,7 @@ MULTITINI_MACHINE=GBC vivado -mode batch -source scripts/create_project.tcl
 This requests 33.554432 MHz and leaves the physical PSRAM path disabled. Read
 `docs/VIVADO_HANDOFF.md` before opting into that path.
 
-See `docs/HANDOFF_STATUS.md` and `docs/VIVADO_HANDOFF.md` before running them.
+See `docs/HANDOFF_STATUS.md` and `docs/VIVADO_HANDOFF.md` before rebuilding.
 
 ## Licensing
 

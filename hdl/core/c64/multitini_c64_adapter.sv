@@ -73,9 +73,12 @@ module multitini_c64_adapter #(
     logic [7:0]  raw_r;
     logic [7:0]  raw_g;
     logic [7:0]  raw_b;
+    logic        sync_hsync;
+    logic        sync_vsync;
     logic        hblank;
     logic        vblank;
-    logic [1:0]  pixel_phase;
+    logic        sync_pixel_tick;
+    logic        sync_pixel_tick_d;
 
     logic [17:0] raw_audio_l;
     logic [17:0] raw_audio_r;
@@ -164,22 +167,35 @@ module multitini_c64_adapter #(
     video_sync sync_i (
         .clk32(core_clk), .pause(!core_reset_n),
         .hsync(raw_hsync), .vsync(raw_vsync), .ntsc(NTSC_MODE),
-        .wide(1'b0), .hsync_out(video_hsync), .vsync_out(video_vsync),
-        .hblank(hblank), .vblank(vblank)
+        .wide(1'b0), .hsync_out(sync_hsync), .vsync_out(sync_vsync),
+        .hblank(hblank), .vblank(vblank), .pixel_tick(sync_pixel_tick)
     );
 
-    assign video_r = raw_r;
-    assign video_g = raw_g;
-    assign video_b = raw_b;
-    assign video_de = core_reset_n && !hblank && !vblank;
-
+    // video_sync locks its divide-by-four pixel phase to the VIC hsync. Wait
+    // one complete core-clock edge after that tick before registering the
+    // entire video tuple, so RGB, blanking, and sync all describe one stable
+    // source pixel when video_valid is asserted.
     always_ff @(posedge core_clk) begin
         if (!core_reset_n) begin
-            pixel_phase <= 2'd0;
-            video_valid <= 1'b0;
+            sync_pixel_tick_d <= 1'b0;
+            video_r           <= 8'd0;
+            video_g           <= 8'd0;
+            video_b           <= 8'd0;
+            video_de          <= 1'b0;
+            video_hsync       <= 1'b0;
+            video_vsync       <= 1'b0;
+            video_valid       <= 1'b0;
         end else begin
-            pixel_phase <= pixel_phase + 2'd1;
-            video_valid <= pixel_phase == 2'd3;
+            sync_pixel_tick_d <= sync_pixel_tick;
+            video_valid       <= sync_pixel_tick_d;
+            if (sync_pixel_tick_d) begin
+                video_r     <= raw_r;
+                video_g     <= raw_g;
+                video_b     <= raw_b;
+                video_de    <= !hblank && !vblank;
+                video_hsync <= sync_hsync;
+                video_vsync <= sync_vsync;
+            end
         end
     end
 

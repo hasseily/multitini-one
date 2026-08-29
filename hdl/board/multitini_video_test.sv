@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns / 1ps
 
-// 1920x1080p60 RGB565 diagnostic pattern for a 148.5 MHz pixel clock.
+// 1920x1080p60 timing, diagnostic fallback, and physical DVI output stage for
+// a 148.5 MHz pixel clock. The machine framebuffer is selected only when its
+// bridge has latched machine_enable at vblank; otherwise diagnostics remain on.
 module multitini_video_test #(
     parameter int H_ACTIVE = 1920,
     parameter int H_FRONT  = 88,
@@ -15,45 +17,63 @@ module multitini_video_test #(
     input  logic       pixel_clk,
     input  logic       resetn,
     input  logic       enable,
-    output logic [4:0] dvi_red,
-    output logic [5:0] dvi_grn,
-    output logic [4:0] dvi_blu,
+    input  logic       machine_enable,
+    input  logic [15:0] machine_rgb565,
+    output logic [11:0] scan_x,
+    output logic [11:0] scan_y,
+    output logic        vblank_start,
+    (* IOB = "TRUE" *) output logic [4:0] dvi_red,
+    (* IOB = "TRUE" *) output logic [5:0] dvi_grn,
+    (* IOB = "TRUE" *) output logic [4:0] dvi_blu,
     output logic       dvi_clk,
-    output logic       dvi_de,
-    output logic       dvi_hsync,
-    output logic       dvi_vsync
+    (* IOB = "TRUE" *) output logic       dvi_de,
+    (* IOB = "TRUE" *) output logic       dvi_hsync,
+    (* IOB = "TRUE" *) output logic       dvi_vsync
 );
     logic [11:0] x;
-    logic [10:0] y;
-    logic [15:0] rgb565;
+    logic [11:0] y;
+    logic [15:0] diagnostic_rgb565;
+    logic [15:0] selected_rgb565;
     logic active;
+    logic use_machine;
+    logic unused_enable;
+
+    assign scan_x = x;
+    assign scan_y = y;
+    assign vblank_start = resetn && x == 0 && y == V_ACTIVE;
+    assign unused_enable = enable;
 
     always_ff @(posedge pixel_clk) begin
         if (!resetn) begin
             x <= 12'd0;
-            y <= 11'd0;
+            y <= 12'd0;
         end else if (x == H_TOTAL - 1) begin
             x <= 12'd0;
-            y <= (y == V_TOTAL - 1) ? 11'd0 : y + 11'd1;
+            y <= (y == V_TOTAL - 1) ? 12'd0 : y + 12'd1;
         end else begin
             x <= x + 12'd1;
         end
     end
 
     always_comb begin
-        active = enable && x < H_ACTIVE && y < V_ACTIVE;
+        active = x < H_ACTIVE && y < V_ACTIVE;
+        // machine_enable is the bridge's vblank-latched mode decision. The raw
+        // diagnostic request must not override it here or DVI can change source
+        // in the middle of an active scan.
+        use_machine = machine_enable;
         unique case (x[10:8])
-            3'd0: rgb565 = 16'hFFFF;
-            3'd1: rgb565 = 16'hFFE0;
-            3'd2: rgb565 = 16'h07FF;
-            3'd3: rgb565 = 16'h07E0;
-            3'd4: rgb565 = 16'hF81F;
-            3'd5: rgb565 = 16'hF800;
-            3'd6: rgb565 = 16'h001F;
-            default: rgb565 = 16'h8410;
+            3'd0: diagnostic_rgb565 = 16'hFFFF;
+            3'd1: diagnostic_rgb565 = 16'hFFE0;
+            3'd2: diagnostic_rgb565 = 16'h07FF;
+            3'd3: diagnostic_rgb565 = 16'h07E0;
+            3'd4: diagnostic_rgb565 = 16'hF81F;
+            3'd5: diagnostic_rgb565 = 16'hF800;
+            3'd6: diagnostic_rgb565 = 16'h001F;
+            default: diagnostic_rgb565 = 16'h8410;
         endcase
         if (x == 0 || y == 0 || x == H_ACTIVE - 1 || y == V_ACTIVE - 1)
-            rgb565 = 16'hFFFF;
+            diagnostic_rgb565 = 16'hFFFF;
+        selected_rgb565 = use_machine ? machine_rgb565 : diagnostic_rgb565;
     end
 
     always_ff @(posedge pixel_clk) begin
@@ -65,9 +85,9 @@ module multitini_video_test #(
             dvi_hsync <= 1'b0;
             dvi_vsync <= 1'b0;
         end else begin
-            dvi_red   <= active ? rgb565[15:11] : 5'd0;
-            dvi_grn   <= active ? rgb565[10:5] : 6'd0;
-            dvi_blu   <= active ? rgb565[4:0] : 5'd0;
+            dvi_red   <= active ? selected_rgb565[15:11] : 5'd0;
+            dvi_grn   <= active ? selected_rgb565[10:5] : 6'd0;
+            dvi_blu   <= active ? selected_rgb565[4:0] : 5'd0;
             dvi_de    <= active;
             dvi_hsync <= x >= H_ACTIVE + H_FRONT &&
                          x < H_ACTIVE + H_FRONT + H_SYNC;

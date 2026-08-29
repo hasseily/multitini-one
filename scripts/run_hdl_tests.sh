@@ -28,6 +28,13 @@ run_test tb_video_test \
     "$repo_root/hdl/board/multitini_video_test.sv" \
     "$repo_root/hdl/sim/tb_video_test.sv"
 
+run_test tb_c64_video_bridge \
+    "$repo_root/hdl/sim/xilinx_primitives.sv" \
+    "$repo_root/third_party/appletini/hdl/cdc_bit_sync.sv" \
+    "$repo_root/hdl/board/multitini_c64_video_bridge.sv" \
+    "$repo_root/hdl/board/multitini_video_test.sv" \
+    "$repo_root/hdl/sim/tb_c64_video_bridge.sv"
+
 run_test tb_audio_test \
     "$repo_root/third_party/appletini/hdl/reset_sync.sv" \
     "$repo_root/third_party/appletini/hdl/cdc_bit_sync.sv" \
@@ -111,6 +118,7 @@ iverilog -g2012 -Wall -Wimplicit -i -s multitini_one_top \
     "$repo_root/hdl/common/multitini_async_mailbox.sv" \
     "$repo_root/hdl/common/multitini_memory_cdc.sv" \
     "$repo_root/hdl/common/multitini_cdc_pulse_toggle.sv" \
+    "$repo_root/hdl/board/multitini_c64_video_bridge.sv" \
     "$repo_root/hdl/board/multitini_video_test.sv" \
     "$repo_root/hdl/board/multitini_audio_test.sv" \
     "$repo_root/hdl/board/multitini_one_top.sv" \

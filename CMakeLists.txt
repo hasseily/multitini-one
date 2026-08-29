@@ -14,6 +14,7 @@ add_library(multitini_common STATIC
     firmware/common/core_link.c
     firmware/common/gameboy_boot.c
     firmware/common/tmp102.c
+    firmware/common/xmodem.c
 )
 target_include_directories(multitini_common PUBLIC firmware/include)
 
@@ -69,3 +70,7 @@ add_test(NAME content_fuzz COMMAND test_content_fuzz)
 add_executable(test_tmp102 tests/host/test_tmp102.c)
 target_link_libraries(test_tmp102 PRIVATE multitini_common)
 add_test(NAME tmp102 COMMAND test_tmp102)
+
+add_executable(test_xmodem tests/host/test_xmodem.c)
+target_link_libraries(test_xmodem PRIVATE multitini_common)
+add_test(NAME xmodem COMMAND test_xmodem)

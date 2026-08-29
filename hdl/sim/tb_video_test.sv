@@ -14,6 +14,11 @@ module tb_video_test;
     logic clk = 1'b0;
     logic resetn = 1'b0;
     logic enable = 1'b1;
+    logic machine_enable = 1'b0;
+    logic [15:0] machine_rgb565 = 16'h1234;
+    logic [11:0] scan_x;
+    logic [11:0] scan_y;
+    logic vblank_start;
     logic [4:0] red;
     logic [5:0] green;
     logic [4:0] blue;
@@ -33,6 +38,9 @@ module tb_video_test;
         .V_SYNC(V_SYNC), .V_TOTAL(V_TOTAL)
     ) dut (
         .pixel_clk(clk), .resetn(resetn), .enable(enable),
+        .machine_enable(machine_enable), .machine_rgb565(machine_rgb565),
+        .scan_x(scan_x), .scan_y(scan_y),
+        .vblank_start(vblank_start),
         .dvi_red(red), .dvi_grn(green), .dvi_blu(blue),
         .dvi_clk(dvi_clk), .dvi_de(de), .dvi_hsync(hsync),
         .dvi_vsync(vsync)
@@ -61,12 +69,32 @@ module tb_video_test;
         check_value(hsync_count == H_SYNC * V_TOTAL, "horizontal sync width");
         check_value(vsync_count == V_SYNC * H_TOTAL, "vertical sync width");
 
+        // With no live machine frame, disabling the explicit diagnostic
+        // request must retain the diagnostic fallback rather than blank DVI.
         enable = 1'b0;
-        repeat (2) @(posedge clk);
+        machine_enable = 1'b0;
+        while (!(scan_x == 2 && scan_y == 1)) @(negedge clk);
+        @(posedge clk);
         #1;
-        check_value(!de && red == 0 && green == 0 && blue == 0,
-               "disabled video blanks pixels");
-        $display("PASS: video timing generator");
+        check_value(de && {red, green, blue} == 16'hFFFF,
+               "diagnostic fallback remains visible");
+
+        machine_enable = 1'b1;
+        while (!(scan_x == 3 && scan_y == 2)) @(negedge clk);
+        @(posedge clk);
+        #1;
+        check_value(de && {red, green, blue} == machine_rgb565,
+               "live machine pixel selected");
+
+        // The bridge owns vblank mode latching. A raw diagnostic request may
+        // not override an already-latched machine selection mid-scan.
+        enable = 1'b1;
+        while (!(scan_x == 4 && scan_y == 2)) @(negedge clk);
+        @(posedge clk);
+        #1;
+        check_value(de && {red, green, blue} == machine_rgb565,
+               "raw diagnostics cannot override latched machine pixel");
+        $display("PASS: video timing and diagnostic fallback");
         $finish;
     end
 endmodule

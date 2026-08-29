@@ -33,6 +33,64 @@ module ODDR #(
 endmodule
 
 // Behavioral model for portable tests only. Vivado supplies the real XPM.
+// Match xpm_cdc_gray's binary-to-Gray source register, destination synchronizer,
+// and Gray-to-binary output so async-ring tests exercise legal pointer motion.
+module xpm_cdc_gray #(
+    parameter integer DEST_SYNC_FF = 4,
+    parameter integer INIT_SYNC_FF = 0,
+    parameter integer REG_OUTPUT = 0,
+    parameter integer SIM_ASSERT_CHK = 0,
+    parameter integer SIM_LOSSLESS_GRAY_CHK = 0,
+    parameter integer VERSION = 0,
+    parameter integer WIDTH = 2
+) (
+    input  logic             src_clk,
+    input  logic [WIDTH-1:0] src_in_bin,
+    input  logic             dest_clk,
+    output logic [WIDTH-1:0] dest_out_bin
+);
+    logic [WIDTH-1:0] source_gray = '0;
+    logic [WIDTH-1:0] synchronizer [0:DEST_SYNC_FF-1];
+    logic [WIDTH-1:0] decoded_binary;
+    logic [WIDTH-1:0] output_register = '0;
+    integer init_stage;
+    integer sync_stage;
+    integer bit_index;
+
+    initial begin
+        for (init_stage = 0; init_stage < DEST_SYNC_FF;
+             init_stage = init_stage + 1)
+            synchronizer[init_stage] = '0;
+    end
+
+    assign dest_out_bin = REG_OUTPUT ? output_register : decoded_binary;
+
+    always_ff @(posedge src_clk)
+        source_gray <= src_in_bin ^ {1'b0, src_in_bin[WIDTH-1:1]};
+
+    always_ff @(posedge dest_clk) begin
+        synchronizer[0] <= source_gray;
+        for (sync_stage = 1; sync_stage < DEST_SYNC_FF;
+             sync_stage = sync_stage + 1)
+            synchronizer[sync_stage] <= synchronizer[sync_stage-1];
+        output_register <= decoded_binary;
+    end
+
+    always_comb begin
+        decoded_binary[WIDTH-1] = synchronizer[DEST_SYNC_FF-1][WIDTH-1];
+        for (bit_index = WIDTH - 2; bit_index >= 0; bit_index = bit_index - 1)
+            decoded_binary[bit_index] =
+                decoded_binary[bit_index+1] ^
+                synchronizer[DEST_SYNC_FF-1][bit_index];
+    end
+
+    wire unused_parameters = (INIT_SYNC_FF == 0) ^
+                             (SIM_ASSERT_CHK == 0) ^
+                             (SIM_LOSSLESS_GRAY_CHK == 0) ^
+                             (VERSION == 0);
+endmodule
+
+// Behavioral model for portable tests only. Vivado supplies the real XPM.
 module xpm_cdc_handshake #(
     parameter integer DEST_EXT_HSK = 1,
     parameter integer DEST_SYNC_FF = 4,

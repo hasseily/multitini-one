@@ -63,24 +63,50 @@ proc require_file {path} {
     return [file normalize $path]
 }
 
-proc add_manifest_sources {repo_root} {
+proc add_manifest_sources {repo_root machine} {
     set manifest [require_file [file join $repo_root hdl hdl_sources.txt]]
     set stream [open $manifest r]
     set lines [split [read -nonewline $stream] "\n"]
     close $stream
 
+    set active_section "COMMON"
     foreach line $lines {
         set relative [string trim $line]
         if {$relative eq "" || [string index $relative 0] eq "#"} {
             continue
         }
+        if {[regexp {^\[([A-Za-z0-9_]+)\]$} $relative -> section]} {
+            set active_section [string toupper $section]
+            if {$active_section ni {COMMON C64 GBC}} {
+                error "Unknown source-manifest section: $relative"
+            }
+            continue
+        }
+        if {$active_section ne "COMMON" && $active_section ne $machine} {
+            continue
+        }
+        set fields [split $relative "|"]
+        if {[llength $fields] > 2} {
+            error "Malformed source-manifest entry: $relative"
+        }
+        set relative [string trim [lindex $fields 0]]
+        set language ""
+        if {[llength $fields] == 2} {
+            set language [string toupper [string trim [lindex $fields 1]]]
+            if {$language ni {SYSTEMVERILOG}} {
+                error "Unsupported source-manifest language: $language"
+            }
+        }
         set source [require_file [file join $repo_root hdl $relative]]
         set extension [string tolower [file extension $source]]
         if {$extension eq ".xdc"} {
             add_files -fileset constrs_1 -norecurse $source
+            if {[file tail $source] eq "multitini_timing.xdc"} {
+                set_property USED_IN_SYNTHESIS false [get_files $source]
+            }
         } else {
             add_files -fileset sources_1 -norecurse $source
-            if {$extension eq ".sv"} {
+            if {$extension eq ".sv" || $language eq "SYSTEMVERILOG"} {
                 set_property file_type SystemVerilog [get_files $source]
             } elseif {$extension eq ".vhd" || $extension eq ".vhdl"} {
                 set_property file_type {VHDL 2008} [get_files $source]
@@ -155,9 +181,9 @@ proc configure_processing_system {ps} {
     foreach mio {1 2 3 4 5 6 9 10 11 12 13 14 15} {
         set_property "CONFIG.PCW_MIO_${mio}_SLEW" fast $ps
     }
-    foreach mio {1 2 3 4 5 6} {
-        set_property "CONFIG.PCW_MIO_${mio}_PULLUP" disabled $ps
-    }
+    # Only MIO1 exposes a configurable pull-up in the PS7 IP. MIO2-6 are
+    # fixed by the QSPI peripheral selection and reject explicit assignments.
+    set_property CONFIG.PCW_MIO_1_PULLUP disabled $ps
 
     # Board-management bus and both debug UARTs.
     set_property -dict [list \
@@ -198,7 +224,7 @@ proc configure_processing_system {ps} {
         CONFIG.PCW_ENET1_GRP_MDIO_ENABLE {0} \
         CONFIG.PCW_GPIO_MIO_GPIO_ENABLE {1} \
         CONFIG.PCW_GPIO_EMIO_GPIO_ENABLE {0} \
-        CONFIG.PCW_UIPARAM_GENERATE_SUMMARY {1}] $ps
+        CONFIG.PCW_UIPARAM_GENERATE_SUMMARY {None}] $ps
 }
 
 file mkdir $project_dir
@@ -206,7 +232,7 @@ create_project $project_name $project_dir -part $part_name -force
 set_property target_language Verilog [current_project]
 set_property simulator_language Mixed [current_project]
 set_property default_lib work [current_project]
-add_manifest_sources $repo_root
+add_manifest_sources $repo_root $machine
 
 create_bd_design zynq_ps_bd
 set ps [create_bd_cell -type ip \
@@ -225,7 +251,6 @@ set_property -dict [list \
     CONFIG.ADDR_WIDTH {32} \
     CONFIG.DATA_WIDTH {32} \
     CONFIG.HAS_REGION {0} \
-    CONFIG.ID_WIDTH {12} \
     CONFIG.NUM_READ_OUTSTANDING {8} \
     CONFIG.NUM_WRITE_OUTSTANDING {8} \
     CONFIG.PROTOCOL {AXI3}] $gp0
@@ -245,7 +270,7 @@ set_property -dict [list CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0_0} \
     CONFIG.ASSOCIATED_RESET {control_aresetn}] $control_clk
 set_property CONFIG.ASSOCIATED_RESET {video_aresetn} $video_clk
 set_property CONFIG.ASSOCIATED_RESET {c64_aresetn} $c64_clk
-set irq [create_bd_port -dir I -from 15 -to 0 IRQ]
+set irq [create_bd_port -dir I IRQ]
 
 set control_wiz [create_bd_cell -type ip \
     -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_control]

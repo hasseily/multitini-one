@@ -66,13 +66,18 @@ module tb_async_mailbox;
         repeat (5) @(negedge dst_clk);
         check_value(dst_valid, "destination holds valid under backpressure");
         dst_ready = 1'b1;
-        @(negedge dst_clk);
+        repeat (6) @(negedge dst_clk);
         dst_ready = 1'b0;
+        check_value(received == 1,
+                    "held ready accepts the first payload exactly once");
 
         submit(82'h2_FEDCBA98_76543210_A55A);
         repeat (2) @(negedge dst_clk);
         dst_ready = 1'b1;
         wait (received == 2);
+        repeat (6) @(negedge dst_clk);
+        check_value(received == 2,
+                    "held ready accepts the second payload exactly once");
         while (!src_ready) @(negedge src_clk);
         check_value(src_ready, "source acknowledged after two transfers");
 

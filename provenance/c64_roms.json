@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "recorded": "2026-08-29",
+  "distribution_decision": {
+    "authority": "repository owner",
+    "decision": "Include and distribute these exact three C64 system ROM files with the repository and matching packages.",
+    "availability_statement": "The repository owner states that equivalent copies are widely available in ordinary public GitHub repositories.",
+    "source": "Copies supplied directly by the repository owner in third_party/c64/ROMs on 2026-08-29; no canonical download URL was recorded.",
+    "license_status": "NOASSERTION",
+    "notice": "No explicit license or redistribution notice was supplied or identified. This record documents the owner's inclusion decision and does not assert that the files are open source."
+  },
+  "roms": [
+    {
+      "role": "basic",
+      "identifier": "901226-01",
+      "path": "third_party/c64/ROMs/basic.901226-01.bin",
+      "size": 8192,
+      "sha256": "89878cea0a268734696de11c4bae593eaaa506465d2029d619c0e0cbccdfa62d"
+    },
+    {
+      "role": "kernal",
+      "identifier": "901227-03",
+      "path": "third_party/c64/ROMs/kernal.901227-03.bin",
+      "size": 8192,
+      "sha256": "83c60d47047d7beab8e5b7bf6f67f80daa088b7a6a27de0d7e016f6484042721"
+    },
+    {
+      "role": "characters",
+      "identifier": "901225-01",
+      "path": "third_party/c64/ROMs/characters.901225-01.bin",
+      "size": 4096,
+      "sha256": "fd0d53b8480e86163ac98998976c72cc58d5dd8eb824ed7b829774e74213b420"
+    }
+  ],
+  "bundle": {
+    "order": [
+      "third_party/c64/ROMs/basic.901226-01.bin",
+      "third_party/c64/ROMs/kernal.901227-03.bin",
+      "third_party/c64/ROMs/characters.901225-01.bin"
+    ],
+    "size": 20480,
+    "crc32": "0x260CD1D8",
+    "sha256": "6d86861abdf674bc3d256e101ffd44f8297004aa8990a267d55c940d755f9fff"
+  }
+}
