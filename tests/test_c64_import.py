@@ -10,6 +10,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def without_trailing_whitespace(text: str) -> str:
+    """Compare imported VHDL bodies independent of checkout whitespace."""
+    return "\n".join(line.rstrip() for line in text.splitlines())
+
+
 class C64ImportTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -90,7 +95,10 @@ class C64ImportTests(unittest.TestCase):
         expected = upstream.replace(
             "\tcpu: work.T65", "\tcpu: entity work.T65", 1
         )
-        self.assertEqual(product.split(marker, 1)[1], expected)
+        self.assertEqual(
+            without_trailing_whitespace(product.split(marker, 1)[1]),
+            without_trailing_whitespace(expected),
+        )
         sources = (ROOT / "hdl/hdl_sources.txt").read_text()
         self.assertIn("core/c64/ports/cpu_6510.vhd", sources)
         self.assertNotIn("../third_party/c64/upstream/rtl/cpu_6510.vhd", sources)
@@ -115,7 +123,8 @@ class C64ImportTests(unittest.TestCase):
             1,
         )
         self.assertEqual(
-            product.split(marker, 1)[1].rstrip("\n"), expected.rstrip("\n")
+            without_trailing_whitespace(product.split(marker, 1)[1]),
+            without_trailing_whitespace(expected),
         )
         sources = (ROOT / "hdl/hdl_sources.txt").read_text()
         self.assertIn("core/c64/ports/video_sync.vhd", sources)

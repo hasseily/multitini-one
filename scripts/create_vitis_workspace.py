@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+import os
 import sys
 from pathlib import Path
 
@@ -11,11 +12,14 @@ import vitis
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE = ROOT / "build" / "vitis_workspace"
-XSA = ROOT / "build" / "vivado" / "multitini_one.xsa"
+WORKSPACE = Path(os.environ.get(
+    "MULTITINI_VITIS_WORKSPACE", ROOT / "build" / "vitis_workspace"))
+XSA = Path(os.environ.get(
+    "MULTITINI_XSA", ROOT / "build" / "vivado" / "multitini_one.xsa"))
+REUSE_XPFM = os.environ.get("MULTITINI_PLATFORM_XPFM")
 PLATFORM_NAME = "multitini_platform"
 DOMAIN_NAME = "standalone_ps7_cortexa9_0"
-APP_NAME = "diagnostic"
+APP_NAME = os.environ.get("MULTITINI_VITIS_APP", "diagnostic")
 
 
 def require(path: Path, description: str) -> Path:
@@ -47,23 +51,51 @@ def add_include_directory(component: str, include_directory: Path) -> None:
                       encoding="utf-8")
 
 
+def patch_usbh_class_info_section(component: str) -> None:
+    """Retain CherryUSB class records and expose their linker boundaries."""
+    lscript = WORKSPACE / component / "src" / "lscript.ld"
+    text = require(lscript, "Vitis linker script").read_text(encoding="utf-8")
+    if "__usbh_class_info_start__" in text:
+        return
+    section = (
+        "\n.usbh_class_info : {\n"
+        "   . = ALIGN(4);\n"
+        "   __usbh_class_info_start__ = .;\n"
+        "   KEEP(*(.usbh_class_info))\n"
+        "   __usbh_class_info_end__ = .;\n"
+        "} > ps7_ddr_0_memory_0\n"
+    )
+    pattern = re.compile(
+        r"(\.rodata\s*:\s*\{.*?\}\s*>\s*ps7_ddr_0_memory_0\s*)",
+        re.DOTALL,
+    )
+    updated, count = pattern.subn(r"\1" + section, text, count=1)
+    if count == 0:
+        raise RuntimeError(f"Could not find .rodata section in {lscript}")
+    lscript.write_text(updated, encoding="utf-8")
+
+
 def main() -> int:
     require(XSA, "Vivado hardware platform")
     client = vitis.create_client()
     try:
         client.set_workspace(path=str(WORKSPACE))
-        platform = client.create_platform_component(
-            name=PLATFORM_NAME,
-            hw_design=str(XSA),
-            os="standalone",
-            cpu="ps7_cortexa9_0",
-            domain_name=DOMAIN_NAME,
-            compiler="gcc",
-        )
-        require_success(platform.build(), "platform build")
-        xpfm = (WORKSPACE / PLATFORM_NAME / "export" / PLATFORM_NAME /
-                f"{PLATFORM_NAME}.xpfm")
-        require(xpfm, "exported platform")
+        if REUSE_XPFM:
+            xpfm = require(Path(REUSE_XPFM), "reused exported platform")
+            print(f"Reusing exported platform: {xpfm}")
+        else:
+            platform = client.create_platform_component(
+                name=PLATFORM_NAME,
+                hw_design=str(XSA),
+                os="standalone",
+                cpu="ps7_cortexa9_0",
+                domain_name=DOMAIN_NAME,
+                compiler="gcc",
+            )
+            require_success(platform.build(), "platform build")
+            xpfm = (WORKSPACE / PLATFORM_NAME / "export" / PLATFORM_NAME /
+                    f"{PLATFORM_NAME}.xpfm")
+            require(xpfm, "exported platform")
 
         application = client.create_app_component(
             name=APP_NAME,
@@ -77,10 +109,26 @@ def main() -> int:
                 "firmware/common",
                 "firmware/include",
                 "firmware/platform/xilinx",
+                "third_party/CherryUSB/core/usbh_core.c",
+                "third_party/CherryUSB/class/hid/usbh_hid.c",
+                "third_party/CherryUSB/port/ehci/usb_hc_ehci.c",
             ],
             is_skip_copy_sources=True,
         )
         add_include_directory(APP_NAME, ROOT / "firmware" / "include")
+        add_include_directory(APP_NAME, ROOT / "firmware" / "platform" /
+                              "xilinx")
+        add_include_directory(APP_NAME, ROOT / "third_party" / "CherryUSB" /
+                              "common")
+        add_include_directory(APP_NAME, ROOT / "third_party" / "CherryUSB" /
+                              "core")
+        add_include_directory(APP_NAME, ROOT / "third_party" / "CherryUSB" /
+                              "class" / "hub")
+        add_include_directory(APP_NAME, ROOT / "third_party" / "CherryUSB" /
+                              "class" / "hid")
+        add_include_directory(APP_NAME, ROOT / "third_party" / "CherryUSB" /
+                              "port" / "ehci")
+        patch_usbh_class_info_section(APP_NAME)
         require_success(application.build(), "diagnostic application build")
         require(WORKSPACE / APP_NAME / "build" / f"{APP_NAME}.elf",
                 "diagnostic ELF")

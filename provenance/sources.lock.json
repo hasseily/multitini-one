@@ -9,6 +9,20 @@
       "use": "Selected board HDL, constraints, PS configuration, and firmware reference"
     },
     {
+      "name": "Appletini One USB1 host port",
+      "url": "https://github.com/hasseily/appletini-one.git",
+      "commit": "39992a3ca4ac09b25f0b40a941353f8e8da7146e",
+      "license": "GPL-3.0-only except the Apache-2.0 CherryUSB hub derivative",
+      "use": "Cooperative bare-metal OSAL, Zynq-7000 EHCI glue, USB PHY initialization, and hub polling reference"
+    },
+    {
+      "name": "CherryUSB",
+      "url": "https://github.com/hasseily/CherryUSB.git",
+      "commit": "825dc4166ef4b92ced2b15446c668e74f2bc064c",
+      "license": "Apache-2.0",
+      "use": "Pinned USB host core, HID class, and EHCI controller source"
+    },
+    {
       "name": "MiSTer C64",
       "url": "https://github.com/MiSTer-devel/C64_MiSTer.git",
       "commit": "62fc697e3c9b5982c9dc76aa8cd03db545d20803",

@@ -11,6 +11,15 @@ firmware/common/tmp102.c,Appletini One and Multitini One,052fe8aa43c483c193fcbc1
 firmware/include/multitini_tmp102.h,Appletini One and Multitini One,052fe8aa43c483c193fcbc10ecba4225272c213d,GPL-3.0-only,host-tested,New transport-independent API around the ported decode
 firmware/common/xmodem.c,Appletini One and Multitini One,052fe8aa43c483c193fcbc10ecba4225272c213d,GPL-3.0-only,host-tested,Memory-sink XMODEM-1K and CRC mechanics adapted from the golden serial monitor
 scripts/serial_c64_rom_upload.py,Appletini One and Multitini One,052fe8aa43c483c193fcbc10ecba4225272c213d,GPL-3.0-only,host-tested,Read-only C64 ROM uploader adapted from the golden serial XMODEM sender
+firmware/platform/xilinx/cherryusb_baremetal_osal.c,Appletini One,39992a3ca4ac09b25f0b40a941353f8e8da7146e,GPL-3.0-only,pending-hardware,Cooperative bare-metal CherryUSB OSAL port
+firmware/platform/xilinx/cherryusb_usbh_hub_poll.c,CherryUSB and Appletini One,39992a3ca4ac09b25f0b40a941353f8e8da7146e,Apache-2.0,pending-hardware,Modified CherryUSB hub class for cooperative polling
+firmware/platform/xilinx/cherryusb_zynq_hc.c,Appletini One,39992a3ca4ac09b25f0b40a941353f8e8da7146e,GPL-3.0-only,pending-hardware,Zynq-7000 EHCI low-level and cache port
+firmware/platform/xilinx/cherryusb_platform.h,Appletini One,39992a3ca4ac09b25f0b40a941353f8e8da7146e,GPL-3.0-only,pending-hardware,CherryUSB Zynq platform contract
+firmware/platform/xilinx/usb_config.h,Appletini One,39992a3ca4ac09b25f0b40a941353f8e8da7146e,GPL-3.0-only,pending-hardware,CherryUSB host limits and cache configuration
+firmware/platform/xilinx/usb_phy_init.c,Appletini One,39992a3ca4ac09b25f0b40a941353f8e8da7146e,GPL-3.0-only,pending-hardware,Zynq USB clock reset and PHY initialization
+firmware/platform/xilinx/usb_phy_init.h,Appletini One,39992a3ca4ac09b25f0b40a941353f8e8da7146e,GPL-3.0-only,pending-hardware,Zynq USB initialization API
+third_party/CherryUSB/**,CherryUSB,825dc4166ef4b92ced2b15446c668e74f2bc064c,Apache-2.0,pinned-submodule,USB host core HID class and EHCI port; exact files are the pinned gitlink
+licenses/third_party/Apache-2.0.txt,CherryUSB,825dc4166ef4b92ced2b15446c668e74f2bc064c,Apache-2.0,verbatim-license,SHA-256 1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6
 third_party/c64/ROMs/basic.901226-01.bin,C64 BASIC ROM 901226-01 supplied by repository owner,,NOASSERTION,owner-directed-inclusion,SHA-256 89878cea0a268734696de11c4bae593eaaa506465d2029d619c0e0cbccdfa62d; no explicit license or rights notice identified; see provenance/c64_roms.json
 third_party/c64/ROMs/kernal.901227-03.bin,C64 KERNAL ROM 901227-03 supplied by repository owner,,NOASSERTION,owner-directed-inclusion,SHA-256 83c60d47047d7beab8e5b7bf6f67f80daa088b7a6a27de0d7e016f6484042721; no explicit license or rights notice identified; see provenance/c64_roms.json
 third_party/c64/ROMs/characters.901225-01.bin,C64 character ROM 901225-01 supplied by repository owner,,NOASSERTION,owner-directed-inclusion,SHA-256 fd0d53b8480e86163ac98998976c72cc58d5dd8eb824ed7b829774e74213b420; no explicit license or rights notice identified; see provenance/c64_roms.json

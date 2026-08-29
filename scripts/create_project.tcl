@@ -4,6 +4,17 @@
 set script_dir [file dirname [file normalize [info script]]]
 set repo_root [file normalize [file join $script_dir ".."]]
 set project_dir [file join $repo_root "build" "vivado"]
+if {[info exists ::env(MULTITINI_VIVADO_DIR)]} {
+    set requested_dir [string trim $::env(MULTITINI_VIVADO_DIR)]
+    if {$requested_dir eq ""} {
+        error "MULTITINI_VIVADO_DIR must not be empty"
+    }
+    if {[file pathtype $requested_dir] eq "absolute"} {
+        set project_dir [file normalize $requested_dir]
+    } else {
+        set project_dir [file normalize [file join $repo_root $requested_dir]]
+    }
+}
 set project_name "multitini_one"
 set part_name "xc7z020clg484-2"
 

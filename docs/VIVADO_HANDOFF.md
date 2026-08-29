@@ -201,7 +201,7 @@ segments. The 4,241,740-byte `FIRMWARE.BIN` has SHA-256
 CRC32 `01F764E0`. Do not enable writable media until the read-only path and
 power-loss rules are tested.
 
-The diagnostic starts with the core held in reset and the DAC muted. It probes
+The USB-input test application starts with the core held in reset and the DAC muted. It probes
 the ABI, logs the TMP102 temperature when I2C works, initializes the DAC without
 unmuting, and accepts UART commands for status, ping, video, audio mute/unmute,
 core reset, and reboot to the golden image. `:c64rx` receives an exact 20 KiB
@@ -212,6 +212,12 @@ ROM set and retains explicit path overrides. SD loading remains absent.
 The portable GBC helper can stream a validated cartridge and optional bootstrap
 override; it is likewise not connected to SD or the diagnostic CLI.
 
+The current USB-input image was rebuilt from a separate PAL XSA with shell and
+firmware build ID `2026082A`. Timing passes at WNS +0.394 ns, WHS +0.057 ns,
+and WPWS +1.749 ns. Its 4,346,380-byte `FIRMWARE.BIN` has SHA-256
+`3e211fd424675753afa9a208b8c817bd12e196cb097951a0e38f2b61b8bab0db`
+and CRC32 `B25E5862`. Physical input remains unqualified.
+
 ## Next step: physical input
 
 The independent diagnostics, ROM-upload/frozen-frame image, and exact packaged
@@ -220,9 +226,9 @@ BASIC cursor, a stable tear-free five-minute soak, clean whole-frame `v`
 switches, correct `r` reset/rearm behavior, and successful `:reboot` to golden.
 Preserve that firmware and report set as the PAL video baseline.
 
-Add physical input one subsystem at a time. Start with the USB keyboard path,
-then joystick/gamepad mapping. Before treating either as a machine result,
-retain the board safety checks:
+Run `docs/C64_USB_INPUT_HARDWARE_TEST.md` one subsystem at a time. Start with
+the USB keyboard path, then joystick/gamepad mapping. Before treating either
+as a machine result, retain the board safety checks:
 
 - the stand-alone power jumper and connector;
 - all Apple main transceiver OE pins are high;

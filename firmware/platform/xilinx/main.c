@@ -7,6 +7,7 @@
 #include "multitini_regs.h"
 #include "multitini_tmp102.h"
 #include "multitini_xmodem.h"
+#include "usb_hid_service.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -25,6 +26,7 @@
 #include "xuartps_hw.h"
 
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
+#define MT_FIRMWARE_BUILD_ID UINT32_C(0x2026082A)
 #define MT_I2C_CLOCK_HZ UINT32_C(100000)
 #define MT_I2C_BUSY_POLLS UINT32_C(1000000)
 #define MT_UART_DRAIN_POLLS UINT32_C(10000000)
@@ -142,6 +144,16 @@ static int initialize_i2c(void)
 static uint32_t shell_read(uint32_t offset)
 {
     return Xil_In32(MT_SHELL_BASE_ADDRESS + offset);
+}
+
+static void service_usb_input(void)
+{
+    const uint32_t status = shell_read(MT_REG_STATUS);
+    const uint32_t control = shell_read(MT_REG_CONTROL);
+    usb_hid_service_set_core_ready(
+        (status & MT_STATUS_CORE_READY) != 0U &&
+        (control & MT_CONTROL_CORE_RESET_REQUEST) == 0U);
+    usb_hid_service_poll();
 }
 
 static void print_status(void)
@@ -273,6 +285,17 @@ static XTime ticks_from_ms(uint32_t milliseconds)
                    UINT64_C(1000));
 }
 
+static int uart0_try_read_byte(uint8_t *value)
+{
+    const uint32_t status = XUartPs_ReadReg(
+        XPAR_XUARTPS_0_BASEADDR, XUARTPS_SR_OFFSET);
+    if (value == NULL) return -1;
+    if ((status & XUARTPS_SR_RXEMPTY) != 0U) return 0;
+    *value = (uint8_t)XUartPs_ReadReg(
+        XPAR_XUARTPS_0_BASEADDR, XUARTPS_FIFO_OFFSET);
+    return 1;
+}
+
 static int uart0_read_byte(void *context, uint8_t *value,
                            uint32_t timeout_ms)
 {
@@ -284,13 +307,9 @@ static int uart0_read_byte(void *context, uint8_t *value,
     if (value == NULL) return -1;
     XTime_GetTime(&start);
     do {
-        const uint32_t status = XUartPs_ReadReg(
-            XPAR_XUARTPS_0_BASEADDR, XUARTPS_SR_OFFSET);
-        if ((status & XUARTPS_SR_RXEMPTY) == 0U) {
-            *value = (uint8_t)XUartPs_ReadReg(
-                XPAR_XUARTPS_0_BASEADDR, XUARTPS_FIFO_OFFSET);
-            return 1;
-        }
+        const int read_result = uart0_try_read_byte(value);
+        if (read_result != 0) return read_result;
+        service_usb_input();
         XTime_GetTime(&now);
     } while ((now - start) < timeout_ticks);
     return 0;
@@ -452,7 +471,8 @@ static void handle_c64_rx_command(char *line)
 static void print_help(void)
 {
     xil_printf("commands: h help, s status, p ping, a audio on, m mute, ");
-    xil_printf("v toggle video, r toggle core reset\r\n");
+    xil_printf("v toggle video, r toggle core reset, u USB status, ");
+    xil_printf("j swap joystick port\r\n");
     xil_printf("extended: :c64rx 20480 0xCRC32, :reboot to golden\r\n");
 }
 
@@ -462,7 +482,10 @@ static bool read_extended_command(char *buffer, size_t capacity)
     bool overflow = false;
 
     for (;;) {
-        const char input = inbyte();
+        uint8_t byte;
+        char input;
+        while (uart0_try_read_byte(&byte) == 0) service_usb_input();
+        input = (char)byte;
         if (input == '\r' || input == '\n') {
             break;
         }
@@ -561,13 +584,15 @@ int main(void)
 {
     mt_link_result_t link_status;
     int status;
+    int usb_status;
 
     init_platform();
     Xil_SetTlbAttributes(MT_SHELL_BASE_ADDRESS, DEVICE_MEMORY);
     mt_core_link_init_mmio(&shell_link,
         (volatile void *)(uintptr_t)MT_SHELL_BASE_ADDRESS);
 
-    xil_printf("\r\nMultitini One diagnostic firmware\r\n");
+    xil_printf("\r\nMultitini One diagnostic firmware build=%08x\r\n",
+               (unsigned int)MT_FIRMWARE_BUILD_ID);
     link_status = mt_core_link_probe(&shell_link);
     xil_printf("shell probe: %s\r\n", mt_link_result_name(link_status));
     if (link_status != MT_LINK_OK) {
@@ -587,10 +612,21 @@ int main(void)
     xil_printf("DAC initialization (muted): %s (%d)\r\n",
                dac_ready ? "ok" : "failed", status);
     print_status();
+    usb_hid_service_init(&shell_link);
+    usb_hid_service_set_core_ready(
+        (shell_read(MT_REG_STATUS) & MT_STATUS_CORE_READY) != 0U);
+    usb_status = usb_hid_service_start();
+    xil_printf("USB1 keyboard/gamepad initialization: %s (%d)\r\n",
+               usb_status == 0 ? "ok" : "failed", usb_status);
+    usb_hid_service_dump_status();
     print_help();
 
     for (;;) {
-        const char input = inbyte();
+        uint8_t byte;
+        char input;
+        service_usb_input();
+        if (uart0_try_read_byte(&byte) == 0) continue;
+        input = (char)byte;
         const uint32_t control = shell_read(MT_REG_CONTROL);
         switch (input) {
         case 'h': print_help(); break;
@@ -609,6 +645,18 @@ int main(void)
                           0U);
             print_status();
             break;
+        case 'u': usb_hid_service_dump_status(); break;
+        case 'j': {
+            const uint8_t port =
+                usb_hid_service_joystick_port() == 2U ? 1U : 2U;
+            if (usb_hid_service_set_joystick_port(port) == 0) {
+                xil_printf("USB gamepad mapped to C64 joystick port %u\r\n",
+                           (unsigned int)port);
+            } else {
+                xil_printf("USB gamepad port swap failed\r\n");
+            }
+            break;
+        }
         case ':': handle_extended_command(false); break;
         case '\r':
         case '\n':

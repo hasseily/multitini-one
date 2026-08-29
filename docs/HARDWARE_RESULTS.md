@@ -135,3 +135,30 @@ This result qualifies live PAL frame capture, complete-frame rate conversion,
 vblank-only source switching, reset-epoch recovery, and golden fallback on the
 tested board/display combination. It does not qualify physical keyboard or
 joystick input, storage, SID audio, NTSC, or extended environmental operation.
+
+## 2026-08-29 PAL C64 USB-input image awaiting board test
+
+The ARM USB1 host now translates a USB boot keyboard and common HID gamepad
+reports into the already-tested C64 input mailbox. Host tests cover key and
+joystick state, disconnect, rollover, retry, aggregation, port swap, and reset
+reassertion. The matching build ID is `2026082A`.
+
+Packaged test artifact:
+
+- Package: `Multitini-One-PAL-C64-usb-input-2026082A.zip`
+- `FIRMWARE.BIN` size: 4,346,380 bytes
+- `FIRMWARE.BIN` SHA-256:
+  `3e211fd424675753afa9a208b8c817bd12e196cb097951a0e38f2b61b8bab0db`
+- `FIRMWARE.BIN` CRC32: `B25E5862`
+- Free firmware-slot space: 10,268,148 bytes
+- Bootgen readback verified the expected FSBL, routed bitstream, and two
+  application segments.
+
+The isolated PAL Vivado build passes with WNS +0.394 ns, WHS +0.057 ns, WPWS
++1.749 ns, zero timing failures, no Critical CDC entry, no routing error, and
+no DRC error. Vitis rebuilt the FSBL and application against that exact XSA.
+
+No physical USB device has been tested with this image yet. Run
+`docs/C64_USB_INPUT_HARDWARE_TEST.md`; do not promote these automated results
+to hardware support until its keyboard, gamepad, disconnect, reset, video, and
+golden-reboot checks pass.

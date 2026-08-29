@@ -64,6 +64,17 @@ Known:
   cursor proves continuous delivery rather than a frozen capture; the
   five-minute soak, whole-frame source toggles, reset/rearm, and golden reboot
   all passed.
+- USB1 host input is now implemented with pinned CherryUSB source. The ARM
+  translates USB boot-keyboard and common HID gamepad reports into the existing
+  reset-safe C64 input-event mailbox. Disconnect releases, rollover retention,
+  multiple-device aggregation, delivery retry, reset reassertion, and joystick
+  port swap are covered by host tests.
+- The first USB-input PAL image uses build ID `2026082A`. Its isolated Vivado
+  2025.2 build passes at WNS +0.394 ns, WHS +0.057 ns, and WPWS +1.749 ns;
+  Vitis rebuilt the matching FSBL/application, and Bootgen read back the
+  expected partitions. The 4,346,380-byte image has SHA-256
+  `3e211fd424675753afa9a208b8c817bd12e196cb097951a0e38f2b61b8bab0db`.
+  Physical USB enumeration and input remain pending board qualification.
 - The exact AK4493 datasheet has been reviewed. Conservative I2S output delays
   are now part of the implemented-design timing constraints.
 - For that snapshot XSA, the Vitis FSBL and diagnostic application ELF built
@@ -93,9 +104,10 @@ Hardware status and remaining gaps:
   tested card/display combination, not physical input, storage, or SID audio.
 - NTSC and GBC Vivado builds remain pending. The GBC PSRAM path remains
   disabled by default and awaits timing and board validation.
-- SD file-system and USB input integration are not implemented. The tracked
-  C64 ROM set is loaded over UART; the pinned open GBC bootstrap remains the
-  only ROM embedded in an FPGA image.
+- SD file-system integration is not implemented. USB keyboard/gamepad input is
+  implemented and vendor-built but not yet board-qualified. The tracked C64
+  ROM set is loaded over UART; the pinned open GBC bootstrap remains the only
+  ROM embedded in an FPGA image.
 - DVI timing and the fixed diagnostic tone have initial board observations.
   Their long-run gates, plus USB host, SD, DDR, PSRAM, and Apple-bus isolation,
   still require the hardware work in `MULTITINI_ONE_PLAN.md`.
@@ -143,6 +155,8 @@ procedure is in
 [`docs/C64_SNAPSHOT_HARDWARE_TEST.md`](docs/C64_SNAPSHOT_HARDWARE_TEST.md).
 For the packaged live test image, use
 [`docs/C64_LIVE_VIDEO_HARDWARE_TEST.md`](docs/C64_LIVE_VIDEO_HARDWARE_TEST.md).
+For the USB keyboard/gamepad image, use
+[`docs/C64_USB_INPUT_HARDWARE_TEST.md`](docs/C64_USB_INPUT_HARDWARE_TEST.md).
 None of these engineering images is a complete C64 release.
 
 Project creation defaults to PAL. Set

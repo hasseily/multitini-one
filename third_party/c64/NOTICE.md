@@ -14,6 +14,8 @@ copies of GPL-2.0, LGPL-3.0, and CERN-OHL-S-2.0 are in
 `licenses/third_party/`. The T65 redistribution notice is included directly in
 each T65 source file.
 
-No Commodore system ROM, drive ROM, game, disk, cartridge, tape, MiSTer release
-binary, generated Intel IP, logo, or manual is included or licensed by this
-source import.
+The repository owner separately directed inclusion of the three C64 system ROM
+test/build inputs under `ROMs/`; their hashes and `NOASSERTION` rights status
+are recorded independently. No drive ROM, game, disk, cartridge, tape, MiSTer
+release binary, generated Intel IP, logo, or manual is included by this source
+import.

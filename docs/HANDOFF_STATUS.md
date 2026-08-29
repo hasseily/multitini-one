@@ -5,7 +5,8 @@ PAL C64 UART-ROM/frozen-snapshot image have both passed their initial board
 tests. The current source replaces the frozen buffer with a four-bank,
 four-bit-palette live frame ring. That bridge passes focused XSim, a fresh
 routed PAL build in Vivado 2025.2, and the complete first live-video board
-procedure. Physical input is the next subsystem gate.
+procedure. USB keyboard/gamepad input is implemented and vendor-built; its
+first board procedure is the next subsystem gate.
 
 ## Completed repository and portable validation
 
@@ -44,6 +45,12 @@ procedure. Physical input is the next subsystem gate.
   whole-frame drop when the ring is full; and fail-closed independent-reset
   rearming. Focused XSim, the fresh PAL Vivado build, and the first live-video
   board qualification all pass.
+- Pinned CherryUSB USB1 host integration; cooperative Zynq EHCI service; USB
+  boot-keyboard and common HID gamepad parsing; C64 key/joystick translation;
+  explicit disconnect releases; rollover retention; multi-device aggregation;
+  retry, reset reassertion, and runtime joystick port swap. Nine compiled host
+  tests and all 42 Python tests pass; one Tcl-only Python check is skipped
+  because `tclsh` is unavailable.
 - Exact 47-file Game Boy import at the pinned commit, per-file license rows,
   SHA-256 lock, open SameBoy-derived CGB bootstrap source/image, and deterministic
   strict-tool ports for the selected upstream `gb` and `cart` modules.
@@ -104,6 +111,30 @@ procedure. Physical input is the next subsystem gate.
 These are the current live-bridge vendor-tool results. The separate board
 observations below qualify the corresponding packaged image on hardware.
 
+## Completed vendor flow for the USB-input test image
+
+- A separate PAL C64 build with shell build ID `2026082A` completed synthesis,
+  implementation, bitstream generation, and XSA export in Vivado 2025.2.
+- The manifest timestamp is `2026-08-29T16:43:18Z`; it records base commit
+  `5150d830ddf7f63c4e6eefe9c9e861cccb69e3d8` and the exact dirty engineering
+  source snapshot included with the package.
+- Timing passes with WNS +0.394 ns, WHS +0.057 ns, WPWS +1.749 ns, and zero
+  failing endpoints. All 11,048 routable nets are fully routed with zero
+  routing errors. DRC has zero errors and 51 retained non-blocking warnings.
+- CDC remains 14 `CDC-3` and one `CDC-9` informational crossing, with no
+  Warning or Critical entry. All bus-skew constraints pass; the two live-video
+  pointer skews are 0.764 ns and 0.777 ns against 6.733 ns.
+- The routed design uses 6,172 LUTs, 5,703 flip-flops, 85 RAMB36 blocks, one
+  RAMB18 block, and seven DSP blocks.
+- Vitis 2025.2 rebuilt the hardware-matched FSBL and USB-input application.
+  Bootgen readback identifies the expected FSBL, bitstream, and two application
+  segments. `FIRMWARE.BIN` is 4,346,380 bytes, has SHA-256
+  `3e211fd424675753afa9a208b8c817bd12e196cb097951a0e38f2b61b8bab0db`
+  and CRC32 `B25E5862`, and leaves 10,268,148 bytes free in the firmware slot.
+
+This vendor result does not qualify a physical keyboard or gamepad. Follow
+`docs/C64_USB_INPUT_HARDWARE_TEST.md` and preserve the live-video baseline.
+
 ## Completed first board observations
 
 - The golden UART updater loaded and booted the first PAL diagnostic image.
@@ -149,17 +180,17 @@ observations below qualify the corresponding packaged image on hardware.
 - PSRAM activation: PHY timing, IDELAYCTRL, calibration, constraints, command
   edge/count tuning, and board measurement are unresolved. The default build
   holds CE high; the prepared GBC branch is explicit opt-in only.
-- Physical keyboard and joystick input still need their first board tests.
-  Physical audio remains the independent diagnostic tone; SID is not routed.
+- USB keyboard and gamepad input still need their first board tests. Physical
+  audio remains the independent diagnostic tone; SID is not routed.
 - Initial golden-slot boot, DVI timing, fixed-tone audio, and golden reboot have
   observations. Pin-isolation measurements, DDR, SD, USB input, temperature,
   cold/warm cycles, and the long-run DVI/audio gates remain open.
 
 ## Next validation sequence
 
-1. Add and qualify physical input one subsystem at a time, starting with USB
-   keyboard delivery and then joystick/gamepad mapping. Preserve the proven
-   live-video, reset, and golden-reboot behavior.
+1. Run `docs/C64_USB_INPUT_HARDWARE_TEST.md`, starting with USB keyboard
+   delivery and then joystick/gamepad mapping. Preserve the proven live-video,
+   reset, and golden-reboot behavior.
 2. Recreate and build C64 NTSC with
    `MULTITINI_C64_VIDEO_STANDARD=NTSC`; retain and review a separate complete
    report set.
