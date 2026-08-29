@@ -598,6 +598,17 @@ On hardware:
 
 ## 13. Decisions Still Needed
 
+### Decisions recorded after the baseline plan
+
+- 2026-08-29: Game Boy Color is the second core used to prove reuse. It must use
+  the same load, input, video, audio, reset, and common-memory boundaries rather
+  than adding another board shell.
+- 2026-08-29: The content rule applies to C64, GBC, and future cores. A system
+  ROM, bootstrap, or test image that is widely and easily available from an
+  ordinary stable public source may be pinned with provenance and a checksum.
+  Warez-only material is excluded and remains user content. See
+  `docs/CONTENT_POLICY.md`.
+
 Answer these from tests, source review, or product choice. Do not guess when the
 answer changes hardware safety or a public license duty.
 
@@ -611,12 +622,11 @@ answer changes hardware safety or a public license duty.
 - What PSRAM speed and worst delay pass on production boards?
 - How much block RAM and logic does the chosen C64 source use after Intel parts
   are replaced?
-- Which C64 ROM set will the user supply, and how will the UI explain missing or
-  wrong files?
+- Which C64 ROM set will be pinned under the content policy, or supplied by the
+  user, and how will the UI explain missing or wrong files?
 - Will the first release load one full FPGA image from QSPI, or load it from SD
   after a small recovery image starts?
 - Which license will cover original Multitini shell and ARM code?
-- Which second core best tests reuse under a sale-friendly license?
 
 ## 14. First Session Checklist
 

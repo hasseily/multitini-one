@@ -14,6 +14,13 @@
       "commit": "62fc697e3c9b5982c9dc76aa8cd03db545d20803",
       "license": "mixed file-local terms; assumed GPL-2.0-or-later grant for otherwise unmarked allowlisted source",
       "use": "C64 machine logic only; no ROM, media, Intel-generated IP, or MiSTer platform binary"
+    },
+    {
+      "name": "MiSTer Game Boy",
+      "url": "https://github.com/MiSTer-devel/Gameboy_MiSTer.git",
+      "commit": "7a5ff50528cd9c1d13ffb675e7df8506bffaa078",
+      "license": "mixed file-local terms; upstream top-level GPL-2.0-or-later declaration applied to unmarked allowlisted machine source",
+      "use": "Game Boy and Game Boy Color machine logic plus the MIT SameBoy-derived bootstrap; no game, palette, border, release image, Intel-generated IP, SDRAM controller, or MiSTer platform support source"
     }
   ]
 }

@@ -33,6 +33,13 @@ class BuildInputTests(unittest.TestCase):
                          joined)
         self.assertNotIn("third_party/c64/upstream/rtl/iec_drive/", joined)
         self.assertNotIn(".mif", joined)
+        self.assertIn("core/gameboy/multitini_gameboy_adapter.sv", joined)
+        self.assertIn("core/gameboy/ports/gb.v", joined)
+        self.assertIn("core/gameboy/ports/cart.v", joined)
+        self.assertIn("third_party/gameboy/upstream/rtl/megaswizzle.sv", joined)
+        self.assertIn("core/gameboy/boot/cgb_boot.hex", joined)
+        self.assertNotIn("third_party/gameboy/upstream/rtl/gb.v", joined)
+        self.assertNotIn("third_party/gameboy/upstream/rtl/cart.v", joined)
 
     def test_every_pl_port_has_one_pin_assignment(self):
         top = (ROOT / "hdl" / "board" / "multitini_one_top.sv").read_text()
@@ -94,7 +101,11 @@ class BuildInputTests(unittest.TestCase):
             "PCW_USB1_RESET_ENABLE {0}",
             "set c64_clock_mhz 31.527954",
             "set c64_clock_mhz 32.727266",
+            "set c64_clock_mhz 33.554432",
             "MULTITINI_C64_VIDEO_STANDARD must be PAL or NTSC",
+            "MULTITINI_MACHINE must be C64 or GBC",
+            "MULTITINI_ENABLE_GBC_PSRAM",
+            "ACTIVE_MACHINE",
             "-vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_c64",
             "assign_bd_address -offset 0x40000000 -range 0x00001000",
         )

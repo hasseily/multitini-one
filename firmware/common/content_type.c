@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "multitini_content.h"
 #include "multitini_c64_interface.h"
+#include "multitini_gameboy_interface.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -54,6 +55,8 @@ mt_content_type_t mt_content_classify(const char *path)
     if (extension_is(extension, "crt")) return MT_CONTENT_CRT;
     if (extension_is(extension, "tap")) return MT_CONTENT_TAP_FUTURE;
     if (extension_is(extension, "d81")) return MT_CONTENT_D81_FUTURE;
+    if (extension_is(extension, "gb")) return MT_CONTENT_GB_CART;
+    if (extension_is(extension, "gbc")) return MT_CONTENT_GBC_CART;
     return MT_CONTENT_UNKNOWN;
 }
 
@@ -61,7 +64,8 @@ bool mt_content_supported_first_release(mt_content_type_t type)
 {
     return type == MT_CONTENT_SYSTEM_ROM || type == MT_CONTENT_PRG ||
            type == MT_CONTENT_D64 || type == MT_CONTENT_G64 ||
-           type == MT_CONTENT_CRT;
+           type == MT_CONTENT_CRT || type == MT_CONTENT_GB_CART ||
+           type == MT_CONTENT_GBC_CART;
 }
 
 bool mt_content_may_write_first_release(mt_content_type_t type)
@@ -79,6 +83,8 @@ const char *mt_content_type_name(mt_content_type_t type)
     case MT_CONTENT_CRT: return "CRT";
     case MT_CONTENT_TAP_FUTURE: return "TAP (future)";
     case MT_CONTENT_D81_FUTURE: return "D81 (future)";
+    case MT_CONTENT_GB_CART: return "Game Boy cartridge";
+    case MT_CONTENT_GBC_CART: return "Game Boy Color cartridge";
     case MT_CONTENT_UNKNOWN: return "unknown";
     }
     return "unknown";
@@ -191,13 +197,67 @@ static mt_content_validation_t inspect_crt(const uint8_t *data, size_t size,
     return MT_CONTENT_VALID;
 }
 
+static size_t gameboy_rom_size(uint8_t code)
+{
+    if (code <= 8U) {
+        return (size_t)32768U << code;
+    }
+    switch (code) {
+    case 0x52U: return 1179648U;
+    case 0x53U: return 1310720U;
+    case 0x54U: return 1572864U;
+    default: return 0U;
+    }
+}
+
+static mt_content_validation_t inspect_gameboy_cart(
+    const uint8_t *data, size_t size, bool require_color,
+    mt_content_info_t *info)
+{
+    uint8_t checksum = 0U;
+    uint8_t color_flag;
+    size_t index;
+    size_t expected_size;
+
+    if (size < 0x150U) return MT_CONTENT_TOO_SMALL;
+    if (size > MT_SIZE_GB_CART_MAX) return MT_CONTENT_WRONG_SIZE;
+
+    color_flag = data[0x143U];
+    if (color_flag != 0x00U && color_flag != 0x80U && color_flag != 0xC0U) {
+        return MT_CONTENT_BAD_STRUCTURE;
+    }
+    if (require_color && color_flag == 0x00U) {
+        return MT_CONTENT_BAD_STRUCTURE;
+    }
+
+    expected_size = gameboy_rom_size(data[0x148U]);
+    if (expected_size == 0U || size != expected_size) {
+        return MT_CONTENT_WRONG_SIZE;
+    }
+    if (data[0x149U] > 5U) return MT_CONTENT_BAD_STRUCTURE;
+
+    for (index = 0x134U; index <= 0x14CU; ++index) {
+        checksum = (uint8_t)(checksum - data[index] - 1U);
+    }
+    if (checksum != data[0x14DU]) return MT_CONTENT_BAD_STRUCTURE;
+
+    info->payload_size = size;
+    info->mapper_type = data[0x147U];
+    info->rom_size_code = data[0x148U];
+    info->ram_size_code = data[0x149U];
+    info->color_capable = color_flag != 0x00U;
+    info->color_required = color_flag == 0xC0U;
+    return MT_CONTENT_VALID;
+}
+
 mt_content_validation_t mt_content_inspect(mt_content_type_t type,
                                            const uint8_t *data, size_t size,
                                            mt_content_info_t *info)
 {
-    mt_content_info_t result = {0U, 0U, 0U, 0U, false};
+    mt_content_info_t result;
     mt_content_validation_t status;
     if (data == NULL || info == NULL) return MT_CONTENT_INVALID_ARGUMENT;
+    memset(&result, 0, sizeof(result));
     switch (type) {
     case MT_CONTENT_PRG:
         status = inspect_prg(data, size, &result);
@@ -215,6 +275,12 @@ mt_content_validation_t mt_content_inspect(mt_content_type_t type,
         result.payload_size = size;
         status = size == 0U ? MT_CONTENT_TOO_SMALL : MT_CONTENT_VALID;
         break;
+    case MT_CONTENT_GB_CART:
+        status = inspect_gameboy_cart(data, size, false, &result);
+        break;
+    case MT_CONTENT_GBC_CART:
+        status = inspect_gameboy_cart(data, size, true, &result);
+        break;
     case MT_CONTENT_TAP_FUTURE:
     case MT_CONTENT_D81_FUTURE:
     case MT_CONTENT_UNKNOWN:
@@ -226,6 +292,17 @@ mt_content_validation_t mt_content_inspect(mt_content_type_t type,
     }
     if (status == MT_CONTENT_VALID) *info = result;
     return status;
+}
+
+mt_content_validation_t mt_gbc_boot_rom_validate(const uint8_t *data,
+                                                  size_t size)
+{
+    size_t index;
+    uint8_t difference = 0U;
+    if (data == NULL) return MT_CONTENT_INVALID_ARGUMENT;
+    if (size != MT_SIZE_GBC_BOOT) return MT_CONTENT_WRONG_SIZE;
+    for (index = 1U; index < size; ++index) difference |= data[index] ^ data[0];
+    return difference == 0U ? MT_CONTENT_BAD_STRUCTURE : MT_CONTENT_VALID;
 }
 
 mt_content_validation_t mt_c64_rom_validate(mt_c64_rom_kind_t kind,

@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "source": {
+    "url": "https://github.com/MiSTer-devel/Gameboy_MiSTer.git",
+    "commit": "7a5ff50528cd9c1d13ffb675e7df8506bffaa078"
+  },
+  "destination": "third_party/gameboy/upstream",
+  "resolved_groups": [
+    {
+      "license": "MIT",
+      "basis": "upstream BootROM README and file-local notices; generated MIF is the corresponding open-source bootstrap image",
+      "paths": [
+        "BootROMs/README.md",
+        "BootROMs/cgb_boot.mif",
+        "BootROMs/src/cgb_boot.asm",
+        "BootROMs/src/dmg_boot.asm",
+        "BootROMs/src/hardware.inc",
+        "BootROMs/src/sgb_boot.asm"
+      ]
+    },
+    {
+      "license": "GPL-2.0-or-later",
+      "basis": "file-local notice",
+      "paths": [
+        "Gameboy.sv"
+      ]
+    },
+    {
+      "license": "GPL-3.0-or-later",
+      "basis": "file-local notice",
+      "paths": [
+        "rtl/gb.v",
+        "rtl/sprites.v",
+        "rtl/video.v"
+      ]
+    },
+    {
+      "license": "BSD-3-Clause-like-T80",
+      "basis": "complete file-local redistribution notice",
+      "paths": [
+        "rtl/T80/GBse.vhd",
+        "rtl/T80/T80.vhd",
+        "rtl/T80/T80_ALU.vhd",
+        "rtl/T80/T80_MCode.vhd",
+        "rtl/T80/T80_Pack.vhd",
+        "rtl/T80/T80_Reg.vhd"
+      ]
+    },
+    {
+      "license": "GPL-2.0-or-later",
+      "basis": "repository top-level GPL-2.0-or-later declaration and inclusion in the upstream machine build manifest; files have no narrower local terms",
+      "paths": [
+        "rtl/bus_savestates.vhd",
+        "rtl/cart.v",
+        "rtl/cheatcodes.sv",
+        "rtl/dpram.vhd",
+        "rtl/gb_savestates.vhd",
+        "rtl/gb_statemanager.vhd",
+        "rtl/gbc_snd.vhd",
+        "rtl/hdma.v",
+        "rtl/link.v",
+        "rtl/megaswizzle.sv",
+        "rtl/mappers/gb_camera.v",
+        "rtl/mappers/huc1.v",
+        "rtl/mappers/huc3.v",
+        "rtl/mappers/mappers.v",
+        "rtl/mappers/mbc1.v",
+        "rtl/mappers/mbc2.v",
+        "rtl/mappers/mbc3.v",
+        "rtl/mappers/mbc5.v",
+        "rtl/mappers/mbc6.v",
+        "rtl/mappers/mbc7.v",
+        "rtl/mappers/megaduck.v",
+        "rtl/mappers/misc.v",
+        "rtl/mappers/mmm01.v",
+        "rtl/mappers/rocket.sv",
+        "rtl/mappers/sachen.v",
+        "rtl/mappers/tama.v",
+        "rtl/reg_savestates.vhd",
+        "rtl/speedcontrol.vhd",
+        "rtl/sprites_extra.v",
+        "rtl/sprites_extra_store.v",
+        "rtl/timer.v"
+      ]
+    }
+  ],
+  "unresolved": [],
+  "excluded_globs": [
+    "BootROMs/bin/**",
+    "BootROMs/obj/**",
+    "BootROMs/*.png",
+    "BootROMs/src/*.c",
+    "BootROMs/src/cgb0_boot.asm",
+    "BootROMs/src/mgb_boot.asm",
+    "BootROMs/src/sgb2_boot.asm",
+    "Border/**",
+    "ColorLUT/**",
+    "Palette/**",
+    "borders/**",
+    "releases/**",
+    "sim/**",
+    "sys/**",
+    "rtl/pll/**",
+    "rtl/pll.*",
+    "rtl/sdram.sv",
+    "rtl/ddram.sv",
+    "rtl/lcd.v",
+    "rtl/lcd_color_lut.mif",
+    "*.bin",
+    "*.gb",
+    "*.gbc",
+    "rtl/*.mif",
+    "*.rbf",
+    "*.rom"
+  ]
+}

@@ -29,7 +29,9 @@ excludes at least:
 - prebuilt `.rbf`, `.exe`, `.com`, disk, cart, tape, and ROM content.
 
 The C64 and drive ROM stores must be writable from the Multitini load stream
-and start empty. User ROMs are required until distribution rights are secured.
+and start empty in the current adapter. A stable ordinary public ROM source may
+be pinned later under `docs/CONTENT_POLICY.md`; otherwise the user supplies the
+ROMs at run time.
 
 ## License findings
 

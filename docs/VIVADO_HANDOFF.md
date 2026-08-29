@@ -50,6 +50,22 @@ Stop on every Tcl error. Confirm:
 - all source and constraint files came from the tracked manifests; and
 - the block design validates.
 
+The default is the PAL C64 project. The same tracked manifest also contains the
+GBC sources, so they must parse cleanly even when inactive.
+
+Create a separate first-pass GBC project with:
+
+```sh
+MULTITINI_MACHINE=GBC \
+  MULTITINI_ENABLE_GBC_PSRAM=0 \
+  vivado -mode batch -source scripts/create_project.tcl
+```
+
+Confirm that the build generic selects `ACTIVE_MACHINE=1`, the machine Clocking
+Wizard requests 33.554432 MHz, and `ENABLE_GBC_PSRAM=0`. The PSRAM pins must
+remain inactive in this project. The wizard and generated block-design port
+retain their historical `c64_clk` names; they carry the selected machine clock.
+
 ## Synthesis and implementation
 
 Run:
@@ -66,9 +82,14 @@ or bitstream generation fails. Review, do not waive:
 - every generated clock and clock group;
 - the achieved C64 clock frequency and error from 31.527954 MHz PAL or
   32.727266 MHz NTSC;
+- for the GBC project, the achieved machine frequency and error from
+  33.554432 MHz;
 - C64 main RAM and writable ROM inference, port mode, and read latency;
 - XPM handshake constraints, the error-clear toggle synchronizer, and every
-  control-to-C64 CDC path;
+  control-to-machine CDC path;
+- GBC T80/mapper/audio/video mixed-language elaboration, the portable dual-port
+  RAM modes and read latencies, the bootstrap hex initialization, and the
+  one-line cartridge-cache stall path;
 - every false path and max-delay object count;
 - setup, hold, pulse-width, and bus-skew reports;
 - Apple-bus pin constants after optimization;
@@ -79,11 +100,11 @@ or bitstream generation fails. Review, do not waive:
 
 Save the exact reports and build manifest. A clean build is not hardware proof.
 
-The C64 adapter is marked `DONT_TOUCH` and its raw video/audio outputs are kept
-so synthesis and timing cannot silently remove the integration. The physical
-DVI and audio pins still use the independent diagnostic generators. Confirm
-that the C64 hierarchy is present and timed, but do not interpret this image as
-a C64 display/audio test.
+The selected machine adapter is marked `DONT_TOUCH` and its raw video/audio
+outputs are kept so synthesis and timing cannot silently remove the integration.
+The physical DVI and audio pins still use the independent diagnostic generators.
+Confirm that the selected hierarchy is present and timed, but do not interpret
+this image as a machine display/audio test.
 
 After the default PAL build is reviewed, recreate the project for NTSC with:
 
@@ -99,10 +120,26 @@ The TFP410 constraint uses the rev. D, single-edge receiver requirements that
 match the schematic straps: 1.2 ns setup and 1.3 ns hold. Confirm that Vivado
 models the ODDR forwarded edge one half pixel after the RGB/control launch.
 
-The imported PSRAM PHY and simulated BIST are present as staged source but are
-not connected in `multitini_one_top`. Keep PSRAM inactive for the first board
-image. Its command timing, input capture edge/tap, IDELAYCTRL, and external
-constraints are a separate Phase 3 review.
+The imported PSRAM PHY and simulated BIST are present as staged source. The GBC
+top has an opt-in physical branch, but it defaults off. Keep PSRAM inactive for
+the first board image. Its command timing, input capture edge/tap, IDELAYCTRL,
+and external constraints are a separate Phase 3 review.
+
+After the inactive GBC project elaborates and its resource estimate is
+acceptable, validate PSRAM independently. Add and review external timing
+constraints, confirm the controller's fixed command edge and count choices,
+run the destructive BIST over temperature/reset cases, and record measured
+latency. Only then create an integration project with:
+
+```sh
+MULTITINI_MACHINE=GBC \
+  MULTITINI_ENABLE_GBC_PSRAM=1 \
+  vivado -mode batch -source scripts/create_project.tcl
+```
+
+This opt-in command is not permission to program hardware before the PSRAM
+gates above pass. Re-run synthesis, CDC, timing, utilization, and pin reports
+with the physical path enabled.
 
 ## Vitis
 
@@ -122,6 +159,8 @@ the DAC without unmuting, and accepts UART commands for status, ping, video,
 audio mute/unmute, and core reset. Portable firmware functions can validate and
 stream caller-supplied BASIC, KERNAL, and character ROM buffers, but SD file
 loading and a UART file-transfer command are not wired into the diagnostic.
+The portable GBC helper can stream a validated cartridge and optional bootstrap
+override; it is likewise not connected to SD or the diagnostic CLI.
 
 ## First board program
 

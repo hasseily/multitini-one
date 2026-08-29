@@ -19,7 +19,7 @@ typedef struct {
 } mt_c64_system_roms_t;
 
 /*
- * Load all three user-supplied system ROMs while core reset is asserted.
+ * Load all three selected system ROMs while core reset is asserted.
  * A failed transfer leaves core reset asserted. File-system ownership and ROM
  * redistribution policy remain outside this portable helper.
  */

@@ -26,22 +26,37 @@ Status date: 2026-08-29. No Vivado, Vitis, or board result is claimed.
 - ARM ROM stream commands with bounded backpressure retry and abort, coherent
   XPM clock crossing, strict PL framing, sticky load errors, and a portable
   reset-safe three-ROM boot helper.
+- Exact 47-file Game Boy import at the pinned commit, per-file license rows,
+  SHA-256 lock, open SameBoy-derived CGB bootstrap source/image, and deterministic
+  strict-tool ports for the selected upstream `gb` and `cart` modules.
+- GBC interface definitions; GB/GBC header validation; reset-safe cart/bootstrap
+  boot helper; gamepad mapping; clock enables; raw RGB/audio adapter; cartridge
+  loader; one-line cache; and a one-outstanding common 64-bit memory ABI.
+- Tested control/machine memory CDC and PSRAM line service, plus a prepared
+  optional GBC PSRAM PHY branch. That branch defaults off and is not accepted
+  for hardware use.
 - Icarus tests for AXI, registers, video, audio, PSRAM BIST, asynchronous
-  mailbox, and C64 loader/input; Verilator lint for the selected C64
-  SystemVerilog; strict C and sanitizer tests; malformed-content exercise; Tcl
-  completeness; pin coverage; and host compilation of the Xilinx entry point.
+  mailbox, C64 loader/input, GBC loader/input/clock/cache, memory CDC, and PSRAM
+  service; board-shell elaboration for the selected GBC branch; Verilator lint
+  for selected C64 and GBC SystemVerilog; strict C and sanitizer tests;
+  malformed-content exercise; Tcl completeness; pin coverage; and host
+  compilation of the Xilinx entry point.
 
 ## Requires vendor tools or hardware
 
 - Mixed VHDL/SystemVerilog C64 elaboration, the inferred writable memories,
   achieved PAL/NTSC clock, XPM constraints, resource use, and timing have not
   been checked by Vivado.
+- Mixed VHDL/SystemVerilog GBC elaboration, portable dual-port memory inference,
+  achieved 33.554432 MHz clock, common-memory CDC constraints, resource fit,
+  and timing have not been checked by Vivado.
 - AK4493 I2S output timing: exact receiver setup/hold values are not in the
   publicly accessible product material. The timing gate must remain red.
-- PSRAM activation: PHY timing, IDELAYCTRL, calibration, and board measurement
-  are unresolved. The diagnostic top holds CE high.
-- Physical C64 video/audio selection is intentionally absent until synthesis
-  and diagnostic outputs pass. USB input, SD file I/O, DDR test, and all
+- PSRAM activation: PHY timing, IDELAYCTRL, calibration, constraints, command
+  edge/count tuning, and board measurement are unresolved. The default build
+  holds CE high; the prepared GBC branch is explicit opt-in only.
+- Physical machine video/audio selection is intentionally absent until
+  synthesis and diagnostic outputs pass. USB input, SD file I/O, DDR test, and all
   cold/warm boot claims require a Vitis build and the modified board.
 
 ## First vendor-machine sequence
@@ -53,13 +68,19 @@ Status date: 2026-08-29. No Vivado, Vitis, or board result is claimed.
    `MULTITINI_C64_VIDEO_STANDARD=NTSC`; confirm the C64 VHDL/SV compile order,
    inferred memories, achieved selected clock, XPM CDC constraints, and
    resource estimate before implementation.
-5. Obtain and record AK4493SEQ timing; add reviewed I2S output delays.
-6. Run `vivado -mode batch -source scripts/build_and_export_xsa.tcl`.
-7. Review all reports in `build/vivado/reports`; do not rely only on run status.
-8. Run `vitis -s scripts/create_vitis_workspace.py` and retain its complete log.
-9. Execute the power, pin-isolation, boot, DDR, SD, DVI, audio, and USB gates in
+5. Create a separate GBC project with `MULTITINI_MACHINE=GBC`; keep
+   `MULTITINI_ENABLE_GBC_PSRAM=0` for the first elaboration and synthesis review.
+   Confirm the selected upstream hierarchy, open bootstrap initialization,
+   inferred memories, requested machine clock, and resource estimate.
+6. Obtain and record AK4493SEQ timing; add reviewed I2S output delays.
+7. Run `vivado -mode batch -source scripts/build_and_export_xsa.tcl`.
+8. Review all reports in `build/vivado/reports`; do not rely only on run status.
+9. Run `vitis -s scripts/create_vitis_workspace.py` and retain its complete log.
+10. Execute the power, pin-isolation, boot, DDR, SD, DVI, audio, and USB gates in
    `MULTITINI_ONE_PLAN.md` and `docs/VIVADO_HANDOFF.md`.
 
 Only after the minimal board image passes should PSRAM be connected and its
-BIST exposed. The C64 integration remains off the physical outputs until its
-clock, reset, video, and audio paths pass their corresponding gates.
+BIST exposed. Only after a dedicated PSRAM test passes should a GBC project set
+`MULTITINI_ENABLE_GBC_PSRAM=1`. Both machine integrations remain off the
+physical outputs until their clock, reset, video, and audio paths pass their
+corresponding gates.

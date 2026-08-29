@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "abi": {"major": 0, "minor": 1},
+  "core_id": "0x47424320",
+  "clocks_hz": {
+    "CORE": 33554432,
+    "CPU": 4194304,
+    "AUDIO_SAMPLE": 48000
+  },
+  "load_kinds": {
+    "GBC_BOOT": "0x20",
+    "GB_CART": "0x21"
+  },
+  "sizes": {
+    "GBC_BOOT": 2304,
+    "GB_CART_MIN": 32768,
+    "GB_CART_MAX": 8388608,
+    "GB_CART_RAM_MAX": 131072
+  },
+  "input_namespaces": {
+    "GB_GAMEPAD": "0x10"
+  },
+  "buttons": {
+    "RIGHT": 0,
+    "LEFT": 1,
+    "DOWN": 2,
+    "UP": 3,
+    "A": 4,
+    "B": 5,
+    "SELECT": 6,
+    "START": 7
+  },
+  "memory_map": {
+    "ROM_BASE": "0x000000",
+    "CART_RAM_BASE": "0x800000"
+  }
+}

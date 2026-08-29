@@ -39,7 +39,9 @@ set control_clocks [get_clocks -quiet \
     -filter {NAME =~ *clk_out1*zynq_ps_bd_clk_wiz_control*}]
 set video_clocks [get_clocks -quiet \
     -filter {NAME =~ *clk_out1*zynq_ps_bd_clk_wiz_video*}]
-set c64_clocks [get_clocks -quiet \
+# The block-design cell keeps its historical c64 name but generates the active
+# build-selected C64 or GBC machine clock.
+set machine_clocks [get_clocks -quiet \
     -filter {NAME =~ *clk_out1*zynq_ps_bd_clk_wiz_c64*}]
 if {[llength $control_clocks] != 1} {
     error "Expected one control clock; found [llength $control_clocks]"
@@ -47,11 +49,11 @@ if {[llength $control_clocks] != 1} {
 if {[llength $video_clocks] != 1} {
     error "Expected one video clock; found [llength $video_clocks]"
 }
-if {[llength $c64_clocks] != 1} {
-    error "Expected one C64 clock; found [llength $c64_clocks]"
+if {[llength $machine_clocks] != 1} {
+    error "Expected one selected machine clock; found [llength $machine_clocks]"
 }
 set_clock_groups -asynchronous \
-    -group $control_clocks -group $video_clocks -group $c64_clocks \
+    -group $control_clocks -group $video_clocks -group $machine_clocks \
     -group [get_clocks audio_mclk]
 
 # Raw Apple connector inputs are deliberately not clocks in standalone mode.
@@ -68,9 +70,10 @@ set_false_path -from [get_ports \
     {dvi_hpd i2c0_rtc_int_n i2c0_rtc_clkout i2c0_temp_alert_n \
      eth_int_n usb_sys_fault_n}]
 
-# PSRAM is held inactive in this image. Do not add interface timing until the
-# controller and capture mode are selected. These static outputs are reviewed
-# after synthesis and again at the pins before PSRAM work starts.
+# PSRAM is held inactive by default. The opt-in GBC source branch is bring-up
+# preparation only: it has no accepted external interface timing here. Do not
+# program an enabled build until the controller/capture mode, I/O delays, clock
+# relationship, tap choice, and board measurements have been reviewed.
 
 set_property CONFIG_VOLTAGE 3.3 [current_design]
 set_property CFGBVS VCCO [current_design]

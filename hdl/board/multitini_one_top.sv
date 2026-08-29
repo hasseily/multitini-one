@@ -3,7 +3,9 @@
 
 module multitini_one_top #(
     parameter logic [31:0] SHELL_BUILD_ID = 32'h00000000,
-    parameter bit C64_NTSC_MODE = 1'b0
+    parameter bit C64_NTSC_MODE = 1'b0,
+    parameter integer ACTIVE_MACHINE = 0,
+    parameter bit ENABLE_GBC_PSRAM = 1'b0
 ) (
     inout  wire [53:0] MIO,
     inout  wire        PS_CLK,
@@ -201,6 +203,18 @@ module multitini_one_top #(
     (* KEEP = "yes" *) logic signed [23:0] c64_audio_r;
     (* KEEP = "yes" *) logic               c64_audio_valid;
 
+    logic [31:0] gbc_cart_size;
+    logic        gbc_cart_loaded;
+    logic [23:0] gbc_memory_addr;
+    logic        gbc_memory_write;
+    logic [63:0] gbc_memory_wdata;
+    logic [7:0]  gbc_memory_wstrb;
+    logic        gbc_memory_valid;
+    logic        gbc_memory_ready;
+    logic [63:0] gbc_memory_rdata;
+    logic        gbc_memory_rvalid;
+    logic        gbc_memory_fault;
+
     assign irq_bus = {15'd0, shell_irq};
 
     zynq_ps_bd_wrapper zynq_ps_i (
@@ -340,29 +354,100 @@ module multitini_one_top #(
         .dst_resetn(c64_aresetn), .dst_pulse(c64_load_error_clear)
     );
 
-    // Keep the C64 integration in the synthesized design for resource,
-    // clocking, and timing validation. Physical outputs remain on the board
-    // test generators until that validation passes.
-    (* DONT_TOUCH = "yes" *) multitini_c64_adapter #(
-        .NTSC_MODE(C64_NTSC_MODE)
-    ) c64_adapter (
-        .core_clk(c64_clk), .reset(!c64_aresetn),
-        .core_reset_request(c64_core_reset_request),
-        .clear_load_error(c64_load_error_clear),
-        .input_code(c64_input_code), .input_value(c64_input_value),
-        .input_valid(c64_input_valid), .input_ready(c64_input_ready),
-        .load_data(c64_load_data), .load_valid(c64_load_valid),
-        .load_ready(c64_load_ready), .load_first(c64_load_first),
-        .load_last(c64_load_last), .load_kind(c64_load_kind),
-        .load_offset(c64_load_offset), .load_total(c64_load_total),
-        .core_id(c64_core_id), .ready(c64_ready),
-        .load_error(c64_load_error), .rom_loaded(c64_rom_loaded),
-        .video_r(c64_video_r), .video_g(c64_video_g),
-        .video_b(c64_video_b), .video_de(c64_video_de),
-        .video_hsync(c64_video_hsync), .video_vsync(c64_video_vsync),
-        .video_valid(c64_video_valid), .audio_l(c64_audio_l),
-        .audio_r(c64_audio_r), .audio_valid(c64_audio_valid)
-    );
+    // Build one complete machine at a time. Raw machine video and audio remain
+    // retained for Vivado inspection while physical outputs stay diagnostic.
+    generate
+        if (ACTIVE_MACHINE == 0) begin : g_c64_machine
+            assign gbc_cart_size = 32'd0;
+            assign gbc_cart_loaded = 1'b0;
+            assign gbc_memory_fault = 1'b0;
+            (* DONT_TOUCH = "yes" *) multitini_c64_adapter #(
+                .NTSC_MODE(C64_NTSC_MODE)
+            ) machine_adapter (
+                .core_clk(c64_clk), .reset(!c64_aresetn),
+                .core_reset_request(c64_core_reset_request),
+                .clear_load_error(c64_load_error_clear),
+                .input_code(c64_input_code), .input_value(c64_input_value),
+                .input_valid(c64_input_valid), .input_ready(c64_input_ready),
+                .load_data(c64_load_data), .load_valid(c64_load_valid),
+                .load_ready(c64_load_ready), .load_first(c64_load_first),
+                .load_last(c64_load_last), .load_kind(c64_load_kind),
+                .load_offset(c64_load_offset), .load_total(c64_load_total),
+                .core_id(c64_core_id), .ready(c64_ready),
+                .load_error(c64_load_error), .rom_loaded(c64_rom_loaded),
+                .video_r(c64_video_r), .video_g(c64_video_g),
+                .video_b(c64_video_b), .video_de(c64_video_de),
+                .video_hsync(c64_video_hsync),
+                .video_vsync(c64_video_vsync),
+                .video_valid(c64_video_valid), .audio_l(c64_audio_l),
+                .audio_r(c64_audio_r), .audio_valid(c64_audio_valid)
+            );
+            assign psram_a_io = 4'hz;
+            assign psram_b_io = 4'hz;
+            assign psram_ce_n = 1'b1;
+            assign psram_clk  = 1'b0;
+        end else begin : g_gameboy_machine
+            assign c64_rom_loaded = {2'd0, gbc_cart_loaded};
+            (* DONT_TOUCH = "yes" *) multitini_gameboy_adapter machine_adapter (
+                .core_clk(c64_clk), .reset(!c64_aresetn),
+                .core_reset_request(c64_core_reset_request),
+                .clear_load_error(c64_load_error_clear),
+                .input_code(c64_input_code), .input_value(c64_input_value),
+                .input_valid(c64_input_valid), .input_ready(c64_input_ready),
+                .load_data(c64_load_data), .load_valid(c64_load_valid),
+                .load_ready(c64_load_ready), .load_first(c64_load_first),
+                .load_last(c64_load_last), .load_kind(c64_load_kind),
+                .load_offset(c64_load_offset), .load_total(c64_load_total),
+                .memory_addr(gbc_memory_addr),
+                .memory_write(gbc_memory_write),
+                .memory_wdata(gbc_memory_wdata),
+                .memory_wstrb(gbc_memory_wstrb),
+                .memory_valid(gbc_memory_valid),
+                .memory_ready(gbc_memory_ready),
+                .memory_rdata(gbc_memory_rdata),
+                .memory_rvalid(gbc_memory_rvalid),
+                .memory_fault(gbc_memory_fault),
+                .core_id(c64_core_id), .ready(c64_ready),
+                .load_error(c64_load_error), .cart_loaded(gbc_cart_loaded),
+                .cart_size(gbc_cart_size),
+                .video_r(c64_video_r), .video_g(c64_video_g),
+                .video_b(c64_video_b), .video_de(c64_video_de),
+                .video_hsync(c64_video_hsync),
+                .video_vsync(c64_video_vsync),
+                .video_valid(c64_video_valid), .audio_l(c64_audio_l),
+                .audio_r(c64_audio_r), .audio_valid(c64_audio_valid)
+            );
+
+            if (ENABLE_GBC_PSRAM) begin : g_psram_active
+                multitini_gameboy_psram_path psram_path_i (
+                    .core_clk(c64_clk), .core_resetn(c64_aresetn),
+                    .control_clk(control_clk),
+                    .control_resetn(control_aresetn),
+                    .idelay_ref_clk(idelay_ref_clk),
+                    .core_memory_addr(gbc_memory_addr),
+                    .core_memory_write(gbc_memory_write),
+                    .core_memory_wdata(gbc_memory_wdata),
+                    .core_memory_wstrb(gbc_memory_wstrb),
+                    .core_memory_valid(gbc_memory_valid),
+                    .core_memory_ready(gbc_memory_ready),
+                    .core_memory_rdata(gbc_memory_rdata),
+                    .core_memory_rvalid(gbc_memory_rvalid),
+                    .memory_fault(gbc_memory_fault),
+                    .psram_a_io(psram_a_io), .psram_b_io(psram_b_io),
+                    .psram_ce_n(psram_ce_n), .psram_clk(psram_clk)
+                );
+            end else begin : g_psram_inactive
+                assign gbc_memory_ready = 1'b0;
+                assign gbc_memory_rdata = 64'd0;
+                assign gbc_memory_rvalid = 1'b0;
+                assign gbc_memory_fault = 1'b0;
+                assign psram_a_io = 4'hz;
+                assign psram_b_io = 4'hz;
+                assign psram_ce_n = 1'b1;
+                assign psram_clk  = 1'b0;
+            end
+        end
+    endgenerate
 
     cdc_bit_sync video_enable_sync (
         .clk(video_clk), .resetn(video_aresetn),
@@ -414,11 +499,6 @@ module multitini_one_top #(
     assign dvi_scl = 1'bz;
     assign dvi_sda = 1'bz;
 
-    assign psram_a_io = 4'hz;
-    assign psram_b_io = 4'hz;
-    assign psram_ce_n = 1'b1;
-    assign psram_clk  = 1'b0;
-
     assign eth_d     = 8'hzz;
     assign eth_a     = 2'b00;
     assign eth_rd_n  = 1'b1;
@@ -429,6 +509,7 @@ module multitini_one_top #(
     wire unused_inputs = ^{idelay_ref_clk, a2fpga_clk, a2fpga_7m, a2fpga_q3,
                            a2fpga_m2b0, a2fpga_m2sel, a2fpga_devsel_n,
                            dvi_hpd, i2c0_rtc_int_n, i2c0_rtc_clkout,
-                           i2c0_temp_alert_n, eth_int_n, usb_sys_fault_n};
+                           i2c0_temp_alert_n, eth_int_n, usb_sys_fault_n,
+                           gbc_cart_size, gbc_memory_fault};
 
 endmodule

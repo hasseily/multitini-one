@@ -265,6 +265,288 @@
       "source": "MiSTer C64",
       "source_path": "rtl/video_vicII_656x.vhd",
       "sha256": "823c5242a97490e208a8bca4bf3895c1af56396130508f4f43fb04147a81dedb"
+    },
+    {
+      "path": "third_party/gameboy/upstream/BootROMs/README.md",
+      "source": "MiSTer Game Boy",
+      "source_path": "BootROMs/README.md",
+      "sha256": "1fee891e546b5224494fe763406282cf0bf8db4fe3213c33a422582b381a8a14"
+    },
+    {
+      "path": "third_party/gameboy/upstream/BootROMs/cgb_boot.mif",
+      "source": "MiSTer Game Boy",
+      "source_path": "BootROMs/cgb_boot.mif",
+      "sha256": "83d6acb33f6d2d1606a3d2b18eaf1e6fc7bbf940b09696af87ea5839a776d807"
+    },
+    {
+      "path": "third_party/gameboy/upstream/BootROMs/src/cgb_boot.asm",
+      "source": "MiSTer Game Boy",
+      "source_path": "BootROMs/src/cgb_boot.asm",
+      "sha256": "db6a2972142b1d3135146dd124282033b626a52c48e26c419ac2f912854e7d70"
+    },
+    {
+      "path": "third_party/gameboy/upstream/BootROMs/src/dmg_boot.asm",
+      "source": "MiSTer Game Boy",
+      "source_path": "BootROMs/src/dmg_boot.asm",
+      "sha256": "e344099ee1a40174f668721ec7f5df93d12e67b616db663f374438e6fc7738c1"
+    },
+    {
+      "path": "third_party/gameboy/upstream/BootROMs/src/hardware.inc",
+      "source": "MiSTer Game Boy",
+      "source_path": "BootROMs/src/hardware.inc",
+      "sha256": "09d6e38e9967d4c58156b3b3e22cdd1747985561e331e3c10f2891ab3abeef57"
+    },
+    {
+      "path": "third_party/gameboy/upstream/BootROMs/src/sgb_boot.asm",
+      "source": "MiSTer Game Boy",
+      "source_path": "BootROMs/src/sgb_boot.asm",
+      "sha256": "86b9121eea31d0cf1eedc449800b9575af44f8d672259d5c4e47b8ddf9e18515"
+    },
+    {
+      "path": "third_party/gameboy/upstream/Gameboy.sv",
+      "source": "MiSTer Game Boy",
+      "source_path": "Gameboy.sv",
+      "sha256": "26e3b4486f0995d25b5403589b0d22e3def597afa5d016c7b8a6eb24b472db89"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/T80/GBse.vhd",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/T80/GBse.vhd",
+      "sha256": "8c05795279b138dbd865fb4d5462817a8cf2f465603fcad615ae6e8c549e2650"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/T80/T80.vhd",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/T80/T80.vhd",
+      "sha256": "f4ec062bed81d76f10b1003e797f5090896501af83c3a7b5a4e5ab0107f25577"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/T80/T80_ALU.vhd",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/T80/T80_ALU.vhd",
+      "sha256": "ec57bddba954c380ad305b1c181b7a86875661360e025180278ccb4c0e1bd103"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/T80/T80_MCode.vhd",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/T80/T80_MCode.vhd",
+      "sha256": "454926348e38e9b1e98265b81b3021a8bf0493deecea4c64970e72255d6ad2c0"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/T80/T80_Pack.vhd",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/T80/T80_Pack.vhd",
+      "sha256": "e90f9e2f70320e6db730fee0196e63da80d5190d6ceec92240bc74582a66cdc5"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/T80/T80_Reg.vhd",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/T80/T80_Reg.vhd",
+      "sha256": "4fa9397ae0c7d0b900c83cfb80bf6b9c2a1fda50f407219f3bde355a324f0fa3"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/bus_savestates.vhd",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/bus_savestates.vhd",
+      "sha256": "46000dafabd1f6a80bf21d1164b9e07b1b03a9010006d53683188dfcbb8c644f"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/cart.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/cart.v",
+      "sha256": "2585edcdd64bd9a6eeaf57884e584c8f740c5bae5dbbd7c6ac6664e9e085f090"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/cheatcodes.sv",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/cheatcodes.sv",
+      "sha256": "ce69811afc0e719b4f855cfe9d5e7b58526ae3768e1ee8cb69d8698de4fdd0a7"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/dpram.vhd",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/dpram.vhd",
+      "sha256": "6565abc8d449dc03379545ad9989f225aad6475f37e7a43ad77014bc9a4d662d"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/gb.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/gb.v",
+      "sha256": "1cf120413f94c9d847ed41dc33daf65748b28cbcf68a802a7a8e2a0cdde5cd39"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/gb_savestates.vhd",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/gb_savestates.vhd",
+      "sha256": "dfbe0245d6d507e2977922a3038732ed5e191abde656c827a4b98f8c3603219e"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/gb_statemanager.vhd",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/gb_statemanager.vhd",
+      "sha256": "491ffb2e04c4697d4e93a61b61692b44acd8ef2bd7f2ebaa82a2e5a5f9307da8"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/gbc_snd.vhd",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/gbc_snd.vhd",
+      "sha256": "fdd9ae51b20335792fb6971b3f111bfd4bdb8cf74e796087db72bf7617881616"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/hdma.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/hdma.v",
+      "sha256": "82171b8780e068b2c14a3fb6faa5995567cbe93e61fdb9bfbfafd0cc81899897"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/link.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/link.v",
+      "sha256": "4c1f21d82bef9e139879b33970a7ed4cf94aa9b1bbfc54e1ce6eee9706c33dd9"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/mappers/gb_camera.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/mappers/gb_camera.v",
+      "sha256": "9a174629b742c71cef0a430278cc08523f78e953ba99b02a5006d93560bed72b"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/mappers/huc1.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/mappers/huc1.v",
+      "sha256": "0e0a82859eb22fa27a3f7066f1c4c557498dc6b7e1cf74f429c688e4696c947d"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/mappers/huc3.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/mappers/huc3.v",
+      "sha256": "02847b716b970965581c196ef4a84be45a85466f4126b13e34cd52e1b20687eb"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/mappers/mappers.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/mappers/mappers.v",
+      "sha256": "9fe8b0ee44a5ef8904b9bf58bab6602f52727da7dd4af900b713c37b437dbb21"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/mappers/mbc1.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/mappers/mbc1.v",
+      "sha256": "bbec3662f7ab61c1839bf796450d0d8d9f25f00ff9f3262e5f242a39d3b068ce"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/mappers/mbc2.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/mappers/mbc2.v",
+      "sha256": "6448d9f828fc1c23133e54aeaa5a9927feacc855c06aa9fdb7d60604ed84b66c"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/mappers/mbc3.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/mappers/mbc3.v",
+      "sha256": "bf2d48894ae557f712af228e684db2f7b3ac05b986cdd0fd0a88170cdc97a0d1"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/mappers/mbc5.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/mappers/mbc5.v",
+      "sha256": "ca84ece89798306881ad9debf700fd8207116664ee61882316f4e4e285fcaaef"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/mappers/mbc6.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/mappers/mbc6.v",
+      "sha256": "9e9c8dd86e67f8527d772b805e1577e8a9ee81dfac884362c5960d6795724744"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/mappers/mbc7.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/mappers/mbc7.v",
+      "sha256": "06339de46d7ab846e80b44051558b249d09e85c10b2064f779e1c8b1d67138e0"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/mappers/megaduck.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/mappers/megaduck.v",
+      "sha256": "efe1f604a1e2b34939ad6854b8df3a4759a171812ded3687210b09eebb1f49b2"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/mappers/misc.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/mappers/misc.v",
+      "sha256": "8975da79b6c0671f0c44643918ec5ae0241deadd518b163cdfd5253550b501e5"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/mappers/mmm01.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/mappers/mmm01.v",
+      "sha256": "31b31b8ea7eb191b365a3e32477944153d15bb10c3d4ac2224ce7df965844962"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/mappers/rocket.sv",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/mappers/rocket.sv",
+      "sha256": "a32134dd3c70a201ba16a613eab94da6a6c372c8b29ca37880f5af6e0605ed70"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/mappers/sachen.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/mappers/sachen.v",
+      "sha256": "026b20818a87cf9816723df00278c2c9cc15998b7bbbabe80e0e823ad8da4db7"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/mappers/tama.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/mappers/tama.v",
+      "sha256": "a6a324a945f0cd4baa7265d89cc17d5f696ca5c287680cc6b07494ff6e37023c"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/megaswizzle.sv",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/megaswizzle.sv",
+      "sha256": "f6a52a210453952d9502b12e8279439c59a87b33cf3e4b542d86207d3d60b23a"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/reg_savestates.vhd",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/reg_savestates.vhd",
+      "sha256": "e7f840214dd84363cadb70db402b192e494d8060d5d4b2ac89f5b9c71e79afbf"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/speedcontrol.vhd",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/speedcontrol.vhd",
+      "sha256": "8e79a5e1e74f7dee8534f66831e1f04108e75d95738503c4cc50b1fccd5183e5"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/sprites.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/sprites.v",
+      "sha256": "1d2e0438e4bc027c4cecf41bc492b6e365ee9c649cf197d656cc267a752b2c81"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/sprites_extra.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/sprites_extra.v",
+      "sha256": "f78edebbd1cb751384e831c00101d4ebb76ba455b61921e9b24b2857cf404de0"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/sprites_extra_store.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/sprites_extra_store.v",
+      "sha256": "8e020f8e0ceedfea3840618a397268d5beb08b1f0b0e9d4a5c0caa010f8a5355"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/timer.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/timer.v",
+      "sha256": "6eed0c8fe2f18cebff6050622edacacba2543f6ad1ea880ebaa8dbc53af090ee"
+    },
+    {
+      "path": "third_party/gameboy/upstream/rtl/video.v",
+      "source": "MiSTer Game Boy",
+      "source_path": "rtl/video.v",
+      "sha256": "95c16fde7d5ea1105891d7663105d718e5d515319b185273a344e08d5a630528"
     }
   ]
 }

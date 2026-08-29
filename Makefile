@@ -1,21 +1,28 @@
-.PHONY: check generate check-generated repo-check host-build host-test host-sanitize hdl-test c64-lint clean
+.PHONY: check generate check-generated repo-check host-build host-test host-sanitize hdl-test c64-lint gameboy-lint clean
 
 PYTHON ?= python3
 HOST_BUILD_DIR ?= build-host
 
-check: check-generated repo-check host-test host-sanitize hdl-test c64-lint
+check: check-generated repo-check host-test host-sanitize hdl-test c64-lint gameboy-lint
 
 generate:
 	$(PYTHON) scripts/generate_registers.py
 	$(PYTHON) scripts/generate_c64_interface.py
+	$(PYTHON) scripts/generate_gameboy_interface.py
+	$(PYTHON) scripts/generate_gameboy_bootrom.py
+	$(PYTHON) scripts/port_gameboy_core.py
 
 check-generated:
 	$(PYTHON) scripts/generate_registers.py --check
 	$(PYTHON) scripts/generate_c64_interface.py --check
+	$(PYTHON) scripts/generate_gameboy_interface.py --check
+	$(PYTHON) scripts/generate_gameboy_bootrom.py --check
+	$(PYTHON) scripts/port_gameboy_core.py --check
 
 repo-check:
 	$(PYTHON) scripts/check_repo.py
 	$(PYTHON) scripts/audit_c64_import.py
+	$(PYTHON) scripts/audit_gameboy_import.py
 	$(PYTHON) -m unittest discover -s tests -p 'test_*.py'
 
 host-build:
@@ -35,6 +42,9 @@ hdl-test:
 
 c64-lint:
 	./scripts/lint_c64_sv.sh
+
+gameboy-lint:
+	./scripts/lint_gameboy_sv.sh
 
 clean:
 	cmake -E remove_directory $(HOST_BUILD_DIR)

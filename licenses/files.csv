@@ -12,6 +12,10 @@ firmware/include/multitini_tmp102.h,Appletini One and Multitini One,052fe8aa43c4
 hdl/board/**,Multitini One,,GPL-3.0-only,pending-vivado,Original board shell
 hdl/common/**,Multitini One,,GPL-3.0-only,pending-vivado,Original common shell logic
 hdl/core/**,Multitini One,,GPL-3.0-only,pending-vivado,Original core adapter interfaces
+hdl/core/gameboy/ports/gb.v,MiSTer Game Boy and Multitini One,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-3.0-or-later,pending-vivado,Deterministic compatibility port selecting the generated open-source bootstrap hex
+hdl/core/gameboy/ports/cart.v,MiSTer Game Boy and Multitini One,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,pending-vivado,Deterministic strict-tool compatibility port with declarations moved before use
+hdl/core/gameboy/ports/dpram.sv,MiSTer Game Boy and Multitini One,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later,pending-vivado,Portable dual-port memory compatibility implementation replacing Intel altsyncram
+hdl/core/gameboy/boot/cgb_boot.hex,MiSTer Game Boy and SameBoy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,MIT,generated,Deterministic readmemh form of the pinned open-source CGB bootstrap MIF
 hdl/core/c64/multitini_c64_buslogic.vhd,MiSTer C64 and Multitini One,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,pending-vivado,Port of FPGA64 bus logic with all embedded ROM variants removed and writable character ROM added
 hdl/core/c64/ports/dprom.vhd,MiSTer C64 and Multitini One,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,pending-vivado,Standards-compatible dual-port memory inference with ROM initialization disabled
 hdl/core/c64/ports/spram.vhd,MiSTer C64 and Multitini One,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,pending-vivado,Standards-compatible single-port memory inference
@@ -66,3 +70,50 @@ third_party/c64/upstream/rtl/iec_drive/c1541_direct_gcr.sv,MiSTer C64,62fc697e3c
 third_party/c64/upstream/rtl/iec_drive/c1541_logic.sv,MiSTer C64,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,imported,Exact copy; repository-owner-directed redistribution-grant assumption
 third_party/c64/upstream/rtl/iec_drive/iecdrv_misc.sv,MiSTer C64,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,imported,Exact copy; repository-owner-directed redistribution-grant assumption
 third_party/c64/upstream/rtl/iec_drive/lfsr.v,MiSTer C64,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,imported,Exact copy; repository-owner-directed redistribution-grant assumption
+third_party/gameboy/upstream/Gameboy.sv,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later,imported,Exact copy retained as platform-top reference and not built
+third_party/gameboy/upstream/BootROMs/README.md,MiSTer Game Boy and SameBoy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,MIT,imported,Exact attribution and build note for the open-source bootstrap ROMs
+third_party/gameboy/upstream/BootROMs/cgb_boot.mif,MiSTer Game Boy and SameBoy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,MIT,imported,Exact generated open-source CGB DMG and SGB bootstrap memory image; product GBC path uses the CGB range
+third_party/gameboy/upstream/BootROMs/src/cgb_boot.asm,MiSTer Game Boy and SameBoy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,MIT,imported,Exact source with file-local MIT notice
+third_party/gameboy/upstream/BootROMs/src/dmg_boot.asm,MiSTer Game Boy and SameBoy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,MIT,imported,Exact source with file-local MIT notice
+third_party/gameboy/upstream/BootROMs/src/hardware.inc,MiSTer Game Boy and SameBoy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,MIT,imported,Exact bootstrap build include covered by upstream BootROM attribution
+third_party/gameboy/upstream/BootROMs/src/sgb_boot.asm,MiSTer Game Boy and SameBoy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,MIT,imported,Exact source with file-local MIT notice
+third_party/gameboy/upstream/rtl/gb.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-3.0-or-later,imported,Exact copy retained as reference; product build uses a deterministic strict-tool port with the open bootstrap hex
+third_party/gameboy/upstream/rtl/sprites.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-3.0-or-later,imported,Exact copy; file-local notice
+third_party/gameboy/upstream/rtl/video.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-3.0-or-later,imported,Exact copy; file-local notice
+third_party/gameboy/upstream/rtl/T80/GBse.vhd,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,BSD-3-Clause-like-T80,imported,Exact copy; complete file-local redistribution notice
+third_party/gameboy/upstream/rtl/T80/T80.vhd,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,BSD-3-Clause-like-T80,imported,Exact copy; complete file-local redistribution notice
+third_party/gameboy/upstream/rtl/T80/T80_ALU.vhd,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,BSD-3-Clause-like-T80,imported,Exact copy; complete file-local redistribution notice
+third_party/gameboy/upstream/rtl/T80/T80_MCode.vhd,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,BSD-3-Clause-like-T80,imported,Exact copy; complete file-local redistribution notice
+third_party/gameboy/upstream/rtl/T80/T80_Pack.vhd,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,BSD-3-Clause-like-T80,imported,Exact copy; complete file-local redistribution notice
+third_party/gameboy/upstream/rtl/T80/T80_Reg.vhd,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,BSD-3-Clause-like-T80,imported,Exact copy; complete file-local redistribution notice
+third_party/gameboy/upstream/rtl/bus_savestates.vhd,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact unmarked build source covered by upstream top-level declaration
+third_party/gameboy/upstream/rtl/cart.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact unmarked build source covered by upstream top-level declaration
+third_party/gameboy/upstream/rtl/cheatcodes.sv,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact unmarked build source covered by upstream top-level declaration; feature disabled
+third_party/gameboy/upstream/rtl/dpram.vhd,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact Intel memory reference; product build uses portable replacement
+third_party/gameboy/upstream/rtl/gb_savestates.vhd,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact unmarked build source covered by upstream top-level declaration
+third_party/gameboy/upstream/rtl/gb_statemanager.vhd,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact unmarked build source covered by upstream top-level declaration
+third_party/gameboy/upstream/rtl/gbc_snd.vhd,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact unmarked build source covered by upstream top-level declaration
+third_party/gameboy/upstream/rtl/hdma.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact unmarked build source covered by upstream top-level declaration
+third_party/gameboy/upstream/rtl/link.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact unmarked build source covered by upstream top-level declaration; external link disabled
+third_party/gameboy/upstream/rtl/megaswizzle.sv,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact unmarked machine dependency; MegaDuck mode disabled but the shared address/audio bridge remains instantiated
+third_party/gameboy/upstream/rtl/mappers/gb_camera.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact mapper source; camera input not exposed
+third_party/gameboy/upstream/rtl/mappers/huc1.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact mapper source
+third_party/gameboy/upstream/rtl/mappers/huc3.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact mapper source
+third_party/gameboy/upstream/rtl/mappers/mappers.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact mapper aggregator
+third_party/gameboy/upstream/rtl/mappers/mbc1.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact mapper source
+third_party/gameboy/upstream/rtl/mappers/mbc2.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact mapper source
+third_party/gameboy/upstream/rtl/mappers/mbc3.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact mapper source
+third_party/gameboy/upstream/rtl/mappers/mbc5.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact mapper source
+third_party/gameboy/upstream/rtl/mappers/mbc6.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact mapper source
+third_party/gameboy/upstream/rtl/mappers/mbc7.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact mapper source
+third_party/gameboy/upstream/rtl/mappers/megaduck.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact mapper source; MegaDuck mode disabled
+third_party/gameboy/upstream/rtl/mappers/misc.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact mapper source
+third_party/gameboy/upstream/rtl/mappers/mmm01.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact mapper source
+third_party/gameboy/upstream/rtl/mappers/rocket.sv,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact mapper source
+third_party/gameboy/upstream/rtl/mappers/sachen.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact mapper source
+third_party/gameboy/upstream/rtl/mappers/tama.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact mapper source
+third_party/gameboy/upstream/rtl/reg_savestates.vhd,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact unmarked build source covered by upstream top-level declaration
+third_party/gameboy/upstream/rtl/speedcontrol.vhd,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact reference; product adapter uses stall-capable clock-enable generator
+third_party/gameboy/upstream/rtl/sprites_extra.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact unmarked build source covered by upstream top-level declaration
+third_party/gameboy/upstream/rtl/sprites_extra_store.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact unmarked build source covered by upstream top-level declaration
+third_party/gameboy/upstream/rtl/timer.v,MiSTer Game Boy,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-2.0-or-later-upstream-scope,imported,Exact unmarked build source covered by upstream top-level declaration

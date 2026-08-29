@@ -59,6 +59,34 @@ run_test tb_c64_input \
     "$repo_root/hdl/core/c64/multitini_c64_input.sv" \
     "$repo_root/hdl/sim/tb_c64_input.sv"
 
+run_test tb_gameboy_input \
+    "$repo_root/hdl/core/gameboy/multitini_gameboy_defs_pkg.sv" \
+    "$repo_root/hdl/core/gameboy/multitini_gameboy_input.sv" \
+    "$repo_root/hdl/sim/tb_gameboy_input.sv"
+
+run_test tb_gameboy_clock_enable \
+    "$repo_root/hdl/core/gameboy/multitini_gameboy_clock_enable.sv" \
+    "$repo_root/hdl/sim/tb_gameboy_clock_enable.sv"
+
+run_test tb_gameboy_loader \
+    "$repo_root/hdl/core/gameboy/multitini_gameboy_defs_pkg.sv" \
+    "$repo_root/hdl/core/gameboy/multitini_gameboy_loader.sv" \
+    "$repo_root/hdl/sim/tb_gameboy_loader.sv"
+
+run_test tb_gameboy_memory \
+    "$repo_root/hdl/core/gameboy/multitini_gameboy_memory.sv" \
+    "$repo_root/hdl/sim/tb_gameboy_memory.sv"
+
+run_test tb_psram_line_service \
+    "$repo_root/hdl/common/multitini_psram_line_service.sv" \
+    "$repo_root/hdl/sim/tb_psram_line_service.sv"
+
+run_test tb_memory_cdc \
+    "$repo_root/hdl/sim/xilinx_primitives.sv" \
+    "$repo_root/hdl/common/multitini_async_mailbox.sv" \
+    "$repo_root/hdl/common/multitini_memory_cdc.sv" \
+    "$repo_root/hdl/sim/tb_memory_cdc.sv"
+
 # Compile the complete tracked shell. The generated block-design wrapper is a
 # Vivado artifact, so -i treats that one module as a black box here.
 iverilog -g2012 -Wall -Wimplicit -i -s multitini_one_top \
@@ -79,7 +107,9 @@ iverilog -g2012 -Wall -Wimplicit -i -s multitini_one_top \
     "$repo_root/hdl/common/multitini_axi3_regs.sv" \
     "$repo_root/hdl/common/multitini_control_regs.sv" \
     "$repo_root/hdl/common/multitini_psram_bist.sv" \
+    "$repo_root/hdl/common/multitini_psram_line_service.sv" \
     "$repo_root/hdl/common/multitini_async_mailbox.sv" \
+    "$repo_root/hdl/common/multitini_memory_cdc.sv" \
     "$repo_root/hdl/common/multitini_cdc_pulse_toggle.sv" \
     "$repo_root/hdl/board/multitini_video_test.sv" \
     "$repo_root/hdl/board/multitini_audio_test.sv" \

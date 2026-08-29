@@ -14,7 +14,9 @@ typedef enum {
     MT_CONTENT_G64,
     MT_CONTENT_CRT,
     MT_CONTENT_TAP_FUTURE,
-    MT_CONTENT_D81_FUTURE
+    MT_CONTENT_D81_FUTURE,
+    MT_CONTENT_GB_CART,
+    MT_CONTENT_GBC_CART
 } mt_content_type_t;
 
 typedef enum {
@@ -40,6 +42,11 @@ typedef struct {
     uint32_t load_address;
     uint16_t hardware_type;
     bool writable;
+    uint8_t mapper_type;
+    uint8_t rom_size_code;
+    uint8_t ram_size_code;
+    bool color_capable;
+    bool color_required;
 } mt_content_info_t;
 
 mt_content_type_t mt_content_classify(const char *path);
@@ -51,6 +58,8 @@ mt_content_validation_t mt_content_inspect(mt_content_type_t type,
                                            mt_content_info_t *info);
 mt_content_validation_t mt_c64_rom_validate(mt_c64_rom_kind_t kind,
                                             const uint8_t *data, size_t size);
+mt_content_validation_t mt_gbc_boot_rom_validate(const uint8_t *data,
+                                                  size_t size);
 const char *mt_content_validation_name(mt_content_validation_t result);
 
 #endif

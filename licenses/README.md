@@ -9,8 +9,9 @@ Rules:
 - Imported files retain their original headers.
 - Exact upstream commits and copied paths must be recorded.
 - A binary release must include the full corresponding source and build inputs.
-- System ROMs, games, disks, carts, tapes, logos, and manuals require separate
-  rights and are not covered merely because a core is open source.
+- System ROMs, games, disks, carts, tapes, logos, and manuals are separate
+  artifacts and are not covered merely because a core is open source. The
+  practical cross-core inclusion rule is recorded in `docs/CONTENT_POLICY.md`.
 - NonCommercial code is not accepted in the official product path.
 
 The project license is GPL-3.0-only because the first board-support imports are

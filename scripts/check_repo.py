@@ -21,6 +21,12 @@ RESTRICTED_SUFFIXES = {
 }
 SOURCE_SUFFIXES = {".c", ".h", ".py", ".sv", ".tcl", ".v", ".vhd", ".vhdl", ".xdc"}
 GENERATED_PREFIXES = ("build/", "build-", "project/", "vitis_workspace/", ".Xil/")
+ALLOWED_RESTRICTED_FILES = {
+    # Open-source SameBoy-derived bootstrap, plus its deterministic Vivado/
+    # readmemh representation. Both are pinned and covered by the MIT notice.
+    "third_party/gameboy/upstream/BootROMs/cgb_boot.mif",
+    "hdl/core/gameboy/boot/cgb_boot.hex",
+}
 
 
 def candidate_files() -> list[str]:
@@ -61,7 +67,7 @@ def main() -> int:
     for path in files:
         lowered = path.lower()
         suffix = Path(lowered).suffix
-        if suffix in RESTRICTED_SUFFIXES:
+        if suffix in RESTRICTED_SUFFIXES and path not in ALLOWED_RESTRICTED_FILES:
             errors.append(f"restricted content or generated binary: {path}")
         if any(path == prefix.rstrip("/") or path.startswith(prefix) for prefix in GENERATED_PREFIXES):
             errors.append(f"generated directory is tracked: {path}")
@@ -115,7 +121,8 @@ def main() -> int:
         tracked_imports = {
             path for path in files
             if path.startswith("third_party/appletini/") or
-            path.startswith("third_party/c64/upstream/")
+            path.startswith("third_party/c64/upstream/") or
+            path.startswith("third_party/gameboy/upstream/")
         }
         if tracked_imports != import_paths:
             for path in sorted(tracked_imports - import_paths):

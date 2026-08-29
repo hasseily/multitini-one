@@ -7,23 +7,53 @@ set project_dir [file join $repo_root "build" "vivado"]
 set project_name "multitini_one"
 set part_name "xc7z020clg484-2"
 
-set c64_video_standard "PAL"
-if {[info exists ::env(MULTITINI_C64_VIDEO_STANDARD)]} {
-    set c64_video_standard \
-        [string toupper [string trim $::env(MULTITINI_C64_VIDEO_STANDARD)]]
+set machine "C64"
+if {[info exists ::env(MULTITINI_MACHINE)]} {
+    set machine [string toupper [string trim $::env(MULTITINI_MACHINE)]]
 }
-switch -- $c64_video_standard {
-    PAL {
-        set c64_clock_mhz 31.527954
-        set c64_ntsc_mode 0
+set c64_video_standard "PAL"
+set c64_ntsc_mode 0
+set active_machine 0
+switch -- $machine {
+    C64 {
+        if {[info exists ::env(MULTITINI_C64_VIDEO_STANDARD)]} {
+            set c64_video_standard \
+                [string toupper [string trim $::env(MULTITINI_C64_VIDEO_STANDARD)]]
+        }
+        switch -- $c64_video_standard {
+            PAL {
+                set c64_clock_mhz 31.527954
+                set c64_ntsc_mode 0
+            }
+            NTSC {
+                set c64_clock_mhz 32.727266
+                set c64_ntsc_mode 1
+            }
+            default {
+                error "MULTITINI_C64_VIDEO_STANDARD must be PAL or NTSC"
+            }
+        }
     }
-    NTSC {
-        set c64_clock_mhz 32.727266
-        set c64_ntsc_mode 1
+    GBC {
+        set c64_clock_mhz 33.554432
+        set c64_video_standard "N/A"
+        set active_machine 1
     }
     default {
-        error "MULTITINI_C64_VIDEO_STANDARD must be PAL or NTSC"
+        error "MULTITINI_MACHINE must be C64 or GBC"
     }
+}
+
+set enable_gbc_psram 0
+if {[info exists ::env(MULTITINI_ENABLE_GBC_PSRAM)]} {
+    set requested [string trim $::env(MULTITINI_ENABLE_GBC_PSRAM)]
+    if {$requested ni {0 1}} {
+        error "MULTITINI_ENABLE_GBC_PSRAM must be 0 or 1"
+    }
+    set enable_gbc_psram $requested
+}
+if {$enable_gbc_psram && $machine ne "GBC"} {
+    error "MULTITINI_ENABLE_GBC_PSRAM is valid only for GBC builds"
 }
 
 proc require_file {path} {
@@ -54,7 +84,8 @@ proc add_manifest_sources {repo_root} {
                 set_property file_type SystemVerilog [get_files $source]
             } elseif {$extension eq ".vhd" || $extension eq ".vhdl"} {
                 set_property file_type {VHDL 2008} [get_files $source]
-            } elseif {$extension ne ".v" && $extension ne ".mem"} {
+            } elseif {$extension ne ".v" && $extension ne ".mem" &&
+                      $extension ne ".hex"} {
                 error "Unsupported source-manifest extension: $source"
             }
         }
@@ -236,9 +267,9 @@ set_property -dict [list \
     CONFIG.RESET_PORT {resetn} \
     CONFIG.RESET_TYPE {ACTIVE_LOW}] $video_wiz
 
-# The requested frequency is the selected MiSTer C64 core's 4x dot clock.
-# Vivado must report the achieved MMCM frequency and timing before this is
-# accepted for hardware use.
+# The requested frequency is selected above for the active machine. The cell
+# and ports keep their historical c64 names to avoid unnecessary block-design
+# churn. Vivado must report the achieved MMCM frequency and timing before use.
 set c64_wiz [create_bd_cell -type ip \
     -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_c64]
 set_property -dict [list \
@@ -311,11 +342,13 @@ if {[info exists ::env(MULTITINI_BUILD_ID)]} {
     }
 }
 set_property generic \
-    "SHELL_BUILD_ID=32'h${git_id} C64_NTSC_MODE=1'b${c64_ntsc_mode}" \
+    "SHELL_BUILD_ID=32'h${git_id} C64_NTSC_MODE=1'b${c64_ntsc_mode} ACTIVE_MACHINE=${active_machine} ENABLE_GBC_PSRAM=1'b${enable_gbc_psram}" \
     [get_filesets sources_1]
 update_compile_order -fileset sources_1
 
 puts "Created $project_dir/$project_name.xpr"
 puts "SHELL_BUILD_ID=0x$git_id"
+puts "MACHINE=$machine"
 puts "C64_VIDEO_STANDARD=$c64_video_standard"
-puts "C64_CLOCK_REQUEST_MHZ=$c64_clock_mhz"
+puts "MACHINE_CLOCK_REQUEST_MHZ=$c64_clock_mhz"
+puts "GBC_PSRAM_ENABLED=$enable_gbc_psram"

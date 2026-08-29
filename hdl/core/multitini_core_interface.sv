@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns / 1ps
 
-// Draft ABI 0.1 core-facing signal bundle. The C64 adapter may narrow this
-// before ABI 1.0. Board pins never appear in this interface.
+// Draft ABI 0.1 core-facing signal bundle, exercised by C64 and GBC adapters.
+// It may still change before ABI 1.0. Board pins never appear here.
 interface multitini_core_interface;
     logic        clk;
     logic        reset;
@@ -31,6 +31,17 @@ interface multitini_core_interface;
     logic [31:0] load_offset;
     logic [31:0] load_total;
     logic        load_error;
+    // One-outstanding, 64-bit aligned external-memory service. Requests stay
+    // stable through ready; every accepted request receives one response.
+    logic [23:0] memory_addr;
+    logic        memory_write;
+    logic [63:0] memory_wdata;
+    logic [7:0]  memory_wstrb;
+    logic        memory_valid;
+    logic        memory_ready;
+    logic [63:0] memory_rdata;
+    logic        memory_rvalid;
+    logic        memory_fault;
 
     modport shell (
         output clk, reset, input core_id, ready,
@@ -39,7 +50,10 @@ interface multitini_core_interface;
         input audio_l, audio_r, audio_valid,
         output input_code, input_value, input_valid, input input_ready, load_ready,
         output load_data, load_valid, load_first, load_last, load_kind,
-        load_offset, load_total, input load_error
+        load_offset, load_total, input load_error,
+        input memory_addr, memory_write, memory_wdata, memory_wstrb,
+        memory_valid, output memory_ready, memory_rdata, memory_rvalid,
+        memory_fault
     );
 
     modport core (
@@ -49,6 +63,9 @@ interface multitini_core_interface;
         output audio_l, audio_r, audio_valid,
         input input_code, input_value, input_valid, output input_ready, load_ready,
         input load_data, load_valid, load_first, load_last, load_kind,
-        load_offset, load_total, output load_error
+        load_offset, load_total, output load_error,
+        output memory_addr, memory_write, memory_wdata, memory_wstrb,
+        memory_valid, input memory_ready, memory_rdata, memory_rvalid,
+        memory_fault
     );
 endinterface

@@ -15,17 +15,22 @@ Each machine adapter translates the common shell interface to an imported core.
 The imported core stays close to its pinned upstream source. Board-specific
 changes belong in the shell or adapter.
 
-## First image
+## Build-time machine selection
 
-The first image is one full Zynq configuration containing:
+One complete machine adapter is selected when the Vivado project is created.
+`MULTITINI_MACHINE=C64` is the default; `MULTITINI_MACHINE=GBC` selects the
+reuse-validation image. This is full-image selection, not partial
+reconfiguration.
+
+Each image is one full Zynq configuration containing:
 
 - the PS and its DDR, QSPI, SD, UART, I2C, and two ULPI controllers;
 - a small AXI control register bank;
 - an independently visible DVI test pattern;
 - independently audible I2S and SPDIF test tones;
 - safe idle values on Apple, Ethernet, and PSRAM pins; and
-- a retained C64 adapter/core integration whose outputs are not yet selected
-  onto the physical DVI and audio paths.
+- one retained machine adapter/core integration whose outputs are not yet
+  selected onto the physical DVI and audio paths.
 
 Partial reconfiguration is deliberately outside this baseline.
 
@@ -42,6 +47,7 @@ Planned initial domains:
 | PSRAM reference | 199.995 MHz | same Clocking Wizard | IDELAYCTRL reference |
 | Video | 148.5 MHz | PS FCLK2 through Clocking Wizard | 1080p diagnostic output |
 | C64 machine | requested 31.527954 MHz PAL or 32.727266 MHz NTSC | PS FCLK2 through a separate Clocking Wizard | FPGA64 machine, ROM/input loaders, raw video/audio |
+| GBC machine | requested 33.554432 MHz | PS FCLK2 through the build-selected machine Clocking Wizard | GB/GBC machine, cart/bootstrap loaders, raw video/audio |
 | Audio MCLK | 12.288 MHz | board oscillator | DAC clock and I2S derivation |
 | Audio BCLK | 3.072 MHz | MCLK divided by four | 48 kHz, 64-bit I2S frames |
 
@@ -63,6 +69,25 @@ each completed a strictly framed transfer. The ARM command ABI supports begin,
 data, end, and abort. Firmware retries bounded mailbox backpressure and leaves
 the core in reset if a ROM set cannot be loaded.
 
+The GBC adapter holds reset until a cartridge is strictly framed and accepted
+by the external-memory service. Its open CGB bootstrap is generated from a
+pinned SameBoy-derived source; an optional 2304-byte override uses the same
+direct-load stream. One gamepad namespace maps directly to the eight upstream
+button bits.
+
+## Common bulk-memory service
+
+The core interface exposes one outstanding, aligned 64-bit line request. Reads
+and byte-masked writes use explicit request acceptance and response-valid
+handshakes. The GBC adapter uses it for cartridge ROM and external cartridge
+RAM, with a one-line cache that suppresses machine clock enables during misses
+or writes.
+
+`multitini_memory_cdc` carries this contract between the machine and control
+domains. `multitini_psram_line_service` translates it to the imported
+Appletini PSRAM driver. The physical GBC path is opt-in and defaults off; the
+PSRAM pins remain inactive until Vivado and hardware gates pass.
+
 ## Interface versioning
 
 `spec/interface_v0.json` is the source of truth for the first ARM-to-shell
@@ -70,10 +95,10 @@ register ABI. Generated C and SystemVerilog definitions must be regenerated and
 checked together. Major versions are incompatible. Minor versions only add
 backward-compatible behavior.
 
-`spec/core_interface_v0.md` records the separate core-facing ready/valid
-contract. It is deliberately pre-release. Media service semantics wait for a
-rights-cleared 1541 integration instead of assuming that D64 sector requests
-also fit G64 track data.
+`spec/core_interface_v0.md` records the separate core-facing ready/valid and
+memory contracts. It is deliberately pre-release. Media service semantics wait
+for a rights-cleared 1541 integration instead of assuming that D64 sector
+requests also fit G64 track data.
 
 ## Prepared memory test
 
