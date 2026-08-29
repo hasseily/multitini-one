@@ -173,6 +173,31 @@ interface enumerated, and no input report arrived.
 
 ### Build 2026082B: USB3300 VBUS correction awaiting board test
 
+Exact firmware artifact:
+
+- File: repository-root `FIRMWARE.BIN`
+- Source/build-input commit:
+  `c2b87fad2913580de296eb9b06a9186b57deeefa`
+- `FIRMWARE.BIN` size: 4,351,948 bytes
+- `FIRMWARE.BIN` SHA-256:
+  `e13e1b3df355e38590ebff3c5f496fa10a8b5c1d89bee0066f649aed1caf9425`
+- `FIRMWARE.BIN` CRC32: `F31417DA`
+- Free firmware-slot space: 10,262,580 bytes
+- Routed bitstream SHA-256:
+  `1db57776fab49b7fea3056032c4a20205652fabe6805887979e5541d5feddba2`
+- XSA SHA-256:
+  `f3b0608b77e7b0c8f4612d3a61665234453c3f4f98dc067888f1635f157c953e`
+- Bootgen readback verified the expected FSBL, routed bitstream, and two
+  application segments.
+
+The matched PAL Vivado 2025.2 build passes at WNS +0.119 ns, WHS +0.053 ns,
+and WPWS +1.749 ns with zero total negative slack or failing endpoints. All
+11,046 routable nets are fully routed. CDC has 15 Info-only crossings and no
+Warning or Critical entry; all four bus-skew constraints pass. DRC has zero
+errors or critical warnings. The routed design uses 6,169 LUTs, 5,703
+flip-flops, 85 RAMB36 blocks, one RAMB18 block, and seven DSP blocks. A fresh
+Vitis 2025.2 workspace rebuilt the FSBL and final application from this XSA.
+
 Firmware build `2026082B` adds explicit USB3300 host-power setup through the
 Zynq USB1 ULPI viewport in
 [`cherryusb_zynq_hc.c`](../firmware/platform/xilinx/cherryusb_zynq_hc.c), using

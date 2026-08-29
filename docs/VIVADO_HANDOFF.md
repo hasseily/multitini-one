@@ -1,32 +1,27 @@
 # Vivado and Vitis Handoff
 
-Status: the first diagnostic image and the PAL C64 UART-ROM/frozen-snapshot
-image have passed their initial board tests. The current four-bank live-video
-source passes focused XSim, a fresh routed PAL build in Vivado 2025.2, and its
-first complete board procedure using the matching Vitis/Bootgen package.
+Status: the diagnostic, PAL C64 frozen-snapshot, and PAL live-video images have
+passed their recorded board procedures. The corrected USB-input image has a
+fresh Vivado 2025.2 build and matching Vitis/Bootgen artifact; physical USB1
+VBUS and HID validation remain pending.
 
-The fresh default build used Vivado 2025.2, part `xc7z020clg484-2`, shell build
-ID `20260829`, PAL generic `C64_NTSC_MODE=0`, base commit
-`fd554dbf46e22514bb132f3dc063ee0a892bdcc6`, and a dirty engineering tree. Its
-manifest timestamp is `2026-08-29T15:33:38Z`. Vivado generated the routed
-bitstream and XSA. Routed timing passes with WNS +0.675 ns, WHS +0.053 ns, WPWS
-+1.749 ns, and zero failing endpoints. All 11,033 routable nets are fully
-routed with zero routing errors, and DRC reports zero errors.
+The fresh default PAL C64 build used Vivado 2025.2, part
+`xc7z020clg484-2`, shell and firmware build ID `2026082B`, PAL generic
+`C64_NTSC_MODE=0`, and source/manifest commit
+`c2b87fad2913580de296eb9b06a9186b57deeefa`. The exported XSA has SHA-256
+`f3b0608b77e7b0c8f4612d3a61665234453c3f4f98dc067888f1635f157c953e`; the
+routed bitstream has SHA-256
+`1db57776fab49b7fea3056032c4a20205652fabe6805887979e5541d5feddba2`.
 
-The final CDC report contains only 14 `CDC-3` informational crossings and one
-`CDC-9` informational reset crossing; the fatal critical-CDC gate passed.
-`check_timing` reports zero no-clock registers, unconstrained internal
-endpoints, missing input delays, and genuinely missing output delays. The
-SPDIF false path and the forwarded I2S/DVI clocks remain reported as
-informational exceptions.
+Routed timing passes with WNS +0.119 ns, WHS +0.053 ns, WPWS +1.749 ns,
+all total negative slack zero, and zero failing endpoints. The CDC report has
+15 Info entries only: 14 `CDC-3` and one `CDC-9`. All four bus-skew checks pass,
+with worst slack +6.210 ns. All 11,046 routable nets are fully routed with zero
+routing errors. DRC has zero Error or Critical entries and retains 51 advisory
+warnings.
 
-The routed live design uses 6,168 LUTs, 5,703 flip-flops, 85 RAMB36 blocks, one
-RAMB18 block, and seven DSP blocks. The four-bank bridge uses 543 LUTs, 335
-flip-flops, and 64 RAMB36 blocks. Total design use is 85.5 of 140 block-RAM
-tiles (61.07%), leaving 54.5 tiles. All four bus-skew constraints pass; the two
-live Gray-pointer crossings have actual skews 0.507 ns and 0.610 ns against a
-6.733 ns requirement. The DVI output path group passes with setup slack
-+1.672 ns and hold slack +1.718 ns.
+The routed design uses 6,169 LUTs, 5,703 flip-flops, 85 RAMB36 blocks, one
+RAMB18 block, and seven DSP blocks.
 
 The exact AK4493 datasheet was obtained and reviewed locally. The I2S LRCK and
 SDATA constraints now use a conservative +/-5 ns receiver window, and the
@@ -133,10 +128,11 @@ or bitstream generation fails. Review, do not waive:
 
 Save the exact reports and build manifest. A clean build is not hardware proof.
 
-The verified result above covers the current default PAL C64 live-video
-project. The corresponding packaged image also passes its first board test.
-The separate NTSC C64 and GBC vendor builds remain pending. GBC PSRAM remains
-disabled and unqualified.
+The verified vendor result above covers the current default PAL C64 USB-input
+project. Its live-video PL path is unchanged from the separately qualified PAL
+live image, but the `2026082B` image has not yet passed USB1 VBUS or HID board
+testing. The separate NTSC C64 and GBC vendor builds remain pending. GBC PSRAM
+remains disabled and unqualified.
 
 The selected machine adapter is marked `DONT_TOUCH` so synthesis and timing
 cannot silently remove the integration. Its registered PAL RGB output feeds an
@@ -193,13 +189,13 @@ After a successful XSA export:
 vitis -s scripts/create_vitis_workspace.py
 ```
 
-Confirm the platform uses that exact XSA. For the current live test image,
-Vitis 2025.2 built both the FSBL and diagnostic ELF from the fresh XSA. Bootgen
-packaged and read back the expected FSBL, routed bitstream, and two application
-segments. The 4,241,740-byte `FIRMWARE.BIN` has SHA-256
-`a44943738448e3114e58c03a30a2210270684ecf849911621e045ae5771f8703` and
-CRC32 `01F764E0`. Do not enable writable media until the read-only path and
-power-loss rules are tested.
+Confirm the platform uses that exact XSA. For build `2026082B`, Vitis 2025.2
+built both the FSBL and USB-input application from the fresh XSA. The
+application has 169,768 bytes of text, 1,932 bytes of data, and 133,568 bytes
+of BSS. Bootgen packaged and read back the expected FSBL, routed bitstream, and
+two application segments. The 4,351,948-byte `FIRMWARE.BIN` has SHA-256
+`e13e1b3df355e38590ebff3c5f496fa10a8b5c1d89bee0066f649aed1caf9425`,
+CRC32 `F31417DA`, and 10,262,580 bytes free in the firmware slot.
 
 The USB-input test application starts with the core held in reset and the DAC muted. It probes
 the ABI, logs the TMP102 temperature when I2C works, initializes the DAC without
@@ -212,11 +208,13 @@ ROM set and retains explicit path overrides. SD loading remains absent.
 The portable GBC helper can stream a validated cartridge and optional bootstrap
 override; it is likewise not connected to SD or the diagnostic CLI.
 
-The current USB-input image was rebuilt from a separate PAL XSA with shell and
-firmware build ID `2026082A`. Timing passes at WNS +0.394 ns, WHS +0.057 ns,
-and WPWS +1.749 ns. Its 4,346,380-byte `FIRMWARE.BIN` has SHA-256
-`3e211fd424675753afa9a208b8c817bd12e196cb097951a0e38f2b61b8bab0db`
-and CRC32 `B25E5862`. Physical input remains unqualified.
+The normal installation path copies this exact `FIRMWARE.BIN` to the SD-card
+root. `:reboot` from a running image, or a power cycle, lets golden program and
+verify the secondary firmware slot, replace `FIRMWARE.BIN` with
+`FIRMWARE.OK`, and reboot into normal auto-boot. Run the ROM uploader only after
+the `2026082B` firmware banner appears. The golden UART updater remains a
+recovery path, not the normal installation method. Physical USB1 VBUS and HID
+input remain unqualified.
 
 ## Next step: physical input
 

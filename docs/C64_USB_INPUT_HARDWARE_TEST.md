@@ -12,9 +12,11 @@ CRC32, and Bootgen readback have been recorded in
 Confirm the UART firmware banner says `build=2026082B`; record the shell build
 ID separately rather than assuming that it matches the firmware ID.
 
-Load `FIRMWARE.BIN` with the golden UART updater. Then upload the bundled
-20 KiB ROM set with `scripts/serial_c64_rom_upload.py`, as for the qualified
-live-video image. Do not overwrite the golden slot.
+Copy repository-root `FIRMWARE.BIN` to the root of the SD card under that exact
+name, then send `:reboot` or power-cycle. Golden programs and verifies the
+secondary firmware slot, renames the file to `FIRMWARE.OK`, and boots it
+automatically. After confirming `build=2026082B`, upload the bundled 20 KiB ROM
+set with `scripts/serial_c64_rom_upload.py`. Do not overwrite the golden slot.
 
 ## USB1 PHY and VBUS
 
