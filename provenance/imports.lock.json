@@ -1,15 +1,270 @@
 {
   "schema_version": 1,
   "imports": [
-    {"path": "third_party/appletini/hdl/audio_i2s_pcm_tx.sv", "source": "Appletini One board support", "source_path": "hdl/audio_i2s_pcm_tx.sv", "sha256": "c1f4c2b5ba6dbc04d270986454e8a316e719180af6b7daabc9b982b6e5673f84"},
-    {"path": "third_party/appletini/hdl/audio_i2s_tone.sv", "source": "Appletini One board support", "source_path": "hdl/audio_i2s_tone.sv", "sha256": "69afe2df117e3b048f2d282fb91d02b07ae66ae2a96428137206c370c457f107"},
-    {"path": "third_party/appletini/hdl/audio_spdif_pcm_tx.sv", "source": "Appletini One board support", "source_path": "hdl/audio_spdif_pcm_tx.sv", "sha256": "766f53bf06ef2673b5dae81f0e2a2a0b6542ce814eca3bf2e8e616b70117c269"},
-    {"path": "third_party/appletini/hdl/cdc_bit_sync.sv", "source": "Appletini One board support", "source_path": "hdl/cdc_bit_sync.sv", "sha256": "1fa7391a8d2818e5d6d8170f2d50024b05380613e50c2cf75510b13d623bd612"},
-    {"path": "third_party/appletini/hdl/cdc_bus_sampled.sv", "source": "Appletini One board support", "source_path": "hdl/cdc_bus_sampled.sv", "sha256": "e1e75dcd082a2f220888fe73983a2f17ffaed1e30470f07858dc0cd56ee5e6bb"},
-    {"path": "third_party/appletini/hdl/cdc_handshake_reg.sv", "source": "Appletini One board support", "source_path": "hdl/cdc_handshake_reg.sv", "sha256": "8e0fbdff6b764b36b3145abcc9cdc0548e8bfbb99f221c3f82b6d830b23a904c"},
-    {"path": "third_party/appletini/hdl/cdc_pulse_toggle.sv", "source": "Appletini One board support", "source_path": "hdl/cdc_pulse_toggle.sv", "sha256": "2d8d005c748bc364d61499b1fb0d2abac376c2572612888b330b537bf5c43743"},
-    {"path": "third_party/appletini/hdl/psram_driver.sv", "source": "Appletini One board support", "source_path": "hdl/apple/psram_driver.sv", "sha256": "0cebbbb41c3a29fdd81d02c15b8dc2972fb0582ffec399dcc9d52e1383098c4d"},
-    {"path": "third_party/appletini/hdl/reset_sync.sv", "source": "Appletini One board support", "source_path": "hdl/reset_sync.sv", "sha256": "d4405843728c24b3a99b2a17cfcb2eb556a8a842815c376c6d9673dec90ab350"},
-    {"path": "third_party/appletini/constraints/multitini_pins.xdc", "source": "Appletini One board support", "source_path": "hdl/constraints/appletini_yarz.xdc", "transform": "pin-assignment lines 1-399 only", "sha256": "2d2c3ab91e3f9f971ced4c9153399156fac7296394fa21e01a6289affbba4042"}
+    {
+      "path": "third_party/appletini/constraints/multitini_pins.xdc",
+      "source": "Appletini One board support",
+      "source_path": "hdl/constraints/appletini_yarz.xdc",
+      "transform": "pin-assignment lines 1-399 only",
+      "sha256": "2d2c3ab91e3f9f971ced4c9153399156fac7296394fa21e01a6289affbba4042"
+    },
+    {
+      "path": "third_party/appletini/hdl/audio_i2s_pcm_tx.sv",
+      "source": "Appletini One board support",
+      "source_path": "hdl/audio_i2s_pcm_tx.sv",
+      "sha256": "c1f4c2b5ba6dbc04d270986454e8a316e719180af6b7daabc9b982b6e5673f84"
+    },
+    {
+      "path": "third_party/appletini/hdl/audio_i2s_tone.sv",
+      "source": "Appletini One board support",
+      "source_path": "hdl/audio_i2s_tone.sv",
+      "sha256": "69afe2df117e3b048f2d282fb91d02b07ae66ae2a96428137206c370c457f107"
+    },
+    {
+      "path": "third_party/appletini/hdl/audio_spdif_pcm_tx.sv",
+      "source": "Appletini One board support",
+      "source_path": "hdl/audio_spdif_pcm_tx.sv",
+      "sha256": "766f53bf06ef2673b5dae81f0e2a2a0b6542ce814eca3bf2e8e616b70117c269"
+    },
+    {
+      "path": "third_party/appletini/hdl/cdc_bit_sync.sv",
+      "source": "Appletini One board support",
+      "source_path": "hdl/cdc_bit_sync.sv",
+      "sha256": "1fa7391a8d2818e5d6d8170f2d50024b05380613e50c2cf75510b13d623bd612"
+    },
+    {
+      "path": "third_party/appletini/hdl/cdc_bus_sampled.sv",
+      "source": "Appletini One board support",
+      "source_path": "hdl/cdc_bus_sampled.sv",
+      "sha256": "e1e75dcd082a2f220888fe73983a2f17ffaed1e30470f07858dc0cd56ee5e6bb"
+    },
+    {
+      "path": "third_party/appletini/hdl/cdc_handshake_reg.sv",
+      "source": "Appletini One board support",
+      "source_path": "hdl/cdc_handshake_reg.sv",
+      "sha256": "8e0fbdff6b764b36b3145abcc9cdc0548e8bfbb99f221c3f82b6d830b23a904c"
+    },
+    {
+      "path": "third_party/appletini/hdl/cdc_pulse_toggle.sv",
+      "source": "Appletini One board support",
+      "source_path": "hdl/cdc_pulse_toggle.sv",
+      "sha256": "2d8d005c748bc364d61499b1fb0d2abac376c2572612888b330b537bf5c43743"
+    },
+    {
+      "path": "third_party/appletini/hdl/psram_driver.sv",
+      "source": "Appletini One board support",
+      "source_path": "hdl/apple/psram_driver.sv",
+      "sha256": "0cebbbb41c3a29fdd81d02c15b8dc2972fb0582ffec399dcc9d52e1383098c4d"
+    },
+    {
+      "path": "third_party/appletini/hdl/reset_sync.sv",
+      "source": "Appletini One board support",
+      "source_path": "hdl/reset_sync.sv",
+      "sha256": "d4405843728c24b3a99b2a17cfcb2eb556a8a842815c376c6d9673dec90ab350"
+    },
+    {
+      "path": "third_party/c64/upstream/c64.sv",
+      "source": "MiSTer C64",
+      "source_path": "c64.sv",
+      "sha256": "c11971d86cd30a663bb9a3616995f1b137abd1c4e899c37b11dc1e42dea382b3"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/am29f040.sv",
+      "source": "MiSTer C64",
+      "source_path": "rtl/am29f040.sv",
+      "sha256": "95afcd0c9d443e6768b9d33b6f532b58e1364009e0f9c59f449e84432e6d964a"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/c1351.v",
+      "source": "MiSTer C64",
+      "source_path": "rtl/c1351.v",
+      "sha256": "0f0e620fdbf262509555b0241861ab7b095b42b62ccd93a9f798cf56383f56b9"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/cartridge.v",
+      "source": "MiSTer C64",
+      "source_path": "rtl/cartridge.v",
+      "sha256": "f9524f03a86c5207abfd4bb77082fda8353f7b81b73609283902e47849c0a4c1"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/cpu_6510.vhd",
+      "source": "MiSTer C64",
+      "source_path": "rtl/cpu_6510.vhd",
+      "sha256": "dfa3872ce33146b51944e19702b06bb9518447bce4facdabf5c94c212ab3eac5"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/dprom.vhd",
+      "source": "MiSTer C64",
+      "source_path": "rtl/dprom.vhd",
+      "sha256": "ff9c477e7e69cbbe977b6fcd3b7661122bfce9a72e67a291034d66173a233e9f"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/fpga64_buslogic.vhd",
+      "source": "MiSTer C64",
+      "source_path": "rtl/fpga64_buslogic.vhd",
+      "sha256": "bffe6efb483b747194267413bbed8e2aa27460134753b1f38cc2cf822e228891"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/fpga64_keyboard.vhd",
+      "source": "MiSTer C64",
+      "source_path": "rtl/fpga64_keyboard.vhd",
+      "sha256": "569288bf6a0d9e8dd8e662d9e42f57da92a1a5e3f42baac284d597858722aa6a"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/fpga64_rgbcolor.vhd",
+      "source": "MiSTer C64",
+      "source_path": "rtl/fpga64_rgbcolor.vhd",
+      "sha256": "ce637ee6709b4d560c986e0f94bf83682eab13c44bdc23815a543ecbf245f6c5"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/fpga64_sid_iec.vhd",
+      "source": "MiSTer C64",
+      "source_path": "rtl/fpga64_sid_iec.vhd",
+      "sha256": "2c49cc45fa07c8a7120de92728dfa1a9b0ed4ee3ea9d5ac7f1f40edc4ab52487"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/iec_drive/c1541_direct_gcr.sv",
+      "source": "MiSTer C64",
+      "source_path": "rtl/iec_drive/c1541_direct_gcr.sv",
+      "sha256": "c0e5d3497fc6346c73f2574498c4d71b58cfd4c738008266d14eedaacaa44efb"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/iec_drive/c1541_drv.sv",
+      "source": "MiSTer C64",
+      "source_path": "rtl/iec_drive/c1541_drv.sv",
+      "sha256": "52fab03852d9b639f9dbd83f55eadcfcf53cd302b513357f995cf0ef6e6b3dca"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/iec_drive/c1541_gcr.sv",
+      "source": "MiSTer C64",
+      "source_path": "rtl/iec_drive/c1541_gcr.sv",
+      "sha256": "ff4b30adf83fff88a651c00e3cd733d522e18a9c1fefd80ae4b8516d74232468"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/iec_drive/c1541_logic.sv",
+      "source": "MiSTer C64",
+      "source_path": "rtl/iec_drive/c1541_logic.sv",
+      "sha256": "39eefe9624d8604ff28732bb643e118b50ec4d58926c51bb5d91bac6f363eb21"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/iec_drive/c1541_multi.sv",
+      "source": "MiSTer C64",
+      "source_path": "rtl/iec_drive/c1541_multi.sv",
+      "sha256": "ff351ad5e05c7d97ac8d55d77744af1a3d915b512a6b2b24a0ccd8033bd33ba4"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/iec_drive/c1541_track.sv",
+      "source": "MiSTer C64",
+      "source_path": "rtl/iec_drive/c1541_track.sv",
+      "sha256": "1a75c12a60033cc3bd451e64c9ed9f289730ee6c2e0a1813ab41a295dd3d77d2"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/iec_drive/iec_drive.sv",
+      "source": "MiSTer C64",
+      "source_path": "rtl/iec_drive/iec_drive.sv",
+      "sha256": "4f5d7307554feae5988650c2139e841a48d99cc9a7fed812735e2744d8263b43"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/iec_drive/iecdrv_misc.sv",
+      "source": "MiSTer C64",
+      "source_path": "rtl/iec_drive/iecdrv_misc.sv",
+      "sha256": "3ed78e029c75c08c228ed7b0e21f1e32cd5fb4b773eea2c076c3a7b9e999d22f"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/iec_drive/iecdrv_via6522.vhd",
+      "source": "MiSTer C64",
+      "source_path": "rtl/iec_drive/iecdrv_via6522.vhd",
+      "sha256": "d8a80c3c0a0b65c48b43d16314ccb9f036c2223744e68b848d14b7b1238088ff"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/iec_drive/lfsr.v",
+      "source": "MiSTer C64",
+      "source_path": "rtl/iec_drive/lfsr.v",
+      "sha256": "cca35252ac987ba08bc54ce2805c890609d8d0514d9412cead80699c8dc11c04"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/mos6526.v",
+      "source": "MiSTer C64",
+      "source_path": "rtl/mos6526.v",
+      "sha256": "f555b73d27b41a588142f362a2434a5925637e6dd2a3bf20c93501e6cf47b7f4"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/sid/sid_dac.sv",
+      "source": "MiSTer C64",
+      "source_path": "rtl/sid/sid_dac.sv",
+      "sha256": "e1c1fa51f640dfce39efdd561e9836d254fe93269bf0f38ca89d58f84b059097"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/sid/sid_envelope.sv",
+      "source": "MiSTer C64",
+      "source_path": "rtl/sid/sid_envelope.sv",
+      "sha256": "7b1f5d9062c0db76a38761ada77bfa7492f39b2b52b333a4adb4b32499716011"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/sid/sid_filter.sv",
+      "source": "MiSTer C64",
+      "source_path": "rtl/sid/sid_filter.sv",
+      "sha256": "989c53c3baed84698bfe73b105ceabe12ed3858e884a2a85bab308b9d0434fa7"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/sid/sid_tables.sv",
+      "source": "MiSTer C64",
+      "source_path": "rtl/sid/sid_tables.sv",
+      "sha256": "8765bcbdac77e253765f934a3df53b27d440bf35555c5e295861e81fb1e1a611"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/sid/sid_top.sv",
+      "source": "MiSTer C64",
+      "source_path": "rtl/sid/sid_top.sv",
+      "sha256": "b7a9f3c508a2859e1e1bbcec08851605f44ece738fa4611be1c8fa1e485d99ed"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/sid/sid_voice.sv",
+      "source": "MiSTer C64",
+      "source_path": "rtl/sid/sid_voice.sv",
+      "sha256": "9d8b946e94282afa7385f630c71125aca495debc720ece8ce01303be82477898"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/spram.vhd",
+      "source": "MiSTer C64",
+      "source_path": "rtl/spram.vhd",
+      "sha256": "0cb23cf83a859c3cbe37fcd9e5bfc0661e8fbf98ce21e6a5c283519348d960ab"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/t65/T65.vhd",
+      "source": "MiSTer C64",
+      "source_path": "rtl/t65/T65.vhd",
+      "sha256": "8923ff7a4ef10c8f30bb3ce847573b2429c86f19b31ca18452f9ee5fc4ca38c9"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/t65/T65_ALU.vhd",
+      "source": "MiSTer C64",
+      "source_path": "rtl/t65/T65_ALU.vhd",
+      "sha256": "78981177465d777e54bc0fed6e71542503ef7ee1cf6ff2965bd980417000acf7"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/t65/T65_MCode.vhd",
+      "source": "MiSTer C64",
+      "source_path": "rtl/t65/T65_MCode.vhd",
+      "sha256": "baae03802d2a8b7392996667334cdc94df4e733bab418b6e05fc31441ff6ef07"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/t65/T65_Pack.vhd",
+      "source": "MiSTer C64",
+      "source_path": "rtl/t65/T65_Pack.vhd",
+      "sha256": "1d9b584832dba92d57e6510675791daa1ef737f349ebe145db1fe31c24675dfa"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/video_sync.vhd",
+      "source": "MiSTer C64",
+      "source_path": "rtl/video_sync.vhd",
+      "sha256": "e3072dfd8d60ab0c864531668beccc1c8ec647c0a7e8cf183bc86bf098f13fa2"
+    },
+    {
+      "path": "third_party/c64/upstream/rtl/video_vicII_656x.vhd",
+      "source": "MiSTer C64",
+      "source_path": "rtl/video_vicII_656x.vhd",
+      "sha256": "823c5242a97490e208a8bca4bf3895c1af56396130508f4f43fb04147a81dedb"
+    }
   ]
 }

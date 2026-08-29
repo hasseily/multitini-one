@@ -43,6 +43,10 @@ Stop on every Tcl error. Confirm:
 - QSPI, SDIO1, I2C0, UART0/1, USB0/1 MIO assignments;
 - USB reset MIO remains disabled;
 - no Apple clock or reset feeds an internal clock/reset;
+- the C64 Clocking Wizard requests 31.527954 MHz from FCLK2 and has its own
+  synchronized reset;
+- the mixed VHDL/SystemVerilog compile order resolves `fpga64_sid_iec`, the
+  Multitini bus logic/memory ports, SID compatibility ports, and adapter;
 - all source and constraint files came from the tracked manifests; and
 - the block design validates.
 
@@ -60,6 +64,10 @@ or bitstream generation fails. Review, do not waive:
 - unconstrained endpoints;
 - critical warnings;
 - every generated clock and clock group;
+- the achieved C64 PAL clock frequency and error from 31.527954 MHz;
+- C64 main RAM and writable ROM inference, port mode, and read latency;
+- XPM handshake constraints, the error-clear toggle synchronizer, and every
+  control-to-C64 CDC path;
 - every false path and max-delay object count;
 - setup, hold, pulse-width, and bus-skew reports;
 - Apple-bus pin constants after optimization;
@@ -69,6 +77,12 @@ or bitstream generation fails. Review, do not waive:
 - LUT, register, BRAM, DSP, BUFG, MMCM/PLL, and I/O use.
 
 Save the exact reports and build manifest. A clean build is not hardware proof.
+
+The C64 adapter is marked `DONT_TOUCH` and its raw video/audio outputs are kept
+so synthesis and timing cannot silently remove the integration. The physical
+DVI and audio pins still use the independent diagnostic generators. Confirm
+that the C64 hierarchy is present and timed, but do not interpret this image as
+a C64 display/audio test.
 
 The TFP410 constraint uses the rev. D, single-edge receiver requirements that
 match the schematic straps: 1.2 ns setup and 1.3 ns hold. Confirm that Vivado
@@ -94,7 +108,9 @@ power-loss rules are tested.
 The diagnostic starts with the core held in reset and both the shell and DAC
 muted. It probes the ABI, logs the TMP102 temperature when I2C works, initializes
 the DAC without unmuting, and accepts UART commands for status, ping, video,
-audio mute/unmute, and core reset.
+audio mute/unmute, and core reset. Portable firmware functions can validate and
+stream caller-supplied BASIC, KERNAL, and character ROM buffers, but SD file
+loading and a UART file-transfer command are not wired into the diagnostic.
 
 ## First board program
 

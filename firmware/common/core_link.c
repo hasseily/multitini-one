@@ -96,6 +96,84 @@ mt_link_result_t mt_core_link_command(mt_core_link_t *link, uint32_t opcode,
     return MT_LINK_TIMEOUT;
 }
 
+static mt_link_result_t command_retry_busy(
+    mt_core_link_t *link, uint32_t opcode, const uint32_t args[4],
+    uint32_t max_polls, mt_link_progress_fn progress, void *progress_context)
+{
+    uint32_t attempt;
+    mt_command_response_t response;
+    mt_link_result_t result;
+
+    for (attempt = 0U; attempt < max_polls; ++attempt) {
+        result = mt_core_link_command(link, opcode, args, max_polls,
+                                      progress, progress_context, &response);
+        if (result != MT_LINK_REMOTE_ERROR ||
+            response.status != MT_RESPONSE_BUSY) {
+            return result;
+        }
+    }
+    return MT_LINK_TIMEOUT;
+}
+
+static void abort_stream(mt_core_link_t *link, uint32_t max_polls,
+                         mt_link_progress_fn progress, void *progress_context)
+{
+    const uint32_t args[4] = {0U, 0U, 0U, 0U};
+    mt_command_response_t response;
+    (void)mt_core_link_command(link, MT_COMMAND_STREAM_ABORT, args, max_polls,
+                               progress, progress_context, &response);
+}
+
+mt_link_result_t mt_core_link_stream(mt_core_link_t *link, uint8_t kind,
+                                     const uint8_t *data, size_t size,
+                                     uint32_t max_polls,
+                                     mt_link_progress_fn progress,
+                                     void *progress_context)
+{
+    uint32_t args[4] = {0U, 0U, 0U, 0U};
+    mt_command_response_t response;
+    mt_link_result_t result;
+    size_t offset;
+
+    if (!link_valid(link) || data == NULL || size == 0U || max_polls == 0U) {
+        return MT_LINK_BAD_ARGUMENT;
+    }
+#if SIZE_MAX > UINT32_MAX
+    if (size > (size_t)UINT32_MAX) {
+        return MT_LINK_BAD_ARGUMENT;
+    }
+#endif
+
+    args[0] = kind;
+    args[1] = (uint32_t)size;
+    result = mt_core_link_command(link, MT_COMMAND_STREAM_BEGIN, args,
+                                  max_polls, progress, progress_context,
+                                  &response);
+    if (result != MT_LINK_OK) {
+        return result;
+    }
+
+    args[1] = 0U;
+    for (offset = 0U; offset < size; ++offset) {
+        args[0] = data[offset];
+        result = command_retry_busy(link, MT_COMMAND_STREAM_DATA, args,
+                                    max_polls, progress, progress_context);
+        if (result != MT_LINK_OK) {
+            abort_stream(link, max_polls, progress, progress_context);
+            return result;
+        }
+    }
+
+    args[0] = 0U;
+    result = mt_core_link_command(link, MT_COMMAND_STREAM_END, args,
+                                  max_polls, progress, progress_context,
+                                  &response);
+    if (result != MT_LINK_OK) {
+        abort_stream(link, max_polls, progress, progress_context);
+    }
+    return result;
+}
+
 const char *mt_link_result_name(mt_link_result_t result)
 {
     switch (result) {

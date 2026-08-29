@@ -25,8 +25,14 @@ class BuildInputTests(unittest.TestCase):
         self.assertEqual(entries[-1], "board/multitini_timing.xdc")
         for entry in entries:
             self.assertTrue((ROOT / "hdl" / entry).is_file(), entry)
-        self.assertFalse(any("third_party/c64/upstream" in entry
-                             for entry in entries))
+        joined = "\n".join(entries)
+        self.assertIn("third_party/c64/upstream/rtl/fpga64_sid_iec.vhd", joined)
+        self.assertIn("core/c64/multitini_c64_adapter.sv", joined)
+        self.assertNotIn("third_party/c64/upstream/c64.sv", joined)
+        self.assertNotIn("third_party/c64/upstream/rtl/fpga64_buslogic.vhd",
+                         joined)
+        self.assertNotIn("third_party/c64/upstream/rtl/iec_drive/", joined)
+        self.assertNotIn(".mif", joined)
 
     def test_every_pl_port_has_one_pin_assignment(self):
         top = (ROOT / "hdl" / "board" / "multitini_one_top.sv").read_text()
@@ -86,6 +92,8 @@ class BuildInputTests(unittest.TestCase):
             "PCW_USB1_USB1_IO {MIO 40 .. 51}",
             "PCW_USB0_RESET_ENABLE {0}",
             "PCW_USB1_RESET_ENABLE {0}",
+            "CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {31.527954}",
+            "-vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_c64",
             "assign_bd_address -offset 0x40000000 -range 0x00001000",
         )
         for value in required:

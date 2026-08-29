@@ -16,3 +16,4 @@ Makefile text eol=lf
 
 # Preserve imported source byte-for-byte, including upstream whitespace.
 third_party/appletini/** -whitespace
+third_party/c64/upstream/** -text -whitespace

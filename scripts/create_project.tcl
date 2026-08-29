@@ -34,7 +34,7 @@ proc add_manifest_sources {repo_root} {
             if {$extension eq ".sv"} {
                 set_property file_type SystemVerilog [get_files $source]
             } elseif {$extension eq ".vhd" || $extension eq ".vhdl"} {
-                set_property file_type VHDL [get_files $source]
+                set_property file_type {VHDL 2008} [get_files $source]
             } elseif {$extension ne ".v" && $extension ne ".mem"} {
                 error "Unsupported source-manifest extension: $source"
             }
@@ -184,13 +184,17 @@ connect_bd_intf_net [get_bd_intf_pins $ps/M_AXI_GP0] $gp0
 set control_clk [create_bd_port -dir O -type clk control_clk]
 set idelay_ref_clk [create_bd_port -dir O -type clk idelay_ref_clk]
 set video_clk [create_bd_port -dir O -type clk video_clk]
+set c64_clk [create_bd_port -dir O -type clk c64_clk]
 set control_aresetn [create_bd_port -dir O -type rst control_aresetn]
 set video_aresetn [create_bd_port -dir O -type rst video_aresetn]
+set c64_aresetn [create_bd_port -dir O -type rst c64_aresetn]
 set_property CONFIG.POLARITY ACTIVE_LOW $control_aresetn
 set_property CONFIG.POLARITY ACTIVE_LOW $video_aresetn
+set_property CONFIG.POLARITY ACTIVE_LOW $c64_aresetn
 set_property -dict [list CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0_0} \
     CONFIG.ASSOCIATED_RESET {control_aresetn}] $control_clk
 set_property CONFIG.ASSOCIATED_RESET {video_aresetn} $video_clk
+set_property CONFIG.ASSOCIATED_RESET {c64_aresetn} $c64_clk
 set irq [create_bd_port -dir I -from 15 -to 0 IRQ]
 
 set control_wiz [create_bd_cell -type ip \
@@ -213,17 +217,34 @@ set_property -dict [list \
     CONFIG.RESET_PORT {resetn} \
     CONFIG.RESET_TYPE {ACTIVE_LOW}] $video_wiz
 
+# The first core build is PAL. The requested frequency is the MiSTer C64
+# core's 4x PAL dot clock; Vivado must report the achieved MMCM frequency and
+# timing before this is accepted for hardware use.
+set c64_wiz [create_bd_cell -type ip \
+    -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_c64]
+set_property -dict [list \
+    CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {31.527954} \
+    CONFIG.PRIM_IN_FREQ {150.000} \
+    CONFIG.PRIM_SOURCE {No_buffer} \
+    CONFIG.RESET_PORT {resetn} \
+    CONFIG.RESET_TYPE {ACTIVE_LOW}] $c64_wiz
+
 set control_reset [create_bd_cell -type ip \
     -vlnv xilinx.com:ip:proc_sys_reset:5.0 reset_control]
 set video_reset [create_bd_cell -type ip \
     -vlnv xilinx.com:ip:proc_sys_reset:5.0 reset_video]
+set c64_reset [create_bd_cell -type ip \
+    -vlnv xilinx.com:ip:proc_sys_reset:5.0 reset_c64]
 
 connect_bd_net [get_bd_pins $ps/FCLK_CLK0] [get_bd_pins $control_wiz/clk_in1]
-connect_bd_net [get_bd_pins $ps/FCLK_CLK2] [get_bd_pins $video_wiz/clk_in1]
+connect_bd_net [get_bd_pins $ps/FCLK_CLK2] \
+    [get_bd_pins $video_wiz/clk_in1] [get_bd_pins $c64_wiz/clk_in1]
 connect_bd_net [get_bd_pins $ps/FCLK_RESET0_N] \
     [get_bd_pins $control_wiz/resetn] [get_bd_pins $video_wiz/resetn] \
+    [get_bd_pins $c64_wiz/resetn] \
     [get_bd_pins $control_reset/ext_reset_in] \
-    [get_bd_pins $video_reset/ext_reset_in]
+    [get_bd_pins $video_reset/ext_reset_in] \
+    [get_bd_pins $c64_reset/ext_reset_in]
 
 connect_bd_net [get_bd_pins $control_wiz/clk_out1] $control_clk \
     [get_bd_pins $control_reset/slowest_sync_clk] \
@@ -238,6 +259,12 @@ connect_bd_net [get_bd_pins $video_wiz/clk_out1] $video_clk \
 connect_bd_net [get_bd_pins $video_wiz/locked] \
     [get_bd_pins $video_reset/dcm_locked]
 connect_bd_net [get_bd_pins $video_reset/peripheral_aresetn] $video_aresetn
+
+connect_bd_net [get_bd_pins $c64_wiz/clk_out1] $c64_clk \
+    [get_bd_pins $c64_reset/slowest_sync_clk]
+connect_bd_net [get_bd_pins $c64_wiz/locked] \
+    [get_bd_pins $c64_reset/dcm_locked]
+connect_bd_net [get_bd_pins $c64_reset/peripheral_aresetn] $c64_aresetn
 connect_bd_net $irq [get_bd_pins $ps/IRQ_F2P]
 
 assign_bd_address -offset 0x40000000 -range 0x00001000 \

@@ -4,6 +4,13 @@
     "url": "https://github.com/MiSTer-devel/C64_MiSTer.git",
     "commit": "62fc697e3c9b5982c9dc76aa8cd03db545d20803"
   },
+  "redistribution_assumption": {
+    "authorized_by": "repository owner",
+    "recorded_on": "2026-08-29",
+    "scope": "planned first-core source allowlist only",
+    "terms": "GPL-2.0-or-later for files without narrower file-local terms",
+    "excludes": "ROMs, media, generated IP, binaries, logos, manuals, and other content"
+  },
   "destination": "third_party/c64/upstream",
   "resolved_groups": [
     {
@@ -46,33 +53,38 @@
         "rtl/t65/T65_MCode.vhd",
         "rtl/t65/T65_Pack.vhd"
       ]
+    },
+    {
+      "license": "GPL-2.0-or-later",
+      "basis": "repository-owner-directed assumed redistribution grant; combined-work terms follow c64.sv",
+      "paths": [
+        "rtl/cpu_6510.vhd",
+        "rtl/mos6526.v",
+        "rtl/dprom.vhd",
+        "rtl/spram.vhd",
+        "rtl/cartridge.v",
+        "rtl/video_sync.vhd",
+        "rtl/video_vicII_656x.vhd",
+        "rtl/fpga64_rgbcolor.vhd",
+        "rtl/fpga64_keyboard.vhd",
+        "rtl/fpga64_buslogic.vhd",
+        "rtl/fpga64_sid_iec.vhd",
+        "rtl/sid/sid_top.sv",
+        "rtl/sid/sid_voice.sv",
+        "rtl/sid/sid_tables.sv",
+        "rtl/sid/sid_envelope.sv",
+        "rtl/iec_drive/iec_drive.sv",
+        "rtl/iec_drive/c1541_multi.sv",
+        "rtl/iec_drive/c1541_drv.sv",
+        "rtl/iec_drive/c1541_gcr.sv",
+        "rtl/iec_drive/c1541_direct_gcr.sv",
+        "rtl/iec_drive/c1541_logic.sv",
+        "rtl/iec_drive/iecdrv_misc.sv",
+        "rtl/iec_drive/lfsr.v"
+      ]
     }
   ],
-  "unresolved": [
-    {"path": "rtl/cpu_6510.vhd", "reason": "copyright header has no license grant"},
-    {"path": "rtl/mos6526.v", "reason": "no file-local license grant"},
-    {"path": "rtl/dprom.vhd", "reason": "no file-local license grant"},
-    {"path": "rtl/spram.vhd", "reason": "no file-local license grant"},
-    {"path": "rtl/cartridge.v", "reason": "no file-local license grant"},
-    {"path": "rtl/video_sync.vhd", "reason": "no file-local license grant"},
-    {"path": "rtl/video_vicII_656x.vhd", "reason": "FPGA64 source reference but no license grant"},
-    {"path": "rtl/fpga64_rgbcolor.vhd", "reason": "FPGA64 copyright header has no license grant"},
-    {"path": "rtl/fpga64_keyboard.vhd", "reason": "FPGA64 copyright header has no license grant"},
-    {"path": "rtl/fpga64_buslogic.vhd", "reason": "FPGA64 copyright header has no license grant"},
-    {"path": "rtl/fpga64_sid_iec.vhd", "reason": "FPGA64 source reference but no license grant"},
-    {"path": "rtl/sid/sid_top.sv", "reason": "no file-local license grant"},
-    {"path": "rtl/sid/sid_voice.sv", "reason": "no file-local license grant"},
-    {"path": "rtl/sid/sid_tables.sv", "reason": "no file-local license grant"},
-    {"path": "rtl/sid/sid_envelope.sv", "reason": "no file-local license grant"},
-    {"path": "rtl/iec_drive/iec_drive.sv", "reason": "no file-local license grant"},
-    {"path": "rtl/iec_drive/c1541_multi.sv", "reason": "no file-local license grant"},
-    {"path": "rtl/iec_drive/c1541_drv.sv", "reason": "no file-local license grant"},
-    {"path": "rtl/iec_drive/c1541_gcr.sv", "reason": "no file-local license grant"},
-    {"path": "rtl/iec_drive/c1541_direct_gcr.sv", "reason": "no file-local license grant"},
-    {"path": "rtl/iec_drive/c1541_logic.sv", "reason": "no file-local license grant"},
-    {"path": "rtl/iec_drive/iecdrv_misc.sv", "reason": "no file-local license grant"},
-    {"path": "rtl/iec_drive/lfsr.v", "reason": "no file-local license grant"}
-  ],
+  "unresolved": [],
   "excluded_globs": [
     "releases/**",
     "rtl/roms/**",

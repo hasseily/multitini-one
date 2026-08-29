@@ -8,6 +8,8 @@ module multitini_control_regs #(
     input  logic         resetn,
     input  logic [31:0]  core_id,
     input  logic         core_ready,
+    input  logic         load_submit_ready,
+    input  logic         core_load_error,
 
     input  logic         wr_en,
     input  logic [11:0]  wr_addr,
@@ -18,6 +20,14 @@ module multitini_control_regs #(
     output logic [31:0]  rd_data,
 
     output logic [31:0]  control,
+    output logic         load_submit,
+    output logic [7:0]   load_kind,
+    output logic [7:0]   load_data,
+    output logic [31:0]  load_offset,
+    output logic [31:0]  load_total,
+    output logic         load_first,
+    output logic         load_last,
+    output logic         load_error_clear,
     output logic         irq
 );
     import multitini_regs_pkg::*;
@@ -41,6 +51,10 @@ module multitini_control_regs #(
     logic [31:0] count_command;
     logic [31:0] count_timeout;
     logic [31:0] status_word;
+    logic        stream_active;
+    logic [7:0]  stream_kind;
+    logic [31:0] stream_total;
+    logic [31:0] stream_offset;
     logic        rd_known;
     logic [31:0] error_set_mask;
     logic [31:0] error_clear_mask;
@@ -70,6 +84,12 @@ module multitini_control_regs #(
             status_word |= MT_STATUS_AUDIO_ACTIVE;
         if (core_ready)
             status_word |= MT_STATUS_CORE_READY;
+        if (stream_active)
+            status_word |= MT_STATUS_STREAM_ACTIVE;
+        if (load_submit_ready)
+            status_word |= MT_STATUS_STREAM_READY;
+        if (core_load_error)
+            status_word |= MT_STATUS_CORE_LOAD_ERROR;
     end
 
     always_comb begin
@@ -115,6 +135,8 @@ module multitini_control_regs #(
         error_set_mask = 32'd0;
         error_clear_mask = 32'd0;
         irq_clear_mask = 32'd0;
+        if (core_load_error)
+            error_set_mask |= MT_ERROR_CORE_LOAD;
         if (rd_en && !rd_known)
             error_set_mask |= MT_ERROR_BAD_READ;
         if (wr_en) begin
@@ -129,7 +151,11 @@ module multitini_control_regs #(
                 else if (command_opcode != MT_COMMAND_PING &&
                          command_opcode != MT_COMMAND_GET_STATUS &&
                          command_opcode != MT_COMMAND_CORE_RESET &&
-                         command_opcode != MT_COMMAND_SET_AUDIO)
+                         command_opcode != MT_COMMAND_SET_AUDIO &&
+                         command_opcode != MT_COMMAND_STREAM_BEGIN &&
+                         command_opcode != MT_COMMAND_STREAM_DATA &&
+                         command_opcode != MT_COMMAND_STREAM_END &&
+                         command_opcode != MT_COMMAND_STREAM_ABORT)
                     error_set_mask |= MT_ERROR_BAD_COMMAND;
             end
             MT_REG_CONTROL,
@@ -170,7 +196,21 @@ module multitini_control_regs #(
             count_bad_read  <= 32'h00000000;
             count_command   <= 32'h00000000;
             count_timeout   <= 32'h00000000;
+            stream_active   <= 1'b0;
+            stream_kind     <= 8'd0;
+            stream_total    <= 32'd0;
+            stream_offset   <= 32'd0;
+            load_submit     <= 1'b0;
+            load_kind       <= 8'd0;
+            load_data       <= 8'd0;
+            load_offset     <= 32'd0;
+            load_total      <= 32'd0;
+            load_first      <= 1'b0;
+            load_last       <= 1'b0;
+            load_error_clear <= 1'b0;
         end else begin
+            load_submit <= 1'b0;
+            load_error_clear <= 1'b0;
             error_flags <= (error_flags & ~error_clear_mask) | error_set_mask;
             irq_status <= (irq_status & ~irq_clear_mask) |
                           ((|error_set_mask) ? 32'd1 : 32'd0);
@@ -182,7 +222,8 @@ module multitini_control_regs #(
             if (wr_en) begin
                 unique case (wr_addr)
                     MT_REG_ERROR:
-                        ;
+                        if (|(error_clear_mask & MT_ERROR_CORE_LOAD))
+                            load_error_clear <= 1'b1;
                     MT_REG_CONTROL:
                         control <= merge_strobes(control, wr_data, wr_strb);
                     MT_REG_IRQ_STATUS:
@@ -239,6 +280,54 @@ module multitini_control_regs #(
                                                 32'd0) |
                                                (command_arg1[0] ?
                                                 MT_CONTROL_AUDIO_MUTE : 32'd0);
+                                end
+                                MT_COMMAND_STREAM_BEGIN: begin
+                                    if (stream_active) begin
+                                        response_status <= MT_RESPONSE_BUSY;
+                                    end else if (command_arg1 == 32'd0) begin
+                                        response_status <= MT_RESPONSE_INVALID_ARGUMENT;
+                                    end else begin
+                                        response_status <= MT_RESPONSE_OK;
+                                        stream_active <= 1'b1;
+                                        stream_kind <= command_arg0[7:0];
+                                        stream_total <= command_arg1;
+                                        stream_offset <= 32'd0;
+                                    end
+                                end
+                                MT_COMMAND_STREAM_DATA: begin
+                                    if (!stream_active ||
+                                        stream_offset >= stream_total) begin
+                                        response_status <= MT_RESPONSE_INVALID_ARGUMENT;
+                                    end else if (!load_submit_ready) begin
+                                        response_status <= MT_RESPONSE_BUSY;
+                                    end else begin
+                                        response_status <= MT_RESPONSE_OK;
+                                        load_submit <= 1'b1;
+                                        load_kind <= stream_kind;
+                                        load_data <= command_arg0[7:0];
+                                        load_offset <= stream_offset;
+                                        load_total <= stream_total;
+                                        load_first <= stream_offset == 32'd0;
+                                        load_last <= stream_offset + 32'd1 ==
+                                                     stream_total;
+                                        stream_offset <= stream_offset + 32'd1;
+                                    end
+                                end
+                                MT_COMMAND_STREAM_END: begin
+                                    if (!stream_active ||
+                                        stream_offset != stream_total) begin
+                                        response_status <= MT_RESPONSE_INVALID_ARGUMENT;
+                                    end else begin
+                                        response_status <= MT_RESPONSE_OK;
+                                        stream_active <= 1'b0;
+                                    end
+                                end
+                                MT_COMMAND_STREAM_ABORT: begin
+                                    response_status <= MT_RESPONSE_OK;
+                                    stream_active <= 1'b0;
+                                    stream_kind <= 8'd0;
+                                    stream_total <= 32'd0;
+                                    stream_offset <= 32'd0;
                                 end
                                 default: begin
                                     response_status <= MT_RESPONSE_UNSUPPORTED;

@@ -8,6 +8,13 @@
 typedef struct {
     uint32_t registers[MT_REGISTER_SPAN / sizeof(uint32_t)];
     uint32_t progress_count;
+    uint32_t observed_sequence;
+    uint32_t observed_commands;
+    uint32_t stream_kind;
+    uint32_t stream_size;
+    uint8_t stream_data[8];
+    size_t stream_data_size;
+    int inject_busy;
 } mock_shell_t;
 
 static uint32_t mock_read(void *context, uint32_t offset)
@@ -37,12 +44,46 @@ static void respond_on_second_poll(void *context)
     }
 }
 
+static void respond_to_stream(void *context)
+{
+    mock_shell_t *const shell = context;
+    const uint32_t sequence = shell->registers[MT_REG_COMMAND_SEQ / 4U];
+    const uint32_t opcode = shell->registers[MT_REG_COMMAND_OPCODE / 4U];
+    uint32_t status = MT_RESPONSE_OK;
+
+    if (sequence == shell->observed_sequence) {
+        return;
+    }
+    shell->observed_sequence = sequence;
+    ++shell->observed_commands;
+
+    if (opcode == MT_COMMAND_STREAM_BEGIN) {
+        shell->stream_kind = shell->registers[MT_REG_COMMAND_ARG0 / 4U];
+        shell->stream_size = shell->registers[MT_REG_COMMAND_ARG1 / 4U];
+    } else if (opcode == MT_COMMAND_STREAM_DATA) {
+        if (shell->inject_busy != 0 && shell->stream_data_size == 1U) {
+            status = MT_RESPONSE_BUSY;
+            shell->inject_busy = 0;
+        } else {
+            assert(shell->stream_data_size < sizeof(shell->stream_data));
+            shell->stream_data[shell->stream_data_size++] =
+                (uint8_t)shell->registers[MT_REG_COMMAND_ARG0 / 4U];
+        }
+    }
+
+    shell->registers[MT_REG_RESPONSE_STATUS / 4U] = status;
+    shell->registers[MT_REG_RESPONSE_ARG0 / 4U] = 0U;
+    shell->registers[MT_REG_RESPONSE_ARG1 / 4U] = 0U;
+    shell->registers[MT_REG_RESPONSE_SEQ / 4U] = sequence;
+}
+
 int main(void)
 {
     mock_shell_t shell = {0};
     mt_core_link_t link;
     mt_command_response_t response = {0};
     const uint32_t args[4] = {1U, 2U, 3U, 4U};
+    const uint8_t stream_data[3] = {0x11U, 0x22U, 0x33U};
 
     mt_core_link_init(&link, &shell, mock_read, mock_write);
     assert(mt_core_link_probe(&link) == MT_LINK_NO_SHELL);
@@ -70,5 +111,27 @@ int main(void)
                                 NULL, NULL, &response) == MT_LINK_TIMEOUT);
     assert(mt_core_link_command(NULL, MT_COMMAND_PING, args, 1U,
                                 NULL, NULL, &response) == MT_LINK_BAD_ARGUMENT);
+
+    shell.observed_sequence = shell.registers[MT_REG_RESPONSE_SEQ / 4U];
+    shell.inject_busy = 1;
+    assert(mt_core_link_stream(&link, 7U, stream_data, sizeof(stream_data), 8U,
+                               respond_to_stream, &shell) == MT_LINK_OK);
+    assert(shell.stream_kind == 7U);
+    assert(shell.stream_size == sizeof(stream_data));
+    assert(shell.stream_data_size == sizeof(stream_data));
+    assert(shell.stream_data[0] == 0x11U);
+    assert(shell.stream_data[1] == 0x22U);
+    assert(shell.stream_data[2] == 0x33U);
+    assert(shell.observed_commands == 6U);
+
+    assert(mt_core_link_stream(&link, 0U, NULL, 1U, 1U,
+                               NULL, NULL) == MT_LINK_BAD_ARGUMENT);
+    assert(mt_core_link_stream(&link, 0U, stream_data, 0U, 1U,
+                               NULL, NULL) == MT_LINK_BAD_ARGUMENT);
+#if SIZE_MAX > UINT32_MAX
+    assert(mt_core_link_stream(&link, 0U, stream_data,
+                               (size_t)UINT32_MAX + 1U, 1U,
+                               NULL, NULL) == MT_LINK_BAD_ARGUMENT);
+#endif
     return 0;
 }

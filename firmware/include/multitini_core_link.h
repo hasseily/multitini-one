@@ -2,6 +2,7 @@
 #ifndef MULTITINI_CORE_LINK_H
 #define MULTITINI_CORE_LINK_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "multitini_regs.h"
@@ -42,6 +43,11 @@ mt_link_result_t mt_core_link_command(mt_core_link_t *link, uint32_t opcode,
                                       mt_link_progress_fn progress,
                                       void *progress_context,
                                       mt_command_response_t *response);
+mt_link_result_t mt_core_link_stream(mt_core_link_t *link, uint8_t kind,
+                                     const uint8_t *data, size_t size,
+                                     uint32_t max_polls,
+                                     mt_link_progress_fn progress,
+                                     void *progress_context);
 const char *mt_link_result_name(mt_link_result_t result);
 
 #endif

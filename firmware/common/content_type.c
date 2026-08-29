@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "multitini_content.h"
+#include "multitini_c64_interface.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -237,13 +238,13 @@ mt_content_validation_t mt_c64_rom_validate(mt_c64_rom_kind_t kind,
     switch (kind) {
     case MT_C64_ROM_BASIC:
     case MT_C64_ROM_KERNAL:
-        expected = 8192U;
+        expected = MT_SIZE_C64_BASIC;
         break;
     case MT_C64_ROM_CHARACTER:
-        expected = 4096U;
+        expected = MT_SIZE_C64_CHARACTER;
         break;
     case MT_C64_ROM_DRIVE_1541:
-        expected = 16384U;
+        expected = MT_SIZE_C64_1541_ROM;
         break;
     default:
         return MT_CONTENT_INVALID_ARGUMENT;

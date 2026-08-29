@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit or stage the exact, rights-cleared subset of MiSTer C64."""
+"""Audit or stage the exact, approved subset of MiSTer C64."""
 
 from __future__ import annotations
 
@@ -36,6 +36,10 @@ def load_manifest() -> dict:
     for group in manifest["resolved_groups"]:
         if not group.get("license") or not group.get("basis"):
             raise ValueError("resolved group lacks license or basis")
+    assumption = manifest.get("redistribution_assumption", {})
+    if not all(assumption.get(field) for field in
+               ("authorized_by", "recorded_on", "scope", "terms", "excludes")):
+        raise ValueError("C64 redistribution assumption is incomplete")
     return manifest
 
 
@@ -85,12 +89,38 @@ def stage(source: Path, manifest: dict) -> None:
             print(f"staged {relative}")
 
 
+def update_lock(manifest: dict) -> None:
+    lock_path = ROOT / "provenance" / "imports.lock.json"
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    source_name = "MiSTer C64"
+    destination = ROOT / manifest["destination"]
+    expected = [path for group in manifest["resolved_groups"]
+                for path in group["paths"]]
+    imports = [entry for entry in lock.get("imports", [])
+               if entry.get("source") != source_name]
+    for relative in expected:
+        target = destination / relative
+        if not target.is_file():
+            raise FileNotFoundError(f"staged C64 source is absent: {target}")
+        imports.append({
+            "path": str(target.relative_to(ROOT)),
+            "source": source_name,
+            "source_path": relative,
+            "sha256": digest(target),
+        })
+    lock["imports"] = sorted(imports, key=lambda entry: entry["path"])
+    lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+    print(f"locked {len(expected)} C64 imports")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path,
                         help="path to the pinned C64_MiSTer checkout")
     parser.add_argument("--stage", action="store_true",
                         help="copy only after every planned file is resolved")
+    parser.add_argument("--update-lock", action="store_true",
+                        help="rewrite the import lock for the staged C64 files")
     args = parser.parse_args()
     manifest = load_manifest()
     if args.stage and args.source is None:
@@ -99,6 +129,8 @@ def main() -> int:
         verify_source(args.source.resolve(), manifest)
     if args.stage:
         stage(args.source.resolve(), manifest)
+    if args.update_lock:
+        update_lock(manifest)
 
     resolved_count = sum(len(group["paths"])
                          for group in manifest["resolved_groups"])

@@ -1,15 +1,17 @@
-.PHONY: check generate check-generated repo-check host-build host-test host-sanitize hdl-test clean
+.PHONY: check generate check-generated repo-check host-build host-test host-sanitize hdl-test c64-lint clean
 
 PYTHON ?= python3
 HOST_BUILD_DIR ?= build-host
 
-check: check-generated repo-check host-test host-sanitize hdl-test
+check: check-generated repo-check host-test host-sanitize hdl-test c64-lint
 
 generate:
 	$(PYTHON) scripts/generate_registers.py
+	$(PYTHON) scripts/generate_c64_interface.py
 
 check-generated:
 	$(PYTHON) scripts/generate_registers.py --check
+	$(PYTHON) scripts/generate_c64_interface.py --check
 
 repo-check:
 	$(PYTHON) scripts/check_repo.py
@@ -30,6 +32,9 @@ host-sanitize:
 
 hdl-test:
 	./scripts/run_hdl_tests.sh
+
+c64-lint:
+	./scripts/lint_c64_sv.sh
 
 clean:
 	cmake -E remove_directory $(HOST_BUILD_DIR)

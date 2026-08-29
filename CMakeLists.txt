@@ -9,6 +9,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 add_library(multitini_common STATIC
     firmware/common/ak4493.c
+    firmware/common/c64_boot.c
     firmware/common/content_type.c
     firmware/common/core_link.c
     firmware/common/tmp102.c
@@ -47,6 +48,10 @@ add_test(NAME core_link COMMAND test_core_link)
 add_executable(test_content_type tests/host/test_content_type.c)
 target_link_libraries(test_content_type PRIVATE multitini_common)
 add_test(NAME content_type COMMAND test_content_type)
+
+add_executable(test_c64_boot tests/host/test_c64_boot.c)
+target_link_libraries(test_c64_boot PRIVATE multitini_common)
+add_test(NAME c64_boot COMMAND test_c64_boot)
 
 add_executable(test_ak4493 tests/host/test_ak4493.c)
 target_link_libraries(test_ak4493 PRIVATE multitini_common)

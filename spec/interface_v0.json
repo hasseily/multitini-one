@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "abi": {"major": 0, "minor": 1},
+  "abi": {"major": 0, "minor": 2},
   "magic": "0x4D543031",
   "shell_id": "0x4D544F4E",
   "register_span": "0x1000",
@@ -44,13 +44,17 @@
       "VIDEO_ACTIVE": 1,
       "AUDIO_ACTIVE": 2,
       "CORE_READY": 3,
-      "COMMAND_PENDING": 4
+      "COMMAND_PENDING": 4,
+      "STREAM_ACTIVE": 5,
+      "STREAM_READY": 6,
+      "CORE_LOAD_ERROR": 7
     },
     "ERROR": {
       "BAD_WRITE": 0,
       "BAD_READ": 1,
       "BAD_COMMAND": 2,
-      "COMMAND_OVERRUN": 3
+      "COMMAND_OVERRUN": 3,
+      "CORE_LOAD": 4
     }
   },
   "commands": {
@@ -61,6 +65,8 @@
     "SET_AUDIO": 4,
     "STREAM_BEGIN": 16,
     "STREAM_END": 17,
+    "STREAM_DATA": 18,
+    "STREAM_ABORT": 19,
     "MEDIA_MOUNT": 32,
     "MEDIA_EJECT": 33
   },

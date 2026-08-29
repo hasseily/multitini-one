@@ -15,8 +15,14 @@ Known:
 - The C64 source baseline is MiSTer C64 commit `62fc697e3c9b5982c9dc76aa8cd03db545d20803`.
 - The common register ABI, host-testable firmware code, diagnostic FPGA shell,
   and source-only Vivado flow live in this repository.
-- The AXI register path, DVI timing generator, audio path, and PSRAM BIST
-  sequencer pass Icarus Verilog simulations.
+- The 34-file C64 allowlist is imported exactly, SHA-256 locked, and covered by
+  the per-file license ledger under the recorded redistribution assumption.
+- A ROM-free `fpga64_sid_iec` build boundary, writable ROM adapter, ARM byte
+  stream, clock-domain mailbox, C64 input mapping, and reset-safe ROM boot
+  helper are implemented.
+- The AXI register path, DVI timing generator, audio path, PSRAM BIST, C64 ROM
+  loader/input bridges, and asynchronous mailbox pass Icarus simulations. The
+  selected SystemVerilog C64 path passes Verilator lint.
 - Portable content, DAC, temperature, and shell-link code passes normal and
   sanitizer-enabled host tests. The Vitis entry point compiles against strict
   host stubs for the Xilinx APIs it uses.
@@ -30,8 +36,14 @@ Not yet proven:
 - The firmware has not been built in Vitis.
 - AK4493 I2S receiver timing remains unavailable from the public product page;
   the Vivado timing-coverage gate must not be waived to hide it.
-- The C64 import is blocked on 23 planned files with no file-local license
-  grant. No C64 source has been imported.
+- The mixed-language C64 build has not been compiled by Vivado. macOS checks
+  do not validate VHDL elaboration, Xilinx memories, XPM CDC constraints, the
+  requested 31.527954 MHz PAL clock, or resource/timing results.
+- C64 video and audio are retained for synthesis but are not connected to the
+  physical outputs yet. The board top deliberately continues to show/play the
+  independent diagnostics.
+- SD file-system and USB input integration are not implemented. The portable
+  firmware can transfer caller-supplied ROM buffers, but no ROM is embedded.
 - No Multitini image has booted on the card.
 - DVI, audio, USB host, SD, DDR, PSRAM, and Apple-bus isolation still require
   the hardware gates in `MULTITINI_ONE_PLAN.md`.
@@ -39,7 +51,7 @@ Not yet proven:
 ## Host checks
 
 The checks available on macOS require Python 3, CMake, a C compiler, Tclsh,
-and Icarus Verilog 13 or later:
+Icarus Verilog 13 or later, and Verilator 5:
 
 ```sh
 make check
@@ -48,8 +60,9 @@ make check
 This regenerates and compares the C/SystemVerilog ABI files, checks repository
 policy and provenance, checks the Tcl/build manifests and pin coverage, builds
 the portable firmware library with and without sanitizers, compiles the Vitis
-entry point against API stubs, and runs host and HDL tests. It does not replace
-Vivado, Vitis, timing review, or board testing.
+entry point against API stubs, runs host and HDL tests, and lints the selected
+C64 SystemVerilog modules. It does not replace Vivado, Vitis, timing review, or
+board testing.
 
 ## Vendor-tool handoff
 

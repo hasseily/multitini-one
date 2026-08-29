@@ -30,6 +30,18 @@ class InterfaceSpecTests(unittest.TestCase):
                      "AUDIO_TEST_ENABLE", "AUDIO_MUTE"):
             self.assertNotEqual(reset & (1 << fields[name]), 0)
 
+    def test_c64_interface_ids_and_required_rom_sizes(self):
+        c64 = json.loads((ROOT / "spec/c64_interface_v0.json").read_text())
+        self.assertEqual(c64["schema_version"], 1)
+        load_ids = [int(value, 0) for value in c64["load_kinds"].values()]
+        input_ids = [int(value, 0)
+                     for value in c64["input_namespaces"].values()]
+        self.assertEqual(len(load_ids), len(set(load_ids)))
+        self.assertEqual(len(input_ids), len(set(input_ids)))
+        self.assertEqual(c64["rom_sizes"]["C64_BASIC"], 8192)
+        self.assertEqual(c64["rom_sizes"]["C64_KERNAL"], 8192)
+        self.assertEqual(c64["rom_sizes"]["C64_CHARACTER"], 4096)
+
 
 if __name__ == "__main__":
     unittest.main()

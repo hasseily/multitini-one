@@ -14,6 +14,7 @@ interface multitini_core_interface;
     logic        video_de;
     logic        video_hsync;
     logic        video_vsync;
+    logic        video_valid;
     logic signed [23:0] audio_l;
     logic signed [23:0] audio_r;
     logic        audio_valid;
@@ -29,22 +30,25 @@ interface multitini_core_interface;
     logic [7:0]  load_kind;
     logic [31:0] load_offset;
     logic [31:0] load_total;
+    logic        load_error;
 
     modport shell (
         output clk, reset, input core_id, ready,
         input video_r, video_g, video_b, video_de, video_hsync, video_vsync,
+        input video_valid,
         input audio_l, audio_r, audio_valid,
         output input_code, input_value, input_valid, input input_ready, load_ready,
         output load_data, load_valid, load_first, load_last, load_kind,
-        load_offset, load_total
+        load_offset, load_total, input load_error
     );
 
     modport core (
         input clk, reset, output core_id, ready,
         output video_r, video_g, video_b, video_de, video_hsync, video_vsync,
+        output video_valid,
         output audio_l, audio_r, audio_valid,
         input input_code, input_value, input_valid, output input_ready, load_ready,
         input load_data, load_valid, load_first, load_last, load_kind,
-        load_offset, load_total
+        load_offset, load_total, output load_error
     );
 endinterface

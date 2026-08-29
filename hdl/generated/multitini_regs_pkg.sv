@@ -3,7 +3,7 @@
 `timescale 1ns / 1ps
 package multitini_regs_pkg;
     localparam logic [15:0] MT_ABI_MAJOR = 16'd0;
-    localparam logic [15:0] MT_ABI_MINOR = 16'd1;
+    localparam logic [15:0] MT_ABI_MINOR = 16'd2;
     localparam logic [31:0] MT_ABI_VERSION = {MT_ABI_MAJOR, MT_ABI_MINOR};
     localparam logic [31:0] MT_MAGIC = 32'h4D543031;
     localparam logic [31:0] MT_SHELL_ID = 32'h4D544F4E;
@@ -46,11 +46,15 @@ package multitini_regs_pkg;
     localparam logic [31:0] MT_STATUS_AUDIO_ACTIVE = 32'h00000004;
     localparam logic [31:0] MT_STATUS_CORE_READY = 32'h00000008;
     localparam logic [31:0] MT_STATUS_COMMAND_PENDING = 32'h00000010;
+    localparam logic [31:0] MT_STATUS_STREAM_ACTIVE = 32'h00000020;
+    localparam logic [31:0] MT_STATUS_STREAM_READY = 32'h00000040;
+    localparam logic [31:0] MT_STATUS_CORE_LOAD_ERROR = 32'h00000080;
 
     localparam logic [31:0] MT_ERROR_BAD_WRITE = 32'h00000001;
     localparam logic [31:0] MT_ERROR_BAD_READ = 32'h00000002;
     localparam logic [31:0] MT_ERROR_BAD_COMMAND = 32'h00000004;
     localparam logic [31:0] MT_ERROR_COMMAND_OVERRUN = 32'h00000008;
+    localparam logic [31:0] MT_ERROR_CORE_LOAD = 32'h00000010;
 
     localparam logic [31:0] MT_COMMAND_PING = 32'h00000000;
     localparam logic [31:0] MT_COMMAND_GET_STATUS = 32'h00000001;
@@ -59,6 +63,8 @@ package multitini_regs_pkg;
     localparam logic [31:0] MT_COMMAND_SET_AUDIO = 32'h00000004;
     localparam logic [31:0] MT_COMMAND_STREAM_BEGIN = 32'h00000010;
     localparam logic [31:0] MT_COMMAND_STREAM_END = 32'h00000011;
+    localparam logic [31:0] MT_COMMAND_STREAM_DATA = 32'h00000012;
+    localparam logic [31:0] MT_COMMAND_STREAM_ABORT = 32'h00000013;
     localparam logic [31:0] MT_COMMAND_MEDIA_MOUNT = 32'h00000020;
     localparam logic [31:0] MT_COMMAND_MEDIA_EJECT = 32'h00000021;
 

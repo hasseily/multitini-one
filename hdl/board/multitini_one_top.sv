@@ -92,8 +92,10 @@ module multitini_one_top #(
     logic control_clk;
     logic idelay_ref_clk;
     logic video_clk;
+    logic c64_clk;
     logic control_aresetn;
     logic video_aresetn;
+    logic c64_aresetn;
     logic [15:0] irq_bus;
     logic shell_irq;
     logic [31:0] shell_control;
@@ -146,6 +148,46 @@ module multitini_one_top #(
     logic [31:0] reg_rd_data;
     logic        video_enable;
 
+    logic        c64_core_reset_request;
+    logic [31:0] c64_core_id;
+    logic        c64_ready;
+    logic        c64_ready_control;
+    logic        c64_load_error;
+    logic        c64_load_error_control;
+    logic [2:0]  c64_rom_loaded;
+
+    logic        load_submit;
+    logic        load_submit_ready;
+    logic [7:0]  load_kind;
+    logic [7:0]  load_data;
+    logic [31:0] load_offset;
+    logic [31:0] load_total;
+    logic        load_first;
+    logic        load_last;
+    logic        load_error_clear;
+    logic        c64_load_error_clear;
+    logic [81:0] load_mailbox_source;
+    logic [81:0] load_mailbox_destination;
+    logic        c64_load_valid;
+    logic        c64_load_ready;
+    logic [7:0]  c64_load_kind;
+    logic [7:0]  c64_load_data;
+    logic [31:0] c64_load_offset;
+    logic [31:0] c64_load_total;
+    logic        c64_load_first;
+    logic        c64_load_last;
+
+    (* KEEP = "yes" *) logic [7:0] c64_video_r;
+    (* KEEP = "yes" *) logic [7:0] c64_video_g;
+    (* KEEP = "yes" *) logic [7:0] c64_video_b;
+    (* KEEP = "yes" *) logic       c64_video_de;
+    (* KEEP = "yes" *) logic       c64_video_hsync;
+    (* KEEP = "yes" *) logic       c64_video_vsync;
+    (* KEEP = "yes" *) logic       c64_video_valid;
+    (* KEEP = "yes" *) logic signed [23:0] c64_audio_l;
+    (* KEEP = "yes" *) logic signed [23:0] c64_audio_r;
+    (* KEEP = "yes" *) logic               c64_audio_valid;
+
     assign irq_bus = {15'd0, shell_irq};
 
     zynq_ps_bd_wrapper zynq_ps_i (
@@ -181,8 +223,10 @@ module multitini_one_top #(
         .M_AXI_GP0_0_wstrb(m_axi_wstrb), .M_AXI_GP0_0_wvalid(m_axi_wvalid),
 
         .control_clk(control_clk), .idelay_ref_clk(idelay_ref_clk),
-        .video_clk(video_clk), .control_aresetn(control_aresetn),
-        .video_aresetn(video_aresetn), .IRQ(irq_bus)
+        .video_clk(video_clk), .c64_clk(c64_clk),
+        .control_aresetn(control_aresetn),
+        .video_aresetn(video_aresetn), .c64_aresetn(c64_aresetn),
+        .IRQ(irq_bus)
     );
 
     multitini_axi3_regs axi_regs (
@@ -214,10 +258,76 @@ module multitini_one_top #(
 
     multitini_control_regs #(.SHELL_BUILD_ID(SHELL_BUILD_ID)) control_regs (
         .clk(control_clk), .resetn(control_aresetn),
-        .core_id(32'h00000000), .core_ready(1'b0),
+        .core_id(c64_core_id), .core_ready(c64_ready_control),
+        .load_submit_ready(load_submit_ready),
+        .core_load_error(c64_load_error_control),
         .wr_en(reg_wr_en), .wr_addr(reg_wr_addr), .wr_data(reg_wr_data),
         .wr_strb(reg_wr_strb), .rd_en(reg_rd_en), .rd_addr(reg_rd_addr),
-        .rd_data(reg_rd_data), .control(shell_control), .irq(shell_irq)
+        .rd_data(reg_rd_data), .control(shell_control),
+        .load_submit(load_submit), .load_kind(load_kind),
+        .load_data(load_data), .load_offset(load_offset),
+        .load_total(load_total), .load_first(load_first),
+        .load_last(load_last), .load_error_clear(load_error_clear),
+        .irq(shell_irq)
+    );
+
+    assign load_mailbox_source = {load_kind, load_data, load_offset,
+                                  load_total, load_first, load_last};
+    assign {c64_load_kind, c64_load_data, c64_load_offset, c64_load_total,
+            c64_load_first, c64_load_last} = load_mailbox_destination;
+
+    multitini_async_mailbox #(.WIDTH(82)) c64_load_mailbox (
+        .src_clk(control_clk), .src_resetn(control_aresetn),
+        .src_data(load_mailbox_source), .src_valid(load_submit),
+        .src_ready(load_submit_ready),
+        .dst_clk(c64_clk), .dst_resetn(c64_aresetn),
+        .dst_data(load_mailbox_destination), .dst_valid(c64_load_valid),
+        .dst_ready(c64_load_ready)
+    );
+
+    cdc_bit_sync c64_reset_sync (
+        .clk(c64_clk), .resetn(c64_aresetn),
+        .din(|(shell_control &
+               multitini_regs_pkg::MT_CONTROL_CORE_RESET_REQUEST)),
+        .dout(c64_core_reset_request)
+    );
+
+    cdc_bit_sync c64_ready_sync (
+        .clk(control_clk), .resetn(control_aresetn),
+        .din(c64_ready), .dout(c64_ready_control)
+    );
+
+    cdc_bit_sync c64_load_error_sync (
+        .clk(control_clk), .resetn(control_aresetn),
+        .din(c64_load_error), .dout(c64_load_error_control)
+    );
+
+    multitini_cdc_pulse_toggle c64_load_error_clear_sync (
+        .src_clk(control_clk), .src_resetn(control_aresetn),
+        .src_pulse(load_error_clear), .dst_clk(c64_clk),
+        .dst_resetn(c64_aresetn), .dst_pulse(c64_load_error_clear)
+    );
+
+    // Keep the C64 integration in the synthesized design for resource,
+    // clocking, and timing validation. Physical outputs remain on the board
+    // test generators until that validation passes.
+    (* DONT_TOUCH = "yes" *) multitini_c64_adapter c64_adapter (
+        .core_clk(c64_clk), .reset(!c64_aresetn),
+        .core_reset_request(c64_core_reset_request),
+        .clear_load_error(c64_load_error_clear),
+        .input_code(16'd0), .input_value(16'd0), .input_valid(1'b0),
+        .input_ready(),
+        .load_data(c64_load_data), .load_valid(c64_load_valid),
+        .load_ready(c64_load_ready), .load_first(c64_load_first),
+        .load_last(c64_load_last), .load_kind(c64_load_kind),
+        .load_offset(c64_load_offset), .load_total(c64_load_total),
+        .core_id(c64_core_id), .ready(c64_ready),
+        .load_error(c64_load_error), .rom_loaded(c64_rom_loaded),
+        .video_r(c64_video_r), .video_g(c64_video_g),
+        .video_b(c64_video_b), .video_de(c64_video_de),
+        .video_hsync(c64_video_hsync), .video_vsync(c64_video_vsync),
+        .video_valid(c64_video_valid), .audio_l(c64_audio_l),
+        .audio_r(c64_audio_r), .audio_valid(c64_audio_valid)
     );
 
     cdc_bit_sync video_enable_sync (

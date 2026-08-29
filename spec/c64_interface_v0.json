@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "abi": {"major": 0, "minor": 1},
+  "core_id": "0x43363420",
+  "clocks_hz": {
+    "PAL": 31527954,
+    "NTSC": 32727266,
+    "AUDIO_SAMPLE": 48000
+  },
+  "load_kinds": {
+    "C64_BASIC": "0x01",
+    "C64_KERNAL": "0x02",
+    "C64_CHARACTER": "0x03",
+    "C64_1541_ROM": "0x04",
+    "C64_PRG": "0x10",
+    "C64_CRT": "0x11",
+    "C64_D64": "0x12",
+    "C64_G64": "0x13"
+  },
+  "rom_sizes": {
+    "C64_BASIC": 8192,
+    "C64_KERNAL": 8192,
+    "C64_CHARACTER": 4096,
+    "C64_1541_ROM": 16384
+  },
+  "input_namespaces": {
+    "PS2_SET2": "0x00",
+    "JOYSTICK1": "0x01",
+    "JOYSTICK2": "0x02"
+  }
+}

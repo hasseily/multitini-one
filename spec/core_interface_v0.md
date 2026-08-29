@@ -13,7 +13,8 @@ are usable. `core_id` is stable while `ready` is high.
 
 Video is unscaled RGB888 plus active-high data enable and explicit syncs. The
 adapter documents its pixel clock, polarities, active region, and PAL/NTSC
-cadence. The shell owns conversion to the physical RGB565 DVI path.
+cadence. `video_valid` marks a new pixel sample. The shell owns conversion to
+the physical RGB565 DVI path.
 
 Audio is signed 24-bit stereo. `audio_valid` marks a new sample pair. The
 adapter documents its source rate; the shell owns rate conversion, gain,
@@ -24,8 +25,15 @@ clipping, mute, I2S, and SPDIF.
 `input_code`, `input_value`, and `input_valid` form a ready/valid event stream.
 The shell holds code and value stable until `input_ready` is high. Releases are
 explicit events; reset cannot be used as a substitute for missing releases.
-The initial code namespace and C64 matrix table are not frozen until the USB
-host path supplies captured keyboard and pad reports.
+The C64 adapter currently defines the high byte of `input_code` as a namespace:
+
+| Namespace | Value | Low byte / value |
+| --- | ---: | --- |
+| PS/2 set 2 | `0x00` | Low byte is the scan code; `input_value[0]` is pressed and bit 1 is extended |
+| Joystick 1 | `0x01` | Low byte selects bit 0-6; `input_value[0]` is its new level |
+| Joystick 2 | `0x02` | Low byte selects bit 0-6; `input_value[0]` is its new level |
+
+The USB host translation and a user-visible C64 key map remain unfrozen.
 
 ## Direct-load stream
 
@@ -39,9 +47,22 @@ host path supplies captured keyboard and pad reports.
 - A receiver rejects an unexpected offset, early last, or late byte.
 - Reset aborts a partial object. A new object must restart at offset zero.
 
-The first kinds will cover C64 BASIC, KERNAL, character, and 1541 ROMs, then
-PRG and CRT data. Numeric assignments wait for the rights-cleared core adapter
-so unused formats are not baked into the common ABI.
+The C64 ABI 0.1 assignments are:
+
+| Kind | Value | Exact size | Current adapter |
+| --- | ---: | ---: | --- |
+| BASIC ROM | `0x01` | 8192 | Implemented |
+| KERNAL ROM | `0x02` | 8192 | Implemented |
+| Character ROM | `0x03` | 4096 | Implemented |
+| 1541 ROM | `0x04` | 16384 | Reserved; drive excluded from first build |
+| PRG | `0x10` | variable | Reserved |
+| CRT | `0x11` | variable | Reserved |
+| D64 | `0x12` | variable | Reserved for media service design |
+| G64 | `0x13` | variable | Reserved for media service design |
+
+The loader begins with empty ROM stores, accepts only the three exact system
+ROM sizes above, and asserts a sticky error for unsupported or malformed
+objects. No ROM bytes are part of the bitstream source.
 
 ## Deliberately absent
 

@@ -1,7 +1,7 @@
 # MiSTer C64 Import Record
 
-Status: pinned and audited at repository level; source import and per-file
-clearance are incomplete.
+Status: 34 allowlisted files imported, SHA-256 locked, and licensed in the
+repository ledger. Vivado and hardware validation remain pending.
 
 ## Pin
 
@@ -10,15 +10,16 @@ clearance are incomplete.
 - Commit date: 2026-08-23
 - Commit subject: `Release 20260823.`
 
-## Import rule
+## Import and exclusion rule
 
 Do not add the upstream repository as a recursive product dependency. It
 contains system and drive ROM images, release media, prebuilt programs, Intel
 generated IP, and MiSTer platform files that are not required in the final
 Multitini source tree.
 
-The eventual import must use an explicit allowlist and preserve relative paths.
-It must exclude at least:
+The import uses the explicit allowlist in
+`third_party/c64/import_manifest.json` and preserves relative paths. It
+excludes at least:
 
 - `releases/`;
 - `rtl/roms/`;
@@ -39,21 +40,25 @@ and start empty. User ROMs are required until distribution rights are secured.
 - SID DAC and filter files declare CERN-OHL-S-2.0.
 - OPL3 mixes a BSD-style license and LGPL-2.1-or-later; it is optional and is
   excluded from the first milestone.
-- Several FPGA64 VHDL files contain copyright notices but no file-local license
-  grant. Their use under the top-level GPL notice needs confirmation before the
-  Phase 0 rights gate is marked passed.
-- The upstream tree does not include the license texts referenced by several
-  source headers. Multitini must include every applicable text with an import.
+- Twenty-three allowlisted files have copyright or provenance notices but no
+  file-local grant. The repository owner directed the project to assume a
+  redistribution grant under GPL-2.0-or-later for those files. That assumption,
+  its scope, and its exclusions are machine-readable in the import manifest.
+- The three referenced full license texts are stored in
+  `licenses/third_party/`. T65's complete redistribution notice remains in each
+  exact imported file.
+- Every imported C64 file has an explicit row in `licenses/files.csv`.
 
-No C64 source file is listed in `licenses/files.csv` until its import allowlist
-and license entry are complete.
+The assumption does not cover ROMs, media, generated IP, binaries, logos,
+manuals, or files outside the allowlist. It is an owner-directed project input,
+not an independent legal conclusion.
 
-## Prepared audit gate
+## Reproducible audit gate
 
 `third_party/c64/import_manifest.json` is the explicit first-core allowlist.
-It separates 11 files with file-local grants from 23 planned files whose
-headers do not state a license grant. It also records the ROM, media, OPL3,
-Intel IP, and MiSTer platform exclusions.
+It separates 11 files with file-local grants from the 23 files covered by the
+recorded assumption. It also records the ROM, media, OPL3, Intel IP, and MiSTer
+platform exclusions.
 
 Audit a checkout at the pinned commit with:
 
@@ -61,7 +66,30 @@ Audit a checkout at the pinned commit with:
 python3 scripts/audit_c64_import.py --source /path/to/C64_MiSTer
 ```
 
-The script deliberately refuses `--stage` while any entry remains unresolved.
-Do not change an entry to resolved merely by inference from a repository name
-or from a different file's header. Record a maintainer statement, upstream
-license file, or original-source grant as the basis.
+The repository copy and `provenance/imports.lock.json` can be checked with:
+
+```sh
+python3 scripts/audit_c64_import.py
+python3 scripts/check_repo.py
+```
+
+Use `--update-lock` only while intentionally restaging the pinned allowlist.
+
+## First build boundary
+
+The Vivado manifest builds the FPGA64 machine boundary
+`rtl/fpga64_sid_iec.vhd`, not the MiSTer `c64.sv` platform top. Multitini
+replaces only the pieces needed for a ROM-free Xilinx build:
+
+- `multitini_c64_buslogic.vhd` removes embedded MIF selections and provides
+  writable BASIC/KERNAL and character ROM stores;
+- `ports/dprom.vhd` and `ports/spram.vhd` use portable signal-array memory
+  inference with no initialization file;
+- the four SID compatibility ports make narrowly scoped language/elaboration
+  fixes while the exact upstream versions remain imported and locked; and
+- `multitini_c64_adapter.sv` supplies main RAM, ROM loading, input mapping,
+  reset sequencing, raw video, and 48 kHz signed audio samples.
+
+The imported 1541 files are not in the first build. Their current wrapper also
+depends on excluded drive/platform pieces, so drive media requires a separate
+adapter and service contract.

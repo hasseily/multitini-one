@@ -39,14 +39,20 @@ set control_clocks [get_clocks -quiet \
     -filter {NAME =~ *clk_out1*zynq_ps_bd_clk_wiz_control*}]
 set video_clocks [get_clocks -quiet \
     -filter {NAME =~ *clk_out1*zynq_ps_bd_clk_wiz_video*}]
+set c64_clocks [get_clocks -quiet \
+    -filter {NAME =~ *clk_out1*zynq_ps_bd_clk_wiz_c64*}]
 if {[llength $control_clocks] != 1} {
     error "Expected one control clock; found [llength $control_clocks]"
 }
 if {[llength $video_clocks] != 1} {
     error "Expected one video clock; found [llength $video_clocks]"
 }
+if {[llength $c64_clocks] != 1} {
+    error "Expected one C64 clock; found [llength $c64_clocks]"
+}
 set_clock_groups -asynchronous \
-    -group $control_clocks -group $video_clocks -group [get_clocks audio_mclk]
+    -group $control_clocks -group $video_clocks -group $c64_clocks \
+    -group [get_clocks audio_mclk]
 
 # Raw Apple connector inputs are deliberately not clocks in standalone mode.
 # They only feed an unused-input reduction and are excluded from timing. No

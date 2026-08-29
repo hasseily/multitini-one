@@ -24,7 +24,8 @@ The first image is one full Zynq configuration containing:
 - an independently visible DVI test pattern;
 - independently audible I2S and SPDIF test tones;
 - safe idle values on Apple, Ethernet, and PSRAM pins; and
-- later, the C64 adapter and core.
+- a retained C64 adapter/core integration whose outputs are not yet selected
+  onto the physical DVI and audio paths.
 
 Partial reconfiguration is deliberately outside this baseline.
 
@@ -40,12 +41,26 @@ Planned initial domains:
 | Control | 133.333 MHz | PS FCLK0 through Clocking Wizard | AXI registers and shell control |
 | PSRAM reference | 199.995 MHz | same Clocking Wizard | IDELAYCTRL reference |
 | Video | 148.5 MHz | PS FCLK2 through Clocking Wizard | 1080p diagnostic output |
+| C64 PAL | requested 31.527954 MHz | PS FCLK2 through a separate Clocking Wizard | FPGA64 machine, ROM loader, raw video/audio |
 | Audio MCLK | 12.288 MHz | board oscillator | DAC clock and I2S derivation |
 | Audio BCLK | 3.072 MHz | MCLK divided by four | 48 kHz, 64-bit I2S frames |
 
 Every asynchronous crossing must use a named synchronizer or handshake. Every
 generated clock and exception must bind to an existing object in the final
 Vivado design. These facts cannot be certified on this Mac.
+
+Sparse ROM bytes move from the 133.333 MHz control domain to the C64 domain
+through a one-entry `xpm_cdc_handshake` mailbox. A source holds all 82 payload
+bits until the destination accepts them. Reset request, ready, and error levels
+use named bit synchronizers; the sparse error-clear event uses a tested
+three-stage toggle synchronizer. The behavioral CDC tests deliberately use
+unrelated clocks and backpressure. Vivado CDC reports and XPM handshake
+constraint binding remain mandatory.
+
+The C64 adapter holds machine reset until BASIC, KERNAL, and character ROMs have
+each completed a strictly framed transfer. The ARM command ABI supports begin,
+data, end, and abort. Firmware retries bounded mailbox backpressure and leaves
+the core in reset if a ROM set cannot be loaded.
 
 ## Interface versioning
 

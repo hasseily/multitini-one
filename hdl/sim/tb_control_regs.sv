@@ -15,14 +15,30 @@ module tb_control_regs;
     logic [31:0] rd_data;
     logic [31:0] control;
     logic irq;
+    logic load_submit_ready = 1'b1;
+    logic core_load_error = 1'b0;
+    logic load_submit;
+    logic [7:0] load_kind;
+    logic [7:0] load_data;
+    logic [31:0] load_offset;
+    logic [31:0] load_total;
+    logic load_first;
+    logic load_last;
+    logic load_error_clear;
 
     always #5 clk = !clk;
 
     multitini_control_regs #(.SHELL_BUILD_ID(32'h12345678)) dut (
         .clk(clk), .resetn(resetn), .core_id(32'h43363420),
-        .core_ready(1'b1), .wr_en(wr_en), .wr_addr(wr_addr),
+        .core_ready(1'b1), .load_submit_ready(load_submit_ready),
+        .core_load_error(core_load_error),
+        .wr_en(wr_en), .wr_addr(wr_addr),
         .wr_data(wr_data), .wr_strb(wr_strb), .rd_en(rd_en),
-        .rd_addr(rd_addr), .rd_data(rd_data), .control(control), .irq(irq)
+        .rd_addr(rd_addr), .rd_data(rd_data), .control(control),
+        .load_submit(load_submit), .load_kind(load_kind),
+        .load_data(load_data), .load_offset(load_offset),
+        .load_total(load_total), .load_first(load_first),
+        .load_last(load_last), .load_error_clear(load_error_clear), .irq(irq)
     );
 
     task automatic check_value(input logic condition, input string message);
@@ -63,7 +79,7 @@ module tb_control_regs;
         expect_read(MT_REG_CORE_ID, 32'h43363420, "core ID");
         expect_read(MT_REG_STATUS,
                     MT_STATUS_SHELL_READY | MT_STATUS_VIDEO_ACTIVE |
-                    MT_STATUS_CORE_READY,
+                    MT_STATUS_CORE_READY | MT_STATUS_STREAM_READY,
                     "muted audio is not active");
 
         write_reg(MT_REG_SCRATCH, 32'hA5A55A5A, 4'b0101);
@@ -118,6 +134,73 @@ module tb_control_regs;
         #1;
         expect_read(MT_REG_ERROR, MT_ERROR_BAD_READ,
                     "simultaneous set wins over clear");
+
+        write_reg(MT_REG_COMMAND_ARG0, 32'h00000001, 4'hF);
+        write_reg(MT_REG_COMMAND_ARG1, 32'd2, 4'hF);
+        write_reg(MT_REG_COMMAND_SEQ, 32'd4, 4'hF);
+        write_reg(MT_REG_COMMAND_OPCODE, MT_COMMAND_STREAM_BEGIN, 4'hF);
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd4, 4'hF);
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_OK, "stream begin");
+        expect_read(MT_REG_STATUS,
+                    MT_STATUS_SHELL_READY | MT_STATUS_VIDEO_ACTIVE |
+                    MT_STATUS_AUDIO_ACTIVE | MT_STATUS_CORE_READY |
+                    MT_STATUS_STREAM_ACTIVE |
+                    MT_STATUS_STREAM_READY,
+                    "stream active status");
+
+        load_submit_ready = 1'b0;
+        write_reg(MT_REG_COMMAND_ARG0, 32'h000000AA, 4'hF);
+        write_reg(MT_REG_COMMAND_SEQ, 32'd5, 4'hF);
+        write_reg(MT_REG_COMMAND_OPCODE, MT_COMMAND_STREAM_DATA, 4'hF);
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd5, 4'hF);
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_BUSY,
+                    "mailbox backpressure response");
+        check_value(!load_submit, "busy stream byte not submitted");
+
+        load_submit_ready = 1'b1;
+        write_reg(MT_REG_COMMAND_SEQ, 32'd6, 4'hF);
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd6, 4'hF);
+        check_value(load_submit && load_kind == 8'h01 && load_data == 8'hAA,
+                    "first stream payload");
+        check_value(load_offset == 32'd0 && load_total == 32'd2 &&
+                    load_first && !load_last,
+                    "first stream framing");
+
+        write_reg(MT_REG_COMMAND_ARG0, 32'h00000055, 4'hF);
+        write_reg(MT_REG_COMMAND_SEQ, 32'd7, 4'hF);
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd7, 4'hF);
+        check_value(load_submit && load_data == 8'h55 &&
+                    load_offset == 32'd1 && !load_first && load_last,
+                    "last stream framing");
+
+        write_reg(MT_REG_COMMAND_SEQ, 32'd8, 4'hF);
+        write_reg(MT_REG_COMMAND_OPCODE, MT_COMMAND_STREAM_END, 4'hF);
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd8, 4'hF);
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_OK, "stream end");
+
+        write_reg(MT_REG_COMMAND_ARG0, 32'h00000001, 4'hF);
+        write_reg(MT_REG_COMMAND_ARG1, 32'd2, 4'hF);
+        write_reg(MT_REG_COMMAND_SEQ, 32'd9, 4'hF);
+        write_reg(MT_REG_COMMAND_OPCODE, MT_COMMAND_STREAM_BEGIN, 4'hF);
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd9, 4'hF);
+        write_reg(MT_REG_COMMAND_SEQ, 32'd10, 4'hF);
+        write_reg(MT_REG_COMMAND_OPCODE, MT_COMMAND_STREAM_ABORT, 4'hF);
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd10, 4'hF);
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_OK, "stream abort");
+        expect_read(MT_REG_STATUS,
+                    MT_STATUS_SHELL_READY | MT_STATUS_VIDEO_ACTIVE |
+                    MT_STATUS_AUDIO_ACTIVE | MT_STATUS_CORE_READY |
+                    MT_STATUS_STREAM_READY,
+                    "stream abort clears active state");
+
+        core_load_error = 1'b1;
+        @(negedge clk);
+        expect_read(MT_REG_ERROR, MT_ERROR_BAD_READ | MT_ERROR_CORE_LOAD,
+                    "core load error becomes sticky");
+        core_load_error = 1'b0;
+        write_reg(MT_REG_ERROR, MT_ERROR_BAD_READ | MT_ERROR_CORE_LOAD, 4'hF);
+        check_value(load_error_clear, "load-error clear pulse");
+        expect_read(MT_REG_ERROR, 32'd0, "load errors cleared");
 
         $display("PASS: control registers");
         $finish;

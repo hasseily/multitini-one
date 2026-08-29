@@ -112,12 +112,16 @@ def main() -> int:
                 errors.append(f"locked import changed without provenance update: {path}")
             if not imported.get("source") or not imported.get("source_path"):
                 errors.append(f"locked import lacks source identity: {path}")
-        tracked_imports = {path for path in files if path.startswith("third_party/appletini/")}
+        tracked_imports = {
+            path for path in files
+            if path.startswith("third_party/appletini/") or
+            path.startswith("third_party/c64/upstream/")
+        }
         if tracked_imports != import_paths:
             for path in sorted(tracked_imports - import_paths):
-                errors.append(f"third-party Appletini file is not import-locked: {path}")
+                errors.append(f"third-party source is not import-locked: {path}")
             for path in sorted(import_paths - tracked_imports):
-                errors.append(f"import lock names an untracked Appletini file: {path}")
+                errors.append(f"import lock names an untracked third-party file: {path}")
     except (OSError, ValueError) as exc:
         errors.append(f"invalid import lock: {exc}")
 
