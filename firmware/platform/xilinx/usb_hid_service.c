@@ -56,6 +56,7 @@ static uint32_t g_transfer_errors;
 static uint32_t g_input_errors;
 static int g_last_error;
 static uint8_t g_started;
+static uint8_t g_power_shutdown_required;
 static uint8_t g_core_ready;
 
 static int emit_c64_input(void *context, uint16_t code, uint16_t value)
@@ -476,17 +477,41 @@ void usb_hid_service_init(mt_core_link_t *link)
     g_input_errors = 0U;
     g_last_error = 0;
     g_started = 0U;
+    g_power_shutdown_required = 0U;
     g_core_ready = 0U;
     mt_c64_hid_input_init(&g_c64_input, emit_c64_input, link);
 }
 
 int usb_hid_service_start(void)
 {
+    int cleanup_result;
     int result;
     if (g_started != 0U) return 0;
+    if (g_power_shutdown_required != 0U) {
+        result = cherryusb_usb1_host_power_stop();
+        if (result != 0) {
+            g_last_error = result;
+            return result;
+        }
+        g_power_shutdown_required = 0U;
+    }
     xil_printf("[usb1] CherryUSB keyboard/gamepad host start\r\n");
-    g_started = 1U;
     result = usbh_initialize(CHERRYUSB_USB1_BUSID, MT_USB1_BASE, host_event);
+    if (result == 0) {
+        g_started = 1U;
+        result = cherryusb_usb1_host_power_start();
+        if (result == 0) {
+            g_power_shutdown_required = 1U;
+        } else {
+            if (cherryusb_usb1_power_stop_result() != 0) {
+                g_power_shutdown_required = 1U;
+            }
+            cleanup_result = usb_hid_service_stop();
+            if (cleanup_result != 0) {
+                result = cleanup_result;
+            }
+        }
+    }
     if (result != 0) {
         g_started = 0U;
         g_last_error = result;
@@ -495,14 +520,42 @@ int usb_hid_service_start(void)
     return result;
 }
 
-void usb_hid_service_stop(void)
+int usb_hid_service_stop(void)
 {
+    int power_result = 0;
+
+    if (g_started != 0U || g_power_shutdown_required != 0U) {
+        g_power_shutdown_required = 1U;
+        power_result = cherryusb_usb1_host_power_stop();
+        if (power_result == 0) {
+            g_power_shutdown_required = 0U;
+        }
+    }
     if (g_started != 0U) {
         (void)usbh_deinitialize(CHERRYUSB_USB1_BUSID);
+        if (power_result != 0 &&
+            cherryusb_usb1_power_stop_result() == 0) {
+            /* The independent pre-stop failed, but the low-level deinit hook
+             * subsequently removed and verified VBUS. */
+            power_result = 0;
+            g_power_shutdown_required = 0U;
+        } else if (power_result != 0) {
+            /* If CherryUSB returned before the low-level hook, make one final
+             * independent attempt while the ULPI viewport is still active. */
+            power_result = cherryusb_usb1_host_power_stop();
+            if (power_result == 0) {
+                g_power_shutdown_required = 0U;
+            }
+        }
         g_started = 0U;
     }
     (void)mt_c64_hid_release_all(&g_c64_input);
     memset(g_slots, 0, sizeof(g_slots));
+    if (power_result != 0) {
+        g_power_shutdown_required = 1U;
+        g_last_error = power_result;
+    }
+    return power_result;
 }
 
 void usb_hid_service_set_core_ready(bool ready)
@@ -562,7 +615,9 @@ void usb_hid_service_get_status(mt_usb_hid_status_t *status)
 void usb_hid_service_dump_status(void)
 {
     mt_usb_hid_status_t status;
+    cherryusb_usb1_phy_status_t phy;
     usb_hid_service_get_status(&status);
+    cherryusb_usb1_phy_status(&phy);
     xil_printf("usb1 started=%u portsc=%08x keyboards=%u gamepads=%u "
                "joyport=%u reports=%u submit_err=%u transfer_err=%u "
                "input_err=%u last=%d\r\n",
@@ -574,4 +629,21 @@ void usb_hid_service_dump_status(void)
                (unsigned int)status.submit_errors,
                (unsigned int)status.transfer_errors,
                (unsigned int)status.input_errors, status.last_error);
+    xil_printf("usb1 phy setup_rc=%d disable_rc=%d drive_known=%u drive=%u "
+               "vbus_known=%u vbus_valid=%u ulpi_err=%d timeouts=%u "
+               "id=%04x:%04x func=%02x iface=%02x otg=%02x int=%02x "
+               "debug=%02x otgsc=%08x viewport=%08x\r\n",
+               phy.power_result, phy.disable_result,
+               (unsigned int)phy.vbus_drive_known,
+               (unsigned int)phy.vbus_drive_enabled,
+               (unsigned int)phy.vbus_valid_known,
+               (unsigned int)phy.vbus_valid, phy.last_error,
+               (unsigned int)phy.timeouts,
+               (unsigned int)phy.vendor_id, (unsigned int)phy.product_id,
+               (unsigned int)phy.function_control,
+               (unsigned int)phy.interface_control,
+               (unsigned int)phy.otg_control,
+               (unsigned int)phy.interrupt_status,
+               (unsigned int)phy.debug, (unsigned int)phy.otgsc,
+               (unsigned int)phy.viewport);
 }

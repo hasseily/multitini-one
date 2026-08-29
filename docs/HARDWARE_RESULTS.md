@@ -136,12 +136,14 @@ vblank-only source switching, reset-epoch recovery, and golden fallback on the
 tested board/display combination. It does not qualify physical keyboard or
 joystick input, storage, SID audio, NTSC, or extended environmental operation.
 
-## 2026-08-29 PAL C64 USB-input image awaiting board test
+## 2026-08-29 PAL C64 USB-input bring-up
 
-The ARM USB1 host now translates a USB boot keyboard and common HID gamepad
-reports into the already-tested C64 input mailbox. Host tests cover key and
-joystick state, disconnect, rollover, retry, aggregation, port swap, and reset
-reassertion. The matching build ID is `2026082A`.
+### Build 2026082A: controller startup, no USB1 connector power
+
+The ARM USB1 host translates a USB boot keyboard and common HID gamepad reports
+into the already-tested C64 input mailbox. Host tests cover key and joystick
+state, disconnect, rollover, retry, aggregation, port swap, and reset
+reassertion.
 
 Packaged test artifact:
 
@@ -158,7 +160,51 @@ The isolated PAL Vivado build passes with WNS +0.394 ns, WHS +0.057 ns, WPWS
 +1.749 ns, zero timing failures, no Critical CDC entry, no routing error, and
 no DRC error. Vitis rebuilt the FSBL and application against that exact XSA.
 
-No physical USB device has been tested with this image yet. Run
-`docs/C64_USB_INPUT_HARDWARE_TEST.md`; do not promote these automated results
-to hardware support until its keyboard, gamepad, disconnect, reset, video, and
-golden-reboot checks pass.
+The first physical USB1 check failed. The user observed that the keyboard
+received no USB1 power. UART command `u` reported:
+
+```text
+usb1 started=1 portsc=8C001000 keyboards=0 gamepads=0 joyport=2 reports=0 submit_err=0 transfer_err=0 input_err=0 last=0
+```
+
+This result establishes controller startup and a set `PORTSC.PP` request. It
+does not establish connector VBUS or HID operation: no device attached, no HID
+interface enumerated, and no input report arrived.
+
+### Build 2026082B: USB3300 VBUS correction awaiting board test
+
+Firmware build `2026082B` adds explicit USB3300 host-power setup through the
+Zynq USB1 ULPI viewport in
+[`cherryusb_zynq_hc.c`](../firmware/platform/xilinx/cherryusb_zynq_hc.c), using
+the register policy in
+[`cherryusb_ulpi.h`](../firmware/platform/xilinx/cherryusb_ulpi.h). It keeps
+`SuspendM` set, enables host `AutoResume`, uses the USB3300 internal VBUS
+comparator, and sets `DpPulldown`, `DmPulldown`, `DrvVbus`, and
+`DrvVbusExternal`. The firmware requires readback values of Function Control
+`0x41`, Interface Control `0x10`, and OTG Control `0x66`.
+
+`UseExternalVbusIndicator` remains clear. The board's TPS25221 `FAULT#` output
+is open-drain and the `USB_MOUSE_EXTVBUS` net has no pull-up, so it cannot be
+used as a valid healthy-state input. USB3300 `CPEN` still enables the TPS25221
+VBUS switch, as recorded in
+[`BOARD_FACTS.md`](BOARD_FACTS.md#known-from-the-reviewed-sources).
+
+UART command `u` now reports PHY identity, setup and cleanup results,
+VBUS-drive and VBUS-valid readback, ULPI errors and timeouts, and relevant
+register snapshots through
+[`usb_hid_service.c`](../firmware/platform/xilinx/usb_hid_service.c). The host
+test in
+[`test_cherryusb_ulpi.c`](../tests/host/test_cherryusb_ulpi.c) covers viewport
+command encoding and the `0x66` OTG / `0x10` interface policy. These automated
+checks cannot prove connector power or device enumeration.
+
+Shutdown clears both USB3300 VBUS-drive bits, reads them back, and waits for
+the internal `VbusValid` indication to fall. That verification remains pending
+across retries if it fails; `:reboot` cancels instead of resetting with USB1
+power in an unverified state.
+
+Build `2026082B` has not yet passed on-board VBUS or HID testing. USB3300
+identity and register readback, connector power, keyboard and gamepad
+enumeration/input, disconnect/reconnect, and cold/warm-reset recovery remain
+pending. Do not claim USB1 power or HID hardware support until
+[`C64_USB_INPUT_HARDWARE_TEST.md`](C64_USB_INPUT_HARDWARE_TEST.md) passes.

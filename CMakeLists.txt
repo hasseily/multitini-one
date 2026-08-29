@@ -79,3 +79,9 @@ add_test(NAME tmp102 COMMAND test_tmp102)
 add_executable(test_xmodem tests/host/test_xmodem.c)
 target_link_libraries(test_xmodem PRIVATE multitini_common)
 add_test(NAME xmodem COMMAND test_xmodem)
+
+add_executable(test_cherryusb_ulpi tests/host/test_cherryusb_ulpi.c)
+target_include_directories(test_cherryusb_ulpi PRIVATE
+    firmware/platform/xilinx
+)
+add_test(NAME cherryusb_ulpi COMMAND test_cherryusb_ulpi)

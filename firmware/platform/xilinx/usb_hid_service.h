@@ -22,7 +22,7 @@ typedef struct {
 
 void usb_hid_service_init(mt_core_link_t *link);
 int usb_hid_service_start(void);
-void usb_hid_service_stop(void);
+int usb_hid_service_stop(void);
 void usb_hid_service_poll(void);
 void usb_hid_service_set_core_ready(bool ready);
 int usb_hid_service_set_joystick_port(uint8_t port);

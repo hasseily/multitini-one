@@ -15,6 +15,8 @@ class FirmwareRecoveryTests(unittest.TestCase):
         body = source.split("static void reboot_to_golden(void)", 1)[1]
         body = body.split("\n}\n", 1)[0]
 
+        usb_power_stop = body.index("usb_hid_service_stop()")
+        usb_power_failure = body.index("USB1 VBUS shutdown failed")
         drain = body.index("wait_uart0_transmit_idle()")
         clear = body.index("Xil_Out32(MT_DEVCFG_MULTIBOOT, 0U)")
         barrier = body.index("DATA_SYNC", clear)
@@ -23,6 +25,8 @@ class FirmwareRecoveryTests(unittest.TestCase):
         reset = body.index(
             "Xil_Out32(MT_PS_RESET_CONTROL, MT_PS_SOFTWARE_RESET)"
         )
+        self.assertLess(usb_power_stop, usb_power_failure)
+        self.assertLess(usb_power_failure, drain)
         self.assertLess(drain, clear)
         self.assertLess(clear, barrier)
         self.assertLess(barrier, readback)
@@ -36,6 +40,21 @@ class FirmwareRecoveryTests(unittest.TestCase):
         self.assertIn("case 'r':", source)
         self.assertIn("MT_COMMAND_CORE_RESET", source)
         self.assertIn(":reboot return to golden updater", source)
+
+    def test_reboot_retries_unverified_usb1_power_shutdown(self):
+        service = (
+            ROOT / "firmware/platform/xilinx/usb_hid_service.c"
+        ).read_text()
+        stop = service.split("int usb_hid_service_stop(void)", 1)[1]
+        stop = stop.split("\n}\n", 1)[0]
+
+        self.assertIn("g_power_shutdown_required", service)
+        self.assertIn(
+            "g_started != 0U || g_power_shutdown_required != 0U", stop
+        )
+        failure = stop.rindex("g_power_shutdown_required = 1U")
+        returned = stop.index("return power_result")
+        self.assertLess(failure, returned)
 
     def test_recovery_console_remains_available_when_shell_probe_fails(self):
         source = (ROOT / "firmware/platform/xilinx/main.c").read_text()

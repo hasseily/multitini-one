@@ -26,7 +26,7 @@
 #include "xuartps_hw.h"
 
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
-#define MT_FIRMWARE_BUILD_ID UINT32_C(0x2026082A)
+#define MT_FIRMWARE_BUILD_ID UINT32_C(0x2026082B)
 #define MT_I2C_CLOCK_HZ UINT32_C(100000)
 #define MT_I2C_BUSY_POLLS UINT32_C(1000000)
 #define MT_UART_DRAIN_POLLS UINT32_C(10000000)
@@ -515,6 +515,12 @@ static bool wait_uart0_transmit_idle(void)
 
 static void reboot_to_golden(void)
 {
+    const int usb_stop_result = usb_hid_service_stop();
+    if (usb_stop_result != 0) {
+        xil_printf("USB1 VBUS shutdown failed (%d); reboot cancelled\r\n",
+                   usb_stop_result);
+        return;
+    }
     xil_printf("rebooting to golden at QSPI offset 0x00000000\r\n");
     if (!wait_uart0_transmit_idle()) {
         xil_printf("UART did not drain; reboot cancelled\r\n");
