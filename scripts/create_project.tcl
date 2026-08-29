@@ -1,0 +1,271 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Recreate the Multitini One Vivado 2025.2 project from tracked sources.
+
+set script_dir [file dirname [file normalize [info script]]]
+set repo_root [file normalize [file join $script_dir ".."]]
+set project_dir [file join $repo_root "build" "vivado"]
+set project_name "multitini_one"
+set part_name "xc7z020clg484-2"
+
+proc require_file {path} {
+    if {![file isfile $path]} {
+        error "Required source is absent: $path"
+    }
+    return [file normalize $path]
+}
+
+proc add_manifest_sources {repo_root} {
+    set manifest [require_file [file join $repo_root hdl hdl_sources.txt]]
+    set stream [open $manifest r]
+    set lines [split [read -nonewline $stream] "\n"]
+    close $stream
+
+    foreach line $lines {
+        set relative [string trim $line]
+        if {$relative eq "" || [string index $relative 0] eq "#"} {
+            continue
+        }
+        set source [require_file [file join $repo_root hdl $relative]]
+        set extension [string tolower [file extension $source]]
+        if {$extension eq ".xdc"} {
+            add_files -fileset constrs_1 -norecurse $source
+        } else {
+            add_files -fileset sources_1 -norecurse $source
+            if {$extension eq ".sv"} {
+                set_property file_type SystemVerilog [get_files $source]
+            } elseif {$extension eq ".vhd" || $extension eq ".vhdl"} {
+                set_property file_type VHDL [get_files $source]
+            } elseif {$extension ne ".v" && $extension ne ".mem"} {
+                error "Unsupported source-manifest extension: $source"
+            }
+        }
+    }
+}
+
+proc configure_processing_system {ps} {
+    # Clock and fabric interfaces.
+    set_property -dict [list \
+        CONFIG.PCW_FPGA_FCLK0_ENABLE {1} \
+        CONFIG.PCW_FPGA_FCLK1_ENABLE {0} \
+        CONFIG.PCW_FPGA_FCLK2_ENABLE {1} \
+        CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ {133.000000} \
+        CONFIG.PCW_FPGA2_PERIPHERAL_FREQMHZ {150.000000} \
+        CONFIG.PCW_EN_CLK0_PORT {1} \
+        CONFIG.PCW_EN_CLK1_PORT {0} \
+        CONFIG.PCW_EN_CLK2_PORT {1} \
+        CONFIG.PCW_FCLK0_PERIPHERAL_CLKSRC {IO PLL} \
+        CONFIG.PCW_FCLK2_PERIPHERAL_CLKSRC {IO PLL} \
+        CONFIG.PCW_FCLK_CLK0_BUF {TRUE} \
+        CONFIG.PCW_FCLK_CLK2_BUF {TRUE} \
+        CONFIG.PCW_EN_RST0_PORT {1} \
+        CONFIG.PCW_USE_M_AXI_GP0 {1} \
+        CONFIG.PCW_USE_FABRIC_INTERRUPT {1} \
+        CONFIG.PCW_IRQ_F2P_INTR {1} \
+        CONFIG.PCW_IRQ_F2P_MODE {DIRECT}] $ps
+
+    set_property -dict [list \
+        CONFIG.PCW_CRYSTAL_PERIPHERAL_FREQMHZ {33.333333} \
+        CONFIG.PCW_APU_CLK_RATIO_ENABLE {6:2:1} \
+        CONFIG.PCW_CPU_PERIPHERAL_CLKSRC {ARM PLL} \
+        CONFIG.PCW_DDR_PERIPHERAL_CLKSRC {DDR PLL} \
+        CONFIG.PCW_QSPI_PERIPHERAL_CLKSRC {IO PLL} \
+        CONFIG.PCW_SDIO_PERIPHERAL_CLKSRC {IO PLL} \
+        CONFIG.PCW_UART_PERIPHERAL_CLKSRC {IO PLL}] $ps
+
+    # Two 16-bit DDR3L devices. These values are inherited from the pinned
+    # Appletini board project and require confirmation in generated PS reports.
+    set_property -dict [list \
+        CONFIG.PCW_UIPARAM_DDR_PARTNO {MT41K256M16 RE-125} \
+        CONFIG.PCW_UIPARAM_DDR_BUS_WIDTH {32 Bit} \
+        CONFIG.PCW_UIPARAM_DDR_DEVICE_CAPACITY {4096 MBits} \
+        CONFIG.PCW_UIPARAM_DDR_SPEED_BIN {DDR3L_800} \
+        CONFIG.PCW_UIPARAM_DDR_TRAIN_WRITE_LEVEL {1} \
+        CONFIG.PCW_UIPARAM_DDR_TRAIN_READ_GATE {1} \
+        CONFIG.PCW_UIPARAM_DDR_TRAIN_DATA_EYE {1} \
+        CONFIG.PCW_UIPARAM_DDR_DQS_TO_CLK_DELAY_0 {0.048} \
+        CONFIG.PCW_UIPARAM_DDR_DQS_TO_CLK_DELAY_1 {0.050} \
+        CONFIG.PCW_UIPARAM_DDR_DQS_TO_CLK_DELAY_2 {0.048} \
+        CONFIG.PCW_UIPARAM_DDR_DQS_TO_CLK_DELAY_3 {0.050} \
+        CONFIG.PCW_UIPARAM_DDR_BOARD_DELAY0 {0.294} \
+        CONFIG.PCW_UIPARAM_DDR_BOARD_DELAY1 {0.298} \
+        CONFIG.PCW_UIPARAM_DDR_BOARD_DELAY2 {0.294} \
+        CONFIG.PCW_UIPARAM_DDR_BOARD_DELAY3 {0.298}] $ps
+
+    # Boot flash and removable storage.
+    set_property -dict [list \
+        CONFIG.PCW_QSPI_PERIPHERAL_ENABLE {1} \
+        CONFIG.PCW_QSPI_QSPI_IO {MIO 1 .. 6} \
+        CONFIG.PCW_QSPI_GRP_FBCLK_ENABLE {0} \
+        CONFIG.PCW_SD1_PERIPHERAL_ENABLE {1} \
+        CONFIG.PCW_SD1_SD1_IO {MIO 10 .. 15} \
+        CONFIG.PCW_SD1_GRP_CD_ENABLE {1} \
+        CONFIG.PCW_SD1_GRP_CD_IO {MIO 9} \
+        CONFIG.PCW_SD1_GRP_WP_ENABLE {0}] $ps
+
+    foreach mio {1 2 3 4 5 6 9 10 11 12 13 14 15} {
+        set_property "CONFIG.PCW_MIO_${mio}_SLEW" fast $ps
+    }
+    foreach mio {1 2 3 4 5 6} {
+        set_property "CONFIG.PCW_MIO_${mio}_PULLUP" disabled $ps
+    }
+
+    # Board-management bus and both debug UARTs.
+    set_property -dict [list \
+        CONFIG.PCW_I2C0_PERIPHERAL_ENABLE {1} \
+        CONFIG.PCW_I2C0_I2C0_IO {MIO 22 .. 23} \
+        CONFIG.PCW_I2C0_GRP_INT_ENABLE {0} \
+        CONFIG.PCW_UART0_PERIPHERAL_ENABLE {1} \
+        CONFIG.PCW_UART0_UART0_IO {MIO 26 .. 27} \
+        CONFIG.PCW_UART0_GRP_FULL_ENABLE {0} \
+        CONFIG.PCW_UART0_BAUD_RATE {115200} \
+        CONFIG.PCW_UART1_PERIPHERAL_ENABLE {1} \
+        CONFIG.PCW_UART1_UART1_IO {MIO 24 .. 25} \
+        CONFIG.PCW_UART1_GRP_FULL_ENABLE {0} \
+        CONFIG.PCW_UART1_BAUD_RATE {115200}] $ps
+
+    # USB0 is the uplink/debug port. USB1 is the device-facing host port.
+    # The schematic has no PS-MIO USB PHY reset signal, so both reset outputs
+    # remain disabled pending the cold/warm-reset hardware check.
+    set_property -dict [list \
+        CONFIG.PCW_USB0_PERIPHERAL_ENABLE {1} \
+        CONFIG.PCW_USB0_USB0_IO {MIO 28 .. 39} \
+        CONFIG.PCW_USB0_RESET_ENABLE {0} \
+        CONFIG.PCW_USB1_PERIPHERAL_ENABLE {1} \
+        CONFIG.PCW_USB1_USB1_IO {MIO 40 .. 51} \
+        CONFIG.PCW_USB1_RESET_ENABLE {0}] $ps
+    foreach mio {28 29 30 31 32 33 34 35 36 37 38 39 \
+                 40 41 42 43 44 45 46 47 48 49 50 51} {
+        set_property "CONFIG.PCW_MIO_${mio}_SLEW" fast $ps
+    }
+
+    # Ethernet uses the PL-side W5100S, not a PS GEM.
+    set_property -dict [list \
+        CONFIG.PCW_EN_ENET0 {0} \
+        CONFIG.PCW_EN_ENET1 {0} \
+        CONFIG.PCW_ENET0_PERIPHERAL_ENABLE {0} \
+        CONFIG.PCW_ENET1_PERIPHERAL_ENABLE {0} \
+        CONFIG.PCW_ENET0_GRP_MDIO_ENABLE {0} \
+        CONFIG.PCW_ENET1_GRP_MDIO_ENABLE {0} \
+        CONFIG.PCW_GPIO_MIO_GPIO_ENABLE {1} \
+        CONFIG.PCW_GPIO_EMIO_GPIO_ENABLE {0} \
+        CONFIG.PCW_UIPARAM_GENERATE_SUMMARY {1}] $ps
+}
+
+file mkdir $project_dir
+create_project $project_name $project_dir -part $part_name -force
+set_property target_language Verilog [current_project]
+set_property simulator_language Mixed [current_project]
+set_property default_lib work [current_project]
+add_manifest_sources $repo_root
+
+create_bd_design zynq_ps_bd
+set ps [create_bd_cell -type ip \
+    -vlnv xilinx.com:ip:processing_system7:5.5 processing_system7_0]
+apply_bd_automation -rule xilinx.com:bd_rule:processing_system7 -config {
+    make_external "FIXED_IO, DDR"
+    apply_board_preset "0"
+    Master "Disable"
+    Slave "Disable"
+} $ps
+configure_processing_system $ps
+
+set gp0 [create_bd_intf_port -mode Master \
+    -vlnv xilinx.com:interface:aximm_rtl:1.0 M_AXI_GP0_0]
+set_property -dict [list \
+    CONFIG.ADDR_WIDTH {32} \
+    CONFIG.DATA_WIDTH {32} \
+    CONFIG.HAS_REGION {0} \
+    CONFIG.ID_WIDTH {12} \
+    CONFIG.NUM_READ_OUTSTANDING {8} \
+    CONFIG.NUM_WRITE_OUTSTANDING {8} \
+    CONFIG.PROTOCOL {AXI3}] $gp0
+connect_bd_intf_net [get_bd_intf_pins $ps/M_AXI_GP0] $gp0
+
+set control_clk [create_bd_port -dir O -type clk control_clk]
+set idelay_ref_clk [create_bd_port -dir O -type clk idelay_ref_clk]
+set video_clk [create_bd_port -dir O -type clk video_clk]
+set control_aresetn [create_bd_port -dir O -type rst control_aresetn]
+set video_aresetn [create_bd_port -dir O -type rst video_aresetn]
+set_property CONFIG.POLARITY ACTIVE_LOW $control_aresetn
+set_property CONFIG.POLARITY ACTIVE_LOW $video_aresetn
+set_property -dict [list CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0_0} \
+    CONFIG.ASSOCIATED_RESET {control_aresetn}] $control_clk
+set_property CONFIG.ASSOCIATED_RESET {video_aresetn} $video_clk
+set irq [create_bd_port -dir I -from 15 -to 0 IRQ]
+
+set control_wiz [create_bd_cell -type ip \
+    -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_control]
+set_property -dict [list \
+    CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {133.333} \
+    CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {199.995} \
+    CONFIG.CLKOUT2_USED {true} \
+    CONFIG.NUM_OUT_CLKS {2} \
+    CONFIG.PRIM_SOURCE {No_buffer} \
+    CONFIG.RESET_PORT {resetn} \
+    CONFIG.RESET_TYPE {ACTIVE_LOW}] $control_wiz
+
+set video_wiz [create_bd_cell -type ip \
+    -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_video]
+set_property -dict [list \
+    CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {148.5} \
+    CONFIG.PRIM_IN_FREQ {150.000} \
+    CONFIG.PRIM_SOURCE {No_buffer} \
+    CONFIG.RESET_PORT {resetn} \
+    CONFIG.RESET_TYPE {ACTIVE_LOW}] $video_wiz
+
+set control_reset [create_bd_cell -type ip \
+    -vlnv xilinx.com:ip:proc_sys_reset:5.0 reset_control]
+set video_reset [create_bd_cell -type ip \
+    -vlnv xilinx.com:ip:proc_sys_reset:5.0 reset_video]
+
+connect_bd_net [get_bd_pins $ps/FCLK_CLK0] [get_bd_pins $control_wiz/clk_in1]
+connect_bd_net [get_bd_pins $ps/FCLK_CLK2] [get_bd_pins $video_wiz/clk_in1]
+connect_bd_net [get_bd_pins $ps/FCLK_RESET0_N] \
+    [get_bd_pins $control_wiz/resetn] [get_bd_pins $video_wiz/resetn] \
+    [get_bd_pins $control_reset/ext_reset_in] \
+    [get_bd_pins $video_reset/ext_reset_in]
+
+connect_bd_net [get_bd_pins $control_wiz/clk_out1] $control_clk \
+    [get_bd_pins $control_reset/slowest_sync_clk] \
+    [get_bd_pins $ps/M_AXI_GP0_ACLK]
+connect_bd_net [get_bd_pins $control_wiz/clk_out2] $idelay_ref_clk
+connect_bd_net [get_bd_pins $control_wiz/locked] \
+    [get_bd_pins $control_reset/dcm_locked]
+connect_bd_net [get_bd_pins $control_reset/peripheral_aresetn] $control_aresetn
+
+connect_bd_net [get_bd_pins $video_wiz/clk_out1] $video_clk \
+    [get_bd_pins $video_reset/slowest_sync_clk]
+connect_bd_net [get_bd_pins $video_wiz/locked] \
+    [get_bd_pins $video_reset/dcm_locked]
+connect_bd_net [get_bd_pins $video_reset/peripheral_aresetn] $video_aresetn
+connect_bd_net $irq [get_bd_pins $ps/IRQ_F2P]
+
+assign_bd_address -offset 0x40000000 -range 0x00001000 \
+    -target_address_space [get_bd_addr_spaces $ps/Data] \
+    [get_bd_addr_segs M_AXI_GP0_0/Reg] -force
+
+regenerate_bd_layout
+validate_bd_design
+save_bd_design
+generate_target all [get_files zynq_ps_bd.bd]
+set wrapper [make_wrapper -files [get_files zynq_ps_bd.bd] -top]
+add_files -norecurse $wrapper
+
+set_property top multitini_one_top [get_filesets sources_1]
+set git_id "00000000"
+if {![catch {exec git -C $repo_root rev-parse --short=8 HEAD} candidate]} {
+    if {[regexp {^[0-9a-fA-F]{8}$} [string trim $candidate]]} {
+        set git_id [string trim $candidate]
+    }
+}
+if {[info exists ::env(MULTITINI_BUILD_ID)]} {
+    set git_id [string trim $::env(MULTITINI_BUILD_ID)]
+    if {![regexp {^[0-9a-fA-F]{8}$} $git_id]} {
+        error "MULTITINI_BUILD_ID must contain exactly eight hexadecimal digits"
+    }
+}
+set_property generic "SHELL_BUILD_ID=32'h${git_id}" [get_filesets sources_1]
+update_compile_order -fileset sources_1
+
+puts "Created $project_dir/$project_name.xpr"
+puts "SHELL_BUILD_ID=0x$git_id"

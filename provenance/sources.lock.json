@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "name": "Appletini One board support",
+      "url": "https://github.com/hasseily/appletini-one.git",
+      "commit": "052fe8aa43c483c193fcbc10ecba4225272c213d",
+      "license": "GPL-3.0-only",
+      "use": "Selected board HDL, constraints, PS configuration, and firmware reference"
+    },
+    {
+      "name": "MiSTer C64",
+      "url": "https://github.com/MiSTer-devel/C64_MiSTer.git",
+      "commit": "62fc697e3c9b5982c9dc76aa8cd03db545d20803",
+      "license": "mixed; audit required",
+      "use": "C64 machine logic only; no ROM, media, Intel-generated IP, or MiSTer platform binary"
+    }
+  ]
+}

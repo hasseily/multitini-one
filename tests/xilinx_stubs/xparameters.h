@@ -1,0 +1,5 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+#ifndef TEST_XILINX_XPARAMETERS_H
+#define TEST_XILINX_XPARAMETERS_H
+#define XPAR_XIICPS_0_BASEADDR 0xE0004000U
+#endif

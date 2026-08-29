@@ -1,0 +1,18 @@
+* text=auto
+
+*.sv text eol=lf
+*.v text eol=lf
+*.vhd text eol=lf
+*.vhdl text eol=lf
+*.xdc text eol=lf
+*.tcl text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+*.py text eol=lf
+*.json text eol=lf
+*.csv text eol=lf
+*.md text eol=lf
+Makefile text eol=lf
+
+# Preserve imported source byte-for-byte, including upstream whitespace.
+third_party/appletini/** -whitespace

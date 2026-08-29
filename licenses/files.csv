@@ -1,0 +1,27 @@
+path,origin,commit,license,status,notes
+README.md,Multitini One,,GPL-3.0-only,reviewed,Original project documentation
+MULTITINI_ONE_PLAN.md,Multitini One,,GPL-3.0-only,reviewed,Original product plan
+docs/**,Multitini One,,GPL-3.0-only,reviewed,Original documentation except quoted facts
+spec/**,Multitini One,,GPL-3.0-only,reviewed,Register ABI source specification
+scripts/**,Multitini One,,GPL-3.0-only,reviewed,Original build and policy scripts unless a narrower row applies
+firmware/**,Multitini One,,GPL-3.0-only,reviewed,Original firmware unless a narrower row applies
+firmware/common/ak4493.c,Appletini One and Multitini One,052fe8aa43c483c193fcbc10ecba4225272c213d,GPL-3.0-only,host-tested,Transport-independent port of the register sequence; modified to default muted
+firmware/include/multitini_ak4493.h,Appletini One and Multitini One,052fe8aa43c483c193fcbc10ecba4225272c213d,GPL-3.0-only,host-tested,New transport-independent API around the ported sequence
+firmware/common/tmp102.c,Appletini One and Multitini One,052fe8aa43c483c193fcbc10ecba4225272c213d,GPL-3.0-only,host-tested,Transport-independent decode port
+firmware/include/multitini_tmp102.h,Appletini One and Multitini One,052fe8aa43c483c193fcbc10ecba4225272c213d,GPL-3.0-only,host-tested,New transport-independent API around the ported decode
+hdl/board/**,Multitini One,,GPL-3.0-only,pending-vivado,Original board shell
+hdl/common/**,Multitini One,,GPL-3.0-only,pending-vivado,Original common shell logic
+hdl/core/**,Multitini One,,GPL-3.0-only,pending-vivado,Original core adapter interfaces
+hdl/generated/**,Multitini One,,GPL-3.0-only,generated,Generated from spec/interface_v0.json
+hdl/sim/**,Multitini One,,GPL-3.0-only,pending-simulator,Original testbenches
+tests/**,Multitini One,,GPL-3.0-only,reviewed,Original host tests
+third_party/appletini/hdl/reset_sync.sv,Appletini One,052fe8aa43c483c193fcbc10ecba4225272c213d,GPL-3.0-only,pending-vivado,Exact copy
+third_party/appletini/hdl/cdc_bit_sync.sv,Appletini One,052fe8aa43c483c193fcbc10ecba4225272c213d,GPL-3.0-only,pending-vivado,Exact copy
+third_party/appletini/hdl/cdc_bus_sampled.sv,Appletini One,052fe8aa43c483c193fcbc10ecba4225272c213d,GPL-3.0-only,pending-vivado,Exact copy
+third_party/appletini/hdl/cdc_handshake_reg.sv,Appletini One,052fe8aa43c483c193fcbc10ecba4225272c213d,GPL-3.0-only,pending-vivado,Exact copy
+third_party/appletini/hdl/cdc_pulse_toggle.sv,Appletini One,052fe8aa43c483c193fcbc10ecba4225272c213d,GPL-3.0-only,pending-vivado,Exact copy
+third_party/appletini/hdl/audio_i2s_pcm_tx.sv,Appletini One,052fe8aa43c483c193fcbc10ecba4225272c213d,GPL-3.0-only,pending-vivado,Exact copy
+third_party/appletini/hdl/audio_i2s_tone.sv,Appletini One,052fe8aa43c483c193fcbc10ecba4225272c213d,GPL-3.0-only,pending-vivado,Exact copy
+third_party/appletini/hdl/audio_spdif_pcm_tx.sv,Appletini One,052fe8aa43c483c193fcbc10ecba4225272c213d,GPL-3.0-only,pending-vivado,Exact copy
+third_party/appletini/hdl/psram_driver.sv,Appletini One,052fe8aa43c483c193fcbc10ecba4225272c213d,GPL-3.0-only,pending-vivado,Exact copy; Xilinx primitive dependent
+third_party/appletini/constraints/multitini_pins.xdc,Appletini One,052fe8aa43c483c193fcbc10ecba4225272c213d,GPL-3.0-only,pending-vivado,Pin-assignment subset copied without timing exceptions

@@ -1,0 +1,257 @@
+// SPDX-License-Identifier: GPL-3.0-only
+`timescale 1ns / 1ps
+
+module multitini_control_regs #(
+    parameter logic [31:0] SHELL_BUILD_ID = 32'h00000000
+) (
+    input  logic         clk,
+    input  logic         resetn,
+    input  logic [31:0]  core_id,
+    input  logic         core_ready,
+
+    input  logic         wr_en,
+    input  logic [11:0]  wr_addr,
+    input  logic [31:0]  wr_data,
+    input  logic [3:0]   wr_strb,
+    input  logic         rd_en,
+    input  logic [11:0]  rd_addr,
+    output logic [31:0]  rd_data,
+
+    output logic [31:0]  control,
+    output logic         irq
+);
+    import multitini_regs_pkg::*;
+
+    logic [31:0] error_flags;
+    logic [31:0] irq_status;
+    logic [31:0] irq_enable;
+    logic [31:0] scratch;
+    logic [31:0] command_seq;
+    logic [31:0] command_opcode;
+    logic [31:0] command_arg0;
+    logic [31:0] command_arg1;
+    logic [31:0] command_arg2;
+    logic [31:0] command_arg3;
+    logic [31:0] response_seq;
+    logic [31:0] response_status;
+    logic [31:0] response_arg0;
+    logic [31:0] response_arg1;
+    logic [31:0] count_bad_write;
+    logic [31:0] count_bad_read;
+    logic [31:0] count_command;
+    logic [31:0] count_timeout;
+    logic [31:0] status_word;
+    logic        rd_known;
+    logic [31:0] error_set_mask;
+    logic [31:0] error_clear_mask;
+    logic [31:0] irq_clear_mask;
+
+    function automatic logic [31:0] merge_strobes(
+        input logic [31:0] old_value,
+        input logic [31:0] new_value,
+        input logic [3:0] strobes
+    );
+        logic [31:0] result;
+        begin
+            result = old_value;
+            for (int lane = 0; lane < 4; lane = lane + 1)
+                if (strobes[lane])
+                    result[lane*8 +: 8] = new_value[lane*8 +: 8];
+            merge_strobes = result;
+        end
+    endfunction
+
+    always_comb begin
+        status_word = MT_STATUS_SHELL_READY;
+        if (control & MT_CONTROL_VIDEO_TEST_ENABLE)
+            status_word |= MT_STATUS_VIDEO_ACTIVE;
+        if ((control & MT_CONTROL_AUDIO_TEST_ENABLE) &&
+            !(control & MT_CONTROL_AUDIO_MUTE))
+            status_word |= MT_STATUS_AUDIO_ACTIVE;
+        if (core_ready)
+            status_word |= MT_STATUS_CORE_READY;
+    end
+
+    always_comb begin
+        rd_known = 1'b1;
+        unique case (rd_addr)
+            MT_REG_MAGIC:            rd_data = MT_MAGIC;
+            MT_REG_ABI_VERSION:      rd_data = MT_ABI_VERSION;
+            MT_REG_SHELL_ID:         rd_data = MT_SHELL_ID;
+            MT_REG_SHELL_BUILD_ID:   rd_data = SHELL_BUILD_ID;
+            MT_REG_CORE_ID:          rd_data = core_id;
+            MT_REG_STATUS:           rd_data = status_word;
+            MT_REG_ERROR:            rd_data = error_flags;
+            MT_REG_CONTROL:          rd_data = control;
+            MT_REG_IRQ_STATUS:       rd_data = irq_status;
+            MT_REG_IRQ_ENABLE:       rd_data = irq_enable;
+            MT_REG_SCRATCH:          rd_data = scratch;
+            MT_REG_COMMAND_SEQ:      rd_data = command_seq;
+            MT_REG_COMMAND_OPCODE:   rd_data = command_opcode;
+            MT_REG_COMMAND_ARG0:     rd_data = command_arg0;
+            MT_REG_COMMAND_ARG1:     rd_data = command_arg1;
+            MT_REG_COMMAND_ARG2:     rd_data = command_arg2;
+            MT_REG_COMMAND_ARG3:     rd_data = command_arg3;
+            MT_REG_RESPONSE_SEQ:     rd_data = response_seq;
+            MT_REG_RESPONSE_STATUS:  rd_data = response_status;
+            MT_REG_RESPONSE_ARG0:    rd_data = response_arg0;
+            MT_REG_RESPONSE_ARG1:    rd_data = response_arg1;
+            MT_REG_COUNT_BAD_WRITE:  rd_data = count_bad_write;
+            MT_REG_COUNT_BAD_READ:   rd_data = count_bad_read;
+            MT_REG_COUNT_COMMAND:    rd_data = count_command;
+            MT_REG_COUNT_TIMEOUT:    rd_data = count_timeout;
+            default: begin
+                rd_data = 32'h00000000;
+                rd_known = 1'b0;
+            end
+        endcase
+    end
+
+    assign irq = |(irq_status & irq_enable);
+
+    // Merge sticky updates so simultaneous AXI read and write completions
+    // cannot lose an error. New errors win over a same-cycle software clear.
+    always_comb begin
+        error_set_mask = 32'd0;
+        error_clear_mask = 32'd0;
+        irq_clear_mask = 32'd0;
+        if (rd_en && !rd_known)
+            error_set_mask |= MT_ERROR_BAD_READ;
+        if (wr_en) begin
+            unique case (wr_addr)
+            MT_REG_ERROR:
+                error_clear_mask = merge_strobes(32'd0, wr_data, wr_strb);
+            MT_REG_IRQ_STATUS:
+                irq_clear_mask = merge_strobes(32'd0, wr_data, wr_strb);
+            MT_REG_COMMAND_DOORBELL: begin
+                if (wr_data != command_seq)
+                    error_set_mask |= MT_ERROR_BAD_COMMAND;
+                else if (command_opcode != MT_COMMAND_PING &&
+                         command_opcode != MT_COMMAND_GET_STATUS &&
+                         command_opcode != MT_COMMAND_CORE_RESET &&
+                         command_opcode != MT_COMMAND_SET_AUDIO)
+                    error_set_mask |= MT_ERROR_BAD_COMMAND;
+            end
+            MT_REG_CONTROL,
+            MT_REG_IRQ_ENABLE,
+            MT_REG_SCRATCH,
+            MT_REG_COMMAND_SEQ,
+            MT_REG_COMMAND_OPCODE,
+            MT_REG_COMMAND_ARG0,
+            MT_REG_COMMAND_ARG1,
+            MT_REG_COMMAND_ARG2,
+            MT_REG_COMMAND_ARG3: ;
+            default: error_set_mask |= MT_ERROR_BAD_WRITE;
+            endcase
+        end
+    end
+
+    always_ff @(posedge clk) begin
+        if (!resetn) begin
+            error_flags     <= 32'h00000000;
+            control         <= MT_CONTROL_CORE_RESET_REQUEST |
+                               MT_CONTROL_VIDEO_TEST_ENABLE |
+                               MT_CONTROL_AUDIO_TEST_ENABLE |
+                               MT_CONTROL_AUDIO_MUTE;
+            irq_status      <= 32'h00000000;
+            irq_enable      <= 32'h00000000;
+            scratch         <= 32'h00000000;
+            command_seq     <= 32'h00000000;
+            command_opcode  <= 32'h00000000;
+            command_arg0    <= 32'h00000000;
+            command_arg1    <= 32'h00000000;
+            command_arg2    <= 32'h00000000;
+            command_arg3    <= 32'h00000000;
+            response_seq    <= 32'h00000000;
+            response_status <= MT_RESPONSE_OK;
+            response_arg0   <= 32'h00000000;
+            response_arg1   <= 32'h00000000;
+            count_bad_write <= 32'h00000000;
+            count_bad_read  <= 32'h00000000;
+            count_command   <= 32'h00000000;
+            count_timeout   <= 32'h00000000;
+        end else begin
+            error_flags <= (error_flags & ~error_clear_mask) | error_set_mask;
+            irq_status <= (irq_status & ~irq_clear_mask) |
+                          ((|error_set_mask) ? 32'd1 : 32'd0);
+
+            if (rd_en && !rd_known) begin
+                count_bad_read  <= count_bad_read + 32'd1;
+            end
+
+            if (wr_en) begin
+                unique case (wr_addr)
+                    MT_REG_ERROR:
+                        ;
+                    MT_REG_CONTROL:
+                        control <= merge_strobes(control, wr_data, wr_strb);
+                    MT_REG_IRQ_STATUS:
+                        ;
+                    MT_REG_IRQ_ENABLE:
+                        irq_enable <= merge_strobes(irq_enable, wr_data, wr_strb);
+                    MT_REG_SCRATCH:
+                        scratch <= merge_strobes(scratch, wr_data, wr_strb);
+                    MT_REG_COMMAND_SEQ:
+                        command_seq <= merge_strobes(command_seq, wr_data, wr_strb);
+                    MT_REG_COMMAND_OPCODE:
+                        command_opcode <= merge_strobes(command_opcode, wr_data, wr_strb);
+                    MT_REG_COMMAND_ARG0:
+                        command_arg0 <= merge_strobes(command_arg0, wr_data, wr_strb);
+                    MT_REG_COMMAND_ARG1:
+                        command_arg1 <= merge_strobes(command_arg1, wr_data, wr_strb);
+                    MT_REG_COMMAND_ARG2:
+                        command_arg2 <= merge_strobes(command_arg2, wr_data, wr_strb);
+                    MT_REG_COMMAND_ARG3:
+                        command_arg3 <= merge_strobes(command_arg3, wr_data, wr_strb);
+                    MT_REG_COMMAND_DOORBELL: begin
+                        count_command <= count_command + 32'd1;
+                        response_seq <= command_seq;
+                        response_arg0 <= 32'h00000000;
+                        response_arg1 <= 32'h00000000;
+                        if (wr_data != command_seq) begin
+                            response_status <= MT_RESPONSE_INVALID_ARGUMENT;
+                        end else begin
+                            unique case (command_opcode)
+                                MT_COMMAND_PING: begin
+                                    response_status <= MT_RESPONSE_OK;
+                                    response_arg0 <= MT_SHELL_ID;
+                                    response_arg1 <= MT_ABI_VERSION;
+                                end
+                                MT_COMMAND_GET_STATUS: begin
+                                    response_status <= MT_RESPONSE_OK;
+                                    response_arg0 <= status_word;
+                                    response_arg1 <= error_flags;
+                                end
+                                MT_COMMAND_CORE_RESET: begin
+                                    response_status <= MT_RESPONSE_OK;
+                                    if (command_arg0[0])
+                                        control <= control | MT_CONTROL_CORE_RESET_REQUEST;
+                                    else
+                                        control <= control & ~MT_CONTROL_CORE_RESET_REQUEST;
+                                end
+                                MT_COMMAND_SET_AUDIO: begin
+                                    response_status <= MT_RESPONSE_OK;
+                                    control <= (control &
+                                                ~(MT_CONTROL_AUDIO_TEST_ENABLE |
+                                                  MT_CONTROL_AUDIO_MUTE)) |
+                                               (command_arg0[0] ?
+                                                MT_CONTROL_AUDIO_TEST_ENABLE :
+                                                32'd0) |
+                                               (command_arg1[0] ?
+                                                MT_CONTROL_AUDIO_MUTE : 32'd0);
+                                end
+                                default: begin
+                                    response_status <= MT_RESPONSE_UNSUPPORTED;
+                                end
+                            endcase
+                        end
+                    end
+                    default: begin
+                        count_bad_write <= count_bad_write + 32'd1;
+                    end
+                endcase
+            end
+        end
+    end
+
+endmodule

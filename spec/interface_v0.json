@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "abi": {"major": 0, "minor": 1},
+  "magic": "0x4D543031",
+  "shell_id": "0x4D544F4E",
+  "register_span": "0x1000",
+  "registers": [
+    {"name": "MAGIC", "offset": "0x000", "access": "ro", "reset": "0x4D543031"},
+    {"name": "ABI_VERSION", "offset": "0x004", "access": "ro", "reset": "generated"},
+    {"name": "SHELL_ID", "offset": "0x008", "access": "ro", "reset": "0x4D544F4E"},
+    {"name": "SHELL_BUILD_ID", "offset": "0x00C", "access": "ro", "reset": "parameter"},
+    {"name": "CORE_ID", "offset": "0x010", "access": "ro", "reset": "0x00000000"},
+    {"name": "STATUS", "offset": "0x014", "access": "ro", "reset": "0x00000000"},
+    {"name": "ERROR", "offset": "0x018", "access": "rw1c", "reset": "0x00000000"},
+    {"name": "CONTROL", "offset": "0x01C", "access": "rw", "reset": "0x0000000F"},
+    {"name": "IRQ_STATUS", "offset": "0x020", "access": "rw1c", "reset": "0x00000000"},
+    {"name": "IRQ_ENABLE", "offset": "0x024", "access": "rw", "reset": "0x00000000"},
+    {"name": "SCRATCH", "offset": "0x028", "access": "rw", "reset": "0x00000000"},
+    {"name": "COMMAND_SEQ", "offset": "0x040", "access": "rw", "reset": "0x00000000"},
+    {"name": "COMMAND_OPCODE", "offset": "0x044", "access": "rw", "reset": "0x00000000"},
+    {"name": "COMMAND_ARG0", "offset": "0x048", "access": "rw", "reset": "0x00000000"},
+    {"name": "COMMAND_ARG1", "offset": "0x04C", "access": "rw", "reset": "0x00000000"},
+    {"name": "COMMAND_ARG2", "offset": "0x050", "access": "rw", "reset": "0x00000000"},
+    {"name": "COMMAND_ARG3", "offset": "0x054", "access": "rw", "reset": "0x00000000"},
+    {"name": "COMMAND_DOORBELL", "offset": "0x058", "access": "wo", "reset": "0x00000000"},
+    {"name": "RESPONSE_SEQ", "offset": "0x05C", "access": "ro", "reset": "0x00000000"},
+    {"name": "RESPONSE_STATUS", "offset": "0x060", "access": "ro", "reset": "0x00000000"},
+    {"name": "RESPONSE_ARG0", "offset": "0x064", "access": "ro", "reset": "0x00000000"},
+    {"name": "RESPONSE_ARG1", "offset": "0x068", "access": "ro", "reset": "0x00000000"},
+    {"name": "COUNT_BAD_WRITE", "offset": "0x080", "access": "ro", "reset": "0x00000000"},
+    {"name": "COUNT_BAD_READ", "offset": "0x084", "access": "ro", "reset": "0x00000000"},
+    {"name": "COUNT_COMMAND", "offset": "0x088", "access": "ro", "reset": "0x00000000"},
+    {"name": "COUNT_TIMEOUT", "offset": "0x08C", "access": "ro", "reset": "0x00000000"}
+  ],
+  "bitfields": {
+    "CONTROL": {
+      "CORE_RESET_REQUEST": 0,
+      "VIDEO_TEST_ENABLE": 1,
+      "AUDIO_TEST_ENABLE": 2,
+      "AUDIO_MUTE": 3
+    },
+    "STATUS": {
+      "SHELL_READY": 0,
+      "VIDEO_ACTIVE": 1,
+      "AUDIO_ACTIVE": 2,
+      "CORE_READY": 3,
+      "COMMAND_PENDING": 4
+    },
+    "ERROR": {
+      "BAD_WRITE": 0,
+      "BAD_READ": 1,
+      "BAD_COMMAND": 2,
+      "COMMAND_OVERRUN": 3
+    }
+  },
+  "commands": {
+    "PING": 0,
+    "GET_STATUS": 1,
+    "CORE_RESET": 2,
+    "SET_VIDEO_MODE": 3,
+    "SET_AUDIO": 4,
+    "STREAM_BEGIN": 16,
+    "STREAM_END": 17,
+    "MEDIA_MOUNT": 32,
+    "MEDIA_EJECT": 33
+  },
+  "responses": {
+    "OK": 0,
+    "UNSUPPORTED": 1,
+    "INVALID_ARGUMENT": 2,
+    "BUSY": 3,
+    "IO_ERROR": 4,
+    "TIMEOUT": 5
+  }
+}

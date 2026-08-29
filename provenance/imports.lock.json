@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "imports": [
+    {"path": "third_party/appletini/hdl/audio_i2s_pcm_tx.sv", "source": "Appletini One board support", "source_path": "hdl/audio_i2s_pcm_tx.sv", "sha256": "c1f4c2b5ba6dbc04d270986454e8a316e719180af6b7daabc9b982b6e5673f84"},
+    {"path": "third_party/appletini/hdl/audio_i2s_tone.sv", "source": "Appletini One board support", "source_path": "hdl/audio_i2s_tone.sv", "sha256": "69afe2df117e3b048f2d282fb91d02b07ae66ae2a96428137206c370c457f107"},
+    {"path": "third_party/appletini/hdl/audio_spdif_pcm_tx.sv", "source": "Appletini One board support", "source_path": "hdl/audio_spdif_pcm_tx.sv", "sha256": "766f53bf06ef2673b5dae81f0e2a2a0b6542ce814eca3bf2e8e616b70117c269"},
+    {"path": "third_party/appletini/hdl/cdc_bit_sync.sv", "source": "Appletini One board support", "source_path": "hdl/cdc_bit_sync.sv", "sha256": "1fa7391a8d2818e5d6d8170f2d50024b05380613e50c2cf75510b13d623bd612"},
+    {"path": "third_party/appletini/hdl/cdc_bus_sampled.sv", "source": "Appletini One board support", "source_path": "hdl/cdc_bus_sampled.sv", "sha256": "e1e75dcd082a2f220888fe73983a2f17ffaed1e30470f07858dc0cd56ee5e6bb"},
+    {"path": "third_party/appletini/hdl/cdc_handshake_reg.sv", "source": "Appletini One board support", "source_path": "hdl/cdc_handshake_reg.sv", "sha256": "8e0fbdff6b764b36b3145abcc9cdc0548e8bfbb99f221c3f82b6d830b23a904c"},
+    {"path": "third_party/appletini/hdl/cdc_pulse_toggle.sv", "source": "Appletini One board support", "source_path": "hdl/cdc_pulse_toggle.sv", "sha256": "2d8d005c748bc364d61499b1fb0d2abac376c2572612888b330b537bf5c43743"},
+    {"path": "third_party/appletini/hdl/psram_driver.sv", "source": "Appletini One board support", "source_path": "hdl/apple/psram_driver.sv", "sha256": "0cebbbb41c3a29fdd81d02c15b8dc2972fb0582ffec399dcc9d52e1383098c4d"},
+    {"path": "third_party/appletini/hdl/reset_sync.sv", "source": "Appletini One board support", "source_path": "hdl/reset_sync.sv", "sha256": "d4405843728c24b3a99b2a17cfcb2eb556a8a842815c376c6d9673dec90ab350"},
+    {"path": "third_party/appletini/constraints/multitini_pins.xdc", "source": "Appletini One board support", "source_path": "hdl/constraints/appletini_yarz.xdc", "transform": "pin-assignment lines 1-399 only", "sha256": "2d2c3ab91e3f9f971ced4c9153399156fac7296394fa21e01a6289affbba4042"}
+  ]
+}

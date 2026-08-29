@@ -1,0 +1,19 @@
+# Relative to hdl/. Order matters for packages and interfaces.
+generated/multitini_regs_pkg.sv
+core/multitini_core_interface.sv
+../third_party/appletini/hdl/reset_sync.sv
+../third_party/appletini/hdl/cdc_bit_sync.sv
+../third_party/appletini/hdl/cdc_bus_sampled.sv
+../third_party/appletini/hdl/cdc_handshake_reg.sv
+../third_party/appletini/hdl/cdc_pulse_toggle.sv
+../third_party/appletini/hdl/audio_i2s_pcm_tx.sv
+../third_party/appletini/hdl/audio_i2s_tone.sv
+../third_party/appletini/hdl/audio_spdif_pcm_tx.sv
+common/multitini_axi3_regs.sv
+common/multitini_control_regs.sv
+common/multitini_psram_bist.sv
+board/multitini_video_test.sv
+board/multitini_audio_test.sv
+board/multitini_one_top.sv
+../third_party/appletini/constraints/multitini_pins.xdc
+board/multitini_timing.xdc
