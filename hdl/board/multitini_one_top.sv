@@ -2,7 +2,8 @@
 `timescale 1ns / 1ps
 
 module multitini_one_top #(
-    parameter logic [31:0] SHELL_BUILD_ID = 32'h00000000
+    parameter logic [31:0] SHELL_BUILD_ID = 32'h00000000,
+    parameter bit C64_NTSC_MODE = 1'b0
 ) (
     inout  wire [53:0] MIO,
     inout  wire        PS_CLK,
@@ -177,6 +178,18 @@ module multitini_one_top #(
     logic        c64_load_first;
     logic        c64_load_last;
 
+    logic        input_submit;
+    logic        input_submit_ready;
+    logic [15:0] input_code;
+    logic [15:0] input_value;
+    logic [31:0] input_mailbox_source;
+    logic [31:0] input_mailbox_destination;
+    logic        c64_input_valid;
+    logic        c64_input_ready;
+    logic        c64_input_mailbox_ready;
+    logic [15:0] c64_input_code;
+    logic [15:0] c64_input_value;
+
     (* KEEP = "yes" *) logic [7:0] c64_video_r;
     (* KEEP = "yes" *) logic [7:0] c64_video_g;
     (* KEEP = "yes" *) logic [7:0] c64_video_b;
@@ -261,6 +274,7 @@ module multitini_one_top #(
         .core_id(c64_core_id), .core_ready(c64_ready_control),
         .load_submit_ready(load_submit_ready),
         .core_load_error(c64_load_error_control),
+        .input_submit_ready(input_submit_ready),
         .wr_en(reg_wr_en), .wr_addr(reg_wr_addr), .wr_data(reg_wr_data),
         .wr_strb(reg_wr_strb), .rd_en(reg_rd_en), .rd_addr(reg_rd_addr),
         .rd_data(reg_rd_data), .control(shell_control),
@@ -268,6 +282,8 @@ module multitini_one_top #(
         .load_data(load_data), .load_offset(load_offset),
         .load_total(load_total), .load_first(load_first),
         .load_last(load_last), .load_error_clear(load_error_clear),
+        .input_submit(input_submit), .input_code(input_code),
+        .input_value(input_value),
         .irq(shell_irq)
     );
 
@@ -283,6 +299,22 @@ module multitini_one_top #(
         .dst_clk(c64_clk), .dst_resetn(c64_aresetn),
         .dst_data(load_mailbox_destination), .dst_valid(c64_load_valid),
         .dst_ready(c64_load_ready)
+    );
+
+    assign input_mailbox_source = {input_code, input_value};
+    assign {c64_input_code, c64_input_value} = input_mailbox_destination;
+    // Consume and discard any already queued event while the machine reset is
+    // asserted so a stale key press cannot appear after reset release.
+    assign c64_input_mailbox_ready = c64_input_ready ||
+                                     c64_core_reset_request;
+
+    multitini_async_mailbox #(.WIDTH(32)) c64_input_mailbox (
+        .src_clk(control_clk), .src_resetn(control_aresetn),
+        .src_data(input_mailbox_source), .src_valid(input_submit),
+        .src_ready(input_submit_ready),
+        .dst_clk(c64_clk), .dst_resetn(c64_aresetn),
+        .dst_data(input_mailbox_destination), .dst_valid(c64_input_valid),
+        .dst_ready(c64_input_mailbox_ready)
     );
 
     cdc_bit_sync c64_reset_sync (
@@ -311,12 +343,14 @@ module multitini_one_top #(
     // Keep the C64 integration in the synthesized design for resource,
     // clocking, and timing validation. Physical outputs remain on the board
     // test generators until that validation passes.
-    (* DONT_TOUCH = "yes" *) multitini_c64_adapter c64_adapter (
+    (* DONT_TOUCH = "yes" *) multitini_c64_adapter #(
+        .NTSC_MODE(C64_NTSC_MODE)
+    ) c64_adapter (
         .core_clk(c64_clk), .reset(!c64_aresetn),
         .core_reset_request(c64_core_reset_request),
         .clear_load_error(c64_load_error_clear),
-        .input_code(16'd0), .input_value(16'd0), .input_valid(1'b0),
-        .input_ready(),
+        .input_code(c64_input_code), .input_value(c64_input_value),
+        .input_valid(c64_input_valid), .input_ready(c64_input_ready),
         .load_data(c64_load_data), .load_valid(c64_load_valid),
         .load_ready(c64_load_ready), .load_first(c64_load_first),
         .load_last(c64_load_last), .load_kind(c64_load_kind),

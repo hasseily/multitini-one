@@ -30,6 +30,11 @@ class InterfaceSpecTests(unittest.TestCase):
                      "AUDIO_TEST_ENABLE", "AUDIO_MUTE"):
             self.assertNotEqual(reset & (1 << fields[name]), 0)
 
+    def test_input_event_addition_is_versioned(self):
+        self.assertGreaterEqual(self.spec["abi"]["minor"], 3)
+        self.assertEqual(self.spec["commands"]["INPUT_EVENT"], 5)
+        self.assertEqual(self.spec["bitfields"]["STATUS"]["INPUT_READY"], 8)
+
     def test_c64_interface_ids_and_required_rom_sizes(self):
         c64 = json.loads((ROOT / "spec/c64_interface_v0.json").read_text())
         self.assertEqual(c64["schema_version"], 1)

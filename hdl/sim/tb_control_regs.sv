@@ -25,6 +25,10 @@ module tb_control_regs;
     logic load_first;
     logic load_last;
     logic load_error_clear;
+    logic input_submit_ready = 1'b1;
+    logic input_submit;
+    logic [15:0] input_code;
+    logic [15:0] input_value;
 
     always #5 clk = !clk;
 
@@ -32,13 +36,16 @@ module tb_control_regs;
         .clk(clk), .resetn(resetn), .core_id(32'h43363420),
         .core_ready(1'b1), .load_submit_ready(load_submit_ready),
         .core_load_error(core_load_error),
+        .input_submit_ready(input_submit_ready),
         .wr_en(wr_en), .wr_addr(wr_addr),
         .wr_data(wr_data), .wr_strb(wr_strb), .rd_en(rd_en),
         .rd_addr(rd_addr), .rd_data(rd_data), .control(control),
         .load_submit(load_submit), .load_kind(load_kind),
         .load_data(load_data), .load_offset(load_offset),
         .load_total(load_total), .load_first(load_first),
-        .load_last(load_last), .load_error_clear(load_error_clear), .irq(irq)
+        .load_last(load_last), .load_error_clear(load_error_clear),
+        .input_submit(input_submit), .input_code(input_code),
+        .input_value(input_value), .irq(irq)
     );
 
     task automatic check_value(input logic condition, input string message);
@@ -192,6 +199,33 @@ module tb_control_regs;
                     MT_STATUS_AUDIO_ACTIVE | MT_STATUS_CORE_READY |
                     MT_STATUS_STREAM_READY,
                     "stream abort clears active state");
+
+        write_reg(MT_REG_COMMAND_ARG0, 32'd0, 4'hF);
+        write_reg(MT_REG_COMMAND_SEQ, 32'd11, 4'hF);
+        write_reg(MT_REG_COMMAND_OPCODE, MT_COMMAND_CORE_RESET, 4'hF);
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd11, 4'hF);
+        expect_read(MT_REG_STATUS,
+                    MT_STATUS_SHELL_READY | MT_STATUS_VIDEO_ACTIVE |
+                    MT_STATUS_AUDIO_ACTIVE | MT_STATUS_CORE_READY |
+                    MT_STATUS_STREAM_READY | MT_STATUS_INPUT_READY,
+                    "input service ready after core reset release");
+
+        input_submit_ready = 1'b0;
+        write_reg(MT_REG_COMMAND_ARG0, 32'h0000001C, 4'hF);
+        write_reg(MT_REG_COMMAND_ARG1, 32'h00000001, 4'hF);
+        write_reg(MT_REG_COMMAND_SEQ, 32'd12, 4'hF);
+        write_reg(MT_REG_COMMAND_OPCODE, MT_COMMAND_INPUT_EVENT, 4'hF);
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd12, 4'hF);
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_BUSY,
+                    "input mailbox backpressure");
+        check_value(!input_submit, "busy input event not submitted");
+
+        input_submit_ready = 1'b1;
+        write_reg(MT_REG_COMMAND_SEQ, 32'd13, 4'hF);
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd13, 4'hF);
+        check_value(input_submit && input_code == 16'h001C &&
+                    input_value == 16'h0001,
+                    "input event submitted coherently");
 
         core_load_error = 1'b1;
         @(negedge clk);

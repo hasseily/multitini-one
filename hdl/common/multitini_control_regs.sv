@@ -10,6 +10,7 @@ module multitini_control_regs #(
     input  logic         core_ready,
     input  logic         load_submit_ready,
     input  logic         core_load_error,
+    input  logic         input_submit_ready,
 
     input  logic         wr_en,
     input  logic [11:0]  wr_addr,
@@ -28,6 +29,9 @@ module multitini_control_regs #(
     output logic         load_first,
     output logic         load_last,
     output logic         load_error_clear,
+    output logic         input_submit,
+    output logic [15:0]  input_code,
+    output logic [15:0]  input_value,
     output logic         irq
 );
     import multitini_regs_pkg::*;
@@ -90,6 +94,9 @@ module multitini_control_regs #(
             status_word |= MT_STATUS_STREAM_READY;
         if (core_load_error)
             status_word |= MT_STATUS_CORE_LOAD_ERROR;
+        if (input_submit_ready && core_ready &&
+            !(control & MT_CONTROL_CORE_RESET_REQUEST))
+            status_word |= MT_STATUS_INPUT_READY;
     end
 
     always_comb begin
@@ -152,6 +159,7 @@ module multitini_control_regs #(
                          command_opcode != MT_COMMAND_GET_STATUS &&
                          command_opcode != MT_COMMAND_CORE_RESET &&
                          command_opcode != MT_COMMAND_SET_AUDIO &&
+                         command_opcode != MT_COMMAND_INPUT_EVENT &&
                          command_opcode != MT_COMMAND_STREAM_BEGIN &&
                          command_opcode != MT_COMMAND_STREAM_DATA &&
                          command_opcode != MT_COMMAND_STREAM_END &&
@@ -208,9 +216,13 @@ module multitini_control_regs #(
             load_first      <= 1'b0;
             load_last       <= 1'b0;
             load_error_clear <= 1'b0;
+            input_submit    <= 1'b0;
+            input_code      <= 16'd0;
+            input_value     <= 16'd0;
         end else begin
             load_submit <= 1'b0;
             load_error_clear <= 1'b0;
+            input_submit <= 1'b0;
             error_flags <= (error_flags & ~error_clear_mask) | error_set_mask;
             irq_status <= (irq_status & ~irq_clear_mask) |
                           ((|error_set_mask) ? 32'd1 : 32'd0);
@@ -280,6 +292,18 @@ module multitini_control_regs #(
                                                 32'd0) |
                                                (command_arg1[0] ?
                                                 MT_CONTROL_AUDIO_MUTE : 32'd0);
+                                end
+                                MT_COMMAND_INPUT_EVENT: begin
+                                    if (!input_submit_ready || !core_ready ||
+                                        (control &
+                                         MT_CONTROL_CORE_RESET_REQUEST)) begin
+                                        response_status <= MT_RESPONSE_BUSY;
+                                    end else begin
+                                        response_status <= MT_RESPONSE_OK;
+                                        input_submit <= 1'b1;
+                                        input_code <= command_arg0[15:0];
+                                        input_value <= command_arg1[15:0];
+                                    end
                                 end
                                 MT_COMMAND_STREAM_BEGIN: begin
                                     if (stream_active) begin

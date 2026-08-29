@@ -92,12 +92,20 @@ class BuildInputTests(unittest.TestCase):
             "PCW_USB1_USB1_IO {MIO 40 .. 51}",
             "PCW_USB0_RESET_ENABLE {0}",
             "PCW_USB1_RESET_ENABLE {0}",
-            "CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {31.527954}",
+            "set c64_clock_mhz 31.527954",
+            "set c64_clock_mhz 32.727266",
+            "MULTITINI_C64_VIDEO_STANDARD must be PAL or NTSC",
             "-vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_c64",
             "assign_bd_address -offset 0x40000000 -range 0x00001000",
         )
         for value in required:
             self.assertIn(value, script)
+
+    def test_c64_input_path_is_not_tied_off(self):
+        top = (ROOT / "hdl/board/multitini_one_top.sv").read_text()
+        self.assertIn("c64_input_mailbox", top)
+        self.assertIn(".input_valid(c64_input_valid)", top)
+        self.assertNotIn(".input_valid(1'b0)", top)
 
 
 if __name__ == "__main__":

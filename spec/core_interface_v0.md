@@ -34,6 +34,8 @@ The C64 adapter currently defines the high byte of `input_code` as a namespace:
 | Joystick 2 | `0x02` | Low byte selects bit 0-6; `input_value[0]` is its new level |
 
 The USB host translation and a user-visible C64 key map remain unfrozen.
+The ARM register ABI's `INPUT_EVENT` command retries mailbox backpressure and
+crosses the code/value pair coherently into the selected C64 clock domain.
 
 ## Direct-load stream
 

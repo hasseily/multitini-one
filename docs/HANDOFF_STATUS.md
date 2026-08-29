@@ -21,8 +21,8 @@ Status date: 2026-08-29. No Vivado, Vitis, or board result is claimed.
 - Exact 34-file C64 import at the pinned commit, per-file license rows, complete
   applicable license texts, SHA-256 lock, and ROM/media exclusion checks.
 - ROM-free FPGA64 machine build list; writable BASIC/KERNAL/character stores;
-  C64 adapter, RAM, raw video/audio, PS/2/joystick input bridge, and PAL clock
-  source definition.
+  C64 adapter, RAM, raw video/audio, PS/2/joystick input bridge, coherent input
+  event transport, and reproducible PAL/NTSC clock selection.
 - ARM ROM stream commands with bounded backpressure retry and abort, coherent
   XPM clock crossing, strict PL framing, sticky load errors, and a portable
   reset-safe three-ROM boot helper.
@@ -34,8 +34,8 @@ Status date: 2026-08-29. No Vivado, Vitis, or board result is claimed.
 ## Requires vendor tools or hardware
 
 - Mixed VHDL/SystemVerilog C64 elaboration, the inferred writable memories,
-  achieved 31.527954 MHz clock, XPM constraints, resource use, and timing have
-  not been checked by Vivado.
+  achieved PAL/NTSC clock, XPM constraints, resource use, and timing have not
+  been checked by Vivado.
 - AK4493 I2S output timing: exact receiver setup/hold values are not in the
   publicly accessible product material. The timing gate must remain red.
 - PSRAM activation: PHY timing, IDELAYCTRL, calibration, and board measurement
@@ -49,8 +49,10 @@ Status date: 2026-08-29. No Vivado, Vitis, or board result is claimed.
 1. Run `make check` and require a clean result.
 2. Run `vivado -mode batch -source scripts/create_project.tcl`.
 3. Fix only source/Tcl defects. Commit them before assigning a release build ID.
-4. Confirm the C64 VHDL/SV compile order, inferred memories, achieved PAL
-   clock, XPM CDC constraints, and resource estimate before implementation.
+4. Build PAL first, then recreate with
+   `MULTITINI_C64_VIDEO_STANDARD=NTSC`; confirm the C64 VHDL/SV compile order,
+   inferred memories, achieved selected clock, XPM CDC constraints, and
+   resource estimate before implementation.
 5. Obtain and record AK4493SEQ timing; add reviewed I2S output delays.
 6. Run `vivado -mode batch -source scripts/build_and_export_xsa.tcl`.
 7. Review all reports in `build/vivado/reports`; do not rely only on run status.

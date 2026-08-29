@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "abi": {"major": 0, "minor": 2},
+  "abi": {"major": 0, "minor": 3},
   "magic": "0x4D543031",
   "shell_id": "0x4D544F4E",
   "register_span": "0x1000",
@@ -47,7 +47,8 @@
       "COMMAND_PENDING": 4,
       "STREAM_ACTIVE": 5,
       "STREAM_READY": 6,
-      "CORE_LOAD_ERROR": 7
+      "CORE_LOAD_ERROR": 7,
+      "INPUT_READY": 8
     },
     "ERROR": {
       "BAD_WRITE": 0,
@@ -63,6 +64,7 @@
     "CORE_RESET": 2,
     "SET_VIDEO_MODE": 3,
     "SET_AUDIO": 4,
+    "INPUT_EVENT": 5,
     "STREAM_BEGIN": 16,
     "STREAM_END": 17,
     "STREAM_DATA": 18,

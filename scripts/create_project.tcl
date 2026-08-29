@@ -7,6 +7,25 @@ set project_dir [file join $repo_root "build" "vivado"]
 set project_name "multitini_one"
 set part_name "xc7z020clg484-2"
 
+set c64_video_standard "PAL"
+if {[info exists ::env(MULTITINI_C64_VIDEO_STANDARD)]} {
+    set c64_video_standard \
+        [string toupper [string trim $::env(MULTITINI_C64_VIDEO_STANDARD)]]
+}
+switch -- $c64_video_standard {
+    PAL {
+        set c64_clock_mhz 31.527954
+        set c64_ntsc_mode 0
+    }
+    NTSC {
+        set c64_clock_mhz 32.727266
+        set c64_ntsc_mode 1
+    }
+    default {
+        error "MULTITINI_C64_VIDEO_STANDARD must be PAL or NTSC"
+    }
+}
+
 proc require_file {path} {
     if {![file isfile $path]} {
         error "Required source is absent: $path"
@@ -217,13 +236,13 @@ set_property -dict [list \
     CONFIG.RESET_PORT {resetn} \
     CONFIG.RESET_TYPE {ACTIVE_LOW}] $video_wiz
 
-# The first core build is PAL. The requested frequency is the MiSTer C64
-# core's 4x PAL dot clock; Vivado must report the achieved MMCM frequency and
-# timing before this is accepted for hardware use.
+# The requested frequency is the selected MiSTer C64 core's 4x dot clock.
+# Vivado must report the achieved MMCM frequency and timing before this is
+# accepted for hardware use.
 set c64_wiz [create_bd_cell -type ip \
     -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_c64]
 set_property -dict [list \
-    CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {31.527954} \
+    CONFIG.CLKOUT1_REQUESTED_OUT_FREQ $c64_clock_mhz \
     CONFIG.PRIM_IN_FREQ {150.000} \
     CONFIG.PRIM_SOURCE {No_buffer} \
     CONFIG.RESET_PORT {resetn} \
@@ -291,8 +310,12 @@ if {[info exists ::env(MULTITINI_BUILD_ID)]} {
         error "MULTITINI_BUILD_ID must contain exactly eight hexadecimal digits"
     }
 }
-set_property generic "SHELL_BUILD_ID=32'h${git_id}" [get_filesets sources_1]
+set_property generic \
+    "SHELL_BUILD_ID=32'h${git_id} C64_NTSC_MODE=1'b${c64_ntsc_mode}" \
+    [get_filesets sources_1]
 update_compile_order -fileset sources_1
 
 puts "Created $project_dir/$project_name.xpr"
 puts "SHELL_BUILD_ID=0x$git_id"
+puts "C64_VIDEO_STANDARD=$c64_video_standard"
+puts "C64_CLOCK_REQUEST_MHZ=$c64_clock_mhz"

@@ -41,7 +41,7 @@ Planned initial domains:
 | Control | 133.333 MHz | PS FCLK0 through Clocking Wizard | AXI registers and shell control |
 | PSRAM reference | 199.995 MHz | same Clocking Wizard | IDELAYCTRL reference |
 | Video | 148.5 MHz | PS FCLK2 through Clocking Wizard | 1080p diagnostic output |
-| C64 PAL | requested 31.527954 MHz | PS FCLK2 through a separate Clocking Wizard | FPGA64 machine, ROM loader, raw video/audio |
+| C64 machine | requested 31.527954 MHz PAL or 32.727266 MHz NTSC | PS FCLK2 through a separate Clocking Wizard | FPGA64 machine, ROM/input loaders, raw video/audio |
 | Audio MCLK | 12.288 MHz | board oscillator | DAC clock and I2S derivation |
 | Audio BCLK | 3.072 MHz | MCLK divided by four | 48 kHz, 64-bit I2S frames |
 
@@ -49,9 +49,10 @@ Every asynchronous crossing must use a named synchronizer or handshake. Every
 generated clock and exception must bind to an existing object in the final
 Vivado design. These facts cannot be certified on this Mac.
 
-Sparse ROM bytes move from the 133.333 MHz control domain to the C64 domain
-through a one-entry `xpm_cdc_handshake` mailbox. A source holds all 82 payload
-bits until the destination accepts them. Reset request, ready, and error levels
+Sparse ROM bytes and input event pairs move from the 133.333 MHz control domain
+to the C64 domain through separate one-entry `xpm_cdc_handshake` mailboxes. A
+source holds every payload bit until the destination accepts it. Reset request,
+ready, and error levels
 use named bit synchronizers; the sparse error-clear event uses a tested
 three-stage toggle synchronizer. The behavioral CDC tests deliberately use
 unrelated clocks and backpressure. Vivado CDC reports and XPM handshake

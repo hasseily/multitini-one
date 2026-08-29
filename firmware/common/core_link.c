@@ -124,6 +124,20 @@ static void abort_stream(mt_core_link_t *link, uint32_t max_polls,
                                progress, progress_context, &response);
 }
 
+mt_link_result_t mt_core_link_input_event(mt_core_link_t *link,
+                                          uint16_t code, uint16_t value,
+                                          uint32_t max_polls,
+                                          mt_link_progress_fn progress,
+                                          void *progress_context)
+{
+    const uint32_t args[4] = {code, value, 0U, 0U};
+    if (max_polls == 0U) {
+        return MT_LINK_BAD_ARGUMENT;
+    }
+    return command_retry_busy(link, MT_COMMAND_INPUT_EVENT, args, max_polls,
+                              progress, progress_context);
+}
+
 mt_link_result_t mt_core_link_stream(mt_core_link_t *link, uint8_t kind,
                                      const uint8_t *data, size_t size,
                                      uint32_t max_polls,

@@ -48,6 +48,11 @@ mt_link_result_t mt_core_link_stream(mt_core_link_t *link, uint8_t kind,
                                      uint32_t max_polls,
                                      mt_link_progress_fn progress,
                                      void *progress_context);
+mt_link_result_t mt_core_link_input_event(mt_core_link_t *link,
+                                          uint16_t code, uint16_t value,
+                                          uint32_t max_polls,
+                                          mt_link_progress_fn progress,
+                                          void *progress_context);
 const char *mt_link_result_name(mt_link_result_t result);
 
 #endif

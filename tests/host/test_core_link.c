@@ -15,6 +15,8 @@ typedef struct {
     uint8_t stream_data[8];
     size_t stream_data_size;
     int inject_busy;
+    uint32_t input_code;
+    uint32_t input_value;
 } mock_shell_t;
 
 static uint32_t mock_read(void *context, uint32_t offset)
@@ -69,6 +71,9 @@ static void respond_to_stream(void *context)
             shell->stream_data[shell->stream_data_size++] =
                 (uint8_t)shell->registers[MT_REG_COMMAND_ARG0 / 4U];
         }
+    } else if (opcode == MT_COMMAND_INPUT_EVENT) {
+        shell->input_code = shell->registers[MT_REG_COMMAND_ARG0 / 4U];
+        shell->input_value = shell->registers[MT_REG_COMMAND_ARG1 / 4U];
     }
 
     shell->registers[MT_REG_RESPONSE_STATUS / 4U] = status;
@@ -123,6 +128,14 @@ int main(void)
     assert(shell.stream_data[1] == 0x22U);
     assert(shell.stream_data[2] == 0x33U);
     assert(shell.observed_commands == 6U);
+
+    assert(mt_core_link_input_event(&link, UINT16_C(0x001C),
+                                    UINT16_C(0x0001), 8U,
+                                    respond_to_stream, &shell) == MT_LINK_OK);
+    assert(shell.input_code == UINT32_C(0x001C));
+    assert(shell.input_value == UINT32_C(0x0001));
+    assert(mt_core_link_input_event(&link, 0U, 0U, 0U,
+                                    NULL, NULL) == MT_LINK_BAD_ARGUMENT);
 
     assert(mt_core_link_stream(&link, 0U, NULL, 1U, 1U,
                                NULL, NULL) == MT_LINK_BAD_ARGUMENT);

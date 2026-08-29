@@ -43,8 +43,8 @@ Stop on every Tcl error. Confirm:
 - QSPI, SDIO1, I2C0, UART0/1, USB0/1 MIO assignments;
 - USB reset MIO remains disabled;
 - no Apple clock or reset feeds an internal clock/reset;
-- the C64 Clocking Wizard requests 31.527954 MHz from FCLK2 and has its own
-  synchronized reset;
+- the default C64 Clocking Wizard requests 31.527954 MHz PAL from FCLK2 and has
+  its own synchronized reset;
 - the mixed VHDL/SystemVerilog compile order resolves `fpga64_sid_iec`, the
   Multitini bus logic/memory ports, SID compatibility ports, and adapter;
 - all source and constraint files came from the tracked manifests; and
@@ -64,7 +64,8 @@ or bitstream generation fails. Review, do not waive:
 - unconstrained endpoints;
 - critical warnings;
 - every generated clock and clock group;
-- the achieved C64 PAL clock frequency and error from 31.527954 MHz;
+- the achieved C64 clock frequency and error from 31.527954 MHz PAL or
+  32.727266 MHz NTSC;
 - C64 main RAM and writable ROM inference, port mode, and read latency;
 - XPM handshake constraints, the error-clear toggle synchronizer, and every
   control-to-C64 CDC path;
@@ -83,6 +84,16 @@ so synthesis and timing cannot silently remove the integration. The physical
 DVI and audio pins still use the independent diagnostic generators. Confirm
 that the C64 hierarchy is present and timed, but do not interpret this image as
 a C64 display/audio test.
+
+After the default PAL build is reviewed, recreate the project for NTSC with:
+
+```sh
+MULTITINI_C64_VIDEO_STANDARD=NTSC \
+  vivado -mode batch -source scripts/create_project.tcl
+```
+
+Keep separate PAL and NTSC logs/reports. The script rejects other standard
+names and records the selected generic and requested clock.
 
 The TFP410 constraint uses the rev. D, single-edge receiver requirements that
 match the schematic straps: 1.2 ns setup and 1.3 ns hold. Confirm that Vivado

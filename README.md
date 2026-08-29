@@ -18,8 +18,8 @@ Known:
 - The 34-file C64 allowlist is imported exactly, SHA-256 locked, and covered by
   the per-file license ledger under the recorded redistribution assumption.
 - A ROM-free `fpga64_sid_iec` build boundary, writable ROM adapter, ARM byte
-  stream, clock-domain mailbox, C64 input mapping, and reset-safe ROM boot
-  helper are implemented.
+  stream, coherent clock-domain mailboxes, live C64 input mapping, and
+  reset-safe ROM boot helper are implemented.
 - The AXI register path, DVI timing generator, audio path, PSRAM BIST, C64 ROM
   loader/input bridges, and asynchronous mailbox pass Icarus simulations. The
   selected SystemVerilog C64 path passes Verilator lint.
@@ -38,7 +38,7 @@ Not yet proven:
   the Vivado timing-coverage gate must not be waived to hide it.
 - The mixed-language C64 build has not been compiled by Vivado. macOS checks
   do not validate VHDL elaboration, Xilinx memories, XPM CDC constraints, the
-  requested 31.527954 MHz PAL clock, or resource/timing results.
+  requested PAL/NTSC core clock, or resource/timing results.
 - C64 video and audio are retained for synthesis but are not connected to the
   physical outputs yet. The board top deliberately continues to show/play the
   independent diagnostics.
@@ -73,6 +73,10 @@ vivado -mode batch -source scripts/create_project.tcl
 vivado -mode batch -source scripts/build_and_export_xsa.tcl
 vitis -s scripts/create_vitis_workspace.py
 ```
+
+Project creation defaults to PAL. Set
+`MULTITINI_C64_VIDEO_STANDARD=NTSC` while running `create_project.tcl` to make
+the independently reproducible NTSC build.
 
 See `docs/HANDOFF_STATUS.md` and `docs/VIVADO_HANDOFF.md` before running them.
 
