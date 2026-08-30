@@ -1,10 +1,10 @@
 # Architecture Baseline
 
 Status: the independent PAL DVI, fixed-tone audio, UART, and golden-reboot
-diagnostics have passed on hardware. The PAL UART-ROM and coherent
-frozen-snapshot image also passed its board test. The current four-bank live
-video bridge passes focused XSim but has not yet completed a fresh vendor build
-or board test. SID audio and physical input remain later gates.
+diagnostics have passed on hardware. Live PAL video, USB input, wired Xbox
+input, SD ROM loading, 1541 startup, and read-only D64 game loading also have
+recorded board results. Build `2026082F` connects live machine PCM to I2S and
+SPDIF, but audible board testing remains pending.
 
 ## Ownership boundaries
 
@@ -33,11 +33,11 @@ Each image is one full Zynq configuration containing:
 - a small AXI control register bank;
 - an independent DVI test pattern and, for PAL C64, optional live machine
   frames converted to the fixed C64 palette;
-- independently audible I2S and SPDIF test tones;
+- a shared I2S/SPDIF stage that selects live machine PCM or the fixed test tone;
 - safe idle values on Apple, Ethernet, and PSRAM pins; and
 - one retained machine adapter/core integration. The PAL C64 RGB output feeds
-  the live-frame bridge; machine audio is not selected onto the physical
-  output.
+  the live-frame bridge, and the selected machine's PCM output feeds the common
+  audio stage.
 
 Partial reconfiguration is deliberately outside this baseline.
 
@@ -61,9 +61,10 @@ Planned initial domains:
 Every asynchronous crossing must use a named synchronizer or handshake. Every
 generated clock and exception must bind to an existing object in the final
 Vivado design. In the verified default PAL build, the fatal CDC gate passed and
-the final snapshot-build report contained only 15 `CDC-3` Info crossings and
-one `CDC-9` Info reset crossing. The live PAL, NTSC, and GBC vendor builds
-remain pending.
+the `2026082F` live-audio report contains only 24 `CDC-3` Info crossings and one
+`CDC-9` Info reset crossing. The machine-audio payloads use coherent XPM
+handshakes, and both readiness crossings launch from a machine-domain register.
+The NTSC and GBC vendor builds still require their own report review.
 
 Sparse ROM bytes and input event pairs move from the 133.333 MHz control domain
 to the C64 domain through separate one-entry `xpm_cdc_handshake` mailboxes. A
@@ -98,8 +99,9 @@ serves bounded 256-byte read requests through the common command/register and
 CDC-mailbox path. Mount generations reject stale requests. The service is
 drive-8-only and read-only: firmware does not modify the image or write it back
 to SD. The exact layout and operator commands are documented in
-[C64_SD_STORAGE.md](C64_SD_STORAGE.md). This implementation has host-test
-coverage and a matching vendor build, but no hardware qualification yet.
+[C64_SD_STORAGE.md](C64_SD_STORAGE.md). Build `2026082E` passes its first board
+test: the C64 and 1541 ROMs loaded from SD, the default drive-8 D64 mounted,
+and Decathlon loaded and ran. The service remains read-only.
 
 The PAL video adapter registers coherent RGB, data-enable, and sync values in
 the machine domain. The live bridge accepts only exact 382x270 frames whose
@@ -123,11 +125,34 @@ mid-scan swap. A grant/acknowledge rearm barrier flushes pointer ownership after
 an independent source reset, pixel reset, or loss of C64 readiness and keeps
 machine video fail-closed until a new complete frame arrives. Focused XSim
 covers live swaps, repeats, queue-full frame drops, palette/geometry rejection,
-diagnostic switching, and independent resets. This is not yet a board result.
+diagnostic switching, and independent resets. The preserved PAL live-video
+image also passes its recorded board procedure.
 
-The exact AK4493 datasheet was reviewed locally. The routed PAL build applies a
-conservative +/-5 ns receiver window to I2S LRCK and SDATA and passes timing.
-This is constraint validation, not an audible hardware result.
+The selected adapter emits signed 24-bit stereo samples at a nominal 48 kHz.
+Build `2026082F` packs validity, left, and right into one 49-bit source-domain
+value. Two coherent XPM handshakes carry that value to the independent audio
+BCLK and control domains. Each destination holds the newest complete pair, so
+small source/oscillator drift produces bounded zero-order hold instead of FIFO
+overrun or underrun. Loss of machine readiness invalidates the held sample and
+forces silence through core reset or ROM loading while the physical clocks keep
+running.
+
+The board's 12.288 MHz oscillator supplies audio MCLK. Dividing it by four
+produces the 3.072 MHz BCLK and exact 48 kHz, 64-bit I2S frame rate. Live PCM
+and the diagnostic serializer run continuously from the same BCLK and reset;
+source selection changes only at a complete stereo-frame boundary. The local
+SPDIF transmitter uses the 133.333 MHz control-clock phase increment and
+captures the right sample with the left so an asynchronous update cannot mix
+two stereo pairs. `AUDIO_MUTE` dominates both sources.
+
+Firmware initializes the AK4493 muted. It selects live PCM in the PL, waits at
+least two complete PCM frames, and then releases DAC soft mute. UART `a`
+selects live audio, `t` selects the fixed diagnostic tone, and `m` mutes the
+current source. The exact AK4493 datasheet was reviewed locally, and the routed
+PAL baseline applies a conservative +/-5 ns receiver window to I2S LRCK and
+SDATA. The `2026082F` source, focused XSim, routed timing, CDC, DRC, and Bootgen
+checks pass. It still requires an audible board test before it is
+hardware-qualified.
 
 The GBC adapter holds reset until a cartridge is strictly framed and accepted
 by the external-memory service. Its open CGB bootstrap is generated from a

@@ -4,10 +4,13 @@ Status: the diagnostic, PAL C64 frozen-snapshot, and PAL live-video images have
 passed their recorded board procedures. Build `2026082B` also proves physical
 USB1 VBUS, keyboard transport, and one generic HID gamepad. Build `2026082C`
 qualified both keyboard maps and the initial wired Xbox 360 report/directional
-path. Current build `2026082D` has passed Vivado, Vitis, Bootgen, and the board
-test for the full intended Xbox input map and player LED command.
+path. Build `2026082D` passed Vivado, Vitis, Bootgen, and the board test for the
+full intended Xbox input map and player LED command. Build `2026082E` adds the
+matched SD ROM/1541/read-only-D64 image and passes its first board test with
+Decathlon. Build `2026082F` connects live machine PCM to I2S and SPDIF and
+passes its fresh PAL vendor/package gates; audible board testing remains open.
 
-The fresh default PAL C64 build used Vivado 2025.2, part
+The last fully detailed USB baseline used Vivado 2025.2, part
 `xc7z020clg484-2`, shell and firmware build ID `2026082D`, PAL generic
 `C64_NTSC_MODE=0`. Its manifest is UTC `2026-08-30T04:33:20Z` and records base
 commit `765aee1fbf54c330c7fdab1543da38c0b577b277` plus an intentional dirty
@@ -134,13 +137,16 @@ or bitstream generation fails. Review, do not waive:
 
 Save the exact reports and build manifest. A clean build is not hardware proof.
 
-The verified vendor result above covers the current default PAL C64 USB-input
+The verified vendor result above covers the recorded PAL C64 USB-input
 project. Its live-video PL path is unchanged from the separately qualified PAL
 live image. Build `2026082B` proves USB1 VBUS and generic HID input, build
 `2026082C` qualifies both keyboard maps, and build `2026082D` qualifies the
 wired Xbox 360 functional map and player LED command on the tested controller.
-The separate NTSC C64 and GBC vendor builds remain pending. GBC PSRAM remains
-disabled and unqualified.
+The matching `2026082E` vendor image additionally passes the SD ROM, 1541, and
+read-only D64 board path. The `2026082F` live-audio reports pass with WNS
++0.252 ns, WHS +0.059 ns, WPWS +1.749 ns, zero failed nets, and no Critical CDC
+findings. The separate NTSC C64 and GBC vendor builds remain pending. GBC PSRAM
+remains disabled and unqualified.
 
 The selected machine adapter is marked `DONT_TOUCH` so synthesis and timing
 cannot silently remove the integration. Its registered PAL RGB output feeds an
@@ -150,9 +156,11 @@ pointers cross through `xpm_cdc_gray`. The 1080p60 side acquires at most one
 approximately 50.123 Hz PAL frame at each vertical blank; if none is ready, it
 repeats the current bank. Diagnostic/machine source selection also changes only
 at vertical blank. A full ring drops an entire incoming source frame before
-capture. Physical audio still uses the independent diagnostic generator. This
-description is supported by source, focused XSim, and the completed PAL Vivado
-build and the recorded live-video board procedure.
+capture. Build `2026082F` also sends the selected machine's coherent 24-bit PCM
+through separate handshakes to the I2S BCLK and SPDIF control domains. The fixed
+tone remains selectable, and reset or loss of readiness selects silence without
+stopping the physical clocks. Source, focused XSim, and routed vendor checks
+pass; the audible board procedure remains open.
 
 After the default PAL build is reviewed, recreate the project for NTSC with:
 
@@ -208,30 +216,50 @@ Xbox records, and the Xbox run/stop callbacks are strong definitions. The
 `ae75318d458c6f6203c5ed6a87be1283ace6b39dacf0307c7e82c52e281ea004`,
 CRC32 `EF6EB912`, and 10,252,468 bytes free in the firmware slot.
 
-For current build `2026082D`, Vitis 2025.2 rebuilt the matching FSBL and
+For build `2026082D`, Vitis 2025.2 rebuilt the matching FSBL and
 diagnostic application. Bootgen packaged and read back the expected FSBL,
 routed bitstream, and two application segments. The 4,365,516-byte root
 `FIRMWARE.BIN` has SHA-256
 `536b68ff99f53925d7825d70d7ee30bb586edb8cb301c1e5feff1607248a6600`,
 CRC32 `0680EEAB`, and 10,249,012 bytes free in the firmware slot.
 
-The USB-input test application starts with the core held in reset and the DAC muted. It probes
-the ABI, logs the TMP102 temperature when I2C works, initializes the DAC without
-unmuting, and accepts UART commands for status, ping, video, audio mute/unmute,
-core reset, and reboot to the golden image. `:c64rx` receives an exact 20 KiB
+For build `2026082E`, Vitis 2025.2 rebuilt the matching FSBL and application,
+and Bootgen readback verified the expected FSBL, routed bitstream, and
+application partitions. The 4,475,348-byte root `FIRMWARE.BIN` has SHA-256
+`079257d25af73abfc6c3f9372771660934942d9009655e5684bc78952d4cd118`.
+That image passes the user-reported SD ROM, 1541, default read-only D64, and
+Decathlon board test.
+
+The historical USB-input application starts with the core held in reset and
+the DAC muted. It probes the ABI, logs the TMP102 temperature when I2C works,
+initializes the DAC without unmuting, and accepts UART commands for status,
+ping, video, audio mute/unmute, core reset, and reboot to the golden image.
+`:c64rx` receives an exact 20 KiB
 XMODEM-1K/CRC bundle from `scripts/serial_c64_rom_upload.py`, verifies the outer
 CRC32 and three ROM slices, streams them, and releases reset only after the core
 reports ready. The uploader defaults to the repository's selected three-file
-ROM set and retains explicit path overrides. SD loading remains absent.
+ROM set and retains explicit path overrides. SD loading is absent from that
+historical application.
 The portable GBC helper can stream a validated cartridge and optional bootstrap
 override; it is likewise not connected to SD or the diagnostic CLI.
 
-The normal installation path copies this exact `FIRMWARE.BIN` to the SD-card
-root. `:reboot` from a running image, or a power cycle, lets golden program and
+Build `2026082F` initializes the DAC muted, selects live PCM in the PL, waits at
+least two complete 48 kHz frames, and then releases DAC soft mute when the core
+is ready. UART `a` selects and unmutes live machine audio, `t` selects and
+unmutes the fixed tone, and `m` mutes the selected source. Vivado 2025.2 passes
+with WNS +0.252 ns, WHS +0.059 ns, WPWS +1.749 ns, no failing endpoints, zero
+failed nets, and a CDC summary of 24 `CDC-3` Info plus one `CDC-9` Info. Vitis
+and Bootgen produce a 4,475,348-byte root `FIRMWARE.BIN` with SHA-256
+`24c8ca616e939ddd13ae46807bcd315affcd6a56f6836c14af4c7cf70510903c`.
+These results do not constitute an audible board pass.
+
+The normal installation path copies the matching root `FIRMWARE.BIN` to the
+SD-card root. `:reboot` from a running image, or a power cycle, lets golden program and
 verify the secondary firmware slot, replace `FIRMWARE.BIN` with
-`FIRMWARE.OK`, and reboot into normal auto-boot. Run the ROM uploader only after
-the `2026082D` firmware banner appears. The golden UART updater remains a
-recovery path, not the normal installation method. Physical USB1 VBUS and
+`FIRMWARE.OK`, and reboot into normal auto-boot. With `2026082E` or later, use
+the canonical `/cores/c64` SD layout; the UART ROM uploader remains a fallback.
+The golden UART updater is a recovery path, not the normal installation method.
+Physical USB1 VBUS and
 generic HID input are proven by `2026082B`, both keyboard maps by `2026082C`,
 and the Xbox functional input map and player LED command by `2026082D`.
 
@@ -250,6 +278,17 @@ keyboard-matrix side effects appeared: A/Fire and B/Space both produced Space,
 X remained Control, and the D-pad produced the left-arrow glyph, `2`, and other
 matrix-dependent characters. This confirms port-1 delivery rather than an
 Xbox remap. The focused Xbox checklist is complete for that controller.
+
+The `2026082E` follow-up board test loaded the C64 and 1541 ROMs from
+`/cores/c64/roms`, mounted `/cores/c64/media/drive8.d64` read-only, and loaded
+and ran Decathlon from drive 8. UART `j`
+selected the game's required C64 joystick port 1. This qualifies the first
+SD-to-game path on the tested card and media, not writes or other formats.
+
+The `2026082F` live-audio image still needs its board procedure. Confirm
+automatic SID output, quiet startup, `m` mute, `t` fixed tone, `a` live restore,
+silence through `r` reset and ROM/media work, channel behavior, level, and
+SPDIF before marking it audible or hardware-qualified.
 
 Retain the board safety checks:
 

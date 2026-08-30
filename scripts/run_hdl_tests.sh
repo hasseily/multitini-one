@@ -38,9 +38,12 @@ run_test tb_c64_video_bridge \
 run_test tb_audio_test \
     "$repo_root/third_party/appletini/hdl/reset_sync.sv" \
     "$repo_root/third_party/appletini/hdl/cdc_bit_sync.sv" \
+    "$repo_root/third_party/appletini/hdl/cdc_handshake_reg.sv" \
     "$repo_root/third_party/appletini/hdl/audio_i2s_tone.sv" \
-    "$repo_root/third_party/appletini/hdl/audio_spdif_pcm_tx.sv" \
+    "$repo_root/third_party/appletini/hdl/audio_i2s_pcm_tx.sv" \
+    "$repo_root/hdl/board/multitini_audio_spdif_pcm_tx.sv" \
     "$repo_root/hdl/board/multitini_audio_test.sv" \
+    "$repo_root/hdl/sim/xilinx_primitives.sv" \
     "$repo_root/hdl/sim/tb_audio_test.sv"
 
 run_test tb_psram_bist \
@@ -121,6 +124,7 @@ iverilog -g2012 -Wall -Wimplicit -i -s multitini_one_top \
     "$repo_root/third_party/appletini/hdl/audio_i2s_pcm_tx.sv" \
     "$repo_root/third_party/appletini/hdl/audio_i2s_tone.sv" \
     "$repo_root/third_party/appletini/hdl/audio_spdif_pcm_tx.sv" \
+    "$repo_root/hdl/board/multitini_audio_spdif_pcm_tx.sv" \
     "$repo_root/hdl/common/multitini_axi3_regs.sv" \
     "$repo_root/hdl/common/multitini_control_regs.sv" \
     "$repo_root/hdl/common/multitini_psram_bist.sv" \

@@ -355,3 +355,58 @@ joystick port 1 shares CIA keyboard-matrix lines, so the ROM keyboard scan can
 interpret joystick direction and Fire closures as keys. Those port-1
 fingerprints confirm the swap end to end; they are not an Xbox remap. This
 closes the focused Xbox checklist for the tested controller and topology.
+
+## Build 2026082E: SD ROM, 1541, and read-only D64 board pass
+
+Exact firmware artifact:
+
+- File: repository-root `FIRMWARE.BIN`
+- Shell and firmware build ID: `2026082E`
+- `FIRMWARE.BIN` size: 4,475,348 bytes
+- `FIRMWARE.BIN` SHA-256:
+  `079257d25af73abfc6c3f9372771660934942d9009655e5684bc78952d4cd118`
+- Bootgen readback verified the expected FSBL, routed bitstream, and application
+  partitions.
+
+The user-reported hardware result passed the complete first SD-to-game path.
+Golden installed the root firmware, the C64 system ROMs and 1541 ROM loaded
+from `/cores/c64/roms`, and `/cores/c64/media/drive8.d64` mounted as read-only
+drive 8. Decathlon loaded from the disk and ran. The game uses C64
+joystick port 1, and UART `j` switched the Xbox controller to that port
+successfully.
+
+This qualifies automatic SD ROM loading, 1541 startup, default D64 mounting,
+read service during a real game load, gameplay from the mounted image, and
+joystick-port swapping on the tested hardware and media. Build `2026082E` did
+not route SID audio to the physical output, so this result makes no live-audio
+claim.
+
+## Build 2026082F: live machine audio pending board test
+
+Build `2026082F` connects the selected machine's coherent signed 24-bit stereo
+PCM to both physical audio transports. The I2S path uses the board's 12.288 MHz
+MCLK and 3.072 MHz BCLK. The SPDIF path uses a phase increment matched to the
+133.333 MHz control clock and captures each stereo pair together. Core reset or
+loss of readiness invalidates the held sample while audio clocks continue.
+
+The firmware starts the AK4493 muted, selects live PCM, waits for stable frames,
+and then releases soft mute when the core is ready. UART commands are:
+
+| Command | Result |
+| --- | --- |
+| `a` | Select and unmute live machine audio. |
+| `t` | Select and unmute the fixed diagnostic tone. |
+| `m` | Mute the currently selected source. |
+
+The matching PAL C64 vendor and package flow passes:
+
+- Vivado 2025.2 routed timing: WNS +0.252 ns, WHS +0.059 ns, WPWS +1.749 ns;
+- zero failed or unrouted nets and zero Critical CDC findings;
+- successful bitstream and XSA export, Vitis FSBL/application build, and
+  Bootgen three-partition readback;
+- repository-root `FIRMWARE.BIN`: 4,475,348 bytes, SHA-256
+  `24c8ca616e939ddd13ae46807bcd315affcd6a56f6836c14af4c7cf70510903c`.
+
+These are automated and vendor-tool results, not an audible board result.
+Startup, live SID sound, mute/tone/live switching, reset silence, channel
+behavior, level, and SPDIF still require the packaged image's board test.

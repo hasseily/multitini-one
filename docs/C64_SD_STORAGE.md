@@ -1,11 +1,13 @@
 # C64 SD ROM and D64 workflow
 
-Status: implemented in the current `2026082E` firmware and covered by host
-tests. Its matching Vivado/Vitis/Bootgen build passes, producing a 4,475,348
-byte `FIRMWARE.BIN` with SHA-256
+Status: implemented in build `2026082E` and covered by host tests. Its matching
+Vivado/Vitis/Bootgen build passes, producing a 4,475,348-byte `FIRMWARE.BIN`
+with SHA-256
 `079257d25af73abfc6c3f9372771660934942d9009655e5684bc78952d4cd118`.
-It has not yet completed an SD-card hardware test. The `2026082D` packaged
-firmware does not contain this feature.
+The user-reported board test also passes: C64 and 1541 ROM loading from SD,
+default drive-8 D64 mounting, Decathlon loading and gameplay, and UART `j`
+joystick-port selection all worked. The `2026082D` packaged firmware does not
+contain this feature.
 
 ## Card layout
 
@@ -116,7 +118,8 @@ the three tracked repository ROM files, and retains its explicit file-path
 options. It does not upload `1541.bin` or a D64. After a serial fallback boot,
 use `v` if the diagnostic color bars are still selected.
 
-These source, host-test, and vendor-build results are not a board claim. The
-matching packaged firmware must still be installed and tested with the SD card
-before ROM autoload, 1541 startup, default D64 mounting, disk commands, and
-read service can be marked hardware-qualified.
+The first board result qualifies ROM autoload, 1541 startup, the default
+drive-8 D64 mount, read service during Decathlon loading and gameplay, and
+runtime joystick-port selection on the tested card and SD setup. It does not
+qualify D64 writes, other drives, G64, D81, save-back, arbitrary game
+compatibility, or long-run SD reliability.

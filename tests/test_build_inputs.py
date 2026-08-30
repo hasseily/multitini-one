@@ -259,7 +259,8 @@ class BuildInputTests(unittest.TestCase):
             self.assertIn(f"{size:,} bytes", workflow)
         self.assertIn("read-only", workflow)
         self.assertIn(":c64rx 20480 0xCRC32", workflow)
-        self.assertIn("not a board claim", workflow)
+        self.assertIn("The first board result qualifies", workflow)
+        self.assertRegex(workflow, r"does not\s+qualify D64 writes")
 
     def test_vitis_build_includes_wired_xbox_360_host_support(self):
         script = (ROOT / "scripts/create_vitis_workspace.py").read_text()

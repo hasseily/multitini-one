@@ -41,6 +41,7 @@ iverilog -g2012 -Wall -Wimplicit -i -s multitini_one_top \
     "$repo_root/third_party/appletini/hdl/audio_i2s_pcm_tx.sv" \
     "$repo_root/third_party/appletini/hdl/audio_i2s_tone.sv" \
     "$repo_root/third_party/appletini/hdl/audio_spdif_pcm_tx.sv" \
+    "$repo_root/hdl/board/multitini_audio_spdif_pcm_tx.sv" \
     "$repo_root/hdl/common/multitini_axi3_regs.sv" \
     "$repo_root/hdl/common/multitini_control_regs.sv" \
     "$repo_root/hdl/common/multitini_async_mailbox.sv" \

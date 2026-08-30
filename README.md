@@ -6,12 +6,14 @@ Color is the second adapter used to prove that the shell is reusable. Neither
 machine uses an Apple II host.
 
 The independent PAL DVI timing, fixed-tone audio, UART control, and golden
-reboot paths have passed their first board test. The following frozen-frame
-image proved UART ROM upload, reset release, C64 boot, and coherent scaling.
-The preserved four-bank live PAL baseline also passed its board gate: the
-BASIC cursor remained live and blinking, the five-minute display soak stayed
-locked and tear-free, repeated `v` switches were whole-frame, `r` reset and
-rearmed correctly, and `:reboot` returned to golden.
+reboot paths have passed their first board test. The frozen-frame image proved
+UART ROM upload, reset release, C64 boot, and coherent scaling. The preserved
+four-bank live PAL baseline also passed its board gate, and later images proved
+USB keyboard/gamepad input and the wired Xbox 360 path. Build `2026082E` now
+also passes the SD ROM, 1541, and read-only D64 path on hardware: Decathlon
+loads and runs from drive 8, with UART `j` selecting its joystick port 1.
+Build `2026082F` routes live machine PCM to the physical audio outputs, but its
+audible board test remains pending.
 
 ## Current state
 
@@ -43,23 +45,25 @@ Known:
 - The board shell selects C64 or GBC at project creation. A GBC PSRAM CDC/PHY
   path is prepared but deliberately disabled by default pending Vivado timing
   and board validation.
-- The AXI register path, DVI timing generator, audio path, PSRAM BIST, and C64
-  ROM loader/input bridges pass HDL simulations. The asynchronous mailbox,
+- The AXI register path, DVI timing generator, diagnostic audio path, PSRAM
+  BIST, and C64 ROM loader/input bridges pass HDL simulations. Build
+  `2026082F` adds coherent live stereo PCM crossings for I2S and SPDIF while
+  retaining the fixed diagnostic tone. The asynchronous mailbox,
   frozen-frame predecessor, and four-bank live C64 bridge pass focused Vivado
   XSim, and the selected SystemVerilog C64 path passes Verilator lint.
-- The current PAL C64 USB-input project completed synthesis, implementation,
-  bitstream generation, and XSA export in Vivado 2025.2 with shell build ID
-  `2026082D`. Routed timing passed with WNS +0.525 ns, WHS +0.040 ns, WPWS
-  +1.749 ns, and no failing endpoints.
-- The current routed design uses 6,170 LUTs, 5,703 flip-flops, 85 RAMB36 blocks,
-  one RAMB18 block, and seven DSP blocks. The four-bank video bridge accounts
-  for 546 LUTs, 335 flip-flops, and 64 RAMB36 blocks.
+- Build `2026082F` completed synthesis, implementation, bitstream generation,
+  and XSA export in Vivado 2025.2. Routed timing passed with WNS +0.252 ns,
+  WHS +0.059 ns, WPWS +1.749 ns, no failing endpoints, zero failed nets, and
+  zero Critical CDC findings.
+- The current routed design uses 8,214 LUTs, 8,536 flip-flops, 91 RAMB36 blocks,
+  two RAMB18 blocks, and seven DSP blocks. The audio stage accounts for 300
+  LUTs and 766 flip-flops; the four-bank video bridge accounts for 544 LUTs,
+  335 flip-flops, and 64 RAMB36 blocks.
 - Vitis 2025.2 built the matching FSBL and diagnostic application from the
   fresh XSA. Bootgen created and read back the expected FSBL, routed bitstream,
-  and application partitions. The resulting 4,365,516-byte root
+  and application partitions. The resulting 4,475,348-byte root
   `FIRMWARE.BIN` has SHA-256
-  `536b68ff99f53925d7825d70d7ee30bb586edb8cb301c1e5feff1607248a6600`
-  and CRC32 `0680EEAB`.
+  `24c8ca616e939ddd13ae46807bcd315affcd6a56f6836c14af4c7cf70510903c`.
 - The preserved `20260829` live-video baseline passed its PAL board test. Its
   blinking BASIC cursor proves continuous delivery rather than a frozen
   capture; the five-minute soak, whole-frame source toggles, reset/rearm, and
@@ -90,12 +94,19 @@ Known:
   owner are tracked build/test inputs with recorded hashes. Other unapproved
   ROM/media and generated FPGA or firmware products remain blocked from source
   control. See `docs/CONTENT_POLICY.md` for the per-core rule.
-- The current `2026082E` firmware adds a single-owner FatFs service,
+- Build `2026082E` adds a single-owner FatFs service,
   canonical C64 ROM autoload paths, optional 1541 ROM loading, and a read-only
-  drive-8 D64 service. Host tests and the matching Vivado/Vitis/Bootgen build
-  pass, but this image does not yet have an SD-card board result. See
+  drive-8 D64 service. Host tests, the matching Vivado/Vitis/Bootgen build, and
+  the first SD-card board test pass. Decathlon loads and runs, and `j` selects
+  the game's required joystick port 1. See
   [`docs/C64_SD_STORAGE.md`](docs/C64_SD_STORAGE.md) for the exact card layout,
   startup behavior, UART commands, and serial fallback.
+- Build `2026082F` connects the selected machine's signed 24-bit PCM stream to
+  the common I2S and SPDIF outputs. Live audio is selected automatically when
+  the core is ready; UART `a` restores live audio, `t` selects the fixed test
+  tone, and `m` mutes either source. Source checks, focused XSim, and the fresh
+  routed vendor reports cover stereo coherence, mute, source changes, reset
+  silence, timing, and CDC. Audible hardware qualification is still pending.
 
 Hardware status and remaining gaps:
 
@@ -111,15 +122,17 @@ Hardware status and remaining gaps:
   tested card/display combination, not physical input, storage, or SID audio.
 - NTSC and GBC Vivado builds remain pending. The GBC PSRAM path remains
   disabled by default and awaits timing and board validation.
-- SD file-system and read-only C64 D64 support are implemented and packaged in
-  the untested `2026082E` firmware. USB1 power, both keyboard maps, generic
+- SD file-system, C64/1541 ROM autoload, default drive-8 mounting, and read-only
+  D64 service pass on the board in build `2026082E`; Decathlon loads and runs.
+  USB1 power, both keyboard maps, generic
   HID gamepad input, and the `2026082D` wired Xbox 360 input map and player LED
   command are board-proven. The tested Xbox controller also passes hotplug,
-  held-disconnect release, reconnect, and joystick-port swap. The packaged
-  board-proven firmware still loads the tracked C64 ROM set over UART; the
+  held-disconnect release, reconnect, and joystick-port swap. Build `2026082E`
+  loads the tracked C64 ROM set from SD; UART upload remains a fallback. The
   pinned open GBC bootstrap remains the only ROM embedded in an FPGA image.
 - DVI timing and the fixed diagnostic tone have initial board observations.
-  Their long-run gates, remaining non-Xbox USB hotplug checks, SD, DDR, PSRAM,
+  Live SID audio in build `2026082F` still needs its first audible board test.
+  The long-run audio gate, remaining non-Xbox USB hotplug checks, DDR, PSRAM,
   and Apple-bus isolation still require the hardware work in
   `MULTITINI_ONE_PLAN.md`.
 
@@ -144,7 +157,7 @@ review, or board testing.
 The intended first commands on a Vivado 2025.2 machine are:
 
 ```powershell
-$env:MULTITINI_BUILD_ID = '2026082E'
+$env:MULTITINI_BUILD_ID = '2026082F'
 vivado -mode batch -source scripts/create_project.tcl
 vivado -mode batch -source scripts/build_and_export_xsa.tcl
 vitis -s scripts/create_vitis_workspace.py

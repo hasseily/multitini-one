@@ -8,9 +8,11 @@ routed PAL build in Vivado 2025.2, and the complete first live-video board
 procedure. Build `2026082B` also proves USB1 connector power, keyboard input,
 and one generic HID gamepad. Build `2026082C` fixed the US symbolic map and
 Xbox enumeration; its board test qualified both keyboard maps and Xbox
-directional input. Current build `2026082D` has a matched
-Vivado/Vitis/Bootgen artifact and qualifies the full intended wired Xbox 360
-input map plus the player LED command on the tested controller.
+directional input. Build `2026082D` qualifies the full intended wired Xbox 360
+input map plus the player LED command. Build `2026082E` passes automatic SD ROM
+and 1541 loading, default read-only D64 mounting, Decathlon gameplay, and
+joystick-port swapping on hardware. Current build `2026082F` connects live
+machine PCM to I2S and SPDIF; audible board testing remains pending.
 
 ## Completed repository and portable validation
 
@@ -23,7 +25,8 @@ input map plus the player LED command on the tested controller.
 - Stand-alone top with Apple, Ethernet, and PSRAM pins in inactive states.
 - AXI3 register slave, generated ABI, sticky error/IRQ merge behavior, build
   ID, counters, and safe muted reset defaults.
-- 1080p60 RGB565 diagnostic pattern and 48 kHz I2S/SPDIF tone source.
+- 1080p60 RGB565 diagnostic pattern and a 48 kHz I2S/SPDIF output stage that
+  selects coherent live machine PCM or the fixed diagnostic tone.
 - Minimal Vitis 2025.2 workspace and UART diagnostic application.
 - Transport-independent AK4493 initialization, TMP102 decode, shell command
   link, and PRG/D64/G64/CRT/ROM validation.
@@ -54,8 +57,16 @@ input map plus the player LED command on the tested controller.
   symbolic and retained MiSTer positional maps; C64 key/joystick translation;
   explicit disconnect releases; rollover retention; alias-safe multi-device
   aggregation; retry, reset reassertion, and runtime joystick port swap.
-  Eleven compiled host tests and all 44 Python tests pass; one Tcl-only Python
-  check is skipped because `tclsh` is unavailable.
+- One ARM-owned FatFs service; canonical C64/1541 ROM paths; bounded read-only
+  D64 service; default drive-8 mounting; and UART directory, mount, status, and
+  eject commands. Build `2026082E` passes its first SD-to-game board test with
+  Decathlon.
+- Build `2026082F` adds dual coherent 49-bit machine-audio crossings, whole-I2S
+  frame source switching, a 133.333 MHz SPDIF transmitter with stereo-pair
+  capture, reset/load silence, and pop-safe DAC unmute order. Focused source
+  and HDL tests cover live PCM, tone, mute, reset, cadence, and parity. The
+  fresh PAL Vivado build passes timing, CDC, DRC, routing, bitstream, and XSA
+  gates; Vitis and Bootgen also pass. Hardware audibility is not yet qualified.
 - Exact 47-file Game Boy import at the pinned commit, per-file license rows,
   SHA-256 lock, open SameBoy-derived CGB bootstrap source/image, and deterministic
   strict-tool ports for the selected upstream `gb` and `cart` modules.
@@ -277,28 +288,32 @@ did not assert Fire and the player ring kept blinking.
 - PSRAM activation: PHY timing, IDELAYCTRL, calibration, constraints, command
   edge/count tuning, and board measurement are unresolved. The default build
   holds CE high; the prepared GBC branch is explicit opt-in only.
-- Physical audio remains the independent diagnostic tone; SID is not routed.
+- Build `2026082F` routes live machine PCM, but audible SID output, startup and
+  reset behavior, source switching, channel behavior, level, and SPDIF remain
+  untested on the board.
 - Initial golden-slot boot, DVI timing, fixed-tone audio, USB1 power, keyboard
   transport, generic HID input, and golden reboot have observations.
-  Pin-isolation measurements, DDR, SD, the remaining non-Xbox USB regressions,
+  Pin-isolation measurements, DDR, the remaining non-Xbox USB regressions,
   temperature, cold/warm cycles, and the long-run DVI/audio gates remain open.
 
 ## Next validation sequence
 
-1. Recreate and build C64 NTSC with
+1. Install the packaged `2026082F` image, then test automatic live SID audio,
+   UART `m` mute, `t` diagnostic tone, `a` live-source restore, reset/load
+   silence, and SPDIF on the board. Record audible behavior before calling it
+   qualified.
+2. Recreate and build C64 NTSC with
    `MULTITINI_C64_VIDEO_STANDARD=NTSC`; retain and review a separate complete
    report set.
-2. Create a separate GBC project with `MULTITINI_MACHINE=GBC`; keep
+3. Create a separate GBC project with `MULTITINI_MACHINE=GBC`; keep
    `MULTITINI_ENABLE_GBC_PSRAM=0` for the first elaboration and synthesis review.
    Confirm the selected upstream hierarchy, open bootstrap initialization,
    inferred memories, requested machine clock, and resource estimate.
-3. Route SID audio only after its own clock, reset, format, and mute gates
-   pass.
-4. Execute the remaining boot, DDR, SD, input, and machine gates in
+4. Execute the remaining boot, DDR, input, and machine gates in
    `MULTITINI_ONE_PLAN.md` and `docs/VIVADO_HANDOFF.md`.
 
 Only after the minimal board image passes should PSRAM be connected and its
 BIST exposed. Only after a dedicated PSRAM test passes should a GBC project set
 `MULTITINI_ENABLE_GBC_PSRAM=1`. GBC remains off the physical outputs. C64 DVI
-must pass the live gate above, and C64 audio remains the independent diagnostic
-source until the SID clock, reset, format, and mute gates pass.
+must pass the live gate above. C64 live audio remains unqualified on hardware
+until the `2026082F` audible board gate passes.

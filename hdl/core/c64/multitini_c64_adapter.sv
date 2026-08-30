@@ -293,8 +293,10 @@ module multitini_c64_adapter #(
             audio_r <= 24'sd0;
         end else if (audio_phase + AUDIO_SAMPLE_HZ >= CORE_CLOCK_HZ) begin
             audio_phase <= audio_phase + AUDIO_SAMPLE_HZ - CORE_CLOCK_HZ;
-            audio_l <= $signed({{6{raw_audio_l[17]}}, raw_audio_l});
-            audio_r <= $signed({{6{raw_audio_r[17]}}, raw_audio_r});
+            // MiSTer consumes bits 17:2 as signed 16-bit PCM. Preserve that
+            // full-scale convention at the common 24-bit boundary.
+            audio_l <= $signed({raw_audio_l, 6'b000000});
+            audio_r <= $signed({raw_audio_r, 6'b000000});
             audio_valid <= 1'b1;
         end else begin
             audio_phase <= audio_phase + AUDIO_SAMPLE_HZ;

@@ -144,6 +144,18 @@ module tb_control_regs;
                            MT_CONTROL_AUDIO_MUTE)) ==
                MT_CONTROL_AUDIO_TEST_ENABLE,
                "audio enable and mute update is atomic");
+        expect_read(MT_REG_STATUS,
+                    MT_STATUS_SHELL_READY | MT_STATUS_VIDEO_ACTIVE |
+                    MT_STATUS_AUDIO_ACTIVE | MT_STATUS_CORE_READY |
+                    MT_STATUS_STREAM_READY,
+                    "unmuted diagnostic audio is active");
+        write_reg(MT_REG_CONTROL,
+                  control & ~MT_CONTROL_AUDIO_TEST_ENABLE, 4'hF);
+        expect_read(MT_REG_STATUS,
+                    MT_STATUS_SHELL_READY | MT_STATUS_VIDEO_ACTIVE |
+                    MT_STATUS_AUDIO_ACTIVE | MT_STATUS_CORE_READY |
+                    MT_STATUS_STREAM_READY,
+                    "unmuted ready-machine audio is active");
 
         write_reg(MT_REG_COMMAND_SEQ, 32'd3, 4'hF);
         write_reg(MT_REG_COMMAND_OPCODE, 32'hFFFFFFFF, 4'hF);

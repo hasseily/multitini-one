@@ -75,6 +75,27 @@ class FirmwareRecoveryTests(unittest.TestCase):
         long_format = re.compile(r"%[-+ #0-9.*]*l[diuoxXfFeEgGaAcspn]")
         self.assertIsNone(long_format.search(source))
 
+    def test_audio_commands_separate_live_tone_and_pop_safe_mute(self):
+        source = (ROOT / "firmware/platform/xilinx/main.c").read_text()
+        self.assertIn("case 'a': set_audio(false, false);", source)
+        self.assertIn("case 't': set_audio(false, true);", source)
+        self.assertIn("MT_CONTROL_AUDIO_TEST_ENABLE", source)
+        self.assertIn(
+            "(shell_read(MT_REG_STATUS) & MT_STATUS_CORE_READY) != 0U",
+            source,
+        )
+
+        body = source.split(
+            "static void set_audio(bool mute, bool test_tone)", 1
+        )[1].split("\n}\n", 1)[0]
+        pl_unmute = body.index(
+            "command(MT_COMMAND_SET_AUDIO, test_tone ? 1U : 0U, 0U)"
+        )
+        settle = body.index("board_delay_us(NULL, 50U)", pl_unmute)
+        dac_unmute = body.index("mt_ak4493_set_mute(&dac_bus, false)")
+        self.assertLess(pl_unmute, settle)
+        self.assertLess(settle, dac_unmute)
+
     def test_c64_upload_is_reset_guarded_and_recovery_excludes_it(self):
         source = (ROOT / "firmware/platform/xilinx/main.c").read_text()
         capacity = re.search(

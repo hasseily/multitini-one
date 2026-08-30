@@ -309,8 +309,9 @@ module multitini_gameboy_adapter #(
             audio_r <= 24'sd0;
         end else if (audio_phase + AUDIO_SAMPLE_HZ >= MT_GBC_CORE_HZ) begin
             audio_phase <= audio_phase + AUDIO_SAMPLE_HZ - MT_GBC_CORE_HZ;
-            audio_l <= $signed({{8{raw_audio_l[15]}}, raw_audio_l});
-            audio_r <= $signed({{8{raw_audio_r[15]}}, raw_audio_r});
+            // Map signed 16-bit mixer PCM onto the full 24-bit interface.
+            audio_l <= $signed({raw_audio_l, 8'h00});
+            audio_r <= $signed({raw_audio_r, 8'h00});
             audio_valid <= 1'b1;
         end else begin
             audio_phase <= audio_phase + AUDIO_SAMPLE_HZ;

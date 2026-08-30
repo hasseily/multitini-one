@@ -99,6 +99,7 @@ common/multitini_memory_cdc.sv
 common/multitini_psram_line_service.sv
 ../third_party/appletini/hdl/psram_driver.sv
 board/multitini_video_test.sv
+board/multitini_audio_spdif_pcm_tx.sv
 board/multitini_audio_test.sv
 [gbc]
 board/multitini_gameboy_psram_path.sv

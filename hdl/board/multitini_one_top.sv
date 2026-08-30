@@ -705,10 +705,14 @@ module multitini_one_top #(
     );
 
     multitini_audio_test audio_test (
+        .machine_clk(c64_clk), .machine_resetn(c64_aresetn),
+        .machine_ready(c64_ready),
+        .machine_audio_l(c64_audio_l), .machine_audio_r(c64_audio_r),
+        .machine_audio_valid(c64_audio_valid),
         .control_clk(control_clk), .control_resetn(control_aresetn),
         .audio_mclk(audio_i2s_mclk),
-        .enable_async(|(shell_control &
-                        multitini_regs_pkg::MT_CONTROL_AUDIO_TEST_ENABLE)),
+        .test_tone_async(|(shell_control &
+                           multitini_regs_pkg::MT_CONTROL_AUDIO_TEST_ENABLE)),
         .mute_async(|(shell_control &
                       multitini_regs_pkg::MT_CONTROL_AUDIO_MUTE)),
         .i2s_lrck(audio_i2s_lrck), .i2s_sdata(audio_i2s_sdata),

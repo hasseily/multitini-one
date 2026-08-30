@@ -29,7 +29,7 @@
 #include "xuartps_hw.h"
 
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
-#define MT_FIRMWARE_BUILD_ID UINT32_C(0x2026082E)
+#define MT_FIRMWARE_BUILD_ID UINT32_C(0x2026082F)
 #define MT_I2C_CLOCK_HZ UINT32_C(100000)
 #define MT_I2C_BUSY_POLLS UINT32_C(1000000)
 #define MT_UART_DRAIN_POLLS UINT32_C(10000000)
@@ -211,11 +211,12 @@ static int command(uint32_t opcode, uint32_t arg0, uint32_t arg1)
     return 0;
 }
 
-static void set_audio(bool mute)
+static void set_audio(bool mute, bool test_tone)
 {
     int status;
     if (mute) {
-        (void)command(MT_COMMAND_SET_AUDIO, 1U, 1U);
+        (void)command(MT_COMMAND_SET_AUDIO, test_tone ? 1U : 0U, 1U);
+        board_delay_us(NULL, 50U);
         if (dac_ready) {
             status = mt_ak4493_set_mute(&dac_bus, true);
             if (status != 0) {
@@ -229,13 +230,16 @@ static void set_audio(bool mute)
         xil_printf("DAC is unavailable; audio remains muted\r\n");
         return;
     }
+    if (command(MT_COMMAND_SET_AUDIO, test_tone ? 1U : 0U, 0U) != 0) {
+        return;
+    }
+    // Let at least two complete 48 kHz PCM frames reach the pins before the
+    // converter's analog outputs leave soft mute.
+    board_delay_us(NULL, 50U);
     status = mt_ak4493_set_mute(&dac_bus, false);
     if (status != 0) {
         xil_printf("DAC unmute failed: %d\r\n", status);
-        return;
-    }
-    if (command(MT_COMMAND_SET_AUDIO, 1U, 0U) != 0) {
-        (void)mt_ak4493_set_mute(&dac_bus, true);
+        (void)command(MT_COMMAND_SET_AUDIO, test_tone ? 1U : 0U, 1U);
     }
 }
 
@@ -619,11 +623,13 @@ static void handle_c64_rx_command(char *line)
 
     xil_printf("[C64] boot ok crc32=%08x status=%08x\r\n",
                (unsigned int)actual_crc32, (unsigned int)core_status);
+    set_audio(false, false);
 }
 
 static void print_help(void)
 {
-    xil_printf("commands: h help, s status, p ping, a audio on, m mute, ");
+    xil_printf("commands: h help, s status, p ping, a live audio, ");
+    xil_printf("t test tone, m mute, ");
     xil_printf("v toggle video, r toggle core reset, u USB status, ");
     xil_printf("j swap joystick port, k toggle keyboard map\r\n");
     xil_printf("US map: Alt/GUI=C=, F9=up-arrow, F10=+, F11=RESTORE, ");
@@ -809,6 +815,10 @@ int main(void)
     dac_ready = status == 0;
     xil_printf("DAC initialization (muted): %s (%d)\r\n",
                dac_ready ? "ok" : "failed", status);
+    if (dac_ready &&
+        (shell_read(MT_REG_STATUS) & MT_STATUS_CORE_READY) != 0U) {
+        set_audio(false, false);
+    }
     print_status();
     usb_hid_service_init(&shell_link);
     usb_hid_service_set_core_ready(
@@ -838,8 +848,12 @@ int main(void)
             c64_d64_service_dump_status();
             break;
         case 'p': (void)command(MT_COMMAND_PING, 0U, 0U); break;
-        case 'a': set_audio(false); break;
-        case 'm': set_audio(true); break;
+        case 'a': set_audio(false, false); break;
+        case 't': set_audio(false, true); break;
+        case 'm':
+            set_audio(true,
+                      (control & MT_CONTROL_AUDIO_TEST_ENABLE) != 0U);
+            break;
         case 'v':
             Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_CONTROL,
                       control ^ MT_CONTROL_VIDEO_TEST_ENABLE);

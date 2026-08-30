@@ -109,8 +109,8 @@ module multitini_control_regs #(
         status_word = MT_STATUS_SHELL_READY;
         if (control & MT_CONTROL_VIDEO_TEST_ENABLE)
             status_word |= MT_STATUS_VIDEO_ACTIVE;
-        if ((control & MT_CONTROL_AUDIO_TEST_ENABLE) &&
-            !(control & MT_CONTROL_AUDIO_MUTE))
+        if (!(control & MT_CONTROL_AUDIO_MUTE) &&
+            ((control & MT_CONTROL_AUDIO_TEST_ENABLE) || core_ready))
             status_word |= MT_STATUS_AUDIO_ACTIVE;
         if (core_ready)
             status_word |= MT_STATUS_CORE_READY;
