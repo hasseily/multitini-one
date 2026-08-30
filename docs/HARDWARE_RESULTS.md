@@ -171,11 +171,11 @@ This result establishes controller startup and a set `PORTSC.PP` request. It
 does not establish connector VBUS or HID operation: no device attached, no HID
 interface enumerated, and no input report arrived.
 
-### Build 2026082B: USB3300 VBUS correction awaiting board test
+### Build 2026082B: USB1 power and generic HID pass; keymap and Xbox fail
 
 Exact firmware artifact:
 
-- File: repository-root `FIRMWARE.BIN`
+- File at test time: repository-root `FIRMWARE.BIN`
 - Source/build-input commit:
   `c2b87fad2913580de296eb9b06a9186b57deeefa`
 - `FIRMWARE.BIN` size: 4,351,948 bytes
@@ -228,8 +228,72 @@ the internal `VbusValid` indication to fall. That verification remains pending
 across retries if it fails; `:reboot` cancels instead of resetting with USB1
 power in an unverified state.
 
-Build `2026082B` has not yet passed on-board VBUS or HID testing. USB3300
-identity and register readback, connector power, keyboard and gamepad
-enumeration/input, disconnect/reconnect, and cold/warm-reset recovery remain
-pending. Do not claim USB1 power or HID hardware support until
-[`C64_USB_INPUT_HARDWARE_TEST.md`](C64_USB_INPUT_HARDWARE_TEST.md) passes.
+Board results prove the corrected USB1 power path, keyboard enumeration and
+input, and generic HID gamepad input. A USB keyboard received power, produced
+reports, and controlled the live C64 BASIC screen. The generic low-speed
+gamepad `06a3:0107` enumerated as HID with `gamepads=1` and an increasing
+report count. Its final status included `func=46`, which is the active
+low-speed Function Control value rather than the idle `func=41` setup value.
+
+Two failures define the next build. The positional/hybrid symbol map made the
+PC `=` key act as C64 plus while `Shift+=` produced a shifted graphics plus;
+`PRINT 2+2` therefore echoed a plus-like glyph but evaluated as `22`. The
+wired Microsoft Xbox 360 controller `045e:028e` could not enumerate because
+its four-endpoint interface met CherryUSB's erroneous `>=` capacity check:
+
+```text
+[E/usbh_core] Endpoint num 4 overflow
+[E/usbh_core] Parse config descriptor fail
+[E/usbh_hub] Port 1 enumerate fail
+```
+
+Build `2026082B` qualifies connector VBUS, USB keyboard transport, and the
+generic HID controller on this board. It does not qualify a US symbolic keymap
+or Xbox/XInput support. Held-disconnect, explicit VBUS shutdown, and full
+hotplug coverage were not separately recorded and remain regression checks.
+
+### Build 2026082C: US symbolic map and Xbox candidate
+
+Exact firmware artifact:
+
+- File: repository-root `FIRMWARE.BIN`
+- Initial build manifest: UTC `2026-08-30T03:27:47Z`, base commit
+  `ee71f5dd5a77e8a15c9881e2a07d3ee48c9c9c77`, intentional dirty engineering
+  tree, PAL C64, shell and firmware build ID `2026082C`
+- `FIRMWARE.BIN` size: 4,362,060 bytes
+- `FIRMWARE.BIN` SHA-256:
+  `ae75318d458c6f6203c5ed6a87be1283ace6b39dacf0307c7e82c52e281ea004`
+- `FIRMWARE.BIN` CRC32: `EF6EB912`
+- Free firmware-slot space: 10,252,468 bytes
+- Routed bitstream SHA-256:
+  `e0b6df0a38dcbd1c4a6f31e2274d4c74e62cf77489f9332bd36a276a9c650e4b`
+- XSA SHA-256:
+  `530322983caa359baedcd1cbc50b990b0657862c3c6cf545ba91f9f86289158c`
+- Diagnostic ELF SHA-256:
+  `50373cdb3f936e082a3004a10e3f195a9e19923dbb423506d762d0309877e5f4`
+- FSBL ELF SHA-256:
+  `474bd41ca01df2d9bf69b30f92321c8a0a674591040152ea3e10883a50f0f63c`
+- Bootgen readback verified the expected FSBL, routed bitstream, and two
+  application segments.
+
+The default PAL Vivado 2025.2 build uses shell build ID `2026082C` and passes
+at WNS +0.599 ns, WHS +0.036 ns, and WPWS +1.749 ns with zero total negative
+slack or failing endpoints. All 11,035 routable nets are fully routed. CDC has
+14 `CDC-3` and one `CDC-9` Info-only crossing. All four bus-skew constraints
+pass; the two live-pointer skews are 0.476 ns and 0.575 ns against 6.733 ns.
+DRC has zero errors or critical warnings and retains 51 advisory warnings. The
+routed design uses 6,167 LUTs, 5,703 flip-flops, 85 RAMB36 blocks, one RAMB18
+block, and seven DSP blocks.
+
+Vitis 2025.2 rebuilt the matching FSBL and application. The application uses
+179,856 bytes of text, 1,932 bytes of data, and 141,760 bytes of BSS. Its USB
+class registry contains hub, HID, and Xbox entries; the three records span 48
+bytes, `xbox_custom_class_info` is retained, and `usbh_xbox_run` and
+`usbh_xbox_stop` are strong linked definitions.
+
+Eleven compiled host tests, 44 Python tests, and the repository policy check
+pass. This result qualifies the source and vendor build only. The US symbolic
+map and Xbox 360 path require the focused board procedure in
+[`C64_USB_INPUT_HARDWARE_TEST.md`](C64_USB_INPUT_HARDWARE_TEST.md). Until that
+passes, the physical input boundary remains the proven `2026082B` keyboard
+transport and generic HID controller.

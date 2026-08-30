@@ -198,6 +198,27 @@ class BuildInputTests(unittest.TestCase):
             script,
         )
 
+    def test_vitis_build_includes_wired_xbox_360_host_support(self):
+        script = (ROOT / "scripts/create_vitis_workspace.py").read_text()
+        config = (ROOT / "firmware/platform/xilinx/usb_config.h").read_text()
+        xbox = (ROOT /
+                "third_party/CherryUSB/class/vendor/xbox/usbh_xbox.c").read_text()
+
+        endpoint_capacity = re.search(
+            r"#define\s+CONFIG_USBHOST_MAX_ENDPOINTS\s+(\d+)", config
+        )
+        self.assertIsNotNone(endpoint_capacity)
+        self.assertGreater(int(endpoint_capacity.group(1)), 4)
+        self.assertRegex(
+            config, r"#define\s+CONFIG_USBHOST_MAX_XBOX_CLASS\s+1\b"
+        )
+        self.assertIn(
+            '"third_party/CherryUSB/class/vendor/xbox/usbh_xbox.c"',
+            script,
+        )
+        self.assertIn('"class" / "vendor" / "xbox"', script)
+        self.assertIn("{ 0x045e, 0x028e }", xbox)
+
     def test_vitis_platform_hook_is_owned_source(self):
         platform_directory = ROOT / "firmware" / "platform" / "xilinx"
         header = (platform_directory / "platform.h").read_text()

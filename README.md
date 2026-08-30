@@ -8,7 +8,7 @@ machine uses an Apple II host.
 The independent PAL DVI timing, fixed-tone audio, UART control, and golden
 reboot paths have passed their first board test. The following frozen-frame
 image proved UART ROM upload, reset release, C64 boot, and coherent scaling.
-The current four-bank live PAL image has now also passed its board gate: the
+The preserved four-bank live PAL baseline also passed its board gate: the
 BASIC cursor remained live and blinking, the five-minute display soak stayed
 locked and tear-free, repeated `v` switches were whole-frame, `r` reset and
 rearmed correctly, and `:reboot` returned to golden.
@@ -47,39 +47,37 @@ Known:
   ROM loader/input bridges pass HDL simulations. The asynchronous mailbox,
   frozen-frame predecessor, and four-bank live C64 bridge pass focused Vivado
   XSim, and the selected SystemVerilog C64 path passes Verilator lint.
-- The current PAL C64 live-video project completed synthesis, implementation,
+- The current PAL C64 USB-input project completed synthesis, implementation,
   bitstream generation, and XSA export in Vivado 2025.2 with shell build ID
-  `20260829`. Routed timing passed with WNS +0.675 ns, WHS +0.053 ns, WPWS
+  `2026082C`. Routed timing passed with WNS +0.599 ns, WHS +0.036 ns, WPWS
   +1.749 ns, and no failing endpoints. The final CDC report contains only 14
   `CDC-3` and one `CDC-9` informational crossing.
-- The routed live design uses 6,168 LUTs, 5,703 flip-flops, 85 RAMB36 blocks,
+- The current routed design uses 6,167 LUTs, 5,703 flip-flops, 85 RAMB36 blocks,
   one RAMB18 block, and seven DSP blocks. The four-bank video bridge accounts
   for 543 LUTs, 335 flip-flops, and 64 RAMB36 blocks.
 - Vitis 2025.2 built the matching FSBL and diagnostic application from the
-  fresh live XSA. Bootgen packaged and read back the expected FSBL, routed
-  bitstream, and application partitions. The resulting 4,241,740-byte
+  fresh XSA. Bootgen created and read back the expected FSBL, routed bitstream,
+  and application partitions. The resulting 4,362,060-byte root
   `FIRMWARE.BIN` has SHA-256
-  `a44943738448e3114e58c03a30a2210270684ecf849911621e045ae5771f8703`.
-- That exact live firmware passed its first PAL board test. The blinking BASIC
-  cursor proves continuous delivery rather than a frozen capture; the
-  five-minute soak, whole-frame source toggles, reset/rearm, and golden reboot
-  all passed.
+  `ae75318d458c6f6203c5ed6a87be1283ace6b39dacf0307c7e82c52e281ea004`
+  and CRC32 `EF6EB912`. Its US-keymap and Xbox changes still require the board
+  procedure.
+- The preserved `20260829` live-video baseline passed its PAL board test. Its
+  blinking BASIC cursor proves continuous delivery rather than a frozen
+  capture; the five-minute soak, whole-frame source toggles, reset/rearm, and
+  golden reboot all passed.
 - USB1 host input is now implemented with pinned CherryUSB source. The ARM
-  translates USB boot-keyboard and common HID gamepad reports into the existing
-  reset-safe C64 input-event mailbox. Disconnect releases, rollover retention,
-  multiple-device aggregation, delivery retry, reset reassertion, and joystick
-  port swap are covered by host tests.
-- The first USB-input PAL image uses build ID `2026082A`. Its isolated Vivado
-  2025.2 build passes at WNS +0.394 ns, WHS +0.057 ns, and WPWS +1.749 ns;
-  Vitis rebuilt the matching FSBL/application, and Bootgen read back the
-  expected partitions. The 4,346,380-byte image has SHA-256
-  `3e211fd424675753afa9a208b8c817bd12e196cb097951a0e38f2b61b8bab0db`.
-  Physical USB enumeration and input remain pending board qualification.
+  translates USB boot-keyboard, common HID gamepad, and wired Xbox 360 reports
+  into the existing reset-safe C64 input-event mailbox. The default keyboard
+  map is US symbolic; UART `k` restores the original MiSTer positional map.
+  Disconnect releases, rollover retention, alias-safe aggregation, delivery
+  retry, reset reassertion, and joystick port swap are covered by host tests.
+- Build `2026082B` proves USB1 connector power, keyboard input, and one generic
+  HID gamepad on the board. It exposed a hybrid symbol-map failure and an Xbox
+  `Endpoint num 4 overflow` failure. Build `2026082C` fixes both in source and
+  passes host tests; its keyboard and Xbox changes await board qualification.
 - The exact AK4493 datasheet has been reviewed. Conservative I2S output delays
   are now part of the implemented-design timing constraints.
-- For that snapshot XSA, the Vitis FSBL and diagnostic application ELF built
-  successfully. Bootgen packaged them with its routed bitstream as
-  `FIRMWARE.BIN`.
 - Portable content, XMODEM, DAC, temperature, and shell-link code passes the
   normal strict host tests. The Vitis entry point compiles against strict host
   stubs for the Xilinx APIs it uses. The current Windows GCC installation does
@@ -104,13 +102,15 @@ Hardware status and remaining gaps:
   tested card/display combination, not physical input, storage, or SID audio.
 - NTSC and GBC Vivado builds remain pending. The GBC PSRAM path remains
   disabled by default and awaits timing and board validation.
-- SD file-system integration is not implemented. USB keyboard/gamepad input is
-  implemented and vendor-built but not yet board-qualified. The tracked C64
-  ROM set is loaded over UART; the pinned open GBC bootstrap remains the only
-  ROM embedded in an FPGA image.
+- SD file-system integration is not implemented. USB1 power, keyboard
+  transport, and generic HID gamepad input are board-proven. The `2026082C` US
+  symbol map and Xbox path still need their focused board checks. The tracked
+  C64 ROM set is loaded over UART; the pinned open GBC bootstrap remains the
+  only ROM embedded in an FPGA image.
 - DVI timing and the fixed diagnostic tone have initial board observations.
-  Their long-run gates, plus USB host, SD, DDR, PSRAM, and Apple-bus isolation,
-  still require the hardware work in `MULTITINI_ONE_PLAN.md`.
+  Their long-run gates, remaining USB map/Xbox/hotplug checks, SD, DDR, PSRAM,
+  and Apple-bus isolation still require the hardware work in
+  `MULTITINI_ONE_PLAN.md`.
 
 ## Host checks
 
@@ -132,18 +132,22 @@ review, or board testing.
 
 The intended first commands on a Vivado 2025.2 machine are:
 
-```sh
+```powershell
+$env:MULTITINI_BUILD_ID = '2026082C'
 vivado -mode batch -source scripts/create_project.tcl
 vivado -mode batch -source scripts/build_and_export_xsa.tcl
 vitis -s scripts/create_vitis_workspace.py
 ```
 
-Package the exact generated artifacts from PowerShell with:
+Set `MULTITINI_BUILD_ID` to the eight-digit firmware build ID in
+`firmware/platform/xilinx/main.c`. The shell and firmware IDs must match.
+
+Build the root firmware directly from the exact generated artifacts in
+PowerShell with:
 
 ```powershell
-New-Item -ItemType Directory -Force .\build\firmware
 .\scripts\make_firmware_bin.bat `
-  .\build\firmware\FIRMWARE.BIN `
+  .\FIRMWARE.BIN `
   .\build\vitis_workspace\multitini_platform\export\multitini_platform\sw\boot\fsbl.elf `
   .\build\vivado\multitini_one.runs\impl_1\multitini_one_top.bit `
   .\build\vitis_workspace\diagnostic\build\diagnostic.elf
@@ -153,7 +157,7 @@ The completed independent diagnostic and frozen-snapshot tests are recorded in
 [`docs/HARDWARE_RESULTS.md`](docs/HARDWARE_RESULTS.md). The preserved snapshot
 procedure is in
 [`docs/C64_SNAPSHOT_HARDWARE_TEST.md`](docs/C64_SNAPSHOT_HARDWARE_TEST.md).
-For the packaged live test image, use
+For the live test image, use
 [`docs/C64_LIVE_VIDEO_HARDWARE_TEST.md`](docs/C64_LIVE_VIDEO_HARDWARE_TEST.md).
 For the USB keyboard/gamepad image, use
 [`docs/C64_USB_INPUT_HARDWARE_TEST.md`](docs/C64_USB_INPUT_HARDWARE_TEST.md).

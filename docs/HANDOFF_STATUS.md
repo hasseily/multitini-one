@@ -1,12 +1,15 @@
 # Multitini One Handoff Status
 
-Status date: 2026-08-29. The first independent diagnostic image and the second
+Status date: 2026-08-30. The first independent diagnostic image and the second
 PAL C64 UART-ROM/frozen-snapshot image have both passed their initial board
 tests. The current source replaces the frozen buffer with a four-bank,
 four-bit-palette live frame ring. That bridge passes focused XSim, a fresh
 routed PAL build in Vivado 2025.2, and the complete first live-video board
-procedure. USB keyboard/gamepad input is implemented and vendor-built; its
-first board procedure is the next subsystem gate.
+procedure. Build `2026082B` also proves USB1 connector power, keyboard input,
+and one generic HID gamepad. Current build `2026082C` replaces the hybrid
+symbol map with a US symbolic default and adds wired Xbox 360 input; those two
+changes now have a matched Vivado/Vitis/Bootgen artifact and are the next board
+gate.
 
 ## Completed repository and portable validation
 
@@ -46,11 +49,12 @@ first board procedure is the next subsystem gate.
   rearming. Focused XSim, the fresh PAL Vivado build, and the first live-video
   board qualification all pass.
 - Pinned CherryUSB USB1 host integration; cooperative Zynq EHCI service; USB
-  boot-keyboard and common HID gamepad parsing; C64 key/joystick translation;
-  explicit disconnect releases; rollover retention; multi-device aggregation;
-  retry, reset reassertion, and runtime joystick port swap. Nine compiled host
-  tests and all 42 Python tests pass; one Tcl-only Python check is skipped
-  because `tclsh` is unavailable.
+  boot-keyboard, common HID gamepad, and wired Xbox 360 parsing; default US
+  symbolic and retained MiSTer positional maps; C64 key/joystick translation;
+  explicit disconnect releases; rollover retention; alias-safe multi-device
+  aggregation; retry, reset reassertion, and runtime joystick port swap.
+  Eleven compiled host tests and all 44 Python tests pass; one Tcl-only Python
+  check is skipped because `tclsh` is unavailable.
 - Exact 47-file Game Boy import at the pinned commit, per-file license rows,
   SHA-256 lock, open SameBoy-derived CGB bootstrap source/image, and deterministic
   strict-tool ports for the selected upstream `gb` and `cart` modules.
@@ -70,7 +74,7 @@ first board procedure is the next subsystem gate.
   four-bank live bridge's swap, repeat, full-ring, rejection, diagnostic-toggle,
   and independent-reset cases.
 
-## Completed vendor flow for the current PAL live-video image
+## Completed vendor flow for the board-proven PAL live-video baseline
 
 - Fresh default PAL C64 project creation, mixed VHDL/SystemVerilog
   elaboration, synthesis, implementation, bitstream generation, and XSA export
@@ -105,19 +109,17 @@ first board procedure is the next subsystem gate.
 - The resulting `FIRMWARE.BIN` is 4,241,740 bytes, has SHA-256
   `a44943738448e3114e58c03a30a2210270684ecf849911621e045ae5771f8703`
   and CRC32 `01F764E0`, and leaves 10,372,788 bytes free in the firmware slot.
-  The test package is `Multitini-One-PAL-C64-live-video-20260829.zip`; its
-  source archive is `Multitini-One-source-C64-live-video-20260829.zip`.
 
-These are the current live-bridge vendor-tool results. The separate board
-observations below qualify the corresponding packaged image on hardware.
+These are the preserved live-bridge baseline results. The separate board
+observations below qualify the corresponding firmware on hardware.
 
-## Completed vendor flow for the USB-input test image
+## Completed vendor flow for historical build 2026082A
 
 - A separate PAL C64 build with shell build ID `2026082A` completed synthesis,
   implementation, bitstream generation, and XSA export in Vivado 2025.2.
 - The manifest timestamp is `2026-08-29T16:43:18Z`; it records base commit
   `5150d830ddf7f63c4e6eefe9c9e861cccb69e3d8` and the exact dirty engineering
-  source snapshot included with the package.
+  source snapshot recorded for that build.
 - Timing passes with WNS +0.394 ns, WHS +0.057 ns, WPWS +1.749 ns, and zero
   failing endpoints. All 11,048 routable nets are fully routed with zero
   routing errors. DRC has zero errors and 51 retained non-blocking warnings.
@@ -132,8 +134,42 @@ observations below qualify the corresponding packaged image on hardware.
   `3e211fd424675753afa9a208b8c817bd12e196cb097951a0e38f2b61b8bab0db`
   and CRC32 `B25E5862`, and leaves 10,268,148 bytes free in the firmware slot.
 
-This vendor result does not qualify a physical keyboard or gamepad. Follow
-`docs/C64_USB_INPUT_HARDWARE_TEST.md` and preserve the live-video baseline.
+Build `2026082A` did not qualify a physical keyboard or gamepad. The later
+`2026082B` board observations below supersede that boundary for USB1 power,
+keyboard transport, and generic HID input.
+
+## Completed vendor flow for build 2026082C
+
+- A fresh default PAL C64 project completed synthesis, implementation,
+  bitstream generation, and XSA export in Vivado 2025.2 for
+  `xc7z020clg484-2` with shell build ID `2026082C`.
+- The initial manifest is UTC `2026-08-30T03:27:47Z`; it records base commit
+  `ee71f5dd5a77e8a15c9881e2a07d3ee48c9c9c77` and an intentional dirty
+  engineering tree.
+- Timing passes with WNS +0.599 ns, WHS +0.036 ns, WPWS +1.749 ns, and zero
+  failing endpoints. All 11,035 routable nets are fully routed. DRC has zero
+  errors or critical warnings and retains 51 advisory warnings.
+- CDC contains 14 `CDC-3` and one `CDC-9` Info-only crossing. All four bus-skew
+  constraints pass; the live-pointer skews are 0.476 ns and 0.575 ns against
+  6.733 ns.
+- The routed design uses 6,167 LUTs, 5,703 flip-flops, 85 RAMB36 blocks, one
+  RAMB18 block, and seven DSP blocks.
+- The routed bitstream SHA-256 is
+  `e0b6df0a38dcbd1c4a6f31e2274d4c74e62cf77489f9332bd36a276a9c650e4b`.
+  The matching XSA SHA-256 is
+  `530322983caa359baedcd1cbc50b990b0657862c3c6cf545ba91f9f86289158c`.
+- Vitis 2025.2 rebuilt the matching FSBL and application. The application uses
+  179,856 bytes of text, 1,932 bytes of data, and 141,760 bytes of BSS. Its
+  linked USB registry retains hub, HID, and Xbox class records, and the Xbox
+  run/stop callbacks are strong definitions.
+- Bootgen readback identifies the expected FSBL, bitstream, and two application
+  segments. The root `FIRMWARE.BIN` is 4,362,060 bytes, has SHA-256
+  `ae75318d458c6f6203c5ed6a87be1283ace6b39dacf0307c7e82c52e281ea004`
+  and CRC32 `EF6EB912`, and leaves 10,252,468 bytes free in the firmware slot.
+
+This build fixes the US symbolic-keymap behavior and the CherryUSB endpoint
+capacity failure in source. It does not claim those paths on hardware; the
+focused keyboard and `045e:028e` Xbox test remains pending.
 
 ## Completed first board observations
 
@@ -171,6 +207,20 @@ This vendor result does not qualify a physical keyboard or gamepad. Follow
   combination. It does not qualify physical input, storage, SID audio, NTSC,
   or extended environmental operation.
 
+## Completed build 2026082B USB board observations
+
+- Golden loaded the root firmware, renamed it `FIRMWARE.OK`, and booted it.
+- USB1 powered a keyboard; the keyboard enumerated, delivered reports, and
+  controlled the live C64 BASIC screen.
+- Generic low-speed HID gamepad `06a3:0107` enumerated and delivered joystick
+  input. This proves the common HID path on the tested board.
+- The keyboard symbol map failed its US-layout check: `Shift+=` was a shifted
+  graphics plus rather than arithmetic plus, so `PRINT 2+2` evaluated as `22`.
+- Xbox 360 controller `045e:028e` failed enumeration with
+  `Endpoint num 4 overflow`; no Xbox input was delivered.
+- These results qualify USB1 power, keyboard transport, and generic HID input,
+  but not the new `2026082C` symbolic map or Xbox path.
+
 ## Still requires vendor tools or hardware
 
 - The NTSC C64 project still needs its own clean vendor build and report review.
@@ -180,17 +230,19 @@ This vendor result does not qualify a physical keyboard or gamepad. Follow
 - PSRAM activation: PHY timing, IDELAYCTRL, calibration, constraints, command
   edge/count tuning, and board measurement are unresolved. The default build
   holds CE high; the prepared GBC branch is explicit opt-in only.
-- USB keyboard and gamepad input still need their first board tests. Physical
-  audio remains the independent diagnostic tone; SID is not routed.
-- Initial golden-slot boot, DVI timing, fixed-tone audio, and golden reboot have
-  observations. Pin-isolation measurements, DDR, SD, USB input, temperature,
-  cold/warm cycles, and the long-run DVI/audio gates remain open.
+- The `2026082C` US symbolic map and wired Xbox 360 input need their focused
+  board tests. Physical audio remains the independent diagnostic tone; SID is
+  not routed.
+- Initial golden-slot boot, DVI timing, fixed-tone audio, USB1 power, keyboard
+  transport, generic HID input, and golden reboot have observations.
+  Pin-isolation measurements, DDR, SD, the new symbolic/Xbox paths,
+  temperature, cold/warm cycles, and the long-run DVI/audio gates remain open.
 
 ## Next validation sequence
 
-1. Run `docs/C64_USB_INPUT_HARDWARE_TEST.md`, starting with USB keyboard
-   delivery and then joystick/gamepad mapping. Preserve the proven live-video,
-   reset, and golden-reboot behavior.
+1. Run `docs/C64_USB_INPUT_HARDWARE_TEST.md`, starting with the US symbol map,
+   then regress generic HID and qualify Xbox 360 input. Preserve the proven
+   USB1 power, live-video, reset, and golden-reboot behavior.
 2. Recreate and build C64 NTSC with
    `MULTITINI_C64_VIDEO_STANDARD=NTSC`; retain and review a separate complete
    report set.

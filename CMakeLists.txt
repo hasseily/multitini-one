@@ -11,6 +11,7 @@ add_library(multitini_common STATIC
     firmware/common/ak4493.c
     firmware/common/c64_boot.c
     firmware/common/c64_hid_input.c
+    firmware/common/c64_xinput.c
     firmware/common/content_type.c
     firmware/common/core_link.c
     firmware/common/gameboy_boot.c
@@ -59,6 +60,10 @@ add_test(NAME c64_boot COMMAND test_c64_boot)
 add_executable(test_c64_hid_input tests/host/test_c64_hid_input.c)
 target_link_libraries(test_c64_hid_input PRIVATE multitini_common)
 add_test(NAME c64_hid_input COMMAND test_c64_hid_input)
+
+add_executable(test_c64_xinput tests/host/test_c64_xinput.c)
+target_link_libraries(test_c64_xinput PRIVATE multitini_common)
+add_test(NAME c64_xinput COMMAND test_c64_xinput)
 
 add_executable(test_gameboy_boot tests/host/test_gameboy_boot.c)
 target_link_libraries(test_gameboy_boot PRIVATE multitini_common)

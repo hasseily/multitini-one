@@ -111,6 +111,7 @@ def main() -> int:
                 "firmware/platform/xilinx",
                 "third_party/CherryUSB/core/usbh_core.c",
                 "third_party/CherryUSB/class/hid/usbh_hid.c",
+                "third_party/CherryUSB/class/vendor/xbox/usbh_xbox.c",
                 "third_party/CherryUSB/port/ehci/usb_hc_ehci.c",
             ],
             is_skip_copy_sources=True,
@@ -126,6 +127,8 @@ def main() -> int:
                               "class" / "hub")
         add_include_directory(APP_NAME, ROOT / "third_party" / "CherryUSB" /
                               "class" / "hid")
+        add_include_directory(APP_NAME, ROOT / "third_party" / "CherryUSB" /
+                              "class" / "vendor" / "xbox")
         add_include_directory(APP_NAME, ROOT / "third_party" / "CherryUSB" /
                               "port" / "ehci")
         patch_usbh_class_info_section(APP_NAME)

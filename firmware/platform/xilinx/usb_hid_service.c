@@ -1,12 +1,14 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* C64-only USB HID adapter built on the pinned CherryUSB USB1 host port. */
+/* C64 USB keyboard, HID gamepad, and XInput adapter on USB1. */
 #include "usb_hid_service.h"
 
 #include "cherryusb_platform.h"
 #include "multitini_c64_hid_input.h"
+#include "multitini_c64_xinput.h"
 #include "usb_config.h"
 #include "usbh_core.h"
 #include "usbh_hid.h"
+#include "usbh_xbox.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -27,6 +29,17 @@
 #define MT_HID_DESCRIPTOR_BYTES CONFIG_USBHOST_REQUEST_BUFFER_LEN
 #define MT_HID_RETRY_TICKS ((XTime)(COUNTS_PER_SECOND / UINT64_C(20)))
 #define MT_INPUT_COMMAND_POLLS UINT32_C(10000)
+#define MT_XINPUT_PACKET_BYTES 64U
+#define MT_XINPUT_SLOT_BASE CONFIG_USBHOST_MAX_HID_CLASS
+
+#if (MT_XINPUT_PACKET_BYTES % CONFIG_USB_ALIGN_SIZE) != 0
+#error XInput DMA buffers must span whole cache lines
+#endif
+
+#if (CONFIG_USBHOST_MAX_HID_CLASS + CONFIG_USBHOST_MAX_XBOX_CLASS) > \
+    MT_C64_HID_SLOT_COUNT
+#error Multitini input slots do not cover all USB class instances
+#endif
 
 typedef struct {
     struct usbh_hid *hid;
@@ -44,10 +57,30 @@ typedef struct {
     uint8_t retry_armed;
 } mt_hid_slot_t;
 
+typedef struct {
+    struct usbh_xbox *xbox;
+    XTime retry_started;
+    uint32_t reports;
+    uint32_t submit_errors;
+    uint32_t transfer_errors;
+    int last_error;
+    uint8_t active;
+    uint8_t report_pending;
+    uint8_t retry_armed;
+} mt_xinput_slot_t;
+
 static mt_hid_slot_t g_slots[MT_C64_HID_SLOT_COUNT];
 static uint8_t g_reports[MT_C64_HID_SLOT_COUNT][MT_HID_REPORT_BYTES]
     __attribute__((aligned(CONFIG_USB_ALIGN_SIZE)));
 static uint8_t g_descriptors[MT_C64_HID_SLOT_COUNT][MT_HID_DESCRIPTOR_BYTES]
+    __attribute__((aligned(CONFIG_USB_ALIGN_SIZE)));
+static mt_xinput_slot_t g_xinput_slots[CONFIG_USBHOST_MAX_XBOX_CLASS];
+static uint8_t
+    g_xinput_reports[CONFIG_USBHOST_MAX_XBOX_CLASS][MT_XINPUT_PACKET_BYTES]
+    __attribute__((aligned(CONFIG_USB_ALIGN_SIZE)));
+static uint8_t
+    g_xinput_control[CONFIG_USBHOST_MAX_XBOX_CLASS]
+                    [MT_XINPUT_PACKET_BYTES]
     __attribute__((aligned(CONFIG_USB_ALIGN_SIZE)));
 static mt_c64_hid_input_t g_c64_input;
 static uint32_t g_reports_total;
@@ -77,8 +110,22 @@ static int emit_c64_input(void *context, uint16_t code, uint16_t value)
 
 static mt_hid_slot_t *slot_for_hid(struct usbh_hid *hid)
 {
-    if (hid == NULL || hid->minor >= MT_C64_HID_SLOT_COUNT) return NULL;
+    if (hid == NULL || hid->minor >= CONFIG_USBHOST_MAX_HID_CLASS) return NULL;
     return &g_slots[hid->minor];
+}
+
+static mt_xinput_slot_t *slot_for_xinput(struct usbh_xbox *xbox)
+{
+    if (xbox == NULL || xbox->minor >= CONFIG_USBHOST_MAX_XBOX_CLASS) {
+        return NULL;
+    }
+    return &g_xinput_slots[xbox->minor];
+}
+
+static uint8_t xinput_aggregate_slot(const mt_xinput_slot_t *slot)
+{
+    return (uint8_t)(MT_XINPUT_SLOT_BASE +
+                     (uint8_t)(slot - g_xinput_slots));
 }
 
 static void slot_clear(mt_hid_slot_t *slot)
@@ -377,17 +424,186 @@ static void submit_report(mt_hid_slot_t *slot)
     g_last_error = result;
 }
 
+static uint32_t xinput_report_length(const mt_xinput_slot_t *slot)
+{
+    uint32_t length;
+
+    if (slot == NULL || slot->xbox == NULL || slot->xbox->intin == NULL) {
+        return 0U;
+    }
+    length = USB_GET_MAXPACKETSIZE(slot->xbox->intin->wMaxPacketSize);
+    if (length > MT_XINPUT_PACKET_BYTES) length = MT_XINPUT_PACKET_BYTES;
+    return length;
+}
+
+static void submit_xinput_report(mt_xinput_slot_t *slot);
+
+static void xinput_report_complete(void *argument, int bytes)
+{
+    mt_xinput_slot_t *const slot = argument;
+    const uint8_t index = slot != NULL ?
+        (uint8_t)(slot - g_xinput_slots) : 0U;
+
+    if (slot == NULL) return;
+    slot->report_pending = 0U;
+    if (slot->active == 0U || slot->xbox == NULL) return;
+    if (bytes == -USB_ERR_SHUTDOWN || slot->xbox->hport == NULL ||
+        !slot->xbox->hport->connected) {
+        return;
+    }
+
+    if (bytes > 0) {
+        uint8_t state;
+        int decode_result;
+        slot->last_error = 0;
+        ++slot->reports;
+        ++g_reports_total;
+        decode_result = mt_c64_xinput_decode(
+            g_xinput_reports[index], (size_t)bytes, &state);
+        if (decode_result == 0) {
+            (void)mt_c64_hid_joystick_report(
+                &g_c64_input, xinput_aggregate_slot(slot), state);
+        } else {
+            ++g_input_errors;
+            slot->last_error = decode_result;
+            g_last_error = decode_result;
+        }
+    } else if (bytes < 0) {
+        ++slot->transfer_errors;
+        ++g_transfer_errors;
+        slot->last_error = bytes;
+        g_last_error = bytes;
+    }
+    submit_xinput_report(slot);
+}
+
+static void submit_xinput_report(mt_xinput_slot_t *slot)
+{
+    uint32_t length;
+    uint8_t index;
+    int result;
+
+    if (slot == NULL || slot->active == 0U || slot->xbox == NULL ||
+        slot->xbox->hport == NULL || slot->xbox->intin == NULL) {
+        return;
+    }
+
+    index = (uint8_t)(slot - g_xinput_slots);
+    length = xinput_report_length(slot);
+    if (length < MT_C64_XINPUT_REPORT_BYTES) {
+        slot->last_error = -USB_ERR_RANGE;
+        g_last_error = slot->last_error;
+        return;
+    }
+    memset(g_xinput_reports[index], 0, MT_XINPUT_PACKET_BYTES);
+    usbh_int_urb_fill(&slot->xbox->intin_urb, slot->xbox->hport,
+                      slot->xbox->intin, g_xinput_reports[index], length, 0U,
+                      xinput_report_complete, slot);
+    result = usbh_submit_urb(&slot->xbox->intin_urb);
+    if (result == 0) {
+        slot->report_pending = 1U;
+        slot->retry_armed = 0U;
+        return;
+    }
+    if (result == -USB_ERR_NOMEM && slot->xbox->intin_urb.hcpriv == NULL) {
+        slot->xbox->intin_urb.errorcode = 0;
+    }
+    XTime_GetTime(&slot->retry_started);
+    slot->retry_armed = 1U;
+    ++slot->submit_errors;
+    ++g_submit_errors;
+    slot->last_error = result;
+    g_last_error = result;
+}
+
+static void initialize_xinput_device(mt_xinput_slot_t *slot)
+{
+    struct usb_setup_packet *setup;
+    uint8_t index;
+    int result;
+
+    if (slot == NULL || slot->xbox == NULL || slot->xbox->hport == NULL ||
+        slot->xbox->hport->setup == NULL) {
+        return;
+    }
+    index = (uint8_t)(slot - g_xinput_slots);
+    setup = slot->xbox->hport->setup;
+    memset(setup, 0, sizeof(*setup));
+    memset(g_xinput_control[index], 0, MT_XINPUT_PACKET_BYTES);
+    setup->bmRequestType = USB_REQUEST_DIR_IN | USB_REQUEST_VENDOR |
+                           USB_REQUEST_RECIPIENT_INTERFACE;
+    setup->bRequest = UINT8_C(0x01);
+    setup->wValue = UINT16_C(0x0100);
+    setup->wIndex = slot->xbox->intf;
+    setup->wLength = MT_C64_XINPUT_REPORT_BYTES;
+    result = usbh_control_transfer(slot->xbox->hport, setup,
+                                   g_xinput_control[index]);
+    if (result < 0 && result != -USB_ERR_STALL) {
+        xil_printf("[usb1] XInput initialization warning: %d\r\n", result);
+    }
+}
+
+void usbh_xbox_run(struct usbh_xbox *xbox)
+{
+    mt_xinput_slot_t *slot;
+    uint8_t aggregate_slot;
+
+    if (xbox == NULL || xbox->hport == NULL || xbox->intin == NULL) return;
+    if ((xbox->intin->bEndpointAddress & USB_ENDPOINT_DIRECTION_MASK) == 0U ||
+        (xbox->intin->bmAttributes & USB_ENDPOINT_TYPE_MASK) !=
+            USB_ENDPOINT_TYPE_INTERRUPT) {
+        xil_printf("[usb1] XInput has no interrupt-IN endpoint\r\n");
+        return;
+    }
+    slot = slot_for_xinput(xbox);
+    if (slot == NULL) return;
+    aggregate_slot = xinput_aggregate_slot(slot);
+    (void)mt_c64_hid_disconnect(&g_c64_input, aggregate_slot);
+    memset(slot, 0, sizeof(*slot));
+    slot->xbox = xbox;
+    slot->active = 1U;
+    xil_printf("[usb1] XInput connected slot=%u aggregate=%u\r\n",
+               (unsigned int)xbox->minor, (unsigned int)aggregate_slot);
+    submit_xinput_report(slot);
+    initialize_xinput_device(slot);
+}
+
+void usbh_xbox_stop(struct usbh_xbox *xbox)
+{
+    mt_xinput_slot_t *slot;
+
+    if (xbox == NULL) return;
+    slot = slot_for_xinput(xbox);
+    if (slot == NULL || slot->xbox != xbox) return;
+    xil_printf("[usb1] XInput disconnected slot=%u\r\n",
+               (unsigned int)xbox->minor);
+    (void)mt_c64_hid_disconnect(&g_c64_input,
+                                xinput_aggregate_slot(slot));
+    memset(slot, 0, sizeof(*slot));
+}
+
 static void retry_reports(void)
 {
     XTime now;
     XTime_GetTime(&now);
-    for (uint8_t index = 0U; index < MT_C64_HID_SLOT_COUNT; ++index) {
+    for (uint8_t index = 0U; index < CONFIG_USBHOST_MAX_HID_CLASS;
+         ++index) {
         mt_hid_slot_t *const slot = &g_slots[index];
         if (slot->active != 0U && slot->report_pending == 0U &&
             slot->retry_armed != 0U &&
             now - slot->retry_started >= MT_HID_RETRY_TICKS) {
             slot->retry_armed = 0U;
             submit_report(slot);
+        }
+    }
+    for (uint8_t index = 0U; index < CONFIG_USBHOST_MAX_XBOX_CLASS;
+         ++index) {
+        mt_xinput_slot_t *const slot = &g_xinput_slots[index];
+        if (slot->active != 0U && slot->report_pending == 0U &&
+            slot->retry_armed != 0U &&
+            now - slot->retry_started >= MT_HID_RETRY_TICKS) {
+            slot->retry_armed = 0U;
+            submit_xinput_report(slot);
         }
     }
 }
@@ -471,6 +687,7 @@ void usbh_hid_stop(struct usbh_hid *hid)
 void usb_hid_service_init(mt_core_link_t *link)
 {
     memset(g_slots, 0, sizeof(g_slots));
+    memset(g_xinput_slots, 0, sizeof(g_xinput_slots));
     g_reports_total = 0U;
     g_submit_errors = 0U;
     g_transfer_errors = 0U;
@@ -551,6 +768,7 @@ int usb_hid_service_stop(void)
     }
     (void)mt_c64_hid_release_all(&g_c64_input);
     memset(g_slots, 0, sizeof(g_slots));
+    memset(g_xinput_slots, 0, sizeof(g_xinput_slots));
     if (power_result != 0) {
         g_power_shutdown_required = 1U;
         g_last_error = power_result;
@@ -594,6 +812,20 @@ uint8_t usb_hid_service_joystick_port(void)
     return g_c64_input.joystick_port;
 }
 
+int usb_hid_service_set_symbolic_keyboard(bool enabled)
+{
+    return mt_c64_hid_set_keyboard_layout(
+        &g_c64_input,
+        enabled ? MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC
+                : MT_C64_KEYBOARD_LAYOUT_POSITIONAL);
+}
+
+bool usb_hid_service_symbolic_keyboard(void)
+{
+    return mt_c64_hid_get_keyboard_layout(&g_c64_input) ==
+           MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC;
+}
+
 void usb_hid_service_get_status(mt_usb_hid_status_t *status)
 {
     if (status == NULL) return;
@@ -606,9 +838,16 @@ void usb_hid_service_get_status(mt_usb_hid_status_t *status)
     status->portsc = cherryusb_usb1_portsc();
     status->started = g_started;
     status->joystick_port = g_c64_input.joystick_port;
-    for (uint8_t index = 0U; index < MT_C64_HID_SLOT_COUNT; ++index) {
+    status->symbolic_keyboard =
+        (uint8_t)(usb_hid_service_symbolic_keyboard() ? 1U : 0U);
+    for (uint8_t index = 0U; index < CONFIG_USBHOST_MAX_HID_CLASS;
+         ++index) {
         status->keyboards += g_slots[index].keyboard;
         status->gamepads += g_slots[index].gamepad;
+    }
+    for (uint8_t index = 0U; index < CONFIG_USBHOST_MAX_XBOX_CLASS;
+         ++index) {
+        status->gamepads += g_xinput_slots[index].active;
     }
 }
 
@@ -619,12 +858,13 @@ void usb_hid_service_dump_status(void)
     usb_hid_service_get_status(&status);
     cherryusb_usb1_phy_status(&phy);
     xil_printf("usb1 started=%u portsc=%08x keyboards=%u gamepads=%u "
-               "joyport=%u reports=%u submit_err=%u transfer_err=%u "
-               "input_err=%u last=%d\r\n",
+               "joyport=%u keymap=%s reports=%u submit_err=%u "
+               "transfer_err=%u input_err=%u last=%d\r\n",
                (unsigned int)status.started, (unsigned int)status.portsc,
                (unsigned int)status.keyboards,
                (unsigned int)status.gamepads,
                (unsigned int)status.joystick_port,
+               status.symbolic_keyboard != 0U ? "us" : "positional",
                (unsigned int)status.reports,
                (unsigned int)status.submit_errors,
                (unsigned int)status.transfer_errors,

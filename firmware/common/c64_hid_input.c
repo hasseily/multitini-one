@@ -11,7 +11,13 @@ typedef struct {
     uint8_t extended;
 } mt_ps2_key_t;
 
-static bool hid_usage_to_set2(uint8_t usage, mt_ps2_key_t *key)
+typedef struct {
+    mt_ps2_key_t keys[2];
+    uint8_t count;
+    uint8_t consume_shift;
+} mt_key_mapping_t;
+
+static bool hid_usage_to_set2_positional(uint8_t usage, mt_ps2_key_t *key)
 {
     static const uint8_t letters[26] = {
         0x1CU, 0x32U, 0x21U, 0x23U, 0x24U, 0x2BU, 0x34U,
@@ -100,6 +106,171 @@ static bool hid_usage_to_set2(uint8_t usage, mt_ps2_key_t *key)
     return true;
 }
 
+static void mapping_clear(mt_key_mapping_t *mapping)
+{
+    memset(mapping, 0, sizeof(*mapping));
+}
+
+static void mapping_add(mt_key_mapping_t *mapping, uint8_t scan,
+                        uint8_t extended)
+{
+    if (mapping->count >= 2U) return;
+    mapping->keys[mapping->count].scan = scan;
+    mapping->keys[mapping->count].extended = extended;
+    ++mapping->count;
+}
+
+static bool positional_mapping(uint8_t usage, mt_key_mapping_t *mapping)
+{
+    mt_ps2_key_t key;
+
+    mapping_clear(mapping);
+    if (!hid_usage_to_set2_positional(usage, &key)) return false;
+    mapping_add(mapping, key.scan, key.extended);
+    return true;
+}
+
+static bool symbolic_mapping(uint8_t usage, bool shifted,
+                             bool allow_transform,
+                             mt_key_mapping_t *mapping)
+{
+    mapping_clear(mapping);
+
+    /* F9-F12 retain direct C64 keys so PETSCII chords remain reachable. */
+    switch (usage) {
+    case 0x42U: mapping_add(mapping, 0x01U, 0U); return true;
+    case 0x43U: mapping_add(mapping, 0x55U, 0U); return true;
+    case 0x44U: mapping_add(mapping, 0x78U, 0U); return true;
+    case 0x45U: mapping_add(mapping, 0x09U, 0U); return true;
+    case 0x67U: mapping_add(mapping, 0x09U, 0U); return true; /* keypad = */
+    default: break;
+    }
+
+    /* These one-key substitutions need no synthetic modifier and remain sane
+     * when another ordinary key is held in the same boot report. */
+    if (!shifted && usage == 0x2EU) {
+        mapping_add(mapping, 0x09U, 0U); /* = */
+        return true;
+    }
+    if (!shifted && usage == 0x33U) {
+        mapping_add(mapping, 0x52U, 0U); /* ; */
+        return true;
+    }
+
+    if (allow_transform) {
+        if (shifted) {
+            switch (usage) {
+            case 0x1FU: /* Shift+2 -> @ */
+                mapping_add(mapping, 0x54U, 0U);
+                mapping->consume_shift = 1U;
+                return true;
+            case 0x23U: /* Shift+6 -> up-arrow */
+                mapping_add(mapping, 0x01U, 0U);
+                mapping->consume_shift = 1U;
+                return true;
+            case 0x25U: /* Shift+8 -> * */
+                mapping_add(mapping, 0x7CU, 0U);
+                mapping->consume_shift = 1U;
+                return true;
+            case 0x2DU: /* Shift+- -> Commodore+@ underscore */
+                mapping_add(mapping, 0x0DU, 0U);
+                mapping_add(mapping, 0x54U, 0U);
+                mapping->consume_shift = 1U;
+                return true;
+            case 0x2EU: /* Shift+= -> + */
+                mapping_add(mapping, 0x55U, 0U);
+                mapping->consume_shift = 1U;
+                return true;
+            case 0x2FU: /* { fallback -> closest [ */
+                mapping_add(mapping, 0x12U, 0U);
+                mapping_add(mapping, 0x4CU, 0U);
+                mapping->consume_shift = 1U;
+                return true;
+            case 0x30U: /* } fallback -> closest ] */
+                mapping_add(mapping, 0x12U, 0U);
+                mapping_add(mapping, 0x52U, 0U);
+                mapping->consume_shift = 1U;
+                return true;
+            case 0x33U: /* Shift+; -> : */
+                mapping_add(mapping, 0x4CU, 0U);
+                mapping->consume_shift = 1U;
+                return true;
+            case 0x34U: /* Shift+' -> Shift+2 quote */
+                mapping_add(mapping, 0x12U, 0U);
+                mapping_add(mapping, 0x1EU, 0U);
+                mapping->consume_shift = 1U;
+                return true;
+            default: break;
+            }
+        } else {
+            switch (usage) {
+            case 0x2FU: /* [ -> Shift+colon */
+                mapping_add(mapping, 0x12U, 0U);
+                mapping_add(mapping, 0x4CU, 0U);
+                return true;
+            case 0x30U: /* ] -> Shift+semicolon */
+                mapping_add(mapping, 0x12U, 0U);
+                mapping_add(mapping, 0x52U, 0U);
+                return true;
+            case 0x34U: /* ' -> C64 Shift+7 */
+                mapping_add(mapping, 0x12U, 0U);
+                mapping_add(mapping, 0x36U, 0U);
+                return true;
+            default: break;
+            }
+        }
+    }
+
+    /* Backslash/pipe and grave/tilde deliberately retain the C64
+     * pound/shifted-pound and left-arrow/PETSCII positional fallbacks. */
+    return positional_mapping(usage, mapping);
+}
+
+static void canonicalize_symbolic_mapping(mt_key_mapping_t *mapping)
+{
+    /* FPGA64 assigns several Set-2 aliases to one C64 key signal. Emit one
+     * identity per logical key so releasing one host alias cannot clear
+     * another that is still held. Its later top-row remap also overrides the
+     * apparent keypad 6..0 assignments, so route every keypad digit through
+     * the working physical top-row path in symbolic mode. */
+    for (uint8_t index = 0U; index < mapping->count; ++index) {
+        mt_ps2_key_t *const key = &mapping->keys[index];
+
+        if (key->extended != 0U) {
+            switch (key->scan) {
+            case 0x0DU: key->extended = 0U; break; /* GUI -> Commodore */
+            case 0x11U: key->scan = 0x0DU; key->extended = 0U; break;
+            case 0x14U: key->extended = 0U; break; /* right Control */
+            case 0x4AU: key->extended = 0U; break; /* keypad slash */
+            case 0x5AU: key->extended = 0U; break; /* keypad Enter */
+            case 0x69U: key->scan = 0x09U; key->extended = 0U; break;
+            case 0x71U: key->scan = 0x66U; key->extended = 0U; break;
+            case 0x7AU: key->scan = 0x01U; key->extended = 0U; break;
+            default: break;
+            }
+            continue;
+        }
+
+        switch (key->scan) {
+        case 0x11U: key->scan = 0x0DU; break; /* Alt -> Commodore */
+        case 0x5BU: key->scan = 0x7CU; break; /* star */
+        case 0x69U: key->scan = 0x16U; break; /* keypad 1 */
+        case 0x6BU: key->scan = 0x25U; break; /* keypad 4 */
+        case 0x6CU: key->scan = 0x3DU; break; /* keypad 7 */
+        case 0x70U: key->scan = 0x45U; break; /* keypad 0 */
+        case 0x72U: key->scan = 0x1EU; break; /* keypad 2 */
+        case 0x73U: key->scan = 0x2EU; break; /* keypad 5 */
+        case 0x74U: key->scan = 0x36U; break; /* keypad 6 */
+        case 0x75U: key->scan = 0x3EU; break; /* keypad 8 */
+        case 0x7DU: key->scan = 0x46U; break; /* keypad 9 */
+        case 0x7AU: key->scan = 0x26U; break; /* keypad 3 */
+        case 0x7BU: key->scan = 0x4EU; break; /* keypad minus */
+        case 0x79U: key->scan = 0x55U; break; /* keypad plus */
+        default: break;
+        }
+    }
+}
+
 static void bitmap_set(uint8_t *bitmap, uint16_t bit)
 {
     bitmap[bit >> 3U] |= (uint8_t)(1U << (bit & 7U));
@@ -108,6 +279,50 @@ static void bitmap_set(uint8_t *bitmap, uint16_t bit)
 static bool bitmap_get(const uint8_t *bitmap, uint16_t bit)
 {
     return (bitmap[bit >> 3U] & (uint8_t)(1U << (bit & 7U))) != 0U;
+}
+
+static bool slot_shifted(const uint8_t *usages)
+{
+    return bitmap_get(usages, UINT16_C(0xE1)) ||
+           bitmap_get(usages, UINT16_C(0xE5));
+}
+
+static uint8_t slot_mapped_nonmodifier_count(
+    const uint8_t *usages, mt_c64_keyboard_layout_t layout)
+{
+    uint8_t count = 0U;
+
+    for (uint16_t usage = UINT16_C(0x04); usage < UINT16_C(0xE0);
+         ++usage) {
+        mt_key_mapping_t mapping;
+        bool mapped;
+
+        if (!bitmap_get(usages, usage)) continue;
+        mapped = layout == MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC
+                     ? symbolic_mapping((uint8_t)usage,
+                                        slot_shifted(usages), false, &mapping)
+                     : positional_mapping((uint8_t)usage, &mapping);
+        if (mapped) {
+            ++count;
+            if (count > 1U) return count;
+        }
+    }
+    return count;
+}
+
+static bool scan_is_modifier(uint16_t scan_bit)
+{
+    switch ((uint8_t)(scan_bit & UINT16_C(0x00FF))) {
+    case 0x0DU: /* Commodore */
+    case 0x11U: /* Alt -> Commodore */
+    case 0x12U: /* left Shift */
+    case 0x14U: /* Control */
+    case 0x58U: /* Caps Lock participates in FPGA64 Shift */
+    case 0x59U: /* right Shift */
+        return true;
+    default:
+        return false;
+    }
 }
 
 static int emit_event(mt_c64_hid_input_t *input, uint16_t code,
@@ -124,6 +339,7 @@ void mt_c64_hid_input_init(mt_c64_hid_input_t *input,
     memset(input, 0, sizeof(*input));
     input->joystick_port = 2U;
     input->emitted_joystick_port = 2U;
+    input->keyboard_layout = MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC;
     input->emit = emit;
     input->emit_context = emit_context;
 }
@@ -181,6 +397,25 @@ int mt_c64_hid_set_joystick_port(mt_c64_hid_input_t *input, uint8_t port)
     return mt_c64_hid_input_poll(input);
 }
 
+int mt_c64_hid_set_keyboard_layout(mt_c64_hid_input_t *input,
+                                   mt_c64_keyboard_layout_t layout)
+{
+    if (input == NULL ||
+        (layout != MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC &&
+         layout != MT_C64_KEYBOARD_LAYOUT_POSITIONAL)) {
+        return -1;
+    }
+    input->keyboard_layout = layout;
+    return mt_c64_hid_input_poll(input);
+}
+
+mt_c64_keyboard_layout_t mt_c64_hid_get_keyboard_layout(
+    const mt_c64_hid_input_t *input)
+{
+    if (input == NULL) return MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC;
+    return input->keyboard_layout;
+}
+
 int mt_c64_hid_release_all(mt_c64_hid_input_t *input)
 {
     if (input == NULL) return -1;
@@ -209,37 +444,84 @@ int mt_c64_hid_input_poll(mt_c64_hid_input_t *input)
     if (input == NULL || input->emit == NULL) return -1;
 
     for (slot = 0U; slot < MT_C64_HID_SLOT_COUNT; ++slot) {
+        const bool shifted = slot_shifted(input->usages[slot]);
+        const bool allow_transform =
+            input->keyboard_layout == MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC &&
+            slot_mapped_nonmodifier_count(input->usages[slot],
+                                          input->keyboard_layout) == 1U;
+        bool consume_shift = false;
+
+        if (allow_transform) {
+            for (usage = UINT16_C(0x04); usage < UINT16_C(0xE0); ++usage) {
+                mt_key_mapping_t mapping;
+                if (bitmap_get(input->usages[slot], usage) &&
+                    symbolic_mapping((uint8_t)usage, shifted, true,
+                                     &mapping) &&
+                    mapping.consume_shift != 0U) {
+                    consume_shift = true;
+                    break;
+                }
+            }
+        }
+
         for (usage = 0U; usage < 256U; ++usage) {
-            mt_ps2_key_t key;
+            mt_key_mapping_t mapping;
+            bool mapped;
             if (!bitmap_get(input->usages[slot], usage) ||
-                !hid_usage_to_set2((uint8_t)usage, &key)) {
+                (consume_shift &&
+                 (usage == UINT16_C(0xE1) || usage == UINT16_C(0xE5)))) {
                 continue;
             }
-            scan_bit = (uint16_t)((uint16_t)key.scan +
-                       (key.extended != 0U ? UINT16_C(256) : UINT16_C(0)));
-            bitmap_set(desired_scans, scan_bit);
+            mapped = input->keyboard_layout ==
+                             MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC
+                         ? symbolic_mapping((uint8_t)usage, shifted,
+                                            allow_transform, &mapping)
+                         : positional_mapping((uint8_t)usage, &mapping);
+            if (!mapped) continue;
+            if (input->keyboard_layout ==
+                MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC) {
+                canonicalize_symbolic_mapping(&mapping);
+            }
+            for (uint8_t index = 0U; index < mapping.count; ++index) {
+                scan_bit = (uint16_t)(
+                    (uint16_t)mapping.keys[index].scan +
+                    (mapping.keys[index].extended != 0U
+                         ? UINT16_C(256) : UINT16_C(0)));
+                bitmap_set(desired_scans, scan_bit);
+            }
         }
         if (input->joystick_active[slot] != 0U) {
             desired_joystick |= input->joysticks[slot];
         }
     }
 
-    for (scan_bit = 0U; scan_bit < 512U; ++scan_bit) {
-        const bool desired = bitmap_get(desired_scans, scan_bit);
-        const bool emitted = bitmap_get(input->emitted_scans, scan_bit);
-        uint16_t value;
-        if (desired == emitted) continue;
-        value = (uint16_t)(desired ? 1U : 0U);
-        if (scan_bit >= 256U) value |= UINT16_C(2);
-        if (emit_event(input, (uint16_t)(scan_bit & UINT16_C(0x00FF)),
-                       value) != 0) {
-            return -1;
-        }
-        if (desired) {
-            bitmap_set(input->emitted_scans, scan_bit);
-        } else {
-            input->emitted_scans[scan_bit >> 3U] &=
-                (uint8_t)~(uint8_t)(1U << (scan_bit & 7U));
+    /* Release old non-modifiers and then modifiers before pressing replacement
+     * modifiers and keys. This prevents transient Shift+symbol chords while a
+     * semantic mapping changes under a still-held host modifier. */
+    for (uint8_t phase = 0U; phase < 4U; ++phase) {
+        const bool desired_state = phase >= 2U;
+        const bool modifier_phase = phase == 1U || phase == 2U;
+        for (scan_bit = 0U; scan_bit < 512U; ++scan_bit) {
+            const bool desired = bitmap_get(desired_scans, scan_bit);
+            const bool emitted = bitmap_get(input->emitted_scans, scan_bit);
+            uint16_t value;
+            if (desired == emitted || desired != desired_state ||
+                scan_is_modifier(scan_bit) != modifier_phase) {
+                continue;
+            }
+            value = (uint16_t)(desired ? 1U : 0U);
+            if (scan_bit >= 256U) value |= UINT16_C(2);
+            if (emit_event(input,
+                           (uint16_t)(scan_bit & UINT16_C(0x00FF)),
+                           value) != 0) {
+                return -1;
+            }
+            if (desired) {
+                bitmap_set(input->emitted_scans, scan_bit);
+            } else {
+                input->emitted_scans[scan_bit >> 3U] &=
+                    (uint8_t)~(uint8_t)(1U << (scan_bit & 7U));
+            }
         }
     }
 

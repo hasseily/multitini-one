@@ -26,7 +26,7 @@
 #include "xuartps_hw.h"
 
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
-#define MT_FIRMWARE_BUILD_ID UINT32_C(0x2026082B)
+#define MT_FIRMWARE_BUILD_ID UINT32_C(0x2026082C)
 #define MT_I2C_CLOCK_HZ UINT32_C(100000)
 #define MT_I2C_BUSY_POLLS UINT32_C(1000000)
 #define MT_UART_DRAIN_POLLS UINT32_C(10000000)
@@ -472,7 +472,9 @@ static void print_help(void)
 {
     xil_printf("commands: h help, s status, p ping, a audio on, m mute, ");
     xil_printf("v toggle video, r toggle core reset, u USB status, ");
-    xil_printf("j swap joystick port\r\n");
+    xil_printf("j swap joystick port, k toggle keyboard map\r\n");
+    xil_printf("US map: Alt/GUI=C=, F9=up-arrow, F10=+, F11=RESTORE, ");
+    xil_printf("F12=C64 equals; k restores MiSTer positional mapping\r\n");
     xil_printf("extended: :c64rx 20480 0xCRC32, :reboot to golden\r\n");
 }
 
@@ -652,6 +654,17 @@ int main(void)
             print_status();
             break;
         case 'u': usb_hid_service_dump_status(); break;
+        case 'k': {
+            const bool symbolic =
+                !usb_hid_service_symbolic_keyboard();
+            if (usb_hid_service_set_symbolic_keyboard(symbolic) == 0) {
+                xil_printf("USB keyboard map: %s\r\n",
+                           symbolic ? "US symbolic" : "MiSTer positional");
+            } else {
+                xil_printf("USB keyboard map change failed\r\n");
+            }
+            break;
+        }
         case 'j': {
             const uint8_t port =
                 usb_hid_service_joystick_port() == 2U ? 1U : 2U;
