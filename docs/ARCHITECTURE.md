@@ -87,6 +87,20 @@ available. Firmware verifies the bundle CRC32 and each ROM's size and
 nonuniform content before using the portable stream helper. Failure leaves the
 C64 in reset.
 
+The `2026082E` firmware adds one ARM-owned FatFs instance and keeps
+`ff.h` private to the Xilinx storage layer. C64 startup reads the three required
+system ROMs from `0:/cores/c64/roms`, then independently tries the optional
+16 KiB 1541 ROM. A missing drive ROM disables drive service without undoing a
+successful C64 boot. The UART three-ROM path remains independent and unchanged.
+
+The first media service reads one selected D64 completely into PS DDR and
+serves bounded 256-byte read requests through the common command/register and
+CDC-mailbox path. Mount generations reject stale requests. The service is
+drive-8-only and read-only: firmware does not modify the image or write it back
+to SD. The exact layout and operator commands are documented in
+[C64_SD_STORAGE.md](C64_SD_STORAGE.md). This implementation has host-test
+coverage and a matching vendor build, but no hardware qualification yet.
+
 The PAL video adapter registers coherent RGB, data-enable, and sync values in
 the machine domain. The live bridge accepts only exact 382x270 frames whose
 pixels match the core's fixed 16-color palette. It stores four-bit palette

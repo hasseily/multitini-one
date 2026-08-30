@@ -161,6 +161,7 @@ module multitini_one_top #(
     logic        c64_ready_launch;
     logic        c64_ready_control;
     logic        c64_load_error;
+    logic        c64_load_error_launch;
     logic        c64_load_error_control;
     logic [2:0]  c64_rom_loaded;
 
@@ -196,6 +197,57 @@ module multitini_one_top #(
     logic        c64_input_mailbox_ready;
     logic [15:0] c64_input_code;
     logic [15:0] c64_input_value;
+
+    logic        c64_media_request_valid;
+    logic        c64_media_request_write;
+    logic [31:0] c64_media_request_id;
+    logic [31:0] c64_media_request_lba;
+    logic [15:0] c64_media_request_block_count;
+    logic [31:0] c64_media_request_generation;
+    logic        media_request_valid_control;
+    logic        media_request_write_control;
+    logic [31:0] media_request_id_control;
+    logic [31:0] media_request_lba_control;
+    logic [15:0] media_request_block_count_control;
+    logic [31:0] media_request_generation_control;
+    logic        media_mount;
+    logic        media_eject;
+    logic        media_complete;
+    logic [7:0]  media_slot;
+    logic [7:0]  media_kind;
+    logic        media_read_only;
+    logic [31:0] media_image_size;
+    logic [31:0] media_generation;
+    logic [31:0] media_complete_request_id;
+    logic [31:0] media_complete_status;
+    logic [15:0] media_complete_block_count;
+    logic [31:0] media_complete_generation;
+    logic        c64_media_mount;
+    logic        c64_media_eject;
+    logic        c64_media_complete;
+    logic [7:0]  c64_media_slot;
+    logic [7:0]  c64_media_kind;
+    logic        c64_media_read_only;
+    logic [31:0] c64_media_image_size;
+    logic [31:0] c64_media_generation;
+    logic [31:0] c64_media_complete_request_id;
+    logic [31:0] c64_media_complete_status;
+    logic [15:0] c64_media_complete_block_count;
+    logic [31:0] c64_media_complete_generation;
+    logic        media_submit_ready;
+    logic [1:0]  media_command_operation;
+    logic [194:0] media_command_mailbox_source;
+    logic [194:0] media_command_mailbox_destination;
+    logic        media_command_submit;
+    logic        c64_media_command_valid;
+    logic [1:0]  c64_media_command_operation;
+    logic [112:0] media_request_mailbox_source;
+    logic [112:0] media_request_mailbox_destination;
+    logic        media_request_mailbox_src_valid;
+    logic        media_request_mailbox_src_ready;
+    logic        media_request_mailbox_dst_valid;
+    logic        media_request_mailbox_dst_ready;
+    logic        c64_media_request_sent;
 
     (* KEEP = "yes" *) logic [7:0] c64_video_r;
     (* KEEP = "yes" *) logic [7:0] c64_video_g;
@@ -292,6 +344,13 @@ module multitini_one_top #(
         .load_submit_ready(load_submit_ready),
         .core_load_error(c64_load_error_control),
         .input_submit_ready(input_submit_ready),
+        .media_request_valid(media_request_valid_control),
+        .media_request_write(media_request_write_control),
+        .media_request_id(media_request_id_control),
+        .media_request_lba(media_request_lba_control),
+        .media_request_block_count(media_request_block_count_control),
+        .media_request_generation(media_request_generation_control),
+        .media_submit_ready(media_submit_ready),
         .wr_en(reg_wr_en), .wr_addr(reg_wr_addr), .wr_data(reg_wr_data),
         .wr_strb(reg_wr_strb), .rd_en(reg_rd_en), .rd_addr(reg_rd_addr),
         .rd_data(reg_rd_data), .control(shell_control),
@@ -301,6 +360,15 @@ module multitini_one_top #(
         .load_last(load_last), .load_error_clear(load_error_clear),
         .input_submit(input_submit), .input_code(input_code),
         .input_value(input_value),
+        .media_mount(media_mount), .media_eject(media_eject),
+        .media_complete(media_complete), .media_slot(media_slot),
+        .media_kind(media_kind), .media_read_only(media_read_only),
+        .media_image_size(media_image_size),
+        .media_generation(media_generation),
+        .media_complete_request_id(media_complete_request_id),
+        .media_complete_status(media_complete_status),
+        .media_complete_block_count(media_complete_block_count),
+        .media_complete_generation(media_complete_generation),
         .irq(shell_irq)
     );
 
@@ -344,10 +412,13 @@ module multitini_one_top #(
     // Launch status from a machine-clocked register.  Feeding the combinational
     // adapter status directly into a synchronizer creates a CDC-10 hazard.
     always_ff @(posedge c64_clk) begin
-        if (!c64_aresetn)
+        if (!c64_aresetn) begin
             c64_ready_launch <= 1'b0;
-        else
+            c64_load_error_launch <= 1'b0;
+        end else begin
             c64_ready_launch <= c64_ready;
+            c64_load_error_launch <= c64_load_error;
+        end
     end
 
     cdc_bit_sync c64_ready_sync (
@@ -357,13 +428,121 @@ module multitini_one_top #(
 
     cdc_bit_sync c64_load_error_sync (
         .clk(control_clk), .resetn(control_aresetn),
-        .din(c64_load_error), .dout(c64_load_error_control)
+        .din(c64_load_error_launch), .dout(c64_load_error_control)
     );
 
     multitini_cdc_pulse_toggle c64_load_error_clear_sync (
         .src_clk(control_clk), .src_resetn(control_aresetn),
         .src_pulse(load_error_clear), .dst_clk(c64_clk),
         .dst_resetn(c64_aresetn), .dst_pulse(c64_load_error_clear)
+    );
+
+    // A request is captured once and held coherently in the control domain
+    // until software completes or ejects it. The source latch prevents the
+    // still-asserted core request from being submitted twice.
+    assign media_request_mailbox_source = {
+        c64_media_request_write, c64_media_request_id,
+        c64_media_request_lba, c64_media_request_block_count,
+        c64_media_request_generation
+    };
+    assign media_request_mailbox_src_valid =
+        c64_media_request_valid && !c64_media_request_sent;
+    // While a soft core reset is asserted, acknowledge and discard any
+    // pre-reset mailbox item so it cannot reappear as a stale MMIO request.
+    assign media_request_mailbox_dst_ready =
+        !media_request_valid_control ||
+        |(shell_control & MT_CONTROL_CORE_RESET_REQUEST);
+
+    always_ff @(posedge c64_clk) begin
+        if (!c64_aresetn || c64_core_reset_request)
+            c64_media_request_sent <= 1'b0;
+        else if (!c64_media_request_valid)
+            c64_media_request_sent <= 1'b0;
+        else if (media_request_mailbox_src_valid &&
+                 media_request_mailbox_src_ready)
+            c64_media_request_sent <= 1'b1;
+    end
+
+    multitini_async_mailbox #(.WIDTH(113)) media_request_mailbox (
+        .src_clk(c64_clk), .src_resetn(c64_aresetn),
+        .src_data(media_request_mailbox_source),
+        .src_valid(media_request_mailbox_src_valid),
+        .src_ready(media_request_mailbox_src_ready),
+        .dst_clk(control_clk), .dst_resetn(control_aresetn),
+        .dst_data(media_request_mailbox_destination),
+        .dst_valid(media_request_mailbox_dst_valid),
+        .dst_ready(media_request_mailbox_dst_ready)
+    );
+
+    always_ff @(posedge control_clk) begin
+        if (!control_aresetn) begin
+            media_request_valid_control <= 1'b0;
+            media_request_write_control <= 1'b0;
+            media_request_id_control <= 32'd0;
+            media_request_lba_control <= 32'd0;
+            media_request_block_count_control <= 16'd0;
+            media_request_generation_control <= 32'd0;
+        end else if (|(shell_control & MT_CONTROL_CORE_RESET_REQUEST)) begin
+            media_request_valid_control <= 1'b0;
+            media_request_write_control <= 1'b0;
+            media_request_id_control <= 32'd0;
+            media_request_lba_control <= 32'd0;
+            media_request_block_count_control <= 16'd0;
+            media_request_generation_control <= 32'd0;
+        end else begin
+            if (media_mount || media_eject || media_complete)
+                media_request_valid_control <= 1'b0;
+            if (media_request_mailbox_dst_valid &&
+                media_request_mailbox_dst_ready) begin
+                {media_request_write_control, media_request_id_control,
+                 media_request_lba_control,
+                 media_request_block_count_control,
+                 media_request_generation_control} <=
+                    media_request_mailbox_destination;
+                media_request_valid_control <= 1'b1;
+            end
+        end
+    end
+
+    // Shell media commands and every associated field cross as one atomic
+    // mailbox payload. Backpressure reaches the command decoder.
+    always_comb begin
+        if (media_mount)
+            media_command_operation = 2'd1;
+        else if (media_eject)
+            media_command_operation = 2'd2;
+        else if (media_complete)
+            media_command_operation = 2'd3;
+        else
+            media_command_operation = 2'd0;
+    end
+    assign media_command_submit = media_command_operation != 2'd0;
+    assign media_command_mailbox_source = {
+        media_command_operation, media_slot, media_kind, media_read_only,
+        media_image_size, media_generation, media_complete_request_id,
+        media_complete_status, media_complete_block_count,
+        media_complete_generation
+    };
+    assign {c64_media_command_operation, c64_media_slot, c64_media_kind,
+            c64_media_read_only, c64_media_image_size,
+            c64_media_generation, c64_media_complete_request_id,
+            c64_media_complete_status, c64_media_complete_block_count,
+            c64_media_complete_generation} =
+        media_command_mailbox_destination;
+    assign c64_media_mount = c64_media_command_valid &&
+                             c64_media_command_operation == 2'd1;
+    assign c64_media_eject = c64_media_command_valid &&
+                             c64_media_command_operation == 2'd2;
+    assign c64_media_complete = c64_media_command_valid &&
+                                c64_media_command_operation == 2'd3;
+
+    multitini_async_mailbox #(.WIDTH(195)) media_command_mailbox (
+        .src_clk(control_clk), .src_resetn(control_aresetn),
+        .src_data(media_command_mailbox_source),
+        .src_valid(media_command_submit), .src_ready(media_submit_ready),
+        .dst_clk(c64_clk), .dst_resetn(c64_aresetn),
+        .dst_data(media_command_mailbox_destination),
+        .dst_valid(c64_media_command_valid), .dst_ready(1'b1)
     );
 
     // Build one complete machine at a time. The default PAL C64 additionally
@@ -386,6 +565,23 @@ module multitini_one_top #(
                 .load_ready(c64_load_ready), .load_first(c64_load_first),
                 .load_last(c64_load_last), .load_kind(c64_load_kind),
                 .load_offset(c64_load_offset), .load_total(c64_load_total),
+                .media_mount(c64_media_mount),
+                .media_eject(c64_media_eject),
+                .media_complete(c64_media_complete),
+                .media_slot(c64_media_slot), .media_kind(c64_media_kind),
+                .media_read_only(c64_media_read_only),
+                .media_image_size(c64_media_image_size),
+                .media_generation(c64_media_generation),
+                .media_complete_request_id(c64_media_complete_request_id),
+                .media_complete_status(c64_media_complete_status),
+                .media_complete_block_count(c64_media_complete_block_count),
+                .media_complete_generation(c64_media_complete_generation),
+                .media_request_valid(c64_media_request_valid),
+                .media_request_write(c64_media_request_write),
+                .media_request_id(c64_media_request_id),
+                .media_request_lba(c64_media_request_lba),
+                .media_request_block_count(c64_media_request_block_count),
+                .media_request_generation(c64_media_request_generation),
                 .core_id(c64_core_id), .ready(c64_ready),
                 .load_error(c64_load_error), .rom_loaded(c64_rom_loaded),
                 .video_r(c64_video_r), .video_g(c64_video_g),
@@ -421,6 +617,12 @@ module multitini_one_top #(
             assign psram_clk  = 1'b0;
         end else begin : g_gameboy_machine
             assign c64_rom_loaded = {2'd0, gbc_cart_loaded};
+            assign c64_media_request_valid = 1'b0;
+            assign c64_media_request_write = 1'b0;
+            assign c64_media_request_id = 32'd0;
+            assign c64_media_request_lba = 32'd0;
+            assign c64_media_request_block_count = 16'd0;
+            assign c64_media_request_generation = 32'd0;
             assign machine_video_active = 1'b0;
             assign machine_video_rgb565 = 16'h0000;
             (* DONT_TOUCH = "yes" *) multitini_gameboy_adapter machine_adapter (

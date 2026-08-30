@@ -29,6 +29,25 @@ module tb_control_regs;
     logic input_submit;
     logic [15:0] input_code;
     logic [15:0] input_value;
+    logic media_request_valid = 1'b0;
+    logic media_request_write = 1'b0;
+    logic [31:0] media_request_id = 32'd0;
+    logic [31:0] media_request_lba = 32'd0;
+    logic [15:0] media_request_block_count = 16'd0;
+    logic [31:0] media_request_generation = 32'd0;
+    logic media_submit_ready = 1'b1;
+    logic media_mount;
+    logic media_eject;
+    logic media_complete;
+    logic [7:0] media_slot;
+    logic [7:0] media_kind;
+    logic media_read_only;
+    logic [31:0] media_image_size;
+    logic [31:0] media_generation;
+    logic [31:0] media_complete_request_id;
+    logic [31:0] media_complete_status;
+    logic [15:0] media_complete_block_count;
+    logic [31:0] media_complete_generation;
 
     always #5 clk = !clk;
 
@@ -37,6 +56,13 @@ module tb_control_regs;
         .core_ready(1'b1), .load_submit_ready(load_submit_ready),
         .core_load_error(core_load_error),
         .input_submit_ready(input_submit_ready),
+        .media_request_valid(media_request_valid),
+        .media_request_write(media_request_write),
+        .media_request_id(media_request_id),
+        .media_request_lba(media_request_lba),
+        .media_request_block_count(media_request_block_count),
+        .media_request_generation(media_request_generation),
+        .media_submit_ready(media_submit_ready),
         .wr_en(wr_en), .wr_addr(wr_addr),
         .wr_data(wr_data), .wr_strb(wr_strb), .rd_en(rd_en),
         .rd_addr(rd_addr), .rd_data(rd_data), .control(control),
@@ -45,7 +71,17 @@ module tb_control_regs;
         .load_total(load_total), .load_first(load_first),
         .load_last(load_last), .load_error_clear(load_error_clear),
         .input_submit(input_submit), .input_code(input_code),
-        .input_value(input_value), .irq(irq)
+        .input_value(input_value),
+        .media_mount(media_mount), .media_eject(media_eject),
+        .media_complete(media_complete), .media_slot(media_slot),
+        .media_kind(media_kind), .media_read_only(media_read_only),
+        .media_image_size(media_image_size),
+        .media_generation(media_generation),
+        .media_complete_request_id(media_complete_request_id),
+        .media_complete_status(media_complete_status),
+        .media_complete_block_count(media_complete_block_count),
+        .media_complete_generation(media_complete_generation),
+        .irq(irq)
     );
 
     task automatic check_value(input logic condition, input string message);
@@ -226,6 +262,145 @@ module tb_control_regs;
         check_value(input_submit && input_code == 16'h001C &&
                     input_value == 16'h0001,
                     "input event submitted coherently");
+
+        // Read-only mounts are explicit, path-free events. Writable mounts and
+        // malformed payloads must not reach the core-facing pulse.
+        write_reg(MT_REG_COMMAND_ARG0, 32'h00001200, 4'hF);
+        write_reg(MT_REG_COMMAND_ARG1, 32'd174848, 4'hF);
+        write_reg(MT_REG_COMMAND_ARG2, 32'h0000002A, 4'hF);
+        write_reg(MT_REG_COMMAND_ARG3, 32'd0, 4'hF);
+        write_reg(MT_REG_COMMAND_SEQ, 32'd14, 4'hF);
+        write_reg(MT_REG_COMMAND_OPCODE, MT_COMMAND_MEDIA_MOUNT, 4'hF);
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd14, 4'hF);
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_INVALID_ARGUMENT,
+                    "writable media mount rejected");
+        check_value(!media_mount, "invalid mount pulse suppressed");
+
+        write_reg(MT_REG_COMMAND_ARG0,
+                  MT_MEDIA_MOUNT_READ_ONLY | 32'h00001200, 4'hF);
+        media_submit_ready = 1'b0;
+        write_reg(MT_REG_COMMAND_SEQ, 32'd15, 4'hF);
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd15, 4'hF);
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_BUSY,
+                    "media mailbox backpressure");
+        check_value(!media_mount, "busy media command not submitted");
+
+        media_submit_ready = 1'b1;
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd15, 4'hF);
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_OK,
+                    "read-only media mount accepted");
+        check_value(media_mount && !media_eject && !media_complete &&
+                    media_slot == 8'd0 && media_kind == 8'h12 &&
+                    media_read_only && media_image_size == 32'd174848 &&
+                    media_generation == 32'h0000002A,
+                    "mount pulse and payload");
+
+        write_reg(MT_REG_COMMAND_ARG0, 32'd0, 4'hF);
+        write_reg(MT_REG_COMMAND_ARG1, 32'h0000002A, 4'hF);
+        write_reg(MT_REG_COMMAND_ARG2, 32'd0, 4'hF);
+        write_reg(MT_REG_COMMAND_SEQ, 32'd16, 4'hF);
+        write_reg(MT_REG_COMMAND_OPCODE, MT_COMMAND_MEDIA_EJECT, 4'hF);
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd16, 4'hF);
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_OK,
+                    "media eject accepted");
+        check_value(media_eject && !media_mount && !media_complete &&
+                    media_slot == 8'd0 &&
+                    media_generation == 32'h0000002A,
+                    "eject pulse and payload");
+
+        media_request_valid = 1'b1;
+        media_request_write = 1'b0;
+        media_request_id = 32'h11223344;
+        media_request_lba = 32'd357;
+        media_request_block_count = 16'd2;
+        media_request_generation = 32'h0000002A;
+        #1;
+        expect_read(MT_REG_STATUS,
+                    MT_STATUS_SHELL_READY | MT_STATUS_VIDEO_ACTIVE |
+                    MT_STATUS_AUDIO_ACTIVE | MT_STATUS_CORE_READY |
+                    MT_STATUS_STREAM_READY | MT_STATUS_INPUT_READY |
+                    MT_STATUS_MEDIA_REQUEST,
+                    "pending media request status");
+        expect_read(MT_REG_MEDIA_REQUEST, MT_MEDIA_REQUEST_VALID,
+                    "read request flags");
+        expect_read(MT_REG_MEDIA_REQUEST_ID, 32'h11223344,
+                    "media request ID");
+        expect_read(MT_REG_MEDIA_REQUEST_LBA, 32'd357,
+                    "media request LBA");
+        expect_read(MT_REG_MEDIA_REQUEST_BLOCK_COUNT, 32'd2,
+                    "media request block count");
+        expect_read(MT_REG_MEDIA_REQUEST_GENERATION, 32'h0000002A,
+                    "media request generation");
+
+        // A stale ID, failure status, partial count, or stale generation is
+        // never acknowledged as a successful read.
+        write_reg(MT_REG_COMMAND_ARG0, 32'h11223345, 4'hF);
+        write_reg(MT_REG_COMMAND_ARG1, MT_RESPONSE_OK, 4'hF);
+        write_reg(MT_REG_COMMAND_ARG2, 32'd2, 4'hF);
+        write_reg(MT_REG_COMMAND_ARG3, 32'h0000002A, 4'hF);
+        write_reg(MT_REG_COMMAND_SEQ, 32'd17, 4'hF);
+        write_reg(MT_REG_COMMAND_OPCODE, MT_COMMAND_MEDIA_COMPLETE, 4'hF);
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd17, 4'hF);
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_INVALID_ARGUMENT,
+                    "stale media request ID rejected");
+        check_value(!media_complete, "stale completion pulse suppressed");
+
+        write_reg(MT_REG_COMMAND_ARG0, 32'h11223344, 4'hF);
+        write_reg(MT_REG_COMMAND_ARG1, MT_RESPONSE_IO_ERROR, 4'hF);
+        write_reg(MT_REG_COMMAND_SEQ, 32'd18, 4'hF);
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd18, 4'hF);
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_INVALID_ARGUMENT,
+                    "failed media completion rejected");
+
+        write_reg(MT_REG_COMMAND_ARG1, MT_RESPONSE_OK, 4'hF);
+        write_reg(MT_REG_COMMAND_ARG2, 32'd1, 4'hF);
+        write_reg(MT_REG_COMMAND_SEQ, 32'd19, 4'hF);
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd19, 4'hF);
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_INVALID_ARGUMENT,
+                    "partial media completion rejected");
+
+        write_reg(MT_REG_COMMAND_ARG2, 32'd2, 4'hF);
+        write_reg(MT_REG_COMMAND_ARG3, 32'h00000029, 4'hF);
+        write_reg(MT_REG_COMMAND_SEQ, 32'd20, 4'hF);
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd20, 4'hF);
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_INVALID_ARGUMENT,
+                    "stale media generation rejected");
+
+        write_reg(MT_REG_COMMAND_ARG3, 32'h0000002A, 4'hF);
+        write_reg(MT_REG_COMMAND_SEQ, 32'd21, 4'hF);
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd21, 4'hF);
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_OK,
+                    "matching media completion accepted");
+        expect_read(MT_REG_RESPONSE_ARG0, 32'h11223344,
+                    "completion response ID");
+        expect_read(MT_REG_RESPONSE_ARG1, 32'd2,
+                    "completion response block count");
+        check_value(media_complete && !media_mount && !media_eject &&
+                    media_complete_request_id == 32'h11223344 &&
+                    media_complete_status == MT_RESPONSE_OK &&
+                    media_complete_block_count == 16'd2 &&
+                    media_complete_generation == 32'h0000002A,
+                    "completion pulse and payload");
+
+        media_request_write = 1'b1;
+        #1;
+        expect_read(MT_REG_MEDIA_REQUEST,
+                    MT_MEDIA_REQUEST_VALID | MT_MEDIA_REQUEST_WRITE,
+                    "write request flag is observable");
+        write_reg(MT_REG_COMMAND_SEQ, 32'd22, 4'hF);
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd22, 4'hF);
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_INVALID_ARGUMENT,
+                    "read-only service rejects write completion");
+        check_value(!media_complete, "write completion pulse suppressed");
+
+        media_request_valid = 1'b0;
+        media_request_write = 1'b0;
+        #1;
+        expect_read(MT_REG_STATUS,
+                    MT_STATUS_SHELL_READY | MT_STATUS_VIDEO_ACTIVE |
+                    MT_STATUS_AUDIO_ACTIVE | MT_STATUS_CORE_READY |
+                    MT_STATUS_STREAM_READY | MT_STATUS_INPUT_READY,
+                    "media request status clears with valid");
 
         core_load_error = 1'b1;
         @(negedge clk);

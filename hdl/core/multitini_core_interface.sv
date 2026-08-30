@@ -42,6 +42,26 @@ interface multitini_core_interface;
     logic [63:0] memory_rdata;
     logic        memory_rvalid;
     logic        memory_fault;
+    // One media request remains asserted and coherent until the shell returns
+    // a matching completion. LBA and block count use 256-byte units.
+    logic        media_request_valid;
+    logic        media_request_write;
+    logic [31:0] media_request_id;
+    logic [31:0] media_request_lba;
+    logic [15:0] media_request_block_count;
+    logic [31:0] media_request_generation;
+    logic        media_mount;
+    logic        media_eject;
+    logic        media_complete;
+    logic [7:0]  media_slot;
+    logic [7:0]  media_kind;
+    logic        media_read_only;
+    logic [31:0] media_image_size;
+    logic [31:0] media_generation;
+    logic [31:0] media_complete_request_id;
+    logic [31:0] media_complete_status;
+    logic [15:0] media_complete_block_count;
+    logic [31:0] media_complete_generation;
 
     modport shell (
         output clk, reset, input core_id, ready,
@@ -53,7 +73,14 @@ interface multitini_core_interface;
         load_offset, load_total, input load_error,
         input memory_addr, memory_write, memory_wdata, memory_wstrb,
         memory_valid, output memory_ready, memory_rdata, memory_rvalid,
-        memory_fault
+        memory_fault,
+        input media_request_valid, media_request_write, media_request_id,
+        media_request_lba, media_request_block_count,
+        media_request_generation,
+        output media_mount, media_eject, media_complete, media_slot,
+        media_kind, media_read_only, media_image_size, media_generation,
+        media_complete_request_id, media_complete_status,
+        media_complete_block_count, media_complete_generation
     );
 
     modport core (
@@ -66,6 +93,13 @@ interface multitini_core_interface;
         load_offset, load_total, output load_error,
         output memory_addr, memory_write, memory_wdata, memory_wstrb,
         memory_valid, input memory_ready, memory_rdata, memory_rvalid,
-        memory_fault
+        memory_fault,
+        output media_request_valid, media_request_write, media_request_id,
+        media_request_lba, media_request_block_count,
+        media_request_generation,
+        input media_mount, media_eject, media_complete, media_slot,
+        media_kind, media_read_only, media_image_size, media_generation,
+        media_complete_request_id, media_complete_status,
+        media_complete_block_count, media_complete_generation
     );
 endinterface

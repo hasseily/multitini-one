@@ -10,6 +10,8 @@ set(CMAKE_C_EXTENSIONS OFF)
 add_library(multitini_common STATIC
     firmware/common/ak4493.c
     firmware/common/c64_boot.c
+    firmware/common/c64_d64.c
+    firmware/common/c64_rom_files.c
     firmware/common/c64_hid_input.c
     firmware/common/c64_xinput.c
     firmware/common/content_type.c
@@ -26,12 +28,24 @@ target_include_directories(xilinx_main_compile PRIVATE
     firmware/include
 )
 
+add_library(xilinx_sd_storage_host STATIC
+    firmware/platform/xilinx/sd_storage.c
+)
+target_include_directories(xilinx_sd_storage_host PUBLIC
+    tests/xilinx_stubs
+    firmware/platform/xilinx
+)
+
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(multitini_common PRIVATE
         -Wall -Wextra -Wpedantic -Werror
         -Wconversion -Wshadow -Wstrict-prototypes
     )
     target_compile_options(xilinx_main_compile PRIVATE
+        -Wall -Wextra -Wpedantic -Werror
+        -Wconversion -Wshadow -Wstrict-prototypes
+    )
+    target_compile_options(xilinx_sd_storage_host PRIVATE
         -Wall -Wextra -Wpedantic -Werror
         -Wconversion -Wshadow -Wstrict-prototypes
     )
@@ -56,6 +70,21 @@ add_test(NAME content_type COMMAND test_content_type)
 add_executable(test_c64_boot tests/host/test_c64_boot.c)
 target_link_libraries(test_c64_boot PRIVATE multitini_common)
 add_test(NAME c64_boot COMMAND test_c64_boot)
+
+add_executable(test_c64_d64 tests/host/test_c64_d64.c)
+target_link_libraries(test_c64_d64 PRIVATE multitini_common)
+add_test(NAME c64_d64 COMMAND test_c64_d64)
+
+add_executable(test_c64_d64_service
+    tests/host/test_c64_d64_service.c
+    firmware/platform/xilinx/c64_d64_service.c
+)
+target_include_directories(test_c64_d64_service PRIVATE
+    tests/xilinx_stubs
+    firmware/platform/xilinx
+)
+target_link_libraries(test_c64_d64_service PRIVATE multitini_common)
+add_test(NAME c64_d64_service COMMAND test_c64_d64_service)
 
 add_executable(test_c64_hid_input tests/host/test_c64_hid_input.c)
 target_link_libraries(test_c64_hid_input PRIVATE multitini_common)
@@ -90,3 +119,7 @@ target_include_directories(test_cherryusb_ulpi PRIVATE
     firmware/platform/xilinx
 )
 add_test(NAME cherryusb_ulpi COMMAND test_cherryusb_ulpi)
+
+add_executable(test_sd_storage tests/host/test_sd_storage.c)
+target_link_libraries(test_sd_storage PRIVATE xilinx_sd_storage_host)
+add_test(NAME sd_storage COMMAND test_sd_storage)

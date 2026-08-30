@@ -34,4 +34,6 @@ Current result:
 - The C64 adapter loads the tracked BASIC 901226-01, KERNAL 901227-03, and
   character 901225-01 ROMs at run time. The serial uploader uses these exact
   repository copies by default and still accepts explicit replacement paths.
-- No C64 game, disk, cartridge, or tape image is included.
+- No 1541 ROM or C64 game, disk, cartridge, or tape image is included. The SD
+  workflow documents canonical user-supplied paths without adding those files
+  to the repository.

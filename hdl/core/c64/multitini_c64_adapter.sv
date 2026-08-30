@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns / 1ps
 
-// Minimal PAL/NTSC build-time adapter around the pinned FPGA64 machine core.
-// Runtime clock switching, scaling, cartridges, PRG injection, and drive media
-// are separate services and are intentionally not implied by this boundary.
+// PAL/NTSC build-time adapter around the pinned FPGA64 machine core. The first
+// drive boundary implements one read-only D64-backed serial-IEC 1541.
 module multitini_c64_adapter #(
     parameter bit NTSC_MODE = 1'b0,
     parameter integer AUDIO_SAMPLE_HZ = 48000
@@ -26,6 +25,26 @@ module multitini_c64_adapter #(
     input  logic [7:0]  load_kind,
     input  logic [31:0] load_offset,
     input  logic [31:0] load_total,
+
+    input  logic        media_mount,
+    input  logic        media_eject,
+    input  logic        media_complete,
+    input  logic [7:0]  media_slot,
+    input  logic [7:0]  media_kind,
+    input  logic        media_read_only,
+    input  logic [31:0] media_image_size,
+    input  logic [31:0] media_generation,
+    input  logic [31:0] media_complete_request_id,
+    input  logic [31:0] media_complete_status,
+    input  logic [15:0] media_complete_block_count,
+    input  logic [31:0] media_complete_generation,
+
+    output logic        media_request_valid,
+    output logic        media_request_write,
+    output logic [31:0] media_request_id,
+    output logic [31:0] media_request_lba,
+    output logic [15:0] media_request_block_count,
+    output logic [31:0] media_request_generation,
 
     output logic [31:0] core_id,
     output logic        ready,
@@ -54,8 +73,27 @@ module multitini_c64_adapter #(
     logic [7:0]  rom_data;
     logic        roms_ready;
     logic        load_active;
+    logic        rom_load_valid;
+    logic        rom_load_ready;
+    logic        rom_load_error;
+    logic        d64_load_valid;
+    logic        d64_load_ready;
+    logic        drive_media_error;
+    logic        drive_rom_wr;
+    logic [13:0] drive_rom_addr;
+    logic [7:0]  drive_rom_data;
+    logic        drive_rom_loaded;
     logic        core_enable;
     logic        core_reset_n;
+    logic        drive_soft_reset;
+
+    logic        c64_iec_data;
+    logic        c64_iec_clk;
+    logic        c64_iec_atn;
+    logic        drive_iec_data;
+    logic        drive_iec_clk;
+    logic        drive_mounted;
+    logic        drive_led;
 
     logic [10:0] ps2_key;
     logic [6:0]  joy_a;
@@ -85,18 +123,31 @@ module multitini_c64_adapter #(
     integer unsigned audio_phase;
 
     assign core_id = MT_C64_CORE_ID;
+    assign rom_load_valid = load_valid && load_kind != MT_LOAD_C64_D64;
+    assign d64_load_valid = load_valid && load_kind == MT_LOAD_C64_D64;
+    // The asynchronous mailbox presents its payload while valid is stalled, so
+    // D64 bytes can apply drive-buffer backpressure without blocking a later
+    // ROM object whose kind selects the ordinary loader instead.
+    assign load_ready = load_kind == MT_LOAD_C64_D64 ?
+                        d64_load_ready : rom_load_ready;
+    assign load_error = rom_load_error || drive_media_error;
     assign ready = core_enable && !reset && !core_reset_request &&
-                   !load_valid && !load_active;
+                   !rom_load_valid && !load_active;
     assign core_reset_n = ready;
+    assign drive_soft_reset = core_reset_request || !core_enable;
 
     multitini_c64_loader loader_i (
         .clk(core_clk), .reset(reset), .clear_error(clear_load_error),
-        .load_data(load_data), .load_valid(load_valid), .load_ready(load_ready),
+        .load_data(load_data), .load_valid(rom_load_valid),
+        .load_ready(rom_load_ready),
         .load_first(load_first), .load_last(load_last), .load_kind(load_kind),
         .load_offset(load_offset), .load_total(load_total),
         .rom_wr(rom_wr), .rom_bank(rom_bank), .rom_addr(rom_addr),
         .rom_data(rom_data), .rom_loaded(rom_loaded),
-        .roms_ready(roms_ready), .active(load_active), .error(load_error)
+        .drive_rom_wr(drive_rom_wr), .drive_rom_addr(drive_rom_addr),
+        .drive_rom_data(drive_rom_data),
+        .drive_rom_loaded(drive_rom_loaded),
+        .roms_ready(roms_ready), .active(load_active), .error(rom_load_error)
     );
 
     multitini_c64_input input_i (
@@ -110,7 +161,7 @@ module multitini_c64_adapter #(
     // the VHDL memory. Any replacement ROM object immediately stops the core.
     always_ff @(posedge core_clk) begin
         if (reset || core_reset_request || !roms_ready || load_active ||
-            load_valid || rom_wr)
+            rom_load_valid || rom_wr || drive_rom_wr)
             core_enable <= 1'b0;
         else
             core_enable <= 1'b1;
@@ -158,10 +209,43 @@ module multitini_c64_adapter #(
         .flag2_n_i(1'b1), .sp2_i(1'b1), .sp2_o(),
         .sp1_i(1'b1), .sp1_o(), .cnt2_i(1'b1), .cnt2_o(),
         .cnt1_i(1'b1), .cnt1_o(),
-        .iec_data_o(), .iec_data_i(1'b1), .iec_clk_o(),
-        .iec_clk_i(1'b1), .iec_atn_o(),
+        .iec_data_o(c64_iec_data), .iec_data_i(drive_iec_data),
+        .iec_clk_o(c64_iec_clk), .iec_clk_i(drive_iec_clk),
+        .iec_atn_o(c64_iec_atn),
         .c64rom_addr(rom_addr), .c64rom_data(rom_data), .c64rom_wr(rom_wr),
         .cass_motor(), .cass_write(), .cass_sense(1'b1), .cass_read(1'b1)
+    );
+
+    multitini_c64_1541 #(.CORE_CLOCK_HZ(CORE_CLOCK_HZ)) drive_i (
+        .clk(core_clk), .reset(reset), .soft_reset(drive_soft_reset),
+        .clear_error(clear_load_error),
+        .drive_rom_write(drive_rom_wr),
+        .drive_rom_address(drive_rom_addr),
+        .drive_rom_write_data(drive_rom_data),
+        .drive_rom_loaded(drive_rom_loaded),
+        .c64_iec_atn(c64_iec_atn), .c64_iec_data(c64_iec_data),
+        .c64_iec_clk(c64_iec_clk), .drive_iec_data(drive_iec_data),
+        .drive_iec_clk(drive_iec_clk),
+        .media_mount(media_mount), .media_eject(media_eject),
+        .media_complete(media_complete), .media_slot(media_slot),
+        .media_kind(media_kind), .media_read_only(media_read_only),
+        .media_image_size(media_image_size),
+        .media_generation(media_generation),
+        .media_complete_request_id(media_complete_request_id),
+        .media_complete_status(media_complete_status),
+        .media_complete_block_count(media_complete_block_count),
+        .media_complete_generation(media_complete_generation),
+        .media_request_valid(media_request_valid),
+        .media_request_write(media_request_write),
+        .media_request_id(media_request_id),
+        .media_request_lba(media_request_lba),
+        .media_request_block_count(media_request_block_count),
+        .media_request_generation(media_request_generation),
+        .d64_load_data(load_data), .d64_load_valid(d64_load_valid),
+        .d64_load_ready(d64_load_ready), .d64_load_first(load_first),
+        .d64_load_last(load_last), .d64_load_offset(load_offset),
+        .d64_load_total(load_total), .mounted(drive_mounted),
+        .drive_led(drive_led), .error(drive_media_error)
     );
 
     video_sync sync_i (
@@ -216,4 +300,6 @@ module multitini_c64_adapter #(
             audio_phase <= audio_phase + AUDIO_SAMPLE_HZ;
         end
     end
+
+    wire unused_drive_status = d64_load_ready ^ drive_mounted ^ drive_led;
 endmodule

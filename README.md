@@ -90,6 +90,12 @@ Known:
   owner are tracked build/test inputs with recorded hashes. Other unapproved
   ROM/media and generated FPGA or firmware products remain blocked from source
   control. See `docs/CONTENT_POLICY.md` for the per-core rule.
+- The current `2026082E` firmware adds a single-owner FatFs service,
+  canonical C64 ROM autoload paths, optional 1541 ROM loading, and a read-only
+  drive-8 D64 service. Host tests and the matching Vivado/Vitis/Bootgen build
+  pass, but this image does not yet have an SD-card board result. See
+  [`docs/C64_SD_STORAGE.md`](docs/C64_SD_STORAGE.md) for the exact card layout,
+  startup behavior, UART commands, and serial fallback.
 
 Hardware status and remaining gaps:
 
@@ -105,12 +111,13 @@ Hardware status and remaining gaps:
   tested card/display combination, not physical input, storage, or SID audio.
 - NTSC and GBC Vivado builds remain pending. The GBC PSRAM path remains
   disabled by default and awaits timing and board validation.
-- SD file-system integration is not implemented. USB1 power, both keyboard
-  maps, generic HID gamepad input, and the `2026082D` wired Xbox 360 input map
-  and player LED command are board-proven. The tested Xbox controller also
-  passes hotplug, held-disconnect release, reconnect, and joystick-port swap.
-  The tracked C64 ROM set is loaded over UART; the pinned open GBC bootstrap
-  remains the only ROM embedded in an FPGA image.
+- SD file-system and read-only C64 D64 support are implemented and packaged in
+  the untested `2026082E` firmware. USB1 power, both keyboard maps, generic
+  HID gamepad input, and the `2026082D` wired Xbox 360 input map and player LED
+  command are board-proven. The tested Xbox controller also passes hotplug,
+  held-disconnect release, reconnect, and joystick-port swap. The packaged
+  board-proven firmware still loads the tracked C64 ROM set over UART; the
+  pinned open GBC bootstrap remains the only ROM embedded in an FPGA image.
 - DVI timing and the fixed diagnostic tone have initial board observations.
   Their long-run gates, remaining non-Xbox USB hotplug checks, SD, DDR, PSRAM,
   and Apple-bus isolation still require the hardware work in
@@ -137,7 +144,7 @@ review, or board testing.
 The intended first commands on a Vivado 2025.2 machine are:
 
 ```powershell
-$env:MULTITINI_BUILD_ID = '2026082D'
+$env:MULTITINI_BUILD_ID = '2026082E'
 vivado -mode batch -source scripts/create_project.tcl
 vivado -mode batch -source scripts/build_and_export_xsa.tcl
 vitis -s scripts/create_vitis_workspace.py

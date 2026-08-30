@@ -61,6 +61,11 @@ run_test tb_c64_loader \
     "$repo_root/hdl/core/c64/multitini_c64_loader.sv" \
     "$repo_root/hdl/sim/tb_c64_loader.sv"
 
+run_test tb_c64_d64_track \
+    "$repo_root/hdl/core/c64/multitini_c64_defs_pkg.sv" \
+    "$repo_root/hdl/core/c64/multitini_c64_d64_track.sv" \
+    "$repo_root/hdl/sim/tb_c64_d64_track.sv"
+
 run_test tb_c64_input \
     "$repo_root/hdl/core/c64/multitini_c64_defs_pkg.sv" \
     "$repo_root/hdl/core/c64/multitini_c64_input.sv" \
@@ -103,6 +108,11 @@ iverilog -g2012 -Wall -Wimplicit -i -s multitini_one_top \
     "$repo_root/hdl/core/c64/multitini_c64_defs_pkg.sv" \
     "$repo_root/hdl/core/c64/multitini_c64_loader.sv" \
     "$repo_root/hdl/core/c64/multitini_c64_input.sv" \
+    "$repo_root/third_party/c64/upstream/rtl/iec_drive/iecdrv_misc.sv" \
+    "$repo_root/hdl/core/c64/ports/c1541_logic.sv" \
+    "$repo_root/hdl/core/c64/ports/c1541_gcr.sv" \
+    "$repo_root/hdl/core/c64/multitini_c64_d64_track.sv" \
+    "$repo_root/hdl/core/c64/multitini_c64_1541.sv" \
     "$repo_root/hdl/core/c64/multitini_c64_adapter.sv" \
     "$repo_root/third_party/appletini/hdl/reset_sync.sv" \
     "$repo_root/third_party/appletini/hdl/cdc_bit_sync.sv" \

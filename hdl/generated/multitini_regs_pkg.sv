@@ -3,7 +3,7 @@
 `timescale 1ns / 1ps
 package multitini_regs_pkg;
     localparam logic [15:0] MT_ABI_MAJOR = 16'd0;
-    localparam logic [15:0] MT_ABI_MINOR = 16'd3;
+    localparam logic [15:0] MT_ABI_MINOR = 16'd4;
     localparam logic [31:0] MT_ABI_VERSION = {MT_ABI_MAJOR, MT_ABI_MINOR};
     localparam logic [31:0] MT_MAGIC = 32'h4D543031;
     localparam logic [31:0] MT_SHELL_ID = 32'h4D544F4E;
@@ -35,6 +35,11 @@ package multitini_regs_pkg;
     localparam logic [11:0] MT_REG_COUNT_BAD_READ = 12'h084;
     localparam logic [11:0] MT_REG_COUNT_COMMAND = 12'h088;
     localparam logic [11:0] MT_REG_COUNT_TIMEOUT = 12'h08C;
+    localparam logic [11:0] MT_REG_MEDIA_REQUEST = 12'h090;
+    localparam logic [11:0] MT_REG_MEDIA_REQUEST_ID = 12'h094;
+    localparam logic [11:0] MT_REG_MEDIA_REQUEST_LBA = 12'h098;
+    localparam logic [11:0] MT_REG_MEDIA_REQUEST_BLOCK_COUNT = 12'h09C;
+    localparam logic [11:0] MT_REG_MEDIA_REQUEST_GENERATION = 12'h0A0;
 
     localparam logic [31:0] MT_CONTROL_CORE_RESET_REQUEST = 32'h00000001;
     localparam logic [31:0] MT_CONTROL_VIDEO_TEST_ENABLE = 32'h00000002;
@@ -50,12 +55,24 @@ package multitini_regs_pkg;
     localparam logic [31:0] MT_STATUS_STREAM_READY = 32'h00000040;
     localparam logic [31:0] MT_STATUS_CORE_LOAD_ERROR = 32'h00000080;
     localparam logic [31:0] MT_STATUS_INPUT_READY = 32'h00000100;
+    localparam logic [31:0] MT_STATUS_MEDIA_REQUEST = 32'h00000200;
 
     localparam logic [31:0] MT_ERROR_BAD_WRITE = 32'h00000001;
     localparam logic [31:0] MT_ERROR_BAD_READ = 32'h00000002;
     localparam logic [31:0] MT_ERROR_BAD_COMMAND = 32'h00000004;
     localparam logic [31:0] MT_ERROR_COMMAND_OVERRUN = 32'h00000008;
     localparam logic [31:0] MT_ERROR_CORE_LOAD = 32'h00000010;
+
+    localparam logic [31:0] MT_MEDIA_REQUEST_VALID = 32'h00000001;
+    localparam logic [31:0] MT_MEDIA_REQUEST_WRITE = 32'h00000002;
+
+    localparam logic [31:0] MT_MEDIA_BLOCK_BYTES = 32'h00000100;
+    localparam logic [31:0] MT_MEDIA_SLOT_MASK = 32'h000000FF;
+    localparam logic [31:0] MT_MEDIA_KIND_SHIFT = 32'h00000008;
+    localparam logic [31:0] MT_MEDIA_KIND_MASK = 32'h0000FF00;
+    localparam logic [31:0] MT_MEDIA_MOUNT_READ_ONLY = 32'h00010000;
+    localparam logic [31:0] MT_MEDIA_MOUNT_RESERVED_MASK = 32'hFFFE0000;
+    localparam logic [31:0] MT_MEDIA_BLOCK_COUNT_MASK = 32'h0000FFFF;
 
     localparam logic [31:0] MT_COMMAND_PING = 32'h00000000;
     localparam logic [31:0] MT_COMMAND_GET_STATUS = 32'h00000001;
@@ -69,6 +86,7 @@ package multitini_regs_pkg;
     localparam logic [31:0] MT_COMMAND_STREAM_ABORT = 32'h00000013;
     localparam logic [31:0] MT_COMMAND_MEDIA_MOUNT = 32'h00000020;
     localparam logic [31:0] MT_COMMAND_MEDIA_EJECT = 32'h00000021;
+    localparam logic [31:0] MT_COMMAND_MEDIA_COMPLETE = 32'h00000022;
 
     localparam logic [31:0] MT_RESPONSE_OK = 32'h00000000;
     localparam logic [31:0] MT_RESPONSE_UNSUPPORTED = 32'h00000001;

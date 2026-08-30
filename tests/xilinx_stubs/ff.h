@@ -1,0 +1,49 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+#ifndef TEST_XILINX_FF_H
+#define TEST_XILINX_FF_H
+
+#include <stdint.h>
+
+typedef unsigned int UINT;
+typedef uint8_t BYTE;
+typedef uint64_t FSIZE_t;
+
+typedef enum {
+    FR_OK = 0,
+    FR_DISK_ERR = 1,
+    FR_INVALID_PARAMETER = 19
+} FRESULT;
+
+typedef struct {
+    unsigned placeholder;
+} FATFS;
+
+typedef struct {
+    unsigned placeholder;
+} FIL;
+
+typedef struct {
+    unsigned placeholder;
+} DIR;
+
+typedef struct {
+    FSIZE_t fsize;
+    BYTE fattrib;
+    char fname[256];
+} FILINFO;
+
+#define FA_READ UINT32_C(0x01)
+#define FA_OPEN_EXISTING UINT32_C(0x00)
+#define AM_DIR UINT32_C(0x10)
+
+FRESULT f_mount(FATFS *file_system, const char *path, BYTE option);
+FRESULT f_open(FIL *file, const char *path, BYTE mode);
+FSIZE_t f_size(const FIL *file);
+FRESULT f_read(FIL *file, void *buffer, UINT bytes_to_read,
+               UINT *bytes_read);
+FRESULT f_close(FIL *file);
+FRESULT f_opendir(DIR *directory, const char *path);
+FRESULT f_readdir(DIR *directory, FILINFO *info);
+FRESULT f_closedir(DIR *directory);
+
+#endif

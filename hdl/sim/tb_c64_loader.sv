@@ -20,6 +20,10 @@ module tb_c64_loader;
     logic [13:0] rom_addr;
     logic [7:0] rom_data;
     logic [2:0] rom_loaded;
+    logic drive_rom_wr;
+    logic [13:0] drive_rom_addr;
+    logic [7:0] drive_rom_data;
+    logic drive_rom_loaded;
     logic roms_ready;
     logic active;
     logic error;
@@ -32,6 +36,33 @@ module tb_c64_loader;
         if (!condition) begin
             $display("FAIL: %s", message);
             $fatal(1);
+        end
+    endtask
+
+    task automatic load_drive_rom;
+        integer index;
+        for (index = 0; index < MT_SIZE_C64_1541_ROM;
+             index = index + 1) begin
+            @(negedge clk);
+            load_kind = MT_LOAD_C64_1541_ROM;
+            load_offset = index;
+            load_total = MT_SIZE_C64_1541_ROM;
+            load_data = index[7:0] ^ 8'h5A;
+            load_first = index == 0;
+            load_last = index == MT_SIZE_C64_1541_ROM - 1;
+            load_valid = 1'b1;
+            @(posedge clk);
+            #1;
+            check_value(!rom_wr && drive_rom_wr,
+                        "1541 ROM uses the separate write port");
+            check_value(drive_rom_addr == index[13:0],
+                        "1541 ROM address mapping");
+            check_value(drive_rom_data == (index[7:0] ^ 8'h5A),
+                        "1541 ROM data mapping");
+            @(negedge clk);
+            load_valid = 1'b0;
+            load_first = 1'b0;
+            load_last = 1'b0;
         end
     endtask
 
@@ -115,8 +146,14 @@ module tb_c64_loader;
         load_rom(MT_LOAD_C64_CHARACTER, 4096, 1'b1, 0);
         check_value(rom_loaded == 3'b111 && roms_ready,
                     "all required ROMs accepted");
+        check_value(!drive_rom_loaded, "1541 ROM starts absent");
+        load_drive_rom();
+        check_value(drive_rom_loaded,
+                    "complete 16 KiB 1541 ROM object accepted");
+        check_value(rom_loaded == 3'b111 && roms_ready,
+                    "drive ROM does not replace C64 system-ROM readiness");
 
-        $display("PASS: C64 ROM loader");
+        $display("PASS: C64 and 1541 ROM loader");
         $finish;
     end
 endmodule

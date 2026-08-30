@@ -11,6 +11,13 @@ module multitini_control_regs #(
     input  logic         load_submit_ready,
     input  logic         core_load_error,
     input  logic         input_submit_ready,
+    input  logic         media_request_valid,
+    input  logic         media_request_write,
+    input  logic [31:0]  media_request_id,
+    input  logic [31:0]  media_request_lba,
+    input  logic [15:0]  media_request_block_count,
+    input  logic [31:0]  media_request_generation,
+    input  logic         media_submit_ready,
 
     input  logic         wr_en,
     input  logic [11:0]  wr_addr,
@@ -32,6 +39,18 @@ module multitini_control_regs #(
     output logic         input_submit,
     output logic [15:0]  input_code,
     output logic [15:0]  input_value,
+    output logic         media_mount,
+    output logic         media_eject,
+    output logic         media_complete,
+    output logic [7:0]   media_slot,
+    output logic [7:0]   media_kind,
+    output logic         media_read_only,
+    output logic [31:0]  media_image_size,
+    output logic [31:0]  media_generation,
+    output logic [31:0]  media_complete_request_id,
+    output logic [31:0]  media_complete_status,
+    output logic [15:0]  media_complete_block_count,
+    output logic [31:0]  media_complete_generation,
     output logic         irq
 );
     import multitini_regs_pkg::*;
@@ -63,6 +82,7 @@ module multitini_control_regs #(
     logic [31:0] error_set_mask;
     logic [31:0] error_clear_mask;
     logic [31:0] irq_clear_mask;
+    logic [31:0] media_request_word;
 
     function automatic logic [31:0] merge_strobes(
         input logic [31:0] old_value,
@@ -80,6 +100,12 @@ module multitini_control_regs #(
     endfunction
 
     always_comb begin
+        media_request_word = 32'd0;
+        if (media_request_valid)
+            media_request_word |= MT_MEDIA_REQUEST_VALID;
+        if (media_request_write)
+            media_request_word |= MT_MEDIA_REQUEST_WRITE;
+
         status_word = MT_STATUS_SHELL_READY;
         if (control & MT_CONTROL_VIDEO_TEST_ENABLE)
             status_word |= MT_STATUS_VIDEO_ACTIVE;
@@ -97,6 +123,8 @@ module multitini_control_regs #(
         if (input_submit_ready && core_ready &&
             !(control & MT_CONTROL_CORE_RESET_REQUEST))
             status_word |= MT_STATUS_INPUT_READY;
+        if (media_request_valid)
+            status_word |= MT_STATUS_MEDIA_REQUEST;
     end
 
     always_comb begin
@@ -127,6 +155,13 @@ module multitini_control_regs #(
             MT_REG_COUNT_BAD_READ:   rd_data = count_bad_read;
             MT_REG_COUNT_COMMAND:    rd_data = count_command;
             MT_REG_COUNT_TIMEOUT:    rd_data = count_timeout;
+            MT_REG_MEDIA_REQUEST:    rd_data = media_request_word;
+            MT_REG_MEDIA_REQUEST_ID: rd_data = media_request_id;
+            MT_REG_MEDIA_REQUEST_LBA: rd_data = media_request_lba;
+            MT_REG_MEDIA_REQUEST_BLOCK_COUNT:
+                rd_data = {16'd0, media_request_block_count};
+            MT_REG_MEDIA_REQUEST_GENERATION:
+                rd_data = media_request_generation;
             default: begin
                 rd_data = 32'h00000000;
                 rd_known = 1'b0;
@@ -163,7 +198,10 @@ module multitini_control_regs #(
                          command_opcode != MT_COMMAND_STREAM_BEGIN &&
                          command_opcode != MT_COMMAND_STREAM_DATA &&
                          command_opcode != MT_COMMAND_STREAM_END &&
-                         command_opcode != MT_COMMAND_STREAM_ABORT)
+                         command_opcode != MT_COMMAND_STREAM_ABORT &&
+                         command_opcode != MT_COMMAND_MEDIA_MOUNT &&
+                         command_opcode != MT_COMMAND_MEDIA_EJECT &&
+                         command_opcode != MT_COMMAND_MEDIA_COMPLETE)
                     error_set_mask |= MT_ERROR_BAD_COMMAND;
             end
             MT_REG_CONTROL,
@@ -219,10 +257,25 @@ module multitini_control_regs #(
             input_submit    <= 1'b0;
             input_code      <= 16'd0;
             input_value     <= 16'd0;
+            media_mount     <= 1'b0;
+            media_eject     <= 1'b0;
+            media_complete  <= 1'b0;
+            media_slot      <= 8'd0;
+            media_kind      <= 8'd0;
+            media_read_only <= 1'b0;
+            media_image_size <= 32'd0;
+            media_generation <= 32'd0;
+            media_complete_request_id <= 32'd0;
+            media_complete_status <= MT_RESPONSE_OK;
+            media_complete_block_count <= 16'd0;
+            media_complete_generation <= 32'd0;
         end else begin
             load_submit <= 1'b0;
             load_error_clear <= 1'b0;
             input_submit <= 1'b0;
+            media_mount <= 1'b0;
+            media_eject <= 1'b0;
+            media_complete <= 1'b0;
             error_flags <= (error_flags & ~error_clear_mask) | error_set_mask;
             irq_status <= (irq_status & ~irq_clear_mask) |
                           ((|error_set_mask) ? 32'd1 : 32'd0);
@@ -352,6 +405,79 @@ module multitini_control_regs #(
                                     stream_kind <= 8'd0;
                                     stream_total <= 32'd0;
                                     stream_offset <= 32'd0;
+                                end
+                                MT_COMMAND_MEDIA_MOUNT: begin
+                                    if ((command_arg0 &
+                                         MT_MEDIA_MOUNT_RESERVED_MASK) !=
+                                            32'd0 ||
+                                        (command_arg0 &
+                                         MT_MEDIA_MOUNT_READ_ONLY) ==
+                                            32'd0 ||
+                                        (command_arg0 & MT_MEDIA_KIND_MASK) ==
+                                            32'd0 ||
+                                        command_arg1 == 32'd0 ||
+                                        command_arg2 == 32'd0 ||
+                                        command_arg3 != 32'd0) begin
+                                        response_status <=
+                                            MT_RESPONSE_INVALID_ARGUMENT;
+                                    end else if (!media_submit_ready) begin
+                                        response_status <= MT_RESPONSE_BUSY;
+                                    end else begin
+                                        response_status <= MT_RESPONSE_OK;
+                                        media_mount <= 1'b1;
+                                        media_slot <= command_arg0[7:0];
+                                        media_kind <= command_arg0[15:8];
+                                        media_read_only <= command_arg0[16];
+                                        media_image_size <= command_arg1;
+                                        media_generation <= command_arg2;
+                                    end
+                                end
+                                MT_COMMAND_MEDIA_EJECT: begin
+                                    if (command_arg0[31:8] != 24'd0 ||
+                                        command_arg1 == 32'd0 ||
+                                        command_arg2 != 32'd0 ||
+                                        command_arg3 != 32'd0) begin
+                                        response_status <=
+                                            MT_RESPONSE_INVALID_ARGUMENT;
+                                    end else if (!media_submit_ready) begin
+                                        response_status <= MT_RESPONSE_BUSY;
+                                    end else begin
+                                        response_status <= MT_RESPONSE_OK;
+                                        media_eject <= 1'b1;
+                                        media_slot <= command_arg0[7:0];
+                                        media_generation <= command_arg1;
+                                    end
+                                end
+                                MT_COMMAND_MEDIA_COMPLETE: begin
+                                    if (!media_request_valid ||
+                                        media_request_write ||
+                                        media_request_block_count == 16'd0 ||
+                                        command_arg0 != media_request_id ||
+                                        command_arg1 != MT_RESPONSE_OK ||
+                                        command_arg2[31:16] != 16'd0 ||
+                                        command_arg2[15:0] !=
+                                            media_request_block_count ||
+                                        command_arg3 !=
+                                            media_request_generation) begin
+                                        response_status <=
+                                            MT_RESPONSE_INVALID_ARGUMENT;
+                                    end else if (!media_submit_ready) begin
+                                        response_status <= MT_RESPONSE_BUSY;
+                                    end else begin
+                                        response_status <= MT_RESPONSE_OK;
+                                        response_arg0 <= media_request_id;
+                                        response_arg1 <= {
+                                            16'd0, media_request_block_count};
+                                        media_complete <= 1'b1;
+                                        media_complete_request_id <=
+                                            command_arg0;
+                                        media_complete_status <=
+                                            command_arg1;
+                                        media_complete_block_count <=
+                                            command_arg2[15:0];
+                                        media_complete_generation <=
+                                            command_arg3;
+                                    end
                                 end
                                 default: begin
                                     response_status <= MT_RESPONSE_UNSUPPORTED;

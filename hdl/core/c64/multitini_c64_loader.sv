@@ -20,6 +20,10 @@ module multitini_c64_loader (
     output logic [13:0] rom_addr,
     output logic [7:0]  rom_data,
     output logic [2:0]  rom_loaded,
+    output logic        drive_rom_wr,
+    output logic [13:0] drive_rom_addr,
+    output logic [7:0]  drive_rom_data,
+    output logic        drive_rom_loaded,
     output logic        roms_ready,
     output logic        active,
     output logic        error
@@ -36,6 +40,7 @@ module multitini_c64_loader (
             MT_LOAD_C64_BASIC:     expected_size = MT_SIZE_C64_BASIC;
             MT_LOAD_C64_KERNAL:    expected_size = MT_SIZE_C64_KERNAL;
             MT_LOAD_C64_CHARACTER: expected_size = MT_SIZE_C64_CHARACTER;
+            MT_LOAD_C64_1541_ROM:  expected_size = MT_SIZE_C64_1541_ROM;
             default:               expected_size = 32'd0;
         endcase
     endfunction
@@ -66,13 +71,17 @@ module multitini_c64_loader (
         logic continuation_good;
         logic finish_good;
 
-        rom_wr <= 1'b0;
+        rom_wr       <= 1'b0;
+        drive_rom_wr <= 1'b0;
 
         if (reset) begin
             rom_bank       <= 1'b0;
             rom_addr       <= 14'd0;
             rom_data       <= 8'd0;
             rom_loaded     <= 3'b000;
+            drive_rom_addr <= 14'd0;
+            drive_rom_data <= 8'd0;
+            drive_rom_loaded <= 1'b0;
             active         <= 1'b0;
             active_kind    <= 8'd0;
             active_total   <= 32'd0;
@@ -97,10 +106,17 @@ module multitini_c64_loader (
                     object_error    <= !start_good;
 
                     if (start_good) begin
-                        rom_wr   <= 1'b1;
-                        rom_bank <= mapped_bank(load_kind);
-                        rom_addr <= mapped_address(load_kind, load_offset);
-                        rom_data <= load_data;
+                        if (load_kind == MT_LOAD_C64_1541_ROM) begin
+                            drive_rom_loaded <= 1'b0;
+                            drive_rom_wr     <= 1'b1;
+                            drive_rom_addr   <= load_offset[13:0];
+                            drive_rom_data   <= load_data;
+                        end else begin
+                            rom_wr   <= 1'b1;
+                            rom_bank <= mapped_bank(load_kind);
+                            rom_addr <= mapped_address(load_kind, load_offset);
+                            rom_data <= load_data;
+                        end
                     end
                 end else if (active) begin
                     continuation_good = !object_error &&
@@ -111,10 +127,16 @@ module multitini_c64_loader (
                                   load_offset + 32'd1 == active_total;
 
                     if (continuation_good) begin
-                        rom_wr   <= 1'b1;
-                        rom_bank <= mapped_bank(active_kind);
-                        rom_addr <= mapped_address(active_kind, load_offset);
-                        rom_data <= load_data;
+                        if (active_kind == MT_LOAD_C64_1541_ROM) begin
+                            drive_rom_wr   <= 1'b1;
+                            drive_rom_addr <= load_offset[13:0];
+                            drive_rom_data <= load_data;
+                        end else begin
+                            rom_wr   <= 1'b1;
+                            rom_bank <= mapped_bank(active_kind);
+                            rom_addr <= mapped_address(active_kind, load_offset);
+                            rom_data <= load_data;
+                        end
                     end else begin
                         error        <= 1'b1;
                         object_error <= 1'b1;
@@ -126,6 +148,7 @@ module multitini_c64_loader (
                                 MT_LOAD_C64_BASIC:     rom_loaded[0] <= 1'b1;
                                 MT_LOAD_C64_KERNAL:    rom_loaded[1] <= 1'b1;
                                 MT_LOAD_C64_CHARACTER: rom_loaded[2] <= 1'b1;
+                                MT_LOAD_C64_1541_ROM:  drive_rom_loaded <= 1'b1;
                                 default:               error <= 1'b1;
                             endcase
                         end else begin

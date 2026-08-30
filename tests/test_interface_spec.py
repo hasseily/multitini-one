@@ -35,6 +35,30 @@ class InterfaceSpecTests(unittest.TestCase):
         self.assertEqual(self.spec["commands"]["INPUT_EVENT"], 5)
         self.assertEqual(self.spec["bitfields"]["STATUS"]["INPUT_READY"], 8)
 
+    def test_read_only_media_request_addition_is_versioned(self):
+        self.assertGreaterEqual(self.spec["abi"]["minor"], 4)
+        self.assertEqual(self.spec["commands"]["MEDIA_MOUNT"], 32)
+        self.assertEqual(self.spec["commands"]["MEDIA_EJECT"], 33)
+        self.assertEqual(self.spec["commands"]["MEDIA_COMPLETE"], 34)
+        self.assertEqual(self.spec["bitfields"]["STATUS"]["MEDIA_REQUEST"], 9)
+        self.assertEqual(self.spec["constants"]["MEDIA_BLOCK_BYTES"], 256)
+        self.assertEqual(
+            int(self.spec["constants"]["MEDIA_MOUNT_READ_ONLY"], 0),
+            1 << 16,
+        )
+        request_registers = {
+            "MEDIA_REQUEST",
+            "MEDIA_REQUEST_ID",
+            "MEDIA_REQUEST_LBA",
+            "MEDIA_REQUEST_BLOCK_COUNT",
+            "MEDIA_REQUEST_GENERATION",
+        }
+        self.assertTrue(
+            request_registers.issubset(
+                {register["name"] for register in self.spec["registers"]}
+            )
+        )
+
     def test_c64_interface_ids_and_required_rom_sizes(self):
         c64 = json.loads((ROOT / "spec/c64_interface_v0.json").read_text())
         self.assertEqual(c64["schema_version"], 1)

@@ -1,10 +1,129 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "multitini_c64_boot.h"
 #include "multitini_c64_interface.h"
+#include "multitini_c64_rom_files.h"
 
 #include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
+
+typedef struct {
+    unsigned calls;
+    unsigned fail_call;
+    unsigned short_call;
+    unsigned uniform_call;
+} rom_reader_t;
+
+static mt_c64_rom_file_read_result_t read_rom_file(
+    void *context, const char *path, uint8_t *destination,
+    size_t expected_size)
+{
+    static const char *const expected_paths[] = {
+        MT_C64_SD_BASIC_PATH,
+        MT_C64_SD_KERNAL_PATH,
+        MT_C64_SD_CHARACTER_PATH,
+    };
+    rom_reader_t *const reader = context;
+    mt_c64_rom_file_read_result_t result = {0, 0U, expected_size};
+    size_t index;
+
+    assert(reader != NULL);
+    assert(reader->calls < sizeof(expected_paths) / sizeof(expected_paths[0]));
+    assert(strcmp(path, expected_paths[reader->calls]) == 0);
+    ++reader->calls;
+
+    if (reader->calls == reader->fail_call) {
+        result.status = -7;
+        result.backend_status = 91U;
+        result.size = 0U;
+        return result;
+    }
+    for (index = 0U; index < expected_size; ++index) {
+        destination[index] = (uint8_t)(index + reader->calls);
+    }
+    if (reader->calls == reader->uniform_call) {
+        memset(destination, 0x5AU, expected_size);
+    }
+    if (reader->calls == reader->short_call) {
+        result.size = expected_size - 1U;
+    }
+    return result;
+}
+
+static void test_rom_file_paths_and_loading(void)
+{
+    static uint8_t bundle[MT_C64_SYSTEM_ROM_BUNDLE_SIZE];
+    mt_c64_system_roms_t roms;
+    mt_c64_rom_files_result_t result;
+    rom_reader_t reader = {0};
+
+    assert(strcmp(MT_SD_CORE_ROOT, "0:/cores") == 0);
+    assert(strcmp(MT_C64_SD_MEDIA_ROOT, "0:/cores/c64/media") == 0);
+    assert(strcmp(mt_c64_sd_rom_path(MT_C64_ROM_BASIC),
+                  "0:/cores/c64/roms/basic.bin") == 0);
+    assert(strcmp(mt_c64_sd_rom_path(MT_C64_ROM_KERNAL),
+                  "0:/cores/c64/roms/kernal.bin") == 0);
+    assert(strcmp(mt_c64_sd_rom_path(MT_C64_ROM_CHARACTER),
+                  "0:/cores/c64/roms/characters.bin") == 0);
+    assert(strcmp(mt_c64_sd_rom_path(MT_C64_ROM_DRIVE_1541),
+                  "0:/cores/c64/roms/1541.bin") == 0);
+    assert(mt_c64_sd_rom_path((mt_c64_rom_kind_t)99) == NULL);
+
+    result = mt_c64_rom_files_load_system(
+        read_rom_file, &reader, bundle, sizeof(bundle), &roms);
+    assert(result.status == MT_C64_ROM_FILES_OK);
+    assert(result.path == NULL);
+    assert(reader.calls == 3U);
+    assert(roms.basic.data == bundle);
+    assert(roms.basic.size == MT_SIZE_C64_BASIC);
+    assert(roms.kernal.data == bundle + MT_SIZE_C64_BASIC);
+    assert(roms.kernal.size == MT_SIZE_C64_KERNAL);
+    assert(roms.character.data ==
+           bundle + MT_SIZE_C64_BASIC + MT_SIZE_C64_KERNAL);
+    assert(roms.character.size == MT_SIZE_C64_CHARACTER);
+
+    memset(&reader, 0, sizeof(reader));
+    reader.fail_call = 2U;
+    result = mt_c64_rom_files_load_system(
+        read_rom_file, &reader, bundle, sizeof(bundle), &roms);
+    assert(result.status == MT_C64_ROM_FILES_READ_FAILED);
+    assert(result.kind == MT_C64_ROM_KERNAL);
+    assert(strcmp(result.path, MT_C64_SD_KERNAL_PATH) == 0);
+    assert(result.read.status == -7);
+    assert(result.read.backend_status == 91U);
+    assert(reader.calls == 2U);
+    assert(roms.basic.data == NULL);
+
+    memset(&reader, 0, sizeof(reader));
+    reader.short_call = 1U;
+    result = mt_c64_rom_files_load_system(
+        read_rom_file, &reader, bundle, sizeof(bundle), &roms);
+    assert(result.status == MT_C64_ROM_FILES_SIZE_MISMATCH);
+    assert(result.kind == MT_C64_ROM_BASIC);
+    assert(result.read.size == MT_SIZE_C64_BASIC - 1U);
+    assert(reader.calls == 1U);
+
+    memset(&reader, 0, sizeof(reader));
+    reader.uniform_call = 3U;
+    result = mt_c64_rom_files_load_system(
+        read_rom_file, &reader, bundle, sizeof(bundle), &roms);
+    assert(result.status == MT_C64_ROM_FILES_VALIDATION_FAILED);
+    assert(result.kind == MT_C64_ROM_CHARACTER);
+    assert(result.validation == MT_CONTENT_BAD_STRUCTURE);
+    assert(reader.calls == 3U);
+
+    memset(&reader, 0, sizeof(reader));
+    result = mt_c64_rom_files_load_system(
+        read_rom_file, &reader, bundle, sizeof(bundle) - 1U, &roms);
+    assert(result.status == MT_C64_ROM_FILES_INVALID_ARGUMENT);
+    assert(reader.calls == 0U);
+    assert(strcmp(mt_c64_rom_files_status_name(result.status),
+                  "invalid argument") == 0);
+    assert(mt_c64_rom_files_load_system(
+               NULL, &reader, bundle, sizeof(bundle), &roms).status ==
+           MT_C64_ROM_FILES_INVALID_ARGUMENT);
+}
 
 typedef struct {
     uint32_t registers[MT_REGISTER_SPAN / sizeof(uint32_t)];
@@ -105,6 +224,8 @@ int main(void)
     mt_c64_system_roms_t roms;
     uint32_t expected_checksum = 0U;
     size_t index;
+
+    test_rom_file_paths_and_loading();
 
     for (index = 0U; index < sizeof(basic); ++index) {
         basic[index] = (uint8_t)index;

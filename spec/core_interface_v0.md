@@ -92,9 +92,27 @@ The interface supports one outstanding aligned 64-bit line transaction:
 The GBC map places cartridge ROM at `0x000000` and cartridge RAM at `0x800000`.
 The current service supports at most 8 MiB of ROM and 128 KiB of cartridge RAM.
 
-## Deliberately absent
+## Media request service
 
-The disk and save-data service is not frozen yet. D64 sector service and G64
-track service have different atomicity and latency needs. That contract will
-be based on the rights-cleared 1541 integration and must include request IDs,
-length, write protection, timeout, flush, and eject semantics.
+ABI 0.4 adds the first read-only D64 transport. A core presents one request at
+a time using `media_request_valid`, `media_request_write`, a request ID, LBA,
+block count, and mount generation. LBA and block count use 256-byte units. The
+core holds every request field stable until the shell returns a matching
+`media_complete` pulse. The initial shell accepts successful read completions
+only: request ID and generation must match, the write flag must be clear, the
+status must be `MT_RESPONSE_OK`, and the completed count must equal the
+requested count.
+
+`media_mount`, `media_eject`, and `media_complete` are one-cycle events. Their
+payload registers remain available alongside the pulse. Mounts carry slot,
+content kind, image size, read-only state, and a nonzero generation selected by
+firmware. Eject carries the slot and a new nonzero generation for the empty
+slot, invalidating any request from the previous mount; ejecting an already
+empty slot is idempotent. Completion carries request ID, status, completed
+block count, and generation. The path is deliberately filename-free; ARM
+firmware owns paths and files.
+
+The data buffer and its ownership crossing are shell implementation details and
+are not part of this register-only increment. G64 track service, writes, flush,
+and timeout/error completion remain unfrozen because their atomicity and
+latency differ from the first read-only D64 path.

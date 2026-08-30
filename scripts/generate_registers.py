@@ -57,6 +57,17 @@ def load_spec() -> dict:
                 raise ValueError(f"invalid or duplicate bit: {register_name}.{field_name}")
             bits.add(bit)
 
+    constant_names: set[str] = set()
+    for name, value in spec.get("constants", {}).items():
+        if not name.isidentifier() or name.upper() != name:
+            raise ValueError(f"invalid constant name: {name}")
+        if name in constant_names:
+            raise ValueError(f"duplicate constant name: {name}")
+        parsed = number(value)
+        if parsed < 0 or parsed > 0xFFFFFFFF:
+            raise ValueError(f"constant out of range: {name}")
+        constant_names.add(name)
+
     return spec
 
 
@@ -89,6 +100,13 @@ def render_c(spec: dict) -> str:
         for field_name, bit in fields.items():
             lines.append(
                 f"#define MT_{register_name}_{field_name} (UINT32_C(1) << {bit})"
+            )
+
+    if spec.get("constants"):
+        lines.append("")
+        for name, value in spec["constants"].items():
+            lines.append(
+                f"#define MT_{name} UINT32_C(0x{number(value):08X})"
             )
 
     for group, prefix in (("commands", "MT_COMMAND"), ("responses", "MT_RESPONSE")):
@@ -126,6 +144,13 @@ def render_sv(spec: dict) -> str:
         for field_name, bit in fields.items():
             lines.append(
                 f"    localparam logic [31:0] MT_{register_name}_{field_name} = 32'h{1 << bit:08X};"
+            )
+
+    if spec.get("constants"):
+        lines.append("")
+        for name, value in spec["constants"].items():
+            lines.append(
+                f"    localparam logic [31:0] MT_{name} = 32'h{number(value):08X};"
             )
 
     for group, prefix in (("commands", "MT_COMMAND"), ("responses", "MT_RESPONSE")):

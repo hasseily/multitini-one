@@ -12,6 +12,8 @@ core/c64/ports/spram.vhd
 ../third_party/c64/upstream/rtl/t65/T65_ALU.vhd
 ../third_party/c64/upstream/rtl/t65/T65_MCode.vhd
 ../third_party/c64/upstream/rtl/t65/T65.vhd
+../third_party/c64/upstream/rtl/iec_drive/iecdrv_via6522.vhd
+../third_party/c64/upstream/rtl/iec_drive/iecdrv_misc.sv
 core/c64/ports/cpu_6510.vhd
 ../third_party/c64/upstream/rtl/fpga64_rgbcolor.vhd
 ../third_party/c64/upstream/rtl/fpga64_keyboard.vhd
@@ -25,8 +27,12 @@ core/c64/ports/sid_filter.sv
 core/c64/ports/sid_tables.sv
 ../third_party/c64/upstream/rtl/sid/sid_voice.sv
 core/c64/ports/sid_top.sv
+core/c64/ports/c1541_logic.sv
+core/c64/ports/c1541_gcr.sv
 ../third_party/c64/upstream/rtl/fpga64_sid_iec.vhd
 core/c64/ports/video_sync.vhd
+core/c64/multitini_c64_d64_track.sv
+core/c64/multitini_c64_1541.sv
 core/c64/multitini_c64_adapter.sv
 board/multitini_c64_video_bridge.sv
 [gbc]

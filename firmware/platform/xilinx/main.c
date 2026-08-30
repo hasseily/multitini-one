@@ -1,12 +1,15 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
+#include "c64_d64_service.h"
 #include "multitini_ak4493.h"
 #include "multitini_c64_boot.h"
 #include "multitini_c64_interface.h"
+#include "multitini_c64_rom_files.h"
 #include "multitini_content.h"
 #include "multitini_core_link.h"
 #include "multitini_regs.h"
 #include "multitini_tmp102.h"
 #include "multitini_xmodem.h"
+#include "sd_storage.h"
 #include "usb_hid_service.h"
 
 #include <stdbool.h>
@@ -26,7 +29,7 @@
 #include "xuartps_hw.h"
 
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
-#define MT_FIRMWARE_BUILD_ID UINT32_C(0x2026082D)
+#define MT_FIRMWARE_BUILD_ID UINT32_C(0x2026082E)
 #define MT_I2C_CLOCK_HZ UINT32_C(100000)
 #define MT_I2C_BUSY_POLLS UINT32_C(1000000)
 #define MT_UART_DRAIN_POLLS UINT32_C(10000000)
@@ -34,10 +37,8 @@
 #define MT_UART_XMODEM_RETRIES UINT32_C(20)
 #define MT_CORE_READY_POLLS UINT32_C(1000000)
 #define MT_LINK_COMMAND_POLLS UINT32_C(100000)
-#define MT_EXTENDED_COMMAND_CAPACITY 96U
+#define MT_EXTENDED_COMMAND_CAPACITY 272U
 #define MT_EXTENDED_ARGUMENT_CAPACITY 4
-#define MT_C64_ROM_BUNDLE_SIZE \
-    (MT_SIZE_C64_BASIC + MT_SIZE_C64_KERNAL + MT_SIZE_C64_CHARACTER)
 
 /* Zynq-7000 UG585 multiboot and PS software-reset registers. */
 #define MT_DEVCFG_MULTIBOOT UINT32_C(0xF800702C)
@@ -53,7 +54,10 @@ static XIicPs i2c_instance;
 static mt_core_link_t shell_link;
 static mt_ak4493_bus_t dac_bus;
 static bool dac_ready;
-static uint8_t c64_rom_bundle[MT_C64_ROM_BUNDLE_SIZE];
+static bool c64_drive_ready;
+static bool c64_core_reset_active;
+static uint8_t c64_rom_bundle[MT_C64_SYSTEM_ROM_BUNDLE_SIZE];
+static uint8_t c64_drive_rom[MT_SIZE_C64_1541_ROM];
 
 static int board_i2c_write(void *context, uint8_t address, uint8_t reg,
                            uint8_t value)
@@ -154,6 +158,21 @@ static void service_usb_input(void)
         (status & MT_STATUS_CORE_READY) != 0U &&
         (control & MT_CONTROL_CORE_RESET_REQUEST) == 0U);
     usb_hid_service_poll();
+}
+
+static void service_runtime(void)
+{
+    const uint32_t control = shell_read(MT_REG_CONTROL);
+    service_usb_input();
+    if ((control & MT_CONTROL_CORE_RESET_REQUEST) != 0U) {
+        if (!c64_core_reset_active) {
+            c64_d64_service_notify_core_reset();
+        }
+        c64_core_reset_active = true;
+        return;
+    }
+    c64_core_reset_active = false;
+    c64_d64_service_poll();
 }
 
 static void print_status(void)
@@ -373,6 +392,140 @@ static bool wait_for_c64_core_ready(uint32_t *status_out)
     return false;
 }
 
+static mt_c64_rom_file_read_result_t read_c64_sd_rom(
+    void *context, const char *path, uint8_t *destination,
+    size_t expected_size)
+{
+    const mt_sd_result_t sd_result = mt_sd_storage_read_file_exact(
+        path, destination, expected_size);
+    mt_c64_rom_file_read_result_t result;
+    (void)context;
+    result.status = (int)sd_result.status;
+    result.backend_status = sd_result.backend_status;
+    result.size = sd_result.size;
+    return result;
+}
+
+static void print_c64_sd_fallback(void)
+{
+    xil_printf("[C64] core held in reset; install ROMs under %s or use "
+               ":c64rx 20480 0xCRC32\r\n", MT_C64_SD_ROM_ROOT);
+}
+
+static bool load_c64_sd_drive_rom(void)
+{
+    const mt_sd_result_t read_result = mt_sd_storage_read_file_exact(
+        MT_C64_SD_1541_PATH, c64_drive_rom, sizeof(c64_drive_rom));
+    mt_content_validation_t validation;
+    mt_link_result_t load_result;
+
+    if (read_result.status != MT_SD_OK) {
+        xil_printf("[C64] drive8 ROM unavailable path=%s read=%s "
+                   "backend=%u size=%u\r\n",
+                   MT_C64_SD_1541_PATH,
+                   mt_sd_status_name(read_result.status),
+                   read_result.backend_status,
+                   (unsigned int)read_result.size);
+        return false;
+    }
+    validation = mt_c64_rom_validate(
+        MT_C64_ROM_DRIVE_1541, c64_drive_rom, sizeof(c64_drive_rom));
+    if (validation != MT_CONTENT_VALID) {
+        xil_printf("[C64] drive8 ROM rejected path=%s validation=%s\r\n",
+                   MT_C64_SD_1541_PATH,
+                   mt_content_validation_name(validation));
+        return false;
+    }
+
+    load_result = mt_core_link_stream(
+        &shell_link, MT_LOAD_C64_1541_ROM, c64_drive_rom,
+        sizeof(c64_drive_rom), MT_LINK_COMMAND_POLLS, NULL, NULL);
+    if (load_result != MT_LINK_OK) {
+        xil_printf("[C64] drive8 ROM stream failed: %s\r\n",
+                   mt_link_result_name(load_result));
+        return false;
+    }
+    xil_printf("[C64] drive8 ROM loaded path=%s crc32=%08x\r\n",
+               MT_C64_SD_1541_PATH,
+               (unsigned int)mt_xmodem_crc32_ieee(
+                   c64_drive_rom, sizeof(c64_drive_rom)));
+    return true;
+}
+
+static void attempt_c64_sd_boot(void)
+{
+    mt_sd_result_t mount_result;
+    mt_c64_rom_files_result_t files_result;
+    mt_c64_system_roms_t roms;
+    mt_link_result_t load_result;
+    uint32_t core_status = 0U;
+    uint32_t actual_crc32;
+    uint32_t control;
+
+    if (set_core_reset_request(true) != 0) {
+        xil_printf("[C64] error: cannot enter reset for SD ROM load\r\n");
+        return;
+    }
+
+    mount_result = mt_sd_storage_mount();
+    xil_printf("[SD] mount status=%s backend=%u\r\n",
+               mt_sd_status_name(mount_result.status),
+               mount_result.backend_status);
+    if (mount_result.status != MT_SD_OK) {
+        print_c64_sd_fallback();
+        return;
+    }
+
+    files_result = mt_c64_rom_files_load_system(
+        read_c64_sd_rom, NULL, c64_rom_bundle, sizeof(c64_rom_bundle), &roms);
+    if (files_result.status != MT_C64_ROM_FILES_OK) {
+        const mt_sd_status_t read_status =
+            (mt_sd_status_t)files_result.read.status;
+        xil_printf("[C64] SD ROM load failed status=%s path=%s "
+                   "read=%s backend=%u size=%u validation=%s\r\n",
+                   mt_c64_rom_files_status_name(files_result.status),
+                   files_result.path == NULL ? "(none)" : files_result.path,
+                   mt_sd_status_name(read_status),
+                   files_result.read.backend_status,
+                   (unsigned int)files_result.read.size,
+                   mt_content_validation_name(files_result.validation));
+        print_c64_sd_fallback();
+        return;
+    }
+
+    Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_ERROR, MT_ERROR_CORE_LOAD);
+    c64_drive_ready = load_c64_sd_drive_rom();
+    if (!c64_drive_ready) {
+        /* Keep system-ROM boot independent of the optional drive ROM. */
+        Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_ERROR, MT_ERROR_CORE_LOAD);
+    }
+    load_result = mt_c64_load_system_roms(
+        &shell_link, &roms, MT_LINK_COMMAND_POLLS, NULL, NULL);
+    if (load_result != MT_LINK_OK) {
+        leave_core_in_reset();
+        xil_printf("[C64] error: SD ROM stream %s\r\n",
+                   mt_link_result_name(load_result));
+        print_c64_sd_fallback();
+        return;
+    }
+    if (!wait_for_c64_core_ready(&core_status)) {
+        leave_core_in_reset();
+        xil_printf("[C64] error: core-ready timeout status=%08x\r\n",
+                   (unsigned int)core_status);
+        print_c64_sd_fallback();
+        return;
+    }
+
+    control = shell_read(MT_REG_CONTROL);
+    Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_CONTROL,
+              control & ~MT_CONTROL_VIDEO_TEST_ENABLE);
+    actual_crc32 = mt_xmodem_crc32_ieee(c64_rom_bundle,
+                                         sizeof(c64_rom_bundle));
+    xil_printf("[C64] SD boot ok root=%s crc32=%08x status=%08x\r\n",
+               MT_C64_SD_ROM_ROOT, (unsigned int)actual_crc32,
+               (unsigned int)core_status);
+}
+
 static void handle_c64_rx_command(char *line)
 {
     char *arguments[MT_EXTENDED_ARGUMENT_CAPACITY];
@@ -475,7 +628,8 @@ static void print_help(void)
     xil_printf("j swap joystick port, k toggle keyboard map\r\n");
     xil_printf("US map: Alt/GUI=C=, F9=up-arrow, F10=+, F11=RESTORE, ");
     xil_printf("F12=C64 equals; k restores MiSTer positional mapping\r\n");
-    xil_printf("extended: :c64rx 20480 0xCRC32, :reboot to golden\r\n");
+    xil_printf("extended: :mount FILE.d64, :eject, :dir, :disk\r\n");
+    xil_printf("recovery: :c64rx 20480 0xCRC32, :reboot to golden\r\n");
 }
 
 static bool read_extended_command(char *buffer, size_t capacity)
@@ -486,7 +640,7 @@ static bool read_extended_command(char *buffer, size_t capacity)
     for (;;) {
         uint8_t byte;
         char input;
-        while (uart0_try_read_byte(&byte) == 0) service_usb_input();
+        while (uart0_try_read_byte(&byte) == 0) service_runtime();
         input = (char)byte;
         if (input == '\r' || input == '\n') {
             break;
@@ -518,10 +672,17 @@ static bool wait_uart0_transmit_idle(void)
 static void reboot_to_golden(void)
 {
     const int usb_stop_result = usb_hid_service_stop();
+    mt_sd_result_t unmount_result;
     if (usb_stop_result != 0) {
         xil_printf("USB1 VBUS shutdown failed (%d); reboot cancelled\r\n",
                    usb_stop_result);
         return;
+    }
+    unmount_result = mt_sd_storage_unmount();
+    if (unmount_result.status != MT_SD_OK) {
+        xil_printf("SD unmount warning: %s backend=%u\r\n",
+                   mt_sd_status_name(unmount_result.status),
+                   unmount_result.backend_status);
     }
     xil_printf("rebooting to golden at QSPI offset 0x00000000\r\n");
     if (!wait_uart0_transmit_idle()) {
@@ -551,6 +712,8 @@ static void reboot_to_golden(void)
 static void handle_extended_command(bool recovery_only)
 {
     char extended[MT_EXTENDED_COMMAND_CAPACITY];
+    char *mount_name;
+    char *mount_end;
 
     if (!read_extended_command(extended, sizeof(extended))) {
         if (!recovery_only && strncmp(extended, "c64rx", 5U) == 0) {
@@ -564,6 +727,30 @@ static void handle_extended_command(bool recovery_only)
                (extended[5] == '\0' || extended[5] == ' ' ||
                 extended[5] == '\t')) {
         handle_c64_rx_command(extended);
+    } else if (!recovery_only && strcmp(extended, "dir") == 0) {
+        c64_d64_service_list();
+    } else if (!recovery_only && strcmp(extended, "disk") == 0) {
+        c64_d64_service_dump_status();
+    } else if (!recovery_only && strcmp(extended, "eject") == 0) {
+        (void)c64_d64_service_eject();
+    } else if (!recovery_only && strncmp(extended, "mount", 5U) == 0 &&
+               (extended[5] == ' ' || extended[5] == '\t')) {
+        mount_name = extended + 5;
+        while (*mount_name == ' ' || *mount_name == '\t') ++mount_name;
+        mount_end = mount_name + strlen(mount_name);
+        while (mount_end > mount_name &&
+               (mount_end[-1] == ' ' || mount_end[-1] == '\t')) {
+            --mount_end;
+        }
+        *mount_end = '\0';
+        if (*mount_name == '\0') {
+            xil_printf("usage: :mount FILE.d64\r\n");
+        } else if (!c64_drive_ready) {
+            xil_printf("[C64] drive8 unavailable; install %s\r\n",
+                       MT_C64_SD_1541_PATH);
+        } else {
+            (void)c64_d64_service_mount(mount_name);
+        }
     } else {
         xil_printf("unknown extended command ':%s'\r\n", extended);
     }
@@ -607,6 +794,9 @@ int main(void)
         xil_printf("shell unavailable; diagnostic outputs remain in reset defaults\r\n");
         recovery_console();
     }
+    if (shell_read(MT_REG_CORE_ID) == MT_C64_CORE_ID) {
+        attempt_c64_sd_boot();
+    }
 
     status = initialize_i2c();
     if (status == 0) {
@@ -627,18 +817,26 @@ int main(void)
     xil_printf("USB1 keyboard/gamepad initialization: %s (%d)\r\n",
                usb_status == 0 ? "ok" : "failed", usb_status);
     usb_hid_service_dump_status();
+    /* A progress callback must not re-enter shell_link through USB input. */
+    c64_d64_service_init(&shell_link, NULL, NULL);
+    if (shell_read(MT_REG_CORE_ID) == MT_C64_CORE_ID && c64_drive_ready) {
+        (void)c64_d64_service_mount_default();
+    }
     print_help();
 
     for (;;) {
         uint8_t byte;
         char input;
-        service_usb_input();
+        service_runtime();
         if (uart0_try_read_byte(&byte) == 0) continue;
         input = (char)byte;
         const uint32_t control = shell_read(MT_REG_CONTROL);
         switch (input) {
         case 'h': print_help(); break;
-        case 's': print_status(); break;
+        case 's':
+            print_status();
+            c64_d64_service_dump_status();
+            break;
         case 'p': (void)command(MT_COMMAND_PING, 0U, 0U); break;
         case 'a': set_audio(false); break;
         case 'm': set_audio(true); break;

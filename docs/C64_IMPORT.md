@@ -1,9 +1,9 @@
 # MiSTer C64 Import Record
 
 Status: 34 allowlisted files imported, SHA-256 locked, and licensed in the
-repository ledger. The default PAL integration has completed Vivado 2025.2
-elaboration, synthesis, implementation, and packaging; hardware and usable-C64
-validation remain pending.
+repository ledger. The hardware-proven PAL machine baseline is now being
+extended with a read-only D64/1541 path; that drive increment remains pending
+Vivado and board qualification.
 
 ## Pin
 
@@ -95,12 +95,31 @@ replaces only the pieces needed for a ROM-free Xilinx build:
   inference with no initialization file;
 - the four SID compatibility ports make narrowly scoped language/elaboration
   fixes while the exact upstream versions remain imported and locked; and
-- `multitini_c64_adapter.sv` supplies main RAM, ROM loading, input mapping,
-  reset sequencing, raw video, and 48 kHz signed audio samples.
+- `ports/c1541_logic.sv` and `ports/c1541_gcr.sv` are strict-tool compatibility
+  ports of the two pinned drive modules, with declarations moved before use and
+  behavior otherwise preserved;
+- `multitini_c64_adapter.sv` supplies main RAM, system and 1541 ROM loading,
+  input mapping, reset sequencing, serial IEC, raw video, and 48 kHz signed
+  audio samples; and
+- `multitini_c64_d64_track.sv` plus `multitini_c64_1541.sv` provide one
+  read-only drive 8 using the imported 1541 CPU/VIA logic and sector-to-GCR
+  buffer.
 
-The imported 1541 files are not in the first build. Their current wrapper also
-depends on excluded drive/platform pieces, so drive media requires a separate
-adapter and service contract.
+The D64 track geometry and directory-track-first sequence are based on the
+sector-buffer design at MiSTer C64 commit
+`f11608f66bcb2b017680d7c719aa547f537bfd3f`, immediately before commit
+`a1a560e1cc51ab27c8424678a39254aab67a5afe` replaced it with whole-image DDR
+DMA. No file from that older revision is imported: the local service implements
+the Multitini generation-tagged request contract and uses actual counts of
+256-byte blocks. It covers the six recognized 35-, 40-, and 42-track D64 sizes,
+including the final 42-track request at LBA 785 for 17 blocks.
+
+Only `iecdrv_via6522.vhd`, `iecdrv_misc.sv`, and strict local ports of
+`c1541_logic.sv` and `c1541_gcr.sv` enter this build. The current upstream
+`iec_drive`, `c1541_multi`, `c1541_drv`, direct-GCR, DDR track, and C1581 paths
+remain excluded. The first drive therefore requires a separately loaded
+16 KiB standard 1541 ROM and supports read-only D64 only; D64 writes, G64, T64,
+TAP, CRT, PRG injection, a second drive, and 1581 remain later work.
 
 ## Verified engineering-build boundary
 

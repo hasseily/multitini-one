@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "abi": {"major": 0, "minor": 3},
+  "abi": {"major": 0, "minor": 4},
   "magic": "0x4D543031",
   "shell_id": "0x4D544F4E",
   "register_span": "0x1000",
@@ -30,7 +30,12 @@
     {"name": "COUNT_BAD_WRITE", "offset": "0x080", "access": "ro", "reset": "0x00000000"},
     {"name": "COUNT_BAD_READ", "offset": "0x084", "access": "ro", "reset": "0x00000000"},
     {"name": "COUNT_COMMAND", "offset": "0x088", "access": "ro", "reset": "0x00000000"},
-    {"name": "COUNT_TIMEOUT", "offset": "0x08C", "access": "ro", "reset": "0x00000000"}
+    {"name": "COUNT_TIMEOUT", "offset": "0x08C", "access": "ro", "reset": "0x00000000"},
+    {"name": "MEDIA_REQUEST", "offset": "0x090", "access": "ro", "reset": "0x00000000"},
+    {"name": "MEDIA_REQUEST_ID", "offset": "0x094", "access": "ro", "reset": "0x00000000"},
+    {"name": "MEDIA_REQUEST_LBA", "offset": "0x098", "access": "ro", "reset": "0x00000000"},
+    {"name": "MEDIA_REQUEST_BLOCK_COUNT", "offset": "0x09C", "access": "ro", "reset": "0x00000000"},
+    {"name": "MEDIA_REQUEST_GENERATION", "offset": "0x0A0", "access": "ro", "reset": "0x00000000"}
   ],
   "bitfields": {
     "CONTROL": {
@@ -48,7 +53,8 @@
       "STREAM_ACTIVE": 5,
       "STREAM_READY": 6,
       "CORE_LOAD_ERROR": 7,
-      "INPUT_READY": 8
+      "INPUT_READY": 8,
+      "MEDIA_REQUEST": 9
     },
     "ERROR": {
       "BAD_WRITE": 0,
@@ -56,7 +62,20 @@
       "BAD_COMMAND": 2,
       "COMMAND_OVERRUN": 3,
       "CORE_LOAD": 4
+    },
+    "MEDIA_REQUEST": {
+      "VALID": 0,
+      "WRITE": 1
     }
+  },
+  "constants": {
+    "MEDIA_BLOCK_BYTES": 256,
+    "MEDIA_SLOT_MASK": "0x000000FF",
+    "MEDIA_KIND_SHIFT": 8,
+    "MEDIA_KIND_MASK": "0x0000FF00",
+    "MEDIA_MOUNT_READ_ONLY": "0x00010000",
+    "MEDIA_MOUNT_RESERVED_MASK": "0xFFFE0000",
+    "MEDIA_BLOCK_COUNT_MASK": "0x0000FFFF"
   },
   "commands": {
     "PING": 0,
@@ -70,7 +89,8 @@
     "STREAM_DATA": 18,
     "STREAM_ABORT": 19,
     "MEDIA_MOUNT": 32,
-    "MEDIA_EJECT": 33
+    "MEDIA_EJECT": 33,
+    "MEDIA_COMPLETE": 34
   },
   "responses": {
     "OK": 0,
@@ -79,5 +99,31 @@
     "BUSY": 3,
     "IO_ERROR": 4,
     "TIMEOUT": 5
+  },
+  "media_contract": {
+    "request": {
+      "unit_bytes": 256,
+      "rule": "VALID, WRITE, ID, LBA, BLOCK_COUNT, and GENERATION remain stable until a matching MEDIA_COMPLETE pulse"
+    },
+    "commands": {
+      "MEDIA_MOUNT": {
+        "arg0": "slot[7:0] | kind[15:8] | read_only[16]; bits[31:17] zero",
+        "arg1": "nonzero image size in bytes",
+        "arg2": "nonzero mount generation",
+        "arg3": "zero"
+      },
+      "MEDIA_EJECT": {
+        "arg0": "slot[7:0]; bits[31:8] zero",
+        "arg1": "new nonzero generation for the empty slot",
+        "arg2": "zero",
+        "arg3": "zero"
+      },
+      "MEDIA_COMPLETE": {
+        "arg0": "request ID",
+        "arg1": "MT_RESPONSE_OK",
+        "arg2": "completed 256-byte block count in bits[15:0]; bits[31:16] zero",
+        "arg3": "mount generation"
+      }
+    }
   }
 }

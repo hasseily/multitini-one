@@ -47,7 +47,26 @@ class BuildInputTests(unittest.TestCase):
         self.assertNotIn("third_party/c64/upstream/c64.sv", joined)
         self.assertNotIn("third_party/c64/upstream/rtl/fpga64_buslogic.vhd",
                          joined)
-        self.assertNotIn("third_party/c64/upstream/rtl/iec_drive/", joined)
+        self.assertIn(
+            "third_party/c64/upstream/rtl/iec_drive/iecdrv_via6522.vhd",
+            joined,
+        )
+        self.assertIn(
+            "third_party/c64/upstream/rtl/iec_drive/iecdrv_misc.sv",
+            joined,
+        )
+        self.assertIn("core/c64/ports/c1541_logic.sv", joined)
+        self.assertIn("core/c64/ports/c1541_gcr.sv", joined)
+        self.assertIn("core/c64/multitini_c64_d64_track.sv", joined)
+        self.assertIn("core/c64/multitini_c64_1541.sv", joined)
+        for excluded_drive_source in (
+            "c1541_multi.sv",
+            "c1541_drv.sv",
+            "c1541_direct_gcr.sv",
+            "c1541_track.sv",
+            "iec_drive.sv",
+        ):
+            self.assertNotIn(excluded_drive_source, joined)
         self.assertNotIn(".mif", joined)
         self.assertIn("core/gameboy/multitini_gameboy_adapter.sv", joined)
         self.assertIn("core/gameboy/ports/gb.v", joined)
@@ -197,6 +216,50 @@ class BuildInputTests(unittest.TestCase):
             '"diagnostic application build")',
             script,
         )
+
+    def test_vitis_platform_enables_safe_fatfs(self):
+        script = (ROOT / "scripts/create_vitis_workspace.py").read_text()
+        self.assertIn('domain.set_lib(lib_name="xilffs"', script)
+        self.assertIn("domain.regenerate()", script)
+        self.assertIn("enable_fatfs_lfn(domain_bsp)", script)
+        self.assertIn("patch_fatfs_no_card_hang(domain_bsp)", script)
+        self.assertIn("Multitini no-card fail-fast", script)
+        self.assertIn("StableCount == 100U", script)
+        self.assertIn("validate_reused_xilffs(xpfm)", script)
+
+    def test_c64_sd_paths_stay_under_canonical_core_root(self):
+        header = (ROOT / "firmware/include/multitini_c64_rom_files.h").read_text()
+        self.assertIn('#define MT_SD_CORE_ROOT "0:/cores"', header)
+        self.assertIn('MT_C64_SD_ROM_ROOT "/basic.bin"', header)
+        self.assertIn('MT_C64_SD_ROM_ROOT "/kernal.bin"', header)
+        self.assertIn('MT_C64_SD_ROM_ROOT "/characters.bin"', header)
+        self.assertIn('MT_C64_SD_ROM_ROOT "/1541.bin"', header)
+        self.assertNotIn("Multitini/cores", header)
+
+    def test_c64_sd_workflow_documents_source_contract(self):
+        readme = (ROOT / "README.md").read_text()
+        workflow = (ROOT / "docs/C64_SD_STORAGE.md").read_text()
+        d64 = (ROOT / "firmware/common/c64_d64.c").read_text()
+        main = (ROOT / "firmware/platform/xilinx/main.c").read_text()
+
+        self.assertIn("docs/C64_SD_STORAGE.md", readme)
+        for path in (
+            "0:/cores/c64/roms/basic.bin",
+            "0:/cores/c64/roms/kernal.bin",
+            "0:/cores/c64/roms/characters.bin",
+            "0:/cores/c64/roms/1541.bin",
+            "0:/cores/c64/media/drive8.d64",
+        ):
+            self.assertIn(path, workflow)
+        for command in (":dir", ":mount FILE.d64", ":disk", ":eject"):
+            self.assertIn(command, workflow)
+            self.assertIn(command, main)
+        for size in (174848, 175531, 196608, 197376, 205312, 206114):
+            self.assertIn(f"{size}U", d64)
+            self.assertIn(f"{size:,} bytes", workflow)
+        self.assertIn("read-only", workflow)
+        self.assertIn(":c64rx 20480 0xCRC32", workflow)
+        self.assertIn("not a board claim", workflow)
 
     def test_vitis_build_includes_wired_xbox_360_host_support(self):
         script = (ROOT / "scripts/create_vitis_workspace.py").read_text()
