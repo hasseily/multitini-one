@@ -9,6 +9,20 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AudioPathTests(unittest.TestCase):
+    def test_c64_defaults_to_the_6581_sid_model(self):
+        adapter = (
+            ROOT / "hdl/core/c64/multitini_c64_adapter.sv"
+        ).read_text()
+        voice = (
+            ROOT / "third_party/c64/upstream/rtl/sid/sid_voice.sv"
+        ).read_text()
+
+        self.assertIn("SID_VERSION = 2'b00", adapter)
+        self.assertIn(".sid_ver(SID_VERSION)", adapter)
+        self.assertNotIn(".sid_ver(2'b11)", adapter)
+        self.assertIn("NOISE_TTL_6581 = 24'h8000", voice)
+        self.assertIn("NOISE_TTL_8580 = 24'h950000", voice)
+
     def test_machine_pcm_is_normalized_to_signed_24_bit(self):
         c64 = (ROOT / "hdl/core/c64/multitini_c64_adapter.sv").read_text()
         gbc = (

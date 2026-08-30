@@ -12,7 +12,11 @@ directional input. Build `2026082D` qualifies the full intended wired Xbox 360
 input map plus the player LED command. Build `2026082E` passes automatic SD ROM
 and 1541 loading, default read-only D64 mounting, Decathlon gameplay, and
 joystick-port swapping on hardware. Current build `2026082F` connects live
-machine PCM to I2S and SPDIF; audible board testing remains pending.
+machine PCM to I2S and SPDIF. Its first board test was mostly clean, but
+Decathlon produced a roughly ten-second scratch/random passage and a later
+stuck high tone; Ultima II also produced a stuck tone. Candidate `20260830`
+defaults the C64 to 6581 instead of the prior hardwired 8580 and awaits board
+retest.
 
 ## Completed repository and portable validation
 
@@ -66,7 +70,19 @@ machine PCM to I2S and SPDIF; audible board testing remains pending.
   capture, reset/load silence, and pop-safe DAC unmute order. Focused source
   and HDL tests cover live PCM, tone, mute, reset, cadence, and parity. The
   fresh PAL Vivado build passes timing, CDC, DRC, routing, bitstream, and XSA
-  gates; Vitis and Bootgen also pass. Hardware audibility is not yet qualified.
+  gates; Vitis and Bootgen also pass. Its first hardware run proves generally
+  clean live transport and working `t`/`a` source selection, but the two
+  game-specific stuck-tone failures leave SID audio unqualified.
+- Candidate build `20260830` changes the adapter's default SID model from 8580
+  to 6581. The upstream 8580 noise timeout is about 9.77 seconds, matching the
+  duration of Decathlon's scratch/random passage closely enough to make the
+  hardwired model the leading cause candidate. Focused source checks pass. The
+  fresh routed PAL Vivado result has +0.176 ns setup slack, +0.051 ns hold
+  slack, zero failed nets, and zero Critical warnings. Vitis, Bootgen packaging,
+  and three-partition readback pass. The 4,475,348-byte root `FIRMWARE.BIN` has
+  SHA-256
+  `99a21c6f929ffe056faabd7d80da9f64bded7d83b8ccf989213ba1fa157aee47`;
+  hardware retest remains pending.
 - Exact 47-file Game Boy import at the pinned commit, per-file license rows,
   SHA-256 lock, open SameBoy-derived CGB bootstrap source/image, and deterministic
   strict-tool ports for the selected upstream `gb` and `cart` modules.
@@ -288,9 +304,10 @@ did not assert Fire and the player ring kept blinking.
 - PSRAM activation: PHY timing, IDELAYCTRL, calibration, constraints, command
   edge/count tuning, and board measurement are unresolved. The default build
   holds CE high; the prepared GBC branch is explicit opt-in only.
-- Build `2026082F` routes live machine PCM, but audible SID output, startup and
-  reset behavior, source switching, channel behavior, level, and SPDIF remain
-  untested on the board.
+- Build `2026082F` routes audible live machine PCM and proves source switching,
+  but its Decathlon and Ultima II faults leave SID compatibility, long-run
+  behavior, level, channel behavior, reset behavior, and SPDIF open. Candidate
+  `20260830` needs the same game sequences repeated with its 6581 default.
 - Initial golden-slot boot, DVI timing, fixed-tone audio, USB1 power, keyboard
   transport, generic HID input, and golden reboot have observations.
   Pin-isolation measurements, DDR, the remaining non-Xbox USB regressions,
@@ -298,10 +315,10 @@ did not assert Fire and the player ring kept blinking.
 
 ## Next validation sequence
 
-1. Install the packaged `2026082F` image, then test automatic live SID audio,
-   UART `m` mute, `t` diagnostic tone, `a` live-source restore, reset/load
-   silence, and SPDIF on the board. Record audible behavior before calling it
-   qualified.
+1. Install candidate `20260830`, then repeat the Decathlon opening
+   and gameplay sequence and the Ultima II sequence. Recheck UART `m`, `t`, and
+   `a`, reset/load silence, channels, level, and SPDIF. Record whether either
+   stuck tone returns before calling live SID audio qualified.
 2. Recreate and build C64 NTSC with
    `MULTITINI_C64_VIDEO_STANDARD=NTSC`; retain and review a separate complete
    report set.
@@ -315,5 +332,5 @@ did not assert Fire and the player ring kept blinking.
 Only after the minimal board image passes should PSRAM be connected and its
 BIST exposed. Only after a dedicated PSRAM test passes should a GBC project set
 `MULTITINI_ENABLE_GBC_PSRAM=1`. GBC remains off the physical outputs. C64 DVI
-must pass the live gate above. C64 live audio remains unqualified on hardware
-until the `2026082F` audible board gate passes.
+must pass the live gate above. C64 live audio remains unqualified until the
+`20260830` 6581-default candidate passes the repeated hardware gate.

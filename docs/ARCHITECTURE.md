@@ -4,7 +4,9 @@ Status: the independent PAL DVI, fixed-tone audio, UART, and golden-reboot
 diagnostics have passed on hardware. Live PAL video, USB input, wired Xbox
 input, SD ROM loading, 1541 startup, and read-only D64 game loading also have
 recorded board results. Build `2026082F` connects live machine PCM to I2S and
-SPDIF, but audible board testing remains pending.
+SPDIF. Its first board test found mostly clean output plus repeatable stuck-tone
+faults. Candidate `20260830` changes the C64 default SID model from 8580 to
+6581; hardware retest remains pending.
 
 ## Ownership boundaries
 
@@ -151,8 +153,14 @@ selects live audio, `t` selects the fixed diagnostic tone, and `m` mutes the
 current source. The exact AK4493 datasheet was reviewed locally, and the routed
 PAL baseline applies a conservative +/-5 ns receiver window to I2S LRCK and
 SDATA. The `2026082F` source, focused XSim, routed timing, CDC, DRC, and Bootgen
-checks pass. It still requires an audible board test before it is
-hardware-qualified.
+checks pass. Its board test showed that `t` cleanly masks live SID faults and
+`a` restores them, separating the common output stage from the machine source.
+
+The C64 adapter exposes the imported core's two-bit SID-version choice and
+defaults both instances to 6581 in candidate `20260830`. Build `2026082F` had
+hardwired 8580; that model's roughly 9.77-second noise timeout closely matches
+the timed Decathlon artifact. The model mismatch remains a diagnosis candidate
+until Decathlon and Ultima II pass the repeated board test.
 
 The GBC adapter holds reset until a cartridge is strictly framed and accepted
 by the external-memory service. Its open CGB bootstrap is generated from a

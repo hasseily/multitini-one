@@ -381,7 +381,7 @@ joystick-port swapping on the tested hardware and media. Build `2026082E` did
 not route SID audio to the physical output, so this result makes no live-audio
 claim.
 
-## Build 2026082F: live machine audio pending board test
+## Build 2026082F: initial live machine audio board result
 
 Build `2026082F` connects the selected machine's coherent signed 24-bit stereo
 PCM to both physical audio transports. The I2S path uses the board's 12.288 MHz
@@ -407,6 +407,35 @@ The matching PAL C64 vendor and package flow passes:
 - repository-root `FIRMWARE.BIN`: 4,475,348 bytes, SHA-256
   `24c8ca616e939ddd13ae46807bcd315affcd6a56f6836c14af4c7cf70510903c`.
 
-These are automated and vendor-tool results, not an audible board result.
-Startup, live SID sound, mute/tone/live switching, reset silence, channel
-behavior, level, and SPDIF still require the packaged image's board test.
+The first audible board test found the live path otherwise clean, but it did
+not pass the game-audio gate:
+
+- Decathlon produced scratch/random noise for about ten seconds near the end
+  of its opening theme, then later developed a high-pitched tone that remained
+  stuck.
+- Ultima II also developed a stuck tone.
+- UART `t` replaced the fault with the clean fixed diagnostic tone. UART `a`
+  restored live audio and the stuck tone returned. This points to the live C64
+  audio source rather than the shared serializer, DAC, or analog output.
+
+This qualifies basic live-audio transport and source switching on the tested
+board, not SID compatibility, long-run stability, channel behavior, level, or
+SPDIF.
+
+## Build 20260830 candidate: 6581 default, hardware retest pending
+
+Build `2026082F` hardwired both imported SID instances as 8580. The upstream
+SID model uses an 8580 noise timeout of `24'h950000`, about 9.77 seconds at the
+nominal SID rate, which closely matches Decathlon's timed scratch/random
+passage. Both tested games predate the 8580. This is a root-cause candidate,
+not yet a confirmed diagnosis for either stuck tone.
+
+Candidate build `20260830` makes the adapter's default SID version 6581 while
+retaining an explicit parameter for later settings support. Its fresh routed
+PAL Vivado result passes with +0.176 ns setup slack, +0.051 ns hold slack, zero
+failed nets, and zero Critical warnings. Vitis and Bootgen pass, and Bootgen
+readback shows the expected FSBL, FPGA bitstream, and application partitions.
+The repository-root `FIRMWARE.BIN` is 4,475,348 bytes with SHA-256
+`99a21c6f929ffe056faabd7d80da9f64bded7d83b8ccf989213ba1fa157aee47`.
+The same Decathlon and Ultima II sequences must be repeated on hardware before
+this candidate can qualify live SID audio.

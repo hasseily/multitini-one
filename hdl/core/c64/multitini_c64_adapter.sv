@@ -5,7 +5,11 @@
 // drive boundary implements one read-only D64-backed serial-IEC 1541.
 module multitini_c64_adapter #(
     parameter bit NTSC_MODE = 1'b0,
-    parameter integer AUDIO_SAMPLE_HZ = 48000
+    parameter integer AUDIO_SAMPLE_HZ = 48000,
+    // Early and most classic C64 software targets the MOS 6581. Keep the
+    // MiSTer core's power-on model at 6581 unless a build explicitly selects
+    // another model for both emulated SID instances.
+    parameter logic [1:0] SID_VERSION = 2'b00
 ) (
     input  logic        core_clk,
     input  logic        reset,
@@ -201,7 +205,7 @@ module multitini_c64_adapter #(
         .joyA(joy_a), .joyB(joy_b),
         .pot1(8'hFF), .pot2(8'hFF), .pot3(8'hFF), .pot4(8'hFF),
         .audio_l(raw_audio_l), .audio_r(raw_audio_r),
-        .sid_filter(2'b11), .sid_ver(2'b11), .sid_mode(3'b000),
+        .sid_filter(2'b11), .sid_ver(SID_VERSION), .sid_mode(3'b000),
         .sid_cfg(4'b0000), .sid_fc_off_l(13'd0), .sid_fc_off_r(13'd0),
         .sid_ld_clk(core_clk), .sid_ld_addr(12'd0), .sid_ld_data(16'd0),
         .sid_ld_wr(1'b0), .sid_digifix(1'b0),

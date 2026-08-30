@@ -13,7 +13,11 @@ USB keyboard/gamepad input and the wired Xbox 360 path. Build `2026082E` now
 also passes the SD ROM, 1541, and read-only D64 path on hardware: Decathlon
 loads and runs from drive 8, with UART `j` selecting its joystick port 1.
 Build `2026082F` routes live machine PCM to the physical audio outputs, but its
-audible board test remains pending.
+first board test found mostly clean SID audio plus repeatable source-side
+faults: Decathlon produced about ten seconds of scratch/random noise near the
+end of its opening theme and later a stuck high tone; Ultima II also produced a
+stuck tone. Candidate build `20260830` changes the C64 default from the
+previously hardwired 8580 SID model to 6581 and awaits the same hardware retest.
 
 ## Current state
 
@@ -55,7 +59,7 @@ Known:
   and XSA export in Vivado 2025.2. Routed timing passed with WNS +0.252 ns,
   WHS +0.059 ns, WPWS +1.749 ns, no failing endpoints, zero failed nets, and
   zero Critical CDC findings.
-- The current routed design uses 8,214 LUTs, 8,536 flip-flops, 91 RAMB36 blocks,
+- The `2026082F` routed design uses 8,214 LUTs, 8,536 flip-flops, 91 RAMB36 blocks,
   two RAMB18 blocks, and seven DSP blocks. The audio stage accounts for 300
   LUTs and 766 flip-flops; the four-bank video bridge accounts for 544 LUTs,
   335 flip-flops, and 64 RAMB36 blocks.
@@ -106,7 +110,20 @@ Known:
   the core is ready; UART `a` restores live audio, `t` selects the fixed test
   tone, and `m` mutes either source. Source checks, focused XSim, and the fresh
   routed vendor reports cover stereo coherence, mute, source changes, reset
-  silence, timing, and CDC. Audible hardware qualification is still pending.
+  silence, timing, and CDC. Its first board test was mostly clean, but
+  Decathlon produced a roughly ten-second scratch/random passage and a later
+  stuck high tone; Ultima II also produced a stuck tone. Selecting the fixed
+  tone with `t` masked the fault and `a` restored it, localizing it to live
+  machine audio rather than the shared physical transport.
+- Candidate build `20260830` defaults both C64 SID instances to 6581 instead of
+  the `2026082F` hardwired 8580 model. The upstream 8580 noise timeout is about
+  9.77 seconds at its nominal SID rate, making the model mismatch the leading
+  cause of Decathlon's timed noise, not yet a confirmed fix. Its fresh routed
+  PAL Vivado result passes with +0.176 ns setup slack, +0.051 ns hold slack,
+  zero failed nets, and zero Critical warnings. Vitis and Bootgen also pass;
+  the 4,475,348-byte root `FIRMWARE.BIN` has SHA-256
+  `99a21c6f929ffe056faabd7d80da9f64bded7d83b8ccf989213ba1fa157aee47`.
+  Hardware retest is pending.
 
 Hardware status and remaining gaps:
 
@@ -131,7 +148,10 @@ Hardware status and remaining gaps:
   loads the tracked C64 ROM set from SD; UART upload remains a fallback. The
   pinned open GBC bootstrap remains the only ROM embedded in an FPGA image.
 - DVI timing and the fixed diagnostic tone have initial board observations.
-  Live SID audio in build `2026082F` still needs its first audible board test.
+  Build `2026082F` proves that live SID audio is generally clean but does not
+  pass qualification because of the Decathlon and Ultima II stuck-tone faults.
+  Candidate `20260830` needs the same Decathlon and Ultima II board retest with
+  its new 6581 default.
   The long-run audio gate, remaining non-Xbox USB hotplug checks, DDR, PSRAM,
   and Apple-bus isolation still require the hardware work in
   `MULTITINI_ONE_PLAN.md`.
@@ -157,7 +177,7 @@ review, or board testing.
 The intended first commands on a Vivado 2025.2 machine are:
 
 ```powershell
-$env:MULTITINI_BUILD_ID = '2026082F'
+$env:MULTITINI_BUILD_ID = '20260830'
 vivado -mode batch -source scripts/create_project.tcl
 vivado -mode batch -source scripts/build_and_export_xsa.tcl
 vitis -s scripts/create_vitis_workspace.py
