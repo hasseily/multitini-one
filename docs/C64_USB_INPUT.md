@@ -131,6 +131,14 @@ to print USB controller, connected-device, report, and error counters. Build
 `2026082D` also prints a per-XInput line with decoded state, all-seen bits,
 state-change count, LED-output state, errors, and the latest raw packet prefix.
 
+Joystick port 1 shares the C64 CIA keyboard-matrix input lines. At the BASIC
+prompt, its direction and Fire closures can therefore appear as characters
+during the ROM keyboard scan. The recorded port-1 Xbox test produced the
+left-arrow glyph, `2`, and other matrix-dependent characters from the D-pad;
+A/Fire appeared as Space. Those are expected port-1 fingerprints, not an Xbox
+mapping error. B and X remain the separate Space and Control convenience
+mappings on either joystick port.
+
 ## Test boundary
 
 Eleven host binaries and 44 Python tests cover symbolic and positional key
@@ -139,5 +147,6 @@ extended keys, disconnect releases, delivery retry, HID/XInput decoding,
 joystick aggregation, port swap, and reset reassertion. Build `2026082B`
 proves physical VBUS and one generic HID gamepad; build `2026082C` qualifies
 both keyboard maps. Build `2026082D` qualifies the wired Xbox 360 functional
-input map and player LED command on the tested controller. Xbox disconnect,
-hotplug, unplug-while-held, and joystick-port-swap coverage remain open.
+input map and player LED command on the tested controller. Hotplug after boot,
+disconnect while held with state release, reconnect, and runtime joystick-port
+swap also pass on that controller and USB topology.

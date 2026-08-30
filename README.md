@@ -76,7 +76,9 @@ Known:
   qualified the US symbolic and retained positional keyboard maps. Build
   `2026082D` qualifies wired Xbox 360 report decoding, D-pad and left-stick
   directions, A as Fire, B as Space, X as Control, and the player LED command
-  on the tested controller.
+  on the tested controller. Hotplug after boot, disconnect while held with
+  state release, reconnect, and runtime joystick-port swapping also passed on
+  that controller and USB topology.
 - The exact AK4493 datasheet has been reviewed. Conservative I2S output delays
   are now part of the implemented-design timing constraints.
 - Portable content, XMODEM, DAC, temperature, and shell-link code passes the
@@ -105,12 +107,12 @@ Hardware status and remaining gaps:
   disabled by default and awaits timing and board validation.
 - SD file-system integration is not implemented. USB1 power, both keyboard
   maps, generic HID gamepad input, and the `2026082D` wired Xbox 360 input map
-  and player LED command are board-proven. Xbox disconnect, hotplug, and
-  unplug-while-held coverage remain open. The tracked C64 ROM set is loaded
-  over UART; the pinned open GBC bootstrap remains the only ROM embedded in an
-  FPGA image.
+  and player LED command are board-proven. The tested Xbox controller also
+  passes hotplug, held-disconnect release, reconnect, and joystick-port swap.
+  The tracked C64 ROM set is loaded over UART; the pinned open GBC bootstrap
+  remains the only ROM embedded in an FPGA image.
 - DVI timing and the fixed diagnostic tone have initial board observations.
-  Their long-run gates, remaining USB hotplug checks, SD, DDR, PSRAM,
+  Their long-run gates, remaining non-Xbox USB hotplug checks, SD, DDR, PSRAM,
   and Apple-bus isolation still require the hardware work in
   `MULTITINI_ONE_PLAN.md`.
 

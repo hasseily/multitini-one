@@ -259,8 +259,14 @@ did not assert Fire and the player ring kept blinking.
   proving Control end to end. X alone remained nonprinting as expected for a
   modifier. All seven intended state bits were observed.
 - These results qualify the wired Xbox 360 functional input map and player LED
-  command on the tested controller. Disconnect, hotplug, unplug-while-held,
-  and joystick-port-swap coverage remain open.
+  command on the tested controller.
+- A follow-up test passed hotplug after boot, disconnect while held with state
+  release, reconnect, and runtime joystick-port swap on that controller and
+  USB topology.
+- With port 1 selected, A/Fire and B/Space both appeared as Space, X remained
+  Control, and D-pad motion produced the left-arrow glyph, `2`, and other
+  matrix-dependent characters at BASIC. This is expected because C64 joystick
+  port 1 shares CIA keyboard-matrix lines, and it confirms the swap end to end.
 
 ## Still requires vendor tools or hardware
 
@@ -271,30 +277,24 @@ did not assert Fire and the player ring kept blinking.
 - PSRAM activation: PHY timing, IDELAYCTRL, calibration, constraints, command
   edge/count tuning, and board measurement are unresolved. The default build
   holds CE high; the prepared GBC branch is explicit opt-in only.
-- Xbox disconnect, hotplug, unplug-while-held, and joystick-port-swap
-  regressions remain open. Physical audio remains the independent diagnostic
-  tone; SID is not routed.
+- Physical audio remains the independent diagnostic tone; SID is not routed.
 - Initial golden-slot boot, DVI timing, fixed-tone audio, USB1 power, keyboard
   transport, generic HID input, and golden reboot have observations.
-  Pin-isolation measurements, DDR, SD, the remaining USB regressions,
+  Pin-isolation measurements, DDR, SD, the remaining non-Xbox USB regressions,
   temperature, cold/warm cycles, and the long-run DVI/audio gates remain open.
 
 ## Next validation sequence
 
-1. Finish the remaining Xbox disconnect, hotplug, unplug-while-held, and
-   joystick-port-swap steps in `docs/C64_USB_INPUT_HARDWARE_TEST.md`. Preserve
-   the proven USB1 power, keyboard, input-map, live-video, reset, and
-   golden-reboot behavior.
-2. Recreate and build C64 NTSC with
+1. Recreate and build C64 NTSC with
    `MULTITINI_C64_VIDEO_STANDARD=NTSC`; retain and review a separate complete
    report set.
-3. Create a separate GBC project with `MULTITINI_MACHINE=GBC`; keep
+2. Create a separate GBC project with `MULTITINI_MACHINE=GBC`; keep
    `MULTITINI_ENABLE_GBC_PSRAM=0` for the first elaboration and synthesis review.
    Confirm the selected upstream hierarchy, open bootstrap initialization,
    inferred memories, requested machine clock, and resource estimate.
-4. Route SID audio only after its own clock, reset, format, and mute gates
+3. Route SID audio only after its own clock, reset, format, and mute gates
    pass.
-5. Execute the remaining boot, DDR, SD, input, and machine gates in
+4. Execute the remaining boot, DDR, SD, input, and machine gates in
    `MULTITINI_ONE_PLAN.md` and `docs/VIVADO_HANDOFF.md`.
 
 Only after the minimal board image passes should PSRAM be connected and its

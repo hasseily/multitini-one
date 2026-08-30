@@ -344,5 +344,14 @@ LED delivery without retry or transfer error.
 
 This qualifies the `2026082D` wired Xbox 360 functional input mapping and
 player LED command on the tested controller, in addition to the already
-qualified keyboard maps. Xbox disconnect, hotplug, unplug-while-held, and
-joystick-port-swap coverage are not recorded by this result and remain open.
+qualified keyboard maps. A follow-up test also passed hotplug after boot,
+disconnect while held with state release, reconnect, and runtime
+joystick-port swap on the same controller and USB topology.
+
+After `j` selected C64 joystick port 1, A/Fire and B/Space both appeared as
+Space, X remained Control, and D-pad motion produced the left-arrow glyph, `2`,
+and other matrix-dependent characters at BASIC. This is expected C64 behavior:
+joystick port 1 shares CIA keyboard-matrix lines, so the ROM keyboard scan can
+interpret joystick direction and Fire closures as keys. Those port-1
+fingerprints confirm the swap end to end; they are not an Xbox remap. This
+closes the focused Xbox checklist for the tested controller and topology.

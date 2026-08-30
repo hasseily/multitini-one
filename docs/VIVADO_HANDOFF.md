@@ -235,7 +235,7 @@ recovery path, not the normal installation method. Physical USB1 VBUS and
 generic HID input are proven by `2026082B`, both keyboard maps by `2026082C`,
 and the Xbox functional input map and player LED command by `2026082D`.
 
-## Next step: remaining physical-input regressions
+## Board qualification and next gates
 
 The independent diagnostics, ROM-upload/frozen-frame image, and exact
 live-video image have passed on the board. The live test produced a blinking
@@ -243,10 +243,15 @@ BASIC cursor, a stable tear-free five-minute soak, clean whole-frame `v`
 switches, correct `r` reset/rearm behavior, and successful `:reboot` to golden.
 Preserve that firmware and report set as the PAL video baseline.
 
-Finish the Xbox disconnect, hotplug, unplug-while-held, and joystick-port-swap
-steps in `docs/C64_USB_INPUT_HARDWARE_TEST.md`. The keyboard maps, intended
-Xbox state map, and player LED command are already qualified on the tested
-devices. Retain the board safety checks:
+The follow-up Xbox test passed hotplug after boot, disconnect while held with
+state release, reconnect, and runtime joystick-port swap on controller
+`045e:028e` and the tested USB topology. With port 1 selected, its expected C64
+keyboard-matrix side effects appeared: A/Fire and B/Space both produced Space,
+X remained Control, and the D-pad produced the left-arrow glyph, `2`, and other
+matrix-dependent characters. This confirms port-1 delivery rather than an
+Xbox remap. The focused Xbox checklist is complete for that controller.
+
+Retain the board safety checks:
 
 - the stand-alone power jumper and connector;
 - all Apple main transceiver OE pins are high;

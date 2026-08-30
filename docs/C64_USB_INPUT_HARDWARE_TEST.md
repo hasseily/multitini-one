@@ -4,8 +4,9 @@ This procedure covers the US keyboard map and wired Xbox 360 path in firmware
 build `2026082D`. It also regresses the already-proven USB1 power, keyboard,
 generic HID gamepad, live PAL C64 video, and golden update paths. The recorded
 test qualifies the keyboard maps, Xbox functional input mapping, and player
-LED command. Disconnect, hotplug, unplug-while-held, and joystick-port-swap
-coverage remain to be completed.
+LED command. The recorded follow-up also passes hotplug, disconnect while held,
+reconnect, and joystick-port swap on the tested Xbox controller and USB
+topology.
 
 Build `2026082A` is a failed-power baseline only. Build `2026082B` proved
 connector power, keyboard input, and generic HID gamepad input, but exposed the
@@ -74,7 +75,9 @@ the golden slot and do not use `:reboot` merely to start the loaded C64.
 2. At BASIC, use `PRINT PEEK(56320)` for the default joystick port 2. Neutral
    is `127`; directions and button 1 must pull the corresponding bits low.
 3. Press `j`, confirm the UART says port 1, and repeat with
-   `PRINT PEEK(56321)`.
+   `PRINT PEEK(56321)`. Port 1 shares CIA keyboard-matrix lines, so direction
+   and Fire closures may also appear as BASIC characters; the PEEK value is the
+   unambiguous joystick check.
 4. Check diagonals, hold/release, button 1, unplug while held, reconnect, and
    hotplug after boot. Buttons 2 and 3 are mapped to Space and Control.
 5. Connect the Xbox 360 controller `045e:028e`. Enumeration must complete
@@ -107,5 +110,11 @@ directions worked, A/Fire produced masked joystick value `15`, B produced
 Space, and holding X while pressing a number changed the C64 cursor color,
 proving Control end to end. X alone was nonprinting as expected for a modifier.
 This qualifies the functional Xbox input map and player LED command on the
-tested controller. It does not close the remaining disconnect, hotplug,
-unplug-while-held, or joystick-port-swap steps.
+tested controller. The follow-up test passed hotplug after boot, disconnect
+while held with state release, reconnect, and runtime joystick-port swap. With
+port 1 selected, A/Fire and B/Space both appeared as Space, X remained Control,
+and D-pad motion produced the left-arrow glyph, `2`, and other
+matrix-dependent characters. That is expected because C64 joystick port 1
+shares CIA keyboard-matrix lines; it confirms the swap rather than indicating
+an Xbox remap. All focused Xbox steps passed on the tested controller and USB
+topology.
