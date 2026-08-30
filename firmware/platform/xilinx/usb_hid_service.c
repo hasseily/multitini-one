@@ -30,6 +30,8 @@
 #define MT_HID_RETRY_TICKS ((XTime)(COUNTS_PER_SECOND / UINT64_C(20)))
 #define MT_INPUT_COMMAND_POLLS UINT32_C(10000)
 #define MT_XINPUT_PACKET_BYTES 64U
+#define MT_XINPUT_DIAGNOSTIC_BYTES 10U
+#define MT_XINPUT_OUTPUT_ATTEMPTS 3U
 #define MT_XINPUT_SLOT_BASE CONFIG_USBHOST_MAX_HID_CLASS
 
 #if (MT_XINPUT_PACKET_BYTES % CONFIG_USB_ALIGN_SIZE) != 0
@@ -60,13 +62,24 @@ typedef struct {
 typedef struct {
     struct usbh_xbox *xbox;
     XTime retry_started;
+    XTime output_retry_started;
     uint32_t reports;
+    uint32_t state_changes;
     uint32_t submit_errors;
     uint32_t transfer_errors;
     int last_error;
+    int output_last_error;
+    uint8_t last_packet[MT_XINPUT_DIAGNOSTIC_BYTES];
+    uint8_t decoded_state;
+    uint8_t observed_state;
+    uint8_t last_packet_length;
     uint8_t active;
     uint8_t report_pending;
     uint8_t retry_armed;
+    uint8_t output_pending;
+    uint8_t output_retry_armed;
+    uint8_t output_attempts;
+    uint8_t output_sent;
 } mt_xinput_slot_t;
 
 static mt_hid_slot_t g_slots[MT_C64_HID_SLOT_COUNT];
@@ -80,6 +93,10 @@ static uint8_t
     __attribute__((aligned(CONFIG_USB_ALIGN_SIZE)));
 static uint8_t
     g_xinput_control[CONFIG_USBHOST_MAX_XBOX_CLASS]
+                    [MT_XINPUT_PACKET_BYTES]
+    __attribute__((aligned(CONFIG_USB_ALIGN_SIZE)));
+static uint8_t
+    g_xinput_outputs[CONFIG_USBHOST_MAX_XBOX_CLASS]
                     [MT_XINPUT_PACKET_BYTES]
     __attribute__((aligned(CONFIG_USB_ALIGN_SIZE)));
 static mt_c64_hid_input_t g_c64_input;
@@ -454,13 +471,24 @@ static void xinput_report_complete(void *argument, int bytes)
 
     if (bytes > 0) {
         uint8_t state;
+        uint32_t diagnostic_length;
         int decode_result;
         slot->last_error = 0;
         ++slot->reports;
         ++g_reports_total;
+        diagnostic_length = (uint32_t)bytes;
+        if (diagnostic_length > MT_XINPUT_DIAGNOSTIC_BYTES) {
+            diagnostic_length = MT_XINPUT_DIAGNOSTIC_BYTES;
+        }
+        memset(slot->last_packet, 0, sizeof(slot->last_packet));
+        memcpy(slot->last_packet, g_xinput_reports[index], diagnostic_length);
+        slot->last_packet_length = (uint8_t)diagnostic_length;
         decode_result = mt_c64_xinput_decode(
             g_xinput_reports[index], (size_t)bytes, &state);
         if (decode_result == 0) {
+            if (state != slot->decoded_state) ++slot->state_changes;
+            slot->decoded_state = state;
+            slot->observed_state |= state;
             (void)mt_c64_hid_joystick_report(
                 &g_c64_input, xinput_aggregate_slot(slot), state);
         } else {
@@ -516,6 +544,103 @@ static void submit_xinput_report(mt_xinput_slot_t *slot)
     g_last_error = result;
 }
 
+static bool xinput_output_can_retry(int error)
+{
+    return error != -USB_ERR_STALL && error != -USB_ERR_SHUTDOWN &&
+           error != -USB_ERR_NODEV && error != -USB_ERR_NOTCONN;
+}
+
+static void arm_xinput_output_retry(mt_xinput_slot_t *slot, int error)
+{
+    if (slot == NULL) return;
+    slot->output_last_error = error;
+    slot->last_error = error;
+    g_last_error = error;
+    if (slot->output_attempts >= MT_XINPUT_OUTPUT_ATTEMPTS ||
+        !xinput_output_can_retry(error)) {
+        return;
+    }
+    XTime_GetTime(&slot->output_retry_started);
+    slot->output_retry_armed = 1U;
+}
+
+static void xinput_output_complete(void *argument, int bytes)
+{
+    mt_xinput_slot_t *const slot = argument;
+    int error;
+
+    if (slot == NULL) return;
+    slot->output_pending = 0U;
+    if (slot->active == 0U || slot->xbox == NULL) return;
+    if (bytes == -USB_ERR_SHUTDOWN || slot->xbox->hport == NULL ||
+        !slot->xbox->hport->connected) {
+        return;
+    }
+    if (bytes == (int)MT_C64_XINPUT_LED_COMMAND_BYTES) {
+        slot->output_sent = 1U;
+        slot->output_retry_armed = 0U;
+        slot->output_last_error = 0;
+        return;
+    }
+
+    error = bytes < 0 ? bytes : -USB_ERR_IO;
+    ++slot->transfer_errors;
+    ++g_transfer_errors;
+    arm_xinput_output_retry(slot, error);
+}
+
+static void submit_xinput_output(mt_xinput_slot_t *slot)
+{
+    uint8_t index;
+    int command_length;
+    int result;
+
+    if (slot == NULL || slot->active == 0U || slot->xbox == NULL ||
+        slot->xbox->hport == NULL || slot->output_pending != 0U ||
+        slot->output_sent != 0U ||
+        slot->output_attempts >= MT_XINPUT_OUTPUT_ATTEMPTS) {
+        return;
+    }
+    if (slot->xbox->intout == NULL ||
+        (slot->xbox->intout->bEndpointAddress &
+         USB_ENDPOINT_DIRECTION_MASK) != 0U ||
+        (slot->xbox->intout->bmAttributes & USB_ENDPOINT_TYPE_MASK) !=
+            USB_ENDPOINT_TYPE_INTERRUPT ||
+        USB_GET_MAXPACKETSIZE(slot->xbox->intout->wMaxPacketSize) <
+            MT_C64_XINPUT_LED_COMMAND_BYTES) {
+        slot->output_last_error = -USB_ERR_NOTSUPP;
+        return;
+    }
+
+    index = (uint8_t)(slot - g_xinput_slots);
+    memset(g_xinput_outputs[index], 0, MT_XINPUT_PACKET_BYTES);
+    command_length = mt_c64_xinput_player_led_command(
+        1U, g_xinput_outputs[index], MT_XINPUT_PACKET_BYTES);
+    if (command_length < 0) {
+        slot->output_last_error = -USB_ERR_INVAL;
+        return;
+    }
+
+    slot->output_retry_armed = 0U;
+    ++slot->output_attempts;
+    usbh_int_urb_fill(&slot->xbox->intout_urb, slot->xbox->hport,
+                      slot->xbox->intout, g_xinput_outputs[index],
+                      (uint32_t)command_length, 0U,
+                      xinput_output_complete, slot);
+    result = usbh_submit_urb(&slot->xbox->intout_urb);
+    if (result == 0) {
+        slot->output_pending = 1U;
+        return;
+    }
+    if ((result == -USB_ERR_NOMEM || result == -USB_ERR_BUSY) &&
+        slot->xbox->intout_urb.hcpriv == NULL) {
+        slot->xbox->intout_urb.errorcode = 0;
+    }
+    ++slot->submit_errors;
+    ++g_submit_errors;
+    arm_xinput_output_retry(slot, result);
+}
+
 static void initialize_xinput_device(mt_xinput_slot_t *slot)
 {
     struct usb_setup_packet *setup;
@@ -566,6 +691,7 @@ void usbh_xbox_run(struct usbh_xbox *xbox)
                (unsigned int)xbox->minor, (unsigned int)aggregate_slot);
     submit_xinput_report(slot);
     initialize_xinput_device(slot);
+    submit_xinput_output(slot);
 }
 
 void usbh_xbox_stop(struct usbh_xbox *xbox)
@@ -604,6 +730,12 @@ static void retry_reports(void)
             now - slot->retry_started >= MT_HID_RETRY_TICKS) {
             slot->retry_armed = 0U;
             submit_xinput_report(slot);
+        }
+        if (slot->active != 0U && slot->output_pending == 0U &&
+            slot->output_retry_armed != 0U &&
+            now - slot->output_retry_started >= MT_HID_RETRY_TICKS) {
+            slot->output_retry_armed = 0U;
+            submit_xinput_output(slot);
         }
     }
 }
@@ -869,6 +1001,34 @@ void usb_hid_service_dump_status(void)
                (unsigned int)status.submit_errors,
                (unsigned int)status.transfer_errors,
                (unsigned int)status.input_errors, status.last_error);
+    for (uint8_t index = 0U; index < CONFIG_USBHOST_MAX_XBOX_CLASS;
+         ++index) {
+        const mt_xinput_slot_t *const slot = &g_xinput_slots[index];
+        if (slot->active == 0U) continue;
+        xil_printf("usb1 xinput%u reports=%u state=%02x seen=%02x "
+                   "changes=%u in_pending=%u led=%u out_try=%u "
+                   "out_pending=%u submit_err=%u transfer_err=%u "
+                   "last=%d out_last=%d raw=",
+                   (unsigned int)index, (unsigned int)slot->reports,
+                   (unsigned int)slot->decoded_state,
+                   (unsigned int)slot->observed_state,
+                   (unsigned int)slot->state_changes,
+                   (unsigned int)slot->report_pending,
+                   (unsigned int)slot->output_sent,
+                   (unsigned int)slot->output_attempts,
+                   (unsigned int)slot->output_pending,
+                   (unsigned int)slot->submit_errors,
+                   (unsigned int)slot->transfer_errors, slot->last_error,
+                   slot->output_last_error);
+        if (slot->last_packet_length == 0U) {
+            xil_printf("-");
+        } else {
+            for (uint8_t byte = 0U; byte < slot->last_packet_length; ++byte) {
+                xil_printf("%02x", (unsigned int)slot->last_packet[byte]);
+            }
+        }
+        xil_printf("\r\n");
+    }
     xil_printf("usb1 phy setup_rc=%d disable_rc=%d drive_known=%u drive=%u "
                "vbus_known=%u vbus_valid=%u ulpi_err=%d timeouts=%u "
                "id=%04x:%04x func=%02x iface=%02x otg=%02x int=%02x "

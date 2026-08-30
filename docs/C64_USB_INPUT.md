@@ -6,17 +6,18 @@ US-keymap or Xbox qualification image: `Shift+=` did not produce arithmetic
 plus, and the Xbox 360 controller (`045e:028e`) failed configuration parsing
 with `Endpoint num 4 overflow`.
 
-Current build `2026082C` source defaults to a US symbolic keyboard map and adds
-a dedicated wired Xbox 360 input path. Host tests pass. Board qualification is
-pending. Its current root `FIRMWARE.BIN` is 4,362,060 bytes, has SHA-256
-`ae75318d458c6f6203c5ed6a87be1283ace6b39dacf0307c7e82c52e281ea004`,
-CRC32 `EF6EB912`, and 10,252,468 bytes free in the firmware slot. The matching
-routed bitstream has SHA-256
-`e0b6df0a38dcbd1c4a6f31e2274d4c74e62cf77489f9332bd36a276a9c650e4b`;
-the XSA has SHA-256
-`530322983caa359baedcd1cbc50b990b0657862c3c6cf545ba91f9f86289158c`.
-Bootgen readback found the expected FSBL, bitstream, and two application
-segments.
+Build `2026082C` introduced the US symbolic keyboard map and dedicated wired
+Xbox 360 path. Its board test qualified both US symbolic and retained MiSTer
+positional keyboard modes, plus Xbox enumeration, report transport, D-pad, and
+left-stick directions. A/Fire and the blinking player ring remained open.
+
+Current build `2026082D` adds per-XInput state/raw-report diagnostics and sends
+the wired-controller player-1 LED command. Vivado, Vitis, and Bootgen passed,
+and the focused board test qualifies the intended Xbox input map and player LED
+command on controller `045e:028e`. Its root `FIRMWARE.BIN` is 4,365,516 bytes,
+has SHA-256
+`536b68ff99f53925d7825d70d7ee30bb586edb8cb301c1e5feff1607248a6600`,
+CRC32 `0680EEAB`, and 10,249,012 bytes free in the firmware slot.
 
 The historical PAL image uses shell and firmware build ID `2026082B` and records
 source/manifest commit `c2b87fad2913580de296eb9b06a9186b57deeefa`.
@@ -24,8 +25,8 @@ Its 4,351,948-byte `FIRMWARE.BIN` has SHA-256
 `e13e1b3df355e38590ebff3c5f496fa10a8b5c1d89bee0066f649aed1caf9425`,
 CRC32 `F31417DA`, and 10,262,580 bytes free in the firmware slot. Use
 [`HARDWARE_RESULTS.md`](HARDWARE_RESULTS.md) for that historical result. Use
-[`C64_USB_INPUT_HARDWARE_TEST.md`](C64_USB_INPUT_HARDWARE_TEST.md) to qualify
-the current `2026082C` artifact above.
+[`C64_USB_INPUT_HARDWARE_TEST.md`](C64_USB_INPUT_HARDWARE_TEST.md) for the
+current `2026082D` result and the remaining regression steps.
 
 USB1 runs as a CherryUSB host on the ARM. USB packets do not enter the FPGA.
 The firmware converts stable HID state into the existing C64 input-event ABI:
@@ -103,8 +104,9 @@ releasing one keyboard does not release a key still held on another.
 ## Gamepad map
 
 The parser accepts common HID gamepads with X/Y or Rx/Ry axes, a hat, or
-individual D-pad usages. Build `2026082C` also binds wired Xbox 360/XInput
-controllers, including `045e:028e`. The default is C64 joystick port 2.
+individual D-pad usages. Build `2026082C` and later also bind wired Xbox
+360/XInput controllers, including `045e:028e`. The default is C64 joystick
+port 2.
 
 | HID control | C64 input |
 | --- | --- |
@@ -115,12 +117,19 @@ controllers, including `045e:028e`. The default is C64 joystick port 2.
 | Button 3 | Control |
 
 For Xbox 360 reports, the D-pad and left stick drive directions, A is Fire, B
-is Space, and X is Control. HID and XInput controllers use separate aggregate
-slots, so they can coexist on a hub without clearing each other's state.
+is Space, and X is Control. Build `2026082D` demonstrated every intended state
+bit on hardware: A/Fire produced masked joystick value `15`, B produced Space,
+and holding X while pressing a number changed the C64 cursor color, proving
+Control end to end. X alone was correctly nonprinting as a modifier. Its
+player-1 LED output completed in one attempt. HID and XInput controllers use
+separate aggregate slots, so they can coexist on a hub without clearing each
+other's state.
 
 Press `j` at the UART console to swap the USB gamepad between C64 ports 2 and
 1. The firmware releases the old port before asserting the new one. Press `u`
-to print USB controller, connected-device, report, and error counters.
+to print USB controller, connected-device, report, and error counters. Build
+`2026082D` also prints a per-XInput line with decoded state, all-seen bits,
+state-change count, LED-output state, errors, and the latest raw packet prefix.
 
 ## Test boundary
 
@@ -128,6 +137,7 @@ Eleven host binaries and 44 Python tests cover symbolic and positional key
 maps, punctuation, keypad aliases, held keys, duplicate keyboards, rollover,
 extended keys, disconnect releases, delivery retry, HID/XInput decoding,
 joystick aggregation, port swap, and reset reassertion. Build `2026082B`
-already proves physical VBUS, keyboard input, and one generic HID gamepad on
-the board. Build `2026082C` must still pass the new keymap and Xbox procedure
-before either change is claimed as hardware-qualified.
+proves physical VBUS and one generic HID gamepad; build `2026082C` qualifies
+both keyboard maps. Build `2026082D` qualifies the wired Xbox 360 functional
+input map and player LED command on the tested controller. Xbox disconnect,
+hotplug, unplug-while-held, and joystick-port-swap coverage remain open.

@@ -292,8 +292,57 @@ bytes, `xbox_custom_class_info` is retained, and `usbh_xbox_run` and
 `usbh_xbox_stop` are strong linked definitions.
 
 Eleven compiled host tests, 44 Python tests, and the repository policy check
-pass. This result qualifies the source and vendor build only. The US symbolic
-map and Xbox 360 path require the focused board procedure in
-[`C64_USB_INPUT_HARDWARE_TEST.md`](C64_USB_INPUT_HARDWARE_TEST.md). Until that
-passes, the physical input boundary remains the proven `2026082B` keyboard
-transport and generic HID controller.
+pass. At packaging time this qualified the source and vendor build only and
+required the focused board procedure in
+[`C64_USB_INPUT_HARDWARE_TEST.md`](C64_USB_INPUT_HARDWARE_TEST.md).
+
+The subsequent board test qualified both the US symbolic and retained MiSTer
+positional keyboard maps. The Xbox controller also enumerated, bound interface
+0, delivered valid reports, and drove the D-pad and left-stick directions.
+However, A did not assert C64 Fire and the player ring kept blinking. Those two
+remaining observations led to the focused `2026082D` diagnostic build below.
+
+### Build 2026082D: Xbox input map and player LED pass
+
+Exact firmware artifact:
+
+- File: repository-root `FIRMWARE.BIN`
+- Vivado build manifest: UTC `2026-08-30T04:33:20Z`, base commit
+  `765aee1fbf54c330c7fdab1543da38c0b577b277`, intentional dirty engineering
+  tree, PAL C64, shell and firmware build ID `2026082D`
+- `FIRMWARE.BIN` size: 4,365,516 bytes
+- `FIRMWARE.BIN` SHA-256:
+  `536b68ff99f53925d7825d70d7ee30bb586edb8cb301c1e5feff1607248a6600`
+- `FIRMWARE.BIN` CRC32: `0680EEAB`
+- Free firmware-slot space: 10,249,012 bytes
+- Bootgen readback verified the expected FSBL, routed bitstream, and two
+  application segments.
+
+Vivado 2025.2 completed synthesis, implementation, bitstream generation, and
+XSA export. Timing passes with WNS +0.525 ns, WHS +0.040 ns, WPWS +1.749 ns,
+and no failing endpoints. The four bus-skew slacks are +6.213 ns, +6.194 ns,
++125.927 ns, and +125.693 ns. The routed design uses 6,170 LUTs, 5,703
+flip-flops, 85 RAMB36 blocks, one RAMB18 block, and seven DSP blocks; the live
+video bridge accounts for 546 LUTs. Vitis 2025.2 rebuilt the matching FSBL and
+diagnostic application, and Bootgen packaging and readback passed.
+
+The wired Microsoft Xbox 360 controller `045e:028e` completed its player-1 LED
+output on the first attempt and continued receiving valid 20-byte input
+reports. The final per-controller UART line was:
+
+```text
+usb1 xinput0 reports=839 state=10 seen=7F changes=86 in_pending=1 led=1 out_try=1 out_pending=0 submit_err=0 transfer_err=0 last=0 out_last=0 raw=0014001000002EFB6B00
+```
+
+`seen=7F` proves that every intended direction, Fire, Space, and Control state
+bit was decoded during the test. On the live C64, D-pad and left-stick
+directions worked, A/Fire produced the expected masked joystick value `15`, B
+produced Space, and holding X while pressing a number changed the C64 cursor
+color, proving Control end to end. X alone remained nonprinting, as expected
+for a modifier. `led=1`, `out_try=1`, and `out_last=0` record successful player
+LED delivery without retry or transfer error.
+
+This qualifies the `2026082D` wired Xbox 360 functional input mapping and
+player LED command on the tested controller, in addition to the already
+qualified keyboard maps. Xbox disconnect, hotplug, unplug-while-held, and
+joystick-port-swap coverage are not recorded by this result and remain open.

@@ -64,3 +64,17 @@ int mt_c64_xinput_decode(const uint8_t *report, size_t length,
     *joystick_state = state;
     return 0;
 }
+
+int mt_c64_xinput_player_led_command(uint8_t player, uint8_t *command,
+                                     size_t capacity)
+{
+    if (command == NULL || capacity < MT_C64_XINPUT_LED_COMMAND_BYTES ||
+        player < 1U || player > 4U) {
+        return -1;
+    }
+
+    command[0] = UINT8_C(0x01);
+    command[1] = UINT8_C(0x03);
+    command[2] = (uint8_t)(player + 1U);
+    return (int)MT_C64_XINPUT_LED_COMMAND_BYTES;
+}

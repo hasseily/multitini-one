@@ -2,28 +2,27 @@
 
 Status: the diagnostic, PAL C64 frozen-snapshot, and PAL live-video images have
 passed their recorded board procedures. Build `2026082B` also proves physical
-USB1 VBUS, keyboard transport, and one generic HID gamepad. The corrected
-`2026082C` US-keymap/Xbox image has a fresh Vivado 2025.2 build and matching
-Vitis/Bootgen artifact; those two changes remain pending on hardware.
+USB1 VBUS, keyboard transport, and one generic HID gamepad. Build `2026082C`
+qualified both keyboard maps and the initial wired Xbox 360 report/directional
+path. Current build `2026082D` has passed Vivado, Vitis, Bootgen, and the board
+test for the full intended Xbox input map and player LED command.
 
 The fresh default PAL C64 build used Vivado 2025.2, part
-`xc7z020clg484-2`, shell and firmware build ID `2026082C`, PAL generic
-`C64_NTSC_MODE=0`. Its initial manifest is UTC `2026-08-30T03:27:47Z` and
-records base commit `ee71f5dd5a77e8a15c9881e2a07d3ee48c9c9c77` plus an intentional dirty
-engineering tree. The exported XSA has SHA-256
-`530322983caa359baedcd1cbc50b990b0657862c3c6cf545ba91f9f86289158c`; the
-routed bitstream has SHA-256
-`e0b6df0a38dcbd1c4a6f31e2274d4c74e62cf77489f9332bd36a276a9c650e4b`.
+`xc7z020clg484-2`, shell and firmware build ID `2026082D`, PAL generic
+`C64_NTSC_MODE=0`. Its manifest is UTC `2026-08-30T04:33:20Z` and records base
+commit `765aee1fbf54c330c7fdab1543da38c0b577b277` plus an intentional dirty
+engineering tree.
 
-Routed timing passes with WNS +0.599 ns, WHS +0.036 ns, WPWS +1.749 ns,
+Routed timing passes with WNS +0.525 ns, WHS +0.040 ns, WPWS +1.749 ns,
 all total negative slack zero, and zero failing endpoints. The CDC report has
-15 Info entries only: 14 `CDC-3` and one `CDC-9`. All four bus-skew checks pass,
-with worst slack +6.158 ns. All 11,035 routable nets are fully routed with zero
-routing errors. DRC has zero Error or Critical entries and retains 51 advisory
-warnings.
+15 Info entries only: 14 `CDC-3` and one `CDC-9`. All four bus-skew checks pass
+at +6.213 ns, +6.194 ns, +125.927 ns, and +125.693 ns. All 11,035 routable nets
+are fully routed with zero routing errors. DRC has zero Error or Critical
+entries and retains 51 advisory warnings.
 
-The routed design uses 6,167 LUTs, 5,703 flip-flops, 85 RAMB36 blocks, one
-RAMB18 block, and seven DSP blocks.
+The routed design uses 6,170 LUTs, 5,703 flip-flops, 85 RAMB36 blocks, one
+RAMB18 block, and seven DSP blocks. The four-bank live video bridge uses 546
+LUTs, 335 flip-flops, and 64 RAMB36 blocks.
 
 The exact AK4493 datasheet was obtained and reviewed locally. The I2S LRCK and
 SDATA constraints now use a conservative +/-5 ns receiver window, and the
@@ -53,7 +52,7 @@ changes.
 Run from the repository root:
 
 ```sh
-MULTITINI_BUILD_ID=2026082C \
+MULTITINI_BUILD_ID=2026082D \
   vivado -mode batch -source scripts/create_project.tcl
 ```
 
@@ -137,8 +136,9 @@ Save the exact reports and build manifest. A clean build is not hardware proof.
 
 The verified vendor result above covers the current default PAL C64 USB-input
 project. Its live-video PL path is unchanged from the separately qualified PAL
-live image. Build `2026082B` proves USB1 VBUS, keyboard transport, and generic
-HID input; build `2026082C` still needs the US symbolic-map and Xbox checks.
+live image. Build `2026082B` proves USB1 VBUS and generic HID input, build
+`2026082C` qualifies both keyboard maps, and build `2026082D` qualifies the
+wired Xbox 360 functional map and player LED command on the tested controller.
 The separate NTSC C64 and GBC vendor builds remain pending. GBC PSRAM remains
 disabled and unqualified.
 
@@ -197,7 +197,8 @@ After a successful XSA export:
 vitis -s scripts/create_vitis_workspace.py
 ```
 
-Confirm the platform uses that exact XSA. For build `2026082C`, Vitis 2025.2
+Confirm the platform uses that exact XSA. For historical build `2026082C`,
+Vitis 2025.2
 built both the FSBL and USB-input application from the fresh XSA. The
 application has 179,856 bytes of text, 1,932 bytes of data, and 141,760 bytes
 of BSS. Bootgen packaged and read back the expected FSBL, routed bitstream, and
@@ -206,6 +207,13 @@ Xbox records, and the Xbox run/stop callbacks are strong definitions. The
 4,362,060-byte `FIRMWARE.BIN` has SHA-256
 `ae75318d458c6f6203c5ed6a87be1283ace6b39dacf0307c7e82c52e281ea004`,
 CRC32 `EF6EB912`, and 10,252,468 bytes free in the firmware slot.
+
+For current build `2026082D`, Vitis 2025.2 rebuilt the matching FSBL and
+diagnostic application. Bootgen packaged and read back the expected FSBL,
+routed bitstream, and two application segments. The 4,365,516-byte root
+`FIRMWARE.BIN` has SHA-256
+`536b68ff99f53925d7825d70d7ee30bb586edb8cb301c1e5feff1607248a6600`,
+CRC32 `0680EEAB`, and 10,249,012 bytes free in the firmware slot.
 
 The USB-input test application starts with the core held in reset and the DAC muted. It probes
 the ABI, logs the TMP102 temperature when I2C works, initializes the DAC without
@@ -222,12 +230,12 @@ The normal installation path copies this exact `FIRMWARE.BIN` to the SD-card
 root. `:reboot` from a running image, or a power cycle, lets golden program and
 verify the secondary firmware slot, replace `FIRMWARE.BIN` with
 `FIRMWARE.OK`, and reboot into normal auto-boot. Run the ROM uploader only after
-the `2026082C` firmware banner appears. The golden UART updater remains a
-recovery path, not the normal installation method. Physical USB1 VBUS,
-keyboard transport, and generic HID input are already proven by `2026082B`;
-the new symbolic map and Xbox path are not yet qualified.
+the `2026082D` firmware banner appears. The golden UART updater remains a
+recovery path, not the normal installation method. Physical USB1 VBUS and
+generic HID input are proven by `2026082B`, both keyboard maps by `2026082C`,
+and the Xbox functional input map and player LED command by `2026082D`.
 
-## Next step: physical input
+## Next step: remaining physical-input regressions
 
 The independent diagnostics, ROM-upload/frozen-frame image, and exact
 live-video image have passed on the board. The live test produced a blinking
@@ -235,10 +243,10 @@ BASIC cursor, a stable tear-free five-minute soak, clean whole-frame `v`
 switches, correct `r` reset/rearm behavior, and successful `:reboot` to golden.
 Preserve that firmware and report set as the PAL video baseline.
 
-Run `docs/C64_USB_INPUT_HARDWARE_TEST.md` one subsystem at a time. Start with
-the US symbolic keyboard map, regress the proven generic HID gamepad, then test
-the wired Xbox 360 controller. Before treating either change as a machine
-result, retain the board safety checks:
+Finish the Xbox disconnect, hotplug, unplug-while-held, and joystick-port-swap
+steps in `docs/C64_USB_INPUT_HARDWARE_TEST.md`. The keyboard maps, intended
+Xbox state map, and player LED command are already qualified on the tested
+devices. Retain the board safety checks:
 
 - the stand-alone power jumper and connector;
 - all Apple main transceiver OE pins are high;

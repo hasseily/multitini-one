@@ -6,10 +6,11 @@ tests. The current source replaces the frozen buffer with a four-bank,
 four-bit-palette live frame ring. That bridge passes focused XSim, a fresh
 routed PAL build in Vivado 2025.2, and the complete first live-video board
 procedure. Build `2026082B` also proves USB1 connector power, keyboard input,
-and one generic HID gamepad. Current build `2026082C` replaces the hybrid
-symbol map with a US symbolic default and adds wired Xbox 360 input; those two
-changes now have a matched Vivado/Vitis/Bootgen artifact and are the next board
-gate.
+and one generic HID gamepad. Build `2026082C` fixed the US symbolic map and
+Xbox enumeration; its board test qualified both keyboard maps and Xbox
+directional input. Current build `2026082D` has a matched
+Vivado/Vitis/Bootgen artifact and qualifies the full intended wired Xbox 360
+input map plus the player LED command on the tested controller.
 
 ## Completed repository and portable validation
 
@@ -167,9 +168,29 @@ keyboard transport, and generic HID input.
   `ae75318d458c6f6203c5ed6a87be1283ace6b39dacf0307c7e82c52e281ea004`
   and CRC32 `EF6EB912`, and leaves 10,252,468 bytes free in the firmware slot.
 
-This build fixes the US symbolic-keymap behavior and the CherryUSB endpoint
-capacity failure in source. It does not claim those paths on hardware; the
-focused keyboard and `045e:028e` Xbox test remains pending.
+This build fixed the US symbolic-keymap behavior and the CherryUSB endpoint
+capacity failure in source. Its later board test qualified both keyboard maps,
+Xbox enumeration and report transport, and D-pad/left-stick directions, but A
+did not assert Fire and the player ring kept blinking.
+
+## Completed vendor flow for build 2026082D
+
+- Vivado 2025.2 completed the fresh PAL C64 synthesis, implementation,
+  bitstream, and XSA flow with shell build ID `2026082D`.
+- The manifest is UTC `2026-08-30T04:33:20Z`; it records base commit
+  `765aee1fbf54c330c7fdab1543da38c0b577b277` and an intentional dirty
+  engineering tree.
+- Timing passes with WNS +0.525 ns, WHS +0.040 ns, WPWS +1.749 ns, and zero
+  failing endpoints.
+- All four bus-skew checks pass at +6.213 ns, +6.194 ns, +125.927 ns, and
+  +125.693 ns. The routed design uses 6,170 LUTs, 5,703 flip-flops, 85 RAMB36
+  blocks, one RAMB18 block, and seven DSP blocks; the live bridge uses 546
+  LUTs.
+- Vitis 2025.2 rebuilt the matching FSBL and diagnostic application. Bootgen
+  packaging and readback passed.
+- The root `FIRMWARE.BIN` is 4,365,516 bytes, has SHA-256
+  `536b68ff99f53925d7825d70d7ee30bb586edb8cb301c1e5feff1607248a6600`
+  and CRC32 `0680EEAB`, and leaves 10,249,012 bytes free in the firmware slot.
 
 ## Completed first board observations
 
@@ -221,6 +242,26 @@ focused keyboard and `045e:028e` Xbox test remains pending.
 - These results qualify USB1 power, keyboard transport, and generic HID input,
   but not the new `2026082C` symbolic map or Xbox path.
 
+## Completed builds 2026082C and 2026082D USB board observations
+
+- Build `2026082C` qualified both the US symbolic and retained MiSTer
+  positional keyboard maps on the tested keyboard.
+- The same build proved that Xbox controller `045e:028e` enumerated, bound its
+  input interface, delivered reports, and drove D-pad and left-stick
+  directions. A/Fire and the blinking player ring remained open.
+- Build `2026082D` sent the player-1 LED command successfully and exposed
+  per-XInput report, state, and raw-packet diagnostics.
+- Its final line reported `reports=839`, `state=10`, `seen=7F`, `changes=86`,
+  `led=1`, one output attempt, and zero per-XInput submit, transfer, or output
+  errors. The final raw prefix was `0014001000002EFB6B00`.
+- On the live C64, A/Fire produced masked joystick value `15`, B produced
+  Space, and holding X while pressing a number changed the cursor color,
+  proving Control end to end. X alone remained nonprinting as expected for a
+  modifier. All seven intended state bits were observed.
+- These results qualify the wired Xbox 360 functional input map and player LED
+  command on the tested controller. Disconnect, hotplug, unplug-while-held,
+  and joystick-port-swap coverage remain open.
+
 ## Still requires vendor tools or hardware
 
 - The NTSC C64 project still needs its own clean vendor build and report review.
@@ -230,19 +271,20 @@ focused keyboard and `045e:028e` Xbox test remains pending.
 - PSRAM activation: PHY timing, IDELAYCTRL, calibration, constraints, command
   edge/count tuning, and board measurement are unresolved. The default build
   holds CE high; the prepared GBC branch is explicit opt-in only.
-- The `2026082C` US symbolic map and wired Xbox 360 input need their focused
-  board tests. Physical audio remains the independent diagnostic tone; SID is
-  not routed.
+- Xbox disconnect, hotplug, unplug-while-held, and joystick-port-swap
+  regressions remain open. Physical audio remains the independent diagnostic
+  tone; SID is not routed.
 - Initial golden-slot boot, DVI timing, fixed-tone audio, USB1 power, keyboard
   transport, generic HID input, and golden reboot have observations.
-  Pin-isolation measurements, DDR, SD, the new symbolic/Xbox paths,
+  Pin-isolation measurements, DDR, SD, the remaining USB regressions,
   temperature, cold/warm cycles, and the long-run DVI/audio gates remain open.
 
 ## Next validation sequence
 
-1. Run `docs/C64_USB_INPUT_HARDWARE_TEST.md`, starting with the US symbol map,
-   then regress generic HID and qualify Xbox 360 input. Preserve the proven
-   USB1 power, live-video, reset, and golden-reboot behavior.
+1. Finish the remaining Xbox disconnect, hotplug, unplug-while-held, and
+   joystick-port-swap steps in `docs/C64_USB_INPUT_HARDWARE_TEST.md`. Preserve
+   the proven USB1 power, keyboard, input-map, live-video, reset, and
+   golden-reboot behavior.
 2. Recreate and build C64 NTSC with
    `MULTITINI_C64_VIDEO_STANDARD=NTSC`; retain and review a separate complete
    report set.

@@ -24,6 +24,7 @@ static void expect_state(uint8_t *report, uint8_t expected)
 int main(void)
 {
     uint8_t report[MT_C64_XINPUT_REPORT_BYTES] = {0};
+    uint8_t command[MT_C64_XINPUT_LED_COMMAND_BYTES] = {0};
     uint8_t state = 0U;
 
     report[1] = MT_C64_XINPUT_REPORT_BYTES;
@@ -59,6 +60,23 @@ int main(void)
     report[0] = UINT8_C(0x00);
     report[1] = UINT8_C(0x13);
     assert(mt_c64_xinput_decode(report, sizeof(report), &state) == -2);
+
+    assert(mt_c64_xinput_player_led_command(1U, command,
+                                             sizeof(command)) == 3);
+    assert(command[0] == UINT8_C(0x01));
+    assert(command[1] == UINT8_C(0x03));
+    assert(command[2] == UINT8_C(0x02));
+    assert(mt_c64_xinput_player_led_command(4U, command,
+                                             sizeof(command)) == 3);
+    assert(command[2] == UINT8_C(0x05));
+    assert(mt_c64_xinput_player_led_command(0U, command,
+                                             sizeof(command)) == -1);
+    assert(mt_c64_xinput_player_led_command(5U, command,
+                                             sizeof(command)) == -1);
+    assert(mt_c64_xinput_player_led_command(1U, NULL,
+                                             sizeof(command)) == -1);
+    assert(mt_c64_xinput_player_led_command(1U, command,
+                                             sizeof(command) - 1U) == -1);
 
     return 0;
 }

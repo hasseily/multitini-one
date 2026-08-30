@@ -49,19 +49,17 @@ Known:
   XSim, and the selected SystemVerilog C64 path passes Verilator lint.
 - The current PAL C64 USB-input project completed synthesis, implementation,
   bitstream generation, and XSA export in Vivado 2025.2 with shell build ID
-  `2026082C`. Routed timing passed with WNS +0.599 ns, WHS +0.036 ns, WPWS
-  +1.749 ns, and no failing endpoints. The final CDC report contains only 14
-  `CDC-3` and one `CDC-9` informational crossing.
-- The current routed design uses 6,167 LUTs, 5,703 flip-flops, 85 RAMB36 blocks,
+  `2026082D`. Routed timing passed with WNS +0.525 ns, WHS +0.040 ns, WPWS
+  +1.749 ns, and no failing endpoints.
+- The current routed design uses 6,170 LUTs, 5,703 flip-flops, 85 RAMB36 blocks,
   one RAMB18 block, and seven DSP blocks. The four-bank video bridge accounts
-  for 543 LUTs, 335 flip-flops, and 64 RAMB36 blocks.
+  for 546 LUTs, 335 flip-flops, and 64 RAMB36 blocks.
 - Vitis 2025.2 built the matching FSBL and diagnostic application from the
   fresh XSA. Bootgen created and read back the expected FSBL, routed bitstream,
-  and application partitions. The resulting 4,362,060-byte root
+  and application partitions. The resulting 4,365,516-byte root
   `FIRMWARE.BIN` has SHA-256
-  `ae75318d458c6f6203c5ed6a87be1283ace6b39dacf0307c7e82c52e281ea004`
-  and CRC32 `EF6EB912`. Its US-keymap and Xbox changes still require the board
-  procedure.
+  `536b68ff99f53925d7825d70d7ee30bb586edb8cb301c1e5feff1607248a6600`
+  and CRC32 `0680EEAB`.
 - The preserved `20260829` live-video baseline passed its PAL board test. Its
   blinking BASIC cursor proves continuous delivery rather than a frozen
   capture; the five-minute soak, whole-frame source toggles, reset/rearm, and
@@ -74,8 +72,11 @@ Known:
   retry, reset reassertion, and joystick port swap are covered by host tests.
 - Build `2026082B` proves USB1 connector power, keyboard input, and one generic
   HID gamepad on the board. It exposed a hybrid symbol-map failure and an Xbox
-  `Endpoint num 4 overflow` failure. Build `2026082C` fixes both in source and
-  passes host tests; its keyboard and Xbox changes await board qualification.
+  `Endpoint num 4 overflow` failure. Build `2026082C` fixed both failures and
+  qualified the US symbolic and retained positional keyboard maps. Build
+  `2026082D` qualifies wired Xbox 360 report decoding, D-pad and left-stick
+  directions, A as Fire, B as Space, X as Control, and the player LED command
+  on the tested controller.
 - The exact AK4493 datasheet has been reviewed. Conservative I2S output delays
   are now part of the implemented-design timing constraints.
 - Portable content, XMODEM, DAC, temperature, and shell-link code passes the
@@ -102,13 +103,14 @@ Hardware status and remaining gaps:
   tested card/display combination, not physical input, storage, or SID audio.
 - NTSC and GBC Vivado builds remain pending. The GBC PSRAM path remains
   disabled by default and awaits timing and board validation.
-- SD file-system integration is not implemented. USB1 power, keyboard
-  transport, and generic HID gamepad input are board-proven. The `2026082C` US
-  symbol map and Xbox path still need their focused board checks. The tracked
-  C64 ROM set is loaded over UART; the pinned open GBC bootstrap remains the
-  only ROM embedded in an FPGA image.
+- SD file-system integration is not implemented. USB1 power, both keyboard
+  maps, generic HID gamepad input, and the `2026082D` wired Xbox 360 input map
+  and player LED command are board-proven. Xbox disconnect, hotplug, and
+  unplug-while-held coverage remain open. The tracked C64 ROM set is loaded
+  over UART; the pinned open GBC bootstrap remains the only ROM embedded in an
+  FPGA image.
 - DVI timing and the fixed diagnostic tone have initial board observations.
-  Their long-run gates, remaining USB map/Xbox/hotplug checks, SD, DDR, PSRAM,
+  Their long-run gates, remaining USB hotplug checks, SD, DDR, PSRAM,
   and Apple-bus isolation still require the hardware work in
   `MULTITINI_ONE_PLAN.md`.
 
@@ -133,7 +135,7 @@ review, or board testing.
 The intended first commands on a Vivado 2025.2 machine are:
 
 ```powershell
-$env:MULTITINI_BUILD_ID = '2026082C'
+$env:MULTITINI_BUILD_ID = '2026082D'
 vivado -mode batch -source scripts/create_project.tcl
 vivado -mode batch -source scripts/build_and_export_xsa.tcl
 vitis -s scripts/create_vitis_workspace.py
