@@ -110,7 +110,7 @@ The existing uploader still sends only BASIC, KERNAL, and character ROMs as an
 exact 20,480-byte XMODEM-1K/CRC bundle:
 
 ```powershell
-python .\scripts\serial_c64_rom_upload.py --port COM10
+python .\scripts\serial_c64_rom_upload.py --port COM10 --baud 115200
 ```
 
 Change `COM10` as needed. The script issues `:c64rx 20480 0xCRC32`, defaults to

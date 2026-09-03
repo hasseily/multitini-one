@@ -72,7 +72,7 @@ Close the terminal so the uploader can own the COM port, then run from the
 repository root:
 
 ```powershell
-python .\scripts\serial_c64_rom_upload.py --port COM3
+python .\scripts\serial_c64_rom_upload.py --port COM3 --baud 115200
 ```
 
 Use `--basic`, `--kernal`, and `--character` only to override those defaults.

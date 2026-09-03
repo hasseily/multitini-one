@@ -86,6 +86,12 @@ each completed a strictly framed transfer. The ARM command ABI supports begin,
 data, end, and abort. Firmware retries bounded mailbox backpressure and leaves
 the core in reset if a ROM set cannot be loaded.
 
+The next source-generated image configures UART0 at the golden-compatible
+921600 baud while retaining UART1 at 115200. The PS UART configuration is
+initialized by the generated FSBL, so applying this source change requires a
+fresh Vivado/XSA and Vitis platform/FSBL build. The already packaged `20260902`
+image remains at its historical 115200 baud.
+
 The current diagnostic firmware exposes `:c64rx` on UART0. The host uploader
 combines the repository's selected BASIC, KERNAL, and character ROMs into an
 exact 20 KiB XMODEM-1K/CRC transfer by default; explicit path overrides remain

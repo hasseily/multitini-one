@@ -41,6 +41,10 @@ Known:
 - The UART diagnostic accepts an exact 20 KiB BASIC/KERNAL/character bundle
   through XMODEM-1K/CRC, verifies an outer CRC32, and releases reset only after
   all three FPGA ROM streams complete and the core reports ready.
+- Current source configures diagnostic UART0 at the golden-compatible 921600
+  baud; UART1 remains at 115200. This PS setting takes effect only after a new
+  Vivado/XSA and Vitis platform/FSBL build. The last packaged `20260902` image
+  remains a 115200-baud historical artifact.
 - A fail-closed dual-clock live bridge stores the fixed C64 palette as four-bit
   indices in four 382x270 frame banks. Complete PAL frames enter a Gray-pointer
   ring; the 1080p60 side changes display banks only at vertical blank. A missing
@@ -202,7 +206,7 @@ review, or board testing.
 The intended first commands on a Vivado 2025.2 machine are:
 
 ```powershell
-$env:MULTITINI_BUILD_ID = '20260902'
+$env:MULTITINI_BUILD_ID = '20260903'
 vivado -mode batch -source scripts/create_project.tcl
 vivado -mode batch -source scripts/build_and_export_xsa.tcl
 vitis -s scripts/create_vitis_workspace.py

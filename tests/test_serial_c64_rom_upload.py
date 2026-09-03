@@ -29,17 +29,20 @@ class SerialC64RomUploadTests(unittest.TestCase):
             args.character,
             ROOT / "third_party/c64/ROMs/characters.901225-01.bin",
         )
+        self.assertEqual(args.baud, 921600)
 
         overrides = UPLOAD.parse_args(
             [
                 "--basic", "alternate-basic.bin",
                 "--kernal", "alternate-kernal.bin",
                 "--character", "alternate-character.bin",
+                "--baud", "115200",
             ]
         )
         self.assertEqual(overrides.basic, Path("alternate-basic.bin"))
         self.assertEqual(overrides.kernal, Path("alternate-kernal.bin"))
         self.assertEqual(overrides.character, Path("alternate-character.bin"))
+        self.assertEqual(overrides.baud, 115200)
 
     def test_bundle_order_size_and_exact_command(self):
         basic = patterned(UPLOAD.BASIC_SIZE, 0x10)

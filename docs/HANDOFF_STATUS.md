@@ -105,6 +105,11 @@ retest reports that the scratching/audio bug is fixed.
   then reported that the scratching/audio bug is fixed on the connected board.
   The exact game sequence and duration, stuck-tone recurrence, channels, level,
   reset behavior, SPDIF, and long-run stability were not separately reported.
+- Source after `20260902` changes diagnostic UART0 from 115200 to the golden
+  image's 921600 baud and updates the ROM uploader default to match. UART1
+  remains at 115200. The new UART0 setting is not present in the packaged
+  `20260902` image; it requires a future Vivado/XSA and Vitis platform/FSBL
+  rebuild.
 - Exact 47-file Game Boy import at the pinned commit, per-file license rows,
   SHA-256 lock, open SameBoy-derived CGB bootstrap source/image, and deterministic
   strict-tool ports for the selected upstream `gb` and `cart` modules.

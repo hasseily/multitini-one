@@ -69,6 +69,7 @@ Stop on every Tcl error. Confirm:
 - top `multitini_one_top`;
 - PS input clock 33.333333 MHz;
 - QSPI, SDIO1, I2C0, UART0/1, USB0/1 MIO assignments;
+- UART0 at the golden-compatible 921600 baud and UART1 at 115200 baud;
 - USB reset MIO remains disabled;
 - no Apple clock or reset feeds an internal clock/reset;
 - the default C64 Clocking Wizard requests 31.527954 MHz PAL from FCLK2 and has

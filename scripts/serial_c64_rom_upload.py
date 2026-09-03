@@ -239,7 +239,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="4096-byte character ROM (defaults to the repository copy)",
     )
     parser.add_argument("--port", default="COM3", help="diagnostic UART0 port")
-    parser.add_argument("--baud", type=int, default=115200, help="UART baud rate")
+    parser.add_argument("--baud", type=int, default=921600, help="UART baud rate")
     parser.add_argument("--command-timeout", type=float, default=10.0)
     parser.add_argument("--result-timeout", type=float, default=30.0)
     parser.add_argument("--xmodem-retries", type=int, default=10)

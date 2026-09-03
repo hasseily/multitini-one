@@ -21,7 +21,7 @@ Copy repository-root `FIRMWARE.BIN` to the root of the SD card under that exact
 name, insert the card, and power-cycle. Golden programs and verifies the
 secondary firmware slot, renames the file to `FIRMWARE.OK`, and boots it
 automatically. Upload the 20 KiB ROM set with
-`python .\scripts\serial_c64_rom_upload.py --port COM10`, substituting the
+`python .\scripts\serial_c64_rom_upload.py --port COM10 --baud 115200`, substituting the
 actual COM port. After `[host] target reported C64 boot ok`, press `v` once at
 the UART console to switch from color bars to the C64 screen. Do not overwrite
 the golden slot and do not use `:reboot` merely to start the loaded C64.

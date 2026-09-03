@@ -81,7 +81,7 @@ and save the startup/status log. Close that terminal so the uploader can own the
 port, then run from the repository root:
 
 ```powershell
-python .\scripts\serial_c64_rom_upload.py --port COM3
+python .\scripts\serial_c64_rom_upload.py --port COM3 --baud 115200
 ```
 
 Replace `COM3` if needed. Success must end with:
