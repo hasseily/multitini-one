@@ -5,8 +5,11 @@ diagnostics have passed on hardware. Live PAL video, USB input, wired Xbox
 input, SD ROM loading, 1541 startup, and read-only D64 game loading also have
 recorded board results. Build `2026082F` connects live machine PCM to I2S and
 SPDIF. Its first board test found mostly clean output plus repeatable stuck-tone
-faults. Candidate `20260830` changes the C64 default SID model from 8580 to
-6581; hardware retest remains pending.
+faults. Candidate `20260830` changed the C64 default SID model from 8580 to
+6581, but the 2026-09-02 report says the scratching remains. Candidate
+`20260902` corrects the reproduced dual-SID output schedule. The exact build
+booted on the connected board, and the 2026-09-03 user retest reports that the
+scratching/audio bug is fixed.
 
 ## Ownership boundaries
 
@@ -159,8 +162,27 @@ checks pass. Its board test showed that `t` cleanly masks live SID faults and
 The C64 adapter exposes the imported core's two-bit SID-version choice and
 defaults both instances to 6581 in candidate `20260830`. Build `2026082F` had
 hardwired 8580; that model's roughly 9.77-second noise timeout closely matches
-the timed Decathlon artifact. The model mismatch remains a diagnosis candidate
-until Decathlon and Ultima II pass the repeated board test.
+the timed Decathlon artifact, but the reported retest still scratches and
+rejects the model change as a sufficient fix.
+
+Candidate `20260902` instead corrects a deterministic schedule error at the
+shared dual-SID filter boundary. Filter state 7 launches the final audio MAC.
+The left slot has state 8 available to capture that result, while the right
+slot reaches full state 15 on its launch edge and then remains there until the
+next 1 MHz enable. The old logic published on the first state-15 edge, before
+the right result became visible, so one filter intermediate escaped for one
+machine clock per SID period. Since the adapter's 48 kHz sampler is not phase
+locked to that pipeline, it could hold those narrow corrupt values for entire
+PCM frames. The corrected port waits for a repeated state-15 edge and publishes
+the left and right results together. Focused XSim reproduced four mono-channel
+mismatches in 128 clocks before the fix and none afterward.
+
+The golden-UART-installed `20260902` image subsequently booted with C64 core
+status `0000014D` and no shell error, and the user reported that the prior
+scratching/audio bug was fixed on the connected board. That result validates
+the scheduling repair against the reported fault. It does not by itself cover
+long-run stability, exact game sequences, channels, level, reset behavior, or
+SPDIF.
 
 The GBC adapter holds reset until a cartridge is strictly framed and accepted
 by the external-memory service. Its open CGB bootstrap is generated from a

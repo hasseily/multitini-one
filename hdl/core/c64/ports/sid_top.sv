@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Multitini compatibility port of MiSTer C64 commit
 // 62fc697e3c9b5982c9dc76aa8cd03db545d20803. Procedurally assigned waveform
-// arrays are declared as variables instead of nets.
+// arrays are variables, declarations precede use, reset initializes the shared
+// scheduler, and dual-SID audio publishes only after the right MAC is valid.
 module sid_top
 #(
 	parameter MULTI_FILTERS = 1,
@@ -13,7 +14,7 @@ module sid_top
 	input         clk,
 	input         ce_1m,
 
-	input [N-1:0] cs,
+	input [(DUAL ? 2 : 1)-1:0] cs,
 	input         we,
 	input   [4:0] addr,
 	input   [7:0] data_in,
@@ -31,9 +32,9 @@ module sid_top
 	input  [17:0] ext_in_r,    // not used if DUAL is 0
 	output [17:0] audio_r,
 
-	input [N-1:0] filter_en,
-	input [N-1:0] mode,
-	input [(N*2)-1:0] cfg,
+	input [(DUAL ? 2 : 1)-1:0] filter_en,
+	input [(DUAL ? 2 : 1)-1:0] mode,
+	input [((DUAL ? 2 : 1)*2)-1:0] cfg,
 
 	input         ld_clk,
 	input  [11:0] ld_addr,
@@ -87,6 +88,17 @@ reg  [17:0] audio[N];
 
 reg   [7:0] bus_data[N];
 reg  [12:0] Fc_offset[N];
+
+wire  [7:0] f__st_out;
+wire  [7:0] f_p_t_out;
+wire  [7:0] f_ps__out;
+wire  [7:0] f_pst_out;
+reg  [11:0] f_acc_t;
+reg   [3:0] state;
+reg   [2:0] v;
+reg  [17:0] audio0;
+reg         state15_seen;
+integer     audio_index;
 
 generate
 	genvar i;
@@ -253,39 +265,37 @@ sid_tables #(MULTI_FILTERS) sid_tables
 	.ld_wr(ld_wr)
 );
 
-wire  [7:0] f__st_out;
-wire  [7:0] f_p_t_out;
-wire  [7:0] f_ps__out;
-wire  [7:0] f_pst_out;
-reg  [11:0] f_acc_t;
-reg   [3:0] state;
-
 always @(posedge clk) begin
-	reg [2:0] v;
-	if(~&state) state <= state + 1'd1;
-	if(ce_1m) state <= 0;
+	if (reset) begin
+		state <= 0;
+		f_acc_t <= 0;
+		v <= 0;
+	end else begin
+		if(~&state) state <= state + 1'd1;
+		if(ce_1m) state <= 0;
 
-	case(state)
-		1,3,5,7,9,11: begin
-			f_acc_t <= acc_t[state[3:1]];
-			v <= state[3:1];
-		end
-	endcase
+		case(state)
+			1,3,5,7,9,11: begin
+				f_acc_t <= acc_t[state[3:1]];
+				v <= state[3:1];
+			end
+		endcase
 
-	case(state)
-		3,5,7: begin
-			_st_out[v] <= f__st_out;
-			p_t_out[v] <= f_p_t_out;
-			ps__out[v] <= f_ps__out;
-			pst_out[v] <= f_pst_out;
-		end
-		9,11,13: if(DUAL) begin
-			_st_out[v] <= f__st_out;
-			p_t_out[v] <= f_p_t_out;
-			ps__out[v] <= f_ps__out;
-			pst_out[v] <= f_pst_out;
-		end
-	endcase
+		case(state)
+			3,5,7: begin
+				_st_out[v] <= f__st_out;
+				p_t_out[v] <= f_p_t_out;
+				ps__out[v] <= f_ps__out;
+				pst_out[v] <= f_pst_out;
+			end
+			9,11,13: if(DUAL) begin
+				_st_out[v] <= f__st_out;
+				p_t_out[v] <= f_p_t_out;
+				ps__out[v] <= f_ps__out;
+				pst_out[v] <= f_pst_out;
+			end
+		endcase
+	end
 end
 
 wire [17:0] faudio;
@@ -308,14 +318,26 @@ sid_filter sid_filter
 );
 
 always @(posedge clk) begin
-	reg [17:0] audio0;
-	// faudio is two states later than upstream (was 6) because sid_filter
-	// pipelines the compressor across filter-states 5-7 to close timing; the
-	// first-pass result lands at state 8 and the DUAL slot at 15 (was 14).
-	if(state == 8)  audio0 <= faudio;
-	if(state == 15) begin
-		audio[n] <= faudio;
-		audio[0] <= audio0;
+	if (reset) begin
+		audio0 <= 0;
+		state15_seen <= 0;
+		for (audio_index = 0; audio_index < N; audio_index = audio_index + 1)
+			audio[audio_index] <= 0;
+	end else begin
+		// faudio is two states later than upstream (was 6) because
+		// sid_filter pipelines the compressor across filter states 5-7.
+		// The first result is valid at state 8. The second audio MAC is only
+		// launched by the first state-15 edge, so publishing on that same edge
+		// briefly exposed the preceding filter intermediate as the right
+		// channel. Wait for one repeated state-15 edge and publish both channels
+		// together as one coherent pair.
+		state15_seen <= (state == 15) && !ce_1m;
+		if(state == 8)
+			audio0 <= faudio;
+		if(state == 15 && state15_seen) begin
+			audio[n] <= faudio;
+			audio[0] <= audio0;
+		end
 	end
 end
 

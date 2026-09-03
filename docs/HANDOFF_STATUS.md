@@ -1,6 +1,6 @@
 # Multitini One Handoff Status
 
-Status date: 2026-08-30. The first independent diagnostic image and the second
+Status date: 2026-09-03. The first independent diagnostic image and the second
 PAL C64 UART-ROM/frozen-snapshot image have both passed their initial board
 tests. The current source replaces the frozen buffer with a four-bank,
 four-bit-palette live frame ring. That bridge passes focused XSim, a fresh
@@ -15,8 +15,11 @@ joystick-port swapping on hardware. Current build `2026082F` connects live
 machine PCM to I2S and SPDIF. Its first board test was mostly clean, but
 Decathlon produced a roughly ten-second scratch/random passage and a later
 stuck high tone; Ultima II also produced a stuck tone. Candidate `20260830`
-defaults the C64 to 6581 instead of the prior hardwired 8580 and awaits board
-retest.
+defaulted the C64 to 6581 instead of the prior hardwired 8580, but the
+2026-09-02 report says the scratching remains after that latest attempted fix.
+Candidate `20260902` fixes a separately reproduced dual-SID result-scheduling
+error. The exact build booted on the connected board, and the 2026-09-03 user
+retest reports that the scratching/audio bug is fixed.
 
 ## Completed repository and portable validation
 
@@ -76,13 +79,32 @@ retest.
 - Candidate build `20260830` changes the adapter's default SID model from 8580
   to 6581. The upstream 8580 noise timeout is about 9.77 seconds, matching the
   duration of Decathlon's scratch/random passage closely enough to make the
-  hardwired model the leading cause candidate. Focused source checks pass. The
+  hardwired model an early cause candidate. Focused source checks pass. The
   fresh routed PAL Vivado result has +0.176 ns setup slack, +0.051 ns hold
   slack, zero failed nets, and zero Critical warnings. Vitis, Bootgen packaging,
   and three-partition readback pass. The 4,475,348-byte root `FIRMWARE.BIN` has
   SHA-256
   `99a21c6f929ffe056faabd7d80da9f64bded7d83b8ccf989213ba1fa157aee47`;
-  hardware retest remains pending.
+  2026-09-02 report says the scratching remains after the latest attempted
+  fix, so the model change is not a sufficient repair. The exact live banner
+  was not captured in this session.
+- Candidate `20260902` repairs the stronger reproduced cause in the shared SID
+  pipeline. The first state-15 edge launches the right-channel audio MAC, yet
+  the old top level published the preceding filter intermediate on that same
+  edge. That one-machine-clock transient recurred once per SID period, and the
+  unrelated 48 kHz sampler could stretch a captured transient across a full
+  PCM frame. Focused XSim recorded four mono left/right mismatches in 128 clocks
+  before the repair and zero after waiting one repeated state-15 edge and then
+  publishing both channels together. Its fresh PAL route passes with +0.411 ns
+  setup slack, +0.029 ns hold slack, zero routing errors, and no Critical
+  warnings or critical CDC findings. Vitis and three-partition Bootgen
+  packaging pass. The 4,475,348-byte root `FIRMWARE.BIN` has SHA-256
+  `9af37acf16f35c0f784ad98a505d4864c38d187bb84675f81a884b6002ef1b52`;
+  golden-UART installation completed, and the rebooted shell reported
+  `build=20260902`, C64 core `status=0000014D`, and `error=00000000`. The user
+  then reported that the scratching/audio bug is fixed on the connected board.
+  The exact game sequence and duration, stuck-tone recurrence, channels, level,
+  reset behavior, SPDIF, and long-run stability were not separately reported.
 - Exact 47-file Game Boy import at the pinned commit, per-file license rows,
   SHA-256 lock, open SameBoy-derived CGB bootstrap source/image, and deterministic
   strict-tool ports for the selected upstream `gb` and `cart` modules.
@@ -306,8 +328,10 @@ did not assert Fire and the player ring kept blinking.
   holds CE high; the prepared GBC branch is explicit opt-in only.
 - Build `2026082F` routes audible live machine PCM and proves source switching,
   but its Decathlon and Ultima II faults leave SID compatibility, long-run
-  behavior, level, channel behavior, reset behavior, and SPDIF open. Candidate
-  `20260830` needs the same game sequences repeated with its 6581 default.
+  behavior, level, channel behavior, reset behavior, and SPDIF open. The
+  reported `20260830` retest still scratched. The connected-board `20260902`
+  retest reports that the scratching/audio bug is fixed after the dual-SID
+  scheduling repair; broader game-specific and long-run coverage remains open.
 - Initial golden-slot boot, DVI timing, fixed-tone audio, USB1 power, keyboard
   transport, generic HID input, and golden reboot have observations.
   Pin-isolation measurements, DDR, the remaining non-Xbox USB regressions,
@@ -315,10 +339,10 @@ did not assert Fire and the player ring kept blinking.
 
 ## Next validation sequence
 
-1. Install candidate `20260830`, then repeat the Decathlon opening
-   and gameplay sequence and the Ultima II sequence. Recheck UART `m`, `t`, and
-   `a`, reset/load silence, channels, level, and SPDIF. Record whether either
-   stuck tone returns before calling live SID audio qualified.
+1. Extend the `20260902` audio pass with recorded Decathlon opening/gameplay and
+   Ultima II sequences. Recheck UART `m`, `t`, and `a`, reset/load silence,
+   channels, level, and SPDIF. Record whether either stuck tone returns before
+   calling the full live SID audio path qualified.
 2. Recreate and build C64 NTSC with
    `MULTITINI_C64_VIDEO_STANDARD=NTSC`; retain and review a separate complete
    report set.
@@ -333,4 +357,5 @@ Only after the minimal board image passes should PSRAM be connected and its
 BIST exposed. Only after a dedicated PSRAM test passes should a GBC project set
 `MULTITINI_ENABLE_GBC_PSRAM=1`. GBC remains off the physical outputs. C64 DVI
 must pass the live gate above. C64 live audio remains unqualified until the
-`20260830` 6581-default candidate passes the repeated hardware gate.
+remaining `20260902` long-run, game-specific, channel, level, reset, and SPDIF
+checks pass.

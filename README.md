@@ -16,8 +16,12 @@ Build `2026082F` routes live machine PCM to the physical audio outputs, but its
 first board test found mostly clean SID audio plus repeatable source-side
 faults: Decathlon produced about ten seconds of scratch/random noise near the
 end of its opening theme and later a stuck high tone; Ultima II also produced a
-stuck tone. Candidate build `20260830` changes the C64 default from the
-previously hardwired 8580 SID model to 6581 and awaits the same hardware retest.
+stuck tone. Candidate build `20260830` changed the C64 default from the
+previously hardwired 8580 SID model to 6581, but the 2026-09-02 report says the
+same scratching remains. Candidate `20260902` instead fixes a reproduced
+dual-SID pipeline error that briefly published a filter intermediate as the
+right channel. The exact build was installed on the connected board, and the
+2026-09-03 user retest reports that the scratching/audio bug is fixed.
 
 ## Current state
 
@@ -117,13 +121,33 @@ Known:
   machine audio rather than the shared physical transport.
 - Candidate build `20260830` defaults both C64 SID instances to 6581 instead of
   the `2026082F` hardwired 8580 model. The upstream 8580 noise timeout is about
-  9.77 seconds at its nominal SID rate, making the model mismatch the leading
-  cause of Decathlon's timed noise, not yet a confirmed fix. Its fresh routed
+  9.77 seconds at its nominal SID rate, which made the model mismatch an early
+  cause candidate. Its fresh routed
   PAL Vivado result passes with +0.176 ns setup slack, +0.051 ns hold slack,
   zero failed nets, and zero Critical warnings. Vitis and Bootgen also pass;
   the 4,475,348-byte root `FIRMWARE.BIN` has SHA-256
   `99a21c6f929ffe056faabd7d80da9f64bded7d83b8ccf989213ba1fa157aee47`.
-  Hardware retest is pending.
+  The 2026-09-02 report that the scratching remains after the latest attempted
+  fix rejects the SID-model change as a sufficient repair; the exact live
+  banner was not captured in this session.
+- Candidate `20260902` fixes the stronger reproduced cause. The shared SID
+  filter launches its right-channel audio MAC on the first state-15 edge, but
+  the old logic published `faudio` on that same edge while it still held a
+  filter intermediate. That corrupt value existed for one roughly 31.7 ns
+  machine clock per roughly 1.0 us SID period, giving the unrelated 48 kHz
+  sampler about a 3.1% chance per sample to stretch a bad value over a complete
+  PCM frame. Focused XSim saw four mono left/right mismatches in 128 clocks
+  before the fix and none after coherent publication was delayed one clock.
+  Its fresh PAL route passes with +0.411 ns setup slack, +0.029 ns hold slack,
+  zero routing errors, and no Critical warnings or critical CDC findings.
+  Vitis and three-partition Bootgen packaging pass. The 4,475,348-byte root
+  `FIRMWARE.BIN` has SHA-256
+  `9af37acf16f35c0f784ad98a505d4864c38d187bb84675f81a884b6002ef1b52`.
+  Golden-UART installation completed, and the rebooted shell reported
+  `build=20260902`, C64 core `status=0000014D`, and `error=00000000`. The user
+  then reported that the scratching/audio bug is fixed on the connected board.
+  The exact game sequence, duration, stuck-tone recurrence, channel and level
+  checks, reset behavior, and SPDIF were not separately reported.
 
 Hardware status and remaining gaps:
 
@@ -150,8 +174,9 @@ Hardware status and remaining gaps:
 - DVI timing and the fixed diagnostic tone have initial board observations.
   Build `2026082F` proves that live SID audio is generally clean but does not
   pass qualification because of the Decathlon and Ultima II stuck-tone faults.
-  Candidate `20260830` needs the same Decathlon and Ultima II board retest with
-  its new 6581 default.
+  The reported `20260830` retest still scratched. The connected-board retest of
+  `20260902` reports that the scratching/audio bug is fixed; broader long-run,
+  game-specific, channel, level, reset, and SPDIF coverage remains open.
   The long-run audio gate, remaining non-Xbox USB hotplug checks, DDR, PSRAM,
   and Apple-bus isolation still require the hardware work in
   `MULTITINI_ONE_PLAN.md`.
@@ -177,7 +202,7 @@ review, or board testing.
 The intended first commands on a Vivado 2025.2 machine are:
 
 ```powershell
-$env:MULTITINI_BUILD_ID = '20260830'
+$env:MULTITINI_BUILD_ID = '20260902'
 vivado -mode batch -source scripts/create_project.tcl
 vivado -mode batch -source scripts/build_and_export_xsa.tcl
 vitis -s scripts/create_vitis_workspace.py

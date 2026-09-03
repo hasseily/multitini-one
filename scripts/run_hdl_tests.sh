@@ -46,6 +46,10 @@ run_test tb_audio_test \
     "$repo_root/hdl/sim/xilinx_primitives.sv" \
     "$repo_root/hdl/sim/tb_audio_test.sv"
 
+run_test tb_sid_output_schedule \
+    "$repo_root/hdl/sim/tb_sid_output_schedule.sv" \
+    "$repo_root/hdl/core/c64/ports/sid_top.sv"
+
 run_test tb_psram_bist \
     "$repo_root/hdl/common/multitini_psram_bist.sv" \
     "$repo_root/hdl/sim/tb_psram_bist.sv"

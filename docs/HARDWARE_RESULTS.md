@@ -422,7 +422,7 @@ This qualifies basic live-audio transport and source switching on the tested
 board, not SID compatibility, long-run stability, channel behavior, level, or
 SPDIF.
 
-## Build 20260830 candidate: 6581 default, hardware retest pending
+## Build 20260830 candidate: 6581 default, scratching still reported
 
 Build `2026082F` hardwired both imported SID instances as 8580. The upstream
 SID model uses an 8580 noise timeout of `24'h950000`, about 9.77 seconds at the
@@ -437,5 +437,59 @@ failed nets, and zero Critical warnings. Vitis and Bootgen pass, and Bootgen
 readback shows the expected FSBL, FPGA bitstream, and application partitions.
 The repository-root `FIRMWARE.BIN` is 4,475,348 bytes with SHA-256
 `99a21c6f929ffe056faabd7d80da9f64bded7d83b8ccf989213ba1fa157aee47`.
-The same Decathlon and Ultima II sequences must be repeated on hardware before
-this candidate can qualify live SID audio.
+
+On 2026-09-02 the user reported that the scratching heard before this attempted
+fix remains. This rejects the SID-model change as a sufficient repair. The
+exact live UART banner and artifact hash were not available in this session,
+so this is recorded as user retest feedback rather than a newly captured board
+log.
+
+## Build 20260902: coherent dual-SID result scheduling fixes reported scratching
+
+Source analysis found a deterministic one-clock corrupt value in the imported
+SID port's shared filter schedule. Filter state 7 launches the final audio MAC.
+The first SID result is therefore valid at state 8. For the second SID, the
+first full state-15 edge launches that same MAC, but the old logic also copied
+`faudio` into the right output on that edge, before the nonblocking MAC result
+was visible. The value copied was the preceding filter intermediate. A later
+state-15 edge corrected it, leaving a roughly 31.7 ns bad right-channel value
+once per roughly 1.0 us SID period.
+
+The adapter samples at an unrelated nominal 48 kHz. It could therefore capture
+that approximately 3.1%-duty transient around 1,500 times per second and hold
+each captured error for a complete PCM frame, which is a direct mechanism for
+the reported scratch. The fixed port waits for one repeated state-15 edge and
+then publishes both SID results together. It also resets the shared schedule
+and output latches on machine reset and moves early-referenced declarations to
+strict-tool-safe positions.
+
+A focused Vivado XSim test models the filter's intermediate and final MAC
+timing while driving both SID slots as mono. Before the repair it observed four
+left/right mismatches at cycles 20, 48, 80, and 112 of a 128-clock run. With
+the repair, the same test reports:
+
+```text
+PASS: mono dual-SID output updates as a coherent pair
+```
+
+The fresh PAL route passes with +0.411 ns setup slack, +0.029 ns hold slack,
+zero routing errors, and no Critical warnings or critical CDC findings. Vitis
+and Bootgen packaging pass; Bootgen readback contains the expected FSBL, FPGA
+bitstream, and application partitions. The repository-root `FIRMWARE.BIN` is
+4,475,348 bytes with SHA-256
+`9af37acf16f35c0f784ad98a505d4864c38d187bb84675f81a884b6002ef1b52`.
+
+The 4,475,348-byte artifact was installed through the golden UART updater on
+the connected Appletini. After reboot, the live shell returned:
+
+```text
+magic=4D543031 abi=00000004 shell=4D544F4E build=20260902
+core=43363420 status=0000014D error=00000000 control=00000000
+[C64] drive8 empty
+```
+
+On 2026-09-03 the user reported that the audio bug was fixed. This board result
+qualifies the scheduling repair against the previously reported scratching on
+the connected hardware. The exact game sequence and duration, stuck-tone
+recurrence, channels, level, reset behavior, SPDIF, and long-run stability were
+not separately reported and remain open for broader live-audio qualification.

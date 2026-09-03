@@ -23,6 +23,15 @@ class AudioPathTests(unittest.TestCase):
         self.assertIn("NOISE_TTL_6581 = 24'h8000", voice)
         self.assertIn("NOISE_TTL_8580 = 24'h950000", voice)
 
+    def test_dual_sid_audio_waits_for_the_right_mac_result(self):
+        sid_top = (
+            ROOT / "hdl/core/c64/ports/sid_top.sv"
+        ).read_text(encoding="utf-8")
+        self.assertIn("state15_seen <= (state == 15) && !ce_1m", sid_top)
+        self.assertIn("if(state == 15 && state15_seen)", sid_top)
+        self.assertIn("audio[n] <= faudio", sid_top)
+        self.assertIn("audio[0] <= audio0", sid_top)
+
     def test_machine_pcm_is_normalized_to_signed_24_bit(self):
         c64 = (ROOT / "hdl/core/c64/multitini_c64_adapter.sv").read_text()
         gbc = (
