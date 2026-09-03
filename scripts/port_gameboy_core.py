@@ -28,7 +28,7 @@ def normalized_port(source: str) -> str:
 def port_gb() -> str:
     source = (SOURCE_DIR / "gb.v").read_text(encoding="utf-8")
     old = 'dpram_dif #(12,8,11,16,"BootROMs/cgb_boot.mif") boot_rom ('
-    new = 'dpram_dif #(12,8,11,16,"cgb_boot.hex") boot_rom ('
+    new = 'dpram_dif #(12,8,11,16,"cgb_boot.mem") boot_rom ('
     result = replace_once(source, old, new, "boot-memory instance")
     result = replace_once(
         result,
@@ -52,6 +52,32 @@ def port_gb() -> str:
         "wire hdma_read_ext_bus = (isGBC & hdma_rd & hdma_sel_ext_bus);",
         "assign hdma_read_ext_bus = (isGBC & hdma_rd & hdma_sel_ext_bus);",
         "HDMA external-bus declaration")
+    result = replace_once(
+        result,
+        "wire clk = clk_sys & ce;\n\n"
+        "wire ce_cpu = cpu_speed ? ce_2x:ce;\n"
+        "wire clk_cpu = clk_sys & ce_cpu;",
+        "wire ce_cpu = cpu_speed ? ce_2x:ce;",
+        "fabric-gated clocks")
+    result = replace_once(
+        result,
+        "always  @ (posedge clk) begin\n\treset_r <= reset;\nend",
+        "always  @ (posedge clk_sys) begin\n"
+        "\tif (ce) reset_r <= reset;\nend",
+        "reset clock enable")
+    for width, instance in ((13, "vram0"), (13, "vram1"),
+                            (7, "zpram"), (15, "wram")):
+        result = replace_once(
+            result,
+            f"dpram #({width}) {instance} (",
+            f"dpram_ce #({width}) {instance} (",
+            f"{instance} clock-enable memory")
+    for old in ("\t.clock_a   (clk_cpu  ),", "\t.clock_a   (clk_cpu   ),",
+                "\t.clock_a   (clk_cpu      ),", "\t.clock_a   (clk_cpu),"):
+        result = replace_once(
+            result, old,
+            "\t.clock_a   (clk_sys),\n\t.clken_a   (ce_cpu),",
+            "CPU memory fabric-gated clock")
     result = replace_once(result, "\nalways begin\n\tcase (boot_addr)",
                           "\nalways @* begin\n\tcase (boot_addr)",
                           "bootstrap combinational block")
@@ -109,6 +135,79 @@ wire [7:0] cram_q;
     return normalized_port(result)
 
 
+def port_cheatcodes() -> str:
+    result = (SOURCE_DIR / "cheatcodes.sv").read_text(encoding="utf-8")
+    result = replace_once(
+        result,
+        "module CODES(\n",
+        "// Multitini port: strict SystemVerilog declarations for Vivado.\n"
+        "module CODES #(\n"
+        "\tparameter ADDR_WIDTH = 16, // Not more than 32\n"
+        "\tparameter DATA_WIDTH = 8,  // Not more than 32\n"
+        "\tparameter MAX_CODES = 32\n"
+        ")(\n",
+        "cheat-code parameter header",
+    )
+    result = replace_once(
+        result,
+        "\nparameter ADDR_WIDTH   = 16; // Not more than 32\n"
+        "parameter DATA_WIDTH   = 8;  // Not more than 32\n"
+        "parameter MAX_CODES    = 32;\n",
+        "",
+        "cheat-code legacy parameters",
+    )
+    result = replace_once(
+        result, "\toutput genie_ovr,", "\toutput logic genie_ovr,",
+        "cheat-code override output",
+    )
+    result = replace_once(
+        result,
+        "\toutput [DATA_WIDTH - 1:0] genie_data",
+        "\toutput logic [DATA_WIDTH - 1:0] genie_data",
+        "cheat-code data output",
+    )
+    result = replace_once(
+        result,
+        "wire [INDEX_SIZE-1:0] index, dup_index;",
+        "wire [INDEX_SIZE-1:0] index;\nlogic [INDEX_SIZE-1:0] dup_index;",
+        "cheat-code duplicate index",
+    )
+    result = replace_once(
+        result, "wire found_dup;", "logic found_dup;",
+        "cheat-code duplicate flag",
+    )
+    return normalized_port(result)
+
+
+def port_gbc_snd() -> str:
+    result = (SOURCE_DIR / "gbc_snd.vhd").read_text(encoding="utf-8")
+    result = replace_once(
+        result,
+        "\tconstant DAC_DECAY_PERIOD\t: integer := dac_decay_timer'high;",
+        "\tconstant DAC_DECAY_PERIOD\t: integer := 100;",
+        "sound DAC decay range attribute",
+    )
+    return normalized_port(
+        "-- Multitini port: Vivado-compatible scalar range constant.\n" + result
+    )
+
+
+def port_megaswizzle() -> str:
+    result = (SOURCE_DIR / "megaswizzle.sv").read_text(encoding="utf-8")
+    for old, new, description in (
+        ("\toutput [15:0] a_out,", "\toutput logic [15:0] a_out,",
+         "MegaDuck address output"),
+        ("\toutput [7:0] snd_in_do,", "\toutput logic [7:0] snd_in_do,",
+         "MegaDuck sound-input output"),
+        ("\toutput [7:0] snd_out_do", "\toutput logic [7:0] snd_out_do",
+         "MegaDuck sound-output output"),
+    ):
+        result = replace_once(result, old, new, description)
+    return normalized_port(
+        "// Multitini port: explicit procedural output variable types.\n" + result
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
@@ -116,6 +215,9 @@ def main() -> int:
     outputs = {
         OUTPUT_DIR / "gb.v": port_gb(),
         OUTPUT_DIR / "cart.v": port_cart(),
+        OUTPUT_DIR / "cheatcodes.sv": port_cheatcodes(),
+        OUTPUT_DIR / "gbc_snd.vhd": port_gbc_snd(),
+        OUTPUT_DIR / "megaswizzle.sv": port_megaswizzle(),
     }
     changed = False
     for output, expected in outputs.items():

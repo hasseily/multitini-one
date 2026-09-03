@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns / 1ps
 
-// One standard, serial-IEC 1541 for the first read-only D64 milestone.
-// Raw-G64, parallel-drive ROMs, writes, second drives, and 1581 support are
+// One standard, serial-IEC 1541 with transactional D64 and read-only raw-G64
+// media. Parallel-drive ROMs, G64 writes, second drives, and 1581 support are
 // deliberately outside this boundary.
 module multitini_c64_1541 #(
     parameter integer CORE_CLOCK_HZ = 31527954
@@ -43,6 +43,11 @@ module multitini_c64_1541 #(
     output logic [15:0] media_request_block_count,
     output logic [31:0] media_request_generation,
 
+    output logic [7:0]  media_write_data,
+    output logic        media_write_data_valid,
+    output logic        media_write_data_last,
+    input  logic        media_write_data_ready,
+
     input  logic [7:0]  d64_load_data,
     input  logic        d64_load_valid,
     output logic        d64_load_ready,
@@ -51,10 +56,22 @@ module multitini_c64_1541 #(
     input  logic [31:0] d64_load_offset,
     input  logic [31:0] d64_load_total,
 
+    input  logic [7:0]  g64_load_data,
+    input  logic        g64_load_valid,
+    output logic        g64_load_ready,
+    input  logic        g64_load_first,
+    input  logic        g64_load_last,
+    input  logic [31:0] g64_load_offset,
+    input  logic [31:0] g64_load_total,
+
     output logic        mounted,
+    output logic        media_dirty,
+    output logic        media_eject_pending,
     output logic        drive_led,
     output logic        error
 );
+    import multitini_c64_defs_pkg::*;
+
     logic drive_reset;
     logic drive_rom_write_delayed;
     logic [7:0] drive_rom_write_data_delayed;
@@ -68,6 +85,8 @@ module multitini_c64_1541 #(
     logic [7:0]  drive_rom_read_data;
 
     logic [7:0] drive_data_from_disk;
+    logic [7:0] d64_data_from_disk;
+    logic [7:0] g64_data_from_disk;
     logic [7:0] drive_data_to_disk;
     logic       disk_mode;
     logic [1:0] stepper_phase;
@@ -77,6 +96,10 @@ module multitini_c64_1541 #(
     logic [1:0] motor_frequency;
     logic       byte_ready_n;
     logic       sync_n;
+    logic       d64_byte_ready_n;
+    logic       d64_sync_n;
+    logic       g64_byte_ready_n;
+    logic       g64_sync_n;
     logic       drive_activity;
     logic       drive_logic_iec_data;
     logic       drive_logic_iec_clk;
@@ -84,12 +107,40 @@ module multitini_c64_1541 #(
     logic [6:0] head_half_track;
     logic [5:0] buffer_track;
     logic       disk_busy;
+    logic       d64_disk_busy;
+    logic       g64_disk_busy;
     logic       disk_buffer_write;
     logic [12:0] disk_buffer_address;
     logic [7:0] disk_buffer_data;
-    logic [7:0] unused_disk_buffer_dout;
-    logic       unused_disk_write;
+    logic [7:0] disk_buffer_dout;
+    logic       disk_write;
+    logic       mounted_read_only;
     logic [31:0] unused_mounted_generation;
+    logic       g64_mode;
+    logic       d64_mounted;
+    logic       g64_mounted;
+    logic       d64_error;
+    logic       g64_error;
+    logic       g64_buffer_write;
+    logic [13:0] g64_buffer_address;
+    logic [63:0] g64_buffer_data;
+    logic [1:0]  g64_track_speed;
+    logic       unused_g64_disk_write;
+    logic [31:0] unused_g64_mounted_generation;
+    logic       d64_media_request_valid;
+    logic       d64_media_request_write;
+    logic [31:0] d64_media_request_id;
+    logic [31:0] d64_media_request_lba;
+    logic [15:0] d64_media_request_block_count;
+    logic [31:0] d64_media_request_generation;
+    logic       g64_media_request_valid;
+    logic       g64_media_request_write;
+    logic [31:0] g64_media_request_id;
+    logic [31:0] g64_media_request_lba;
+    logic [15:0] g64_media_request_block_count;
+    logic [31:0] g64_media_request_generation;
+    logic        media_dirty_d64;
+    logic        media_eject_pending_d64;
 
     assign drive_reset = reset || soft_reset || !drive_rom_loaded ||
                          drive_rom_write || drive_rom_write_delayed;
@@ -97,6 +148,37 @@ module multitini_c64_1541 #(
     assign drive_iec_clk  = drive_reset ? 1'b1 : drive_logic_iec_clk;
     assign drive_led = drive_activity || (mounted && disk_busy);
     assign stepper_move = stepper_phase - previous_stepper_phase;
+    assign drive_data_from_disk = g64_mode ? g64_data_from_disk :
+                                           d64_data_from_disk;
+    assign byte_ready_n = g64_mode ? g64_byte_ready_n : d64_byte_ready_n;
+    assign sync_n = g64_mode ? g64_sync_n : d64_sync_n;
+    assign disk_busy = g64_mode ? g64_disk_busy : d64_disk_busy;
+    assign mounted = g64_mode ? g64_mounted : d64_mounted;
+    assign error = g64_mode ? g64_error : d64_error;
+    assign media_dirty = g64_mode ? 1'b0 : media_dirty_d64;
+    assign media_eject_pending = g64_mode ? 1'b0 : media_eject_pending_d64;
+    assign media_request_valid = g64_mode ? g64_media_request_valid :
+                                            d64_media_request_valid;
+    assign media_request_write = g64_mode ? g64_media_request_write :
+                                            d64_media_request_write;
+    assign media_request_id = g64_mode ? g64_media_request_id :
+                                         d64_media_request_id;
+    assign media_request_lba = g64_mode ? g64_media_request_lba :
+                                          d64_media_request_lba;
+    assign media_request_block_count = g64_mode ?
+        g64_media_request_block_count : d64_media_request_block_count;
+    assign media_request_generation = g64_mode ?
+        g64_media_request_generation : d64_media_request_generation;
+
+    always_ff @(posedge clk) begin
+        if (reset)
+            g64_mode <= 1'b0;
+        else if (media_mount && media_slot == 8'd0 &&
+                 !media_dirty_d64 && !media_eject_pending_d64)
+            g64_mode <= media_kind == MT_LOAD_C64_G64;
+        else if (media_eject && media_slot == 8'd0 && g64_mode)
+            g64_mode <= 1'b0;
+    end
 
     always_ff @(posedge clk) begin
         if (reset) begin
@@ -166,24 +248,39 @@ module multitini_c64_1541 #(
         .dout(drive_data_to_disk), .mode(disk_mode),
         .stp(stepper_phase), .mtr(motor_on), .freq(motor_frequency),
         .sync_n(sync_n), .byte_n(byte_ready_n),
-        .wps_n(!mounted), .tr00_sense_n(|head_half_track),
+        .wps_n(mounted && !mounted_read_only),
+        .tr00_sense_n(|head_half_track),
         .act(drive_activity)
     );
 
     // D64 sector bytes are converted to the bitstream seen by the emulated
-    // drive electronics. Write protect is asserted permanently in this first
-    // implementation, so the reverse conversion output is intentionally unused.
+    // drive electronics. A writable mount exposes the converted sector buffer
+    // through the media write stream before a dirty track is released.
     c1541_gcr disk_gcr (
-        .clk(clk), .ce(drive_ce),
-        .dout(drive_data_from_disk), .din(drive_data_to_disk),
+        .clk(clk), .ce(drive_ce && !g64_mode),
+        .dout(d64_data_from_disk), .din(drive_data_to_disk),
         .mode(disk_mode), .mtr(motor_on), .freq(motor_frequency),
-        .sync_n(sync_n), .byte_n(byte_ready_n),
-        .track(buffer_track), .busy(disk_busy), .we(unused_disk_write),
-        .sd_clk(clk), .sd_lba(media_request_lba),
+        .sync_n(d64_sync_n), .byte_n(d64_byte_ready_n),
+        .track(buffer_track), .busy(d64_disk_busy), .we(disk_write),
+        .sd_clk(clk), .sd_lba(d64_media_request_lba),
         .sd_buff_addr(disk_buffer_address),
         .sd_buff_dout(disk_buffer_data),
-        .sd_buff_din(unused_disk_buffer_dout),
+        .sd_buff_din(disk_buffer_dout),
         .sd_buff_wr(disk_buffer_write)
+    );
+
+    // G64 media is already a raw flux-transition stream. Firmware normalizes
+    // the selected half track into the exact 8 KiB layout consumed here.
+    c1541_direct_gcr raw_disk_gcr (
+        .clk(clk), .ce(drive_ce && g64_mode), .reset(drive_reset),
+        .drive_rpm(3'd0), .drive_wobble(1'b0),
+        .dout(g64_data_from_disk), .din(drive_data_to_disk),
+        .mode(disk_mode), .mtr(motor_on), .freq(g64_track_speed),
+        .wps_n(1'b0), .sync_n(g64_sync_n), .byte_n(g64_byte_ready_n),
+        .disk_present(g64_mounted), .we(unused_g64_disk_write),
+        .sd_clk(clk), .sd_buff_addr(g64_buffer_address),
+        .sd_buff_dout(g64_buffer_data), .sd_buff_din(),
+        .sd_buff_wr(g64_buffer_write)
     );
 
     // Track zero is half-track 0; the physical head is clamped by the media
@@ -207,8 +304,12 @@ module multitini_c64_1541 #(
         .service_enable(drive_rom_loaded && !drive_rom_write &&
                         !drive_rom_write_delayed),
         .head_half_track(head_half_track),
-        .media_mount(media_mount), .media_eject(media_eject),
-        .media_complete(media_complete), .media_slot(media_slot),
+        .disk_write(disk_write), .disk_mode(disk_mode),
+        .motor_on(motor_on),
+        .media_mount(media_mount && media_kind ==
+                     multitini_c64_defs_pkg::MT_LOAD_C64_D64),
+        .media_eject(media_eject && !g64_mode),
+        .media_complete(media_complete && !g64_mode), .media_slot(media_slot),
         .media_kind(media_kind), .media_read_only(media_read_only),
         .media_image_size(media_image_size),
         .media_generation(media_generation),
@@ -216,19 +317,61 @@ module multitini_c64_1541 #(
         .media_complete_status(media_complete_status),
         .media_complete_block_count(media_complete_block_count),
         .media_complete_generation(media_complete_generation),
-        .media_request_valid(media_request_valid),
-        .media_request_write(media_request_write),
-        .media_request_id(media_request_id),
-        .media_request_lba(media_request_lba),
-        .media_request_block_count(media_request_block_count),
-        .media_request_generation(media_request_generation),
+        .media_request_valid(d64_media_request_valid),
+        .media_request_write(d64_media_request_write),
+        .media_request_id(d64_media_request_id),
+        .media_request_lba(d64_media_request_lba),
+        .media_request_block_count(d64_media_request_block_count),
+        .media_request_generation(d64_media_request_generation),
         .load_data(d64_load_data), .load_valid(d64_load_valid),
         .load_ready(d64_load_ready), .load_first(d64_load_first),
         .load_last(d64_load_last), .load_offset(d64_load_offset),
-        .load_total(d64_load_total), .buffer_write(disk_buffer_write),
+        .load_total(d64_load_total),
+        .media_write_data(media_write_data),
+        .media_write_data_valid(media_write_data_valid),
+        .media_write_data_last(media_write_data_last),
+        .media_write_data_ready(media_write_data_ready),
+        .buffer_write(disk_buffer_write),
         .buffer_address(disk_buffer_address), .buffer_data(disk_buffer_data),
-        .buffer_track(buffer_track), .mounted(mounted),
+        .buffer_read_data(disk_buffer_dout),
+        .buffer_track(buffer_track), .mounted(d64_mounted),
         .mounted_generation(unused_mounted_generation),
-        .disk_busy(disk_busy), .error(error)
+        .read_only(mounted_read_only), .dirty(media_dirty_d64),
+        .eject_pending(media_eject_pending_d64),
+        .disk_busy(d64_disk_busy), .error(d64_error)
+    );
+
+    multitini_c64_g64_track raw_track_service (
+        .clk(clk), .reset(reset), .soft_reset(soft_reset),
+        .clear_error(clear_error),
+        .service_enable(drive_rom_loaded && !drive_rom_write &&
+                        !drive_rom_write_delayed),
+        .head_half_track(head_half_track),
+        .media_mount(media_mount && media_kind ==
+                     multitini_c64_defs_pkg::MT_LOAD_C64_G64),
+        .media_eject(media_eject && g64_mode),
+        .media_complete(media_complete && g64_mode), .media_slot(media_slot),
+        .media_kind(media_kind), .media_read_only(media_read_only),
+        .media_image_size(media_image_size),
+        .media_generation(media_generation),
+        .media_complete_request_id(media_complete_request_id),
+        .media_complete_status(media_complete_status),
+        .media_complete_block_count(media_complete_block_count),
+        .media_complete_generation(media_complete_generation),
+        .media_request_valid(g64_media_request_valid),
+        .media_request_write(g64_media_request_write),
+        .media_request_id(g64_media_request_id),
+        .media_request_lba(g64_media_request_lba),
+        .media_request_block_count(g64_media_request_block_count),
+        .media_request_generation(g64_media_request_generation),
+        .load_data(g64_load_data), .load_valid(g64_load_valid),
+        .load_ready(g64_load_ready), .load_first(g64_load_first),
+        .load_last(g64_load_last), .load_offset(g64_load_offset),
+        .load_total(g64_load_total), .buffer_write(g64_buffer_write),
+        .buffer_address(g64_buffer_address), .buffer_data(g64_buffer_data),
+        .track_speed(g64_track_speed),
+        .mounted(g64_mounted),
+        .mounted_generation(unused_g64_mounted_generation),
+        .disk_busy(g64_disk_busy), .error(g64_error)
     );
 endmodule

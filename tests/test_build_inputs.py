@@ -37,12 +37,17 @@ class BuildInputTests(unittest.TestCase):
             sections[active_section].append(entry)
             languages[entry] = language
         self.assertEqual(len(entries), len(set(entries)))
-        self.assertTrue(entries[-2].endswith("multitini_pins.xdc"))
-        self.assertEqual(entries[-1], "board/multitini_timing.xdc")
+        self.assertTrue(entries[-4].endswith("multitini_pins.xdc"))
+        self.assertEqual(entries[-3], "board/multitini_psram_iob.xdc")
+        self.assertEqual(entries[-2], "board/multitini_timing.xdc")
+        self.assertEqual(entries[-1], "board/multitini_psram_timing.xdc")
         for entry in entries:
             self.assertTrue((ROOT / "hdl" / entry).is_file(), entry)
         joined = "\n".join(entries)
-        self.assertIn("third_party/c64/upstream/rtl/fpga64_sid_iec.vhd", joined)
+        self.assertIn("core/c64/ports/fpga64_sid_iec.vhd", joined)
+        self.assertNotIn(
+            "third_party/c64/upstream/rtl/fpga64_sid_iec.vhd", joined
+        )
         self.assertIn("core/c64/multitini_c64_adapter.sv", joined)
         self.assertNotIn("third_party/c64/upstream/c64.sv", joined)
         self.assertNotIn("third_party/c64/upstream/rtl/fpga64_buslogic.vhd",
@@ -52,17 +57,30 @@ class BuildInputTests(unittest.TestCase):
             joined,
         )
         self.assertIn(
+            "core/c64/ports/iecdrv_misc.sv",
+            joined,
+        )
+        self.assertNotIn(
             "third_party/c64/upstream/rtl/iec_drive/iecdrv_misc.sv",
             joined,
         )
+        self.assertIn("board/multitini_psram_driver.sv", joined)
+        self.assertNotIn("third_party/appletini/hdl/psram_driver.sv", joined)
         self.assertIn("core/c64/ports/c1541_logic.sv", joined)
         self.assertIn("core/c64/ports/c1541_gcr.sv", joined)
+        self.assertIn(
+            "third_party/c64/upstream/rtl/iec_drive/lfsr.v", joined
+        )
+        self.assertIn(
+            "third_party/c64/upstream/rtl/iec_drive/c1541_direct_gcr.sv",
+            joined,
+        )
         self.assertIn("core/c64/multitini_c64_d64_track.sv", joined)
+        self.assertIn("core/c64/multitini_c64_g64_track.sv", joined)
         self.assertIn("core/c64/multitini_c64_1541.sv", joined)
         for excluded_drive_source in (
             "c1541_multi.sv",
             "c1541_drv.sv",
-            "c1541_direct_gcr.sv",
             "c1541_track.sv",
             "iec_drive.sv",
         ):
@@ -71,10 +89,15 @@ class BuildInputTests(unittest.TestCase):
         self.assertIn("core/gameboy/multitini_gameboy_adapter.sv", joined)
         self.assertIn("core/gameboy/ports/gb.v", joined)
         self.assertIn("core/gameboy/ports/cart.v", joined)
-        self.assertIn("third_party/gameboy/upstream/rtl/megaswizzle.sv", joined)
-        self.assertIn("core/gameboy/boot/cgb_boot.hex", joined)
+        self.assertIn("core/gameboy/ports/cheatcodes.sv", joined)
+        self.assertIn("core/gameboy/ports/gbc_snd.vhd", joined)
+        self.assertIn("core/gameboy/ports/megaswizzle.sv", joined)
+        self.assertIn("core/gameboy/boot/cgb_boot.mem", joined)
         self.assertNotIn("third_party/gameboy/upstream/rtl/gb.v", joined)
         self.assertNotIn("third_party/gameboy/upstream/rtl/cart.v", joined)
+        self.assertNotIn("third_party/gameboy/upstream/rtl/cheatcodes.sv", joined)
+        self.assertNotIn("third_party/gameboy/upstream/rtl/gbc_snd.vhd", joined)
+        self.assertNotIn("third_party/gameboy/upstream/rtl/megaswizzle.sv", joined)
         self.assertIn("core/c64/multitini_c64_adapter.sv", sections["c64"])
         self.assertIn("core/c64/ports/video_sync.vhd", sections["c64"])
         self.assertIn("board/multitini_c64_video_bridge.sv",
@@ -85,6 +108,12 @@ class BuildInputTests(unittest.TestCase):
                          sections["c64"])
         self.assertIn("core/gameboy/multitini_gameboy_adapter.sv",
                       sections["gbc"])
+        self.assertIn("board/multitini_gameboy_video_bridge.sv",
+                      sections["gbc"])
+        adapter = (ROOT / "hdl" / "core" / "gameboy" /
+                   "multitini_gameboy_adapter.sv").read_text(encoding="utf-8")
+        self.assertIn("ready && ce_cpu && lcd_clkena", adapter)
+        self.assertIn("assign video_vsync = ready && lcd_vsync;", adapter)
         self.assertNotIn("core/c64/multitini_c64_adapter.sv", sections["gbc"])
         for entry in entries:
             if entry.startswith(("core/c64/", "../third_party/c64/")):
@@ -92,16 +121,62 @@ class BuildInputTests(unittest.TestCase):
             if entry.startswith(("core/gameboy/", "../third_party/gameboy/")):
                 self.assertIn(entry, sections["gbc"])
         self.assertIn("board/multitini_gameboy_psram_path.sv",
-                      sections["gbc"])
+                      sections["common"])
         self.assertFalse(set(sections["common"]) & set(sections["c64"]))
         self.assertFalse(set(sections["common"]) & set(sections["gbc"]))
         self.assertNotIn("board/multitini_c64_video_bridge.sv",
                          sections["gbc"] + sections["common"])
+        self.assertNotIn("board/multitini_gameboy_video_bridge.sv",
+                         sections["c64"] + sections["common"])
         self.assertNotIn("../third_party/gameboy/upstream/rtl/cheatcodes.sv",
                          sections["common"] + sections["c64"])
         self.assertEqual(
             languages["../third_party/c64/upstream/rtl/mos6526.v"],
             "systemverilog",
+        )
+
+    def test_c64_fpga64_port_stretches_external_memory_wait(self):
+        source = (
+            ROOT / "hdl" / "core" / "c64" / "ports" /
+            "fpga64_sid_iec.vhd"
+        ).read_text(encoding="utf-8")
+        self.assertIn("memory_wait : in  std_logic", source)
+        self.assertIn("memory_wait_q <= memory_wait", source)
+        self.assertRegex(
+            source,
+            r"if memory_wait_q = '0' then\s+"
+            r"preCycle <= sysCycleDef'succ\(preCycle\)",
+        )
+        self.assertIn(
+            "enable => enableCpu and not dma_active and not memory_wait_q",
+            source,
+        )
+        self.assertIn(
+            "enaData => enableVic and not memory_wait_q", source
+        )
+        self.assertIn(
+            "phi2_n => enableCia_n and not memory_wait_q", source
+        )
+        self.assertIn("ce_1m => enableSid and not memory_wait_q", source)
+
+    def test_c64_media_density_and_dirty_eject_wiring(self):
+        drive = (
+            ROOT / "hdl" / "core" / "c64" / "multitini_c64_1541.sv"
+        ).read_text(encoding="utf-8")
+        top = (
+            ROOT / "hdl" / "board" / "multitini_one_top.sv"
+        ).read_text(encoding="utf-8")
+        self.assertRegex(
+            drive,
+            r"c1541_gcr\s+disk_gcr\s*\([\s\S]*?\.freq\(motor_frequency\)",
+        )
+        self.assertRegex(
+            drive,
+            r"c1541_direct_gcr\s+raw_disk_gcr\s*\([\s\S]*?"
+            r"\.freq\(g64_track_speed\)",
+        )
+        self.assertIn(
+            "(media_eject && !media_request_write_control)", top
         )
 
     def test_every_pl_port_has_one_pin_assignment(self):
@@ -177,10 +252,57 @@ class BuildInputTests(unittest.TestCase):
             "add_manifest_sources $repo_root $machine",
             "USED_IN_SYNTHESIS false",
             "-vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_c64",
-            "assign_bd_address -offset 0x40000000 -range 0x00001000",
+            "assign_bd_address -offset 0x40000000 -range 0x00010000",
         )
         for value in required:
             self.assertIn(value, script)
+
+    def test_gp0_axi_clock_survives_full_pl_reconfiguration(self):
+        script = (ROOT / "scripts" / "create_project.tcl").read_text()
+        fclk_net = script.split(
+            "connect_bd_net [get_bd_pins $ps/FCLK_CLK0]", 1
+        )[1].split("\n\n", 1)[0]
+        self.assertIn("$control_clk", fclk_net)
+        self.assertIn("$control_reset/slowest_sync_clk", fclk_net)
+        self.assertIn("$ps/M_AXI_GP0_ACLK", fclk_net)
+        self.assertNotIn("$idelay_wiz/clk_out1", fclk_net)
+
+        self.assertIn(
+            "[get_bd_pins $constant_one/dout] \\\n    [get_bd_pins $control_reset/dcm_locked]",
+            script,
+        )
+        self.assertIn(
+            "[get_bd_pins $idelay_wiz/locked] \\\n    [get_bd_pins $idelay_reset/dcm_locked]",
+            script,
+        )
+        self.assertIn(
+            "[get_bd_pins $idelay_reset/peripheral_aresetn] $idelay_aresetn",
+            script,
+        )
+
+        top = (ROOT / "hdl/board/multitini_one_top.sv").read_text()
+        psram = (ROOT / "hdl/board/multitini_gameboy_psram_path.sv").read_text()
+        self.assertIn(".idelay_aresetn(idelay_aresetn)", top)
+        self.assertIn(".idelay_resetn(idelay_aresetn)", top)
+        self.assertIn(".RST(!idelay_resetn)", psram)
+
+        timing = (ROOT / "hdl" / "board" /
+                  "multitini_timing.xdc").read_text()
+        self.assertIn(
+            "set control_root_clock [get_clocks -quiet clk_fpga_0]",
+            timing,
+        )
+
+    def test_gameboy_cartridge_load_selects_core_video(self):
+        main = (ROOT / "firmware/platform/xilinx/main.c").read_text()
+        load_action = main.split('xil_printf("[GBC] load', 1)[1].split(
+            "} else {", 1
+        )[0]
+        detach_action = main.split(
+            "gameboy_content_service_detach();", 1
+        )[1].split("} else {", 1)[0]
+        self.assertIn("set_video_test(false);", load_action)
+        self.assertIn("set_video_test(true);", detach_action)
 
     def test_c64_input_path_is_not_tied_off(self):
         top = (ROOT / "hdl/board/multitini_one_top.sv").read_text()
@@ -188,16 +310,74 @@ class BuildInputTests(unittest.TestCase):
         self.assertIn(".input_valid(c64_input_valid)", top)
         self.assertNotIn(".input_valid(1'b0)", top)
 
+    def test_psram_driver_port_diff_is_limited_to_registered_tristate_polarity(self):
+        upstream = (
+            ROOT / "third_party/appletini/hdl/psram_driver.sv"
+        ).read_text()
+        expected = upstream.replace(
+            "module psram_driver (", "module multitini_psram_driver (", 1
+        )
+        expected = expected.replace(
+            "output logic [3:0] psram_oe,", "output logic [3:0] psram_t,", 1
+        )
+        expected = expected.replace(
+            "psram_oe / psram_a_o / psram_b_o",
+            "psram_t / psram_a_o / psram_b_o",
+            1,
+        )
+        expected = expected.replace(
+            "psram_oe <= {4{sh_oe_tape[31]}};",
+            "psram_t <= {4{!sh_oe_tape[31]}};",
+            1,
+        )
+        expected = expected.replace(
+            "psram_oe <= {3'b0, sh_oe_tape[31]};",
+            "psram_t <= {3'b111, !sh_oe_tape[31]};",
+            1,
+        )
+        local = (ROOT / "hdl/board/multitini_psram_driver.sv").read_text()
+        self.assertEqual(
+            local,
+            "// SPDX-License-Identifier: GPL-3.0-only\n" + expected,
+        )
+
     def test_timing_xdc_uses_only_supported_constraint_commands(self):
         xdc = (ROOT / "hdl/board/multitini_timing.xdc").read_text()
+        psram_xdc = (
+            ROOT / "hdl/board/multitini_psram_timing.xdc"
+        ).read_text()
+        psram_iob_xdc = (
+            ROOT / "hdl/board/multitini_psram_iob.xdc"
+        ).read_text()
         self.assertNotRegex(xdc, r"(?m)^\s*if\s*\{")
         self.assertIn("-include_generated_clocks audio_mclk", xdc)
         self.assertIn("set_false_path -to [get_ports audio_spdif_out]", xdc)
+        self.assertNotRegex(psram_xdc, r"(?m)^\s*if\s*\{")
+        self.assertIn("create_generated_clock -name psram_clk_out", psram_xdc)
+        self.assertIn("set_false_path -from $psram_data_ports", psram_xdc)
+        self.assertEqual(psram_iob_xdc.count("set_property IOB TRUE"), 4)
 
     def test_vivado_script_gates_critical_cdc_findings(self):
         script = (ROOT / "scripts/build_and_export_xsa.tcl").read_text()
+        self.assertIn("require_packed_iob_registers", script)
+        self.assertIn('{.*psram_t_reg\\[[0-3]\\](_rep)?$} 8', script)
         self.assertIn("set cdc_report", script)
-        self.assertIn("CDC gate found one or more critical crossings", script)
+        self.assertIn("cdc_unexpected_critical", script)
+        self.assertIn("Expected $expected_psram_waivers external PSRAM CDC waivers", script)
+        self.assertIn("CDC gate found unexpected critical crossings", script)
+        self.assertIn("Fabric LUTs drive clock pins", script)
+
+    def test_gameboy_ram_port_preserves_registered_address_reads(self):
+        source = (ROOT / "hdl/core/gameboy/ports/dpram.sv").read_text()
+        machine = (ROOT / "hdl/core/gameboy/ports/gb.v").read_text()
+        self.assertEqual(source.count("xpm_memory_tdpram"), 2)
+        self.assertEqual(source.count('.MEMORY_PRIMITIVE("block")'), 2)
+        self.assertEqual(source.count(".READ_LATENCY_A(1)"), 2)
+        self.assertEqual(source.count(".READ_LATENCY_B(1)"), 2)
+        self.assertIn("module dpram_ce", source)
+        self.assertIn(".ena(clken_a)", source)
+        self.assertEqual(machine.count("dpram_ce #("), 4)
+        self.assertNotIn("clk_sys & ce", machine)
 
     def test_mailbox_acknowledgement_is_destination_registered(self):
         mailbox = (ROOT / "hdl/common/multitini_async_mailbox.sv").read_text()
@@ -231,7 +411,7 @@ class BuildInputTests(unittest.TestCase):
 
     def test_c64_sd_paths_stay_under_canonical_core_root(self):
         header = (ROOT / "firmware/include/multitini_c64_rom_files.h").read_text()
-        self.assertIn('#define MT_SD_CORE_ROOT "0:/cores"', header)
+        self.assertIn('#define MT_SD_CORE_ROOT "0:/multitini/cores"', header)
         self.assertIn('MT_C64_SD_ROM_ROOT "/basic.bin"', header)
         self.assertIn('MT_C64_SD_ROM_ROOT "/kernal.bin"', header)
         self.assertIn('MT_C64_SD_ROM_ROOT "/characters.bin"', header)
@@ -246,11 +426,11 @@ class BuildInputTests(unittest.TestCase):
 
         self.assertIn("docs/C64_SD_STORAGE.md", readme)
         for path in (
-            "0:/cores/c64/roms/basic.bin",
-            "0:/cores/c64/roms/kernal.bin",
-            "0:/cores/c64/roms/characters.bin",
-            "0:/cores/c64/roms/1541.bin",
-            "0:/cores/c64/media/drive8.d64",
+            "0:/multitini/cores/c64/roms/basic.bin",
+            "0:/multitini/cores/c64/roms/kernal.bin",
+            "0:/multitini/cores/c64/roms/characters.bin",
+            "0:/multitini/cores/c64/roms/1541.bin",
+            "0:/multitini/cores/c64/media/drive8.d64",
         ):
             self.assertIn(path, workflow)
         for command in (":dir", ":mount FILE.d64", ":disk", ":eject"):

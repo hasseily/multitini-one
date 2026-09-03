@@ -5,13 +5,14 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 sim_build="$repo_root/build/hdl-sim"
 mkdir -p "$sim_build"
+cp "$repo_root/hdl/common/multitini_font7x8.mem" "$sim_build/"
 
 run_test() {
     name=$1
     shift
     iverilog -g2012 -Wall -Wimplicit -s "$name" \
         -o "$sim_build/$name.vvp" "$@"
-    vvp "$sim_build/$name.vvp"
+    (cd "$sim_build" && vvp "$name.vvp")
 }
 
 run_test tb_control_regs \
@@ -34,6 +35,19 @@ run_test tb_c64_video_bridge \
     "$repo_root/hdl/board/multitini_c64_video_bridge.sv" \
     "$repo_root/hdl/board/multitini_video_test.sv" \
     "$repo_root/hdl/sim/tb_c64_video_bridge.sv"
+
+run_test tb_c64_ntsc_video_bridge \
+    "$repo_root/hdl/sim/xilinx_primitives.sv" \
+    "$repo_root/third_party/appletini/hdl/cdc_bit_sync.sv" \
+    "$repo_root/hdl/board/multitini_c64_video_bridge.sv" \
+    "$repo_root/hdl/sim/tb_c64_ntsc_video_bridge.sv"
+
+run_test tb_gameboy_video_bridge \
+    "$repo_root/hdl/sim/xilinx_primitives.sv" \
+    "$repo_root/third_party/appletini/hdl/cdc_bit_sync.sv" \
+    "$repo_root/hdl/board/multitini_gameboy_video_bridge.sv" \
+    "$repo_root/hdl/board/multitini_video_test.sv" \
+    "$repo_root/hdl/sim/tb_gameboy_video_bridge.sv"
 
 run_test tb_audio_test \
     "$repo_root/third_party/appletini/hdl/reset_sync.sv" \
@@ -59,6 +73,12 @@ run_test tb_async_mailbox \
     "$repo_root/hdl/common/multitini_async_mailbox.sv" \
     "$repo_root/hdl/sim/tb_async_mailbox.sv"
 
+run_test tb_text_overlay \
+    "$repo_root/hdl/sim/xilinx_primitives.sv" \
+    "$repo_root/hdl/common/multitini_async_mailbox.sv" \
+    "$repo_root/hdl/common/multitini_text_overlay.sv" \
+    "$repo_root/hdl/sim/tb_text_overlay.sv"
+
 run_test tb_cdc_pulse_toggle \
     "$repo_root/hdl/common/multitini_cdc_pulse_toggle.sv" \
     "$repo_root/hdl/sim/tb_cdc_pulse_toggle.sv"
@@ -68,10 +88,28 @@ run_test tb_c64_loader \
     "$repo_root/hdl/core/c64/multitini_c64_loader.sv" \
     "$repo_root/hdl/sim/tb_c64_loader.sv"
 
+run_test tb_c64_content_loader \
+    "$repo_root/hdl/core/c64/multitini_c64_defs_pkg.sv" \
+    "$repo_root/hdl/core/c64/multitini_c64_content_loader.sv" \
+    "$repo_root/hdl/sim/tb_c64_content_loader.sv"
+
+run_test tb_c64_run_injector \
+    "$repo_root/hdl/core/c64/multitini_c64_run_injector.sv" \
+    "$repo_root/hdl/sim/tb_c64_run_injector.sv"
+
+run_test tb_c64_cart_memory \
+    "$repo_root/hdl/core/c64/multitini_c64_cart_memory.sv" \
+    "$repo_root/hdl/sim/tb_c64_cart_memory.sv"
+
 run_test tb_c64_d64_track \
     "$repo_root/hdl/core/c64/multitini_c64_defs_pkg.sv" \
     "$repo_root/hdl/core/c64/multitini_c64_d64_track.sv" \
     "$repo_root/hdl/sim/tb_c64_d64_track.sv"
+
+run_test tb_c64_g64_track \
+    "$repo_root/hdl/core/c64/multitini_c64_defs_pkg.sv" \
+    "$repo_root/hdl/core/c64/multitini_c64_g64_track.sv" \
+    "$repo_root/hdl/sim/tb_c64_g64_track.sv"
 
 run_test tb_c64_input \
     "$repo_root/hdl/core/c64/multitini_c64_defs_pkg.sv" \
@@ -103,6 +141,7 @@ run_test tb_psram_line_service \
 run_test tb_memory_cdc \
     "$repo_root/hdl/sim/xilinx_primitives.sv" \
     "$repo_root/hdl/common/multitini_async_mailbox.sv" \
+    "$repo_root/hdl/common/multitini_text_overlay.sv" \
     "$repo_root/hdl/common/multitini_memory_cdc.sv" \
     "$repo_root/hdl/sim/tb_memory_cdc.sv"
 
@@ -114,11 +153,16 @@ iverilog -g2012 -Wall -Wimplicit -i -s multitini_one_top \
     "$repo_root/hdl/core/multitini_core_interface.sv" \
     "$repo_root/hdl/core/c64/multitini_c64_defs_pkg.sv" \
     "$repo_root/hdl/core/c64/multitini_c64_loader.sv" \
+    "$repo_root/hdl/core/c64/multitini_c64_content_loader.sv" \
+    "$repo_root/hdl/core/c64/multitini_c64_run_injector.sv" \
+    "$repo_root/hdl/core/c64/multitini_c64_cart_memory.sv" \
     "$repo_root/hdl/core/c64/multitini_c64_input.sv" \
-    "$repo_root/third_party/c64/upstream/rtl/iec_drive/iecdrv_misc.sv" \
+    "$repo_root/hdl/core/c64/ports/cartridge.sv" \
+    "$repo_root/hdl/core/c64/ports/iecdrv_misc.sv" \
     "$repo_root/hdl/core/c64/ports/c1541_logic.sv" \
     "$repo_root/hdl/core/c64/ports/c1541_gcr.sv" \
     "$repo_root/hdl/core/c64/multitini_c64_d64_track.sv" \
+    "$repo_root/hdl/core/c64/multitini_c64_g64_track.sv" \
     "$repo_root/hdl/core/c64/multitini_c64_1541.sv" \
     "$repo_root/hdl/core/c64/multitini_c64_adapter.sv" \
     "$repo_root/third_party/appletini/hdl/reset_sync.sv" \
@@ -137,8 +181,12 @@ iverilog -g2012 -Wall -Wimplicit -i -s multitini_one_top \
     "$repo_root/hdl/common/multitini_memory_cdc.sv" \
     "$repo_root/hdl/common/multitini_cdc_pulse_toggle.sv" \
     "$repo_root/hdl/board/multitini_c64_video_bridge.sv" \
+    "$repo_root/hdl/board/multitini_gameboy_video_bridge.sv" \
     "$repo_root/hdl/board/multitini_video_test.sv" \
     "$repo_root/hdl/board/multitini_audio_test.sv" \
     "$repo_root/hdl/board/multitini_one_top.sv" \
     "$repo_root/hdl/sim/xilinx_primitives.sv"
-echo "PASS: complete shell compiles with block design black-boxed"
+# Two exact pinned cartridge leaves use SystemVerilog constructs unsupported by
+# Icarus. Vivado/XSim compile those sources; this portable whole-shell gate
+# black-boxes them along with the generated block design.
+echo "PASS: complete shell compiles with block design and pinned cartridge leaves black-boxed"

@@ -22,6 +22,10 @@ DOMAIN_NAME = "standalone_ps7_cortexa9_0"
 APP_NAME = os.environ.get("MULTITINI_VITIS_APP", "diagnostic")
 XILFFS_VERSION = "xilffs_v5_5"
 XILFFS_READY_STAMP = ".multitini-xilffs-ready"
+XILFFS_READY_DESCRIPTION = (
+    "xilffs_v5_5 lfn=1 exfat=1 media-validation=r0.16-patch2 "
+    "fat-time-hook=rtc-cache no-card=bounded\n"
+)
 
 
 def require(path: Path, description: str) -> Path:
@@ -139,6 +143,221 @@ def enable_fatfs_lfn(domain_bsp: Path) -> None:
         print(f"Patched FatFs LFN: {bsp_yaml}")
 
 
+def enable_fatfs_exfat(domain_bsp: Path) -> None:
+    """Keep Vitis 2025.2's exported and build-tree exFAT config in sync.
+
+    domain.set_config() updates bsp.yaml, CMakeCache.txt, and the gen_bsp
+    header, but this Vitis release leaves the exported include header and
+    cmake_lib_configs.txt at their old defaults.
+    """
+    patches = {
+        Path("include") / "xilffs_config.h": [
+            ("/* #undef FILE_SYSTEM_FS_EXFAT */",
+             "#define FILE_SYSTEM_FS_EXFAT"),
+        ],
+        Path("libsrc") / "build_configs" / "gen_bsp" / "include" /
+        "xilffs_config.h": [
+            ("/* #undef FILE_SYSTEM_FS_EXFAT */",
+             "#define FILE_SYSTEM_FS_EXFAT"),
+        ],
+        Path("libsrc") / "build_configs" / "gen_bsp" / "CMakeCache.txt": [
+            ("XILFFS_enable_exfat:BOOL=OFF",
+             "XILFFS_enable_exfat:BOOL=ON"),
+        ],
+        Path("libsrc") / "build_configs" / "gen_bsp" /
+        "cmake_lib_configs.txt": [
+            ("XILFFS_enable_exfat:BOOL=OFF",
+             "XILFFS_enable_exfat:BOOL=ON"),
+        ],
+    }
+
+    for relative, replacements in patches.items():
+        path = require(domain_bsp / relative, f"generated {relative}")
+        original = path.read_text(encoding="utf-8")
+        updated = original
+        for old, new in replacements:
+            updated = updated.replace(old, new)
+        if "xilffs_config.h" == path.name:
+            if "#define FILE_SYSTEM_FS_EXFAT" not in updated:
+                raise RuntimeError(f"Could not enable FatFs exFAT in {path}")
+        elif "XILFFS_enable_exfat:BOOL=ON" not in updated:
+            raise RuntimeError(f"Could not enable FatFs exFAT in {path}")
+        if updated != original:
+            path.write_text(updated, encoding="utf-8")
+            print(f"Patched FatFs exFAT: {path}")
+
+
+def patch_fatfs_media_validation(domain_bsp: Path) -> None:
+    """Backport the FatFs R0.16 patch-2 media validation checks.
+
+    Vitis 2025.2 supplies xilffs 5.5 with FatFs R0.15a. Keep the upstream
+    bounds checks in this reproducible BSP build instead of modifying the
+    machine-wide Xilinx installation.
+    """
+    path = require(domain_bsp / "libsrc" / "xilffs" / "src" / "ff.c",
+                   "generated FatFs ff.c")
+    text = path.read_text(encoding="utf-8")
+    patched_checks = (
+        "#define MIN_EXFAT\t0x00000100",
+        "nclst < MIN_EXFAT || nclst > MAX_EXFAT",
+        "fasize >= 0x200000U",
+        "si < dj.dir[XDIR_NumLabel] && si < 11U",
+    )
+    if all(check in text for check in patched_checks):
+        return
+
+    replacements = [
+        (
+            "#define MAX_EXFAT\t0x7FFFFFFD\t\t/* Max exFAT clusters "
+            "(differs from specs, implementation limit) */\n",
+            "#define MAX_EXFAT\t0x7FFFFFFD\t\t/* Max exFAT clusters "
+            "(differs from specs, implementation limit) */\n"
+            "#define MIN_EXFAT\t0x00000100\t\t/* Min exFAT clusters "
+            "(implementation limit) */\n",
+        ),
+        (
+            "\t\tnclst = ld_dword(fs->win + BPB_NumClusEx);\t\t/* Number "
+            "of clusters */\n"
+            "\t\tif (nclst > MAX_EXFAT) {\n"
+            "\t\t\treturn FR_NO_FILESYSTEM;        /* (Too many clusters) */\n"
+            "\t\t}\n",
+            "\t\tnclst = ld_dword(fs->win + BPB_NumClusEx);\t\t/* Number "
+            "of clusters */\n"
+            "\t\tif (nclst < MIN_EXFAT || nclst > MAX_EXFAT) {\n"
+            "\t\t\treturn FR_NO_FILESYSTEM;        /* (Wrong cluster count) */\n"
+            "\t\t}\n",
+        ),
+        (
+            "\t\tif (fasize == 0) {\n"
+            "\t\t\tfasize = ld_dword(fs->win + BPB_FATSz32);\n"
+            "\t\t}\n"
+            "\t\tfs->fsize = fasize;\n",
+            "\t\tif (fasize == 0) {\n"
+            "\t\t\tfasize = ld_dword(fs->win + BPB_FATSz32);\n"
+            "\t\t}\n"
+            "\t\tif (fasize >= 0x200000U) {\n"
+            "\t\t\treturn FR_NO_FILESYSTEM;        /* (FAT is too large) */\n"
+            "\t\t}\n"
+            "\t\tfs->fsize = fasize;\n",
+        ),
+        (
+            "\t\t\t\t\tfor (si = di = hs = 0; si < "
+            "dj.dir[XDIR_NumLabel]; si++) {\t/* Extract volume label from "
+            "83 entry */\n",
+            "\t\t\t\t\tfor (si = di = hs = 0; si < "
+            "dj.dir[XDIR_NumLabel] && si < 11U; si++) {\t/* Extract volume "
+            "label from 83 entry */\n",
+        ),
+    ]
+    for old, new in replacements:
+        if old not in text:
+            raise RuntimeError(
+                f"Could not find expected FatFs media-validation code in "
+                f"{path}: {old!r}")
+        text = text.replace(old, new, 1)
+    if not all(check in text for check in patched_checks):
+        raise RuntimeError(f"FatFs media-validation patch incomplete: {path}")
+    path.write_text(text, encoding="utf-8")
+    print(f"Patched FatFs media validation: {path}")
+
+
+def verify_fatfs_exfat_configuration(domain_bsp: Path) -> None:
+    """Stop if Vitis did not apply exFAT and its BSP safety hooks."""
+    config_paths = (
+        domain_bsp / "include" / "xilffs_config.h",
+        domain_bsp / "libsrc" / "build_configs" / "gen_bsp" / "include" /
+        "xilffs_config.h",
+    )
+    for path in config_paths:
+        text = require(path, "generated xilffs_config.h").read_text(
+            encoding="utf-8")
+        for marker in ("#define FILE_SYSTEM_FS_EXFAT",
+                       "#define FILE_SYSTEM_USE_LFN 1"):
+            if marker not in text:
+                raise RuntimeError(f"Missing {marker!r} in {path}")
+
+    generated = domain_bsp / "libsrc" / "build_configs" / "gen_bsp"
+    for path in (generated / "CMakeCache.txt",
+                 generated / "cmake_lib_configs.txt"):
+        if "XILFFS_enable_exfat:BOOL=ON" not in require(
+                path, "generated BSP exFAT config").read_text(
+                    encoding="utf-8"):
+            raise RuntimeError(f"exFAT is not enabled in {path}")
+
+    yaml_path = require(domain_bsp / "bsp.yaml", "generated BSP yaml")
+    yaml = yaml_path.read_text(encoding="utf-8")
+    option_start = yaml.find("    XILFFS_enable_exfat:")
+    option_end = yaml.find("\n    XILFFS_", option_start + 1)
+    if option_start < 0:
+        raise RuntimeError(f"Missing XILFFS_enable_exfat in {yaml_path}")
+    if option_end < 0:
+        option_end = len(yaml)
+    if "value: 'true'" not in yaml[option_start:option_end]:
+        raise RuntimeError(f"exFAT is not enabled in {yaml_path}")
+
+    ff_path = require(domain_bsp / "libsrc" / "xilffs" / "src" / "ff.c",
+                      "patched FatFs ff.c")
+    ff_source = ff_path.read_text(encoding="utf-8")
+    for marker in ("#define MIN_EXFAT\t0x00000100",
+                   "nclst < MIN_EXFAT || nclst > MAX_EXFAT",
+                   "fasize >= 0x200000U",
+                   "si < dj.dir[XDIR_NumLabel] && si < 11U"):
+        if marker not in ff_source:
+            raise RuntimeError(f"Missing FatFs media guard {marker!r} in "
+                               f"{ff_path}")
+
+    diskio_path = require(domain_bsp / "libsrc" / "xilffs" / "src" /
+                          "diskio.c", "patched FatFs diskio.c")
+    diskio_source = diskio_path.read_text(encoding="utf-8")
+    for marker in ("__attribute__((weak)) DWORD "
+                   "multitini_fatfs_get_fattime (void)",
+                   "return multitini_fatfs_get_fattime();"):
+        if marker not in diskio_source:
+            raise RuntimeError(f"Missing FatFs RTC timestamp hook "
+                               f"{marker!r} in {diskio_path}")
+
+
+def enable_fatfs_timestamp_hook(domain_bsp: Path) -> None:
+    """Patch generated FatFs get_fattime() to allow an RTC-backed override."""
+    path = require(domain_bsp / "libsrc" / "xilffs" / "src" / "diskio.c",
+                   "generated FatFs diskio.c")
+    text = path.read_text(encoding="utf-8")
+    if "multitini_fatfs_get_fattime" in text:
+        return
+
+    old = (
+        "DWORD get_fattime (void)\n"
+        "{\n"
+        "\treturn\t((DWORD)(2010U - 1980U) << 25U)\t/* Fixed to Jan. 1, 2010 */\n"
+        "\t\t| ((DWORD)1 << 21)\n"
+        "\t\t| ((DWORD)1 << 16)\n"
+        "\t\t| ((DWORD)0 << 11)\n"
+        "\t\t| ((DWORD)0 << 5)\n"
+        "\t\t| ((DWORD)0 >> 1);\n"
+        "}\n"
+    )
+    new = (
+        "__attribute__((weak)) DWORD multitini_fatfs_get_fattime (void)\n"
+        "{\n"
+        "\treturn\t((DWORD)(2010U - 1980U) << 25U)\t/* Fixed to Jan. 1, 2010 */\n"
+        "\t\t| ((DWORD)1 << 21)\n"
+        "\t\t| ((DWORD)1 << 16)\n"
+        "\t\t| ((DWORD)0 << 11)\n"
+        "\t\t| ((DWORD)0 << 5)\n"
+        "\t\t| ((DWORD)0 >> 1);\n"
+        "}\n\n"
+        "DWORD get_fattime (void)\n"
+        "{\n"
+        "\treturn multitini_fatfs_get_fattime();\n"
+        "}\n"
+    )
+    if old not in text:
+        raise RuntimeError(f"Could not find generated get_fattime() in "
+                           f"{path}")
+    path.write_text(text.replace(old, new, 1), encoding="utf-8")
+    print(f"Patched FatFs timestamp hook: {path}")
+
+
 def patch_fatfs_no_card_hang(domain_bsp: Path) -> None:
     """Fail fast without a card and bound the card-stable wait to one second."""
     path = require(domain_bsp / "libsrc" / "xilffs" / "src" / "diskio.c",
@@ -238,30 +457,42 @@ def configure_xilffs(platform: object) -> None:
     )
     domain = platform.get_domain(name=DOMAIN_NAME)
     domain.set_lib(lib_name="xilffs", path=str(xilffs))
+    domain.set_config(option="lib", param="XILFFS_enable_exfat",
+                      value="true", lib_name="xilffs")
     domain.regenerate()
     domain_bsp = (WORKSPACE / PLATFORM_NAME / "ps7_cortexa9_0" /
                   DOMAIN_NAME / "bsp")
+    enable_fatfs_exfat(domain_bsp)
     enable_fatfs_lfn(domain_bsp)
+    patch_fatfs_media_validation(domain_bsp)
+    enable_fatfs_timestamp_hook(domain_bsp)
     patch_fatfs_no_card_hang(domain_bsp)
+    verify_fatfs_exfat_configuration(domain_bsp)
 
 
 def mark_xilffs_ready(xpfm: Path) -> None:
     (xpfm.parent / XILFFS_READY_STAMP).write_text(
-        "xilffs_v5_5 lfn=1 no-card=bounded\n", encoding="utf-8")
+        XILFFS_READY_DESCRIPTION, encoding="utf-8")
 
 
 def validate_reused_xilffs(xpfm: Path) -> None:
-    require(xpfm.parent / XILFFS_READY_STAMP,
-            "Multitini xilffs-ready platform stamp; rebuild the platform "
-            "without MULTITINI_PLATFORM_XPFM")
+    stamp = require(xpfm.parent / XILFFS_READY_STAMP,
+                    "Multitini xilffs-ready platform stamp; rebuild the "
+                    "platform without MULTITINI_PLATFORM_XPFM")
+    if stamp.read_text(encoding="utf-8") != XILFFS_READY_DESCRIPTION:
+        raise RuntimeError(
+            f"Reused platform predates the required FatFs BSP features: "
+            f"{stamp}")
     include = xpfm.parent / "sw" / DOMAIN_NAME / "include"
     require(include / "ff.h", "reused platform FatFs header")
     config = require(include / "xilffs_config.h",
                      "reused platform xilffs config")
-    if "#define FILE_SYSTEM_USE_LFN 1" not in config.read_text(
-            encoding="utf-8"):
-        raise RuntimeError(
-            f"Reused platform lacks FatFs LFN support: {config}")
+    config_text = config.read_text(encoding="utf-8")
+    for marker in ("#define FILE_SYSTEM_USE_LFN 1",
+                   "#define FILE_SYSTEM_FS_EXFAT"):
+        if marker not in config_text:
+            raise RuntimeError(
+                f"Reused platform lacks {marker}: {config}")
 
 
 def main() -> int:

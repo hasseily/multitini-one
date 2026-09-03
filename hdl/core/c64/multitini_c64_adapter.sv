@@ -2,7 +2,8 @@
 `timescale 1ns / 1ps
 
 // PAL/NTSC build-time adapter around the pinned FPGA64 machine core. The first
-// drive boundary implements one read-only D64-backed serial-IEC 1541.
+// drive boundary implements one transactional-D64/read-only-G64 serial-IEC
+// 1541.
 module multitini_c64_adapter #(
     parameter bit NTSC_MODE = 1'b0,
     parameter integer AUDIO_SAMPLE_HZ = 48000,
@@ -30,6 +31,16 @@ module multitini_c64_adapter #(
     input  logic [31:0] load_offset,
     input  logic [31:0] load_total,
 
+    output logic [23:0] memory_addr,
+    output logic        memory_write,
+    output logic [63:0] memory_wdata,
+    output logic [7:0]  memory_wstrb,
+    output logic        memory_valid,
+    input  logic        memory_ready,
+    input  logic [63:0] memory_rdata,
+    input  logic        memory_rvalid,
+    input  logic        memory_fault,
+
     input  logic        media_mount,
     input  logic        media_eject,
     input  logic        media_complete,
@@ -50,10 +61,23 @@ module multitini_c64_adapter #(
     output logic [15:0] media_request_block_count,
     output logic [31:0] media_request_generation,
 
+    output logic [7:0]  media_write_data,
+    output logic        media_write_data_valid,
+    output logic        media_write_data_last,
+    input  logic        media_write_data_ready,
+
+    output logic        media_state_mounted,
+    output logic        media_state_dirty,
+    output logic        media_state_eject_pending,
+
     output logic [31:0] core_id,
     output logic        ready,
     output logic        load_error,
     output logic [2:0]  rom_loaded,
+    output logic        prg_loaded,
+    output logic        cart_loaded,
+    output logic [7:0]  cart_hardware_type,
+    output logic        prg_run_busy,
 
     output logic [7:0]  video_r,
     output logic [7:0]  video_g,
@@ -76,12 +100,22 @@ module multitini_c64_adapter #(
     logic [13:0] rom_addr;
     logic [7:0]  rom_data;
     logic        roms_ready;
-    logic        load_active;
+    logic        rom_load_active;
+    logic        content_load_active;
+    logic        system_rom_load_valid;
+    logic        content_load_valid;
     logic        rom_load_valid;
     logic        rom_load_ready;
     logic        rom_load_error;
+    logic        content_load_ready;
+    logic        content_load_error;
+    logic        fatal_load_error;
+    logic        content_core_reset_hold;
+    logic        prg_install_pause;
     logic        d64_load_valid;
     logic        d64_load_ready;
+    logic        g64_load_valid;
+    logic        g64_load_ready;
     logic        drive_media_error;
     logic        drive_rom_wr;
     logic [13:0] drive_rom_addr;
@@ -91,6 +125,30 @@ module multitini_c64_adapter #(
     logic        core_reset_n;
     logic        drive_soft_reset;
 
+    logic        prg_ram_wr;
+    logic [15:0] prg_ram_addr;
+    logic [7:0]  prg_ram_data;
+    logic        prg_run_request;
+
+    logic [23:0] loader_memory_addr;
+    logic        loader_memory_write;
+    logic [63:0] loader_memory_wdata;
+    logic [7:0]  loader_memory_wstrb;
+    logic        loader_memory_valid;
+    logic        loader_memory_ready;
+    logic        cart_loading;
+    logic        cart_exrom_header;
+    logic        cart_game_header;
+    logic        cart_bank_hi;
+    logic        cart_bank_16k;
+    logic [7:0]  cart_bank_num;
+    logic [7:0]  cart_bank_addr;
+    logic        cart_bank_wr;
+    logic        cart_memory_fault;
+    logic        cart_memory_busy;
+    logic        cart_loader_busy;
+    logic [7:0]  loader_cart_id;
+
     logic        c64_iec_data;
     logic        c64_iec_clk;
     logic        c64_iec_atn;
@@ -99,16 +157,44 @@ module multitini_c64_adapter #(
     logic        drive_mounted;
     logic        drive_led;
 
+    logic [10:0] host_ps2_key;
+    logic        host_input_ready;
     logic [10:0] ps2_key;
     logic [6:0]  joy_a;
     logic [6:0]  joy_b;
 
     logic [15:0] ram_addr;
-    logic [7:0]  ram_din = 8'd0;
+    logic [7:0]  main_ram_din = 8'd0;
+    logic [7:0]  core_ram_din;
     logic [7:0]  ram_dout;
     logic        ram_ce;
     logic        ram_we;
     logic [7:0]  main_ram [0:65535];
+
+    logic        cart_game;
+    logic        cart_exrom;
+    logic        cart_rom_l;
+    logic        cart_rom_h;
+    logic        cart_umax_rom_h;
+    logic        cart_ioe;
+    logic        cart_iof;
+    logic        cart_io_rom;
+    logic        cart_io_read;
+    logic [7:0]  cart_io_data;
+    logic        cart_nmi;
+    logic        cart_nmi_ack;
+    logic        cart_mem_ce;
+    logic        cart_mem_we;
+    logic [7:0]  cart_mem_in;
+    logic [7:0]  cart_mem_out;
+    logic [7:0]  cart_data_out;
+    logic [24:0] cart_mem_addr;
+    logic        cart_mem_req;
+    logic        cart_mem_cycle;
+    logic [7:0]  cart_runtime_data;
+    logic        cart_external_select;
+    logic        cart_runtime_request;
+    logic        cart_stall;
 
     logic        raw_hsync;
     logic        raw_vsync;
@@ -127,18 +213,46 @@ module multitini_c64_adapter #(
     integer unsigned audio_phase;
 
     assign core_id = MT_C64_CORE_ID;
-    assign rom_load_valid = load_valid && load_kind != MT_LOAD_C64_D64;
+    assign system_rom_load_valid = load_valid &&
+        (load_kind == MT_LOAD_C64_BASIC ||
+         load_kind == MT_LOAD_C64_KERNAL ||
+         load_kind == MT_LOAD_C64_CHARACTER ||
+         load_kind == MT_LOAD_C64_1541_ROM);
+    assign content_load_valid = load_valid &&
+        (load_kind == MT_LOAD_C64_PRG ||
+         load_kind == MT_LOAD_C64_CRT ||
+         load_kind == MT_LOAD_C64_CRT_DETACH);
+    assign rom_load_valid = system_rom_load_valid;
     assign d64_load_valid = load_valid && load_kind == MT_LOAD_C64_D64;
+    assign g64_load_valid = load_valid && load_kind == MT_LOAD_C64_G64;
     // The asynchronous mailbox presents its payload while valid is stalled, so
     // D64 bytes can apply drive-buffer backpressure without blocking a later
     // ROM object whose kind selects the ordinary loader instead.
-    assign load_ready = load_kind == MT_LOAD_C64_D64 ?
-                        d64_load_ready : rom_load_ready;
-    assign load_error = rom_load_error || drive_media_error;
+    always_comb begin
+        case (load_kind)
+            MT_LOAD_C64_D64: load_ready = d64_load_ready;
+            MT_LOAD_C64_G64: load_ready = g64_load_ready;
+            MT_LOAD_C64_PRG,
+            MT_LOAD_C64_CRT,
+            MT_LOAD_C64_CRT_DETACH: load_ready = content_load_ready;
+            default: load_ready = rom_load_ready;
+        endcase
+    end
+    assign load_error = rom_load_error || content_load_error ||
+                        drive_media_error || cart_memory_fault;
+    assign fatal_load_error = rom_load_error || content_load_error ||
+                              cart_memory_fault;
     assign ready = core_enable && !reset && !core_reset_request &&
-                   !rom_load_valid && !load_active;
-    assign core_reset_n = ready;
+                   !system_rom_load_valid && !content_load_valid &&
+                   !rom_load_active && !content_load_active &&
+                   !fatal_load_error &&
+                   !cart_loader_busy && !prg_run_request && !prg_run_busy;
+    assign core_reset_n = core_enable && !reset && !core_reset_request &&
+                          !system_rom_load_valid && !rom_load_active &&
+                          !content_core_reset_hold &&
+                          !cart_loader_busy && !fatal_load_error;
     assign drive_soft_reset = core_reset_request || !core_enable;
+    assign cart_hardware_type = cart_loaded ? loader_cart_id : 8'hff;
 
     multitini_c64_loader loader_i (
         .clk(core_clk), .reset(reset), .clear_error(clear_load_error),
@@ -151,21 +265,60 @@ module multitini_c64_adapter #(
         .drive_rom_wr(drive_rom_wr), .drive_rom_addr(drive_rom_addr),
         .drive_rom_data(drive_rom_data),
         .drive_rom_loaded(drive_rom_loaded),
-        .roms_ready(roms_ready), .active(load_active), .error(rom_load_error)
+        .roms_ready(roms_ready), .active(rom_load_active),
+        .error(rom_load_error)
+    );
+
+    multitini_c64_content_loader content_loader_i (
+        .clk(core_clk), .reset(reset), .clear_error(clear_load_error),
+        .load_data(load_data), .load_valid(content_load_valid),
+        .load_ready(content_load_ready), .load_first(load_first),
+        .load_last(load_last), .load_kind(load_kind),
+        .load_offset(load_offset), .load_total(load_total),
+        .core_addr(ram_addr),
+        .prg_ram_wr(prg_ram_wr), .prg_ram_addr(prg_ram_addr),
+        .prg_ram_data(prg_ram_data), .prg_loaded(prg_loaded),
+        .prg_run_request(prg_run_request),
+        .loader_memory_addr(loader_memory_addr),
+        .loader_memory_write(loader_memory_write),
+        .loader_memory_wdata(loader_memory_wdata),
+        .loader_memory_wstrb(loader_memory_wstrb),
+        .loader_memory_valid(loader_memory_valid),
+        .loader_memory_ready(loader_memory_ready),
+        .memory_fault(cart_memory_fault),
+        .cart_loading(cart_loading), .cart_loaded(cart_loaded),
+        .cart_id(loader_cart_id), .cart_exrom(cart_exrom_header),
+        .cart_game(cart_game_header), .cart_bank_hi(cart_bank_hi),
+        .cart_bank_16k(cart_bank_16k), .cart_bank_num(cart_bank_num),
+        .cart_bank_addr(cart_bank_addr), .cart_bank_wr(cart_bank_wr),
+        .core_reset_hold(content_core_reset_hold),
+        .prg_install_pause(prg_install_pause),
+        .active(content_load_active), .error(content_load_error)
     );
 
     multitini_c64_input input_i (
         .clk(core_clk), .reset(!core_reset_n),
         .input_code(input_code), .input_value(input_value),
-        .input_valid(input_valid), .input_ready(input_ready),
-        .ps2_key(ps2_key), .joy_a(joy_a), .joy_b(joy_b)
+        .input_valid(input_valid && !prg_run_busy),
+        .input_ready(host_input_ready),
+        .ps2_key(host_ps2_key), .joy_a(joy_a), .joy_b(joy_b)
+    );
+    assign input_ready = host_input_ready && !prg_run_busy;
+
+    multitini_c64_run_injector run_injector_i (
+        .clk(core_clk),
+        .reset(reset || core_reset_request ||
+               (content_load_valid && load_first)),
+        .start(prg_run_request), .host_ps2_key(host_ps2_key),
+        .ps2_key(ps2_key), .busy(prg_run_busy)
     );
 
     // Delay reset release until the final registered ROM write has reached
     // the VHDL memory. Any replacement ROM object immediately stops the core.
     always_ff @(posedge core_clk) begin
-        if (reset || core_reset_request || !roms_ready || load_active ||
-            rom_load_valid || rom_wr || drive_rom_wr)
+        if (reset || core_reset_request || !roms_ready || rom_load_active ||
+            content_core_reset_hold || system_rom_load_valid ||
+            rom_wr || drive_rom_wr)
             core_enable <= 1'b0;
         else
             core_enable <= 1'b1;
@@ -174,31 +327,90 @@ module multitini_c64_adapter #(
     // One synchronous byte-wide 64 KiB store matches the FPGA64 bus latency.
     // RAM contents are deliberately not initialized or cleared as ROM data.
     always_ff @(posedge core_clk) begin
-        if (ram_ce) begin
+        if (prg_ram_wr) begin
+            main_ram[prg_ram_addr] <= prg_ram_data;
+        end else if (ram_ce) begin
             if (ram_we) begin
-                main_ram[ram_addr] <= ram_dout;
-                ram_din <= ram_dout;
+                if (cart_mem_we && !cart_external_select)
+                    main_ram[ram_addr] <= ram_dout;
+                main_ram_din <= ram_dout;
             end else begin
-                ram_din <= main_ram[ram_addr];
+                main_ram_din <= main_ram[ram_addr];
             end
         end
     end
 
+    assign cart_external_select = cart_loaded && cart_mem_ce &&
+                                  cart_mem_addr[24:16] != 9'd0;
+    assign cart_runtime_request = core_reset_n && cart_external_select;
+    assign cart_mem_in = cart_external_select ?
+                         cart_runtime_data : main_ram_din;
+    assign core_ram_din = cart_loaded ? cart_data_out : main_ram_din;
+
+    multitini_c64_cart_memory cart_memory_i (
+        .clk(core_clk), .reset(reset), .loader_active(cart_loading),
+        .loader_addr(loader_memory_addr),
+        .loader_write(loader_memory_write),
+        .loader_wdata(loader_memory_wdata),
+        .loader_wstrb(loader_memory_wstrb),
+        .loader_valid(loader_memory_valid),
+        .loader_ready(loader_memory_ready),
+        .core_request(cart_runtime_request), .core_write(cart_mem_we),
+        .core_addr(cart_mem_addr[23:0]), .core_wdata(cart_mem_out),
+        .core_rdata(cart_runtime_data),
+        .core_stall(cart_stall), .busy(cart_memory_busy),
+        .loader_busy(cart_loader_busy),
+        .fault(cart_memory_fault), .clear_fault(clear_load_error),
+        .memory_addr(memory_addr), .memory_write(memory_write),
+        .memory_wdata(memory_wdata), .memory_wstrb(memory_wstrb),
+        .memory_valid(memory_valid), .memory_ready(memory_ready),
+        .memory_rdata(memory_rdata), .memory_rvalid(memory_rvalid),
+        .memory_fault(memory_fault)
+    );
+
+    cartridge cartridge_i (
+        .clk32(core_clk), .reset_n(core_reset_n),
+        .cart_loading(cart_loading),
+        .cart_id(cart_loaded ? loader_cart_id : 8'hff),
+        .cart_exrom(cart_exrom_header), .cart_game(cart_game_header),
+        .cart_bank_hi(cart_bank_hi), .cart_bank_16k(cart_bank_16k),
+        .cart_bank_num(cart_bank_num), .cart_bank_addr(cart_bank_addr),
+        .cart_bank_wr(cart_bank_wr), .cart_boot(1'b1),
+        .exrom(cart_exrom), .game(cart_game), .romL(cart_rom_l),
+        .romH(cart_rom_h), .UMAXromH(cart_umax_rom_h),
+        .IOE(cart_ioe), .IOF(cart_iof), .mem_write(ram_we),
+        .mem_ce(ram_ce), .mem_ce_out(cart_mem_ce),
+        .mem_write_out(cart_mem_we), .mem_in(cart_mem_in),
+        .mem_out(cart_mem_out), .mem_addr(cart_mem_addr),
+        .mem_req(cart_mem_req), .mem_cycle(cart_mem_cycle),
+        .IO_rom(cart_io_rom), .IO_rd(cart_io_read),
+        .IO_data(cart_io_data), .addr_in(ram_addr), .data_in(ram_dout),
+        .data_out(cart_data_out), .freeze_key(1'b0),
+        .mod_key(1'b0), .nmi(cart_nmi), .nmi_ack(cart_nmi_ack)
+    );
+
     fpga64_sid_iec core_i (
         .clk32(core_clk), .reset_n(core_reset_n),
-        .bios({1'b0, rom_bank}), .pause(1'b0), .pause_out(),
+        .bios({1'b0, rom_bank}),
+        // PRG installation uses FPGA64's boundary-safe whole-core pause.
+        // Cartridge PSRAM misses instead stretch the active VIC/CPU bus phase
+        // until the requested cache line is present.
+        .pause(prg_install_pause), .memory_wait(cart_stall), .pause_out(),
         .ps2_key(ps2_key), .kbd_reset(!core_reset_n), .shift_mod(2'b11),
-        .ramAddr(ram_addr), .ramDin(ram_din), .ramDout(ram_dout),
+        .ramAddr(ram_addr), .ramDin(core_ram_din), .ramDout(ram_dout),
         .ramCE(ram_ce), .ramWE(ram_we),
-        .io_cycle(), .ext_cycle(), .refresh(),
+        .io_cycle(cart_mem_cycle), .ext_cycle(), .refresh(),
         .cia_mode(1'b0), .turbo_mode(2'b00), .turbo_speed(2'b00),
         .vic_variant(2'b00), .ntscMode(NTSC_MODE),
         .hsync(raw_hsync), .vsync(raw_vsync), .palette(3'b000),
         .r(raw_r), .g(raw_g), .b(raw_b),
-        .game(1'b1), .exrom(1'b1), .io_rom(1'b0), .io_ext(1'b0),
-        .io_data(8'hFF), .irq_n(1'b1), .nmi_n(1'b1), .nmi_ack(),
-        .romL(), .romH(), .UMAXromH(), .IOE(), .IOF(),
-        .freeze_key(), .mod_key(), .tape_play(), .tape_rew(),
+        .game(cart_game), .exrom(cart_exrom), .io_rom(cart_io_rom),
+        .io_ext(cart_io_read), .io_data(cart_io_data), .irq_n(1'b1),
+        .nmi_n(!cart_nmi), .nmi_ack(cart_nmi_ack),
+        .romL(cart_rom_l), .romH(cart_rom_h),
+        .UMAXromH(cart_umax_rom_h), .IOE(cart_ioe), .IOF(cart_iof),
+        .freeze_key(), .mod_key(),
+        .tape_play(), .tape_rew(),
         .tape_stop(), .tape_ff(), .tape_reset_counter(),
         .dma_req(1'b0), .dma_cycle(), .dma_addr(16'd0),
         .dma_dout(8'd0), .dma_din(), .dma_we(1'b0), .irq_ext_n(1'b1),
@@ -245,12 +457,24 @@ module multitini_c64_adapter #(
         .media_request_lba(media_request_lba),
         .media_request_block_count(media_request_block_count),
         .media_request_generation(media_request_generation),
+        .media_write_data(media_write_data),
+        .media_write_data_valid(media_write_data_valid),
+        .media_write_data_last(media_write_data_last),
+        .media_write_data_ready(media_write_data_ready),
         .d64_load_data(load_data), .d64_load_valid(d64_load_valid),
         .d64_load_ready(d64_load_ready), .d64_load_first(load_first),
         .d64_load_last(load_last), .d64_load_offset(load_offset),
-        .d64_load_total(load_total), .mounted(drive_mounted),
+        .d64_load_total(load_total),
+        .g64_load_data(load_data), .g64_load_valid(g64_load_valid),
+        .g64_load_ready(g64_load_ready), .g64_load_first(load_first),
+        .g64_load_last(load_last), .g64_load_offset(load_offset),
+        .g64_load_total(load_total), .mounted(drive_mounted),
+        .media_dirty(media_state_dirty),
+        .media_eject_pending(media_state_eject_pending),
         .drive_led(drive_led), .error(drive_media_error)
     );
+
+    assign media_state_mounted = drive_mounted;
 
     video_sync sync_i (
         .clk32(core_clk), .pause(!core_reset_n),

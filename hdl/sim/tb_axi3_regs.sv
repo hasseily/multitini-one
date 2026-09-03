@@ -43,16 +43,16 @@ module tb_axi3_regs;
     logic rvalid;
     logic rready = 1'b1;
     logic reg_wr_en;
-    logic [11:0] reg_wr_addr;
+    logic [15:0] reg_wr_addr;
     logic [31:0] reg_wr_data;
     logic [3:0] reg_wr_strb;
     logic reg_rd_en;
-    logic [11:0] reg_rd_addr;
+    logic [15:0] reg_rd_addr;
     logic [31:0] reg_rd_data;
     integer write_count = 0;
 
     always #5 clk = !clk;
-    always_comb reg_rd_data = 32'hA0000000 | {20'd0, reg_rd_addr};
+    always_comb reg_rd_data = 32'hA0000000 | {16'd0, reg_rd_addr};
     always @(posedge clk) if (reg_wr_en) write_count <= write_count + 1;
 
     multitini_axi3_regs dut (
@@ -111,7 +111,7 @@ module tb_axi3_regs;
         wait (bvalid);
         #1;
         check_value(bresp == 2'b00 && bid == 12'h123, "valid write response");
-        check_value(reg_wr_addr == 12'h028 && reg_wr_data == 32'hDEADBEEF,
+        check_value(reg_wr_addr == 16'h0028 && reg_wr_data == 32'hDEADBEEF,
                "write payload");
         @(negedge clk);
         check_value(write_count == 1, "one accepted register write");

@@ -21,7 +21,13 @@ previously hardwired 8580 SID model to 6581, but the 2026-09-02 report says the
 same scratching remains. Candidate `20260902` instead fixes a reproduced
 dual-SID pipeline error that briefly published a filter intermediate as the
 right channel. The exact build was installed on the connected board, and the
-2026-09-03 user retest reports that the scratching/audio bug is fixed.
+2026-09-03 user retest reports that the scratching/audio bug is fixed. Build
+`2026090E` adds the ABI 0.6 multicore supervisor, F12 menu, branded standby
+screen, PSRAM-enabled GBC image, and packed two-device PSRAM address mapping.
+Its PAL, NTSC, and GBC images pass the strict vendor gates. On 2026-09-04 the
+connected board reported the expected build and ABI, switched from C64 to GBC
+through PCAP, loaded cartridges through the menu, and ran Tomb Raider and
+V-Rally beyond their title screens without the former white-screen lockup.
 
 ## Current state
 
@@ -42,9 +48,9 @@ Known:
   through XMODEM-1K/CRC, verifies an outer CRC32, and releases reset only after
   all three FPGA ROM streams complete and the core reports ready.
 - Current source configures diagnostic UART0 at the golden-compatible 921600
-  baud; UART1 remains at 115200. This PS setting takes effect only after a new
-  Vivado/XSA and Vitis platform/FSBL build. The last packaged `20260902` image
-  remains a 115200-baud historical artifact.
+  baud; UART1 remains at 115200. The standalone `20260903` builds include that
+  setting. The older packaged `20260902` image remains a 115200-baud historical
+  artifact.
 - A fail-closed dual-clock live bridge stores the fixed C64 palette as four-bit
   indices in four 382x270 frame banks. Complete PAL frames enter a Gray-pointer
   ring; the 1080p60 side changes display banks only at vertical blank. A missing
@@ -54,9 +60,20 @@ Known:
   strict-tool compatibility ports, GB/GBC content validation, cartridge boot
   helper, adapter, one-line cartridge cache, and shared external-memory ABI are
   implemented and provenance locked.
-- The board shell selects C64 or GBC at project creation. A GBC PSRAM CDC/PHY
-  path is prepared but deliberately disabled by default pending Vivado timing
-  and board validation.
+- The board shell still selects one machine at project creation, but current
+  ABI 0.6 source adds an ARM-resident multicore supervisor. It discovers strict
+  SD core packages, safely replaces the complete PL through DevCfg/PCAP,
+  validates the new shell/core/ABI, and reloads the previous package on
+  failure. This is full PL reconfiguration, not partial reconfiguration.
+- Every ABI 0.6 image includes the same double-buffered 80x36 overlay. The F12
+  menu selects core variants, machine-specific media, active or diagnostic
+  video, input settings, core reset, and golden recovery. C64 and GBC both
+  have activation services; GBC accepts `.gb` and `.gbc` cartridges. See
+  [`docs/MULTICORE_RUNTIME.md`](docs/MULTICORE_RUNTIME.md).
+- GBC video crosses into a four-bank RGB565 frame ring and scales 160x144 by
+  6x into the common 1080p output. The PSRAM-enabled `2026090E` image passes
+  timing/CDC/DRC/route gates and its first cartridge board tests. Save/RTC
+  persistence and broader mapper/input/audio qualification remain open.
 - The AXI register path, DVI timing generator, diagnostic audio path, PSRAM
   BIST, and C64 ROM loader/input bridges pass HDL simulations. Build
   `2026082F` adds coherent live stereo PCM crossings for I2S and SPDIF while
@@ -113,6 +130,24 @@ Known:
   the game's required joystick port 1. See
   [`docs/C64_SD_STORAGE.md`](docs/C64_SD_STORAGE.md) for the exact card layout,
   startup behavior, UART commands, and serial fallback.
+- The later storage/content batch extends that historical baseline. The Vitis
+  generator enables exFAT in
+  Xilinx `xilffs` 5.5, keeps every generated/exported configuration copy in
+  sync, carries the upstream FatFs media-validation guards, and connects
+  FatFs timestamps to the board PCF8563 RTC with a fixed-date fallback until a
+  valid clock reading is available. Normal data-only D64 images are writable;
+  every accepted write is persisted through a checksummed write-ahead journal
+  before the FPGA receives success. A leftover complete journal is replayed
+  when that D64 is mounted again. D64 images with error-info tails remain
+  read-only. G64 version-zero images are read-only and support fixed speed
+  zones 0 through 3; variable per-byte speed maps are rejected explicitly.
+  Eject, core reset, content changes, and reboot all use the same
+  flush/eject barrier and refuse to discard a dirty image on failure. UART
+  exposes `:mount`, `:eject`, `:dir`, `:disk`, and `:diskretry` for this path.
+  The standalone PAL and NTSC `20260903` builds that include the storage batch
+  were subsequently reported by the user to look okay on the board. That is a
+  visual smoke result, not complete writable-media, exFAT, RTC, or content
+  qualification.
 - Build `2026082F` connects the selected machine's signed 24-bit PCM stream to
   the common I2S and SPDIF outputs. Live audio is selected automatically when
   the core is ready; UART `a` restores live audio, `t` selects the fixed test
@@ -165,8 +200,13 @@ Hardware status and remaining gaps:
 - The four-bank live-video source passes focused XSim, its fresh PAL Vivado
   build, and its first board test. This qualifies live PAL C64 video on the
   tested card/display combination, not physical input, storage, or SID audio.
-- NTSC and GBC Vivado builds remain pending. The GBC PSRAM path remains
-  disabled by default and awaits timing and board validation.
+- Fresh ABI 0.6 PAL, NTSC, and PSRAM-enabled GBC `2026090E` builds pass the
+  strict vendor gates at +0.244/+0.026 ns, +0.272/+0.056 ns, and
+  +0.211/+0.055 ns setup/hold respectively. The consolidated supervisor and
+  packages are installed on the board. F12, C64-to-GBC PCAP loading, package
+  CRC validation, GBC cartridge loading, Tomb Raider gameplay, and V-Rally
+  gameplay pass. Failure rollback and repeated bidirectional switching still
+  need focused board tests.
 - SD file-system, C64/1541 ROM autoload, default drive-8 mounting, and read-only
   D64 service pass on the board in build `2026082E`; Decathlon loads and runs.
   USB1 power, both keyboard maps, generic
@@ -175,14 +215,19 @@ Hardware status and remaining gaps:
   held-disconnect release, reconnect, and joystick-port swap. Build `2026082E`
   loads the tracked C64 ROM set from SD; UART upload remains a fallback. The
   pinned open GBC bootstrap remains the only ROM embedded in an FPGA image.
+- Writable D64, journal recovery, exFAT, RTC-backed FAT timestamps, G64 reads,
+  and the media retry/eject/reset barriers are present in the standalone
+  `20260903` images, but the user report is only that both C64 images look
+  okay. The detailed `2026082E` storage run remains the most recent evidence
+  for actual disk loading and covers read-only D64 only.
 - DVI timing and the fixed diagnostic tone have initial board observations.
   Build `2026082F` proves that live SID audio is generally clean but does not
   pass qualification because of the Decathlon and Ultima II stuck-tone faults.
   The reported `20260830` retest still scratched. The connected-board retest of
   `20260902` reports that the scratching/audio bug is fixed; broader long-run,
   game-specific, channel, level, reset, and SPDIF coverage remains open.
-  The long-run audio gate, remaining non-Xbox USB hotplug checks, DDR, PSRAM,
-  and Apple-bus isolation still require the hardware work in
+  The long-run audio gate, remaining non-Xbox USB hotplug checks, DDR,
+  destructive PSRAM testing, and Apple-bus isolation still require the hardware work in
   `MULTITINI_ONE_PLAN.md`.
 
 ## Host checks
@@ -206,7 +251,7 @@ review, or board testing.
 The intended first commands on a Vivado 2025.2 machine are:
 
 ```powershell
-$env:MULTITINI_BUILD_ID = '20260903'
+$env:MULTITINI_BUILD_ID = '2026090E'
 vivado -mode batch -source scripts/create_project.tcl
 vivado -mode batch -source scripts/build_and_export_xsa.tcl
 vitis -s scripts/create_vitis_workspace.py
@@ -250,6 +295,8 @@ This requests 33.554432 MHz and leaves the physical PSRAM path disabled. Read
 `docs/VIVADO_HANDOFF.md` before opting into that path.
 
 See `docs/HANDOFF_STATUS.md` and `docs/VIVADO_HANDOFF.md` before rebuilding.
+The runtime package layout, menu controls, and post-build packaging command are
+in [`docs/MULTICORE_RUNTIME.md`](docs/MULTICORE_RUNTIME.md).
 
 ## Licensing
 

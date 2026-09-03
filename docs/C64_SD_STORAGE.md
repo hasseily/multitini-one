@@ -1,65 +1,101 @@
-# C64 SD ROM and D64 workflow
+# C64 SD ROM and disk workflow
 
-Status: implemented in build `2026082E` and covered by host tests. Its matching
-Vivado/Vitis/Bootgen build passes, producing a 4,475,348-byte `FIRMWARE.BIN`
-with SHA-256
+Historical hardware baseline: build `2026082E` implemented SD ROM loading and
+read-only drive-8 D64 service. Its Vivado/Vitis/Bootgen build produced a
+4,475,348-byte `FIRMWARE.BIN` with SHA-256
 `079257d25af73abfc6c3f9372771660934942d9009655e5684bc78952d4cd118`.
-The user-reported board test also passes: C64 and 1541 ROM loading from SD,
-default drive-8 D64 mounting, Decathlon loading and gameplay, and UART `j`
-joystick-port selection all worked. The `2026082D` packaged firmware does not
-contain this feature.
+The user-reported board test passed C64 and 1541 ROM loading, default D64
+mounting, Decathlon loading and gameplay, and UART `j` joystick-port
+selection. Build `2026082D` did not contain that storage feature.
+
+Current source extends the baseline with exFAT, RTC-backed FAT timestamps,
+writable normal D64 images, journal recovery, safe media barriers, and
+read-only G64 images. This newer source has not had a full Vivado/Vitis/Bootgen
+rebuild and has not been tested on the board. None of those additions should
+be attributed to `2026082E` or another packaged historical image.
 
 ## Card layout
 
-Keep golden-updater files at the SD-card root and put machine content under
-the lowercase `/cores` directory:
+Keep golden-updater files at the SD-card root and put each machine's package,
+ROMs, and media together under `/multitini/cores`:
 
 ```text
 /
 |-- FIRMWARE.BIN                 optional golden-update input
 |-- FIRMWARE.OK                  renamed/verified golden-update image
-`-- cores/
-    `-- c64/
-        |-- roms/
-        |   |-- basic.bin        exactly 8,192 bytes
-        |   |-- kernal.bin       exactly 8,192 bytes
-        |   |-- characters.bin   exactly 4,096 bytes
-        |   `-- 1541.bin         exactly 16,384 bytes
-        `-- media/
-            |-- drive8.d64       optional default disk
-            `-- other.d64        optional manually mounted disks
+`-- multitini/
+    `-- cores/
+        `-- c64/
+            |-- core.cfg
+            |-- c64-pal.bin
+            |-- c64-ntsc.bin
+            |-- roms/
+            |   |-- basic.bin        exactly 8,192 bytes
+            |   |-- kernal.bin       exactly 8,192 bytes
+            |   |-- characters.bin   exactly 4,096 bytes
+            |   `-- 1541.bin         exactly 16,384 bytes
+            `-- media/
+                |-- drive8.d64       optional default disk
+                |-- other.d64        normal writable D64
+                |-- protected.d64    D64 with error-info tail; read-only
+                |-- other.g64        read-only G64
+                |-- program.prg      directly loadable C64 program
+                `-- cartridge.crt    directly loadable cartridge
 ```
 
-The firmware uses FatFs volume `0:`. The canonical paths are therefore:
+The firmware uses FatFs volume `0:`. The canonical ROM and default-media paths
+are:
 
-- `0:/cores/c64/roms/basic.bin`
-- `0:/cores/c64/roms/kernal.bin`
-- `0:/cores/c64/roms/characters.bin`
-- `0:/cores/c64/roms/1541.bin`
-- `0:/cores/c64/media/drive8.d64`
+- `0:/multitini/cores/c64/roms/basic.bin`
+- `0:/multitini/cores/c64/roms/kernal.bin`
+- `0:/multitini/cores/c64/roms/characters.bin`
+- `0:/multitini/cores/c64/roms/1541.bin`
+- `0:/multitini/cores/c64/media/drive8.d64`
 
-Create these directories and copy the files yourself. Firmware does not
-format the card or create, delete, or rename content under `/cores`. Long-file
-name support is enabled so `characters.bin` and ordinary D64 names work.
-Unrelated root files and directories outside `/cores` are ignored. Golden
-continues to inspect only its root update names, so the machine-content tree
-coexists with `FIRMWARE.BIN` and `FIRMWARE.OK`.
+Create the directories and copy the content files yourself. The firmware does
+not format the card. It does not rename or alter unrelated content. When a
+normal D64 is written, firmware may create a temporary sidecar named after the
+image with `.mtj` appended, such as `other.d64.mtj`. That file is an internal
+write-ahead journal, not mountable media. It is removed after a complete
+commit and retained for recovery if an operation is interrupted.
 
 The repository contains its selected BASIC, KERNAL, and character ROMs as
 tracked inputs, but the SD copies use the short canonical names above. It does
-not provide a 1541 ROM or D64 image. Supplying those files does not change their
-copyright or redistribution status; see [CONTENT_POLICY.md](CONTENT_POLICY.md).
+not provide a 1541 ROM or media image. Supplying those files does not change
+their copyright or redistribution status; see
+[CONTENT_POLICY.md](CONTENT_POLICY.md).
+
+## FatFs and exFAT
+
+The current Vitis generator selects Xilinx `xilffs` 5.5 and enables both long
+file names and exFAT before building the platform. Vitis 2025.2 leaves some
+generated and exported configuration copies stale, so the generator
+synchronizes both `xilffs_config.h` copies, `CMakeCache.txt`,
+`cmake_lib_configs.txt`, and `bsp.yaml`. It also applies the four FatFs R0.16
+patch-2 media-validation bounds checks to the generated R0.15a source and
+retains the bounded no-card handling inherited from Appletini.
+
+A reused Vitis platform is accepted only when its semantic stamp identifies
+the LFN, exFAT, media-validation, RTC timestamp-hook, and bounded no-card
+features. A platform built before these changes must be regenerated; merely
+rebuilding the application is insufficient.
+
+The generated FatFs `get_fattime()` calls a weak application hook. Multitini's
+strong hook uses a cached PCF8563 RTC reading, refreshed once per second by the
+main loop. Invalid or voltage-low readings do not replace the last good value.
+Before the first valid reading, or when I2C/RTC initialization fails, file
+writes use FatFs' fixed `2010-01-01 00:00:00` fallback.
 
 ## Automatic startup
 
 On a C64 image, the application mounts the SD volume once and reports the
 FatFs result on UART. It holds the C64 in reset while it reads the three
-required system ROMs at their exact sizes, rejects uniform/invalid content,
+required system ROMs at their exact sizes, rejects uniform or invalid content,
 and streams them into the FPGA. A successful load releases reset and turns off
-the diagnostic color bars, so the C64 display appears directly.
+the Multitini standby screen, so the C64 display appears directly.
 
 If the SD card, a required system ROM, validation, or FPGA streaming fails,
-the C64 remains in reset and the color bars remain visible. UART and USB still
+the C64 remains in reset and the Multitini standby screen remains visible. UART and USB still
 start, and the serial three-ROM upload remains available as a recovery path.
 
 The 1541 ROM is separate from the required 20,480-byte C64 system-ROM bundle.
@@ -69,9 +105,11 @@ mounting remains unavailable; `:dir` and `:disk` can still inspect the media
 directory and empty status.
 
 After the drive service is ready, firmware automatically tries to mount
-`0:/cores/c64/media/drive8.d64`. The file is optional: a missing or invalid
-default disk leaves drive 8 empty without stopping the running C64. Other D64
-files are mounted only when requested through UART.
+`0:/multitini/cores/c64/media/drive8.d64`. Before reading that image, it validates and
+replays any complete checksummed journal left by an interrupted write. The
+default file is optional: a missing or invalid image leaves drive 8 empty
+without stopping the running C64. Other D64 and G64 files are mounted only
+when requested through UART.
 
 ## UART disk commands
 
@@ -79,47 +117,99 @@ Enter these extended commands in the running firmware's serial console:
 
 | Command | Result |
 | --- | --- |
-| `:dir` | List `.d64` files immediately inside `0:/cores/c64/media`. |
-| `:mount FILE.d64` | Eject the current disk, read and validate the named file from the media directory, and mount it read-only as drive 8. Pass a file name, not a path. |
-| `:disk` | Show the current drive-8 file, byte size, generation, and read-only state, or report that the drive is empty. |
-| `:eject` | Eject the current drive-8 disk. |
+| `:dir` | List recognized `.d64`, `.g64`, `.prg`, and `.crt` files immediately inside `0:/multitini/cores/c64/media`. |
+| `:mount FILE.d64` | Safely eject the current disk, recover a complete journal if present, validate the named D64, and mount a normal data-only image writable or an error-tail image read-only as drive 8. |
+| `:mount FILE.g64` | Safely eject the current disk, validate the named G64, and mount it read-only as drive 8. |
+| `:disk` | Show the current drive-8 file, type, byte size, generation, writable/read-only policy, FPGA mounted/dirty/eject state, RAM-dirty state, and service-fault state. |
+| `:eject` | Drain pending media work and eject only after the FPGA reports a stable unmounted and clean state. A failed persistence step retains the dirty image for retry. |
+| `:diskretry` | Clear a retryable media-transfer fault, let the FPGA reissue its held dirty write, and retry a pending post-reset remount. |
 
-`:mount` rejects names containing `/`, `\`, or `:` and accepts only a D64
-extension. It never searches the SD-card root or another core's directory.
+`:mount` rejects names containing `/`, `\`, or `:` and accepts only D64 or G64
+extensions. It never searches the SD-card root or another core's directory.
 
-## Read-only D64 scope
+Core reset, PRG/CRT content changes, and `:reboot` use the same media
+preparation path. Firmware first flushes and ejects the current disk. Reset or
+reboot is refused or cancelled when that barrier cannot complete, so the
+operation does not silently discard a dirty D64. After a normal core reset or
+content load, firmware remounts the prior image; `:diskretry` remains available
+if that remount fails.
+
+## D64 write and recovery rules
 
 The firmware reads the complete selected D64 into PS DDR, validates its exact
 size, and serves 256-byte data sectors to the FPGA drive. The accepted image
 sizes are:
 
-| Data sectors | Without error-info tail | With one error byte per sector |
+| Data sectors | Normal data-only D64 | D64 with one error byte per sector |
 | ---: | ---: | ---: |
 | 683 | 174,848 bytes | 175,531 bytes |
 | 768 | 196,608 bytes | 197,376 bytes |
 | 802 | 205,312 bytes | 206,114 bytes |
 
-This first service is deliberately read-only. It advertises a read-only mount,
-rejects write requests, and never writes a modified image back to SD. Only
-drive 8 and D64 media are in scope; G64, D81, multiple drives, save-back, and
-filesystem mutation are not qualified by this implementation.
+The three normal data-only forms are writable. The three error-tail forms are
+mounted read-only because updating sector data without defined error-tail
+semantics would make the combined image ambiguous. Read-only media rejects
+write requests rather than modifying the in-memory copy.
+
+For a writable image, the FPGA sends an exact reverse byte stream for the
+changed block range. Firmware validates the range before consuming bytes,
+requires the final marker on exactly the last expected byte, updates the RAM
+image, and persists the entire D64 before acknowledging success. Persistence
+uses this order:
+
+1. Write and sync a sidecar containing a versioned header, complete D64
+   payload, CRC-32, and matching trailer.
+2. Rewrite and sync the ordinary D64 while the complete journal remains.
+3. Remove the journal only after the target sync succeeds.
+
+On the next mount, a complete journal with matching sizes, complements,
+trailer, and CRC is replayed and then removed. An incomplete or corrupt journal
+is rejected and preserved for diagnosis; it is never treated as a valid disk
+image. The design does not depend on `f_rename()` being power-loss atomic.
+
+The FPGA holds dirty/eject-pending state until the matching write completion
+succeeds. Firmware reads the media state twice for a stable clock-domain
+snapshot before treating eject as complete. A failed journal write, target
+write, sync, completion, or eject therefore leaves an explicit retry path
+instead of forgetting the mounted image.
+
+## G64 read scope
+
+Current source accepts strict version-zero `GCR-1541` images whose track table,
+track lengths, extents, and fixed speed entries validate. Fixed speed zones 0,
+1, 2, and 3 are carried with each normalized half-track. A speed-table value
+that points to a variable per-byte speed map is rejected with an explicit
+unsupported-speed-map error.
+
+G64 tracks are normalized into the fixed 8 KiB transfer buffer used by the
+direct-GCR drive reader. Missing track-table entries produce an empty track.
+G64 is read-only: no reverse write stream or file save-back is accepted.
 
 ## Serial ROM fallback
 
 The existing uploader still sends only BASIC, KERNAL, and character ROMs as an
-exact 20,480-byte XMODEM-1K/CRC bundle:
+exact 20,480-byte XMODEM-1K/CRC bundle. The currently packaged `20260902` image
+retains its historical 115200-baud UART setting:
 
 ```powershell
 python .\scripts\serial_c64_rom_upload.py --port COM10 --baud 115200
 ```
 
-Change `COM10` as needed. The script issues `:c64rx 20480 0xCRC32`, defaults to
-the three tracked repository ROM files, and retains its explicit file-path
-options. It does not upload `1541.bin` or a D64. After a serial fallback boot,
-use `v` if the diagnostic color bars are still selected.
+Change `COM10` as needed. Current source changes UART0 to the
+golden-compatible 921600 baud, but that takes effect only after a fresh
+Vivado/XSA and Vitis platform/FSBL build. The script issues
+`:c64rx 20480 0xCRC32`, defaults to the three tracked repository ROM files,
+and retains its explicit file-path options. It does not upload `1541.bin` or a
+disk image. After a serial fallback boot, use `v` if the Multitini standby screen
+are still selected.
+
+## Validation boundary
 
 The first board result qualifies ROM autoload, 1541 startup, the default
-drive-8 D64 mount, read service during Decathlon loading and gameplay, and
-runtime joystick-port selection on the tested card and SD setup. It does not
-qualify D64 writes, other drives, G64, D81, save-back, arbitrary game
-compatibility, or long-run SD reliability.
+read-only drive-8 D64 mount, read service during Decathlon loading and
+gameplay, and runtime joystick-port selection on the tested card and SD setup.
+That result is build `2026082E`; it does not qualify D64 writes,
+journal/recovery behavior, exFAT, RTC-backed
+timestamps, G64, safe reset/reboot barriers, arbitrary game compatibility, or
+long-run SD reliability. Those are current source features awaiting a full
+build and physical-card validation.

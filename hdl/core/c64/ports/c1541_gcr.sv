@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Multitini compatibility port of MiSTer C64 commit
 // 62fc697e3c9b5982c9dc76aa8cd03db545d20803. Declarations are moved before
-// use and the procedurally assigned GCR decoder nibble is a variable.
+// use, the procedurally assigned GCR decoder nibble is a variable, and the
+// constant encoder table is expressed as an equivalent function for portable
+// simulator support.
 //-------------------------------------------------------------------------------
 //
 // Commodore 1541 gcr floppy (read/write) by Dar (darfpga@aol.fr) 23-May-2017
@@ -62,12 +64,27 @@ reg  [4:0] gcr_nibble_out;
 reg  [7:0] hdr_cks;
 
 wire [7:0] buff_do;
-wire [4:0] gcr_lut[16] = '{
-	5'b01010, 5'b11010, 5'b01001, 5'b11001,
-	5'b01110, 5'b11110, 5'b01101, 5'b11101,
-	5'b10010, 5'b10011, 5'b01011, 5'b11011,
-	5'b10110, 5'b10111, 5'b01111, 5'b10101
-};
+
+function automatic [4:0] gcr_encode(input logic [3:0] value);
+	case (value)
+		4'h0: gcr_encode = 5'b01010;
+		4'h1: gcr_encode = 5'b11010;
+		4'h2: gcr_encode = 5'b01001;
+		4'h3: gcr_encode = 5'b11001;
+		4'h4: gcr_encode = 5'b01110;
+		4'h5: gcr_encode = 5'b11110;
+		4'h6: gcr_encode = 5'b01101;
+		4'h7: gcr_encode = 5'b11101;
+		4'h8: gcr_encode = 5'b10010;
+		4'h9: gcr_encode = 5'b10011;
+		4'hA: gcr_encode = 5'b01011;
+		4'hB: gcr_encode = 5'b11011;
+		4'hC: gcr_encode = 5'b10110;
+		4'hD: gcr_encode = 5'b10111;
+		4'hE: gcr_encode = 5'b01111;
+		default: gcr_encode = 5'b10101;
+	endcase
+endfunction
 wire [4:0] sector_max= (track < 18) ? 5'd20 :
 								(track < 25) ? 5'd18 :
 								(track < 31) ? 5'd17 :
@@ -86,7 +103,7 @@ wire [7:0] data_body= (byte_cnt == 0)   ? 8'h07 :
 								(byte_cnt >= 260) ? 8'h0F :
 													  buff_do;
 wire [7:0] data = state ? data_body : data_header;
-wire [4:0] gcr_nibble = gcr_lut[nibble ? data[3:0] : data[7:4]];
+wire [4:0] gcr_nibble = gcr_encode(nibble ? data[3:0] : data[7:4]);
 
 assign sync_n = ~mtr | busy | sync_in_n;
 

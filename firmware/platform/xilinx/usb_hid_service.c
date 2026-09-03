@@ -1,10 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* C64 USB keyboard, HID gamepad, and XInput adapter on USB1. */
+/* Shared USB keyboard, HID gamepad, and XInput adapter on USB1. */
 #include "usb_hid_service.h"
 
 #include "cherryusb_platform.h"
 #include "multitini_c64_hid_input.h"
 #include "multitini_c64_xinput.h"
+#include "multitini_gameboy_hid_input.h"
+#include "multitini_gameboy_interface.h"
 #include "usb_config.h"
 #include "usbh_core.h"
 #include "usbh_hid.h"
@@ -100,6 +102,7 @@ static uint8_t
                     [MT_XINPUT_PACKET_BYTES]
     __attribute__((aligned(CONFIG_USB_ALIGN_SIZE)));
 static mt_c64_hid_input_t g_c64_input;
+static mt_gameboy_hid_input_t g_gameboy_input;
 static uint32_t g_reports_total;
 static uint32_t g_submit_errors;
 static uint32_t g_transfer_errors;
@@ -108,13 +111,23 @@ static int g_last_error;
 static uint8_t g_started;
 static uint8_t g_power_shutdown_required;
 static uint8_t g_core_ready;
+static uint32_t g_active_core_id;
+static mt_usb_keyboard_filter_fn g_keyboard_filter;
+static void *g_keyboard_filter_context;
 
-static int emit_c64_input(void *context, uint16_t code, uint16_t value)
+static int emit_active_input(void *context, uint16_t code, uint16_t value)
 {
     mt_core_link_t *const link = context;
     mt_link_result_t result;
+    const uint8_t input_namespace = (uint8_t)(code >> 8U);
 
     if (link == NULL || g_core_ready == 0U) return -1;
+    if ((g_active_core_id == MT_GBC_CORE_ID &&
+         input_namespace != MT_INPUT_GB_GAMEPAD) ||
+        (g_active_core_id != MT_GBC_CORE_ID &&
+         input_namespace == MT_INPUT_GB_GAMEPAD)) {
+        return -1;
+    }
     result = mt_core_link_input_event(link, code, value,
                                       MT_INPUT_COMMAND_POLLS, NULL, NULL);
     if (result != MT_LINK_OK) {
@@ -123,6 +136,35 @@ static int emit_c64_input(void *context, uint16_t code, uint16_t value)
         return -1;
     }
     return 0;
+}
+
+static void submit_keyboard_state(uint8_t slot, uint8_t modifiers,
+                                  const uint8_t *keys, size_t key_count)
+{
+    (void)mt_c64_hid_keyboard_report(&g_c64_input, slot, modifiers,
+                                     keys, key_count);
+    (void)mt_gameboy_hid_keyboard_report(&g_gameboy_input, slot, modifiers,
+                                         keys, key_count);
+}
+
+static void submit_gamepad_state(uint8_t slot, uint8_t state)
+{
+    (void)mt_c64_hid_joystick_report(&g_c64_input, slot, state);
+    (void)mt_gameboy_hid_gamepad_report(&g_gameboy_input, slot, state);
+}
+
+static void disconnect_input_slot(uint8_t slot)
+{
+    (void)mt_c64_hid_disconnect(&g_c64_input, slot);
+    (void)mt_gameboy_hid_disconnect(&g_gameboy_input, slot);
+}
+
+static void poll_active_input(void)
+{
+    if (g_active_core_id == MT_GBC_CORE_ID)
+        (void)mt_gameboy_hid_input_poll(&g_gameboy_input);
+    else
+        (void)mt_c64_hid_input_poll(&g_c64_input);
 }
 
 static mt_hid_slot_t *slot_for_hid(struct usbh_hid *hid)
@@ -313,9 +355,11 @@ static void process_gamepad_report(mt_hid_slot_t *slot,
             usage = usage_for_field(item, field);
 
             if (item->attribute.usage_page == HID_USAGE_PAGE_BUTTON &&
-                usage >= 1U && usage <= 3U) {
-                const uint8_t bit = (uint8_t)(usage + 3U);
-                const uint8_t mask = (uint8_t)(1U << bit);
+                ((usage >= 1U && usage <= 4U) ||
+                 usage == 9U || usage == 10U)) {
+                const uint8_t mask = usage == 9U ? UINT8_C(0x40) :
+                                     (usage == 10U ? UINT8_C(0x80) :
+                                      (uint8_t)(1U << (usage + 3U)));
                 button_touched |= mask;
                 if (raw != 0U) button_value |= mask;
             } else if (item->attribute.usage_page ==
@@ -360,8 +404,7 @@ static void process_gamepad_report(mt_hid_slot_t *slot,
                      direction_value);
     next = (uint8_t)((next & (uint8_t)~button_touched) | button_value);
     slot->gamepad_state = next;
-    (void)mt_c64_hid_joystick_report(&g_c64_input,
-                                     (uint8_t)(slot - g_slots), next);
+    submit_gamepad_state((uint8_t)(slot - g_slots), next);
 }
 
 static uint32_t report_length(const mt_hid_slot_t *slot)
@@ -394,9 +437,16 @@ static void report_complete(void *argument, int bytes)
         if (slot->keyboard != 0U && bytes >= 8) {
             const struct usb_hid_kbd_report *const keyboard =
                 (const struct usb_hid_kbd_report *)g_reports[index];
-            (void)mt_c64_hid_keyboard_report(
-                &g_c64_input, index, keyboard->modifier, keyboard->key,
-                sizeof(keyboard->key));
+            const bool captured = g_keyboard_filter != NULL &&
+                g_keyboard_filter(g_keyboard_filter_context, index,
+                                  keyboard->modifier, keyboard->key,
+                                  sizeof(keyboard->key));
+            if (captured) {
+                submit_keyboard_state(index, 0U, NULL, 0U);
+            } else {
+                submit_keyboard_state(index, keyboard->modifier,
+                                      keyboard->key, sizeof(keyboard->key));
+            }
         } else if (slot->gamepad != 0U) {
             process_gamepad_report(slot, g_reports[index], (uint32_t)bytes);
         }
@@ -489,8 +539,7 @@ static void xinput_report_complete(void *argument, int bytes)
             if (state != slot->decoded_state) ++slot->state_changes;
             slot->decoded_state = state;
             slot->observed_state |= state;
-            (void)mt_c64_hid_joystick_report(
-                &g_c64_input, xinput_aggregate_slot(slot), state);
+            submit_gamepad_state(xinput_aggregate_slot(slot), state);
         } else {
             ++g_input_errors;
             slot->last_error = decode_result;
@@ -683,7 +732,7 @@ void usbh_xbox_run(struct usbh_xbox *xbox)
     slot = slot_for_xinput(xbox);
     if (slot == NULL) return;
     aggregate_slot = xinput_aggregate_slot(slot);
-    (void)mt_c64_hid_disconnect(&g_c64_input, aggregate_slot);
+    disconnect_input_slot(aggregate_slot);
     memset(slot, 0, sizeof(*slot));
     slot->xbox = xbox;
     slot->active = 1U;
@@ -703,8 +752,7 @@ void usbh_xbox_stop(struct usbh_xbox *xbox)
     if (slot == NULL || slot->xbox != xbox) return;
     xil_printf("[usb1] XInput disconnected slot=%u\r\n",
                (unsigned int)xbox->minor);
-    (void)mt_c64_hid_disconnect(&g_c64_input,
-                                xinput_aggregate_slot(slot));
+    disconnect_input_slot(xinput_aggregate_slot(slot));
     memset(slot, 0, sizeof(*slot));
 }
 
@@ -780,7 +828,7 @@ void usbh_hid_run(struct usbh_hid *hid)
     if (hid == NULL || hid->hport == NULL) return;
     slot = slot_for_hid(hid);
     if (slot == NULL) return;
-    (void)mt_c64_hid_disconnect(&g_c64_input, hid->minor);
+    disconnect_input_slot(hid->minor);
     slot_clear(slot);
     descriptor = &hid->hport->config.intf[hid->intf]
                       .altsetting[0].intf_desc;
@@ -811,7 +859,7 @@ void usbh_hid_stop(struct usbh_hid *hid)
     if (slot == NULL || slot->hid != hid) return;
     xil_printf("[usb1] HID disconnected slot=%u\r\n",
                (unsigned int)hid->minor);
-    (void)mt_c64_hid_disconnect(&g_c64_input, hid->minor);
+    disconnect_input_slot(hid->minor);
     hid->user_data = NULL;
     slot_clear(slot);
 }
@@ -828,7 +876,18 @@ void usb_hid_service_init(mt_core_link_t *link)
     g_started = 0U;
     g_power_shutdown_required = 0U;
     g_core_ready = 0U;
-    mt_c64_hid_input_init(&g_c64_input, emit_c64_input, link);
+    g_active_core_id = 0U;
+    g_keyboard_filter = NULL;
+    g_keyboard_filter_context = NULL;
+    mt_c64_hid_input_init(&g_c64_input, emit_active_input, link);
+    mt_gameboy_hid_input_init(&g_gameboy_input, emit_active_input, link);
+}
+
+void usb_hid_service_set_keyboard_filter(mt_usb_keyboard_filter_fn filter,
+                                         void *context)
+{
+    g_keyboard_filter = filter;
+    g_keyboard_filter_context = context;
 }
 
 int usb_hid_service_start(void)
@@ -899,6 +958,7 @@ int usb_hid_service_stop(void)
         g_started = 0U;
     }
     (void)mt_c64_hid_release_all(&g_c64_input);
+    (void)mt_gameboy_hid_release_all(&g_gameboy_input);
     memset(g_slots, 0, sizeof(g_slots));
     memset(g_xinput_slots, 0, sizeof(g_xinput_slots));
     if (power_result != 0) {
@@ -908,13 +968,26 @@ int usb_hid_service_stop(void)
     return power_result;
 }
 
+void usb_hid_service_set_active_core(uint32_t core_id)
+{
+    g_core_ready = 0U;
+    g_active_core_id = core_id;
+    if (g_active_core_id == MT_GBC_CORE_ID)
+        mt_gameboy_hid_reassert(&g_gameboy_input);
+    else
+        mt_c64_hid_reassert(&g_c64_input);
+}
+
 void usb_hid_service_set_core_ready(bool ready)
 {
     const uint8_t next = ready ? 1U : 0U;
     if (next != 0U && g_core_ready == 0U) {
         g_core_ready = 1U;
-        mt_c64_hid_reassert(&g_c64_input);
-        (void)mt_c64_hid_input_poll(&g_c64_input);
+        if (g_active_core_id == MT_GBC_CORE_ID)
+            mt_gameboy_hid_reassert(&g_gameboy_input);
+        else
+            mt_c64_hid_reassert(&g_c64_input);
+        poll_active_input();
     } else {
         g_core_ready = next;
     }
@@ -926,12 +999,12 @@ void usb_hid_service_poll(void)
         cherryusb_host_poll(CHERRYUSB_USB1_BUSID);
         retry_reports();
     }
-    (void)mt_c64_hid_input_poll(&g_c64_input);
+    poll_active_input();
 }
 
 void cherryusb_background_poll(void)
 {
-    (void)mt_c64_hid_input_poll(&g_c64_input);
+    poll_active_input();
 }
 
 int usb_hid_service_set_joystick_port(uint8_t port)

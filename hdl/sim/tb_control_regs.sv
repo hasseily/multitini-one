@@ -35,6 +35,12 @@ module tb_control_regs;
     logic [31:0] media_request_lba = 32'd0;
     logic [15:0] media_request_block_count = 16'd0;
     logic [31:0] media_request_generation = 32'd0;
+    logic media_data_valid = 1'b0;
+    logic [7:0] media_data = 8'd0;
+    logic media_data_last = 1'b0;
+    logic media_state_mounted = 1'b0;
+    logic media_state_dirty = 1'b0;
+    logic media_state_eject_pending = 1'b0;
     logic media_submit_ready = 1'b1;
     logic media_mount;
     logic media_eject;
@@ -48,11 +54,19 @@ module tb_control_regs;
     logic [31:0] media_complete_status;
     logic [15:0] media_complete_block_count;
     logic [31:0] media_complete_generation;
+    logic media_data_pop;
+    logic ui_active_visible = 1'b0;
+    logic ui_active_bank = 1'b0;
+    logic ui_submit_ready = 1'b1;
+    logic ui_submit;
+    logic ui_visible;
+    logic ui_bank;
 
     always #5 clk = !clk;
 
     multitini_control_regs #(.SHELL_BUILD_ID(32'h12345678)) dut (
         .clk(clk), .resetn(resetn), .core_id(32'h43363420),
+        .core_variant_index(32'd1),
         .core_ready(1'b1), .load_submit_ready(load_submit_ready),
         .core_load_error(core_load_error),
         .input_submit_ready(input_submit_ready),
@@ -62,7 +76,15 @@ module tb_control_regs;
         .media_request_lba(media_request_lba),
         .media_request_block_count(media_request_block_count),
         .media_request_generation(media_request_generation),
+        .media_data_valid(media_data_valid), .media_data(media_data),
+        .media_data_last(media_data_last),
+        .media_state_mounted(media_state_mounted),
+        .media_state_dirty(media_state_dirty),
+        .media_state_eject_pending(media_state_eject_pending),
         .media_submit_ready(media_submit_ready),
+        .ui_active_visible(ui_active_visible),
+        .ui_active_bank(ui_active_bank),
+        .ui_submit_ready(ui_submit_ready),
         .wr_en(wr_en), .wr_addr(wr_addr),
         .wr_data(wr_data), .wr_strb(wr_strb), .rd_en(rd_en),
         .rd_addr(rd_addr), .rd_data(rd_data), .control(control),
@@ -81,6 +103,8 @@ module tb_control_regs;
         .media_complete_status(media_complete_status),
         .media_complete_block_count(media_complete_block_count),
         .media_complete_generation(media_complete_generation),
+        .media_data_pop(media_data_pop),
+        .ui_submit(ui_submit), .ui_visible(ui_visible), .ui_bank(ui_bank),
         .irq(irq)
     );
 
@@ -120,10 +144,33 @@ module tb_control_regs;
         expect_read(MT_REG_MAGIC, MT_MAGIC, "magic");
         expect_read(MT_REG_SHELL_BUILD_ID, 32'h12345678, "build ID");
         expect_read(MT_REG_CORE_ID, 32'h43363420, "core ID");
+        expect_read(MT_REG_CORE_VARIANT_INDEX, 32'd1, "core variant index");
         expect_read(MT_REG_STATUS,
                     MT_STATUS_SHELL_READY | MT_STATUS_VIDEO_ACTIVE |
                     MT_STATUS_CORE_READY | MT_STATUS_STREAM_READY,
                     "muted audio is not active");
+
+        expect_read(MT_REG_UI_STATUS, MT_UI_STATUS_READY,
+                    "UI mailbox initially ready");
+        write_reg(MT_REG_UI_COMMIT,
+                  MT_UI_COMMIT_VISIBLE | MT_UI_COMMIT_BANK, 4'hF);
+        check_value(ui_submit && ui_visible && ui_bank,
+                    "UI bank commit submitted coherently");
+        ui_active_visible = 1'b1;
+        ui_active_bank = 1'b1;
+        #1;
+        expect_read(MT_REG_UI_STATUS,
+                    MT_UI_STATUS_VISIBLE | MT_UI_STATUS_BANK |
+                    MT_UI_STATUS_READY,
+                    "UI active state reported");
+
+        ui_submit_ready = 1'b0;
+        write_reg(MT_REG_UI_COMMIT, MT_UI_COMMIT_VISIBLE, 4'hF);
+        check_value(!ui_submit, "busy UI mailbox rejects commit");
+        expect_read(MT_REG_ERROR, MT_ERROR_BAD_WRITE,
+                    "busy UI commit sets bad-write error");
+        write_reg(MT_REG_ERROR, MT_ERROR_BAD_WRITE, 4'hF);
+        ui_submit_ready = 1'b1;
 
         write_reg(MT_REG_SCRATCH, 32'hA5A55A5A, 4'b0101);
         expect_read(MT_REG_SCRATCH, 32'h00A5005A, "byte strobes");
@@ -275,7 +322,7 @@ module tb_control_regs;
                     input_value == 16'h0001,
                     "input event submitted coherently");
 
-        // Read-only mounts are explicit, path-free events. Writable mounts and
+        // Mounts are explicit, path-free events. Writable media is allowed;
         // malformed payloads must not reach the core-facing pulse.
         write_reg(MT_REG_COMMAND_ARG0, 32'h00001200, 4'hF);
         write_reg(MT_REG_COMMAND_ARG1, 32'd174848, 4'hF);
@@ -284,9 +331,10 @@ module tb_control_regs;
         write_reg(MT_REG_COMMAND_SEQ, 32'd14, 4'hF);
         write_reg(MT_REG_COMMAND_OPCODE, MT_COMMAND_MEDIA_MOUNT, 4'hF);
         write_reg(MT_REG_COMMAND_DOORBELL, 32'd14, 4'hF);
-        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_INVALID_ARGUMENT,
-                    "writable media mount rejected");
-        check_value(!media_mount, "invalid mount pulse suppressed");
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_OK,
+                    "writable media mount accepted");
+        check_value(media_mount && !media_read_only,
+                    "writable mount pulse and flag");
 
         write_reg(MT_REG_COMMAND_ARG0,
                   MT_MEDIA_MOUNT_READ_ONLY | 32'h00001200, 4'hF);
@@ -344,8 +392,35 @@ module tb_control_regs;
         expect_read(MT_REG_MEDIA_REQUEST_GENERATION, 32'h0000002A,
                     "media request generation");
 
-        // A stale ID, failure status, partial count, or stale generation is
-        // never acknowledged as a successful read.
+        media_state_mounted = 1'b1;
+        media_state_dirty = 1'b1;
+        media_state_eject_pending = 1'b1;
+        media_data = 8'hC7;
+        media_data_valid = 1'b1;
+        media_data_last = 1'b1;
+        #1;
+        expect_read(MT_REG_MEDIA_STATE,
+                    MT_MEDIA_STATE_MOUNTED | MT_MEDIA_STATE_DIRTY |
+                    MT_MEDIA_STATE_EJECT_PENDING,
+                    "media state flags");
+        expect_read(MT_REG_MEDIA_DATA,
+                    MT_MEDIA_DATA_VALID | MT_MEDIA_DATA_LAST |
+                    (32'hC7 << MT_MEDIA_DATA_BYTE_SHIFT),
+                    "media write byte");
+        @(negedge clk);
+        rd_addr = MT_REG_MEDIA_DATA;
+        rd_en = 1'b1;
+        @(negedge clk);
+        check_value(media_data_pop, "media data read pops byte");
+        rd_en = 1'b0;
+        media_data_valid = 1'b0;
+        media_data_last = 1'b0;
+        media_state_dirty = 1'b0;
+        media_state_eject_pending = 1'b0;
+
+        // A stale ID, partial success count, or stale generation is rejected.
+        // Explicit failures are forwarded with a zero completed count so the
+        // core can preserve dirty state and leave its request deterministically.
         write_reg(MT_REG_COMMAND_ARG0, 32'h11223345, 4'hF);
         write_reg(MT_REG_COMMAND_ARG1, MT_RESPONSE_OK, 4'hF);
         write_reg(MT_REG_COMMAND_ARG2, 32'd2, 4'hF);
@@ -359,10 +434,15 @@ module tb_control_regs;
 
         write_reg(MT_REG_COMMAND_ARG0, 32'h11223344, 4'hF);
         write_reg(MT_REG_COMMAND_ARG1, MT_RESPONSE_IO_ERROR, 4'hF);
+        write_reg(MT_REG_COMMAND_ARG2, 32'd0, 4'hF);
         write_reg(MT_REG_COMMAND_SEQ, 32'd18, 4'hF);
         write_reg(MT_REG_COMMAND_DOORBELL, 32'd18, 4'hF);
-        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_INVALID_ARGUMENT,
-                    "failed media completion rejected");
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_OK,
+                    "failed media completion forwarded");
+        check_value(media_complete &&
+                    media_complete_status == MT_RESPONSE_IO_ERROR &&
+                    media_complete_block_count == 16'd0,
+                    "failed completion pulse and payload");
 
         write_reg(MT_REG_COMMAND_ARG1, MT_RESPONSE_OK, 4'hF);
         write_reg(MT_REG_COMMAND_ARG2, 32'd1, 4'hF);
@@ -401,9 +481,9 @@ module tb_control_regs;
                     "write request flag is observable");
         write_reg(MT_REG_COMMAND_SEQ, 32'd22, 4'hF);
         write_reg(MT_REG_COMMAND_DOORBELL, 32'd22, 4'hF);
-        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_INVALID_ARGUMENT,
-                    "read-only service rejects write completion");
-        check_value(!media_complete, "write completion pulse suppressed");
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_OK,
+                    "matching write completion accepted");
+        check_value(media_complete, "write completion pulse emitted");
 
         media_request_valid = 1'b0;
         media_request_write = 1'b0;

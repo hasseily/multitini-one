@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns / 1ps
 
-// Prepared GBC external-memory path. This block is excluded from active pin
-// drive by default and must pass Vivado timing, CDC, and board PSRAM tests
-// before ENABLE_GBC_PSRAM is used for a hardware image.
+// Common external-memory path first exercised by GBC. C64 cartridges use the
+// same aligned service; the legacy module name remains until the ABI refactor.
 module multitini_gameboy_psram_path (
     input  logic         core_clk,
     input  logic         core_resetn,
     input  logic         control_clk,
     input  logic         control_resetn,
     input  logic         idelay_ref_clk,
+    input  logic         idelay_resetn,
 
     input  logic [23:0]  core_memory_addr,
     input  logic         core_memory_write,
@@ -37,6 +37,8 @@ module multitini_gameboy_psram_path (
     logic [63:0] service_rdata;
     logic service_rvalid;
     logic service_initialized;
+    logic memory_fault_control;
+    logic memory_fault_meta;
 
     logic command_valid;
     logic command_ready;
@@ -45,14 +47,14 @@ module multitini_gameboy_psram_path (
     logic [63:0] command_wdata;
     logic driver_response_valid;
     logic [63:0] driver_response_rdata;
-    logic [3:0] psram_oe;
+    logic [3:0] psram_t;
     logic [3:0] psram_a_i;
     logic [3:0] psram_a_o;
     logic [3:0] psram_b_i;
     logic [3:0] psram_b_o;
 
     IDELAYCTRL idelayctrl_i (
-        .REFCLK(idelay_ref_clk), .RST(!control_resetn), .RDY(idelay_ready)
+        .REFCLK(idelay_ref_clk), .RST(!idelay_resetn), .RDY(idelay_ready)
     );
     assign memory_resetn = control_resetn && idelay_ready;
 
@@ -79,7 +81,7 @@ module multitini_gameboy_psram_path (
 
     multitini_psram_line_service service_i (
         .clk(control_clk), .resetn(memory_resetn),
-        .initialized(service_initialized), .fault(memory_fault),
+        .initialized(service_initialized), .fault(memory_fault_control),
         .request_addr(service_addr), .request_write(service_write),
         .request_wdata(service_wdata), .request_wstrb(service_wstrb),
         .request_valid(service_valid), .request_ready(service_ready),
@@ -91,13 +93,25 @@ module multitini_gameboy_psram_path (
         .driver_response_rdata(driver_response_rdata)
     );
 
-    psram_driver driver_i (
+    // The line service fault is sticky in the control-clock domain. Synchronize
+    // that level before either machine adapter consumes it in core_clk.
+    always_ff @(posedge core_clk) begin
+        if (!core_resetn) begin
+            memory_fault_meta <= 1'b0;
+            memory_fault <= 1'b0;
+        end else begin
+            memory_fault_meta <= memory_fault_control;
+            memory_fault <= memory_fault_meta;
+        end
+    end
+
+    multitini_psram_driver driver_i (
         .clk(control_clk), .resetn(memory_resetn),
         .valid(command_valid), .ready(command_ready), .cmd(command),
         .addr(command_addr), .wdata(command_wdata),
         .rvalid(driver_response_valid), .rdata(driver_response_rdata),
         .done(), .dcount_wr_en(1'b0), .dcount_wr(5'd0),
-        .dcount_edge(1'b0), .psram_oe(psram_oe),
+        .dcount_edge(1'b0), .psram_t(psram_t),
         .psram_a_i(psram_a_i), .psram_a_o(psram_a_o),
         .psram_b_i(psram_b_i), .psram_b_o(psram_b_o),
         .psram_ce_n(psram_ce_n), .psram_clk(psram_clk)
@@ -108,11 +122,11 @@ module multitini_gameboy_psram_path (
         for (index = 0; index < 4; index = index + 1) begin : g_psram_iobuf
             IOBUF a_iobuf (
                 .I(psram_a_o[index]), .O(psram_a_i[index]),
-                .T(!psram_oe[index]), .IO(psram_a_io[index])
+                .T(psram_t[index]), .IO(psram_a_io[index])
             );
             IOBUF b_iobuf (
                 .I(psram_b_o[index]), .O(psram_b_i[index]),
-                .T(!psram_oe[index]), .IO(psram_b_io[index])
+                .T(psram_t[index]), .IO(psram_b_io[index])
             );
         end
     endgenerate

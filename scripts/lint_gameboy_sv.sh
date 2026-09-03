@@ -15,6 +15,8 @@ local_sources=(
     "$repo_root/hdl/core/gameboy/ports/dpram.sv"
     "$repo_root/hdl/core/gameboy/ports/gb.v"
     "$repo_root/hdl/core/gameboy/ports/cart.v"
+    "$repo_root/hdl/core/gameboy/ports/cheatcodes.sv"
+    "$repo_root/hdl/core/gameboy/ports/megaswizzle.sv"
 )
 
 # Parse and elaborate both mixed-language top-level ports. VHDL dependencies
@@ -46,6 +48,7 @@ iverilog -g2012 -Wall -Wimplicit -i -s multitini_one_top \
     "$repo_root/hdl/common/multitini_control_regs.sv" \
     "$repo_root/hdl/common/multitini_async_mailbox.sv" \
     "$repo_root/hdl/common/multitini_cdc_pulse_toggle.sv" \
+    "$repo_root/hdl/board/multitini_gameboy_video_bridge.sv" \
     "$repo_root/hdl/board/multitini_video_test.sv" \
     "$repo_root/hdl/board/multitini_audio_test.sv" \
     "$repo_root/hdl/board/multitini_one_top.sv" \
@@ -58,12 +61,12 @@ iverilog -g2012 -Wall -Wimplicit -i -s multitini_gameboy_psram_path \
     "$repo_root/hdl/common/multitini_async_mailbox.sv" \
     "$repo_root/hdl/common/multitini_memory_cdc.sv" \
     "$repo_root/hdl/common/multitini_psram_line_service.sv" \
-    "$repo_root/third_party/appletini/hdl/psram_driver.sv" \
+    "$repo_root/hdl/board/multitini_psram_driver.sv" \
     "$repo_root/hdl/board/multitini_gameboy_psram_path.sv"
 
 upstream_sources=(
     "${(@f)$(cd "$repo_root" && rg --files third_party/gameboy/upstream/rtl | \
-        rg '\.(v|sv)$' | rg -v '/(gb|cart|video)\.v$')}"
+        rg '\.(v|sv)$' | rg -v '[/\\](gb|cart|video)\.v$|[/\\](cheatcodes|megaswizzle)\.sv$')}"
 )
 upstream_sources=("${upstream_sources[@]/#/$repo_root/}")
 

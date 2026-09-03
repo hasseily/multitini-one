@@ -58,16 +58,17 @@ static void test_rom_file_paths_and_loading(void)
     mt_c64_rom_files_result_t result;
     rom_reader_t reader = {0};
 
-    assert(strcmp(MT_SD_CORE_ROOT, "0:/cores") == 0);
-    assert(strcmp(MT_C64_SD_MEDIA_ROOT, "0:/cores/c64/media") == 0);
+    assert(strcmp(MT_SD_CORE_ROOT, "0:/multitini/cores") == 0);
+    assert(strcmp(MT_C64_SD_MEDIA_ROOT,
+                  "0:/multitini/cores/c64/media") == 0);
     assert(strcmp(mt_c64_sd_rom_path(MT_C64_ROM_BASIC),
-                  "0:/cores/c64/roms/basic.bin") == 0);
+                  "0:/multitini/cores/c64/roms/basic.bin") == 0);
     assert(strcmp(mt_c64_sd_rom_path(MT_C64_ROM_KERNAL),
-                  "0:/cores/c64/roms/kernal.bin") == 0);
+                  "0:/multitini/cores/c64/roms/kernal.bin") == 0);
     assert(strcmp(mt_c64_sd_rom_path(MT_C64_ROM_CHARACTER),
-                  "0:/cores/c64/roms/characters.bin") == 0);
+                  "0:/multitini/cores/c64/roms/characters.bin") == 0);
     assert(strcmp(mt_c64_sd_rom_path(MT_C64_ROM_DRIVE_1541),
-                  "0:/cores/c64/roms/1541.bin") == 0);
+                  "0:/multitini/cores/c64/roms/1541.bin") == 0);
     assert(mt_c64_sd_rom_path((mt_c64_rom_kind_t)99) == NULL);
 
     result = mt_c64_rom_files_load_system(

@@ -14,6 +14,7 @@
 #define MT_JOY_FIRE UINT8_C(0x10)
 #define MT_JOY_SPACE UINT8_C(0x20)
 #define MT_JOY_CONTROL UINT8_C(0x40)
+#define MT_JOY_START UINT8_C(0x80)
 
 static int32_t signed_le16(const uint8_t *bytes)
 {
@@ -60,6 +61,8 @@ int mt_c64_xinput_decode(const uint8_t *report, size_t length,
     if ((buttons[1] & UINT8_C(0x10)) != 0U) state |= MT_JOY_FIRE;
     if ((buttons[1] & UINT8_C(0x20)) != 0U) state |= MT_JOY_SPACE;
     if ((buttons[1] & UINT8_C(0x40)) != 0U) state |= MT_JOY_CONTROL;
+    if ((buttons[0] & UINT8_C(0x20)) != 0U) state |= MT_JOY_CONTROL;
+    if ((buttons[0] & UINT8_C(0x10)) != 0U) state |= MT_JOY_START;
 
     *joystick_state = state;
     return 0;

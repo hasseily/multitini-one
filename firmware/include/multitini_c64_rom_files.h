@@ -9,7 +9,7 @@
 #include "multitini_c64_interface.h"
 #include "multitini_content.h"
 
-#define MT_SD_CORE_ROOT "0:/cores"
+#define MT_SD_CORE_ROOT "0:/multitini/cores"
 #define MT_C64_SD_ROOT MT_SD_CORE_ROOT "/c64"
 #define MT_C64_SD_ROM_ROOT MT_C64_SD_ROOT "/roms"
 #define MT_C64_SD_MEDIA_ROOT MT_C64_SD_ROOT "/media"

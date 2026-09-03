@@ -15,13 +15,39 @@
     "C64_PRG": "0x10",
     "C64_CRT": "0x11",
     "C64_D64": "0x12",
-    "C64_G64": "0x13"
+    "C64_G64": "0x13",
+    "C64_CRT_DETACH": "0x14"
   },
   "rom_sizes": {
     "C64_BASIC": 8192,
     "C64_KERNAL": 8192,
     "C64_CHARACTER": 4096,
     "C64_1541_ROM": 16384
+  },
+  "content_limits": {
+    "C64_PRG_MIN": 3,
+    "C64_PRG_MAX": 65538,
+    "C64_CRT_MIN": 80,
+    "C64_CRT_MAX": 2101312
+  },
+  "crt_hardware_types": {
+    "NORMAL": 0,
+    "SIMONS_BASIC": 4,
+    "OCEAN_TYPE_1": 5,
+    "FUN_PLAY": 7,
+    "SUPER_GAMES": 8,
+    "EPYX_FASTLOAD": 10,
+    "FINAL_CARTRIDGE_1_2": 13,
+    "C64_GAME_SYSTEM": 15,
+    "DINAMIC": 17,
+    "ZAXXON": 18,
+    "MAGIC_DESK": 19,
+    "COMAL_80": 21,
+    "WATERLOO_BASIC": 22,
+    "MIKRO_ASSEMBLER": 28,
+    "PROPHET64": 43,
+    "RGCD": 57,
+    "MAGIC_DESK_2": 85
   },
   "input_namespaces": {
     "PS2_SET2": "0x00",

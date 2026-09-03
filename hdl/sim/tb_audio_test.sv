@@ -196,7 +196,10 @@ module tb_audio_test;
         repeat (140) @(negedge bclk);
         #1;
         check_value(lrck_edges >= 4, "48 kHz I2S frame clock advances");
-        check_value(!$isunknown({lrck, sdata, bclk, spdif}),
+        // Icarus 13 incorrectly reports a known packed concatenation as
+        // unknown, so test each physical output independently.
+        check_value(!$isunknown(lrck) && !$isunknown(sdata) &&
+                    !$isunknown(bclk) && !$isunknown(spdif),
                     "audio outputs are known");
         expect_i2s_frame(24'd0, 24'd0,
                          "muted unavailable machine emits silence");

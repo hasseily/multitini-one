@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert the pinned open-source MiSTer CGB bootstrap MIF to readmemh."""
+"""Convert the pinned open-source MiSTer CGB bootstrap MIF to XPM/readmemh."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "third_party" / "gameboy" / "upstream" / "BootROMs" / "cgb_boot.mif"
-OUTPUT = ROOT / "hdl" / "core" / "gameboy" / "boot" / "cgb_boot.hex"
+OUTPUT = ROOT / "hdl" / "core" / "gameboy" / "boot" / "cgb_boot.mem"
 
 
 def convert() -> str:

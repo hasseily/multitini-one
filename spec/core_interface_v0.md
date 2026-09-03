@@ -62,11 +62,11 @@ The C64 ABI 0.1 assignments are:
 | BASIC ROM | `0x01` | 8192 | Implemented |
 | KERNAL ROM | `0x02` | 8192 | Implemented |
 | Character ROM | `0x03` | 4096 | Implemented |
-| 1541 ROM | `0x04` | 16384 | Reserved; drive excluded from first build |
-| PRG | `0x10` | variable | Reserved |
-| CRT | `0x11` | variable | Reserved |
-| D64 | `0x12` | variable | Reserved for media service design |
-| G64 | `0x13` | variable | Reserved for media service design |
+| 1541 ROM | `0x04` | 16384 | Implemented and board-tested in the earlier read-only-D64 build |
+| PRG | `0x10` | 3-65538 | Implemented in source; pending vendor build and board test |
+| CRT | `0x11` | 80-2101312 | Implemented for the documented conservative mapper profiles; pending vendor build and board test |
+| D64 | `0x12` | validated D64 sizes | Implemented in source for reads and transactional writes; pending vendor build and board test |
+| G64 | `0x13` | validated G64 v0 | Implemented read-only in source; pending vendor build and board test |
 | GBC bootstrap | `0x20` | 2304 | Implemented; optional override of the built-in open bootstrap |
 | GB/GBC cartridge | `0x21` | 32768-8388608 | Implemented |
 
@@ -91,17 +91,27 @@ The interface supports one outstanding aligned 64-bit line transaction:
 
 The GBC map places cartridge ROM at `0x000000` and cartridge RAM at `0x800000`.
 The current service supports at most 8 MiB of ROM and 128 KiB of cartridge RAM.
+These are logical addresses. On Appletini ONE, the two x4 PSRAM devices operate
+in parallel: device A stores bytes 0-3 of each logical line and device B stores
+bytes 4-7. The board service therefore sends physical address
+`logical_address >> 1`, preserving alignment. Logical ROM occupies physical
+`0x000000-0x3FFFFF`; cartridge RAM begins at physical `0x400000`. This packing
+is required because each LY68L6400 implements only address bits A[22:0].
+The C64 cartridge loader places the selected CRT payload at `0x200000` and
+uses the same one-outstanding service. Only mapper layouts whose logical bank
+addressing matches that packed representation are accepted.
 
 ## Media request service
 
-ABI 0.4 adds the first read-only D64 transport. A core presents one request at
+ABI 0.5 extends the first D64 transport to bidirectional requests and G64
+reads. A core presents one request at
 a time using `media_request_valid`, `media_request_write`, a request ID, LBA,
 block count, and mount generation. LBA and block count use 256-byte units. The
 core holds every request field stable until the shell returns a matching
-`media_complete` pulse. The initial shell accepts successful read completions
-only: request ID and generation must match, the write flag must be clear, the
-status must be `MT_RESPONSE_OK`, and the completed count must equal the
-requested count.
+`media_complete` pulse. Successful completions require the exact requested
+block count. `INVALID_ARGUMENT`, `IO_ERROR`, and `TIMEOUT` failure completions
+carry a zero completed count so a core can preserve dirty state and enter a
+deterministic retry/error state.
 
 `media_mount`, `media_eject`, and `media_complete` are one-cycle events. Their
 payload registers remain available alongside the pulse. Mounts carry slot,
@@ -113,6 +123,15 @@ block count, and generation. The path is deliberately filename-free; ARM
 firmware owns paths and files.
 
 The data buffer and its ownership crossing are shell implementation details and
-are not part of this register-only increment. G64 track service, writes, flush,
-and timeout/error completion remain unfrozen because their atomicity and
-latency differ from the first read-only D64 path.
+are not exposed directly. Read requests receive exactly `block_count * 256`
+bytes through the normal direct-load stream. Write requests publish that same
+number of bytes through destructive reads of `MEDIA_DATA`; `VALID` marks an
+available byte, and `LAST` is asserted only for the final byte. `MEDIA_STATE`
+reports one coherent mounted/dirty/eject-pending snapshot.
+
+D64 eject is deferred while the drive has a dirty track. Firmware drains and
+applies the exact write request, then persists the complete in-memory image
+through a checksummed write-ahead journal before considering eject or reset
+safe. G64 remains read-only. Its service normalizes each requested half-track
+to an 8 KiB direct-GCR extent and rejects variable speed maps that the current
+drive path cannot reproduce.

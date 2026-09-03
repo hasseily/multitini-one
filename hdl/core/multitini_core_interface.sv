@@ -50,6 +50,13 @@ interface multitini_core_interface;
     logic [31:0] media_request_lba;
     logic [15:0] media_request_block_count;
     logic [31:0] media_request_generation;
+    logic [7:0]  media_write_data;
+    logic        media_write_data_valid;
+    logic        media_write_data_last;
+    logic        media_write_data_ready;
+    logic        media_state_mounted;
+    logic        media_state_dirty;
+    logic        media_state_eject_pending;
     logic        media_mount;
     logic        media_eject;
     logic        media_complete;
@@ -76,7 +83,11 @@ interface multitini_core_interface;
         memory_fault,
         input media_request_valid, media_request_write, media_request_id,
         media_request_lba, media_request_block_count,
-        media_request_generation,
+        media_request_generation, media_write_data,
+        media_write_data_valid, media_write_data_last,
+        output media_write_data_ready,
+        input media_state_mounted, media_state_dirty,
+        media_state_eject_pending,
         output media_mount, media_eject, media_complete, media_slot,
         media_kind, media_read_only, media_image_size, media_generation,
         media_complete_request_id, media_complete_status,
@@ -96,7 +107,11 @@ interface multitini_core_interface;
         memory_fault,
         output media_request_valid, media_request_write, media_request_id,
         media_request_lba, media_request_block_count,
-        media_request_generation,
+        media_request_generation, media_write_data,
+        media_write_data_valid, media_write_data_last,
+        input media_write_data_ready,
+        output media_state_mounted, media_state_dirty,
+        media_state_eject_pending,
         input media_mount, media_eject, media_complete, media_slot,
         media_kind, media_read_only, media_image_size, media_generation,
         media_complete_request_id, media_complete_status,

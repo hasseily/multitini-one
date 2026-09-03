@@ -34,6 +34,10 @@ int main(void)
     report[3] = UINT8_C(0x70);
     expect_state(report, UINT8_C(0x7F));
 
+    report[2] = UINT8_C(0x30);
+    report[3] = UINT8_C(0x00);
+    expect_state(report, UINT8_C(0xC0));
+
     memset(report, 0, sizeof(report));
     report[1] = MT_C64_XINPUT_REPORT_BYTES;
     set_axis(report, 6U, -10923);

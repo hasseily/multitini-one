@@ -8,7 +8,8 @@
 #define MT_C64_XINPUT_REPORT_BYTES 20U
 #define MT_C64_XINPUT_LED_COMMAND_BYTES 3U
 
-/* Decode one wired Xbox 360 input report into Multitini joystick bits. */
+/* Decode one wired Xbox 360 report into the shared eight-button pad format.
+ * C64 consumes bits 0..6; other cores may use bit 7 for Start. */
 int mt_c64_xinput_decode(const uint8_t *report, size_t length,
                          uint8_t *joystick_state);
 

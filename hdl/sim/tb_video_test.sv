@@ -39,6 +39,7 @@ module tb_video_test;
     ) dut (
         .pixel_clk(clk), .resetn(resetn), .enable(enable),
         .machine_enable(machine_enable), .machine_rgb565(machine_rgb565),
+        .ui_opaque(1'b0), .ui_rgb565(16'd0),
         .scan_x(scan_x), .scan_y(scan_y),
         .vblank_start(vblank_start),
         .dvi_red(red), .dvi_grn(green), .dvi_blu(blue),
@@ -76,7 +77,7 @@ module tb_video_test;
         while (!(scan_x == 2 && scan_y == 1)) @(negedge clk);
         @(posedge clk);
         #1;
-        check_value(de && {red, green, blue} == 16'hFFFF,
+        check_value(de && {red, green, blue} == 16'h0842,
                "diagnostic fallback remains visible");
 
         machine_enable = 1'b1;

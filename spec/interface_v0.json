@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "abi": {"major": 0, "minor": 4},
+  "abi": {"major": 0, "minor": 6},
   "magic": "0x4D543031",
   "shell_id": "0x4D544F4E",
   "register_span": "0x1000",
@@ -35,7 +35,12 @@
     {"name": "MEDIA_REQUEST_ID", "offset": "0x094", "access": "ro", "reset": "0x00000000"},
     {"name": "MEDIA_REQUEST_LBA", "offset": "0x098", "access": "ro", "reset": "0x00000000"},
     {"name": "MEDIA_REQUEST_BLOCK_COUNT", "offset": "0x09C", "access": "ro", "reset": "0x00000000"},
-    {"name": "MEDIA_REQUEST_GENERATION", "offset": "0x0A0", "access": "ro", "reset": "0x00000000"}
+    {"name": "MEDIA_REQUEST_GENERATION", "offset": "0x0A0", "access": "ro", "reset": "0x00000000"},
+    {"name": "MEDIA_DATA", "offset": "0x0A4", "access": "ro", "reset": "0x00000000"},
+    {"name": "MEDIA_STATE", "offset": "0x0A8", "access": "ro", "reset": "0x00000000"},
+    {"name": "UI_COMMIT", "offset": "0x0AC", "access": "wo", "reset": "0x00000000"},
+    {"name": "UI_STATUS", "offset": "0x0B0", "access": "ro", "reset": "0x00000004"},
+    {"name": "CORE_VARIANT_INDEX", "offset": "0x0B4", "access": "ro", "reset": "parameter"}
   ],
   "bitfields": {
     "CONTROL": {
@@ -54,7 +59,8 @@
       "STREAM_READY": 6,
       "CORE_LOAD_ERROR": 7,
       "INPUT_READY": 8,
-      "MEDIA_REQUEST": 9
+      "MEDIA_REQUEST": 9,
+      "MEDIA_DATA": 10
     },
     "ERROR": {
       "BAD_WRITE": 0,
@@ -66,6 +72,24 @@
     "MEDIA_REQUEST": {
       "VALID": 0,
       "WRITE": 1
+    },
+    "MEDIA_DATA": {
+      "VALID": 0,
+      "LAST": 1
+    },
+    "MEDIA_STATE": {
+      "MOUNTED": 0,
+      "DIRTY": 1,
+      "EJECT_PENDING": 2
+    },
+    "UI_COMMIT": {
+      "VISIBLE": 0,
+      "BANK": 1
+    },
+    "UI_STATUS": {
+      "VISIBLE": 0,
+      "BANK": 1,
+      "READY": 2
     }
   },
   "constants": {
@@ -75,7 +99,16 @@
     "MEDIA_KIND_MASK": "0x0000FF00",
     "MEDIA_MOUNT_READ_ONLY": "0x00010000",
     "MEDIA_MOUNT_RESERVED_MASK": "0xFFFE0000",
-    "MEDIA_BLOCK_COUNT_MASK": "0x0000FFFF"
+    "MEDIA_BLOCK_COUNT_MASK": "0x0000FFFF",
+    "MEDIA_DATA_BYTE_SHIFT": 8,
+    "MEDIA_DATA_BYTE_MASK": "0x0000FF00",
+    "UI_COLUMNS": 80,
+    "UI_ROWS": 36,
+    "UI_CELL_BYTES": 2,
+    "UI_VRAM_BANK_BYTES": "0x00001680",
+    "UI_VRAM_BANK0_OFFSET": "0x00001000",
+    "UI_VRAM_BANK1_OFFSET": "0x00002800",
+    "UI_WINDOW_SPAN": "0x00010000"
   },
   "commands": {
     "PING": 0,
@@ -103,7 +136,9 @@
   "media_contract": {
     "request": {
       "unit_bytes": 256,
-      "rule": "VALID, WRITE, ID, LBA, BLOCK_COUNT, and GENERATION remain stable until a matching MEDIA_COMPLETE pulse"
+      "rule": "VALID, WRITE, ID, LBA, BLOCK_COUNT, and GENERATION remain stable until a matching MEDIA_COMPLETE pulse",
+      "read_payload": "For WRITE=0, software sends exactly BLOCK_COUNT*256 bytes through the normal load stream before MEDIA_COMPLETE",
+      "write_payload": "For WRITE=1, each MMIO read of MEDIA_DATA with VALID=1 returns and consumes one byte in bits[15:8]; LAST is set only on byte BLOCK_COUNT*256-1"
     },
     "commands": {
       "MEDIA_MOUNT": {
@@ -120,10 +155,11 @@
       },
       "MEDIA_COMPLETE": {
         "arg0": "request ID",
-        "arg1": "MT_RESPONSE_OK",
-        "arg2": "completed 256-byte block count in bits[15:0]; bits[31:16] zero",
+        "arg1": "MT_RESPONSE_OK, MT_RESPONSE_INVALID_ARGUMENT, MT_RESPONSE_IO_ERROR, or MT_RESPONSE_TIMEOUT",
+        "arg2": "For OK, the exact completed 256-byte block count in bits[15:0] with bits[31:16] zero; for failure, zero",
         "arg3": "mount generation"
       }
-    }
+    },
+    "state": "MEDIA_STATE reports the synchronized core mount, dirty, and deferred-eject state"
   }
 }

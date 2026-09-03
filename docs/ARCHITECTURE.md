@@ -11,6 +11,20 @@ faults. Candidate `20260830` changed the C64 default SID model from 8580 to
 booted on the connected board, and the 2026-09-03 user retest reports that the
 scratching/audio bug is fixed.
 
+Current source also extends the C64 storage path with exFAT, RTC-backed FAT
+timestamps, writable data-only D64 images, journal recovery, safe media
+barriers, and read-only G64 support. Standalone PAL and NTSC `20260903` images
+containing that batch completed the vendor flow and were reported by the user
+to look okay on the board. This is a visual smoke result, not complete
+writable-media, exFAT, RTC, or content qualification.
+
+Build `2026090E` adds the ABI 0.6 text overlay, SD core catalog, on-screen menu,
+and full-PL PCAP supervisor. Fresh PAL, NTSC, and PSRAM-enabled GBC images pass
+the strict vendor gates. The connected board reports the expected build/ABI,
+switches from C64 to GBC through PCAP, and runs Tomb Raider and V-Rally into
+gameplay. Rollback and the broader bidirectional-switch/media matrix remain
+pending.
+
 ## Ownership boundaries
 
 The ARM control program owns files, USB protocol work, settings, menus, update
@@ -24,18 +38,19 @@ Each machine adapter translates the common shell interface to an imported core.
 The imported core stays close to its pinned upstream source. Board-specific
 changes belong in the shell or adapter.
 
-## Build-time machine selection
+## Machine images and runtime selection
 
-One complete machine adapter is selected when the Vivado project is created.
+One complete machine adapter is selected when each Vivado project is created.
 `MULTITINI_MACHINE=C64` is the default; `MULTITINI_MACHINE=GBC` selects the
 Game Boy Color reuse-validation image. Only the common and selected-machine
 sections of the HDL manifest enter that project, so an inactive core is not a
-build dependency. This is full-image selection, not partial reconfiguration.
+build dependency.
 
 Each image is one full Zynq configuration containing:
 
 - the PS and its DDR, QSPI, SD, UART, I2C, and two ULPI controllers;
 - a small AXI control register bank;
+- the common double-buffered 80x36 text overlay;
 - an independent DVI test pattern and, for PAL C64, optional live machine
   frames converted to the fixed C64 palette;
 - a shared I2S/SPDIF stage that selects live machine PCM or the fixed test tone;
@@ -44,7 +59,14 @@ Each image is one full Zynq configuration containing:
   the live-frame bridge, and the selected machine's PCM output feeds the common
   audio stage.
 
-Partial reconfiguration is deliberately outside this baseline.
+The ARM supervisor can replace this complete PL image from a validated raw
+bitstream package while the ARM application remains alive in DDR. It first
+flushes media and quiesces the active core, isolates the PL, loads through
+DevCfg/PCAP, probes the new shell/core/ABI, then activates the new service. A
+failure after quiescing attempts to reload the last known active package.
+Every selectable image must therefore retain the common shell and ABI. This is
+runtime full-PL reconfiguration; partial reconfiguration remains deliberately
+outside the baseline. See [MULTICORE_RUNTIME.md](MULTICORE_RUNTIME.md).
 
 ## Clock and reset domains
 
@@ -55,8 +77,8 @@ Planned initial domains:
 
 | Domain | Planned rate | Source | Use |
 | --- | ---: | --- | --- |
-| Control | 133.333 MHz | PS FCLK0 through Clocking Wizard | AXI registers and shell control |
-| PSRAM reference | 199.995 MHz | same Clocking Wizard | IDELAYCTRL reference |
+| Control | approximately 133.333 MHz | direct PS FCLK0 and PS fabric reset | AXI registers and shell control; its clock and reset remain independent of PL MMCM lock across full-PL PCAP |
+| PSRAM reference | 199.995 MHz | dedicated Clocking Wizard and lock-qualified reset | IDELAYCTRL reference |
 | Video | 148.5 MHz | PS FCLK2 through Clocking Wizard | 1080p diagnostic output |
 | C64 machine | requested 31.527954 MHz PAL or 32.727266 MHz NTSC | PS FCLK2 through a separate Clocking Wizard | FPGA64 machine, ROM/input loaders, raw video/audio |
 | GBC machine | requested 33.554432 MHz | PS FCLK2 through the build-selected machine Clocking Wizard | GB/GBC machine, cart/bootstrap loaders, raw video/audio |
@@ -69,7 +91,9 @@ Vivado design. In the verified default PAL build, the fatal CDC gate passed and
 the `2026082F` live-audio report contains only 24 `CDC-3` Info crossings and one
 `CDC-9` Info reset crossing. The machine-audio payloads use coherent XPM
 handshakes, and both readiness crossings launch from a machine-domain register.
-The NTSC and GBC vendor builds still require their own report review.
+The standalone `20260903` PAL, NTSC, and default-off-PSRAM GBC builds each
+passed their own strict timing, CDC, DRC, and route gates. Any ABI 0.6 rebuild
+must repeat those reviews because the overlay changes the implemented design.
 
 Sparse ROM bytes and input event pairs move from the 133.333 MHz control domain
 to the C64 domain through separate one-entry `xpm_cdc_handshake` mailboxes. A
@@ -99,20 +123,46 @@ available. Firmware verifies the bundle CRC32 and each ROM's size and
 nonuniform content before using the portable stream helper. Failure leaves the
 C64 in reset.
 
-The `2026082E` firmware adds one ARM-owned FatFs instance and keeps
-`ff.h` private to the Xilinx storage layer. C64 startup reads the three required
-system ROMs from `0:/cores/c64/roms`, then independently tries the optional
+Build `2026082E` introduced one ARM-owned FatFs instance and keeps `ff.h`
+private to the Xilinx storage layer. C64 startup reads the three required
+system ROMs from `0:/multitini/cores/c64/roms`, then independently tries the optional
 16 KiB 1541 ROM. A missing drive ROM disables drive service without undoing a
-successful C64 boot. The UART three-ROM path remains independent and unchanged.
+successful C64 boot. The UART three-ROM path remains independent and
+unchanged. That build passes its first board test: the C64 and 1541 ROMs loaded
+from SD, the default drive-8 D64 mounted read-only, and Decathlon loaded and
+ran.
 
-The first media service reads one selected D64 completely into PS DDR and
-serves bounded 256-byte read requests through the common command/register and
-CDC-mailbox path. Mount generations reject stale requests. The service is
-drive-8-only and read-only: firmware does not modify the image or write it back
-to SD. The exact layout and operator commands are documented in
-[C64_SD_STORAGE.md](C64_SD_STORAGE.md). Build `2026082E` passes its first board
-test: the C64 and 1541 ROMs loaded from SD, the default drive-8 D64 mounted,
-and Decathlon loaded and ran. The service remains read-only.
+Current source configures Xilinx `xilffs` 5.5 for long file names and exFAT.
+The Vitis generator synchronizes the generated and exported config copies,
+backports the four FatFs R0.16 patch-2 media-validation guards into Vitis
+2025.2's R0.15a source, and stamps the resulting platform. A reused XPFM must
+carry that exact semantic stamp. The generated `get_fattime()` contains a weak
+hook; the application overrides it with the last valid PCF8563 reading cached
+by the main loop. An unavailable, invalid, or voltage-low RTC leaves the last
+good value in place, with `2010-01-01` used until the first good sample.
+
+The media ABI now has a PS-to-core load stream, a core-to-PS reverse data
+stream, explicit mounted/dirty/eject-pending state, and request completions.
+Mount generations still reject stale requests. Normal data-only D64 images are
+writable. Firmware range-checks the reverse block stream, requires its final
+marker at the exact expected byte, updates the PS DDR copy, and commits the
+complete image through a synced checksummed journal before acknowledging the
+write. Mount-time recovery replays only a structurally valid complete journal.
+D64 images carrying an error-info tail are deliberately read-only.
+
+G64 version-zero images use the same drive-8 boundary but remain read-only.
+The ARM validates track extents and accepts fixed speed zones 0 through 3,
+then supplies normalized half-tracks to the direct-GCR reader. Variable
+per-byte speed maps are rejected instead of being approximated.
+
+Eject is a state barrier rather than a blind unmount. The FPGA retains dirty
+or eject-pending state until the matching write completion succeeds, and the
+ARM waits for a stable clean/unmounted state. Core reset, PRG/CRT content
+changes, and golden reboot first pass through that barrier; failure refuses or
+cancels the destructive transition and leaves `:diskretry` available. The
+exact layout and `:mount`, `:eject`, `:dir`, `:disk`, and `:diskretry` behavior
+are documented in [C64_SD_STORAGE.md](C64_SD_STORAGE.md). This extended path is
+source-only and is not part of the board-qualified `2026082E` artifact.
 
 The PAL video adapter registers coherent RGB, data-enable, and sync values in
 the machine domain. The live bridge accepts only exact 382x270 frames whose
@@ -196,6 +246,14 @@ pinned SameBoy-derived source; an optional 2304-byte override uses the same
 direct-load stream. One gamepad namespace maps directly to the eight upstream
 button bits.
 
+Exact 160x144 GBC frames enter four RGB565 dual-clock banks. Gray-coded
+producer and consumer pointers keep the machine and 1080p domains from owning
+the same bank, and the display changes banks only at output vertical blank.
+Pixels are enlarged 6x into a centered 960x864 image; a missing source frame
+repeats the current bank cleanly. The same F12 overlay and diagnostic-video
+switch used by C64 sit after this bridge. USB gamepads use the common eight-bit
+pad convention; arrows, Z, X, Enter, and right Shift provide keyboard control.
+
 ## Common bulk-memory service
 
 The core interface exposes one outstanding, aligned 64-bit line request. Reads
@@ -209,17 +267,27 @@ domains. `multitini_psram_line_service` translates it to the imported
 Appletini PSRAM driver. The physical GBC path is opt-in and defaults off; the
 PSRAM pins remain inactive until Vivado and hardware gates pass.
 
+The two x4 PSRAM devices share command/address signals and transfer four bytes
+each per command. The line service packs one logical 64-bit line across them:
+logical bytes 0-3 use device A and bytes 4-7 use device B at physical address
+`logical_address >> 1`. This exposes the pair as a contiguous 16 MiB logical
+store and keeps GBC cartridge RAM at logical `0x800000` from aliasing ROM on
+the devices' 23-bit physical address buses.
+
 ## Interface versioning
 
 `spec/interface_v0.json` is the source of truth for the first ARM-to-shell
 register ABI. Generated C and SystemVerilog definitions must be regenerated and
 checked together. Major versions are incompatible. Minor versions only add
-backward-compatible behavior.
+backward-compatible behavior. ABI 0.6 adds two text VRAM banks, an atomic
+vblank commit/status handshake, and a build-time core-variant index so the ARM
+can identify and safely restore the boot image.
 
-`spec/core_interface_v0.md` records the separate core-facing ready/valid and
-memory contracts. It is deliberately pre-release. Media service semantics wait
-for a rights-cleared 1541 integration instead of assuming that D64 sector
-requests also fit G64 track data.
+`spec/core_interface_v0.md` records the separate core-facing ready/valid,
+memory, and bidirectional media contracts. It is deliberately pre-release.
+D64 transfers use bounded 256-byte blocks, while G64 reads use normalized
+half-track payloads; the shared ABI does not pretend that the two file formats
+have identical storage semantics.
 
 ## Prepared memory test
 

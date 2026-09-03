@@ -25,6 +25,7 @@ module tb_psram_line_service;
     logic [7:0] pending_command = 8'd0;
     logic [63:0] memory_line = 64'h8877665544332211;
     logic [7:0] command_log [0:15];
+    logic [23:0] address_log [0:15];
     integer command_count = 0;
 
     always #5 clk = !clk;
@@ -46,6 +47,7 @@ module tb_psram_line_service;
         end
         if (resetn && command_valid && command_ready) begin
             command_log[command_count] <= command;
+            address_log[command_count] <= command_addr;
             command_count <= command_count + 1;
             pending_command <= command;
             pending_response <= 1'b1;
@@ -82,6 +84,8 @@ module tb_psram_line_service;
         request(1'b0, 24'h000100, 64'd0, 8'd0);
         check_value(response_rdata == 64'h8877665544332211,
                     "line read response");
+        check_value(address_log[2] == 24'h000080,
+                    "logical lines pack across both PSRAM devices");
         request(1'b1, 24'h000100, 64'h0123456789abcdef, 8'hff);
         check_value(memory_line == 64'h0123456789abcdef,
                     "full line write");
@@ -91,6 +95,13 @@ module tb_psram_line_service;
         check_value(command_log[2] == 8'heb && command_log[3] == 8'h02 &&
                     command_log[4] == 8'heb && command_log[5] == 8'h02,
                     "data command ordering");
+
+        request(1'b0, 24'h7ffff8, 64'd0, 8'd0);
+        check_value(address_log[6] == 24'h3ffffc,
+                    "largest ROM line remains in lower physical half");
+        request(1'b0, 24'h800000, 64'd0, 8'd0);
+        check_value(address_log[7] == 24'h400000,
+                    "cartridge RAM does not alias ROM at device boundary");
 
         request(1'b0, 24'h000101, 64'd0, 8'd0);
         check_value(fault, "unaligned request sets sticky fault");

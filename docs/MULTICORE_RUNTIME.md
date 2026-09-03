@@ -1,0 +1,163 @@
+# Multicore Runtime and Menu
+
+Status: implemented for ABI 0.6 and covered by portable C and HDL tests. Build
+`2026090E` passes fresh PAL, NTSC, and PSRAM-enabled GBC vendor builds and its
+first direct board exercise. F12 selection, C64-to-GBC PCAP loading, package
+CRC validation, and two GBC cartridge gameplay tests pass. Rollback and the
+remaining repeated-switch/media matrix are not yet board-qualified.
+
+## Design
+
+The ARM application remains alive while DevCfg/PCAP replaces the complete PL
+image. This is full PL reconfiguration, not partial reconfiguration. Every
+loadable image therefore contains the same board shell, AXI register ABI,
+80x36 text overlay, video output, audio output, and input boundary. Only the
+machine adapter and its clock generator differ.
+
+The PS supplies the same 150 MHz `FCLK_CLK2` to every image. Each image's MMCM
+derives its own machine clock, so the C64 PAL and NTSC packages do not require
+the ARM to retune a PS clock during a switch.
+
+The PS supplies the AXI/control domain directly from `FCLK_CLK0`, and the
+control reset is synchronized from the matching PS fabric-reset output without
+depending on a PL lock detector. Full-PL PCAP replaces every PL MMCM, so both
+halves of the resident supervisor's control path must remain independent of
+them. A separate reset domain waits for the dedicated 200 MHz IDELAY-reference
+wizard to lock before releasing `IDELAYCTRL`.
+
+A switch follows this fail-closed sequence:
+
+1. Ask the active core service to flush and eject writable media.
+2. Assert core reset, mute audio, and stop forwarding USB input.
+3. Verify the selected raw bitstream's exact size and CRC32 while the old PL is
+   still running.
+4. Isolate and reset the fabric, enable PCAP, load the full image, wait for DMA
+   and configuration completion, then release isolation.
+5. Probe shell magic, shell ID, core ID, and ABI before using the new image.
+6. Start the selected core's services, reload its required content, remount the
+   previous disk when appropriate, then restore input and audio.
+
+If loading, probing, or activation fails, the supervisor repeats steps 3
+through 6 with the last known active package. A failed media flush stops before
+audio or input is disabled. A rollback failure leaves the supervisor in a
+failed state instead of pretending that a core is running.
+
+## SD card layout
+
+Each core is self-contained under its catalog directory:
+
+```text
+0:/multitini/cores/c64/core.cfg
+0:/multitini/cores/c64/c64-pal.bin
+0:/multitini/cores/c64/c64-ntsc.bin
+0:/multitini/cores/c64/roms/basic.bin
+0:/multitini/cores/c64/roms/kernal.bin
+0:/multitini/cores/c64/roms/characters.bin
+0:/multitini/cores/c64/roms/1541.bin
+0:/multitini/cores/c64/media/*.d64
+0:/multitini/cores/c64/media/*.g64
+0:/multitini/cores/c64/media/*.crt
+0:/multitini/cores/c64/media/*.prg
+0:/multitini/cores/gbc/core.cfg
+0:/multitini/cores/gbc/gbc-default.bin
+0:/multitini/cores/gbc/media/*.gb
+0:/multitini/cores/gbc/media/*.gbc
+```
+
+The catalog scans only immediate subdirectories of
+`0:/multitini/cores`. Directory and package IDs use lowercase letters,
+digits, hyphen, or underscore. At most 16 cores and eight variants per core
+are accepted. Unknown keys, duplicates, missing fields, unsafe paths,
+oversized manifests, and directory/package ID mismatches reject that package
+without hiding other valid packages.
+
+Schema 1 uses this strict form:
+
+```ini
+schema=1
+id=c64
+name=Commodore 64
+core_id=0x43363420
+abi=0.6
+content_root=0:/multitini/cores/c64/media
+variant=pal|PAL 50 Hz|c64-pal.bin|4045568|0x12345678
+variant=ntsc|NTSC 60 Hz|c64-ntsc.bin|4045568|0x9ABCDEF0
+```
+
+The size and CRC fields are verified before PCAP starts. The shell is probed
+again afterward, so a valid file containing the wrong core or ABI is not
+activated. SHA-256 values are emitted as comments for release/provenance
+checking; the bounded target-side loader uses size plus CRC32.
+
+Generate the C64 package from fresh ABI 0.6 Vivado bitstreams with:
+
+```powershell
+python scripts/make_core_package.py `
+  --id c64 `
+  --name "Commodore 64" `
+  --core-id 0x43363420 `
+  --content-root 0:/multitini/cores/c64/media `
+  --variant "pal|PAL 50 Hz|build/vivado-pal-current/multitini_one.runs/impl_1/multitini_one_top.bit" `
+  --variant "ntsc|NTSC 60 Hz|build/vivado-ntsc-current/multitini_one.runs/impl_1/multitini_one_top.bit" `
+  --output build/core-packages/c64
+```
+
+Generate the GBC package from the PSRAM-enabled GBC bitstream with:
+
+```powershell
+python scripts/make_core_package.py `
+  --id gbc `
+  --name "Game Boy Color" `
+  --core-id 0x47424320 `
+  --content-root 0:/multitini/cores/gbc/media `
+  --variant "default|GB/GBC|build/vivado-gbc-runtime/multitini_one.runs/impl_1/multitini_one_top.bit" `
+  --output build/core-packages/gbc
+```
+
+The GBC image used for cartridge testing must be created with
+`MULTITINI_ENABLE_GBC_PSRAM=1`. The default-off image is useful only for
+compile integration because it has no cartridge-memory backing.
+
+The packager invokes Bootgen's Zynq bitstream processor and defaults to ABI
+0.6. Existing packages made from the earlier ABI 0.5 PAL/NTSC images are not
+compatible with this runtime and must not be copied to the card for the next
+test.
+
+## Menu
+
+Press `F12` to open or close the menu. While it is open, menu keystrokes are
+consumed and an empty keyboard report is sent to the core so no key remains
+held. `Tab` advances through Cores, Media, Video, Input, and System. Use the
+arrow keys to select or change a value, `Enter` to apply it, and `Escape` to
+leave a file browser or close the menu. UART command `o` is an independent
+recovery way to toggle the menu.
+
+- Cores selects an SD package and variant. C64 PAL and NTSC are separate full
+  PL images under one C64 entry.
+- Media browses the active core's content directory. The C64 service mounts or
+  ejects D64/G64 disks, attaches or detaches CRT cartridges, and loads PRGs.
+  The GBC service loads `.gb` or `.gbc` cartridges and keeps the core in reset
+  after cartridge detach.
+- Video selects active-core video or the branded Multitini standby screen and applies the active
+  core's timing variant. Physical output timing remains the currently
+  qualified 1920x1080 60 Hz mode.
+- Input selects the C64 symbolic/positional keyboard map and joystick port.
+  GBC uses the shared USB gamepad path plus arrows, Z, X, Enter, and right
+  Shift as a complete keyboard fallback.
+- System restarts the active core or returns to the golden updater.
+
+The ARM renders into the inactive text bank and submits the complete plane to
+the video domain. The overlay changes bank and visibility only at vertical
+blank, so a menu update cannot expose a partially written screen.
+
+## Current boundary
+
+The generic catalog, package validation, UI plane, menu navigation, guarded
+PCAP state machine, and rollback policy are common. C64 and GBC activation
+services are connected. GBC now uses the same menu, USB input boundary, audio
+path, and a four-bank 160x144-to-960x864 video bridge. Save RAM and RTC
+persistence remain outside this first GBC adapter. The PSRAM-enabled
+`2026090E` image completes the vendor gates and runs both a RAM-backed MBC5
+cartridge and a no-RAM MBC5 cartridge on the card. Broader mapper, input,
+audio, detach/reset, rollback, and repeated-switch coverage is still required
+before calling the complete GBC path qualified.

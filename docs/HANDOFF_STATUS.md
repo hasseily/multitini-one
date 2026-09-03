@@ -1,6 +1,6 @@
 # Multitini One Handoff Status
 
-Status date: 2026-09-03. The first independent diagnostic image and the second
+Status date: 2026-09-04. The first independent diagnostic image and the second
 PAL C64 UART-ROM/frozen-snapshot image have both passed their initial board
 tests. The current source replaces the frozen buffer with a four-bank,
 four-bit-palette live frame ring. That bridge passes focused XSim, a fresh
@@ -21,6 +21,16 @@ Candidate `20260902` fixes a separately reproduced dual-SID result-scheduling
 error. The exact build booted on the connected board, and the 2026-09-03 user
 retest reports that the scratching/audio bug is fixed.
 
+Standalone `20260903` PAL and NTSC images then completed the strict vendor
+flow. The user reports that both C64 cores look okay on the board; this records
+a visual smoke test, not complete media or long-run qualification. Build
+`2026090E` now includes the ABI 0.6 text overlay, SD package catalog, multicore
+menu, guarded full-PL PCAP supervisor, branded standby screen, and
+PSRAM-enabled GBC package. PAL, NTSC, and GBC pass strict vendor gates. The
+installed board reports the expected build and ABI, switches from C64 to GBC,
+validates and loads cartridges, and runs Tomb Raider and V-Rally into gameplay
+without the former white-screen lockup.
+
 ## Completed repository and portable validation
 
 - Repository layout, GPL-3.0-only project license, ignore policy, source pins,
@@ -36,7 +46,7 @@ retest reports that the scratching/audio bug is fixed.
   selects coherent live machine PCM or the fixed diagnostic tone.
 - Minimal Vitis 2025.2 workspace and UART diagnostic application.
 - Transport-independent AK4493 initialization, TMP102 decode, shell command
-  link, and PRG/D64/G64/CRT/ROM validation.
+  link, and generic PRG/D64/G64/CRT/ROM format inspection.
 - Destructive PSRAM BIST sequencer, not yet connected to the board PHY.
 - Exact 34-file C64 import at the pinned commit, per-file license rows, complete
   applicable license texts, SHA-256 lock, and ROM/media policy checks.
@@ -46,6 +56,23 @@ retest reports that the scratching/audio bug is fixed.
 - ARM ROM stream commands with bounded backpressure retry and abort, coherent
   XPM clock crossing, strict PL framing, sticky load errors, and a portable
   reset-safe three-ROM boot helper.
+- Source-only PRG/CRT increment: strict portable parsers and a C64 media
+  service; a PL stream loader; KERNAL `$FFCF` readiness gating; paused PRG RAM
+  and BASIC-pointer writes; `RUN` plus Return injection; and attachment only
+  after the PL completes without `CORE_LOAD_ERROR`.
+- Conservative read-only CRT support is limited to type IDs `0`, `4`, `5`,
+  `7`, `8`, `10`, `13`, `15`, `17`, `18`, `19`, `21`, `22`, `28`, `43`, `57`,
+  and `85`: Normal, Simons' BASIC, Ocean type 1, Fun Play, Super Games, Epyx
+  FastLoad, Final Cartridge I/II, C64 Game System, Dinamic, Zaxxon, Magic Desk,
+  Comal 80, Waterloo/Structured BASIC, Mikro Assembler, Prophet64, RGCD, and
+  Magic Desk 2. Exact binary EXROM/GAME profiles, ROM-only CHIP packets, mapper sizes and
+  addresses, and contiguous bank layouts are enforced; unsupported writable,
+  freezer, peripheral, sparse, and out-of-order profiles fail closed.
+- The pinned upstream `cartridge.v` remains untouched. The product source uses
+  a separately licensed local compatibility port with the bare `always`
+  corrected to `always @*` and two early-referenced net declarations moved
+  before use. Its cartridge cache bridges to the common 64-bit memory service
+  and latches a miss stall until the response.
 - Portable XMODEM-1K/CRC receiver, UART `:c64rx` command, exact 20 KiB
   BASIC/KERNAL/character uploader, target CRC32/ROM validation, and fail-closed
   reset behavior. The selected three-file ROM set is now a tracked test/build
@@ -68,6 +95,24 @@ retest reports that the scratching/audio bug is fixed.
   D64 service; default drive-8 mounting; and UART directory, mount, status, and
   eject commands. Build `2026082E` passes its first SD-to-game board test with
   Decathlon.
+- Current source enables exFAT/LFN in `xilffs` 5.5 with generated-config and
+  semantic-stamp checks, RTC-backed FAT timestamps, transactional writable
+  data-only D64 images, read-only error-tail D64, journal recovery, read-only
+  fixed-speed G64, reverse media data, and safe eject/reset/content/reboot
+  barriers. The serial shell integrates `:mount`, `:eject`, `:dir`, `:disk`,
+  `:diskretry`, `:load`, and `:cartoff`. This batch is included in the
+  standalone `20260903` packages; the user reports that PAL and NTSC look okay,
+  but no focused writable-media, exFAT, RTC, G64, PRG, or CRT result was
+  recorded.
+- Current ABI 0.6 source adds a common double-buffered 80x36 overlay and a
+  keyboard-driven F12 menu for core variants, C64 disk/cartridge/program
+  content, active/test video, keyboard map, joystick port, core reset, and
+  golden recovery. The ARM scans strict versioned packages below
+  `0:/multitini/cores`, validates size and CRC32, quiesces the active service,
+  loads the complete PL through DevCfg/PCAP, probes shell/core/ABI, and rolls
+  back to the prior package on failure. C64 and GBC activation services are
+  now connected; GBC loads validated `.gb`/`.gbc` cartridges from its package
+  content root and remains in reset when no cartridge is attached.
 - Build `2026082F` adds dual coherent 49-bit machine-audio crossings, whole-I2S
   frame source switching, a 133.333 MHz SPDIF transmitter with stereo-pair
   capture, reset/load silence, and pop-safe DAC unmute order. Focused source
@@ -107,18 +152,19 @@ retest reports that the scratching/audio bug is fixed.
   reset behavior, SPDIF, and long-run stability were not separately reported.
 - Source after `20260902` changes diagnostic UART0 from 115200 to the golden
   image's 921600 baud and updates the ROM uploader default to match. UART1
-  remains at 115200. The new UART0 setting is not present in the packaged
-  `20260902` image; it requires a future Vivado/XSA and Vitis platform/FSBL
-  rebuild.
+  remains at 115200. The new UART0 setting is absent from the packaged
+  `20260902` image and present in the current `20260903` build artifacts; it
+  has not been retested on the board.
 - Exact 47-file Game Boy import at the pinned commit, per-file license rows,
   SHA-256 lock, open SameBoy-derived CGB bootstrap source/image, and deterministic
   strict-tool ports for the selected upstream `gb` and `cart` modules.
 - GBC interface definitions; GB/GBC header validation; reset-safe cart/bootstrap
   boot helper; gamepad mapping; clock enables; raw RGB/audio adapter; cartridge
   loader; one-line cache; and a one-outstanding common 64-bit memory ABI.
-- Tested control/machine memory CDC and PSRAM line service, plus a prepared
-  optional GBC PSRAM PHY branch. That branch defaults off and is not accepted
-  for hardware use.
+- Tested control/machine memory CDC and PSRAM line service, plus the opt-in GBC
+  PSRAM PHY branch. The packed two-device address translation keeps logical
+  cartridge RAM from aliasing ROM. The PSRAM-enabled `2026090E` branch passes
+  vendor gates and its first two cartridge gameplay tests.
 - Icarus tests for AXI, registers, video, audio, PSRAM BIST, C64 loader/input,
   GBC loader/input/clock/cache, memory CDC, and PSRAM service; a Vivado XSim
   replay of the final asynchronous-mailbox fix; board-shell elaboration for
@@ -128,6 +174,65 @@ retest reports that the scratching/audio bug is fixed.
   compilation of the Xilinx entry point. Focused XSim also passes the current
   four-bank live bridge's swap, repeat, full-ring, rejection, diagnostic-toggle,
   and independent-reset cases.
+- The full Python repository suite runs 71 checks: 70 pass and one is skipped;
+  all 25 strict host C tests pass. Focused XSim/Icarus passes the PRG/CRT content
+  loader, RUN injector, cartridge memory bridge, transactional D64 service,
+  read-only G64 service, ABI registers, and PAL/NTSC live-video benches. The
+  local wait-capable FPGA64 VHDL port analyzes successfully, and the C64
+  adapter reaches mixed-language XSim elaboration using `--relax` for exact
+  pinned SystemVerilog sources and a simulation-only RGB lookup stub for the
+  pinned lookup table's pre-existing strict-XSim case limitation. Coverage also
+  includes the common overlay's atomic vblank bank/visibility handoff and the
+  complete C64 shell compile. The runtime menu and successful C64-to-GBC PCAP
+  path now have initial board validation.
+
+## Completed ABI 0.6 multicore and GBC-fix build
+
+- Fresh source-generated Vivado 2025.2 images for PAL C64, NTSC C64, and
+  PSRAM-enabled GBC use shell build ID `2026090E`. All three pass synthesis,
+  implementation, bitstream, timing/CDC/DRC/route, and XSA gates with zero
+  failing timing endpoints. PAL has +0.244 ns setup and +0.026 ns hold slack;
+  NTSC has +0.272/+0.056 ns; GBC has +0.211/+0.055 ns.
+- A fresh Vitis 2025.2 workspace built the matching FSBL and supervisor with
+  exFAT, LFN, FatFs media validation, RTC timestamps, and missing-card guards.
+  Bootgen packaged a 4,550,068-byte `FIRMWARE.BIN` with SHA-256
+  `0d84b535791e150e8face4fba6c9a6c6e69cbf86e21767e52f8b877e85f1900d`.
+- The installed card preserved seven C64 and seven GBC media files. The live
+  board reported ABI 0.6, build `2026090E`, C64 core status `0x0000014D`, and
+  no shell error. F12 selected GBC; PCAP loaded the expected 4,045,568-byte
+  image with CRC32 `0x11E740AE`; shell probing and activation passed.
+- Tomb Raider loaded as MBC5+RAM+battery, 4 MiB, CGB-required and ran into
+  gameplay. V-Rally loaded as MBC5, 1 MiB, no cartridge RAM and also ran into
+  gameplay. These results cover the reported white-screen transition in two
+  MBC5 layouts, but not every mapper or save-persistence path.
+
+## Completed previous standalone PAL, NTSC, and GBC vendor builds
+
+- Clean source-generated Vivado 2025.2 builds completed for PAL C64, NTSC C64,
+  and the default-off-PSRAM GBC target. All three completed synthesis,
+  implementation, bitstream generation, strict timing/CDC/DRC/route gates, and
+  XSA export for `xc7z020clg484-2` with shell build ID `20260903`.
+- PAL passes with +0.324 ns setup and +0.036 ns hold slack. NTSC passes with
+  +0.327 ns setup and +0.062 ns hold slack. GBC passes with +1.394 ns setup and
+  +0.055 ns hold slack. Every target has zero failed routed nets.
+- The GBC memories map to block RAM instead of LUT memory. Its former
+  LUT-generated CPU/RAM clock was replaced by root-clock enables. A fatal
+  implementation gate now rejects any fabric LUT driving a clock pin.
+- Vitis 2025.2 built a hardware-matched platform, FSBL, and diagnostic
+  application from each XSA. Every BSP enables exFAT and LFN, applies the FatFs
+  R0.16 patch-2 media checks, uses the RTC timestamp hook, and bounds missing-SD
+  handling. Short `C:\mtv` workspaces avoid the Vitis/Ninja Windows path limit.
+- Bootgen packaged explicit PAL, NTSC, and GBC images under
+  `build/firmware-current`; three-partition readback confirms the FSBL,
+  bitstream, and application in every image. Each is 4,508,116 bytes. Their
+  SHA-256 values are
+  `f2ce808009a35600b65bd6be796fba7494d796189ecebff7cc256759e803dd8b`,
+  `6f77f9ec91e3433c978bbfbd9889cf825570d531021c61b651c9f647f7bc3451`,
+  and `0adae823b0674b5858d578db70938d63d3a475032465cad5a89afaf902e16741`,
+  respectively.
+- These are build/test artifacts from a dirty engineering tree. The user has
+  since visually smoke-tested both C64 images and reports that they look okay.
+  The GBC image has not been exercised on the board.
 
 ## Completed vendor flow for the board-proven PAL live-video baseline
 
@@ -324,13 +429,16 @@ did not assert Fire and the player ring kept blinking.
 
 ## Still requires vendor tools or hardware
 
-- The NTSC C64 project still needs its own clean vendor build and report review.
-- Mixed VHDL/SystemVerilog GBC elaboration, portable dual-port memory inference,
-  achieved 33.554432 MHz clock, common-memory CDC constraints, resource fit,
-  and timing have not been checked by Vivado.
-- PSRAM activation: PHY timing, IDELAYCTRL, calibration, constraints, command
-  edge/count tuning, and board measurement are unresolved. The default build
-  holds CE high; the prepared GBC branch is explicit opt-in only.
+- Current C64 CRT source connects the common memory service to the board PSRAM
+  path. The shared PHY now has timing, CDC/DRC/route, and initial GBC cartridge
+  gameplay evidence, but destructive BIST, broad address/data stress, C64 CRT
+  use, and electrical board measurement remain open. GBC remains an explicit
+  opt-in build setting.
+- The current C64 storage/content increment has PAL and NTSC Vivado, Vitis,
+  packaged-image, and visual smoke results, but still needs focused board
+  validation. The ABI 0.6 multicore menu and PCAP supervisor have a
+  consolidated vendor build and successful C64-to-GBC board switch; rollback,
+  repeated bidirectional switching, and the full media matrix remain open.
 - Build `2026082F` routes audible live machine PCM and proves source switching,
   but its Decathlon and Ultima II faults leave SID compatibility, long-run
   behavior, level, channel behavior, reset behavior, and SPDIF open. The
@@ -348,19 +456,27 @@ did not assert Fire and the player ring kept blinking.
    Ultima II sequences. Recheck UART `m`, `t`, and `a`, reset/load silence,
    channels, level, and SPDIF. Record whether either stuck tone returns before
    calling the full live SID audio path qualified.
-2. Recreate and build C64 NTSC with
-   `MULTITINI_C64_VIDEO_STANDARD=NTSC`; retain and review a separate complete
-   report set.
-3. Create a separate GBC project with `MULTITINI_MACHINE=GBC`; keep
-   `MULTITINI_ENABLE_GBC_PSRAM=0` for the first elaboration and synthesis review.
-   Confirm the selected upstream hierarchy, open bootstrap initialization,
-   inferred memories, requested machine clock, and resource estimate.
-4. Execute the remaining boot, DDR, input, and machine gates in
+2. Continue the installed ABI 0.6 package test with PAL/NTSC switching in both
+   directions, CRC/ABI rejection, failed-load rollback, repeated switching,
+   reset, and golden recovery. F12 rendering and one C64-to-GBC transition
+   already pass.
+3. Exercise BASIC and non-BASIC PRGs, RUN typing,
+   each accepted CRT mapper/profile, malformed and unsupported CRT rejection,
+   cartridge cache misses, D64/G64 mount/eject/remount, reset/detach, and PSRAM
+   fault handling through the menu.
+4. Extend the passing `MULTITINI_ENABLE_GBC_PSRAM=1` Tomb Raider and V-Rally
+   runs across the remaining MBC1/MBC5 cartridge samples, save-data behavior,
+   video, audio, keyboard/gamepad input, detach, reset, and repeated C64/GBC
+   switching on the board.
+5. Execute the remaining boot, DDR, input, and machine gates in
    `MULTITINI_ONE_PLAN.md` and `docs/VIVADO_HANDOFF.md`.
 
-Only after the minimal board image passes should PSRAM be connected and its
-BIST exposed. Only after a dedicated PSRAM test passes should a GBC project set
-`MULTITINI_ENABLE_GBC_PSRAM=1`. GBC remains off the physical outputs. C64 DVI
+The checked-in C64 CRT source now connects PSRAM, but it is not releasable until
+the dedicated PSRAM and cartridge tests pass in the vendor build and on the
+board. Only a dedicated candidate build should set
+`MULTITINI_ENABLE_GBC_PSRAM=1` while the remaining PSRAM and cartridge matrix
+is incomplete. GBC now has initial physical video and cartridge gameplay
+evidence but remains incompletely qualified. C64 DVI
 must pass the live gate above. C64 live audio remains unqualified until the
 remaining `20260902` long-run, game-specific, channel, level, reset, and SPDIF
 checks pass.

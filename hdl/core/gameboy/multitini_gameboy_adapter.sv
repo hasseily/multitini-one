@@ -296,10 +296,14 @@ module multitini_gameboy_adapter #(
     assign video_r = {lcd_data[4:0], lcd_data[4:2]};
     assign video_g = {lcd_data[9:5], lcd_data[9:7]};
     assign video_b = {lcd_data[14:10], lcd_data[14:12]};
-    assign video_de = ready && lcd_on && lcd_clkena;
+    // lcd_clkena is updated only on the upstream 4 MHz enable and remains
+    // asserted between enables. Qualify it with the *following* ce_cpu event,
+    // exactly as the upstream lcd consumer does, to expose one root-clock
+    // valid pulse for each newly completed LCD pixel instead of eight copies.
+    assign video_de = ready && lcd_on && ce_cpu && lcd_clkena;
     assign video_hsync = lcd_mode == 2'd0;
-    assign video_vsync = lcd_mode == 2'd1;
-    assign video_valid = ready && lcd_clkena;
+    assign video_vsync = ready && lcd_vsync;
+    assign video_valid = ready && ce_cpu && lcd_clkena;
 
     always_ff @(posedge core_clk) begin
         audio_valid <= 1'b0;
@@ -320,6 +324,6 @@ module multitini_gameboy_adapter #(
 
     wire unused_status = ^{boot_override_loaded, clock_phase, cram_rd,
                            cram_bram_wr, cart_has_save, cart_is_gbc,
-                           cart_is_sgb, dma_on, lcd_data_gb, lcd_vsync,
+                           cart_is_sgb, dma_on, lcd_data_gb, lcd_mode,
                            savestate_cram_read};
 endmodule

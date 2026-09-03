@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns / 1ps
 
-// Tear-free PAL C64 frame-rate conversion into a 1080p scan.
+// Tear-free PAL/NTSC C64 frame-rate conversion into a 1080p scan.
 //
 // The fixed C64 palette is stored as four-bit indices in four independent
 // dual-clock frame banks. A source-domain write pointer publishes only exact,
@@ -43,10 +43,12 @@ module multitini_c64_frame_bank #(
 endmodule
 
 module multitini_c64_video_bridge #(
-    parameter integer SOURCE_WIDTH    = 382,
-    parameter integer SOURCE_HEIGHT   = 270,
+    parameter bit     NTSC_MODE        = 1'b0,
+    parameter integer SOURCE_WIDTH    = NTSC_MODE ? 404 : 382,
+    parameter integer SOURCE_HEIGHT   = NTSC_MODE ? 250 : 270,
     parameter integer OUTPUT_SCALE    = 4,
-    parameter integer OUTPUT_X_OFFSET = 196
+    parameter integer OUTPUT_X_OFFSET = NTSC_MODE ? 152 : 196,
+    parameter integer OUTPUT_Y_OFFSET = NTSC_MODE ? 40 : 0
 ) (
     input  logic        source_clk,
     input  logic        source_resetn,
@@ -73,7 +75,8 @@ module multitini_c64_video_bridge #(
     localparam integer COUNT_WIDTH = $clog2(FRAME_PIXELS + 1);
     localparam integer LINE_PIXEL_COUNT_WIDTH = $clog2(SOURCE_WIDTH + 1);
     localparam integer LINE_COUNT_WIDTH = $clog2(SOURCE_HEIGHT + 1);
-    localparam integer REPEAT_COUNT_WIDTH = $clog2(OUTPUT_SCALE);
+    localparam integer REPEAT_COUNT_WIDTH =
+        OUTPUT_SCALE > 1 ? $clog2(OUTPUT_SCALE) : 1;
     localparam integer SCALED_WIDTH = SOURCE_WIDTH * OUTPUT_SCALE;
     localparam integer SCALED_HEIGHT = SOURCE_HEIGHT * OUTPUT_SCALE;
     localparam integer POINTER_WIDTH = 3; // one wrap bit plus two bank bits
@@ -497,11 +500,13 @@ module multitini_c64_video_bridge #(
     // output and the second registers the selected four-bit index, splitting
     // the distributed bank mux from palette expansion and the DVI register.
     assign prefetch_active =
-        scan_y < SCALED_HEIGHT &&
+        scan_y >= OUTPUT_Y_OFFSET &&
+        scan_y < OUTPUT_Y_OFFSET + SCALED_HEIGHT &&
         scan_x >= OUTPUT_X_OFFSET - 2 &&
         scan_x < OUTPUT_X_OFFSET + SCALED_WIDTH - 2;
     assign output_active =
-        scan_y < SCALED_HEIGHT &&
+        scan_y >= OUTPUT_Y_OFFSET &&
+        scan_y < OUTPUT_Y_OFFSET + SCALED_HEIGHT &&
         scan_x >= OUTPUT_X_OFFSET &&
         scan_x < OUTPUT_X_OFFSET + SCALED_WIDTH;
     assign pixel_read_enable = machine_active && display_valid && prefetch_active;
@@ -530,11 +535,11 @@ module multitini_c64_video_bridge #(
             selected_palette_index <= selected_bank_read_data;
             if (scan_x == 0) begin
                 horizontal_repeat_count <= '0;
-                if (scan_y == 0) begin
+                if (scan_y <= OUTPUT_Y_OFFSET) begin
                     read_line_base <= '0;
                     read_address   <= '0;
-                end else if (scan_y < SCALED_HEIGHT &&
-                             (scan_y & (OUTPUT_SCALE - 1)) == 0) begin
+                end else if (scan_y < OUTPUT_Y_OFFSET + SCALED_HEIGHT &&
+                             ((scan_y - OUTPUT_Y_OFFSET) % OUTPUT_SCALE) == 0) begin
                     read_line_base <= read_line_base + SOURCE_WIDTH;
                     read_address   <= read_line_base + SOURCE_WIDTH;
                 end else begin

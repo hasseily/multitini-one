@@ -52,11 +52,11 @@ module multitini_axi3_regs (
     input  logic         s_axi_rready,
 
     output logic         reg_wr_en,
-    output logic [11:0]  reg_wr_addr,
+    output logic [15:0]  reg_wr_addr,
     output logic [31:0]  reg_wr_data,
     output logic [3:0]   reg_wr_strb,
     output logic         reg_rd_en,
-    output logic [11:0]  reg_rd_addr,
+    output logic [15:0]  reg_rd_addr,
     input  logic [31:0]  reg_rd_data
 );
 
@@ -92,7 +92,7 @@ module multitini_axi3_regs (
     assign s_axi_awready = !aw_hold && !s_axi_bvalid;
     assign s_axi_wready  = !w_hold && !s_axi_bvalid;
     assign s_axi_arready = !s_axi_rvalid;
-    assign reg_rd_addr   = s_axi_araddr[11:0];
+    assign reg_rd_addr   = s_axi_araddr[15:0];
 
     // Attributes are intentionally accepted but have no effect in this
     // device-register slave.
@@ -159,7 +159,7 @@ module multitini_axi3_regs (
                     selected_wlast && selected_awid == selected_wid) begin
                     s_axi_bresp <= AXI_OKAY;
                     reg_wr_en   <= 1'b1;
-                    reg_wr_addr <= selected_awaddr[11:0];
+                    reg_wr_addr <= selected_awaddr[15:0];
                     reg_wr_data <= selected_wdata;
                     reg_wr_strb <= selected_wstrb;
                 end else begin

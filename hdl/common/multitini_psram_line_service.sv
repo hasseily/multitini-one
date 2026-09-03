@@ -49,6 +49,19 @@ module multitini_psram_line_service (
     logic [7:0] strobe_hold;
     logic partial_write;
 
+    // The two x4 PSRAMs run in parallel. Each command transfers four
+    // consecutive bytes per device: the A device carries logical bytes 0-3
+    // and the B device carries logical bytes 4-7. Pack each aligned logical
+    // 8-byte line into four physical byte addresses so the combined pair
+    // exposes the full 16 MiB logical space. Passing the logical address
+    // through unchanged would waste every other four-byte region and place
+    // logical cartridge RAM at 0x800000, beyond each device's A[22:0] range.
+    function automatic logic [23:0] physical_address(
+        input logic [23:0] logical_address
+    );
+        physical_address = {1'b0, logical_address[23:3], 2'b00};
+    endfunction
+
     function automatic logic [63:0] merge_bytes(
         input logic [63:0] old_data,
         input logic [63:0] new_data,
@@ -68,7 +81,7 @@ module multitini_psram_line_service (
     always_comb begin
         command_valid = 1'b0;
         command = 8'd0;
-        command_addr = address_hold;
+        command_addr = physical_address(address_hold);
         command_wdata = write_hold;
         unique case (state)
         STATE_INIT_QPI_ISSUE: begin

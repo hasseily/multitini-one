@@ -20,6 +20,7 @@ typedef enum {
     MT_LOAD_C64_CRT = 0x11,
     MT_LOAD_C64_D64 = 0x12,
     MT_LOAD_C64_G64 = 0x13,
+    MT_LOAD_C64_CRT_DETACH = 0x14,
 } mt_c64_load_kind_t;
 
 typedef enum {
@@ -32,5 +33,29 @@ typedef enum {
 #define MT_SIZE_C64_KERNAL ((size_t)8192)
 #define MT_SIZE_C64_CHARACTER ((size_t)4096)
 #define MT_SIZE_C64_1541_ROM ((size_t)16384)
+#define MT_SIZE_C64_PRG_MIN ((size_t)3)
+#define MT_SIZE_C64_PRG_MAX ((size_t)65538)
+#define MT_SIZE_C64_CRT_MIN ((size_t)80)
+#define MT_SIZE_C64_CRT_MAX ((size_t)2101312)
+
+typedef enum {
+    MT_CRT_NORMAL = 0,
+    MT_CRT_SIMONS_BASIC = 4,
+    MT_CRT_OCEAN_TYPE_1 = 5,
+    MT_CRT_FUN_PLAY = 7,
+    MT_CRT_SUPER_GAMES = 8,
+    MT_CRT_EPYX_FASTLOAD = 10,
+    MT_CRT_FINAL_CARTRIDGE_1_2 = 13,
+    MT_CRT_C64_GAME_SYSTEM = 15,
+    MT_CRT_DINAMIC = 17,
+    MT_CRT_ZAXXON = 18,
+    MT_CRT_MAGIC_DESK = 19,
+    MT_CRT_COMAL_80 = 21,
+    MT_CRT_WATERLOO_BASIC = 22,
+    MT_CRT_MIKRO_ASSEMBLER = 28,
+    MT_CRT_PROPHET64 = 43,
+    MT_CRT_RGCD = 57,
+    MT_CRT_MAGIC_DESK_2 = 85,
+} mt_c64_crt_hardware_type_t;
 
 #endif

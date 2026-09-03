@@ -15,6 +15,7 @@ class FirmwareRecoveryTests(unittest.TestCase):
         body = source.split("static void reboot_to_golden(void)", 1)[1]
         body = body.split("\n}\n", 1)[0]
 
+        media_flush = body.index("c64_d64_service_prepare_reset()")
         usb_power_stop = body.index("usb_hid_service_stop()")
         usb_power_failure = body.index("USB1 VBUS shutdown failed")
         drain = body.index("wait_uart0_transmit_idle()")
@@ -25,12 +26,13 @@ class FirmwareRecoveryTests(unittest.TestCase):
         reset = body.index(
             "Xil_Out32(MT_PS_RESET_CONTROL, MT_PS_SOFTWARE_RESET)"
         )
-        self.assertLess(usb_power_stop, usb_power_failure)
-        self.assertLess(usb_power_failure, drain)
+        self.assertLess(media_flush, drain)
         self.assertLess(drain, clear)
         self.assertLess(clear, barrier)
         self.assertLess(barrier, readback)
-        self.assertLess(readback, unlock)
+        self.assertLess(readback, usb_power_stop)
+        self.assertLess(usb_power_stop, usb_power_failure)
+        self.assertLess(usb_power_failure, unlock)
         self.assertLess(unlock, reset)
 
     def test_recovery_command_is_explicit_and_core_reset_is_preserved(self):
@@ -119,6 +121,44 @@ class FirmwareRecoveryTests(unittest.TestCase):
         extended = extended.split("\n}\n", 1)[0]
         self.assertIn("!recovery_only", extended)
         self.assertIn("handle_c64_rx_command(extended)", extended)
+
+    def test_reset_wrapper_records_short_assertions_for_disk_remount(self):
+        source = (ROOT / "firmware/platform/xilinx/main.c").read_text()
+        wrapper = source.split(
+            "static int set_core_reset_request(bool asserted)", 1
+        )[1].split("\n}\n", 1)[0]
+        command = wrapper.index("result = command(MT_COMMAND_CORE_RESET")
+        notify = wrapper.index("c64_d64_service_notify_core_reset();")
+        active = wrapper.index("c64_core_reset_active = true;")
+        self.assertLess(command, notify)
+        self.assertLess(notify, active)
+        self.assertIn("result == 0 && asserted && !currently_asserted", wrapper)
+
+    def test_core_switch_quiesces_media_before_muting_or_input_gating(self):
+        source = (ROOT / "firmware/platform/xilinx/main.c").read_text()
+        body = source.split("static int supervisor_quiesce(void *context)", 1)[1]
+        body = body.split("\n}\n", 1)[0]
+        reset = body.index("set_core_reset_request(true)")
+        mute = body.index("set_audio(true")
+        input_gate = body.index("usb_hid_service_set_core_ready(false)")
+        self.assertLess(reset, mute)
+        self.assertLess(mute, input_gate)
+
+    def test_full_pcap_load_has_clock_queue_timeout_and_isolation_guards(self):
+        source = (
+            ROOT / "firmware/platform/xilinx/pl_loader.c"
+        ).read_text()
+        program = source.split("static mt_pl_load_result_t program_fabric", 1)[1]
+        program = program.split("\n}\n", 1)[0]
+        self.assertIn("enable_pcap_clock();", program)
+        self.assertIn("XDCFG_STATUS_DMA_CMD_Q_F_MASK", program)
+        self.assertIn("MT_PCAP_LAST_TRANSFER", source)
+        self.assertIn("MT_PCAP_TIMEOUT_MS", program)
+        initialize = program.index("initialize_fabric()")
+        transfer = program.index("XDcfg_Transfer")
+        release = program.index("set_fabric_isolation(false)")
+        self.assertLess(initialize, transfer)
+        self.assertLess(transfer, release)
 
 
 if __name__ == "__main__":

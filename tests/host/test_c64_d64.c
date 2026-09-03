@@ -9,6 +9,7 @@
 int main(void)
 {
     static uint8_t image[MT_C64_D64_MAX_SIZE];
+    static uint8_t write_data[MT_C64_D64_SECTOR_SIZE * 2U];
     const uint8_t *data = NULL;
     size_t size = 0U;
 
@@ -43,5 +44,28 @@ int main(void)
                                       &data, &size) ==
            MT_C64_D64_INVALID_ARGUMENT);
     assert(strcmp(mt_c64_d64_result_name(MT_C64_D64_OK), "ok") == 0);
+
+    memset(write_data, 0x3C, sizeof(write_data));
+    image[174848U] = 0x5AU;
+    assert(mt_c64_d64_write_blocks(image, 175531U, 681U, 2U,
+                                   write_data, sizeof(write_data)) ==
+           MT_C64_D64_OK);
+    assert(memcmp(image + 681U * MT_C64_D64_SECTOR_SIZE,
+                  write_data, sizeof(write_data)) == 0);
+    assert(image[174848U] == 0x5AU);
+
+    image[0] = 0xA5U;
+    assert(mt_c64_d64_write_blocks(image, 174848U, 0U, 1U,
+                                   write_data,
+                                   MT_C64_D64_SECTOR_SIZE - 1U) ==
+           MT_C64_D64_DATA_SIZE_MISMATCH);
+    assert(image[0] == 0xA5U);
+    assert(mt_c64_d64_write_blocks(image, 174848U, 682U, 2U,
+                                   write_data, sizeof(write_data)) ==
+           MT_C64_D64_OUT_OF_RANGE);
+    assert(image[0] == 0xA5U);
+    assert(mt_c64_d64_write_blocks(NULL, 174848U, 0U, 1U,
+                                   write_data, MT_C64_D64_SECTOR_SIZE) ==
+           MT_C64_D64_INVALID_ARGUMENT);
     return 0;
 }

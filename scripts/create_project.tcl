@@ -112,7 +112,8 @@ proc add_manifest_sources {repo_root machine} {
         set extension [string tolower [file extension $source]]
         if {$extension eq ".xdc"} {
             add_files -fileset constrs_1 -norecurse $source
-            if {[file tail $source] eq "multitini_timing.xdc"} {
+            if {[file tail $source] in {
+                    "multitini_timing.xdc" "multitini_psram_timing.xdc"}} {
                 set_property USED_IN_SYNTHESIS false [get_files $source]
             }
         } else {
@@ -244,6 +245,15 @@ set_property target_language Verilog [current_project]
 set_property simulator_language Mixed [current_project]
 set_property default_lib work [current_project]
 add_manifest_sources $repo_root $machine
+set psram_timing_file [require_file \
+    [file join $repo_root hdl board multitini_psram_timing.xdc]]
+if {$machine eq "GBC" && !$enable_gbc_psram} {
+    set psram_iob_file [require_file \
+        [file join $repo_root hdl board multitini_psram_iob.xdc]]
+    set_property USED_IN_SYNTHESIS false [get_files $psram_iob_file]
+    set_property USED_IN_IMPLEMENTATION false \
+        [get_files [list $psram_iob_file $psram_timing_file]]
+}
 
 create_bd_design zynq_ps_bd
 set ps [create_bd_cell -type ip \
@@ -272,9 +282,11 @@ set idelay_ref_clk [create_bd_port -dir O -type clk idelay_ref_clk]
 set video_clk [create_bd_port -dir O -type clk video_clk]
 set c64_clk [create_bd_port -dir O -type clk c64_clk]
 set control_aresetn [create_bd_port -dir O -type rst control_aresetn]
+set idelay_aresetn [create_bd_port -dir O -type rst idelay_aresetn]
 set video_aresetn [create_bd_port -dir O -type rst video_aresetn]
 set c64_aresetn [create_bd_port -dir O -type rst c64_aresetn]
 set_property CONFIG.POLARITY ACTIVE_LOW $control_aresetn
+set_property CONFIG.POLARITY ACTIVE_LOW $idelay_aresetn
 set_property CONFIG.POLARITY ACTIVE_LOW $video_aresetn
 set_property CONFIG.POLARITY ACTIVE_LOW $c64_aresetn
 set_property -dict [list CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0_0} \
@@ -283,16 +295,14 @@ set_property CONFIG.ASSOCIATED_RESET {video_aresetn} $video_clk
 set_property CONFIG.ASSOCIATED_RESET {c64_aresetn} $c64_clk
 set irq [create_bd_port -dir I IRQ]
 
-set control_wiz [create_bd_cell -type ip \
-    -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_control]
+set idelay_wiz [create_bd_cell -type ip \
+    -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_idelay]
 set_property -dict [list \
-    CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {133.333} \
-    CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {199.995} \
-    CONFIG.CLKOUT2_USED {true} \
-    CONFIG.NUM_OUT_CLKS {2} \
+    CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {199.995} \
+    CONFIG.NUM_OUT_CLKS {1} \
     CONFIG.PRIM_SOURCE {No_buffer} \
     CONFIG.RESET_PORT {resetn} \
-    CONFIG.RESET_TYPE {ACTIVE_LOW}] $control_wiz
+    CONFIG.RESET_TYPE {ACTIVE_LOW}] $idelay_wiz
 
 set video_wiz [create_bd_cell -type ip \
     -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_video]
@@ -317,28 +327,44 @@ set_property -dict [list \
 
 set control_reset [create_bd_cell -type ip \
     -vlnv xilinx.com:ip:proc_sys_reset:5.0 reset_control]
+set idelay_reset [create_bd_cell -type ip \
+    -vlnv xilinx.com:ip:proc_sys_reset:5.0 reset_idelay]
 set video_reset [create_bd_cell -type ip \
     -vlnv xilinx.com:ip:proc_sys_reset:5.0 reset_video]
 set c64_reset [create_bd_cell -type ip \
     -vlnv xilinx.com:ip:proc_sys_reset:5.0 reset_c64]
+set constant_one [create_bd_cell -type ip \
+    -vlnv xilinx.com:ip:xlconstant:1.1 constant_one]
+set_property -dict [list CONFIG.CONST_VAL {1} CONFIG.CONST_WIDTH {1}] \
+    $constant_one
 
-connect_bd_net [get_bd_pins $ps/FCLK_CLK0] [get_bd_pins $control_wiz/clk_in1]
+# Keep the PS GP0 AXI clock and its reset independent of every lock detector
+# in the PL. Full-PL PCAP replaces the clock wizards themselves; making either
+# half of the control domain wait on one can strand the first shell probe after
+# configuration. FCLK0 and FCLK_RESET0_N remain sourced by the PS.
+connect_bd_net [get_bd_pins $ps/FCLK_CLK0] \
+    [get_bd_pins $idelay_wiz/clk_in1] $control_clk \
+    [get_bd_pins $control_reset/slowest_sync_clk] \
+    [get_bd_pins $ps/M_AXI_GP0_ACLK]
 connect_bd_net [get_bd_pins $ps/FCLK_CLK2] \
     [get_bd_pins $video_wiz/clk_in1] [get_bd_pins $c64_wiz/clk_in1]
 connect_bd_net [get_bd_pins $ps/FCLK_RESET0_N] \
-    [get_bd_pins $control_wiz/resetn] [get_bd_pins $video_wiz/resetn] \
+    [get_bd_pins $idelay_wiz/resetn] [get_bd_pins $video_wiz/resetn] \
     [get_bd_pins $c64_wiz/resetn] \
     [get_bd_pins $control_reset/ext_reset_in] \
+    [get_bd_pins $idelay_reset/ext_reset_in] \
     [get_bd_pins $video_reset/ext_reset_in] \
     [get_bd_pins $c64_reset/ext_reset_in]
 
-connect_bd_net [get_bd_pins $control_wiz/clk_out1] $control_clk \
-    [get_bd_pins $control_reset/slowest_sync_clk] \
-    [get_bd_pins $ps/M_AXI_GP0_ACLK]
-connect_bd_net [get_bd_pins $control_wiz/clk_out2] $idelay_ref_clk
-connect_bd_net [get_bd_pins $control_wiz/locked] \
+connect_bd_net [get_bd_pins $constant_one/dout] \
     [get_bd_pins $control_reset/dcm_locked]
 connect_bd_net [get_bd_pins $control_reset/peripheral_aresetn] $control_aresetn
+
+connect_bd_net [get_bd_pins $idelay_wiz/clk_out1] $idelay_ref_clk \
+    [get_bd_pins $idelay_reset/slowest_sync_clk]
+connect_bd_net [get_bd_pins $idelay_wiz/locked] \
+    [get_bd_pins $idelay_reset/dcm_locked]
+connect_bd_net [get_bd_pins $idelay_reset/peripheral_aresetn] $idelay_aresetn
 
 connect_bd_net [get_bd_pins $video_wiz/clk_out1] $video_clk \
     [get_bd_pins $video_reset/slowest_sync_clk]
@@ -353,7 +379,7 @@ connect_bd_net [get_bd_pins $c64_wiz/locked] \
 connect_bd_net [get_bd_pins $c64_reset/peripheral_aresetn] $c64_aresetn
 connect_bd_net $irq [get_bd_pins $ps/IRQ_F2P]
 
-assign_bd_address -offset 0x40000000 -range 0x00001000 \
+assign_bd_address -offset 0x40000000 -range 0x00010000 \
     -target_address_space [get_bd_addr_spaces $ps/Data] \
     [get_bd_addr_segs M_AXI_GP0_0/Reg] -force
 

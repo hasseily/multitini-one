@@ -35,8 +35,8 @@ class InterfaceSpecTests(unittest.TestCase):
         self.assertEqual(self.spec["commands"]["INPUT_EVENT"], 5)
         self.assertEqual(self.spec["bitfields"]["STATUS"]["INPUT_READY"], 8)
 
-    def test_read_only_media_request_addition_is_versioned(self):
-        self.assertGreaterEqual(self.spec["abi"]["minor"], 4)
+    def test_bidirectional_media_request_addition_is_versioned(self):
+        self.assertGreaterEqual(self.spec["abi"]["minor"], 5)
         self.assertEqual(self.spec["commands"]["MEDIA_MOUNT"], 32)
         self.assertEqual(self.spec["commands"]["MEDIA_EJECT"], 33)
         self.assertEqual(self.spec["commands"]["MEDIA_COMPLETE"], 34)
@@ -52,12 +52,32 @@ class InterfaceSpecTests(unittest.TestCase):
             "MEDIA_REQUEST_LBA",
             "MEDIA_REQUEST_BLOCK_COUNT",
             "MEDIA_REQUEST_GENERATION",
+            "MEDIA_DATA",
+            "MEDIA_STATE",
         }
         self.assertTrue(
             request_registers.issubset(
                 {register["name"] for register in self.spec["registers"]}
             )
         )
+
+    def test_double_buffered_ui_window_is_versioned(self):
+        self.assertGreaterEqual(self.spec["abi"]["minor"], 6)
+        registers = {register["name"] for register in self.spec["registers"]}
+        self.assertIn("UI_COMMIT", registers)
+        self.assertIn("UI_STATUS", registers)
+        self.assertIn("CORE_VARIANT_INDEX", registers)
+        constants = self.spec["constants"]
+        columns = int(constants["UI_COLUMNS"])
+        rows = int(constants["UI_ROWS"])
+        cell_bytes = int(constants["UI_CELL_BYTES"])
+        bank_bytes = int(constants["UI_VRAM_BANK_BYTES"], 0)
+        bank0 = int(constants["UI_VRAM_BANK0_OFFSET"], 0)
+        bank1 = int(constants["UI_VRAM_BANK1_OFFSET"], 0)
+        window = int(constants["UI_WINDOW_SPAN"], 0)
+        self.assertEqual(bank_bytes, columns * rows * cell_bytes)
+        self.assertGreaterEqual(bank1, bank0 + bank_bytes)
+        self.assertLessEqual(bank1 + bank_bytes, window)
 
     def test_c64_interface_ids_and_required_rom_sizes(self):
         c64 = json.loads((ROOT / "spec/c64_interface_v0.json").read_text())

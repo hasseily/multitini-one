@@ -5,6 +5,9 @@ core/multitini_core_interface.sv
 [c64]
 core/c64/multitini_c64_defs_pkg.sv
 core/c64/multitini_c64_loader.sv
+core/c64/multitini_c64_content_loader.sv
+core/c64/multitini_c64_run_injector.sv
+core/c64/multitini_c64_cart_memory.sv
 core/c64/multitini_c64_input.sv
 core/c64/ports/dprom.vhd
 core/c64/ports/spram.vhd
@@ -13,7 +16,7 @@ core/c64/ports/spram.vhd
 ../third_party/c64/upstream/rtl/t65/T65_MCode.vhd
 ../third_party/c64/upstream/rtl/t65/T65.vhd
 ../third_party/c64/upstream/rtl/iec_drive/iecdrv_via6522.vhd
-../third_party/c64/upstream/rtl/iec_drive/iecdrv_misc.sv
+core/c64/ports/iecdrv_misc.sv
 core/c64/ports/cpu_6510.vhd
 ../third_party/c64/upstream/rtl/fpga64_rgbcolor.vhd
 ../third_party/c64/upstream/rtl/fpga64_keyboard.vhd
@@ -21,6 +24,8 @@ core/c64/ports/cpu_6510.vhd
 core/c64/multitini_c64_buslogic.vhd
 # This source uses SystemVerilog block declarations despite its .v suffix.
 ../third_party/c64/upstream/rtl/mos6526.v | systemverilog
+../third_party/c64/upstream/rtl/am29f040.sv
+core/c64/ports/cartridge.sv
 core/c64/ports/sid_dac.sv
 core/c64/ports/sid_filter.sv
 ../third_party/c64/upstream/rtl/sid/sid_envelope.sv
@@ -29,9 +34,12 @@ core/c64/ports/sid_tables.sv
 core/c64/ports/sid_top.sv
 core/c64/ports/c1541_logic.sv
 core/c64/ports/c1541_gcr.sv
-../third_party/c64/upstream/rtl/fpga64_sid_iec.vhd
+../third_party/c64/upstream/rtl/iec_drive/lfsr.v
+../third_party/c64/upstream/rtl/iec_drive/c1541_direct_gcr.sv
+core/c64/ports/fpga64_sid_iec.vhd
 core/c64/ports/video_sync.vhd
 core/c64/multitini_c64_d64_track.sv
+core/c64/multitini_c64_g64_track.sv
 core/c64/multitini_c64_1541.sv
 core/c64/multitini_c64_adapter.sv
 board/multitini_c64_video_bridge.sv
@@ -42,7 +50,7 @@ core/gameboy/multitini_gameboy_clock_enable.sv
 core/gameboy/multitini_gameboy_input.sv
 core/gameboy/multitini_gameboy_memory.sv
 core/gameboy/ports/dpram.sv
-core/gameboy/boot/cgb_boot.hex
+core/gameboy/boot/cgb_boot.mem
 ../third_party/gameboy/upstream/rtl/bus_savestates.vhd
 ../third_party/gameboy/upstream/rtl/reg_savestates.vhd
 ../third_party/gameboy/upstream/rtl/T80/T80_Pack.vhd
@@ -51,14 +59,14 @@ core/gameboy/boot/cgb_boot.hex
 ../third_party/gameboy/upstream/rtl/T80/T80_Reg.vhd
 ../third_party/gameboy/upstream/rtl/T80/T80.vhd
 ../third_party/gameboy/upstream/rtl/T80/GBse.vhd
-../third_party/gameboy/upstream/rtl/gbc_snd.vhd
+core/gameboy/ports/gbc_snd.vhd
 ../third_party/gameboy/upstream/rtl/gb_savestates.vhd
 ../third_party/gameboy/upstream/rtl/gb_statemanager.vhd
 ../third_party/gameboy/upstream/rtl/timer.v
 ../third_party/gameboy/upstream/rtl/hdma.v
 ../third_party/gameboy/upstream/rtl/link.v
-../third_party/gameboy/upstream/rtl/cheatcodes.sv
-../third_party/gameboy/upstream/rtl/megaswizzle.sv
+core/gameboy/ports/cheatcodes.sv
+core/gameboy/ports/megaswizzle.sv
 ../third_party/gameboy/upstream/rtl/sprites.v
 ../third_party/gameboy/upstream/rtl/sprites_extra.v
 ../third_party/gameboy/upstream/rtl/sprites_extra_store.v
@@ -82,6 +90,7 @@ core/gameboy/boot/cgb_boot.hex
 core/gameboy/ports/cart.v
 core/gameboy/ports/gb.v
 core/gameboy/multitini_gameboy_adapter.sv
+board/multitini_gameboy_video_bridge.sv
 [common]
 ../third_party/appletini/hdl/reset_sync.sv
 ../third_party/appletini/hdl/cdc_bit_sync.sv
@@ -94,16 +103,19 @@ common/multitini_axi3_regs.sv
 common/multitini_control_regs.sv
 common/multitini_psram_bist.sv
 common/multitini_async_mailbox.sv
+common/multitini_font7x8.mem
+common/multitini_text_overlay.sv
 common/multitini_cdc_pulse_toggle.sv
 common/multitini_memory_cdc.sv
 common/multitini_psram_line_service.sv
-../third_party/appletini/hdl/psram_driver.sv
+board/multitini_psram_driver.sv
 board/multitini_video_test.sv
 board/multitini_audio_spdif_pcm_tx.sv
 board/multitini_audio_test.sv
-[gbc]
-board/multitini_gameboy_psram_path.sv
 [common]
+board/multitini_gameboy_psram_path.sv
 board/multitini_one_top.sv
 ../third_party/appletini/constraints/multitini_pins.xdc
+board/multitini_psram_iob.xdc
 board/multitini_timing.xdc
+board/multitini_psram_timing.xdc

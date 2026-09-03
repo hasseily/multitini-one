@@ -70,7 +70,7 @@ class GameBoyImportTests(unittest.TestCase):
         product = (ROOT / "hdl/core/gameboy/ports/gb.v").read_text()
         self.assertIn('"BootROMs/cgb_boot.mif"', upstream)
         self.assertNotIn('"BootROMs/cgb_boot.mif"', product)
-        self.assertIn('"cgb_boot.hex"', product)
+        self.assertIn('"cgb_boot.mem"', product)
         self.assertIn("Multitini port:", product)
 
         upstream_cart = (ROOT / "third_party/gameboy/upstream/rtl/cart.v").read_text()
@@ -81,7 +81,7 @@ class GameBoyImportTests(unittest.TestCase):
     def test_boot_image_has_source_and_attribution(self):
         readme = (ROOT / "third_party/gameboy/upstream/BootROMs/README.md").read_text()
         source = (ROOT / "third_party/gameboy/upstream/BootROMs/src/cgb_boot.asm").read_text()
-        generated = ROOT / "hdl/core/gameboy/boot/cgb_boot.hex"
+        generated = ROOT / "hdl/core/gameboy/boot/cgb_boot.mem"
         self.assertIn("SameBoy", readme)
         self.assertIn("MIT", source)
         self.assertEqual(len(generated.read_text().splitlines()), 4096)

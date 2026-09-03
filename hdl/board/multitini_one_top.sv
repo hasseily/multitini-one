@@ -97,6 +97,7 @@ module multitini_one_top #(
     logic video_clk;
     logic c64_clk;
     logic control_aresetn;
+    logic idelay_aresetn;
     logic video_aresetn;
     logic c64_aresetn;
     logic shell_irq;
@@ -142,12 +143,24 @@ module multitini_one_top #(
     logic        m_axi_wvalid;
 
     logic        reg_wr_en;
-    logic [11:0] reg_wr_addr;
+    logic [15:0] reg_wr_addr;
     logic [31:0] reg_wr_data;
     logic [3:0]  reg_wr_strb;
     logic        reg_rd_en;
-    logic [11:0] reg_rd_addr;
+    logic [15:0] reg_rd_addr;
     logic [31:0] reg_rd_data;
+    logic [31:0] control_rd_data;
+    logic        control_wr_en;
+    logic        control_rd_en;
+    logic        ui_vram_wr_en;
+    logic        ui_submit;
+    logic        ui_submit_ready;
+    logic        ui_commit_visible;
+    logic        ui_commit_bank;
+    logic        ui_active_visible_control;
+    logic        ui_active_bank_control;
+    logic        ui_pixel_opaque;
+    logic [15:0] ui_pixel_rgb565;
     logic        video_enable;
     logic [11:0] video_scan_x;
     logic [11:0] video_scan_y;
@@ -204,6 +217,13 @@ module multitini_one_top #(
     logic [31:0] c64_media_request_lba;
     logic [15:0] c64_media_request_block_count;
     logic [31:0] c64_media_request_generation;
+    logic [7:0]  c64_media_write_data;
+    logic        c64_media_write_data_valid;
+    logic        c64_media_write_data_last;
+    logic        c64_media_write_data_ready;
+    logic        c64_media_state_mounted;
+    logic        c64_media_state_dirty;
+    logic        c64_media_state_eject_pending;
     logic        media_request_valid_control;
     logic        media_request_write_control;
     logic [31:0] media_request_id_control;
@@ -248,6 +268,20 @@ module multitini_one_top #(
     logic        media_request_mailbox_dst_valid;
     logic        media_request_mailbox_dst_ready;
     logic        c64_media_request_sent;
+    logic [8:0]  media_data_mailbox_destination;
+    logic        media_data_valid_control;
+    logic [7:0]  media_data_control;
+    logic        media_data_last_control;
+    logic        media_data_pop;
+    logic [2:0]  media_state_mailbox_source;
+    logic [2:0]  media_state_mailbox_destination;
+    logic [2:0]  c64_media_state_sent;
+    logic        media_state_mailbox_src_valid;
+    logic        media_state_mailbox_src_ready;
+    logic        media_state_mailbox_dst_valid;
+    logic        media_state_mounted_control;
+    logic        media_state_dirty_control;
+    logic        media_state_eject_pending_control;
 
     (* KEEP = "yes" *) logic [7:0] c64_video_r;
     (* KEEP = "yes" *) logic [7:0] c64_video_g;
@@ -262,6 +296,19 @@ module multitini_one_top #(
 
     logic [31:0] gbc_cart_size;
     logic        gbc_cart_loaded;
+    logic [23:0] c64_memory_addr;
+    logic        c64_memory_write;
+    logic [63:0] c64_memory_wdata;
+    logic [7:0]  c64_memory_wstrb;
+    logic        c64_memory_valid;
+    logic        c64_memory_ready;
+    logic [63:0] c64_memory_rdata;
+    logic        c64_memory_rvalid;
+    logic        c64_memory_fault;
+    logic        c64_prg_loaded;
+    logic        c64_cart_loaded;
+    logic [7:0]  c64_cart_hardware_type;
+    logic        c64_prg_run_busy;
     logic [23:0] gbc_memory_addr;
     logic        gbc_memory_write;
     logic [63:0] gbc_memory_wdata;
@@ -307,6 +354,7 @@ module multitini_one_top #(
         .control_clk(control_clk), .idelay_ref_clk(idelay_ref_clk),
         .video_clk(video_clk), .c64_clk(c64_clk),
         .control_aresetn(control_aresetn),
+        .idelay_aresetn(idelay_aresetn),
         .video_aresetn(video_aresetn), .c64_aresetn(c64_aresetn),
         .IRQ(shell_irq)
     );
@@ -340,7 +388,10 @@ module multitini_one_top #(
 
     multitini_control_regs #(.SHELL_BUILD_ID(SHELL_BUILD_ID)) control_regs (
         .clk(control_clk), .resetn(control_aresetn),
-        .core_id(c64_core_id), .core_ready(c64_ready_control),
+        .core_id(c64_core_id),
+        .core_variant_index(ACTIVE_MACHINE == 0 && C64_NTSC_MODE ?
+                            32'd1 : 32'd0),
+        .core_ready(c64_ready_control),
         .load_submit_ready(load_submit_ready),
         .core_load_error(c64_load_error_control),
         .input_submit_ready(input_submit_ready),
@@ -350,10 +401,21 @@ module multitini_one_top #(
         .media_request_lba(media_request_lba_control),
         .media_request_block_count(media_request_block_count_control),
         .media_request_generation(media_request_generation_control),
+        .media_data_valid(media_data_valid_control),
+        .media_data(media_data_control),
+        .media_data_last(media_data_last_control),
+        .media_state_mounted(media_state_mounted_control),
+        .media_state_dirty(media_state_dirty_control),
+        .media_state_eject_pending(media_state_eject_pending_control),
         .media_submit_ready(media_submit_ready),
-        .wr_en(reg_wr_en), .wr_addr(reg_wr_addr), .wr_data(reg_wr_data),
-        .wr_strb(reg_wr_strb), .rd_en(reg_rd_en), .rd_addr(reg_rd_addr),
-        .rd_data(reg_rd_data), .control(shell_control),
+        .ui_active_visible(ui_active_visible_control),
+        .ui_active_bank(ui_active_bank_control),
+        .ui_submit_ready(ui_submit_ready),
+        .wr_en(control_wr_en), .wr_addr(reg_wr_addr[11:0]),
+        .wr_data(reg_wr_data),
+        .wr_strb(reg_wr_strb), .rd_en(control_rd_en),
+        .rd_addr(reg_rd_addr[11:0]),
+        .rd_data(control_rd_data), .control(shell_control),
         .load_submit(load_submit), .load_kind(load_kind),
         .load_data(load_data), .load_offset(load_offset),
         .load_total(load_total), .load_first(load_first),
@@ -369,8 +431,20 @@ module multitini_one_top #(
         .media_complete_status(media_complete_status),
         .media_complete_block_count(media_complete_block_count),
         .media_complete_generation(media_complete_generation),
+        .media_data_pop(media_data_pop),
+        .ui_submit(ui_submit), .ui_visible(ui_commit_visible),
+        .ui_bank(ui_commit_bank),
         .irq(shell_irq)
     );
+
+    always_comb begin
+        control_wr_en = reg_wr_en && reg_wr_addr < 16'h1000;
+        control_rd_en = reg_rd_en && reg_rd_addr < 16'h1000;
+        ui_vram_wr_en = reg_wr_en &&
+            ((reg_wr_addr >= 16'h1000 && reg_wr_addr < 16'h2680) ||
+             (reg_wr_addr >= 16'h2800 && reg_wr_addr < 16'h3E80));
+        reg_rd_data = reg_rd_addr < 16'h1000 ? control_rd_data : 32'd0;
+    end
 
     assign load_mailbox_source = {load_kind, load_data, load_offset,
                                   load_total, load_first, load_last};
@@ -474,6 +548,58 @@ module multitini_one_top #(
         .dst_ready(media_request_mailbox_dst_ready)
     );
 
+    // Writeback bytes remain stable in the drive domain until software reads
+    // MEDIA_DATA. The acknowledgement then backpressures the next byte until
+    // this one-entry CDC mailbox has completed its round trip.
+    assign {media_data_last_control, media_data_control} =
+        media_data_mailbox_destination;
+    multitini_async_mailbox #(.WIDTH(9)) media_data_mailbox (
+        .src_clk(c64_clk), .src_resetn(c64_aresetn),
+        .src_data({c64_media_write_data_last, c64_media_write_data}),
+        .src_valid(c64_media_write_data_valid),
+        .src_ready(c64_media_write_data_ready),
+        .dst_clk(control_clk), .dst_resetn(control_aresetn),
+        .dst_data(media_data_mailbox_destination),
+        .dst_valid(media_data_valid_control), .dst_ready(media_data_pop)
+    );
+
+    // Status is sparse but the three bits form one state machine. Carry each
+    // changed snapshot coherently so software never observes a mixed-domain
+    // mounted/dirty/eject-pending combination.
+    assign media_state_mailbox_source = {
+        c64_media_state_eject_pending, c64_media_state_dirty,
+        c64_media_state_mounted
+    };
+    assign media_state_mailbox_src_valid =
+        media_state_mailbox_source != c64_media_state_sent;
+    always_ff @(posedge c64_clk) begin
+        if (!c64_aresetn)
+            c64_media_state_sent <= 3'd0;
+        else if (media_state_mailbox_src_valid &&
+                 media_state_mailbox_src_ready)
+            c64_media_state_sent <= media_state_mailbox_source;
+    end
+    multitini_async_mailbox #(.WIDTH(3)) media_state_mailbox (
+        .src_clk(c64_clk), .src_resetn(c64_aresetn),
+        .src_data(media_state_mailbox_source),
+        .src_valid(media_state_mailbox_src_valid),
+        .src_ready(media_state_mailbox_src_ready),
+        .dst_clk(control_clk), .dst_resetn(control_aresetn),
+        .dst_data(media_state_mailbox_destination),
+        .dst_valid(media_state_mailbox_dst_valid), .dst_ready(1'b1)
+    );
+    always_ff @(posedge control_clk) begin
+        if (!control_aresetn) begin
+            media_state_mounted_control <= 1'b0;
+            media_state_dirty_control <= 1'b0;
+            media_state_eject_pending_control <= 1'b0;
+        end else if (media_state_mailbox_dst_valid) begin
+            {media_state_eject_pending_control, media_state_dirty_control,
+             media_state_mounted_control} <=
+                media_state_mailbox_destination;
+        end
+    end
+
     always_ff @(posedge control_clk) begin
         if (!control_aresetn) begin
             media_request_valid_control <= 1'b0;
@@ -490,7 +616,13 @@ module multitini_one_top #(
             media_request_block_count_control <= 16'd0;
             media_request_generation_control <= 32'd0;
         end else begin
-            if (media_mount || media_eject || media_complete)
+            // A dirty eject deliberately preserves an outstanding reverse
+            // write request in the drive domain. Keep the matching coherent
+            // MMIO snapshot until software completes that write; clearing it
+            // here would also leave the source request latch asserted, so the
+            // request could never be submitted again.
+            if (media_mount || media_complete ||
+                (media_eject && !media_request_write_control))
                 media_request_valid_control <= 1'b0;
             if (media_request_mailbox_dst_valid &&
                 media_request_mailbox_dst_ready) begin
@@ -545,9 +677,10 @@ module multitini_one_top #(
         .dst_valid(c64_media_command_valid), .dst_ready(1'b1)
     );
 
-    // Build one complete machine at a time. The default PAL C64 additionally
-    // gets the live frame-rate bridge; NTSC and GBC retain diagnostics until
-    // they have separately verified capture geometry and output timing.
+    // Build one complete machine at a time. Both C64 standards use the same
+    // whole-frame ring. The 6569 PAL blanking window is 382x270; the selected
+    // 6567R8 NTSC timing is 404x250. Four-times scaling fills PAL vertically
+    // and centers the shorter NTSC raster in the 1920x1080 active area.
     generate
         if (ACTIVE_MACHINE == 0) begin : g_c64_machine
             assign gbc_cart_size = 32'd0;
@@ -565,6 +698,15 @@ module multitini_one_top #(
                 .load_ready(c64_load_ready), .load_first(c64_load_first),
                 .load_last(c64_load_last), .load_kind(c64_load_kind),
                 .load_offset(c64_load_offset), .load_total(c64_load_total),
+                .memory_addr(c64_memory_addr),
+                .memory_write(c64_memory_write),
+                .memory_wdata(c64_memory_wdata),
+                .memory_wstrb(c64_memory_wstrb),
+                .memory_valid(c64_memory_valid),
+                .memory_ready(c64_memory_ready),
+                .memory_rdata(c64_memory_rdata),
+                .memory_rvalid(c64_memory_rvalid),
+                .memory_fault(c64_memory_fault),
                 .media_mount(c64_media_mount),
                 .media_eject(c64_media_eject),
                 .media_complete(c64_media_complete),
@@ -582,8 +724,19 @@ module multitini_one_top #(
                 .media_request_lba(c64_media_request_lba),
                 .media_request_block_count(c64_media_request_block_count),
                 .media_request_generation(c64_media_request_generation),
+                .media_write_data(c64_media_write_data),
+                .media_write_data_valid(c64_media_write_data_valid),
+                .media_write_data_last(c64_media_write_data_last),
+                .media_write_data_ready(c64_media_write_data_ready),
+                .media_state_mounted(c64_media_state_mounted),
+                .media_state_dirty(c64_media_state_dirty),
+                .media_state_eject_pending(c64_media_state_eject_pending),
                 .core_id(c64_core_id), .ready(c64_ready),
                 .load_error(c64_load_error), .rom_loaded(c64_rom_loaded),
+                .prg_loaded(c64_prg_loaded),
+                .cart_loaded(c64_cart_loaded),
+                .cart_hardware_type(c64_cart_hardware_type),
+                .prg_run_busy(c64_prg_run_busy),
                 .video_r(c64_video_r), .video_g(c64_video_g),
                 .video_b(c64_video_b), .video_de(c64_video_de),
                 .video_hsync(c64_video_hsync),
@@ -592,29 +745,40 @@ module multitini_one_top #(
                 .audio_r(c64_audio_r), .audio_valid(c64_audio_valid)
             );
 
-            if (!C64_NTSC_MODE) begin : g_pal_video
-                multitini_c64_video_bridge video_bridge (
-                    .source_clk(c64_clk), .source_resetn(c64_aresetn),
-                    .source_ready(c64_ready),
-                    .source_r(c64_video_r), .source_g(c64_video_g),
-                    .source_b(c64_video_b), .source_de(c64_video_de),
-                    .source_vsync(c64_video_vsync),
-                    .source_valid(c64_video_valid),
-                    .pixel_clk(video_clk), .pixel_resetn(video_aresetn),
-                    .diagnostic_request(video_enable),
-                    .scan_x(video_scan_x), .scan_y(video_scan_y),
-                    .vblank_start(video_vblank_start),
-                    .machine_active(machine_video_active),
-                    .machine_rgb565(machine_video_rgb565)
-                );
-            end else begin : g_ntsc_video_diagnostic
-                assign machine_video_active = 1'b0;
-                assign machine_video_rgb565 = 16'h0000;
-            end
-            assign psram_a_io = 4'hz;
-            assign psram_b_io = 4'hz;
-            assign psram_ce_n = 1'b1;
-            assign psram_clk  = 1'b0;
+            multitini_c64_video_bridge #(
+                .NTSC_MODE(C64_NTSC_MODE)
+            ) video_bridge (
+                .source_clk(c64_clk), .source_resetn(c64_aresetn),
+                .source_ready(c64_ready),
+                .source_r(c64_video_r), .source_g(c64_video_g),
+                .source_b(c64_video_b), .source_de(c64_video_de),
+                .source_vsync(c64_video_vsync),
+                .source_valid(c64_video_valid),
+                .pixel_clk(video_clk), .pixel_resetn(video_aresetn),
+                .diagnostic_request(video_enable),
+                .scan_x(video_scan_x), .scan_y(video_scan_y),
+                .vblank_start(video_vblank_start),
+                .machine_active(machine_video_active),
+                .machine_rgb565(machine_video_rgb565)
+            );
+            multitini_gameboy_psram_path psram_path_i (
+                .core_clk(c64_clk), .core_resetn(c64_aresetn),
+                .control_clk(control_clk),
+                .control_resetn(control_aresetn),
+                .idelay_ref_clk(idelay_ref_clk),
+                .idelay_resetn(idelay_aresetn),
+                .core_memory_addr(c64_memory_addr),
+                .core_memory_write(c64_memory_write),
+                .core_memory_wdata(c64_memory_wdata),
+                .core_memory_wstrb(c64_memory_wstrb),
+                .core_memory_valid(c64_memory_valid),
+                .core_memory_ready(c64_memory_ready),
+                .core_memory_rdata(c64_memory_rdata),
+                .core_memory_rvalid(c64_memory_rvalid),
+                .memory_fault(c64_memory_fault),
+                .psram_a_io(psram_a_io), .psram_b_io(psram_b_io),
+                .psram_ce_n(psram_ce_n), .psram_clk(psram_clk)
+            );
         end else begin : g_gameboy_machine
             assign c64_rom_loaded = {2'd0, gbc_cart_loaded};
             assign c64_media_request_valid = 1'b0;
@@ -623,8 +787,12 @@ module multitini_one_top #(
             assign c64_media_request_lba = 32'd0;
             assign c64_media_request_block_count = 16'd0;
             assign c64_media_request_generation = 32'd0;
-            assign machine_video_active = 1'b0;
-            assign machine_video_rgb565 = 16'h0000;
+            assign c64_media_write_data = 8'd0;
+            assign c64_media_write_data_valid = 1'b0;
+            assign c64_media_write_data_last = 1'b0;
+            assign c64_media_state_mounted = 1'b0;
+            assign c64_media_state_dirty = 1'b0;
+            assign c64_media_state_eject_pending = 1'b0;
             (* DONT_TOUCH = "yes" *) multitini_gameboy_adapter machine_adapter (
                 .core_clk(c64_clk), .reset(!c64_aresetn),
                 .core_reset_request(c64_core_reset_request),
@@ -655,12 +823,28 @@ module multitini_one_top #(
                 .audio_r(c64_audio_r), .audio_valid(c64_audio_valid)
             );
 
+            multitini_gameboy_video_bridge video_bridge (
+                .source_clk(c64_clk), .source_resetn(c64_aresetn),
+                .source_ready(c64_ready),
+                .source_r(c64_video_r), .source_g(c64_video_g),
+                .source_b(c64_video_b), .source_de(c64_video_de),
+                .source_vsync(c64_video_vsync),
+                .source_valid(c64_video_valid),
+                .pixel_clk(video_clk), .pixel_resetn(video_aresetn),
+                .diagnostic_request(video_enable),
+                .scan_x(video_scan_x), .scan_y(video_scan_y),
+                .vblank_start(video_vblank_start),
+                .machine_active(machine_video_active),
+                .machine_rgb565(machine_video_rgb565)
+            );
+
             if (ENABLE_GBC_PSRAM) begin : g_psram_active
                 multitini_gameboy_psram_path psram_path_i (
                     .core_clk(c64_clk), .core_resetn(c64_aresetn),
                     .control_clk(control_clk),
                     .control_resetn(control_aresetn),
                     .idelay_ref_clk(idelay_ref_clk),
+                    .idelay_resetn(idelay_aresetn),
                     .core_memory_addr(gbc_memory_addr),
                     .core_memory_write(gbc_memory_write),
                     .core_memory_wdata(gbc_memory_wdata),
@@ -693,10 +877,25 @@ module multitini_one_top #(
         .dout(video_enable)
     );
 
+    multitini_text_overlay text_overlay (
+        .control_clk(control_clk), .control_resetn(control_aresetn),
+        .vram_wr_en(ui_vram_wr_en), .vram_wr_addr(reg_wr_addr),
+        .vram_wr_data(reg_wr_data), .vram_wr_strb(reg_wr_strb),
+        .commit_valid(ui_submit), .commit_visible(ui_commit_visible),
+        .commit_bank(ui_commit_bank), .commit_ready(ui_submit_ready),
+        .active_visible_control(ui_active_visible_control),
+        .active_bank_control(ui_active_bank_control),
+        .pixel_clk(video_clk), .pixel_resetn(video_aresetn),
+        .scan_x(video_scan_x), .scan_y(video_scan_y),
+        .vblank_start(video_vblank_start),
+        .pixel_opaque(ui_pixel_opaque), .pixel_rgb565(ui_pixel_rgb565)
+    );
+
     multitini_video_test video_test (
         .pixel_clk(video_clk), .resetn(video_aresetn), .enable(video_enable),
         .machine_enable(machine_video_active),
         .machine_rgb565(machine_video_rgb565),
+        .ui_opaque(ui_pixel_opaque), .ui_rgb565(ui_pixel_rgb565),
         .scan_x(video_scan_x), .scan_y(video_scan_y),
         .vblank_start(video_vblank_start),
         .dvi_red(dvi_red), .dvi_grn(dvi_grn), .dvi_blu(dvi_blu),
@@ -751,7 +950,8 @@ module multitini_one_top #(
     assign eth_cs_n  = 1'b1;
     assign eth_rst_n = 1'b0;
 
-    wire unused_inputs = ^{idelay_ref_clk, a2fpga_clk, a2fpga_7m, a2fpga_q3,
+    wire unused_inputs = ^{idelay_ref_clk, idelay_aresetn,
+                           a2fpga_clk, a2fpga_7m, a2fpga_q3,
                            a2fpga_m2b0, a2fpga_m2sel, a2fpga_devsel_n,
                            dvi_hpd, i2c0_rtc_int_n, i2c0_rtc_clkout,
                            i2c0_temp_alert_n, eth_int_n, usb_sys_fault_n,

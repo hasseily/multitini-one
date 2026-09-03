@@ -309,10 +309,7 @@ wire cpu_mreq_n;
 wire cpu_halt_n;
 wire [2:0] cpu_tstate;
 
-wire clk = clk_sys & ce;
-
 wire ce_cpu = cpu_speed ? ce_2x:ce;
-wire clk_cpu = clk_sys & ce_cpu;
 
 // Portable forward declarations for strict Verilog tools.
 wire hdma_rd;
@@ -327,8 +324,8 @@ reg reset_r  = 1;
 wire reset_ss;
 
 //sync reset with clock
-always  @ (posedge clk) begin
-	reset_r <= reset;
+always  @ (posedge clk_sys) begin
+	if (ce) reset_r <= reset;
 end
 
 // Generate PHI signal. Normally the CPU runs from the PHI signal but the current CPU does not use it.
@@ -830,8 +827,9 @@ wire [12:0] vram_addr = video_rd?video_addr:(hdma_rd&&isGBC)?hdma_target_addr[12
 
 wire [7:0] Savestate_RAMReadData_VRAM0, Savestate_RAMReadData_VRAM1;
 
-dpram #(13) vram0 (
-	.clock_a   (clk_cpu  ),
+dpram_ce #(13) vram0 (
+	.clock_a   (clk_sys),
+	.clken_a   (ce_cpu),
 	.address_a (vram_addr),
 	.wren_a    (vram_wren),
 	.data_a    (vram_di  ),
@@ -845,8 +843,9 @@ dpram #(13) vram0 (
 );
 
 //separate 8k for vbank1 for gbc because of BG reads
-dpram #(13) vram1 (
-	.clock_a   (clk_cpu   ),
+dpram_ce #(13) vram1 (
+	.clock_a   (clk_sys),
+	.clken_a   (ce_cpu),
 	.address_a (vram_addr ),
 	.wren_a    (vram1_wren),
 	.data_a    (vram_di   ),
@@ -917,8 +916,9 @@ hdma hdma(
 // 127 bytes internal zero page ram from $ff80 to $fffe
 wire cpu_wr_zpram = sel_zpram && !cpu_wr_n;
 
-dpram #(7) zpram (
-	.clock_a   (clk_cpu      ),
+dpram_ce #(7) zpram (
+	.clock_a   (clk_sys),
+	.clken_a   (ce_cpu),
 	.address_a (cpu_addr[6:0]),
 	.wren_a    (cpu_wr_zpram ),
 	.data_a    (cpu_do       ),
@@ -952,8 +952,9 @@ wire [2:0] wram_bank_o = (!wram_bank ? 3'd1 : wram_bank);
 wire [14:0] wram_addr = (wram_addr_i[12]) ? { wram_bank_o, wram_addr_i[11:0] }  // bank 1-7 $D000-DFFF
                                           : {        3'd0, wram_addr_i[11:0] }; // bank 0   $C000-CFFF
 
-dpram #(15) wram (
-	.clock_a   (clk_cpu),
+dpram_ce #(15) wram (
+	.clock_a   (clk_sys),
+	.clken_a   (ce_cpu),
 	.address_a (wram_addr),
 	.wren_a    (wram_wren),
 	.data_a    (cpu_do),
@@ -1022,7 +1023,7 @@ wire [10:0] boot_wr_addr =
 
 wire [7:0] boot_q;
 
-dpram_dif #(12,8,11,16,"cgb_boot.hex") boot_rom (
+dpram_dif #(12,8,11,16,"cgb_boot.mem") boot_rom (
 	.clock (clk_sys),
 
 	.address_a (boot_addr),

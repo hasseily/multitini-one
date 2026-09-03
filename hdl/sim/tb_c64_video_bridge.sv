@@ -6,10 +6,12 @@ module tb_c64_video_bridge;
     localparam int SOURCE_HEIGHT = 4;
     localparam int OUTPUT_SCALE = 2;
     localparam int OUTPUT_X_OFFSET = 4;
+    localparam int OUTPUT_Y_OFFSET = 2;
     localparam int OUTPUT_WIDTH = SOURCE_WIDTH * OUTPUT_SCALE;
     localparam int PATH_H_ACTIVE = OUTPUT_X_OFFSET + OUTPUT_WIDTH + 2;
     localparam int PATH_H_TOTAL = PATH_H_ACTIVE + 4;
-    localparam int PATH_V_ACTIVE = SOURCE_HEIGHT * OUTPUT_SCALE + 2;
+    localparam int PATH_V_ACTIVE = OUTPUT_Y_OFFSET +
+                                   SOURCE_HEIGHT * OUTPUT_SCALE + 2;
     localparam int PATH_V_TOTAL = PATH_V_ACTIVE + 3;
 
     logic source_clk = 1'b0;
@@ -58,7 +60,8 @@ module tb_c64_video_bridge;
 
     multitini_c64_video_bridge #(
         .SOURCE_WIDTH(SOURCE_WIDTH), .SOURCE_HEIGHT(SOURCE_HEIGHT),
-        .OUTPUT_SCALE(OUTPUT_SCALE), .OUTPUT_X_OFFSET(OUTPUT_X_OFFSET)
+        .OUTPUT_SCALE(OUTPUT_SCALE), .OUTPUT_X_OFFSET(OUTPUT_X_OFFSET),
+        .OUTPUT_Y_OFFSET(OUTPUT_Y_OFFSET)
     ) dut (
         .source_clk(source_clk), .source_resetn(source_resetn),
         .source_ready(source_ready),
@@ -84,6 +87,7 @@ module tb_c64_video_bridge;
         .pixel_clk(pixel_clk), .resetn(path_resetn),
         .enable(diagnostic_request), .machine_enable(machine_active),
         .machine_rgb565(machine_rgb565),
+        .ui_opaque(1'b0), .ui_rgb565(16'd0),
         .scan_x(path_scan_x), .scan_y(path_scan_y),
         .vblank_start(path_vblank_start),
         .dvi_red(path_red), .dvi_grn(path_green), .dvi_blu(path_blue),
@@ -419,21 +423,27 @@ module tb_c64_video_bridge;
         // hidden pipeline coordinates must remain black border pixels.
         prepare_next_pixel(12'd0, 12'd0, 16'h0000,
                            "left border remains black");
-        prepare_next_pixel(OUTPUT_X_OFFSET - 2, 12'd0, 16'h0000,
+        prepare_next_pixel(OUTPUT_X_OFFSET, OUTPUT_Y_OFFSET - 1, 16'h0000,
+                           "top border remains black");
+        prepare_next_pixel(12'd0, OUTPUT_Y_OFFSET, 16'h0000,
+                           "first centered row starts at frame origin");
+        prepare_next_pixel(OUTPUT_X_OFFSET - 2, OUTPUT_Y_OFFSET, 16'h0000,
                            "RAM prefetch coordinate remains black");
-        prepare_next_pixel(OUTPUT_X_OFFSET - 1, 12'd0, 16'h0000,
+        prepare_next_pixel(OUTPUT_X_OFFSET - 1, OUTPUT_Y_OFFSET, 16'h0000,
                            "index-pipeline coordinate remains black");
-        prepare_next_pixel(OUTPUT_X_OFFSET, 12'd0,
+        prepare_next_pixel(OUTPUT_X_OFFSET, OUTPUT_Y_OFFSET,
                            palette_rgb565(pattern_index(0, 0, 1)),
                            "horizontal source pixel repeated");
-        prepare_next_pixel(OUTPUT_X_OFFSET + 1, 12'd0,
+        prepare_next_pixel(OUTPUT_X_OFFSET + 1, OUTPUT_Y_OFFSET,
                            palette_rgb565(pattern_index(1, 0, 1)),
                            "next source pixel selected");
-        prepare_next_pixel(12'd0, OUTPUT_SCALE, 16'h0000,
+        prepare_next_pixel(12'd0, OUTPUT_Y_OFFSET + OUTPUT_SCALE, 16'h0000,
                            "next source-row base advances");
-        prepare_next_pixel(OUTPUT_X_OFFSET - 2, OUTPUT_SCALE, 16'h0000,
+        prepare_next_pixel(OUTPUT_X_OFFSET - 2,
+                           OUTPUT_Y_OFFSET + OUTPUT_SCALE, 16'h0000,
                            "next row RAM prefetch remains black");
-        prepare_next_pixel(OUTPUT_X_OFFSET - 1, OUTPUT_SCALE, 16'h0000,
+        prepare_next_pixel(OUTPUT_X_OFFSET - 1,
+                           OUTPUT_Y_OFFSET + OUTPUT_SCALE, 16'h0000,
                            "next row index pipeline remains black");
 
         // Raw diagnostic changes cannot alter physical mode mid-active.
@@ -500,11 +510,11 @@ module tb_c64_video_bridge;
         check_value(dut.display_bank == 2'd0, "wrapped bank displayed");
         prepare_next_pixel(12'd0, 12'd0, 16'h0000,
                            "wrapped frame address resets");
-        prepare_next_pixel(OUTPUT_X_OFFSET - 2, 12'd0, 16'h0000,
+        prepare_next_pixel(OUTPUT_X_OFFSET - 2, OUTPUT_Y_OFFSET, 16'h0000,
                            "wrapped-frame RAM prefetch remains hidden");
-        prepare_next_pixel(OUTPUT_X_OFFSET - 1, 12'd0, 16'h0000,
+        prepare_next_pixel(OUTPUT_X_OFFSET - 1, OUTPUT_Y_OFFSET, 16'h0000,
                            "wrapped-frame index pipeline remains hidden");
-        prepare_next_pixel(OUTPUT_X_OFFSET, 12'd0,
+        prepare_next_pixel(OUTPUT_X_OFFSET, OUTPUT_Y_OFFSET,
                            palette_rgb565(pattern_index(0, 0, 6)),
                            "wrapped bank contains only its complete frame");
 
@@ -530,12 +540,12 @@ module tb_c64_video_bridge;
             wait_released_source(expected_pointer - 1'b1);
             prepare_next_pixel(12'd0, 12'd0, 16'h0000,
                                "rollover frame resets scan address");
-            prepare_next_pixel(OUTPUT_X_OFFSET - 2, 12'd0, 16'h0000,
+            prepare_next_pixel(OUTPUT_X_OFFSET - 2, OUTPUT_Y_OFFSET, 16'h0000,
                                "rollover RAM prefetch remains hidden");
-            prepare_next_pixel(OUTPUT_X_OFFSET - 1, 12'd0, 16'h0000,
+            prepare_next_pixel(OUTPUT_X_OFFSET - 1, OUTPUT_Y_OFFSET, 16'h0000,
                                "rollover index pipeline remains hidden");
             expected_rgb = palette_rgb565(pattern_index(0, 0, 9 + index));
-            prepare_next_pixel(OUTPUT_X_OFFSET, 12'd0, expected_rgb,
+            prepare_next_pixel(OUTPUT_X_OFFSET, OUTPUT_Y_OFFSET, expected_rgb,
                                "rollover frame contains expected pixels");
         end
         check_value(dut.published_binary_source == 3'd5 &&
@@ -616,25 +626,28 @@ module tb_c64_video_bridge;
         @(negedge pixel_clk);
         use_path_timing = 1'b1;
         path_resetn = 1'b1;
-        check_path_pixel(OUTPUT_X_OFFSET - 2, 12'd0, 16'h0000,
+        check_path_pixel(OUTPUT_X_OFFSET, OUTPUT_Y_OFFSET - 1, 16'h0000,
+                         "composed DVI path keeps top border black");
+        check_path_pixel(OUTPUT_X_OFFSET - 2, OUTPUT_Y_OFFSET, 16'h0000,
                          "composed DVI path keeps RAM prefetch column black");
-        check_path_pixel(OUTPUT_X_OFFSET - 1, 12'd0, 16'h0000,
+        check_path_pixel(OUTPUT_X_OFFSET - 1, OUTPUT_Y_OFFSET, 16'h0000,
                          "composed DVI path keeps index pipeline column black");
-        check_path_pixel(OUTPUT_X_OFFSET, 12'd0,
+        check_path_pixel(OUTPUT_X_OFFSET, OUTPUT_Y_OFFSET,
                          palette_rgb565(pattern_index(0, 0, 9)),
                          "composed DVI path shows first source pixel");
-        check_path_pixel(OUTPUT_X_OFFSET + 1, 12'd0,
+        check_path_pixel(OUTPUT_X_OFFSET + 1, OUTPUT_Y_OFFSET,
                          palette_rgb565(pattern_index(0, 0, 9)),
                          "composed DVI path repeats first source pixel");
-        check_path_pixel(OUTPUT_X_OFFSET + 2, 12'd0,
+        check_path_pixel(OUTPUT_X_OFFSET + 2, OUTPUT_Y_OFFSET,
                          palette_rgb565(pattern_index(1, 0, 9)),
                          "composed DVI path advances to second source pixel");
-        check_path_pixel(OUTPUT_X_OFFSET + OUTPUT_WIDTH - 1, 12'd0,
+        check_path_pixel(OUTPUT_X_OFFSET + OUTPUT_WIDTH - 1, OUTPUT_Y_OFFSET,
                          palette_rgb565(pattern_index(SOURCE_WIDTH - 1, 0, 9)),
                          "composed DVI path retains final visible column");
-        check_path_pixel(OUTPUT_X_OFFSET + OUTPUT_WIDTH, 12'd0, 16'h0000,
+        check_path_pixel(OUTPUT_X_OFFSET + OUTPUT_WIDTH, OUTPUT_Y_OFFSET,
+                         16'h0000,
                          "composed DVI path restores right border");
-        check_path_pixel(OUTPUT_X_OFFSET, OUTPUT_SCALE,
+        check_path_pixel(OUTPUT_X_OFFSET, OUTPUT_Y_OFFSET + OUTPUT_SCALE,
                          palette_rgb565(pattern_index(0, 1, 9)),
                          "composed DVI path advances source rows exactly");
 
@@ -645,7 +658,7 @@ module tb_c64_video_bridge;
         if (failure_count != 0) begin
             $fatal(1, "%0d live C64 bridge checks failed", failure_count);
         end else begin
-            $display("PASS: live PAL ring, palette, reset epochs, vblank swaps, and registered DVI edges");
+            $display("PASS: live C64 ring, centered scaling, reset epochs, vblank swaps, and registered DVI edges");
             $finish;
         end
     end

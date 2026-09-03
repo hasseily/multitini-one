@@ -35,6 +35,22 @@ proc require_one_object {description objects} {
     }
 }
 
+proc require_packed_iob_registers {description pattern expected_count} {
+    set registers [get_cells -hierarchical -quiet -regexp $pattern]
+    set count [llength $registers]
+    if {$count != $expected_count} {
+        error "Expected $expected_count $description I/O registers; found $count: $registers"
+    }
+    foreach register $registers {
+        if {[get_property IOB $register] ne "TRUE"} {
+            error "$description register is not marked for I/O packing: $register"
+        }
+        if {![string match "OLOGIC_*" [get_property LOC $register]]} {
+            error "$description register is not physically packed into OLOGIC: $register"
+        }
+    }
+}
+
 if {![file isfile $project_file]} {
     error "Project is absent. Run scripts/create_project.tcl first: $project_file"
 }
@@ -64,6 +80,12 @@ wait_on_run impl_1
 require_complete_run impl_1
 open_run impl_1
 
+set build_generics [get_property GENERIC [get_filesets sources_1]]
+set psram_active [expr {
+    [string match "*ACTIVE_MACHINE=0*" $build_generics] ||
+    [string match "*ENABLE_GBC_PSRAM=1'b1*" $build_generics]
+}]
+
 # XDC files cannot contain Tcl control flow. Enforce every hierarchical timing
 # query here, against the fully linked and implemented design, so hierarchy
 # drift cannot silently remove a generated clock or asynchronous group.
@@ -71,8 +93,15 @@ require_one_object "audio BCLK divider source" [get_pins -hierarchical -quiet \
     -regexp {.*audio_test/audio_bclk_div_reg\[1\]/Q}]
 require_one_object "DVI ODDR clock pin" [get_pins -hierarchical -quiet \
     -filter {NAME =~ *video_test/dvi_clk_oddr/C}]
+set psram_oddr_pins [get_pins -hierarchical -quiet \
+    -filter {NAME =~ */psram_clk_oddr_i/C}]
+if {$psram_active} {
+    require_one_object "PSRAM ODDR clock pin" $psram_oddr_pins
+} elseif {[llength $psram_oddr_pins] != 0} {
+    error "Inactive PSRAM build unexpectedly contains an ODDR clock pin"
+}
 foreach {description pattern} {
-    "control root clock" {*clk_out1*zynq_ps_bd_clk_wiz_control*}
+    "control root clock" {clk_fpga_0}
     "video root clock" {*clk_out1*zynq_ps_bd_clk_wiz_video*}
     "selected machine root clock" {*clk_out1*zynq_ps_bd_clk_wiz_c64*}
 } {
@@ -81,6 +110,32 @@ foreach {description pattern} {
 require_one_object "audio BCLK generated clock" [get_clocks -quiet audio_bclk]
 require_one_object "forwarded audio BCLK" [get_clocks -quiet audio_bclk_out]
 require_one_object "forwarded DVI clock" [get_clocks -quiet dvi_clk_out]
+set psram_forwarded_clocks [get_clocks -quiet psram_clk_out]
+if {$psram_active} {
+    require_one_object "forwarded PSRAM clock" $psram_forwarded_clocks
+    require_packed_iob_registers "PSRAM A data" \
+        {.*psram_a_o_reg\[[0-3]\]$} 4
+    require_packed_iob_registers "PSRAM B data" \
+        {.*psram_b_o_reg\[[0-3]\]$} 4
+    require_packed_iob_registers "PSRAM chip-enable" \
+        {.*psram_ce_n_reg$} 1
+    # Each logical tri-state bit controls one pin in both four-bit PSRAM
+    # banks. Synthesis must replicate all four registers into both IOBs.
+    require_packed_iob_registers "PSRAM tri-state" \
+        {.*psram_t_reg\[[0-3]\](_rep)?$} 8
+} elseif {[llength $psram_forwarded_clocks] != 0} {
+    error "Inactive PSRAM build unexpectedly contains a forwarded clock"
+}
+
+set lut_cells [get_cells -hierarchical -quiet -filter {REF_NAME =~ LUT*}]
+set lut_outputs [get_pins -quiet -of_objects $lut_cells \
+    -filter {DIRECTION == OUT}]
+set lut_nets [get_nets -quiet -of_objects $lut_outputs]
+set fabric_clock_sinks [get_pins -quiet -leaf -of_objects $lut_nets \
+    -filter {IS_CLOCK == 1 && DIRECTION == IN}]
+if {[llength $fabric_clock_sinks] != 0} {
+    error "Fabric LUTs drive clock pins: $fabric_clock_sinks"
+}
 
 report_timing_summary -delay_type min_max -max_paths 100 -check_timing_verbose \
     -report_unconstrained \
@@ -91,8 +146,43 @@ report_cdc -details -file $cdc_report
 set cdc_stream [open $cdc_report r]
 set cdc_text [read $cdc_stream]
 close $cdc_stream
-if {[regexp {CDC-[0-9]+[ \t]+Critical[ \t]+[1-9][0-9]*} $cdc_text]} {
-    error "CDC gate found one or more critical crossings"
+
+# report_cdc classifies each external PSRAM pin-to-IDDR path as CDC-13 even
+# though the capture phase and IDELAY tap are selected dynamically and the
+# external input path is explicitly false-pathed. Waive only those eight exact
+# report rows. Every internal or otherwise unexpected Critical row remains a
+# build failure, and the summary/detail counts must agree.
+set cdc_summary_critical 0
+set cdc_detail_critical 0
+set cdc_psram_waived 0
+set cdc_unexpected_critical {}
+foreach cdc_line [split $cdc_text "\n"] {
+    if {[regexp {^CDC-[0-9]+[ \t]+Critical[ \t]+([0-9]+)} \
+            $cdc_line -> critical_count]} {
+        incr cdc_summary_critical $critical_count
+    }
+    if {![regexp {^[ \t]*[0-9]+[ \t]+CDC-[0-9]+[ \t]+Critical[ \t]+} \
+            $cdc_line]} {
+        continue
+    }
+    incr cdc_detail_critical
+    if {$psram_active && [regexp \
+            {CDC-13[ \t]+Critical.*False Path[ \t]+psram_[ab]_io\[[0-3]\][ \t]+.*u_[ab]_iddr/D[ \t]*$} \
+            $cdc_line]} {
+        incr cdc_psram_waived
+    } else {
+        lappend cdc_unexpected_critical [string trim $cdc_line]
+    }
+}
+if {$cdc_summary_critical != $cdc_detail_critical} {
+    error "CDC report summary/detail mismatch: summary=$cdc_summary_critical detail=$cdc_detail_critical"
+}
+set expected_psram_waivers [expr {$psram_active ? 8 : 0}]
+if {$cdc_psram_waived != $expected_psram_waivers} {
+    error "Expected $expected_psram_waivers external PSRAM CDC waivers; found $cdc_psram_waived"
+}
+if {[llength $cdc_unexpected_critical] != 0} {
+    error "CDC gate found unexpected critical crossings: $cdc_unexpected_critical"
 }
 report_bus_skew -warn_on_violation -file [file join $report_dir bus_skew.rpt]
 report_drc -file [file join $report_dir drc.rpt]

@@ -19,3 +19,9 @@ Makefile text eol=lf
 third_party/appletini/** -whitespace
 third_party/c64/upstream/** -text -whitespace
 third_party/gameboy/upstream/** -text -whitespace
+
+# Local compatibility ports intentionally preserve upstream whitespace.
+hdl/board/multitini_psram_driver.sv -whitespace
+hdl/core/c64/ports/cartridge.sv -whitespace
+hdl/core/c64/ports/fpga64_sid_iec.vhd -whitespace
+hdl/core/gameboy/ports/gbc_snd.vhd -whitespace

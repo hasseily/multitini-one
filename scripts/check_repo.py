@@ -31,7 +31,7 @@ ALLOWED_RESTRICTED_FILES = {
     # Open-source SameBoy-derived bootstrap, plus its deterministic Vivado/
     # readmemh representation. Both are pinned and covered by the MIT notice.
     "third_party/gameboy/upstream/BootROMs/cgb_boot.mif",
-    "hdl/core/gameboy/boot/cgb_boot.hex",
+    "hdl/core/gameboy/boot/cgb_boot.mem",
     # Exact C64 ROM set covered by provenance/c64_roms.json and the explicit
     # repository-owner inclusion decision recorded there.
     *C64_ROM_PATHS,
@@ -45,7 +45,14 @@ def candidate_files() -> list[str]:
         check=True,
         stdout=subprocess.PIPE,
     )
-    return sorted(path for path in result.stdout.decode().split("\0") if path)
+    # git ls-files keeps tracked paths in its output until a deletion is
+    # committed. Policy applies to files present in the candidate tree, not
+    # obsolete paths that this change intentionally removes.
+    return sorted(
+        path
+        for path in result.stdout.decode().split("\0")
+        if path and (ROOT / path).is_file()
+    )
 
 
 def load_license_patterns() -> list[str]:

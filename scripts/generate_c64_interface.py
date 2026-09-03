@@ -37,6 +37,12 @@ def load_spec() -> dict:
     for name in spec["rom_sizes"]:
         if name not in spec["load_kinds"]:
             raise ValueError(f"ROM size has no load kind: {name}")
+    crt_values = [number(value) for value in
+                  spec["crt_hardware_types"].values()]
+    if len(crt_values) != len(set(crt_values)):
+        raise ValueError("duplicate C64 CRT hardware type")
+    if any(value < 0 or value > 255 for value in crt_values):
+        raise ValueError("C64 CRT hardware type does not fit the HDL adapter")
     return spec
 
 
@@ -58,6 +64,12 @@ def generate_sv(spec: dict) -> str:
     lines.append("")
     for name, value in spec["rom_sizes"].items():
         lines.append(f"    localparam integer MT_SIZE_{name} = {number(value)};")
+    for name, value in spec["content_limits"].items():
+        lines.append(f"    localparam integer MT_SIZE_{name} = {number(value)};")
+    lines.append("")
+    for name, value in spec["crt_hardware_types"].items():
+        lines.append(
+            f"    localparam logic [7:0] MT_CRT_{name} = 8'd{number(value)};")
     lines.append("")
     for name, value in spec["input_namespaces"].items():
         lines.append(
@@ -89,6 +101,12 @@ def generate_c(spec: dict) -> str:
     lines.extend(["} mt_c64_input_namespace_t;", ""])
     for name, value in spec["rom_sizes"].items():
         lines.append(f"#define MT_SIZE_{name} ((size_t){number(value)})")
+    for name, value in spec["content_limits"].items():
+        lines.append(f"#define MT_SIZE_{name} ((size_t){number(value)})")
+    lines.extend(["", "typedef enum {"])
+    for name, value in spec["crt_hardware_types"].items():
+        lines.append(f"    MT_CRT_{name} = {number(value)},")
+    lines.extend(["} mt_c64_crt_hardware_type_t;"])
     lines.extend(["", "#endif", ""])
     return "\n".join(lines)
 

@@ -7,6 +7,7 @@ module multitini_control_regs #(
     input  logic         clk,
     input  logic         resetn,
     input  logic [31:0]  core_id,
+    input  logic [31:0]  core_variant_index,
     input  logic         core_ready,
     input  logic         load_submit_ready,
     input  logic         core_load_error,
@@ -17,7 +18,16 @@ module multitini_control_regs #(
     input  logic [31:0]  media_request_lba,
     input  logic [15:0]  media_request_block_count,
     input  logic [31:0]  media_request_generation,
+    input  logic         media_data_valid,
+    input  logic [7:0]   media_data,
+    input  logic         media_data_last,
+    input  logic         media_state_mounted,
+    input  logic         media_state_dirty,
+    input  logic         media_state_eject_pending,
     input  logic         media_submit_ready,
+    input  logic         ui_active_visible,
+    input  logic         ui_active_bank,
+    input  logic         ui_submit_ready,
 
     input  logic         wr_en,
     input  logic [11:0]  wr_addr,
@@ -51,6 +61,10 @@ module multitini_control_regs #(
     output logic [31:0]  media_complete_status,
     output logic [15:0]  media_complete_block_count,
     output logic [31:0]  media_complete_generation,
+    output logic         media_data_pop,
+    output logic         ui_submit,
+    output logic         ui_visible,
+    output logic         ui_bank,
     output logic         irq
 );
     import multitini_regs_pkg::*;
@@ -83,6 +97,9 @@ module multitini_control_regs #(
     logic [31:0] error_clear_mask;
     logic [31:0] irq_clear_mask;
     logic [31:0] media_request_word;
+    logic [31:0] media_data_word;
+    logic [31:0] media_state_word;
+    logic [31:0] ui_status_word;
 
     function automatic logic [31:0] merge_strobes(
         input logic [31:0] old_value,
@@ -106,6 +123,31 @@ module multitini_control_regs #(
         if (media_request_write)
             media_request_word |= MT_MEDIA_REQUEST_WRITE;
 
+        media_data_word = 32'd0;
+        if (media_data_valid) begin
+            media_data_word |= MT_MEDIA_DATA_VALID;
+            if (media_data_last)
+                media_data_word |= MT_MEDIA_DATA_LAST;
+            media_data_word |=
+                ({24'd0, media_data} << MT_MEDIA_DATA_BYTE_SHIFT);
+        end
+
+        media_state_word = 32'd0;
+        if (media_state_mounted)
+            media_state_word |= MT_MEDIA_STATE_MOUNTED;
+        if (media_state_dirty)
+            media_state_word |= MT_MEDIA_STATE_DIRTY;
+        if (media_state_eject_pending)
+            media_state_word |= MT_MEDIA_STATE_EJECT_PENDING;
+
+        ui_status_word = 32'd0;
+        if (ui_active_visible)
+            ui_status_word |= MT_UI_STATUS_VISIBLE;
+        if (ui_active_bank)
+            ui_status_word |= MT_UI_STATUS_BANK;
+        if (ui_submit_ready)
+            ui_status_word |= MT_UI_STATUS_READY;
+
         status_word = MT_STATUS_SHELL_READY;
         if (control & MT_CONTROL_VIDEO_TEST_ENABLE)
             status_word |= MT_STATUS_VIDEO_ACTIVE;
@@ -125,6 +167,8 @@ module multitini_control_regs #(
             status_word |= MT_STATUS_INPUT_READY;
         if (media_request_valid)
             status_word |= MT_STATUS_MEDIA_REQUEST;
+        if (media_data_valid)
+            status_word |= MT_STATUS_MEDIA_DATA;
     end
 
     always_comb begin
@@ -135,6 +179,7 @@ module multitini_control_regs #(
             MT_REG_SHELL_ID:         rd_data = MT_SHELL_ID;
             MT_REG_SHELL_BUILD_ID:   rd_data = SHELL_BUILD_ID;
             MT_REG_CORE_ID:          rd_data = core_id;
+            MT_REG_CORE_VARIANT_INDEX: rd_data = core_variant_index;
             MT_REG_STATUS:           rd_data = status_word;
             MT_REG_ERROR:            rd_data = error_flags;
             MT_REG_CONTROL:          rd_data = control;
@@ -162,6 +207,9 @@ module multitini_control_regs #(
                 rd_data = {16'd0, media_request_block_count};
             MT_REG_MEDIA_REQUEST_GENERATION:
                 rd_data = media_request_generation;
+            MT_REG_MEDIA_DATA:       rd_data = media_data_word;
+            MT_REG_MEDIA_STATE:      rd_data = media_state_word;
+            MT_REG_UI_STATUS:        rd_data = ui_status_word;
             default: begin
                 rd_data = 32'h00000000;
                 rd_known = 1'b0;
@@ -204,6 +252,11 @@ module multitini_control_regs #(
                          command_opcode != MT_COMMAND_MEDIA_COMPLETE)
                     error_set_mask |= MT_ERROR_BAD_COMMAND;
             end
+            MT_REG_UI_COMMIT:
+                if ((wr_data & ~(MT_UI_COMMIT_VISIBLE |
+                                 MT_UI_COMMIT_BANK)) != 32'd0 ||
+                    !ui_submit_ready)
+                    error_set_mask |= MT_ERROR_BAD_WRITE;
             MT_REG_CONTROL,
             MT_REG_IRQ_ENABLE,
             MT_REG_SCRATCH,
@@ -269,6 +322,10 @@ module multitini_control_regs #(
             media_complete_status <= MT_RESPONSE_OK;
             media_complete_block_count <= 16'd0;
             media_complete_generation <= 32'd0;
+            media_data_pop <= 1'b0;
+            ui_submit      <= 1'b0;
+            ui_visible     <= 1'b0;
+            ui_bank        <= 1'b0;
         end else begin
             load_submit <= 1'b0;
             load_error_clear <= 1'b0;
@@ -276,6 +333,8 @@ module multitini_control_regs #(
             media_mount <= 1'b0;
             media_eject <= 1'b0;
             media_complete <= 1'b0;
+            media_data_pop <= 1'b0;
+            ui_submit <= 1'b0;
             error_flags <= (error_flags & ~error_clear_mask) | error_set_mask;
             irq_status <= (irq_status & ~irq_clear_mask) |
                           ((|error_set_mask) ? 32'd1 : 32'd0);
@@ -283,6 +342,8 @@ module multitini_control_regs #(
             if (rd_en && !rd_known) begin
                 count_bad_read  <= count_bad_read + 32'd1;
             end
+            if (rd_en && rd_addr == MT_REG_MEDIA_DATA && media_data_valid)
+                media_data_pop <= 1'b1;
 
             if (wr_en) begin
                 unique case (wr_addr)
@@ -309,6 +370,15 @@ module multitini_control_regs #(
                         command_arg2 <= merge_strobes(command_arg2, wr_data, wr_strb);
                     MT_REG_COMMAND_ARG3:
                         command_arg3 <= merge_strobes(command_arg3, wr_data, wr_strb);
+                    MT_REG_UI_COMMIT: begin
+                        if ((wr_data & ~(MT_UI_COMMIT_VISIBLE |
+                                        MT_UI_COMMIT_BANK)) == 32'd0 &&
+                            ui_submit_ready) begin
+                            ui_visible <= |(wr_data & MT_UI_COMMIT_VISIBLE);
+                            ui_bank <= |(wr_data & MT_UI_COMMIT_BANK);
+                            ui_submit <= 1'b1;
+                        end
+                    end
                     MT_REG_COMMAND_DOORBELL: begin
                         count_command <= count_command + 32'd1;
                         response_seq <= command_seq;
@@ -410,9 +480,6 @@ module multitini_control_regs #(
                                     if ((command_arg0 &
                                          MT_MEDIA_MOUNT_RESERVED_MASK) !=
                                             32'd0 ||
-                                        (command_arg0 &
-                                         MT_MEDIA_MOUNT_READ_ONLY) ==
-                                            32'd0 ||
                                         (command_arg0 & MT_MEDIA_KIND_MASK) ==
                                             32'd0 ||
                                         command_arg1 == 32'd0 ||
@@ -450,13 +517,19 @@ module multitini_control_regs #(
                                 end
                                 MT_COMMAND_MEDIA_COMPLETE: begin
                                     if (!media_request_valid ||
-                                        media_request_write ||
                                         media_request_block_count == 16'd0 ||
                                         command_arg0 != media_request_id ||
-                                        command_arg1 != MT_RESPONSE_OK ||
-                                        command_arg2[31:16] != 16'd0 ||
-                                        command_arg2[15:0] !=
-                                            media_request_block_count ||
+                                        (command_arg1 != MT_RESPONSE_OK &&
+                                         command_arg1 !=
+                                             MT_RESPONSE_INVALID_ARGUMENT &&
+                                         command_arg1 != MT_RESPONSE_IO_ERROR &&
+                                         command_arg1 != MT_RESPONSE_TIMEOUT) ||
+                                        (command_arg1 == MT_RESPONSE_OK &&
+                                         (command_arg2[31:16] != 16'd0 ||
+                                          command_arg2[15:0] !=
+                                              media_request_block_count)) ||
+                                        (command_arg1 != MT_RESPONSE_OK &&
+                                         command_arg2 != 32'd0) ||
                                         command_arg3 !=
                                             media_request_generation) begin
                                         response_status <=
@@ -466,8 +539,7 @@ module multitini_control_regs #(
                                     end else begin
                                         response_status <= MT_RESPONSE_OK;
                                         response_arg0 <= media_request_id;
-                                        response_arg1 <= {
-                                            16'd0, media_request_block_count};
+                                        response_arg1 <= command_arg2;
                                         media_complete <= 1'b1;
                                         media_complete_request_id <=
                                             command_arg0;

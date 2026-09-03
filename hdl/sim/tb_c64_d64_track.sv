@@ -10,6 +10,9 @@ module tb_c64_d64_track;
     logic clear_error = 1'b0;
     logic service_enable = 1'b1;
     logic [6:0] head_half_track = 7'd34;
+    logic disk_write = 1'b0;
+    logic disk_mode = 1'b1;
+    logic motor_on = 1'b1;
     logic media_mount = 1'b0;
     logic media_eject = 1'b0;
     logic media_complete = 1'b0;
@@ -35,18 +38,36 @@ module tb_c64_d64_track;
     logic load_last = 1'b0;
     logic [31:0] load_offset = 32'd0;
     logic [31:0] load_total = 32'd0;
+    logic [7:0] media_write_data;
+    logic media_write_data_valid;
+    logic media_write_data_last;
+    logic media_write_data_ready = 1'b1;
     logic buffer_write;
     logic [12:0] buffer_address;
     logic [7:0] buffer_data;
+    logic [7:0] buffer_read_data = 8'd0;
     logic [5:0] buffer_track;
     logic mounted;
     logic [31:0] mounted_generation;
+    logic read_only;
+    logic dirty;
+    logic eject_pending;
     logic disk_busy;
     logic error;
 
     always #5 clk = !clk;
 
-    multitini_c64_d64_track dut (.*);
+    logic [7:0] track_memory [0:8191];
+    logic [12:0] read_address_delayed;
+
+    multitini_c64_d64_track #(.WRITE_IDLE_CYCLES(32)) dut (.*);
+
+    always_ff @(posedge clk) begin
+        read_address_delayed <= buffer_address;
+        buffer_read_data <= track_memory[read_address_delayed];
+        if (buffer_write)
+            track_memory[buffer_address] <= buffer_data;
+    end
 
     task automatic check_value(input logic condition, input string message);
         if (!condition) begin
@@ -124,12 +145,13 @@ module tb_c64_d64_track;
 
     task automatic pulse_complete(
         input integer request_id,
+        input integer status,
         input integer completed_blocks,
         input integer generation
     );
         @(negedge clk);
         media_complete_request_id = request_id;
-        media_complete_status = 32'd0;
+        media_complete_status = status;
         media_complete_block_count = completed_blocks;
         media_complete_generation = generation;
         media_complete = 1'b1;
@@ -137,6 +159,28 @@ module tb_c64_d64_track;
         #1;
         @(negedge clk);
         media_complete = 1'b0;
+    endtask
+
+    task automatic drain_write(output logic [31:0] request_id);
+        integer accepted;
+        integer expected;
+        begin
+            accepted = 0;
+            expected = media_request_block_count * 256;
+            request_id = media_request_id;
+            while (accepted < expected) begin
+                @(negedge clk);
+                if (media_write_data_valid) begin
+                    if (accepted == 0)
+                        check_value(media_write_data == 8'hC3,
+                                    "writeback begins with current BRAM data");
+                    check_value(media_write_data_last ==
+                                (accepted == expected - 1),
+                                "writeback last flag matches exact byte count");
+                    accepted = accepted + 1;
+                end
+            end
+        end
     endtask
 
     initial begin
@@ -147,17 +191,14 @@ module tb_c64_d64_track;
         reset = 1'b0;
         @(negedge clk);
 
-        pulse_mount(1'b0, 205312, 99);
+        pulse_mount(1'b0, 123, 99);
         check_value(!mounted && error,
-                    "writable D64 mount is rejected by read-only service");
+                    "malformed writable D64 mount is rejected");
         clear_error = 1'b1;
-        @(posedge clk);
-        #1;
-        clear_error = 1'b0;
-
         pulse_mount(1'b1, 205312, 1);
-        check_value(mounted && mounted_generation == 32'd1,
-                    "42-track D64 mount accepted");
+        clear_error = 1'b0;
+        check_value(mounted && mounted_generation == 32'd1 && !error,
+                    "mount wins over a coincident retry clear");
         wait_request();
         check_value(!media_request_write, "D64 request is read-only");
         check_value(media_request_lba == 32'd357 &&
@@ -179,14 +220,14 @@ module tb_c64_d64_track;
                         "request metadata remains stable while outstanding");
         end
 
-        pulse_complete(first_request_id + 1,
+        pulse_complete(first_request_id + 1, 0,
                        media_request_block_count, 1);
         check_value(media_request_valid &&
                     media_request_id == first_request_id,
                     "mismatched completion is ignored");
 
         send_request_bytes();
-        pulse_complete(first_request_id, 19, 1);
+        pulse_complete(first_request_id, 0, 19, 1);
         check_value(!media_request_valid,
                     "matching complete releases directory request");
         @(posedge clk);
@@ -234,7 +275,57 @@ module tb_c64_d64_track;
                     mounted_generation == 32'd5 && !error,
                     "empty-drive eject is idempotent with a new generation");
 
-        $display("PASS: read-only C64 D64 track service");
+        head_half_track = 7'd34;
+        pulse_mount(1'b0, 174848, 6);
+        check_value(mounted && !read_only,
+                    "writable D64 mount clears write protect");
+        wait_request();
+        send_request_bytes();
+        pulse_complete(media_request_id, 0, media_request_block_count, 6);
+        @(posedge clk); #1;
+
+        @(negedge clk);
+        disk_write = 1'b1;
+        @(posedge clk); #1;
+        @(negedge clk);
+        disk_write = 1'b0;
+        check_value(dirty, "drive write marks the active D64 track dirty");
+
+        motor_on = 1'b0;
+        wait_request();
+        check_value(media_request_write && media_request_lba == 32'd357 &&
+                    media_request_block_count == 16'd19 &&
+                    media_request_generation == 32'd6,
+                    "writeback identifies the dirty directory track");
+        begin
+            logic [31:0] write_request_id;
+            drain_write(write_request_id);
+            pulse_complete(write_request_id, 2, 0, 6);
+            check_value(mounted && dirty && error && !media_request_valid,
+                        "failed persistence retains the dirty mounted track");
+
+            @(negedge clk);
+            clear_error = 1'b1;
+            media_generation = 32'd7;
+            media_eject = 1'b1;
+            @(posedge clk); #1;
+            check_value(mounted && dirty && eject_pending && !error,
+                        "eject wins over retry clear and starts recovery barrier");
+            @(negedge clk);
+            clear_error = 1'b0;
+            media_eject = 1'b0;
+
+            wait_request();
+            check_value(media_request_write,
+                        "dirty write reissues after faulted eject recovery");
+            drain_write(write_request_id);
+            pulse_complete(write_request_id, 0, 19, 6);
+        end
+        check_value(!mounted && !dirty && !eject_pending &&
+                    mounted_generation == 32'd7,
+                    "successful dirty eject unmounts at the new generation");
+
+        $display("PASS: transactional C64 D64 track service");
         $finish;
     end
 endmodule
