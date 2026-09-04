@@ -1,0 +1,619 @@
+; SPDX-License-Identifier: GPL-3.0-only
+; Multitini fast-disk patch for the C64 KERNAL ROM 901227-03.
+;
+; The stock 8 KiB image is overlaid. The tape (datasette) and RS-232 (user
+; port) code is retired with small error stubs (the board has neither port),
+; which frees the room for the parallel-cable transfer code and the drive
+; engine image. See docs/C64_FAST_DISK.md. Assembled by build.py with ACME.
+
+!cpu 6502
+!to "build/kernal.bin", plain
+!source "protocol.inc"
+
+* = $e000
+!binary "../third_party/c64/ROMs/kernal.901227-03.bin"
+
+; ---------------------------------------------------------------------------
+; Zero page used by the patch (tape/RS-232 bytes, free once those are gone,
+; plus the serial temporaries the stock routines already clobber).
+ZSTREAM = $97          ; LOAD: 0 none, 1 stream requested, 2 stream accepted
+ZSA     = $a4          ; SA byte saved at the SECOND/TKSA hooks
+ZFHDR   = $a4          ; LOAD: current frame header
+ZFCNT   = $a3          ; LOAD: bytes left in the frame
+ZXSAVE  = $a5
+ZYSAVE  = $9f
+ZSTATUS = $9e          ; drive status byte from the detection
+ZPTR    = $b0          ; upload pointer (2 bytes)
+ZCNT    = $b4          ; upload counter (2 bytes)
+
+CIA2_PRA  = $dd00
+CIA2_PRB  = $dd01
+CIA2_DDRA = $dd02
+CIA2_DDRB = $dd03
+CIA2_SDR  = $dd0c      ; holds the last seen REQ level (bit 2)
+
+; ===========================================================================
+; Tape and RS-232 retirement (byte-exact stubs, see the reclamation map)
+; ===========================================================================
+* = $ed0e
+    nop                    ; TALK/LISTEN: drop the RS-232 idle wait
+    nop
+    nop
+* = $f140
+    !byte $d0, $24         ; GETIN: BNE $f166
+* = $f144
+    !byte $f0, $6d         ; GETIN: BEQ $f1b3 (CLC/RTS)
+* = $f175
+    lda #$80               ; CHRIN device 1/2: ST |= device not present
+    jsr $fe1c
+    lda #$0d
+    clc
+    rts
+* = $f1db
+    pla                    ; CHROUT device 1/2
+    lda #$80
+    jsr $fe1c
+    lda #$05
+    sec
+    rts
+* = $f223
+    jmp $f707              ; CHKIN device 1/2: DEVICE NOT PRESENT
+* = $f268
+    jmp $f707              ; CHKOUT device 1/2
+* = $f2a7
+    jmp $f2f1              ; CLOSE device 1/2: drop the entry, CLC
+* = $f384
+    jmp $f707              ; OPEN device 1/2
+* = $f533
+    jmp $f707              ; LOAD device 1/2
+* = $f659
+    jmp $f707              ; SAVE device 1/2
+* = $fe54
+    !byte $30, $66         ; NMI: CIA2 source -> exit (RS-232 handler gone)
+* = $fe64
+    !byte $d0, $56         ; NMI: RESTORE without STOP -> exit
+
+; Serial SAVE helper moved out of the tape block so the block is contiguous.
+* = $f618
+    !byte <copy_start, >copy_start   ; operand of the JSR at $f617
+* = $f65c
+copy_start:
+    lda $c2
+    sta $ad
+    lda $c1
+    sta $ac
+    rts
+
+; ===========================================================================
+; Hooks into the serial routines and LOAD
+; ===========================================================================
+* = $ed19
+    jsr send_hook          ; $ed11: flush the pending byte (was jsr $ed40)
+* = $ed3d
+    jsr atn_delay_hook     ; every byte under ATN (was jsr $eeb3)
+* = $edbb
+    jsr second_hook        ; SECOND (was jsr $ed36)
+* = $edc9
+    jsr tksa_hook          ; TKSA (was jsr $ed36)
+* = $ede7
+    jsr send_hook          ; CIOUT (was jsr $ed40)
+* = $ee13
+    jsr acptr_hook         ; ACPTR (was sei / lda #0 / sta $a5)
+    nop
+    nop
+* = $f4d0
+    jsr load_tksa_hook     ; LOAD (was lda $b9 / jsr $edc7)
+    nop
+    nop
+
+; ===========================================================================
+; Fast transfer code in the retired RS-232 block $eebb-$f0bc
+; ===========================================================================
+* = $eebb
+code_start:
+
+; Every byte sent under ATN passes here: leave any fast mode on our side.
+atn_delay_hook:
+    lda #$00
+    sta CIA2_DDRB          ; port B back to input
+    lda CIA2_DDRA
+    ora #$04
+    sta CIA2_DDRA          ; PA2 back to output (stock direction)
+    jmp $eeb3
+
+; Fast mode test: the C64 releases both CLK and DATA only in fast mode
+; (a stock listener holds DATA, a stock talker holds CLK).
+send_hook:
+    lda CIA2_PRA
+    and #$30
+    bne sh_stock
+    jmp fast_send
+sh_stock:
+    jmp $ed40
+
+acptr_hook:
+    lda CIA2_PRA
+    and #$30
+    bne ah_stock
+    pla
+    pla
+    jmp fast_acptr
+ah_stock:
+    sei
+    lda #$00
+    sta $a5
+    rts
+
+; SECOND: after the SA byte, negotiate the fast mode while ATN is held.
+second_hook:
+    sta ZSA
+    jsr $ed36
+    lda $90
+    and #$83
+    bne sc_stock
+    lda ZSA
+    and #$f0
+    cmp #$e0
+    beq sc_stock           ; close: nothing follows, no detection
+    jsr detect
+    bcs sc_stock
+    lda CIA2_PRA
+    and #$c7               ; release ATN, CLK and DATA
+    sta CIA2_PRA
+    lda #$ff
+    sta CIA2_DDRB          ; we drive the data lines while listening
+    pla
+    pla
+    cli
+    rts
+sc_stock:
+    rts
+
+; TKSA: same, then skip the stock turnaround in fast mode.
+tksa_hook:
+    sta ZSA
+    jsr $ed36
+    lda $90
+    and #$83
+    bne tk_stock
+    jsr detect
+    bcs tk_stock
+    lda CIA2_PRA
+    and #$c7
+    sta CIA2_PRA
+    pla
+    pla
+    cli
+    rts
+tk_stock:
+    rts
+
+; Detection handshake under ATN. C=0: fast mode negotiated (ZSTREAM=2 when
+; a framed stream was accepted). C=1: stock protocol. Preserves X and Y.
+detect:
+    stx ZXSAVE
+    sty ZYSAVE
+    lda CIA2_DDRA
+    and #$fb
+    sta CIA2_DDRA          ; PA2 input: the drive's REQ level
+    lda CIA2_PRA
+    sta CIA2_SDR           ; REQ reference level
+    lda CIA2_PRB           ; query strobe (PC2)
+    jsr wait_toggle_t
+    bcs dt_no
+    lda CIA2_PRB           ; status byte (the read acknowledges it)
+    sta ZSTATUS
+    lda ZSTREAM
+    beq dt_plain
+    lda ZSTATUS
+    bpl dt_plain           ; no expansion RAM: per-byte mode only
+    and #$7f
+    cmp #ENGINE_VERSION
+    beq dt_stream
+    jsr upload_engine
+    bcs dt_no
+dt_stream:
+    lda #CMD_STREAM
+    jsr send_cmd
+    bcs dt_no
+    cmp #$01
+    bne dt_ok
+    lda #$02
+    sta ZSTREAM
+    bne dt_ok
+dt_plain:
+    lda #CMD_PLAIN
+    jsr send_cmd
+    bcs dt_no
+dt_ok:
+    ldx ZXSAVE
+    ldy ZYSAVE
+    clc
+    rts
+dt_no:
+    lda CIA2_DDRA
+    ora #$04
+    sta CIA2_DDRA
+    lda #$00
+    sta CIA2_DDRB
+    ldx ZXSAVE
+    ldy ZYSAVE
+    sec
+    rts
+
+; Send a command byte and read its response byte. C=1 on timeout.
+send_cmd:
+    jsr send_byte_t
+    bcs sc_fail
+    jsr wait_toggle_t
+    bcs sc_fail
+    lda CIA2_PRB
+    clc
+    rts
+sc_fail:
+    sec
+    rts
+
+; Send one byte to the drive under ATN (port B output for the duration).
+send_byte_t:
+    ldx #$ff
+    stx CIA2_DDRB
+    sta CIA2_PRB
+    jsr wait_toggle_t
+    ldx #$00
+    stx CIA2_DDRB
+    rts
+
+; Bounded wait (about 30 ms) for the drive's REQ toggle. C=1 on timeout.
+wait_toggle_t:
+    ldy #$08
+wt_outer:
+    ldx #$00
+wt_inner:
+    lda CIA2_PRA
+    eor CIA2_SDR
+    and #$04
+    bne wt_ok
+    dex
+    bne wt_inner
+    dey
+    bne wt_outer
+    sec
+    rts
+wt_ok:
+    lda CIA2_PRA
+    sta CIA2_SDR
+    clc
+    rts
+
+; Upload the engine image into the drive's expansion RAM.
+upload_engine:
+    lda #CMD_UPLOAD
+    jsr send_byte_t
+    bcs ue_fail
+    lda #<ENGINE_LEN
+    jsr send_byte_t
+    bcs ue_fail
+    lda #>ENGINE_LEN
+    jsr send_byte_t
+    bcs ue_fail
+    lda #<engine_image
+    sta ZPTR
+    lda #>engine_image
+    sta ZPTR+1
+    lda #<ENGINE_LEN
+    sta ZCNT
+    lda #>ENGINE_LEN
+    sta ZCNT+1
+ue_loop:
+    ldy #$00
+    lda (ZPTR),y
+    jsr send_byte_t
+    bcs ue_fail
+    inc ZPTR
+    bne ue_nowrap
+    inc ZPTR+1
+ue_nowrap:
+    lda ZCNT
+    bne ue_declo
+    dec ZCNT+1
+ue_declo:
+    dec ZCNT
+    lda ZCNT
+    ora ZCNT+1
+    bne ue_loop
+    jsr wait_toggle_t      ; the drive confirms the upload
+    bcs ue_fail
+    lda CIA2_PRB
+    cmp #$01
+    bne ue_fail
+    clc
+    rts
+ue_fail:
+    sec
+    rts
+
+; Unbounded wait for the REQ toggle while the drive holds CLK low.
+; C=1 when the drive released CLK (left fast mode) without a byte.
+wait_req:
+    lda CIA2_PRA
+    eor CIA2_SDR
+    and #$04
+    bne wr_ok
+    lda CIA2_PRA
+    and #$40
+    beq wait_req           ; CLK in low: the drive is busy
+    sec
+    rts
+wr_ok:
+    lda CIA2_PRA
+    sta CIA2_SDR
+    clc
+    rts
+
+; ACPTR replacement: one byte, EOI on the DATA line.
+fast_acptr:
+    jsr wait_req
+    bcs fa_gone
+    lda CIA2_PRA
+    bmi fa_data            ; DATA in high: no EOI
+    lda #$40
+    jsr $fe1c
+fa_data:
+    lda CIA2_PRB
+    cli
+    clc
+    rts
+fa_gone:
+    lda #$02
+    jmp $edb2              ; read timeout: ST |= 2, release the bus
+
+; Send $95 to the drive; $a3 bit 7 = EOI. The strobe is repeated every
+; ~2 ms until the drive acknowledges: a strobe that arrives while the drive
+; is still leaving its ATN service is cleared by the DOS's own port writes.
+fast_send:
+    stx ZXSAVE             ; CIOUT preserves X and Y
+    sty ZYSAVE
+    bit $a3
+    bpl fs_noeoi
+    lda CIA2_PRA
+    ora #$20               ; DATA low = EOI on this byte
+    sta CIA2_PRA
+fs_noeoi:
+    lda $95
+fs_strobe:
+    sta CIA2_PRB           ; data + PC2 strobe
+    ldx #$00
+    ldy #$08
+fs_wait:
+    lda CIA2_PRA
+    eor CIA2_SDR
+    and #$04
+    bne fs_ok
+    lda CIA2_PRA
+    and #$40
+    bne fs_gone            ; CLK in high: the drive left fast mode
+    dex
+    bne fs_wait
+    dey
+    bne fs_wait
+    lda $95
+    jmp fs_strobe
+fs_ok:
+    lda CIA2_PRA
+    sta CIA2_SDR
+    lda CIA2_PRA
+    and #$df
+    sta CIA2_PRA
+    ldx ZXSAVE
+    ldy ZYSAVE
+    cli
+    rts
+fs_gone:
+    ldx ZXSAVE
+    ldy ZYSAVE
+    lda #$03
+    jmp $edb2              ; write timeout
+
+code_end:
+!if * > $f0bd { !error "fast code overflows the RS-232 block" }
+
+; ===========================================================================
+; LOAD hooks in the retired RS-232 OPEN block $f409-$f49d
+; ===========================================================================
+* = $f409
+code3_start:
+; LOAD: request a framed stream through TKSA, then receive the file.
+load_tksa_hook:
+    lda #$01
+    sta ZSTREAM
+    lda $b9
+    jsr $edc7
+    lda ZSTREAM
+    cmp #$02
+    bne lt_stock
+    lda #$00
+    sta ZSTREAM
+    pla
+    pla
+    jmp fast_load
+lt_stock:
+    lda #$00
+    sta ZSTREAM
+    rts                    ; continue with the stock byte loop at $f4d5
+
+; Receive a frame-control byte with STOP-key and drive-gone handling.
+; C=1: the drive left fast mode. STOP leaves through the break exit.
+recv_ctl:
+    lda $91
+    cmp #$7f
+    beq rc_stop
+    lda CIA2_PRA
+    eor CIA2_SDR
+    and #$04
+    bne rc_ok
+    lda CIA2_PRA
+    and #$40
+    beq recv_ctl
+    sec
+    rts
+rc_ok:
+    lda CIA2_PRA
+    sta CIA2_SDR
+    lda CIA2_PRB
+    clc
+    rts
+rc_stop:
+    pla                    ; drop the return into fast_load: $f633 returns
+    pla                    ; to LOAD's caller with the break status
+    jmp $f633
+fl_notfound:
+    jmp $f530              ; FILE NOT FOUND
+
+fl_vbyte:
+    lda CIA2_PRA
+    eor CIA2_SDR
+    and #$04
+    bne fl_vgot
+    lda CIA2_PRA
+    and #$40
+    beq fl_vbyte
+    jmp fl_gone
+fl_vgot:
+    lda CIA2_PRA
+    sta CIA2_SDR
+    lda CIA2_PRB
+    cmp ($ae),y
+    beq fl_vok
+    lda #$10
+    jsr $fe1c              ; VERIFY ERROR
+fl_vok:
+    inc $ae
+    bne +
+    inc $af
++   dec ZFCNT
+    bne fl_vbyte
+    jmp fl_next
+fl_gone:
+    lda #$02               ; the drive stopped talking: read error
+    jsr $fe1c
+    jmp $f528
+code3_end:
+!if * > $f49e { !error "LOAD hooks overflow the RS-232 OPEN block" }
+
+; ===========================================================================
+; Drive engine image in the retired tape block $f72c-$fcd0
+; ===========================================================================
+* = $f72c
+engine_image:
+!binary "build/engine.bin"
+engine_image_end:
+ENGINE_LEN = engine_image_end - engine_image
+
+; ===========================================================================
+; LOAD-side code behind the engine image (still inside the tape block)
+; ===========================================================================
+code2_start:
+fl_nf:
+    jmp fl_notfound
+
+fast_load:                 ; X = caller's secondary address
+    jsr recv_ctl
+    bcs fl_nf
+    sta ZFHDR
+    jsr recv_ctl
+    bcs fl_nf
+    sta ZFCNT
+    jsr recv_ctl
+    bcs fl_nf
+    sta $ae
+    jsr recv_ctl
+    bcs fl_nf
+    sta $af
+    dec ZFCNT
+    dec ZFCNT
+    txa                    ; X is preserved by recv_ctl
+    bne fl_addr
+    lda $c3
+    sta $ae
+    lda $c4
+    sta $af
+fl_addr:
+    jsr $f5d2              ; print LOADING / VERIFYING
+fl_frame:
+    lda ZFCNT
+    beq fl_next
+    ldy #$00
+    lda $93
+    beq +
+    jmp fl_vbyte           ; VERIFY uses the compare loop in code3
++    lda CIA2_SDR
+    and #$04
+    bne fl_wlow            ; REQ is high now: the next byte arrives with it low
+fl_whigh:
+    lda CIA2_PRA
+    and #$04
+    bne fl_ghigh
+    lda CIA2_PRA
+    and #$40
+    bne fl_g
+    jmp fl_whigh
+fl_ghigh:
+    lda CIA2_PRB           ; data; the read strobes PC2 = acknowledge
+    sta ($ae),y
+    iny
+    bne +
+    inc $af
++   dec ZFCNT
+    beq fl_endhigh
+fl_wlow:
+    lda CIA2_PRA
+    and #$04
+    beq fl_glow
+    lda CIA2_PRA
+    and #$40
+    bne fl_g
+    jmp fl_wlow
+fl_glow:
+    lda CIA2_PRB
+    sta ($ae),y
+    iny
+    bne +
+    inc $af
++   dec ZFCNT
+    bne fl_whigh
+    lda CIA2_SDR
+    and #$fb               ; last seen level: low
+    sta CIA2_SDR
+    jmp fl_endfix
+fl_endhigh:
+    lda CIA2_SDR
+    ora #$04               ; last seen level: high
+    sta CIA2_SDR
+fl_endfix:
+    tya                    ; $ae/$af += y
+    clc
+    adc $ae
+    sta $ae
+    bcc fl_next
+    inc $af
+fl_next:
+    lda ZFHDR
+    and #FRAME_LAST
+    bne fl_done
+    jsr recv_ctl
+    bcs fl_g
+    sta ZFHDR
+    bmi fl_g            ; raw frames are not supported by this KERNAL
+    jsr recv_ctl
+    bcs fl_g
+    sta ZFCNT
+    jmp fl_frame
+fl_done:
+    lda #$40
+    jsr $fe1c              ; EOI, as the stock LOAD leaves it
+    jmp $f528              ; UNTLK, close, return the end address
+fl_g:
+    jmp fl_gone
+code2_end:
+!if * > $fcd1 { !error "engine image and LOAD code overflow the tape block" }

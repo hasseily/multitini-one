@@ -40,6 +40,11 @@ core; the root packager rejects machine bitstreams. Fresh build `20260912`
 passes the supervisor, PAL C64, NTSC C64, PSRAM-enabled GBC, exFAT-enabled
 Vitis, and package gates. The board test remains.
 
+ABI 0.10 source adds an opt-in DolphinDOS-style parallel cable and 8 KiB of
+drive RAM at `$8000` for the fast ROM pair. It passes the focused XSim
+regression and the portable gates; it has not been built by the vendor flow or
+tested on the board.
+
 ## Completed repository and portable validation
 
 - Repository layout, GPL-3.0-only project license, ignore policy, source pins,

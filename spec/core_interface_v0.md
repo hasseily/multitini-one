@@ -167,6 +167,14 @@ altering the saved setting. The setting defaults off and must be explicitly
 enabled by the user. Control bit 4 is reserved and ignored; the 1541 always
 runs at authentic timing.
 
+ABI 0.10 assigns control bit 6 to a DolphinDOS-style parallel cable between
+the C64 user port (CIA2 port B, PC2, FLAG2) and the emulated 1541 (VIA1 port
+A, CB1, CA2). Setting it also maps 8 KiB of drive RAM at `$8000-$9FFF`,
+matching the upstream option. Firmware sets the bit only while a fast ROM pair
+is installed, because the stock drive ROM drives VIA1 port A low; while the
+bit is clear, or while the drive is in reset, the C64 reads released lines.
+Cable strobes pause CPU turbo like IEC traffic.
+
 ABI 0.7 also uses this request service for GBC battery RAM. After a quiet
 interval, or immediately on eject, the adapter pauses the machine and snapshots
 the complete external cartridge-RAM extent as one write request at LBA zero.

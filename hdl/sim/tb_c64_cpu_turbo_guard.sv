@@ -10,6 +10,8 @@ module tb_c64_cpu_turbo_guard;
     logic c64_iec_clk = 1'b1;
     logic drive_iec_data = 1'b1;
     logic drive_iec_clk = 1'b1;
+    logic c64_par_stb = 1'b1;
+    logic drive_par_stb = 1'b1;
     logic turbo_active;
 
     always #5 clk = !clk;
@@ -62,6 +64,33 @@ module tb_c64_cpu_turbo_guard;
         step();
         check_value(turbo_active,
                     "CPU turbo resumes after the idle holdoff");
+
+        @(negedge clk);
+        c64_par_stb = 1'b0;
+        #1;
+        check_value(!turbo_active,
+                    "a C64 parallel-cable strobe suspends CPU turbo");
+        step();
+        c64_par_stb = 1'b1;
+        repeat (4) begin
+            step();
+            check_value(!turbo_active,
+                        "the cable strobe observes the same holdoff");
+        end
+        step();
+        check_value(turbo_active,
+                    "CPU turbo resumes after the cable strobe holdoff");
+
+        @(negedge clk);
+        drive_par_stb = 1'b0;
+        #1;
+        check_value(!turbo_active,
+                    "a drive parallel-cable strobe suspends CPU turbo");
+        step();
+        drive_par_stb = 1'b1;
+        repeat (5) step();
+        check_value(turbo_active,
+                    "CPU turbo resumes after the drive strobe holdoff");
 
         @(negedge clk);
         drive_iec_data = 1'b0;

@@ -12,7 +12,9 @@ remaining repeated-switch/media matrix are not yet board-qualified.
 Current source adds versioned supervisor settings, explicit Autoboot control,
 a supervisor-only root FPGA image, a four-byte direct-load transport, and
 generic per-core configuration. C64 exposes optional user-supplied fast serial
-ROMs and independent Smart 2x CPU turbo; both default off. The attempted
+ROMs and independent Smart 2x CPU turbo; both default off. On ABI 0.10 shells
+the fast pair also gets a DolphinDOS-style parallel drive cable and 8 KiB of
+drive RAM at `$8000`; this is untested on the board. The attempted
 drive-clock warp option failed IEC loading and was removed. The supervisor image
 contains the common shell and standby UI but no machine core. Build `20260911`
 is superseded by ABI 0.8 build `20260912`, whose supervisor, PAL, NTSC,
@@ -180,8 +182,11 @@ recovery way to toggle the menu.
   Shift as a complete keyboard fallback.
 - Core config contains options supplied by the active core service. C64
   provides independent `Fast serial ROMs` and `CPU turbo` controls. The fast
-  option atomically validates and reloads the user-supplied 8 KiB KERNAL and
-  16 KiB 1541 pair under `roms/fast`; those files are not shipped. CPU turbo
+  option atomically validates and reloads the 8 KiB KERNAL and 16 KiB 1541
+  pair under `roms/fast`; the repository builds one in `c64fast/bin` and any
+  other matching pair can be installed instead. On ABI
+  0.10 shells that pair also runs with a DolphinDOS-style parallel cable and
+  8 KiB of drive RAM at `$8000`; stock ROMs never see the cable. CPU turbo
   selects FPGA64 Smart 2x and automatically pauses around IEC disk traffic.
   Other cores show an empty-page explanation until they define options.
 - System restarts the active core, explicitly enables or disables Autoboot

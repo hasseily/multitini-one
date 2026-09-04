@@ -97,6 +97,12 @@ class InterfaceSpecTests(unittest.TestCase):
     def test_staged_prg_launch_is_versioned(self):
         self.assertGreaterEqual(self.spec["abi"]["minor"], 9)
 
+    def test_drive_parallel_cable_is_versioned(self):
+        self.assertGreaterEqual(self.spec["abi"]["minor"], 10)
+        control = self.spec["bitfields"]["CONTROL"]
+        self.assertEqual(control["C64_CPU_TURBO_ENABLE"], 5)
+        self.assertEqual(control["C64_DRIVE_PARALLEL_ENABLE"], 6)
+
 
 if __name__ == "__main__":
     unittest.main()

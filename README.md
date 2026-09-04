@@ -39,10 +39,15 @@ Multitini standby screen until F12 selection or explicit Autoboot. ABI 0.8
 build `20260912` added four-byte direct-load transfers, two cached C64
 tracks per disk format, and a generic `Core config` page. Its attempted 1541
 drive-warp option corrupted IEC loads in the first board test and is not
-retained in current source. The replacement is an optional user-supplied fast
-serial ROM profile: `roms/fast/kernal.bin` and `roms/fast/1541.bin` must form a
-valid pair before the firmware safely resets and reloads the C64. The stock ROM
-paths remain unchanged, and FPGA64 Smart 2x CPU turbo remains independent.
+retained in current source. The replacement is an optional fast ROM profile:
+`roms/fast/kernal.bin` and `roms/fast/1541.bin` must form a valid pair before
+the firmware safely resets and reloads the C64. The repository builds such a
+pair from the stock ROMs (`c64fast/`, see `docs/C64_FAST_DISK.md`): a
+parallel-cable loader that runs a 202 block LOAD in about 13 s instead of 127 s
+in simulation. The stock ROM paths remain unchanged, and FPGA64 Smart 2x CPU
+turbo remains independent.
+ABI 0.10 source also connects a DolphinDOS-style parallel drive cable and
+8 KiB of drive RAM at `$8000` to that pair; it is untested on the board.
 ABI 0.9 build `20260913` provides an Ultimate-style `Mount & Run` action
 for mounted D64 images. It browses validated PRG directory entries, extracts
 the selected BASIC-start file, stages it through the direct-RAM loader,
@@ -188,12 +193,15 @@ Known:
   completed 8 KiB tracks in FPGA block RAM; revisits avoid ARM/SD access, and
   D64 writes invalidate the changed cached track. Neither optimization changes
   1541 timing. The attempted drive-clock warp path was removed. The replacement
-  `Fast serial ROMs` option atomically selects user-supplied 8 KiB C64 KERNAL
-  and 16 KiB 1541 ROM files under `roms/fast`; neither file is shipped. Both
+  `Fast serial ROMs` option atomically selects the 8 KiB C64 KERNAL and
+  16 KiB 1541 ROM files under `roms/fast`; the repository builds a pair in
+  `c64fast/bin` and any other matching pair can be used instead. Both
   files are validated before a reset/reload, the setting is saved only after a
   successful switch, and a failed switch restores the previous active pair. A
   persisted fast selection whose pair is unavailable is reported and boots the
-  unchanged stock ROM paths instead. `CPU turbo` remains a separate,
+  unchanged stock ROM paths instead. On ABI 0.10 shells the fast pair also
+  runs with a DolphinDOS-style parallel drive cable and 8 KiB of drive RAM at
+  `$8000`; stock ROMs never see the cable. `CPU turbo` remains a separate,
   default-Off FPGA64 Smart 2x option.
 - The C64 Media page has a separate `Mount & Run` action for a mounted D64.
   It lists only complete, structurally valid `$0801` PRGs, revalidates the chosen

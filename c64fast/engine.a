@@ -1,0 +1,663 @@
+; SPDX-License-Identifier: GPL-3.0-only
+; Multitini fast-disk drive engine: track-at-once reader and framed sender.
+;
+; Runs from the 8 KiB drive RAM expansion at $8000-$9fff (uploaded by the C64
+; KERNAL). Entered from the DOS patch's TALK hook with a read channel selected
+; ($82), a valid current byte ($023e,x) and interrupts disabled. Leaves via the
+; stock idle path ($ea4e), the ATN service ($ff50) or the error path ($e60a).
+;
+; Memory map of the expansion RAM:
+;   $8000 + s*256   raw GCR bytes 0..255 of sector s (21 page slots)
+;   $9500 + s*69    raw GCR bytes 256..324 of sector s (21 tail slots)
+;   PRESENT/LINK_T/LINK_S  per-sector flags and links
+;   ENGINE_BASE     this code (JMP entry, 'M','T', version)
+; A sector is decoded in place in its page slot by the stock ROM decoder
+; ($f8e0), which expects the 69 tail bytes at $01ba.
+
+!cpu 6502
+!to "build/engine.bin", plain
+!source "protocol.inc"
+
+PAGE_BASE = $80                ; high byte of page slot 0
+TAIL_BASE = $9500
+TAIL_SIZE = 69
+HDRS      = $9f00              ; 21 * 8 raw header bytes (above the engine)
+OVERFLOW  = $01ba              ; stock decoder's tail area
+PRESENT   = $9ab0              ; 21 bytes (tail slots end at $9aa8)
+LINK_T    = $9ac5              ; 21 bytes
+LINK_S    = $9ada              ; 21 bytes, ends before ENGINE_BASE
+
+; Zero page (bytes the stock DOS never references, plus job-context temps).
+ETRK    = $1b                  ; track being read / current track of the chain
+ESEC    = $1f                  ; sector to send next
+ENEED   = $21                  ; sectors still missing in the track read
+ECNT    = $2c                  ; byte counter for frames
+ECNT2   = $2d                  ; signed step delta / job error code
+ERETRY  = $46                  ; track read retries left
+EBUF    = $74                  ; DOS buffer number used for the job stub
+EPAGE   = $7b                  ; page of that buffer
+EPTR    = $8e                  ; DOS buffer pointer of the current block
+EEND    = $96                  ; end pointer ($0244,ch), 0 = not last block
+ESECR   = $3b                  ; job: sector number of the header just read
+EHDRS   = $3c                  ; job: headers seen (revolution bound)
+ETMP    = $29                  ; temps in the header image area
+ETMP2   = $2a
+ZPCR    = $37                  ; PCR shadow shared with the ROM patch
+
+VIA1_PB   = $1800
+VIA1_PA   = $1801
+VIA1_DDRA = $1803
+VIA1_PCR  = $180c
+VIA1_IFR  = $180d
+VIA2_PB   = $1c00
+VIA2_PA   = $1c01
+
+GCR_HI  = $f8a0                ; ROM tables: 5-bit code -> nibble<<4 / nibble
+GCR_LO  = $f8c0
+ROM_GROUP  = $f7e6             ; 5 GCR bytes at ($30),$34 -> $52..$55
+ROM_DECODE = $f8e0             ; block at ($30)=page + $01ba -> in place
+ROM_SUM    = $f5e9             ; XOR of 256 bytes at ($30)
+
+* = ENGINE_BASE
+    jmp eng_start
+    !text "MT"
+    !byte ENGINE_VERSION
+
+near_atn:
+    jmp eng_atn
+
+; ---------------------------------------------------------------------------
+; Main-context engine
+; ---------------------------------------------------------------------------
+eng_start:
+    lda #$ff
+    sta VIA1_DDRA
+    cli
+    ; --- locate the current block in the DOS buffer of channel $82
+    jsr $df93              ; A = active buffer number
+    sta EBUF
+    asl
+    tax
+    lda $99,x              ; buffer pointer low = next unread index
+    sta EPTR
+    lda $9a,x
+    sta EPAGE
+    ldy $82
+    lda $0244,y            ; end pointer, 0 when more blocks follow
+    sta EEND
+    ; --- first frame: current byte + rest of the buffer
+    beq ff_notlast
+    sec
+    sbc EPTR
+    clc
+    adc #$02               ; (end - ptr + 1) + current byte
+    sta ECNT
+    lda #FRAME_LAST
+    bne ff_hdr
+ff_notlast:
+    lda #$01
+    sec
+    sbc EPTR               ; 257 - ptr (mod 256), ptr >= 3: current byte + rest
+    sta ECNT
+    lda #$00
+ff_hdr:
+    jsr send_byte
+    bcs near_atn
+    lda ECNT
+    jsr send_byte
+    bcs near_atn
+    ldx $82
+    lda $023e,x
+    jsr send_byte
+    bcs near_atn
+    dec ECNT
+    beq ff_done
+    lda #$00
+    sta $30
+    lda EPAGE
+    sta $31
+    ldy EPTR
+ff_loop:
+    lda ($30),y
+    jsr send_byte
+    bcs near_atn
+    iny
+    dec ECNT
+    bne ff_loop
+ff_done:
+    lda EEND
+    beq ff_link
+    jmp eng_finish
+ff_link:
+    ldy #$00
+    lda ($30),y            ; link track
+    sta ETRK
+    iny
+    lda ($30),y            ; link sector
+    sta ESEC
+
+; --- read the whole track ETRK into the slots, then follow the chain
+eng_track:
+    lda #$02
+    sta ERETRY
+eng_read:
+    lda EBUF
+    asl
+    tax
+    lda $22                ; current track: the ROM must not step
+    sta $06,x
+    lda #$00
+    sta $07,x
+    sta $30
+    lda EPAGE
+    sta $31
+    ldy #$00
+    lda #$4c               ; JMP raw_read as the job stub in the buffer
+    sta ($30),y
+    iny
+    lda #<raw_read
+    sta ($30),y
+    iny
+    lda #>raw_read
+    sta ($30),y
+    ldx EBUF
+    lda #$e0               ; execute job: motor on, spun up, then JMP (buffer)
+    sta $00,x
+job_wait:
+    lda $00,x
+    bpl job_done
+    lda $7c
+    beq job_wait
+    jmp eng_atn
+job_done:
+    cmp #$02
+    bcc eng_chain
+    sta ECNT2              ; job error code
+    dec ERETRY
+    bne eng_read
+    lda ECNT2
+    jmp eng_error
+
+eng_chain:
+    ldx ESEC
+    cpx $43
+    bcs eng_missing
+    lda PRESENT,x
+    beq eng_missing
+    jsr validate_slot
+    bcs eng_missing
+    jsr decode_slot        ; sector bytes now decoded in the page at ($94)
+    bcs eng_missing
+    ldy #$00
+    lda ($94),y            ; link track
+    bne ch_more
+    ; last block: data bytes are sector[2..E]
+    iny
+    lda ($94),y
+    sec
+    sbc #$01
+    sta ECNT
+    lda #FRAME_LAST
+    jsr send_byte
+    bcs eng_atn
+    lda ECNT
+    jsr send_byte
+    bcs eng_atn
+    jsr send_dec
+    bcs eng_atn
+    jmp eng_finish
+ch_more:
+    lda #$00
+    jsr send_byte
+    bcs eng_atn
+    lda #254
+    sta ECNT
+    jsr send_byte
+    bcs eng_atn
+    jsr send_dec
+    bcs eng_atn
+    ldy #$00
+    lda ($94),y
+    cmp ETRK
+    bne ch_newtrack
+    iny
+    lda ($94),y
+    sta ESEC
+    jmp eng_chain
+ch_newtrack:
+    sta ETRK
+    iny
+    lda ($94),y
+    sta ESEC
+    jmp eng_track
+
+eng_missing:
+    dec ERETRY
+    beq em_fail
+    jmp eng_read
+em_fail:
+    lda #$02               ; header not found -> error 20
+eng_error:
+    ldx EBUF               ; $e60a wants X = buffer, A = job status
+    pha
+    lda #$00
+    sta VIA1_DDRA
+    pla
+    jmp $e60a
+
+eng_finish:
+    ldx $82
+    lda #$00
+    sta $f2,x              ; channel exhausted, as after the EOI byte
+    sta VIA1_DDRA
+    jmp $ea4e              ; release the bus, idle loop
+
+eng_atn:
+    lda #$00
+    sta VIA1_DDRA
+    jmp $ff50              ; ATN service
+
+; ---------------------------------------------------------------------------
+; Parallel send primitives (REQ toggle on CA2, C64 ack on CB1)
+; ---------------------------------------------------------------------------
+; A = byte. C=1 when ATN arrived instead of an acknowledge.
+send_byte:
+    sta VIA1_PA
+    lda ZPCR
+    eor #$02
+    sta ZPCR
+    sta VIA1_PCR
+sb_wait:
+    lda VIA1_IFR
+    and #$10
+    bne sb_ack
+    lda $7c
+    beq sb_wait
+    sec
+    rts
+sb_ack:
+    bit VIA1_PB            ; clear CB1
+    clc
+    rts
+
+; Send ECNT data bytes of the decoded block at ($94): sector bytes 2..
+; Unrolled by REQ polarity so each byte costs one immediate PCR store;
+; ZPCR is resynchronised at the end.
+send_dec:
+    lda ECNT
+    beq sd_done
+    ldy #$02
+    lda ZPCR
+    and #$02
+    beq sd_high            ; REQ is low now: the first toggle goes high
+sd_low:
+    lda ($94),y
+    sta VIA1_PA
+    lda #$0d
+    sta VIA1_PCR           ; REQ low = byte valid
+sd_wait0:
+    lda VIA1_IFR
+    and #$10
+    bne sd_ack0
+    lda $7c
+    beq sd_wait0
+    sec
+    rts
+sd_ack0:
+    bit VIA1_PB
+    iny
+    dec ECNT
+    beq sd_end_low
+sd_high:
+    lda ($94),y
+    sta VIA1_PA
+    lda #$0f
+    sta VIA1_PCR           ; REQ high = byte valid
+sd_wait1:
+    lda VIA1_IFR
+    and #$10
+    bne sd_ack1
+    lda $7c
+    beq sd_wait1
+    sec
+    rts
+sd_ack1:
+    bit VIA1_PB
+    iny
+    dec ECNT
+    bne sd_low
+    lda #$0f
+    sta ZPCR
+sd_done:
+    clc
+    rts
+sd_end_low:
+    lda #$0d
+    sta ZPCR
+    clc
+    rts
+
+; ---------------------------------------------------------------------------
+; Decoding through the stock ROM routines (main context)
+; ---------------------------------------------------------------------------
+; Point $30/$31 at the page slot of sector X, $34 = 0, $4e/$4f = next page.
+slot_ptr:
+    lda #$00
+    sta $30
+    sta $34
+    sta $4f
+    txa
+    clc
+    adc #PAGE_BASE
+    sta $31
+    adc #$01
+    sta $4e
+    rts
+
+; Validate the raw header of sector X, then take the link from the slot.
+; C=1 (and PRESENT cleared) when the header or the block id is bad.
+validate_slot:
+    stx ESECR
+    txa
+    asl
+    asl
+    asl
+    clc
+    adc #<HDRS
+    sta $30
+    lda #>HDRS
+    adc #$00
+    sta $31
+    lda #$00
+    sta $34
+    jsr ROM_GROUP          ; $52..$55 = 08 chk sec trk (id bytes not kept)
+    lda $52
+    cmp #$08
+    bne vs_bad
+    lda $53                ; chk = sec ^ trk ^ id2 ^ id1: check it against
+    eor $54                ; the disk id the DOS holds for drive 0
+    eor $55
+    eor $12
+    eor $13
+    bne vs_bad
+    lda $54
+    cmp ESECR
+    bne vs_bad
+    lda $55
+    cmp ETRK
+    bne vs_bad
+    ldx ESECR
+    jsr slot_ptr
+    jsr ROM_GROUP          ; $52..$55 = 07 link_t link_s data0
+    lda $52
+    cmp #$07
+    bne vs_bad
+    ldx ESECR
+    lda $53
+    sta LINK_T,x
+    lda $54
+    sta LINK_S,x
+    clc
+    rts
+vs_bad:
+    ldx ESECR
+    lda #$00
+    sta PRESENT,x
+    sec
+    rts
+
+; Decode sector X in place in its page slot with the stock decoder and verify
+; the block id and checksum. C=1 if bad. Leaves $94/$95 pointing at the page.
+decode_slot:
+    stx ESECR
+    lda tail_lo,x
+    sta $30
+    lda tail_hi,x
+    sta $31
+    ldy #TAIL_SIZE-1
+ds_copy:
+    lda ($30),y
+    sta OVERFLOW,y
+    dey
+    bpl ds_copy
+    ldx ESECR
+    jsr slot_ptr
+    jsr ROM_DECODE         ; page[0..255] = sector bytes, $38 = id, $3a = sum
+    lda $38
+    cmp #$07
+    bne ds_bad
+    ldx ESECR
+    jsr slot_ptr
+    jsr ROM_SUM            ; A = XOR of the 256 sector bytes
+    cmp $3a
+    bne ds_bad
+    lda #$00
+    sta $94
+    lda $31
+    sta $95
+    clc
+    rts
+ds_bad:
+    ldx ESECR
+    lda #$00
+    sta PRESENT,x
+    sec
+    rts
+
+; ---------------------------------------------------------------------------
+; Job-context raw track read (entered through the buffer stub from the
+; disk controller's execute job: motor on and spun up, SOE enabled, I=1)
+; ---------------------------------------------------------------------------
+raw_read:
+    lda ETRK
+    sec
+    sbc $22
+    beq rr_zone
+    sta ECNT2
+    bpl rr_abs
+    eor #$ff
+    clc
+    adc #$01
+rr_abs:
+    asl                    ; half steps
+    sta ECNT
+rr_step:
+    lda VIA2_PB
+    and #$03
+    ldx ECNT2
+    bmi rr_out
+    clc
+    adc #$01               ; inward (higher track): phase + 1
+    bne rr_phase
+rr_out:
+    sec
+    sbc #$01
+rr_phase:
+    and #$03
+    sta ETMP
+    lda VIA2_PB
+    and #$fc
+    ora ETMP
+    sta VIA2_PB
+    jsr delay_4ms
+    dec ECNT
+    bne rr_step
+    jsr delay_20ms
+    lda ETRK
+    sta $22
+rr_zone:
+    ldx #$04
+    lda ETRK
+rz_loop:
+    cmp $fed6,x
+    dex
+    bcs rz_loop
+    lda $fed1,x
+    sta $43                ; sectors on this track
+    txa
+    asl
+    asl
+    asl
+    asl
+    asl
+    sta ETMP
+    lda VIA2_PB
+    and #$9f
+    ora ETMP
+    sta VIA2_PB
+    ldx #20
+    lda #$00
+rz_clear:
+    sta PRESENT,x
+    dex
+    bpl rz_clear
+    sta EHDRS
+    lda $43
+    sta ENEED
+rr_hdr:
+    jsr $f556              ; wait for sync (job status 3 on timeout)
+    ldx #$00
+rh_read:
+    bvc rh_read
+    clv
+    lda VIA2_PA
+    sta $24,x
+    inx
+    cpx #$08
+    bne rh_read
+    lda $24
+    cmp #$52               ; first GCR byte of a header block
+    bne rr_hdr
+    ; sector: n4 = (b2&$0f)<<1 | b3>>7 ; n5 = (b3>>2)&$1f
+    lda $26
+    and #$0f
+    asl
+    sta ETMP
+    lda $27
+    asl
+    lda ETMP
+    adc #$00
+    tax
+    lda GCR_HI,x
+    sta ETMP2
+    lda $27
+    lsr
+    lsr
+    and #$1f
+    tax
+    lda GCR_LO,x
+    ora ETMP2
+    sta ESECR
+    ; track: n6 = (b3&3)<<3 | b4>>5 ; n7 = b4&$1f
+    lda $27
+    and #$03
+    asl
+    asl
+    asl
+    sta ETMP
+    lda $28
+    lsr
+    lsr
+    lsr
+    lsr
+    lsr
+    ora ETMP
+    tax
+    lda GCR_HI,x
+    sta ETMP2
+    lda $28
+    and #$1f
+    tax
+    lda GCR_LO,x
+    ora ETMP2
+    cmp ETRK
+    bne rr_wrongtrack
+    inc EHDRS
+    lda EHDRS
+    cmp #$50               ; about three revolutions without completing
+    bcs rr_partial
+    ldx ESECR
+    cpx $43
+    bcs rr_hdr
+    lda PRESENT,x
+    bne rr_hdr
+    ; keep the raw header for validation
+    txa
+    asl
+    asl
+    asl
+    tay
+    ldx #$00
+rh_copy:
+    lda $24,x
+    sta HDRS,y
+    iny
+    inx
+    cpx #$08
+    bne rh_copy
+    ldx ESECR
+    lda #$00
+    sta $30
+    txa
+    clc
+    adc #PAGE_BASE
+    sta $31                ; ($30) = page slot
+    lda tail_lo,x
+    sta $94
+    lda tail_hi,x
+    sta $95                ; ($94) = tail slot
+    jsr $f556              ; data block sync
+    ldy #$00
+rd_page:
+    bvc rd_page
+    clv
+    lda VIA2_PA
+    sta ($30),y
+    iny
+    bne rd_page
+rd_tail:
+    bvc rd_tail
+    clv
+    lda VIA2_PA
+    sta ($94),y
+    iny
+    cpy #TAIL_SIZE
+    bne rd_tail
+    ldx ESECR
+    lda #$01
+    sta PRESENT,x
+    dec ENEED
+    beq rr_done
+    jmp rr_hdr
+rr_partial:
+rr_done:
+    lda #$01
+    jmp $f969
+rr_wrongtrack:
+    lda #$02
+    jmp $f969
+
+delay_4ms:
+    ldy #$04
+    bne delay_loop
+delay_20ms:
+    ldy #$10
+delay_loop:
+    ldx #$00
+dl_inner:
+    dex
+    bne dl_inner
+    dey
+    bne delay_loop
+    rts
+
+; ---------------------------------------------------------------------------
+; Tail slot address tables
+; ---------------------------------------------------------------------------
+tail_lo:
+!for i, 0, 20 { !byte <(TAIL_BASE + i * TAIL_SIZE) }
+tail_hi:
+!for i, 0, 20 { !byte >(TAIL_BASE + i * TAIL_SIZE) }
+
+engine_end:
+!if * > HDRS { !error "engine overflows into the header store" }

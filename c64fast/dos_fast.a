@@ -1,0 +1,458 @@
+; SPDX-License-Identifier: GPL-3.0-only
+; Multitini fast-disk patch for the 1541-II DOS ROM 251968-03.
+;
+; The stock 16 KiB image is overlaid; only the sections below change. See
+; docs/C64_FAST_DISK.md for the protocol and the ROM map. Assembled by
+; build.py with ACME (-f plain). The power-on ROM checksum test is replaced
+; by a plain RAM clear, so no checksum balancing is needed.
+
+!cpu 6502
+!to "build/1541.bin", plain
+!source "protocol.inc"
+
+* = $c000
+!binary "../third_party/c64/ROMs/1541-II.251968-03.bin"
+
+; ---------------------------------------------------------------------------
+; Zero page used by the patch (bytes the stock DOS never references).
+ZMODE   = $35          ; bit7 = extram present, bits0-1 = 0 none/1 plain/2 stream
+ZPCR    = $37          ; shadow of VIA1 PCR ($0d = REQ low, $0f = REQ high)
+ZTMP    = $3b          ; detection status byte / upload length lo
+ZTMP2   = $3c          ; command byte / upload length hi
+
+VIA1_PB   = $1800
+VIA1_PA   = $1801
+VIA1_DDRA = $1803
+VIA1_PCR  = $180c
+VIA1_IFR  = $180d
+
+; ===========================================================================
+; Hooks into stock code
+; ===========================================================================
+
+; Reset: VIA1 port A must come up as inputs (stock 1541-II sets DDRA=$ff,
+; which would drive the C64 user port low through the cable).
+* = $eaa2
+    ldx #$00           ; was ldx #$ff (goes to STX $1803 in the $ff10 stub)
+
+; Power-on self test ($eaa7-$eb1e: zero-page test, ROM checksum, RAM test)
+; becomes a RAM clear. The tests only reported defective hardware; the ROM
+; checksum would reject any patched image.
+* = $eaa7
+    ldx #$00
+    txa
+ram_clear:
+    sta $0000,x
+    sta $0100,x
+    sta $0200,x
+    sta $0300,x
+    sta $0400,x
+    sta $0500,x
+    sta $0600,x
+    sta $0700,x
+    inx
+    bne ram_clear
+    jmp $eb22
+selftest_free_start:
+!if * > $eb1f { !error "self-test replacement too long" }
+
+; End-of-init hook ($e780 is a 34-byte NOP sled + RTS called from $ebe4).
+* = $e780
+init_hook:
+    lda #$00
+    sta ZMODE
+    sta VIA1_DDRA
+    lda #$0f
+    sta ZPCR
+    sta VIA1_PCR           ; CA2 manual high (REQ idle), CA1 positive edge
+    lda #$a5
+    sta $8000
+    cmp $8000              ; RAM at $8000 (the ROM mirror reads $97 there)
+    bne init_done
+    lda #$80
+    sta ZMODE
+init_done:
+    rts
+!if * > $e7a3 { !error "init_hook overflows" }
+
+; ATN service entry: drop any fast mode, release port A.
+* = $e86d
+    jsr atn_entry          ; was jsr $e9b7 (release CLK)
+
+; Secondary-address decode: detection handshake (replaces the 8 bytes
+; lda $84 / and #$f0 / cmp #$e0 / bne $e902).
+* = $e8c5
+    jsr fast_detect
+    bne $e902
+    nop
+    nop
+    nop
+!if * != $e8cd { !error "detect hook size" }
+
+; TALK loop: first ATN check of the per-byte send ($e916 jsr $ea59).
+* = $e916
+    jsr talk_hook
+
+; LISTEN loop: byte receive ($ea44 jsr $e9c9).
+* = $ea44
+    jsr listen_hook
+
+; Command table: retire the ampersand utility loader whose ROM we reuse.
+* = $fe90
+    !byte $ff              ; was $26
+
+; Stepper fast path: bcs $fa1c can never be taken with stock step counts;
+; make it formally dead so $fa1c-$fa2d and $fa7b-$fabd can be reused.
+* = $fa10
+    nop
+    nop
+
+; ===========================================================================
+; Region R1: lower-half filler $c09f-$c0ff (97 bytes): small helpers
+; ===========================================================================
+* = $c09f
+r1_start:
+
+; Toggle the REQ line (VIA1 CA2 in manual output mode).
+req_toggle:
+    lda ZPCR
+    eor #$02
+    sta ZPCR
+    sta VIA1_PCR
+    rts
+
+; Wait for a C64 strobe (CB1 flag) with a ~13 ms timeout. Clears the flag.
+; Never touches $1800 while waiting. Returns C=1 on timeout.
+wait_cb1:
+    ldy #$04
+wc_outer:
+    ldx #$00
+wc_inner:
+    lda VIA1_IFR
+    and #$10
+    bne wc_ok
+    dex
+    bne wc_inner
+    dey
+    bne wc_outer
+    sec
+    rts
+wc_ok:
+    bit VIA1_PB            ; clear CB1
+    clc
+    rts
+
+; Send one response byte to the C64 (port A output, REQ toggle, wait ack).
+; Leaves port A as input. C=1 on timeout.
+send_resp:
+    ldx #$ff
+    stx VIA1_DDRA
+    sta VIA1_PA
+    jsr req_toggle
+    jsr wait_cb1
+    ldx #$00
+    stx VIA1_DDRA
+    rts
+
+atn_entry:
+    lda #$00
+    sta VIA1_DDRA
+    lda ZMODE
+    and #$80
+    sta ZMODE
+    jmp $e9b7
+r1_end:
+!if * > $c100 { !error "R1 overflow" }
+
+; ===========================================================================
+; Region R2: retired ampersand loader $e7a3-$e852 (176 bytes): detection
+; ===========================================================================
+* = $e7a3
+r2_start:
+
+; Called after an SA byte ($6x/$Ex/$Fx) has been received under ATN.
+; Must return Z=1 exactly when ($84 & $f0) == $e0 (close), Z=0 otherwise.
+fast_detect:
+    lda $84
+    and #$f0
+    cmp #$e0
+    bne fd_go
+    rts                    ; Z=1: close, no detection
+fd_go:
+    ldx #$60               ; ~800 us window for the query strobe
+fd_wait:
+    lda VIA1_IFR
+    and #$10
+    bne fd_query
+    dex
+    bne fd_wait
+    lda #$01               ; Z=0: not a fast KERNAL
+    rts
+fd_query:
+    lda VIA1_PB            ; (clears CB1)
+    ora #$08
+    sta VIA1_PB            ; hold CLK low now: "fast mode active" for the C64
+    ; status byte: bit7 extram, bits0-6 resident engine version
+    lda ZMODE
+    and #$80
+    sta ZTMP
+    beq fd_status
+    lda ENGINE_MAGIC0
+    cmp #'M'
+    bne fd_status
+    lda ENGINE_MAGIC1
+    cmp #'T'
+    bne fd_status
+    lda ENGINE_VERSION_ADDR
+    and #$7f
+    ora ZTMP
+    sta ZTMP
+fd_status:
+    lda ZTMP
+    jsr send_resp
+    bcs fd_abort
+fd_cmd:
+    jsr wait_cb1           ; command byte from the C64
+    bcs fd_abort
+    lda VIA1_PA
+    sta ZTMP2
+    jsr req_toggle
+    lda ZTMP2
+    cmp #CMD_UPLOAD
+    bne fd_notup
+    jsr upload
+    bcs fd_abort
+    lda #$80               ; upload done: refresh the status byte
+    sta ZTMP
+    lda #ENGINE_VERSION
+    ora ZTMP
+    sta ZTMP
+    lda #$01
+    jsr send_resp
+    bcs fd_abort
+    jmp fd_cmd
+fd_notup:
+    cmp #CMD_STREAM
+    bne fd_plain
+    jsr stream_eligible    ; C=0 if a framed stream can be served
+    bcs fd_plain
+    lda ZMODE
+    and #$80
+    ora #MODE_STREAM
+    sta ZMODE
+    lda #$01
+    bne fd_resp
+fd_plain:
+    lda ZMODE
+    and #$80
+    ora #MODE_PLAIN
+    sta ZMODE
+    lda #$00
+fd_resp:
+    jsr send_resp
+    bcs fd_abort
+    lda #$01               ; Z=0
+    rts
+fd_abort:
+    lda #$00
+    sta VIA1_DDRA
+    lda ZMODE
+    and #$80
+    sta ZMODE
+    lda #$01
+    rts
+r2_end:
+!if * > $e853 { !error "R2 overflow" }
+
+; ===========================================================================
+; Region R3: freed self-test $eac7-$eb1e (88 bytes): engine upload
+; ===========================================================================
+* = selftest_free_start
+r3_start:
+
+; Engine upload: length lo, length hi, then bytes into ENGINE_BASE.
+; Uses $30/$31 (controller pointer, unused outside a running job).
+upload:
+    jsr wait_cb1
+    bcs up_fail
+    lda VIA1_PA
+    sta ZTMP
+    jsr req_toggle
+    jsr wait_cb1
+    bcs up_fail
+    lda VIA1_PA
+    sta ZTMP2
+    jsr req_toggle
+    lda #<ENGINE_BASE
+    sta $30
+    lda #>ENGINE_BASE
+    sta $31
+up_loop:
+    lda ZTMP
+    ora ZTMP2
+    beq up_done
+    jsr wait_cb1           ; clobbers X and Y
+    bcs up_fail
+    ldy #$00
+    lda VIA1_PA
+    sta ($30),y
+    jsr req_toggle
+    inc $30
+    bne up_nowrap
+    inc $31
+up_nowrap:
+    lda ZTMP
+    bne up_declo
+    dec ZTMP2
+up_declo:
+    dec ZTMP
+    jmp up_loop
+up_done:
+    clc
+    rts
+up_fail:
+    sec
+    rts
+r3_end:
+!if * > $eb1f { !error "R3 overflow" }
+
+; ===========================================================================
+; Region R4: freed self-test blinker $ea6e-$ea9f (50 bytes)
+; ===========================================================================
+* = $ea6e
+r4_start:
+
+; A framed stream needs: a resident engine (status version != 0), talk
+; addressed, not the error channel, not a directory listing, a read channel
+; with a valid byte, and a SEQ/PRG/USR file type.
+stream_eligible:
+    lda ZTMP
+    and #$7f
+    beq se_no
+    lda $7a
+    beq se_no
+    lda $83
+    cmp #$0f
+    beq se_no
+    lda $0254
+    bne se_no
+    jsr $d0eb              ; read channel for SA $83 -> $82, C=1 none
+    bcs se_no
+    ldx $82
+    lda $f2,x
+    bpl se_no
+    jsr $d125              ; channel type in A
+    cmp #$04
+    bcs se_no
+    clc
+    rts
+se_no:
+    sec
+    rts
+r4_end:
+!if * > $eaa0 { !error "R4 overflow" }
+
+; ===========================================================================
+; Region R5: dead stepper fast path $fa7b-$fabd (67 bytes): LISTEN
+; ===========================================================================
+* = $fa7b
+r5_start:
+
+; Entered in place of the per-byte receive inside the stock LISTEN loop
+; ($ea2e: channel checked, $82 set, I=1). Fast mode never returns: it
+; consumes the whole listen phase and leaves through the ATN service.
+listen_hook:
+    lda ZMODE
+    and #$03
+    bne fl_fast
+    jmp $e9c9              ; stock serial receive
+fl_fast:
+    pla
+    pla                    ; CLK is already held low since the detection;
+    lda #$00               ; no $1800 write here, it would clear a CB1 strobe
+    sta VIA1_DDRA
+    cli
+fl_loop:
+    lda VIA1_IFR
+    and #$10
+    bne fl_got
+    lda $7c                ; ATN pending (set by the IRQ)
+    beq fl_loop
+    jmp $ff50
+fl_got:
+    lda VIA1_PB            ; bit0 = DATA in (1 = line low = EOI); clears CB1
+    lsr
+    lda #$00               ; $f8 = 0 marks EOI on this byte
+    bcs fl_store
+    lda #$80
+fl_store:
+    sta $f8
+    lda VIA1_PA
+    sta $85
+    jsr req_toggle         ; acknowledge; the C64 may send the next byte now
+    jsr $cfb7              ; store the byte (file, command buffer, ...)
+    jmp fl_loop
+r5_end:
+!if * > $fabe { !error "R5 overflow" }
+
+; ===========================================================================
+; Region R6: upper-half filler $ff79-$ffe5 (109 bytes): TALK
+; ===========================================================================
+* = $ff79
+r6_start:
+
+; Entered in place of the first ATN check of the stock per-byte send
+; ($e916: read channel found, $82 = X = channel, byte valid, I=1).
+talk_hook:
+    lda ZMODE
+    and #$03
+    bne ft_fast
+    jmp $ea59              ; stock ATN watchdog
+ft_fast:
+    pla
+    pla
+    lda ZMODE
+    and #$03
+    cmp #MODE_STREAM
+    bne ft_generic
+    jmp ENGINE_BASE        ; framed stream engine in extram
+ft_generic:
+    lda #$ff
+    sta VIA1_DDRA
+    cli
+ft_loop:
+    ldx $82
+    lda $f2,x
+    and #$08               ; bit3 set = more bytes follow
+    bne ft_noeoi
+    lda VIA1_PB
+    ora #$02               ; DATA low = EOI on this byte
+    bne ft_put
+ft_noeoi:
+    lda VIA1_PB
+    and #$fd
+ft_put:
+    sta VIA1_PB
+    lda $023e,x
+    sta VIA1_PA
+    jsr req_toggle
+ft_wait:
+    lda VIA1_IFR
+    and #$10
+    bne ft_ack
+    lda $7c
+    beq ft_wait
+    lda #$00
+    sta VIA1_DDRA
+    jmp $ff50
+ft_ack:
+    bit VIA1_PB            ; clear CB1
+    jsr $d3aa              ; next byte for channel $82 (may read a block)
+    ldx $82
+    lda $f2,x
+    bmi ft_loop
+    lda #$00
+    sta VIA1_DDRA
+    jmp $ea4e              ; release the bus, idle loop
+r6_end:
+!if * > $ffe6 { !error "R6 overflow" }

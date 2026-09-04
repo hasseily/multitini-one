@@ -139,6 +139,10 @@ port(
 	-- USER
 	pb_i        : in  unsigned(7 downto 0);
 	pb_o        : out unsigned(7 downto 0);
+	-- Multitini local-port extension: CIA2 port B data direction, so an
+	-- attached user-port device can tell a driven-low line from a released
+	-- input. The pinned source exports only the output register.
+	pb_oe_o     : out unsigned(7 downto 0);
 	pa2_i       : in  std_logic;
 	pa2_o       : out std_logic;
 	pc2_n_o     : out std_logic;
@@ -255,6 +259,7 @@ signal cia2_pao     : unsigned(7 downto 0);
 signal cia2_pbi     : unsigned(7 downto 0);
 signal cia2_pbo     : unsigned(7 downto 0);
 signal cia2_pbe     : unsigned(7 downto 0);
+signal cia2_pae     : unsigned(7 downto 0);
 
 signal todclk       : std_logic;
 
@@ -754,8 +759,13 @@ port map (
 	db_in => cpuDo,
 	db_out => cia2Do,
 
-	pa_in => cia2_pai and cia2_pao,
+	-- Multitini local-port extension: an input-direction port A bit reads
+	-- its pin regardless of the output register, so a drive strobe level on
+	-- PA2 survives read-modify-write of $DD00. Output-direction bits keep the
+	-- pinned open-collector emulation.
+	pa_in => cia2_pai and (cia2_pao or not cia2_pae),
 	pa_out => cia2_pao,
+	pa_oe => cia2_pae,
 	pb_in => (pb_i and not cia2_pbe) or (cia2_pbo and cia2_pbe),
 	pb_out => cia2_pbo,
 	pb_oe => cia2_pbe,
@@ -790,6 +800,7 @@ iec_clk_o  <= not cia2_pao(4);
 iec_atn_o  <= not cia2_pao(3);
 
 pb_o  <= cia2_pbo;
+pb_oe_o <= cia2_pbe;
 pa2_o <= cia2_pao(2);
 
 process(clk32)

@@ -16,6 +16,7 @@ module multitini_c64_adapter #(
     input  logic        reset,
     input  logic        core_reset_request,
     input  logic        cpu_turbo_enable,
+    input  logic        drive_parallel_enable,
     input  logic        clear_load_error,
 
     input  logic [15:0] input_code,
@@ -159,6 +160,11 @@ module multitini_c64_adapter #(
     logic        drive_mounted;
     logic        drive_led;
     logic        cpu_turbo_active;
+    logic [7:0]  c64_pb_o;
+    logic [7:0]  c64_pb_oe;
+    logic        c64_pc2_n;
+    logic [7:0]  drive_par_data_out;
+    logic        drive_par_stb_out;
 
     logic [10:0] host_ps2_key;
     logic        host_input_ready;
@@ -435,8 +441,11 @@ module multitini_c64_adapter #(
         .sid_cfg(4'b0000), .sid_fc_off_l(13'd0), .sid_fc_off_r(13'd0),
         .sid_ld_clk(core_clk), .sid_ld_addr(12'd0), .sid_ld_data(16'd0),
         .sid_ld_wr(1'b0), .sid_digifix(1'b0),
-        .pb_i(8'hFF), .pb_o(), .pa2_i(1'b1), .pa2_o(), .pc2_n_o(),
-        .flag2_n_i(1'b1), .sp2_i(1'b1), .sp2_o(),
+        // User port: the opt-in DolphinDOS-style parallel cable to the drive.
+        // The drive strobe is both a FLAG2 edge and a level on PA2.
+        .pb_i(drive_par_data_out), .pb_o(c64_pb_o), .pb_oe_o(c64_pb_oe),
+        .pa2_i(drive_par_stb_out), .pa2_o(), .pc2_n_o(c64_pc2_n),
+        .flag2_n_i(drive_par_stb_out), .sp2_i(1'b1), .sp2_o(),
         .sp1_i(1'b1), .sp1_o(), .cnt2_i(1'b1), .cnt2_o(),
         .cnt1_i(1'b1), .cnt1_o(),
         .iec_data_o(c64_iec_data), .iec_data_i(drive_iec_data),
@@ -452,7 +461,12 @@ module multitini_c64_adapter #(
             .turbo_request(cpu_turbo_enable),
             .c64_iec_atn(c64_iec_atn), .c64_iec_data(c64_iec_data),
             .c64_iec_clk(c64_iec_clk), .drive_iec_data(drive_iec_data),
-            .drive_iec_clk(drive_iec_clk), .turbo_active(cpu_turbo_active)
+            .drive_iec_clk(drive_iec_clk),
+            // Cable strobes count as drive traffic only while the cable is
+            // connected; the drive side already idles high otherwise.
+            .c64_par_stb(c64_pc2_n || !drive_parallel_enable),
+            .drive_par_stb(drive_par_stb_out),
+            .turbo_active(cpu_turbo_active)
         );
 
     multitini_c64_1541 #(.CORE_CLOCK_HZ(CORE_CLOCK_HZ)) drive_i (
@@ -465,6 +479,11 @@ module multitini_c64_adapter #(
         .c64_iec_atn(c64_iec_atn), .c64_iec_data(c64_iec_data),
         .c64_iec_clk(c64_iec_clk), .drive_iec_data(drive_iec_data),
         .drive_iec_clk(drive_iec_clk),
+        .parallel_enable(drive_parallel_enable),
+        // A user-port line reads high unless the C64 drives it low as an
+        // output; the CIA exports its output register and data direction.
+        .par_data_in(c64_pb_o | ~c64_pb_oe), .par_stb_in(c64_pc2_n),
+        .par_data_out(drive_par_data_out), .par_stb_out(drive_par_stb_out),
         .media_mount(media_mount), .media_eject(media_eject),
         .media_complete(media_complete), .media_slot(media_slot),
         .media_kind(media_kind), .media_read_only(media_read_only),

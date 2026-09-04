@@ -201,7 +201,19 @@ reset, streams both while the core is held in reset, and saves the setting only
 after the new pair starts successfully. A failed runtime switch restores the
 previous active pair. If a persisted fast selection is unavailable during core
 activation, firmware reports the fallback and loads the stock profile. The
-fast pair is not part of the repository or firmware package.
+repository builds a fast pair from the stock ROMs in `c64fast/bin`
+([C64_FAST_DISK.md](C64_FAST_DISK.md)); it is not part of the firmware
+package and must be copied to the card like any other ROM.
+
+With ABI 0.10 shells, enabling the fast pair also connects a DolphinDOS-style
+parallel cable between the C64 user port and the emulated drive and maps 8 KiB
+of drive RAM at `$8000-$9FFF`, exactly like the upstream option. Firmware sets
+control bit 6 beside the ROM streams and clears it for the stock pair, because
+the stock drive ROM drives the same VIA port low. The drive strobe is also
+readable as a level on user-port PA2, and CIA2 port A input is data-direction
+aware. Cable strobes pause CPU turbo the way IEC traffic does. This path
+passes focused XSim only; it has not been built by the vendor flow or tested
+on the board.
 
 FPGA64 Smart 2x independently adds 6510 RAM/ROM cycles without changing VIC,
 CIA, I/O, or drive timing. The track caches and packed ARM transfer reduce host
@@ -352,7 +364,8 @@ ABI 0.8 adds the packed four-byte direct-load transport and the C64 CPU-turbo
 control bit. The core-facing loader remains a byte ready/valid stream, and ABI
 0.7 packages retain their byte-at-a-time register path. Fast serial ROM
 selection is an ARM-owned profile switch and does not overclock the PL or add a
-drive-warp control bit.
+drive-warp control bit. ABI 0.10 adds the C64 drive parallel-cable control bit,
+which firmware sets only while the fast ROM pair is installed.
 
 `spec/core_interface_v0.md` records the separate core-facing ready/valid,
 memory, and bidirectional media contracts. It is deliberately pre-release.

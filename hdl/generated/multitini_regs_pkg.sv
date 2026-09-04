@@ -3,7 +3,7 @@
 `timescale 1ns / 1ps
 package multitini_regs_pkg;
     localparam logic [15:0] MT_ABI_MAJOR = 16'd0;
-    localparam logic [15:0] MT_ABI_MINOR = 16'd9;
+    localparam logic [15:0] MT_ABI_MINOR = 16'd10;
     localparam logic [31:0] MT_ABI_VERSION = {MT_ABI_MAJOR, MT_ABI_MINOR};
     localparam logic [31:0] MT_MAGIC = 32'h4D543031;
     localparam logic [31:0] MT_SHELL_ID = 32'h4D544F4E;
@@ -53,6 +53,7 @@ package multitini_regs_pkg;
     localparam logic [31:0] MT_CONTROL_AUDIO_TEST_ENABLE = 32'h00000004;
     localparam logic [31:0] MT_CONTROL_AUDIO_MUTE = 32'h00000008;
     localparam logic [31:0] MT_CONTROL_C64_CPU_TURBO_ENABLE = 32'h00000020;
+    localparam logic [31:0] MT_CONTROL_C64_DRIVE_PARALLEL_ENABLE = 32'h00000040;
 
     localparam logic [31:0] MT_STATUS_SHELL_READY = 32'h00000001;
     localparam logic [31:0] MT_STATUS_VIDEO_ACTIVE = 32'h00000002;

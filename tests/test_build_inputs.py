@@ -220,6 +220,66 @@ class BuildInputTests(unittest.TestCase):
              "multitini_c64_drive_clock.sv").exists()
         )
 
+    def test_c64_drive_parallel_cable_follows_the_fast_rom_profile(self):
+        adapter = (
+            ROOT / "hdl" / "core" / "c64" /
+            "multitini_c64_adapter.sv"
+        ).read_text(encoding="utf-8")
+        drive = (
+            ROOT / "hdl" / "core" / "c64" /
+            "multitini_c64_1541.sv"
+        ).read_text(encoding="utf-8")
+        top = (
+            ROOT / "hdl" / "board" / "multitini_one_top.sv"
+        ).read_text(encoding="utf-8")
+        fpga64 = (
+            ROOT / "hdl" / "core" / "c64" / "ports" /
+            "fpga64_sid_iec.vhd"
+        ).read_text(encoding="utf-8")
+        main = (ROOT / "firmware/platform/xilinx/main.c").read_text(
+            encoding="utf-8")
+        self.assertIn("pb_oe_o <= cia2_pbe;", fpga64)
+        self.assertIn(
+            ".pb_i(drive_par_data_out), .pb_o(c64_pb_o), "
+            ".pb_oe_o(c64_pb_oe),",
+            adapter,
+        )
+        self.assertIn(".pc2_n_o(c64_pc2_n)", adapter)
+        self.assertIn(".flag2_n_i(drive_par_stb_out)", adapter)
+        self.assertIn(".pa2_i(drive_par_stb_out)", adapter)
+        self.assertIn(
+            "pa_in => cia2_pai and (cia2_pao or not cia2_pae),", fpga64
+        )
+        self.assertIn("pa_oe => cia2_pae,", fpga64)
+        self.assertIn(
+            ".par_data_in(c64_pb_o | ~c64_pb_oe), .par_stb_in(c64_pc2_n),",
+            adapter,
+        )
+        self.assertIn(
+            ".c64_par_stb(c64_pc2_n || !drive_parallel_enable)", adapter
+        )
+        self.assertIn(".ext_en(parallel_enable)", drive)
+        self.assertIn(
+            "assign parallel_active = parallel_enable && !drive_reset;",
+            drive,
+        )
+        self.assertIn("MT_CONTROL_C64_DRIVE_PARALLEL_ENABLE", top)
+        self.assertIn(
+            ".drive_parallel_enable(c64_drive_parallel_enable)", top
+        )
+        # Firmware decides the cable beside the ROM streams and nowhere else,
+        # so it can never disagree with the installed pair.
+        stream = main.split(
+            "static bool stream_c64_rom_profile(", 1
+        )[1].split("\n}\n", 1)[0]
+        self.assertIn(
+            "set_c64_drive_parallel_cable(fast && drive_available);", stream
+        )
+        self.assertEqual(main.count("set_c64_drive_parallel_cable("), 2)
+        self.assertEqual(
+            main.count("MT_CONTROL_C64_DRIVE_PARALLEL_ENABLE"), 2
+        )
+
     def test_every_pl_port_has_one_pin_assignment(self):
         top = (ROOT / "hdl" / "board" / "multitini_one_top.sv").read_text()
         declarations = re.findall(

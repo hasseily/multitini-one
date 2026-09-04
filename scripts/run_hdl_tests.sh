@@ -109,6 +109,17 @@ iverilog -g2012 -Wall -Wimplicit -i -s tb_c64_1541_head_reset \
     "$repo_root/hdl/sim/tb_c64_1541_head_reset.sv"
 (cd "$sim_build" && vvp tb_c64_1541_head_reset.vvp)
 
+# The parallel-cable regression drives the imported 1541 CPU and VIAs, whose
+# T65 and 6522 models are VHDL. Icarus cannot elaborate them, so that test
+# runs through the XSim script when a working Vivado is on PATH and is
+# otherwise skipped here. WSL exposes the Windows wrapper without a Linux
+# binary, so probe the tool instead of only its name.
+if xelab --version >/dev/null 2>&1; then
+    sh "$repo_root/scripts/run_xsim_tests.sh"
+else
+    echo "SKIP: tb_c64_parallel_cable needs XSim; see scripts/run_xsim_tests.sh"
+fi
+
 run_test tb_c64_cpu_turbo_guard \
     "$repo_root/hdl/core/c64/multitini_c64_cpu_turbo_guard.sv" \
     "$repo_root/hdl/sim/tb_c64_cpu_turbo_guard.sv"

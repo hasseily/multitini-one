@@ -1,4 +1,4 @@
-.PHONY: check generate check-generated repo-check host-build host-test host-sanitize hdl-test c64-lint gameboy-lint clean
+.PHONY: check generate check-generated repo-check host-build host-test host-sanitize hdl-test hdl-xsim-test c64-lint gameboy-lint clean
 
 PYTHON ?= python3
 HOST_BUILD_DIR ?= build-host
@@ -39,6 +39,9 @@ host-sanitize:
 
 hdl-test:
 	./scripts/run_hdl_tests.sh
+
+hdl-xsim-test:
+	sh ./scripts/run_xsim_tests.sh
 
 c64-lint:
 	./scripts/lint_c64_sv.sh

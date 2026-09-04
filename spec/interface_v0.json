@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "abi": {"major": 0, "minor": 9},
+  "abi": {"major": 0, "minor": 10},
   "magic": "0x4D543031",
   "shell_id": "0x4D544F4E",
   "register_span": "0x1000",
@@ -50,7 +50,8 @@
       "VIDEO_TEST_ENABLE": 1,
       "AUDIO_TEST_ENABLE": 2,
       "AUDIO_MUTE": 3,
-      "C64_CPU_TURBO_ENABLE": 5
+      "C64_CPU_TURBO_ENABLE": 5,
+      "C64_DRIVE_PARALLEL_ENABLE": 6
     },
     "STATUS": {
       "SHELL_READY": 0,

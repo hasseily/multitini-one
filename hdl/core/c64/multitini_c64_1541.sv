@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns / 1ps
 
-// One standard, serial-IEC 1541 with transactional D64 and read-only raw-G64
-// media. Parallel-drive ROMs, G64 writes, second drives, and 1581 support are
-// deliberately outside this boundary.
+// One standard 1541 with transactional D64 and read-only raw-G64 media. The
+// firmware can additionally connect a DolphinDOS-style parallel cable, which
+// also maps 8 KiB of drive RAM at $8000-$9FFF, for a user-supplied fast ROM
+// pair. G64 writes, second drives, and 1581 support are deliberately outside
+// this boundary.
 module multitini_c64_1541 #(
     parameter integer CORE_CLOCK_HZ = 31527954
 ) (
@@ -22,6 +24,13 @@ module multitini_c64_1541 #(
     input  logic        c64_iec_clk,
     output logic        drive_iec_data,
     output logic        drive_iec_clk,
+
+    // User-port cable. Every line idles high; a strobe is an active-low pulse.
+    input  logic        parallel_enable,
+    input  logic [7:0]  par_data_in,
+    input  logic        par_stb_in,
+    output logic [7:0]  par_data_out,
+    output logic        par_stb_out,
 
     input  logic        media_mount,
     input  logic        media_eject,
@@ -104,6 +113,9 @@ module multitini_c64_1541 #(
     logic       drive_activity;
     logic       drive_logic_iec_data;
     logic       drive_logic_iec_clk;
+    logic [7:0] drive_logic_par_data_out;
+    logic       drive_logic_par_stb_out;
+    logic       parallel_active;
 
     logic [6:0] head_half_track;
     logic [5:0] buffer_track;
@@ -147,6 +159,12 @@ module multitini_c64_1541 #(
                          drive_rom_write || drive_rom_write_delayed;
     assign drive_iec_data = drive_reset ? 1'b1 : drive_logic_iec_data;
     assign drive_iec_clk  = drive_reset ? 1'b1 : drive_logic_iec_clk;
+    // The stock drive ROM sets VIA1 DDRA to $FF and drives port A low, so the
+    // cable reaches the C64 only while the firmware has enabled it for a ROM
+    // pair that expects it, and never while the drive is in reset.
+    assign parallel_active = parallel_enable && !drive_reset;
+    assign par_data_out = parallel_active ? drive_logic_par_data_out : 8'hFF;
+    assign par_stb_out  = parallel_active ? drive_logic_par_stb_out : 1'b1;
     assign drive_led = drive_activity || (mounted && disk_busy);
     assign stepper_move = stepper_phase - previous_stepper_phase;
     assign drive_data_from_disk = g64_mode ? g64_data_from_disk :
@@ -240,10 +258,14 @@ module multitini_c64_1541 #(
         .iec_clk_in(c64_iec_clk), .iec_data_in(c64_iec_data),
         .iec_atn_in(c64_iec_atn), .iec_clk_out(drive_logic_iec_clk),
         .iec_data_out(drive_logic_iec_data),
-        .ext_en(1'b0), .rom_addr(drive_rom_read_address),
+        // ext_en both routes VIA1 port A to the cable and maps the 8 KiB
+        // extension RAM, exactly like the pinned upstream DolphinDOS option.
+        .ext_en(parallel_enable), .rom_addr(drive_rom_read_address),
         .rom_data(drive_rom_read_data),
-        .par_data_in(8'hFF), .par_stb_in(1'b1),
-        .par_data_out(), .par_stb_out(),
+        .par_data_in(parallel_enable ? par_data_in : 8'hFF),
+        .par_stb_in(parallel_enable ? par_stb_in : 1'b1),
+        .par_data_out(drive_logic_par_data_out),
+        .par_stb_out(drive_logic_par_stb_out),
         .ds(2'b00), .din(drive_data_from_disk),
         .dout(drive_data_to_disk), .mode(disk_mode),
         .stp(stepper_phase), .mtr(motor_on), .freq(motor_frequency),

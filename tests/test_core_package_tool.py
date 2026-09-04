@@ -29,7 +29,7 @@ class CorePackageToolTests(unittest.TestCase):
             "--output", "package",
         ])
         self.assertEqual(args.abi_major, 0)
-        self.assertEqual(args.abi_minor, 9)
+        self.assertEqual(args.abi_minor, 10)
 
     def test_variant_and_paths_reject_unsafe_values(self) -> None:
         parsed = MODULE.parse_variant("pal|PAL 50 Hz|build/core.bit")

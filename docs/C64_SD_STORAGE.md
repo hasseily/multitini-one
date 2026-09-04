@@ -240,12 +240,14 @@ drive-clock timing and is therefore the compatibility-preserving speedup.
 
 The F12 `Core config` page provides `Fast serial ROMs`, default Off. Enabling it
 requires both `roms/fast/kernal.bin` (exactly 8 KiB) and
-`roms/fast/1541.bin` (exactly 16 KiB). These are user-supplied matching fast
-serial ROMs, such as a properly licensed C64/1541 pair; Multitini does not ship
-or download them. JiffyDOS is one compatible commercial pairing, but a purchase
-or device/emulation license does not automatically grant redistribution rights;
-obtain it from its authorized source and do not add the images to a Multitini
-package. Firmware validates the complete pair before resetting the core. It
+`roms/fast/1541.bin` (exactly 16 KiB). The repository builds a matching pair
+in `c64fast/bin` from the stock ROMs; it uses the parallel drive cable and the
+drive RAM expansion that the profile enables ([C64_FAST_DISK.md](C64_FAST_DISK.md)).
+Any other matching pair, such as a properly licensed C64/1541 fast serial pair,
+can be installed instead. JiffyDOS is one compatible commercial pairing, but a
+purchase or device/emulation license does not automatically grant
+redistribution rights; obtain it from its authorized source and do not add the
+images to a Multitini package. Firmware validates the complete pair before resetting the core. It
 streams both ROMs while reset is asserted and persists the On setting only after
 the C64 starts successfully. If the switch fails, the previous active ROM pair
 is restored.

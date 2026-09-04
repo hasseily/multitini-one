@@ -139,6 +139,18 @@ static void set_c64_cpu_turbo(bool enabled)
     supervisor_menu_dirty = true;
 }
 
+/* The user-supplied fast ROM pair expects the DolphinDOS-style parallel
+ * cable and the 8 KiB drive RAM it brings. The stock drive ROM drives the
+ * same VIA port low, so the cable exists only while a fast pair is
+ * installed. Shells older than ABI 0.10 ignore the bit. */
+static void set_c64_drive_parallel_cable(bool enabled)
+{
+    const uint32_t control = shell_read(MT_REG_CONTROL);
+    Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_CONTROL,
+              enabled ? control | MT_CONTROL_C64_DRIVE_PARALLEL_ENABLE :
+                        control & ~MT_CONTROL_C64_DRIVE_PARALLEL_ENABLE);
+}
+
 static int board_i2c_write(void *context, uint8_t address, uint8_t reg,
                            uint8_t value)
 {
@@ -644,7 +656,7 @@ static bool read_c64_rom_profile(bool fast, bool require_drive,
 
 static bool stream_c64_rom_profile(const uint8_t *system_bundle,
                                    const uint8_t *drive_rom,
-                                   bool drive_available,
+                                   bool drive_available, bool fast,
                                    const char *set_name,
                                    uint32_t *core_status)
 {
@@ -659,6 +671,9 @@ static bool stream_c64_rom_profile(const uint8_t *system_bundle,
                           MT_SIZE_C64_KERNAL;
     roms.character.size = MT_SIZE_C64_CHARACTER;
 
+    /* Decided here, beside the ROM streams, so the cable can never disagree
+     * with the installed pair. Every caller holds the core in reset. */
+    set_c64_drive_parallel_cable(fast && drive_available);
     Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_ERROR, MT_ERROR_CORE_LOAD);
     if (drive_available) {
         load_result = mt_core_link_stream(
@@ -711,7 +726,7 @@ static c64_rom_restore_result_t restore_active_c64_rom_profile(void)
     }
     if (!stream_c64_rom_profile(
             c64_rom_bundle, c64_drive_rom,
-            c64_active_drive_rom_available,
+            c64_active_drive_rom_available, c64_fast_roms_active,
             c64_fast_roms_active ? "fast-pair rollback" : "stock rollback",
             &core_status)) {
         leave_core_in_reset();
@@ -767,7 +782,8 @@ static bool attempt_c64_sd_boot(bool request_fast_roms)
     }
     if (!stream_c64_rom_profile(
             c64_candidate_rom_bundle, c64_candidate_drive_rom,
-            drive_available, fast ? "fast-pair" : "stock", &core_status)) {
+            drive_available, fast, fast ? "fast-pair" : "stock",
+            &core_status)) {
         if (!fast) {
             print_c64_sd_fallback();
             return false;
@@ -780,7 +796,7 @@ static bool attempt_c64_sd_boot(bool request_fast_roms)
         if (!read_c64_rom_profile(false, true, &drive_available) ||
             !stream_c64_rom_profile(
                 c64_candidate_rom_bundle, c64_candidate_drive_rom,
-                drive_available, "stock", &core_status)) {
+                drive_available, false, "stock", &core_status)) {
             print_c64_sd_fallback();
             return false;
         }
@@ -823,7 +839,7 @@ static c64_rom_stage_result_t stage_c64_rom_profile(bool fast)
         return C64_ROM_STAGE_SWITCH_FAILED;
     }
     if (stream_c64_rom_profile(
-            c64_candidate_rom_bundle, c64_candidate_drive_rom, true,
+            c64_candidate_rom_bundle, c64_candidate_drive_rom, true, fast,
             fast ? "fast-pair" : "stock", &core_status)) {
         c64_drive_ready = true;
         if (c64_d64_service_resume_after_reset() != 0) {

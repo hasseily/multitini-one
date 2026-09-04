@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "assembler": "This is ACME, release 0.97 (\"Zem\"), 1 May 2026",
+  "inputs": {
+    "kernal": {
+      "path": "third_party/c64/ROMs/kernal.901227-03.bin",
+      "sha256": "83c60d47047d7beab8e5b7bf6f67f80daa088b7a6a27de0d7e016f6484042721"
+    },
+    "1541": {
+      "path": "third_party/c64/ROMs/1541-II.251968-03.bin",
+      "sha256": "326c289c38753323d7e8167897447cf61ef35189d82eb8d75210ece949adda7c"
+    }
+  },
+  "outputs": {
+    "kernal.bin": {
+      "size": 8192,
+      "sha256": "812276b172e63ad5d83753ee22c87fcdad96a4ccd3048c66f64143e4d01e85ee",
+      "changed_bytes": 1879,
+      "changed_ranges": [
+        "$ED0E-$ED10",
+        "$ED1A-$ED1B",
+        "$ED3E-$ED3E",
+        "$EDBC-$EDBD",
+        "$EDCA-$EDCB",
+        "$EDE8-$EDE9",
+        "$EE13-$EE17",
+        "$EEBB-$EEF7",
+        "$EEF9-$EF0D",
+        "$EF0F-$EF85",
+        "$EF87-$EFE8",
+        "$EFEA-$F031",
+        "$F033-$F038",
+        "$F03A-$F03B",
+        "$F03D-$F03D",
+        "$F03F-$F040",
+        "$F042-$F069",
+        "$F06B-$F06C",
+        "$F070-$F08E",
+        "$F090-$F092",
+        "$F094-$F0A2",
+        "$F0A4-$F0AC",
+        "$F141-$F141",
+        "$F145-$F145",
+        "$F175-$F17D",
+        "$F1DB-$F1E4",
+        "$F223-$F225",
+        "$F268-$F26A",
+        "$F2A7-$F2A9",
+        "$F384-$F386",
+        "$F409-$F42B",
+        "$F42D-$F45B",
+        "$F45D-$F48C",
+        "$F4D0-$F4D4",
+        "$F533-$F535",
+        "$F618-$F619",
+        "$F659-$F664",
+        "$F72C-$F785",
+        "$F787-$F7CF",
+        "$F7D1-$F7F8",
+        "$F7FA-$F808",
+        "$F80A-$F820",
+        "$F822-$F88C",
+        "$F88E-$F88F",
+        "$F891-$F8C3",
+        "$F8C5-$F8D2",
+        "$F8D4-$F909",
+        "$F90B-$F990",
+        "$F992-$F9DA",
+        "$F9DC-$F9F2",
+        "$F9F4-$FA2E",
+        "$FA30-$FAC6",
+        "$FAC8-$FBE3",
+        "$FE55-$FE55",
+        "$FE65-$FE65"
+      ]
+    },
+    "1541.bin": {
+      "size": 16384,
+      "sha256": "41d7ab7ab30d896c49cb09c5aa7d7dac4b0ceaa6cc181c22fec04442162e6d6e",
+      "changed_bytes": 579,
+      "changed_ranges": [
+        "$C09F-$C0E2",
+        "$E780-$E79C",
+        "$E7A3-$E7BA",
+        "$E7BC-$E7E3",
+        "$E7E5-$E7E8",
+        "$E7EA-$E81D",
+        "$E81F-$E849",
+        "$E86E-$E86F",
+        "$E8C5-$E8CC",
+        "$E917-$E918",
+        "$EA45-$EA46",
+        "$EA6E-$EA80",
+        "$EA82-$EA98",
+        "$EAA3-$EAA3",
+        "$EAA7-$EAAA",
+        "$EAAC-$EAAD",
+        "$EAAF-$EAB3",
+        "$EAB5-$EABC",
+        "$EABE-$EB13",
+        "$FA10-$FA11",
+        "$FA7B-$FAA7",
+        "$FAA9-$FAB3",
+        "$FE90-$FE90",
+        "$FF79-$FFCB",
+        "$FFCD-$FFDB"
+      ]
+    },
+    "engine.bin": {
+      "size": 1012,
+      "sha256": "9331ce6e9882e87cbb37d6eeafe745acd18d469408d62f2fa8b5c4045bb8a7c9",
+      "load_address": "$9AF9"
+    }
+  },
+  "regions": {
+    "kernal_fast_code": "$EEBB-$F0AC",
+    "kernal_engine_image": "$F72C-$FB1F",
+    "kernal_load_code": "$FB20-$FBE3",
+    "dos_regions": {
+      "r1": "$C09F-$C0E2",
+      "r2": "$E7A3-$E849",
+      "r3": "$EAC8-$EB13",
+      "r4": "$EA6E-$EA98",
+      "r5": "$FA7B-$FAB3",
+      "r6": "$FF79-$FFDB"
+    }
+  }
+}
