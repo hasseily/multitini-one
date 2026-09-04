@@ -205,7 +205,8 @@ def main() -> int:
     BIN.mkdir(exist_ok=True)
     for name, data in outputs.items():
         (BIN / name).write_bytes(data)
-    (BIN / "PROVENANCE.json").write_text(json.dumps(result["report"], indent=2) + "\n", encoding="utf-8")
+    (BIN / "PROVENANCE.json").write_text(json.dumps(result["report"], indent=2) + "\n",
+                                         encoding="utf-8", newline="\n")
     report = result["report"]
     for name in ("kernal.bin", "1541.bin", "engine.bin"):
         info = report["outputs"][name]
