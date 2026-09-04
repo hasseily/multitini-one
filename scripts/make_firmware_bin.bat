@@ -2,7 +2,7 @@
 REM SPDX-License-Identifier: GPL-3.0-only
 setlocal EnableExtensions DisableDelayedExpansion
 
-REM Package one explicit Multitini Zynq image: FSBL + bitstream + application.
+REM Package one explicit Multitini Zynq image: FSBL + supervisor shell + app.
 REM Usage:
 REM   make_firmware_bin.bat OUT_BIN FSBL_ELF BIT_FILE APP_ELF
 REM
@@ -19,6 +19,7 @@ set "OUT_BIN=%~f1"
 set "FSBL_ELF=%~f2"
 set "BIT_FILE=%~f3"
 set "APP_ELF=%~f4"
+set "BIT_KIND_FILE=%~f3.kind"
 
 if /i not "%~x1"==".bin" (
     echo ERROR: output must have a .bin extension: %~1
@@ -55,6 +56,17 @@ if not exist "%FSBL_ELF%" (
 )
 if not exist "%BIT_FILE%" (
     echo ERROR: bitstream not found: %BIT_FILE%
+    exit /b 1
+)
+if not exist "%BIT_KIND_FILE%" (
+    echo ERROR: bitstream kind marker not found: %BIT_KIND_FILE%
+    echo        Run scripts\build_and_export_xsa.tcl for this bitstream.
+    exit /b 1
+)
+set /p "BIT_KIND="<"%BIT_KIND_FILE%"
+if /i not "%BIT_KIND%"=="SUPERVISOR" (
+    echo ERROR: root firmware requires a supervisor-only bitstream.
+    echo        Bitstream kind is %BIT_KIND%; package machine cores for SD instead.
     exit /b 1
 )
 if not exist "%APP_ELF%" (
@@ -107,6 +119,7 @@ echo ==========================================
 echo OUT : %OUT_BIN%
 echo FSBL: %FSBL_ELF%
 echo BIT : %BIT_FILE%
+echo KIND: %BIT_KIND%
 echo APP : %APP_ELF%
 echo.
 

@@ -4,7 +4,8 @@
 module multitini_one_top #(
     parameter logic [31:0] SHELL_BUILD_ID = 32'h00000000,
     parameter bit C64_NTSC_MODE = 1'b0,
-    parameter integer ACTIVE_MACHINE = 0,
+    // 0 = C64 package, 1 = GBC package, 2 = supervisor-only boot shell.
+    parameter integer ACTIVE_MACHINE = 2,
     parameter bit ENABLE_GBC_PSRAM = 1'b0
 ) (
     inout  wire [53:0] MIO,
@@ -779,7 +780,7 @@ module multitini_one_top #(
                 .psram_a_io(psram_a_io), .psram_b_io(psram_b_io),
                 .psram_ce_n(psram_ce_n), .psram_clk(psram_clk)
             );
-        end else begin : g_gameboy_machine
+        end else if (ACTIVE_MACHINE == 1) begin : g_gameboy_machine
             assign c64_rom_loaded = {2'd0, gbc_cart_loaded};
             (* DONT_TOUCH = "yes" *) multitini_gameboy_adapter machine_adapter (
                 .core_clk(c64_clk), .reset(!c64_aresetn),
@@ -879,6 +880,72 @@ module multitini_one_top #(
                 assign psram_ce_n = 1'b1;
                 assign psram_clk  = 1'b0;
             end
+        end else begin : g_supervisor_shell
+            // The boot shell owns the shared control/UI/video plumbing but
+            // deliberately contains no machine. Every core is loaded from an
+            // SD package by the supervisor firmware.
+            assign c64_core_id = 32'd0;
+            assign c64_ready = 1'b0;
+            assign c64_load_error = 1'b0;
+            assign c64_rom_loaded = 3'd0;
+            assign c64_load_ready = 1'b0;
+            assign c64_input_ready = 1'b0;
+
+            assign c64_media_request_valid = 1'b0;
+            assign c64_media_request_write = 1'b0;
+            assign c64_media_request_id = 32'd0;
+            assign c64_media_request_lba = 32'd0;
+            assign c64_media_request_block_count = 16'd0;
+            assign c64_media_request_generation = 32'd0;
+            assign c64_media_write_data = 8'd0;
+            assign c64_media_write_data_valid = 1'b0;
+            assign c64_media_write_data_last = 1'b0;
+            assign c64_media_state_mounted = 1'b0;
+            assign c64_media_state_dirty = 1'b0;
+            assign c64_media_state_eject_pending = 1'b0;
+
+            assign c64_prg_loaded = 1'b0;
+            assign c64_cart_loaded = 1'b0;
+            assign c64_cart_hardware_type = 8'd0;
+            assign c64_prg_run_busy = 1'b0;
+            assign c64_video_r = 8'd0;
+            assign c64_video_g = 8'd0;
+            assign c64_video_b = 8'd0;
+            assign c64_video_de = 1'b0;
+            assign c64_video_hsync = 1'b0;
+            assign c64_video_vsync = 1'b0;
+            assign c64_video_valid = 1'b0;
+            assign c64_audio_l = 24'sd0;
+            assign c64_audio_r = 24'sd0;
+            assign c64_audio_valid = 1'b0;
+            assign machine_video_active = 1'b0;
+            assign machine_video_rgb565 = 16'd0;
+
+            assign c64_memory_addr = 24'd0;
+            assign c64_memory_write = 1'b0;
+            assign c64_memory_wdata = 64'd0;
+            assign c64_memory_wstrb = 8'd0;
+            assign c64_memory_valid = 1'b0;
+            assign c64_memory_ready = 1'b0;
+            assign c64_memory_rdata = 64'd0;
+            assign c64_memory_rvalid = 1'b0;
+            assign c64_memory_fault = 1'b0;
+            assign gbc_cart_size = 32'd0;
+            assign gbc_cart_loaded = 1'b0;
+            assign gbc_memory_addr = 24'd0;
+            assign gbc_memory_write = 1'b0;
+            assign gbc_memory_wdata = 64'd0;
+            assign gbc_memory_wstrb = 8'd0;
+            assign gbc_memory_valid = 1'b0;
+            assign gbc_memory_ready = 1'b0;
+            assign gbc_memory_rdata = 64'd0;
+            assign gbc_memory_rvalid = 1'b0;
+            assign gbc_memory_fault = 1'b0;
+
+            assign psram_a_io = 4'hz;
+            assign psram_b_io = 4'hz;
+            assign psram_ce_n = 1'b1;
+            assign psram_clk = 1'b0;
         end
     endgenerate
 

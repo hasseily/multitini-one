@@ -132,6 +132,24 @@ int main(void)
     check(row_contains(&frame, 7U, "Arrows + Z/X"),
           "Game Boy keyboard fallback rendered");
 
+    menu.page = MT_MENU_PAGE_SYSTEM;
+    menu.row = 1U;
+    view.settings_auto_boot = false;
+    action = mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true);
+    check(action.kind == MT_MENU_ACTION_TOGGLE_AUTO_BOOT,
+          "auto-boot is an explicit setting");
+    view.settings_auto_boot = true;
+    view.settings_faulted = true;
+    mt_menu_render(&menu, &view, &frame);
+    check(row_contains(&frame, 8U, "Autoboot current core") &&
+          row_contains(&frame, 8U, "On"), "auto-boot value rendered");
+    check(row_contains(&frame, 11U, "WRITE/READ FAILED"),
+          "settings fault rendered");
+    menu.row = 2U;
+    action = mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true);
+    check(action.kind == MT_MENU_ACTION_REBOOT_GOLDEN,
+          "golden reboot remains available");
+
     (void)mt_menu_key(&menu, &view, MT_MENU_HID_ESCAPE, true);
     check(!menu.visible, "Escape closes menu");
     puts("PASS: multicore menu model and renderer");

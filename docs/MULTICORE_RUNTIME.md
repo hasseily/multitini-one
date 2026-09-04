@@ -9,6 +9,11 @@ Bootgen packaging gates. The staged image was installed and GBC game-save
 persistence was confirmed on the board on 2026-09-04. Rollback and the
 remaining repeated-switch/media matrix are not yet board-qualified.
 
+Current source adds versioned supervisor settings, explicit Autoboot control,
+and a supervisor-only root FPGA image. The latter contains the common shell and
+standby UI but no machine core. A fresh Vivado implementation, matching
+exFAT-enabled Vitis platform/package, and board test remain.
+
 ## Design
 
 The ARM application remains alive while DevCfg/PCAP replaces the complete PL
@@ -160,7 +165,26 @@ recovery way to toggle the menu.
 - Input selects the C64 symbolic/positional keyboard map and joystick port.
   GBC uses the shared USB gamepad path plus arrows, Z, X, Enter, and right
   Shift as a complete keyboard fallback.
-- System restarts the active core or returns to the golden updater.
+- System restarts the active core, explicitly enables or disables Autoboot
+  for that core, or returns to the golden updater.
+
+`Autoboot current core` is off when no valid settings file exists and changes
+only when the user presses Enter on that row. A successful manual core or
+timing selection records that core's preferred variant, but it neither enables
+Autoboot nor retargets an existing Autoboot choice. When Autoboot is off, reset
+loads no machine core: the supervisor-only FPGA shell displays `MULTITINI` and
+`Press F12` until the user chooses a core.
+
+Settings are stored in `0:/multitini/settings.bin`. The file is versioned and
+checksummed and is replaced through `settings.bin.mtj`, using the same synced
+write-ahead journal policy as other writable state. It records each core's
+preferred variant and attached disk or cartridge, plus the C64 keyboard map
+and joystick port. A missing, truncated, incompatible, or corrupt file uses
+safe defaults; in particular it cannot enable auto-boot. Media and input
+settings are restored when their core becomes active. Ejecting or detaching
+content clears that remembered attachment. On a card with no settings file,
+the established first-run C64 `drive8.d64` fallback remains; once the user
+ejects it and settings are saved, later boots leave drive 8 empty.
 
 The ARM renders into the inactive text bank and submits the complete plane to
 the video domain. The overlay changes bank and visibility only at vertical
@@ -189,3 +213,7 @@ and a no-RAM MBC5 cartridge. After installing `2026090F`, the user confirmed
 physical GBC game-save persistence on 2026-09-04.
 Broader mapper, input, audio, rollback, and repeated-switch coverage is still
 required before calling the complete GBC path qualified.
+The settings and supervisor-shell source still need a fresh Vivado and
+exFAT-enabled Vitis/package build plus board tests for no-core startup, explicit
+opt-in Autoboot, per-core restoration, corrupt-file fallback, and interrupted
+settings writes.

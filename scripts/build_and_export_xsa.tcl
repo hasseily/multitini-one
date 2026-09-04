@@ -81,6 +81,15 @@ require_complete_run impl_1
 open_run impl_1
 
 set build_generics [get_property GENERIC [get_filesets sources_1]]
+if {[string match "*ACTIVE_MACHINE=2*" $build_generics]} {
+    set image_kind "SUPERVISOR"
+} elseif {[string match "*ACTIVE_MACHINE=0*" $build_generics]} {
+    set image_kind "C64"
+} elseif {[string match "*ACTIVE_MACHINE=1*" $build_generics]} {
+    set image_kind "GBC"
+} else {
+    error "Build generic has no recognized ACTIVE_MACHINE value: $build_generics"
+}
 set psram_active [expr {
     [string match "*ACTIVE_MACHINE=0*" $build_generics] ||
     [string match "*ENABLE_GBC_PSRAM=1'b1*" $build_generics]
@@ -231,12 +240,24 @@ foreach delay_type {max min} {
 write_checkpoint -force [file join $build_dir multitini_one_impl.dcp]
 write_hw_platform -fixed -include_bit -force -file $xsa_file
 
+# The root firmware packager accepts only a supervisor-only bitstream. Machine
+# builds use make_core_package.py and remain dynamically loadable SD payloads.
+set bitstream_file [file join $build_dir multitini_one.runs impl_1 \
+    multitini_one_top.bit]
+if {![file isfile $bitstream_file]} {
+    error "Implemented bitstream is absent: $bitstream_file"
+}
+set image_kind_stream [open "${bitstream_file}.kind" w]
+puts $image_kind_stream $image_kind
+close $image_kind_stream
+
 set manifest [open [file join $report_dir build_manifest.txt] w]
 puts $manifest "utc=[clock format [clock seconds] -gmt 1 -format {%Y-%m-%dT%H:%M:%SZ}]"
 puts $manifest "vivado=[version -short]"
 puts $manifest "part=[get_property PART [current_project]]"
 puts $manifest "top=[get_property TOP [get_filesets sources_1]]"
 puts $manifest "generic=[get_property GENERIC [get_filesets sources_1]]"
+puts $manifest "image_kind=$image_kind"
 if {![catch {exec git -C $repo_root rev-parse HEAD} commit]} {
     puts $manifest "commit=[string trim $commit]"
 }

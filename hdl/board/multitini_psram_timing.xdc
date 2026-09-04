@@ -4,7 +4,7 @@
 #
 # create_project.tcl enables this implementation-only constraint set for the
 # C64 and for an explicitly PSRAM-enabled GBC build. It is disabled for the
-# first-pass GBC build, where the PSRAM pins are intentionally static.
+# supervisor and first-pass GBC builds, where the PSRAM pins are static.
 ################################################################################
 
 # These requirements are inherited from the same driver and board interface in

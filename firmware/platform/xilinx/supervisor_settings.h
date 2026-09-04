@@ -1,0 +1,74 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+#ifndef MULTITINI_XILINX_SUPERVISOR_SETTINGS_H
+#define MULTITINI_XILINX_SUPERVISOR_SETTINGS_H
+
+#include "multitini_core_package.h"
+#include "sd_storage.h"
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#define MT_SETTINGS_PATH "0:/multitini/settings.bin"
+#define MT_SETTINGS_JOURNAL_PATH "0:/multitini/settings.bin.mtj"
+#define MT_SETTINGS_MAX_PROFILES 16U
+#define MT_SETTINGS_MEDIA_NAME_MAX 96U
+#define MT_SETTINGS_WIRE_SIZE 3960U
+
+typedef struct {
+    char core_id[MT_CORE_PACKAGE_ID_MAX];
+    char variant_id[MT_CORE_VARIANT_ID_MAX];
+    char drive8_name[MT_SETTINGS_MEDIA_NAME_MAX];
+    char cartridge_name[MT_SETTINGS_MEDIA_NAME_MAX];
+    bool symbolic_keyboard;
+    uint8_t joystick_port;
+} mt_core_settings_profile_t;
+
+typedef struct {
+    bool auto_boot;
+    char selected_core_id[MT_CORE_PACKAGE_ID_MAX];
+    size_t profile_count;
+    mt_core_settings_profile_t profiles[MT_SETTINGS_MAX_PROFILES];
+} mt_supervisor_settings_t;
+
+typedef enum {
+    MT_SETTINGS_OK = 0,
+    MT_SETTINGS_MISSING,
+    MT_SETTINGS_INVALID_ARGUMENT,
+    MT_SETTINGS_RECOVERY_FAILED,
+    MT_SETTINGS_READ_FAILED,
+    MT_SETTINGS_CORRUPT,
+    MT_SETTINGS_WRITE_FAILED
+} mt_settings_status_t;
+
+typedef struct {
+    mt_settings_status_t status;
+    mt_sd_result_t sd;
+} mt_settings_result_t;
+
+void mt_supervisor_settings_defaults(mt_supervisor_settings_t *settings);
+const mt_core_settings_profile_t *mt_supervisor_settings_find(
+    const mt_supervisor_settings_t *settings, const char *core_id);
+bool mt_supervisor_settings_remember_core(
+    mt_supervisor_settings_t *settings, const char *core_id,
+    const char *variant_id);
+bool mt_supervisor_settings_remember_variant(
+    mt_supervisor_settings_t *settings, const char *core_id,
+    const char *variant_id);
+bool mt_supervisor_settings_remember_drive8(
+    mt_supervisor_settings_t *settings, const char *core_id,
+    const char *file_name);
+bool mt_supervisor_settings_remember_cartridge(
+    mt_supervisor_settings_t *settings, const char *core_id,
+    const char *file_name);
+bool mt_supervisor_settings_remember_c64_input(
+    mt_supervisor_settings_t *settings, const char *core_id,
+    bool symbolic_keyboard, uint8_t joystick_port);
+
+mt_settings_result_t mt_supervisor_settings_load(
+    mt_supervisor_settings_t *settings);
+mt_settings_result_t mt_supervisor_settings_save(
+    const mt_supervisor_settings_t *settings);
+const char *mt_settings_status_name(mt_settings_status_t status);
+
+#endif

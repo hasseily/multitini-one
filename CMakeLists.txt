@@ -51,6 +51,14 @@ target_include_directories(xilinx_persistent_save_host PUBLIC
     firmware/platform/xilinx
 )
 
+add_library(xilinx_supervisor_settings_host STATIC
+    firmware/platform/xilinx/supervisor_settings.c
+)
+target_include_directories(xilinx_supervisor_settings_host PUBLIC
+    firmware/include
+    firmware/platform/xilinx
+)
+
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(multitini_common PRIVATE
         -Wall -Wextra -Wpedantic -Werror
@@ -68,11 +76,21 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
         -Wall -Wextra -Wpedantic -Werror
         -Wconversion -Wshadow -Wstrict-prototypes
     )
+    target_compile_options(xilinx_supervisor_settings_host PRIVATE
+        -Wall -Wextra -Wpedantic -Werror
+        -Wconversion -Wshadow -Wstrict-prototypes
+    )
     if(MULTITINI_SANITIZE)
         target_compile_options(multitini_common PUBLIC
             -fsanitize=address,undefined -fno-omit-frame-pointer
         )
         target_link_options(multitini_common PUBLIC -fsanitize=address,undefined)
+        target_compile_options(xilinx_supervisor_settings_host PUBLIC
+            -fsanitize=address,undefined -fno-omit-frame-pointer
+        )
+        target_link_options(xilinx_supervisor_settings_host PUBLIC
+            -fsanitize=address,undefined
+        )
     endif()
 endif()
 
@@ -213,3 +231,11 @@ target_link_libraries(test_persistent_save PRIVATE
     xilinx_persistent_save_host
 )
 add_test(NAME persistent_save COMMAND test_persistent_save)
+
+add_executable(test_supervisor_settings
+    tests/host/test_supervisor_settings.c
+)
+target_link_libraries(test_supervisor_settings PRIVATE
+    xilinx_supervisor_settings_host
+)
+add_test(NAME supervisor_settings COMMAND test_supervisor_settings)

@@ -18,15 +18,23 @@ if {[info exists ::env(MULTITINI_VIVADO_DIR)]} {
 set project_name "multitini_one"
 set part_name "xc7z020clg484-2"
 
-set machine "C64"
+set machine "SUPERVISOR"
 if {[info exists ::env(MULTITINI_MACHINE)]} {
     set machine [string toupper [string trim $::env(MULTITINI_MACHINE)]]
 }
 set c64_video_standard "PAL"
 set c64_ntsc_mode 0
-set active_machine 0
+set active_machine 2
 switch -- $machine {
+    SUPERVISOR {
+        # The boot image contains only the shared shell and standby UI. Keep a
+        # valid machine-domain clock for the common CDC mailboxes, but do not
+        # import or instantiate any machine core.
+        set c64_clock_mhz 31.527954
+        set c64_video_standard "N/A"
+    }
     C64 {
+        set active_machine 0
         if {[info exists ::env(MULTITINI_C64_VIDEO_STANDARD)]} {
             set c64_video_standard \
                 [string toupper [string trim $::env(MULTITINI_C64_VIDEO_STANDARD)]]
@@ -51,7 +59,7 @@ switch -- $machine {
         set active_machine 1
     }
     default {
-        error "MULTITINI_MACHINE must be C64 or GBC"
+        error "MULTITINI_MACHINE must be SUPERVISOR, C64, or GBC"
     }
 }
 
@@ -247,7 +255,8 @@ set_property default_lib work [current_project]
 add_manifest_sources $repo_root $machine
 set psram_timing_file [require_file \
     [file join $repo_root hdl board multitini_psram_timing.xdc]]
-if {$machine eq "GBC" && !$enable_gbc_psram} {
+if {$machine eq "SUPERVISOR" ||
+    ($machine eq "GBC" && !$enable_gbc_psram)} {
     set psram_iob_file [require_file \
         [file join $repo_root hdl board multitini_psram_iob.xdc]]
     set_property USED_IN_SYNTHESIS false [get_files $psram_iob_file]

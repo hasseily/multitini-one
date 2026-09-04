@@ -32,6 +32,11 @@ ABI 0.7 build `2026090F` adds journaled GBC battery-RAM persistence. Fresh PAL,
 NTSC, and PSRAM-enabled GBC images pass the strict vendor gates, and Vitis
 2025.2 built the matching exFAT-enabled supervisor. After installing the staged
 image, the user confirmed GBC game-save persistence on the board.
+Current source adds journaled per-core settings, a System-menu `Autoboot current
+core` option that is off by default, and a supervisor-only boot FPGA target.
+The normal firmware image therefore starts with no machine loaded and shows the
+Multitini standby screen until F12 selection or explicit Autoboot. This source
+increment has not yet been rebuilt or tested on the board.
 
 ## Current state
 
@@ -64,16 +69,20 @@ Known:
   strict-tool compatibility ports, GB/GBC content validation, cartridge boot
   helper, adapter, one-line cartridge cache, and shared external-memory ABI are
   implemented and provenance locked.
-- The board shell still selects one machine at project creation, but the
-  ARM-resident multicore supervisor discovers strict
+- Project creation defaults to a supervisor-only shell with no packaged
+  machine. Explicit C64 and GBC projects produce dynamically loadable SD core
+  payloads. The ARM-resident multicore supervisor discovers strict
   SD core packages, safely replaces the complete PL through DevCfg/PCAP,
   validates the new shell/core/ABI, and reloads the previous package on
   failure. This is full PL reconfiguration, not partial reconfiguration.
 - Every current ABI 0.7 image includes the same double-buffered 80x36 overlay.
   The F12
   menu selects core variants, machine-specific media, active or diagnostic
-  video, input settings, core reset, and golden recovery. C64 and GBC both
-  have activation services; GBC accepts `.gb` and `.gbc` cartridges. See
+  video, input settings, explicit opt-in auto-boot, core reset, and golden
+  recovery. Merely selecting a core records its preferred variant but neither
+  enables nor retargets auto-boot.
+  C64 and GBC both have activation services; GBC accepts `.gb` and `.gbc`
+  cartridges. See
   [`docs/MULTICORE_RUNTIME.md`](docs/MULTICORE_RUNTIME.md).
 - GBC video crosses into a four-bank RGB565 frame ring and scales 160x144 by
   6x into the common 1080p output. The PSRAM-enabled `2026090E` image passes
@@ -259,10 +268,11 @@ review, or board testing.
 
 ## Vendor-tool handoff
 
-The intended first commands on a Vivado 2025.2 machine are:
+The intended first commands on a Vivado 2025.2 machine build the supervisor-only
+root image:
 
 ```powershell
-$env:MULTITINI_BUILD_ID = '2026090F'
+$env:MULTITINI_BUILD_ID = '20260910'
 vivado -mode batch -source scripts/create_project.tcl
 vivado -mode batch -source scripts/build_and_export_xsa.tcl
 vitis -s scripts/create_vitis_workspace.py
@@ -282,6 +292,10 @@ PowerShell with:
   .\build\vitis_workspace\diagnostic\build\diagnostic.elf
 ```
 
+The packager requires the `SUPERVISOR` kind marker emitted beside the bitstream
+by `build_and_export_xsa.tcl`; it rejects C64 and GBC machine bitstreams. Those
+belong only in SD core packages.
+
 The completed independent diagnostic and frozen-snapshot tests are recorded in
 [`docs/HARDWARE_RESULTS.md`](docs/HARDWARE_RESULTS.md). The preserved snapshot
 procedure is in
@@ -292,14 +306,16 @@ For the USB keyboard/gamepad image, use
 [`docs/C64_USB_INPUT_HARDWARE_TEST.md`](docs/C64_USB_INPUT_HARDWARE_TEST.md).
 None of these engineering images is a complete C64 release.
 
-Project creation defaults to PAL. Set
-`MULTITINI_C64_VIDEO_STANDARD=NTSC` while running `create_project.tcl` to make
-the independently reproducible NTSC build.
+Project creation defaults to the supervisor-only shell. Create a PAL or NTSC
+C64 package project explicitly with `MULTITINI_MACHINE=C64`; set
+`MULTITINI_C64_VIDEO_STANDARD=NTSC` for the NTSC variant. Create GBC similarly
+with `MULTITINI_MACHINE=GBC`.
 
 Create the source-only GBC project with:
 
-```sh
-MULTITINI_MACHINE=GBC vivado -mode batch -source scripts/create_project.tcl
+```powershell
+$env:MULTITINI_MACHINE = 'GBC'
+vivado -mode batch -source scripts/create_project.tcl
 ```
 
 This requests 33.554432 MHz and leaves the physical PSRAM path disabled. Read

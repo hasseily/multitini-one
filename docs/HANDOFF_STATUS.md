@@ -31,6 +31,14 @@ installed board reports the expected build and ABI, switches from C64 to GBC,
 validates and loads cartridges, and runs Tomb Raider and V-Rally into gameplay
 without the former white-screen lockup.
 
+Current source adds versioned, checksummed, journaled settings for per-core
+variant, disk/cartridge attachment, and C64 input choices. The menu has an
+explicit `Autoboot current core` setting. Autoboot defaults off, and merely
+selecting a core neither enables nor retargets it. The Vivado project now
+defaults to a supervisor-only boot shell (`ACTIVE_MACHINE=2`) with no C64 or GBC
+core; the root packager rejects machine bitstreams. No vendor rebuild or board
+test has been performed for this source increment.
+
 ## Completed repository and portable validation
 
 - Repository layout, GPL-3.0-only project license, ignore policy, source pins,
@@ -454,6 +462,10 @@ did not assert Fire and the player ring kept blinking.
   validation. The ABI 0.6 multicore menu and PCAP supervisor have a
   consolidated vendor build and successful C64-to-GBC board switch; rollback,
   repeated bidirectional switching, and the full media matrix remain open.
+- The settings and supervisor-only boot changes need a fresh Vivado
+  implementation, matching exFAT-enabled Vitis/package build, and board checks
+  for no-core startup, explicit opt-in Autoboot, per-core media/input
+  restoration, corrupt-file fallback, and interrupted settings writes.
 - Build `2026082F` routes audible live machine PCM and proves source switching,
   but its Decathlon and Ultima II faults leave SID compatibility, long-run
   behavior, level, channel behavior, reset behavior, and SPDIF open. The
@@ -467,25 +479,29 @@ did not assert Fire and the player ring kept blinking.
 
 ## Next validation sequence
 
-1. Extend the `20260902` audio pass with recorded Decathlon opening/gameplay and
+1. Build and package firmware source `20260910`, then verify settings with
+   `docs/SETTINGS_HARDWARE_TEST.md`. Do not rebuild the unchanged PAL, NTSC,
+   or GBC PL images solely for this ARM-only increment unless a matched new
+   release build ID is required.
+2. Extend the `20260902` audio pass with recorded Decathlon opening/gameplay and
    Ultima II sequences. Recheck UART `m`, `t`, and `a`, reset/load silence,
    channels, level, and SPDIF. Record whether either stuck tone returns before
    calling the full live SID audio path qualified.
-2. Continue the installed ABI 0.6 package test with PAL/NTSC switching in both
+3. Continue the installed ABI 0.6 package test with PAL/NTSC switching in both
    directions, CRC/ABI rejection, failed-load rollback, repeated switching,
    reset, and golden recovery. F12 rendering and one C64-to-GBC transition
    already pass.
-3. Exercise BASIC and non-BASIC PRGs, RUN typing,
+4. Exercise BASIC and non-BASIC PRGs, RUN typing,
    each accepted CRT mapper/profile, malformed and unsupported CRT rejection,
    cartridge cache misses, D64/G64 mount/eject/remount, reset/detach, and PSRAM
    fault handling through the menu.
-4. Basic ABI 0.7 GBC game-save persistence now passes on the board. Repeat it
+5. Basic ABI 0.7 GBC game-save persistence now passes on the board. Repeat it
    across a power cycle, then force one SD write failure and verify detach,
    reset, core switch, and golden reboot are refused without losing the dirty
    save. Extend the passing Tomb Raider and V-Rally runs across remaining
    MBC1/MBC5 samples, video, audio, keyboard/gamepad input, and repeated
    C64/GBC switching.
-5. Execute the remaining boot, DDR, input, and machine gates in
+6. Execute the remaining boot, DDR, input, and machine gates in
    `MULTITINI_ONE_PLAN.md` and `docs/VIVADO_HANDOFF.md`.
 
 The checked-in C64 CRT source now connects PSRAM, but it is not releasable until

@@ -15,7 +15,7 @@ class FirmwareRecoveryTests(unittest.TestCase):
         body = source.split("static void reboot_to_golden(void)", 1)[1]
         body = body.split("\n}\n", 1)[0]
 
-        media_flush = body.index("c64_d64_service_prepare_reset()")
+        media_flush = body.index("set_core_reset_request(true)")
         usb_power_stop = body.index("usb_hid_service_stop()")
         usb_power_failure = body.index("USB1 VBUS shutdown failed")
         drain = body.index("wait_uart0_transmit_idle()")
@@ -34,6 +34,12 @@ class FirmwareRecoveryTests(unittest.TestCase):
         self.assertLess(usb_power_stop, usb_power_failure)
         self.assertLess(usb_power_failure, unlock)
         self.assertLess(unlock, reset)
+
+        reset_wrapper = source.split(
+            "static int set_core_reset_request(bool asserted)", 1
+        )[1].split("\n}\n", 1)[0]
+        self.assertIn("c64_d64_service_prepare_reset()", reset_wrapper)
+        self.assertIn("gameboy_content_service_prepare_reset()", reset_wrapper)
 
     def test_recovery_command_is_explicit_and_core_reset_is_preserved(self):
         source = (ROOT / "firmware/platform/xilinx/main.c").read_text()
@@ -97,6 +103,28 @@ class FirmwareRecoveryTests(unittest.TestCase):
         dac_unmute = body.index("mt_ak4493_set_mute(&dac_bus, false)")
         self.assertLess(pl_unmute, settle)
         self.assertLess(settle, dac_unmute)
+
+    def test_boot_stays_in_supervisor_until_explicit_autoboot(self):
+        source = (ROOT / "firmware/platform/xilinx/main.c").read_text()
+        main = source.split("int main(void)", 1)[1]
+        initialization = source.split(
+            "static void initialize_supervisor_menu(void)", 1
+        )[1].split("\n}\n", 1)[0]
+
+        self.assertNotIn("attempt_c64_sd_boot();", main.split(
+            "initialize_supervisor_menu();", 1
+        )[0])
+        self.assertNotIn("mt_supervisor_set_initial", initialization)
+        self.assertIn("supervisor_enter_standby()", initialization)
+        self.assertIn("if (persistent_settings.auto_boot)", initialization)
+        self.assertIn(
+            "mt_supervisor_switch(&supervisor, &startup_auto_selection)",
+            initialization,
+        )
+        self.assertIn(
+            'set_supervisor_status("Ready; press F12 to choose a core")',
+            initialization,
+        )
 
     def test_c64_upload_is_reset_guarded_and_recovery_excludes_it(self):
         source = (ROOT / "firmware/platform/xilinx/main.c").read_text()

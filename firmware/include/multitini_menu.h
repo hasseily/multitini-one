@@ -35,6 +35,7 @@ typedef enum {
     MT_MENU_ACTION_TOGGLE_KEYBOARD_MAP,
     MT_MENU_ACTION_SWAP_JOYSTICK_PORT,
     MT_MENU_ACTION_RESET_CORE,
+    MT_MENU_ACTION_TOGGLE_AUTO_BOOT,
     MT_MENU_ACTION_REBOOT_GOLDEN
 } mt_menu_action_kind_t;
 
@@ -78,6 +79,8 @@ typedef struct {
     bool save_faulted;
     bool c64_input_settings;
     bool video_test_enabled;
+    bool settings_auto_boot;
+    bool settings_faulted;
     bool symbolic_keyboard;
     uint8_t joystick_port;
 } mt_menu_view_t;

@@ -20,6 +20,7 @@
 #include "multitini_xmodem.h"
 #include "pl_loader.h"
 #include "sd_storage.h"
+#include "supervisor_settings.h"
 #include "usb_hid_service.h"
 
 #include <stdbool.h>
@@ -39,7 +40,8 @@
 #include "xuartps_hw.h"
 
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
-#define MT_FIRMWARE_BUILD_ID UINT32_C(0x2026090F)
+#define MT_SUPERVISOR_CORE_ID UINT32_C(0)
+#define MT_FIRMWARE_BUILD_ID UINT32_C(0x20260910)
 #define MT_I2C_CLOCK_HZ UINT32_C(100000)
 #define MT_I2C_BUSY_POLLS UINT32_C(1000000)
 #define MT_UART_DRAIN_POLLS UINT32_C(10000000)
@@ -87,6 +89,17 @@ static uint8_t supervisor_menu_keys[MT_C64_HID_SLOT_COUNT]
 static char supervisor_status_text[64] = "Ready";
 static mt_menu_file_t supervisor_menu_files[MT_MENU_MAX_FILES];
 static size_t supervisor_menu_file_count;
+static mt_supervisor_settings_t persistent_settings;
+static mt_supervisor_settings_t settings_before_update;
+static mt_core_selection_t startup_auto_selection;
+static bool settings_faulted;
+static bool settings_missing_on_boot;
+static bool last_settings_restore_ok = true;
+
+static bool save_persistent_settings(void);
+static bool remember_active_drive8(const char *file_name);
+static bool remember_active_cartridge(const char *file_name);
+static bool remember_c64_input_settings(void);
 
 static int board_i2c_write(void *context, uint8_t address, uint8_t reg,
                            uint8_t value)
@@ -834,6 +847,11 @@ static void handle_c64_content_load(const char *file_name)
     result = c64_content_service_load(file_name);
     print_c64_content_result("load", file_name, &result);
     finish_c64_content_change();
+    if (result.status == MT_C64_CONTENT_SERVICE_OK) {
+        (void)remember_active_cartridge(
+            mt_content_classify(file_name) == MT_CONTENT_CRT ?
+            file_name : NULL);
+    }
 }
 
 static void handle_c64_cart_detach(void)
@@ -843,6 +861,8 @@ static void handle_c64_cart_detach(void)
     result = c64_content_service_detach_crt();
     print_c64_content_result("cartridge detach", NULL, &result);
     finish_c64_content_change();
+    if (result.status == MT_C64_CONTENT_SERVICE_OK)
+        (void)remember_active_cartridge(NULL);
 }
 
 static bool read_extended_command(char *buffer, size_t capacity)
@@ -964,7 +984,8 @@ static void handle_extended_command(bool recovery_only)
             xil_printf("[C64] drive8 retry failed\r\n");
         }
     } else if (!recovery_only && strcmp(extended, "eject") == 0) {
-        (void)c64_d64_service_eject();
+        if (c64_d64_service_eject() == 0)
+            (void)remember_active_drive8(NULL);
     } else if (!recovery_only && strcmp(extended, "cartoff") == 0) {
         handle_c64_cart_detach();
     } else if (!recovery_only && strncmp(extended, "load", 4U) == 0 &&
@@ -997,7 +1018,8 @@ static void handle_extended_command(bool recovery_only)
             xil_printf("[C64] drive8 unavailable; install %s\r\n",
                        MT_C64_SD_1541_PATH);
         } else {
-            (void)c64_d64_service_mount(argument);
+            if (c64_d64_service_mount(argument) == 0)
+                (void)remember_active_drive8(argument);
         }
     } else {
         xil_printf("unknown extended command ':%s'\r\n", extended);
@@ -1033,6 +1055,198 @@ static void set_supervisor_status(const char *text)
     memcpy(supervisor_status_text, text, size);
     supervisor_status_text[size] = '\0';
     supervisor_menu_dirty = true;
+}
+
+static const char *active_settings_core_id(void)
+{
+    return supervisor.has_active ? supervisor.active.package.id : NULL;
+}
+
+static bool save_persistent_settings(void)
+{
+    const mt_settings_result_t result =
+        mt_supervisor_settings_save(&persistent_settings);
+    settings_faulted = result.status != MT_SETTINGS_OK;
+    supervisor_menu_dirty = true;
+    xil_printf("[settings] save=%s sd=%s backend=%u auto-boot=%u "
+               "selected=%s\r\n",
+               mt_settings_status_name(result.status),
+               mt_sd_status_name(result.sd.status), result.sd.backend_status,
+               persistent_settings.auto_boot ? 1U : 0U,
+               persistent_settings.selected_core_id[0] == '\0' ?
+                   "none" : persistent_settings.selected_core_id);
+    return !settings_faulted;
+}
+
+static bool ensure_active_settings_profile(void)
+{
+    return supervisor.has_active &&
+           mt_supervisor_settings_remember_variant(
+               &persistent_settings, supervisor.active.package.id,
+               supervisor.active.package
+                   .variants[supervisor.active.variant_index].id);
+}
+
+static bool remember_active_drive8(const char *file_name)
+{
+    const char *const core_id = active_settings_core_id();
+    return core_id != NULL && ensure_active_settings_profile() &&
+           mt_supervisor_settings_remember_drive8(
+               &persistent_settings, core_id, file_name) &&
+           save_persistent_settings();
+}
+
+static bool remember_active_cartridge(const char *file_name)
+{
+    const char *const core_id = active_settings_core_id();
+    return core_id != NULL && ensure_active_settings_profile() &&
+           mt_supervisor_settings_remember_cartridge(
+               &persistent_settings, core_id, file_name) &&
+           save_persistent_settings();
+}
+
+static bool remember_c64_input_settings(void)
+{
+    const char *const core_id = active_settings_core_id();
+    return core_id != NULL && ensure_active_settings_profile() &&
+           mt_supervisor_settings_remember_c64_input(
+               &persistent_settings, core_id,
+               usb_hid_service_symbolic_keyboard(),
+               usb_hid_service_joystick_port()) &&
+           save_persistent_settings();
+}
+
+static bool remember_manual_selection(const mt_core_selection_t *selection)
+{
+    if (selection == NULL ||
+        !mt_supervisor_settings_remember_variant(
+            &persistent_settings, selection->package.id,
+            selection->package.variants[selection->variant_index].id)) {
+        return false;
+    }
+    if (selection->package.core_id == MT_C64_CORE_ID &&
+        !mt_supervisor_settings_remember_c64_input(
+            &persistent_settings, selection->package.id,
+            usb_hid_service_symbolic_keyboard(),
+            usb_hid_service_joystick_port())) {
+        return false;
+    }
+    return save_persistent_settings();
+}
+
+static bool configured_auto_boot_selection(mt_core_selection_t *selection)
+{
+    const mt_core_settings_profile_t *profile;
+    size_t core_index;
+    if (selection == NULL || !persistent_settings.auto_boot ||
+        persistent_settings.selected_core_id[0] == '\0') {
+        return false;
+    }
+    profile = mt_supervisor_settings_find(
+        &persistent_settings, persistent_settings.selected_core_id);
+    if (profile == NULL) return false;
+    for (core_index = 0U; core_index < core_catalog.count; ++core_index) {
+        size_t variant_index;
+        if (strcmp(core_catalog.cores[core_index].package.id,
+                   persistent_settings.selected_core_id) != 0) {
+            continue;
+        }
+        *selection = core_catalog.cores[core_index];
+        for (variant_index = 0U;
+             variant_index < selection->package.variant_count;
+             ++variant_index) {
+            if (strcmp(selection->package.variants[variant_index].id,
+                       profile->variant_id) == 0) {
+                selection->variant_index = variant_index;
+                return true;
+            }
+        }
+        return false;
+    }
+    return false;
+}
+
+static bool restore_selection_settings(
+    const mt_core_selection_t *selection)
+{
+    const mt_core_settings_profile_t *profile;
+    bool ok = true;
+    if (selection == NULL) return false;
+    profile = mt_supervisor_settings_find(&persistent_settings,
+                                          selection->package.id);
+    if (selection->package.core_id == MT_C64_CORE_ID) {
+        if (profile != NULL) {
+            if (usb_hid_service_set_symbolic_keyboard(
+                    profile->symbolic_keyboard) != 0 ||
+                usb_hid_service_set_joystick_port(
+                    profile->joystick_port) != 0) {
+                xil_printf("[settings] C64 input restore failed\r\n");
+                ok = false;
+            }
+            if (profile->cartridge_name[0] != '\0') {
+                mt_c64_content_service_result_t content;
+                if (!prepare_c64_content_change()) {
+                    ok = false;
+                } else {
+                    content = c64_content_service_load(
+                        profile->cartridge_name);
+                    print_c64_content_result(
+                        "settings restore", profile->cartridge_name,
+                        &content);
+                    finish_c64_content_change();
+                    if (content.status != MT_C64_CONTENT_SERVICE_OK)
+                        ok = false;
+                }
+            }
+            if (profile->drive8_name[0] != '\0') {
+                const bool already_mounted = c64_d64_service_mounted() &&
+                    strcmp(c64_d64_service_mounted_name(),
+                           profile->drive8_name) == 0;
+                if (!c64_drive_ready ||
+                    (!already_mounted &&
+                     c64_d64_service_mount(profile->drive8_name) != 0)) {
+                    xil_printf("[settings] drive8 restore failed: %s\r\n",
+                               profile->drive8_name);
+                    ok = false;
+                }
+            }
+        } else if (settings_missing_on_boot && c64_drive_ready &&
+                   c64_d64_service_mount_default() == 0) {
+            /* Preserve first-run convenience when the first manually chosen
+             * core is C64, without making C64 the boot core. The subsequent
+             * manual-selection save persists this mount. */
+            (void)mt_supervisor_settings_remember_variant(
+                &persistent_settings, selection->package.id,
+                selection->package.variants[selection->variant_index].id);
+            (void)mt_supervisor_settings_remember_drive8(
+                &persistent_settings, selection->package.id,
+                MT_C64_DEFAULT_D64_NAME);
+        }
+        return ok;
+    }
+    if (selection->package.core_id == MT_GBC_CORE_ID) {
+        if (profile != NULL && profile->cartridge_name[0] != '\0') {
+            const mt_gameboy_content_service_result_t content =
+                gameboy_content_service_load(profile->cartridge_name);
+            if (content.status == MT_GAMEBOY_CONTENT_SERVICE_OK) {
+                usb_hid_service_set_core_ready(true);
+                if (dac_ready) set_audio(false, false);
+                set_video_test(false);
+                xil_printf("[settings] GBC cartridge restored: %s\r\n",
+                           profile->cartridge_name);
+                return true;
+            }
+            xil_printf("[settings] GBC cartridge restore failed: %s (%s)\r\n",
+                       profile->cartridge_name,
+                       gameboy_content_service_status_name(content.status));
+            ok = false;
+        }
+        usb_hid_service_set_core_ready(false);
+        if (dac_ready) set_audio(true, false);
+        set_video_test(true);
+        return ok;
+    }
+    return true;
 }
 
 static mt_menu_view_t supervisor_menu_view(void)
@@ -1075,6 +1289,11 @@ static mt_menu_view_t supervisor_menu_view(void)
     view.file_count = supervisor_menu_file_count;
     view.video_test_enabled =
         (shell_read(MT_REG_CONTROL) & MT_CONTROL_VIDEO_TEST_ENABLE) != 0U;
+    view.settings_auto_boot = persistent_settings.auto_boot &&
+        supervisor.has_active &&
+        strcmp(persistent_settings.selected_core_id,
+               supervisor.active.package.id) == 0;
+    view.settings_faulted = settings_faulted;
     view.symbolic_keyboard = usb_hid_service_symbolic_keyboard();
     view.joystick_port = usb_hid_service_joystick_port();
     return view;
@@ -1208,6 +1427,7 @@ static int supervisor_activate(void *context,
         gameboy_save_fault_displayed = false;
         c64_core_reset_active = true;
         usb_hid_service_set_core_ready(false);
+        last_settings_restore_ok = restore_selection_settings(selection);
         return 0;
     }
     if (selection->package.core_id != MT_C64_CORE_ID) {
@@ -1216,6 +1436,7 @@ static int supervisor_activate(void *context,
         return -1;
     }
     c64_core_reset_active = true;
+    c64_content_service_init(&shell_link, NULL, NULL);
     if (!attempt_c64_sd_boot()) return -2;
     if (c64_services_initialized &&
         c64_d64_service_resume_after_reset() != 0) {
@@ -1225,13 +1446,35 @@ static int supervisor_activate(void *context,
     usb_hid_service_set_core_ready(
         (shell_read(MT_REG_STATUS) & MT_STATUS_CORE_READY) != 0U);
     if (dac_ready) set_audio(false, false);
+    last_settings_restore_ok = restore_selection_settings(selection);
+    return 0;
+}
+
+static int supervisor_enter_standby(void)
+{
+    if (set_core_reset_request(true) != 0) return -1;
+    set_audio(true, false);
+    set_video_test(true);
+    usb_hid_service_set_active_core(MT_SUPERVISOR_CORE_ID);
+    usb_hid_service_set_core_ready(false);
+    c64_drive_ready = false;
+    c64_core_reset_active = true;
+    gameboy_service_initialized = false;
+    gameboy_save_dirty_displayed = false;
+    gameboy_save_fault_displayed = false;
     return 0;
 }
 
 static int supervisor_recover(void *context)
 {
     (void)context;
-    return -1;
+    mt_core_link_init_mmio(&shell_link,
+        (volatile void *)(uintptr_t)MT_SHELL_BASE_ADDRESS);
+    if (mt_core_link_probe(&shell_link) != MT_LINK_OK ||
+        shell_read(MT_REG_CORE_ID) != MT_SUPERVISOR_CORE_ID) {
+        return -1;
+    }
+    return supervisor_enter_standby();
 }
 
 static bool key_bitmap_get(const uint8_t *bitmap, uint8_t usage)
@@ -1294,7 +1537,21 @@ static void handle_menu_action(mt_menu_action_t action)
         selection.variant_index = action.variant_index;
         set_supervisor_status("Switching core...");
         result = mt_supervisor_switch(&supervisor, &selection);
-        set_supervisor_status(mt_supervisor_result_name(result));
+        if (result == MT_SUPERVISOR_OK) {
+            if (!remember_manual_selection(&supervisor.active))
+                set_supervisor_status("Core active; settings write failed");
+            else if (!last_settings_restore_ok)
+                set_supervisor_status("Core active; media restore failed");
+            else
+                set_supervisor_status("Core switched");
+        } else if (result == MT_SUPERVISOR_NO_CHANGE) {
+            set_supervisor_status(
+                remember_manual_selection(&supervisor.active) ?
+                "Core already active" :
+                "Core active; settings write failed");
+        } else {
+            set_supervisor_status(mt_supervisor_result_name(result));
+        }
         xil_printf("[supervisor] switch %s state=%s backend=%d recovered=%u\r\n",
                    mt_supervisor_result_name(result),
                    mt_supervisor_state_name(supervisor.state),
@@ -1316,8 +1573,13 @@ static void handle_menu_action(mt_menu_action_t action)
         status = c64_d64_service_mount(
             supervisor_menu_files[action.file_index].name);
         if (status == 0) supervisor_menu.browser = MT_MENU_BROWSER_NONE;
-        set_supervisor_status(status == 0 ? "Drive 8 mounted" :
-                              "Drive 8 mount failed");
+        if (status != 0)
+            set_supervisor_status("Drive 8 mount failed");
+        else if (!remember_active_drive8(
+                     supervisor_menu_files[action.file_index].name))
+            set_supervisor_status("Drive mounted; settings write failed");
+        else
+            set_supervisor_status("Drive 8 mounted");
     } else if (action.kind == MT_MENU_ACTION_LOAD_CONTENT) {
         if (action.file_index >= supervisor_menu_file_count) {
             set_supervisor_status("Content load could not start");
@@ -1350,11 +1612,17 @@ static void handle_menu_action(mt_menu_action_t action)
                 set_video_test(false);
             }
             if (result.status == MT_GAMEBOY_CONTENT_SERVICE_OK) {
-                set_supervisor_status(
-                    !result.save_active ? "Game Boy cartridge loaded" :
-                    (result.save_existed ?
-                     "Game Boy loaded; save restored" :
-                     "Game Boy loaded; new save ready"));
+                if (!remember_active_cartridge(
+                        supervisor_menu_files[action.file_index].name)) {
+                    set_supervisor_status(
+                        "Game Boy loaded; settings write failed");
+                } else {
+                    set_supervisor_status(
+                        !result.save_active ? "Game Boy cartridge loaded" :
+                        (result.save_existed ?
+                         "Game Boy loaded; save restored" :
+                         "Game Boy loaded; new save ready"));
+                }
             } else {
                 set_supervisor_status(
                     result.status == MT_GAMEBOY_CONTENT_SERVICE_FLUSH_FAILED ?
@@ -1375,12 +1643,26 @@ static void handle_menu_action(mt_menu_action_t action)
             finish_c64_content_change();
             if (result.status == MT_C64_CONTENT_SERVICE_OK)
                 supervisor_menu.browser = MT_MENU_BROWSER_NONE;
-            set_supervisor_status(result.status == MT_C64_CONTENT_SERVICE_OK ?
-                                  "Content loaded" : "Content load failed");
+            if (result.status != MT_C64_CONTENT_SERVICE_OK) {
+                set_supervisor_status("Content load failed");
+            } else if (!remember_active_cartridge(
+                           mt_content_classify(
+                               supervisor_menu_files[action.file_index].name) ==
+                                   MT_CONTENT_CRT ?
+                           supervisor_menu_files[action.file_index].name :
+                           NULL)) {
+                set_supervisor_status("Content loaded; settings write failed");
+            } else {
+                set_supervisor_status("Content loaded");
+            }
         }
     } else if (action.kind == MT_MENU_ACTION_EJECT_DRIVE8) {
-        set_supervisor_status(c64_d64_service_eject() == 0 ?
-                              "Drive 8 ejected" : "Drive 8 eject failed");
+        if (c64_d64_service_eject() != 0)
+            set_supervisor_status("Drive 8 eject failed");
+        else if (!remember_active_drive8(NULL))
+            set_supervisor_status("Drive ejected; settings write failed");
+        else
+            set_supervisor_status("Drive 8 ejected");
     } else if (action.kind == MT_MENU_ACTION_DETACH_CARTRIDGE) {
         if (shell_read(MT_REG_CORE_ID) == MT_GBC_CORE_ID) {
             const mt_gameboy_content_service_result_t result =
@@ -1390,18 +1672,33 @@ static void handle_menu_action(mt_menu_action_t action)
                 if (dac_ready) set_audio(true, false);
                 set_video_test(true);
             }
-            set_supervisor_status(
-                result.status == MT_GAMEBOY_CONTENT_SERVICE_OK ?
-                "Cartridge unloaded" :
-                (result.status == MT_GAMEBOY_CONTENT_SERVICE_FLUSH_FAILED ?
-                 "Unload blocked: save write failed" :
-                 "Cartridge unload failed"));
+            if (result.status == MT_GAMEBOY_CONTENT_SERVICE_OK) {
+                set_supervisor_status(
+                    remember_active_cartridge(NULL) ?
+                    "Cartridge unloaded" :
+                    "Cart unloaded; settings write failed");
+            } else {
+                set_supervisor_status(
+                    result.status == MT_GAMEBOY_CONTENT_SERVICE_FLUSH_FAILED ?
+                    "Unload blocked: save write failed" :
+                    "Cartridge unload failed");
+            }
         } else {
-            const mt_c64_content_service_result_t result =
-                c64_content_service_detach_crt();
-            set_supervisor_status(
-                result.status == MT_C64_CONTENT_SERVICE_OK ?
-                "Cartridge detached" : "Cartridge detach failed");
+            mt_c64_content_service_result_t result;
+            if (!prepare_c64_content_change()) {
+                set_supervisor_status("Cartridge detach could not start");
+                return;
+            }
+            result = c64_content_service_detach_crt();
+            finish_c64_content_change();
+            if (result.status == MT_C64_CONTENT_SERVICE_OK) {
+                set_supervisor_status(
+                    remember_active_cartridge(NULL) ?
+                    "Cartridge detached" :
+                    "Cart detached; settings write failed");
+            } else {
+                set_supervisor_status("Cartridge detach failed");
+            }
         }
     } else if (action.kind == MT_MENU_ACTION_TOGGLE_VIDEO_SOURCE) {
         const uint32_t control = shell_read(MT_REG_CONTROL);
@@ -1413,20 +1710,64 @@ static void handle_menu_action(mt_menu_action_t action)
                               "Multitini standby selected");
     } else if (action.kind == MT_MENU_ACTION_TOGGLE_KEYBOARD_MAP) {
         const bool symbolic = !usb_hid_service_symbolic_keyboard();
-        set_supervisor_status(
-            usb_hid_service_set_symbolic_keyboard(symbolic) == 0 ?
-            "Keyboard map changed" : "Keyboard map change failed");
+        if (usb_hid_service_set_symbolic_keyboard(symbolic) != 0)
+            set_supervisor_status("Keyboard map change failed");
+        else if (!remember_c64_input_settings())
+            set_supervisor_status("Keyboard changed; settings write failed");
+        else
+            set_supervisor_status("Keyboard map changed");
     } else if (action.kind == MT_MENU_ACTION_SWAP_JOYSTICK_PORT) {
         const uint8_t port = usb_hid_service_joystick_port() == 2U ? 1U : 2U;
-        set_supervisor_status(usb_hid_service_set_joystick_port(port) == 0 ?
-                              "Gamepad port changed" :
-                              "Gamepad port change failed");
+        if (usb_hid_service_set_joystick_port(port) != 0)
+            set_supervisor_status("Gamepad port change failed");
+        else if (!remember_c64_input_settings())
+            set_supervisor_status("Gamepad changed; settings write failed");
+        else
+            set_supervisor_status("Gamepad port changed");
     } else if (action.kind == MT_MENU_ACTION_RESET_CORE) {
+        if (!supervisor.has_active) {
+            set_supervisor_status("No active core");
+            return;
+        }
         const int asserted = set_core_reset_request(true);
         if (asserted == 0) usleep(1000U);
         set_supervisor_status(
             asserted == 0 && set_core_reset_request(false) == 0 ?
             "Core restarted" : "Core restart failed");
+    } else if (action.kind == MT_MENU_ACTION_TOGGLE_AUTO_BOOT) {
+        const bool active_is_target = persistent_settings.auto_boot &&
+            supervisor.has_active &&
+            strcmp(persistent_settings.selected_core_id,
+                   supervisor.active.package.id) == 0;
+        const bool enabled = !active_is_target;
+        bool valid = true;
+        settings_before_update = persistent_settings;
+        if (enabled) {
+            valid = supervisor.has_active &&
+                mt_supervisor_settings_remember_core(
+                    &persistent_settings, supervisor.active.package.id,
+                    supervisor.active.package
+                        .variants[supervisor.active.variant_index].id);
+            if (valid && supervisor.active.package.core_id ==
+                             MT_C64_CORE_ID) {
+                valid = mt_supervisor_settings_remember_c64_input(
+                    &persistent_settings, supervisor.active.package.id,
+                    usb_hid_service_symbolic_keyboard(),
+                    usb_hid_service_joystick_port());
+            }
+        }
+        if (!valid) {
+            set_supervisor_status("Cannot enable auto-boot");
+        } else {
+            persistent_settings.auto_boot = enabled;
+            if (save_persistent_settings()) {
+                set_supervisor_status(enabled ? "Autoboot enabled" :
+                                      "Autoboot disabled");
+            } else {
+                persistent_settings = settings_before_update;
+                set_supervisor_status("Autoboot change not saved");
+            }
+        }
     } else if (action.kind == MT_MENU_ACTION_REBOOT_GOLDEN) {
         reboot_to_golden();
     }
@@ -1460,8 +1801,10 @@ static void initialize_supervisor_menu(void)
         supervisor_activate, supervisor_recover
     };
     const uint32_t current_core = shell_read(MT_REG_CORE_ID);
-    const uint32_t current_variant = shell_read(MT_REG_CORE_VARIANT_INDEX);
-    int active_index;
+    mt_settings_result_t load_result;
+    mt_supervisor_result_t switch_result;
+    const bool boot_shell_valid = current_core == MT_SUPERVISOR_CORE_ID;
+    bool standby_ready;
     mt_menu_view_t view;
 
     mt_core_catalog_sd_scan(&core_catalog);
@@ -1471,25 +1814,76 @@ static void initialize_supervisor_menu(void)
                mt_sd_status_name(core_catalog.sd.status),
                core_catalog.sd.backend_status);
     mt_supervisor_init(&supervisor, &ops, NULL);
-    active_index = mt_core_catalog_sd_find(&core_catalog, current_core);
-    if (active_index >= 0) {
-        mt_core_selection_t initial = core_catalog.cores[active_index];
-        if (current_variant < initial.package.variant_count)
-            initial.variant_index = current_variant;
-        (void)mt_supervisor_set_initial(&supervisor, &initial);
-        if (initial.package.core_id == MT_GBC_CORE_ID) {
-            gameboy_content_service_init(
-                &shell_link, initial.package.content_root,
-                initial.package.abi_minor >= 7U, NULL, NULL);
-            gameboy_service_initialized = true;
-            gameboy_save_dirty_displayed = false;
-            gameboy_save_fault_displayed = false;
+    standby_ready = supervisor_enter_standby() == 0;
+    xil_printf("[supervisor] boot shell core=%08x valid=%u standby=%u\r\n",
+               (unsigned int)current_core, boot_shell_valid ? 1U : 0U,
+               standby_ready ? 1U : 0U);
+
+    load_result = mt_supervisor_settings_load(&persistent_settings);
+    settings_missing_on_boot = load_result.status == MT_SETTINGS_MISSING;
+    settings_faulted = load_result.status != MT_SETTINGS_OK &&
+                       load_result.status != MT_SETTINGS_MISSING;
+    xil_printf("[settings] load=%s sd=%s backend=%u auto-boot=%u "
+               "selected=%s\r\n",
+               mt_settings_status_name(load_result.status),
+               mt_sd_status_name(load_result.sd.status),
+               load_result.sd.backend_status,
+               persistent_settings.auto_boot ? 1U : 0U,
+               persistent_settings.selected_core_id[0] == '\0' ?
+                   "none" : persistent_settings.selected_core_id);
+    if (!boot_shell_valid)
+        set_supervisor_status("Invalid boot image; core held in reset");
+    else if (!standby_ready)
+        set_supervisor_status("Supervisor standby failed");
+    else if (settings_faulted)
+        set_supervisor_status("Settings invalid; using safe defaults");
+    else
+        set_supervisor_status("Ready; press F12 to choose a core");
+
+    if (persistent_settings.auto_boot) {
+        if (!configured_auto_boot_selection(&startup_auto_selection)) {
+            set_supervisor_status("Autoboot target unavailable");
+        } else {
+            switch_result =
+                mt_supervisor_switch(&supervisor, &startup_auto_selection);
+            if (switch_result != MT_SUPERVISOR_OK) {
+                set_supervisor_status(
+                    supervisor.recovered ?
+                    "Autoboot failed; standby restored" :
+                    "Autoboot and recovery failed");
+            } else {
+                set_supervisor_status(last_settings_restore_ok ?
+                                      "Autoboot complete" :
+                                      "Autoboot media restore failed");
+            }
         }
-    } else {
-        set_supervisor_status("Active core has no SD package");
     }
     view = supervisor_menu_view();
     mt_menu_init(&supervisor_menu, &view);
+    {
+        size_t core_index;
+        for (core_index = 0U; core_index < core_catalog.count;
+             ++core_index) {
+            const mt_core_settings_profile_t *const profile =
+                mt_supervisor_settings_find(
+                    &persistent_settings,
+                    core_catalog.cores[core_index].package.id);
+            size_t variant_index;
+            if (profile == NULL) continue;
+            for (variant_index = 0U;
+                 variant_index < core_catalog.cores[core_index]
+                                      .package.variant_count;
+                 ++variant_index) {
+                if (strcmp(core_catalog.cores[core_index]
+                               .package.variants[variant_index].id,
+                           profile->variant_id) == 0) {
+                    supervisor_menu.selected_variant[core_index] =
+                        variant_index;
+                    break;
+                }
+            }
+        }
+    }
     pending_menu_action.kind = MT_MENU_ACTION_NONE;
     supervisor_menu_ready = true;
     supervisor_menu_dirty = true;
@@ -1528,10 +1922,6 @@ int main(void)
         xil_printf("shell unavailable; diagnostic outputs remain in reset defaults\r\n");
         recovery_console();
     }
-    if (shell_read(MT_REG_CORE_ID) == MT_C64_CORE_ID) {
-        attempt_c64_sd_boot();
-    }
-
     status = initialize_i2c();
     i2c_ready = status == 0;
     if (i2c_ready) {
@@ -1548,15 +1938,10 @@ int main(void)
     dac_ready = status == 0;
     xil_printf("DAC initialization (muted): %s (%d)\r\n",
                dac_ready ? "ok" : "failed", status);
-    if (dac_ready &&
-        (shell_read(MT_REG_STATUS) & MT_STATUS_CORE_READY) != 0U) {
-        set_audio(false, false);
-    }
     print_status();
     usb_hid_service_init(&shell_link);
-    usb_hid_service_set_active_core(shell_read(MT_REG_CORE_ID));
-    usb_hid_service_set_core_ready(
-        (shell_read(MT_REG_STATUS) & MT_STATUS_CORE_READY) != 0U);
+    usb_hid_service_set_active_core(MT_SUPERVISOR_CORE_ID);
+    usb_hid_service_set_core_ready(false);
     usb_status = usb_hid_service_start();
     xil_printf("USB1 keyboard/gamepad initialization: %s (%d)\r\n",
                usb_status == 0 ? "ok" : "failed", usb_status);
@@ -1565,9 +1950,6 @@ int main(void)
     c64_d64_service_init(&shell_link, NULL, NULL);
     c64_content_service_init(&shell_link, NULL, NULL);
     c64_services_initialized = true;
-    if (shell_read(MT_REG_CORE_ID) == MT_C64_CORE_ID && c64_drive_ready) {
-        (void)c64_d64_service_mount_default();
-    }
     initialize_supervisor_menu();
     service_supervisor_menu();
     print_help();
@@ -1614,6 +1996,8 @@ int main(void)
             if (usb_hid_service_set_symbolic_keyboard(symbolic) == 0) {
                 xil_printf("USB keyboard map: %s\r\n",
                            symbolic ? "US symbolic" : "MiSTer positional");
+                if (!remember_c64_input_settings())
+                    xil_printf("[settings] keyboard map was not saved\r\n");
             } else {
                 xil_printf("USB keyboard map change failed\r\n");
             }
@@ -1625,6 +2009,8 @@ int main(void)
             if (usb_hid_service_set_joystick_port(port) == 0) {
                 xil_printf("USB gamepad mapped to C64 joystick port %u\r\n",
                            (unsigned int)port);
+                if (!remember_c64_input_settings())
+                    xil_printf("[settings] gamepad port was not saved\r\n");
             } else {
                 xil_printf("USB gamepad port swap failed\r\n");
             }

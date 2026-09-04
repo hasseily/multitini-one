@@ -36,6 +36,14 @@ exFAT-enabled Vitis supervisor image also builds and packages successfully.
 The staged `2026090F` image was installed, and the user confirmed GBC game-save
 persistence on the board on 2026-09-04.
 
+Current source adds a versioned, checksummed, journaled supervisor settings
+file and a supervisor-only boot FPGA target. Core and timing choices are
+remembered independently of an explicit Autoboot target, which defaults off
+and changes only when the user selects `Autoboot current core`. With Autoboot
+off, no machine is loaded and the common shell shows the Multitini standby
+screen. Per-core media and C64 input choices are restored only when that core
+is active. A fresh vendor build, package, and board test remain.
+
 ## Ownership boundaries
 
 The ARM control program owns files, USB protocol work, settings, menus, update
@@ -51,13 +59,14 @@ changes belong in the shell or adapter.
 
 ## Machine images and runtime selection
 
-One complete machine adapter is selected when each Vivado project is created.
-`MULTITINI_MACHINE=C64` is the default; `MULTITINI_MACHINE=GBC` selects the
-Game Boy Color reuse-validation image. Only the common and selected-machine
-sections of the HDL manifest enter that project, so an inactive core is not a
-build dependency.
+`MULTITINI_MACHINE=SUPERVISOR` is the project default. It imports only the
+common HDL and contains no machine adapter or core. Explicit
+`MULTITINI_MACHINE=C64` and `MULTITINI_MACHINE=GBC` projects select one complete
+machine adapter for an SD-loadable package. Only the common and selected-machine
+sections of the HDL manifest enter a project, so inactive cores are not build
+dependencies.
 
-Each image is one full Zynq configuration containing:
+Every image is one full Zynq configuration containing:
 
 - the PS and its DDR, QSPI, SD, UART, I2C, and two ULPI controllers;
 - a small AXI control register bank;
@@ -66,12 +75,13 @@ Each image is one full Zynq configuration containing:
   frames converted to the fixed C64 palette;
 - a shared I2S/SPDIF stage that selects live machine PCM or the fixed test tone;
 - safe idle values on Apple, Ethernet, and PSRAM pins; and
-- one retained machine adapter/core integration. The PAL C64 RGB output feeds
-  the live-frame bridge, and the selected machine's PCM output feeds the common
-  audio stage.
+- for an SD core package only, one retained machine adapter/core integration.
+  The supervisor boot image omits this layer entirely. The selected machine's
+  video and PCM feed the common output stages after dynamic load.
 
-The ARM supervisor can replace this complete PL image from a validated raw
-bitstream package while the ARM application remains alive in DDR. It first
+The ARM supervisor can replace the supervisor shell or active machine image
+from a validated raw bitstream package while the ARM application remains alive
+in DDR. It first
 flushes media and quiesces the active core, isolates the PL, loads through
 DevCfg/PCAP, probes the new shell/core/ABI, then activates the new service. A
 failure after quiescing attempts to reload the last known active package.

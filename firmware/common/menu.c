@@ -18,7 +18,7 @@ static size_t page_rows(mt_menu_page_t page, const mt_menu_view_t *view)
     case MT_MENU_PAGE_MEDIA: return 3U;
     case MT_MENU_PAGE_VIDEO: return 2U;
     case MT_MENU_PAGE_INPUT: return 2U;
-    case MT_MENU_PAGE_SYSTEM: return 2U;
+    case MT_MENU_PAGE_SYSTEM: return 3U;
     default: return 0U;
     }
 }
@@ -175,7 +175,9 @@ mt_menu_action_t mt_menu_key(mt_menu_t *menu, const mt_menu_view_t *view,
                               MT_MENU_ACTION_SWAP_JOYSTICK_PORT;
         } else if (menu->page == MT_MENU_PAGE_SYSTEM) {
             action.kind = menu->row == 0U ? MT_MENU_ACTION_RESET_CORE :
-                          MT_MENU_ACTION_REBOOT_GOLDEN;
+                          (menu->row == 1U ?
+                           MT_MENU_ACTION_TOGGLE_AUTO_BOOT :
+                           MT_MENU_ACTION_REBOOT_GOLDEN);
         }
     }
     return action;
@@ -294,7 +296,12 @@ static void render_page(const mt_menu_t *menu, const mt_menu_view_t *view,
         break;
     case MT_MENU_PAGE_SYSTEM:
         draw_item(frame, 7U, menu->row == 0U, "Restart active core", NULL);
-        draw_item(frame, 8U, menu->row == 1U, "Return to golden updater", NULL);
+        draw_item(frame, 8U, menu->row == 1U, "Autoboot current core",
+                  view != NULL && view->settings_auto_boot ? "On" : "Off");
+        draw_item(frame, 9U, menu->row == 2U, "Return to golden updater",
+                  NULL);
+        if (view != NULL && view->settings_faulted)
+            draw_item(frame, 11U, false, "Settings", "WRITE/READ FAILED");
         break;
     default:
         break;

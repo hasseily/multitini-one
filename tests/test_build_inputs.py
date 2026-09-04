@@ -242,8 +242,10 @@ class BuildInputTests(unittest.TestCase):
             "set c64_clock_mhz 31.527954",
             "set c64_clock_mhz 32.727266",
             "set c64_clock_mhz 33.554432",
+            'set machine "SUPERVISOR"',
+            "set active_machine 2",
             "MULTITINI_C64_VIDEO_STANDARD must be PAL or NTSC",
-            "MULTITINI_MACHINE must be C64 or GBC",
+            "MULTITINI_MACHINE must be SUPERVISOR, C64, or GBC",
             "MULTITINI_ENABLE_GBC_PSRAM",
             "ACTIVE_MACHINE",
             "proc add_manifest_sources {repo_root machine}",
@@ -256,6 +258,32 @@ class BuildInputTests(unittest.TestCase):
         )
         for value in required:
             self.assertIn(value, script)
+
+    def test_boot_shell_has_no_packaged_machine_core(self):
+        project = (ROOT / "scripts" / "create_project.tcl").read_text()
+        top = (ROOT / "hdl" / "board" / "multitini_one_top.sv").read_text()
+        export = (ROOT / "scripts" / "build_and_export_xsa.tcl").read_text()
+        packager = (ROOT / "scripts" / "make_firmware_bin.bat").read_text()
+
+        self.assertIn('set machine "SUPERVISOR"', project)
+        self.assertIn("ACTIVE_MACHINE=${active_machine}", project)
+        self.assertIn("parameter integer ACTIVE_MACHINE = 2", top)
+        supervisor = top.split(
+            "end else begin : g_supervisor_shell", 1
+        )[1].split("end\n    endgenerate", 1)[0]
+        for marker in (
+            "assign c64_core_id = 32'd0",
+            "assign c64_ready = 1'b0",
+            "assign c64_load_ready = 1'b0",
+            "assign c64_input_ready = 1'b0",
+            "assign machine_video_active = 1'b0",
+            "assign c64_audio_valid = 1'b0",
+            "assign psram_ce_n = 1'b1",
+        ):
+            self.assertIn(marker, supervisor)
+        self.assertIn('set image_kind "SUPERVISOR"', export)
+        self.assertIn('puts $image_kind_stream $image_kind', export)
+        self.assertIn('not "%BIT_KIND%"=="SUPERVISOR"', packager)
 
     def test_gp0_axi_clock_survives_full_pl_reconfiguration(self):
         script = (ROOT / "scripts" / "create_project.tcl").read_text()

@@ -72,19 +72,17 @@ Stop on every Tcl error. Confirm:
 - UART0 at the golden-compatible 921600 baud and UART1 at 115200 baud;
 - USB reset MIO remains disabled;
 - no Apple clock or reset feeds an internal clock/reset;
-- the default C64 Clocking Wizard requests 31.527954 MHz PAL from FCLK2 and has
-  its own synchronized reset;
-- the mixed VHDL/SystemVerilog compile order resolves `fpga64_sid_iec`, the
-  Multitini bus logic/memory ports, SID compatibility ports, and adapter;
-- the selected C64 source includes the four-bank indexed live bridge and its
-  Gray-pointer crossing primitive;
+- the supervisor build's machine-domain Clocking Wizard requests 31.527954 MHz
+  from FCLK2 and has its own synchronized reset;
+- the default source set contains the common shell but no C64 or GBC adapter;
 - all source and constraint files came from the tracked manifests; and
 - the block design validates.
 
-The default is the PAL C64 project. The tracked manifest has explicit common,
-C64, and GBC sections; project creation loads only common sources plus the
-selected machine section. This keeps an inactive upstream core from becoming
-a build dependency for the selected image.
+The default is the supervisor-only project (`ACTIVE_MACHINE=2`). The tracked
+manifest has explicit common, C64, and GBC sections; project creation loads only
+common sources unless a machine is explicitly selected. The root firmware must
+use this supervisor bitstream. C64 and GBC bitstreams are packaged for SD and
+loaded dynamically.
 
 Create a separate first-pass GBC project with:
 
@@ -163,11 +161,13 @@ tone remains selectable, and reset or loss of readiness selects silence without
 stopping the physical clocks. Source, focused XSim, and routed vendor checks
 pass; the audible board procedure remains open.
 
-After the default PAL build is reviewed, recreate the project for NTSC with:
+After the supervisor root build is reviewed, create the C64 PAL package project
+explicitly. Recreate it for NTSC by setting both machine and timing:
 
-```sh
-MULTITINI_C64_VIDEO_STANDARD=NTSC \
-  vivado -mode batch -source scripts/create_project.tcl
+```powershell
+$env:MULTITINI_MACHINE = 'C64'
+$env:MULTITINI_C64_VIDEO_STANDARD = 'NTSC'
+vivado -mode batch -source scripts/create_project.tcl
 ```
 
 Keep separate PAL and NTSC logs/reports. The script rejects other standard
@@ -254,10 +254,11 @@ and Bootgen produce a 4,475,348-byte root `FIRMWARE.BIN` with SHA-256
 `24c8ca616e939ddd13ae46807bcd315affcd6a56f6836c14af4c7cf70510903c`.
 These results do not constitute an audible board pass.
 
-The normal installation path copies the matching root `FIRMWARE.BIN` to the
+The normal installation path copies the matching supervisor-only root
+`FIRMWARE.BIN` to the
 SD-card root. `:reboot` from a running image, or a power cycle, lets golden program and
 verify the secondary firmware slot, replace `FIRMWARE.BIN` with
-`FIRMWARE.OK`, and reboot into normal auto-boot. With `2026082E` or later, use
+`FIRMWARE.OK`, and reboot into the supervisor shell. With `2026082E` or later, use
 the canonical `/cores/c64` SD layout; the UART ROM uploader remains a fallback.
 The golden UART updater is a recovery path, not the normal installation method.
 Physical USB1 VBUS and
