@@ -3,7 +3,9 @@
 // 62fc697e3c9b5982c9dc76aa8cd03db545d20803. Declarations are moved before
 // use, the procedurally assigned GCR decoder nibble is a variable, and the
 // constant encoder table is expressed as an equivalent function for portable
-// simulator support.
+// simulator support. The SD-buffer write data is registered with the imported
+// RAM wrapper's delayed address/write enable so consecutive writes cannot
+// shift track bytes by one address.
 //-------------------------------------------------------------------------------
 //
 // Commodore 1541 gcr floppy (read/write) by Dar (darfpga@aol.fr) 23-May-2017
@@ -62,6 +64,7 @@ reg  [7:0] data_cks;
 reg  [7:0] gcr_byte_out;
 reg  [4:0] gcr_nibble_out;
 reg  [7:0] hdr_cks;
+reg  [7:0] sd_buff_dout_d;
 
 wire [7:0] buff_do;
 
@@ -155,6 +158,7 @@ always @(posedge clk) begin
 end
 
 always @(posedge sd_clk) begin
+	sd_buff_dout_d <= sd_buff_dout;
 	if(sd_lba == 357 && sd_buff_wr) begin
 		if(sd_buff_addr == 'hA2) id1 <= sd_buff_dout;
 		if(sd_buff_addr == 'hA3) id2 <= sd_buff_dout;
@@ -165,7 +169,7 @@ iecdrv_mem #(8,13) buffer
 (
 	.clock_a(sd_clk),
 	.address_a(sd_buff_addr),
-	.data_a(sd_buff_dout),
+	.data_a(sd_buff_dout_d),
 	.wren_a(sd_buff_wr),
 	.q_a(sd_buff_din),
 

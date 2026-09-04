@@ -20,6 +20,13 @@ run_test tb_control_regs \
     "$repo_root/hdl/common/multitini_control_regs.sv" \
     "$repo_root/hdl/sim/tb_control_regs.sv"
 
+run_test tb_stream_burst_mailbox \
+    "$repo_root/hdl/generated/multitini_regs_pkg.sv" \
+    "$repo_root/hdl/sim/xilinx_primitives.sv" \
+    "$repo_root/hdl/common/multitini_control_regs.sv" \
+    "$repo_root/hdl/common/multitini_async_mailbox.sv" \
+    "$repo_root/hdl/sim/tb_stream_burst_mailbox.sv"
+
 run_test tb_axi3_regs \
     "$repo_root/hdl/common/multitini_axi3_regs.sv" \
     "$repo_root/hdl/sim/tb_axi3_regs.sv"
@@ -93,6 +100,19 @@ run_test tb_c64_content_loader \
     "$repo_root/hdl/core/c64/multitini_c64_content_loader.sv" \
     "$repo_root/hdl/sim/tb_c64_content_loader.sv"
 
+# Only the head tracker is under test here. The imported drive and media leaves
+# are intentionally black-boxed, matching the portable whole-shell gate below.
+iverilog -g2012 -Wall -Wimplicit -i -s tb_c64_1541_head_reset \
+    -o "$sim_build/tb_c64_1541_head_reset.vvp" \
+    "$repo_root/hdl/core/c64/multitini_c64_defs_pkg.sv" \
+    "$repo_root/hdl/core/c64/multitini_c64_1541.sv" \
+    "$repo_root/hdl/sim/tb_c64_1541_head_reset.sv"
+(cd "$sim_build" && vvp tb_c64_1541_head_reset.vvp)
+
+run_test tb_c64_cpu_turbo_guard \
+    "$repo_root/hdl/core/c64/multitini_c64_cpu_turbo_guard.sv" \
+    "$repo_root/hdl/sim/tb_c64_cpu_turbo_guard.sv"
+
 run_test tb_c64_run_injector \
     "$repo_root/hdl/core/c64/multitini_c64_run_injector.sv" \
     "$repo_root/hdl/sim/tb_c64_run_injector.sv"
@@ -105,6 +125,11 @@ run_test tb_c64_d64_track \
     "$repo_root/hdl/core/c64/multitini_c64_defs_pkg.sv" \
     "$repo_root/hdl/core/c64/multitini_c64_d64_track.sv" \
     "$repo_root/hdl/sim/tb_c64_d64_track.sv"
+
+run_test tb_c64_d64_buffer_alignment \
+    "$repo_root/hdl/core/c64/ports/iecdrv_misc.sv" \
+    "$repo_root/hdl/core/c64/ports/c1541_gcr.sv" \
+    "$repo_root/hdl/sim/tb_c64_d64_buffer_alignment.sv"
 
 run_test tb_c64_g64_track \
     "$repo_root/hdl/core/c64/multitini_c64_defs_pkg.sv" \
@@ -169,6 +194,7 @@ iverilog -g2012 -Wall -Wimplicit -i -s multitini_one_top \
     "$repo_root/hdl/core/c64/multitini_c64_d64_track.sv" \
     "$repo_root/hdl/core/c64/multitini_c64_g64_track.sv" \
     "$repo_root/hdl/core/c64/multitini_c64_1541.sv" \
+    "$repo_root/hdl/core/c64/multitini_c64_cpu_turbo_guard.sv" \
     "$repo_root/hdl/core/c64/multitini_c64_adapter.sv" \
     "$repo_root/hdl/core/gameboy/multitini_gameboy_defs_pkg.sv" \
     "$repo_root/hdl/core/gameboy/multitini_gameboy_loader.sv" \

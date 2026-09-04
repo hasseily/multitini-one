@@ -108,9 +108,11 @@ replaces only the pieces needed for a ROM-free Xilinx build:
 - the four SID compatibility ports make narrowly scoped language/elaboration
   fixes while the exact upstream versions remain imported and locked; and
 - `ports/c1541_logic.sv` and `ports/c1541_gcr.sv` are strict-tool compatibility
-  ports of the two pinned drive modules, with declarations moved before use and
-  behavior otherwise preserved; the GCR encoder's constant table is written as
-  an equivalent case function for portable simulation;
+  ports of the two pinned drive modules, with declarations moved before use;
+  the GCR encoder's constant table is written as an equivalent case function
+  for portable simulation, and the SD-buffer byte is registered beside the
+  imported RAM so consecutive cache-copy writes remain aligned with that
+  RAM wrapper's delayed address and write enable;
 - `ports/cartridge.sv` is the local synthesis compatibility port of the pinned
   cartridge mapper, with one procedural-sensitivity fix and two declaration
   moves; the upstream reference remains unchanged;
@@ -189,15 +191,16 @@ Validated CRT ROM bytes are normalized into the common 64-bit external-memory
 service. The C64 machine selection now connects that service to the board
 PSRAM path, and the cartridge bridge latches a first-miss stall through the
 memory response. This is source architecture, not a hardware result: PSRAM
-timing, CDC, resource use, and cartridge behavior have not passed a vendor
-build or board test.
+timing, CDC, and resource gates pass in the PSRAM-enabled `20260912` GBC vendor
+build, while C64 CRT behavior still needs a board test.
 
 The firmware source includes strict PRG/CRT parsing and a C64 media service
 which streams only validated content and reports attachment only after the PL
 finishes without `CORE_LOAD_ERROR`. The dedicated host tests and focused XSim
 benches pass. The serial main loop exposes `:load` and `:cartoff`, including the
-safe disk barrier around content changes. The planned general multicore menu
-does not exist yet, and no vendor build or board validation is claimed.
+safe disk barrier around content changes. The general F12 multicore menu and
+per-core configuration page are implemented. Fresh `20260912` vendor and
+package builds pass; the current C64 increment still needs board validation.
 
 ## Verified engineering-build boundary
 

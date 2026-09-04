@@ -271,6 +271,32 @@ static void make_g64(uint8_t *data, size_t size)
     }
 }
 
+static void make_d64_program(uint8_t *data, size_t size)
+{
+    uint8_t *directory;
+    uint8_t *entry;
+    uint8_t *program;
+    assert(size >= TEST_D64_SIZE);
+    memset(data, 0U, size);
+    /* Track 18 starts after 17 * 21 sectors; its directory starts at S1. */
+    directory = data + (357U + 1U) * 256U;
+    directory[0] = 0U;
+    directory[1] = 0U;
+    entry = directory + 2U;
+    entry[0] = 0x82U;
+    entry[1] = 1U;
+    entry[2] = 1U;
+    memset(entry + 3U, 0xa0U, 16U);
+    memcpy(entry + 3U, "HELLO", 5U);
+    entry[28] = 1U;
+    program = data + 256U;
+    program[0] = 0U;
+    program[1] = 4U;
+    program[2] = 0x01U;
+    program[3] = 0x08U;
+    program[4] = 0x00U;
+}
+
 mt_sd_result_t mt_sd_storage_read_file_max(const char *path, uint8_t *dst,
                                            size_t capacity)
 {
@@ -279,7 +305,7 @@ mt_sd_result_t mt_sd_storage_read_file_max(const char *path, uint8_t *dst,
     if (strcmp(path, "0:/multitini/cores/c64/media/drive8.d64") == 0) {
         result.size = TEST_D64_SIZE;
         assert(capacity >= result.size);
-        memset(dst, 0U, result.size);
+        make_d64_program(dst, result.size);
     } else if (strcmp(path, "0:/multitini/cores/c64/media/error.d64") == 0) {
         result.size = TEST_D64_ERROR_SIZE;
         assert(capacity >= result.size);
@@ -359,6 +385,55 @@ static void setup(fake_shell_t *shell, mt_core_link_t *link)
     shell->write_seed = 0x40U;
     mt_core_link_init(link, shell, fake_read32, fake_write32);
     c64_d64_service_init(link, NULL, NULL);
+}
+
+typedef struct {
+    mt_c64_d64_prg_entry_t entry;
+    size_t calls;
+} prg_capture_t;
+
+static bool capture_prg(void *context,
+                        const mt_c64_d64_prg_entry_t *entry)
+{
+    prg_capture_t *const capture = context;
+    capture->entry = *entry;
+    ++capture->calls;
+    return true;
+}
+
+static void test_mounted_d64_program_access(void)
+{
+    fake_shell_t shell;
+    mt_core_link_t link;
+    prg_capture_t capture = {0};
+    uint8_t output[8U] = {0};
+    size_t count = 0U;
+    size_t output_size = 0U;
+
+    setup(&shell, &link);
+    assert(c64_d64_service_mount_default() == 0);
+    assert(c64_d64_service_mounted_d64());
+    assert(c64_d64_service_list_prgs(capture_prg, &capture, &count) ==
+           MT_C64_D64_OK);
+    assert(count == 1U && capture.calls == 1U);
+    assert(strcmp(capture.entry.display_name, "HELLO") == 0);
+    assert(c64_d64_service_extract_prg(&capture.entry, output,
+                                       sizeof(output), &output_size) ==
+           MT_C64_D64_OK);
+    assert(output_size == 3U);
+    assert(output[0] == 0x01U && output[1] == 0x08U && output[2] == 0x00U);
+
+    shell.registers[register_index(MT_REG_MEDIA_STATE)] =
+        MT_MEDIA_STATE_MOUNTED | MT_MEDIA_STATE_DIRTY;
+    assert(c64_d64_service_list_prgs(capture_prg, &capture, &count) ==
+           MT_C64_D64_INVALID_ARGUMENT);
+    shell.registers[register_index(MT_REG_MEDIA_STATE)] =
+        MT_MEDIA_STATE_MOUNTED;
+
+    assert(c64_d64_service_mount("disk.g64") == 0);
+    assert(!c64_d64_service_mounted_d64());
+    assert(c64_d64_service_list_prgs(capture_prg, &capture, &count) ==
+           MT_C64_D64_INVALID_ARGUMENT);
 }
 
 static void test_d64_mount_read_and_write(void)
@@ -553,6 +628,51 @@ static void test_reset_barrier_remounts(void)
             MT_MEDIA_STATE_MOUNTED) != 0U);
 }
 
+static void test_ensure_live_mount_is_noop(void)
+{
+    fake_shell_t shell;
+    mt_core_link_t link;
+    uint32_t first_mount_generation;
+
+    setup(&shell, &link);
+    assert(c64_d64_service_mount_default() == 0);
+    first_mount_generation = shell.mount_generation;
+
+    assert(c64_d64_service_ensure_mounted(MT_C64_DEFAULT_D64_NAME) == 0);
+    assert(shell.mount_attempts == 1U);
+    assert(shell.eject_attempts == 0U);
+    assert(shell.mount_generation == first_mount_generation);
+}
+
+static void test_ensure_remounts_stale_fpga_state(void)
+{
+    fake_shell_t shell;
+    mt_core_link_t link;
+    uint32_t first_mount_generation;
+
+    setup(&shell, &link);
+    assert(c64_d64_service_mount_default() == 0);
+    first_mount_generation = shell.mount_generation;
+
+    /* Model a PCAP reload: the ARM cache survives while FPGA media state is
+     * reset.  Settings restore must establish a new hardware mount. */
+    shell.registers[register_index(MT_REG_MEDIA_STATE)] = 0U;
+    assert(c64_d64_service_mounted());
+    assert(c64_d64_service_ensure_mounted(MT_C64_DEFAULT_D64_NAME) == 0);
+    assert(shell.eject_attempts == 1U);
+    assert(shell.mount_attempts == 2U);
+    assert(shell.mount_generation != first_mount_generation);
+    assert(fake_sd.recover_count == 2U);
+    assert((shell.registers[register_index(MT_REG_MEDIA_STATE)] &
+            MT_MEDIA_STATE_MOUNTED) != 0U);
+
+    set_request(&shell, 0x300U, false, 357U, 19U,
+                shell.mount_generation);
+    c64_d64_service_poll();
+    assert(shell.complete_status == MT_RESPONSE_OK);
+    assert(shell.complete_generation == shell.mount_generation);
+}
+
 static void test_failed_reset_remount_can_be_retried(void)
 {
     fake_shell_t shell;
@@ -578,6 +698,7 @@ static void test_failed_reset_remount_can_be_retried(void)
 
 int main(void)
 {
+    test_mounted_d64_program_access();
     test_d64_mount_read_and_write();
     test_invalid_journal_blocks_mount();
     test_write_last_is_strict();
@@ -586,6 +707,8 @@ int main(void)
     test_error_tail_is_read_only();
     test_g64_read_only_track();
     test_reset_barrier_remounts();
+    test_ensure_live_mount_is_noop();
+    test_ensure_remounts_stale_fpga_state();
     test_failed_reset_remount_can_be_retried();
     return 0;
 }

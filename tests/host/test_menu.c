@@ -28,7 +28,11 @@ int main(void)
 {
     mt_core_selection_t cores[1] = {0};
     mt_menu_view_t view = {0};
-    mt_menu_file_t files[1] = {{"demo.d64", 174848U}};
+    mt_menu_file_t files[1] = {{"demo.d64", 174848U, 0x1201U}};
+    mt_menu_core_option_t core_options[2] = {
+        {"Fast serial ROMs", "Off", true},
+        {"CPU turbo", "Smart 2x", true}
+    };
     mt_menu_t menu;
     mt_menu_action_t action;
     mt_ui_frame_t frame;
@@ -48,9 +52,12 @@ int main(void)
     view.symbolic_keyboard = true;
     view.joystick_port = 2U;
     view.drive8_supported = true;
+    view.mount_and_run_supported = true;
     view.cartridge_supported = true;
     view.program_supported = true;
     view.c64_input_settings = true;
+    view.core_options = core_options;
+    view.core_option_count = 2U;
 
     mt_menu_init(&menu, &view);
     action = mt_menu_key(&menu, &view, MT_MENU_HID_F12, true);
@@ -83,9 +90,38 @@ int main(void)
           action.file_index == 0U, "browser chooses disk image");
     menu.browser = MT_MENU_BROWSER_NONE;
     view.drive8_mounted = true;
+    view.drive8_d64_mounted = true;
+    menu.row = 0U;
     action = mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true);
     check(action.kind == MT_MENU_ACTION_EJECT_DRIVE8,
           "mounted drive requests eject");
+
+    menu.row = 1U;
+    action = mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true);
+    check(action.kind == MT_MENU_ACTION_BROWSE_DISK_PROGRAM,
+          "mounted D64 opens its program browser");
+    menu.browser = MT_MENU_BROWSER_DISK_PROGRAM;
+    menu.row = 0U;
+    action = mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true);
+    check(action.kind == MT_MENU_ACTION_MOUNT_AND_RUN &&
+          action.file_index == 0U,
+          "D64 program browser requests mount and run");
+    mt_menu_render(&menu, &view, &frame);
+    check(row_contains(&frame, 5U, "Choose program in D64"),
+          "D64 program browser title rendered");
+    check(row_contains(&frame, 33U, "Enter run"),
+          "D64 program browser run help rendered");
+    menu.browser = MT_MENU_BROWSER_NONE;
+    menu.row = 1U;
+    mt_menu_render(&menu, &view, &frame);
+    check(row_contains(&frame, 8U, "Mount & Run") &&
+          row_contains(&frame, 8U, "Choose PRG"),
+          "mounted D64 exposes mount and run");
+    view.drive8_d64_mounted = false;
+    mt_menu_render(&menu, &view, &frame);
+    check(row_contains(&frame, 8U, "D64 only"),
+          "mounted G64 cannot use mount and run");
+    view.drive8_d64_mounted = true;
 
     (void)mt_menu_key(&menu, &view, MT_MENU_HID_TAB, true);
     check(menu.page == MT_MENU_PAGE_VIDEO, "Tab reaches video section");
@@ -105,15 +141,36 @@ int main(void)
     check(row_contains(&frame, 8U, "PAL 50 Hz"),
           "core timing value rendered");
 
+    menu.page = MT_MENU_PAGE_CORE_CONFIG;
+    menu.row = 0U;
+    action = mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true);
+    check(action.kind == MT_MENU_ACTION_TOGGLE_CORE_OPTION &&
+          action.file_index == 0U,
+          "active core option has an indexed generic action");
+    mt_menu_render(&menu, &view, &frame);
+    check(row_contains(&frame, 7U, "Fast serial ROMs") &&
+          row_contains(&frame, 7U, "Off"),
+          "core-specific option rendered");
+    menu.row = 1U;
+    action = mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true);
+    check(action.kind == MT_MENU_ACTION_TOGGLE_CORE_OPTION &&
+          action.file_index == 1U,
+          "second active core option has its own indexed action");
+    mt_menu_render(&menu, &view, &frame);
+    check(row_contains(&frame, 8U, "CPU turbo") &&
+          row_contains(&frame, 8U, "Smart 2x"),
+          "orthogonal CPU turbo option rendered");
+
     menu.page = MT_MENU_PAGE_MEDIA;
     menu.row = 1U;
     view.drive8_supported = false;
+    view.mount_and_run_supported = false;
     view.program_supported = false;
     view.c64_input_settings = false;
     mt_menu_render(&menu, &view, &frame);
     check(row_contains(&frame, 7U, "Unavailable"),
           "unsupported drive is explicit");
-    check(row_contains(&frame, 8U, "Load GB/GBC"),
+    check(row_contains(&frame, 9U, "Load GB/GBC"),
           "second core cartridge prompt rendered");
     view.save_supported = true;
     view.save_active = true;

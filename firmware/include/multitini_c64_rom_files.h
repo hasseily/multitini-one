@@ -18,6 +18,9 @@
 #define MT_C64_SD_KERNAL_PATH MT_C64_SD_ROM_ROOT "/kernal.bin"
 #define MT_C64_SD_CHARACTER_PATH MT_C64_SD_ROM_ROOT "/characters.bin"
 #define MT_C64_SD_1541_PATH MT_C64_SD_ROM_ROOT "/1541.bin"
+#define MT_C64_SD_FAST_ROM_ROOT MT_C64_SD_ROM_ROOT "/fast"
+#define MT_C64_SD_FAST_KERNAL_PATH MT_C64_SD_FAST_ROM_ROOT "/kernal.bin"
+#define MT_C64_SD_FAST_1541_PATH MT_C64_SD_FAST_ROM_ROOT "/1541.bin"
 
 #define MT_C64_SYSTEM_ROM_BUNDLE_SIZE \
     (MT_SIZE_C64_BASIC + MT_SIZE_C64_KERNAL + MT_SIZE_C64_CHARACTER)
@@ -48,7 +51,16 @@ typedef struct {
     mt_content_validation_t validation;
 } mt_c64_rom_files_result_t;
 
+typedef struct {
+    const char *basic;
+    const char *kernal;
+    const char *character;
+    const char *drive_1541;
+} mt_c64_rom_paths_t;
+
 const char *mt_c64_sd_rom_path(mt_c64_rom_kind_t kind);
+const mt_c64_rom_paths_t *mt_c64_stock_rom_paths(void);
+const mt_c64_rom_paths_t *mt_c64_fast_rom_paths(void);
 
 /*
  * Read and validate the three C64 system ROMs from their canonical SD paths.
@@ -59,6 +71,19 @@ const char *mt_c64_sd_rom_path(mt_c64_rom_kind_t kind);
 mt_c64_rom_files_result_t mt_c64_rom_files_load_system(
     mt_c64_rom_file_read_fn read_file, void *read_context,
     uint8_t *bundle, size_t bundle_capacity, mt_c64_system_roms_t *roms);
+
+/* Load the system portion of an explicit ROM set. The caller may validate a
+ * matching drive_1541 object into a separate buffer before streaming either
+ * object, so a paired fast-ROM selection never installs only half a pair. */
+mt_c64_rom_files_result_t mt_c64_rom_files_load_system_from(
+    const mt_c64_rom_paths_t *paths, mt_c64_rom_file_read_fn read_file,
+    void *read_context, uint8_t *bundle, size_t bundle_capacity,
+    mt_c64_system_roms_t *roms);
+
+mt_c64_rom_files_result_t mt_c64_rom_file_load(
+    mt_c64_rom_kind_t kind, const char *path,
+    mt_c64_rom_file_read_fn read_file, void *read_context,
+    uint8_t *destination, size_t destination_capacity);
 
 const char *mt_c64_rom_files_status_name(mt_c64_rom_files_status_t status);
 

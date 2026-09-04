@@ -15,6 +15,7 @@ module multitini_c64_adapter #(
     input  logic        core_clk,
     input  logic        reset,
     input  logic        core_reset_request,
+    input  logic        cpu_turbo_enable,
     input  logic        clear_load_error,
 
     input  logic [15:0] input_code,
@@ -111,6 +112,7 @@ module multitini_c64_adapter #(
     logic        content_load_error;
     logic        fatal_load_error;
     logic        content_core_reset_hold;
+    logic        content_load_resets_run_injector;
     logic        prg_install_pause;
     logic        d64_load_valid;
     logic        d64_load_ready;
@@ -156,6 +158,7 @@ module multitini_c64_adapter #(
     logic        drive_iec_clk;
     logic        drive_mounted;
     logic        drive_led;
+    logic        cpu_turbo_active;
 
     logic [10:0] host_ps2_key;
     logic        host_input_ready;
@@ -220,8 +223,13 @@ module multitini_c64_adapter #(
          load_kind == MT_LOAD_C64_1541_ROM);
     assign content_load_valid = load_valid &&
         (load_kind == MT_LOAD_C64_PRG ||
+         load_kind == MT_LOAD_C64_PRG_STAGE ||
+         load_kind == MT_LOAD_C64_PRG_RUN ||
          load_kind == MT_LOAD_C64_CRT ||
          load_kind == MT_LOAD_C64_CRT_DETACH);
+    assign content_load_resets_run_injector =
+        content_load_valid && load_first &&
+        load_kind != MT_LOAD_C64_PRG_RUN;
     assign rom_load_valid = system_rom_load_valid;
     assign d64_load_valid = load_valid && load_kind == MT_LOAD_C64_D64;
     assign g64_load_valid = load_valid && load_kind == MT_LOAD_C64_G64;
@@ -233,6 +241,8 @@ module multitini_c64_adapter #(
             MT_LOAD_C64_D64: load_ready = d64_load_ready;
             MT_LOAD_C64_G64: load_ready = g64_load_ready;
             MT_LOAD_C64_PRG,
+            MT_LOAD_C64_PRG_STAGE,
+            MT_LOAD_C64_PRG_RUN,
             MT_LOAD_C64_CRT,
             MT_LOAD_C64_CRT_DETACH: load_ready = content_load_ready;
             default: load_ready = rom_load_ready;
@@ -308,7 +318,7 @@ module multitini_c64_adapter #(
     multitini_c64_run_injector run_injector_i (
         .clk(core_clk),
         .reset(reset || core_reset_request ||
-               (content_load_valid && load_first)),
+               content_load_resets_run_injector),
         .start(prg_run_request), .host_ps2_key(host_ps2_key),
         .ps2_key(ps2_key), .busy(prg_run_busy)
     );
@@ -400,7 +410,11 @@ module multitini_c64_adapter #(
         .ramAddr(ram_addr), .ramDin(core_ram_din), .ramDout(ram_dout),
         .ramCE(ram_ce), .ramWE(ram_we),
         .io_cycle(cart_mem_cycle), .ext_cycle(), .refresh(),
-        .cia_mode(1'b0), .turbo_mode(2'b00), .turbo_speed(2'b00),
+        // FPGA64 Smart turbo adds CPU RAM/ROM cycles while CIA/IEC and VIC
+        // remain at 1x. The independent setting is automatically suspended
+        // around IEC traffic, matching the pinned upstream integration.
+        .cia_mode(1'b0), .turbo_mode({1'b0, cpu_turbo_active}),
+        .turbo_speed(2'b00),
         .vic_variant(2'b00), .ntscMode(NTSC_MODE),
         .hsync(raw_hsync), .vsync(raw_vsync), .palette(3'b000),
         .r(raw_r), .g(raw_g), .b(raw_b),
@@ -431,6 +445,15 @@ module multitini_c64_adapter #(
         .c64rom_addr(rom_addr), .c64rom_data(rom_data), .c64rom_wr(rom_wr),
         .cass_motor(), .cass_write(), .cass_sense(1'b1), .cass_read(1'b1)
     );
+
+    multitini_c64_cpu_turbo_guard #(.CORE_CLOCK_HZ(CORE_CLOCK_HZ))
+        cpu_turbo_guard_i (
+            .clk(core_clk), .reset(reset),
+            .turbo_request(cpu_turbo_enable),
+            .c64_iec_atn(c64_iec_atn), .c64_iec_data(c64_iec_data),
+            .c64_iec_clk(c64_iec_clk), .drive_iec_data(drive_iec_data),
+            .drive_iec_clk(drive_iec_clk), .turbo_active(cpu_turbo_active)
+        );
 
     multitini_c64_1541 #(.CORE_CLOCK_HZ(CORE_CLOCK_HZ)) drive_i (
         .clk(core_clk), .reset(reset), .soft_reset(drive_soft_reset),

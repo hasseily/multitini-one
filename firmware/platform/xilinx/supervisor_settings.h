@@ -22,6 +22,8 @@ typedef struct {
     char cartridge_name[MT_SETTINGS_MEDIA_NAME_MAX];
     bool symbolic_keyboard;
     uint8_t joystick_port;
+    bool c64_fast_roms;
+    bool c64_cpu_turbo;
 } mt_core_settings_profile_t;
 
 typedef struct {
@@ -64,6 +66,10 @@ bool mt_supervisor_settings_remember_cartridge(
 bool mt_supervisor_settings_remember_c64_input(
     mt_supervisor_settings_t *settings, const char *core_id,
     bool symbolic_keyboard, uint8_t joystick_port);
+bool mt_supervisor_settings_remember_c64_fast_roms(
+    mt_supervisor_settings_t *settings, const char *core_id, bool enabled);
+bool mt_supervisor_settings_remember_c64_cpu_turbo(
+    mt_supervisor_settings_t *settings, const char *core_id, bool enabled);
 
 mt_settings_result_t mt_supervisor_settings_load(
     mt_supervisor_settings_t *settings);

@@ -92,6 +92,11 @@ module multitini_control_regs #(
     logic [7:0]  stream_kind;
     logic [31:0] stream_total;
     logic [31:0] stream_offset;
+    logic [31:0] stream_burst_word;
+    logic [2:0]  stream_burst_count;
+    logic [1:0]  stream_burst_index;
+    logic        stream_burst_pending;
+    logic [31:0] stream_status_word;
     logic        rd_known;
     logic [31:0] error_set_mask;
     logic [31:0] error_clear_mask;
@@ -147,6 +152,15 @@ module multitini_control_regs #(
             ui_status_word |= MT_UI_STATUS_BANK;
         if (ui_submit_ready)
             ui_status_word |= MT_UI_STATUS_READY;
+
+        stream_status_word = 32'd0;
+        if (stream_active && !stream_burst_pending && !load_submit &&
+            stream_offset < stream_total)
+            stream_status_word |= MT_STREAM_STATUS_READY;
+        if (stream_active && !stream_burst_pending && !load_submit &&
+            load_submit_ready &&
+            stream_offset == stream_total)
+            stream_status_word |= MT_STREAM_STATUS_DRAINED;
 
         status_word = MT_STATUS_SHELL_READY;
         if (control & MT_CONTROL_VIDEO_TEST_ENABLE)
@@ -210,6 +224,7 @@ module multitini_control_regs #(
             MT_REG_MEDIA_DATA:       rd_data = media_data_word;
             MT_REG_MEDIA_STATE:      rd_data = media_state_word;
             MT_REG_UI_STATUS:        rd_data = ui_status_word;
+            MT_REG_STREAM_STATUS:    rd_data = stream_status_word;
             default: begin
                 rd_data = 32'h00000000;
                 rd_known = 1'b0;
@@ -257,6 +272,11 @@ module multitini_control_regs #(
                                  MT_UI_COMMIT_BANK)) != 32'd0 ||
                     !ui_submit_ready)
                     error_set_mask |= MT_ERROR_BAD_WRITE;
+            MT_REG_STREAM_DATA_BURST:
+                if (wr_strb != 4'hF || !stream_active ||
+                    stream_burst_pending || load_submit ||
+                    stream_offset >= stream_total)
+                    error_set_mask |= MT_ERROR_BAD_WRITE;
             MT_REG_CONTROL,
             MT_REG_IRQ_ENABLE,
             MT_REG_SCRATCH,
@@ -299,6 +319,10 @@ module multitini_control_regs #(
             stream_kind     <= 8'd0;
             stream_total    <= 32'd0;
             stream_offset   <= 32'd0;
+            stream_burst_word <= 32'd0;
+            stream_burst_count <= 3'd0;
+            stream_burst_index <= 2'd0;
+            stream_burst_pending <= 1'b0;
             load_submit     <= 1'b0;
             load_kind       <= 8'd0;
             load_data       <= 8'd0;
@@ -327,7 +351,11 @@ module multitini_control_regs #(
             ui_visible     <= 1'b0;
             ui_bank        <= 1'b0;
         end else begin
-            load_submit <= 1'b0;
+            // Byte commands pulse load_submit for one cycle. Burst transfers
+            // instead hold it as a conventional ready/valid producer until
+            // the asynchronous mailbox accepts the staged byte.
+            if (!stream_burst_pending)
+                load_submit <= 1'b0;
             load_error_clear <= 1'b0;
             input_submit <= 1'b0;
             media_mount <= 1'b0;
@@ -338,6 +366,55 @@ module multitini_control_regs #(
             error_flags <= (error_flags & ~error_clear_mask) | error_set_mask;
             irq_status <= (irq_status & ~irq_clear_mask) |
                           ((|error_set_mask) ? 32'd1 : 32'd0);
+
+            // ABI 0.8 accepts four packed bytes per MMIO write and drains
+            // them through the existing ordered CDC mailbox. This keeps the
+            // core-facing byte framing unchanged while removing a command
+            // round trip for every payload byte.
+            if (stream_burst_pending) begin
+                if (!load_submit) begin
+                    // Stage the first byte without consuming it. The mailbox
+                    // samples this registered valid/data pair on a later clk
+                    // edge, so the offset must not advance here.
+                    load_submit <= 1'b1;
+                    load_kind <= stream_kind;
+                    case (stream_burst_index)
+                    2'd0: load_data <= stream_burst_word[7:0];
+                    2'd1: load_data <= stream_burst_word[15:8];
+                    2'd2: load_data <= stream_burst_word[23:16];
+                    default: load_data <= stream_burst_word[31:24];
+                    endcase
+                    load_offset <= stream_offset;
+                    load_total <= stream_total;
+                    load_first <= stream_offset == 32'd0;
+                    load_last <= stream_offset + 32'd1 == stream_total;
+                end else if (load_submit_ready) begin
+                    // Advance only after the currently registered byte has
+                    // actually transferred. Keep valid asserted and stage the
+                    // next byte while the mailbox makes its acknowledgement
+                    // round trip; the payload remains stable whenever ready
+                    // is low.
+                    stream_offset <= stream_offset + 32'd1;
+                    if ({1'b0, stream_burst_index} + 3'd1 ==
+                        stream_burst_count) begin
+                        load_submit <= 1'b0;
+                        stream_burst_pending <= 1'b0;
+                        stream_burst_index <= 2'd0;
+                    end else begin
+                        load_submit <= 1'b1;
+                        stream_burst_index <= stream_burst_index + 2'd1;
+                        case (stream_burst_index)
+                        2'd0: load_data <= stream_burst_word[15:8];
+                        2'd1: load_data <= stream_burst_word[23:16];
+                        default: load_data <= stream_burst_word[31:24];
+                        endcase
+                        load_offset <= stream_offset + 32'd1;
+                        load_total <= stream_total;
+                        load_first <= 1'b0;
+                        load_last <= stream_offset + 32'd2 == stream_total;
+                    end
+                end
+            end
 
             if (rd_en && !rd_known) begin
                 count_bad_read  <= count_bad_read + 32'd1;
@@ -377,6 +454,19 @@ module multitini_control_regs #(
                             ui_visible <= |(wr_data & MT_UI_COMMIT_VISIBLE);
                             ui_bank <= |(wr_data & MT_UI_COMMIT_BANK);
                             ui_submit <= 1'b1;
+                        end
+                    end
+                    MT_REG_STREAM_DATA_BURST: begin
+                        if (wr_strb == 4'hF && stream_active &&
+                            !stream_burst_pending && !load_submit &&
+                            stream_offset < stream_total) begin
+                            stream_burst_word <= wr_data;
+                            stream_burst_index <= 2'd0;
+                            stream_burst_count <=
+                                stream_total - stream_offset >= 32'd4 ?
+                                3'd4 : stream_total[2:0] -
+                                       stream_offset[2:0];
+                            stream_burst_pending <= 1'b1;
                         end
                     end
                     MT_REG_COMMAND_DOORBELL: begin
@@ -439,13 +529,19 @@ module multitini_control_regs #(
                                         stream_kind <= command_arg0[7:0];
                                         stream_total <= command_arg1;
                                         stream_offset <= 32'd0;
+                                        stream_burst_pending <= 1'b0;
+                                        stream_burst_count <= 3'd0;
+                                        stream_burst_index <= 2'd0;
+                                        load_submit <= 1'b0;
                                     end
                                 end
                                 MT_COMMAND_STREAM_DATA: begin
                                     if (!stream_active ||
                                         stream_offset >= stream_total) begin
                                         response_status <= MT_RESPONSE_INVALID_ARGUMENT;
-                                    end else if (!load_submit_ready) begin
+                                    end else if (stream_burst_pending ||
+                                                 load_submit ||
+                                                 !load_submit_ready) begin
                                         response_status <= MT_RESPONSE_BUSY;
                                     end else begin
                                         response_status <= MT_RESPONSE_OK;
@@ -461,8 +557,13 @@ module multitini_control_regs #(
                                     end
                                 end
                                 MT_COMMAND_STREAM_END: begin
-                                    if (!stream_active ||
-                                        stream_offset != stream_total) begin
+                                    if (!stream_active) begin
+                                        response_status <= MT_RESPONSE_INVALID_ARGUMENT;
+                                    end else if (stream_burst_pending ||
+                                                 load_submit ||
+                                                 !load_submit_ready) begin
+                                        response_status <= MT_RESPONSE_BUSY;
+                                    end else if (stream_offset != stream_total) begin
                                         response_status <= MT_RESPONSE_INVALID_ARGUMENT;
                                     end else begin
                                         response_status <= MT_RESPONSE_OK;
@@ -475,6 +576,10 @@ module multitini_control_regs #(
                                     stream_kind <= 8'd0;
                                     stream_total <= 32'd0;
                                     stream_offset <= 32'd0;
+                                    stream_burst_pending <= 1'b0;
+                                    stream_burst_count <= 3'd0;
+                                    stream_burst_index <= 2'd0;
+                                    load_submit <= 1'b0;
                                 end
                                 MT_COMMAND_MEDIA_MOUNT: begin
                                     if ((command_arg0 &

@@ -177,6 +177,10 @@ int main(void)
     image.size = sizeof(prg);
     assert(mt_c64_load_prg(&link, &image, 2U, respond, &shell) == MT_LINK_OK);
     assert(shell.completed_kind == MT_LOAD_C64_PRG);
+    assert(mt_c64_stage_prg(&link, &image, 2U, respond, &shell) == MT_LINK_OK);
+    assert(shell.completed_kind == MT_LOAD_C64_PRG_STAGE);
+    assert(mt_c64_run_prg(&link, 2U, respond, &shell) == MT_LINK_OK);
+    assert(shell.completed_kind == MT_LOAD_C64_PRG_RUN);
 
     image.data = crt;
     image.size = crt_size;
@@ -194,6 +198,10 @@ int main(void)
     assert(shell.reset_requests == 1U);
 
     assert(mt_c64_load_prg(NULL, &image, 2U, respond, &shell) ==
+           MT_LINK_BAD_ARGUMENT);
+    assert(mt_c64_stage_prg(NULL, &image, 2U, respond, &shell) ==
+           MT_LINK_BAD_ARGUMENT);
+    assert(mt_c64_run_prg(NULL, 2U, respond, &shell) ==
            MT_LINK_BAD_ARGUMENT);
     assert(strcmp(mt_c64_content_status_name(MT_C64_CONTENT_UNSUPPORTED_CRT),
                   "unsupported CRT hardware") == 0);

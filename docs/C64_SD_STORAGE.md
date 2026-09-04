@@ -10,9 +10,14 @@ selection. Build `2026082D` did not contain that storage feature.
 
 Current source extends the baseline with exFAT, RTC-backed FAT timestamps,
 writable normal D64 images, journal recovery, safe media barriers, and
-read-only G64 images. This newer source has not had a full Vivado/Vitis/Bootgen
-rebuild and has not been tested on the board. None of those additions should
-be attributed to `2026082E` or another packaged historical image.
+read-only G64 images. ABI 0.8 build `20260912` additionally provides packed
+four-byte load transfers and two cached tracks per disk format. Its attempted
+1541 drive-warp option failed IEC loading on the board and was removed. ABI 0.9
+build `20260913` replaces it with an opt-in, user-supplied fast serial ROM pair
+and adds D64 `Mount & Run`. Fresh Vivado, exFAT-enabled Vitis, and package builds
+pass and are installed on the SD card, but have not been tested on the board.
+None of these changes
+should be attributed to `2026082E` or another packaged historical image.
 
 ## Card layout
 
@@ -33,7 +38,10 @@ ROMs, and media together under `/multitini/cores`:
             |   |-- basic.bin        exactly 8,192 bytes
             |   |-- kernal.bin       exactly 8,192 bytes
             |   |-- characters.bin   exactly 4,096 bytes
-            |   `-- 1541.bin         exactly 16,384 bytes
+            |   |-- 1541.bin         exactly 16,384 bytes
+            |   `-- fast/            optional atomic fast serial pair
+            |       |-- kernal.bin   exactly 8,192 bytes
+            |       `-- 1541.bin     exactly 16,384 bytes
             `-- media/
                 |-- drive8.d64       optional default disk
                 |-- other.d64        normal writable D64
@@ -50,6 +58,8 @@ are:
 - `0:/multitini/cores/c64/roms/kernal.bin`
 - `0:/multitini/cores/c64/roms/characters.bin`
 - `0:/multitini/cores/c64/roms/1541.bin`
+- `0:/multitini/cores/c64/roms/fast/kernal.bin` (optional fast pair)
+- `0:/multitini/cores/c64/roms/fast/1541.bin` (optional fast pair)
 - `0:/multitini/cores/c64/media/drive8.d64`
 
 Create the directories and copy the content files yourself. The firmware does
@@ -61,8 +71,9 @@ commit and retained for recovery if an operation is interrupted.
 
 The repository contains its selected BASIC, KERNAL, and character ROMs as
 tracked inputs, but the SD copies use the short canonical names above. It does
-not provide a 1541 ROM or media image. Supplying those files does not change
-their copyright or redistribution status; see
+not provide a 1541 ROM, either member of the fast serial ROM pair, or a media
+image. Supplying those files does not change their copyright or redistribution
+status; see
 [CONTENT_POLICY.md](CONTENT_POLICY.md).
 
 ## FatFs and exFAT
@@ -134,6 +145,34 @@ operation does not silently discard a dirty D64. After a normal core reset or
 content load, firmware remounts the prior image; `:diskretry` remains available
 if that remount fails.
 
+## Ultimate-style Mount & Run
+
+The F12 Media page keeps direct disk launch separate from the normal Drive 8
+mount operation. Mount a D64 on `Drive 8`, then choose `Mount & Run` and select
+a PRG from that disk's directory. Firmware validates the 35-, 40-, or 42-track
+D64 directory chain, shows complete loadable BASIC-start (`$0801`) PRG entries,
+revalidates the exact directory slot when selected, and follows the file's
+sector chain into a bounded PRG buffer. Malformed, cyclic, stale, unclosed,
+oversized, non-PRG, out-of-range, and non-BASIC-start entries are rejected
+before the disk is ejected or any partial program is sent to the core.
+
+After extraction, the normal dirty-media barrier flushes and temporarily
+ejects the disk. The staged direct-RAM PRG loader resets the C64, writes the
+program, and updates BASIC pointers without starting it. Firmware remounts the
+same D64 and only then sends a separate `RUN` request, so immediate program
+drive access cannot race the remount. A failed flush refuses the launch; a
+failed remount leaves the program staged, does not type `RUN`, and leaves
+`:diskretry` available. A successful retry remounts the D64 and then sends the
+deferred RUN request.
+
+This is the local equivalent of an Ultimate direct PRG launch; it is not a
+faster IEC protocol. It does not accelerate typed `LOAD` commands or later
+custom-loader traffic. G64 has no filesystem directory to extract and is
+explicitly ineligible. Copy-protected disks and software that depends on its
+own loader must continue through the ordinary D64/G64 Drive 8 path. Loose PRG
+loading remains a separate `Program` action, and the optional `Fast serial
+ROMs` profile remains independent of both paths.
+
 ## D64 write and recovery rules
 
 The firmware reads the complete selected D64 into PS DDR, validates its exact
@@ -185,6 +224,46 @@ G64 tracks are normalized into the fixed 8 KiB transfer buffer used by the
 direct-GCR drive reader. Missing track-table entries produce an empty track.
 G64 is read-only: no reverse write stream or file save-back is accepted.
 
+## Disk-access acceleration and compatibility
+
+ABI 0.8 uses one 32-bit MMIO write for each four direct-load bytes. The shell
+holds that word and drains its bytes in order through the existing
+clock-domain mailbox, so the 1541-facing byte protocol and media request sizes
+do not change. An ABI 0.7 package still uses the original one-byte MMIO path.
+
+Both D64 and G64 adapters retain the two most recently completed normalized
+8 KiB tracks in FPGA block RAM. A revisit copies the track locally rather than
+requesting it from the ARM and SD card again. Replacement is round-robin. A
+D64 write invalidates the cached copy of that track, and mount, eject, failed
+loads, and partial loads never publish a cache entry. The cache does not alter
+drive-clock timing and is therefore the compatibility-preserving speedup.
+
+The F12 `Core config` page provides `Fast serial ROMs`, default Off. Enabling it
+requires both `roms/fast/kernal.bin` (exactly 8 KiB) and
+`roms/fast/1541.bin` (exactly 16 KiB). These are user-supplied matching fast
+serial ROMs, such as a properly licensed C64/1541 pair; Multitini does not ship
+or download them. JiffyDOS is one compatible commercial pairing, but a purchase
+or device/emulation license does not automatically grant redistribution rights;
+obtain it from its authorized source and do not add the images to a Multitini
+package. Firmware validates the complete pair before resetting the core. It
+streams both ROMs while reset is asserted and persists the On setting only after
+the C64 starts successfully. If the switch fails, the previous active ROM pair
+is restored.
+
+At later activation, a saved On setting is consulted before ROM loading. If
+either fast file is missing or invalid, firmware reports the condition and
+loads the stock `roms/kernal.bin` plus `roms/1541.bin` profile instead. The
+stock BASIC and character paths do not change. Turning the option Off safely
+reloads the complete stock pair. This design accelerates compatible serial disk
+software through its ROM protocol without overclocking the 1541 in PL; programs
+that bypass the ROM protocol retain their original behavior.
+
+`CPU turbo` is a separate, default-Off C64 option. `Smart 2x` uses FPGA64's
+extra 6510 RAM/ROM cycles while VIC, CIA, I/O, and 1541 timing stay at 1x. It is
+independent of the selected ROM profile and automatically pauses during IEC
+traffic and for 0.5 seconds afterward, matching upstream's compatibility
+behavior. Software that depends on exact CPU timing may need CPU turbo Off.
+
 ## Serial ROM fallback
 
 The existing uploader still sends only BASIC, KERNAL, and character ROMs as an
@@ -212,4 +291,11 @@ That result is build `2026082E`; it does not qualify D64 writes,
 journal/recovery behavior, exFAT, RTC-backed
 timestamps, G64, safe reset/reboot barriers, arbitrary game compatibility, or
 long-run SD reliability. Those are current source features awaiting a full
-build and physical-card validation.
+physical-card validation. The ABI 0.8 burst path and track caches are covered
+by portable and HDL tests. The drive-warp implementation failed ordinary D64
+loads on the board and was removed rather than being presented as compatible.
+The replacement fast-pair selection, settings migration, and `Mount & Run`
+path are covered by portable tests and the ABI 0.9 `20260913` Vivado,
+Vitis, and package build. Board tests are still needed with stock, missing,
+invalid, and properly licensed matching fast ROM pairs, plus mounted-D64
+programs that access the disk after startup. CPU turbo remains orthogonal.

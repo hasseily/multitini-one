@@ -396,6 +396,32 @@ mt_link_result_t mt_c64_load_prg(
                           progress, progress_context);
 }
 
+mt_link_result_t mt_c64_stage_prg(
+    mt_core_link_t *link, const mt_c64_content_image_t *image,
+    uint32_t max_polls, mt_link_progress_fn progress,
+    void *progress_context)
+{
+    if (link == NULL || max_polls == 0U ||
+        mt_c64_validate_prg(image).status != MT_C64_CONTENT_OK) {
+        return MT_LINK_BAD_ARGUMENT;
+    }
+    return stream_checked(link, MT_LOAD_C64_PRG_STAGE, image, max_polls,
+                          progress, progress_context);
+}
+
+mt_link_result_t mt_c64_run_prg(
+    mt_core_link_t *link, uint32_t max_polls,
+    mt_link_progress_fn progress, void *progress_context)
+{
+    static const uint8_t run_token = 0U;
+    if (link == NULL || max_polls == 0U) return MT_LINK_BAD_ARGUMENT;
+    /* A rejected run token leaves the staged program and mounted disk intact;
+     * unlike a partial object transfer, it must not force a blind core reset. */
+    return mt_core_link_stream(link, MT_LOAD_C64_PRG_RUN,
+                               &run_token, 1U, max_polls,
+                               progress, progress_context);
+}
+
 mt_link_result_t mt_c64_load_crt(
     mt_core_link_t *link, const mt_c64_content_image_t *image,
     uint32_t max_polls, mt_link_progress_fn progress,

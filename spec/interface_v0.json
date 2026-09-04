@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "abi": {"major": 0, "minor": 7},
+  "abi": {"major": 0, "minor": 9},
   "magic": "0x4D543031",
   "shell_id": "0x4D544F4E",
   "register_span": "0x1000",
@@ -40,14 +40,17 @@
     {"name": "MEDIA_STATE", "offset": "0x0A8", "access": "ro", "reset": "0x00000000"},
     {"name": "UI_COMMIT", "offset": "0x0AC", "access": "wo", "reset": "0x00000000"},
     {"name": "UI_STATUS", "offset": "0x0B0", "access": "ro", "reset": "0x00000004"},
-    {"name": "CORE_VARIANT_INDEX", "offset": "0x0B4", "access": "ro", "reset": "parameter"}
+    {"name": "CORE_VARIANT_INDEX", "offset": "0x0B4", "access": "ro", "reset": "parameter"},
+    {"name": "STREAM_DATA_BURST", "offset": "0x0B8", "access": "wo", "reset": "0x00000000"},
+    {"name": "STREAM_STATUS", "offset": "0x0BC", "access": "ro", "reset": "0x00000000"}
   ],
   "bitfields": {
     "CONTROL": {
       "CORE_RESET_REQUEST": 0,
       "VIDEO_TEST_ENABLE": 1,
       "AUDIO_TEST_ENABLE": 2,
-      "AUDIO_MUTE": 3
+      "AUDIO_MUTE": 3,
+      "C64_CPU_TURBO_ENABLE": 5
     },
     "STATUS": {
       "SHELL_READY": 0,
@@ -90,6 +93,10 @@
       "VISIBLE": 0,
       "BANK": 1,
       "READY": 2
+    },
+    "STREAM_STATUS": {
+      "READY": 0,
+      "DRAINED": 1
     }
   },
   "constants": {
@@ -108,7 +115,8 @@
     "UI_VRAM_BANK_BYTES": "0x00001680",
     "UI_VRAM_BANK0_OFFSET": "0x00001000",
     "UI_VRAM_BANK1_OFFSET": "0x00002800",
-    "UI_WINDOW_SPAN": "0x00010000"
+    "UI_WINDOW_SPAN": "0x00010000",
+    "STREAM_BURST_BYTES": 4
   },
   "commands": {
     "PING": 0,
@@ -137,7 +145,7 @@
     "request": {
       "unit_bytes": 256,
       "rule": "VALID, WRITE, ID, LBA, BLOCK_COUNT, and GENERATION remain stable until a matching MEDIA_COMPLETE pulse",
-      "read_payload": "For WRITE=0, software sends exactly BLOCK_COUNT*256 bytes through the normal load stream before MEDIA_COMPLETE",
+      "read_payload": "For WRITE=0, software sends exactly BLOCK_COUNT*256 bytes through the load stream before MEDIA_COMPLETE; ABI 0.8 adds packed four-byte STREAM_DATA_BURST writes with STREAM_STATUS backpressure while retaining the byte-command path",
       "write_payload": "For WRITE=1, each MMIO read of MEDIA_DATA with VALID=1 returns and consumes one byte in bits[15:8]; LAST is set only on byte BLOCK_COUNT*256-1"
     },
     "commands": {

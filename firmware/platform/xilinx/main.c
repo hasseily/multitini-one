@@ -41,7 +41,7 @@
 
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
 #define MT_SUPERVISOR_CORE_ID UINT32_C(0)
-#define MT_FIRMWARE_BUILD_ID UINT32_C(0x20260910)
+#define MT_FIRMWARE_BUILD_ID UINT32_C(0x20260913)
 #define MT_I2C_CLOCK_HZ UINT32_C(100000)
 #define MT_I2C_BUSY_POLLS UINT32_C(1000000)
 #define MT_UART_DRAIN_POLLS UINT32_C(10000000)
@@ -51,7 +51,7 @@
 #define MT_LINK_COMMAND_POLLS UINT32_C(100000)
 #define MT_EXTENDED_COMMAND_CAPACITY 272U
 #define MT_EXTENDED_ARGUMENT_CAPACITY 4
-#define MT_MENU_MAX_FILES 64U
+#define MT_MENU_MAX_FILES 144U
 
 /* Zynq-7000 UG585 multiboot and PS software-reset registers. */
 #define MT_DEVCFG_MULTIBOOT UINT32_C(0xF800702C)
@@ -76,6 +76,29 @@ static bool gameboy_save_dirty_displayed;
 static bool gameboy_save_fault_displayed;
 static uint8_t c64_rom_bundle[MT_C64_SYSTEM_ROM_BUNDLE_SIZE];
 static uint8_t c64_drive_rom[MT_SIZE_C64_1541_ROM];
+static uint8_t c64_candidate_rom_bundle[MT_C64_SYSTEM_ROM_BUNDLE_SIZE];
+static uint8_t c64_candidate_drive_rom[MT_SIZE_C64_1541_ROM];
+static bool c64_rom_profile_active_valid;
+static bool c64_active_drive_rom_available;
+static bool c64_fast_roms_active;
+static bool c64_fast_roms_fallback;
+
+typedef enum {
+    C64_ROM_RESTORE_OK = 0,
+    C64_ROM_RESTORE_MEDIA_PENDING,
+    C64_ROM_RESTORE_FAILED
+} c64_rom_restore_result_t;
+
+typedef enum {
+    C64_ROM_STAGE_OK = 0,
+    C64_ROM_STAGE_PROFILE_UNAVAILABLE,
+    C64_ROM_STAGE_NO_ROLLBACK_PAIR,
+    C64_ROM_STAGE_SWITCH_FAILED,
+    C64_ROM_STAGE_MEDIA_FAILED,
+    C64_ROM_STAGE_ROLLBACK_MEDIA_PENDING,
+    C64_ROM_STAGE_ROLLBACK_FAILED
+} c64_rom_stage_result_t;
+
 static XTime last_fatfs_time_poll;
 static mt_core_catalog_sd_t core_catalog;
 static mt_supervisor_t supervisor;
@@ -89,6 +112,10 @@ static uint8_t supervisor_menu_keys[MT_C64_HID_SLOT_COUNT]
 static char supervisor_status_text[64] = "Ready";
 static mt_menu_file_t supervisor_menu_files[MT_MENU_MAX_FILES];
 static size_t supervisor_menu_file_count;
+static mt_c64_d64_prg_entry_t supervisor_d64_prgs[MT_MENU_MAX_FILES];
+static size_t supervisor_d64_prg_count;
+static uint8_t supervisor_disk_prg_buffer[MT_SIZE_C64_PRG_MAX];
+static mt_menu_core_option_t supervisor_core_options[MT_MENU_MAX_CORE_OPTIONS];
 static mt_supervisor_settings_t persistent_settings;
 static mt_supervisor_settings_t settings_before_update;
 static mt_core_selection_t startup_auto_selection;
@@ -100,6 +127,17 @@ static bool save_persistent_settings(void);
 static bool remember_active_drive8(const char *file_name);
 static bool remember_active_cartridge(const char *file_name);
 static bool remember_c64_input_settings(void);
+static uint32_t shell_read(uint32_t offset);
+static void set_supervisor_status(const char *text);
+
+static void set_c64_cpu_turbo(bool enabled)
+{
+    const uint32_t control = shell_read(MT_REG_CONTROL);
+    Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_CONTROL,
+              enabled ? control | MT_CONTROL_C64_CPU_TURBO_ENABLE :
+                        control & ~MT_CONTROL_C64_CPU_TURBO_ENABLE);
+    supervisor_menu_dirty = true;
+}
 
 static int board_i2c_write(void *context, uint8_t address, uint8_t reg,
                            uint8_t value)
@@ -560,59 +598,143 @@ static void print_c64_sd_fallback(void)
                ":c64rx 20480 0xCRC32\r\n", MT_C64_SD_ROM_ROOT);
 }
 
-static bool load_c64_sd_drive_rom(void)
+static void print_c64_rom_file_error(const char *set_name,
+                                     const mt_c64_rom_files_result_t *result)
 {
-    const mt_sd_result_t read_result = mt_sd_storage_read_file_exact(
-        MT_C64_SD_1541_PATH, c64_drive_rom, sizeof(c64_drive_rom));
-    mt_content_validation_t validation;
-    mt_link_result_t load_result;
+    const mt_sd_status_t read_status = (mt_sd_status_t)result->read.status;
+    xil_printf("[C64] %s ROM load failed status=%s path=%s read=%s "
+               "backend=%u size=%u validation=%s\r\n",
+               set_name,
+               mt_c64_rom_files_status_name(result->status),
+               result->path == NULL ? "(none)" : result->path,
+               mt_sd_status_name(read_status), result->read.backend_status,
+               (unsigned int)result->read.size,
+               mt_content_validation_name(result->validation));
+}
 
-    if (read_result.status != MT_SD_OK) {
-        xil_printf("[C64] drive8 ROM unavailable path=%s read=%s "
-                   "backend=%u size=%u\r\n",
-                   MT_C64_SD_1541_PATH,
-                   mt_sd_status_name(read_result.status),
-                   read_result.backend_status,
-                   (unsigned int)read_result.size);
-        return false;
-    }
-    validation = mt_c64_rom_validate(
-        MT_C64_ROM_DRIVE_1541, c64_drive_rom, sizeof(c64_drive_rom));
-    if (validation != MT_CONTENT_VALID) {
-        xil_printf("[C64] drive8 ROM rejected path=%s validation=%s\r\n",
-                   MT_C64_SD_1541_PATH,
-                   mt_content_validation_name(validation));
+static bool read_c64_rom_profile(bool fast, bool require_drive,
+                                 bool *drive_available)
+{
+    const mt_c64_rom_paths_t *const paths = fast ?
+        mt_c64_fast_rom_paths() : mt_c64_stock_rom_paths();
+    const char *const set_name = fast ? "fast-pair" : "stock";
+    mt_c64_rom_files_result_t result;
+    mt_c64_system_roms_t roms;
+
+    if (drive_available == NULL) return false;
+    *drive_available = false;
+    result = mt_c64_rom_files_load_system_from(
+        paths, read_c64_sd_rom, NULL, c64_candidate_rom_bundle,
+        sizeof(c64_candidate_rom_bundle), &roms);
+    if (result.status != MT_C64_ROM_FILES_OK) {
+        print_c64_rom_file_error(set_name, &result);
         return false;
     }
 
-    load_result = mt_core_link_stream(
-        &shell_link, MT_LOAD_C64_1541_ROM, c64_drive_rom,
-        sizeof(c64_drive_rom), MT_LINK_COMMAND_POLLS, NULL, NULL);
-    if (load_result != MT_LINK_OK) {
-        xil_printf("[C64] drive8 ROM stream failed: %s\r\n",
-                   mt_link_result_name(load_result));
-        return false;
+    result = mt_c64_rom_file_load(
+        MT_C64_ROM_DRIVE_1541, paths->drive_1541, read_c64_sd_rom, NULL,
+        c64_candidate_drive_rom, sizeof(c64_candidate_drive_rom));
+    if (result.status != MT_C64_ROM_FILES_OK) {
+        print_c64_rom_file_error(set_name, &result);
+        return !require_drive;
     }
-    xil_printf("[C64] drive8 ROM loaded path=%s crc32=%08x\r\n",
-               MT_C64_SD_1541_PATH,
-               (unsigned int)mt_xmodem_crc32_ieee(
-                   c64_drive_rom, sizeof(c64_drive_rom)));
+    *drive_available = true;
     return true;
 }
 
-static bool attempt_c64_sd_boot(void)
+static bool stream_c64_rom_profile(const uint8_t *system_bundle,
+                                   const uint8_t *drive_rom,
+                                   bool drive_available,
+                                   const char *set_name,
+                                   uint32_t *core_status)
 {
-    mt_sd_result_t mount_result;
-    mt_c64_rom_files_result_t files_result;
     mt_c64_system_roms_t roms;
     mt_link_result_t load_result;
-    uint32_t core_status = 0U;
-    uint32_t actual_crc32;
 
-    if (set_core_reset_request(true) != 0) {
-        xil_printf("[C64] error: cannot enter reset for SD ROM load\r\n");
+    roms.basic.data = system_bundle;
+    roms.basic.size = MT_SIZE_C64_BASIC;
+    roms.kernal.data = system_bundle + MT_SIZE_C64_BASIC;
+    roms.kernal.size = MT_SIZE_C64_KERNAL;
+    roms.character.data = system_bundle + MT_SIZE_C64_BASIC +
+                          MT_SIZE_C64_KERNAL;
+    roms.character.size = MT_SIZE_C64_CHARACTER;
+
+    Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_ERROR, MT_ERROR_CORE_LOAD);
+    if (drive_available) {
+        load_result = mt_core_link_stream(
+            &shell_link, MT_LOAD_C64_1541_ROM, drive_rom,
+            MT_SIZE_C64_1541_ROM, MT_LINK_COMMAND_POLLS, NULL, NULL);
+        if (load_result != MT_LINK_OK) {
+            xil_printf("[C64] %s drive ROM stream failed: %s\r\n",
+                       set_name, mt_link_result_name(load_result));
+            return false;
+        }
+    }
+
+    load_result = mt_c64_load_system_roms(
+        &shell_link, &roms, MT_LINK_COMMAND_POLLS, NULL, NULL);
+    if (load_result != MT_LINK_OK) {
+        leave_core_in_reset();
+        xil_printf("[C64] %s system ROM stream failed: %s\r\n",
+                   set_name, mt_link_result_name(load_result));
         return false;
     }
+    if (!wait_for_c64_core_ready(core_status)) {
+        leave_core_in_reset();
+        xil_printf("[C64] %s core-ready timeout status=%08x\r\n",
+                   set_name,
+                   (unsigned int)(core_status == NULL ? 0U : *core_status));
+        return false;
+    }
+    return true;
+}
+
+static void remember_active_c64_rom_profile(bool fast, bool drive_available)
+{
+    memcpy(c64_rom_bundle, c64_candidate_rom_bundle,
+           sizeof(c64_rom_bundle));
+    if (drive_available) {
+        memcpy(c64_drive_rom, c64_candidate_drive_rom,
+               sizeof(c64_drive_rom));
+    }
+    c64_rom_profile_active_valid = true;
+    c64_active_drive_rom_available = drive_available;
+    c64_fast_roms_active = fast;
+}
+
+static c64_rom_restore_result_t restore_active_c64_rom_profile(void)
+{
+    uint32_t core_status = 0U;
+
+    if (!c64_rom_profile_active_valid || set_core_reset_request(true) != 0) {
+        return C64_ROM_RESTORE_FAILED;
+    }
+    if (!stream_c64_rom_profile(
+            c64_rom_bundle, c64_drive_rom,
+            c64_active_drive_rom_available,
+            c64_fast_roms_active ? "fast-pair rollback" : "stock rollback",
+            &core_status)) {
+        leave_core_in_reset();
+        xil_printf("[C64] ROM rollback failed; core held in reset\r\n");
+        return C64_ROM_RESTORE_FAILED;
+    }
+    c64_drive_ready = c64_active_drive_rom_available;
+    if (c64_d64_service_resume_after_reset() != 0) {
+        xil_printf("[C64] ROM rollback succeeded; drive8 remount pending\r\n");
+        c64_core_reset_active = false;
+        return C64_ROM_RESTORE_MEDIA_PENDING;
+    }
+    c64_core_reset_active = false;
+    return C64_ROM_RESTORE_OK;
+}
+
+static bool attempt_c64_sd_boot(bool request_fast_roms)
+{
+    mt_sd_result_t mount_result;
+    uint32_t core_status = 0U;
+    uint32_t actual_crc32;
+    bool drive_available = false;
+    bool fast = request_fast_roms;
 
     mount_result = mt_sd_storage_mount();
     xil_printf("[SD] mount status=%s backend=%u\r\n",
@@ -623,53 +745,108 @@ static bool attempt_c64_sd_boot(void)
         return false;
     }
 
-    files_result = mt_c64_rom_files_load_system(
-        read_c64_sd_rom, NULL, c64_rom_bundle, sizeof(c64_rom_bundle), &roms);
-    if (files_result.status != MT_C64_ROM_FILES_OK) {
-        const mt_sd_status_t read_status =
-            (mt_sd_status_t)files_result.read.status;
-        xil_printf("[C64] SD ROM load failed status=%s path=%s "
-                   "read=%s backend=%u size=%u validation=%s\r\n",
-                   mt_c64_rom_files_status_name(files_result.status),
-                   files_result.path == NULL ? "(none)" : files_result.path,
-                   mt_sd_status_name(read_status),
-                   files_result.read.backend_status,
-                   (unsigned int)files_result.read.size,
-                   mt_content_validation_name(files_result.validation));
+    c64_fast_roms_fallback = false;
+    if (fast) {
+        if (!read_c64_rom_profile(true, true, &drive_available)) {
+            xil_printf("[C64] fast ROM pair unavailable; using stock ROMs\r\n");
+            c64_fast_roms_fallback = true;
+            fast = false;
+            if (!read_c64_rom_profile(false, false, &drive_available)) {
+                print_c64_sd_fallback();
+                return false;
+            }
+        }
+    } else if (!read_c64_rom_profile(false, false, &drive_available)) {
         print_c64_sd_fallback();
         return false;
     }
 
-    Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_ERROR, MT_ERROR_CORE_LOAD);
-    c64_drive_ready = load_c64_sd_drive_rom();
-    if (!c64_drive_ready) {
-        /* Keep system-ROM boot independent of the optional drive ROM. */
-        Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_ERROR, MT_ERROR_CORE_LOAD);
-    }
-    load_result = mt_c64_load_system_roms(
-        &shell_link, &roms, MT_LINK_COMMAND_POLLS, NULL, NULL);
-    if (load_result != MT_LINK_OK) {
-        leave_core_in_reset();
-        xil_printf("[C64] error: SD ROM stream %s\r\n",
-                   mt_link_result_name(load_result));
-        print_c64_sd_fallback();
+    if (set_core_reset_request(true) != 0) {
+        xil_printf("[C64] error: cannot enter reset for SD ROM load\r\n");
         return false;
     }
-    if (!wait_for_c64_core_ready(&core_status)) {
-        leave_core_in_reset();
-        xil_printf("[C64] error: core-ready timeout status=%08x\r\n",
-                   (unsigned int)core_status);
-        print_c64_sd_fallback();
-        return false;
+    if (!stream_c64_rom_profile(
+            c64_candidate_rom_bundle, c64_candidate_drive_rom,
+            drive_available, fast ? "fast-pair" : "stock", &core_status)) {
+        if (!fast) {
+            print_c64_sd_fallback();
+            return false;
+        }
+        xil_printf("[C64] fast ROM pair could not start; using stock ROMs\r\n");
+        c64_fast_roms_fallback = true;
+        /* The candidate drive ROM may already be live. A fallback after a
+         * failed fast start must overwrite it with a complete stock pair;
+         * otherwise stock system ROMs could run beside the fast drive ROM. */
+        if (!read_c64_rom_profile(false, true, &drive_available) ||
+            !stream_c64_rom_profile(
+                c64_candidate_rom_bundle, c64_candidate_drive_rom,
+                drive_available, "stock", &core_status)) {
+            print_c64_sd_fallback();
+            return false;
+        }
+        fast = false;
     }
 
+    remember_active_c64_rom_profile(fast, drive_available);
+    c64_drive_ready = drive_available;
     set_video_test(false);
-    actual_crc32 = mt_xmodem_crc32_ieee(c64_rom_bundle,
-                                         sizeof(c64_rom_bundle));
-    xil_printf("[C64] SD boot ok root=%s crc32=%08x status=%08x\r\n",
-               MT_C64_SD_ROM_ROOT, (unsigned int)actual_crc32,
-               (unsigned int)core_status);
+    actual_crc32 = mt_xmodem_crc32_ieee(
+        c64_rom_bundle, sizeof(c64_rom_bundle));
+    xil_printf("[C64] SD boot ok ROMs=%s root=%s crc32=%08x status=%08x\r\n",
+               fast ? "fast-pair" : "stock", MT_C64_SD_ROM_ROOT,
+               (unsigned int)actual_crc32, (unsigned int)core_status);
     return true;
+}
+
+/* Load a candidate pair without replacing the in-memory rollback image. The
+ * caller commits candidate buffers only after its settings write succeeds. */
+static c64_rom_stage_result_t stage_c64_rom_profile(bool fast)
+{
+    c64_rom_restore_result_t restore_result;
+    uint32_t core_status = 0U;
+    bool drive_available = false;
+
+    /* A live switch is committed only after its settings write succeeds. The
+     * current profile therefore needs a complete drive ROM as well as system
+     * ROMs so every failure path can restore a full, non-mixed pair. Stock
+     * system-only boot remains supported; it simply cannot be a rollback
+     * source for a live ROM-pair switch. */
+    if (!c64_rom_profile_active_valid ||
+        !c64_active_drive_rom_available) {
+        return C64_ROM_STAGE_NO_ROLLBACK_PAIR;
+    }
+    if (!read_c64_rom_profile(fast, true, &drive_available))
+        return C64_ROM_STAGE_PROFILE_UNAVAILABLE;
+    if (set_core_reset_request(true) != 0) {
+        if (c64_d64_service_resume_after_reset() != 0)
+            return C64_ROM_STAGE_ROLLBACK_MEDIA_PENDING;
+        return C64_ROM_STAGE_SWITCH_FAILED;
+    }
+    if (stream_c64_rom_profile(
+            c64_candidate_rom_bundle, c64_candidate_drive_rom, true,
+            fast ? "fast-pair" : "stock", &core_status)) {
+        c64_drive_ready = true;
+        if (c64_d64_service_resume_after_reset() != 0) {
+            xil_printf("[C64] ROM switch drive8 remount failed; restoring "
+                       "previous ROM pair\r\n");
+            restore_result = restore_active_c64_rom_profile();
+            if (restore_result == C64_ROM_RESTORE_FAILED)
+                return C64_ROM_STAGE_ROLLBACK_FAILED;
+            if (restore_result == C64_ROM_RESTORE_MEDIA_PENDING)
+                return C64_ROM_STAGE_ROLLBACK_MEDIA_PENDING;
+            return C64_ROM_STAGE_MEDIA_FAILED;
+        }
+        c64_core_reset_active = false;
+        return C64_ROM_STAGE_OK;
+    }
+
+    xil_printf("[C64] ROM switch failed; restoring previous ROM pair\r\n");
+    restore_result = restore_active_c64_rom_profile();
+    if (restore_result == C64_ROM_RESTORE_FAILED)
+        return C64_ROM_STAGE_ROLLBACK_FAILED;
+    if (restore_result == C64_ROM_RESTORE_MEDIA_PENDING)
+        return C64_ROM_STAGE_ROLLBACK_MEDIA_PENDING;
+    return C64_ROM_STAGE_SWITCH_FAILED;
 }
 
 static void handle_c64_rx_command(char *line)
@@ -832,12 +1009,14 @@ static bool prepare_c64_content_change(void)
     return true;
 }
 
-static void finish_c64_content_change(void)
+static bool finish_c64_content_change(void)
 {
     if (c64_d64_service_resume_after_reset() != 0) {
         xil_printf("[C64] content change completed, but drive8 remount "
                    "failed; retry with :diskretry\r\n");
+        return false;
     }
+    return true;
 }
 
 static void handle_c64_content_load(const char *file_name)
@@ -978,8 +1157,18 @@ static void handle_extended_command(bool recovery_only)
         if (c64_d64_service_retry() == 0) {
             if (c64_d64_service_resume_after_reset() != 0)
                 xil_printf("[C64] drive8 retry pending\r\n");
-            else
+            else if (c64_content_service_prg_staged()) {
+                const mt_c64_content_service_result_t run =
+                    c64_content_service_run_staged_prg();
+                print_c64_content_result("deferred mount-and-run", NULL,
+                                         &run);
+                set_supervisor_status(
+                    run.status == MT_C64_CONTENT_SERVICE_OK ?
+                    "Program running; D64 remounted" :
+                    "D64 remounted; staged RUN failed");
+            } else {
                 xil_printf("[C64] drive8 retry accepted\r\n");
+            }
         } else {
             xil_printf("[C64] drive8 retry failed\r\n");
         }
@@ -1175,6 +1364,8 @@ static bool restore_selection_settings(
     profile = mt_supervisor_settings_find(&persistent_settings,
                                           selection->package.id);
     if (selection->package.core_id == MT_C64_CORE_ID) {
+        set_c64_cpu_turbo(selection->package.abi_minor >= 8U &&
+                          profile != NULL && profile->c64_cpu_turbo);
         if (profile != NULL) {
             if (usb_hid_service_set_symbolic_keyboard(
                     profile->symbolic_keyboard) != 0 ||
@@ -1199,12 +1390,9 @@ static bool restore_selection_settings(
                 }
             }
             if (profile->drive8_name[0] != '\0') {
-                const bool already_mounted = c64_d64_service_mounted() &&
-                    strcmp(c64_d64_service_mounted_name(),
-                           profile->drive8_name) == 0;
                 if (!c64_drive_ready ||
-                    (!already_mounted &&
-                     c64_d64_service_mount(profile->drive8_name) != 0)) {
+                    c64_d64_service_ensure_mounted(
+                        profile->drive8_name) != 0) {
                     xil_printf("[settings] drive8 restore failed: %s\r\n",
                                profile->drive8_name);
                     ok = false;
@@ -1267,11 +1455,29 @@ static mt_menu_view_t supervisor_menu_view(void)
         view.drive8_supported = true;
         view.cartridge_supported = true;
         view.program_supported = true;
+        view.mount_and_run_supported =
+            supervisor.active.package.abi_minor >= 9U;
         view.c64_input_settings = true;
         view.drive8_mounted = c64_d64_service_mounted();
+        view.drive8_d64_mounted = c64_d64_service_mounted_d64();
         view.drive8_name = c64_d64_service_mounted_name();
         view.cartridge_attached = c64_content_service_crt_attached();
         view.content_name = c64_content_service_crt_name();
+        if (supervisor.active.package.abi_minor >= 8U) {
+            supervisor_core_options[0].label = "Fast serial ROMs";
+            supervisor_core_options[0].value = c64_fast_roms_active ?
+                "On" : (c64_fast_roms_fallback ?
+                         "Unavailable; stock" : "Off");
+            supervisor_core_options[0].enabled = true;
+            supervisor_core_options[1].label = "CPU turbo";
+            supervisor_core_options[1].value =
+                (shell_read(MT_REG_CONTROL) &
+                 MT_CONTROL_C64_CPU_TURBO_ENABLE) != 0U ?
+                "Smart 2x" : "Off";
+            supervisor_core_options[1].enabled = true;
+            view.core_options = supervisor_core_options;
+            view.core_option_count = 2U;
+        }
     } else if (supervisor.has_active &&
                supervisor.active.package.core_id == MT_GBC_CORE_ID &&
                gameboy_service_initialized) {
@@ -1325,8 +1531,50 @@ static int collect_menu_file(void *context, const char *name, size_t size,
     memcpy(supervisor_menu_files[supervisor_menu_file_count].name,
            name, name_size + 1U);
     supervisor_menu_files[supervisor_menu_file_count].size = size;
+    supervisor_menu_files[supervisor_menu_file_count].cookie = 0U;
     ++supervisor_menu_file_count;
     return 0;
+}
+
+static bool collect_d64_prg(void *context,
+                            const mt_c64_d64_prg_entry_t *entry)
+{
+    mt_c64_d64_result_t result;
+    mt_c64_content_image_t image;
+    size_t extracted_size = 0U;
+    size_t name_size;
+    const size_t index = supervisor_d64_prg_count;
+    (void)context;
+
+    if (entry == NULL || index >= MT_MENU_MAX_FILES) return false;
+    /* Unclosed (splat) files are visible in a raw directory but are not safe
+     * Mount & Run targets. Extraction also validates the complete chain. */
+    if ((entry->file_type & UINT8_C(0x80)) == 0U) return true;
+    result = c64_d64_service_extract_prg(
+        entry, supervisor_disk_prg_buffer,
+        sizeof(supervisor_disk_prg_buffer), &extracted_size);
+    image.data = supervisor_disk_prg_buffer;
+    image.size = extracted_size;
+    if (result != MT_C64_D64_OK ||
+        mt_c64_validate_prg(&image).status != MT_C64_CONTENT_OK ||
+        supervisor_disk_prg_buffer[0] != 0x01U ||
+        supervisor_disk_prg_buffer[1] != 0x08U) {
+        return true;
+    }
+
+    supervisor_d64_prgs[index] = *entry;
+    name_size = strlen(entry->display_name);
+    if (name_size == 0U) {
+        memcpy(supervisor_menu_files[index].name, "<unnamed>", 10U);
+    } else {
+        memcpy(supervisor_menu_files[index].name, entry->display_name,
+               name_size + 1U);
+    }
+    supervisor_menu_files[index].size = extracted_size;
+    supervisor_menu_files[index].cookie = (uint32_t)index;
+    ++supervisor_d64_prg_count;
+    supervisor_menu_file_count = supervisor_d64_prg_count;
+    return supervisor_d64_prg_count < MT_MENU_MAX_FILES;
 }
 
 static void sort_menu_files(void)
@@ -1357,6 +1605,25 @@ static void open_menu_browser(mt_menu_browser_t browser)
         return;
     }
     supervisor_menu_file_count = 0U;
+    supervisor_d64_prg_count = 0U;
+    if (browser == MT_MENU_BROWSER_DISK_PROGRAM) {
+        size_t directory_count = 0U;
+        const mt_c64_d64_result_t result = c64_d64_service_list_prgs(
+            collect_d64_prg, NULL, &directory_count);
+        if (result != MT_C64_D64_OK) {
+            xil_printf("[C64] D64 directory: %s\r\n",
+                       mt_c64_d64_result_name(result));
+            set_supervisor_status("Could not read the D64 directory");
+            return;
+        }
+        sort_menu_files();
+        supervisor_menu.browser = browser;
+        supervisor_menu.row = 0U;
+        set_supervisor_status(supervisor_menu_file_count == 0U ?
+                              "No loadable PRGs in this D64" :
+                              "Choose a PRG to mount and run");
+        return;
+    }
     list_result = mt_sd_storage_list(
         supervisor.active.package.content_root, collect_menu_file, &browser);
     if (list_result.status != MT_SD_OK) {
@@ -1416,6 +1683,8 @@ static int supervisor_probe(void *context, uint32_t core_id,
 static int supervisor_activate(void *context,
                                const mt_core_selection_t *selection)
 {
+    const mt_core_settings_profile_t *profile;
+    bool request_fast_roms;
     (void)context;
     usb_hid_service_set_active_core(selection->package.core_id);
     if (selection->package.core_id == MT_GBC_CORE_ID) {
@@ -1437,7 +1706,11 @@ static int supervisor_activate(void *context,
     }
     c64_core_reset_active = true;
     c64_content_service_init(&shell_link, NULL, NULL);
-    if (!attempt_c64_sd_boot()) return -2;
+    profile = mt_supervisor_settings_find(&persistent_settings,
+                                          selection->package.id);
+    request_fast_roms = selection->package.abi_minor >= 8U &&
+                        profile != NULL && profile->c64_fast_roms;
+    if (!attempt_c64_sd_boot(request_fast_roms)) return -2;
     if (c64_services_initialized &&
         c64_d64_service_resume_after_reset() != 0) {
         return -3;
@@ -1559,6 +1832,8 @@ static void handle_menu_action(mt_menu_action_t action)
                    supervisor.recovered ? 1U : 0U);
     } else if (action.kind == MT_MENU_ACTION_BROWSE_DRIVE8) {
         open_menu_browser(MT_MENU_BROWSER_DRIVE8);
+    } else if (action.kind == MT_MENU_ACTION_BROWSE_DISK_PROGRAM) {
+        open_menu_browser(MT_MENU_BROWSER_DISK_PROGRAM);
     } else if (action.kind == MT_MENU_ACTION_BROWSE_CARTRIDGE) {
         open_menu_browser(MT_MENU_BROWSER_CARTRIDGE);
     } else if (action.kind == MT_MENU_ACTION_BROWSE_PROGRAM) {
@@ -1580,6 +1855,70 @@ static void handle_menu_action(mt_menu_action_t action)
             set_supervisor_status("Drive mounted; settings write failed");
         else
             set_supervisor_status("Drive 8 mounted");
+    } else if (action.kind == MT_MENU_ACTION_MOUNT_AND_RUN) {
+        mt_c64_content_service_result_t result;
+        mt_c64_content_service_result_t run_result;
+        mt_c64_d64_result_t extract_result;
+        bool remounted;
+        bool settings_saved = true;
+        size_t extracted_size = 0U;
+        uint32_t cookie;
+        if (action.file_index >= supervisor_menu_file_count) {
+            set_supervisor_status("Mount & Run could not start");
+            return;
+        }
+        cookie = supervisor_menu_files[action.file_index].cookie;
+        if (cookie >= supervisor_d64_prg_count) {
+            set_supervisor_status("D64 program selection is stale");
+            return;
+        }
+        extract_result = c64_d64_service_extract_prg(
+            &supervisor_d64_prgs[cookie], supervisor_disk_prg_buffer,
+            sizeof(supervisor_disk_prg_buffer), &extracted_size);
+        if (extract_result != MT_C64_D64_OK) {
+            xil_printf("[C64] Mount & Run extract %s: %s\r\n",
+                       supervisor_menu_files[action.file_index].name,
+                       mt_c64_d64_result_name(extract_result));
+            set_supervisor_status("Could not extract that D64 program");
+            return;
+        }
+        if (!prepare_c64_content_change()) {
+            set_supervisor_status("Mount & Run could not start");
+            return;
+        }
+        result = c64_content_service_stage_prg_image(
+            supervisor_disk_prg_buffer, extracted_size);
+        print_c64_content_result(
+            "mount-and-run stage",
+            supervisor_menu_files[action.file_index].name,
+            &result);
+        remounted = finish_c64_content_change();
+        if (result.status != MT_C64_CONTENT_SERVICE_OK) {
+            set_supervisor_status("Mount & Run failed");
+        } else {
+            supervisor_menu.browser = MT_MENU_BROWSER_NONE;
+            supervisor_menu.row = 1U;
+            settings_saved = remember_active_cartridge(NULL);
+            if (!remounted) {
+                set_supervisor_status(
+                    "Program staged; retry disk remount");
+                return;
+            }
+            run_result = c64_content_service_run_staged_prg();
+            print_c64_content_result(
+                "mount-and-run start",
+                supervisor_menu_files[action.file_index].name,
+                &run_result);
+            if (run_result.status != MT_C64_CONTENT_SERVICE_OK) {
+                set_supervisor_status("Program staged; RUN failed");
+            } else if (!settings_saved) {
+                set_supervisor_status(
+                    "Program running; settings write failed");
+            } else {
+                set_supervisor_status(
+                    "Program running; D64 remains mounted");
+            }
+        }
     } else if (action.kind == MT_MENU_ACTION_LOAD_CONTENT) {
         if (action.file_index >= supervisor_menu_file_count) {
             set_supervisor_status("Content load could not start");
@@ -1724,16 +2063,129 @@ static void handle_menu_action(mt_menu_action_t action)
             set_supervisor_status("Gamepad changed; settings write failed");
         else
             set_supervisor_status("Gamepad port changed");
+    } else if (action.kind == MT_MENU_ACTION_TOGGLE_CORE_OPTION) {
+        const uint32_t control = shell_read(MT_REG_CONTROL);
+        bool enabled;
+        bool valid;
+        if (!supervisor.has_active ||
+            supervisor.active.package.core_id != MT_C64_CORE_ID ||
+            supervisor.active.package.abi_minor < 8U ||
+            action.file_index > 1U) {
+            set_supervisor_status("Core option unavailable");
+            return;
+        }
+        if (action.file_index == 0U) {
+            const mt_core_settings_profile_t *const profile =
+                mt_supervisor_settings_find(
+                    &persistent_settings, supervisor.active.package.id);
+            const bool previous_active = c64_fast_roms_active;
+            c64_rom_stage_result_t stage_result = C64_ROM_STAGE_OK;
+
+            enabled = !(profile != NULL && profile->c64_fast_roms);
+            if (enabled != previous_active) {
+                stage_result = stage_c64_rom_profile(enabled);
+                if (stage_result != C64_ROM_STAGE_OK) {
+                    switch (stage_result) {
+                    case C64_ROM_STAGE_PROFILE_UNAVAILABLE:
+                        set_supervisor_status(enabled ?
+                            "Fast ROM pair unavailable" :
+                            "Stock ROM pair unavailable");
+                        break;
+                    case C64_ROM_STAGE_NO_ROLLBACK_PAIR:
+                        set_supervisor_status(
+                            "Restart with a stock drive ROM before switching");
+                        break;
+                    case C64_ROM_STAGE_MEDIA_FAILED:
+                        set_supervisor_status(
+                            "Drive remount failed; previous ROMs restored");
+                        break;
+                    case C64_ROM_STAGE_ROLLBACK_MEDIA_PENDING:
+                        set_supervisor_status(
+                            "Previous ROMs restored; drive remount pending");
+                        break;
+                    case C64_ROM_STAGE_ROLLBACK_FAILED:
+                        set_supervisor_status(
+                            "ROM rollback failed; restart the core");
+                        break;
+                    case C64_ROM_STAGE_SWITCH_FAILED:
+                    default:
+                        set_supervisor_status(
+                            "ROM switch failed; previous ROMs active");
+                        break;
+                    }
+                    return;
+                }
+            }
+            settings_before_update = persistent_settings;
+            valid = ensure_active_settings_profile() &&
+                mt_supervisor_settings_remember_c64_fast_roms(
+                    &persistent_settings, supervisor.active.package.id,
+                    enabled);
+            if (!valid || !save_persistent_settings()) {
+                c64_rom_restore_result_t restore_result =
+                    C64_ROM_RESTORE_OK;
+                persistent_settings = settings_before_update;
+                if (enabled != previous_active)
+                    restore_result = restore_active_c64_rom_profile();
+                if (restore_result == C64_ROM_RESTORE_FAILED) {
+                    set_supervisor_status(
+                        "Settings failed; ROM rollback failed");
+                } else if (restore_result ==
+                           C64_ROM_RESTORE_MEDIA_PENDING) {
+                    set_supervisor_status(
+                        "Settings failed; ROM restored; drive remount pending");
+                } else {
+                    set_supervisor_status("Fast ROM setting not saved");
+                }
+                return;
+            }
+            if (enabled != previous_active) {
+                remember_active_c64_rom_profile(enabled, true);
+            }
+            c64_fast_roms_fallback = false;
+            set_supervisor_status(enabled ?
+                "Fast ROM pair active" : "Stock ROMs active");
+            return;
+        }
+
+        enabled = (control & MT_CONTROL_C64_CPU_TURBO_ENABLE) == 0U;
+        settings_before_update = persistent_settings;
+        valid = ensure_active_settings_profile();
+        if (valid) {
+            valid = mt_supervisor_settings_remember_c64_cpu_turbo(
+                &persistent_settings, supervisor.active.package.id, enabled);
+        }
+        if (!valid || !save_persistent_settings()) {
+            persistent_settings = settings_before_update;
+            set_supervisor_status("CPU turbo setting not saved");
+        } else {
+            set_c64_cpu_turbo(enabled);
+            set_supervisor_status(enabled ?
+                "CPU turbo enabled" : "CPU turbo disabled");
+        }
     } else if (action.kind == MT_MENU_ACTION_RESET_CORE) {
         if (!supervisor.has_active) {
             set_supervisor_status("No active core");
             return;
         }
         const int asserted = set_core_reset_request(true);
+        int released = -1;
+        bool restored = true;
         if (asserted == 0) usleep(1000U);
-        set_supervisor_status(
-            asserted == 0 && set_core_reset_request(false) == 0 ?
-            "Core restarted" : "Core restart failed");
+        if (asserted == 0) released = set_core_reset_request(false);
+        if (released == 0 &&
+            supervisor.active.package.core_id == MT_C64_CORE_ID) {
+            last_settings_restore_ok = restore_selection_settings(
+                &supervisor.active);
+            restored = last_settings_restore_ok;
+        }
+        if (asserted != 0 || released != 0) {
+            set_supervisor_status("Core restart failed");
+        } else if (!restored) {
+            set_supervisor_status("Core restarted; settings restore failed");
+        } else {
+            set_supervisor_status("Core restarted");
+        }
     } else if (action.kind == MT_MENU_ACTION_TOGGLE_AUTO_BOOT) {
         const bool active_is_target = persistent_settings.auto_boot &&
             supervisor.has_active &&

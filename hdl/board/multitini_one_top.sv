@@ -170,6 +170,7 @@ module multitini_one_top #(
     logic [15:0] machine_video_rgb565;
 
     logic        c64_core_reset_request;
+    logic        c64_cpu_turbo_enable;
     logic [31:0] c64_core_id;
     logic        c64_ready;
     logic        c64_ready_launch;
@@ -484,6 +485,13 @@ module multitini_one_top #(
         .dout(c64_core_reset_request)
     );
 
+    cdc_bit_sync c64_cpu_turbo_sync (
+        .clk(c64_clk), .resetn(c64_aresetn),
+        .din(|(shell_control &
+               multitini_regs_pkg::MT_CONTROL_C64_CPU_TURBO_ENABLE)),
+        .dout(c64_cpu_turbo_enable)
+    );
+
     // Launch status from a machine-clocked register.  Feeding the combinational
     // adapter status directly into a synchronizer creates a CDC-10 hazard.
     always_ff @(posedge c64_clk) begin
@@ -692,6 +700,7 @@ module multitini_one_top #(
             ) machine_adapter (
                 .core_clk(c64_clk), .reset(!c64_aresetn),
                 .core_reset_request(c64_core_reset_request),
+                .cpu_turbo_enable(c64_cpu_turbo_enable),
                 .clear_load_error(c64_load_error_clear),
                 .input_code(c64_input_code), .input_value(c64_input_value),
                 .input_valid(c64_input_valid), .input_ready(c64_input_ready),

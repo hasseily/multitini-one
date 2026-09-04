@@ -21,6 +21,8 @@ typedef enum {
     MT_LOAD_C64_D64 = 0x12,
     MT_LOAD_C64_G64 = 0x13,
     MT_LOAD_C64_CRT_DETACH = 0x14,
+    MT_LOAD_C64_PRG_STAGE = 0x15,
+    MT_LOAD_C64_PRG_RUN = 0x16,
 } mt_c64_load_kind_t;
 
 typedef enum {

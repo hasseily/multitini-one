@@ -37,3 +37,9 @@ Current result:
 - No 1541 ROM or C64 game, disk, cartridge, or tape image is included. The SD
   workflow documents canonical user-supplied paths without adding those files
   to the repository.
+- The optional C64 fast serial profile requires a user-supplied matching
+  KERNAL and 1541 ROM pair under `roms/fast`. Neither file is included,
+  downloaded, or licensed by Multitini merely because the firmware can load it.
+  JiffyDOS is a compatible commercial example; a user license is not permission
+  to redistribute its ROM images in a repository, core package, or firmware
+  bundle.

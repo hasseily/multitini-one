@@ -3,7 +3,8 @@
 
 #include <string.h>
 
-#define MT_SETTINGS_SCHEMA UINT32_C(1)
+#define MT_SETTINGS_SCHEMA_V1 UINT32_C(1)
+#define MT_SETTINGS_SCHEMA UINT32_C(2)
 #define MT_SETTINGS_HEADER_SIZE 24U
 #define MT_SETTINGS_GLOBAL_SIZE 32U
 #define MT_SETTINGS_PROFILE_SIZE 244U
@@ -215,6 +216,26 @@ bool mt_supervisor_settings_remember_c64_input(
     return true;
 }
 
+bool mt_supervisor_settings_remember_c64_fast_roms(
+    mt_supervisor_settings_t *settings, const char *core_id, bool enabled)
+{
+    mt_core_settings_profile_t *const profile =
+        find_profile(settings, core_id, true);
+    if (profile == NULL) return false;
+    profile->c64_fast_roms = enabled;
+    return true;
+}
+
+bool mt_supervisor_settings_remember_c64_cpu_turbo(
+    mt_supervisor_settings_t *settings, const char *core_id, bool enabled)
+{
+    mt_core_settings_profile_t *const profile =
+        find_profile(settings, core_id, true);
+    if (profile == NULL) return false;
+    profile->c64_cpu_turbo = enabled;
+    return true;
+}
+
 static bool settings_valid(const mt_supervisor_settings_t *settings)
 {
     size_t index;
@@ -276,6 +297,8 @@ static bool encode_settings(const mt_supervisor_settings_t *settings)
                strlen(profile->cartridge_name));
         output[240U] = profile->symbolic_keyboard ? 1U : 0U;
         output[241U] = profile->joystick_port;
+        output[242U] = profile->c64_fast_roms ? 1U : 0U;
+        output[243U] = profile->c64_cpu_turbo ? 1U : 0U;
     }
     crc = crc32_bytes(settings_wire + MT_SETTINGS_HEADER_SIZE,
                       MT_SETTINGS_WIRE_SIZE - MT_SETTINGS_HEADER_SIZE);
@@ -298,10 +321,11 @@ static bool wire_string(char *destination, size_t capacity,
 static bool decode_settings(mt_supervisor_settings_t *settings)
 {
     const uint32_t crc = load_u32_le(settings_wire + 16U);
+    const uint32_t schema = load_u32_le(settings_wire + 8U);
     const uint32_t profile_count = load_u32_le(settings_wire + 52U);
     size_t index;
     if (memcmp(settings_wire, settings_magic, sizeof(settings_magic)) != 0 ||
-        load_u32_le(settings_wire + 8U) != MT_SETTINGS_SCHEMA ||
+        (schema != MT_SETTINGS_SCHEMA_V1 && schema != MT_SETTINGS_SCHEMA) ||
         load_u32_le(settings_wire + 12U) != MT_SETTINGS_WIRE_SIZE ||
         load_u32_le(settings_wire + 20U) != ~crc ||
         crc32_bytes(settings_wire + MT_SETTINGS_HEADER_SIZE,
@@ -330,11 +354,16 @@ static bool decode_settings(mt_supervisor_settings_t *settings)
                          sizeof(profile->drive8_name), input + 48U) ||
             !wire_string(profile->cartridge_name,
                          sizeof(profile->cartridge_name), input + 144U) ||
-            input[240U] > 1U) {
+            input[240U] > 1U || input[242U] > 1U || input[243U] > 1U) {
             return false;
         }
         profile->symbolic_keyboard = input[240U] != 0U;
         profile->joystick_port = input[241U];
+        /* Schema 1 byte 242 meant the removed whole-drive warp. Never migrate
+         * an old true value into the unrelated fast-ROM selection. */
+        profile->c64_fast_roms = schema == MT_SETTINGS_SCHEMA &&
+                                 input[242U] != 0U;
+        profile->c64_cpu_turbo = input[243U] != 0U;
     }
     if (!settings_valid(&settings_decode_candidate)) return false;
     *settings = settings_decode_candidate;

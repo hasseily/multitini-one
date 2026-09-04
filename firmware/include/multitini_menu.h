@@ -11,12 +11,14 @@
 
 #define MT_MENU_MAX_CORES 16U
 #define MT_MENU_FILE_NAME_MAX 96U
+#define MT_MENU_MAX_CORE_OPTIONS 8U
 
 typedef enum {
     MT_MENU_PAGE_CORES = 0,
     MT_MENU_PAGE_MEDIA,
     MT_MENU_PAGE_VIDEO,
     MT_MENU_PAGE_INPUT,
+    MT_MENU_PAGE_CORE_CONFIG,
     MT_MENU_PAGE_SYSTEM,
     MT_MENU_PAGE_COUNT
 } mt_menu_page_t;
@@ -25,15 +27,18 @@ typedef enum {
     MT_MENU_ACTION_NONE = 0,
     MT_MENU_ACTION_SWITCH_CORE,
     MT_MENU_ACTION_BROWSE_DRIVE8,
+    MT_MENU_ACTION_BROWSE_DISK_PROGRAM,
     MT_MENU_ACTION_BROWSE_CARTRIDGE,
     MT_MENU_ACTION_BROWSE_PROGRAM,
     MT_MENU_ACTION_MOUNT_DRIVE8,
+    MT_MENU_ACTION_MOUNT_AND_RUN,
     MT_MENU_ACTION_EJECT_DRIVE8,
     MT_MENU_ACTION_LOAD_CONTENT,
     MT_MENU_ACTION_DETACH_CARTRIDGE,
     MT_MENU_ACTION_TOGGLE_VIDEO_SOURCE,
     MT_MENU_ACTION_TOGGLE_KEYBOARD_MAP,
     MT_MENU_ACTION_SWAP_JOYSTICK_PORT,
+    MT_MENU_ACTION_TOGGLE_CORE_OPTION,
     MT_MENU_ACTION_RESET_CORE,
     MT_MENU_ACTION_TOGGLE_AUTO_BOOT,
     MT_MENU_ACTION_REBOOT_GOLDEN
@@ -42,6 +47,7 @@ typedef enum {
 typedef enum {
     MT_MENU_BROWSER_NONE = 0,
     MT_MENU_BROWSER_DRIVE8,
+    MT_MENU_BROWSER_DISK_PROGRAM,
     MT_MENU_BROWSER_CARTRIDGE,
     MT_MENU_BROWSER_PROGRAM
 } mt_menu_browser_t;
@@ -49,7 +55,14 @@ typedef enum {
 typedef struct {
     char name[MT_MENU_FILE_NAME_MAX];
     size_t size;
+    uint32_t cookie;
 } mt_menu_file_t;
+
+typedef struct {
+    const char *label;
+    const char *value;
+    bool enabled;
+} mt_menu_core_option_t;
 
 typedef struct {
     mt_menu_action_kind_t kind;
@@ -68,7 +81,11 @@ typedef struct {
     const char *status_text;
     const mt_menu_file_t *files;
     size_t file_count;
+    const mt_menu_core_option_t *core_options;
+    size_t core_option_count;
     bool drive8_mounted;
+    bool drive8_d64_mounted;
+    bool mount_and_run_supported;
     bool cartridge_attached;
     bool drive8_supported;
     bool cartridge_supported;

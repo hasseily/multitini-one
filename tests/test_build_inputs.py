@@ -179,6 +179,47 @@ class BuildInputTests(unittest.TestCase):
             "(media_eject && !media_request_write_control)", top
         )
 
+    def test_c64_cpu_turbo_uses_smart_mode_without_drive_warp_path(self):
+        adapter = (
+            ROOT / "hdl" / "core" / "c64" /
+            "multitini_c64_adapter.sv"
+        ).read_text(encoding="utf-8")
+        drive = (
+            ROOT / "hdl" / "core" / "c64" /
+            "multitini_c64_1541.sv"
+        ).read_text(encoding="utf-8")
+        top = (
+            ROOT / "hdl" / "board" / "multitini_one_top.sv"
+        ).read_text(encoding="utf-8")
+        interface = (
+            ROOT / "spec" / "interface_v0.json"
+        ).read_text(encoding="utf-8")
+        fpga64 = (
+            ROOT / "hdl" / "core" / "c64" / "ports" /
+            "fpga64_sid_iec.vhd"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            ".turbo_mode({1'b0, cpu_turbo_active})", adapter
+        )
+        self.assertNotIn(
+            ".turbo_mode({cpu_turbo_active, 1'b0})", adapter
+        )
+        self.assertIn("turbo_en <= turbo_mode(0);", fpga64)
+        self.assertIn(
+            "(turbo_mode(0) and turbo_state) = '1' or "
+            "turbo_mode(1) = '1'",
+            fpga64,
+        )
+        self.assertIn(".turbo_request(cpu_turbo_enable)", adapter)
+        self.assertNotIn("warp", adapter.lower())
+        self.assertNotIn("warp", drive.lower())
+        self.assertNotIn("C64_WARP_ENABLE", top)
+        self.assertNotIn("C64_WARP_ENABLE", interface)
+        self.assertFalse(
+            (ROOT / "hdl" / "core" / "c64" /
+             "multitini_c64_drive_clock.sv").exists()
+        )
+
     def test_every_pl_port_has_one_pin_assignment(self):
         top = (ROOT / "hdl" / "board" / "multitini_one_top.sv").read_text()
         declarations = re.findall(
@@ -471,6 +512,79 @@ class BuildInputTests(unittest.TestCase):
         self.assertIn(":c64rx 20480 0xCRC32", workflow)
         self.assertIn("The first board result qualifies", workflow)
         self.assertRegex(workflow, r"does not\s+qualify D64 writes")
+
+    def test_c64_settings_restore_validates_live_fpga_mount(self):
+        header = (
+            ROOT / "firmware/platform/xilinx/c64_d64_service.h"
+        ).read_text()
+        service = (
+            ROOT / "firmware/platform/xilinx/c64_d64_service.c"
+        ).read_text()
+        main = (ROOT / "firmware/platform/xilinx/main.c").read_text()
+        restore = main.split(
+            "static bool restore_selection_settings(", 1
+        )[1].split("static mt_menu_view_t supervisor_menu_view", 1)[0]
+        restart = main.split(
+            "} else if (action.kind == MT_MENU_ACTION_RESET_CORE)", 1
+        )[1].split(
+            "} else if (action.kind == MT_MENU_ACTION_TOGGLE_AUTO_BOOT)", 1
+        )[0]
+
+        self.assertIn("c64_d64_service_ensure_mounted", header)
+        self.assertIn("read_stable_media_state(&media_state)", service)
+        self.assertIn("MT_MEDIA_STATE_EJECT_PENDING", service)
+        self.assertIn("c64_d64_service_ensure_mounted", restore)
+        self.assertNotIn("already_mounted", restore)
+        self.assertIn("restore_selection_settings(", restart)
+        self.assertIn("&supervisor.active", restart)
+
+    def test_c64_fast_rom_switch_has_complete_rollback_paths(self):
+        main = (ROOT / "firmware/platform/xilinx/main.c").read_text()
+        boot = main.split(
+            "static bool attempt_c64_sd_boot(", 1
+        )[1].split("static c64_rom_stage_result_t stage_c64_rom_profile", 1)[0]
+        stage = main.split(
+            "static c64_rom_stage_result_t stage_c64_rom_profile", 1
+        )[1].split("static void handle_c64_rx_command", 1)[0]
+        toggle = main.split(
+            "} else if (action.kind == MT_MENU_ACTION_TOGGLE_CORE_OPTION)", 1
+        )[1].split(
+            "} else if (action.kind == MT_MENU_ACTION_RESET_CORE)", 1
+        )[0]
+
+        # After a candidate drive may have streamed, stock fallback must be a
+        # complete pair rather than leaving the candidate drive ROM installed.
+        self.assertIn(
+            "read_c64_rom_profile(false, true, &drive_available)", boot
+        )
+        # A system-only stock boot is valid, but not as a transactional
+        # rollback source for a live pair switch.
+        self.assertIn("!c64_active_drive_rom_available", stage)
+        # Media restore and rollback failures must prevent settings commit and
+        # reach distinct user-visible outcomes.
+        self.assertIn("C64_ROM_STAGE_ROLLBACK_FAILED", stage)
+        self.assertIn("C64_ROM_STAGE_ROLLBACK_MEDIA_PENDING", stage)
+        self.assertNotIn("(void)restore_active_c64_rom_profile", stage)
+        self.assertIn("stage_result != C64_ROM_STAGE_OK", toggle)
+        self.assertIn("ROM rollback failed; restart the core", toggle)
+        self.assertIn("ROM restored; drive remount pending", toggle)
+
+    def test_c64_mount_and_run_stages_remounts_then_runs(self):
+        main = (ROOT / "firmware/platform/xilinx/main.c").read_text()
+        flow = main.split(
+            "} else if (action.kind == MT_MENU_ACTION_MOUNT_AND_RUN)", 1
+        )[1].split(
+            "} else if (action.kind == MT_MENU_ACTION_LOAD_CONTENT)", 1
+        )[0]
+        stage = flow.index("c64_content_service_stage_prg_image")
+        remount = flow.index("finish_c64_content_change")
+        run = flow.index("c64_content_service_run_staged_prg")
+
+        self.assertLess(stage, remount)
+        self.assertLess(remount, run)
+        self.assertIn("if (!remounted)", flow)
+        self.assertIn("supervisor_menu.row = 1U", flow)
+        self.assertRegex(main, r"#define\s+MT_MENU_MAX_FILES\s+144U")
 
     def test_vitis_build_includes_wired_xbox_360_host_support(self):
         script = (ROOT / "scripts/create_vitis_workspace.py").read_text()

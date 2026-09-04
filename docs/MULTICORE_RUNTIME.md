@@ -1,6 +1,6 @@
 # Multicore Runtime and Menu
 
-Status: implemented through ABI 0.7 and covered by portable C and HDL tests.
+Status: implemented through ABI 0.9 and covered by portable C and HDL tests.
 The installed ABI 0.6 build `2026090E` passed its first direct board exercise:
 F12 selection, C64-to-GBC PCAP loading, package CRC validation, and two GBC
 cartridge gameplay tests. ABI 0.7 build `2026090F` adds GBC battery-RAM
@@ -10,9 +10,16 @@ persistence was confirmed on the board on 2026-09-04. Rollback and the
 remaining repeated-switch/media matrix are not yet board-qualified.
 
 Current source adds versioned supervisor settings, explicit Autoboot control,
-and a supervisor-only root FPGA image. The latter contains the common shell and
-standby UI but no machine core. A fresh Vivado implementation, matching
-exFAT-enabled Vitis platform/package, and board test remain.
+a supervisor-only root FPGA image, a four-byte direct-load transport, and
+generic per-core configuration. C64 exposes optional user-supplied fast serial
+ROMs and independent Smart 2x CPU turbo; both default off. The attempted
+drive-clock warp option failed IEC loading and was removed. The supervisor image
+contains the common shell and standby UI but no machine core. Build `20260911`
+is superseded by ABI 0.8 build `20260912`, whose supervisor, PAL, NTSC,
+PSRAM-enabled GBC, exFAT-enabled Vitis, and package gates pass. The replacement
+ROM profile has not yet been board-qualified. ABI 0.9 build `20260913` adds the
+D64 staged-load/remount/run flow, passes the same vendor and package gates, and
+is installed on the SD card for board validation.
 
 ## Design
 
@@ -62,6 +69,8 @@ Each core is self-contained under its catalog directory:
 0:/multitini/cores/c64/roms/kernal.bin
 0:/multitini/cores/c64/roms/characters.bin
 0:/multitini/cores/c64/roms/1541.bin
+0:/multitini/cores/c64/roms/fast/kernal.bin  (optional, exactly 8 KiB)
+0:/multitini/cores/c64/roms/fast/1541.bin    (optional, exactly 16 KiB)
 0:/multitini/cores/c64/media/*.d64
 0:/multitini/cores/c64/media/*.g64
 0:/multitini/cores/c64/media/*.crt
@@ -96,7 +105,7 @@ schema=1
 id=c64
 name=Commodore 64
 core_id=0x43363420
-abi=0.7
+abi=0.9
 content_root=0:/multitini/cores/c64/media
 variant=pal|PAL 50 Hz|c64-pal.bin|4045568|0x12345678
 variant=ntsc|NTSC 60 Hz|c64-ntsc.bin|4045568|0x9ABCDEF0
@@ -107,7 +116,7 @@ again afterward, so a valid file containing the wrong core or ABI is not
 activated. SHA-256 values are emitted as comments for release/provenance
 checking; the bounded target-side loader uses size plus CRC32.
 
-Generate the C64 package from fresh ABI 0.7 Vivado bitstreams with:
+Generate the C64 package from fresh ABI 0.9 Vivado bitstreams with:
 
 ```powershell
 python scripts/make_core_package.py `
@@ -115,9 +124,9 @@ python scripts/make_core_package.py `
   --name "Commodore 64" `
   --core-id 0x43363420 `
   --content-root 0:/multitini/cores/c64/media `
-  --variant "pal|PAL 50 Hz|build/vivado-pal-current/multitini_one.runs/impl_1/multitini_one_top.bit" `
-  --variant "ntsc|NTSC 60 Hz|build/vivado-ntsc-current/multitini_one.runs/impl_1/multitini_one_top.bit" `
-  --output build/core-packages/c64
+  --variant "pal|PAL 50 Hz|build/vivado-20260913-c64-pal/multitini_one.runs/impl_1/multitini_one_top.bit" `
+  --variant "ntsc|NTSC 60 Hz|build/vivado-20260913-c64-ntsc/multitini_one.runs/impl_1/multitini_one_top.bit" `
+  --output build/core-packages-20260913/c64
 ```
 
 Generate the GBC package from the PSRAM-enabled GBC bitstream with:
@@ -128,8 +137,8 @@ python scripts/make_core_package.py `
   --name "Game Boy Color" `
   --core-id 0x47424320 `
   --content-root 0:/multitini/cores/gbc/media `
-  --variant "default|GB/GBC|build/vivado-gbc-runtime/multitini_one.runs/impl_1/multitini_one_top.bit" `
-  --output build/core-packages/gbc
+  --variant "default|GB/GBC|build/vivado-20260913-gbc-psram/multitini_one.runs/impl_1/multitini_one_top.bit" `
+  --output build/core-packages-20260913/gbc
 ```
 
 The GBC image used for cartridge testing must be created with
@@ -137,17 +146,17 @@ The GBC image used for cartridge testing must be created with
 compile integration because it has no cartridge-memory backing.
 
 The packager invokes Bootgen's Zynq bitstream processor and defaults to ABI
-0.7. ABI 0.6 GBC packages remain loadable but are intentionally treated as
-legacy no-save cores; a package must declare 0.7 before the supervisor sends
-the new save-RAM stream. Existing packages made from the earlier ABI 0.5
-PAL/NTSC images are not compatible with this runtime and must not be copied to
-the card for the next test.
+0.9. ABI 0.7 packages remain loadable and use the original byte-at-a-time
+direct-load register. A package must declare 0.7 before the supervisor sends
+the save-RAM stream. Existing packages made from the earlier ABI 0.5 PAL/NTSC
+images are not compatible with this runtime and must not be copied to the card.
 
 ## Menu
 
 Press `F12` to open or close the menu. While it is open, menu keystrokes are
 consumed and an empty keyboard report is sent to the core so no key remains
-held. `Tab` advances through Cores, Media, Video, Input, and System. Use the
+held. `Tab` advances through Cores, Media, Video, Input, Core config, and
+System. Use the
 arrow keys to select or change a value, `Enter` to apply it, and `Escape` to
 leave a file browser or close the menu. UART command `o` is an independent
 recovery way to toggle the menu.
@@ -155,7 +164,11 @@ recovery way to toggle the menu.
 - Cores selects an SD package and variant. C64 PAL and NTSC are separate full
   PL images under one C64 entry.
 - Media browses the active core's content directory. The C64 service mounts or
-  ejects D64/G64 disks, attaches or detaches CRT cartridges, and loads PRGs.
+  ejects D64/G64 disks, attaches or detaches CRT cartridges, and loads loose
+  PRGs. For a mounted D64, the separate `Mount & Run` row browses validated
+  `$0801` PRGs inside the image, stages the selection directly, remounts that
+  disk, and only then types `RUN`. G64 and protected/custom-loader disks remain
+  on the normal emulated-drive path.
   The GBC service loads `.gb` or `.gbc` cartridges, restores supported
   battery-backed external RAM, shows `Saved`, `Pending write`, or
   `WRITE FAILED`, and keeps the core in reset after cartridge detach.
@@ -165,6 +178,12 @@ recovery way to toggle the menu.
 - Input selects the C64 symbolic/positional keyboard map and joystick port.
   GBC uses the shared USB gamepad path plus arrows, Z, X, Enter, and right
   Shift as a complete keyboard fallback.
+- Core config contains options supplied by the active core service. C64
+  provides independent `Fast serial ROMs` and `CPU turbo` controls. The fast
+  option atomically validates and reloads the user-supplied 8 KiB KERNAL and
+  16 KiB 1541 pair under `roms/fast`; those files are not shipped. CPU turbo
+  selects FPGA64 Smart 2x and automatically pauses around IEC disk traffic.
+  Other cores show an empty-page explanation until they define options.
 - System restarts the active core, explicitly enables or disables Autoboot
   for that core, or returns to the golden updater.
 
@@ -178,13 +197,19 @@ loads no machine core: the supervisor-only FPGA shell displays `MULTITINI` and
 Settings are stored in `0:/multitini/settings.bin`. The file is versioned and
 checksummed and is replaced through `settings.bin.mtj`, using the same synced
 write-ahead journal policy as other writable state. It records each core's
-preferred variant and attached disk or cartridge, plus the C64 keyboard map
-and joystick port. A missing, truncated, incompatible, or corrupt file uses
-safe defaults; in particular it cannot enable auto-boot. Media and input
-settings are restored when their core becomes active. Ejecting or detaching
-content clears that remembered attachment. On a card with no settings file,
-the established first-run C64 `drive8.d64` fallback remains; once the user
-ejects it and settings are saved, later boots leave drive 8 empty.
+preferred variant and attached disk or cartridge, plus the C64 keyboard map,
+joystick port, fast-ROM setting, and CPU-turbo setting. Migrating a schema-one
+file preserves CPU turbo but deliberately maps the former warp flag to fast
+ROMs Off. A missing, truncated, incompatible, or corrupt file uses safe
+defaults; in particular it cannot enable auto-boot. Media and input settings
+are restored when their core becomes active. A persisted fast-ROM selection is
+consulted before ROM loading; if either member is unavailable, firmware reports
+the fallback and activates the stock ROM profile. Runtime changes are persisted
+only after the full pair reload succeeds, with the previous active pair restored
+on failure. Ejecting or detaching content clears that remembered attachment. On
+a card with no settings file, the established first-run C64 `drive8.d64`
+fallback remains; once the user ejects it and settings are saved, later boots
+leave drive 8 empty.
 
 The ARM renders into the inactive text bank and submits the complete plane to
 the video domain. The overlay changes bank and visibility only at vertical
@@ -213,7 +238,7 @@ and a no-RAM MBC5 cartridge. After installing `2026090F`, the user confirmed
 physical GBC game-save persistence on 2026-09-04.
 Broader mapper, input, audio, rollback, and repeated-switch coverage is still
 required before calling the complete GBC path qualified.
-The settings and supervisor-shell source still need a fresh Vivado and
-exFAT-enabled Vitis/package build plus board tests for no-core startup, explicit
-opt-in Autoboot, per-core restoration, corrupt-file fallback, and interrupted
-settings writes.
+The settings and supervisor-shell source pass fresh ABI 0.9 `20260913` Vivado,
+exFAT-enabled Vitis, and package builds. Board tests remain for no-core startup,
+explicit opt-in Autoboot, per-core restoration, corrupt-file fallback, and
+interrupted settings writes.

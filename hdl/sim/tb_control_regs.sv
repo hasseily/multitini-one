@@ -280,6 +280,56 @@ module tb_control_regs;
         write_reg(MT_REG_COMMAND_DOORBELL, 32'd8, 4'hF);
         expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_OK, "stream end");
 
+        // ABI 0.8 packed writes buffer four bytes and drain them through the
+        // same ordered load interface, including a partial final word.
+        write_reg(MT_REG_COMMAND_ARG0, 32'h00000021, 4'hF);
+        write_reg(MT_REG_COMMAND_ARG1, 32'd5, 4'hF);
+        write_reg(MT_REG_COMMAND_SEQ, 32'd100, 4'hF);
+        write_reg(MT_REG_COMMAND_OPCODE, MT_COMMAND_STREAM_BEGIN, 4'hF);
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd100, 4'hF);
+        load_submit_ready = 1'b0;
+        write_reg(MT_REG_STREAM_DATA_BURST, 32'h44332211, 4'hF);
+        expect_read(MT_REG_STREAM_STATUS, 32'd0,
+                    "burst word applies backpressure");
+        load_submit_ready = 1'b1;
+        @(negedge clk); #1;
+        check_value(load_submit && load_kind == 8'h21 &&
+                    load_data == 8'h11 && load_offset == 32'd0 &&
+                    load_first && !load_last,
+                    "burst first byte framing");
+        @(negedge clk); #1;
+        check_value(load_submit && load_data == 8'h22 &&
+                    load_offset == 32'd1, "burst second byte");
+        @(negedge clk); #1;
+        check_value(load_submit && load_data == 8'h33 &&
+                    load_offset == 32'd2, "burst third byte");
+        @(negedge clk); #1;
+        check_value(load_submit && load_data == 8'h44 &&
+                    load_offset == 32'd3 && !load_last,
+                    "burst fourth byte");
+        @(negedge clk); #1;
+        check_value(!load_submit,
+                    "fourth burst byte accepted before next word");
+        expect_read(MT_REG_STREAM_STATUS, MT_STREAM_STATUS_READY,
+                    "next burst word accepted");
+        load_submit_ready = 1'b0;
+        write_reg(MT_REG_STREAM_DATA_BURST, 32'hAABBCC55, 4'hF);
+        load_submit_ready = 1'b1;
+        @(negedge clk); #1;
+        check_value(load_submit && load_data == 8'h55 &&
+                    load_offset == 32'd4 && !load_first && load_last,
+                    "partial burst final byte framing");
+        @(negedge clk); #1;
+        check_value(!load_submit,
+                    "partial burst final byte accepted before drain");
+        expect_read(MT_REG_STREAM_STATUS, MT_STREAM_STATUS_DRAINED,
+                    "burst stream drained");
+        write_reg(MT_REG_COMMAND_SEQ, 32'd101, 4'hF);
+        write_reg(MT_REG_COMMAND_OPCODE, MT_COMMAND_STREAM_END, 4'hF);
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd101, 4'hF);
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_OK,
+                    "burst stream end");
+
         write_reg(MT_REG_COMMAND_ARG0, 32'h00000001, 4'hF);
         write_reg(MT_REG_COMMAND_ARG1, 32'd2, 4'hF);
         write_reg(MT_REG_COMMAND_SEQ, 32'd9, 4'hF);

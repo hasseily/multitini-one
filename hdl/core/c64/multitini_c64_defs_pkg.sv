@@ -17,6 +17,8 @@ package multitini_c64_defs_pkg;
     localparam logic [7:0] MT_LOAD_C64_D64 = 8'h12;
     localparam logic [7:0] MT_LOAD_C64_G64 = 8'h13;
     localparam logic [7:0] MT_LOAD_C64_CRT_DETACH = 8'h14;
+    localparam logic [7:0] MT_LOAD_C64_PRG_STAGE = 8'h15;
+    localparam logic [7:0] MT_LOAD_C64_PRG_RUN = 8'h16;
 
     localparam integer MT_SIZE_C64_BASIC = 8192;
     localparam integer MT_SIZE_C64_KERNAL = 8192;

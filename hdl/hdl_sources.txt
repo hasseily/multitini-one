@@ -41,6 +41,7 @@ core/c64/ports/video_sync.vhd
 core/c64/multitini_c64_d64_track.sv
 core/c64/multitini_c64_g64_track.sv
 core/c64/multitini_c64_1541.sv
+core/c64/multitini_c64_cpu_turbo_guard.sv
 core/c64/multitini_c64_adapter.sv
 board/multitini_c64_video_bridge.sv
 [gbc]

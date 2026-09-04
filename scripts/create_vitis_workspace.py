@@ -3,8 +3,9 @@
 
 from __future__ import annotations
 
-import re
 import os
+import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -26,6 +27,26 @@ XILFFS_READY_DESCRIPTION = (
     "xilffs_v5_5 lfn=1 exfat=1 media-validation=r0.16-patch2 "
     "fat-time-hook=rtc-cache no-card=bounded\n"
 )
+
+
+def ensure_lopper_preprocessor() -> None:
+    """Expose the host GCC that Vitis' Windows lopper subprocess expects."""
+    if os.name != "nt" or shutil.which("gcc") is not None:
+        return
+    vitis_root = os.environ.get("XILINX_VITIS")
+    if not vitis_root:
+        raise EnvironmentError("XILINX_VITIS is not set")
+    install_root = Path(vitis_root).parent
+    candidates = sorted(
+        (install_root / "tps" / "mingw").glob("*/win64.o/nt/bin"),
+    )
+    for candidate in candidates:
+        if ((candidate / "gcc.exe").is_file() and
+                (candidate / "cpp.exe").is_file()):
+            os.environ["PATH"] = f"{candidate}{os.pathsep}{os.environ['PATH']}"
+            print(f"Using Vitis host preprocessor: {candidate}")
+            return
+    raise FileNotFoundError("Vitis host GCC/cpp not found under tps/mingw")
 
 
 def require(path: Path, description: str) -> Path:
@@ -497,6 +518,7 @@ def validate_reused_xilffs(xpfm: Path) -> None:
 
 def main() -> int:
     require(XSA, "Vivado hardware platform")
+    ensure_lopper_preprocessor()
     client = vitis.create_client()
     try:
         client.set_workspace(path=str(WORKSPACE))

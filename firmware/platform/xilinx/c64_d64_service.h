@@ -2,10 +2,13 @@
 #ifndef MULTITINI_XILINX_C64_D64_SERVICE_H
 #define MULTITINI_XILINX_C64_D64_SERVICE_H
 
+#include "multitini_c64_d64.h"
 #include "multitini_c64_rom_files.h"
 #include "multitini_core_link.h"
 
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #define MT_C64_MEDIA_DIRECTORY MT_C64_SD_MEDIA_ROOT
 #define MT_C64_DEFAULT_D64_NAME "drive8.d64"
@@ -32,12 +35,24 @@ int c64_d64_service_retry(void);
 /* Forget only in-flight request de-duplication after reset was asserted. */
 void c64_d64_service_notify_core_reset(void);
 int c64_d64_service_mount(const char *file_name);
+/* Restore a selection only after confirming the FPGA still owns the mount. */
+int c64_d64_service_ensure_mounted(const char *file_name);
 int c64_d64_service_mount_default(void);
 int c64_d64_service_eject(void);
 void c64_d64_service_poll(void);
 void c64_d64_service_list(void);
 void c64_d64_service_dump_status(void);
 bool c64_d64_service_mounted(void);
+bool c64_d64_service_mounted_d64(void);
 const char *c64_d64_service_mounted_name(void);
+
+/* Inspect and extract programs from the stable in-memory copy of the mounted
+ * D64. G64 images deliberately remain on the normal drive-emulation path. */
+mt_c64_d64_result_t c64_d64_service_list_prgs(
+    mt_c64_d64_prg_visitor_fn visitor, void *visitor_context,
+    size_t *entry_count);
+mt_c64_d64_result_t c64_d64_service_extract_prg(
+    const mt_c64_d64_prg_entry_t *entry,
+    uint8_t *destination, size_t capacity, size_t *extracted_size);
 
 #endif

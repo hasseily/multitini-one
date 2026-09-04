@@ -14,6 +14,29 @@ static bool file_exists;
 static uint8_t stored_file[MT_SETTINGS_WIRE_SIZE];
 static size_t stored_size;
 
+static void store_u32_le(uint8_t *destination, uint32_t value)
+{
+    destination[0] = (uint8_t)value;
+    destination[1] = (uint8_t)(value >> 8U);
+    destination[2] = (uint8_t)(value >> 16U);
+    destination[3] = (uint8_t)(value >> 24U);
+}
+
+static uint32_t crc32_bytes(const uint8_t *data, size_t size)
+{
+    uint32_t crc = UINT32_C(0xFFFFFFFF);
+    size_t index;
+    for (index = 0U; index < size; ++index) {
+        unsigned bit;
+        crc ^= data[index];
+        for (bit = 0U; bit < 8U; ++bit) {
+            const uint32_t mask = 0U - (crc & 1U);
+            crc = (crc >> 1U) ^ (UINT32_C(0xEDB88320) & mask);
+        }
+    }
+    return ~crc;
+}
+
 static mt_sd_result_t sd_result(mt_sd_status_t status, size_t size)
 {
     mt_sd_result_t result = {status, status == MT_SD_OK ? 0U : 17U, size};
@@ -89,6 +112,10 @@ int main(void)
     assert(settings.selected_core_id[0] == '\0');
     assert(mt_supervisor_settings_remember_c64_input(
         &settings, "c64", false, 1U));
+    assert(mt_supervisor_settings_remember_c64_fast_roms(
+        &settings, "c64", true));
+    assert(mt_supervisor_settings_remember_c64_cpu_turbo(
+        &settings, "c64", true));
     assert(mt_supervisor_settings_remember_drive8(
         &settings, "c64", "Writable Demo.d64"));
     assert(mt_supervisor_settings_remember_cartridge(
@@ -117,10 +144,32 @@ int main(void)
     assert(strcmp(profile->drive8_name, "Writable Demo.d64") == 0);
     assert(strcmp(profile->cartridge_name, "Fast Load.crt") == 0);
     assert(!profile->symbolic_keyboard && profile->joystick_port == 1U);
+    assert(profile->c64_fast_roms);
+    assert(profile->c64_cpu_turbo);
     profile = mt_supervisor_settings_find(&loaded, "gbc");
     assert(profile != NULL);
     assert(strcmp(profile->variant_id, "color") == 0);
     assert(strcmp(profile->cartridge_name, "Yars' Revenge.gbc") == 0);
+
+    /* Schema 1 byte 242 was the unsafe whole-drive warp. It must not silently
+     * turn into the new fast-ROM selection, while byte 243 CPU turbo retains
+     * its meaning. */
+    store_u32_le(stored_file + 8U, 1U);
+    {
+        const uint32_t crc = crc32_bytes(stored_file + 24U,
+                                         stored_size - 24U);
+        store_u32_le(stored_file + 16U, crc);
+        store_u32_le(stored_file + 20U, ~crc);
+    }
+    result = mt_supervisor_settings_load(&loaded);
+    assert(result.status == MT_SETTINGS_OK);
+    profile = mt_supervisor_settings_find(&loaded, "c64");
+    assert(profile != NULL && !profile->c64_fast_roms);
+    assert(profile->c64_cpu_turbo);
+
+    /* Put a current-schema image back before exercising corruption checks. */
+    result = mt_supervisor_settings_save(&settings);
+    assert(result.status == MT_SETTINGS_OK);
 
     for (byte_index = 0U; byte_index < stored_size; ++byte_index) {
         stored_file[byte_index] ^= 1U;

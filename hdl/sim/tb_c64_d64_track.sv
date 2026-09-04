@@ -105,7 +105,7 @@ module tb_c64_d64_track;
     task automatic wait_request;
         integer timeout;
         begin : wait_loop
-            for (timeout = 0; timeout < 20; timeout = timeout + 1) begin
+            for (timeout = 0; timeout < 7000; timeout = timeout + 1) begin
                 @(posedge clk);
                 #1;
                 if (media_request_valid)
@@ -256,7 +256,29 @@ module tb_c64_d64_track;
         check_value(media_request_id > boundary_request_id,
                     "request ID remains monotonic across soft reset");
         check_value(media_request_lba == 32'd357,
-                    "soft-reset recovery refreshes directory track first");
+                    "soft-reset recovery reloads the directory track first");
+
+        head_half_track = 7'd34;
+        send_request_bytes();
+        pulse_complete(media_request_id, 0,
+                       media_request_block_count, 1);
+        @(posedge clk); #1;
+        check_value(!media_request_valid && !disk_busy,
+                    "completed directory reload becomes idle");
+
+        // Exercise reset with no request in flight. This is the ordinary
+        // menu-restart case which used to retain a stale valid buffer/cache.
+        @(negedge clk);
+        soft_reset = 1'b1;
+        @(posedge clk); #1;
+        check_value(mounted && disk_busy,
+                    "clean idle soft reset invalidates the active track");
+        @(negedge clk);
+        soft_reset = 1'b0;
+        wait_request();
+        check_value(media_request_lba == 32'd357 &&
+                    media_request_block_count == 16'd19,
+                    "clean idle soft reset requests a fresh directory track");
 
         pulse_eject(2);
         check_value(!mounted && !media_request_valid &&
@@ -290,6 +312,45 @@ module tb_c64_d64_track;
         @(negedge clk);
         disk_write = 1'b0;
         check_value(dirty, "drive write marks the active D64 track dirty");
+
+        // A drive reset must not discard the only dirty copy of a track. It
+        // first drains the active buffer, then reloads track 18 instead of
+        // reviving a pre-reset cache entry.
+        @(negedge clk);
+        soft_reset = 1'b1;
+        @(posedge clk); #1;
+        check_value(dirty && dut.buffer_valid && dut.reset_flush_pending &&
+                    dut.directory_pending && dut.cache_valid == '0,
+                    "dirty soft reset preserves the buffer and invalidates cache");
+        @(negedge clk);
+        soft_reset = 1'b0;
+        wait_request();
+        check_value(media_request_write && media_request_lba == 32'd357 &&
+                    media_request_block_count == 16'd19,
+                    "dirty soft reset flushes the active track first");
+        begin
+            logic [31:0] reset_write_request_id;
+            drain_write(reset_write_request_id);
+            pulse_complete(reset_write_request_id, 0, 19, 6);
+        end
+        wait_request();
+        check_value(!media_request_write && media_request_lba == 32'd357 &&
+                    media_request_block_count == 16'd19,
+                    "dirty soft reset reloads directory after writeback");
+        send_request_bytes();
+        pulse_complete(media_request_id, 0,
+                       media_request_block_count, 6);
+        @(posedge clk); #1;
+        check_value(!dirty && !disk_busy,
+                    "dirty-reset recovery returns to an idle fresh directory");
+
+        @(negedge clk);
+        disk_write = 1'b1;
+        @(posedge clk); #1;
+        @(negedge clk);
+        disk_write = 1'b0;
+        check_value(dirty,
+                    "drive write re-dirties the track for persistence retry");
 
         motor_on = 1'b0;
         wait_request();

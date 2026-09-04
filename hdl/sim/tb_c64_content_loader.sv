@@ -45,6 +45,7 @@ module tb_c64_content_loader;
     logic [7:0] ram [0:65535];
     integer cart_write_count = 0;
     integer bank_write_count = 0;
+    integer run_request_count = 0;
     localparam logic [8*16-1:0] CRT_MAGIC = "C64 CARTRIDGE   ";
 
     always #5 clk = !clk;
@@ -55,6 +56,7 @@ module tb_c64_content_loader;
         if (loader_memory_valid && loader_memory_ready)
             cart_write_count <= cart_write_count + 1;
         if (cart_bank_wr) bank_write_count <= bank_write_count + 1;
+        if (prg_run_request) run_request_count <= run_request_count + 1;
     end
 
     task automatic check(input logic condition, input string message);
@@ -116,12 +118,21 @@ module tb_c64_content_loader;
         repeat (2) @(negedge clk);
         reset = 1'b0;
 
+        send_byte(MT_LOAD_C64_PRG_RUN, 0, 1, 8'h00);
+        check(error && run_request_count == 0,
+              "explicit RUN rejected before a PRG is loaded");
+        clear_error = 1'b1;
+        @(negedge clk);
+        clear_error = 1'b0;
+
         send_byte(MT_LOAD_C64_PRG, 0, 5, 8'h01);
         repeat (260) @(negedge clk);
         check(active && !load_ready,
               "PRG payload waits for KERNAL readiness");
         core_addr = 16'hffcf;
         send_byte(MT_LOAD_C64_PRG, 1, 5, 8'h08);
+        check(prg_install_pause,
+              "ordinary PRG pauses the core while installing payload");
         send_byte(MT_LOAD_C64_PRG, 2, 5, 8'ha9);
         send_byte(MT_LOAD_C64_PRG, 3, 5, 8'h00);
         send_byte(MT_LOAD_C64_PRG, 4, 5, 8'h60);
@@ -133,6 +144,47 @@ module tb_c64_content_loader;
         check(ram[16'h002d] == 8'h04 && ram[16'h002e] == 8'h08 &&
               ram[16'h00ae] == 8'h04 && ram[16'h00af] == 8'h08,
               "BASIC end pointers initialized");
+        check(prg_run_request,
+              "ordinary PRG emits its automatic RUN pulse");
+        @(negedge clk);
+        check(run_request_count == 1,
+              "ordinary PRG retains automatic RUN request");
+
+        core_addr = 16'h0000;
+        send_byte(MT_LOAD_C64_PRG_STAGE, 0, 5, 8'h01);
+        repeat (260) @(negedge clk);
+        check(active && !load_ready,
+              "staged PRG payload waits for KERNAL readiness");
+        core_addr = 16'hffcf;
+        send_byte(MT_LOAD_C64_PRG_STAGE, 1, 5, 8'h09);
+        check(prg_install_pause,
+              "staged PRG pauses the core while installing payload");
+        send_byte(MT_LOAD_C64_PRG_STAGE, 2, 5, 8'ha2);
+        send_byte(MT_LOAD_C64_PRG_STAGE, 3, 5, 8'h2a);
+        send_byte(MT_LOAD_C64_PRG_STAGE, 4, 5, 8'h60);
+        wait (!active);
+        @(negedge clk);
+        check(prg_loaded, "staged PRG committed");
+        check(ram[16'h0901] == 8'ha2 && ram[16'h0903] == 8'h60,
+              "staged PRG payload placed at header address");
+        check(ram[16'h002d] == 8'h04 && ram[16'h002e] == 8'h09 &&
+              ram[16'h00ae] == 8'h04 && ram[16'h00af] == 8'h09,
+              "staged PRG repairs BASIC end pointers");
+        check(run_request_count == 1,
+              "staged PRG does not request RUN");
+
+        send_byte(MT_LOAD_C64_PRG_RUN, 0, 1, 8'h01);
+        check(error && run_request_count == 1,
+              "explicit RUN requires a zero token");
+        clear_error = 1'b1;
+        @(negedge clk);
+        clear_error = 1'b0;
+        send_byte(MT_LOAD_C64_PRG_RUN, 0, 1, 8'h00);
+        check(!active && !prg_install_pause && !core_reset_hold,
+              "explicit RUN token does not reset or pause the core");
+        @(negedge clk);
+        check(!error && run_request_count == 2,
+              "explicit RUN accepted after staged PRG");
 
         for (index = 0; index < CRT_SIZE; index = index + 1)
             send_byte(MT_LOAD_C64_CRT, index, CRT_SIZE, crt_byte(index));

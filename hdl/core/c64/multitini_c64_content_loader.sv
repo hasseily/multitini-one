@@ -351,7 +351,9 @@ module multitini_c64_content_loader (
         ((state == STATE_STREAM || state == STATE_CRT_FINISH) &&
          active_kind == MT_LOAD_C64_CRT);
     assign prg_install_pause =
-        (state == STATE_STREAM && active_kind == MT_LOAD_C64_PRG) ||
+        (state == STATE_STREAM &&
+         (active_kind == MT_LOAD_C64_PRG ||
+          active_kind == MT_LOAD_C64_PRG_STAGE)) ||
         state == STATE_PRG_POINTERS || state == STATE_PRG_FINISH;
 
     always_ff @(posedge clk) begin : receive_content
@@ -459,7 +461,11 @@ module multitini_c64_content_loader (
                 state <= STATE_IDLE;
                 active <= 1'b0;
                 prg_loaded <= 1'b1;
-                prg_run_request <= 1'b1;
+                // Ordinary PRG objects retain the original reset/install/RUN
+                // behavior. A staged object deliberately stops here so the
+                // supervisor can restore mounted media before a separate RUN.
+                if (active_kind == MT_LOAD_C64_PRG)
+                    prg_run_request <= 1'b1;
             end else if (state == STATE_CRT_FINISH) begin
                 if (!loader_memory_valid) begin
                     state <= STATE_IDLE;
@@ -481,7 +487,17 @@ module multitini_c64_content_loader (
                         cart_loaded <= 1'b0;
                         cart_id <= 8'hff;
                         if (!byte_good) error <= 1'b1;
-                    end else if (load_kind == MT_LOAD_C64_PRG) begin
+                    end else if (load_kind == MT_LOAD_C64_PRG_RUN) begin
+                        // The explicit command is deliberately a strict token:
+                        // one zero byte and only after a PRG was committed.
+                        byte_good = byte_good && load_total == 1 &&
+                                    load_last && load_data == 0 && prg_loaded;
+                        if (byte_good)
+                            prg_run_request <= 1'b1;
+                        else
+                            error <= 1'b1;
+                    end else if (load_kind == MT_LOAD_C64_PRG ||
+                                 load_kind == MT_LOAD_C64_PRG_STAGE) begin
                         byte_good = byte_good && !load_last &&
                                     load_total >= MT_SIZE_C64_PRG_MIN &&
                                     load_total <= MT_SIZE_C64_PRG_MAX;
@@ -540,7 +556,8 @@ module multitini_c64_content_loader (
                                     (load_offset + 32'd1 == active_total));
                     byte_good = framing_good;
 
-                    if (active_kind == MT_LOAD_C64_PRG) begin
+                    if (active_kind == MT_LOAD_C64_PRG ||
+                        active_kind == MT_LOAD_C64_PRG_STAGE) begin
                         if (load_offset == 1) begin
                             prg_limit = {1'b0, load_data, prg_base[7:0]} +
                                         active_total - 32'd2;

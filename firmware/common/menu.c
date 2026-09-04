@@ -15,9 +15,13 @@ static size_t page_rows(mt_menu_page_t page, const mt_menu_view_t *view)
 {
     switch (page) {
     case MT_MENU_PAGE_CORES: return bounded_core_count(view);
-    case MT_MENU_PAGE_MEDIA: return 3U;
+    case MT_MENU_PAGE_MEDIA: return 4U;
     case MT_MENU_PAGE_VIDEO: return 2U;
     case MT_MENU_PAGE_INPUT: return 2U;
+    case MT_MENU_PAGE_CORE_CONFIG:
+        return view == NULL || view->core_options == NULL ? 0U :
+               (view->core_option_count > MT_MENU_MAX_CORE_OPTIONS ?
+                MT_MENU_MAX_CORE_OPTIONS : view->core_option_count);
     case MT_MENU_PAGE_SYSTEM: return 3U;
     default: return 0U;
     }
@@ -87,7 +91,9 @@ mt_menu_action_t mt_menu_key(mt_menu_t *menu, const mt_menu_view_t *view,
         else if (hid_usage == MT_MENU_HID_ENTER && rows != 0U) {
             action.kind = menu->browser == MT_MENU_BROWSER_DRIVE8 ?
                           MT_MENU_ACTION_MOUNT_DRIVE8 :
-                          MT_MENU_ACTION_LOAD_CONTENT;
+                          (menu->browser == MT_MENU_BROWSER_DISK_PROGRAM ?
+                           MT_MENU_ACTION_MOUNT_AND_RUN :
+                           MT_MENU_ACTION_LOAD_CONTENT);
             action.file_index = menu->row;
         }
         return action;
@@ -150,11 +156,15 @@ mt_menu_action_t mt_menu_key(mt_menu_t *menu, const mt_menu_view_t *view,
                               MT_MENU_ACTION_EJECT_DRIVE8 :
                               MT_MENU_ACTION_BROWSE_DRIVE8;
             else if (menu->row == 1U && view != NULL &&
+                     view->mount_and_run_supported &&
+                     view->drive8_d64_mounted)
+                action.kind = MT_MENU_ACTION_BROWSE_DISK_PROGRAM;
+            else if (menu->row == 2U && view != NULL &&
                      view->cartridge_supported)
                 action.kind = view != NULL && view->cartridge_attached ?
                               MT_MENU_ACTION_DETACH_CARTRIDGE :
                               MT_MENU_ACTION_BROWSE_CARTRIDGE;
-            else if (menu->row == 2U && view != NULL &&
+            else if (menu->row == 3U && view != NULL &&
                      view->program_supported)
                 action.kind = MT_MENU_ACTION_BROWSE_PROGRAM;
         } else if (menu->page == MT_MENU_PAGE_VIDEO) {
@@ -173,6 +183,12 @@ mt_menu_action_t mt_menu_key(mt_menu_t *menu, const mt_menu_view_t *view,
                 action.kind = menu->row == 0U ?
                               MT_MENU_ACTION_TOGGLE_KEYBOARD_MAP :
                               MT_MENU_ACTION_SWAP_JOYSTICK_PORT;
+        } else if (menu->page == MT_MENU_PAGE_CORE_CONFIG) {
+            if (view != NULL && menu->row < view->core_option_count &&
+                view->core_options[menu->row].enabled) {
+                action.kind = MT_MENU_ACTION_TOGGLE_CORE_OPTION;
+                action.file_index = menu->row;
+            }
         } else if (menu->page == MT_MENU_PAGE_SYSTEM) {
             action.kind = menu->row == 0U ? MT_MENU_ACTION_RESET_CORE :
                           (menu->row == 1U ?
@@ -190,6 +206,7 @@ const char *mt_menu_page_name(mt_menu_page_t page)
     case MT_MENU_PAGE_MEDIA: return "Media";
     case MT_MENU_PAGE_VIDEO: return "Video";
     case MT_MENU_PAGE_INPUT: return "Input";
+    case MT_MENU_PAGE_CORE_CONFIG: return "Core config";
     case MT_MENU_PAGE_SYSTEM: return "System";
     default: return "Unknown";
     }
@@ -250,11 +267,17 @@ static void render_page(const mt_menu_t *menu, const mt_menu_view_t *view,
         draw_item(frame, 7U, menu->row == 0U, "Drive 8",
                   view == NULL || !view->drive8_supported ? "Unavailable" :
                   (view->drive8_mounted ? view->drive8_name : "Load disk..."));
-        draw_item(frame, 8U, menu->row == 1U, "Cartridge",
+        draw_item(frame, 8U, menu->row == 1U, "Mount & Run",
+                  view == NULL || !view->mount_and_run_supported ?
+                  "Unavailable" :
+                  (!view->drive8_mounted ? "Mount a D64 first" :
+                   (view->drive8_d64_mounted ? "Choose PRG..." :
+                    "D64 only")));
+        draw_item(frame, 9U, menu->row == 2U, "Cartridge",
                   view == NULL || !view->cartridge_supported ? "Unavailable" :
                   (view->cartridge_attached ? view->content_name :
                    (view->drive8_supported ? "Load CRT..." : "Load GB/GBC...")));
-        draw_item(frame, 9U, menu->row == 2U, "Program",
+        draw_item(frame, 10U, menu->row == 3U, "Program",
                   view != NULL && view->program_supported ?
                   "Load PRG..." : "Unavailable");
         if (view != NULL && view->save_supported) {
@@ -294,6 +317,23 @@ static void render_page(const mt_menu_t *menu, const mt_menu_view_t *view,
             (void)snprintf(value, sizeof(value), "Game Boy controls");
         draw_item(frame, 8U, menu->row == 1U, "Gamepad", value);
         break;
+    case MT_MENU_PAGE_CORE_CONFIG:
+        if (view == NULL || view->core_options == NULL ||
+            view->core_option_count == 0U) {
+            mt_ui_text(frame, 26U, 8U, "No options for the active core",
+                       MT_UI_COLOR_MUTED, MT_UI_COLOR_PANEL, false);
+        } else {
+            size_t index;
+            const size_t count = view->core_option_count >
+                MT_MENU_MAX_CORE_OPTIONS ? MT_MENU_MAX_CORE_OPTIONS :
+                view->core_option_count;
+            for (index = 0U; index < count; ++index) {
+                draw_item(frame, 7U + index, menu->row == index,
+                          view->core_options[index].label,
+                          view->core_options[index].value);
+            }
+        }
+        break;
     case MT_MENU_PAGE_SYSTEM:
         draw_item(frame, 7U, menu->row == 0U, "Restart active core", NULL);
         draw_item(frame, 8U, menu->row == 1U, "Autoboot current core",
@@ -313,8 +353,10 @@ static void render_browser(const mt_menu_t *menu, const mt_menu_view_t *view,
 {
     const char *title = menu->browser == MT_MENU_BROWSER_DRIVE8 ?
                         "Choose disk image" :
-                        (menu->browser == MT_MENU_BROWSER_CARTRIDGE ?
-                         "Choose cartridge" : "Choose program");
+                        (menu->browser == MT_MENU_BROWSER_DISK_PROGRAM ?
+                         "Choose program in D64" :
+                         (menu->browser == MT_MENU_BROWSER_CARTRIDGE ?
+                          "Choose cartridge" : "Choose program"));
     size_t index;
     const size_t first = menu->row >= 21U ? menu->row - 20U : 0U;
     mt_ui_text(frame, 26U, 5U, title, MT_UI_COLOR_BLUE,
@@ -374,7 +416,9 @@ void mt_menu_render(const mt_menu_t *menu, const mt_menu_view_t *view,
     mt_ui_text(frame, 3U, 33U,
                menu->browser == MT_MENU_BROWSER_NONE ?
                "F12 close   Tab section   Up/Down select   Left/Right change   Enter apply" :
-               "Escape back   Up/Down select   Enter load",
+               (menu->browser == MT_MENU_BROWSER_DISK_PROGRAM ?
+                "Escape back   Up/Down select   Enter run" :
+                "Escape back   Up/Down select   Enter load"),
                MT_UI_COLOR_MUTED, MT_UI_COLOR_RAISED, false);
     if (view != NULL && view->status_text != NULL)
         mt_ui_text(frame, 3U, 34U, view->status_text, MT_UI_COLOR_SUCCESS,

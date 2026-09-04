@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "abi": {"major": 0, "minor": 1},
+  "abi": {"major": 0, "minor": 2},
   "core_id": "0x43363420",
   "clocks_hz": {
     "PAL": 31527954,
@@ -16,7 +16,9 @@
     "C64_CRT": "0x11",
     "C64_D64": "0x12",
     "C64_G64": "0x13",
-    "C64_CRT_DETACH": "0x14"
+    "C64_CRT_DETACH": "0x14",
+    "C64_PRG_STAGE": "0x15",
+    "C64_PRG_RUN": "0x16"
   },
   "rom_sizes": {
     "C64_BASIC": 8192,

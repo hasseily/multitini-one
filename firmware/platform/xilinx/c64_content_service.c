@@ -17,6 +17,7 @@ static mt_link_progress_fn content_progress;
 static void *content_progress_context;
 static uint8_t content_buffer[MT_SIZE_C64_CRT_MAX];
 static bool crt_attached;
+static bool prg_staged;
 static char crt_name[MT_C64_CONTENT_PATH_CAPACITY];
 
 static void clear_core_load_error(void)
@@ -86,6 +87,75 @@ static int content_path(const char *file_name, char *path, size_t capacity,
     return 0;
 }
 
+static mt_c64_content_service_result_t load_image(
+    mt_content_type_t type, const uint8_t *data, size_t size,
+    const char *file_name, bool stage_prg)
+{
+    mt_c64_content_service_result_t result =
+        service_result(MT_C64_CONTENT_SERVICE_OK);
+    mt_c64_content_image_t image;
+
+    if (content_link == NULL || content_link->read32 == NULL ||
+        content_link->write32 == NULL || data == NULL ||
+        (type != MT_CONTENT_PRG && type != MT_CONTENT_CRT) ||
+        (type == MT_CONTENT_CRT && file_name == NULL)) {
+        result.status = MT_C64_CONTENT_SERVICE_INVALID_ARGUMENT;
+        result.link = MT_LINK_BAD_ARGUMENT;
+        return result;
+    }
+
+    image.data = data;
+    image.size = size;
+    result.content = type == MT_CONTENT_PRG ?
+        mt_c64_validate_prg(&image) : mt_c64_validate_crt(&image);
+    if (result.content.status != MT_C64_CONTENT_OK) {
+        result.status = MT_C64_CONTENT_SERVICE_REJECTED;
+        return result;
+    }
+
+    if (type == MT_CONTENT_PRG && crt_attached) {
+        result = c64_content_service_detach_crt();
+        if (result.status != MT_C64_CONTENT_SERVICE_OK) return result;
+    }
+    prg_staged = false;
+    clear_core_load_error();
+    result.link = type == MT_CONTENT_PRG ?
+        (stage_prg ?
+         mt_c64_stage_prg(content_link, &image, MT_C64_CONTENT_POLLS,
+                          content_progress, content_progress_context) :
+         mt_c64_load_prg(content_link, &image, MT_C64_CONTENT_POLLS,
+                         content_progress, content_progress_context)) :
+        mt_c64_load_crt(content_link, &image, MT_C64_CONTENT_POLLS,
+                        content_progress, content_progress_context);
+    if (result.link != MT_LINK_OK) {
+        /* The HDL detaches the active cartridge as soon as the first CRT byte
+         * is accepted. A failed replacement therefore cannot leave the
+         * previous image reported as attached. */
+        if (type == MT_CONTENT_CRT) {
+            crt_attached = false;
+            crt_name[0] = '\0';
+        }
+        result.status = MT_C64_CONTENT_SERVICE_TRANSFER_FAILED;
+        return result;
+    }
+    result.link = wait_for_core_result();
+    if (result.link != MT_LINK_OK) {
+        if (type == MT_CONTENT_CRT) {
+            crt_attached = false;
+            crt_name[0] = '\0';
+        }
+        result.status = MT_C64_CONTENT_SERVICE_TRANSFER_FAILED;
+        return result;
+    }
+    crt_attached = type == MT_CONTENT_CRT;
+    if (crt_attached)
+        memcpy(crt_name, file_name, strlen(file_name) + 1U);
+    else
+        crt_name[0] = '\0';
+    prg_staged = type == MT_CONTENT_PRG && stage_prg;
+    return result;
+}
+
 void c64_content_service_init(mt_core_link_t *link,
                               mt_link_progress_fn progress,
                               void *progress_context)
@@ -94,6 +164,7 @@ void c64_content_service_init(mt_core_link_t *link,
     content_progress = progress;
     content_progress_context = progress_context;
     crt_attached = false;
+    prg_staged = false;
     crt_name[0] = '\0';
 }
 
@@ -121,6 +192,7 @@ mt_c64_content_service_result_t c64_content_service_detach_crt(void)
         return result;
     }
     crt_attached = false;
+    prg_staged = false;
     crt_name[0] = '\0';
     return result;
 }
@@ -151,49 +223,50 @@ mt_c64_content_service_result_t c64_content_service_load(
     }
     image.data = content_buffer;
     image.size = result.sd.size;
-    result.content = type == MT_CONTENT_PRG ?
-        mt_c64_validate_prg(&image) : mt_c64_validate_crt(&image);
-    if (result.content.status != MT_C64_CONTENT_OK) {
-        result.status = MT_C64_CONTENT_SERVICE_REJECTED;
-        return result;
+    {
+        const mt_sd_result_t storage_result = result.sd;
+        result = load_image(type, image.data, image.size, file_name, false);
+        result.sd = storage_result;
     }
+    return result;
+}
 
-    if (type == MT_CONTENT_PRG && crt_attached) {
-        result = c64_content_service_detach_crt();
-        if (result.status != MT_C64_CONTENT_SERVICE_OK) return result;
+mt_c64_content_service_result_t c64_content_service_stage_prg_image(
+    const uint8_t *data, size_t size)
+{
+    return load_image(MT_CONTENT_PRG, data, size, NULL, true);
+}
+
+mt_c64_content_service_result_t c64_content_service_run_staged_prg(void)
+{
+    mt_c64_content_service_result_t result =
+        service_result(MT_C64_CONTENT_SERVICE_OK);
+    if (content_link == NULL || content_link->read32 == NULL ||
+        content_link->write32 == NULL || !prg_staged) {
+        result.status = MT_C64_CONTENT_SERVICE_INVALID_ARGUMENT;
+        result.link = MT_LINK_BAD_ARGUMENT;
+        return result;
     }
     clear_core_load_error();
-    result.link = type == MT_CONTENT_PRG ?
-        mt_c64_load_prg(content_link, &image, MT_C64_CONTENT_POLLS,
-                        content_progress, content_progress_context) :
-        mt_c64_load_crt(content_link, &image, MT_C64_CONTENT_POLLS,
-                        content_progress, content_progress_context);
+    result.link = mt_c64_run_prg(
+        content_link, MT_C64_CONTENT_POLLS,
+        content_progress, content_progress_context);
     if (result.link != MT_LINK_OK) {
-        // The HDL detaches the active cartridge as soon as the first CRT byte
-        // is accepted. A failed replacement therefore cannot leave the
-        // previous image reported as attached.
-        if (type == MT_CONTENT_CRT) {
-            crt_attached = false;
-            crt_name[0] = '\0';
-        }
         result.status = MT_C64_CONTENT_SERVICE_TRANSFER_FAILED;
         return result;
     }
+    /* Once the token was accepted, retrying could type RUN twice even if the
+     * ready transition is later lost or times out. */
+    prg_staged = false;
     result.link = wait_for_core_result();
-    if (result.link != MT_LINK_OK) {
-        if (type == MT_CONTENT_CRT) {
-            crt_attached = false;
-            crt_name[0] = '\0';
-        }
+    if (result.link != MT_LINK_OK)
         result.status = MT_C64_CONTENT_SERVICE_TRANSFER_FAILED;
-        return result;
-    }
-    crt_attached = type == MT_CONTENT_CRT;
-    if (crt_attached)
-        memcpy(crt_name, file_name, strlen(file_name) + 1U);
-    else
-        crt_name[0] = '\0';
     return result;
+}
+
+bool c64_content_service_prg_staged(void)
+{
+    return prg_staged;
 }
 
 bool c64_content_service_crt_attached(void)

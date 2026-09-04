@@ -55,7 +55,16 @@ pressed level.
 - A receiver rejects an unexpected offset, early last, or late byte.
 - Reset aborts a partial object. A new object must restart at offset zero.
 
-The C64 ABI 0.1 assignments are:
+ABI 0.8 changes only the supervisor-side register transport for this stream.
+When both ends report ABI 0.8 or newer, firmware writes four little-endian
+bytes at a time to `STREAM_DATA_BURST` and observes `STREAM_STATUS.READY` and
+`STREAM_STATUS.DRAINED`. The shell serializes those bytes into the unchanged
+core-facing ready/valid byte stream, preserving order and the existing
+`load_first`, offset, and `load_last` semantics. Firmware waits for the burst
+holding register to drain before ending the object. ABI 0.7 images continue to
+use the original byte register.
+
+The C64 ABI 0.2 assignments are:
 
 | Kind | Value | Exact size | Current adapter |
 | --- | ---: | ---: | --- |
@@ -67,6 +76,8 @@ The C64 ABI 0.1 assignments are:
 | CRT | `0x11` | 80-2101312 | Implemented for the documented conservative mapper profiles; pending vendor build and board test |
 | D64 | `0x12` | validated D64 sizes | Implemented in source for reads and transactional writes; pending vendor build and board test |
 | G64 | `0x13` | validated G64 v0 | Implemented read-only in source; pending vendor build and board test |
+| PRG stage | `0x15` | 3-65538 | ABI 0.9; reset/inject/repair pointers without typing RUN |
+| PRG run | `0x16` | 1-byte zero token | ABI 0.9; type RUN only for a successfully staged PRG |
 | GBC bootstrap | `0x20` | 2304 | Implemented; optional override of the built-in open bootstrap |
 | GB/GBC cartridge | `0x21` | 32768-8388608 | Implemented |
 | GB/GBC save RAM | `0x22` | 256-131072, multiple of 256 | ABI 0.7; implemented for supported external battery RAM |
@@ -76,6 +87,11 @@ ROM sizes above, and asserts a sticky error for unsupported or malformed
 objects. The GBC loader accepts one optional exact bootstrap, one cartridge,
 and an optional whole save-RAM image while reset is asserted. The bitstream
 contains the pinned open GBC bootstrap but no commercial game.
+
+ABI 0.9 adds the C64 staged-PRG pair used by D64 `Mount & Run`. Firmware stages
+a validated BASIC-start PRG while the disk is safely ejected, remounts the
+parent D64, and only then sends the run token. Ordinary `C64_PRG` retains its
+existing automatic-RUN behavior for loose files.
 
 ## External line memory
 
@@ -137,6 +153,19 @@ through a checksummed write-ahead journal before considering eject or reset
 safe. G64 remains read-only. Its service normalizes each requested half-track
 to an 8 KiB direct-GCR extent and rejects variable speed maps that the current
 drive path cannot reproduce.
+
+The C64 adapter keeps the two most recently completed 8 KiB track payloads in
+FPGA block RAM for both D64 and G64. A hit is copied locally into the active
+1541 buffer without issuing another ARM/SD request. A D64 write invalidates the
+cached copy of the modified track. Mount, eject, and failed or partial fills
+cannot leave a cache entry valid.
+
+ABI 0.8 assigns control bit 5 to the optional FPGA64 Smart 2x CPU turbo. It
+adds 6510 RAM/ROM cycles without changing VIC, CIA, I/O, or drive timing, and
+automatically pauses during IEC activity and for 0.5 seconds afterward without
+altering the saved setting. The setting defaults off and must be explicitly
+enabled by the user. Control bit 4 is reserved and ignored; the 1541 always
+runs at authentic timing.
 
 ABI 0.7 also uses this request service for GBC battery RAM. After a quiet
 interval, or immediately on eject, the adapter pauses the machine and snapshots

@@ -20,6 +20,17 @@ SPEC.loader.exec_module(MODULE)
 
 
 class CorePackageToolTests(unittest.TestCase):
+    def test_parser_defaults_to_current_abi(self) -> None:
+        args = MODULE.parser().parse_args([
+            "--id", "gbc", "--name", "Game Boy Color",
+            "--core-id", "0x47424320",
+            "--content-root", "0:/multitini/cores/gbc/media",
+            "--variant", "default|GB/GBC|core.bit",
+            "--output", "package",
+        ])
+        self.assertEqual(args.abi_major, 0)
+        self.assertEqual(args.abi_minor, 9)
+
     def test_variant_and_paths_reject_unsafe_values(self) -> None:
         parsed = MODULE.parse_variant("pal|PAL 50 Hz|build/core.bit")
         self.assertEqual(parsed.variant_id, "pal")

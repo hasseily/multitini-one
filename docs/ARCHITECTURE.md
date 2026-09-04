@@ -42,7 +42,17 @@ remembered independently of an explicit Autoboot target, which defaults off
 and changes only when the user selects `Autoboot current core`. With Autoboot
 off, no machine is loaded and the common shell shows the Multitini standby
 screen. Per-core media and C64 input choices are restored only when that core
-is active. A fresh vendor build, package, and board test remain.
+is active. Fresh supervisor, PAL C64, NTSC C64, and PSRAM-enabled GBC vendor
+builds and matching packages pass; the board test remains.
+
+ABI 0.8 build `20260912` adds a four-byte supervisor-to-shell direct-load
+register, two-entry 8 KiB track caches for both D64 and G64, and a generic
+per-core configuration page. Its attempted drive-clock warp option failed the
+first IEC board test and has been removed. Current source instead gives C64 an
+optional paired fast-serial-ROM profile plus an independent FPGA64 Smart 2x CPU
+option. CPU turbo defaults off; it does not change 1541 timing. The replacement
+source passes fresh supervisor, PAL, NTSC, PSRAM-enabled GBC, Vitis, and package
+build gates; it has not yet been tested on the board.
 
 ## Ownership boundaries
 
@@ -176,6 +186,39 @@ The ARM validates track extents and accepts fixed speed zones 0 through 3,
 then supplies normalized half-tracks to the direct-GCR reader. Variable
 per-byte speed maps are rejected instead of being approximated.
 
+ABI 0.8 reduces ARM MMIO traffic by accepting four direct-load bytes per AXI
+write and draining them in order through the existing byte-stream CDC
+mailbox. Each C64 disk adapter also retains the two most recently completed
+normalized 8 KiB tracks in block RAM. Revisiting either track is serviced
+locally; a D64 write invalidates the modified cached track. This cache is
+format-neutral and does not alter 1541 timing.
+
+The C64 `Fast serial ROMs` setting selects an alternate, user-supplied ROM pair:
+an exact 8 KiB KERNAL at `roms/fast/kernal.bin` and an exact 16 KiB drive ROM at
+`roms/fast/1541.bin`. BASIC and character ROMs continue to use their unchanged
+stock paths. Firmware reads and validates the complete pair before asserting
+reset, streams both while the core is held in reset, and saves the setting only
+after the new pair starts successfully. A failed runtime switch restores the
+previous active pair. If a persisted fast selection is unavailable during core
+activation, firmware reports the fallback and loads the stock profile. The
+fast pair is not part of the repository or firmware package.
+
+FPGA64 Smart 2x independently adds 6510 RAM/ROM cycles without changing VIC,
+CIA, I/O, or drive timing. The track caches and packed ARM transfer reduce host
+latency without changing the drive clock. No whole-drive warp control remains.
+
+The supervisor also exposes an Ultimate-style D64 `Mount & Run` operation.
+The ARM parses the directory and selected PRG sector chain from the mounted
+in-memory D64, using stable directory-slot identity and two-pass validation so
+a corrupt or stale entry cannot cause a partial direct load. It then uses the
+same flush/eject reset barrier and PRG stream loader as loose content, followed
+by remounting the parent D64 and issuing a separate RUN token. ABI 0.9 makes
+that stage/remount/run order explicit so immediate disk access cannot race the
+remount. Only validated BASIC-start (`$0801`) PRGs are offered. This path
+accelerates only initial PRG placement;
+normal IEC and copy-protection behavior remain in the unchanged drive path.
+The user-supplied `Fast serial ROMs` profile is an independent option.
+
 Eject is a state barrier rather than a blind unmount. The FPGA retains dirty
 or eject-pending state until the matching write completion succeeds, and the
 ARM waits for a stable clean/unmounted state. Core reset, PRG/CRT content
@@ -305,6 +348,11 @@ vblank commit/status handshake, and a build-time core-variant index so the ARM
 can identify and safely restore the boot image. ABI 0.7 adds the GBC save-RAM
 stream and journal-backed media service. An older 0.6 GBC package remains
 loadable, but the supervisor does not advertise or send persistence data to it.
+ABI 0.8 adds the packed four-byte direct-load transport and the C64 CPU-turbo
+control bit. The core-facing loader remains a byte ready/valid stream, and ABI
+0.7 packages retain their byte-at-a-time register path. Fast serial ROM
+selection is an ARM-owned profile switch and does not overclock the PL or add a
+drive-warp control bit.
 
 `spec/core_interface_v0.md` records the separate core-facing ready/valid,
 memory, and bidirectional media contracts. It is deliberately pre-release.

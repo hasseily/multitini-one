@@ -95,6 +95,27 @@ module tb_c64_g64_track;
         check(writes == 1024, "exactly 1024 raw-track words written");
     endtask
 
+    task automatic wait_cached_track;
+        integer timeout;
+        integer writes;
+        begin : wait_loop
+            writes = 0;
+            for (timeout = 0; timeout < 1200; timeout = timeout + 1) begin
+                @(posedge clk); #1;
+                check(!media_request_valid,
+                      "cached G64 track does not request SD media");
+                if (buffer_write)
+                    writes = writes + 1;
+                if (!disk_busy) begin
+                    check(writes == 1024,
+                          "cached G64 track restores all packed words");
+                    disable wait_loop;
+                end
+            end
+            $fatal(1, "timeout restoring cached G64 track");
+        end
+    endtask
+
     initial begin
         logic [31:0] request_id;
         repeat (3) @(negedge clk);
@@ -129,6 +150,31 @@ module tb_c64_g64_track;
         media_complete = 1'b0;
         @(posedge clk); #1;
         check(!disk_busy, "loaded current half track is ready");
+
+        head_half_track = 7'd35;
+        @(posedge clk); #1;
+        check(disk_busy, "adjacent G64 half track starts a new load");
+        wait_request();
+        check(media_request_lba == 35 * 32,
+              "adjacent G64 half track requests its own extent");
+        request_id = media_request_id;
+        send_track();
+        @(negedge clk);
+        media_complete_request_id = request_id;
+        media_complete_status = 0;
+        media_complete_block_count = 32;
+        media_complete_generation = 7;
+        media_complete = 1'b1;
+        @(posedge clk); #1;
+        check(!media_request_valid && !error,
+              "second G64 track completes into the cache");
+        @(negedge clk);
+        media_complete = 1'b0;
+        @(posedge clk); #1;
+        check(!disk_busy, "second G64 half track is ready");
+
+        head_half_track = 7'd34;
+        wait_cached_track();
 
         head_half_track = 7'd100;
         @(posedge clk); #1;

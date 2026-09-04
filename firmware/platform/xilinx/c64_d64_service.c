@@ -731,6 +731,22 @@ int c64_d64_service_mount(const char *file_name)
     return mount_image(file_name);
 }
 
+int c64_d64_service_ensure_mounted(const char *file_name)
+{
+    uint32_t media_state;
+    const bool cached_mount_matches = file_name != NULL && mounted &&
+        !eject_pending && !service_faulted && !completion_pending &&
+        !reset_resume_pending && strcmp(mounted_name, file_name) == 0;
+
+    if (cached_mount_matches && read_stable_media_state(&media_state) &&
+        (media_state & (MT_MEDIA_STATE_MOUNTED |
+                        MT_MEDIA_STATE_EJECT_PENDING)) ==
+            MT_MEDIA_STATE_MOUNTED) {
+        return 0;
+    }
+    return c64_d64_service_mount(file_name);
+}
+
 int c64_d64_service_mount_default(void)
 {
     return c64_d64_service_mount(MT_C64_DEFAULT_D64_NAME);
@@ -821,7 +837,50 @@ bool c64_d64_service_mounted(void)
     return mounted;
 }
 
+bool c64_d64_service_mounted_d64(void)
+{
+    return mounted && mounted_type == MT_C64_MEDIA_D64;
+}
+
 const char *c64_d64_service_mounted_name(void)
 {
     return mounted ? mounted_name : NULL;
+}
+
+mt_c64_d64_result_t c64_d64_service_list_prgs(
+    mt_c64_d64_prg_visitor_fn visitor, void *visitor_context,
+    size_t *entry_count)
+{
+    uint32_t media_state;
+    if (entry_count == NULL) return MT_C64_D64_INVALID_ARGUMENT;
+    *entry_count = 0U;
+    if (!c64_d64_service_mounted_d64() || eject_pending || service_faulted ||
+        completion_pending || reset_resume_pending || image_dirty ||
+        !read_stable_media_state(&media_state) ||
+        (media_state & (MT_MEDIA_STATE_MOUNTED | MT_MEDIA_STATE_DIRTY |
+                        MT_MEDIA_STATE_EJECT_PENDING)) !=
+            MT_MEDIA_STATE_MOUNTED) {
+        return MT_C64_D64_INVALID_ARGUMENT;
+    }
+    return mt_c64_d64_list_prgs(media_image, media_image_size, visitor,
+                                visitor_context, entry_count);
+}
+
+mt_c64_d64_result_t c64_d64_service_extract_prg(
+    const mt_c64_d64_prg_entry_t *entry,
+    uint8_t *destination, size_t capacity, size_t *extracted_size)
+{
+    uint32_t media_state;
+    if (extracted_size == NULL) return MT_C64_D64_INVALID_ARGUMENT;
+    *extracted_size = 0U;
+    if (!c64_d64_service_mounted_d64() || eject_pending || service_faulted ||
+        completion_pending || reset_resume_pending || image_dirty ||
+        !read_stable_media_state(&media_state) ||
+        (media_state & (MT_MEDIA_STATE_MOUNTED | MT_MEDIA_STATE_DIRTY |
+                        MT_MEDIA_STATE_EJECT_PENDING)) !=
+            MT_MEDIA_STATE_MOUNTED) {
+        return MT_C64_D64_INVALID_ARGUMENT;
+    }
+    return mt_c64_d64_extract_prg(media_image, media_image_size, entry,
+                                  destination, capacity, extracted_size);
 }

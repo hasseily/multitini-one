@@ -57,6 +57,8 @@ module multitini_c64_g64_track (
     localparam logic [7:0] DRIVE8_SLOT = 8'd0;
     localparam logic [15:0] G64_TRACK_BLOCKS = 16'd32;
     localparam logic [31:0] G64_TRACK_BYTES = 32'd8192;
+    localparam integer CACHE_ENTRIES = 2;
+    localparam integer CACHE_WORDS_PER_TRACK = 1024;
 
     logic [6:0] buffered_half_track;
     logic [6:0] loading_half_track;
@@ -68,6 +70,27 @@ module multitini_c64_g64_track (
     logic        stream_complete;
     logic        stream_object_error;
     logic [63:0] pack_word;
+    (* ram_style = "block" *) logic [63:0] track_cache
+        [0:CACHE_ENTRIES*CACHE_WORDS_PER_TRACK-1];
+    logic [CACHE_ENTRIES-1:0] cache_valid;
+    logic [6:0] cache_track [0:CACHE_ENTRIES-1];
+    logic [1:0] cache_speed [0:CACHE_ENTRIES-1];
+    logic       next_cache_slot;
+    logic       loading_cache_slot;
+    logic       requested_cache_hit;
+    logic       requested_cache_slot;
+    logic       replacement_cache_slot;
+    logic       cache_store_write;
+    logic [10:0] cache_store_address;
+    logic [63:0] cache_store_data;
+    logic [10:0] cache_read_address;
+    logic [63:0] cache_read_data;
+    logic       cache_copy_active;
+    logic       cache_copy_primed;
+    logic       cache_copy_finish_pending;
+    logic       cache_copy_slot;
+    logic [6:0] cache_copy_track;
+    logic [9:0] cache_copy_word;
 
     logic [6:0] desired_half_track;
     logic completion_matches;
@@ -91,13 +114,32 @@ module multitini_c64_g64_track (
                               media_complete_status == 32'd0 &&
                               media_complete_block_count == G64_TRACK_BLOCKS &&
                               stream_complete && !stream_object_error;
+        requested_cache_hit = 1'b0;
+        requested_cache_slot = 1'b0;
+        for (int cache_index = 0; cache_index < CACHE_ENTRIES;
+             cache_index = cache_index + 1) begin
+            if (cache_valid[cache_index] &&
+                cache_track[cache_index] == desired_half_track) begin
+                requested_cache_hit = 1'b1;
+                requested_cache_slot = cache_index[0];
+            end
+        end
+        replacement_cache_slot = !cache_valid[0] ? 1'b0 :
+                                 (!cache_valid[1] ? 1'b1 : next_cache_slot);
     end
 
     assign load_ready = media_request_valid && !media_request_write &&
                         mounted && service_enable && !faulted;
     assign disk_busy = !mounted || !buffer_valid || media_request_valid ||
                        request_gap || faulted ||
-                       buffered_half_track != desired_half_track;
+                       buffered_half_track != desired_half_track ||
+                       cache_copy_active || cache_copy_finish_pending;
+
+    always_ff @(posedge clk) begin
+        if (cache_store_write)
+            track_cache[cache_store_address] <= cache_store_data;
+        cache_read_data <= track_cache[cache_read_address];
+    end
 
     always_ff @(posedge clk) begin : service_state
         logic beat_good;
@@ -127,6 +169,23 @@ module multitini_c64_g64_track (
             buffer_address            <= 14'd0;
             buffer_data               <= 64'd0;
             track_speed               <= 2'd0;
+            cache_valid               <= '0;
+            cache_track[0]            <= 7'd0;
+            cache_track[1]            <= 7'd0;
+            cache_speed[0]            <= 2'd0;
+            cache_speed[1]            <= 2'd0;
+            next_cache_slot           <= 1'b0;
+            loading_cache_slot        <= 1'b0;
+            cache_store_write         <= 1'b0;
+            cache_store_address       <= 11'd0;
+            cache_store_data          <= 64'd0;
+            cache_read_address        <= 11'd0;
+            cache_copy_active         <= 1'b0;
+            cache_copy_primed         <= 1'b0;
+            cache_copy_finish_pending <= 1'b0;
+            cache_copy_slot           <= 1'b0;
+            cache_copy_track          <= 7'd0;
+            cache_copy_word           <= 10'd0;
             error                     <= 1'b0;
         // Ordered media commands take priority over the independent
         // error-clear pulse so retry cannot discard a mount or eject.
@@ -144,6 +203,10 @@ module multitini_c64_g64_track (
                 stream_complete          <= 1'b0;
                 stream_object_error      <= 1'b0;
                 pack_word                <= 64'd0;
+                cache_valid              <= '0;
+                cache_store_write        <= 1'b0;
+                cache_copy_active        <= 1'b0;
+                cache_copy_finish_pending <= 1'b0;
                 error                    <= 1'b0;
             end else begin
                 error <= 1'b1;
@@ -160,6 +223,10 @@ module multitini_c64_g64_track (
                 stream_complete         <= 1'b0;
                 stream_object_error     <= 1'b0;
                 pack_word               <= 64'd0;
+                cache_valid             <= '0;
+                cache_store_write       <= 1'b0;
+                cache_copy_active       <= 1'b0;
+                cache_copy_finish_pending <= 1'b0;
                 error                   <= 1'b0;
             end else begin
                 error <= 1'b1;
@@ -174,6 +241,10 @@ module multitini_c64_g64_track (
             stream_complete         <= 1'b0;
             stream_object_error     <= 1'b0;
             pack_word               <= 64'd0;
+            cache_valid             <= '0;
+            cache_store_write       <= 1'b0;
+            cache_copy_active       <= 1'b0;
+            cache_copy_finish_pending <= 1'b0;
         end else if (soft_reset) begin
             media_request_valid     <= 1'b0;
             request_gap             <= 1'b1;
@@ -183,9 +254,39 @@ module multitini_c64_g64_track (
             stream_complete         <= 1'b0;
             stream_object_error     <= 1'b0;
             pack_word               <= 64'd0;
+            cache_store_write       <= 1'b0;
+            if (media_request_valid)
+                cache_valid[loading_cache_slot] <= 1'b0;
+            cache_copy_active       <= 1'b0;
+            cache_copy_primed       <= 1'b0;
+            cache_copy_finish_pending <= 1'b0;
         end else begin
+            cache_store_write <= 1'b0;
             if (request_gap)
                 request_gap <= 1'b0;
+
+            if (cache_copy_active) begin
+                if (!cache_copy_primed) begin
+                    cache_copy_primed <= 1'b1;
+                    cache_read_address <= {cache_copy_slot, 10'd1};
+                end else begin
+                    buffer_write <= 1'b1;
+                    buffer_address <= {1'b0, cache_copy_word, 3'b000};
+                    buffer_data <= cache_read_data;
+                    if (cache_copy_word == 10'd1023) begin
+                        cache_copy_active <= 1'b0;
+                        cache_copy_finish_pending <= 1'b1;
+                    end else begin
+                        cache_copy_word <= cache_copy_word + 10'd1;
+                        cache_read_address <= cache_read_address + 11'd1;
+                    end
+                end
+            end else if (cache_copy_finish_pending) begin
+                cache_copy_finish_pending <= 1'b0;
+                buffer_valid <= 1'b1;
+                buffered_half_track <= cache_copy_track;
+                track_speed <= cache_speed[cache_copy_slot];
+            end
 
             if (load_valid && load_ready) begin
                 beat_good = load_total == G64_TRACK_BYTES &&
@@ -202,6 +303,10 @@ module multitini_c64_g64_track (
                         buffer_write   <= 1'b1;
                         buffer_address <= load_offset[13:0] - 14'd7;
                         buffer_data    <= assembled_word;
+                        cache_store_write <= 1'b1;
+                        cache_store_address <=
+                            {loading_cache_slot, load_offset[12:3]};
+                        cache_store_data <= assembled_word;
                         pack_word      <= 64'd0;
                         if (load_offset == 32'd7)
                             track_speed <= assembled_word[14:13];
@@ -224,27 +329,45 @@ module multitini_c64_g64_track (
                 if (completion_succeeds) begin
                     buffer_valid        <= 1'b1;
                     buffered_half_track <= loading_half_track;
+                    cache_valid[loading_cache_slot] <= 1'b1;
+                    cache_track[loading_cache_slot] <= loading_half_track;
+                    cache_speed[loading_cache_slot] <= track_speed;
                 end else begin
                     buffer_valid <= 1'b0;
+                    cache_valid[loading_cache_slot] <= 1'b0;
                     faulted      <= 1'b1;
                     error        <= 1'b1;
                 end
             end else if (!media_request_valid && !request_gap && mounted &&
-                         service_enable && !faulted &&
+                         service_enable && !faulted && !cache_copy_active &&
+                         !cache_copy_finish_pending &&
                          (!buffer_valid || buffered_half_track !=
                                            desired_half_track)) begin
-                media_request_valid       <= 1'b1;
-                media_request_write       <= 1'b0;
-                media_request_id          <= next_request_id;
-                media_request_lba         <= desired_half_track * 32'd32;
-                media_request_block_count <= G64_TRACK_BLOCKS;
-                media_request_generation  <= mounted_generation;
-                next_request_id           <= next_nonzero_id(next_request_id);
-                loading_half_track        <= desired_half_track;
-                stream_bytes_received     <= 32'd0;
-                stream_complete           <= 1'b0;
-                stream_object_error       <= 1'b0;
-                pack_word                 <= 64'd0;
+                buffer_valid <= 1'b0;
+                if (requested_cache_hit) begin
+                    cache_copy_active <= 1'b1;
+                    cache_copy_primed <= 1'b0;
+                    cache_copy_slot <= requested_cache_slot;
+                    cache_copy_track <= desired_half_track;
+                    cache_copy_word <= 10'd0;
+                    cache_read_address <= {requested_cache_slot, 10'd0};
+                end else begin
+                    media_request_valid       <= 1'b1;
+                    media_request_write       <= 1'b0;
+                    media_request_id          <= next_request_id;
+                    media_request_lba         <= desired_half_track * 32'd32;
+                    media_request_block_count <= G64_TRACK_BLOCKS;
+                    media_request_generation  <= mounted_generation;
+                    next_request_id           <= next_nonzero_id(next_request_id);
+                    loading_half_track        <= desired_half_track;
+                    loading_cache_slot        <= replacement_cache_slot;
+                    cache_valid[replacement_cache_slot] <= 1'b0;
+                    next_cache_slot           <= !replacement_cache_slot;
+                    stream_bytes_received     <= 32'd0;
+                    stream_complete           <= 1'b0;
+                    stream_object_error       <= 1'b0;
+                    pack_word                 <= 64'd0;
+                end
             end
         end
     end

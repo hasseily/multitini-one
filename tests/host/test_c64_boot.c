@@ -13,6 +13,8 @@ typedef struct {
     unsigned fail_call;
     unsigned short_call;
     unsigned uniform_call;
+    const char *expected_paths[4];
+    unsigned expected_path_count;
 } rom_reader_t;
 
 static mt_c64_rom_file_read_result_t read_rom_file(
@@ -29,8 +31,14 @@ static mt_c64_rom_file_read_result_t read_rom_file(
     size_t index;
 
     assert(reader != NULL);
-    assert(reader->calls < sizeof(expected_paths) / sizeof(expected_paths[0]));
-    assert(strcmp(path, expected_paths[reader->calls]) == 0);
+    if (reader->expected_path_count != 0U) {
+        assert(reader->calls < reader->expected_path_count);
+        assert(strcmp(path, reader->expected_paths[reader->calls]) == 0);
+    } else {
+        assert(reader->calls <
+               sizeof(expected_paths) / sizeof(expected_paths[0]));
+        assert(strcmp(path, expected_paths[reader->calls]) == 0);
+    }
     ++reader->calls;
 
     if (reader->calls == reader->fail_call) {
@@ -70,6 +78,16 @@ static void test_rom_file_paths_and_loading(void)
     assert(strcmp(mt_c64_sd_rom_path(MT_C64_ROM_DRIVE_1541),
                   "0:/multitini/cores/c64/roms/1541.bin") == 0);
     assert(mt_c64_sd_rom_path((mt_c64_rom_kind_t)99) == NULL);
+    assert(strcmp(mt_c64_fast_rom_paths()->basic,
+                  MT_C64_SD_BASIC_PATH) == 0);
+    assert(strcmp(mt_c64_fast_rom_paths()->kernal,
+                  "0:/multitini/cores/c64/roms/fast/kernal.bin") == 0);
+    assert(strcmp(mt_c64_fast_rom_paths()->character,
+                  MT_C64_SD_CHARACTER_PATH) == 0);
+    assert(strcmp(mt_c64_fast_rom_paths()->drive_1541,
+                  "0:/multitini/cores/c64/roms/fast/1541.bin") == 0);
+    assert(strcmp(mt_c64_stock_rom_paths()->drive_1541,
+                  MT_C64_SD_1541_PATH) == 0);
 
     result = mt_c64_rom_files_load_system(
         read_rom_file, &reader, bundle, sizeof(bundle), &roms);
@@ -83,6 +101,24 @@ static void test_rom_file_paths_and_loading(void)
     assert(roms.character.data ==
            bundle + MT_SIZE_C64_BASIC + MT_SIZE_C64_KERNAL);
     assert(roms.character.size == MT_SIZE_C64_CHARACTER);
+
+    memset(&reader, 0, sizeof(reader));
+    reader.expected_paths[0] = MT_C64_SD_BASIC_PATH;
+    reader.expected_paths[1] = MT_C64_SD_FAST_KERNAL_PATH;
+    reader.expected_paths[2] = MT_C64_SD_CHARACTER_PATH;
+    reader.expected_path_count = 3U;
+    result = mt_c64_rom_files_load_system_from(
+        mt_c64_fast_rom_paths(), read_rom_file, &reader, bundle,
+        sizeof(bundle), &roms);
+    assert(result.status == MT_C64_ROM_FILES_OK && reader.calls == 3U);
+
+    memset(&reader, 0, sizeof(reader));
+    reader.expected_paths[0] = MT_C64_SD_FAST_1541_PATH;
+    reader.expected_path_count = 1U;
+    result = mt_c64_rom_file_load(
+        MT_C64_ROM_DRIVE_1541, MT_C64_SD_FAST_1541_PATH, read_rom_file,
+        &reader, bundle, sizeof(bundle));
+    assert(result.status == MT_C64_ROM_FILES_OK && reader.calls == 1U);
 
     memset(&reader, 0, sizeof(reader));
     reader.fail_call = 2U;
@@ -123,6 +159,14 @@ static void test_rom_file_paths_and_loading(void)
                   "invalid argument") == 0);
     assert(mt_c64_rom_files_load_system(
                NULL, &reader, bundle, sizeof(bundle), &roms).status ==
+           MT_C64_ROM_FILES_INVALID_ARGUMENT);
+    assert(mt_c64_rom_files_load_system_from(
+               NULL, read_rom_file, &reader, bundle, sizeof(bundle),
+               &roms).status == MT_C64_ROM_FILES_INVALID_ARGUMENT);
+    assert(mt_c64_rom_file_load(
+               MT_C64_ROM_DRIVE_1541, MT_C64_SD_FAST_1541_PATH,
+               read_rom_file, &reader, bundle,
+               MT_SIZE_C64_1541_ROM - 1U).status ==
            MT_C64_ROM_FILES_INVALID_ARGUMENT);
 }
 

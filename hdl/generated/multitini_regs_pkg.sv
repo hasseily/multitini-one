@@ -3,7 +3,7 @@
 `timescale 1ns / 1ps
 package multitini_regs_pkg;
     localparam logic [15:0] MT_ABI_MAJOR = 16'd0;
-    localparam logic [15:0] MT_ABI_MINOR = 16'd7;
+    localparam logic [15:0] MT_ABI_MINOR = 16'd9;
     localparam logic [31:0] MT_ABI_VERSION = {MT_ABI_MAJOR, MT_ABI_MINOR};
     localparam logic [31:0] MT_MAGIC = 32'h4D543031;
     localparam logic [31:0] MT_SHELL_ID = 32'h4D544F4E;
@@ -45,11 +45,14 @@ package multitini_regs_pkg;
     localparam logic [11:0] MT_REG_UI_COMMIT = 12'h0AC;
     localparam logic [11:0] MT_REG_UI_STATUS = 12'h0B0;
     localparam logic [11:0] MT_REG_CORE_VARIANT_INDEX = 12'h0B4;
+    localparam logic [11:0] MT_REG_STREAM_DATA_BURST = 12'h0B8;
+    localparam logic [11:0] MT_REG_STREAM_STATUS = 12'h0BC;
 
     localparam logic [31:0] MT_CONTROL_CORE_RESET_REQUEST = 32'h00000001;
     localparam logic [31:0] MT_CONTROL_VIDEO_TEST_ENABLE = 32'h00000002;
     localparam logic [31:0] MT_CONTROL_AUDIO_TEST_ENABLE = 32'h00000004;
     localparam logic [31:0] MT_CONTROL_AUDIO_MUTE = 32'h00000008;
+    localparam logic [31:0] MT_CONTROL_C64_CPU_TURBO_ENABLE = 32'h00000020;
 
     localparam logic [31:0] MT_STATUS_SHELL_READY = 32'h00000001;
     localparam logic [31:0] MT_STATUS_VIDEO_ACTIVE = 32'h00000002;
@@ -86,6 +89,9 @@ package multitini_regs_pkg;
     localparam logic [31:0] MT_UI_STATUS_BANK = 32'h00000002;
     localparam logic [31:0] MT_UI_STATUS_READY = 32'h00000004;
 
+    localparam logic [31:0] MT_STREAM_STATUS_READY = 32'h00000001;
+    localparam logic [31:0] MT_STREAM_STATUS_DRAINED = 32'h00000002;
+
     localparam logic [31:0] MT_MEDIA_BLOCK_BYTES = 32'h00000100;
     localparam logic [31:0] MT_MEDIA_SLOT_MASK = 32'h000000FF;
     localparam logic [31:0] MT_MEDIA_KIND_SHIFT = 32'h00000008;
@@ -102,6 +108,7 @@ package multitini_regs_pkg;
     localparam logic [31:0] MT_UI_VRAM_BANK0_OFFSET = 32'h00001000;
     localparam logic [31:0] MT_UI_VRAM_BANK1_OFFSET = 32'h00002800;
     localparam logic [31:0] MT_UI_WINDOW_SPAN = 32'h00010000;
+    localparam logic [31:0] MT_STREAM_BURST_BYTES = 32'h00000004;
 
     localparam logic [31:0] MT_COMMAND_PING = 32'h00000000;
     localparam logic [31:0] MT_COMMAND_GET_STATUS = 32'h00000001;

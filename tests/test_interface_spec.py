@@ -82,6 +82,7 @@ class InterfaceSpecTests(unittest.TestCase):
     def test_c64_interface_ids_and_required_rom_sizes(self):
         c64 = json.loads((ROOT / "spec/c64_interface_v0.json").read_text())
         self.assertEqual(c64["schema_version"], 1)
+        self.assertGreaterEqual(c64["abi"]["minor"], 2)
         load_ids = [int(value, 0) for value in c64["load_kinds"].values()]
         input_ids = [int(value, 0)
                      for value in c64["input_namespaces"].values()]
@@ -90,6 +91,11 @@ class InterfaceSpecTests(unittest.TestCase):
         self.assertEqual(c64["rom_sizes"]["C64_BASIC"], 8192)
         self.assertEqual(c64["rom_sizes"]["C64_KERNAL"], 8192)
         self.assertEqual(c64["rom_sizes"]["C64_CHARACTER"], 4096)
+        self.assertEqual(int(c64["load_kinds"]["C64_PRG_STAGE"], 0), 0x15)
+        self.assertEqual(int(c64["load_kinds"]["C64_PRG_RUN"], 0), 0x16)
+
+    def test_staged_prg_launch_is_versioned(self):
+        self.assertGreaterEqual(self.spec["abi"]["minor"], 9)
 
 
 if __name__ == "__main__":

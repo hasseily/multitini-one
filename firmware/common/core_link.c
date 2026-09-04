@@ -148,6 +148,7 @@ mt_link_result_t mt_core_link_stream(mt_core_link_t *link, uint8_t kind,
     mt_command_response_t response;
     mt_link_result_t result;
     size_t offset;
+    uint32_t abi_version;
 
     if (!link_valid(link) || data == NULL || size == 0U || max_polls == 0U) {
         return MT_LINK_BAD_ARGUMENT;
@@ -158,12 +159,61 @@ mt_link_result_t mt_core_link_stream(mt_core_link_t *link, uint8_t kind,
     }
 #endif
 
+    abi_version = link->read32(link->context, MT_REG_ABI_VERSION);
+
     args[0] = kind;
     args[1] = (uint32_t)size;
     result = mt_core_link_command(link, MT_COMMAND_STREAM_BEGIN, args,
                                   max_polls, progress, progress_context,
                                   &response);
     if (result != MT_LINK_OK) {
+        return result;
+    }
+
+    if ((uint16_t)(abi_version >> 16U) == MT_ABI_MAJOR &&
+        (uint16_t)abi_version >= 8U) {
+        for (offset = 0U; offset < size;) {
+            uint32_t word = 0U;
+            uint32_t poll;
+            size_t lane;
+            const size_t remaining = size - offset;
+            const size_t count = remaining < MT_STREAM_BURST_BYTES ?
+                remaining : MT_STREAM_BURST_BYTES;
+            for (lane = 0U; lane < count; ++lane)
+                word |= (uint32_t)data[offset + lane] << (lane * 8U);
+            for (poll = 0U; poll < max_polls; ++poll) {
+                if ((link->read32(link->context, MT_REG_STREAM_STATUS) &
+                     MT_STREAM_STATUS_READY) != 0U) {
+                    link->write32(link->context, MT_REG_STREAM_DATA_BURST,
+                                  word);
+                    offset += count;
+                    break;
+                }
+                if (progress != NULL) progress(progress_context);
+            }
+            if (poll == max_polls) {
+                abort_stream(link, max_polls, progress, progress_context);
+                return MT_LINK_TIMEOUT;
+            }
+        }
+        for (offset = 0U; offset < max_polls; ++offset) {
+            if ((link->read32(link->context, MT_REG_STREAM_STATUS) &
+                 MT_STREAM_STATUS_DRAINED) != 0U)
+                break;
+            if (progress != NULL) progress(progress_context);
+        }
+        if (offset == max_polls) {
+            abort_stream(link, max_polls, progress, progress_context);
+            return MT_LINK_TIMEOUT;
+        }
+
+        args[0] = 0U;
+        result = mt_core_link_command(link, MT_COMMAND_STREAM_END, args,
+                                      max_polls, progress, progress_context,
+                                      &response);
+        if (result != MT_LINK_OK) {
+            abort_stream(link, max_polls, progress, progress_context);
+        }
         return result;
     }
 

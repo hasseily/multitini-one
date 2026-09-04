@@ -7,9 +7,10 @@ uint16_t mt_ui_cell(char character, mt_ui_color_t foreground,
     const uint16_t ascii =
         ((unsigned char)character >= 32U && (unsigned char)character <= 127U) ?
         (uint16_t)(unsigned char)character : (uint16_t)'?';
-    return ascii | ((uint16_t)foreground << 7U) |
-           ((uint16_t)background << 11U) |
-           (transparent_background ? UINT16_C(0x8000) : UINT16_C(0));
+    return (uint16_t)(ascii | ((uint16_t)foreground << 7U) |
+                      ((uint16_t)background << 11U) |
+                      (transparent_background ? UINT16_C(0x8000) :
+                                                UINT16_C(0)));
 }
 
 void mt_ui_clear(mt_ui_frame_t *frame, mt_ui_color_t background)

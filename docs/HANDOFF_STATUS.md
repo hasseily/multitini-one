@@ -36,8 +36,9 @@ variant, disk/cartridge attachment, and C64 input choices. The menu has an
 explicit `Autoboot current core` setting. Autoboot defaults off, and merely
 selecting a core neither enables nor retargets it. The Vivado project now
 defaults to a supervisor-only boot shell (`ACTIVE_MACHINE=2`) with no C64 or GBC
-core; the root packager rejects machine bitstreams. No vendor rebuild or board
-test has been performed for this source increment.
+core; the root packager rejects machine bitstreams. Fresh build `20260912`
+passes the supervisor, PAL C64, NTSC C64, PSRAM-enabled GBC, exFAT-enabled
+Vitis, and package gates. The board test remains.
 
 ## Completed repository and portable validation
 
@@ -182,8 +183,8 @@ test has been performed for this source increment.
   compilation of the Xilinx entry point. Focused XSim also passes the current
   four-bank live bridge's swap, repeat, full-ring, rejection, diagnostic-toggle,
   and independent-reset cases.
-- The full Python repository suite runs 71 checks: 70 pass and one is skipped;
-  all 25 strict host C tests pass. Focused XSim/Icarus passes the PRG/CRT content
+- The full Python repository suite runs 77 checks: 76 pass and one is skipped;
+  all 27 strict host C tests pass. Focused XSim/Icarus passes the PRG/CRT content
   loader, RUN injector, cartridge memory bridge, transactional D64 service,
   read-only G64 service, ABI registers, and PAL/NTSC live-video benches. The
   local wait-capable FPGA64 VHDL port analyzes successfully, and the C64
@@ -193,6 +194,81 @@ test has been performed for this source increment.
   includes the common overlay's atomic vblank bank/visibility handoff and the
   complete C64 shell compile. The runtime menu and successful C64-to-GBC PCAP
   path now have initial board validation.
+
+## Completed ABI 0.9 build 20260913
+
+Vivado 2025.2 rebuilt the supervisor-only shell, both C64 video variants, and
+the PSRAM-enabled GBC image from the current source. All timing endpoint failure
+counts and routed-net failure counts are zero.
+
+| Image | Build generic | WNS/WHS/WPWS (ns) | Routed BIT SHA-256 | XSA SHA-256 |
+|---|---|---:|---|---|
+| C64 PAL | `ACTIVE_MACHINE=0 C64_NTSC_MODE=0` | `+0.414/+0.050/+0.265` | `B379F323528771061D57182AFE81EDE26D5F6B44684FE12D761B71A530DFB93F` | `EA04208D8C9FEC620E610522417B707012E54AB9F242F8CB5D729034C5F4B62F` |
+| C64 NTSC | `ACTIVE_MACHINE=0 C64_NTSC_MODE=1` | `+0.287/+0.028/+0.265` | `94C12C69F67FD7A4ED4621467F22442B7C71A90B49A27C5204D1218AD2808AB8` | `F17099AD387896C1D0C887714D543622837876873A8A0FE65097AA9AC1FE6E26` |
+| Supervisor | `ACTIVE_MACHINE=2` | `+0.561/+0.058/+1.833` | `1018066B407905CEAF67B95D363EB2B480EED712F29225D5F373DC6E1AB4F36E` | `8C81515834D68C463750D41D48FE2F744E393F4D74BABD03FF2E16DB76AAA9B6` |
+| GBC PSRAM | `ACTIVE_MACHINE=1 ENABLE_GBC_PSRAM=1` | `+0.181/+0.054/+0.265` | `DF6B56522BF0248F4D84419A3C372BC55E6EC7245AF9E02D85BEDC2E26FBFB58` | `AABB77BF792A5EE2FF85BB4B23C8CDD1A54E4D5E41895556BD2816F2C846120C` |
+
+Each routed bitstream is 4,045,693 bytes. Fresh Vitis 2025.2 built the
+supervisor from its matching XSA with the `xilffs_v5_5` exFAT/LFN stamp. The
+FSBL SHA-256 is
+`0FE9F690F72B552383F843A4C66D5B7B6A245946BC30D90745CDBBB6891F2292`;
+the application ELF SHA-256 is
+`DFF148DD6A914DEBB19A1EBB6AB694C41310C8163485ABE484B80AF33B2E8558`.
+Bootgen produced a 4,590,068-byte supervisor-only `FIRMWARE.BIN` with SHA-256
+`AC9CC04E4222FEE669048233D3DE927224B216CB54D34FD9AC1EB0759ADFA672`;
+readback identifies exactly the FSBL, supervisor bitstream, and application.
+
+The ABI 0.9 runtime packages contain 4,045,568-byte payloads:
+
+- `c64-pal.bin`: CRC32 `D5682B8A`, SHA-256
+  `DC51B2AA7A9DFA304A8FDDECB5A4D4595BED92C655FDE41601E0651D5B77025A`.
+- `c64-ntsc.bin`: CRC32 `96DEFB4D`, SHA-256
+  `4C5EEC3122485B7B5BEF8B3D38E85230DB372B55268FB9BA97C84288ECC74758`.
+- `gbc-default.bin`: CRC32 `289499C3`, SHA-256
+  `91937D6059BDE81795092146711B3A429939CC753F080D5D8436D996E73E9043`.
+
+The new firmware and five package files were hash-verified on the SD card.
+`FIRMWARE.OK`, settings, ROMs, media, and save files remained unchanged. This
+is a build/package result; physical-board validation remains open.
+
+## Completed ABI 0.8 build 20260912
+
+Vivado 2025.2 completed source-generated implementation, bitstream, XSA, timing,
+CDC, bus-skew, DRC, methodology, route, and timing-coverage gates for all four
+runtime images. All timing endpoint failure counts and routed-net failure counts
+are zero.
+
+| Image | Build generic | WNS/WHS/WPWS (ns) | Routed BIT SHA-256 | XSA SHA-256 |
+|---|---|---:|---|---|
+| C64 PAL | `ACTIVE_MACHINE=0 C64_NTSC_MODE=0` | `+0.291/+0.035/+0.265` | `D00520BDD4A5C6EDEE13217E470018D908EB0E5DC4A4F9AE969CA006E3C86EA4` | `A8EA2D9E38C603C985816AE7D45F2F11A34F8DF9339510C50B3ECE71763AE3C2` |
+| C64 NTSC | `ACTIVE_MACHINE=0 C64_NTSC_MODE=1` | `+0.460/+0.059/+0.265` | `FDA90BF2964C61B21EF17EF282FC80D5D82ECA8EAE7137A925D257092C323C8F` | `7E5B101D021556C1566EF0FF6CF874C303F52E8C8D4294F9CF02A44155E557D4` |
+| Supervisor | `ACTIVE_MACHINE=2` | `+0.463/+0.068/+1.833` | `68F71371390EF042D4988FE8DD7E2BE2220D7DA80278E8CC457990971953D0B3` | `70D627A9D65C13385048B830F2538251E5BE684EE898E83850EC058B733815CA` |
+| GBC PSRAM | `ACTIVE_MACHINE=1 ENABLE_GBC_PSRAM=1` | `+0.210/+0.023/+0.265` | `100407084D2B8AA57EECD97D03E85919F467B4703AC7BA74F30349787A1D2789` | `8F420B824C6B2D03E98B75600442568BC495904E7DF80962CE2E95129933679A` |
+
+Each routed bitstream is 4,045,693 bytes. The PAL, NTSC, supervisor, and GBC
+XSAs are 1,285,448, 1,284,419, 388,410, and 697,174 bytes respectively.
+
+Fresh Vitis 2025.2 built the exFAT/LFN/media-validation supervisor from the
+supervisor XSA. The FSBL SHA-256 is
+`57BE243D3A4B219D3511A37A3E9E2E6CD7F3D8C675066F747A4CAE3320F0F518`;
+the application ELF SHA-256 is
+`562715AFD3C9BBAC2F3581B7A32218021FB0AD8F502021D328808FA600D75CA0`.
+Bootgen produced a 4,580,468-byte supervisor-only `FIRMWARE.BIN` with SHA-256
+`5F27B3478795747E57D9C03F2EE56F19A02251BE0EB059CA1D2DFFEA0F7A32C1`
+and CRC32 `A414D596`. Bootgen readback identifies the expected FSBL, supervisor
+bitstream, and two application partitions.
+
+The ABI 0.8 core packages contain 4,045,568-byte payloads:
+
+- `c64-pal.bin`: CRC32 `3CF5B3E6`, SHA-256
+  `FC13CDD4F6B7E530DE5279617EF3B571D75A7EF0469BCE3BE3FDCE68870A75D5`.
+- `c64-ntsc.bin`: CRC32 `FB77FDCE`, SHA-256
+  `D2D9E2CEDE6CC6C6A3E9774819F1AB6A01EC2097AC0B3FB470771D3F3689011D`.
+- `gbc-default.bin`: CRC32 `4E0F4D7A`, SHA-256
+  `366C473123474AF4290DF1627C93B6664046B7339B675328F6E9E7D861C960CD`.
+
+These are vendor and packaging results from an uncommitted working tree, not a
+physical-board result.
 
 ## Completed ABI 0.6 multicore and GBC-fix build
 
@@ -462,10 +538,16 @@ did not assert Fire and the player ring kept blinking.
   validation. The ABI 0.6 multicore menu and PCAP supervisor have a
   consolidated vendor build and successful C64-to-GBC board switch; rollback,
   repeated bidirectional switching, and the full media matrix remain open.
-- The settings and supervisor-only boot changes need a fresh Vivado
-  implementation, matching exFAT-enabled Vitis/package build, and board checks
+- The settings and supervisor-only boot changes pass fresh `20260912` Vivado,
+  exFAT-enabled Vitis, and package builds. They still need board checks
   for no-core startup, explicit opt-in Autoboot, per-core media/input
   restoration, corrupt-file fallback, and interrupted settings writes.
+- ABI 0.9 build `20260913` adds an Ultimate-style D64 `Mount & Run`
+  menu path. Pure parsing covers 35/40/42-track images, directory and file-chain
+  corruption, stale entry identity, bounded extraction, and error-tail images;
+  service/menu integration passes normal and sanitizer host suites. The PRG is
+  staged, the D64 is remounted, and only then is RUN typed. The matching firmware
+  and core packages are installed on the SD card but not yet tested on the board.
 - Build `2026082F` routes audible live machine PCM and proves source switching,
   but its Decathlon and Ultima II faults leave SID compatibility, long-run
   behavior, level, channel behavior, reset behavior, and SPDIF open. The
@@ -479,10 +561,12 @@ did not assert Fire and the player ring kept blinking.
 
 ## Next validation sequence
 
-1. Build and package firmware source `20260910`, then verify settings with
-   `docs/SETTINGS_HARDWARE_TEST.md`. Do not rebuild the unchanged PAL, NTSC,
-   or GBC PL images solely for this ARM-only increment unless a matched new
-   release build ID is required.
+1. Boot the staged build `20260913`, then verify settings with
+   `docs/SETTINGS_HARDWARE_TEST.md`. Exercise the stock C64 ROM profile, the
+   reported stock fallback for a missing persisted fast pair, successful
+   atomic switching with a properly licensed matching fast ROM pair, and
+   rollback after a forced switch failure. Exercise Smart CPU turbo separately
+   with the stated D64 regression set; no drive-clock warp remains.
 2. Extend the `20260902` audio pass with recorded Decathlon opening/gameplay and
    Ultima II sequences. Recheck UART `m`, `t`, and `a`, reset/load silence,
    channels, level, and SPDIF. Record whether either stuck tone returns before
@@ -491,7 +575,9 @@ did not assert Fire and the player ring kept blinking.
    directions, CRC/ABI rejection, failed-load rollback, repeated switching,
    reset, and golden recovery. F12 rendering and one C64-to-GBC transition
    already pass.
-4. Exercise BASIC and non-BASIC PRGs, RUN typing,
+4. Exercise BASIC and non-BASIC PRGs, RUN typing, D64 `Mount & Run` with a
+   later disk access, rejection of malformed/unclosed entries, and ordinary
+   protected/custom-loader disks through the unchanged Drive 8 path. Exercise
    each accepted CRT mapper/profile, malformed and unsupported CRT rejection,
    cartridge cache misses, D64/G64 mount/eject/remount, reset/detach, and PSRAM
    fault handling through the menu.

@@ -35,8 +35,22 @@ image, the user confirmed GBC game-save persistence on the board.
 Current source adds journaled per-core settings, a System-menu `Autoboot current
 core` option that is off by default, and a supervisor-only boot FPGA target.
 The normal firmware image therefore starts with no machine loaded and shows the
-Multitini standby screen until F12 selection or explicit Autoboot. This source
-increment has not yet been rebuilt or tested on the board.
+Multitini standby screen until F12 selection or explicit Autoboot. ABI 0.8
+build `20260912` added four-byte direct-load transfers, two cached C64
+tracks per disk format, and a generic `Core config` page. Its attempted 1541
+drive-warp option corrupted IEC loads in the first board test and is not
+retained in current source. The replacement is an optional user-supplied fast
+serial ROM profile: `roms/fast/kernal.bin` and `roms/fast/1541.bin` must form a
+valid pair before the firmware safely resets and reloads the C64. The stock ROM
+paths remain unchanged, and FPGA64 Smart 2x CPU turbo remains independent.
+ABI 0.9 build `20260913` provides an Ultimate-style `Mount & Run` action
+for mounted D64 images. It browses validated PRG directory entries, extracts
+the selected BASIC-start file, stages it through the direct-RAM loader,
+remounts the same D64, and only then types `RUN`. Normal D64/G64 mount
+remains the compatible path for custom loaders and protected disks. Fresh
+supervisor-only, PAL C64, NTSC C64, and PSRAM-enabled GBC images pass the
+Vivado 2025.2 gates; the matching exFAT-enabled Vitis firmware and ABI 0.9 core
+packages are installed on the SD card for board validation.
 
 ## Current state
 
@@ -75,10 +89,11 @@ Known:
   SD core packages, safely replaces the complete PL through DevCfg/PCAP,
   validates the new shell/core/ABI, and reloads the previous package on
   failure. This is full PL reconfiguration, not partial reconfiguration.
-- Every current ABI 0.7 image includes the same double-buffered 80x36 overlay.
+- Every current ABI 0.8 image includes the same double-buffered 80x36 overlay.
   The F12
   menu selects core variants, machine-specific media, active or diagnostic
-  video, input settings, explicit opt-in auto-boot, core reset, and golden
+  video, input settings, core-specific settings, explicit opt-in auto-boot,
+  core reset, and golden
   recovery. Merely selecting a core records its preferred variant but neither
   enables nor retargets auto-boot.
   C64 and GBC both have activation services; GBC accepts `.gb` and `.gbc`
@@ -168,6 +183,25 @@ Known:
   were subsequently reported by the user to look okay on the board. That is a
   visual smoke result, not complete writable-media, exFAT, RTC, or content
   qualification.
+- ABI 0.8 moves direct-load traffic in four-byte MMIO bursts while preserving
+  the core-facing byte stream. D64 and G64 each keep their two most recently
+  completed 8 KiB tracks in FPGA block RAM; revisits avoid ARM/SD access, and
+  D64 writes invalidate the changed cached track. Neither optimization changes
+  1541 timing. The attempted drive-clock warp path was removed. The replacement
+  `Fast serial ROMs` option atomically selects user-supplied 8 KiB C64 KERNAL
+  and 16 KiB 1541 ROM files under `roms/fast`; neither file is shipped. Both
+  files are validated before a reset/reload, the setting is saved only after a
+  successful switch, and a failed switch restores the previous active pair. A
+  persisted fast selection whose pair is unavailable is reported and boots the
+  unchanged stock ROM paths instead. `CPU turbo` remains a separate,
+  default-Off FPGA64 Smart 2x option.
+- The C64 Media page has a separate `Mount & Run` action for a mounted D64.
+  It lists only complete, structurally valid `$0801` PRGs, revalidates the chosen
+  directory entry, copies its complete sector chain before reset, performs the
+  direct PRG injection without starting it, remounts the same D64, and then
+  types `RUN`. It is unavailable for G64. It does not alter normal IEC traffic, so
+  protected/custom-loader software continues to use the ordinary Drive 8
+  mount path.
 - Build `2026082F` connects the selected machine's signed 24-bit PCM stream to
   the common I2S and SPDIF outputs. Live audio is selected automatically when
   the core is ready; UART `a` restores live audio, `t` selects the fixed test
@@ -272,7 +306,7 @@ The intended first commands on a Vivado 2025.2 machine build the supervisor-only
 root image:
 
 ```powershell
-$env:MULTITINI_BUILD_ID = '20260910'
+$env:MULTITINI_BUILD_ID = '20260913'
 vivado -mode batch -source scripts/create_project.tcl
 vivado -mode batch -source scripts/build_and_export_xsa.tcl
 vitis -s scripts/create_vitis_workspace.py

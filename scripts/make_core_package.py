@@ -16,6 +16,7 @@ from pathlib import Path
 
 BITSTREAM_MIN = 1024 * 1024
 BITSTREAM_MAX = 8 * 1024 * 1024
+DEFAULT_ABI_MINOR = 9
 
 
 @dataclass(frozen=True)
@@ -153,7 +154,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--core-id", required=True, type=lambda value: int(value, 0))
     result.add_argument("--content-root", required=True)
     result.add_argument("--abi-major", type=int, default=0)
-    result.add_argument("--abi-minor", type=int, default=7)
+    result.add_argument("--abi-minor", type=int, default=DEFAULT_ABI_MINOR)
     result.add_argument("--variant", dest="variants", action="append",
                         type=parse_variant,
                         help="ID|DISPLAY LABEL|PATH.bit (repeatable)")

@@ -141,6 +141,9 @@ int main(void)
     shell_t shell = {0};
     mt_core_link_t link;
     mt_c64_content_service_result_t result;
+    static const uint8_t extracted_prg[] = {
+        0x01U, 0x08U, 0x0bU, 0x08U, 0x01U, 0x00U
+    };
 
     mt_core_link_init(&link, &shell, read32, write32);
     shell.registers[MT_REG_STATUS / 4U] = MT_STATUS_CORE_READY;
@@ -155,14 +158,36 @@ int main(void)
 
     result = c64_content_service_load("hello.prg");
     assert(result.status == MT_C64_CONTENT_SERVICE_OK);
+    assert(result.sd.size == 3U);
     assert(!c64_content_service_crt_attached());
     assert(shell.completed[1] == MT_LOAD_C64_CRT_DETACH);
     assert(shell.completed[2] == MT_LOAD_C64_PRG);
 
+    strcpy(requested_path, "unchanged");
+    result = c64_content_service_run_staged_prg();
+    assert(result.status == MT_C64_CONTENT_SERVICE_INVALID_ARGUMENT);
+    result = c64_content_service_stage_prg_image(
+        extracted_prg, sizeof(extracted_prg));
+    assert(result.status == MT_C64_CONTENT_SERVICE_OK);
+    assert(c64_content_service_prg_staged());
+    assert(strcmp(requested_path, "unchanged") == 0);
+    assert(shell.completed[3] == MT_LOAD_C64_PRG_STAGE);
+    result = c64_content_service_run_staged_prg();
+    assert(result.status == MT_C64_CONTENT_SERVICE_OK);
+    assert(!c64_content_service_prg_staged());
+    assert(shell.completed[4] == MT_LOAD_C64_PRG_RUN);
+    result = c64_content_service_run_staged_prg();
+    assert(result.status == MT_C64_CONTENT_SERVICE_INVALID_ARGUMENT);
+
+    result = c64_content_service_stage_prg_image(NULL, sizeof(extracted_prg));
+    assert(result.status == MT_C64_CONTENT_SERVICE_INVALID_ARGUMENT);
+    result = c64_content_service_stage_prg_image(extracted_prg, 1U);
+    assert(result.status == MT_C64_CONTENT_SERVICE_REJECTED);
+
     result = c64_content_service_load("unsupported.crt");
     assert(result.status == MT_C64_CONTENT_SERVICE_REJECTED);
     assert(result.content.status == MT_C64_CONTENT_UNSUPPORTED_CRT);
-    assert(shell.completed_count == 3U);
+    assert(shell.completed_count == 5U);
 
     shell.raise_load_error_on_end = 1;
     result = c64_content_service_load("pl-error.crt");

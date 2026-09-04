@@ -92,6 +92,7 @@ module multitini_c64_1541 #(
     logic [1:0] stepper_phase;
     logic [1:0] previous_stepper_phase;
     logic [1:0] stepper_move;
+    logic       stepper_sample_valid;
     logic       motor_on;
     logic [1:0] motor_frequency;
     logic       byte_ready_n;
@@ -169,7 +170,6 @@ module multitini_c64_1541 #(
         g64_media_request_block_count : d64_media_request_block_count;
     assign media_request_generation = g64_mode ?
         g64_media_request_generation : d64_media_request_generation;
-
     always_ff @(posedge clk) begin
         if (reset)
             g64_mode <= 1'b0;
@@ -277,7 +277,8 @@ module multitini_c64_1541 #(
         .dout(g64_data_from_disk), .din(drive_data_to_disk),
         .mode(disk_mode), .mtr(motor_on), .freq(g64_track_speed),
         .wps_n(1'b0), .sync_n(g64_sync_n), .byte_n(g64_byte_ready_n),
-        .disk_present(g64_mounted), .we(unused_g64_disk_write),
+        .disk_present(g64_mounted && !g64_disk_busy),
+        .we(unused_g64_disk_write),
         .sd_clk(clk), .sd_buff_addr(g64_buffer_address),
         .sd_buff_dout(g64_buffer_data), .sd_buff_din(),
         .sd_buff_wr(g64_buffer_write)
@@ -289,7 +290,14 @@ module multitini_c64_1541 #(
         previous_stepper_phase <= stepper_phase;
         if (drive_reset) begin
             head_half_track        <= 7'd34;
-            previous_stepper_phase <= 2'd0;
+            // VIA port B is released during reset, which presents phase 3.
+            // Capture that physical phase instead of manufacturing a 0->3
+            // transition on reset release, and discard the first post-reset
+            // sample before accepting real stepper transitions.
+            previous_stepper_phase <= stepper_phase;
+            stepper_sample_valid   <= 1'b0;
+        end else if (!stepper_sample_valid) begin
+            stepper_sample_valid <= 1'b1;
         end else if (motor_on && stepper_move[0]) begin
             if (!stepper_move[1] && head_half_track < 7'd84)
                 head_half_track <= head_half_track + 7'd1;

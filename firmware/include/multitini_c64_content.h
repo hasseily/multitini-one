@@ -39,11 +39,21 @@ mt_c64_content_result_t mt_c64_validate_crt(
     const mt_c64_content_image_t *image);
 
 /* A failed transfer requests core reset so a partial PRG or CRT cannot run.
- * A successful PRG is reset, injected, and RUN automatically by the adapter. */
+ * A successful ordinary PRG is reset, injected, and RUN automatically. */
 mt_link_result_t mt_c64_load_prg(
     mt_core_link_t *link, const mt_c64_content_image_t *image,
     uint32_t max_polls, mt_link_progress_fn progress,
     void *progress_context);
+/* Stage performs the same reset, injection, and BASIC-pointer repair without
+ * typing RUN. A later one-byte run command starts that staged PRG, allowing
+ * firmware to remount its parent disk first. */
+mt_link_result_t mt_c64_stage_prg(
+    mt_core_link_t *link, const mt_c64_content_image_t *image,
+    uint32_t max_polls, mt_link_progress_fn progress,
+    void *progress_context);
+mt_link_result_t mt_c64_run_prg(
+    mt_core_link_t *link, uint32_t max_polls,
+    mt_link_progress_fn progress, void *progress_context);
 mt_link_result_t mt_c64_load_crt(
     mt_core_link_t *link, const mt_c64_content_image_t *image,
     uint32_t max_polls, mt_link_progress_fn progress,
