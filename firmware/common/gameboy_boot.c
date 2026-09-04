@@ -25,8 +25,14 @@ static int images_valid(const mt_gameboy_boot_images_t *images)
                                images->bootstrap_override.data != NULL &&
                                images->bootstrap_override.size ==
                                    MT_SIZE_GBC_BOOT;
+    const int no_save = images != NULL && images->save.data == NULL &&
+                        images->save.size == 0U;
+    const int valid_save = images != NULL && images->save.data != NULL &&
+                           images->save.size >= 256U &&
+                           images->save.size <= MT_SIZE_GB_CART_RAM_MAX &&
+                           (images->save.size & 255U) == 0U;
     if (images == NULL || images->cartridge.data == NULL ||
-        (!no_override && !valid_override)) {
+        (!no_override && !valid_override) || (!no_save && !valid_save)) {
         return 0;
     }
     if (mt_content_inspect(MT_CONTENT_GB_CART, images->cartridge.data,
@@ -40,7 +46,7 @@ static int images_valid(const mt_gameboy_boot_images_t *images)
                MT_CONTENT_VALID;
 }
 
-mt_link_result_t mt_gameboy_boot(
+mt_link_result_t mt_gameboy_stage(
     mt_core_link_t *link, const mt_gameboy_boot_images_t *images,
     uint32_t max_polls, mt_link_progress_fn progress,
     void *progress_context)
@@ -67,5 +73,32 @@ mt_link_result_t mt_gameboy_boot(
                                  max_polls, progress, progress_context);
     if (result != MT_LINK_OK) return result;
 
+    if (images->save.data != NULL) {
+        result = mt_core_link_stream(link, MT_LOAD_GB_SAVE,
+                                     images->save.data, images->save.size,
+                                     max_polls, progress, progress_context);
+        if (result != MT_LINK_OK) return result;
+    }
+
+    return MT_LINK_OK;
+}
+
+mt_link_result_t mt_gameboy_release(
+    mt_core_link_t *link, uint32_t max_polls,
+    mt_link_progress_fn progress, void *progress_context)
+{
+    if (max_polls == 0U) return MT_LINK_BAD_ARGUMENT;
     return set_core_reset(link, 0, max_polls, progress, progress_context);
+}
+
+mt_link_result_t mt_gameboy_boot(
+    mt_core_link_t *link, const mt_gameboy_boot_images_t *images,
+    uint32_t max_polls, mt_link_progress_fn progress,
+    void *progress_context)
+{
+    mt_link_result_t result = mt_gameboy_stage(
+        link, images, max_polls, progress, progress_context);
+    if (result != MT_LINK_OK) return result;
+
+    return mt_gameboy_release(link, max_polls, progress, progress_context);
 }

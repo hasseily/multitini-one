@@ -1,9 +1,12 @@
 # Multicore Runtime and Menu
 
-Status: implemented for ABI 0.6 and covered by portable C and HDL tests. Build
-`2026090E` passes fresh PAL, NTSC, and PSRAM-enabled GBC vendor builds and its
-first direct board exercise. F12 selection, C64-to-GBC PCAP loading, package
-CRC validation, and two GBC cartridge gameplay tests pass. Rollback and the
+Status: implemented through ABI 0.7 and covered by portable C and HDL tests.
+The installed ABI 0.6 build `2026090E` passed its first direct board exercise:
+F12 selection, C64-to-GBC PCAP loading, package CRC validation, and two GBC
+cartridge gameplay tests. ABI 0.7 build `2026090F` adds GBC battery-RAM
+persistence and passes fresh PAL, NTSC, PSRAM-enabled GBC, matching Vitis, and
+Bootgen packaging gates. The staged image was installed and GBC game-save
+persistence was confirmed on the board on 2026-09-04. Rollback and the
 remaining repeated-switch/media matrix are not yet board-qualified.
 
 ## Design
@@ -62,7 +65,17 @@ Each core is self-contained under its catalog directory:
 0:/multitini/cores/gbc/gbc-default.bin
 0:/multitini/cores/gbc/media/*.gb
 0:/multitini/cores/gbc/media/*.gbc
+0:/multitini/cores/gbc/media/*.gb.sav
+0:/multitini/cores/gbc/media/*.gbc.sav
 ```
+
+Battery-backed external cartridge RAM is stored beside its cartridge as
+`<cartridge-name>.sav`; for example, `Zelda.gbc` uses `Zelda.gbc.sav`.
+The file browser ignores save and journal files. A missing save starts erased
+to `0xff`. Each update is first written and synced as
+`<cartridge-name>.sav.mtj`, then copied and synced to the ordinary save file;
+a complete journal is replayed at the next load if power was lost between
+those steps.
 
 The catalog scans only immediate subdirectories of
 `0:/multitini/cores`. Directory and package IDs use lowercase letters,
@@ -78,7 +91,7 @@ schema=1
 id=c64
 name=Commodore 64
 core_id=0x43363420
-abi=0.6
+abi=0.7
 content_root=0:/multitini/cores/c64/media
 variant=pal|PAL 50 Hz|c64-pal.bin|4045568|0x12345678
 variant=ntsc|NTSC 60 Hz|c64-ntsc.bin|4045568|0x9ABCDEF0
@@ -89,7 +102,7 @@ again afterward, so a valid file containing the wrong core or ABI is not
 activated. SHA-256 values are emitted as comments for release/provenance
 checking; the bounded target-side loader uses size plus CRC32.
 
-Generate the C64 package from fresh ABI 0.6 Vivado bitstreams with:
+Generate the C64 package from fresh ABI 0.7 Vivado bitstreams with:
 
 ```powershell
 python scripts/make_core_package.py `
@@ -119,9 +132,11 @@ The GBC image used for cartridge testing must be created with
 compile integration because it has no cartridge-memory backing.
 
 The packager invokes Bootgen's Zynq bitstream processor and defaults to ABI
-0.6. Existing packages made from the earlier ABI 0.5 PAL/NTSC images are not
-compatible with this runtime and must not be copied to the card for the next
-test.
+0.7. ABI 0.6 GBC packages remain loadable but are intentionally treated as
+legacy no-save cores; a package must declare 0.7 before the supervisor sends
+the new save-RAM stream. Existing packages made from the earlier ABI 0.5
+PAL/NTSC images are not compatible with this runtime and must not be copied to
+the card for the next test.
 
 ## Menu
 
@@ -136,8 +151,9 @@ recovery way to toggle the menu.
   PL images under one C64 entry.
 - Media browses the active core's content directory. The C64 service mounts or
   ejects D64/G64 disks, attaches or detaches CRT cartridges, and loads PRGs.
-  The GBC service loads `.gb` or `.gbc` cartridges and keeps the core in reset
-  after cartridge detach.
+  The GBC service loads `.gb` or `.gbc` cartridges, restores supported
+  battery-backed external RAM, shows `Saved`, `Pending write`, or
+  `WRITE FAILED`, and keeps the core in reset after cartridge detach.
 - Video selects active-core video or the branded Multitini standby screen and applies the active
   core's timing variant. Physical output timing remains the currently
   qualified 1920x1080 60 Hz mode.
@@ -155,9 +171,21 @@ blank, so a menu update cannot expose a partially written screen.
 The generic catalog, package validation, UI plane, menu navigation, guarded
 PCAP state machine, and rollback policy are common. C64 and GBC activation
 services are connected. GBC now uses the same menu, USB input boundary, audio
-path, and a four-bank 160x144-to-960x864 video bridge. Save RAM and RTC
-persistence remain outside this first GBC adapter. The PSRAM-enabled
-`2026090E` image completes the vendor gates and runs both a RAM-backed MBC5
-cartridge and a no-RAM MBC5 cartridge on the card. Broader mapper, input,
-audio, detach/reset, rollback, and repeated-switch coverage is still required
-before calling the complete GBC path qualified.
+path, and a four-bank 160x144-to-960x864 video bridge. Current source also
+snapshots supported battery-backed external cartridge RAM after roughly one
+second without a RAM write and commits it through the common media ABI. The
+machine pauses only while a coherent snapshot and SD commit are in progress.
+Detach, reset, core switch, and golden reboot first force this barrier; a
+failed commit retains the dirty image and refuses the destructive operation.
+
+The save path covers external RAM for the battery-bearing ROM/RAM, MBC1,
+MBC2, MMM01, MBC3, MBC5, MBC6, Camera, HuC3, and HuC1 layouts represented by
+the cartridge header. MBC3 wall-clock state and the internal EEPROM/backup
+RAM used by MBC7 and TAMA are not persisted yet. These source changes pass
+portable firmware and HDL tests. Fresh `2026090F` PAL, NTSC, and PSRAM-enabled
+GBC Vivado builds, the matching Vitis supervisor, and Bootgen packaging pass.
+The earlier PSRAM-enabled `2026090E` image ran both a RAM-backed MBC5 cartridge
+and a no-RAM MBC5 cartridge. After installing `2026090F`, the user confirmed
+physical GBC game-save persistence on 2026-09-04.
+Broader mapper, input, audio, rollback, and repeated-switch coverage is still
+required before calling the complete GBC path qualified.

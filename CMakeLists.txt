@@ -44,6 +44,13 @@ target_include_directories(xilinx_sd_storage_host PUBLIC
     firmware/platform/xilinx
 )
 
+add_library(xilinx_persistent_save_host STATIC
+    firmware/platform/xilinx/persistent_save.c
+)
+target_include_directories(xilinx_persistent_save_host PUBLIC
+    firmware/platform/xilinx
+)
+
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(multitini_common PRIVATE
         -Wall -Wextra -Wpedantic -Werror
@@ -54,6 +61,10 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
         -Wconversion -Wshadow -Wstrict-prototypes
     )
     target_compile_options(xilinx_sd_storage_host PRIVATE
+        -Wall -Wextra -Wpedantic -Werror
+        -Wconversion -Wshadow -Wstrict-prototypes
+    )
+    target_compile_options(xilinx_persistent_save_host PRIVATE
         -Wall -Wextra -Wpedantic -Werror
         -Wconversion -Wshadow -Wstrict-prototypes
     )
@@ -161,7 +172,10 @@ add_executable(test_gameboy_content_service
 target_include_directories(test_gameboy_content_service PRIVATE
     firmware/platform/xilinx
 )
-target_link_libraries(test_gameboy_content_service PRIVATE multitini_common)
+target_link_libraries(test_gameboy_content_service PRIVATE
+    multitini_common
+    xilinx_persistent_save_host
+)
 add_test(NAME gameboy_content_service COMMAND test_gameboy_content_service)
 
 add_executable(test_gameboy_hid_input tests/host/test_gameboy_hid_input.c)
@@ -193,3 +207,9 @@ add_test(NAME cherryusb_ulpi COMMAND test_cherryusb_ulpi)
 add_executable(test_sd_storage tests/host/test_sd_storage.c)
 target_link_libraries(test_sd_storage PRIVATE xilinx_sd_storage_host)
 add_test(NAME sd_storage COMMAND test_sd_storage)
+
+add_executable(test_persistent_save tests/host/test_persistent_save.c)
+target_link_libraries(test_persistent_save PRIVATE
+    xilinx_persistent_save_host
+)
+add_test(NAME persistent_save COMMAND test_persistent_save)

@@ -49,6 +49,7 @@ core/gameboy/multitini_gameboy_loader.sv
 core/gameboy/multitini_gameboy_clock_enable.sv
 core/gameboy/multitini_gameboy_input.sv
 core/gameboy/multitini_gameboy_memory.sv
+core/gameboy/multitini_gameboy_save.sv
 core/gameboy/ports/dpram.sv
 core/gameboy/boot/cgb_boot.mem
 ../third_party/gameboy/upstream/rtl/bus_savestates.vhd

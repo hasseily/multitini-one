@@ -28,6 +28,10 @@ Its PAL, NTSC, and GBC images pass the strict vendor gates. On 2026-09-04 the
 connected board reported the expected build and ABI, switched from C64 to GBC
 through PCAP, loaded cartridges through the menu, and ran Tomb Raider and
 V-Rally beyond their title screens without the former white-screen lockup.
+ABI 0.7 build `2026090F` adds journaled GBC battery-RAM persistence. Fresh PAL,
+NTSC, and PSRAM-enabled GBC images pass the strict vendor gates, and Vitis
+2025.2 built the matching exFAT-enabled supervisor. After installing the staged
+image, the user confirmed GBC game-save persistence on the board.
 
 ## Current state
 
@@ -60,20 +64,27 @@ Known:
   strict-tool compatibility ports, GB/GBC content validation, cartridge boot
   helper, adapter, one-line cartridge cache, and shared external-memory ABI are
   implemented and provenance locked.
-- The board shell still selects one machine at project creation, but current
-  ABI 0.6 source adds an ARM-resident multicore supervisor. It discovers strict
+- The board shell still selects one machine at project creation, but the
+  ARM-resident multicore supervisor discovers strict
   SD core packages, safely replaces the complete PL through DevCfg/PCAP,
   validates the new shell/core/ABI, and reloads the previous package on
   failure. This is full PL reconfiguration, not partial reconfiguration.
-- Every ABI 0.6 image includes the same double-buffered 80x36 overlay. The F12
+- Every current ABI 0.7 image includes the same double-buffered 80x36 overlay.
+  The F12
   menu selects core variants, machine-specific media, active or diagnostic
   video, input settings, core reset, and golden recovery. C64 and GBC both
   have activation services; GBC accepts `.gb` and `.gbc` cartridges. See
   [`docs/MULTICORE_RUNTIME.md`](docs/MULTICORE_RUNTIME.md).
 - GBC video crosses into a four-bank RGB565 frame ring and scales 160x144 by
   6x into the common 1080p output. The PSRAM-enabled `2026090E` image passes
-  timing/CDC/DRC/route gates and its first cartridge board tests. Save/RTC
-  persistence and broader mapper/input/audio qualification remain open.
+  timing/CDC/DRC/route gates and its first cartridge board tests. ABI 0.7 build
+  `2026090F` adds journaled battery-RAM `.sav` files, automatic quiet-time
+  commits, and fail-closed detach/reset/switch/reboot barriers. Its fresh PAL,
+  NTSC, and PSRAM-enabled GBC images pass the full Vivado gates at
+  +0.308/+0.054 ns, +0.192/+0.057 ns, and +0.264/+0.056 ns setup/hold slack.
+  Portable tests and the matching Vitis build pass. The staged image was
+  installed and GBC game-save persistence was confirmed on the board; RTC and
+  broader mapper/input/audio qualification remain open.
 - The AXI register path, DVI timing generator, diagnostic audio path, PSRAM
   BIST, and C64 ROM loader/input bridges pass HDL simulations. Build
   `2026082F` adds coherent live stereo PCM crossings for I2S and SPDIF while
@@ -251,7 +262,7 @@ review, or board testing.
 The intended first commands on a Vivado 2025.2 machine are:
 
 ```powershell
-$env:MULTITINI_BUILD_ID = '2026090E'
+$env:MULTITINI_BUILD_ID = '2026090F'
 vivado -mode batch -source scripts/create_project.tcl
 vivado -mode batch -source scripts/build_and_export_xsa.tcl
 vitis -s scripts/create_vitis_workspace.py

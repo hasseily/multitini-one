@@ -134,6 +134,11 @@ run_test tb_gameboy_memory \
     "$repo_root/hdl/core/gameboy/multitini_gameboy_memory.sv" \
     "$repo_root/hdl/sim/tb_gameboy_memory.sv"
 
+run_test tb_gameboy_save \
+    "$repo_root/hdl/core/gameboy/multitini_gameboy_defs_pkg.sv" \
+    "$repo_root/hdl/core/gameboy/multitini_gameboy_save.sv" \
+    "$repo_root/hdl/sim/tb_gameboy_save.sv"
+
 run_test tb_psram_line_service \
     "$repo_root/hdl/common/multitini_psram_line_service.sv" \
     "$repo_root/hdl/sim/tb_psram_line_service.sv"
@@ -165,6 +170,13 @@ iverilog -g2012 -Wall -Wimplicit -i -s multitini_one_top \
     "$repo_root/hdl/core/c64/multitini_c64_g64_track.sv" \
     "$repo_root/hdl/core/c64/multitini_c64_1541.sv" \
     "$repo_root/hdl/core/c64/multitini_c64_adapter.sv" \
+    "$repo_root/hdl/core/gameboy/multitini_gameboy_defs_pkg.sv" \
+    "$repo_root/hdl/core/gameboy/multitini_gameboy_loader.sv" \
+    "$repo_root/hdl/core/gameboy/multitini_gameboy_clock_enable.sv" \
+    "$repo_root/hdl/core/gameboy/multitini_gameboy_input.sv" \
+    "$repo_root/hdl/core/gameboy/multitini_gameboy_memory.sv" \
+    "$repo_root/hdl/core/gameboy/multitini_gameboy_save.sv" \
+    "$repo_root/hdl/core/gameboy/multitini_gameboy_adapter.sv" \
     "$repo_root/third_party/appletini/hdl/reset_sync.sv" \
     "$repo_root/third_party/appletini/hdl/cdc_bit_sync.sv" \
     "$repo_root/third_party/appletini/hdl/cdc_bus_sampled.sv" \

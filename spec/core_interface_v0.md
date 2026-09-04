@@ -69,11 +69,13 @@ The C64 ABI 0.1 assignments are:
 | G64 | `0x13` | validated G64 v0 | Implemented read-only in source; pending vendor build and board test |
 | GBC bootstrap | `0x20` | 2304 | Implemented; optional override of the built-in open bootstrap |
 | GB/GBC cartridge | `0x21` | 32768-8388608 | Implemented |
+| GB/GBC save RAM | `0x22` | 256-131072, multiple of 256 | ABI 0.7; implemented for supported external battery RAM |
 
 The loader begins with empty ROM stores, accepts only the three exact system
 ROM sizes above, and asserts a sticky error for unsupported or malformed
-objects. The GBC loader accepts one optional exact bootstrap and one cartridge.
-The bitstream contains the pinned open GBC bootstrap but no commercial game.
+objects. The GBC loader accepts one optional exact bootstrap, one cartridge,
+and an optional whole save-RAM image while reset is asserted. The bitstream
+contains the pinned open GBC bootstrap but no commercial game.
 
 ## External line memory
 
@@ -135,3 +137,11 @@ through a checksummed write-ahead journal before considering eject or reset
 safe. G64 remains read-only. Its service normalizes each requested half-track
 to an 8 KiB direct-GCR extent and rejects variable speed maps that the current
 drive path cannot reproduce.
+
+ABI 0.7 also uses this request service for GBC battery RAM. After a quiet
+interval, or immediately on eject, the adapter pauses the machine and snapshots
+the complete external cartridge-RAM extent as one write request at LBA zero.
+Firmware journals `<cartridge>.sav` before returning success. A failed
+completion leaves the image dirty; detach, reset, core switching, and golden
+reboot must not proceed until a retry succeeds. RTC state and mapper-internal
+MBC7/TAMA backup storage are not part of this transfer.

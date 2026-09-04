@@ -14,6 +14,7 @@
 typedef enum {
     MT_LOAD_GBC_BOOT = 0x20,
     MT_LOAD_GB_CART = 0x21,
+    MT_LOAD_GB_SAVE = 0x22,
 } mt_gameboy_load_kind_t;
 
 typedef enum {

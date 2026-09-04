@@ -205,6 +205,21 @@ without the former white-screen lockup.
   gameplay. V-Rally loaded as MBC5, 1 MiB, no cartridge RAM and also ran into
   gameplay. These results cover the reported white-screen transition in two
   MBC5 layouts, but not every mapper or save-persistence path.
+- ABI 0.7 build `2026090F` adds GBC battery-RAM restore and automatic
+  journaled `.sav` commits, plus fail-closed detach/reset/switch/reboot
+  barriers and menu status. Portable firmware and HDL tests pass. Fresh PAL,
+  NTSC, and PSRAM-enabled GBC Vivado 2025.2 builds pass all strict gates at
+  +0.308/+0.054 ns, +0.192/+0.057 ns, and +0.264/+0.056 ns setup/hold slack.
+  Vitis built the matching exFAT-enabled platform, FSBL, and supervisor.
+  Bootgen packaged the 4,560,372-byte `FIRMWARE.BIN` and read back the expected
+  FSBL, PAL bitstream, and two application partitions. The staged root image
+  has SHA-256
+  `4260b955f77196979a8f0c22d7ed29c7f525aa9219e181bef719636ec80569b6`
+  and CRC32 `47C2B205`. The staged GBC core package is 4,045,568 bytes with
+  SHA-256
+  `f0f0c2118979e067c234a1ef6d3fc534a4cf5eb893236542ccca0766059757ae`
+  and CRC32 `C6BE3BCD`. After installing the staged SD-card image, the user
+  confirmed GBC game-save persistence on the physical board on 2026-09-04.
 
 ## Completed previous standalone PAL, NTSC, and GBC vendor builds
 
@@ -464,10 +479,12 @@ did not assert Fire and the player ring kept blinking.
    each accepted CRT mapper/profile, malformed and unsupported CRT rejection,
    cartridge cache misses, D64/G64 mount/eject/remount, reset/detach, and PSRAM
    fault handling through the menu.
-4. Extend the passing `MULTITINI_ENABLE_GBC_PSRAM=1` Tomb Raider and V-Rally
-   runs across the remaining MBC1/MBC5 cartridge samples, save-data behavior,
-   video, audio, keyboard/gamepad input, detach, reset, and repeated C64/GBC
-   switching on the board.
+4. Basic ABI 0.7 GBC game-save persistence now passes on the board. Repeat it
+   across a power cycle, then force one SD write failure and verify detach,
+   reset, core switch, and golden reboot are refused without losing the dirty
+   save. Extend the passing Tomb Raider and V-Rally runs across remaining
+   MBC1/MBC5 samples, video, audio, keyboard/gamepad input, and repeated
+   C64/GBC switching.
 5. Execute the remaining boot, DDR, input, and machine gates in
    `MULTITINI_ONE_PLAN.md` and `docs/VIVADO_HANDOFF.md`.
 

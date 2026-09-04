@@ -39,7 +39,7 @@
 #include "xuartps_hw.h"
 
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
-#define MT_FIRMWARE_BUILD_ID UINT32_C(0x2026090E)
+#define MT_FIRMWARE_BUILD_ID UINT32_C(0x2026090F)
 #define MT_I2C_CLOCK_HZ UINT32_C(100000)
 #define MT_I2C_BUSY_POLLS UINT32_C(1000000)
 #define MT_UART_DRAIN_POLLS UINT32_C(10000000)
@@ -70,6 +70,8 @@ static bool c64_drive_ready;
 static bool c64_core_reset_active;
 static bool c64_services_initialized;
 static bool gameboy_service_initialized;
+static bool gameboy_save_dirty_displayed;
+static bool gameboy_save_fault_displayed;
 static uint8_t c64_rom_bundle[MT_C64_SYSTEM_ROM_BUNDLE_SIZE];
 static uint8_t c64_drive_rom[MT_SIZE_C64_1541_ROM];
 static XTime last_fatfs_time_poll;
@@ -220,6 +222,8 @@ static void service_runtime(void)
 {
     const uint32_t control = shell_read(MT_REG_CONTROL);
     const bool c64_active = shell_is_c64();
+    const bool gameboy_active =
+        shell_read(MT_REG_CORE_ID) == MT_GBC_CORE_ID;
     (void)service_fatfs_time();
     service_usb_input();
     if ((control & MT_CONTROL_CORE_RESET_REQUEST) != 0U) {
@@ -237,6 +241,19 @@ static void service_runtime(void)
     }
     c64_core_reset_active = false;
     if (c64_active && c64_services_initialized) c64_d64_service_poll();
+    if (gameboy_active && gameboy_service_initialized) {
+        bool dirty;
+        bool faulted;
+        gameboy_content_service_poll();
+        dirty = gameboy_content_service_save_dirty();
+        faulted = gameboy_content_service_save_faulted();
+        if (dirty != gameboy_save_dirty_displayed ||
+            faulted != gameboy_save_fault_displayed) {
+            gameboy_save_dirty_displayed = dirty;
+            gameboy_save_fault_displayed = faulted;
+            supervisor_menu_dirty = true;
+        }
+    }
 }
 
 static void print_status(void)
@@ -433,20 +450,38 @@ static int set_core_reset_request(bool asserted)
 {
     const bool currently_asserted =
         (shell_read(MT_REG_CONTROL) & MT_CONTROL_CORE_RESET_REQUEST) != 0U;
+    const bool c64_active = shell_is_c64();
+    const bool gameboy_active =
+        shell_read(MT_REG_CORE_ID) == MT_GBC_CORE_ID;
     int result;
 
-    if (asserted && !currently_asserted && shell_is_c64() &&
+    if (asserted && !currently_asserted && c64_active &&
         c64_services_initialized &&
         c64_d64_service_prepare_reset() != 0) {
         xil_printf("[C64] reset refused; drive8 could not flush/eject safely\r\n");
         return -1;
     }
+    if (asserted && !currently_asserted && gameboy_active &&
+        gameboy_service_initialized &&
+        gameboy_content_service_prepare_reset() != 0) {
+        xil_printf("[GBC] reset refused; save RAM could not be committed\r\n");
+        return -1;
+    }
+    if (!asserted && currently_asserted && gameboy_active &&
+        gameboy_service_initialized &&
+        gameboy_content_service_resume_after_reset() != 0) {
+        xil_printf("[GBC] reset release refused; save RAM remount failed\r\n");
+        return -1;
+    }
     result = command(MT_COMMAND_CORE_RESET, asserted ? 1U : 0U, 0U);
     if (result != 0 && asserted && !currently_asserted &&
-        shell_is_c64() && c64_services_initialized) {
+        c64_active && c64_services_initialized) {
         (void)c64_d64_service_resume_after_reset();
+    } else if (result != 0 && asserted && !currently_asserted &&
+               gameboy_active && gameboy_service_initialized) {
+        (void)gameboy_content_service_resume_after_reset();
     } else if (result == 0 && asserted && !currently_asserted &&
-               shell_is_c64() && c64_services_initialized) {
+               c64_active && c64_services_initialized) {
         /* Record the transition synchronously. Some reset users perform the
          * complete assert/load/release sequence without calling
          * service_runtime() while the reset level is high. */
@@ -852,16 +887,14 @@ static void reboot_to_golden(void)
     int usb_stop_result;
     mt_sd_result_t unmount_result;
 
-    if (shell_is_c64() && c64_services_initialized &&
-        c64_d64_service_prepare_reset() != 0) {
-        xil_printf("drive8 flush/eject failed; reboot cancelled\r\n");
+    if (set_core_reset_request(true) != 0) {
+        xil_printf("media flush or core reset failed; reboot cancelled\r\n");
         return;
     }
     xil_printf("rebooting to golden at QSPI offset 0x00000000\r\n");
     if (!wait_uart0_transmit_idle()) {
         xil_printf("UART did not drain; reboot cancelled\r\n");
-        if (shell_is_c64() && c64_services_initialized)
-            (void)c64_d64_service_resume_after_reset();
+        (void)set_core_reset_request(false);
         return;
     }
 
@@ -869,8 +902,7 @@ static void reboot_to_golden(void)
     DATA_SYNC;
     if ((Xil_In32(MT_DEVCFG_MULTIBOOT) & MT_DEVCFG_MULTIBOOT_MASK) != 0U) {
         xil_printf("multiboot readback failed; reboot cancelled\r\n");
-        if (shell_is_c64() && c64_services_initialized)
-            (void)c64_d64_service_resume_after_reset();
+        (void)set_core_reset_request(false);
         return;
     }
 
@@ -878,8 +910,7 @@ static void reboot_to_golden(void)
     if (usb_stop_result != 0) {
         xil_printf("USB1 VBUS shutdown failed (%d); reboot cancelled\r\n",
                    usb_stop_result);
-        if (shell_is_c64() && c64_services_initialized)
-            (void)c64_d64_service_resume_after_reset();
+        (void)set_core_reset_request(false);
         return;
     }
     unmount_result = mt_sd_storage_unmount();
@@ -1034,6 +1065,10 @@ static mt_menu_view_t supervisor_menu_view(void)
         view.cartridge_attached =
             gameboy_content_service_cartridge_attached();
         view.content_name = gameboy_content_service_cartridge_name();
+        view.save_supported = supervisor.active.package.abi_minor >= 7U;
+        view.save_active = gameboy_content_service_save_active();
+        view.save_dirty = gameboy_content_service_save_dirty();
+        view.save_faulted = gameboy_content_service_save_faulted();
     }
     view.status_text = supervisor_status_text;
     view.files = supervisor_menu_files;
@@ -1166,8 +1201,11 @@ static int supervisor_activate(void *context,
     usb_hid_service_set_active_core(selection->package.core_id);
     if (selection->package.core_id == MT_GBC_CORE_ID) {
         gameboy_content_service_init(
-            &shell_link, selection->package.content_root, NULL, NULL);
+            &shell_link, selection->package.content_root,
+            selection->package.abi_minor >= 7U, NULL, NULL);
         gameboy_service_initialized = true;
+        gameboy_save_dirty_displayed = false;
+        gameboy_save_fault_displayed = false;
         c64_core_reset_active = true;
         usb_hid_service_set_core_ready(false);
         return 0;
@@ -1290,7 +1328,8 @@ static void handle_menu_action(mt_menu_action_t action)
                 gameboy_content_service_load(
                     supervisor_menu_files[action.file_index].name);
             xil_printf("[GBC] load %s: %s validation=%s link=%s "
-                       "mapper=%02X rom=%02X ram=%02X cgb=%u required=%u\r\n",
+                       "mapper=%02X rom=%02X ram=%02X cgb=%u required=%u "
+                       "save=%u existed=%u path=%s\r\n",
                        supervisor_menu_files[action.file_index].name,
                        gameboy_content_service_status_name(result.status),
                        mt_content_validation_name(result.validation),
@@ -1299,16 +1338,29 @@ static void handle_menu_action(mt_menu_action_t action)
                        (unsigned int)result.info.rom_size_code,
                        (unsigned int)result.info.ram_size_code,
                        result.info.color_capable ? 1U : 0U,
-                       result.info.color_required ? 1U : 0U);
+                       result.info.color_required ? 1U : 0U,
+                       (unsigned int)result.save_size,
+                       result.save_existed ? 1U : 0U,
+                       gameboy_content_service_save_path() != NULL ?
+                           gameboy_content_service_save_path() : "none");
             if (result.status == MT_GAMEBOY_CONTENT_SERVICE_OK) {
                 supervisor_menu.browser = MT_MENU_BROWSER_NONE;
                 usb_hid_service_set_core_ready(true);
                 if (dac_ready) set_audio(false, false);
                 set_video_test(false);
             }
-            set_supervisor_status(
-                result.status == MT_GAMEBOY_CONTENT_SERVICE_OK ?
-                "Game Boy cartridge loaded" : "Cartridge load failed");
+            if (result.status == MT_GAMEBOY_CONTENT_SERVICE_OK) {
+                set_supervisor_status(
+                    !result.save_active ? "Game Boy cartridge loaded" :
+                    (result.save_existed ?
+                     "Game Boy loaded; save restored" :
+                     "Game Boy loaded; new save ready"));
+            } else {
+                set_supervisor_status(
+                    result.status == MT_GAMEBOY_CONTENT_SERVICE_FLUSH_FAILED ?
+                    "Load blocked: save write failed" :
+                    "Cartridge load failed");
+            }
         } else {
             mt_c64_content_service_result_t result;
             if (!prepare_c64_content_change()) {
@@ -1340,7 +1392,10 @@ static void handle_menu_action(mt_menu_action_t action)
             }
             set_supervisor_status(
                 result.status == MT_GAMEBOY_CONTENT_SERVICE_OK ?
-                "Cartridge unloaded" : "Cartridge unload failed");
+                "Cartridge unloaded" :
+                (result.status == MT_GAMEBOY_CONTENT_SERVICE_FLUSH_FAILED ?
+                 "Unload blocked: save write failed" :
+                 "Cartridge unload failed"));
         } else {
             const mt_c64_content_service_result_t result =
                 c64_content_service_detach_crt();
@@ -1424,8 +1479,11 @@ static void initialize_supervisor_menu(void)
         (void)mt_supervisor_set_initial(&supervisor, &initial);
         if (initial.package.core_id == MT_GBC_CORE_ID) {
             gameboy_content_service_init(
-                &shell_link, initial.package.content_root, NULL, NULL);
+                &shell_link, initial.package.content_root,
+                initial.package.abi_minor >= 7U, NULL, NULL);
             gameboy_service_initialized = true;
+            gameboy_save_dirty_displayed = false;
+            gameboy_save_fault_displayed = false;
         }
     } else {
         set_supervisor_status("Active core has no SD package");

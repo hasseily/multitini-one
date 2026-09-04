@@ -25,6 +25,17 @@ switches from C64 to GBC through PCAP, and runs Tomb Raider and V-Rally into
 gameplay. Rollback and the broader bidirectional-switch/media matrix remain
 pending.
 
+ABI 0.7 build `2026090F` extends the common media ABI to GBC battery-backed
+external RAM. The FPGA pauses the machine for a coherent PSRAM snapshot after a quiet
+interval or an eject request. The ARM writes the complete `<cartridge>.sav`
+through the same synced, checksummed journal mechanism used for writable D64
+media. Reset, detach, switching, and golden reboot are fail-closed on commit
+failure. Portable tests pass. Fresh PAL, NTSC, and PSRAM-enabled GBC Vivado
+2025.2 builds pass timing, CDC, DRC, route, bitstream, and XSA gates; a matching
+exFAT-enabled Vitis supervisor image also builds and packages successfully.
+The staged `2026090F` image was installed, and the user confirmed GBC game-save
+persistence on the board on 2026-09-04.
+
 ## Ownership boundaries
 
 The ARM control program owns files, USB protocol work, settings, menus, update
@@ -281,7 +292,9 @@ register ABI. Generated C and SystemVerilog definitions must be regenerated and
 checked together. Major versions are incompatible. Minor versions only add
 backward-compatible behavior. ABI 0.6 adds two text VRAM banks, an atomic
 vblank commit/status handshake, and a build-time core-variant index so the ARM
-can identify and safely restore the boot image.
+can identify and safely restore the boot image. ABI 0.7 adds the GBC save-RAM
+stream and journal-backed media service. An older 0.6 GBC package remains
+loadable, but the supervisor does not advertise or send persistence data to it.
 
 `spec/core_interface_v0.md` records the separate core-facing ready/valid,
 memory, and bidirectional media contracts. It is deliberately pre-release.

@@ -46,6 +46,10 @@ mt_sd_result_t mt_sd_storage_read_file_max(const char *path, uint8_t *dst,
                                            size_t capacity);
 mt_sd_result_t mt_sd_storage_read_file_exact(const char *path, uint8_t *dst,
                                              size_t expected_size);
+/* A missing file is a successful empty result with *found=false. Other open,
+ * size, read, and close failures remain errors. */
+mt_sd_result_t mt_sd_storage_read_file_optional_exact(
+    const char *path, uint8_t *dst, size_t expected_size, bool *found);
 mt_sd_result_t mt_sd_storage_list(const char *path, mt_sd_list_fn callback,
                                   void *context);
 mt_sd_result_t mt_sd_storage_journal_recover(const char *path,

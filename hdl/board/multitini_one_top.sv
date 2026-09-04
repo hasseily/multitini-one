@@ -781,18 +781,6 @@ module multitini_one_top #(
             );
         end else begin : g_gameboy_machine
             assign c64_rom_loaded = {2'd0, gbc_cart_loaded};
-            assign c64_media_request_valid = 1'b0;
-            assign c64_media_request_write = 1'b0;
-            assign c64_media_request_id = 32'd0;
-            assign c64_media_request_lba = 32'd0;
-            assign c64_media_request_block_count = 16'd0;
-            assign c64_media_request_generation = 32'd0;
-            assign c64_media_write_data = 8'd0;
-            assign c64_media_write_data_valid = 1'b0;
-            assign c64_media_write_data_last = 1'b0;
-            assign c64_media_state_mounted = 1'b0;
-            assign c64_media_state_dirty = 1'b0;
-            assign c64_media_state_eject_pending = 1'b0;
             (* DONT_TOUCH = "yes" *) multitini_gameboy_adapter machine_adapter (
                 .core_clk(c64_clk), .reset(!c64_aresetn),
                 .core_reset_request(c64_core_reset_request),
@@ -812,6 +800,30 @@ module multitini_one_top #(
                 .memory_rdata(gbc_memory_rdata),
                 .memory_rvalid(gbc_memory_rvalid),
                 .memory_fault(gbc_memory_fault),
+                .media_mount(c64_media_mount),
+                .media_eject(c64_media_eject),
+                .media_complete(c64_media_complete),
+                .media_slot(c64_media_slot), .media_kind(c64_media_kind),
+                .media_read_only(c64_media_read_only),
+                .media_image_size(c64_media_image_size),
+                .media_generation(c64_media_generation),
+                .media_complete_request_id(c64_media_complete_request_id),
+                .media_complete_status(c64_media_complete_status),
+                .media_complete_block_count(c64_media_complete_block_count),
+                .media_complete_generation(c64_media_complete_generation),
+                .media_request_valid(c64_media_request_valid),
+                .media_request_write(c64_media_request_write),
+                .media_request_id(c64_media_request_id),
+                .media_request_lba(c64_media_request_lba),
+                .media_request_block_count(c64_media_request_block_count),
+                .media_request_generation(c64_media_request_generation),
+                .media_write_data(c64_media_write_data),
+                .media_write_data_valid(c64_media_write_data_valid),
+                .media_write_data_last(c64_media_write_data_last),
+                .media_write_data_ready(c64_media_write_data_ready),
+                .media_state_mounted(c64_media_state_mounted),
+                .media_state_dirty(c64_media_state_dirty),
+                .media_state_eject_pending(c64_media_state_eject_pending),
                 .core_id(c64_core_id), .ready(c64_ready),
                 .load_error(c64_load_error), .cart_loaded(gbc_cart_loaded),
                 .cart_size(gbc_cart_size),

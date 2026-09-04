@@ -72,6 +72,10 @@ typedef struct {
     bool drive8_supported;
     bool cartridge_supported;
     bool program_supported;
+    bool save_supported;
+    bool save_active;
+    bool save_dirty;
+    bool save_faulted;
     bool c64_input_settings;
     bool video_test_enabled;
     bool symbolic_keyboard;

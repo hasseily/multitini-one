@@ -13,12 +13,20 @@ module tb_gameboy_memory;
     logic loader_ready;
     logic [63:0] loader_rdata;
     logic loader_rvalid;
+    logic save_read = 1'b0;
+    logic [23:0] save_addr = 24'd0;
+    logic save_pause = 1'b0;
+    logic save_ready;
+    logic [63:0] save_rdata;
+    logic save_rvalid;
     logic core_read = 1'b0;
     logic core_write = 1'b0;
     logic [23:0] core_addr = 24'd0;
     logic [7:0] core_wdata = 8'd0;
     logic [7:0] core_rdata;
     logic core_stall;
+    logic core_write_committed;
+    logic [23:0] core_write_address;
     logic [23:0] memory_addr;
     logic memory_write;
     logic [63:0] memory_wdata;
@@ -31,6 +39,7 @@ module tb_gameboy_memory;
     logic response_pending = 1'b0;
     logic [1:0] response_delay = 2'd0;
     integer transaction_count = 0;
+    integer pause_transaction_count = 0;
 
     always #5 clk = !clk;
     multitini_gameboy_memory dut (.*);
@@ -113,6 +122,39 @@ module tb_gameboy_memory;
         check_value(lines[1] == 64'h1716aa1413121110,
                     "byte-strobed write reaches memory");
         core_write = 1'b0;
+        @(negedge clk);
+        @(negedge clk);
+
+        // A transaction can already be queued when a snapshot requests its
+        // pause. It must remain queued until the snapshot completion barrier
+        // releases, or its write could land after the copied bytes and then
+        // be lost when firmware acknowledges the snapshot.
+        core_addr = 24'h000012;
+        core_wdata = 8'h5a;
+        core_write = 1'b1;
+        @(negedge clk);
+        save_pause = 1'b1;
+        pause_transaction_count = transaction_count;
+        repeat (3) @(negedge clk);
+        check_value(transaction_count == pause_transaction_count,
+                    "queued runtime write stays blocked by save barrier");
+        save_pause = 1'b0;
+        wait (!core_stall);
+        check_value(lines[2] == 64'h27262524235a2120,
+                    "queued runtime write resumes after save barrier");
+        core_write = 1'b0;
+
+        @(negedge clk);
+        save_addr = 24'h000018;
+        save_pause = 1'b1;
+        save_read = 1'b1;
+        while (!save_ready) @(negedge clk);
+        @(negedge clk);
+        save_read = 1'b0;
+        wait (save_rvalid);
+        check_value(save_rdata == 64'h3736353433323130,
+                    "save snapshot response routed to save client");
+        save_pause = 1'b0;
 
         @(negedge clk);
         loader_active = 1'b1;

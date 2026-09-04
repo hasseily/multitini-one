@@ -69,6 +69,10 @@ module multitini_gameboy_loader (
         MT_LOAD_GB_CART:
             supported_object = total >= MT_SIZE_GB_CART_MIN &&
                                total <= MT_SIZE_GB_CART_MAX;
+        MT_LOAD_GB_SAVE:
+            supported_object = total >= 32'd256 &&
+                               total <= MT_SIZE_GB_CART_RAM_MAX &&
+                               total[7:0] == 8'd0;
         default:
             supported_object = 1'b0;
         endcase
@@ -77,7 +81,7 @@ module multitini_gameboy_loader (
     assign load_ready = !reset &&
                         (state == STATE_IDLE || state == STATE_RECEIVE);
     assign active = state != STATE_IDLE;
-    assign ioctl_download = active;
+    assign ioctl_download = active && active_kind != MT_LOAD_GB_SAVE;
     assign cart_download = active && active_kind == MT_LOAD_GB_CART;
     assign cgb_boot_download = active && active_kind == MT_LOAD_GBC_BOOT;
     assign memory_write = 1'b1;
@@ -174,15 +178,19 @@ module multitini_gameboy_loader (
                         ioctl_dout <= {load_data, word_low};
                     end
 
-                    if (load_kind == MT_LOAD_GB_CART) begin
+                    if (load_kind == MT_LOAD_GB_CART ||
+                        load_kind == MT_LOAD_GB_SAVE) begin
                         next_line_data = load_first ? 64'd0 : line_data;
                         next_line_strobes = load_first ? 8'd0 : line_strobes;
                         next_line_data[load_offset[2:0] * 8 +: 8] = load_data;
                         next_line_strobes[load_offset[2:0]] = 1'b1;
                         end_of_line = load_offset[2:0] == 3'd7 || load_last;
                         if (end_of_line) begin
-                            memory_addr <= MT_GB_MEMORY_ROM_BASE +
-                                           {load_offset[23:3], 3'b000};
+                            memory_addr <=
+                                (load_kind == MT_LOAD_GB_SAVE ?
+                                 MT_GB_MEMORY_CART_RAM_BASE :
+                                 MT_GB_MEMORY_ROM_BASE) +
+                                {load_offset[23:3], 3'b000};
                             memory_wdata <= next_line_data;
                             memory_wstrb <= next_line_strobes;
                             last_line <= load_last;

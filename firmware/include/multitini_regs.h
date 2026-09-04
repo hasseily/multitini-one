@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #define MT_ABI_MAJOR 0U
-#define MT_ABI_MINOR 6U
+#define MT_ABI_MINOR 7U
 #define MT_ABI_VERSION ((MT_ABI_MAJOR << 16) | MT_ABI_MINOR)
 #define MT_MAGIC UINT32_C(0x4D543031)
 #define MT_SHELL_ID UINT32_C(0x4D544F4E)

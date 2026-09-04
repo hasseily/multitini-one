@@ -29,8 +29,10 @@ first adapter supports:
   override.
 
 SGB, MegaDuck, camera UI, link cable, cheats, rewind, savestates, borders, and
-persistent RTC/save handling are outside the first adapter. Mapper logic stays
-close to upstream even where those optional services are disabled.
+persistent RTC handling are outside the first adapter. Current Multitini
+source layers journaled external cartridge-RAM persistence around the imported
+core without changing its mapper logic. MBC7 and TAMA internal backup storage
+remain outside that path.
 
 ## Local compatibility ports
 
@@ -81,8 +83,15 @@ application, and Bootgen packaging gates. A usable cartridge image must set
 gates with +0.211 ns setup and +0.055 ns hold slack. Its installed package
 loaded Tomb Raider (MBC5+RAM+battery, 4 MiB) and V-Rally (MBC5, 1 MiB), and
 both ran into gameplay on the connected board. A broader mapper matrix,
-save-data persistence, RTC behavior, input, audio, and repeated switching
-remain open.
+RTC behavior, input, audio, and repeated switching remain open. Newer source
+restores and snapshots supported battery-backed external RAM through PSRAM,
+uses the common reverse media stream for full-image commits, and journals each
+`<cartridge>.sav` update before acknowledging it. Reset, detach, core switch,
+and golden reboot refuse to proceed if that commit fails. ABI 0.7 build
+`2026090F` passes portable HDL and C tests and a fresh PSRAM-enabled Vivado
+2025.2 build at +0.264 ns setup and +0.056 ns hold slack. The matching Vitis
+supervisor also builds. After installing the staged image, the user confirmed
+GBC game-save persistence on the physical board on 2026-09-04.
 
 The routed default-off GBC build uses a 33.558 MHz machine clock, 6,989 LUTs,
 6,000 flip-flops, 13 RAMB36 blocks, five RAMB18 blocks, and two DSP blocks. It

@@ -12,6 +12,7 @@ local_sources=(
     "$repo_root/hdl/core/gameboy/multitini_gameboy_clock_enable.sv"
     "$repo_root/hdl/core/gameboy/multitini_gameboy_input.sv"
     "$repo_root/hdl/core/gameboy/multitini_gameboy_memory.sv"
+    "$repo_root/hdl/core/gameboy/multitini_gameboy_save.sv"
     "$repo_root/hdl/core/gameboy/ports/dpram.sv"
     "$repo_root/hdl/core/gameboy/ports/gb.v"
     "$repo_root/hdl/core/gameboy/ports/cart.v"

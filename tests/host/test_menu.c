@@ -115,6 +115,17 @@ int main(void)
           "unsupported drive is explicit");
     check(row_contains(&frame, 8U, "Load GB/GBC"),
           "second core cartridge prompt rendered");
+    view.save_supported = true;
+    view.save_active = true;
+    view.save_dirty = true;
+    mt_menu_render(&menu, &view, &frame);
+    check(row_contains(&frame, 11U, "Battery save") &&
+          row_contains(&frame, 11U, "Pending write"),
+          "battery-save state rendered");
+    view.save_faulted = true;
+    mt_menu_render(&menu, &view, &frame);
+    check(row_contains(&frame, 11U, "WRITE FAILED"),
+          "battery-save fault rendered");
     menu.page = MT_MENU_PAGE_INPUT;
     menu.row = 0U;
     mt_menu_render(&menu, &view, &frame);

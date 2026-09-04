@@ -153,7 +153,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--core-id", required=True, type=lambda value: int(value, 0))
     result.add_argument("--content-root", required=True)
     result.add_argument("--abi-major", type=int, default=0)
-    result.add_argument("--abi-minor", type=int, default=6)
+    result.add_argument("--abi-minor", type=int, default=7)
     result.add_argument("--variant", dest="variants", action="append",
                         type=parse_variant,
                         help="ID|DISPLAY LABEL|PATH.bit (repeatable)")

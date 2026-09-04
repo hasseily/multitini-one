@@ -17,6 +17,7 @@ typedef struct {
     int core_reset;
     int cart_complete;
     int boot_complete;
+    int save_complete;
 } boot_shell_t;
 
 static void finish_gameboy_header(uint8_t *cart)
@@ -77,6 +78,7 @@ static void respond(void *context)
         assert(shell->active_offset == shell->active_size);
         if (shell->active_kind == MT_LOAD_GBC_BOOT) shell->boot_complete = 1;
         if (shell->active_kind == MT_LOAD_GB_CART) shell->cart_complete = 1;
+        if (shell->active_kind == MT_LOAD_GB_SAVE) shell->save_complete = 1;
         shell->active_kind = 0U;
         shell->active_size = 0U;
         shell->active_offset = 0U;
@@ -94,6 +96,7 @@ int main(void)
 {
     static uint8_t cartridge[MT_SIZE_GB_CART_MIN];
     uint8_t bootstrap[MT_SIZE_GBC_BOOT];
+    uint8_t save[256];
     mt_gameboy_boot_images_t images;
     mt_core_link_t link;
     boot_shell_t shell = {0};
@@ -114,15 +117,24 @@ int main(void)
     images.cartridge.size = sizeof(cartridge);
     images.bootstrap_override.data = bootstrap;
     images.bootstrap_override.size = sizeof(bootstrap);
+    images.save.data = save;
+    images.save.size = sizeof(save);
+    for (index = 0U; index < sizeof(save); ++index) {
+        save[index] = (uint8_t)(index ^ 0x3cU);
+        expected_checksum += save[index];
+    }
 
     mt_core_link_init(&link, &shell, read32, write32);
     assert(mt_gameboy_boot(&link, &images, 2U, respond, &shell) == MT_LINK_OK);
     assert(shell.core_reset == 0 && shell.reset_commands == 2U);
-    assert(shell.boot_complete != 0 && shell.cart_complete != 0);
+    assert(shell.boot_complete != 0 && shell.cart_complete != 0 &&
+           shell.save_complete != 0);
     assert(shell.checksum == expected_checksum);
 
     images.bootstrap_override.data = NULL;
     images.bootstrap_override.size = 0U;
+    images.save.data = NULL;
+    images.save.size = 0U;
     cartridge[0x14DU] ^= 1U;
     assert(mt_gameboy_boot(&link, &images, 2U, respond, &shell) ==
            MT_LINK_BAD_ARGUMENT);

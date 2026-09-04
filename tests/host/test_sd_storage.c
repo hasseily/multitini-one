@@ -342,6 +342,26 @@ int main(void)
     assert(mt_sd_storage_read_file_exact("0:/x", NULL, 1U).status ==
            MT_SD_INVALID_ARGUMENT);
 
+    open_status = FR_NO_FILE;
+    {
+        bool found = true;
+        result = mt_sd_storage_read_file_optional_exact(
+            "0:/multitini/cores/gbc/media/demo.gbc.sav",
+            destination, sizeof(destination), &found);
+        assert(result.status == MT_SD_OK && !found && result.size == 0U);
+    }
+    open_status = FR_OK;
+    {
+        bool found = false;
+        fake_file_data = data;
+        fake_file_size = sizeof(data);
+        result = mt_sd_storage_read_file_optional_exact(
+            "0:/multitini/cores/gbc/media/demo.gbc.sav",
+            destination, sizeof(destination), &found);
+        assert(result.status == MT_SD_OK && found);
+        assert(memcmp(destination, data, sizeof(data)) == 0);
+    }
+
     dir_names[0] = "disk.d64";
     dir_names[1] = "subdir";
     dir_sizes[0] = 174848U;

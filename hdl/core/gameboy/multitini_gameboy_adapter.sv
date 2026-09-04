@@ -2,8 +2,9 @@
 `timescale 1ns / 1ps
 
 // Game Boy Color adapter around the pinned MiSTer machine logic. Physical
-// video scaling, audio transport, USB translation, save files, and wall-clock
-// RTC persistence remain shell/firmware services.
+// video scaling, audio transport, USB translation, and wall-clock RTC remain
+// shell/firmware services. Battery-backed cartridge RAM uses the common media
+// and memory interfaces below.
 module multitini_gameboy_adapter #(
     parameter integer AUDIO_SAMPLE_HZ = 48000
 ) (
@@ -35,6 +36,33 @@ module multitini_gameboy_adapter #(
     input  logic [63:0]  memory_rdata,
     input  logic         memory_rvalid,
     input  logic         memory_fault,
+
+    input  logic         media_mount,
+    input  logic         media_eject,
+    input  logic         media_complete,
+    input  logic [7:0]   media_slot,
+    input  logic [7:0]   media_kind,
+    input  logic         media_read_only,
+    input  logic [31:0]  media_image_size,
+    input  logic [31:0]  media_generation,
+    input  logic [31:0]  media_complete_request_id,
+    input  logic [31:0]  media_complete_status,
+    input  logic [15:0]  media_complete_block_count,
+    input  logic [31:0]  media_complete_generation,
+
+    output logic         media_request_valid,
+    output logic         media_request_write,
+    output logic [31:0]  media_request_id,
+    output logic [31:0]  media_request_lba,
+    output logic [15:0]  media_request_block_count,
+    output logic [31:0]  media_request_generation,
+    output logic [7:0]   media_write_data,
+    output logic         media_write_data_valid,
+    output logic         media_write_data_last,
+    input  logic         media_write_data_ready,
+    output logic         media_state_mounted,
+    output logic         media_state_dirty,
+    output logic         media_state_eject_pending,
 
     output logic [31:0]  core_id,
     output logic         ready,
@@ -73,6 +101,16 @@ module multitini_gameboy_adapter #(
     logic loader_memory_ready;
     logic [63:0] loader_memory_rdata;
     logic loader_memory_rvalid;
+    logic save_memory_read;
+    logic [23:0] save_memory_addr;
+    logic save_memory_ready;
+    logic [63:0] save_memory_rdata;
+    logic save_memory_rvalid;
+    logic save_pause;
+    logic save_error;
+    logic runtime_write_committed;
+    logic [23:0] runtime_write_address;
+    logic loader_load_error;
 
     logic ce_cpu;
     logic ce_cpu_n;
@@ -142,7 +180,11 @@ module multitini_gameboy_adapter #(
     assign machine_reset = reset || core_reset_request || load_valid ||
                            load_active || !cart_loaded || !cart_ready ||
                            memory_fault;
-    assign ready = !machine_reset && !load_error;
+    // A failed background save is reported through load_error so firmware can
+    // clear/retry it, but it must not disconnect cartridge memory while the
+    // running game is still recoverable. Eject failures remain paused by the
+    // save controller's fail-closed barrier.
+    assign ready = !machine_reset && !loader_load_error;
 
     multitini_gameboy_loader loader_i (
         .clk(core_clk), .reset(reset), .clear_error(clear_load_error),
@@ -163,8 +205,10 @@ module multitini_gameboy_adapter #(
         .memory_rvalid(loader_memory_rvalid),
         .cart_loaded(cart_loaded),
         .boot_override_loaded(boot_override_loaded),
-        .cart_size(cart_size), .active(load_active), .error(load_error)
+        .cart_size(cart_size), .active(load_active), .error(loader_load_error)
     );
+
+    assign load_error = loader_load_error || save_error;
 
     multitini_gameboy_clock_enable clock_enable_i (
         .clk(core_clk), .reset(reset), .stall(memory_stall),
@@ -197,13 +241,50 @@ module multitini_gameboy_adapter #(
         .loader_ready(loader_memory_ready),
         .loader_rdata(loader_memory_rdata),
         .loader_rvalid(loader_memory_rvalid),
+        .save_read(save_memory_read), .save_addr(save_memory_addr),
+        .save_pause(save_pause), .save_ready(save_memory_ready),
+        .save_rdata(save_memory_rdata), .save_rvalid(save_memory_rvalid),
         .core_read(core_memory_read), .core_write(core_memory_write),
         .core_addr(core_memory_addr), .core_wdata(cart_di),
         .core_rdata(cart_memory_data), .core_stall(memory_stall),
+        .core_write_committed(runtime_write_committed),
+        .core_write_address(runtime_write_address),
         .memory_addr(memory_addr), .memory_write(memory_write),
         .memory_wdata(memory_wdata), .memory_wstrb(memory_wstrb),
         .memory_valid(memory_valid), .memory_ready(memory_ready),
         .memory_rdata(memory_rdata), .memory_rvalid(memory_rvalid)
+    );
+
+    multitini_gameboy_save save_i (
+        .clk(core_clk), .reset(reset), .clear_error(clear_load_error),
+        .runtime_write_committed(runtime_write_committed),
+        .runtime_write_address(runtime_write_address),
+        .media_mount(media_mount), .media_eject(media_eject),
+        .media_complete(media_complete), .media_slot(media_slot),
+        .media_kind(media_kind), .media_read_only(media_read_only),
+        .media_image_size(media_image_size),
+        .media_generation(media_generation),
+        .media_complete_request_id(media_complete_request_id),
+        .media_complete_status(media_complete_status),
+        .media_complete_block_count(media_complete_block_count),
+        .media_complete_generation(media_complete_generation),
+        .media_request_valid(media_request_valid),
+        .media_request_write(media_request_write),
+        .media_request_id(media_request_id),
+        .media_request_lba(media_request_lba),
+        .media_request_block_count(media_request_block_count),
+        .media_request_generation(media_request_generation),
+        .media_write_data(media_write_data),
+        .media_write_data_valid(media_write_data_valid),
+        .media_write_data_last(media_write_data_last),
+        .media_write_data_ready(media_write_data_ready),
+        .media_state_mounted(media_state_mounted),
+        .media_state_dirty(media_state_dirty),
+        .media_state_eject_pending(media_state_eject_pending),
+        .memory_read(save_memory_read), .memory_address(save_memory_addr),
+        .memory_ready(save_memory_ready), .memory_rdata(save_memory_rdata),
+        .memory_rvalid(save_memory_rvalid), .pause_core(save_pause),
+        .error(save_error)
     );
 
     always_ff @(posedge core_clk) begin

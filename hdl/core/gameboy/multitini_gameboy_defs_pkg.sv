@@ -10,6 +10,7 @@ package multitini_gameboy_defs_pkg;
 
     localparam logic [7:0] MT_LOAD_GBC_BOOT = 8'h20;
     localparam logic [7:0] MT_LOAD_GB_CART = 8'h21;
+    localparam logic [7:0] MT_LOAD_GB_SAVE = 8'h22;
 
     localparam integer MT_SIZE_GBC_BOOT = 2304;
     localparam integer MT_SIZE_GB_CART_MIN = 32768;

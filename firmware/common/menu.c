@@ -255,6 +255,13 @@ static void render_page(const mt_menu_t *menu, const mt_menu_view_t *view,
         draw_item(frame, 9U, menu->row == 2U, "Program",
                   view != NULL && view->program_supported ?
                   "Load PRG..." : "Unavailable");
+        if (view != NULL && view->save_supported) {
+            const char *const save_state = view->save_faulted ?
+                "WRITE FAILED" :
+                (!view->save_active ? "Not used by cartridge" :
+                 (view->save_dirty ? "Pending write" : "Saved"));
+            draw_item(frame, 11U, false, "Battery save", save_state);
+        }
         break;
     case MT_MENU_PAGE_VIDEO:
         draw_item(frame, 7U, menu->row == 0U, "Video source",

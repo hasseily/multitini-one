@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "abi": {"major": 0, "minor": 1},
+  "abi": {"major": 0, "minor": 2},
   "core_id": "0x47424320",
   "clocks_hz": {
     "CORE": 33554432,
@@ -9,7 +9,8 @@
   },
   "load_kinds": {
     "GBC_BOOT": "0x20",
-    "GB_CART": "0x21"
+    "GB_CART": "0x21",
+    "GB_SAVE": "0x22"
   },
   "sizes": {
     "GBC_BOOT": 2304,

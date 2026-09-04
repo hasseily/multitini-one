@@ -187,6 +187,28 @@ def port_gbc_snd() -> str:
         "\tconstant DAC_DECAY_PERIOD\t: integer := 100;",
         "sound DAC decay range attribute",
     )
+    result = replace_once(
+        result,
+        "\tprocess (reg_wired_or)\n"
+        "\t\tvariable wired_or : std_logic_vector(63 downto 0);\n"
+        "   \tbegin\n"
+        "\t\twired_or := reg_wired_or(0);\n"
+        "      \tfor i in 1 to (reg_wired_or'length - 1) loop\n"
+        "\t\t\twired_or := wired_or or reg_wired_or(i);\n"
+        "      \tend loop;\n"
+        "      \tSaveStateBus_Dout <= wired_or;\n"
+        "   \tend process;",
+        "\tprocess (reg_wired_or)\n"
+        "\t\tvariable wired_or : std_logic_vector(63 downto 0);\n"
+        "\tbegin\n"
+        "\t\twired_or := reg_wired_or(0);\n"
+        "\tfor i in 1 to (reg_wired_or'length - 1) loop\n"
+        "\t\t\twired_or := wired_or or reg_wired_or(i);\n"
+        "\tend loop;\n"
+        "\tSaveStateBus_Dout <= wired_or;\n"
+        "\tend process;",
+        "sound wired-or indentation",
+    )
     return normalized_port(
         "-- Multitini port: Vivado-compatible scalar range constant.\n" + result
     )
