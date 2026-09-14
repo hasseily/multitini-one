@@ -803,24 +803,28 @@ pb_o  <= cia2_pbo;
 pb_oe_o <= cia2_pbe;
 pa2_o <= cia2_pao(2);
 
-process(clk32)
+-- CIA time-of-day must pause with CPU/VIC/CIA enables. Hold both the
+-- fractional divider and its output level so resume cannot create an edge.
+tod_clock: process(clk32)
 variable sum: integer range 0 to 33000000;
 begin
 	if rising_edge(clk32) then
 		if reset = '1' then
 			todclk <= '0';
 			sum := 0;
-		elsif ntscMode = '1' then
-			sum := sum + 120;
-			if sum >= 32727266 then
-				sum := sum - 32727266;
-				todclk <= not todclk;
-			end if;
-		else
-			sum := sum + 100;
-			if sum >= 31527954 then
-				sum := sum - 31527954;
-				todclk <= not todclk;
+		elsif sysEnable = '1' then
+			if ntscMode = '1' then
+				sum := sum + 120;
+				if sum >= 32727266 then
+					sum := sum - 32727266;
+					todclk <= not todclk;
+				end if;
+			else
+				sum := sum + 100;
+				if sum >= 31527954 then
+					sum := sum - 31527954;
+					todclk <= not todclk;
+				end if;
 			end if;
 		end if;
 	end if;

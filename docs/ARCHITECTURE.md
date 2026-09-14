@@ -1,6 +1,12 @@
 # Architecture Baseline
 
-Status: the independent PAL DVI, fixed-tone audio, UART, and golden-reboot
+Current status: the C64 and GBC functional baselines are accepted. The owner
+confirmed GBC operation and tested saves on 2026-09-14. See
+[Current release](CURRENT_RELEASE.md) and [GBC baseline](GBC_BASELINE.md) for
+the accepted artifacts and scope. The following records the earlier bring-up
+milestones; its pending tests describe those stages.
+
+The independent PAL DVI, fixed-tone audio, UART, and golden-reboot
 diagnostics have passed on hardware. Live PAL video, USB input, wired Xbox
 input, SD ROM loading, 1541 startup, and read-only D64 game loading also have
 recorded board results. Build `2026082F` connects live machine PCM to I2S and
@@ -80,7 +86,8 @@ Every image is one full Zynq configuration containing:
 
 - the PS and its DDR, QSPI, SD, UART, I2C, and two ULPI controllers;
 - a small AXI control register bank;
-- the common double-buffered 80x36 text overlay;
+- the common double-buffered text overlay (candidate ABI 0.11 adds 128x60
+  dense text and menu pause while retaining the legacy 80x36 mode);
 - an independent DVI test pattern and, for PAL C64, optional live machine
   frames converted to the fixed C64 palette;
 - a shared I2S/SPDIF stage that selects live machine PCM or the fixed test tone;

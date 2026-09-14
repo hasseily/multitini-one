@@ -600,6 +600,11 @@ On hardware:
 
 ### Decisions recorded after the baseline plan
 
+- 2026-09-14: The owner accepts the current GBC functional baseline, including
+  tested saves. The second-core reuse milestone is complete for that scope.
+  Preserve PSRAM-enabled GBC `20260913` in the current package. Broader mapper,
+  RTC, failure-case, and product qualification remain separate work. See
+  `docs/GBC_BASELINE.md` for the acceptance and provenance limits.
 - 2026-08-29: Game Boy Color is the second core used to prove reuse. It must use
   the same load, input, video, audio, reset, and common-memory boundaries rather
   than adding another board shell.

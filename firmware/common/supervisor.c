@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "multitini_supervisor.h"
+#include "multitini_regs.h"
 
 #include <string.h>
 
@@ -38,6 +39,9 @@ mt_supervisor_result_t mt_supervisor_set_initial(
 {
     if (supervisor == NULL || !mt_supervisor_selection_valid(selection))
         return MT_SUPERVISOR_INVALID_ARGUMENT;
+    if (selection->package.abi_major != MT_ABI_MAJOR ||
+        selection->package.abi_minor < MT_UI_MIN_ABI_MINOR)
+        return MT_SUPERVISOR_INCOMPATIBLE_ABI;
     supervisor->active = *selection;
     supervisor->has_active = true;
     supervisor->state = MT_SUPERVISOR_ACTIVE;
@@ -105,6 +109,15 @@ mt_supervisor_result_t mt_supervisor_switch(
         supervisor->ops.quiesce == NULL || supervisor->ops.load == NULL ||
         supervisor->ops.probe == NULL || supervisor->ops.activate == NULL) {
         return MT_SUPERVISOR_INVALID_ARGUMENT;
+    }
+    /* Reject incompatible packages before resetting the running core or
+     * touching persistent media. Dense rendering cannot use legacy shells. */
+    if (selection->package.abi_major != MT_ABI_MAJOR ||
+        selection->package.abi_minor < MT_UI_MIN_ABI_MINOR) {
+        supervisor->last_result = MT_SUPERVISOR_INCOMPATIBLE_ABI;
+        supervisor->last_backend_error = 0;
+        supervisor->recovered = false;
+        return supervisor->last_result;
     }
     if (supervisor->has_active &&
         selections_equal(&supervisor->active, selection)) {
@@ -175,6 +188,7 @@ const char *mt_supervisor_state_name(mt_supervisor_state_t state)
 const char *mt_supervisor_result_name(mt_supervisor_result_t result)
 {
     switch (result) {
+    case MT_SUPERVISOR_INCOMPATIBLE_ABI: return "incompatible-abi";
     case MT_SUPERVISOR_OK: return "ok";
     case MT_SUPERVISOR_NO_CHANGE: return "no change";
     case MT_SUPERVISOR_INVALID_ARGUMENT: return "invalid argument";

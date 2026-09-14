@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "abi": {"major": 0, "minor": 10},
+  "abi": {"major": 0, "minor": 11},
   "magic": "0x4D543031",
   "shell_id": "0x4D544F4E",
   "register_span": "0x1000",
@@ -39,7 +39,7 @@
     {"name": "MEDIA_DATA", "offset": "0x0A4", "access": "ro", "reset": "0x00000000"},
     {"name": "MEDIA_STATE", "offset": "0x0A8", "access": "ro", "reset": "0x00000000"},
     {"name": "UI_COMMIT", "offset": "0x0AC", "access": "wo", "reset": "0x00000000"},
-    {"name": "UI_STATUS", "offset": "0x0B0", "access": "ro", "reset": "0x00000004"},
+    {"name": "UI_STATUS", "offset": "0x0B0", "access": "ro", "reset": "0x0000000C"},
     {"name": "CORE_VARIANT_INDEX", "offset": "0x0B4", "access": "ro", "reset": "parameter"},
     {"name": "STREAM_DATA_BURST", "offset": "0x0B8", "access": "wo", "reset": "0x00000000"},
     {"name": "STREAM_STATUS", "offset": "0x0BC", "access": "ro", "reset": "0x00000000"}
@@ -88,12 +88,15 @@
     },
     "UI_COMMIT": {
       "VISIBLE": 0,
-      "BANK": 1
+      "BANK": 1,
+      "DENSE": 2
     },
     "UI_STATUS": {
       "VISIBLE": 0,
       "BANK": 1,
-      "READY": 2
+      "READY": 2,
+      "DENSE_LAYOUT": 3,
+      "DENSE": 4
     },
     "STREAM_STATUS": {
       "READY": 0,
@@ -110,12 +113,28 @@
     "MEDIA_BLOCK_COUNT_MASK": "0x0000FFFF",
     "MEDIA_DATA_BYTE_SHIFT": 8,
     "MEDIA_DATA_BYTE_MASK": "0x0000FF00",
-    "UI_COLUMNS": 80,
-    "UI_ROWS": 36,
+    "UI_COLUMNS": 128,
+    "UI_ROWS": 60,
     "UI_CELL_BYTES": 2,
-    "UI_VRAM_BANK_BYTES": "0x00001680",
-    "UI_VRAM_BANK0_OFFSET": "0x00001000",
-    "UI_VRAM_BANK1_OFFSET": "0x00002800",
+    "UI_CELL_WIDTH": 15,
+    "UI_CELL_HEIGHT": 18,
+    "UI_FONT_SCALE": 2,
+    "UI_GLYPH_X": 0,
+    "UI_GLYPH_Y": 1,
+    "UI_MIN_ABI_MINOR": 11,
+    "UI_LEGACY_COLUMNS": 80,
+    "UI_LEGACY_ROWS": 36,
+    "UI_LEGACY_CELL_WIDTH": 24,
+    "UI_LEGACY_CELL_HEIGHT": 30,
+    "UI_LEGACY_FONT_SCALE": 3,
+    "UI_LEGACY_GLYPH_X": 1,
+    "UI_LEGACY_GLYPH_Y": 3,
+    "UI_LEGACY_VRAM_BANK_BYTES": "0x00001680",
+    "UI_LEGACY_VRAM_BANK0_OFFSET": "0x00001000",
+    "UI_LEGACY_VRAM_BANK1_OFFSET": "0x00002800",
+    "UI_VRAM_BANK_BYTES": "0x00003C00",
+    "UI_VRAM_BANK0_OFFSET": "0x00004000",
+    "UI_VRAM_BANK1_OFFSET": "0x00008000",
     "UI_WINDOW_SPAN": "0x00010000",
     "STREAM_BURST_BYTES": 4
   },

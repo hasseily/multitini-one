@@ -40,8 +40,18 @@ typedef struct {
 typedef enum {
     MT_UI_PRESENT_OK = 0,
     MT_UI_PRESENT_INVALID_ARGUMENT,
-    MT_UI_PRESENT_BUSY
+    MT_UI_PRESENT_BUSY,
+    MT_UI_PRESENT_UNSUPPORTED_LAYOUT
 } mt_ui_present_result_t;
+
+/* Keep one presenter per overlay bus, preferably in static storage. The
+ * presenter must be the only writer of that overlay's VRAM and commits. */
+typedef struct {
+    mt_ui_frame_t banks[2];
+    bool bank_valid[2];
+    bool pending;
+    uint32_t pending_status;
+} mt_ui_presenter_t;
 
 uint16_t mt_ui_cell(char character, mt_ui_color_t foreground,
                     mt_ui_color_t background, bool transparent_background);
@@ -51,7 +61,25 @@ void mt_ui_fill(mt_ui_frame_t *frame, size_t column, size_t row,
 void mt_ui_text(mt_ui_frame_t *frame, size_t column, size_t row,
                 const char *text, mt_ui_color_t foreground,
                 mt_ui_color_t background, bool transparent_background);
+/* Fill exactly width cells (clipped to the row), with an ellipsis when text
+ * does not fit. Short text may be right aligned. A NULL text leaves blanks. */
+void mt_ui_text_field(mt_ui_frame_t *frame, size_t column, size_t row,
+                      size_t width, const char *text,
+                      mt_ui_color_t foreground, mt_ui_color_t background,
+                      bool transparent_background, bool right_aligned);
 char mt_ui_character(const mt_ui_frame_t *frame, size_t column, size_t row);
+void mt_ui_presenter_init(mt_ui_presenter_t *presenter);
+/* Call after every overlay/PL reset or reconfiguration, or external VRAM
+ * access. Invalidation requires any previous commit to be drained or reset. */
+void mt_ui_presenter_invalidate(mt_ui_presenter_t *presenter);
+/* Upload changed words to the inactive bank and commit at vertical blank.
+ * An unchanged active frame needs no writes; visibility alone needs only a
+ * commit. BUSY performs no writes and the caller must retry the latest frame.
+ * OK means either unchanged or submitted, not necessarily visible yet. */
+mt_ui_present_result_t mt_ui_present_cached(mt_ui_presenter_t *presenter,
+                                            const mt_ui_bus_t *bus,
+                                            const mt_ui_frame_t *frame,
+                                            bool visible);
 mt_ui_present_result_t mt_ui_present(const mt_ui_bus_t *bus,
                                      const mt_ui_frame_t *frame,
                                      bool visible);

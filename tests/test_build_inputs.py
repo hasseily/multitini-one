@@ -570,8 +570,9 @@ class BuildInputTests(unittest.TestCase):
             self.assertIn(f"{size:,} bytes", workflow)
         self.assertIn("read-only", workflow)
         self.assertIn(":c64rx 20480 0xCRC32", workflow)
-        self.assertIn("The first board result qualifies", workflow)
-        self.assertRegex(workflow, r"does not\s+qualify D64 writes")
+        # Acceptance changes as board tests pass; keep the evidence discoverable
+        # without requiring wording from a superseded bring-up milestone.
+        self.assertIn("HARDWARE_RESULTS.md", workflow)
 
     def test_c64_settings_restore_validates_live_fpga_mount(self):
         header = (
@@ -643,8 +644,65 @@ class BuildInputTests(unittest.TestCase):
         self.assertLess(stage, remount)
         self.assertLess(remount, run)
         self.assertIn("if (!remounted)", flow)
-        self.assertIn("supervisor_menu.row = 1U", flow)
+        self.assertIn("mt_menu_close_browser(&supervisor_menu)", flow)
         self.assertRegex(main, r"#define\s+MT_MENU_MAX_FILES\s+144U")
+
+    def test_menu_run_actions_wait_for_hidden_overlay(self):
+        main = (ROOT / "firmware/platform/xilinx/main.c").read_text()
+        policy = main.split(
+            "static bool menu_action_needs_core_progress(", 1
+        )[1].split("static int native_load_key", 1)[0]
+        for action in (
+            "SWITCH_CORE", "MOUNT_DRIVE8", "MOUNT_AND_RUN",
+            "LOAD_DISK_PROGRAM", "DIRECT_DISK_PROGRAM", "EJECT_DRIVE8",
+            "LOAD_CONTENT", "DETACH_CARTRIDGE", "RESET_CORE", "REBOOT_GOLDEN",
+        ):
+            self.assertIn(f"case MT_MENU_ACTION_{action}:", policy)
+        self.assertNotIn("case MT_MENU_ACTION_BROWSE_", policy)
+        self.assertNotIn("case MT_MENU_ACTION_TOGGLE_AUTO_BOOT:", policy)
+        self.assertIn("action.file_index == 0U", policy)  # ROM-pair restart
+
+        hide = main.split(
+            "static bool hide_menu_for_core_action(void)\n{", 1
+        )[1].split("static bool menu_action_needs_core_progress", 1)[0]
+        # The temporary hardware hide must not close the user's menu. The
+        # pending redraw restores the requested visibility after the action.
+        self.assertNotRegex(hide, r"supervisor_menu\.visible\s*=")
+        self.assertIn("supervisor_menu_dirty = true", hide)
+        self.assertNotIn("supervisor_menu_dirty = false", hide)
+        # Queuing a commit is insufficient: wait for its acknowledgement and
+        # the actual video visibility before a paused CPU must make progress.
+        self.assertRegex(
+            hide, r"result == MT_UI_PRESENT_OK && !supervisor_presenter.pending &&\s+"
+                  r"\(shell_read\(MT_REG_UI_STATUS\) & MT_UI_STATUS_VISIBLE\) == 0U"
+        )
+        self.assertIn("MT_MENU_HIDE_TIMEOUT_MS", hide)
+        self.assertIn("service_runtime();", hide)
+        self.assertNotIn("service_supervisor_menu();", hide)
+        self.assertIn("action cancelled", hide)
+
+        dispatch = main.split("static void service_supervisor_menu(void)", 1)[1]
+        dispatch = dispatch.split("static void initialize_supervisor_menu", 1)[0]
+        self.assertLess(dispatch.index("hide_menu_for_core_action()"),
+                        dispatch.index("handle_menu_action(action)"))
+        self.assertNotRegex(dispatch, r"supervisor_menu\.visible\s*=")
+        self.assertNotIn("supervisor_status_color ==", dispatch)
+        runtime = main.split("static void service_runtime(void)", 1)[1]
+        runtime = runtime.split("static void print_status", 1)[0]
+        self.assertIn("gameboy_content_service_poll();", runtime)
+        self.assertNotIn("supervisor_menu.visible", runtime)
+
+        prepare = main.split("static bool prepare_c64_content_change(void)", 1)[1]
+        prepare = prepare.split("static bool finish_c64_content_change", 1)[0]
+        self.assertLess(prepare.index("hide_menu_for_core_action()"),
+                        prepare.index("c64_d64_service_prepare_reset()"))
+
+        uart_loop = main.split("int main(void)", 1)[1]
+        self.assertLess(uart_loop.index("supervisor_menu_action_active = true"),
+                        uart_loop.index("switch (input)"))
+        self.assertLess(uart_loop.index("case ':': handle_extended_command(false)"),
+                        uart_loop.index("supervisor_menu_action_active = false"))
+        self.assertIn("supervisor_menu.visible = !supervisor_menu.visible", uart_loop)
 
     def test_vitis_build_includes_wired_xbox_360_host_support(self):
         script = (ROOT / "scripts/create_vitis_workspace.py").read_text()

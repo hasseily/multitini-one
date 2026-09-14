@@ -11,6 +11,7 @@ module multitini_gameboy_adapter #(
     input  logic         core_clk,
     input  logic         reset,
     input  logic         core_reset_request,
+    input  logic         pause_request,
     input  logic         clear_load_error,
 
     input  logic [15:0]  input_code,
@@ -212,6 +213,7 @@ module multitini_gameboy_adapter #(
 
     multitini_gameboy_clock_enable clock_enable_i (
         .clk(core_clk), .reset(reset), .stall(memory_stall),
+        .pause_request(pause_request),
         .ce_cpu(ce_cpu), .ce_cpu_n(ce_cpu_n), .ce_cpu_2x(ce_cpu_2x),
         .phase(clock_phase)
     );
@@ -290,6 +292,10 @@ module multitini_gameboy_adapter #(
     always_ff @(posedge core_clk) begin
         if (reset) begin
             ce_32k_div <= 10'd0;
+            ce_32k <= 1'b0;
+        end else if (pause_request) begin
+            // Freeze the cartridge RTC cadence with the machine. Memory,
+            // loader and save controllers keep their root-clock service.
             ce_32k <= 1'b0;
         end else begin
             ce_32k <= ce_32k_div == 10'd1023;

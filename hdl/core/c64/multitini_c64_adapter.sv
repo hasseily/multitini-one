@@ -15,6 +15,7 @@ module multitini_c64_adapter #(
     input  logic        core_clk,
     input  logic        reset,
     input  logic        core_reset_request,
+    input  logic        pause_request,
     input  logic        cpu_turbo_enable,
     input  logic        drive_parallel_enable,
     input  logic        load_abort,
@@ -118,6 +119,7 @@ module multitini_c64_adapter #(
     logic        content_core_reset_hold;
     logic        content_load_resets_run_injector;
     logic        prg_install_pause;
+    logic        core_paused;
     logic        d64_load_valid;
     logic        d64_load_ready;
     logic        g64_load_valid;
@@ -331,6 +333,7 @@ module multitini_c64_adapter #(
         .clk(core_clk),
         .reset(reset || core_reset_request ||
                content_load_resets_run_injector || load_abort),
+        .pause_request(pause_request || core_paused),
         .start(prg_run_request), .host_ps2_key(host_ps2_key),
         .ps2_key(ps2_key), .busy(prg_run_busy)
     );
@@ -414,10 +417,12 @@ module multitini_c64_adapter #(
     fpga64_sid_iec core_i (
         .clk32(core_clk), .reset_n(core_reset_n),
         .bios({1'b0, rom_bank}),
-        // PRG installation uses FPGA64's boundary-safe whole-core pause.
+        // Menu visibility and PRG installation use FPGA64's boundary-safe
+        // whole-core pause. The acknowledged pause also stops the drive.
         // Cartridge PSRAM misses instead stretch the active VIC/CPU bus phase
         // until the requested cache line is present.
-        .pause(prg_install_pause), .memory_wait(cart_stall), .pause_out(),
+        .pause(prg_install_pause || pause_request), .memory_wait(cart_stall),
+        .pause_out(core_paused),
         .ps2_key(ps2_key), .kbd_reset(!core_reset_n), .shift_mod(2'b11),
         .ramAddr(ram_addr), .ramDin(core_ram_din), .ramDout(ram_dout),
         .ramCE(ram_ce), .ramWE(ram_we),
@@ -477,6 +482,7 @@ module multitini_c64_adapter #(
 
     multitini_c64_1541 #(.CORE_CLOCK_HZ(CORE_CLOCK_HZ)) drive_i (
         .clk(core_clk), .reset(reset), .soft_reset(drive_soft_reset),
+        .pause_request(core_paused),
         .clear_error(clear_load_error),
         .drive_rom_write(drive_rom_wr),
         .drive_rom_address(drive_rom_addr),
@@ -525,7 +531,7 @@ module multitini_c64_adapter #(
     assign media_state_mounted = drive_mounted;
 
     video_sync sync_i (
-        .clk32(core_clk), .pause(!core_reset_n),
+        .clk32(core_clk), .pause(!core_reset_n || core_paused),
         .hsync(raw_hsync), .vsync(raw_vsync), .ntsc(NTSC_MODE),
         .wide(1'b0), .hsync_out(sync_hsync), .vsync_out(sync_vsync),
         .hblank(hblank), .vblank(vblank), .pixel_tick(sync_pixel_tick)

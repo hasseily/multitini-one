@@ -1,7 +1,12 @@
 # Current release
 
-The C64 core is accepted for now. This package preserves the tested images;
-promotion does not rebuild firmware, FPGA images, or ROMs.
+The C64 and GBC functional baselines are accepted. This package preserves the
+tested images; promotion does not rebuild firmware, FPGA images, or ROMs.
+
+The newer [shared interface](SHARED_FRONTEND.md), firmware `20260920` with
+FPGA packages `20260919`, is also owner-confirmed flashed and board tested.
+This page describes the retained `build/current` and root firmware aliases;
+the shared-interface source commit does not replace those generated files.
 
 | Component | Build | ABI |
 | --- | --- | --- |
@@ -28,6 +33,12 @@ repository root as `FIRMWARE.BIN`.
 4. Select C64 PAL or NTSC. Enable **Fast serial ROMs** to select the paired
    fast profile; CPU turbo remains a separate option.
 
+For GBC, put user-supplied `.gb` or `.gbc` cartridges under
+`multitini/cores/gbc/media`, select **Game Boy Color** in Cores, and load a
+cartridge from Media. Battery saves use `<cartridge-name>.sav` beside the
+cartridge. Wait for **Saved** before removing power. See `GBC_BASELINE.md`
+in this package for the accepted scope and save behavior.
+
 In **Mount & Run**, Enter loads the selected program through the emulated
 drive and starts it. Right performs native LOAD only; type RUN afterward when
 needed. Mount a replacement disk without restarting the game at a disk prompt.
@@ -40,6 +51,12 @@ second-disk prompt, and accepts the Player disk. A clean Player image works
 with fast ROMs enabled. The owner attributed the remaining LOAD ERROR failures
 to the old corrupted Player image; the cause of that corruption is unconfirmed.
 Fast loading and GBC battery saving were also confirmed on hardware.
+
+On 2026-09-14 the owner explicitly confirmed that the current GBC baseline
+works, including tested saves. The GBC functional baseline is complete with
+the retained `20260913` image. Broader mapper coverage, RTC persistence, and
+power-loss qualification remain separate work; see
+[GBC baseline](GBC_BASELINE.md).
 
 Final source validation passed all 28 host tests and 139 Python tests (three
 skipped), generated-file checks, repository policy, and both imported-core

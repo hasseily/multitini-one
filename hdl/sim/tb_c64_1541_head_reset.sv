@@ -5,6 +5,7 @@ module tb_c64_1541_head_reset;
     logic clk = 1'b0;
     logic reset = 1'b1;
     logic soft_reset = 1'b0;
+    logic pause_request = 1'b0;
     logic drive_rom_write = 1'b0;
     logic drive_rom_loaded = 1'b1;
 
@@ -17,6 +18,7 @@ module tb_c64_1541_head_reset;
         .clk(clk),
         .reset(reset),
         .soft_reset(soft_reset),
+        .pause_request(pause_request),
         .clear_error(1'b0),
         .drive_rom_write(drive_rom_write),
         .drive_rom_address(14'd0),
@@ -103,7 +105,35 @@ module tb_c64_1541_head_reset;
         check_value(dut.head_half_track == 7'd35,
                     "real motion remains enabled after soft reset");
 
-        $display("PASS: C64 1541 reset-phase head tracking");
+        // Pause at each drive PH2 phase. The CE and PH2 output registers drain
+        // for two clocks; then both the fractional 16 MHz accumulator and the
+        // CPU/VIA divider must remain frozen without asserting reset.
+        for (integer target = 0; target < 16; target++) begin
+            logic [31:0] held_drive_phase;
+            logic [3:0] held_phase_div;
+            @(negedge clk);
+            while (dut.phase_div != target[3:0]) @(negedge clk);
+            pause_request = 1'b1;
+            repeat (3) @(negedge clk);
+            held_drive_phase = dut.drive_phase;
+            held_phase_div = dut.phase_div;
+            repeat (31) begin
+                @(negedge clk);
+                check_value(dut.drive_phase == held_drive_phase &&
+                            dut.phase_div == held_phase_div,
+                            "menu pause preserves drive clock phases");
+                check_value(!dut.drive_ce && !dut.ph2_r && !dut.ph2_f,
+                            "menu pause suppresses CPU VIA and GCR enables");
+                check_value(!dut.drive_reset,
+                            "menu pause preserves the running drive state");
+            end
+            pause_request = 1'b0;
+            repeat (35) @(negedge clk);
+            check_value(dut.drive_phase != held_drive_phase,
+                        "drive resumes after the menu closes");
+        end
+
+        $display("PASS: C64 1541 head reset and menu pause at all PH2 phases");
         $finish;
     end
 endmodule

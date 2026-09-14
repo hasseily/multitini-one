@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns / 1ps
 
-// One 2,880-cell text bank. The ARM writes two 16-bit cells per 32-bit AXI
+// One text bank. The ARM writes two 16-bit cells per 32-bit AXI
 // word while the video side reads one cell. Keep this width conversion inside
 // an explicit XPM so Vivado cannot dissolve the plane into flip-flops when the
 // two clocks are unrelated.
 module multitini_text_bank #(
-    parameter int CELL_COUNT = 2880
+    parameter int CELL_COUNT = multitini_regs_pkg::MT_UI_COLUMNS *
+                               multitini_regs_pkg::MT_UI_ROWS
 ) (
     input  logic        write_clk,
     input  logic        write_enable,
@@ -87,8 +88,10 @@ module multitini_text_bank #(
 `endif
 endmodule
 
-// Double-buffered 80x36 text plane for the supervisor UI. Each 24x30 cell
-// contains a 7x8 glyph at 3x scale. Cell layout is:
+// Double-buffered 128x60 text plane for the supervisor UI. Each 15x18 cell
+// contains a 7x8 glyph at 2x scale, with one pixel between glyphs and one
+// pixel above/below. Geometry and the VRAM map share the firmware ABI constants.
+// Cell layout is:
 //   [15] transparent background, [14:11] background, [10:7] foreground,
 //   [6:0] ASCII. Firmware writes the inactive bank and commits it atomically;
 // the video side changes visibility/bank only at vertical blank.
@@ -107,9 +110,11 @@ module multitini_text_overlay #(
     input  logic        commit_valid,
     input  logic        commit_visible,
     input  logic        commit_bank,
+    input  logic        commit_dense,
     output logic        commit_ready,
-    output logic        active_visible_control,
-    output logic        active_bank_control,
+    (* ASYNC_REG = "TRUE" *) output logic active_visible_control,
+    (* ASYNC_REG = "TRUE" *) output logic active_bank_control,
+    (* ASYNC_REG = "TRUE" *) output logic active_dense_control,
 
     input  logic        pixel_clk,
     input  logic        pixel_resetn,
@@ -119,14 +124,19 @@ module multitini_text_overlay #(
     output logic        pixel_opaque,
     output logic [15:0] pixel_rgb565
 );
-    localparam int COLUMNS = 80;
-    localparam int ROWS = 36;
+    import multitini_regs_pkg::*;
+
+    localparam int COLUMNS = MT_UI_COLUMNS;
+    localparam int ROWS = MT_UI_ROWS;
     localparam int CELL_COUNT = COLUMNS * ROWS;
-    localparam int CELL_W = H_ACTIVE / COLUMNS;
-    localparam int CELL_H = V_ACTIVE / ROWS;
-    localparam logic [15:0] BANK0_BASE = 16'h1000;
-    localparam logic [15:0] BANK1_BASE = 16'h2800;
-    localparam logic [15:0] BANK_BYTES = 16'h1680;
+    localparam int CELL_ADDRESS_WIDTH = $clog2(CELL_COUNT);
+    localparam int WORD_ADDRESS_WIDTH = $clog2((CELL_COUNT + 1) / 2);
+    localparam logic [15:0] BANK0_BASE = MT_UI_VRAM_BANK0_OFFSET;
+    localparam logic [15:0] BANK1_BASE = MT_UI_VRAM_BANK1_OFFSET;
+    localparam logic [15:0] BANK_BYTES = MT_UI_VRAM_BANK_BYTES;
+    localparam logic [15:0] LEGACY_BANK0_BASE = MT_UI_LEGACY_VRAM_BANK0_OFFSET;
+    localparam logic [15:0] LEGACY_BANK1_BASE = MT_UI_LEGACY_VRAM_BANK1_OFFSET;
+    localparam logic [15:0] LEGACY_BANK_BYTES = MT_UI_LEGACY_VRAM_BANK_BYTES;
 
     // A synchronous font ROM breaks the character lookup away from the glyph
     // pixel mux.  Keeping the 96-way, 64-bit lookup combinational cannot meet
@@ -137,26 +147,33 @@ module multitini_text_overlay #(
     logic [15:0] bank1_q;
     logic bank0_write;
     logic bank1_write;
-    logic [10:0] write_address;
-    logic [1:0] commit_source;
-    logic [1:0] commit_destination;
+    logic legacy_bank0_write;
+    logic legacy_bank1_write;
+    logic [WORD_ADDRESS_WIDTH-1:0] write_address;
+    logic [2:0] commit_source;
+    logic [2:0] commit_destination;
     logic commit_destination_valid;
     logic active_visible;
     logic active_bank;
-    logic active_visible_meta;
-    logic active_bank_meta;
+    logic active_dense;
+    logic [7:0] columns;
+    logic [4:0] cell_width;
+    logic [4:0] cell_height;
+    (* ASYNC_REG = "TRUE" *) logic active_visible_meta;
+    (* ASYNC_REG = "TRUE" *) logic active_bank_meta;
+    (* ASYNC_REG = "TRUE" *) logic active_dense_meta;
     logic [11:0] fetch_x;
     logic [11:0] fetch_y;
     logic [4:0] fetch_local_x;
     logic [4:0] fetch_local_y;
-    logic [11:0] fetch_row_base;
-    logic [11:0] fetch_address;
+    logic [CELL_ADDRESS_WIDTH-1:0] fetch_row_base;
+    logic [CELL_ADDRESS_WIDTH-1:0] fetch_address;
     logic fetch_active;
-    logic [11:0] local_x_q;
-    logic [11:0] local_y_q;
-    logic [11:0] local_x_qq;
-    logic [11:0] local_y_qq;
-    logic [11:0] read_address;
+    logic [4:0] local_x_q;
+    logic [4:0] local_y_q;
+    logic [4:0] local_x_qq;
+    logic [4:0] local_y_qq;
+    logic [CELL_ADDRESS_WIDTH-1:0] read_address;
     logic coordinate_active_q;
     logic coordinate_active_qq;
     logic active_visible_q;
@@ -170,8 +187,8 @@ module multitini_text_overlay #(
 
     initial $readmemh("multitini_font7x8.mem", font);
 
-    assign commit_source = {commit_bank, commit_visible};
-    multitini_async_mailbox #(.WIDTH(2)) commit_mailbox (
+    assign commit_source = {commit_dense, commit_bank, commit_visible};
+    multitini_async_mailbox #(.WIDTH(3)) commit_mailbox (
         .src_clk(control_clk), .src_resetn(control_resetn),
         .src_data(commit_source), .src_valid(commit_valid),
         .src_ready(commit_ready),
@@ -187,25 +204,41 @@ module multitini_text_overlay #(
             active_visible_control <= 1'b0;
             active_bank_meta <= 1'b0;
             active_bank_control <= 1'b0;
+            active_dense_meta <= 1'b0;
+            active_dense_control <= 1'b0;
         end else begin
             active_visible_meta <= active_visible;
             active_visible_control <= active_visible_meta;
             active_bank_meta <= active_bank;
             active_bank_control <= active_bank_meta;
+            active_dense_meta <= active_dense;
+            active_dense_control <= active_dense_meta;
         end
     end
 
     always_comb begin
+        legacy_bank0_write = vram_wr_en && vram_wr_addr[1:0] == 2'b00 &&
+                             vram_wr_addr >= LEGACY_BANK0_BASE &&
+                             vram_wr_addr < LEGACY_BANK0_BASE + LEGACY_BANK_BYTES;
+        legacy_bank1_write = vram_wr_en && vram_wr_addr[1:0] == 2'b00 &&
+                             vram_wr_addr >= LEGACY_BANK1_BASE &&
+                             vram_wr_addr < LEGACY_BANK1_BASE + LEGACY_BANK_BYTES;
         bank0_write = vram_wr_en && vram_wr_addr[1:0] == 2'b00 &&
                       vram_wr_addr >= BANK0_BASE &&
                       vram_wr_addr < BANK0_BASE + BANK_BYTES;
         bank1_write = vram_wr_en && vram_wr_addr[1:0] == 2'b00 &&
                       vram_wr_addr >= BANK1_BASE &&
                       vram_wr_addr < BANK1_BASE + BANK_BYTES;
-        if (bank1_write)
+        if (legacy_bank1_write)
+            write_address = (vram_wr_addr - LEGACY_BANK1_BASE) >> 2;
+        else if (legacy_bank0_write)
+            write_address = (vram_wr_addr - LEGACY_BANK0_BASE) >> 2;
+        else if (bank1_write)
             write_address = (vram_wr_addr - BANK1_BASE) >> 2;
         else
             write_address = (vram_wr_addr - BANK0_BASE) >> 2;
+        bank0_write = bank0_write || legacy_bank0_write;
+        bank1_write = bank1_write || legacy_bank1_write;
     end
 
     multitini_text_bank #(.CELL_COUNT(CELL_COUNT)) bank0_i (
@@ -224,10 +257,14 @@ module multitini_text_overlay #(
 
     always_comb cell_q = active_bank ? bank1_q : bank0_q;
 
+    assign columns = active_dense ? MT_UI_COLUMNS : MT_UI_LEGACY_COLUMNS;
+    assign cell_width = active_dense ? MT_UI_CELL_WIDTH : MT_UI_LEGACY_CELL_WIDTH;
+    assign cell_height = active_dense ? MT_UI_CELL_HEIGHT : MT_UI_LEGACY_CELL_HEIGHT;
+
     // The text BRAM, synchronous font ROM, and registered glyph/color output
     // add three cycles before multitini_video_test samples the overlay.  A
     // sequential cursor stays three pixels ahead of the scan and advances the
-    // cell address only at 24-pixel and 30-line boundaries.  This deliberately
+    // cell address only at cell and row boundaries. This deliberately
     // avoids putting constant dividers and modulo operators on the 148.5 MHz
     // BRAM-address path.
     assign read_address = fetch_address;
@@ -236,17 +273,18 @@ module multitini_text_overlay #(
         if (!pixel_resetn) begin
             active_visible <= 1'b0;
             active_bank <= 1'b0;
+            active_dense <= 1'b0;
             fetch_x <= 12'd3;
             fetch_y <= 12'd0;
             fetch_local_x <= 5'd3;
             fetch_local_y <= 5'd0;
-            fetch_row_base <= 12'd0;
-            fetch_address <= 12'd0;
+            fetch_row_base <= '0;
+            fetch_address <= '0;
             fetch_active <= 1'b1;
-            local_x_q <= 12'd0;
-            local_y_q <= 12'd0;
-            local_x_qq <= 12'd0;
-            local_y_qq <= 12'd0;
+            local_x_q <= 5'd0;
+            local_y_q <= 5'd0;
+            local_x_qq <= 5'd0;
+            local_y_qq <= 5'd0;
             coordinate_active_q <= 1'b0;
             coordinate_active_qq <= 1'b0;
             active_visible_q <= 1'b0;
@@ -261,6 +299,7 @@ module multitini_text_overlay #(
             if (commit_destination_valid && vblank_start) begin
                 active_visible <= commit_destination[0];
                 active_bank <= commit_destination[1];
+                active_dense <= commit_destination[2];
             end
             // Re-anchor once per frame. At scan (0,0), the current request is
             // pixel 3 and the next request must be pixel 4.
@@ -269,8 +308,8 @@ module multitini_text_overlay #(
                 fetch_y <= 12'd0;
                 fetch_local_x <= 5'd4;
                 fetch_local_y <= 5'd0;
-                fetch_row_base <= 12'd0;
-                fetch_address <= 12'd0;
+                fetch_row_base <= '0;
+                fetch_address <= '0;
                 fetch_active <= 1'b1;
             end else if (fetch_x == H_TOTAL - 1) begin
                 fetch_x <= 12'd0;
@@ -278,25 +317,25 @@ module multitini_text_overlay #(
                 if (fetch_y == V_TOTAL - 1) begin
                     fetch_y <= 12'd0;
                     fetch_local_y <= 5'd0;
-                    fetch_row_base <= 12'd0;
-                    fetch_address <= 12'd0;
+                    fetch_row_base <= '0;
+                    fetch_address <= '0;
                     fetch_active <= 1'b1;
                 end else begin
                     fetch_y <= fetch_y + 12'd1;
                     if (fetch_y < V_ACTIVE - 1) begin
                         fetch_active <= 1'b1;
-                        if (fetch_local_y == CELL_H - 1) begin
+                        if (fetch_local_y == cell_height - 1) begin
                             fetch_local_y <= 5'd0;
-                            fetch_row_base <= fetch_row_base + COLUMNS;
-                            fetch_address <= fetch_row_base + COLUMNS;
+                            fetch_row_base <= fetch_row_base + columns;
+                            fetch_address <= fetch_row_base + columns;
                         end else begin
                             fetch_local_y <= fetch_local_y + 5'd1;
                             fetch_address <= fetch_row_base;
                         end
                     end else begin
                         fetch_local_y <= 5'd0;
-                        fetch_row_base <= 12'd0;
-                        fetch_address <= 12'd0;
+                        fetch_row_base <= '0;
+                        fetch_address <= '0;
                         fetch_active <= 1'b0;
                     end
                 end
@@ -304,9 +343,9 @@ module multitini_text_overlay #(
                 fetch_x <= fetch_x + 12'd1;
                 if (fetch_y < V_ACTIVE && fetch_x < H_ACTIVE - 1) begin
                     fetch_active <= 1'b1;
-                    if (fetch_local_x == CELL_W - 1) begin
+                    if (fetch_local_x == cell_width - 1) begin
                         fetch_local_x <= 5'd0;
-                        fetch_address <= fetch_address + 12'd1;
+                        fetch_address <= fetch_address + 1'b1;
                     end else begin
                         fetch_local_x <= fetch_local_x + 5'd1;
                     end
@@ -315,8 +354,8 @@ module multitini_text_overlay #(
                     fetch_active <= 1'b0;
                 end
             end
-            local_x_q <= {7'd0, fetch_local_x};
-            local_y_q <= {7'd0, fetch_local_y};
+            local_x_q <= fetch_local_x;
+            local_y_q <= fetch_local_y;
             coordinate_active_q <= fetch_active;
             active_visible_q <= active_visible;
             local_x_qq <= local_x_q;
@@ -359,10 +398,29 @@ module multitini_text_overlay #(
 
     always_comb begin
         glyph_row = 8'd0;
-        if (local_y_qq >= 12'd3 && local_y_qq < 12'd27)
-            glyph_row = glyph_q[((((local_y_qq - 12'd3) / 3) * 8)) +: 8];
-        glyph_pixel = local_x_qq >= 12'd1 && local_x_qq < 12'd22 &&
-                      local_y_qq >= 12'd3 && local_y_qq < 12'd27 &&
-                      glyph_row[(local_x_qq - 12'd1) / 3];
+        glyph_pixel = 1'b0;
+        if (active_dense) begin
+            if (local_y_qq >= MT_UI_GLYPH_Y &&
+                local_y_qq < MT_UI_GLYPH_Y + 8 * MT_UI_FONT_SCALE)
+                glyph_row = glyph_q[(((local_y_qq - MT_UI_GLYPH_Y) /
+                                      MT_UI_FONT_SCALE) * 8) +: 8];
+            if (local_x_qq >= MT_UI_GLYPH_X &&
+                local_x_qq < MT_UI_GLYPH_X + 7 * MT_UI_FONT_SCALE &&
+                local_y_qq >= MT_UI_GLYPH_Y &&
+                local_y_qq < MT_UI_GLYPH_Y + 8 * MT_UI_FONT_SCALE)
+                glyph_pixel = glyph_row[(local_x_qq - MT_UI_GLYPH_X) /
+                                        MT_UI_FONT_SCALE];
+        end else begin
+            if (local_y_qq >= MT_UI_LEGACY_GLYPH_Y &&
+                local_y_qq < MT_UI_LEGACY_GLYPH_Y + 8 * MT_UI_LEGACY_FONT_SCALE)
+                glyph_row = glyph_q[(((local_y_qq - MT_UI_LEGACY_GLYPH_Y) /
+                                      MT_UI_LEGACY_FONT_SCALE) * 8) +: 8];
+            if (local_x_qq >= MT_UI_LEGACY_GLYPH_X &&
+                local_x_qq < MT_UI_LEGACY_GLYPH_X + 7 * MT_UI_LEGACY_FONT_SCALE &&
+                local_y_qq >= MT_UI_LEGACY_GLYPH_Y &&
+                local_y_qq < MT_UI_LEGACY_GLYPH_Y + 8 * MT_UI_LEGACY_FONT_SCALE)
+                glyph_pixel = glyph_row[(local_x_qq - MT_UI_LEGACY_GLYPH_X) /
+                                        MT_UI_LEGACY_FONT_SCALE];
+        end
     end
 endmodule

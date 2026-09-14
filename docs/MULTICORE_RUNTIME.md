@@ -1,7 +1,7 @@
 # Multicore Runtime and Menu
 
-Status: the C64 baseline is accepted for now. The current package uses ARM
-firmware `20260917`, supervisor and C64 PAL/NTSC FPGA images `20260915`
+Status: the C64 and GBC functional baselines are accepted. The current package
+uses ARM firmware `20260917`, supervisor and C64 PAL/NTSC FPGA images `20260915`
 (ABI 0.10), and the unchanged PSRAM-enabled GBC image `20260913` (ABI 0.9).
 See [Current release](CURRENT_RELEASE.md) for exact artifacts and installation.
 
@@ -18,7 +18,9 @@ rollback case, or repeated-switch/media combination.
 The ARM application remains alive while DevCfg/PCAP replaces the complete PL
 image. This is full PL reconfiguration, not partial reconfiguration. Every
 loadable image therefore contains the same board shell, AXI register ABI,
-80x36 text overlay, video output, audio output, and input boundary. Only the
+text overlay, video output, audio output, and input boundary. Candidate ABI
+0.11 adds 128x60 text and automatic menu pause; see
+[Shared front end](SHARED_FRONTEND.md). Only the
 machine adapter and its clock generator differ.
 
 The PS supplies the same 150 MHz `FCLK_CLK2` to every image. Each image's MMCM
@@ -97,7 +99,7 @@ schema=1
 id=c64
 name=Commodore 64
 core_id=0x43363420
-abi=0.9
+abi=0.11
 content_root=0:/multitini/cores/c64/media
 variant=pal|PAL 50 Hz|c64-pal.bin|4045568|0x12345678
 variant=ntsc|NTSC 60 Hz|c64-ntsc.bin|4045568|0x9ABCDEF0
@@ -108,7 +110,10 @@ again afterward, so a valid file containing the wrong core or ABI is not
 activated. SHA-256 values are emitted as comments for release/provenance
 checking; the bounded target-side loader uses size plus CRC32.
 
-Generate the C64 package from fresh ABI 0.9 Vivado bitstreams with:
+The following commands package the fresh ABI 0.11 candidate bitstreams. They
+do not rebuild or relabel the accepted release's older images.
+
+Generate the C64 candidate package with:
 
 ```powershell
 python scripts/make_core_package.py `
@@ -116,12 +121,13 @@ python scripts/make_core_package.py `
   --name "Commodore 64" `
   --core-id 0x43363420 `
   --content-root 0:/multitini/cores/c64/media `
-  --variant "pal|PAL 50 Hz|build/vivado-20260913-c64-pal/multitini_one.runs/impl_1/multitini_one_top.bit" `
-  --variant "ntsc|NTSC 60 Hz|build/vivado-20260913-c64-ntsc/multitini_one.runs/impl_1/multitini_one_top.bit" `
-  --output build/core-packages-20260913/c64
+  --abi-minor 11 `
+  --variant "pal|PAL 50 Hz|build/vivado-ui-20260919-c64-pal-final/multitini_one.runs/impl_1/multitini_one_top.bit" `
+  --variant "ntsc|NTSC 60 Hz|build/vivado-ui-20260919-c64-ntsc/multitini_one.runs/impl_1/multitini_one_top.bit" `
+  --output build/core-packages-ui-20260919/c64
 ```
 
-Generate the GBC package from the PSRAM-enabled GBC bitstream with:
+Generate the GBC candidate package from the PSRAM-enabled bitstream with:
 
 ```powershell
 python scripts/make_core_package.py `
@@ -129,8 +135,9 @@ python scripts/make_core_package.py `
   --name "Game Boy Color" `
   --core-id 0x47424320 `
   --content-root 0:/multitini/cores/gbc/media `
-  --variant "default|GB/GBC|build/vivado-20260913-gbc-psram/multitini_one.runs/impl_1/multitini_one_top.bit" `
-  --output build/core-packages-20260913/gbc
+  --abi-minor 11 `
+  --variant "default|GB/GBC|build/vivado-ui-20260919-gbc/multitini_one.runs/impl_1/multitini_one_top.bit" `
+  --output build/core-packages-ui-20260919/gbc
 ```
 
 The GBC image used for cartridge testing must be created with
@@ -138,10 +145,11 @@ The GBC image used for cartridge testing must be created with
 compile integration because it has no cartridge-memory backing.
 
 The packager invokes Bootgen's Zynq bitstream processor and defaults to ABI
-0.9. ABI 0.7 packages remain loadable and use the original byte-at-a-time
-direct-load register. A package must declare 0.7 before the supervisor sends
-the save-RAM stream. Existing packages made from the earlier ABI 0.5 PAL/NTSC
-images are not compatible with this runtime and must not be copied to the card.
+0.11, matching current source. Candidate firmware requires ABI 0.11 and checks
+the loaded shell's dense-layout capability. Install its matching core packages
+together. When reproducing an older image, pass its actual `--abi-minor`
+explicitly; changing metadata cannot add dense text or menu pause to an old
+bitstream. The accepted release's pinned packages remain unchanged.
 
 ## Menu
 
@@ -218,22 +226,28 @@ services are connected. GBC now uses the same menu, USB input boundary, audio
 path, and a four-bank 160x144-to-960x864 video bridge. Current source also
 snapshots supported battery-backed external cartridge RAM after roughly one
 second without a RAM write and commits it through the common media ABI. The
-machine pauses only while a coherent snapshot and SD commit are in progress.
+machine pauses while a coherent snapshot and SD commit are in progress.
+Candidate ABI 0.11 also pauses it for the visible dense menu, with save
+controllers and ARM polling still available.
 Detach, reset, core switch, and golden reboot first force this barrier; a
 failed commit retains the dirty image and refuses the destructive operation.
 
 The save path covers external RAM for the battery-bearing ROM/RAM, MBC1,
 MBC2, MMM01, MBC3, MBC5, MBC6, Camera, HuC3, and HuC1 layouts represented by
 the cartridge header. MBC3 wall-clock state and the internal EEPROM/backup
-RAM used by MBC7 and TAMA are not persisted yet. These source changes pass
-portable firmware and HDL tests. Fresh `2026090F` PAL, NTSC, and PSRAM-enabled
-GBC Vivado builds, the matching Vitis supervisor, and Bootgen packaging pass.
+RAM used by MBC7 and TAMA are not persisted yet. These save-path changes passed
+portable firmware and HDL tests. The earlier `2026090F` PAL, NTSC, and
+PSRAM-enabled GBC Vivado builds, matching Vitis supervisor, and Bootgen
+packaging passed.
 The earlier PSRAM-enabled `2026090E` image ran both a RAM-backed MBC5 cartridge
 and a no-RAM MBC5 cartridge. After installing `2026090F`, the user confirmed
 physical GBC game-save persistence on 2026-09-04.
-Broader mapper, input, audio, rollback, and repeated-switch coverage is still
-required before calling the complete GBC path qualified.
-The settings and supervisor-shell source pass fresh ABI 0.9 `20260913` Vivado,
-exFAT-enabled Vitis, and package builds. Board tests remain for no-core startup,
+On 2026-09-14 the owner confirmed that the current GBC implementation and
+saves were tested and work. This closes the functional baseline with the
+retained `20260913` core; see [GBC baseline](GBC_BASELINE.md). Broader mapper,
+input-device, audio, rollback, repeated-switch, and power-loss qualification
+remain separate from that acceptance.
+The earlier settings and supervisor-shell work passed ABI 0.9 `20260913`
+Vivado, exFAT-enabled Vitis, and package builds. Board tests remain for no-core startup,
 explicit opt-in Autoboot, per-core restoration, corrupt-file fallback, and
 interrupted settings writes.

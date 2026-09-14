@@ -1,10 +1,13 @@
 # MiSTer Game Boy Import Record
 
-Status: 47 allowlisted files imported, SHA-256 locked, and listed in the
-license ledger. Portable firmware and HDL tests pass. PSRAM-enabled build
-`2026090E` passes the Vivado 2025.2/Vitis 2025.2 flow and its first board
-tests: the supervisor switched from C64 to GBC and Tomb Raider and V-Rally ran
-beyond their former white-screen transition.
+Status: the GBC functional baseline is complete. On 2026-09-14 the owner
+confirmed the current implementation and saves were tested and work. The
+accepted package retains PSRAM-enabled `20260913` (ABI 0.9); see
+[GBC baseline](GBC_BASELINE.md) for artifacts, evidence, and remaining limits.
+
+The import contains 47 allowlisted files, SHA-256 locked and listed in the
+license ledger. The build results below preserve the integration history;
+`2026090E` and `2026090F` are superseded milestones.
 
 ## Pin
 
@@ -27,6 +30,10 @@ first adapter supports:
 - stereo audio sampled onto the common 48 kHz event stream; and
 - the open SameBoy-derived CGB bootstrap, with an optional exact-size run-time
   override.
+
+The accepted adapter also provides journaled external battery-RAM saves,
+shared menu/core selection, reset and media barriers, and keyboard fallback
+through the common input service.
 
 SGB, MegaDuck, camera UI, link cable, cheats, rewind, savestates, borders, and
 persistent RTC handling are outside the first adapter. Current Multitini
@@ -82,8 +89,10 @@ application, and Bootgen packaging gates. A usable cartridge image must set
 `MULTITINI_ENABLE_GBC_PSRAM=1`. The `2026090E` opt-in image passes those vendor
 gates with +0.211 ns setup and +0.055 ns hold slack. Its installed package
 loaded Tomb Raider (MBC5+RAM+battery, 4 MiB) and V-Rally (MBC5, 1 MiB), and
-both ran into gameplay on the connected board. A broader mapper matrix,
-RTC behavior, input, audio, and repeated switching remain open. Newer source
+both ran into gameplay on the connected board. At that milestone a broader
+mapper matrix, RTC behavior, input, audio, and repeated switching remained
+open. The accepted baseline and remaining qualification scope are recorded
+in [GBC baseline](GBC_BASELINE.md). The subsequent save implementation
 restores and snapshots supported battery-backed external RAM through PSRAM,
 uses the common reverse media stream for full-image commits, and journals each
 `<cartridge>.sav` update before acknowledging it. Reset, detach, core switch,

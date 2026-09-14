@@ -81,6 +81,7 @@ run_test tb_async_mailbox \
     "$repo_root/hdl/sim/tb_async_mailbox.sv"
 
 run_test tb_text_overlay \
+    "$repo_root/hdl/generated/multitini_regs_pkg.sv" \
     "$repo_root/hdl/sim/xilinx_primitives.sv" \
     "$repo_root/hdl/common/multitini_async_mailbox.sv" \
     "$repo_root/hdl/common/multitini_text_overlay.sv" \
@@ -180,6 +181,7 @@ run_test tb_psram_line_service \
     "$repo_root/hdl/sim/tb_psram_line_service.sv"
 
 run_test tb_memory_cdc \
+    "$repo_root/hdl/generated/multitini_regs_pkg.sv" \
     "$repo_root/hdl/sim/xilinx_primitives.sv" \
     "$repo_root/hdl/common/multitini_async_mailbox.sv" \
     "$repo_root/hdl/common/multitini_text_overlay.sv" \
@@ -227,6 +229,7 @@ iverilog -g2012 -Wall -Wimplicit -i -s multitini_one_top \
     "$repo_root/hdl/common/multitini_psram_bist.sv" \
     "$repo_root/hdl/common/multitini_psram_line_service.sv" \
     "$repo_root/hdl/common/multitini_async_mailbox.sv" \
+    "$repo_root/hdl/common/multitini_text_overlay.sv" \
     "$repo_root/hdl/common/multitini_memory_cdc.sv" \
     "$repo_root/hdl/common/multitini_cdc_pulse_toggle.sv" \
     "$repo_root/hdl/board/multitini_c64_video_bridge.sv" \

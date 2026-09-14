@@ -1,5 +1,40 @@
 # Hardware Results
 
+## 2026-09-14: shared interface firmware 20260920 board tested
+
+The owner confirmed that firmware `20260920` was flashed and board tested,
+then requested committing and pushing the changes. This is the firmware-only
+menu-persistence correction over the compact shared interface and automatic
+pause implementation. It uses the `20260919` supervisor and matching C64/GBC
+FPGA packages at ABI 0.11.
+
+The supplied `build/firmware-ui-20260920/FIRMWARE.BIN` is 4,612,980 bytes with
+SHA-256 `c2d8c7fa981cd9991df5c2351339fe760414d3f7c20c73abf7ef2ba61378d7ee`.
+The confirmation is owner-reported board evidence; no additional UART capture
+or independent device readback was taken during this commit. The owner did
+not enumerate per-core test sequences or a test duration.
+
+The preceding build/payload audits retain their original pre-flash status.
+[Shared front end](SHARED_FRONTEND.md) records the behavior, exact build inputs,
+and software/FPGA validation. The retained `20260917` current-package aliases
+are unchanged by this source commit.
+
+## 2026-09-14: GBC functional baseline accepted
+
+The owner confirmed that the current GBC implementation works correctly,
+including saves, and stated that they were tested. This closes the functional
+GBC baseline for the retained PSRAM-enabled `20260913` core (ABI 0.9) in the
+current package with ARM firmware `20260917` and supervisor FPGA `20260915`.
+
+This is owner-reported board evidence. No new UART capture, flash operation,
+or board test was performed during closeout. Earlier records establish
+C64-to-GBC switching, Tomb Raider and V-Rally gameplay, and physical save
+persistence confirmed on 2026-09-04. The new confirmation does not enumerate
+additional games, reset sequences, or interrupted-write cases.
+
+[GBC baseline](GBC_BASELINE.md) records the accepted scope, verified package
+hash, source checks, and separate feature and qualification limits.
+
 ## 20260917: Ultima II Mount & Run passes
 
 The user confirms that Enter in Mount & Run now launches Ultima II and

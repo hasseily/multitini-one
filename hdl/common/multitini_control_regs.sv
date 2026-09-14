@@ -27,6 +27,7 @@ module multitini_control_regs #(
     input  logic         media_submit_ready,
     input  logic         ui_active_visible,
     input  logic         ui_active_bank,
+    input  logic         ui_active_dense,
     input  logic         ui_submit_ready,
 
     input  logic         wr_en,
@@ -68,6 +69,7 @@ module multitini_control_regs #(
     output logic         ui_submit,
     output logic         ui_visible,
     output logic         ui_bank,
+    output logic         ui_dense,
     output logic         irq
 );
     import multitini_regs_pkg::*;
@@ -150,11 +152,13 @@ module multitini_control_regs #(
         if (media_state_eject_pending)
             media_state_word |= MT_MEDIA_STATE_EJECT_PENDING;
 
-        ui_status_word = 32'd0;
+        ui_status_word = MT_UI_STATUS_DENSE_LAYOUT;
         if (ui_active_visible)
             ui_status_word |= MT_UI_STATUS_VISIBLE;
         if (ui_active_bank)
             ui_status_word |= MT_UI_STATUS_BANK;
+        if (ui_active_dense)
+            ui_status_word |= MT_UI_STATUS_DENSE;
         if (ui_submit_ready)
             ui_status_word |= MT_UI_STATUS_READY;
 
@@ -274,7 +278,7 @@ module multitini_control_regs #(
             end
             MT_REG_UI_COMMIT:
                 if ((wr_data & ~(MT_UI_COMMIT_VISIBLE |
-                                 MT_UI_COMMIT_BANK)) != 32'd0 ||
+                                 MT_UI_COMMIT_BANK | MT_UI_COMMIT_DENSE)) != 32'd0 ||
                     !ui_submit_ready)
                     error_set_mask |= MT_ERROR_BAD_WRITE;
             MT_REG_STREAM_DATA_BURST:
@@ -360,6 +364,7 @@ module multitini_control_regs #(
             ui_submit      <= 1'b0;
             ui_visible     <= 1'b0;
             ui_bank        <= 1'b0;
+            ui_dense       <= 1'b0;
         end else begin
             // Byte commands pulse load_submit for one cycle. Burst transfers
             // instead hold it as a conventional ready/valid producer until
@@ -461,10 +466,11 @@ module multitini_control_regs #(
                         command_arg3 <= merge_strobes(command_arg3, wr_data, wr_strb);
                     MT_REG_UI_COMMIT: begin
                         if ((wr_data & ~(MT_UI_COMMIT_VISIBLE |
-                                        MT_UI_COMMIT_BANK)) == 32'd0 &&
+                                        MT_UI_COMMIT_BANK | MT_UI_COMMIT_DENSE)) == 32'd0 &&
                             ui_submit_ready) begin
                             ui_visible <= |(wr_data & MT_UI_COMMIT_VISIBLE);
                             ui_bank <= |(wr_data & MT_UI_COMMIT_BANK);
+                            ui_dense <= |(wr_data & MT_UI_COMMIT_DENSE);
                             ui_submit <= 1'b1;
                         end
                     end

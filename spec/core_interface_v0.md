@@ -9,6 +9,33 @@ The shell drives `clk` and synchronous active-high `reset`. An adapter asserts
 `ready` only after its clocks, writable ROM stores, and internal reset sequence
 are usable. `core_id` is stable while `ready` is high.
 
+## Shared menu pause
+
+ABI 0.11 adds a shared `pause_request` for C64, GBC, and later adapters. The
+shell derives it from committed overlay visibility **and dense mode**, then
+synchronizes it into the machine clock domain. Firmware cannot override pause
+while the dense menu is visible. Closing the menu resumes the preserved machine
+state without asserting reset.
+
+Pause holds machine execution and emulated time, including C64 CIA time-of-day,
+drive CPU/VIAs and disk rotation, and GBC cartridge RTC phase. Machine audio
+is muted for the same interval. Physical clocks, memory transactions, loader
+logic, and disk/save request controllers continue operating. ARM polling must
+continue so pending transfers and battery saves can finish while the machine
+is paused. Input releases also remain accepted; pause does not reset input.
+
+Actions requiring CPU or drive progress first commit the menu hidden and wait
+for the acknowledged hidden state before starting. This includes native LOAD,
+RUN, media changes, ROM-profile changes, and restart. This temporary overlay
+hide preserves the user's requested menu state; completion restores the menu
+and pause after success or failure. A failed hide cancels the action. Only an
+explicit exit closes the menu. Browsing and simple settings remain paused.
+See [Shared front end](../docs/SHARED_FRONTEND.md) for action policy.
+
+The legacy 80x36 overlay retains its previous execution behavior. Older firmware
+does not request dense mode and cannot hide its menu before blocking native
+loads. New firmware always requests dense mode and requires ABI 0.11 packages.
+
 ## Video and audio
 
 Video is unscaled RGB888 plus active-high data enable and explicit syncs. The

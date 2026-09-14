@@ -86,6 +86,7 @@ module tb_stream_burst_mailbox;
         .media_submit_ready(1'b1),
         .ui_active_visible(1'b0),
         .ui_active_bank(1'b0),
+        .ui_active_dense(1'b0),
         .ui_submit_ready(1'b1),
         .wr_en(wr_en),
         .wr_addr(wr_addr),
@@ -124,7 +125,7 @@ module tb_stream_burst_mailbox;
         .media_data_pop(),
         .ui_submit(),
         .ui_visible(),
-        .ui_bank(),
+        .ui_bank(), .ui_dense(),
         .irq()
     );
 

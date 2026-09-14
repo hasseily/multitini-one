@@ -1,9 +1,22 @@
 # Current handoff
 
-The owner accepts the C64 baseline for now. Promotion preserves the tested
-artifacts; it does not rebuild or extend the C64 implementation.
+The owner accepts the C64 and GBC functional baselines. GBC baseline work is
+complete following the 2026-09-14 confirmation that the current implementation
+and saves were tested and work. Promotion preserves the tested artifacts.
+See [GBC baseline](GBC_BASELINE.md) for the accepted scope and evidence.
 
-## Accepted artifacts
+The board-tested compact shared front end uses firmware `20260920` with the
+`20260919` FPGA images (ABI 0.11). Configuration operations preserve the menu's
+open state; only an explicit exit closes it.
+It adds 128x60 text, tighter 14x16 glyphs, 40-file browsing, and automatic
+C64/GBC pause while the menu is visible, alongside core-supplied controls
+and cached presentation. It requires matching new supervisor and core FPGA
+images. On 2026-09-14 the owner confirmed the firmware was flashed and board
+tested and requested the source commit and push. See
+[Shared front end](SHARED_FRONTEND.md) and [Hardware results](HARDWARE_RESULTS.md).
+The generated current-package aliases below remain on the earlier release.
+
+## Retained current-package artifacts
 
 | Component | Build | ABI |
 | --- | --- | --- |
@@ -38,6 +51,8 @@ changed or missing inputs. Generated artifacts remain outside source control.
   earlier `LOAD ERROR!` to the previous corrupted Player image; when and how
   that copy became corrupted is unconfirmed.
 - The owner confirms the fast loader and GBC battery saving work.
+- On 2026-09-14 the owner reaffirmed that the current GBC implementation,
+  including saves, was tested and works, closing the GBC functional baseline.
 - Earlier board work established stand-alone boot and golden recovery,
   live PAL DVI, USB keyboard/gamepad input including wired Xbox 360,
   SD C64/1541 ROM loading, D64 gameplay, C64-to-GBC switching, and
@@ -98,8 +113,9 @@ for rebuilding and [MULTICORE_RUNTIME.md](MULTICORE_RUNTIME.md) for packaging.
   audio/channel/SPDIF qualification remain open. Existing passes should not
   be read as completing every gate in the product plan.
 
-These limits describe the accepted baseline; no further C64 feature or
-troubleshooting work is scheduled by this handoff.
+These limits describe the accepted baselines; no further C64 or GBC feature
+or troubleshooting work is scheduled by this handoff. Optional GBC features
+and broader qualification do not reopen the completed functional baseline.
 
 ## Historical evidence
 

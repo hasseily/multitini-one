@@ -12,6 +12,7 @@ module multitini_c64_1541 #(
     input  logic        clk,
     input  logic        reset,
     input  logic        soft_reset,
+    input  logic        pause_request,
     input  logic        clear_error,
 
     input  logic        drive_rom_write,
@@ -210,16 +211,20 @@ module multitini_c64_1541 #(
     end
 
     // Generate the 16 MHz enable expected by the imported 1541 logic while
-    // preserving the authentic PAL/NTSC C64 master clock.
+    // preserving the authentic PAL/NTSC C64 master clock. Pause holds the
+    // fractional phase and drains the registered CE/PH2 pulses, stopping the
+    // CPU, VIAs and GCR rotation together without stopping media service.
     always_ff @(posedge clk) begin
         drive_ce <= 1'b0;
         if (reset) begin
             drive_phase <= 32'd0;
-        end else if (drive_phase + 32'd16000000 >= CORE_CLOCK_HZ) begin
-            drive_phase <= drive_phase + 32'd16000000 - CORE_CLOCK_HZ;
-            drive_ce    <= 1'b1;
-        end else begin
-            drive_phase <= drive_phase + 32'd16000000;
+        end else if (!pause_request) begin
+            if (drive_phase + 32'd16000000 >= CORE_CLOCK_HZ) begin
+                drive_phase <= drive_phase + 32'd16000000 - CORE_CLOCK_HZ;
+                drive_ce    <= 1'b1;
+            end else begin
+                drive_phase <= drive_phase + 32'd16000000;
+            end
         end
     end
 

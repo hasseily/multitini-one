@@ -3,7 +3,7 @@
 `timescale 1ns / 1ps
 package multitini_regs_pkg;
     localparam logic [15:0] MT_ABI_MAJOR = 16'd0;
-    localparam logic [15:0] MT_ABI_MINOR = 16'd10;
+    localparam logic [15:0] MT_ABI_MINOR = 16'd11;
     localparam logic [31:0] MT_ABI_VERSION = {MT_ABI_MAJOR, MT_ABI_MINOR};
     localparam logic [31:0] MT_MAGIC = 32'h4D543031;
     localparam logic [31:0] MT_SHELL_ID = 32'h4D544F4E;
@@ -85,10 +85,13 @@ package multitini_regs_pkg;
 
     localparam logic [31:0] MT_UI_COMMIT_VISIBLE = 32'h00000001;
     localparam logic [31:0] MT_UI_COMMIT_BANK = 32'h00000002;
+    localparam logic [31:0] MT_UI_COMMIT_DENSE = 32'h00000004;
 
     localparam logic [31:0] MT_UI_STATUS_VISIBLE = 32'h00000001;
     localparam logic [31:0] MT_UI_STATUS_BANK = 32'h00000002;
     localparam logic [31:0] MT_UI_STATUS_READY = 32'h00000004;
+    localparam logic [31:0] MT_UI_STATUS_DENSE_LAYOUT = 32'h00000008;
+    localparam logic [31:0] MT_UI_STATUS_DENSE = 32'h00000010;
 
     localparam logic [31:0] MT_STREAM_STATUS_READY = 32'h00000001;
     localparam logic [31:0] MT_STREAM_STATUS_DRAINED = 32'h00000002;
@@ -102,12 +105,28 @@ package multitini_regs_pkg;
     localparam logic [31:0] MT_MEDIA_BLOCK_COUNT_MASK = 32'h0000FFFF;
     localparam logic [31:0] MT_MEDIA_DATA_BYTE_SHIFT = 32'h00000008;
     localparam logic [31:0] MT_MEDIA_DATA_BYTE_MASK = 32'h0000FF00;
-    localparam logic [31:0] MT_UI_COLUMNS = 32'h00000050;
-    localparam logic [31:0] MT_UI_ROWS = 32'h00000024;
+    localparam logic [31:0] MT_UI_COLUMNS = 32'h00000080;
+    localparam logic [31:0] MT_UI_ROWS = 32'h0000003C;
     localparam logic [31:0] MT_UI_CELL_BYTES = 32'h00000002;
-    localparam logic [31:0] MT_UI_VRAM_BANK_BYTES = 32'h00001680;
-    localparam logic [31:0] MT_UI_VRAM_BANK0_OFFSET = 32'h00001000;
-    localparam logic [31:0] MT_UI_VRAM_BANK1_OFFSET = 32'h00002800;
+    localparam logic [31:0] MT_UI_CELL_WIDTH = 32'h0000000F;
+    localparam logic [31:0] MT_UI_CELL_HEIGHT = 32'h00000012;
+    localparam logic [31:0] MT_UI_FONT_SCALE = 32'h00000002;
+    localparam logic [31:0] MT_UI_GLYPH_X = 32'h00000000;
+    localparam logic [31:0] MT_UI_GLYPH_Y = 32'h00000001;
+    localparam logic [31:0] MT_UI_MIN_ABI_MINOR = 32'h0000000B;
+    localparam logic [31:0] MT_UI_LEGACY_COLUMNS = 32'h00000050;
+    localparam logic [31:0] MT_UI_LEGACY_ROWS = 32'h00000024;
+    localparam logic [31:0] MT_UI_LEGACY_CELL_WIDTH = 32'h00000018;
+    localparam logic [31:0] MT_UI_LEGACY_CELL_HEIGHT = 32'h0000001E;
+    localparam logic [31:0] MT_UI_LEGACY_FONT_SCALE = 32'h00000003;
+    localparam logic [31:0] MT_UI_LEGACY_GLYPH_X = 32'h00000001;
+    localparam logic [31:0] MT_UI_LEGACY_GLYPH_Y = 32'h00000003;
+    localparam logic [31:0] MT_UI_LEGACY_VRAM_BANK_BYTES = 32'h00001680;
+    localparam logic [31:0] MT_UI_LEGACY_VRAM_BANK0_OFFSET = 32'h00001000;
+    localparam logic [31:0] MT_UI_LEGACY_VRAM_BANK1_OFFSET = 32'h00002800;
+    localparam logic [31:0] MT_UI_VRAM_BANK_BYTES = 32'h00003C00;
+    localparam logic [31:0] MT_UI_VRAM_BANK0_OFFSET = 32'h00004000;
+    localparam logic [31:0] MT_UI_VRAM_BANK1_OFFSET = 32'h00008000;
     localparam logic [31:0] MT_UI_WINDOW_SPAN = 32'h00010000;
     localparam logic [31:0] MT_STREAM_BURST_BYTES = 32'h00000004;
 

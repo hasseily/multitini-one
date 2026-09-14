@@ -1,0 +1,50 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+#ifndef MULTITINI_CORE_FRONTEND_H
+#define MULTITINI_CORE_FRONTEND_H
+
+#include "multitini_content.h"
+#include "multitini_menu.h"
+
+/* A snapshot of services already owned by the runtime. Building a menu never
+ * performs I/O or changes core, media, input, or save state. String storage must
+ * outlive the resulting view. A zero core ID is the standby supervisor. */
+typedef struct {
+    uint32_t core_id;
+    uint16_t abi_minor;
+    bool services_ready;
+    bool drive8_ready;
+    bool drive8_mounted;
+    bool drive8_d64_mounted;
+    const char *drive8_name;
+    bool cartridge_attached;
+    const char *cartridge_name;
+    bool save_active;
+    bool save_dirty;
+    bool save_faulted;
+    bool symbolic_keyboard;
+    uint8_t joystick_port;
+    bool fast_roms_active;
+    bool fast_roms_fallback;
+    bool cpu_turbo_enabled;
+} mt_core_frontend_state_t;
+
+typedef struct {
+    mt_menu_item_t media_items[MT_MENU_MAX_ITEMS];
+    mt_menu_item_t input_items[MT_MENU_MAX_ITEMS];
+    mt_menu_core_option_t core_options[MT_MENU_MAX_CORE_OPTIONS];
+} mt_core_frontend_t;
+
+/* Replace only the profile-owned view fields. The caller retains ownership of
+ * catalog, active selection, files, status, content root, and shared settings.
+ * frontend must remain alive for as long as the view is used. Unknown core IDs
+ * get neutral empty pages rather than inheriting another machine's controls. */
+void mt_core_frontend_apply(mt_core_frontend_t *frontend,
+                            const mt_core_frontend_state_t *state,
+                            mt_menu_view_t *view);
+bool mt_core_frontend_browser_supported(uint32_t core_id,
+                                        mt_menu_browser_t browser);
+bool mt_core_frontend_accepts_content(uint32_t core_id,
+                                      mt_menu_browser_t browser,
+                                      mt_content_type_t type);
+
+#endif

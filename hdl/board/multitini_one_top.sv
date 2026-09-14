@@ -158,8 +158,12 @@ module multitini_one_top #(
     logic        ui_submit_ready;
     logic        ui_commit_visible;
     logic        ui_commit_bank;
+    logic        ui_commit_dense;
     logic        ui_active_visible_control;
     logic        ui_active_bank_control;
+    logic        ui_active_dense_control;
+    logic        ui_menu_pause_requested;
+    logic        ui_audio_mute;
     logic        ui_pixel_opaque;
     logic [15:0] ui_pixel_rgb565;
     logic        video_enable;
@@ -170,6 +174,7 @@ module multitini_one_top #(
     logic [15:0] machine_video_rgb565;
 
     logic        c64_core_reset_request;
+    logic        core_menu_pause;
     logic        c64_cpu_turbo_enable;
     logic        c64_drive_parallel_enable;
     logic [31:0] c64_core_id;
@@ -424,6 +429,7 @@ module multitini_one_top #(
         .media_submit_ready(media_submit_ready),
         .ui_active_visible(ui_active_visible_control),
         .ui_active_bank(ui_active_bank_control),
+        .ui_active_dense(ui_active_dense_control),
         .ui_submit_ready(ui_submit_ready),
         .wr_en(control_wr_en), .wr_addr(reg_wr_addr[11:0]),
         .wr_data(reg_wr_data),
@@ -450,6 +456,7 @@ module multitini_one_top #(
         .media_data_pop(media_data_pop),
         .ui_submit(ui_submit), .ui_visible(ui_commit_visible),
         .ui_bank(ui_commit_bank),
+        .ui_dense(ui_commit_dense),
         .irq(shell_irq)
     );
 
@@ -457,8 +464,16 @@ module multitini_one_top #(
         control_wr_en = reg_wr_en && reg_wr_addr < 16'h1000;
         control_rd_en = reg_rd_en && reg_rd_addr < 16'h1000;
         ui_vram_wr_en = reg_wr_en &&
-            ((reg_wr_addr >= 16'h1000 && reg_wr_addr < 16'h2680) ||
-             (reg_wr_addr >= 16'h2800 && reg_wr_addr < 16'h3E80));
+            ((reg_wr_addr >= MT_UI_VRAM_BANK0_OFFSET &&
+              reg_wr_addr < MT_UI_VRAM_BANK0_OFFSET + MT_UI_VRAM_BANK_BYTES) ||
+             (reg_wr_addr >= MT_UI_VRAM_BANK1_OFFSET &&
+              reg_wr_addr < MT_UI_VRAM_BANK1_OFFSET + MT_UI_VRAM_BANK_BYTES) ||
+             (reg_wr_addr >= MT_UI_LEGACY_VRAM_BANK0_OFFSET &&
+              reg_wr_addr < MT_UI_LEGACY_VRAM_BANK0_OFFSET +
+                            MT_UI_LEGACY_VRAM_BANK_BYTES) ||
+             (reg_wr_addr >= MT_UI_LEGACY_VRAM_BANK1_OFFSET &&
+              reg_wr_addr < MT_UI_LEGACY_VRAM_BANK1_OFFSET +
+                            MT_UI_LEGACY_VRAM_BANK_BYTES));
         reg_rd_data = reg_rd_addr < 16'h1000 ? control_rd_data : 32'd0;
     end
 
@@ -736,6 +751,30 @@ module multitini_one_top #(
         .dst_valid(c64_media_command_valid), .dst_ready(1'b1)
     );
 
+    // Dense-menu visibility is a shared pause request, independent of reset.
+    // Its synchronized state comes from the vblank-committed overlay, so a
+    // stalled ARM service cannot leave a visible menu over a running game.
+    // Legacy firmware does not hide its overlay before synchronous LOADs;
+    // retaining its old behavior keeps ABI 0.11 backward compatible.
+    // Register combined controls before either clock-domain crossing. A
+    // combinational expression at a synchronizer input can carry glitches.
+    always_ff @(posedge control_clk) begin
+        if (!control_aresetn) begin
+            ui_menu_pause_requested <= 1'b0;
+            ui_audio_mute <= 1'b1;
+        end else begin
+            ui_menu_pause_requested <= ui_active_visible_control &&
+                                       ui_active_dense_control;
+            ui_audio_mute <= (ui_active_visible_control &&
+                             ui_active_dense_control) ||
+                            |(shell_control & MT_CONTROL_AUDIO_MUTE);
+        end
+    end
+    cdc_bit_sync core_menu_pause_sync (
+        .clk(c64_clk), .resetn(c64_aresetn),
+        .din(ui_menu_pause_requested), .dout(core_menu_pause)
+    );
+
     // Build one complete machine at a time. Both C64 standards use the same
     // whole-frame ring. The 6569 PAL blanking window is 382x270; the selected
     // 6567R8 NTSC timing is 404x250. Four-times scaling fills PAL vertically
@@ -750,6 +789,7 @@ module multitini_one_top #(
             ) machine_adapter (
                 .core_clk(c64_clk), .reset(!c64_aresetn),
                 .core_reset_request(c64_core_reset_request),
+                .pause_request(core_menu_pause),
                 .cpu_turbo_enable(c64_cpu_turbo_enable),
                 .drive_parallel_enable(c64_drive_parallel_enable),
                 .load_abort(c64_load_abort),
@@ -848,6 +888,7 @@ module multitini_one_top #(
             (* DONT_TOUCH = "yes" *) multitini_gameboy_adapter machine_adapter (
                 .core_clk(c64_clk), .reset(!c64_aresetn),
                 .core_reset_request(c64_core_reset_request),
+                .pause_request(core_menu_pause),
                 .clear_load_error(c64_load_error_clear),
                 .input_code(c64_input_code), .input_value(c64_input_value),
                 .input_valid(c64_input_valid), .input_ready(c64_input_ready),
@@ -1025,8 +1066,10 @@ module multitini_one_top #(
         .vram_wr_data(reg_wr_data), .vram_wr_strb(reg_wr_strb),
         .commit_valid(ui_submit), .commit_visible(ui_commit_visible),
         .commit_bank(ui_commit_bank), .commit_ready(ui_submit_ready),
+        .commit_dense(ui_commit_dense),
         .active_visible_control(ui_active_visible_control),
         .active_bank_control(ui_active_bank_control),
+        .active_dense_control(ui_active_dense_control),
         .pixel_clk(video_clk), .pixel_resetn(video_aresetn),
         .scan_x(video_scan_x), .scan_y(video_scan_y),
         .vblank_start(video_vblank_start),
@@ -1054,8 +1097,7 @@ module multitini_one_top #(
         .audio_mclk(audio_i2s_mclk),
         .test_tone_async(|(shell_control &
                            multitini_regs_pkg::MT_CONTROL_AUDIO_TEST_ENABLE)),
-        .mute_async(|(shell_control &
-                      multitini_regs_pkg::MT_CONTROL_AUDIO_MUTE)),
+        .mute_async(ui_audio_mute),
         .i2s_lrck(audio_i2s_lrck), .i2s_sdata(audio_i2s_sdata),
         .i2s_bclk(audio_i2s_bick), .spdif_out(audio_spdif_out)
     );

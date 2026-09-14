@@ -12,6 +12,9 @@
 #define MT_MENU_MAX_CORES 16U
 #define MT_MENU_FILE_NAME_MAX 96U
 #define MT_MENU_MAX_CORE_OPTIONS 8U
+#define MT_MENU_MAX_ITEMS 16U
+/* The content list leaves room for the shared header, help and footer. */
+#define MT_MENU_LIST_ROWS (MT_UI_ROWS - 20U)
 
 typedef enum {
     MT_MENU_PAGE_CORES = 0,
@@ -63,8 +66,14 @@ typedef struct {
 typedef struct {
     const char *label;
     const char *value;
+    const char *help;
+    mt_menu_action_kind_t action;
+    size_t argument;
     bool enabled;
-} mt_menu_core_option_t;
+    mt_ui_color_t value_color;
+} mt_menu_item_t;
+
+typedef mt_menu_item_t mt_menu_core_option_t;
 
 typedef struct {
     mt_menu_action_kind_t kind;
@@ -78,30 +87,24 @@ typedef struct {
     size_t core_count;
     const char *active_core_id;
     const char *active_variant_id;
-    const char *drive8_name;
-    const char *content_name;
     const char *status_text;
+    const char *content_root;
+    const char *core_description;
+    const char *input_help;
     const mt_menu_file_t *files;
     size_t file_count;
     const mt_menu_core_option_t *core_options;
     size_t core_option_count;
-    bool drive8_mounted;
-    bool drive8_d64_mounted;
-    bool mount_and_run_supported;
-    bool cartridge_attached;
-    bool drive8_supported;
-    bool cartridge_supported;
-    bool program_supported;
-    bool save_supported;
-    bool save_active;
+    const mt_menu_item_t *media_items;
+    size_t media_item_count;
+    const mt_menu_item_t *input_items;
+    size_t input_item_count;
     bool save_dirty;
     bool save_faulted;
-    bool c64_input_settings;
     bool video_test_enabled;
     bool settings_auto_boot;
     bool settings_faulted;
-    bool symbolic_keyboard;
-    uint8_t joystick_port;
+    mt_ui_color_t status_color;
 } mt_menu_view_t;
 
 typedef struct {
@@ -110,12 +113,18 @@ typedef struct {
     size_t row;
     mt_menu_browser_t browser;
     size_t selected_variant[MT_MENU_MAX_CORES];
+    size_t page_row[MT_MENU_PAGE_COUNT];
+    size_t first_row;
 } mt_menu_t;
 
 enum {
     MT_MENU_HID_ENTER = 0x28,
     MT_MENU_HID_ESCAPE = 0x29,
     MT_MENU_HID_TAB = 0x2B,
+    MT_MENU_HID_HOME = 0x4A,
+    MT_MENU_HID_PAGE_UP = 0x4B,
+    MT_MENU_HID_END = 0x4D,
+    MT_MENU_HID_PAGE_DOWN = 0x4E,
     MT_MENU_HID_F12 = 0x45,
     MT_MENU_HID_RIGHT = 0x4F,
     MT_MENU_HID_LEFT = 0x50,
@@ -124,8 +133,14 @@ enum {
 };
 
 void mt_menu_init(mt_menu_t *menu, const mt_menu_view_t *view);
+void mt_menu_open_browser(mt_menu_t *menu, mt_menu_browser_t browser);
+void mt_menu_close_browser(mt_menu_t *menu);
 mt_menu_action_t mt_menu_key(mt_menu_t *menu, const mt_menu_view_t *view,
                              uint8_t hid_usage, bool pressed);
+mt_menu_action_t mt_menu_key_with_modifiers(mt_menu_t *menu,
+                                            const mt_menu_view_t *view,
+                                            uint8_t hid_usage, bool pressed,
+                                            uint8_t modifiers);
 void mt_menu_render(const mt_menu_t *menu, const mt_menu_view_t *view,
                     mt_ui_frame_t *frame);
 const char *mt_menu_page_name(mt_menu_page_t page);

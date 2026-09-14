@@ -7,6 +7,7 @@ spec/c64_interface_v0.json,Multitini One,,GPL-3.0-only,source-reviewed,C64 load 
 scripts/**,Multitini One,,GPL-3.0-only,reviewed,Original build and policy scripts unless a narrower row applies
 scripts/create_vitis_workspace.py,Appletini One and Multitini One,511dd24f344eafc0056b9519541a185f4c1b028b,GPL-3.0-only,pending-vitis,Multitini generator with FatFs LFN exFAT configuration R0.16 patch-2 media validation RTC timestamp hook and bounded no-card handling ported from Appletini One
 firmware/**,Multitini One,,GPL-3.0-only,reviewed,Original firmware unless a narrower row applies
+tools/menu_preview.c,Multitini One,,GPL-3.0-only,host-tested,Original synthetic UI scenarios rendered by production firmware
 hdl/common/multitini_font7x8.mem,Appletini One,ba0aca2c4ddf3468804c5ae982f19b4891fc985e,GPL-3.0-only,sim-tested,Derived bit rows from the embedded Appletini fb16 ASCII 7x8 font
 firmware/common/c64_content.c,Multitini One,,GPL-3.0-only,host-tested,Strict PRG and conservative read-only CRT validation plus stream helpers; Vitis and board pending
 firmware/include/multitini_c64_content.h,Multitini One,,GPL-3.0-only,host-tested,Public C64 PRG and CRT content API; Vitis and board pending

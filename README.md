@@ -5,8 +5,8 @@ It runs the GPL MiSTer C64 core and a Game Boy Color adapter through a shared
 supervisor, menu, input, audio, storage, and core-loading system. It does not
 use an Apple II host.
 
-The C64 baseline is accepted for now. The current package combines ARM
-firmware **20260917**, supervisor and C64 PAL/NTSC FPGA images **20260915**
+The C64 and GBC functional baselines are accepted. The current package combines
+ARM firmware **20260917**, supervisor and C64 PAL/NTSC FPGA images **20260915**
 (ABI 0.10), and the unchanged PSRAM-enabled GBC image **20260913** (ABI 0.9).
 These build IDs intentionally differ. See
 [Current release](docs/CURRENT_RELEASE.md) for installation and exact contents.
@@ -19,6 +19,10 @@ loading and GBC battery saving are also confirmed on the board. Earlier
 board work established live PAL video, USB keyboard/gamepad input, core
 switching, and the dual-SID scratching fix. This is the tested baseline,
 not exhaustive game or hardware qualification.
+
+On 2026-09-14 the owner confirmed the current GBC implementation works,
+including tested saves, and accepted completion of that baseline. See
+[GBC baseline](docs/GBC_BASELINE.md) for its scope and evidence.
 
 ## Use the current package
 
@@ -51,8 +55,12 @@ explicit direct-RAM shortcut for eligible BASIC programs.
 
 - [Handoff status](docs/HANDOFF_STATUS.md): current build, validation, and
   remaining limits.
+- [Shared front end](docs/SHARED_FRONTEND.md): board-tested firmware `20260920`,
+  Appletini-style layout, core profiles, automatic pause, efficient redraws, and previews.
 - [Multicore runtime](docs/MULTICORE_RUNTIME.md): packages, menu controls,
   settings, core switching, and GBC saves.
+- [GBC baseline](docs/GBC_BASELINE.md): accepted gameplay and save behavior,
+  exact package, and deferred features.
 - [C64 SD workflow](docs/C64_SD_STORAGE.md): ROMs, Mount & Run, disk swaps,
   D64 persistence, G64 scope, and serial recovery.
 - [C64 fast disk](docs/C64_FAST_DISK.md): paired ROM protocol, reproducible

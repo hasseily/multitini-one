@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import sys
 import tempfile
 import unittest
@@ -28,8 +29,9 @@ class CorePackageToolTests(unittest.TestCase):
             "--variant", "default|GB/GBC|core.bit",
             "--output", "package",
         ])
-        self.assertEqual(args.abi_major, 0)
-        self.assertEqual(args.abi_minor, 10)
+        interface = json.loads((ROOT / "spec/interface_v0.json").read_text())
+        self.assertEqual(args.abi_major, interface["abi"]["major"])
+        self.assertEqual(args.abi_minor, interface["abi"]["minor"])
 
     def test_variant_and_paths_reject_unsafe_values(self) -> None:
         parsed = MODULE.parse_variant("pal|PAL 50 Hz|build/core.bit")
@@ -72,6 +74,7 @@ class CorePackageToolTests(unittest.TestCase):
                 manifest = MODULE.create_package(args)
             text = manifest.read_text(encoding="ascii")
             self.assertIn("schema=1", text)
+            self.assertIn("abi=0.5", text)  # Explicit historical ABI is preserved.
             self.assertIn("core_id=0x43363420", text)
             self.assertIn(
                 "variant=pal|PAL 50 Hz|c64-pal.bin|1048576|", text)

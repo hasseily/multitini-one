@@ -2,115 +2,263 @@
 `timescale 1ns / 1ps
 
 module tb_text_overlay;
-    logic control_clk = 1'b0;
-    logic control_resetn = 1'b0;
-    logic vram_wr_en = 1'b0;
-    logic [15:0] vram_wr_addr = 16'd0;
-    logic [31:0] vram_wr_data = 32'd0;
-    logic [3:0] vram_wr_strb = 4'd0;
-    logic commit_valid = 1'b0;
-    logic commit_visible = 1'b0;
-    logic commit_bank = 1'b0;
-    logic commit_ready;
-    logic active_visible_control;
-    logic active_bank_control;
-    logic pixel_clk = 1'b0;
-    logic pixel_resetn = 1'b0;
-    logic [11:0] scan_x = 12'd0;
-    logic [11:0] scan_y = 12'd0;
-    logic vblank_start = 1'b0;
-    logic pixel_opaque;
+    import multitini_regs_pkg::*;
+    localparam int H_ACTIVE = 1920, H_TOTAL = 2200;
+    localparam int V_ACTIVE = 1080, V_TOTAL = 1125;
+    localparam int CELL_COUNT = MT_UI_COLUMNS * MT_UI_ROWS;
+    logic control_clk = 0, control_resetn = 0;
+    logic vram_wr_en = 0;
+    logic [15:0] vram_wr_addr = 0;
+    logic [31:0] vram_wr_data = 0;
+    logic [3:0] vram_wr_strb = 0;
+    logic commit_valid = 0, commit_visible = 0, commit_bank = 0, commit_dense = 0;
+    logic commit_ready, active_visible_control, active_bank_control, active_dense_control;
+    logic pixel_clk = 0, pixel_resetn = 0;
+    logic [11:0] scan_x = 0, scan_y = 0;
+    logic vblank_start, pixel_opaque;
     logic [15:0] pixel_rgb565;
+    logic [15:0] expected_cells [0:1][0:CELL_COUNT-1];
+    logic [63:0] expected_font [0:95];
+    bit verify_pixels = 0, expected_bank = 0, expected_dense = 0, expected_visible = 0;
+    integer verified_active = 0, verified_blank = 0;
+    integer verified_foreground = 0, verified_transparent = 0, completed_frames = 0;
 
     always #5 control_clk = !control_clk;
     always #3 pixel_clk = !pixel_clk;
+    assign vblank_start = scan_x == 0 && scan_y == V_ACTIVE;
+    always_ff @(posedge pixel_clk) begin
+        if (!pixel_resetn) begin
+            scan_x <= 0;
+            scan_y <= 0;
+        end else if (scan_x == H_TOTAL - 1) begin
+            scan_x <= 0;
+            scan_y <= scan_y == V_TOTAL - 1 ? 12'd0 : scan_y + 12'd1;
+        end else scan_x <= scan_x + 12'd1;
+    end
 
-    multitini_text_overlay dut (
-        .control_clk(control_clk), .control_resetn(control_resetn),
-        .vram_wr_en(vram_wr_en), .vram_wr_addr(vram_wr_addr),
-        .vram_wr_data(vram_wr_data), .vram_wr_strb(vram_wr_strb),
-        .commit_valid(commit_valid), .commit_visible(commit_visible),
-        .commit_bank(commit_bank), .commit_ready(commit_ready),
-        .active_visible_control(active_visible_control),
-        .active_bank_control(active_bank_control),
-        .pixel_clk(pixel_clk), .pixel_resetn(pixel_resetn),
-        .scan_x(scan_x), .scan_y(scan_y), .vblank_start(vblank_start),
-        .pixel_opaque(pixel_opaque), .pixel_rgb565(pixel_rgb565)
-    );
+    multitini_text_overlay dut (.*);
 
     task automatic check_value(input logic condition, input string message);
-        if (!condition) begin
-            $display("FAIL: %s", message);
-            $fatal(1);
-        end
+        if (condition !== 1'b1) $fatal(1, "%s", message);
     endtask
 
+    function automatic logic [15:0] reference_palette(input logic [3:0] index);
+        case (index)
+            0: reference_palette = 16'h0841;
+            1: reference_palette = 16'h10A3;
+            2: reference_palette = 16'h18E4;
+            3: reference_palette = 16'h10C3;
+            4: reference_palette = 16'h2166;
+            5: reference_palette = 16'hE75E;
+            6: reference_palette = 16'hA596;
+            7: reference_palette = 16'h39D7;
+            8: reference_palette = 16'h6CFB;
+            9: reference_palette = 16'hF5AB;
+            10: reference_palette = 16'h8ED1;
+            11: reference_palette = 16'h3186;
+            12: reference_palette = 16'h4208;
+            13: reference_palette = 16'hF800;
+            14: reference_palette = 16'h07E0;
+            15: reference_palette = 16'hFFFF;
+        endcase
+    endfunction
+
+    // Sample before this edge's pipeline updates, just as the video output
+    // stage does. The reference derives every pixel from raster coordinates.
+    always @(posedge pixel_clk) begin : pixel_scoreboard
+        integer columns, cell_width, cell_height, scale, origin_x, origin_y;
+        integer index, local_x, local_y, glyph_x, glyph_y;
+        logic [15:0] cell_value, color;
+        logic [63:0] glyph;
+        logic foreground, opaque;
+        if (pixel_resetn)
+            check_value(dut.read_address < CELL_COUNT, "BRAM read address within all 7680 cells");
+        if (verify_pixels) begin
+            if (scan_x < H_ACTIVE && scan_y < V_ACTIVE) begin
+                columns = expected_dense ? MT_UI_COLUMNS : MT_UI_LEGACY_COLUMNS;
+                cell_width = expected_dense ? MT_UI_CELL_WIDTH : MT_UI_LEGACY_CELL_WIDTH;
+                cell_height = expected_dense ? MT_UI_CELL_HEIGHT : MT_UI_LEGACY_CELL_HEIGHT;
+                scale = expected_dense ? MT_UI_FONT_SCALE : MT_UI_LEGACY_FONT_SCALE;
+                origin_x = expected_dense ? MT_UI_GLYPH_X : MT_UI_LEGACY_GLYPH_X;
+                origin_y = expected_dense ? MT_UI_GLYPH_Y : MT_UI_LEGACY_GLYPH_Y;
+                index = (scan_y / cell_height) * columns + scan_x / cell_width;
+                local_x = scan_x % cell_width;
+                local_y = scan_y % cell_height;
+                cell_value = expected_cells[expected_bank][index];
+                glyph = cell_value[6:0] >= 32 ? expected_font[cell_value[6:0] - 32] : 64'd0;
+                foreground = 0;
+                if (local_x >= origin_x && local_x < origin_x + 7 * scale &&
+                    local_y >= origin_y && local_y < origin_y + 8 * scale) begin
+                    glyph_x = (local_x - origin_x) / scale;
+                    glyph_y = (local_y - origin_y) / scale;
+                    foreground = glyph[glyph_y * 8 + glyph_x];
+                end
+                opaque = expected_visible && (foreground || !cell_value[15]);
+                color = reference_palette(foreground ? cell_value[10:7] : cell_value[14:11]);
+                if (pixel_opaque !== opaque || pixel_rgb565 !== color)
+                    $fatal(1, "pixel (%0d,%0d), bank=%0d dense=%0d cell=%0d: expected %0d/%04h got %0d/%04h",
+                           scan_x, scan_y, expected_bank, expected_dense, index,
+                           opaque, color, pixel_opaque, pixel_rgb565);
+                verified_active = verified_active + 1;
+                if (foreground) verified_foreground = verified_foreground + 1;
+                if (!opaque) verified_transparent = verified_transparent + 1;
+            end else begin
+                check_value(!pixel_opaque, "all horizontal and vertical blanking transparent");
+                verified_blank = verified_blank + 1;
+            end
+        end
+    end
+
     task automatic write_word(input logic [15:0] address,
-                              input logic [31:0] value);
+                              input logic [31:0] value, input logic [3:0] strobes);
         @(negedge control_clk);
         vram_wr_addr = address;
         vram_wr_data = value;
-        vram_wr_strb = 4'hF;
-        vram_wr_en = 1'b1;
+        vram_wr_strb = strobes;
+        vram_wr_en = 1;
         @(negedge control_clk);
-        vram_wr_en = 1'b0;
+        vram_wr_en = 0;
     endtask
 
-    task automatic commit(input logic visible, input logic bank);
+    task automatic set_cells(input integer bank, input integer index,
+                             input logic [31:0] value, input logic [3:0] strobes,
+                             input bit legacy);
+        integer address;
+        address = legacy ? (bank ? MT_UI_LEGACY_VRAM_BANK1_OFFSET : MT_UI_LEGACY_VRAM_BANK0_OFFSET) :
+                           (bank ? MT_UI_VRAM_BANK1_OFFSET : MT_UI_VRAM_BANK0_OFFSET);
+        write_word(address + index * 2, value, strobes);
+        if (strobes[0]) expected_cells[bank][index][7:0] = value[7:0];
+        if (strobes[1]) expected_cells[bank][index][15:8] = value[15:8];
+        if (strobes[2]) expected_cells[bank][index + 1][7:0] = value[23:16];
+        if (strobes[3]) expected_cells[bank][index + 1][15:8] = value[31:24];
+    endtask
+
+    task automatic request_commit(input bit visible, input bit bank, input bit dense);
+        bit previous_visible, previous_bank, previous_dense;
+        previous_visible = dut.active_visible;
+        previous_bank = dut.active_bank;
+        previous_dense = dut.active_dense;
+        @(negedge control_clk);
         while (!commit_ready) @(negedge control_clk);
         commit_visible = visible;
         commit_bank = bank;
-        commit_valid = 1'b1;
+        commit_dense = dense;
+        commit_valid = 1;
         @(negedge control_clk);
-        commit_valid = 1'b0;
-        repeat (3) @(posedge pixel_clk);
-        vblank_start = 1'b1;
-        @(posedge pixel_clk);
-        #1;
-        vblank_start = 1'b0;
-        repeat (3) @(posedge control_clk);
+        commit_valid = 0;
+        repeat (16) @(negedge pixel_clk);
+        check_value(!commit_ready, "commit remains pending before vertical blank");
+        check_value(dut.active_visible == previous_visible &&
+                    dut.active_bank == previous_bank && dut.active_dense == previous_dense,
+                    "bank, visibility, geometry stay atomic before vertical blank");
+        // The mailbox must retain its snapshot of all three input fields.
+        commit_visible = !visible;
+        commit_bank = !bank;
+        commit_dense = !dense;
     endtask
 
-    task automatic prefetch_first_cell;
-        scan_x = 12'd2199;
-        scan_y = 12'd1124;
-        @(posedge pixel_clk);
-        #1;
-        scan_x = 12'd0;
-        scan_y = 12'd0;
-        #1;
+    task automatic await_commit(input bit visible, input bit bank, input bit dense);
+        while (!commit_ready) @(negedge control_clk);
+        check_value(active_visible_control == visible && active_bank_control == bank &&
+                    active_dense_control == dense, "committed state synchronizes to control clock");
+        expected_visible = visible;
+        expected_bank = bank;
+        expected_dense = dense;
     endtask
+
+    task automatic check_frame;
+        integer active_before, blank_before;
+        while (scan_x != 0 || scan_y != 0) @(negedge pixel_clk);
+        active_before = verified_active;
+        blank_before = verified_blank;
+        verify_pixels = 1;
+        repeat (H_TOTAL * V_TOTAL) @(negedge pixel_clk);
+        verify_pixels = 0;
+        check_value(verified_active - active_before == H_ACTIVE * V_ACTIVE,
+                    "every active pixel verified, including final row and column");
+        check_value(verified_blank - blank_before == H_TOTAL * V_TOTAL - H_ACTIVE * V_ACTIVE,
+                    "every blanking pixel verified");
+        completed_frames = completed_frames + 1;
+        $display("PASS: full raster bank=%0d dense=%0d visible=%0d", expected_bank,
+                 expected_dense, expected_visible);
+        $fflush();
+    endtask
+
+    task automatic frame_and_next_commit(input bit visible, input bit bank, input bit dense);
+        fork
+            check_frame();
+            begin
+                @(negedge pixel_clk);
+                while (!verify_pixels) @(negedge pixel_clk);
+                while (scan_x != 100 || scan_y != 100) @(negedge pixel_clk);
+                request_commit(visible, bank, dense);
+            end
+        join
+        await_commit(visible, bank, dense);
+    endtask
+
+    initial begin : stimulus
+        integer bank, index, lane;
+        logic [15:0] low_cell, high_cell;
+        $readmemh("multitini_font7x8.mem", expected_font);
+        check_value(MT_UI_COLUMNS == 128 && MT_UI_ROWS == 60 &&
+                    MT_UI_CELL_WIDTH == 15 && MT_UI_CELL_HEIGHT == 18 &&
+                    MT_UI_FONT_SCALE == 2 && MT_UI_GLYPH_X == 0 && MT_UI_GLYPH_Y == 1,
+                    "128x60 geometry with tightly spaced 2x glyphs");
+        repeat (3) @(negedge control_clk);
+        control_resetn = 1;
+        pixel_resetn = 1;
+        for (bank = 0; bank < 2; bank = bank + 1) begin
+            for (index = 0; index < CELL_COUNT; index = index + 2) begin
+                low_cell = ((index % 3 == 0) << 15) | (((index / 7 + bank) % 16) << 11) |
+                           (((index / 5 + bank + 5) % 16) << 7) | (32 + (index + bank * 17) % 96);
+                high_cell = (((index + 1) % 3 == 0) << 15) | ((((index + 1) / 7 + bank) % 16) << 11) |
+                            ((((index + 1) / 5 + bank + 5) % 16) << 7) | (32 + (index + 1 + bank * 17) % 96);
+                set_cells(bank, index, {high_cell, low_cell}, 4'hF, 0);
+            end
+            // Every byte lane, both packed cells, and the highest RAM address.
+            for (lane = 0; lane < 4; lane = lane + 1) begin
+                set_cells(bank, 0, 32'hFF412A57, 1 << lane, 0);
+                set_cells(bank, CELL_COUNT - 2, 32'hAAAABBBB, 1 << lane, 0);
+            end
+            set_cells(bank, 2, 32'h00617FFF, 4'h0, 0);
+            // Legacy aliases share RAM, including the final legacy word.
+            set_cells(bank, MT_UI_LEGACY_COLUMNS * MT_UI_LEGACY_ROWS - 2,
+                      32'h0A4DAF1F, 4'hF, 1);
+            set_cells(bank, 4, 32'hFA4107C2, 4'h5, 1);
+        end
+        // Register space, inter-bank holes, bank ends, and unaligned writes
+        // must neither change nor alias any valid cell.
+        write_word(16'h0000, 0, 4'hF);
+        write_word(MT_UI_LEGACY_VRAM_BANK0_OFFSET - 4, 0, 4'hF);
+        write_word(MT_UI_LEGACY_VRAM_BANK0_OFFSET + MT_UI_LEGACY_VRAM_BANK_BYTES, 0, 4'hF);
+        write_word(MT_UI_LEGACY_VRAM_BANK1_OFFSET + MT_UI_LEGACY_VRAM_BANK_BYTES, 0, 4'hF);
+        write_word(MT_UI_VRAM_BANK0_OFFSET - 4, 0, 4'hF);
+        write_word(MT_UI_VRAM_BANK0_OFFSET + MT_UI_VRAM_BANK_BYTES, 0, 4'hF);
+        write_word(MT_UI_VRAM_BANK1_OFFSET + MT_UI_VRAM_BANK_BYTES, 0, 4'hF);
+        write_word(16'hFFFC, 0, 4'hF);
+        for (lane = 1; lane < 4; lane = lane + 1) begin
+            write_word(MT_UI_VRAM_BANK0_OFFSET + lane, 0, 4'hF);
+            write_word(MT_UI_VRAM_BANK1_OFFSET + lane, 0, 4'hF);
+            write_word(MT_UI_LEGACY_VRAM_BANK0_OFFSET + lane, 0, 4'hF);
+            write_word(MT_UI_LEGACY_VRAM_BANK1_OFFSET + lane, 0, 4'hF);
+        end
+        request_commit(1, 0, 0);
+        await_commit(1, 0, 0);
+        frame_and_next_commit(1, 1, 1);
+        frame_and_next_commit(1, 0, 1);
+        frame_and_next_commit(1, 1, 0);
+        frame_and_next_commit(0, 1, 1);
+        check_frame();
+        check_value(verified_foreground > 0 && verified_transparent > 0,
+                    "glyph strokes and transparent backgrounds both exercised");
+        $display("PASS: %0d full overlay rasters; %0d active and %0d blank pixels",
+                 completed_frames, verified_active, verified_blank);
+        $finish;
+    end
 
     initial begin
-        repeat (3) @(negedge control_clk);
-        control_resetn = 1'b1;
-        pixel_resetn = 1'b1;
-
-        // Cell 0 in bank 0 is an opaque teal space. Cell 0 in bank 1 is an
-        // opaque warning-colored space. Packing also exercises both cells in
-        // one 32-bit bus write.
-        write_word(16'h1000, {16'h0820, 16'h3820});
-        write_word(16'h2800, {16'h0820, 16'h4820});
-
-        commit(1'b1, 1'b0);
-        prefetch_first_cell();
-        check_value(pixel_opaque && pixel_rgb565 == 16'h39D7,
-                    "visible bank 0 background");
-        check_value(active_visible_control && !active_bank_control,
-                    "bank 0 state synchronized to control clock");
-
-        commit(1'b1, 1'b1);
-        // Allow the newly selected BRAM bank to feed the registered cell.
-        prefetch_first_cell();
-        check_value(pixel_opaque && pixel_rgb565 == 16'hF5AB,
-                    "atomic switch to bank 1");
-        check_value(active_visible_control && active_bank_control,
-                    "bank 1 state synchronized to control clock");
-
-        commit(1'b0, 1'b1);
-        prefetch_first_cell();
-        check_value(!pixel_opaque, "hidden overlay is transparent");
-        $display("PASS: double-buffered text overlay");
-        $finish;
+        #250000000;
+        $fatal(1, "text overlay test timed out");
     end
 endmodule

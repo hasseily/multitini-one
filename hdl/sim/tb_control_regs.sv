@@ -60,10 +60,12 @@ module tb_control_regs;
     logic media_data_pop;
     logic ui_active_visible = 1'b0;
     logic ui_active_bank = 1'b0;
+    logic ui_active_dense = 1'b0;
     logic ui_submit_ready = 1'b1;
     logic ui_submit;
     logic ui_visible;
     logic ui_bank;
+    logic ui_dense;
 
     always #5 clk = !clk;
 
@@ -87,6 +89,7 @@ module tb_control_regs;
         .media_submit_ready(media_submit_ready),
         .ui_active_visible(ui_active_visible),
         .ui_active_bank(ui_active_bank),
+        .ui_active_dense(ui_active_dense),
         .ui_submit_ready(ui_submit_ready),
         .wr_en(wr_en), .wr_addr(wr_addr),
         .wr_data(wr_data), .wr_strb(wr_strb), .rd_en(rd_en),
@@ -109,7 +112,7 @@ module tb_control_regs;
         .media_complete_block_count(media_complete_block_count),
         .media_complete_generation(media_complete_generation),
         .media_data_pop(media_data_pop),
-        .ui_submit(ui_submit), .ui_visible(ui_visible), .ui_bank(ui_bank),
+        .ui_submit(ui_submit), .ui_visible(ui_visible), .ui_bank(ui_bank), .ui_dense(ui_dense),
         .irq(irq)
     );
 
@@ -155,7 +158,7 @@ module tb_control_regs;
                     MT_STATUS_CORE_READY | MT_STATUS_STREAM_READY,
                     "muted audio is not active");
 
-        expect_read(MT_REG_UI_STATUS, MT_UI_STATUS_READY,
+        expect_read(MT_REG_UI_STATUS, MT_UI_STATUS_READY | MT_UI_STATUS_DENSE_LAYOUT,
                     "UI mailbox initially ready");
         write_reg(MT_REG_UI_COMMIT,
                   MT_UI_COMMIT_VISIBLE | MT_UI_COMMIT_BANK, 4'hF);
@@ -166,8 +169,19 @@ module tb_control_regs;
         #1;
         expect_read(MT_REG_UI_STATUS,
                     MT_UI_STATUS_VISIBLE | MT_UI_STATUS_BANK |
-                    MT_UI_STATUS_READY,
+                    MT_UI_STATUS_READY | MT_UI_STATUS_DENSE_LAYOUT,
                     "UI active state reported");
+
+        write_reg(MT_REG_UI_COMMIT, MT_UI_COMMIT_VISIBLE |
+                  MT_UI_COMMIT_BANK | MT_UI_COMMIT_DENSE, 4'hF);
+        check_value(ui_submit && ui_visible && ui_bank && ui_dense,
+                    "dense mode joins atomic commit");
+        ui_active_dense = 1'b1;
+        #1;
+        expect_read(MT_REG_UI_STATUS, MT_UI_STATUS_READY |
+                    MT_UI_STATUS_DENSE_LAYOUT | MT_UI_STATUS_VISIBLE |
+                    MT_UI_STATUS_BANK | MT_UI_STATUS_DENSE,
+                    "dense active mode reported independently of capability");
 
         ui_submit_ready = 1'b0;
         write_reg(MT_REG_UI_COMMIT, MT_UI_COMMIT_VISIBLE, 4'hF);

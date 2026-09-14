@@ -4,6 +4,7 @@
 module tb_c64_run_injector;
     logic clk = 1'b0;
     logic reset = 1'b1;
+    logic pause_request = 1'b0;
     logic start = 1'b0;
     logic [10:0] host_ps2_key = 11'h52a;
     logic [10:0] ps2_key;
@@ -52,6 +53,27 @@ module tb_c64_run_injector;
         last_toggle = ps2_key[10];
         @(posedge clk); #1;
         monitor_active = 1'b1;
+        // Stop after the R press, then prove its release and all remaining
+        // events resume in order with no lost key when the menu closes.
+        wait (event_count == 1);
+        @(negedge clk); #1;
+        pause_request = 1'b1;
+        begin
+            logic [10:0] held_key;
+            logic [1:0] held_counter;
+            logic [3:0] held_phase;
+            held_key = ps2_key;
+            held_counter = dut.counter;
+            held_phase = dut.phase;
+            repeat (17) begin
+                @(negedge clk); #1;
+                check(busy && ps2_key == held_key &&
+                      dut.counter == held_counter && dut.phase == held_phase,
+                      "menu pause retains pending RUN key and delay");
+                check(event_count == 1, "no RUN transition escapes pause");
+            end
+        end
+        pause_request = 1'b0;
         wait (!busy);
         @(negedge clk);
         @(posedge clk); #1;

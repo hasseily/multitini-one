@@ -94,6 +94,24 @@ class InterfaceSpecTests(unittest.TestCase):
         self.assertEqual(int(c64["load_kinds"]["C64_PRG_STAGE"], 0), 0x15)
         self.assertEqual(int(c64["load_kinds"]["C64_PRG_RUN"], 0), 0x16)
 
+    def test_dense_ui_preserves_legacy_window_and_fits_screen(self):
+        constants = self.spec["constants"]
+        self.assertGreaterEqual(self.spec["abi"]["minor"], 11)
+        self.assertEqual(constants["UI_COLUMNS"] * constants["UI_CELL_WIDTH"], 1920)
+        self.assertEqual(constants["UI_ROWS"] * constants["UI_CELL_HEIGHT"], 1080)
+        self.assertEqual(constants["UI_FONT_SCALE"], 2)
+        self.assertLessEqual(constants["UI_GLYPH_X"] + 7 * constants["UI_FONT_SCALE"],
+                             constants["UI_CELL_WIDTH"])
+        self.assertLessEqual(constants["UI_GLYPH_Y"] + 8 * constants["UI_FONT_SCALE"],
+                             constants["UI_CELL_HEIGHT"])
+        self.assertEqual(int(constants["UI_LEGACY_VRAM_BANK0_OFFSET"], 0), 0x1000)
+        self.assertEqual(int(constants["UI_LEGACY_VRAM_BANK1_OFFSET"], 0), 0x2800)
+        self.assertEqual(int(constants["UI_LEGACY_VRAM_BANK_BYTES"], 0), 80 * 36 * 2)
+        self.assertGreaterEqual(int(constants["UI_VRAM_BANK0_OFFSET"], 0), 0x3E80)
+        self.assertEqual(self.spec["bitfields"]["UI_COMMIT"]["DENSE"], 2)
+        self.assertEqual(self.spec["bitfields"]["UI_STATUS"]["DENSE_LAYOUT"], 3)
+        self.assertEqual(self.spec["bitfields"]["UI_STATUS"]["DENSE"], 4)
+
     def test_staged_prg_launch_is_versioned(self):
         self.assertGreaterEqual(self.spec["abi"]["minor"], 9)
 

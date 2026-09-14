@@ -47,3 +47,16 @@ xelab --nolog --timescale 1ns/1ps -s tb_c64_parallel_cable_sim \
     tb_c64_parallel_cable
 xsim --nolog -R tb_c64_parallel_cable_sim | tee tb_c64_parallel_cable.log
 check_log tb_c64_parallel_cable.log
+
+# Exercise the exact production TOD divider without the remaining C64 core.
+# Extraction preserves the VHDL process verbatim, including its pause gate.
+python3 "$repo_root/scripts/generate_c64_tod_test.py" c64_tod_test.vhd
+xvhdl --nolog --2008 c64_tod_test.vhd \
+    "$repo_root/hdl/sim/tb_c64_tod_pause.vhd"
+xelab --nolog --timescale 1ns/1ps -s tb_c64_tod_pause_sim tb_c64_tod_pause
+xsim --nolog -R tb_c64_tod_pause_sim | tee tb_c64_tod_pause.log
+grep -q "PASS: C64 PAL and NTSC TOD pause" tb_c64_tod_pause.log
+if grep -q "FAIL: \|Fatal\|ERROR\|Error" tb_c64_tod_pause.log; then
+    echo "FAIL: TOD pause regression" >&2
+    exit 1
+fi

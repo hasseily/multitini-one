@@ -8,6 +8,7 @@ module multitini_c64_run_injector #(
 ) (
     input  logic        clk,
     input  logic        reset,
+    input  logic        pause_request,
     input  logic        start,
     input  logic [10:0] host_ps2_key,
     output logic [10:0] ps2_key,
@@ -44,21 +45,25 @@ module multitini_c64_run_injector #(
             // Clear any held code without changing the event toggle.
             ps2_key <= {host_ps2_key[10], 10'd0};
         end else if (busy) begin
-            if (counter == EVENT_DELAY_CYCLES - 1) begin
-                counter <= '0;
-                toggle <= ~toggle;
-                ps2_key[10] <= ~toggle;
-                ps2_key[9] <= phase[0];
-                ps2_key[8] <= 1'b0;
-                ps2_key[7:0] <= phase_code(phase);
-                if (phase == 4'd8) begin
-                    phase <= 4'd0;
-                    busy <= 1'b0;
+            // Menu pause must retain the pending key and its remaining delay;
+            // otherwise RUN could be typed while the C64 cannot consume it.
+            if (!pause_request) begin
+                if (counter == EVENT_DELAY_CYCLES - 1) begin
+                    counter <= '0;
+                    toggle <= ~toggle;
+                    ps2_key[10] <= ~toggle;
+                    ps2_key[9] <= phase[0];
+                    ps2_key[8] <= 1'b0;
+                    ps2_key[7:0] <= phase_code(phase);
+                    if (phase == 4'd8) begin
+                        phase <= 4'd0;
+                        busy <= 1'b0;
+                    end else begin
+                        phase <= phase + 4'd1;
+                    end
                 end else begin
-                    phase <= phase + 4'd1;
+                    counter <= counter + 1'd1;
                 end
-            end else begin
-                counter <= counter + 1'd1;
             end
         end else begin
             ps2_key <= host_ps2_key;

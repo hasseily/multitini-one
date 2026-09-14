@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "release_id": "20260917",
-  "status": "current; C64 accepted for now",
+  "status": "current; C64 and GBC functional baselines accepted",
   "accepted_on": "2026-09-14",
   "builds": {
     "firmware": "20260917",
@@ -12,14 +12,22 @@
     "gbc_abi": "0.9"
   },
   "hardware_acceptance": {
-    "source": "repository owner reports in the C64 bring-up task",
+    "source": "repository owner reports in the C64 bring-up and GBC baseline tasks",
     "passed": [
       "Ultima II Mount & Run reaches the second-disk prompt",
       "Player disk mounting works",
       "Clean Player disk works with fast ROMs enabled",
       "Fast loader works",
-      "GBC battery saving works"
+      "GBC battery saving works",
+      "Current GBC operation, including tested saves, accepted as the completed functional baseline"
     ],
+    "gbc_baseline": {
+      "status": "complete",
+      "accepted_on": "2026-09-14",
+      "core_build": "20260913",
+      "evidence": "Owner confirmed the current GBC implementation works correctly, including saves, and stated that they were tested. No new board test or UART capture was performed during closeout.",
+      "scope_record": "docs/GBC_BASELINE.md"
+    },
     "qualification": "The owner attributed remaining LOAD ERROR failures to the old corrupted Player image. The cause of that corruption was not established. This acceptance does not imply exhaustive disk or game compatibility."
   },
   "roms": {
@@ -124,6 +132,14 @@
       "destination": "INSTALL.md"
     },
     {
+      "source": "docs/GBC_BASELINE.md",
+      "destination": "GBC_BASELINE.md"
+    },
+    {
+      "source": "docs/HARDWARE_RESULTS.md",
+      "destination": "HARDWARE_RESULTS.md"
+    },
+    {
       "source": "LICENSE",
       "destination": "notices/LICENSE"
     },
@@ -215,6 +231,11 @@
       "c64-ntsc": {
         "WNS": 0.338,
         "WHS": 0.048,
+        "WPWS": 0.265
+      },
+      "gbc": {
+        "WNS": 0.181,
+        "WHS": 0.054,
         "WPWS": 0.265
       }
     },

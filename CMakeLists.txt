@@ -18,6 +18,7 @@ add_library(multitini_common STATIC
     firmware/common/c64_hid_input.c
     firmware/common/c64_xinput.c
     firmware/common/content_type.c
+    firmware/common/core_frontend.c
     firmware/common/core_package.c
     firmware/common/core_link.c
     firmware/common/fatfs_time.c
@@ -126,6 +127,13 @@ add_test(NAME ui COMMAND test_ui)
 add_executable(test_menu tests/host/test_menu.c)
 target_link_libraries(test_menu PRIVATE multitini_common)
 add_test(NAME menu COMMAND test_menu)
+
+add_executable(test_core_frontend tests/host/test_core_frontend.c)
+target_link_libraries(test_core_frontend PRIVATE multitini_common)
+add_test(NAME core_frontend COMMAND test_core_frontend)
+
+add_executable(menu_preview tools/menu_preview.c)
+target_link_libraries(menu_preview PRIVATE multitini_common)
 
 add_executable(test_content_type tests/host/test_content_type.c)
 target_link_libraries(test_content_type PRIVATE multitini_common)

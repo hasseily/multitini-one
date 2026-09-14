@@ -47,7 +47,7 @@ static int fake_probe(void *context, uint32_t core_id,
 {
     fake_backend_t *const backend = context;
     assert(core_id != 0U);
-    assert(abi_major == 0U && abi_minor == 6U);
+    assert(abi_major == 0U && abi_minor == 11U);
     ++backend->probe_calls;
     record(backend, 'P');
     return backend->probe_result;
@@ -79,7 +79,7 @@ static mt_core_selection_t selection(const char *id, const char *variant)
     value.package.core_id = strcmp(id, "c64") == 0 ?
                             UINT32_C(0x43363420) : UINT32_C(0x47424320);
     value.package.abi_major = 0U;
-    value.package.abi_minor = 6U;
+    value.package.abi_minor = 11U;
     strcpy(value.package.id, id);
     strcpy(value.package.name, strcmp(id, "c64") == 0 ?
            "Commodore 64" : "Game Boy Color");
@@ -110,8 +110,30 @@ int main(void)
     mt_core_selection_t c64 = selection("c64", "pal");
     mt_core_selection_t gbc = selection("gbc", "color");
 
+    {
+        mt_core_selection_t old = gbc;
+        old.package.abi_minor = 10U;
+        assert(mt_supervisor_switch(&supervisor, &old) ==
+               MT_SUPERVISOR_INCOMPATIBLE_ABI);
+        assert(backend.order_size == 0U && supervisor.state == MT_SUPERVISOR_IDLE);
+        assert(mt_supervisor_set_initial(&supervisor, &old) ==
+               MT_SUPERVISOR_INCOMPATIBLE_ABI);
+    }
     assert(mt_supervisor_set_initial(&supervisor, &c64) == MT_SUPERVISOR_OK);
     assert(supervisor.state == MT_SUPERVISOR_ACTIVE);
+    {
+        mt_core_selection_t old = gbc;
+        old.package.abi_minor = 9U;
+        assert(mt_supervisor_switch(&supervisor, &old) ==
+               MT_SUPERVISOR_INCOMPATIBLE_ABI);
+        assert(backend.order_size == 0U && supervisor.state == MT_SUPERVISOR_ACTIVE);
+        assert(strcmp(supervisor.active.package.id, "c64") == 0);
+        old.package.abi_major = 1U;
+        old.package.abi_minor = 11U;
+        assert(mt_supervisor_switch(&supervisor, &old) ==
+               MT_SUPERVISOR_INCOMPATIBLE_ABI);
+        assert(backend.order_size == 0U);
+    }
     assert(mt_supervisor_switch(&supervisor, &c64) == MT_SUPERVISOR_NO_CHANGE);
     assert(backend.order_size == 0U);
 

@@ -13,6 +13,7 @@ module tb_c64_parallel_cable;
     logic clk = 1'b0;
     logic reset = 1'b1;
     logic soft_reset = 1'b0;
+    logic pause_request = 1'b0;
     logic drive_rom_write = 1'b0;
     logic [13:0] drive_rom_address = 14'd0;
     logic [7:0] drive_rom_write_data = 8'd0;
@@ -32,6 +33,7 @@ module tb_c64_parallel_cable;
         .clk(clk),
         .reset(reset),
         .soft_reset(soft_reset),
+        .pause_request(pause_request),
         .clear_error(1'b0),
         .drive_rom_write(drive_rom_write),
         .drive_rom_address(drive_rom_address),
@@ -259,6 +261,30 @@ module tb_c64_parallel_cable;
                     "the strobe ends with the first byte presented");
         check_value(dut.drive_logic.ram.ram[0] == 8'hC3,
                     "$9000 reads back the RAM marker while the cable is on");
+
+        // The shared menu freezes the real imported CPU and VIAs. Keep their
+        // bus and cable state intact, then continue the same ROM transaction.
+        @(negedge clk);
+        pause_request = 1'b1;
+        repeat (8) @(negedge clk);
+        begin
+            logic [23:0] held_cpu_address;
+            logic [31:0] held_drive_phase;
+            held_cpu_address = dut.drive_logic.cpu_a;
+            held_drive_phase = dut.drive_phase;
+            repeat (4096) begin
+                @(negedge clk);
+                check_value(dut.drive_logic.cpu_a == held_cpu_address,
+                            "paused drive CPU holds its bus address");
+                check_value(dut.drive_phase == held_drive_phase &&
+                            !dut.drive_ce && !dut.ph2_r && !dut.ph2_f,
+                            "paused drive clock enables remain stopped");
+                check_value(par_data_out == 8'hA5 && par_stb_out &&
+                            strobe_pulses == 1,
+                            "pause retains VIA cable state without strobes");
+            end
+        end
+        pause_request = 1'b0;
 
         // (c) A C64-side strobe is seen on CB1 and answered with the next byte.
         strobe_drive();
