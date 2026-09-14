@@ -321,6 +321,34 @@ mt_c64_content_result_t mt_c64_validate_prg(
                           validation, 0U);
 }
 
+bool mt_c64_prg_has_basic_program(const mt_c64_content_image_t *image)
+{
+    size_t offset = 2U;
+    size_t lines = 0U;
+    if (mt_c64_validate_prg(image).status != MT_C64_CONTENT_OK ||
+        image->data[0] != 0x01U || image->data[1] != 0x08U) return false;
+    while (offset + 2U <= image->size) {
+        const uint16_t next = (uint16_t)((uint16_t)image->data[offset] |
+            ((uint16_t)image->data[offset + 1U] << 8));
+        size_t next_offset;
+        size_t body;
+        if (next == 0U) return lines != 0U;
+        if (next < 0x0801U) return false;
+        next_offset = (size_t)next - 0x0801U + 2U;
+        if (next_offset < offset + 5U || next_offset + 2U > image->size)
+            return false;
+        /* The line's terminator must agree with its link. Do not classify an
+         * empty header followed by native code as something RUN can start. */
+        for (body = offset + 4U; body < next_offset; ++body) {
+            if (image->data[body] == 0U) break;
+        }
+        if (body != next_offset - 1U) return false;
+        ++lines;
+        offset = next_offset;
+    }
+    return false;
+}
+
 mt_c64_content_result_t mt_c64_validate_crt(
     const mt_c64_content_image_t *image)
 {
@@ -359,11 +387,11 @@ mt_c64_content_result_t mt_c64_validate_crt(
                           info.hardware_type);
 }
 
-static mt_link_result_t request_reset(
-    mt_core_link_t *link, uint32_t max_polls,
+static mt_link_result_t set_core_reset(
+    mt_core_link_t *link, int asserted, uint32_t max_polls,
     mt_link_progress_fn progress, void *progress_context)
 {
-    static const uint32_t args[4] = {1U, 0U, 0U, 0U};
+    const uint32_t args[4] = {asserted != 0 ? 1U : 0U, 0U, 0U, 0U};
     mt_command_response_t response;
     return mt_core_link_command(link, MT_COMMAND_CORE_RESET, args, max_polls,
                                 progress, progress_context, &response);
@@ -378,7 +406,13 @@ static mt_link_result_t stream_checked(
     result = mt_core_link_stream(link, kind, image->data, image->size,
                                  max_polls, progress, progress_context);
     if (result != MT_LINK_OK) {
-        (void)request_reset(link, max_polls, progress, progress_context);
+        /* STREAM_ABORT discards the partial receiver state. Pulse reset as a
+         * safety barrier, then always release the software request so the next
+         * valid content operation can recover without reconfiguring the PL. */
+        (void)set_core_reset(link, 1, max_polls,
+                             progress, progress_context);
+        (void)set_core_reset(link, 0, max_polls,
+                             progress, progress_context);
     }
     return result;
 }

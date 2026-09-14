@@ -189,10 +189,20 @@ module multitini_one_top #(
     logic [31:0] load_total;
     logic        load_first;
     logic        load_last;
+    logic        load_epoch;
+    logic        load_abort;
+    logic        load_abort_epoch;
     logic        load_error_clear;
+    logic        c64_load_abort;
+    logic        c64_load_abort_epoch;
+    logic        load_abort_submit_ready;
+    logic        load_abort_pending;
+    logic        load_abort_pending_epoch;
+    logic [0:0]  load_abort_mailbox_source;
+    logic [0:0]  load_abort_mailbox_destination;
     logic        c64_load_error_clear;
-    logic [81:0] load_mailbox_source;
-    logic [81:0] load_mailbox_destination;
+    logic [82:0] load_mailbox_source;
+    logic [82:0] load_mailbox_destination;
     logic        c64_load_valid;
     logic        c64_load_ready;
     logic [7:0]  c64_load_kind;
@@ -201,6 +211,7 @@ module multitini_one_top #(
     logic [31:0] c64_load_total;
     logic        c64_load_first;
     logic        c64_load_last;
+    logic        c64_load_epoch;
 
     logic        input_submit;
     logic        input_submit_ready;
@@ -422,7 +433,9 @@ module multitini_one_top #(
         .load_submit(load_submit), .load_kind(load_kind),
         .load_data(load_data), .load_offset(load_offset),
         .load_total(load_total), .load_first(load_first),
-        .load_last(load_last), .load_error_clear(load_error_clear),
+        .load_last(load_last), .load_epoch(load_epoch),
+        .load_abort(load_abort), .load_abort_epoch(load_abort_epoch),
+        .load_error_clear(load_error_clear),
         .input_submit(input_submit), .input_code(input_code),
         .input_value(input_value),
         .media_mount(media_mount), .media_eject(media_eject),
@@ -450,11 +463,13 @@ module multitini_one_top #(
     end
 
     assign load_mailbox_source = {load_kind, load_data, load_offset,
-                                  load_total, load_first, load_last};
+                                  load_total, load_first, load_last,
+                                  load_epoch};
     assign {c64_load_kind, c64_load_data, c64_load_offset, c64_load_total,
-            c64_load_first, c64_load_last} = load_mailbox_destination;
+            c64_load_first, c64_load_last, c64_load_epoch} =
+        load_mailbox_destination;
 
-    multitini_async_mailbox #(.WIDTH(82)) c64_load_mailbox (
+    multitini_async_mailbox #(.WIDTH(83)) c64_load_mailbox (
         .src_clk(control_clk), .src_resetn(control_aresetn),
         .src_data(load_mailbox_source), .src_valid(load_submit),
         .src_ready(load_submit_ready),
@@ -520,6 +535,33 @@ module multitini_one_top #(
     cdc_bit_sync c64_load_error_sync (
         .clk(control_clk), .resetn(control_aresetn),
         .din(c64_load_error_launch), .dout(c64_load_error_control)
+    );
+
+    // Carry the abort event and its stream epoch through one coherent
+    // handshake.  The destination accepts it immediately, so dst_valid is a
+    // single core-clock pulse and the epoch cannot lag or lead that pulse.
+    always_ff @(posedge control_clk) begin
+        if (!control_aresetn) begin
+            load_abort_pending <= 1'b0;
+            load_abort_pending_epoch <= 1'b0;
+        end else if (load_abort) begin
+            load_abort_pending <= 1'b1;
+            load_abort_pending_epoch <= load_abort_epoch;
+        end else if (load_abort_pending && load_abort_submit_ready) begin
+            load_abort_pending <= 1'b0;
+        end
+    end
+
+    assign load_abort_mailbox_source = load_abort_pending_epoch;
+    assign c64_load_abort_epoch = load_abort_mailbox_destination[0];
+    multitini_async_mailbox #(.WIDTH(1)) c64_load_abort_mailbox (
+        .src_clk(control_clk), .src_resetn(control_aresetn),
+        .src_data(load_abort_mailbox_source),
+        .src_valid(load_abort_pending),
+        .src_ready(load_abort_submit_ready),
+        .dst_clk(c64_clk), .dst_resetn(c64_aresetn),
+        .dst_data(load_abort_mailbox_destination),
+        .dst_valid(c64_load_abort), .dst_ready(1'b1)
     );
 
     multitini_cdc_pulse_toggle c64_load_error_clear_sync (
@@ -710,6 +752,8 @@ module multitini_one_top #(
                 .core_reset_request(c64_core_reset_request),
                 .cpu_turbo_enable(c64_cpu_turbo_enable),
                 .drive_parallel_enable(c64_drive_parallel_enable),
+                .load_abort(c64_load_abort),
+                .load_abort_epoch(c64_load_abort_epoch),
                 .clear_load_error(c64_load_error_clear),
                 .input_code(c64_input_code), .input_value(c64_input_value),
                 .input_valid(c64_input_valid), .input_ready(c64_input_ready),
@@ -717,6 +761,7 @@ module multitini_one_top #(
                 .load_ready(c64_load_ready), .load_first(c64_load_first),
                 .load_last(c64_load_last), .load_kind(c64_load_kind),
                 .load_offset(c64_load_offset), .load_total(c64_load_total),
+                .load_epoch(c64_load_epoch),
                 .memory_addr(c64_memory_addr),
                 .memory_write(c64_memory_write),
                 .memory_wdata(c64_memory_wdata),

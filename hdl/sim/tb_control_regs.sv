@@ -24,6 +24,9 @@ module tb_control_regs;
     logic [31:0] load_total;
     logic load_first;
     logic load_last;
+    logic load_epoch;
+    logic load_abort;
+    logic load_abort_epoch;
     logic load_error_clear;
     logic input_submit_ready = 1'b1;
     logic input_submit;
@@ -91,7 +94,9 @@ module tb_control_regs;
         .load_submit(load_submit), .load_kind(load_kind),
         .load_data(load_data), .load_offset(load_offset),
         .load_total(load_total), .load_first(load_first),
-        .load_last(load_last), .load_error_clear(load_error_clear),
+        .load_last(load_last), .load_epoch(load_epoch),
+        .load_abort(load_abort), .load_abort_epoch(load_abort_epoch),
+        .load_error_clear(load_error_clear),
         .input_submit(input_submit), .input_code(input_code),
         .input_value(input_value),
         .media_mount(media_mount), .media_eject(media_eject),
@@ -338,7 +343,16 @@ module tb_control_regs;
         write_reg(MT_REG_COMMAND_SEQ, 32'd10, 4'hF);
         write_reg(MT_REG_COMMAND_OPCODE, MT_COMMAND_STREAM_ABORT, 4'hF);
         write_reg(MT_REG_COMMAND_DOORBELL, 32'd10, 4'hF);
+        check_value(load_abort && load_abort_epoch == dut.stream_epoch &&
+                    dut.stream_aborted,
+                    "stream abort emits and marks the current epoch");
         expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_OK, "stream abort");
+        write_reg(MT_REG_COMMAND_SEQ, 32'd110, 4'hF);
+        write_reg(MT_REG_COMMAND_OPCODE, MT_COMMAND_STREAM_ABORT, 4'hF);
+        write_reg(MT_REG_COMMAND_DOORBELL, 32'd110, 4'hF);
+        check_value(load_abort && load_abort_epoch == dut.stream_epoch &&
+                    dut.stream_aborted,
+                    "repeated stream abort keeps the same epoch");
         expect_read(MT_REG_STATUS,
                     MT_STATUS_SHELL_READY | MT_STATUS_VIDEO_ACTIVE |
                     MT_STATUS_AUDIO_ACTIVE | MT_STATUS_CORE_READY |

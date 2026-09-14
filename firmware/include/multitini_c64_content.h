@@ -35,11 +35,15 @@ const char *mt_c64_crt_hardware_name(uint16_t hardware_type);
 
 mt_c64_content_result_t mt_c64_validate_prg(
     const mt_c64_content_image_t *image);
+/* True only for a nonempty, linked BASIC program at $0801. Other valid PRGs
+ * may be autostart loaders or data files and must use the emulated drive. */
+bool mt_c64_prg_has_basic_program(const mt_c64_content_image_t *image);
 mt_c64_content_result_t mt_c64_validate_crt(
     const mt_c64_content_image_t *image);
 
-/* A failed transfer requests core reset so a partial PRG or CRT cannot run.
- * A successful ordinary PRG is reset, injected, and RUN automatically. */
+/* A failed transfer aborts the receiver and pulses core reset so a partial PRG
+ * or CRT cannot run; the software reset request is released for recovery. A
+ * successful ordinary PRG is reset, injected, and RUN automatically. */
 mt_link_result_t mt_c64_load_prg(
     mt_core_link_t *link, const mt_c64_content_image_t *image,
     uint32_t max_polls, mt_link_progress_fn progress,

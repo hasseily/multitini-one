@@ -1,27 +1,17 @@
 # Multicore Runtime and Menu
 
-Status: implemented through ABI 0.9 and covered by portable C and HDL tests.
-The installed ABI 0.6 build `2026090E` passed its first direct board exercise:
-F12 selection, C64-to-GBC PCAP loading, package CRC validation, and two GBC
-cartridge gameplay tests. ABI 0.7 build `2026090F` adds GBC battery-RAM
-persistence and passes fresh PAL, NTSC, PSRAM-enabled GBC, matching Vitis, and
-Bootgen packaging gates. The staged image was installed and GBC game-save
-persistence was confirmed on the board on 2026-09-04. Rollback and the
-remaining repeated-switch/media matrix are not yet board-qualified.
+Status: the C64 baseline is accepted for now. The current package uses ARM
+firmware `20260917`, supervisor and C64 PAL/NTSC FPGA images `20260915`
+(ABI 0.10), and the unchanged PSRAM-enabled GBC image `20260913` (ABI 0.9).
+See [Current release](CURRENT_RELEASE.md) for exact artifacts and installation.
 
-Current source adds versioned supervisor settings, explicit Autoboot control,
-a supervisor-only root FPGA image, a four-byte direct-load transport, and
-generic per-core configuration. C64 exposes optional user-supplied fast serial
-ROMs and independent Smart 2x CPU turbo; both default off. On ABI 0.10 shells
-the fast pair also gets a DolphinDOS-style parallel drive cable and 8 KiB of
-drive RAM at `$8000`; this is untested on the board. The attempted
-drive-clock warp option failed IEC loading and was removed. The supervisor image
-contains the common shell and standby UI but no machine core. Build `20260911`
-is superseded by ABI 0.8 build `20260912`, whose supervisor, PAL, NTSC,
-PSRAM-enabled GBC, exFAT-enabled Vitis, and package gates pass. The replacement
-ROM profile has not yet been board-qualified. ABI 0.9 build `20260913` adds the
-D64 staged-load/remount/run flow, passes the same vendor and package gates, and
-is installed on the SD card for board validation.
+The runtime includes versioned settings, explicit Autoboot, a supervisor-only
+root FPGA image, direct-load transport, and per-core configuration. C64 offers
+paired fast serial ROMs with a parallel drive cable and 8 KiB drive RAM, plus
+independent Smart 2x CPU turbo. Both options default off. The owner confirms
+fast loading, Ultima II native launch and disk swapping with a clean Player
+image, and GBC battery saving. These observations do not qualify every game,
+rollback case, or repeated-switch/media combination.
 
 ## Design
 

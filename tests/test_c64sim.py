@@ -410,6 +410,86 @@ class StockRomAcceptanceTests(unittest.TestCase):
         self.assertTrue(any("?FILE NOT FOUND  ERROR" in line for line in screen))
         self.assertTrue(self.system.drive.led)
 
+    def stage_disk_launcher(self, name, target_size=0):
+        # Original one-line launcher, in the same PRG format checked by the
+        # C builder tests. Mirror the HDL's RAM install/pointer repair here;
+        # the ROMs and emulated drive perform the actual LOAD and restart.
+        program = basic_program([(10, b'\x93"' + name.encode('ascii') + b'",8,1')])
+        program += bytes(max(0, target_size - len(program)))
+        end = 0x0801 + len(program) - 2
+        for address, value in enumerate(program[2:], 0x0801):
+            self.system.poke(address, value)
+        for address, value in ((0x2B, 0x0801), (0xAC, 0),
+                               (0x2D, end), (0x2F, end), (0x31, end), (0xAE, end)):
+            self.system.poke(address, value & 0xFF)
+            self.system.poke(address + 1, value >> 8)
+
+    def test_disk_launcher_runs_exact_program_and_its_next_disk_load(self):
+        image = D64.blank('LAUNCH TEST', 'LT')
+        image.add_file('OTHER', basic_program([(10, b'\x97' + b'49152,99')]))
+        image.add_file('STAGE ONE', basic_program([
+            (10, b'\x97' + b'49152,\xc2(186)'),
+            # LOAD initializes its default device before parsing arguments;
+            # use the device saved by line 10, not a live PEEK of $BA here.
+            (20, b'\x93"STAGE TWO",\xc2(49152),1'),
+        ]))
+        image.add_file('STAGE TWO', basic_program([(10, b'\x97' + b'49153,42')]))
+        self.system.insert_disk(image)
+        self.assertEqual(self.system.peek_ram(0xBA), 0)
+        self.stage_disk_launcher('STAGE ONE', len(image.read_file('STAGE ONE')))
+        self.run_line('RUN')
+        self.assertEqual(self.system.peek_ram(0xC000), 8)
+        self.assertEqual(self.system.peek_ram(0xC001), 42)
+        self.assertFalse(self.system.screen_contains('ERROR'))
+        self.assertEqual(self.system.drive.bytes_written, 0)
+
+    def test_disk_launcher_reserves_variables_beyond_large_target(self):
+        image = D64.blank('VARIABLE TEST', 'VT')
+        program = basic_program([
+            (10, b'A\xb21'),
+            (20, b'\x99"VARIABLE TEST OK"'),
+            (30, b'A\xb2A\xaa1'),
+            (40, b'\x97' + b'49152,A'),
+            (50, b'\x8f' + b'X' * 100),
+        ])
+        image.add_file('VARIABLES', program)
+        self.system.insert_disk(image)
+        self.stage_disk_launcher('VARIABLES', len(program))
+        self.run_line('RUN')
+        self.assertTrue(self.system.screen_contains('VARIABLE TEST OK'))
+        self.assertFalse(self.system.screen_contains('ERROR'))
+        self.assertEqual(self.system.peek_ram(0xC000), 2)
+        end = 0x0801 + len(program) - 2
+        self.assertEqual(self.system.peek_word(0x2D), end)
+        self.assertEqual(self.system.ram_bytes(0x0801, end), program[2:])
+
+    def test_disk_launcher_keeps_short_target_variables_above_launcher(self):
+        image = D64.blank('SHORT TEST', 'ST')
+        program = basic_program([(10, b'A\xb21')])
+        name = 'SIXTEENCHARACTER'
+        image.add_file(name, program)
+        self.system.insert_disk(image)
+        self.stage_disk_launcher(name, len(program))
+        reserved_end = self.system.peek_word(0x2D)
+        self.assertGreater(reserved_end, 0x0801 + len(program) - 2)
+        self.run_line('RUN')
+        self.assertFalse(self.system.screen_contains('ERROR'))
+        self.assertEqual(self.system.peek_word(0x2D), reserved_end)
+        self.assertGreater(self.system.peek_word(0x2F), reserved_end)
+        self.assertEqual(self.system.ram_bytes(0x0801, 0x0801 + len(program) - 2),
+                         program[2:])
+
+    def test_disk_launcher_load_failure_returns_basic_without_retrying(self):
+        self.stage_disk_launcher('MISSING')
+        self.run_line('RUN')
+        self.assertTrue(self.system.screen_contains('FILE NOT FOUND'))
+        self.assertTrue(self.system.screen_contains('ERROR IN 10'))
+        self.assertEqual(self.system.peek_ram(0xC000), 0)
+        self.assertEqual(self.system.drive.bytes_written, 0)
+        screen = self.system.screen_text()
+        self.system.run_for(0.5)
+        self.assertEqual(self.system.screen_text(), screen)
+
     def test_save_program(self):
         self.run_line('10 PRINT"HELLO WORLD"')
         self.run_line("20 GOTO 10")

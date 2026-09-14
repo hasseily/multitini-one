@@ -632,7 +632,7 @@ class BuildInputTests(unittest.TestCase):
     def test_c64_mount_and_run_stages_remounts_then_runs(self):
         main = (ROOT / "firmware/platform/xilinx/main.c").read_text()
         flow = main.split(
-            "} else if (action.kind == MT_MENU_ACTION_MOUNT_AND_RUN)", 1
+            "} else if (action.kind == MT_MENU_ACTION_MOUNT_AND_RUN", 1
         )[1].split(
             "} else if (action.kind == MT_MENU_ACTION_LOAD_CONTENT)", 1
         )[0]

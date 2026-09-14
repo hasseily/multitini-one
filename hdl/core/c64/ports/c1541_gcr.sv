@@ -5,7 +5,8 @@
 // constant encoder table is expressed as an equivalent function for portable
 // simulator support. The SD-buffer write data is registered with the imported
 // RAM wrapper's delayed address/write enable so consecutive writes cannot
-// shift track bytes by one address.
+// shift track bytes by one address. Disk-ID capture follows the target track
+// rather than the last SD request, which can be stale during cache copies.
 //-------------------------------------------------------------------------------
 //
 // Commodore 1541 gcr floppy (read/write) by Dar (darfpga@aol.fr) 23-May-2017
@@ -159,7 +160,9 @@ end
 
 always @(posedge sd_clk) begin
 	sd_buff_dout_d <= sd_buff_dout;
-	if(sd_lba == 357 && sd_buff_wr) begin
+	// A cache hit copies the target track without issuing a new SD request.
+	// sd_lba still names the last external read and cannot identify this data.
+	if(track == 18 && sd_buff_wr) begin
 		if(sd_buff_addr == 'hA2) id1 <= sd_buff_dout;
 		if(sd_buff_addr == 'hA3) id2 <= sd_buff_dout;
 	end

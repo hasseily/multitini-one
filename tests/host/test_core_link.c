@@ -16,7 +16,9 @@ typedef struct {
     uint8_t stream_data[8];
     size_t stream_data_size;
     uint32_t burst_writes;
+    uint32_t abort_commands;
     int stream_open;
+    int stream_blocked;
     int inject_busy;
     uint32_t input_code;
     uint32_t input_value;
@@ -27,6 +29,7 @@ static uint32_t mock_read(void *context, uint32_t offset)
     mock_shell_t *const shell = context;
     assert(offset < MT_REGISTER_SPAN && (offset & 3U) == 0U);
     if (offset == MT_REG_STREAM_STATUS && shell->stream_open) {
+        if (shell->stream_blocked != 0) return 0U;
         return shell->stream_data_size == shell->stream_size ?
                MT_STREAM_STATUS_DRAINED : MT_STREAM_STATUS_READY;
     }
@@ -95,6 +98,7 @@ static void respond_to_stream(void *context)
         shell->input_value = shell->registers[MT_REG_COMMAND_ARG1 / 4U];
     } else if (opcode == MT_COMMAND_STREAM_END ||
                opcode == MT_COMMAND_STREAM_ABORT) {
+        if (opcode == MT_COMMAND_STREAM_ABORT) ++shell->abort_commands;
         shell->stream_open = 0;
     }
 
@@ -104,6 +108,14 @@ static void respond_to_stream(void *context)
     shell->registers[MT_REG_RESPONSE_SEQ / 4U] = sequence;
 }
 
+static int continue_twice(void *context)
+{
+    uint32_t *const remaining = context;
+    if (*remaining == 0U) return 0;
+    --*remaining;
+    return 1;
+}
+
 int main(void)
 {
     mock_shell_t shell = {0};
@@ -111,6 +123,7 @@ int main(void)
     mt_command_response_t response = {0};
     const uint32_t args[4] = {1U, 2U, 3U, 4U};
     const uint8_t stream_data[3] = {0x11U, 0x22U, 0x33U};
+    uint32_t remaining;
 
     mt_core_link_init(&link, &shell, mock_read, mock_write);
     assert(mt_core_link_probe(&link) == MT_LINK_NO_SHELL);
@@ -164,6 +177,18 @@ int main(void)
     assert(memcmp(shell.stream_data, stream_data, sizeof(stream_data)) == 0);
     assert(shell.burst_writes == 1U);
     assert(shell.observed_commands == 2U);
+
+    shell.stream_data_size = 0U;
+    shell.observed_commands = 0U;
+    shell.stream_blocked = 1;
+    remaining = 2U;
+    assert(mt_core_link_stream_until(
+               &link, 9U, stream_data, sizeof(stream_data), 8U,
+               respond_to_stream, &shell, continue_twice, &remaining) ==
+           MT_LINK_TIMEOUT);
+    assert(shell.abort_commands == 1U);
+    assert(shell.stream_open == 0);
+    shell.stream_blocked = 0;
 
     assert(mt_core_link_input_event(&link, UINT16_C(0x001C),
                                     UINT16_C(0x0001), 8U,

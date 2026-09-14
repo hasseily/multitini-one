@@ -6,6 +6,8 @@ module tb_c64_content_loader;
 
     logic clk = 1'b0;
     logic reset = 1'b1;
+    logic load_abort = 1'b0;
+    logic load_abort_epoch = 1'b0;
     logic clear_error = 1'b0;
     logic [7:0] load_data = 8'd0;
     logic load_valid = 1'b0;
@@ -15,6 +17,7 @@ module tb_c64_content_loader;
     logic [7:0] load_kind = 8'd0;
     logic [31:0] load_offset = 32'd0;
     logic [31:0] load_total = 32'd0;
+    logic load_epoch = 1'b0;
     logic [15:0] core_addr = 16'h0000;
     logic prg_ram_wr;
     logic [15:0] prg_ram_addr;
@@ -84,6 +87,14 @@ module tb_c64_content_loader;
         load_valid = 1'b0;
         load_first = 1'b0;
         load_last = 1'b0;
+    endtask
+
+    task automatic abort_stream(input logic epoch);
+        @(negedge clk);
+        load_abort_epoch = epoch;
+        load_abort = 1'b1;
+        @(negedge clk);
+        load_abort = 1'b0;
     endtask
 
     function automatic logic [7:0] crt_byte(input integer offset);
@@ -195,6 +206,77 @@ module tb_c64_content_loader;
         check(cart_write_count == 8192 && bank_write_count == 1,
               "one CHIP payload normalized to external memory");
 
+        // BEGIN may have completed in the control domain even though its first
+        // byte has not reached this loader. Repeated aborts for that epoch are
+        // idempotent and quarantine the delayed first byte while idle.
+        abort_stream(1'b0);
+        abort_stream(1'b0);
+        send_byte(MT_LOAD_C64_PRG_STAGE, 0, 5, 8'h01);
+        check(prg_loaded && cart_loaded && !active && !error,
+              "pre-first-byte repeated abort quarantines delayed first beat");
+
+        // Abort while a replacement PRG is waiting for the freshly reset
+        // KERNAL. The committed cartridge is unrelated state and must remain
+        // selected. A late first beat from the old mailbox epoch is consumed
+        // without recreating the transaction.
+        core_addr = 16'h0000;
+        load_epoch = 1'b1;
+        send_byte(MT_LOAD_C64_PRG_STAGE, 0, 5, 8'h01);
+        repeat (260) @(negedge clk);
+        check(active && !load_ready && cart_loaded,
+              "WAIT_BASIC abort setup retains committed CRT");
+        abort_stream(1'b1);
+        check(!active && load_ready && !core_reset_hold &&
+              !prg_install_pause && cart_loaded &&
+              cart_id == MT_CRT_MAGIC_DESK,
+              "WAIT_BASIC abort recovers without clearing committed CRT");
+        send_byte(MT_LOAD_C64_PRG_STAGE, 0, 5, 8'h01);
+        check(!active && !error && cart_loaded,
+              "queued first beat from aborted epoch is quarantined");
+
+        // Enter the payload stream on a new epoch, write one byte, and abort.
+        // A queued continuation from that epoch must likewise drain harmlessly.
+        load_epoch = 1'b0;
+        send_byte(MT_LOAD_C64_PRG_STAGE, 0, 5, 8'h01);
+        repeat (260) @(negedge clk);
+        core_addr = 16'hffcf;
+        send_byte(MT_LOAD_C64_PRG_STAGE, 1, 5, 8'h0a);
+        send_byte(MT_LOAD_C64_PRG_STAGE, 2, 5, 8'hea);
+        check(active && prg_install_pause && cart_loaded,
+              "partial PRG stream is active before abort");
+        abort_stream(1'b0);
+        clear_error = 1'b1;
+        @(negedge clk);
+        clear_error = 1'b0;
+        send_byte(MT_LOAD_C64_PRG_STAGE, 3, 5, 8'h00);
+        check(!active && load_ready && !error && !core_reset_hold &&
+              !prg_install_pause && cart_loaded,
+              "partial-stream abort drains stale beat without a new error");
+
+        // A fresh epoch must be usable immediately after recovery and still
+        // retain the staged-PRG versus explicit-RUN contract.
+        core_addr = 16'h0000;
+        load_epoch = 1'b1;
+        send_byte(MT_LOAD_C64_PRG_STAGE, 0, 5, 8'h01);
+        repeat (260) @(negedge clk);
+        core_addr = 16'hffcf;
+        send_byte(MT_LOAD_C64_PRG_STAGE, 1, 5, 8'h0b);
+        send_byte(MT_LOAD_C64_PRG_STAGE, 2, 5, 8'ha9);
+        send_byte(MT_LOAD_C64_PRG_STAGE, 3, 5, 8'h2a);
+        send_byte(MT_LOAD_C64_PRG_STAGE, 4, 5, 8'h60);
+        wait (!active);
+        @(negedge clk);
+        check(prg_loaded && cart_loaded && run_request_count == 2,
+              "fresh staged PRG commits after abort without implicit RUN");
+
+        // An idle abort is transport cleanup, not a content reset. Preserve
+        // both committed content flags and ignore a late byte from its epoch.
+        abort_stream(1'b1);
+        send_byte(MT_LOAD_C64_PRG_STAGE, 1, 5, 8'h0b);
+        check(prg_loaded && cart_loaded && !active && !error,
+              "abort preserves committed PRG and CRT state");
+
+        load_epoch = 1'b0;
         send_byte(MT_LOAD_C64_CRT_DETACH, 0, 1, 8'h00);
         check(!cart_loaded, "CRT detach is atomic");
 

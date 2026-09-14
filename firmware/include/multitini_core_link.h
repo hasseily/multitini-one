@@ -10,6 +10,7 @@
 typedef uint32_t (*mt_link_read32_fn)(void *context, uint32_t offset);
 typedef void (*mt_link_write32_fn)(void *context, uint32_t offset, uint32_t value);
 typedef void (*mt_link_progress_fn)(void *context);
+typedef int (*mt_link_continue_fn)(void *context);
 
 typedef struct {
     void *context;
@@ -48,6 +49,16 @@ mt_link_result_t mt_core_link_stream(mt_core_link_t *link, uint8_t kind,
                                      uint32_t max_polls,
                                      mt_link_progress_fn progress,
                                      void *progress_context);
+/* The optional continuation predicate bounds a stream by an external deadline
+ * instead of assuming that a raw MMIO poll count represents elapsed time. A
+ * false result aborts an open stream and returns MT_LINK_TIMEOUT. */
+mt_link_result_t mt_core_link_stream_until(
+    mt_core_link_t *link, uint8_t kind, const uint8_t *data, size_t size,
+    uint32_t max_polls, mt_link_progress_fn progress, void *progress_context,
+    mt_link_continue_fn continue_wait, void *continue_context);
+mt_link_result_t mt_core_link_abort_stream(
+    mt_core_link_t *link, uint32_t max_polls,
+    mt_link_progress_fn progress, void *progress_context);
 mt_link_result_t mt_core_link_input_event(mt_core_link_t *link,
                                           uint16_t code, uint16_t value,
                                           uint32_t max_polls,

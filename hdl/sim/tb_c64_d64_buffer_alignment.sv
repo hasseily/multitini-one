@@ -16,6 +16,8 @@ module tb_c64_d64_buffer_alignment;
     logic [12:0] cache_address = 13'd0;
     logic [7:0]  cache_data = 8'd0;
     logic        cache_write = 1'b0;
+    logic [5:0]  cache_track = 6'd18;
+    logic [31:0] last_request_lba = 32'd0;
     wire [7:0]   cache_read_data;
 
     wire [7:0] unused_dout;
@@ -33,11 +35,11 @@ module tb_c64_d64_buffer_alignment;
         .freq(2'b00),
         .sync_n(unused_sync_n),
         .byte_n(unused_byte_n),
-        .track(6'd18),
+        .track(cache_track),
         .busy(1'b1),
         .we(unused_disk_write),
         .sd_clk(clk),
-        .sd_lba(32'd0),
+        .sd_lba(last_request_lba),
         .sd_buff_addr(cache_address),
         .sd_buff_dout(cache_data),
         .sd_buff_din(cache_read_data),
@@ -61,6 +63,26 @@ module tb_c64_d64_buffer_alignment;
                 $fatal(1);
             end
         end
+    endtask
+
+    task automatic write_disk_id_offsets(
+        input logic [5:0] track,
+        input logic [31:0] request_lba,
+        input logic [7:0] first_byte,
+        input logic [7:0] second_byte
+    );
+        @(negedge clk);
+        cache_track = track;
+        last_request_lba = request_lba;
+        cache_write = 1'b1;
+        cache_address = 13'h0a2;
+        cache_data = first_byte;
+        @(negedge clk);
+        cache_address = 13'h0a3;
+        cache_data = second_byte;
+        @(negedge clk);
+        cache_write = 1'b0;
+        repeat (2) @(negedge clk);
     endtask
 
     initial begin
@@ -92,7 +114,25 @@ module tb_c64_d64_buffer_alignment;
         check_address(512);
         check_address(513);
 
-        $display("PASS: consecutive D64 cache bytes retain address/data alignment");
+        write_disk_id_offsets(6'd18, 32'd357, 8'h12, 8'h34);
+        if (dut.id1 !== 8'h12 || dut.id2 !== 8'h34)
+            $fatal(1, "FAIL: directory fill did not install the disk ID");
+
+        // The track cache does not issue an ARM request on a hit. Its copy
+        // therefore sees the LBA of the most recent unrelated request. After
+        // an external directory fill, a cached data track must not replace
+        // the disk ID with that track's bytes at offsets $A2/$A3.
+        write_disk_id_offsets(6'd1, 32'd357, 8'h56, 8'h78);
+        if (dut.id1 !== 8'h12 || dut.id2 !== 8'h34)
+            $fatal(1, "FAIL: cached non-directory track corrupted the disk ID");
+
+        // The converse also matters: restoring directory track 18 from the
+        // cache must install its ID even if the last ARM request was track 1.
+        write_disk_id_offsets(6'd18, 32'd0, 8'h9a, 8'hbc);
+        if (dut.id1 !== 8'h9a || dut.id2 !== 8'hbc)
+            $fatal(1, "FAIL: cached directory track did not restore the disk ID");
+
+        $display("PASS: D64 cache copies preserve byte alignment and disk ID");
         $finish;
     end
 endmodule

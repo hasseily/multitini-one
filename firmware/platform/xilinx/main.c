@@ -7,6 +7,7 @@
 #include "multitini_c64_boot.h"
 #include "multitini_c64_hid_input.h"
 #include "multitini_c64_interface.h"
+#include "multitini_c64_native_load.h"
 #include "multitini_c64_rom_files.h"
 #include "multitini_content.h"
 #include "multitini_core_link.h"
@@ -41,7 +42,7 @@
 
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
 #define MT_SUPERVISOR_CORE_ID UINT32_C(0)
-#define MT_FIRMWARE_BUILD_ID UINT32_C(0x20260913)
+#define MT_FIRMWARE_BUILD_ID UINT32_C(0x20260917)
 #define MT_I2C_CLOCK_HZ UINT32_C(100000)
 #define MT_I2C_BUSY_POLLS UINT32_C(1000000)
 #define MT_UART_DRAIN_POLLS UINT32_C(10000000)
@@ -460,6 +461,19 @@ static XTime ticks_from_ms(uint32_t milliseconds)
 {
     return (XTime)(((uint64_t)COUNTS_PER_SECOND * milliseconds) /
                    UINT64_C(1000));
+}
+
+static uint64_t monotonic_ms(void *context)
+{
+    XTime now = 0U;
+    const uint64_t counts_per_second = (uint64_t)COUNTS_PER_SECOND;
+    (void)context;
+    XTime_GetTime(&now);
+    /* Convert before multiplying so the 64-bit global timer remains usable
+     * well beyond the first ~15 hours of uptime. */
+    return ((uint64_t)now / counts_per_second) * UINT64_C(1000) +
+           (((uint64_t)now % counts_per_second) * UINT64_C(1000)) /
+               counts_per_second;
 }
 
 static int uart0_try_read_byte(uint8_t *value)
@@ -1572,9 +1586,7 @@ static bool collect_d64_prg(void *context,
     image.data = supervisor_disk_prg_buffer;
     image.size = extracted_size;
     if (result != MT_C64_D64_OK ||
-        mt_c64_validate_prg(&image).status != MT_C64_CONTENT_OK ||
-        supervisor_disk_prg_buffer[0] != 0x01U ||
-        supervisor_disk_prg_buffer[1] != 0x08U) {
+        mt_c64_validate_prg(&image).status != MT_C64_CONTENT_OK) {
         return true;
     }
 
@@ -1586,6 +1598,8 @@ static bool collect_d64_prg(void *context,
         memcpy(supervisor_menu_files[index].name, entry->display_name,
                name_size + 1U);
     }
+    if (!mt_c64_prg_has_basic_program(&image))
+        strcat(supervisor_menu_files[index].name, " [load only]");
     supervisor_menu_files[index].size = extracted_size;
     supervisor_menu_files[index].cookie = (uint32_t)index;
     ++supervisor_d64_prg_count;
@@ -1637,7 +1651,7 @@ static void open_menu_browser(mt_menu_browser_t browser)
         supervisor_menu.row = 0U;
         set_supervisor_status(supervisor_menu_file_count == 0U ?
                               "No loadable PRGs in this D64" :
-                              "Choose a PRG to mount and run");
+                              "Enter launches via drive; Right loads; Left loads directly");
         return;
     }
     list_result = mt_sd_storage_list(
@@ -1721,7 +1735,7 @@ static int supervisor_activate(void *context,
         return -1;
     }
     c64_core_reset_active = true;
-    c64_content_service_init(&shell_link, NULL, NULL);
+    c64_content_service_init(&shell_link, NULL, NULL, monotonic_ms, NULL);
     profile = mt_supervisor_settings_find(&persistent_settings,
                                           selection->package.id);
     request_fast_roms = selection->package.abi_minor >= 8U &&
@@ -1811,6 +1825,99 @@ static bool supervisor_keyboard_filter(void *context, uint8_t slot,
     return was_visible || supervisor_menu.visible;
 }
 
+static int native_load_key(void *context, uint8_t scan, bool pressed)
+{
+    (void)context;
+    return mt_core_link_input_event(&shell_link, scan, pressed ? 1U : 0U,
+                                    MT_LINK_COMMAND_POLLS, NULL, NULL) ==
+           MT_LINK_OK ? 0 : -1;
+}
+
+static int native_load_delay(void *context, uint32_t milliseconds)
+{
+    (void)context;
+    /* Commands have completed before this callback. Disk service may use the
+     * same link here; USB/menu input must not interleave the typed command. */
+    while (milliseconds-- != 0U) {
+        usleep(1000U);
+        c64_d64_service_poll();
+    }
+    return 0;
+}
+
+typedef struct {
+    const uint8_t *raw_name;
+    size_t matches;
+} native_name_search_t;
+
+static bool count_native_name(void *context,
+                              const mt_c64_d64_prg_entry_t *entry)
+{
+    native_name_search_t *const search = context;
+    if (memcmp(entry->raw_name, search->raw_name,
+               MT_C64_D64_NAME_SIZE) == 0) ++search->matches;
+    return true;
+}
+
+static bool native_load_name_unique(uint32_t cookie)
+{
+    native_name_search_t search = {
+        supervisor_d64_prgs[cookie].raw_name, 0U
+    };
+    size_t count = 0U;
+    /* Include unclosed/invalid PRGs excluded from the launch browser: the
+     * drive resolves the name itself and could otherwise choose those. */
+    return c64_d64_service_list_prgs(count_native_name, &search, &count) ==
+           MT_C64_D64_OK && search.matches == 1U;
+}
+
+static void launch_disk_program_native(uint32_t cookie)
+{
+    static const mt_c64_native_load_io_t io = {
+        native_load_key, native_load_delay
+    };
+    const mt_c64_d64_prg_entry_t *const entry = &supervisor_d64_prgs[cookie];
+    mt_c64_content_service_result_t result;
+    mt_c64_native_load_status_t typed;
+    bool remounted;
+    bool settings_saved;
+    if (!mt_c64_native_load_name_supported(entry->raw_name) ||
+        !native_load_name_unique(cookie)) {
+        set_supervisor_status("Name cannot be selected exactly by a drive LOAD");
+        return;
+    }
+    if (!prepare_c64_content_change()) {
+        set_supervisor_status("Disk load could not start");
+        return;
+    }
+    result = c64_content_service_prepare_disk_load();
+    print_c64_content_result("native load prepare", entry->display_name,
+                             &result);
+    remounted = finish_c64_content_change();
+    if (result.status != MT_C64_CONTENT_SERVICE_OK) {
+        set_supervisor_status("Disk load preparation failed");
+        return;
+    }
+    settings_saved = remember_active_cartridge(NULL);
+    if (!remounted) {
+        set_supervisor_status("Retry disk remount, then select the program again");
+        return;
+    }
+    typed = mt_c64_native_load(entry->raw_name, &io, NULL);
+    xil_printf("[C64] native LOAD %s: %s\r\n", entry->display_name,
+               typed == MT_C64_NATIVE_LOAD_OK ? "command sent" :
+                                               "keyboard transfer failed");
+    if (typed != MT_C64_NATIVE_LOAD_OK) {
+        set_supervisor_status("LOAD typing failed; restart before retrying");
+        return;
+    }
+    supervisor_menu.browser = MT_MENU_BROWSER_NONE;
+    supervisor_menu.row = 1U;
+    set_supervisor_status(settings_saved ?
+        "LOAD sent through drive; program controls startup" :
+        "LOAD sent; settings write failed");
+}
+
 static void handle_menu_action(mt_menu_action_t action)
 {
     if (action.kind == MT_MENU_ACTION_SWITCH_CORE) {
@@ -1871,12 +1978,15 @@ static void handle_menu_action(mt_menu_action_t action)
             set_supervisor_status("Drive mounted; settings write failed");
         else
             set_supervisor_status("Drive 8 mounted");
-    } else if (action.kind == MT_MENU_ACTION_MOUNT_AND_RUN) {
+    } else if (action.kind == MT_MENU_ACTION_MOUNT_AND_RUN ||
+               action.kind == MT_MENU_ACTION_LOAD_DISK_PROGRAM ||
+               action.kind == MT_MENU_ACTION_DIRECT_DISK_PROGRAM) {
         mt_c64_content_service_result_t result;
         mt_c64_content_service_result_t run_result;
         mt_c64_d64_result_t extract_result;
         bool remounted;
         bool settings_saved = true;
+        const bool drive_load = action.kind == MT_MENU_ACTION_MOUNT_AND_RUN;
         size_t extracted_size = 0U;
         uint32_t cookie;
         if (action.file_index >= supervisor_menu_file_count) {
@@ -1898,6 +2008,51 @@ static void handle_menu_action(mt_menu_action_t action)
             set_supervisor_status("Could not extract that D64 program");
             return;
         }
+        {
+            const mt_c64_content_image_t image = {
+                supervisor_disk_prg_buffer, extracted_size
+            };
+            if (mt_c64_validate_prg(&image).status != MT_C64_CONTENT_OK) {
+                set_supervisor_status("Invalid PRG; disk remains mounted");
+                return;
+            }
+            if (action.kind == MT_MENU_ACTION_LOAD_DISK_PROGRAM ||
+                !mt_c64_prg_has_basic_program(&image)) {
+                if (action.kind == MT_MENU_ACTION_DIRECT_DISK_PROGRAM) {
+                    set_supervisor_status("No BASIC start; use Enter or Right to load");
+                    return;
+                }
+                launch_disk_program_native(cookie);
+                return;
+            }
+        }
+        if (drive_load) {
+            const uint8_t *const name = supervisor_d64_prgs[cookie].raw_name;
+            const size_t program_size = extracted_size;
+            if (!mt_c64_native_load_name_supported(name) ||
+                !native_load_name_unique(cookie)) {
+                set_supervisor_status("Name cannot be selected exactly by a drive LOAD");
+                return;
+            }
+            /* An in-program LOAD makes BASIC start the loaded program after
+             * the real disk transfer succeeds. Preserve KERNAL/drive state
+             * without guessing a delay or queuing RUN after a failed LOAD. */
+            if (mt_c64_native_load_build_basic_launcher(
+                    name, supervisor_disk_prg_buffer,
+                    sizeof(supervisor_disk_prg_buffer), &extracted_size) !=
+                MT_C64_NATIVE_LOAD_OK) {
+                set_supervisor_status("Could not prepare disk LOAD launcher");
+                return;
+            }
+            /* In-program LOAD retains VARTAB. Reserve the target's full
+             * extent before RUN so its variables cannot overwrite loaded
+             * BASIC/code. Short targets retain the larger launcher extent. */
+            if (extracted_size < program_size) {
+                memset(supervisor_disk_prg_buffer + extracted_size, 0,
+                       program_size - extracted_size);
+                extracted_size = program_size;
+            }
+        }
         if (!prepare_c64_content_change()) {
             set_supervisor_status("Mount & Run could not start");
             return;
@@ -1905,7 +2060,7 @@ static void handle_menu_action(mt_menu_action_t action)
         result = c64_content_service_stage_prg_image(
             supervisor_disk_prg_buffer, extracted_size);
         print_c64_content_result(
-            "mount-and-run stage",
+            drive_load ? "disk LOAD launcher stage" : "direct stage",
             supervisor_menu_files[action.file_index].name,
             &result);
         remounted = finish_c64_content_change();
@@ -1922,7 +2077,7 @@ static void handle_menu_action(mt_menu_action_t action)
             }
             run_result = c64_content_service_run_staged_prg();
             print_c64_content_result(
-                "mount-and-run start",
+                drive_load ? "disk LOAD launcher start" : "direct start",
                 supervisor_menu_files[action.file_index].name,
                 &run_result);
             if (run_result.status != MT_C64_CONTENT_SERVICE_OK) {
@@ -1932,7 +2087,8 @@ static void handle_menu_action(mt_menu_action_t action)
                     "Program running; settings write failed");
             } else {
                 set_supervisor_status(
-                    "Program running; D64 remains mounted");
+                    drive_load ? "Disk LOAD started; close F12 to view" :
+                                 "Program running; D64 remains mounted");
             }
         }
     } else if (action.kind == MT_MENU_ACTION_LOAD_CONTENT) {
@@ -2416,7 +2572,7 @@ int main(void)
     usb_hid_service_dump_status();
     /* A progress callback must not re-enter shell_link through USB input. */
     c64_d64_service_init(&shell_link, NULL, NULL);
-    c64_content_service_init(&shell_link, NULL, NULL);
+    c64_content_service_init(&shell_link, NULL, NULL, monotonic_ms, NULL);
     c64_services_initialized = true;
     initialize_supervisor_menu();
     service_supervisor_menu();

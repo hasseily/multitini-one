@@ -88,7 +88,15 @@ mt_menu_action_t mt_menu_key(mt_menu_t *menu, const mt_menu_view_t *view,
             menu->row = menu->row == 0U ? rows - 1U : menu->row - 1U;
         else if (hid_usage == MT_MENU_HID_DOWN && rows != 0U)
             menu->row = (menu->row + 1U) % rows;
-        else if (hid_usage == MT_MENU_HID_ENTER && rows != 0U) {
+        else if (hid_usage == MT_MENU_HID_RIGHT && rows != 0U &&
+                 menu->browser == MT_MENU_BROWSER_DISK_PROGRAM) {
+            action.kind = MT_MENU_ACTION_LOAD_DISK_PROGRAM;
+            action.file_index = menu->row;
+        } else if (hid_usage == MT_MENU_HID_LEFT && rows != 0U &&
+                   menu->browser == MT_MENU_BROWSER_DISK_PROGRAM) {
+            action.kind = MT_MENU_ACTION_DIRECT_DISK_PROGRAM;
+            action.file_index = menu->row;
+        } else if (hid_usage == MT_MENU_HID_ENTER && rows != 0U) {
             action.kind = menu->browser == MT_MENU_BROWSER_DRIVE8 ?
                           MT_MENU_ACTION_MOUNT_DRIVE8 :
                           (menu->browser == MT_MENU_BROWSER_DISK_PROGRAM ?
@@ -417,7 +425,7 @@ void mt_menu_render(const mt_menu_t *menu, const mt_menu_view_t *view,
                menu->browser == MT_MENU_BROWSER_NONE ?
                "F12 close   Tab section   Up/Down select   Left/Right change   Enter apply" :
                (menu->browser == MT_MENU_BROWSER_DISK_PROGRAM ?
-                "Escape back   Up/Down select   Enter run" :
+                "Esc back   Up/Down select   Enter launch   Right load only   Left direct" :
                 "Escape back   Up/Down select   Enter load"),
                MT_UI_COLOR_MUTED, MT_UI_COLOR_RAISED, false);
     if (view != NULL && view->status_text != NULL)

@@ -17,6 +17,8 @@ module multitini_c64_adapter #(
     input  logic        core_reset_request,
     input  logic        cpu_turbo_enable,
     input  logic        drive_parallel_enable,
+    input  logic        load_abort,
+    input  logic        load_abort_epoch,
     input  logic        clear_load_error,
 
     input  logic [15:0] input_code,
@@ -32,6 +34,7 @@ module multitini_c64_adapter #(
     input  logic [7:0]  load_kind,
     input  logic [31:0] load_offset,
     input  logic [31:0] load_total,
+    input  logic        load_epoch,
 
     output logic [23:0] memory_addr,
     output logic        memory_write,
@@ -286,11 +289,14 @@ module multitini_c64_adapter #(
     );
 
     multitini_c64_content_loader content_loader_i (
-        .clk(core_clk), .reset(reset), .clear_error(clear_load_error),
+        .clk(core_clk), .reset(reset), .load_abort(load_abort),
+        .load_abort_epoch(load_abort_epoch),
+        .clear_error(clear_load_error),
         .load_data(load_data), .load_valid(content_load_valid),
         .load_ready(content_load_ready), .load_first(load_first),
         .load_last(load_last), .load_kind(load_kind),
         .load_offset(load_offset), .load_total(load_total),
+        .load_epoch(load_epoch),
         .core_addr(ram_addr),
         .prg_ram_wr(prg_ram_wr), .prg_ram_addr(prg_ram_addr),
         .prg_ram_data(prg_ram_data), .prg_loaded(prg_loaded),
@@ -324,7 +330,7 @@ module multitini_c64_adapter #(
     multitini_c64_run_injector run_injector_i (
         .clk(core_clk),
         .reset(reset || core_reset_request ||
-               content_load_resets_run_injector),
+               content_load_resets_run_injector || load_abort),
         .start(prg_run_request), .host_ps2_key(host_ps2_key),
         .ps2_key(ps2_key), .busy(prg_run_busy)
     );

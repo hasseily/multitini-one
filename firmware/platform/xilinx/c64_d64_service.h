@@ -23,6 +23,8 @@ void c64_d64_service_init(mt_core_link_t *link,
  * mounted so that persistence can be retried without discarding its data.
  */
 int c64_d64_service_prepare_reset(void);
+/* Wait until the FPGA reports a stable mounted state with no eject pending. */
+int c64_d64_service_wait_mounted(void);
 int c64_d64_service_resume_after_reset(void);
 
 /*

@@ -3,6 +3,8 @@
 
 #include <stddef.h>
 
+#define MT_LINK_ABORT_MAX_POLLS UINT32_C(100000)
+
 static uint32_t mmio_read32(void *context, uint32_t offset)
 {
     volatile uint32_t *const base = (volatile uint32_t *)context;
@@ -96,32 +98,101 @@ mt_link_result_t mt_core_link_command(mt_core_link_t *link, uint32_t opcode,
     return MT_LINK_TIMEOUT;
 }
 
-static mt_link_result_t command_retry_busy(
+static int wait_may_continue(mt_link_continue_fn continue_wait,
+                             void *continue_context)
+{
+    return continue_wait == NULL || continue_wait(continue_context) != 0;
+}
+
+static mt_link_result_t command_until(
     mt_core_link_t *link, uint32_t opcode, const uint32_t args[4],
-    uint32_t max_polls, mt_link_progress_fn progress, void *progress_context)
+    uint32_t max_polls, mt_link_progress_fn progress, void *progress_context,
+    mt_link_continue_fn continue_wait, void *continue_context,
+    mt_command_response_t *response)
+{
+    uint32_t sequence;
+    uint32_t poll;
+    uint32_t response_status;
+
+    if (!link_valid(link) || args == NULL || response == NULL ||
+        max_polls == 0U) {
+        return MT_LINK_BAD_ARGUMENT;
+    }
+
+    sequence = link->next_sequence++;
+    if (sequence == 0U) sequence = link->next_sequence++;
+
+    link->write32(link->context, MT_REG_COMMAND_ARG0, args[0]);
+    link->write32(link->context, MT_REG_COMMAND_ARG1, args[1]);
+    link->write32(link->context, MT_REG_COMMAND_ARG2, args[2]);
+    link->write32(link->context, MT_REG_COMMAND_ARG3, args[3]);
+    link->write32(link->context, MT_REG_COMMAND_OPCODE, opcode);
+    link->write32(link->context, MT_REG_COMMAND_SEQ, sequence);
+    link->write32(link->context, MT_REG_COMMAND_DOORBELL, sequence);
+
+    for (poll = 0U; poll < max_polls; ++poll) {
+        if (progress != NULL) progress(progress_context);
+        if (link->read32(link->context, MT_REG_RESPONSE_SEQ) == sequence) {
+            response_status = link->read32(link->context,
+                                           MT_REG_RESPONSE_STATUS);
+            response->sequence = sequence;
+            response->status = response_status;
+            response->arg0 = link->read32(link->context,
+                                          MT_REG_RESPONSE_ARG0);
+            response->arg1 = link->read32(link->context,
+                                          MT_REG_RESPONSE_ARG1);
+            return response_status == MT_RESPONSE_OK ?
+                MT_LINK_OK : MT_LINK_REMOTE_ERROR;
+        }
+        if (!wait_may_continue(continue_wait, continue_context))
+            return MT_LINK_TIMEOUT;
+    }
+    return MT_LINK_TIMEOUT;
+}
+
+static mt_link_result_t command_retry_busy_until(
+    mt_core_link_t *link, uint32_t opcode, const uint32_t args[4],
+    uint32_t max_polls, mt_link_progress_fn progress, void *progress_context,
+    mt_link_continue_fn continue_wait, void *continue_context)
 {
     uint32_t attempt;
     mt_command_response_t response;
     mt_link_result_t result;
 
     for (attempt = 0U; attempt < max_polls; ++attempt) {
-        result = mt_core_link_command(link, opcode, args, max_polls,
-                                      progress, progress_context, &response);
+        result = command_until(link, opcode, args, max_polls,
+                               progress, progress_context,
+                               continue_wait, continue_context, &response);
         if (result != MT_LINK_REMOTE_ERROR ||
             response.status != MT_RESPONSE_BUSY) {
             return result;
         }
+        if (!wait_may_continue(continue_wait, continue_context))
+            return MT_LINK_TIMEOUT;
     }
     return MT_LINK_TIMEOUT;
 }
 
-static void abort_stream(mt_core_link_t *link, uint32_t max_polls,
-                         mt_link_progress_fn progress, void *progress_context)
+static mt_link_result_t command_retry_busy(
+    mt_core_link_t *link, uint32_t opcode, const uint32_t args[4],
+    uint32_t max_polls, mt_link_progress_fn progress, void *progress_context)
+{
+    return command_retry_busy_until(link, opcode, args, max_polls,
+                                    progress, progress_context, NULL, NULL);
+}
+
+mt_link_result_t mt_core_link_abort_stream(
+    mt_core_link_t *link, uint32_t max_polls,
+    mt_link_progress_fn progress, void *progress_context)
 {
     const uint32_t args[4] = {0U, 0U, 0U, 0U};
+    const uint32_t abort_polls = max_polls < MT_LINK_ABORT_MAX_POLLS ?
+                                 max_polls : MT_LINK_ABORT_MAX_POLLS;
     mt_command_response_t response;
-    (void)mt_core_link_command(link, MT_COMMAND_STREAM_ABORT, args, max_polls,
-                               progress, progress_context, &response);
+    if (max_polls == 0U) return MT_LINK_BAD_ARGUMENT;
+    return mt_core_link_command(link, MT_COMMAND_STREAM_ABORT, args,
+                                abort_polls, progress, progress_context,
+                                &response);
 }
 
 mt_link_result_t mt_core_link_input_event(mt_core_link_t *link,
@@ -138,11 +209,10 @@ mt_link_result_t mt_core_link_input_event(mt_core_link_t *link,
                               progress, progress_context);
 }
 
-mt_link_result_t mt_core_link_stream(mt_core_link_t *link, uint8_t kind,
-                                     const uint8_t *data, size_t size,
-                                     uint32_t max_polls,
-                                     mt_link_progress_fn progress,
-                                     void *progress_context)
+mt_link_result_t mt_core_link_stream_until(
+    mt_core_link_t *link, uint8_t kind, const uint8_t *data, size_t size,
+    uint32_t max_polls, mt_link_progress_fn progress, void *progress_context,
+    mt_link_continue_fn continue_wait, void *continue_context)
 {
     uint32_t args[4] = {0U, 0U, 0U, 0U};
     mt_command_response_t response;
@@ -163,10 +233,12 @@ mt_link_result_t mt_core_link_stream(mt_core_link_t *link, uint8_t kind,
 
     args[0] = kind;
     args[1] = (uint32_t)size;
-    result = mt_core_link_command(link, MT_COMMAND_STREAM_BEGIN, args,
-                                  max_polls, progress, progress_context,
-                                  &response);
+    result = command_until(link, MT_COMMAND_STREAM_BEGIN, args,
+                           max_polls, progress, progress_context,
+                           continue_wait, continue_context, &response);
     if (result != MT_LINK_OK) {
+        (void)mt_core_link_abort_stream(
+            link, max_polls, progress, progress_context);
         return result;
     }
 
@@ -190,9 +262,15 @@ mt_link_result_t mt_core_link_stream(mt_core_link_t *link, uint8_t kind,
                     break;
                 }
                 if (progress != NULL) progress(progress_context);
+                if (!wait_may_continue(continue_wait, continue_context)) {
+                    (void)mt_core_link_abort_stream(
+                        link, max_polls, progress, progress_context);
+                    return MT_LINK_TIMEOUT;
+                }
             }
             if (poll == max_polls) {
-                abort_stream(link, max_polls, progress, progress_context);
+                (void)mt_core_link_abort_stream(
+                    link, max_polls, progress, progress_context);
                 return MT_LINK_TIMEOUT;
             }
         }
@@ -201,18 +279,25 @@ mt_link_result_t mt_core_link_stream(mt_core_link_t *link, uint8_t kind,
                  MT_STREAM_STATUS_DRAINED) != 0U)
                 break;
             if (progress != NULL) progress(progress_context);
+            if (!wait_may_continue(continue_wait, continue_context)) {
+                (void)mt_core_link_abort_stream(
+                    link, max_polls, progress, progress_context);
+                return MT_LINK_TIMEOUT;
+            }
         }
         if (offset == max_polls) {
-            abort_stream(link, max_polls, progress, progress_context);
+            (void)mt_core_link_abort_stream(
+                link, max_polls, progress, progress_context);
             return MT_LINK_TIMEOUT;
         }
 
         args[0] = 0U;
-        result = mt_core_link_command(link, MT_COMMAND_STREAM_END, args,
-                                      max_polls, progress, progress_context,
-                                      &response);
+        result = command_until(link, MT_COMMAND_STREAM_END, args,
+                               max_polls, progress, progress_context,
+                               continue_wait, continue_context, &response);
         if (result != MT_LINK_OK) {
-            abort_stream(link, max_polls, progress, progress_context);
+            (void)mt_core_link_abort_stream(
+                link, max_polls, progress, progress_context);
         }
         return result;
     }
@@ -220,22 +305,35 @@ mt_link_result_t mt_core_link_stream(mt_core_link_t *link, uint8_t kind,
     args[1] = 0U;
     for (offset = 0U; offset < size; ++offset) {
         args[0] = data[offset];
-        result = command_retry_busy(link, MT_COMMAND_STREAM_DATA, args,
-                                    max_polls, progress, progress_context);
+        result = command_retry_busy_until(
+            link, MT_COMMAND_STREAM_DATA, args, max_polls,
+            progress, progress_context, continue_wait, continue_context);
         if (result != MT_LINK_OK) {
-            abort_stream(link, max_polls, progress, progress_context);
+            (void)mt_core_link_abort_stream(
+                link, max_polls, progress, progress_context);
             return result;
         }
     }
 
     args[0] = 0U;
-    result = mt_core_link_command(link, MT_COMMAND_STREAM_END, args,
-                                  max_polls, progress, progress_context,
-                                  &response);
+    result = command_until(link, MT_COMMAND_STREAM_END, args,
+                           max_polls, progress, progress_context,
+                           continue_wait, continue_context, &response);
     if (result != MT_LINK_OK) {
-        abort_stream(link, max_polls, progress, progress_context);
+        (void)mt_core_link_abort_stream(
+            link, max_polls, progress, progress_context);
     }
     return result;
+}
+
+mt_link_result_t mt_core_link_stream(mt_core_link_t *link, uint8_t kind,
+                                     const uint8_t *data, size_t size,
+                                     uint32_t max_polls,
+                                     mt_link_progress_fn progress,
+                                     void *progress_context)
+{
+    return mt_core_link_stream_until(link, kind, data, size, max_polls,
+                                     progress, progress_context, NULL, NULL);
 }
 
 const char *mt_link_result_name(mt_link_result_t result)

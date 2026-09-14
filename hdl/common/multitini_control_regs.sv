@@ -45,6 +45,9 @@ module multitini_control_regs #(
     output logic [31:0]  load_total,
     output logic         load_first,
     output logic         load_last,
+    output logic         load_epoch,
+    output logic         load_abort,
+    output logic         load_abort_epoch,
     output logic         load_error_clear,
     output logic         input_submit,
     output logic [15:0]  input_code,
@@ -96,6 +99,8 @@ module multitini_control_regs #(
     logic [2:0]  stream_burst_count;
     logic [1:0]  stream_burst_index;
     logic        stream_burst_pending;
+    logic        stream_epoch;
+    logic        stream_aborted;
     logic [31:0] stream_status_word;
     logic        rd_known;
     logic [31:0] error_set_mask;
@@ -323,6 +328,8 @@ module multitini_control_regs #(
             stream_burst_count <= 3'd0;
             stream_burst_index <= 2'd0;
             stream_burst_pending <= 1'b0;
+            stream_epoch      <= 1'b0;
+            stream_aborted    <= 1'b0;
             load_submit     <= 1'b0;
             load_kind       <= 8'd0;
             load_data       <= 8'd0;
@@ -330,6 +337,9 @@ module multitini_control_regs #(
             load_total      <= 32'd0;
             load_first      <= 1'b0;
             load_last       <= 1'b0;
+            load_epoch      <= 1'b0;
+            load_abort      <= 1'b0;
+            load_abort_epoch <= 1'b0;
             load_error_clear <= 1'b0;
             input_submit    <= 1'b0;
             input_code      <= 16'd0;
@@ -356,6 +366,7 @@ module multitini_control_regs #(
             // the asynchronous mailbox accepts the staged byte.
             if (!stream_burst_pending)
                 load_submit <= 1'b0;
+            load_abort <= 1'b0;
             load_error_clear <= 1'b0;
             input_submit <= 1'b0;
             media_mount <= 1'b0;
@@ -388,6 +399,7 @@ module multitini_control_regs #(
                     load_total <= stream_total;
                     load_first <= stream_offset == 32'd0;
                     load_last <= stream_offset + 32'd1 == stream_total;
+                    load_epoch <= stream_epoch;
                 end else if (load_submit_ready) begin
                     // Advance only after the currently registered byte has
                     // actually transferred. Keep valid asserted and stage the
@@ -532,6 +544,12 @@ module multitini_control_regs #(
                                         stream_burst_pending <= 1'b0;
                                         stream_burst_count <= 3'd0;
                                         stream_burst_index <= 2'd0;
+                                        // Repeated aborts retain one epoch;
+                                        // advance it exactly once when the
+                                        // replacement stream is accepted.
+                                        if (stream_aborted)
+                                            stream_epoch <= ~stream_epoch;
+                                        stream_aborted <= 1'b0;
                                         load_submit <= 1'b0;
                                     end
                                 end
@@ -553,6 +571,7 @@ module multitini_control_regs #(
                                         load_first <= stream_offset == 32'd0;
                                         load_last <= stream_offset + 32'd1 ==
                                                      stream_total;
+                                        load_epoch <= stream_epoch;
                                         stream_offset <= stream_offset + 32'd1;
                                     end
                                 end
@@ -580,6 +599,9 @@ module multitini_control_regs #(
                                     stream_burst_count <= 3'd0;
                                     stream_burst_index <= 2'd0;
                                     load_submit <= 1'b0;
+                                    load_abort <= 1'b1;
+                                    load_abort_epoch <= stream_epoch;
+                                    stream_aborted <= 1'b1;
                                 end
                                 MT_COMMAND_MEDIA_MOUNT: begin
                                     if ((command_arg0 &

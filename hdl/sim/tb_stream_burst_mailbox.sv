@@ -27,8 +27,16 @@ module tb_stream_burst_mailbox;
     logic [31:0] load_total;
     logic load_first;
     logic load_last;
-    logic [81:0] mailbox_source;
-    logic [81:0] mailbox_destination;
+    logic load_epoch;
+    logic load_abort;
+    logic load_abort_epoch;
+    logic load_abort_ready;
+    logic [0:0] abort_mailbox_source;
+    logic [0:0] abort_mailbox_destination;
+    logic destination_abort;
+    logic destination_abort_epoch;
+    logic [82:0] mailbox_source;
+    logic [82:0] mailbox_destination;
     logic destination_valid;
     logic destination_ready = 1'b0;
     logic [7:0] destination_kind;
@@ -37,18 +45,22 @@ module tb_stream_burst_mailbox;
     logic [31:0] destination_total;
     logic destination_first;
     logic destination_last;
+    logic destination_epoch;
 
     integer accepted_count = 0;
     logic stream_under_test = 1'b0;
+    logic abort_test_active = 1'b0;
 
     always #5.0 control_clk = !control_clk;
     always #7.0 core_clk = !core_clk;
 
     assign mailbox_source = {load_kind, load_data, load_offset, load_total,
-                             load_first, load_last};
+                             load_first, load_last, load_epoch};
     assign {destination_kind, destination_data, destination_offset,
-            destination_total, destination_first, destination_last} =
-        mailbox_destination;
+            destination_total, destination_first, destination_last,
+            destination_epoch} = mailbox_destination;
+    assign abort_mailbox_source = load_abort_epoch;
+    assign destination_abort_epoch = abort_mailbox_destination[0];
 
     multitini_control_regs #(.SHELL_BUILD_ID(32'h12345678)) control_regs_i (
         .clk(control_clk),
@@ -90,6 +102,9 @@ module tb_stream_burst_mailbox;
         .load_total(load_total),
         .load_first(load_first),
         .load_last(load_last),
+        .load_epoch(load_epoch),
+        .load_abort(load_abort),
+        .load_abort_epoch(load_abort_epoch),
         .load_error_clear(),
         .input_submit(),
         .input_code(),
@@ -113,7 +128,7 @@ module tb_stream_burst_mailbox;
         .irq()
     );
 
-    multitini_async_mailbox #(.WIDTH(82)) load_mailbox_i (
+    multitini_async_mailbox #(.WIDTH(83)) load_mailbox_i (
         .src_clk(control_clk),
         .src_resetn(control_resetn),
         .src_data(mailbox_source),
@@ -124,6 +139,19 @@ module tb_stream_burst_mailbox;
         .dst_data(mailbox_destination),
         .dst_valid(destination_valid),
         .dst_ready(destination_ready)
+    );
+
+    multitini_async_mailbox #(.WIDTH(1)) abort_mailbox_i (
+        .src_clk(control_clk),
+        .src_resetn(control_resetn),
+        .src_data(abort_mailbox_source),
+        .src_valid(load_abort),
+        .src_ready(load_abort_ready),
+        .dst_clk(core_clk),
+        .dst_resetn(core_resetn),
+        .dst_data(abort_mailbox_destination),
+        .dst_valid(destination_abort),
+        .dst_ready(1'b1)
     );
 
     task automatic check_value(input logic condition, input string message);
@@ -193,11 +221,13 @@ module tb_stream_burst_mailbox;
                         "first flag matches offset zero");
             check_value(destination_last == (index == 6),
                         "last flag matches final offset");
+            check_value(destination_epoch == 1'b0,
+                        "first stream epoch is preserved");
         end
     endtask
 
     task automatic accept_next(input integer stalled_core_cycles);
-        logic [81:0] held_payload;
+        logic [82:0] held_payload;
         integer target_count;
         begin
             target_count = accepted_count + 1;
@@ -222,7 +252,20 @@ module tb_stream_burst_mailbox;
 
     always @(posedge core_clk) begin
         if (destination_valid && destination_ready) begin
-            validate_destination(accepted_count);
+            if (stream_under_test) begin
+                validate_destination(accepted_count);
+            end else if (abort_test_active && accepted_count == 7) begin
+                check_value(destination_kind == 8'h15 &&
+                            destination_offset == 0 && destination_first &&
+                            destination_epoch == 1'b0,
+                            "queued pre-abort byte retains aborted epoch");
+            end else if (abort_test_active && accepted_count == 8) begin
+                check_value(destination_kind == 8'h15 &&
+                            destination_data == 8'h5a &&
+                            destination_offset == 0 && destination_first &&
+                            destination_last && destination_epoch == 1'b1,
+                            "post-abort stream uses a fresh epoch");
+            end
             accepted_count <= accepted_count + 1;
         end
     end
@@ -303,6 +346,59 @@ module tb_stream_burst_mailbox;
                     "all seven packed payload bytes crossed exactly once");
 
         stream_under_test = 1'b0;
+
+        // Leave a packed first byte queued at the destination, then abort it.
+        // The abort crosses coherently with epoch zero; the stale mailbox byte
+        // remains tagged zero, while the abort advances later bytes to one.
+        command(32'd4, MT_COMMAND_STREAM_BEGIN, 32'h00000015, 32'd5);
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_OK,
+                    "abort-test stream begins");
+        write_reg(MT_REG_STREAM_DATA_BURST, 32'h44332211);
+        wait (destination_valid === 1'b1);
+        #1;
+        check_value(destination_offset == 0 && destination_first &&
+                    destination_epoch == 1'b0,
+                    "first packed byte is queued before abort");
+        check_value(load_abort_ready,
+                    "coherent abort mailbox is ready");
+        command(32'd5, MT_COMMAND_STREAM_ABORT, 32'd0, 32'd0);
+        check_value(load_abort && load_abort_epoch == 1'b0,
+                    "abort launches with queued byte epoch");
+        wait (destination_abort === 1'b1);
+        #1;
+        check_value(destination_abort_epoch == 1'b0,
+                    "abort pulse and epoch cross coherently");
+        wait (destination_abort === 1'b0);
+        wait (load_abort_ready === 1'b1);
+        command(32'd50, MT_COMMAND_STREAM_ABORT, 32'd0, 32'd0);
+        check_value(load_abort && load_abort_epoch == 1'b0,
+                    "repeated abort retains the quarantined epoch");
+        wait (destination_abort === 1'b1);
+        #1;
+        check_value(destination_abort_epoch == 1'b0,
+                    "repeated abort crosses with the same epoch");
+
+        abort_test_active = 1'b1;
+        destination_ready = 1'b1;
+        wait (accepted_count == 8);
+        @(negedge core_clk);
+        destination_ready = 1'b0;
+        wait (load_submit_ready === 1'b1);
+
+        command(32'd6, MT_COMMAND_STREAM_BEGIN, 32'h00000015, 32'd1);
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_OK,
+                    "new stream begins after queued abort");
+        command(32'd7, MT_COMMAND_STREAM_DATA, 32'h0000005a, 32'd0);
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_OK,
+                    "new stream byte submits after queued abort");
+        wait (destination_valid === 1'b1);
+        destination_ready = 1'b1;
+        wait (accepted_count == 9);
+        @(negedge core_clk);
+        destination_ready = 1'b0;
+        check_value(accepted_count == 9,
+                    "queued old byte and fresh byte each crossed exactly once");
+
         $display("PASS: packed stream through asynchronous mailbox");
         $finish;
     end

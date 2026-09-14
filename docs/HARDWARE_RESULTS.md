@@ -1,5 +1,47 @@
 # Hardware Results
 
+## 20260917: Ultima II Mount & Run passes
+
+The user confirms that Enter in Mount & Run now launches Ultima II and
+reaches the second-disk prompt. This validates the reported launch fix on
+the board. Mounting the Player disk and continuing also works. A later
+time-gate map transition reports `LOAD ERROR!` with fast ROMs off and on;
+the UART media service reports no fault. A subsequent Right/native-LOAD
+test also fails just after Player-disk insertion. The user then confirms a
+clean Player disk works with fast ROMs on and identifies the previous copy
+as corrupted. The cause of that corruption remains unconfirmed. See
+[firmware 20260917](C64_LAUNCH_20260917.md) for the exact artifact and checks.
+
+## 20260916 candidate: launcher LOAD failure
+
+The follow-up board report shows `?FILE NOT FOUND ERROR IN 10` after the
+injected RUN, returning to BASIC. The launcher fails before the game starts.
+LIST shows the correct `10 LOAD"ULTIMA II",8,1`. Another RUN and manual
+LOAD commands for ULTIMA II, `*`, and `$` also fail without remounting.
+The source audit found a shared error-clear operation canceling a healthy
+disk request after remount. See [firmware 20260917](C64_LAUNCH_20260917.md)
+for the correction and the successful Ultima II board retest recorded above.
+Right followed by manual RUN remains the previously confirmed workaround.
+
+## 20260915 candidate: Ultima II comparison
+
+The user reports that manual LOAD/RUN and the menu's Right LOAD followed by
+RUN both reach Ultima II's second-disk prompt. Enter's direct RAM launch later
+reports a read error. ULTIMA is a later module, not the startup PRG.
+See [firmware 20260916](C64_LAUNCH_20260916.md) for the generic launcher change
+and the subsequent board failure recorded above.
+
+## 2026-09-14 disk launch report
+
+The user reports that Decathlon Mount & Run, the fast loader in other tested
+software, and battery saving work. Colors disk 1 stalls with Fast serial ROMs
+and CPU turbo Off; with Fast serial ROMs On it reports that the drive must be
+turned on. The Ultima I program browser shows HELLO but omits ULTIMA I.
+
+The findings, candidate changes, and remaining board tests are recorded in
+[C64 disk launch candidate 20260915](C64_LAUNCH_20260915.md). Its later board
+follow-up is recorded above.
+
 ## 2026-08-29 PAL diagnostic image
 
 Artifact:

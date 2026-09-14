@@ -25,15 +25,26 @@ typedef struct {
     mt_link_result_t link;
 } mt_c64_content_service_result_t;
 
+/* Monotonic milliseconds used to bound the C64 reset-to-KERNAL and RUN
+ * injector waits by elapsed time. */
+typedef uint64_t (*mt_c64_content_time_ms_fn)(void *context);
+
 void c64_content_service_init(mt_core_link_t *link,
                               mt_link_progress_fn progress,
-                              void *progress_context);
+                              void *progress_context,
+                              mt_c64_content_time_ms_fn time_ms,
+                              void *time_context);
 mt_c64_content_service_result_t c64_content_service_load(
     const char *file_name);
 /* Stage an already-extracted PRG without typing RUN, then launch it after its
  * parent disk has been remounted. */
 mt_c64_content_service_result_t c64_content_service_stage_prg_image(
     const uint8_t *data, size_t size);
+/* Reset to a ready, empty BASIC session for a subsequent native disk LOAD.
+ * No deferred RUN is armed: a disk-remount retry must not run the empty stub. */
+mt_c64_content_service_result_t c64_content_service_prepare_disk_load(void);
+/* Start without clearing shared load/media errors after remount. An existing
+ * core load fault is returned with the staged program available for recovery. */
 mt_c64_content_service_result_t c64_content_service_run_staged_prg(void);
 bool c64_content_service_prg_staged(void);
 mt_c64_content_service_result_t c64_content_service_detach_crt(void);

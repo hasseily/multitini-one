@@ -88,7 +88,7 @@ hdl/sim/tb_sid_output_schedule.sv,Multitini One,,GPL-3.0-only,xsim-2025.2-passed
 hdl/sim/tb_c64_cpu_turbo_guard.sv,Multitini One,,GPL-3.0-only,portable-simulation-pass,Focused independent Smart CPU turbo and IEC and parallel-cable strobe holdoff regression
 hdl/sim/tb_c64_parallel_cable.sv,Multitini One,,GPL-3.0-only,xsim-2025.2-passed,Mixed-language 1541 parallel-cable regression with a synthetic drive ROM driving VIA1 port A CA2 and CB1 and probing the 8 KiB extension RAM
 scripts/run_xsim_tests.sh,Multitini One,,GPL-3.0-only,xsim-2025.2-passed,XSim runner for mixed-language drive regressions that Icarus cannot elaborate
-hdl/core/c64/ports/c1541_gcr.sv,MiSTer C64 and Multitini One,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,portable-simulation-pass,Strict-tool compatibility port with declaration and encoder-table fixes plus SD-buffer data alignment for the imported RAM wrapper's delayed address and write enable
+hdl/core/c64/ports/c1541_gcr.sv,MiSTer C64 and Multitini One,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,portable-simulation-pass,Strict-tool compatibility port with declaration and encoder-table fixes plus SD-buffer data alignment and target-track disk-ID capture during cache copies
 hdl/generated/**,Multitini One,,GPL-3.0-only,generated,Generated from spec/interface_v0.json
 hdl/sim/**,Multitini One,,GPL-3.0-only,pending-simulator,Original testbenches
 tests/**,Multitini One,,GPL-3.0-only,reviewed,Original host tests

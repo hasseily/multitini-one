@@ -22,6 +22,7 @@
 #define MT_C64_MEDIA_BUSY_RETRIES UINT32_C(16)
 #define MT_C64_MEDIA_DATA_IDLE_POLLS UINT32_C(100000)
 #define MT_C64_MEDIA_DRAIN_POLLS UINT32_C(1000000)
+#define MT_C64_MEDIA_MOUNT_POLLS UINT32_C(1000000)
 #define MT_C64_MEDIA_EJECT_SETTLE_POLLS UINT32_C(4)
 
 typedef enum {
@@ -764,6 +765,29 @@ int c64_d64_service_prepare_reset(void)
     return 0;
 }
 
+int c64_d64_service_wait_mounted(void)
+{
+    uint32_t media_state = 0U;
+    uint32_t poll;
+
+    if (media_link == NULL || !mounted || eject_pending || service_faulted)
+        return -1;
+    for (poll = 0U; poll < MT_C64_MEDIA_MOUNT_POLLS; ++poll) {
+        if (read_stable_media_state(&media_state) &&
+            (media_state & (MT_MEDIA_STATE_MOUNTED |
+                            MT_MEDIA_STATE_EJECT_PENDING)) ==
+                MT_MEDIA_STATE_MOUNTED) {
+            return 0;
+        }
+        c64_d64_service_poll();
+        if (service_faulted || eject_pending || !mounted) break;
+        service_progress();
+    }
+    xil_printf("[C64] drive8 mount confirmation timed out state=%08x\r\n",
+               (unsigned int)media_state);
+    return -1;
+}
+
 int c64_d64_service_resume_after_reset(void)
 {
     char name[MT_C64_MEDIA_PATH_CAPACITY];
@@ -771,6 +795,10 @@ int c64_d64_service_resume_after_reset(void)
     memcpy(name, reset_resume_name, strlen(reset_resume_name) + 1U);
     reset_resume_pending = false;
     if (mount_image(name) != 0) {
+        reset_resume_pending = true;
+        return -1;
+    }
+    if (c64_d64_service_wait_mounted() != 0) {
         reset_resume_pending = true;
         return -1;
     }

@@ -11,14 +11,75 @@
 
 #define MT_C64_CONTENT_PATH_CAPACITY 256U
 #define MT_C64_CONTENT_POLLS UINT32_C(100000)
+#define MT_C64_PRG_STREAM_POLLS UINT32_MAX
+#define MT_C64_PRG_BOOT_TIMEOUT_MS UINT32_C(5000)
+#define MT_C64_PRG_RUN_TIMEOUT_MS UINT32_C(2000)
+
+typedef struct {
+    uint64_t started_ms;
+    uint32_t duration_ms;
+} mt_c64_content_deadline_t;
 
 static mt_core_link_t *content_link;
 static mt_link_progress_fn content_progress;
 static void *content_progress_context;
+static mt_c64_content_time_ms_fn content_time_ms;
+static void *content_time_context;
 static uint8_t content_buffer[MT_SIZE_C64_CRT_MAX];
 static bool crt_attached;
 static bool prg_staged;
 static char crt_name[MT_C64_CONTENT_PATH_CAPACITY];
+
+static mt_link_result_t set_core_reset(bool asserted)
+{
+    const uint32_t args[4] = {asserted ? 1U : 0U, 0U, 0U, 0U};
+    mt_command_response_t response;
+    return mt_core_link_command(content_link, MT_COMMAND_CORE_RESET, args,
+                                MT_C64_CONTENT_POLLS, content_progress,
+                                content_progress_context, &response);
+}
+
+static mt_link_result_t release_stale_core_reset(void)
+{
+    if ((content_link->read32(content_link->context, MT_REG_CONTROL) &
+         MT_CONTROL_CORE_RESET_REQUEST) == 0U) {
+        return MT_LINK_OK;
+    }
+    return set_core_reset(false);
+}
+
+static void pulse_core_reset(void)
+{
+    (void)set_core_reset(true);
+    (void)set_core_reset(false);
+}
+
+static void abort_and_reset_failed_transfer(void)
+{
+    /* A failure after STREAM_END needs one explicit abort to reset the
+     * core-side receiver. A stream call failure has already aborted itself and
+     * must not come through this path a second time. */
+    (void)mt_core_link_abort_stream(
+        content_link, MT_C64_CONTENT_POLLS,
+        content_progress, content_progress_context);
+    pulse_core_reset();
+}
+
+static void start_deadline(mt_c64_content_deadline_t *deadline,
+                           uint32_t duration_ms)
+{
+    deadline->started_ms = content_time_ms == NULL ? 0U :
+                           content_time_ms(content_time_context);
+    deadline->duration_ms = duration_ms;
+}
+
+static int before_deadline(void *context)
+{
+    const mt_c64_content_deadline_t *const deadline = context;
+    if (content_time_ms == NULL) return 1;
+    return content_time_ms(content_time_context) - deadline->started_ms <
+           (uint64_t)deadline->duration_ms;
+}
 
 static void clear_core_load_error(void)
 {
@@ -26,10 +87,14 @@ static void clear_core_load_error(void)
                           MT_ERROR_CORE_LOAD);
 }
 
-static mt_link_result_t wait_for_core_result(void)
+static mt_link_result_t wait_for_core_result(
+    mt_c64_content_deadline_t *deadline)
 {
     uint32_t poll;
-    for (poll = 0U; poll < MT_C64_CONTENT_POLLS; ++poll) {
+    const uint32_t max_polls = deadline == NULL || content_time_ms == NULL ?
+                               MT_C64_CONTENT_POLLS :
+                               MT_C64_PRG_STREAM_POLLS;
+    for (poll = 0U; poll < max_polls; ++poll) {
         uint32_t status;
         if (content_progress != NULL)
             content_progress(content_progress_context);
@@ -38,6 +103,8 @@ static mt_link_result_t wait_for_core_result(void)
             return MT_LINK_REMOTE_ERROR;
         if ((status & MT_STATUS_CORE_READY) != 0U)
             return MT_LINK_OK;
+        if (deadline != NULL && !before_deadline(deadline))
+            return MT_LINK_TIMEOUT;
     }
     return MT_LINK_TIMEOUT;
 }
@@ -94,6 +161,7 @@ static mt_c64_content_service_result_t load_image(
     mt_c64_content_service_result_t result =
         service_result(MT_C64_CONTENT_SERVICE_OK);
     mt_c64_content_image_t image;
+    mt_c64_content_deadline_t deadline;
 
     if (content_link == NULL || content_link->read32 == NULL ||
         content_link->write32 == NULL || data == NULL ||
@@ -113,21 +181,41 @@ static mt_c64_content_service_result_t load_image(
         return result;
     }
 
+    result.link = release_stale_core_reset();
+    if (result.link != MT_LINK_OK) {
+        result.status = MT_C64_CONTENT_SERVICE_TRANSFER_FAILED;
+        return result;
+    }
+
     if (type == MT_CONTENT_PRG && crt_attached) {
         result = c64_content_service_detach_crt();
         if (result.status != MT_C64_CONTENT_SERVICE_OK) return result;
     }
     prg_staged = false;
     clear_core_load_error();
-    result.link = type == MT_CONTENT_PRG ?
-        (stage_prg ?
-         mt_c64_stage_prg(content_link, &image, MT_C64_CONTENT_POLLS,
-                          content_progress, content_progress_context) :
-         mt_c64_load_prg(content_link, &image, MT_C64_CONTENT_POLLS,
-                         content_progress, content_progress_context)) :
-        mt_c64_load_crt(content_link, &image, MT_C64_CONTENT_POLLS,
-                        content_progress, content_progress_context);
+    if (type == MT_CONTENT_PRG) {
+        start_deadline(&deadline, MT_C64_PRG_BOOT_TIMEOUT_MS);
+        const uint32_t polls = content_time_ms == NULL ?
+                               MT_C64_CONTENT_POLLS :
+                               MT_C64_PRG_STREAM_POLLS;
+        result.link = mt_core_link_stream_until(
+            content_link,
+            stage_prg ? MT_LOAD_C64_PRG_STAGE : MT_LOAD_C64_PRG,
+            image.data, image.size, polls,
+            content_progress, content_progress_context,
+            before_deadline, &deadline);
+    } else {
+        result.link = mt_c64_load_crt(
+            content_link, &image, MT_C64_CONTENT_POLLS,
+            content_progress, content_progress_context);
+    }
     if (result.link != MT_LINK_OK) {
+        if (type == MT_CONTENT_PRG) {
+            /* mt_core_link_stream_until() already issued the single abort. */
+            pulse_core_reset();
+        } else {
+            (void)set_core_reset(false);
+        }
         /* The HDL detaches the active cartridge as soon as the first CRT byte
          * is accepted. A failed replacement therefore cannot leave the
          * previous image reported as attached. */
@@ -138,8 +226,12 @@ static mt_c64_content_service_result_t load_image(
         result.status = MT_C64_CONTENT_SERVICE_TRANSFER_FAILED;
         return result;
     }
-    result.link = wait_for_core_result();
+    if (type == MT_CONTENT_PRG)
+        start_deadline(&deadline, MT_C64_PRG_RUN_TIMEOUT_MS);
+    result.link = wait_for_core_result(
+        type == MT_CONTENT_PRG ? &deadline : NULL);
     if (result.link != MT_LINK_OK) {
+        abort_and_reset_failed_transfer();
         if (type == MT_CONTENT_CRT) {
             crt_attached = false;
             crt_name[0] = '\0';
@@ -158,11 +250,15 @@ static mt_c64_content_service_result_t load_image(
 
 void c64_content_service_init(mt_core_link_t *link,
                               mt_link_progress_fn progress,
-                              void *progress_context)
+                              void *progress_context,
+                              mt_c64_content_time_ms_fn time_ms,
+                              void *time_context)
 {
     content_link = link;
     content_progress = progress;
     content_progress_context = progress_context;
+    content_time_ms = time_ms;
+    content_time_context = time_context;
     crt_attached = false;
     prg_staged = false;
     crt_name[0] = '\0';
@@ -178,6 +274,11 @@ mt_c64_content_service_result_t c64_content_service_detach_crt(void)
         result.link = MT_LINK_BAD_ARGUMENT;
         return result;
     }
+    result.link = release_stale_core_reset();
+    if (result.link != MT_LINK_OK) {
+        result.status = MT_C64_CONTENT_SERVICE_TRANSFER_FAILED;
+        return result;
+    }
     clear_core_load_error();
     result.link = mt_c64_detach_crt(
         content_link, MT_C64_CONTENT_POLLS, content_progress,
@@ -186,7 +287,7 @@ mt_c64_content_service_result_t c64_content_service_detach_crt(void)
         result.status = MT_C64_CONTENT_SERVICE_TRANSFER_FAILED;
         return result;
     }
-    result.link = wait_for_core_result();
+    result.link = wait_for_core_result(NULL);
     if (result.link != MT_LINK_OK) {
         result.status = MT_C64_CONTENT_SERVICE_TRANSFER_FAILED;
         return result;
@@ -237,30 +338,68 @@ mt_c64_content_service_result_t c64_content_service_stage_prg_image(
     return load_image(MT_CONTENT_PRG, data, size, NULL, true);
 }
 
+mt_c64_content_service_result_t c64_content_service_prepare_disk_load(void)
+{
+    static const uint8_t empty_basic[] = {0x01U, 0x08U, 0U, 0U};
+    const mt_c64_content_service_result_t result =
+        c64_content_service_stage_prg_image(empty_basic, sizeof(empty_basic));
+    prg_staged = false;
+    return result;
+}
+
 mt_c64_content_service_result_t c64_content_service_run_staged_prg(void)
 {
     mt_c64_content_service_result_t result =
         service_result(MT_C64_CONTENT_SERVICE_OK);
+    mt_c64_content_deadline_t deadline;
     if (content_link == NULL || content_link->read32 == NULL ||
         content_link->write32 == NULL || !prg_staged) {
         result.status = MT_C64_CONTENT_SERVICE_INVALID_ARGUMENT;
         result.link = MT_LINK_BAD_ARGUMENT;
         return result;
     }
-    clear_core_load_error();
-    result.link = mt_c64_run_prg(
-        content_link, MT_C64_CONTENT_POLLS,
-        content_progress, content_progress_context);
+    /* Drive 8 is already remounted. The shared core-error acknowledgement
+     * also clears the D64 receiver and can cancel a healthy track request.
+     * Leave existing faults and the staged program intact for recovery;
+     * starting RUN must not acknowledge an error or reset mounted media. */
+    if ((content_link->read32(content_link->context, MT_REG_STATUS) &
+         MT_STATUS_CORE_LOAD_ERROR) != 0U) {
+        result.status = MT_C64_CONTENT_SERVICE_TRANSFER_FAILED;
+        result.link = MT_LINK_REMOTE_ERROR;
+        return result;
+    }
+    result.link = release_stale_core_reset();
     if (result.link != MT_LINK_OK) {
+        result.status = MT_C64_CONTENT_SERVICE_TRANSFER_FAILED;
+        return result;
+    }
+    start_deadline(&deadline, MT_C64_PRG_RUN_TIMEOUT_MS);
+    {
+        static const uint8_t run_token = 0U;
+        const uint32_t polls = content_time_ms == NULL ?
+                               MT_C64_CONTENT_POLLS :
+                               MT_C64_PRG_STREAM_POLLS;
+        result.link = mt_core_link_stream_until(
+            content_link, MT_LOAD_C64_PRG_RUN, &run_token, 1U,
+            polls, content_progress,
+            content_progress_context, before_deadline, &deadline);
+    }
+    if (result.link != MT_LINK_OK) {
+        /* STREAM_ABORT leaves a committed staged PRG available for retry and
+         * cancels any partially accepted RUN token. Do not reset here: Drive
+         * 8 has already been remounted by the Mount & Run transaction. */
         result.status = MT_C64_CONTENT_SERVICE_TRANSFER_FAILED;
         return result;
     }
     /* Once the token was accepted, retrying could type RUN twice even if the
      * ready transition is later lost or times out. */
     prg_staged = false;
-    result.link = wait_for_core_result();
-    if (result.link != MT_LINK_OK)
+    result.link = wait_for_core_result(&deadline);
+    if (result.link != MT_LINK_OK) {
+        /* The token was accepted, so the injector may complete after a lost
+         * ready transition. Never retry it and never reset a mounted drive. */
         result.status = MT_C64_CONTENT_SERVICE_TRANSFER_FAILED;
+    }
     return result;
 }
 

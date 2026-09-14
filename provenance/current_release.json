@@ -1,0 +1,249 @@
+{
+  "schema_version": 1,
+  "release_id": "20260917",
+  "status": "current; C64 accepted for now",
+  "accepted_on": "2026-09-14",
+  "builds": {
+    "firmware": "20260917",
+    "supervisor": "20260915",
+    "c64": "20260915",
+    "c64_abi": "0.10",
+    "gbc": "20260913",
+    "gbc_abi": "0.9"
+  },
+  "hardware_acceptance": {
+    "source": "repository owner reports in the C64 bring-up task",
+    "passed": [
+      "Ultima II Mount & Run reaches the second-disk prompt",
+      "Player disk mounting works",
+      "Clean Player disk works with fast ROMs enabled",
+      "Fast loader works",
+      "GBC battery saving works"
+    ],
+    "qualification": "The owner attributed remaining LOAD ERROR failures to the old corrupted Player image. The cause of that corruption was not established. This acceptance does not imply exhaustive disk or game compatibility."
+  },
+  "roms": {
+    "decision": "Owner requested promotion of the tested firmware and ROM set to current. Generated firmware and fast ROM binaries stay outside the source commit.",
+    "notices": [
+      "provenance/c64_roms.json",
+      "c64fast/bin/PROVENANCE.json",
+      "licenses/files.csv",
+      "docs/CONTENT_POLICY.md"
+    ],
+    "rights_status": "Stock C64 and 1541 ROMs and their fast derivatives: NOASSERTION; original patch source: GPL-3.0-only."
+  },
+  "files": [
+    {
+      "role": "firmware",
+      "source": "build/firmware-20260917/FIRMWARE.BIN",
+      "destination": "FIRMWARE.BIN",
+      "size": 4598772,
+      "sha256": "643583d20e7980ec2de3f51a7b9b53f634468427ed16162edf77ecdda97a4f8e"
+    },
+    {
+      "role": "c64_manifest",
+      "source": "build/core-packages-20260915/c64/core.cfg",
+      "destination": "multitini/cores/c64/core.cfg",
+      "size": 462,
+      "sha256": "70bb01dba0adee70bc3ad64489bb9772c8bdccfd76666ad885549ddf1dc3f6d4"
+    },
+    {
+      "role": "c64_pal",
+      "source": "build/core-packages-20260915/c64/c64-pal.bin",
+      "destination": "multitini/cores/c64/c64-pal.bin",
+      "size": 4045568,
+      "sha256": "264878df958d5b2482fafa25eae0d4d2280865d715b3af8a66652d37cef56364"
+    },
+    {
+      "role": "c64_ntsc",
+      "source": "build/core-packages-20260915/c64/c64-ntsc.bin",
+      "destination": "multitini/cores/c64/c64-ntsc.bin",
+      "size": 4045568,
+      "sha256": "b38394f79da917069187b1d917bc5d03327e3d592adfb61f59e87b349e54facd"
+    },
+    {
+      "role": "gbc_manifest",
+      "source": "build/core-packages-20260913/gbc/core.cfg",
+      "destination": "multitini/cores/gbc/core.cfg",
+      "size": 335,
+      "sha256": "45b1cd74ca935ba7ae1a96c326cdf1cad92b32b78a94de90677e93f97aebe7c0"
+    },
+    {
+      "role": "gbc",
+      "source": "build/core-packages-20260913/gbc/gbc-default.bin",
+      "destination": "multitini/cores/gbc/gbc-default.bin",
+      "size": 4045568,
+      "sha256": "91937d6059bde81795092146711b3a429939cc753f080d5d8436d996e73e9043"
+    },
+    {
+      "role": "basic",
+      "source": "third_party/c64/ROMs/basic.901226-01.bin",
+      "destination": "multitini/cores/c64/roms/basic.bin",
+      "size": 8192,
+      "sha256": "89878cea0a268734696de11c4bae593eaaa506465d2029d619c0e0cbccdfa62d"
+    },
+    {
+      "role": "kernal",
+      "source": "third_party/c64/ROMs/kernal.901227-03.bin",
+      "destination": "multitini/cores/c64/roms/kernal.bin",
+      "size": 8192,
+      "sha256": "83c60d47047d7beab8e5b7bf6f67f80daa088b7a6a27de0d7e016f6484042721"
+    },
+    {
+      "role": "characters",
+      "source": "third_party/c64/ROMs/characters.901225-01.bin",
+      "destination": "multitini/cores/c64/roms/characters.bin",
+      "size": 4096,
+      "sha256": "fd0d53b8480e86163ac98998976c72cc58d5dd8eb824ed7b829774e74213b420"
+    },
+    {
+      "role": "1541",
+      "source": "third_party/c64/ROMs/1541-II.251968-03.bin",
+      "destination": "multitini/cores/c64/roms/1541.bin",
+      "size": 16384,
+      "sha256": "326c289c38753323d7e8167897447cf61ef35189d82eb8d75210ece949adda7c"
+    },
+    {
+      "role": "fast_kernal",
+      "source": "c64fast/bin/kernal.bin",
+      "destination": "multitini/cores/c64/roms/fast/kernal.bin",
+      "size": 8192,
+      "sha256": "812276b172e63ad5d83753ee22c87fcdad96a4ccd3048c66f64143e4d01e85ee"
+    },
+    {
+      "role": "fast_1541",
+      "source": "c64fast/bin/1541.bin",
+      "destination": "multitini/cores/c64/roms/fast/1541.bin",
+      "size": 16384,
+      "sha256": "41d7ab7ab30d896c49cb09c5aa7d7dac4b0ceaa6cc181c22fec04442162e6d6e"
+    }
+  ],
+  "notices": [
+    {
+      "source": "docs/CURRENT_RELEASE.md",
+      "destination": "INSTALL.md"
+    },
+    {
+      "source": "LICENSE",
+      "destination": "notices/LICENSE"
+    },
+    {
+      "source": "docs/CONTENT_POLICY.md",
+      "destination": "notices/CONTENT_POLICY.md"
+    },
+    {
+      "source": "licenses/files.csv",
+      "destination": "notices/files.csv"
+    },
+    {
+      "source": "provenance/c64_roms.json",
+      "destination": "notices/c64_roms.json"
+    },
+    {
+      "source": "c64fast/bin/PROVENANCE.json",
+      "destination": "notices/fast_roms.json"
+    },
+    {
+      "source": "provenance/sources.lock.json",
+      "destination": "notices/sources.lock.json"
+    },
+    {
+      "source": "licenses/third_party/Apache-2.0.txt",
+      "destination": "notices/third_party/Apache-2.0.txt"
+    },
+    {
+      "source": "licenses/third_party/CERN-OHL-S-2.0.txt",
+      "destination": "notices/third_party/CERN-OHL-S-2.0.txt"
+    },
+    {
+      "source": "licenses/third_party/GPL-2.0.txt",
+      "destination": "notices/third_party/GPL-2.0.txt"
+    },
+    {
+      "source": "licenses/third_party/LGPL-3.0.txt",
+      "destination": "notices/third_party/LGPL-3.0.txt"
+    }
+  ],
+  "source_evidence": {
+    "firmware_20260917": {
+      "captured_inputs": 480,
+      "mismatches": 0,
+      "audit": "build/validation20260917/firmware-build-summary.json"
+    },
+    "supervisor_and_c64_20260915": {
+      "captured_inputs": 134,
+      "mismatches": 0,
+      "audit": "build/validation20260917/hardware-input-provenance.json",
+      "qualification": "Captured input list is supplemented by the pinned imports and font source in the source commit."
+    },
+    "gbc_20260913": {
+      "binary_verified": true,
+      "source_snapshot": "Historical build manifest records 2e7356a with a dirty working tree. No complete saved input hashes or source delta were found.",
+      "qualification": "Retained byte-for-byte as the accepted existing GBC package. An exact historical source-to-binary mapping is not established; this promotion does not rebuild or newly publish the GBC binary."
+    },
+    "fast_roms": {
+      "build_check": "ACME 0.97 fresh assembly matches all three existing outputs",
+      "provenance": "c64fast/bin/PROVENANCE.json"
+    },
+    "overlay_font": {
+      "path": "hdl/common/multitini_font7x8.mem",
+      "sha256": "be62a9d5ced50db55482084b61a6afd8ceec7e8a40f5cdd8506931718060e389",
+      "source_commit": "ba0aca2c4ddf3468804c5ae982f19b4891fc985e",
+      "source_path": "Appletini One ps_sources/lib/fb16.c",
+      "audit": "Exact regeneration verified from pinned GPL source."
+    }
+  },
+  "build_settings": {
+    "toolchain": "Vivado/Vitis 2025.2",
+    "fpga_manifests": {
+      "supervisor": "utc=2026-09-13T21:09:39Z\nvivado=2025.2\npart=xc7z020clg484-2\ntop=multitini_one_top\ngeneric=SHELL_BUILD_ID=32'h20260915 C64_NTSC_MODE=1'b0 ACTIVE_MACHINE=2 ENABLE_GBC_PSRAM=1'b0\nimage_kind=SUPERVISOR\ncommit=90d2f531429908069bd4c788e8d50524f8bf582b\ndirty=1\n",
+      "c64-pal": "utc=2026-09-13T21:18:44Z\nvivado=2025.2\npart=xc7z020clg484-2\ntop=multitini_one_top\ngeneric=SHELL_BUILD_ID=32'h20260915 C64_NTSC_MODE=1'b0 ACTIVE_MACHINE=0 ENABLE_GBC_PSRAM=1'b0\nimage_kind=C64\ncommit=90d2f531429908069bd4c788e8d50524f8bf582b\ndirty=1\n",
+      "c64-ntsc": "utc=2026-09-13T21:19:06Z\nvivado=2025.2\npart=xc7z020clg484-2\ntop=multitini_one_top\ngeneric=SHELL_BUILD_ID=32'h20260915 C64_NTSC_MODE=1'b1 ACTIVE_MACHINE=0 ENABLE_GBC_PSRAM=1'b0\nimage_kind=C64\ncommit=90d2f531429908069bd4c788e8d50524f8bf582b\ndirty=1\n"
+    },
+    "gbc_manifest": "utc=2026-09-04T16:25:00Z\nvivado=2025.2\npart=xc7z020clg484-2\ntop=multitini_one_top\ngeneric=SHELL_BUILD_ID=32'h20260913 C64_NTSC_MODE=1'b0 ACTIVE_MACHINE=1 ENABLE_GBC_PSRAM=1'b1\nimage_kind=GBC\ncommit=2e7356a591f4490226e3bbe28b378e91c3f29481\ndirty=1\n",
+    "timing_ns": {
+      "supervisor": {
+        "WNS": 0.445,
+        "WHS": 0.043,
+        "WPWS": 1.833
+      },
+      "c64-pal": {
+        "WNS": 0.361,
+        "WHS": 0.051,
+        "WPWS": 0.265
+      },
+      "c64-ntsc": {
+        "WNS": 0.338,
+        "WHS": 0.048,
+        "WPWS": 0.265
+      }
+    },
+    "firmware_build_id_define": "20260917"
+  },
+  "firmware_inputs": [
+    {
+      "role": "fsbl",
+      "path": "build/v15/multitini_platform/export/multitini_platform/sw/boot/fsbl.elf",
+      "size": 585548,
+      "sha256": "6b4224a0a734c2926a5ac713df6f2da26d07f61dccda547910d6b1943526cbd1"
+    },
+    {
+      "role": "supervisor_bit",
+      "path": "build/vivado-20260915-supervisor/multitini_one.runs/impl_1/multitini_one_top.bit",
+      "size": 4045693,
+      "sha256": "6439d93c23df3facfa74ae3e88164301332780e5b587612c0d6773936d3d7203"
+    },
+    {
+      "role": "supervisor_xsa",
+      "path": "build/vivado-20260915-supervisor/multitini_one.xsa",
+      "size": 391036,
+      "sha256": "9c5de75c9f00b35efdbdc6ae995e0ee5ed7a508905bb1ca2480a4bb89bfb216c"
+    },
+    {
+      "role": "application",
+      "path": "build/v17/diagnostic/build/diagnostic.elf",
+      "size": 1408356,
+      "sha256": "cef018bcf6c00ce31c635d3bf64bb49ad5890e3b7f30ec324746699a884da629"
+    }
+  ]
+}

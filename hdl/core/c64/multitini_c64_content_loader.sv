@@ -7,6 +7,8 @@
 module multitini_c64_content_loader (
     input  logic        clk,
     input  logic        reset,
+    input  logic        load_abort,
+    input  logic        load_abort_epoch,
     input  logic        clear_error,
 
     input  logic [7:0]  load_data,
@@ -17,6 +19,7 @@ module multitini_c64_content_loader (
     input  logic [7:0]  load_kind,
     input  logic [31:0] load_offset,
     input  logic [31:0] load_total,
+    input  logic        load_epoch,
     input  logic [15:0] core_addr,
 
     output logic        prg_ram_wr,
@@ -66,6 +69,13 @@ module multitini_c64_content_loader (
     logic [31:0] active_total;
     logic [31:0] expected_offset;
     logic object_error;
+    logic active_epoch;
+    logic aborted_epoch;
+    logic aborted_epoch_valid;
+    logic load_epoch_aborted;
+    logic abort_is_stale;
+    logic abort_targets_transaction;
+    logic abort_replacement_first;
 
     logic [15:0] prg_base;
     logic [15:0] prg_end;
@@ -345,8 +355,22 @@ module multitini_c64_content_loader (
         chip_magic_byte_good = value == CHIP_MAGIC[(3-offset)*8 +: 8];
     endfunction
 
+    assign load_epoch_aborted = aborted_epoch_valid &&
+                                load_epoch == aborted_epoch;
+    // STREAM_ABORT and the load payload use independent CDC paths.  The epoch
+    // tag lets the receiver drain a byte which the source mailbox accepted
+    // before the abort without interpreting it as a new object afterwards.
+    assign abort_is_stale = load_abort && active &&
+                            active_epoch != load_abort_epoch;
+    assign abort_targets_transaction = load_abort && !abort_is_stale &&
+        (!active || active_epoch == load_abort_epoch);
+    assign abort_replacement_first = abort_targets_transaction && load_valid &&
+        load_first && load_epoch != load_abort_epoch;
     assign load_ready = !reset && !loader_memory_valid &&
-                        (state == STATE_IDLE || state == STATE_STREAM);
+                        (state == STATE_IDLE || state == STATE_STREAM ||
+                         load_epoch_aborted ||
+                         (load_abort && load_epoch == load_abort_epoch) ||
+                         abort_replacement_first);
     assign core_reset_hold = state == STATE_PRG_RESET ||
         ((state == STATE_STREAM || state == STATE_CRT_FINISH) &&
          active_kind == MT_LOAD_C64_CRT);
@@ -377,6 +401,9 @@ module multitini_c64_content_loader (
             active_total          <= 32'd0;
             expected_offset       <= 32'd0;
             object_error          <= 1'b0;
+            active_epoch          <= 1'b0;
+            aborted_epoch         <= 1'b0;
+            aborted_epoch_valid   <= 1'b0;
             prg_base              <= 16'd0;
             prg_end               <= 16'd0;
             pointer_index         <= 4'd0;
@@ -414,6 +441,20 @@ module multitini_c64_content_loader (
         end else begin
             if (clear_error) error <= 1'b0;
 
+            if (load_abort && !abort_is_stale) begin
+                aborted_epoch <= load_abort_epoch;
+                aborted_epoch_valid <= 1'b1;
+            end
+
+            // A first beat from the next stream is an ordered mailbox barrier:
+            // no byte from the aborted epoch can remain behind it.  Retire the
+            // quarantine even if this first beat later fails object validation.
+            if (load_valid && load_ready && load_first &&
+                !load_epoch_aborted &&
+                !(load_abort && load_epoch == load_abort_epoch)) begin
+                aborted_epoch_valid <= 1'b0;
+            end
+
             if (loader_memory_valid && loader_memory_ready)
                 loader_memory_valid <= 1'b0;
 
@@ -425,16 +466,43 @@ module multitini_c64_content_loader (
                 active <= 1'b0;
                 state <= STATE_IDLE;
                 error <= 1'b1;
-            end else if (state == STATE_PRG_RESET) begin
+            end else if (abort_targets_transaction &&
+                         !abort_replacement_first) begin
+                // Abort only transaction-local work.  This is not a hard
+                // loader reset: committed content which the active replacement
+                // has not already superseded remains installed.
+                state <= STATE_IDLE;
+                active_kind <= 8'd0;
+                active_total <= 32'd0;
+                expected_offset <= 32'd0;
+                object_error <= 1'b0;
+                pointer_index <= 4'd0;
+                prg_reset_count <= 8'd0;
+                loader_memory_valid <= 1'b0;
+                cart_loading <= 1'b0;
+                chip_header_index <= 4'd0;
+                chip_packet_size <= 32'd0;
+                chip_bytes_remaining <= 16'd0;
+                active <= 1'b0;
+            end else if (load_valid && load_ready &&
+                         (load_epoch_aborted ||
+                          (load_abort &&
+                           load_epoch == load_abort_epoch))) begin
+                // Deliberately consume a pre-abort mailbox byte.  It must not
+                // recreate loader state or set the sticky framing error.
+            end else if (state == STATE_PRG_RESET &&
+                         !abort_replacement_first) begin
                 if (prg_reset_count == 0)
                     state <= STATE_PRG_WAIT_BASIC;
                 else
                     prg_reset_count <= prg_reset_count - 1'd1;
-            end else if (state == STATE_PRG_WAIT_BASIC) begin
+            end else if (state == STATE_PRG_WAIT_BASIC &&
+                         !abort_replacement_first) begin
                 // Match the pinned MiSTer integration: resume the PRG stream
                 // only once the freshly booted KERNAL reaches $FFCF.
                 if (core_addr == 16'hffcf) state <= STATE_STREAM;
-            end else if (state == STATE_PRG_POINTERS) begin
+            end else if (state == STATE_PRG_POINTERS &&
+                         !abort_replacement_first) begin
                 prg_ram_wr <= 1'b1;
                 case (pointer_index)
                     0:  begin prg_ram_addr <= 16'h002b; prg_ram_data <= 8'h01; end
@@ -455,7 +523,8 @@ module multitini_c64_content_loader (
                 end else begin
                     pointer_index <= pointer_index + 4'd1;
                 end
-            end else if (state == STATE_PRG_FINISH) begin
+            end else if (state == STATE_PRG_FINISH &&
+                         !abort_replacement_first) begin
                 // prg_ram_wr is registered. Keep the core paused for this
                 // drain cycle so the final $00AF write reaches main RAM.
                 state <= STATE_IDLE;
@@ -466,7 +535,8 @@ module multitini_c64_content_loader (
                 // supervisor can restore mounted media before a separate RUN.
                 if (active_kind == MT_LOAD_C64_PRG)
                     prg_run_request <= 1'b1;
-            end else if (state == STATE_CRT_FINISH) begin
+            end else if (state == STATE_CRT_FINISH &&
+                         !abort_replacement_first) begin
                 if (!loader_memory_valid) begin
                     state <= STATE_IDLE;
                     active <= 1'b0;
@@ -478,7 +548,9 @@ module multitini_c64_content_loader (
 
                 if (load_first) begin
                     byte_good = load_offset == 0;
-                    if (active) begin
+                    if (active &&
+                        !(abort_replacement_first &&
+                          active_epoch == load_abort_epoch)) begin
                         error <= 1'b1;
                     end else if (load_kind == MT_LOAD_C64_CRT_DETACH) begin
                         byte_good = byte_good && load_total == 1 &&
@@ -506,6 +578,7 @@ module multitini_c64_content_loader (
                             state <= STATE_PRG_RESET;
                             active <= 1'b1;
                             active_kind <= load_kind;
+                            active_epoch <= load_epoch;
                             active_total <= load_total;
                             expected_offset <= 32'd1;
                             object_error <= 1'b0;
@@ -528,6 +601,7 @@ module multitini_c64_content_loader (
                             state <= STATE_STREAM;
                             active <= 1'b1;
                             active_kind <= load_kind;
+                            active_epoch <= load_epoch;
                             active_total <= load_total;
                             expected_offset <= 32'd1;
                             object_error <= 1'b0;
@@ -549,6 +623,7 @@ module multitini_c64_content_loader (
                     end
                 end else if (state == STATE_STREAM && active) begin
                     framing_good = !object_error &&
+                                   load_epoch == active_epoch &&
                                    load_kind == active_kind &&
                                    load_total == active_total &&
                                    load_offset == expected_offset &&

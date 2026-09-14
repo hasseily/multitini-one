@@ -85,9 +85,22 @@ int main(void)
     menu.browser = MT_MENU_BROWSER_DRIVE8;
     view.files = files;
     view.file_count = 1U;
+    action = mt_menu_key(&menu, &view, MT_MENU_HID_RIGHT, true);
+    check(action.kind == MT_MENU_ACTION_NONE,
+          "drive-load shortcut does not apply to disk-image browser");
+    action = mt_menu_key(&menu, &view, MT_MENU_HID_LEFT, true);
+    check(action.kind == MT_MENU_ACTION_NONE,
+          "direct-load shortcut does not apply to disk-image browser");
     action = mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true);
     check(action.kind == MT_MENU_ACTION_MOUNT_DRIVE8 &&
           action.file_index == 0U, "browser chooses disk image");
+    menu.browser = MT_MENU_BROWSER_DISK_PROGRAM;
+    action = mt_menu_key(&menu, &view, MT_MENU_HID_RIGHT, true);
+    check(action.kind == MT_MENU_ACTION_LOAD_DISK_PROGRAM &&
+          action.file_index == 0U, "right requests native disk LOAD");
+    action = mt_menu_key(&menu, &view, MT_MENU_HID_LEFT, true);
+    check(action.kind == MT_MENU_ACTION_DIRECT_DISK_PROGRAM &&
+          action.file_index == 0U, "left requests direct disk PRG launch");
     menu.browser = MT_MENU_BROWSER_NONE;
     view.drive8_mounted = true;
     view.drive8_d64_mounted = true;
@@ -109,8 +122,10 @@ int main(void)
     mt_menu_render(&menu, &view, &frame);
     check(row_contains(&frame, 5U, "Choose program in D64"),
           "D64 program browser title rendered");
-    check(row_contains(&frame, 33U, "Enter run"),
-          "D64 program browser run help rendered");
+    check(row_contains(&frame, 33U, "Enter launch") &&
+          row_contains(&frame, 33U, "Right load only") &&
+          row_contains(&frame, 33U, "Left direct"),
+          "D64 program browser launch choices rendered");
     menu.browser = MT_MENU_BROWSER_NONE;
     menu.row = 1U;
     mt_menu_render(&menu, &view, &frame);

@@ -1,5 +1,16 @@
 # Vivado and Vitis Handoff
 
+Current selection: ARM firmware 20260917, supervisor and C64 PAL/NTSC FPGA
+20260915 (ABI 0.10), and retained GBC 20260913 (ABI 0.9). See
+[Current release](CURRENT_RELEASE.md) and its pinned manifest for accepted
+artifacts, build settings, hashes, and source-provenance limits. Firmware and
+FPGA build IDs may differ in a firmware-only update.
+
+The older measurements below are historical bring-up evidence. Current board
+acceptance and remaining coverage are in [Handoff status](HANDOFF_STATUS.md).
+
+## Historical baseline measurements
+
 Status: the diagnostic, PAL C64 frozen-snapshot, and PAL live-video images have
 passed their recorded board procedures. Build `2026082B` also proves physical
 USB1 VBUS, keyboard transport, and one generic HID gamepad. Build `2026082C`
@@ -55,13 +66,13 @@ changes.
 Run from the repository root:
 
 ```sh
-MULTITINI_BUILD_ID=2026082D \
+MULTITINI_BUILD_ID=20260915 \
   vivado -mode batch -source scripts/create_project.tcl
 ```
 
-Use the eight-digit firmware build ID from `firmware/platform/xilinx/main.c`.
-Without this override the project script uses the current Git short hash, so
-the shell and firmware banners would not match.
+Set the explicit eight-digit FPGA build ID for the image being built. Without
+this override the project script uses the current Git short hash. The current
+firmware-only update intentionally uses ARM ID 20260917 with FPGA ID 20260915.
 
 Stop on every Tcl error. Confirm:
 
@@ -144,8 +155,8 @@ wired Xbox 360 functional map and player LED command on the tested controller.
 The matching `2026082E` vendor image additionally passes the SD ROM, 1541, and
 read-only D64 board path. The `2026082F` live-audio reports pass with WNS
 +0.252 ns, WHS +0.059 ns, WPWS +1.749 ns, zero failed nets, and no Critical CDC
-findings. The separate NTSC C64 and GBC vendor builds remain pending. GBC PSRAM
-remains disabled and unqualified.
+findings. At that historical stage NTSC and GBC builds were pending. The current
+PAL/NTSC and PSRAM-enabled GBC package gates are recorded in the handoff.
 
 The selected machine adapter is marked `DONT_TOUCH` so synthesis and timing
 cannot silently remove the integration. Its registered PAL RGB output feeds an
@@ -177,16 +188,10 @@ The TFP410 constraint uses the rev. D, single-edge receiver requirements that
 match the schematic straps: 1.2 ns setup and 1.3 ns hold. Confirm that Vivado
 models the ODDR forwarded edge one half pixel after the RGB/control launch.
 
-The imported PSRAM PHY and simulated BIST are present as staged source. The GBC
-top has an opt-in physical branch, but it defaults off. Keep PSRAM inactive for
-the first board image. Its command timing, input capture edge/tap, IDELAYCTRL,
-and external constraints are a separate Phase 3 review.
-
-After the inactive GBC project elaborates and its resource estimate is
-acceptable, validate PSRAM independently. Add and review external timing
-constraints, confirm the controller's fixed command edge and count choices,
-run the destructive BIST over temperature/reset cases, and record measured
-latency. Only then create an integration project with:
+The GBC physical PSRAM branch is explicit and defaults off in project
+creation. The accepted GBC package enables it. Preserve and review its command
+timing, capture edge/tap, IDELAYCTRL, and external constraints when rebuilding.
+Create a PSRAM-enabled GBC project with:
 
 ```sh
 MULTITINI_MACHINE=GBC \
@@ -194,9 +199,9 @@ MULTITINI_MACHINE=GBC \
   vivado -mode batch -source scripts/create_project.tcl
 ```
 
-This opt-in command is not permission to program hardware before the PSRAM
-gates above pass. Re-run synthesis, CDC, timing, utilization, and pin reports
-with the physical path enabled.
+Re-run synthesis, CDC, timing, utilization, and pin reports with the physical
+path enabled. The accepted image does not qualify all destructive stress or
+electrical measurements.
 
 ## Vitis
 
@@ -259,13 +264,13 @@ The normal installation path copies the matching supervisor-only root
 SD-card root. `:reboot` from a running image, or a power cycle, lets golden program and
 verify the secondary firmware slot, replace `FIRMWARE.BIN` with
 `FIRMWARE.OK`, and reboot into the supervisor shell. With `2026082E` or later, use
-the canonical `/cores/c64` SD layout; the UART ROM uploader remains a fallback.
+the canonical `/multitini/cores/c64` SD layout; the UART ROM uploader remains a fallback.
 The golden UART updater is a recovery path, not the normal installation method.
 Physical USB1 VBUS and
 generic HID input are proven by `2026082B`, both keyboard maps by `2026082C`,
 and the Xbox functional input map and player LED command by `2026082D`.
 
-## Board qualification and next gates
+## Historical board qualification procedures
 
 The independent diagnostics, ROM-upload/frozen-frame image, and exact
 live-video image have passed on the board. The live test produced a blinking

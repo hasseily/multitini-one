@@ -15,7 +15,8 @@ typedef struct {
     uint32_t active_size;
     uint32_t active_offset;
     uint32_t completed_kind;
-    uint32_t reset_requests;
+    uint32_t reset_asserts;
+    uint32_t reset_releases;
     uint32_t fail_at;
     int fail_enabled;
 } shell_t;
@@ -65,8 +66,10 @@ static void respond(void *context)
         shell->active_size = 0U;
         break;
     case MT_COMMAND_CORE_RESET:
-        assert(arg0 == 1U);
-        ++shell->reset_requests;
+        if (arg0 != 0U)
+            ++shell->reset_asserts;
+        else
+            ++shell->reset_releases;
         break;
     default:
         assert(0);
@@ -109,8 +112,40 @@ static size_t make_crt(uint8_t *crt, uint16_t hardware_type)
     return size;
 }
 
+static void test_basic_launch_classification(void)
+{
+    /* Original test program: 10 SYS2064, followed by an empty final link. */
+    uint8_t basic[] = {1U, 8U, 11U, 8U, 10U, 0U,
+                      0x9eU, '2', '0', '6', '4', 0U, 0U, 0U};
+    const uint8_t native[] = {0xa7U, 0x02U, 0xeaU};
+    const uint8_t empty[] = {1U, 8U, 0U, 0U, 0xeaU, 0xeaU};
+    mt_c64_content_image_t image = {basic, sizeof(basic)};
+    assert(mt_c64_prg_has_basic_program(&image));
+    image.data = native;
+    image.size = sizeof(native);
+    assert(mt_c64_validate_prg(&image).status == MT_C64_CONTENT_OK);
+    assert(!mt_c64_prg_has_basic_program(&image));
+    image.data = empty;
+    image.size = sizeof(empty);
+    assert(!mt_c64_prg_has_basic_program(&image));
+    image.data = basic;
+    image.size = sizeof(basic);
+    basic[2] = 1U; /* Backward/self link. */
+    assert(!mt_c64_prg_has_basic_program(&image));
+    basic[2] = 0xffU; /* Link past the PRG. */
+    assert(!mt_c64_prg_has_basic_program(&image));
+    basic[2] = 11U;
+    basic[11] = 1U; /* Missing line terminator. */
+    assert(!mt_c64_prg_has_basic_program(&image));
+    basic[11] = 0U;
+    image.size = sizeof(basic) - 1U; /* Truncated final link. */
+    assert(!mt_c64_prg_has_basic_program(&image));
+    assert(!mt_c64_prg_has_basic_program(NULL));
+}
+
 int main(void)
 {
+    test_basic_launch_classification();
     uint8_t prg[] = {0x01U, 0x08U, 0xa9U, 0x00U, 0x60U};
     static uint8_t crt[0x40U + 0x10U + 0x4000U];
     mt_c64_content_image_t image = {prg, sizeof(prg)};
@@ -195,7 +230,8 @@ int main(void)
     image.size = sizeof(prg);
     assert(mt_c64_load_prg(&link, &image, 2U, respond, &shell) ==
            MT_LINK_REMOTE_ERROR);
-    assert(shell.reset_requests == 1U);
+    assert(shell.reset_asserts == 1U);
+    assert(shell.reset_releases == 1U);
 
     assert(mt_c64_load_prg(NULL, &image, 2U, respond, &shell) ==
            MT_LINK_BAD_ARGUMENT);

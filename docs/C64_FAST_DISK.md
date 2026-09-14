@@ -6,8 +6,15 @@ onto the parallel drive cable the fast ROM profile enables. It records the
 protocol, the exact ROM changes, the drive engine, the measured results, the
 limits, and what remains untested.
 
-Scope: this is purely the two ROM images. It is independent of the
-supervisor's direct PRG placement (`Mount & Run`) and of the CPU turbo. It
+The current release uses this paired profile with the ABI 0.10 C64 FPGA
+20260915 and ARM firmware 20260917. The owner confirms fast loading works
+on the board, including Ultima II with a clean Player disk and fast ROMs On.
+See [CURRENT_RELEASE.md](CURRENT_RELEASE.md) for the selected images and
+[C64_LAUNCH_20260917.md](C64_LAUNCH_20260917.md) for the board record.
+
+The ROM protocol is independent of CPU turbo. Default `Mount & Run` now
+uses a native drive LOAD, so compatible programs benefit from the fast pair;
+the explicit Left/direct-RAM shortcut bypasses the initial LOAD. The pair
 targets unprotected, normal D64 images. Software that runs its own drive code
 (custom loaders, most copy protection) keeps using the stock serial lines with
 authentic timing and is not accelerated.
@@ -15,7 +22,8 @@ authentic timing and is not accelerated.
 ## Results
 
 Measured on the py65 simulator in `scripts/c64sim` (PAL C64, badlines on,
-authentic 1541 timing), same disk images for both pairs:
+authentic 1541 timing), using the same disk images for both pairs. These are
+simulation timings, not physical-board measurements:
 
 | Operation | Stock pair | Fast pair | Ratio |
 |---|---|---|---|
@@ -254,7 +262,7 @@ At the end the channel is marked exhausted like after the stock EOI byte, so
 the KERNAL's CLOSE works unchanged. ATN is polled through `$7C` in every wait
 loop, so a C64 that resets or breaks is served within one byte.
 
-## Limits and next steps
+## Limits
 
 - The GCR decode dominates (27 ms per sector). Options, in order of gain:
   a table-driven decoder in drive RAM (needs 1-2 KiB, only available if the
@@ -267,17 +275,23 @@ loop, so a C64 that resets or breaks is served within one byte.
 - SAVE is bound by the DOS write-and-verify job, 330 ms per block; a faster
   SAVE needs a drive-side write engine.
 - Stepping uses conservative real-drive timing (28 ms per track).
-- Not tested on the board. The simulator mirrors the shell's VIA, CIA and
-  GCR models and the stock pair passes the same tests, but the cable, the
-  PA2 level path and the expansion RAM are new shell features.
+- The selected pair is board-confirmed for the reported fast loading and
+  clean Ultima II Player-disk use. This does not qualify every custom loader,
+  replacement ROM pair, writable workload, or long-run timing interaction.
 
 ## Build and test
 
 ```
 python c64fast/build.py            # writes c64fast/bin/{kernal,1541,engine}.bin and PROVENANCE.json
-python c64fast/build.py --check    # rebuild and compare with the committed images
+python c64fast/build.py --check    # rebuild and compare with the recorded local images
 python -m unittest tests.test_c64fast
-set MULTITINI_SLOW_TESTS=1 && python -m unittest tests.test_c64fast   # adds the 202 block LOAD
+```
+
+For the optional 202-block LOAD regression in PowerShell:
+
+```powershell
+$env:MULTITINI_SLOW_TESTS = '1'
+python -m unittest tests.test_c64fast
 ```
 
 The build needs ACME 0.97 on the PATH. It overlays the patch sections on the

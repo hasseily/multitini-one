@@ -24,6 +24,9 @@ typedef struct {
     uint32_t mount_busy_remaining;
     uint32_t mount_generation;
     uint32_t mount_flags;
+    uint32_t mount_state_delay_reads;
+    uint32_t media_state_reads;
+    bool mount_state_delayed;
     uint32_t eject_attempts;
     uint32_t eject_generation;
     bool eject_generation_mismatch;
@@ -106,6 +109,18 @@ static void prepare_reverse_write(fake_shell_t *shell)
 static uint32_t fake_read32(void *context, uint32_t offset)
 {
     fake_shell_t *const shell = context;
+    if (offset == MT_REG_MEDIA_STATE) {
+        ++shell->media_state_reads;
+        if (shell->mount_state_delayed) {
+            if (shell->mount_state_delay_reads != 0U)
+                --shell->mount_state_delay_reads;
+            if (shell->mount_state_delay_reads == 0U) {
+                shell->registers[register_index(MT_REG_MEDIA_STATE)] =
+                    MT_MEDIA_STATE_MOUNTED;
+                shell->mount_state_delayed = false;
+            }
+        }
+    }
     if (offset == MT_REG_MEDIA_DATA) {
         uint32_t result;
         bool last;
@@ -148,6 +163,10 @@ static void fake_complete_command(fake_shell_t *shell, uint32_t sequence)
         if (shell->mount_busy_remaining != 0U) {
             --shell->mount_busy_remaining;
             status = MT_RESPONSE_BUSY;
+        } else if (shell->mount_state_delay_reads != 0U) {
+            shell->registers[register_index(MT_REG_MEDIA_STATE)] =
+                MT_MEDIA_STATE_MOUNTED | MT_MEDIA_STATE_EJECT_PENDING;
+            shell->mount_state_delayed = true;
         } else {
             shell->registers[register_index(MT_REG_MEDIA_STATE)] =
                 MT_MEDIA_STATE_MOUNTED;
@@ -628,6 +647,28 @@ static void test_reset_barrier_remounts(void)
             MT_MEDIA_STATE_MOUNTED) != 0U);
 }
 
+static void test_reset_resume_waits_for_fpga_mount(void)
+{
+    fake_shell_t shell;
+    mt_core_link_t link;
+
+    setup(&shell, &link);
+    assert(c64_d64_service_mount_default() == 0);
+    assert(c64_d64_service_prepare_reset() == 0);
+    c64_d64_service_notify_core_reset();
+
+    shell.mount_state_delay_reads = 6U;
+    shell.media_state_reads = 0U;
+    assert(c64_d64_service_resume_after_reset() == 0);
+    assert(shell.media_state_reads >= 6U);
+    assert(shell.mount_state_delay_reads == 0U);
+    assert(!shell.mount_state_delayed);
+    assert((shell.registers[register_index(MT_REG_MEDIA_STATE)] &
+            (MT_MEDIA_STATE_MOUNTED | MT_MEDIA_STATE_EJECT_PENDING)) ==
+           MT_MEDIA_STATE_MOUNTED);
+    assert(c64_d64_service_wait_mounted() == 0);
+}
+
 static void test_ensure_live_mount_is_noop(void)
 {
     fake_shell_t shell;
@@ -707,6 +748,7 @@ int main(void)
     test_error_tail_is_read_only();
     test_g64_read_only_track();
     test_reset_barrier_remounts();
+    test_reset_resume_waits_for_fpga_mount();
     test_ensure_live_mount_is_noop();
     test_ensure_remounts_stale_fpga_state();
     test_failed_reset_remount_can_be_retried();

@@ -50,6 +50,9 @@ dfx_runtime.txt
 !third_party/gameboy/upstream/BootROMs/cgb_boot.mif
 !hdl/core/gameboy/boot/cgb_boot.mem
 
+# GPL font source required by the shared text overlay.
+!hdl/common/multitini_font7x8.mem
+
 # Exact C64 system ROMs included by explicit repository-owner decision.
 !third_party/c64/ROMs/basic.901226-01.bin
 !third_party/c64/ROMs/kernal.901227-03.bin

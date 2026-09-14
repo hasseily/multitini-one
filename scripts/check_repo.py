@@ -22,6 +22,8 @@ RESTRICTED_SUFFIXES = {
 }
 SOURCE_SUFFIXES = {".c", ".h", ".py", ".sv", ".tcl", ".v", ".vhd", ".vhdl", ".xdc"}
 GENERATED_PREFIXES = ("build/", "build-", "project/", "vitis_workspace/", ".Xil/")
+FONT_PATH = "hdl/common/multitini_font7x8.mem"
+FONT_SHA256 = "be62a9d5ced50db55482084b61a6afd8ceec7e8a40f5cdd8506931718060e389"
 C64_ROM_PATHS = (
     "third_party/c64/ROMs/basic.901226-01.bin",
     "third_party/c64/ROMs/kernal.901227-03.bin",
@@ -32,6 +34,8 @@ ALLOWED_RESTRICTED_FILES = {
     # readmemh representation. Both are pinned and covered by the MIT notice.
     "third_party/gameboy/upstream/BootROMs/cgb_boot.mif",
     "hdl/core/gameboy/boot/cgb_boot.mem",
+    # GPL font derived from Appletini fb16 at the commit in licenses/files.csv.
+    FONT_PATH,
     # Exact C64 ROM set covered by provenance/c64_roms.json and the explicit
     # repository-owner inclusion decision recorded there.
     *C64_ROM_PATHS,
@@ -159,6 +163,12 @@ def main() -> int:
             errors.append(f"source has no license-list row: {path}")
 
     check_c64_rom_provenance(errors)
+
+    font = ROOT / FONT_PATH
+    if not font.is_file():
+        errors.append(f"pinned overlay font is absent: {FONT_PATH}")
+    elif sha256(font) != FONT_SHA256:
+        errors.append(f"pinned overlay font changed: {FONT_PATH}")
 
     try:
         lock = json.loads((ROOT / "provenance" / "sources.lock.json").read_text(encoding="utf-8"))

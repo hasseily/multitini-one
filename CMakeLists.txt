@@ -11,6 +11,7 @@ add_library(multitini_common STATIC
     firmware/common/ak4493.c
     firmware/common/c64_boot.c
     firmware/common/c64_content.c
+    firmware/common/c64_native_load.c
     firmware/common/c64_d64.c
     firmware/common/c64_g64.c
     firmware/common/c64_rom_files.c
@@ -141,6 +142,10 @@ add_test(NAME c64_boot COMMAND test_c64_boot)
 add_executable(test_c64_content tests/host/test_c64_content.c)
 target_link_libraries(test_c64_content PRIVATE multitini_common)
 add_test(NAME c64_content COMMAND test_c64_content)
+
+add_executable(test_c64_native_load tests/host/test_c64_native_load.c)
+target_link_libraries(test_c64_native_load PRIVATE multitini_common)
+add_test(NAME c64_native_load COMMAND test_c64_native_load)
 
 add_executable(test_c64_content_service
     tests/host/test_c64_content_service.c

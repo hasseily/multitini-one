@@ -14,6 +14,10 @@
 *.csv text eol=lf
 *.md text eol=lf
 Makefile text eol=lf
+CMakeLists.txt text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+hdl/common/multitini_font7x8.mem text eol=lf
 
 # Preserve imported source byte-for-byte, including upstream whitespace.
 third_party/appletini/** -whitespace
