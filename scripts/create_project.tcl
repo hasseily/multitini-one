@@ -58,8 +58,13 @@ switch -- $machine {
         set c64_video_standard "N/A"
         set active_machine 1
     }
+    VECTREX {
+        set c64_clock_mhz 96.000000
+        set c64_video_standard "N/A"
+        set active_machine 3
+    }
     default {
-        error "MULTITINI_MACHINE must be SUPERVISOR, C64, or GBC"
+        error "MULTITINI_MACHINE must be SUPERVISOR, C64, GBC, or VECTREX"
     }
 }
 
@@ -96,7 +101,7 @@ proc add_manifest_sources {repo_root machine} {
         }
         if {[regexp {^\[([A-Za-z0-9_]+)\]$} $relative -> section]} {
             set active_section [string toupper $section]
-            if {$active_section ni {COMMON C64 GBC}} {
+            if {$active_section ni {COMMON C64 GBC VECTREX}} {
                 error "Unknown source-manifest section: $relative"
             }
             continue
@@ -255,7 +260,7 @@ set_property default_lib work [current_project]
 add_manifest_sources $repo_root $machine
 set psram_timing_file [require_file \
     [file join $repo_root hdl board multitini_psram_timing.xdc]]
-if {$machine eq "SUPERVISOR" ||
+if {$machine eq "SUPERVISOR" || $machine eq "VECTREX" ||
     ($machine eq "GBC" && !$enable_gbc_psram)} {
     set psram_iob_file [require_file \
         [file join $repo_root hdl board multitini_psram_iob.xdc]]

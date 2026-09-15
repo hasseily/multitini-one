@@ -1,0 +1,35 @@
+{
+  "commit": "9b2894cacf73bdacaba32cb505289c658d981fd9",
+  "files": [
+    {
+      "path": "LICENSE.md",
+      "source": "https://raw.githubusercontent.com/jhawthorn/vecx/9b2894cacf73bdacaba32cb505289c658d981fd9/LICENSE.md",
+      "sha256": "72d6e1a0ffb74e5e95841061200da2f5e14b66bbe043f41e634ef9bc6070132a"
+    },
+    {
+      "path": "e6809.c",
+      "source": "https://raw.githubusercontent.com/jhawthorn/vecx/9b2894cacf73bdacaba32cb505289c658d981fd9/e6809.c",
+      "sha256": "cde52cb89f88280066de3ce494b35072853cc7b47482a7fffcaec5bf1c0d1a66"
+    },
+    {
+      "path": "e6809.h",
+      "source": "https://raw.githubusercontent.com/jhawthorn/vecx/9b2894cacf73bdacaba32cb505289c658d981fd9/e6809.h",
+      "sha256": "fa3eed94d56be290d7714e2b68ebe319c456e8ccadf6037203a0545d2391c793"
+    },
+    {
+      "path": "README.md",
+      "source": "https://raw.githubusercontent.com/jhawthorn/vecx/9b2894cacf73bdacaba32cb505289c658d981fd9/README.md",
+      "sha256": "6c365890652090fab268a9c83c9c90bdb726219107ecce5135aca7cd0c8eb474"
+    }
+  ],
+  "repository": "https://github.com/jhawthorn/vecx",
+  "license": "GPL-3.0-only",
+  "license_basis": "Repository LICENSE.md; CPU files carry no separate header terms",
+  "authors": "Valavan Manohararajah (original author), repository maintained by John Hawthorn; README attribution retained in this record",
+  "scope": "6809 CPU chip only; no VecX machine, sound, rendering, ROM or game source imported",
+  "changes": [
+    "Remove duplicate static in einline macro for namespaced C++ inclusion",
+    "Initialize invalid indexed-address result to zero; diagnostic stops execution before it can be used",
+    "Add provenance comment; valid instruction behavior unchanged"
+  ]
+}

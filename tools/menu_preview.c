@@ -93,6 +93,16 @@ int main(int argc, char **argv)
                strcmp(scenario, "gbc-save-failure") == 0) {
         menu.page = MT_MENU_PAGE_MEDIA;
         menu.row = 1U;
+    } else if (strcmp(scenario, "c64-video") == 0 ||
+               strcmp(scenario, "gbc-video-off") == 0 ||
+               strcmp(scenario, "gbc-video-legacy") == 0) {
+        view.border_supported = strcmp(scenario, "gbc-video-legacy") != 0;
+        view.border_enabled = strcmp(scenario, "c64-video") == 0;
+        view.border_style = 2U;
+        view.border_color = 9U;
+        view.border_padding = 6U;
+        menu.page = MT_MENU_PAGE_VIDEO;
+        menu.row = 4U;
     } else if (strcmp(scenario, "gbc-input") == 0) {
         menu.page = MT_MENU_PAGE_INPUT;
     } else if (strcmp(scenario, "browser-long") == 0) {

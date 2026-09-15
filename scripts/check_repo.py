@@ -20,7 +20,7 @@ RESTRICTED_SUFFIXES = {
     ".hex", ".img", ".mem", ".mif", ".po", ".prg", ".rbf", ".reu",
     ".rom", ".tap", ".t64", ".woz",
 }
-SOURCE_SUFFIXES = {".c", ".h", ".py", ".sv", ".tcl", ".v", ".vhd", ".vhdl", ".xdc"}
+SOURCE_SUFFIXES = {".c", ".cpp", ".h", ".hpp", ".py", ".sv", ".tcl", ".v", ".vhd", ".vhdl", ".xdc"}
 GENERATED_PREFIXES = ("build/", "build-", "project/", "vitis_workspace/", ".Xil/")
 FONT_PATH = "hdl/common/multitini_font7x8.mem"
 FONT_SHA256 = "be62a9d5ced50db55482084b61a6afd8ceec7e8a40f5cdd8506931718060e389"

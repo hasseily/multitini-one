@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -39,6 +40,7 @@ static mt_supervisor_t supervisor;
 static mt_menu_action_t pending_menu_action;
 static bool supervisor_menu_ready, supervisor_menu_dirty;
 static bool supervisor_menu_action_active;
+static bool vectrex_basic_running, vectrex_basic_stop;
 static uint8_t supervisor_menu_keys[MT_C64_HID_SLOT_COUNT][MT_C64_HID_USAGE_BYTES];
 static mt_ui_color_t supervisor_status_color;
 static uint64_t now_ms;
@@ -122,6 +124,7 @@ static void reset_fixture(bool visible) {
     mt_ui_presenter_init(&supervisor_presenter);
     supervisor_menu_ready = true; supervisor_menu_dirty = false;
     supervisor_menu_action_active = false;
+    vectrex_basic_running = vectrex_basic_stop = false;
     supervisor_menu.visible = expected_visible = visible;
     supervisor_menu.page = MT_MENU_PAGE_MEDIA;
     supervisor_menu.row = 2U;
@@ -200,7 +203,7 @@ static void dispatch(mt_menu_action_kind_t kind) {
 }
 static void all_actions(void) {
     unsigned kind;
-    for (kind = MT_MENU_ACTION_NONE; kind <= MT_MENU_ACTION_REBOOT_GOLDEN; ++kind) {
+    for (kind = MT_MENU_ACTION_NONE; kind <= MT_MENU_ACTION_SET_BORDER; ++kind) {
         mt_menu_action_t action = {(mt_menu_action_kind_t)kind, 0U, 0U, 0U};
         reset_fixture(true);
         assert(menu_action_needs_core_progress(action) == progress_expected(action.kind));
@@ -331,6 +334,35 @@ static void explicit_exit(void) {
     assert(supervisor_menu.visible && supervisor_menu.browser == MT_MENU_BROWSER_NONE);
     settle_menu();
 }
+static void basic_keyboard_stop(void) {
+    const uint8_t game_keys[] = {0x04U, MT_MENU_HID_ENTER, MT_MENU_HID_ESCAPE,
+                                MT_MENU_HID_RIGHT};
+    const uint8_t stop_key = MT_MENU_HID_F12;
+    unsigned visible;
+    for (visible = 0U; visible <= 1U; ++visible) {
+        reset_fixture(visible != 0U);
+        vectrex_basic_running = true;
+        supervisor_menu_action_active = true; /* BASIC runs within a content action. */
+        assert(!supervisor_keyboard_filter(NULL, 0U, 0U, game_keys, sizeof(game_keys)));
+        assert(!vectrex_basic_stop && supervisor_menu.visible == expected_visible);
+        assert(supervisor_menu.page == MT_MENU_PAGE_MEDIA && supervisor_menu.row == 2U);
+        assert(pending_menu_action.kind == MT_MENU_ACTION_NONE);
+        assert(supervisor_keyboard_filter(NULL, 0U, 0U, &stop_key, 1U));
+        assert(vectrex_basic_stop && supervisor_menu.visible == expected_visible);
+        assert(pending_menu_action.kind == MT_MENU_ACTION_NONE);
+        /* Starting another BASIC run while F12 is held must not stop it until
+         * a fresh press; reports still update the shared key bitmap. */
+        vectrex_basic_stop = false;
+        assert(!supervisor_keyboard_filter(NULL, 0U, 0U, &stop_key, 1U));
+        assert(!vectrex_basic_stop);
+        assert(!supervisor_keyboard_filter(NULL, 0U, 0U, NULL, 0U));
+        assert(supervisor_keyboard_filter(NULL, 0U, 0U, &stop_key, 1U));
+        assert(vectrex_basic_stop);
+        assert(supervisor_keyboard_filter(NULL, 0U, 0U, NULL, 0U));
+        assert(vectrex_basic_stop && pending_menu_action.kind == MT_MENU_ACTION_NONE);
+        assert(supervisor_menu.visible == expected_visible && writes == 0U);
+    }
+}
 int main(int argc, char **argv) {
     assert(argc == 2);
     if (strcmp(argv[1], "actions") == 0) all_actions();
@@ -339,6 +371,7 @@ int main(int argc, char **argv) {
     else if (strcmp(argv[1], "uart") == 0) uart_and_hidden();
     else if (strcmp(argv[1], "failure") == 0) failed_hide();
     else if (strcmp(argv[1], "exit") == 0) explicit_exit();
+    else if (strcmp(argv[1], "basic") == 0) basic_keyboard_stop();
     else assert(false);
     printf("PASS: menu runtime %s\n", argv[1]);
     return 0;
@@ -369,6 +402,7 @@ class MenuRuntimeTests(unittest.TestCase):
         ) + "\n" + SCENARIOS)
         cls.executable = directory / ("menu_runtime.exe" if os.name == "nt" else "menu_runtime")
         compile_result = subprocess.run([
+            sys.executable, str(ROOT / "scripts/run_native_tool.py"), "--",
             compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wpedantic",
             "-I", str(ROOT / "firmware/include"), str(harness),
             str(ROOT / "firmware/common/menu.c"), str(ROOT / "firmware/common/ui.c"),
@@ -378,7 +412,8 @@ class MenuRuntimeTests(unittest.TestCase):
             raise AssertionError(compile_result.stdout + compile_result.stderr)
 
     def run_scenario(self, scenario):
-        result = subprocess.run([str(self.executable), scenario], capture_output=True,
+        result = subprocess.run([sys.executable, str(ROOT / "scripts/run_native_tool.py"),
+                                 "--", str(self.executable), scenario], capture_output=True,
                                 text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn(f"PASS: menu runtime {scenario}", result.stdout)
@@ -400,6 +435,9 @@ class MenuRuntimeTests(unittest.TestCase):
 
     def test_explicit_escape_and_f12_remain_closed(self):
         self.run_scenario("exit")
+
+    def test_basic_game_keys_pass_through_and_only_fresh_f12_requests_stop(self):
+        self.run_scenario("basic")
 
 
 if __name__ == "__main__":

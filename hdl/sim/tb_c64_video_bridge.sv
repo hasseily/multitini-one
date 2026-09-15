@@ -86,7 +86,7 @@ module tb_c64_video_bridge;
     ) video_path (
         .pixel_clk(pixel_clk), .resetn(path_resetn),
         .enable(diagnostic_request), .machine_enable(machine_active),
-        .machine_rgb565(machine_rgb565),
+        .border_opaque(1'b0), .border_rgb565(16'd0), .machine_rgb565(machine_rgb565),
         .ui_opaque(1'b0), .ui_rgb565(16'd0),
         .scan_x(path_scan_x), .scan_y(path_scan_y),
         .vblank_start(path_vblank_start),
@@ -397,6 +397,11 @@ module tb_c64_video_bridge;
                     "unknown palette tuple rejected");
 
         repeat (4) @(negedge source_clk);
+        check_value(dut.viewport_x == OUTPUT_X_OFFSET &&
+                    dut.viewport_y == OUTPUT_Y_OFFSET &&
+                    dut.viewport_width == SOURCE_WIDTH * OUTPUT_SCALE &&
+                    dut.viewport_height == SOURCE_HEIGHT * OUTPUT_SCALE,
+                    "border viewport matches the fixed C64 scan");
         source_resetn = 1'b1;
         source_ready = 1'b1;
         pixel_resetn = 1'b1;

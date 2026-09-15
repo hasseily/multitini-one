@@ -53,6 +53,7 @@ module multitini_gameboy_video_bridge #(
     input  logic        pixel_clk,
     input  logic        pixel_resetn,
     input  logic        diagnostic_request,
+    output logic [11:0] viewport_x, viewport_y, viewport_width, viewport_height,
     input  logic [11:0] scan_x,
     input  logic [11:0] scan_y,
     input  logic        vblank_start,
@@ -384,6 +385,12 @@ module multitini_gameboy_video_bridge #(
             endcase
         end
     end
+
+    // The border overlay consumes the original fixed machine viewport.
+    assign viewport_x = OUTPUT_X_OFFSET;
+    assign viewport_y = OUTPUT_Y_OFFSET;
+    assign viewport_width = SCALED_WIDTH;
+    assign viewport_height = SCALED_HEIGHT;
 
     // Prefetch two coordinates ahead of the registered DVI output, matching
     // the common C64 path's proven synchronous-RAM alignment.

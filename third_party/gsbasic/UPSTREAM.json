@@ -1,0 +1,429 @@
+{
+  "repository": "https://github.com/malbanGit/pitrex-baremetal",
+  "commit": "457c5a98f914a812c9341c2949e9d57473ccac4a",
+  "subtree": "gsBasic",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2021 Robert E. Alexander",
+  "files": [
+    {
+      "path": "third_party/gsbasic/AST.cpp",
+      "upstream_path": "gsBasic/AST.cpp",
+      "git_blob_sha1": "4ce31a01502194e00fbb5306319c87b62b871409"
+    },
+    {
+      "path": "third_party/gsbasic/AST.h",
+      "upstream_path": "gsBasic/AST.h",
+      "git_blob_sha1": "77fd7e94400bdc5dae8cd249662f44787a6b49c2"
+    },
+    {
+      "path": "third_party/gsbasic/Array.h",
+      "upstream_path": "gsBasic/Array.h",
+      "git_blob_sha1": "65e0cf82b4c9daf2d4f9a6c5c0455e43104447b5"
+    },
+    {
+      "path": "third_party/gsbasic/ArrayInitializer.cpp",
+      "upstream_path": "gsBasic/ArrayInitializer.cpp",
+      "git_blob_sha1": "82b46621625dc815a8a81335acb96ea261d65ffb"
+    },
+    {
+      "path": "third_party/gsbasic/ArrayInitializer.h",
+      "upstream_path": "gsBasic/ArrayInitializer.h",
+      "git_blob_sha1": "5ef97090954b2d36835d6530b2929e1d216a2be1"
+    },
+    {
+      "path": "third_party/gsbasic/BuiltInConstants.cpp",
+      "upstream_path": "gsBasic/BuiltInConstants.cpp",
+      "git_blob_sha1": "32b0a05c888a7d0ee8712308aacc7909fae1c9d9"
+    },
+    {
+      "path": "third_party/gsbasic/BuiltInConstants.h",
+      "upstream_path": "gsBasic/BuiltInConstants.h",
+      "git_blob_sha1": "abd25108606156a481178db181078873cd9d7c45"
+    },
+    {
+      "path": "third_party/gsbasic/BuiltInFunctions.cpp",
+      "upstream_path": "gsBasic/BuiltInFunctions.cpp",
+      "git_blob_sha1": "20283a7bed12058ed5bffb5f1600aa8968e23359"
+    },
+    {
+      "path": "third_party/gsbasic/BuiltInFunctions.h",
+      "upstream_path": "gsBasic/BuiltInFunctions.h",
+      "git_blob_sha1": "65442a1a834b9f5545f11e6c6741f23c76b69dbe"
+    },
+    {
+      "path": "third_party/gsbasic/CallSpec.cpp",
+      "upstream_path": "gsBasic/CallSpec.cpp",
+      "git_blob_sha1": "849f1d91b65d0bddc978be23593ac2dae5d854e6"
+    },
+    {
+      "path": "third_party/gsbasic/CallSpec.h",
+      "upstream_path": "gsBasic/CallSpec.h",
+      "git_blob_sha1": "686f8713d97f8b64833f26d6e01f345a56449bc3"
+    },
+    {
+      "path": "third_party/gsbasic/Constant.cpp",
+      "upstream_path": "gsBasic/Constant.cpp",
+      "git_blob_sha1": "b314a77cd165e2a0de7c2a9fffc9a02a6567f9eb"
+    },
+    {
+      "path": "third_party/gsbasic/Constant.h",
+      "upstream_path": "gsBasic/Constant.h",
+      "git_blob_sha1": "dcb0e20200bb8efae7ded135f904cff953552d76"
+    },
+    {
+      "path": "third_party/gsbasic/CustomDirent.h",
+      "upstream_path": "gsBasic/CustomDirent.h",
+      "git_blob_sha1": "6214ef3cced390236e201d06f8b973be95503f53"
+    },
+    {
+      "path": "third_party/gsbasic/Environment.cpp",
+      "upstream_path": "gsBasic/Environment.cpp",
+      "git_blob_sha1": "249b10c5a1907344af7e7d2d808ad37bc8325ac9"
+    },
+    {
+      "path": "third_party/gsbasic/Environment.h",
+      "upstream_path": "gsBasic/Environment.h",
+      "git_blob_sha1": "1fbfef3616735338da3d42830e9685e7ea90e8eb"
+    },
+    {
+      "path": "third_party/gsbasic/Error.cpp",
+      "upstream_path": "gsBasic/Error.cpp",
+      "git_blob_sha1": "b87e1ae8fa8b0301c18cfcf25690e93b172bf83f"
+    },
+    {
+      "path": "third_party/gsbasic/Error.h",
+      "upstream_path": "gsBasic/Error.h",
+      "git_blob_sha1": "b941be9f267a0484986be29f7ed9c4d9232b0e54"
+    },
+    {
+      "path": "third_party/gsbasic/Executive.cpp",
+      "upstream_path": "gsBasic/Executive.cpp",
+      "git_blob_sha1": "ff0d195c4d4026e7ef1bfab4aba1d7889c837b80"
+    },
+    {
+      "path": "third_party/gsbasic/Executive.h",
+      "upstream_path": "gsBasic/Executive.h",
+      "git_blob_sha1": "b82a83e79c898effa7e46a1e37ce56eec9b16dba"
+    },
+    {
+      "path": "third_party/gsbasic/Expression.cpp",
+      "upstream_path": "gsBasic/Expression.cpp",
+      "git_blob_sha1": "23f002cc12a432fefed74ef7c5853caeadbe10b8"
+    },
+    {
+      "path": "third_party/gsbasic/Expression.h",
+      "upstream_path": "gsBasic/Expression.h",
+      "git_blob_sha1": "149b44ca0fb232dd919f5106102f17a3c6916038"
+    },
+    {
+      "path": "third_party/gsbasic/ExpressionList.cpp",
+      "upstream_path": "gsBasic/ExpressionList.cpp",
+      "git_blob_sha1": "69f8e8eb4f64ec64aed8098aaf04467e43d13d63"
+    },
+    {
+      "path": "third_party/gsbasic/ExpressionList.h",
+      "upstream_path": "gsBasic/ExpressionList.h",
+      "git_blob_sha1": "37c672add2a666cd7be0484f9f0abaaa93011743"
+    },
+    {
+      "path": "third_party/gsbasic/GSBASICNotifications.h",
+      "upstream_path": "gsBasic/GSBASICNotifications.h",
+      "git_blob_sha1": "47aed363c9d6c724a1248e93d08ae9d3487f2ad8"
+    },
+    {
+      "path": "third_party/gsbasic/GSBCommon.h",
+      "upstream_path": "gsBasic/GSBCommon.h",
+      "git_blob_sha1": "699423bf9185fde6e6801cbac2bc52dd92c23f4c"
+    },
+    {
+      "path": "third_party/gsbasic/GSBString.cpp",
+      "upstream_path": "gsBasic/GSBString.cpp",
+      "git_blob_sha1": "7c2e166b8490e13f5b7ecf49d2ef6a988a66a49f"
+    },
+    {
+      "path": "third_party/gsbasic/GSBString.h",
+      "upstream_path": "gsBasic/GSBString.h",
+      "git_blob_sha1": "b7b59f9e2283a70f6002270595bc9fc4893861d1"
+    },
+    {
+      "path": "third_party/gsbasic/GSBasic.cpp",
+      "upstream_path": "gsBasic/GSBasic.cpp",
+      "git_blob_sha1": "32945a1d8e7515e1f2745769532f82f3d6eb9f1d"
+    },
+    {
+      "path": "third_party/gsbasic/GSList.h",
+      "upstream_path": "gsBasic/GSList.h",
+      "git_blob_sha1": "aa7a06d650868cf122ecd720a53f15826c2a8d06"
+    },
+    {
+      "path": "third_party/gsbasic/Heap.cpp",
+      "upstream_path": "gsBasic/Heap.cpp",
+      "git_blob_sha1": "329408815bb738023efd9b5ecf7daf5dc00b3808"
+    },
+    {
+      "path": "third_party/gsbasic/Heap.h",
+      "upstream_path": "gsBasic/Heap.h",
+      "git_blob_sha1": "33a04c5a65880805931f1f5cdf6b4006601d8c52"
+    },
+    {
+      "path": "third_party/gsbasic/Lexer.cpp",
+      "upstream_path": "gsBasic/Lexer.cpp",
+      "git_blob_sha1": "e9b387a4057cea4a769de276636e04089e0b14f2"
+    },
+    {
+      "path": "third_party/gsbasic/Lexer.h",
+      "upstream_path": "gsBasic/Lexer.h",
+      "git_blob_sha1": "9e084383f528391aecc5e105ab848c6135085e34"
+    },
+    {
+      "path": "third_party/gsbasic/LineNumber.h",
+      "upstream_path": "gsBasic/LineNumber.h",
+      "git_blob_sha1": "5119b7d66d9b5d24fcc4c4e8bc4a9719dd3f5e70"
+    },
+    {
+      "path": "third_party/gsbasic/ListMember.h",
+      "upstream_path": "gsBasic/ListMember.h",
+      "git_blob_sha1": "3005d86eed525a6190bf5d4e3d8f2e7e0c78e6f1"
+    },
+    {
+      "path": "third_party/gsbasic/Makefile",
+      "upstream_path": "gsBasic/Makefile",
+      "git_blob_sha1": "f31a7822c1578c9c2aa77766c57ea16f043f6546"
+    },
+    {
+      "path": "third_party/gsbasic/Parser.cpp",
+      "upstream_path": "gsBasic/Parser.cpp",
+      "git_blob_sha1": "304a02a20d6a95f5c9acd30c7a6df5e10f50ea23"
+    },
+    {
+      "path": "third_party/gsbasic/Parser.h",
+      "upstream_path": "gsBasic/Parser.h",
+      "git_blob_sha1": "a365a43140f23120032bb02719fc7f03b15327f8"
+    },
+    {
+      "path": "third_party/gsbasic/PlacementNews.cpp",
+      "upstream_path": "gsBasic/PlacementNews.cpp",
+      "git_blob_sha1": "651481e18a8ecdc00595e00571f7849fa546d1a2"
+    },
+    {
+      "path": "third_party/gsbasic/Pool.h",
+      "upstream_path": "gsBasic/Pool.h",
+      "git_blob_sha1": "1a10a66b499625217a48776908d63000fdba229c"
+    },
+    {
+      "path": "third_party/gsbasic/README.txt",
+      "upstream_path": "gsBasic/README.txt",
+      "git_blob_sha1": "16d862ca248ce0c9a0bc725d7c7a40dba93628c2"
+    },
+    {
+      "path": "third_party/gsbasic/Reader.h",
+      "upstream_path": "gsBasic/Reader.h",
+      "git_blob_sha1": "71b283c863a0010c0c9554d13e5ff810da22728d"
+    },
+    {
+      "path": "third_party/gsbasic/Statements.cpp",
+      "upstream_path": "gsBasic/Statements.cpp",
+      "git_blob_sha1": "61e7b88521eb0300de85033ea88b33de78d8b03e"
+    },
+    {
+      "path": "third_party/gsbasic/Statements.h",
+      "upstream_path": "gsBasic/Statements.h",
+      "git_blob_sha1": "d97655909f79231e98ffe663eaee22d60885696c"
+    },
+    {
+      "path": "third_party/gsbasic/StructDef.cpp",
+      "upstream_path": "gsBasic/StructDef.cpp",
+      "git_blob_sha1": "b5439402c9be0b4d477b5cad0246dd8e3fcccaed"
+    },
+    {
+      "path": "third_party/gsbasic/StructDef.h",
+      "upstream_path": "gsBasic/StructDef.h",
+      "git_blob_sha1": "49f49f75c473f80b802002a0a7b7183e331fcadc"
+    },
+    {
+      "path": "third_party/gsbasic/Token.cpp",
+      "upstream_path": "gsBasic/Token.cpp",
+      "git_blob_sha1": "dfd98e836aa99c8bf866d3e9d68de20c25f34c30"
+    },
+    {
+      "path": "third_party/gsbasic/Token.h",
+      "upstream_path": "gsBasic/Token.h",
+      "git_blob_sha1": "847ae453d32c5da806d37db436dffa02c8e0704c"
+    },
+    {
+      "path": "third_party/gsbasic/TypeBehaviors.cpp",
+      "upstream_path": "gsBasic/TypeBehaviors.cpp",
+      "git_blob_sha1": "a452420befd7e23365af9889829faf4aa910a025"
+    },
+    {
+      "path": "third_party/gsbasic/TypeBehaviors.h",
+      "upstream_path": "gsBasic/TypeBehaviors.h",
+      "git_blob_sha1": "669536e266a8fe27829026f0adcd17cb3f735b0d"
+    },
+    {
+      "path": "third_party/gsbasic/Utilities.cpp",
+      "upstream_path": "gsBasic/Utilities.cpp",
+      "git_blob_sha1": "2247b031d5a19bfb5ab8aef4b9de388a736dfb5e"
+    },
+    {
+      "path": "third_party/gsbasic/Utilities.h",
+      "upstream_path": "gsBasic/Utilities.h",
+      "git_blob_sha1": "8e194cc6cd7e0ae18090a05c3bcd47c2c0dfe273"
+    },
+    {
+      "path": "third_party/gsbasic/Value.cpp",
+      "upstream_path": "gsBasic/Value.cpp",
+      "git_blob_sha1": "bd2421386ab346357528af330f40133528ce3717"
+    },
+    {
+      "path": "third_party/gsbasic/Value.h",
+      "upstream_path": "gsBasic/Value.h",
+      "git_blob_sha1": "827a27bd696c5c53e0436f2badf84b108e15bb80"
+    },
+    {
+      "path": "third_party/gsbasic/ValueArray.h",
+      "upstream_path": "gsBasic/ValueArray.h",
+      "git_blob_sha1": "29d141cb33720e575068655975770a6bb08f4d12"
+    },
+    {
+      "path": "third_party/gsbasic/VarSpec.cpp",
+      "upstream_path": "gsBasic/VarSpec.cpp",
+      "git_blob_sha1": "4616ea799c015682c170ee1b0a25c8b1fa1d4492"
+    },
+    {
+      "path": "third_party/gsbasic/VarSpec.h",
+      "upstream_path": "gsBasic/VarSpec.h",
+      "git_blob_sha1": "a760ac1ba5f038eb0cca66c283e4861c9de82468"
+    },
+    {
+      "path": "third_party/gsbasic/cppWrapper.c",
+      "upstream_path": "gsBasic/cppWrapper.c",
+      "git_blob_sha1": "4dde29b45aa3cffbef617421639daa1637884f3d"
+    },
+    {
+      "path": "third_party/gsbasic/cppWrapper.h",
+      "upstream_path": "gsBasic/cppWrapper.h",
+      "git_blob_sha1": "36b85594d9497eba8c436a3445a413c21525f008"
+    },
+    {
+      "path": "third_party/gsbasic/licence.txt",
+      "upstream_path": "gsBasic/licence.txt",
+      "git_blob_sha1": "9b0964cdb5443e82bbbce6cae4ab711e3316f591"
+    },
+    {
+      "path": "third_party/gsbasic/stdafx.cpp",
+      "upstream_path": "gsBasic/stdafx.cpp",
+      "git_blob_sha1": "3ff9f63c8598531428652108c445aeb52d8d24fc"
+    },
+    {
+      "path": "third_party/gsbasic/stdafx.h",
+      "upstream_path": "gsBasic/stdafx.h",
+      "git_blob_sha1": "fb57edfddec898e3379be38ac424612a2900b48e"
+    },
+    {
+      "path": "third_party/gsbasic/vio.c",
+      "upstream_path": "gsBasic/vio.c",
+      "git_blob_sha1": "3e31e62c0d3c543dc26af20e51f91cff1a1a12ff"
+    },
+    {
+      "path": "third_party/gsbasic/vio.h",
+      "upstream_path": "gsBasic/vio.h",
+      "git_blob_sha1": "0ea6f56a56fa6ab460974562d58ab63a5bcfe338"
+    },
+    {
+      "path": "third_party/gsbasic/vectrex32/BASICBuiltInConstants.cpp",
+      "upstream_path": "gsBasic/vectrex32/BASICBuiltInConstants.cpp",
+      "git_blob_sha1": "8a2d6106d6a15032e99b0506915c9ebb6e647839"
+    },
+    {
+      "path": "third_party/gsbasic/vectrex32/BASICBuiltInConstants.h",
+      "upstream_path": "gsBasic/vectrex32/BASICBuiltInConstants.h",
+      "git_blob_sha1": "2b40ec4aa7f84aa0bbb64c0375b7e67ed91d466f"
+    },
+    {
+      "path": "third_party/gsbasic/vectrex32/BASICBuiltInFunctions.cpp",
+      "upstream_path": "gsBasic/vectrex32/BASICBuiltInFunctions.cpp",
+      "git_blob_sha1": "117d222736cfa2ef9dc475615a8215c0e33a5c24"
+    },
+    {
+      "path": "third_party/gsbasic/vectrex32/Calculations.cpp",
+      "upstream_path": "gsBasic/vectrex32/Calculations.cpp",
+      "git_blob_sha1": "f28c3582a17c0822251d0890cfd6f41a16c14d2e"
+    },
+    {
+      "path": "third_party/gsbasic/vectrex32/Calculations.h",
+      "upstream_path": "gsBasic/vectrex32/Calculations.h",
+      "git_blob_sha1": "3e59d115cfee86dc6e048f4a2beacc298f45774f"
+    },
+    {
+      "path": "third_party/gsbasic/vectrex32/Camera.cpp",
+      "upstream_path": "gsBasic/vectrex32/Camera.cpp",
+      "git_blob_sha1": "5750223d02f3c876c1f9c8f552c1ed8f28ac7f6f"
+    },
+    {
+      "path": "third_party/gsbasic/vectrex32/Camera.h",
+      "upstream_path": "gsBasic/vectrex32/Camera.h",
+      "git_blob_sha1": "1d27e0d2b13be7ca08906cdd83cb8d3ec830669b"
+    },
+    {
+      "path": "third_party/gsbasic/vectrex32/CommandDataQueue.h",
+      "upstream_path": "gsBasic/vectrex32/CommandDataQueue.h",
+      "git_blob_sha1": "ad6a22fbc27822e8d2e0d8bd382aa2ac7872cb83"
+    },
+    {
+      "path": "third_party/gsbasic/vectrex32/Matrix.cpp",
+      "upstream_path": "gsBasic/vectrex32/Matrix.cpp",
+      "git_blob_sha1": "84c16c983aa7eff577bdc887564db06f08e4bf28"
+    },
+    {
+      "path": "third_party/gsbasic/vectrex32/Matrix.h",
+      "upstream_path": "gsBasic/vectrex32/Matrix.h",
+      "git_blob_sha1": "0777f85335c57105fa5eb7fa5f74d7dc78574509"
+    },
+    {
+      "path": "third_party/gsbasic/vectrex32/VectorFont.cpp",
+      "upstream_path": "gsBasic/vectrex32/VectorFont.cpp",
+      "git_blob_sha1": "b6e26a9836e68ef83f8187f28ab3a1f91e632b75"
+    },
+    {
+      "path": "third_party/gsbasic/vectrex32/VectorFont.h",
+      "upstream_path": "gsBasic/vectrex32/VectorFont.h",
+      "git_blob_sha1": "9b306592cf12a6e17af8d057d08b043a4dff5a17"
+    },
+    {
+      "path": "third_party/gsbasic/vectrex32/VectrexCommand.cpp",
+      "upstream_path": "gsBasic/vectrex32/VectrexCommand.cpp",
+      "git_blob_sha1": "62d21888dc8d6032f2a3a161bc559707b95cc09f"
+    },
+    {
+      "path": "third_party/gsbasic/vectrex32/VectrexCommand.h",
+      "upstream_path": "gsBasic/vectrex32/VectrexCommand.h",
+      "git_blob_sha1": "6c8478c30378ffae66a61645a7f8838dab4f7974"
+    },
+    {
+      "path": "third_party/gsbasic/vectrex32/VectrexInterface.h",
+      "upstream_path": "gsBasic/vectrex32/VectrexInterface.h",
+      "git_blob_sha1": "70ea808e44e8db60fc97650b4878e40379d789e3"
+    },
+    {
+      "path": "third_party/gsbasic/vectrex32/VectrexSound.cpp",
+      "upstream_path": "gsBasic/vectrex32/VectrexSound.cpp",
+      "git_blob_sha1": "a350e1e40f98a611b4bd894b561478d183f0d157"
+    },
+    {
+      "path": "third_party/gsbasic/vectrex32/VectrexSound.h",
+      "upstream_path": "gsBasic/vectrex32/VectrexSound.h",
+      "git_blob_sha1": "0073b2c09d645d7f5f87e867860df7facda95817"
+    },
+    {
+      "path": "third_party/gsbasic/vectrex32/Version.h",
+      "upstream_path": "gsBasic/vectrex32/Version.h",
+      "git_blob_sha1": "8cb101f8c46fd3224616dc7503c7b0451a40fa4d"
+    },
+    {
+      "path": "third_party/gsbasic/vectrex32/ymStuff.i",
+      "upstream_path": "gsBasic/vectrex32/ymStuff.i",
+      "git_blob_sha1": "5920b879f15868f4337d2c5545c1a0651caeeafd"
+    }
+  ]
+}

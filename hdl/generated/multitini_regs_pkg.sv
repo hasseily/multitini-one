@@ -3,7 +3,7 @@
 `timescale 1ns / 1ps
 package multitini_regs_pkg;
     localparam logic [15:0] MT_ABI_MAJOR = 16'd0;
-    localparam logic [15:0] MT_ABI_MINOR = 16'd11;
+    localparam logic [15:0] MT_ABI_MINOR = 16'd12;
     localparam logic [31:0] MT_ABI_VERSION = {MT_ABI_MAJOR, MT_ABI_MINOR};
     localparam logic [31:0] MT_MAGIC = 32'h4D543031;
     localparam logic [31:0] MT_SHELL_ID = 32'h4D544F4E;
@@ -47,6 +47,7 @@ package multitini_regs_pkg;
     localparam logic [11:0] MT_REG_CORE_VARIANT_INDEX = 12'h0B4;
     localparam logic [11:0] MT_REG_STREAM_DATA_BURST = 12'h0B8;
     localparam logic [11:0] MT_REG_STREAM_STATUS = 12'h0BC;
+    localparam logic [11:0] MT_REG_BORDER_CONFIG = 12'h0C0;
 
     localparam logic [31:0] MT_CONTROL_CORE_RESET_REQUEST = 32'h00000001;
     localparam logic [31:0] MT_CONTROL_VIDEO_TEST_ENABLE = 32'h00000002;
@@ -129,6 +130,18 @@ package multitini_regs_pkg;
     localparam logic [31:0] MT_UI_VRAM_BANK1_OFFSET = 32'h00008000;
     localparam logic [31:0] MT_UI_WINDOW_SPAN = 32'h00010000;
     localparam logic [31:0] MT_STREAM_BURST_BYTES = 32'h00000004;
+    localparam logic [31:0] MT_BORDER_MIN_ABI_MINOR = 32'h0000000C;
+    localparam logic [31:0] MT_BORDER_ENABLE_MASK = 32'h00000001;
+    localparam logic [31:0] MT_BORDER_STYLE_SHIFT = 32'h00000001;
+    localparam logic [31:0] MT_BORDER_STYLE_MASK = 32'h0000000E;
+    localparam logic [31:0] MT_BORDER_COLOR_SHIFT = 32'h00000004;
+    localparam logic [31:0] MT_BORDER_COLOR_MASK = 32'h000000F0;
+    localparam logic [31:0] MT_BORDER_PADDING_SHIFT = 32'h00000008;
+    localparam logic [31:0] MT_BORDER_PADDING_MASK = 32'h00001F00;
+    localparam logic [31:0] MT_BORDER_CONFIG_DEFAULT = 32'h00000670;
+    localparam logic [31:0] MT_BORDER_MIN_PADDING = 32'h00000001;
+    localparam logic [31:0] MT_BORDER_MAX_PADDING = 32'h00000014;
+    localparam logic [31:0] MT_BORDER_STYLE_MAX = 32'h00000004;
 
     localparam logic [31:0] MT_COMMAND_PING = 32'h00000000;
     localparam logic [31:0] MT_COMMAND_GET_STATUS = 32'h00000001;

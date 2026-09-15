@@ -40,6 +40,7 @@ typedef struct {
 #define FA_WRITE UINT32_C(0x02)
 #define FA_CREATE_ALWAYS UINT32_C(0x08)
 #define FA_OPEN_EXISTING UINT32_C(0x00)
+#define FA_OPEN_ALWAYS UINT32_C(0x10)
 #define AM_DIR UINT32_C(0x10)
 
 FRESULT f_mount(FATFS *file_system, const char *path, BYTE option);
@@ -52,6 +53,8 @@ FRESULT f_write(FIL *file, const void *buffer, UINT bytes_to_write,
 FRESULT f_sync(FIL *file);
 FRESULT f_close(FIL *file);
 FRESULT f_unlink(const char *path);
+FRESULT f_lseek(FIL *file, FSIZE_t offset);
+FRESULT f_rename(const char *old_path, const char *new_path);
 FRESULT f_opendir(DIR *directory, const char *path);
 FRESULT f_readdir(DIR *directory, FILINFO *info);
 FRESULT f_closedir(DIR *directory);

@@ -3,6 +3,8 @@
 #include "c64_content_service.h"
 #include "core_catalog_sd.h"
 #include "gameboy_content_service.h"
+#include "vectrex_content_service.h"
+#include "vectrex32_service.h"
 #include "multitini_ak4493.h"
 #include "multitini_c64_boot.h"
 #include "multitini_c64_hid_input.h"
@@ -14,7 +16,9 @@
 #include "multitini_core_link.h"
 #include "multitini_fatfs_time.h"
 #include "multitini_gameboy_interface.h"
+#include "multitini_vectrex_interface.h"
 #include "multitini_menu.h"
+#include "multitini_media_browser.h"
 #include "multitini_regs.h"
 #include "multitini_supervisor.h"
 #include "multitini_tmp102.h"
@@ -43,7 +47,8 @@
 
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
 #define MT_SUPERVISOR_CORE_ID UINT32_C(0)
-#define MT_FIRMWARE_BUILD_ID UINT32_C(0x20260920)
+/* VEC3 adds per-core borders, retaining nested media navigation. */
+#define MT_FIRMWARE_BUILD_ID UINT32_C(0x56454333)
 #define MT_I2C_CLOCK_HZ UINT32_C(100000)
 #define MT_I2C_BUSY_POLLS UINT32_C(1000000)
 #define MT_UART_DRAIN_POLLS UINT32_C(10000000)
@@ -77,6 +82,9 @@ static bool c64_services_initialized;
 static bool gameboy_service_initialized;
 static bool gameboy_save_dirty_displayed;
 static bool gameboy_save_fault_displayed;
+static bool vectrex_service_initialized;
+static bool vectrex_basic_running;
+static bool vectrex_basic_stop;
 static uint8_t c64_rom_bundle[MT_C64_SYSTEM_ROM_BUNDLE_SIZE];
 static uint8_t c64_drive_rom[MT_SIZE_C64_1541_ROM];
 static uint8_t c64_candidate_rom_bundle[MT_C64_SYSTEM_ROM_BUNDLE_SIZE];
@@ -118,6 +126,8 @@ static char supervisor_status_text[64] = "Ready";
 static mt_ui_color_t supervisor_status_color = MT_UI_COLOR_MUTED;
 static mt_menu_file_t supervisor_menu_files[MT_MENU_MAX_FILES];
 static size_t supervisor_menu_file_count;
+static mt_media_browser_t vectrex_media_browser;
+static char vectrex_browser_path[512];
 static mt_c64_d64_prg_entry_t supervisor_d64_prgs[MT_MENU_MAX_FILES];
 static size_t supervisor_d64_prg_count;
 static uint8_t supervisor_disk_prg_buffer[MT_SIZE_C64_PRG_MAX];
@@ -140,6 +150,7 @@ static void set_supervisor_error(const char *text);
 static void set_supervisor_outcome(bool succeeded, const char *success,
                                     const char *failure);
 static bool hide_menu_for_core_action(void);
+static int run_vectrex_basic(void *, const char *, const char *, const char *);
 
 static void set_c64_cpu_turbo(bool enabled)
 {
@@ -562,6 +573,10 @@ static int set_core_reset_request(bool asserted)
         return -1;
     }
     result = command(MT_COMMAND_CORE_RESET, asserted ? 1U : 0U, 0U);
+    /* A synchronous assert/release can finish before the USB service observes
+     * reset. Invalidate the cached Vectrex delivery state explicitly. */
+    if (result == 0 && asserted && shell_read(MT_REG_CORE_ID) == MT_VECTREX_CORE_ID)
+        usb_hid_service_set_core_ready(false);
     if (result != 0 && asserted && !currently_asserted &&
         c64_active && c64_services_initialized) {
         (void)c64_d64_service_resume_after_reset();
@@ -1345,6 +1360,63 @@ static bool ensure_active_settings_profile(void)
                    .variants[supervisor.active.variant_index].id);
 }
 
+static bool selection_supports_borders(const mt_core_selection_t *selection)
+{
+    uint32_t version;
+    if (selection == NULL || selection->package.core_id == MT_SUPERVISOR_CORE_ID ||
+        shell_read(MT_REG_CORE_ID) != selection->package.core_id) return false;
+    version = shell_read(MT_REG_ABI_VERSION);
+    return (uint16_t)(version >> 16U) == MT_ABI_MAJOR &&
+           (uint16_t)version >= MT_BORDER_MIN_ABI_MINOR;
+}
+
+static uint32_t profile_border_config(const mt_core_settings_profile_t *profile)
+{
+    const uint32_t style = profile != NULL && profile->border_style < 5U ?
+        profile->border_style : MT_SETTINGS_BORDER_STYLE_DEFAULT;
+    const uint32_t color = profile != NULL && profile->border_color < 16U ?
+        profile->border_color : MT_SETTINGS_BORDER_COLOR_DEFAULT;
+    const uint32_t padding = profile != NULL && profile->border_padding >= 1U &&
+        profile->border_padding <= 20U ? profile->border_padding :
+        MT_SETTINGS_BORDER_PADDING_DEFAULT;
+    return (profile != NULL && profile->border_enabled ? MT_BORDER_ENABLE_MASK : UINT32_C(0)) |
+           (style << MT_BORDER_STYLE_SHIFT) | (color << MT_BORDER_COLOR_SHIFT) |
+           (padding << MT_BORDER_PADDING_SHIFT);
+}
+
+static void change_active_border(size_t packed)
+{
+    const uint32_t value = (uint32_t)packed;
+    const uint8_t style = (uint8_t)((value & MT_BORDER_STYLE_MASK) >> MT_BORDER_STYLE_SHIFT);
+    const uint8_t color = (uint8_t)((value & MT_BORDER_COLOR_MASK) >> MT_BORDER_COLOR_SHIFT);
+    const uint8_t padding = (uint8_t)((value & MT_BORDER_PADDING_MASK) >> MT_BORDER_PADDING_SHIFT);
+    if (!supervisor.has_active || !selection_supports_borders(&supervisor.active)) {
+        set_supervisor_error("Borders are unavailable for this core");
+        return;
+    }
+    if ((size_t)value != packed ||
+        (value & ~(MT_BORDER_ENABLE_MASK | MT_BORDER_STYLE_MASK |
+                   MT_BORDER_COLOR_MASK | MT_BORDER_PADDING_MASK)) != 0U ||
+        style > MT_BORDER_STYLE_MAX || padding < MT_BORDER_MIN_PADDING ||
+        padding > MT_BORDER_MAX_PADDING) {
+        set_supervisor_error("Invalid border setting");
+        return;
+    }
+    settings_before_update = persistent_settings;
+    if (!ensure_active_settings_profile() ||
+        !mt_supervisor_settings_remember_borders(&persistent_settings,
+            supervisor.active.package.id, (value & MT_BORDER_ENABLE_MASK) != 0U,
+            style, color, padding) ||
+        !save_persistent_settings()) {
+        persistent_settings = settings_before_update;
+        set_supervisor_error("Border unchanged; settings write failed");
+        return;
+    }
+    /* The shell transfers this complete configuration at the next vblank. */
+    Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_BORDER_CONFIG, value);
+    set_supervisor_status("Border saved for this core");
+}
+
 static bool remember_active_drive8(const char *file_name)
 {
     const char *const core_id = active_settings_core_id();
@@ -1432,6 +1504,10 @@ static bool restore_selection_settings(
     if (selection == NULL) return false;
     profile = mt_supervisor_settings_find(&persistent_settings,
                                           selection->package.id);
+    if (selection_supports_borders(selection)) {
+        Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_BORDER_CONFIG,
+                  profile_border_config(profile));
+    }
     if (selection->package.core_id == MT_C64_CORE_ID) {
         set_c64_cpu_turbo(selection->package.abi_minor >= 8U &&
                           profile != NULL && profile->c64_cpu_turbo);
@@ -1503,6 +1579,16 @@ static bool restore_selection_settings(
         set_video_test(true);
         return ok;
     }
+    if (selection->package.core_id == MT_VECTREX_CORE_ID && profile != NULL &&
+        profile->cartridge_name[0] != '\0') {
+        const mt_vectrex_content_result_t content =
+            vectrex_content_service_load(profile->cartridge_name);
+        const bool loaded = content.status == MT_VECTREX_CONTENT_OK;
+        usb_hid_service_set_core_ready(loaded);
+        if (dac_ready) set_audio(!loaded, false);
+        set_video_test(!loaded);
+        return loaded;
+    }
     return true;
 }
 
@@ -1548,12 +1634,23 @@ static mt_menu_view_t supervisor_menu_view(void)
         state.save_active = gameboy_content_service_save_active();
         state.save_dirty = gameboy_content_service_save_dirty();
         state.save_faulted = gameboy_content_service_save_faulted();
+    } else if (supervisor.has_active &&
+               supervisor.active.package.core_id == MT_VECTREX_CORE_ID &&
+               vectrex_service_initialized) {
+        state.services_ready = true;
+        state.cartridge_attached = vectrex_content_service_cartridge_attached();
+        state.cartridge_name = vectrex_content_service_cartridge_name();
     }
     mt_core_frontend_apply(&supervisor_frontend, &state, &view);
     view.status_text = supervisor_status_text;
     view.status_color = supervisor_status_color;
     view.files = supervisor_menu_files;
     view.file_count = supervisor_menu_file_count;
+    if (supervisor.has_active &&
+        supervisor.active.package.core_id == MT_VECTREX_CORE_ID &&
+        supervisor_menu.browser != MT_MENU_BROWSER_NONE &&
+        vectrex_browser_path[0] != '\0')
+        view.content_root = vectrex_browser_path;
     view.video_test_enabled =
         (shell_read(MT_REG_CONTROL) & MT_CONTROL_VIDEO_TEST_ENABLE) != 0U;
     view.settings_auto_boot = persistent_settings.auto_boot &&
@@ -1561,6 +1658,17 @@ static mt_menu_view_t supervisor_menu_view(void)
         strcmp(persistent_settings.selected_core_id,
                supervisor.active.package.id) == 0;
     view.settings_faulted = settings_faulted;
+    {
+        const mt_core_settings_profile_t *const profile = supervisor.has_active ?
+            mt_supervisor_settings_find(&persistent_settings, supervisor.active.package.id) : NULL;
+        const uint32_t border = profile_border_config(profile);
+        view.border_supported = supervisor.has_active &&
+            selection_supports_borders(&supervisor.active);
+        view.border_enabled = (border & MT_BORDER_ENABLE_MASK) != 0U;
+        view.border_style = (uint8_t)((border & MT_BORDER_STYLE_MASK) >> MT_BORDER_STYLE_SHIFT);
+        view.border_color = (uint8_t)((border & MT_BORDER_COLOR_MASK) >> MT_BORDER_COLOR_SHIFT);
+        view.border_padding = (uint8_t)((border & MT_BORDER_PADDING_MASK) >> MT_BORDER_PADDING_SHIFT);
+    }
     return view;
 }
 
@@ -1568,12 +1676,16 @@ static int collect_menu_file(void *context, const char *name, size_t size,
                              bool is_directory)
 {
     const mt_menu_browser_t browser = *(const mt_menu_browser_t *)context;
-    const mt_content_type_t type = mt_content_classify(name);
+    const mt_content_type_t type = mt_content_classify_for_core(
+        supervisor.has_active ? supervisor.active.package.core_id : 0U, name);
     size_t name_size;
     bool accepted;
-    if (is_directory) return 0;
-    accepted = supervisor.has_active && mt_core_frontend_accepts_content(
-        supervisor.active.package.core_id, browser, type);
+    const bool folders = supervisor.has_active &&
+        supervisor.active.package.core_id == MT_VECTREX_CORE_ID;
+    if (folders && !mt_media_browser_valid_component(name)) return 0;
+    accepted = is_directory ? folders :
+        supervisor.has_active && mt_core_frontend_accepts_content(
+            supervisor.active.package.core_id, browser, type);
     if (!accepted || supervisor_menu_file_count >= MT_MENU_MAX_FILES)
         return 0;
     name_size = strlen(name);
@@ -1581,7 +1693,8 @@ static int collect_menu_file(void *context, const char *name, size_t size,
     memcpy(supervisor_menu_files[supervisor_menu_file_count].name,
            name, name_size + 1U);
     supervisor_menu_files[supervisor_menu_file_count].size = size;
-    supervisor_menu_files[supervisor_menu_file_count].cookie = 0U;
+    supervisor_menu_files[supervisor_menu_file_count].cookie =
+        is_directory ? MT_MENU_FILE_DIRECTORY : 0U;
     ++supervisor_menu_file_count;
     return 0;
 }
@@ -1633,9 +1746,15 @@ static void sort_menu_files(void)
     for (index = 1U; index < supervisor_menu_file_count; ++index) {
         mt_menu_file_t value = supervisor_menu_files[index];
         size_t position = index;
-        while (position != 0U &&
-               strcmp(supervisor_menu_files[position - 1U].name,
-                      value.name) > 0) {
+        while (position != 0U) {
+            const mt_menu_file_t *const previous = &supervisor_menu_files[position - 1U];
+            const unsigned value_group = (value.cookie & MT_MENU_FILE_PARENT) != 0U ? 0U :
+                ((value.cookie & MT_MENU_FILE_DIRECTORY) != 0U ? 1U : 2U);
+            const unsigned previous_group = (previous->cookie & MT_MENU_FILE_PARENT) != 0U ? 0U :
+                ((previous->cookie & MT_MENU_FILE_DIRECTORY) != 0U ? 1U : 2U);
+            if (previous_group < value_group ||
+                (previous_group == value_group && strcmp(previous->name, value.name) <= 0))
+                break;
             supervisor_menu_files[position] =
                 supervisor_menu_files[position - 1U];
             --position;
@@ -1644,12 +1763,54 @@ static void sort_menu_files(void)
     }
 }
 
+static void list_vectrex_browser(mt_menu_browser_t browser,
+                                 const mt_media_browser_t *directory)
+{
+    char path[512];
+    mt_sd_result_t listed;
+    if (!mt_media_browser_path(directory, path, sizeof(path))) {
+        set_supervisor_error("Media folder path is too long");
+        return;
+    }
+    supervisor_menu_file_count = 0U;
+    supervisor_d64_prg_count = 0U;
+    if (mt_media_browser_can_up(directory)) {
+        memcpy(supervisor_menu_files[0].name, "..", 3U);
+        supervisor_menu_files[0].size = 0U;
+        supervisor_menu_files[0].cookie = MT_MENU_FILE_DIRECTORY | MT_MENU_FILE_PARENT;
+        supervisor_menu_file_count = 1U;
+    }
+    listed = mt_sd_storage_list(path, collect_menu_file, &browser);
+    if (listed.status != MT_SD_OK) {
+        /* A partial list must never be interpreted relative to the old path. */
+        supervisor_menu_file_count = 0U;
+        mt_menu_close_browser(&supervisor_menu);
+        set_supervisor_error("Could not open the media folder");
+        return;
+    }
+    vectrex_media_browser = *directory;
+    memcpy(vectrex_browser_path, path, strlen(path) + 1U);
+    sort_menu_files();
+    mt_menu_open_browser(&supervisor_menu, browser);
+    set_supervisor_status(supervisor_menu_file_count == 0U ?
+        "No matching files or folders" : "Enter opens; Backspace goes up; Esc closes");
+}
+
 static void open_menu_browser(mt_menu_browser_t browser)
 {
     mt_sd_result_t list_result;
     if (!supervisor.has_active || !mt_core_frontend_browser_supported(
             supervisor.active.package.core_id, browser)) {
         set_supervisor_status("This core has no media browser yet");
+        return;
+    }
+    if (supervisor.active.package.core_id == MT_VECTREX_CORE_ID) {
+        mt_media_browser_t directory;
+        if (!mt_media_browser_init(&directory, supervisor.active.package.content_root)) {
+            set_supervisor_error("Invalid Vectrex media folder");
+            return;
+        }
+        list_vectrex_browser(browser, &directory);
         return;
     }
     supervisor_menu_file_count = 0U;
@@ -1736,6 +1897,78 @@ static int supervisor_probe(void *context, uint32_t core_id,
     return -1;
 }
 
+static int vectrex_basic_service(void *context)
+{
+    (void)context;
+    service_usb_input();
+    return vectrex_basic_stop ? 0 : 1;
+}
+
+static int vectrex_basic_stream_service(void *context)
+{
+    (void)context;
+    usb_hid_service_poll_deferred();
+    return vectrex_basic_stop ? 0 : 1;
+}
+
+static void vectrex_basic_controls(void *context, int controls[2][6])
+{
+    (void)context;
+    usb_hid_service_vectrex_controls(controls);
+}
+
+static void vectrex_basic_text(void *context, const char *text)
+{
+    (void)context;
+    xil_printf("%s", text);
+}
+
+static int vectrex_basic_console_read(void *context)
+{
+    uint8_t byte;
+    const int result = uart0_try_read_byte(&byte);
+    (void)context;
+    return result > 0 ? byte : (result == 0 ? -1 : -3);
+}
+
+static int vectrex_basic_console_write(void *context, const void *data, size_t size)
+{
+    const uint8_t *bytes = data;
+    size_t offset;
+    (void)context;
+    for (offset = 0U; offset < size; ++offset) {
+        if ((offset & 63U) == 0U && !vectrex_basic_service(NULL)) return -2;
+        if (uart0_write_byte(NULL, bytes[offset]) != 0) return -1;
+    }
+    return 0;
+}
+
+static int run_vectrex_basic(void *context, const char *root,
+                             const char *name, const char *source)
+{
+    const mt_vectrex32_platform_ops_t ops = {
+        NULL, vectrex_basic_service, monotonic_ms,
+        vectrex_basic_controls, vectrex_basic_text, vectrex_basic_stream_service,
+        vectrex_basic_console_read, vectrex_basic_console_write
+    };
+    int status;
+    (void)context;
+    if (vectrex_basic_running) return -1;
+    if (!hide_menu_for_core_action()) return -1;
+    usb_hid_service_set_core_ready(false);
+    vectrex32_service_init(&shell_link, &ops);
+    vectrex_basic_stop = false;
+    vectrex_basic_running = true;
+    set_video_test(false);
+    if (dac_ready) set_audio(false, false);
+    status = vectrex32_service_run(NULL, root, name, source);
+    vectrex_basic_running = false;
+    supervisor_menu.visible = true;
+    supervisor_menu_dirty = true;
+    if (dac_ready) set_audio(true, false);
+    return status;
+}
+
 static int supervisor_activate(void *context,
                                const mt_core_selection_t *selection)
 {
@@ -1743,6 +1976,21 @@ static int supervisor_activate(void *context,
     bool request_fast_roms;
     (void)context;
     usb_hid_service_set_active_core(selection->package.core_id);
+    if (selection->package.core_id == MT_VECTREX_CORE_ID) {
+        mt_vectrex_content_result_t boot;
+        vectrex_content_service_init(&shell_link, selection->package.content_root,
+            NULL, NULL, run_vectrex_basic, NULL);
+        vectrex_service_initialized = true;
+        boot = vectrex_content_service_boot_bios();
+        usb_hid_service_set_core_ready(boot.status == MT_VECTREX_CONTENT_OK);
+        if (dac_ready) set_audio(boot.status != MT_VECTREX_CONTENT_OK, false);
+        set_video_test(boot.status != MT_VECTREX_CONTENT_OK);
+        if (boot.status != MT_VECTREX_CONTENT_OK)
+            xil_printf("[Vectrex] BIOS unavailable: %s (%s); BASIC remains available\r\n",
+                vectrex_content_status_name(boot.status), mt_sd_status_name(boot.sd.status));
+        last_settings_restore_ok = restore_selection_settings(selection);
+        return boot.status == MT_VECTREX_CONTENT_TRANSFER_FAILED ? -1 : 0;
+    }
     if (selection->package.core_id == MT_GBC_CORE_ID) {
         gameboy_content_service_init(
             &shell_link, selection->package.content_root,
@@ -1789,6 +2037,7 @@ static int supervisor_enter_standby(void)
     c64_drive_ready = false;
     c64_core_reset_active = true;
     gameboy_service_initialized = false;
+    vectrex_service_initialized = false;
     gameboy_save_dirty_displayed = false;
     gameboy_save_fault_displayed = false;
     return 0;
@@ -1822,6 +2071,7 @@ static bool supervisor_keyboard_filter(void *context, uint8_t slot,
 {
     static const uint8_t menu_keys[] = {
         MT_MENU_HID_ENTER, MT_MENU_HID_ESCAPE, MT_MENU_HID_TAB,
+        MT_MENU_HID_BACKSPACE,
         MT_MENU_HID_F12, MT_MENU_HID_RIGHT, MT_MENU_HID_LEFT,
         MT_MENU_HID_DOWN, MT_MENU_HID_UP, MT_MENU_HID_HOME, MT_MENU_HID_END,
         MT_MENU_HID_PAGE_UP, MT_MENU_HID_PAGE_DOWN
@@ -1836,6 +2086,14 @@ static bool supervisor_keyboard_filter(void *context, uint8_t slot,
         const uint8_t usage = keys == NULL ? 0U : keys[index];
         if (usage > 3U)
             next[usage >> 3U] |= (uint8_t)(1U << (usage & 7U));
+    }
+    if (vectrex_basic_running) {
+        if (key_bitmap_get(next, MT_MENU_HID_F12) &&
+            !key_bitmap_get(supervisor_menu_keys[slot], MT_MENU_HID_F12)) {
+            vectrex_basic_stop = true;
+        }
+        memcpy(supervisor_menu_keys[slot], next, sizeof(next));
+        return vectrex_basic_stop;
     }
     if (supervisor_menu_action_active) {
         /* The USB capture path submits an empty keyboard state, releasing
@@ -2069,6 +2327,23 @@ static void handle_menu_action(mt_menu_action_t action)
         open_menu_browser(MT_MENU_BROWSER_CARTRIDGE);
     } else if (action.kind == MT_MENU_ACTION_BROWSE_PROGRAM) {
         open_menu_browser(MT_MENU_BROWSER_PROGRAM);
+    } else if (action.kind == MT_MENU_ACTION_OPEN_DIRECTORY) {
+        mt_media_browser_t directory = vectrex_media_browser;
+        const mt_menu_file_t *entry;
+        bool changed;
+        if (!supervisor.has_active ||
+            supervisor.active.package.core_id != MT_VECTREX_CORE_ID ||
+            supervisor_menu.browser == MT_MENU_BROWSER_NONE ||
+            action.file_index >= supervisor_menu_file_count) return;
+        entry = &supervisor_menu_files[action.file_index];
+        if ((entry->cookie & MT_MENU_FILE_DIRECTORY) == 0U) return;
+        changed = (entry->cookie & MT_MENU_FILE_PARENT) != 0U ?
+            mt_media_browser_up(&directory) : mt_media_browser_enter(&directory, entry->name);
+        if (!changed) {
+            set_supervisor_error("Cannot enter that folder; path is too long");
+            return;
+        }
+        list_vectrex_browser(supervisor_menu.browser, &directory);
     } else if (action.kind == MT_MENU_ACTION_MOUNT_DRIVE8) {
         int status;
         if (action.file_index >= supervisor_menu_file_count ||
@@ -2203,7 +2478,40 @@ static void handle_menu_action(mt_menu_action_t action)
             set_supervisor_error("Content load could not start");
             return;
         }
-        if (shell_read(MT_REG_CORE_ID) == MT_GBC_CORE_ID) {
+        if (shell_read(MT_REG_CORE_ID) == MT_VECTREX_CORE_ID) {
+            char name[MT_MEDIA_BROWSER_PATH_MAX + 1U];
+            if ((supervisor_menu_files[action.file_index].cookie & MT_MENU_FILE_DIRECTORY) != 0U ||
+                !mt_media_browser_resolve(&vectrex_media_browser,
+                    supervisor_menu_files[action.file_index].name, name, sizeof(name))) {
+                set_supervisor_error("Content path is too long or invalid");
+                return;
+            }
+            const bool basic = mt_content_classify(name) == MT_CONTENT_VECTREX_BASIC;
+            usb_hid_service_set_core_ready(false);
+            const mt_vectrex_content_result_t result = vectrex_content_service_load(name);
+            if (result.status == MT_VECTREX_CONTENT_OK) {
+                mt_menu_close_browser(&supervisor_menu);
+                usb_hid_service_set_core_ready(true);
+                if (dac_ready) set_audio(basic, false);
+                set_video_test(false);
+                if (!basic && strlen(name) >= MT_SETTINGS_MEDIA_NAME_MAX) {
+                    if (remember_active_cartridge(NULL))
+                        set_supervisor_warning("Cartridge loaded; long path cannot be remembered");
+                    else
+                        set_supervisor_error("Loaded; could not clear previous cartridge setting");
+                } else {
+                    set_supervisor_outcome(remember_active_cartridge(basic ? NULL : name),
+                        basic ? "BASIC finished; choose a program to run again" : "Vectrex cartridge loaded",
+                        "Loaded; settings write failed");
+                }
+            } else {
+                xil_printf("[Vectrex] load failed: %s sd=%s link=%s\r\n",
+                    vectrex_content_status_name(result.status), mt_sd_status_name(result.sd.status),
+                    mt_link_result_name(result.link));
+                set_supervisor_error(basic && vectrex32_service_error()[0] != '\0' ?
+                    vectrex32_service_error() : "Vectrex load failed; check BIOS and file");
+            }
+        } else if (shell_read(MT_REG_CORE_ID) == MT_GBC_CORE_ID) {
             const mt_gameboy_content_service_result_t result =
                 gameboy_content_service_load(
                     supervisor_menu_files[action.file_index].name);
@@ -2288,7 +2596,15 @@ static void handle_menu_action(mt_menu_action_t action)
         else
             set_supervisor_status("Drive 8 ejected");
     } else if (action.kind == MT_MENU_ACTION_DETACH_CARTRIDGE) {
-        if (shell_read(MT_REG_CORE_ID) == MT_GBC_CORE_ID) {
+        if (shell_read(MT_REG_CORE_ID) == MT_VECTREX_CORE_ID) {
+            usb_hid_service_set_core_ready(false);
+            const mt_vectrex_content_result_t result = vectrex_content_service_detach();
+            if (result.status == MT_VECTREX_CONTENT_OK) {
+                usb_hid_service_set_core_ready(true);
+                set_supervisor_outcome(remember_active_cartridge(NULL),
+                    "Vectrex cartridge unloaded", "Cart unloaded; settings write failed");
+            } else set_supervisor_error("Vectrex cartridge unload failed");
+        } else if (shell_read(MT_REG_CORE_ID) == MT_GBC_CORE_ID) {
             const mt_gameboy_content_service_result_t result =
                 gameboy_content_service_detach();
             if (result.status == MT_GAMEBOY_CONTENT_SERVICE_OK) {
@@ -2332,6 +2648,8 @@ static void handle_menu_action(mt_menu_action_t action)
                     "Cartridge detach and drive remount failed");
             }
         }
+    } else if (action.kind == MT_MENU_ACTION_SET_BORDER) {
+        change_active_border(action.file_index);
     } else if (action.kind == MT_MENU_ACTION_TOGGLE_VIDEO_SOURCE) {
         const uint32_t control = shell_read(MT_REG_CONTROL);
         const bool test_enabled =
@@ -2459,6 +2777,18 @@ static void handle_menu_action(mt_menu_action_t action)
     } else if (action.kind == MT_MENU_ACTION_RESET_CORE) {
         if (!supervisor.has_active) {
             set_supervisor_warning("No active core");
+            return;
+        }
+        if (supervisor.active.package.core_id == MT_VECTREX_CORE_ID &&
+            vectrex_content_service_basic_selected()) {
+            const mt_vectrex_content_result_t restarted = vectrex_content_service_restart_basic();
+            if (restarted.status == MT_VECTREX_CONTENT_OK)
+                set_supervisor_status("BASIC restarted and finished");
+            else if (restarted.status == MT_VECTREX_CONTENT_NO_BASIC_PROGRAM)
+                set_supervisor_warning("Select a BASIC program to run");
+            else
+                set_supervisor_error(restarted.status == MT_VECTREX_CONTENT_BASIC_FAILED ?
+                    vectrex32_service_error() : "BASIC restart failed; check source file");
             return;
         }
         const int asserted = set_core_reset_request(true);

@@ -30,6 +30,41 @@
       "use": "C64 machine logic only; no ROM, media, Intel-generated IP, or MiSTer platform binary"
     },
     {
+      "name": "Vectrex VIA and AY chips from Appletini One",
+      "url": "https://github.com/hasseily/appletini-one.git",
+      "commit": "31a5d7073e61588afe834ff1bb80c06750e1a613",
+      "license": "BSD-3-Clause",
+      "use": "Adapted VIA 6522 and AY8912/YM2149 chip modules only; per-file origins and changes in hdl/core/vectrex/chips/PROVENANCE.json"
+    },
+    {
+      "name": "JTFRAME Greg Miller 6809 CPU",
+      "url": "https://github.com/jotego/jtcores.git",
+      "commit": "24761ad59f2abc0718a009dede5c18fec6d0e266",
+      "license": "GPL-3.0 derivative with underlying BSD-3-Clause notice retained",
+      "use": "Unmodified mc6809i.v processor chip; no machine core or ROM"
+    },
+    {
+      "name": "Greg Miller 6809 original license and documentation",
+      "url": "https://github.com/cavnex/mc6809.git",
+      "commit": "17e94a6ef163be8b79a9b15b2e814847b6062f0f",
+      "license": "BSD-3-Clause; Standard BSD option selected",
+      "use": "Original CPU grant and README retained alongside the JTFRAME derivative"
+    },
+    {
+      "name": "GS BASIC from PiTrex",
+      "url": "https://github.com/malbanGit/pitrex-baremetal.git",
+      "commit": "457c5a98f914a812c9341c2949e9d57473ccac4a",
+      "license": "MIT",
+      "use": "Selected gsBasic language, geometry and sound source with portable callbacks; per-file upstream hashes and modifications in third_party/gsbasic/UPSTREAM.json; excludes bundled BIOS music and other ROM data"
+    },
+    {
+      "name": "VecX software 6809 chip",
+      "url": "https://github.com/jhawthorn/vecx.git",
+      "commit": "9b2894cacf73bdacaba32cb505289c658d981fd9",
+      "license": "GPL-3.0-only",
+      "use": "Processor chip only for Vectrex32 CodeSprite execution on ARM; no VecX machine, renderer, BIOS or game data"
+    },
+    {
       "name": "MiSTer Game Boy",
       "url": "https://github.com/MiSTer-devel/Gameboy_MiSTer.git",
       "commit": "7a5ff50528cd9c1d13ffb675e7df8506bffaa078",

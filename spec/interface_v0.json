@@ -1,48 +1,248 @@
 {
   "schema_version": 1,
-  "abi": {"major": 0, "minor": 11},
+  "abi": {
+    "major": 0,
+    "minor": 12
+  },
   "magic": "0x4D543031",
   "shell_id": "0x4D544F4E",
   "register_span": "0x1000",
   "registers": [
-    {"name": "MAGIC", "offset": "0x000", "access": "ro", "reset": "0x4D543031"},
-    {"name": "ABI_VERSION", "offset": "0x004", "access": "ro", "reset": "generated"},
-    {"name": "SHELL_ID", "offset": "0x008", "access": "ro", "reset": "0x4D544F4E"},
-    {"name": "SHELL_BUILD_ID", "offset": "0x00C", "access": "ro", "reset": "parameter"},
-    {"name": "CORE_ID", "offset": "0x010", "access": "ro", "reset": "0x00000000"},
-    {"name": "STATUS", "offset": "0x014", "access": "ro", "reset": "0x00000000"},
-    {"name": "ERROR", "offset": "0x018", "access": "rw1c", "reset": "0x00000000"},
-    {"name": "CONTROL", "offset": "0x01C", "access": "rw", "reset": "0x0000000F"},
-    {"name": "IRQ_STATUS", "offset": "0x020", "access": "rw1c", "reset": "0x00000000"},
-    {"name": "IRQ_ENABLE", "offset": "0x024", "access": "rw", "reset": "0x00000000"},
-    {"name": "SCRATCH", "offset": "0x028", "access": "rw", "reset": "0x00000000"},
-    {"name": "COMMAND_SEQ", "offset": "0x040", "access": "rw", "reset": "0x00000000"},
-    {"name": "COMMAND_OPCODE", "offset": "0x044", "access": "rw", "reset": "0x00000000"},
-    {"name": "COMMAND_ARG0", "offset": "0x048", "access": "rw", "reset": "0x00000000"},
-    {"name": "COMMAND_ARG1", "offset": "0x04C", "access": "rw", "reset": "0x00000000"},
-    {"name": "COMMAND_ARG2", "offset": "0x050", "access": "rw", "reset": "0x00000000"},
-    {"name": "COMMAND_ARG3", "offset": "0x054", "access": "rw", "reset": "0x00000000"},
-    {"name": "COMMAND_DOORBELL", "offset": "0x058", "access": "wo", "reset": "0x00000000"},
-    {"name": "RESPONSE_SEQ", "offset": "0x05C", "access": "ro", "reset": "0x00000000"},
-    {"name": "RESPONSE_STATUS", "offset": "0x060", "access": "ro", "reset": "0x00000000"},
-    {"name": "RESPONSE_ARG0", "offset": "0x064", "access": "ro", "reset": "0x00000000"},
-    {"name": "RESPONSE_ARG1", "offset": "0x068", "access": "ro", "reset": "0x00000000"},
-    {"name": "COUNT_BAD_WRITE", "offset": "0x080", "access": "ro", "reset": "0x00000000"},
-    {"name": "COUNT_BAD_READ", "offset": "0x084", "access": "ro", "reset": "0x00000000"},
-    {"name": "COUNT_COMMAND", "offset": "0x088", "access": "ro", "reset": "0x00000000"},
-    {"name": "COUNT_TIMEOUT", "offset": "0x08C", "access": "ro", "reset": "0x00000000"},
-    {"name": "MEDIA_REQUEST", "offset": "0x090", "access": "ro", "reset": "0x00000000"},
-    {"name": "MEDIA_REQUEST_ID", "offset": "0x094", "access": "ro", "reset": "0x00000000"},
-    {"name": "MEDIA_REQUEST_LBA", "offset": "0x098", "access": "ro", "reset": "0x00000000"},
-    {"name": "MEDIA_REQUEST_BLOCK_COUNT", "offset": "0x09C", "access": "ro", "reset": "0x00000000"},
-    {"name": "MEDIA_REQUEST_GENERATION", "offset": "0x0A0", "access": "ro", "reset": "0x00000000"},
-    {"name": "MEDIA_DATA", "offset": "0x0A4", "access": "ro", "reset": "0x00000000"},
-    {"name": "MEDIA_STATE", "offset": "0x0A8", "access": "ro", "reset": "0x00000000"},
-    {"name": "UI_COMMIT", "offset": "0x0AC", "access": "wo", "reset": "0x00000000"},
-    {"name": "UI_STATUS", "offset": "0x0B0", "access": "ro", "reset": "0x0000000C"},
-    {"name": "CORE_VARIANT_INDEX", "offset": "0x0B4", "access": "ro", "reset": "parameter"},
-    {"name": "STREAM_DATA_BURST", "offset": "0x0B8", "access": "wo", "reset": "0x00000000"},
-    {"name": "STREAM_STATUS", "offset": "0x0BC", "access": "ro", "reset": "0x00000000"}
+    {
+      "name": "MAGIC",
+      "offset": "0x000",
+      "access": "ro",
+      "reset": "0x4D543031"
+    },
+    {
+      "name": "ABI_VERSION",
+      "offset": "0x004",
+      "access": "ro",
+      "reset": "generated"
+    },
+    {
+      "name": "SHELL_ID",
+      "offset": "0x008",
+      "access": "ro",
+      "reset": "0x4D544F4E"
+    },
+    {
+      "name": "SHELL_BUILD_ID",
+      "offset": "0x00C",
+      "access": "ro",
+      "reset": "parameter"
+    },
+    {
+      "name": "CORE_ID",
+      "offset": "0x010",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "STATUS",
+      "offset": "0x014",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "ERROR",
+      "offset": "0x018",
+      "access": "rw1c",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "CONTROL",
+      "offset": "0x01C",
+      "access": "rw",
+      "reset": "0x0000000F"
+    },
+    {
+      "name": "IRQ_STATUS",
+      "offset": "0x020",
+      "access": "rw1c",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "IRQ_ENABLE",
+      "offset": "0x024",
+      "access": "rw",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "SCRATCH",
+      "offset": "0x028",
+      "access": "rw",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "COMMAND_SEQ",
+      "offset": "0x040",
+      "access": "rw",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "COMMAND_OPCODE",
+      "offset": "0x044",
+      "access": "rw",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "COMMAND_ARG0",
+      "offset": "0x048",
+      "access": "rw",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "COMMAND_ARG1",
+      "offset": "0x04C",
+      "access": "rw",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "COMMAND_ARG2",
+      "offset": "0x050",
+      "access": "rw",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "COMMAND_ARG3",
+      "offset": "0x054",
+      "access": "rw",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "COMMAND_DOORBELL",
+      "offset": "0x058",
+      "access": "wo",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "RESPONSE_SEQ",
+      "offset": "0x05C",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "RESPONSE_STATUS",
+      "offset": "0x060",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "RESPONSE_ARG0",
+      "offset": "0x064",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "RESPONSE_ARG1",
+      "offset": "0x068",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "COUNT_BAD_WRITE",
+      "offset": "0x080",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "COUNT_BAD_READ",
+      "offset": "0x084",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "COUNT_COMMAND",
+      "offset": "0x088",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "COUNT_TIMEOUT",
+      "offset": "0x08C",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "MEDIA_REQUEST",
+      "offset": "0x090",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "MEDIA_REQUEST_ID",
+      "offset": "0x094",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "MEDIA_REQUEST_LBA",
+      "offset": "0x098",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "MEDIA_REQUEST_BLOCK_COUNT",
+      "offset": "0x09C",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "MEDIA_REQUEST_GENERATION",
+      "offset": "0x0A0",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "MEDIA_DATA",
+      "offset": "0x0A4",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "MEDIA_STATE",
+      "offset": "0x0A8",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "UI_COMMIT",
+      "offset": "0x0AC",
+      "access": "wo",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "UI_STATUS",
+      "offset": "0x0B0",
+      "access": "ro",
+      "reset": "0x0000000C"
+    },
+    {
+      "name": "CORE_VARIANT_INDEX",
+      "offset": "0x0B4",
+      "access": "ro",
+      "reset": "parameter"
+    },
+    {
+      "name": "STREAM_DATA_BURST",
+      "offset": "0x0B8",
+      "access": "wo",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "STREAM_STATUS",
+      "offset": "0x0BC",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "BORDER_CONFIG",
+      "offset": "0x0C0",
+      "access": "rw",
+      "reset": "0x00000670",
+      "description": "Frame-latched border: enable[0], style[3:1], color[7:4], padding[12:8]. Reserved bits read zero; invalid style becomes Single line and padding clamps to 1..20."
+    }
   ],
   "bitfields": {
     "CONTROL": {
@@ -136,7 +336,19 @@
     "UI_VRAM_BANK0_OFFSET": "0x00004000",
     "UI_VRAM_BANK1_OFFSET": "0x00008000",
     "UI_WINDOW_SPAN": "0x00010000",
-    "STREAM_BURST_BYTES": 4
+    "STREAM_BURST_BYTES": 4,
+    "BORDER_MIN_ABI_MINOR": 12,
+    "BORDER_ENABLE_MASK": "0x00000001",
+    "BORDER_STYLE_SHIFT": 1,
+    "BORDER_STYLE_MASK": "0x0000000E",
+    "BORDER_COLOR_SHIFT": 4,
+    "BORDER_COLOR_MASK": "0x000000F0",
+    "BORDER_PADDING_SHIFT": 8,
+    "BORDER_PADDING_MASK": "0x00001F00",
+    "BORDER_CONFIG_DEFAULT": "0x00000670",
+    "BORDER_MIN_PADDING": 1,
+    "BORDER_MAX_PADDING": 20,
+    "BORDER_STYLE_MAX": 4
   },
   "commands": {
     "PING": 0,

@@ -16,6 +16,7 @@ module tb_video_test;
     logic enable = 1'b1;
     logic machine_enable = 1'b0;
     logic [15:0] machine_rgb565 = 16'h1234;
+    logic border_opaque=0,ui_opaque=0;
     logic [11:0] scan_x;
     logic [11:0] scan_y;
     logic vblank_start;
@@ -38,8 +39,8 @@ module tb_video_test;
         .V_SYNC(V_SYNC), .V_TOTAL(V_TOTAL)
     ) dut (
         .pixel_clk(clk), .resetn(resetn), .enable(enable),
-        .machine_enable(machine_enable), .machine_rgb565(machine_rgb565),
-        .ui_opaque(1'b0), .ui_rgb565(16'd0),
+        .machine_enable(machine_enable), .border_opaque(border_opaque), .border_rgb565(16'hACE1), .machine_rgb565(machine_rgb565),
+        .ui_opaque(ui_opaque), .ui_rgb565(16'hF01F),
         .scan_x(scan_x), .scan_y(scan_y),
         .vblank_start(vblank_start),
         .dvi_red(red), .dvi_grn(green), .dvi_blu(blue),
@@ -95,7 +96,18 @@ module tb_video_test;
         #1;
         check_value(de && {red, green, blue} == machine_rgb565,
                "raw diagnostics cannot override latched machine pixel");
-        $display("PASS: video timing and diagnostic fallback");
+        border_opaque=1;
+        while (!(scan_x==2 && scan_y==1)) @(negedge clk);
+        @(posedge clk);#1;
+        check_value(de && {red,green,blue}==16'hACE1,"border above game");
+        ui_opaque=1;
+        @(posedge clk);#1;
+        check_value(de && {red,green,blue}==16'hF01F,"UI above border");
+        ui_opaque=0;machine_enable=0;
+        while (!(scan_x==2 && scan_y==1)) @(negedge clk);
+        @(posedge clk);#1;
+        check_value(de && {red,green,blue}==16'h0842,"border hidden without active game");
+        $display("PASS: video timing, diagnostic fallback, UI/border/game priority");
         $finish;
     end
 endmodule

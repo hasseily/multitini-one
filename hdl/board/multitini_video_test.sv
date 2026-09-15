@@ -19,6 +19,8 @@ module multitini_video_test #(
     input  logic       enable,
     input  logic       machine_enable,
     input  logic [15:0] machine_rgb565,
+    input  logic        border_opaque,
+    input  logic [15:0] border_rgb565,
     input  logic       ui_opaque,
     input  logic [15:0] ui_rgb565,
     output logic [11:0] scan_x,
@@ -242,7 +244,8 @@ module multitini_video_test #(
         if (one_pixel) diagnostic_rgb565 = 16'hFFFF;
         if (hint_pixel) diagnostic_rgb565 = 16'hBDF7;
         selected_rgb565 = ui_opaque ? ui_rgb565 :
-                          (use_machine ? machine_rgb565 : diagnostic_rgb565_q);
+                          (use_machine ? (border_opaque ? border_rgb565 : machine_rgb565) :
+                                         diagnostic_rgb565_q);
     end
 
     // The standby glyph renderer contains coordinate compares, character

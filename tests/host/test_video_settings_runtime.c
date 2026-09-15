@@ -1,0 +1,247 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Exercise the board's real static handlers. The focused runner uses whole-
+ * program LTO and section GC to discard unrelated hardware startup/services. */
+#define main mt_unused_board_main
+#include "../../firmware/platform/xilinx/main.c"
+#undef main
+
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+static uint32_t test_core_id;
+static uint32_t test_abi;
+static uint32_t test_border;
+static unsigned test_mmio_writes;
+static unsigned test_save_calls;
+static mt_sd_status_t test_save_status;
+
+static _Noreturn void unexpected_service(void)
+{
+    assert(!"Unrelated media/control service reached by video-only restore");
+    abort();
+}
+
+mt_link_result_t mt_core_link_command(mt_core_link_t *link, uint32_t opcode,
+    const uint32_t args[4], uint32_t max_polls, mt_link_progress_fn progress,
+    void *progress_context, mt_command_response_t *response)
+{
+    (void)link; (void)opcode; (void)args; (void)max_polls; (void)progress;
+    (void)progress_context; (void)response;
+    unexpected_service();
+}
+
+const char *mt_link_result_name(mt_link_result_t result)
+{
+    (void)result;
+    unexpected_service();
+}
+
+mt_gameboy_content_service_result_t gameboy_content_service_load(const char *name)
+{
+    (void)name;
+    unexpected_service();
+}
+
+const char *gameboy_content_service_status_name(mt_gameboy_content_service_status_t status)
+{
+    (void)status;
+    unexpected_service();
+}
+
+mt_vectrex_content_result_t vectrex_content_service_load(const char *name)
+{
+    (void)name;
+    unexpected_service();
+}
+
+void usb_hid_service_set_core_ready(bool ready)
+{
+    (void)ready;
+    unexpected_service();
+}
+
+uint32_t Xil_In32(uintptr_t address)
+{
+    if (address == MT_SHELL_BASE_ADDRESS + MT_REG_CORE_ID) return test_core_id;
+    if (address == MT_SHELL_BASE_ADDRESS + MT_REG_ABI_VERSION) return test_abi;
+    assert(!"Unexpected MMIO read");
+    return 0U;
+}
+
+void Xil_Out32(uintptr_t address, uint32_t value)
+{
+    ++test_mmio_writes;
+    if (address == MT_SHELL_BASE_ADDRESS + MT_REG_BORDER_CONFIG) test_border = value;
+    else assert(!"Unexpected MMIO write");
+}
+
+int xil_printf(const char *format, ...)
+{
+    (void)format;
+    return 0;
+}
+
+const char *mt_sd_status_name(mt_sd_status_t status)
+{
+    (void)status;
+    return "mock storage";
+}
+
+mt_sd_result_t mt_sd_storage_journal_replace(const char *path,
+    const char *journal_path, const uint8_t *source, size_t size)
+{
+    const mt_sd_result_t result = {test_save_status, 0U, size};
+    assert(strcmp(path, MT_SETTINGS_PATH) == 0);
+    assert(strcmp(journal_path, MT_SETTINGS_JOURNAL_PATH) == 0);
+    assert(source != NULL && source[8U] == 3U && size == 4024U);
+    /* The visible hardware state must still have its previous value while
+     * the complete settings write is in progress. */
+    assert(test_mmio_writes == 0U);
+    ++test_save_calls;
+    return result;
+}
+
+static void test_reset(uint32_t core_id, const char *id)
+{
+    memset(&supervisor, 0, sizeof(supervisor));
+    supervisor.has_active = true;
+    supervisor.active.package.core_id = core_id;
+    supervisor.active.package.abi_minor = MT_ABI_MINOR;
+    strcpy(supervisor.active.package.id, id);
+    supervisor.active.package.variant_count = 1U;
+    strcpy(supervisor.active.package.variants[0].id, "default");
+    test_core_id = core_id;
+    test_abi = MT_ABI_VERSION;
+    test_border = UINT32_C(0x670);
+    test_mmio_writes = test_save_calls = 0U;
+    test_save_status = MT_SD_OK;
+    settings_faulted = false;
+    supervisor_menu_dirty = false;
+    mt_supervisor_settings_defaults(&persistent_settings);
+}
+
+static void assert_unchanged(const mt_supervisor_settings_t *before)
+{
+    assert(test_mmio_writes == 0U && test_border == UINT32_C(0x670));
+    assert(memcmp(before, &persistent_settings, sizeof(*before)) == 0);
+    assert(supervisor_status_color == MT_UI_COLOR_RED);
+}
+
+static void test_guards(void)
+{
+    static const uint32_t invalid_borders[] = {
+        UINT32_C(0x2000), UINT32_C(0x67b), UINT32_C(0x71), UINT32_C(0x1571)
+    };
+    mt_supervisor_settings_t before;
+    size_t index;
+    test_reset(MT_VECTREX_CORE_ID, "vectrex");
+    before = persistent_settings;
+    test_abi = 11U;
+    change_active_border(UINT32_C(0x671));
+    assert_unchanged(&before);
+    assert(test_save_calls == 0U);
+    test_abi = UINT32_C(0x1000C);
+    change_active_border(UINT32_C(0x671));
+    assert_unchanged(&before);
+    test_abi = MT_ABI_VERSION;
+    test_core_id = MT_GBC_CORE_ID;
+    change_active_border(UINT32_C(0x671));
+    assert_unchanged(&before);
+    test_core_id = MT_VECTREX_CORE_ID;
+    supervisor.has_active = false;
+    change_active_border(UINT32_C(0x671));
+    assert_unchanged(&before);
+    supervisor.has_active = true;
+    for (index = 0U; index < sizeof(invalid_borders) / sizeof(invalid_borders[0]); ++index) {
+        change_active_border(invalid_borders[index]);
+        assert_unchanged(&before);
+    }
+    if (SIZE_MAX > UINT32_MAX) {
+        change_active_border((size_t)UINT32_MAX + 1U);
+        assert_unchanged(&before);
+    }
+    assert_unchanged(&before);
+    assert(test_save_calls == 0U);
+}
+
+static void test_apply_and_failure(void)
+{
+    static const mt_sd_status_t failures[] = {
+        MT_SD_OPEN_FAILED, MT_SD_WRITE_FAILED, MT_SD_SYNC_FAILED,
+        MT_SD_CLOSE_FAILED, MT_SD_UNLINK_FAILED
+    };
+    static const uint32_t cores[] = {MT_C64_CORE_ID, MT_GBC_CORE_ID, MT_VECTREX_CORE_ID};
+    static const char *const ids[] = {"c64", "gbc", "vectrex"};
+    size_t index;
+    size_t core;
+    for (core = 0U; core < 3U; ++core) {
+        test_reset(cores[core], ids[core]);
+        change_active_border(UINT32_C(0x14f9));
+        assert(test_mmio_writes == 1U && test_save_calls == 1U);
+        assert(test_border == UINT32_C(0x14f9));
+        assert(mt_supervisor_settings_find(&persistent_settings, ids[core])->border_enabled);
+    }
+    for (index = 0U; index < sizeof(failures) / sizeof(failures[0]); ++index) {
+        mt_supervisor_settings_t before;
+        test_reset(MT_VECTREX_CORE_ID, "vectrex");
+        assert(mt_supervisor_settings_remember_core(&persistent_settings, "c64", "pal"));
+        persistent_settings.auto_boot = true;
+        before = persistent_settings;
+        test_save_status = failures[index];
+        change_active_border(UINT32_C(0x671));
+        assert_unchanged(&before);
+        assert(settings_faulted && test_save_calls == 1U);
+        change_active_border(UINT32_C(0x14f9));
+        assert_unchanged(&before);
+        assert(settings_faulted && test_save_calls == 2U);
+        test_save_status = MT_SD_OK;
+        change_active_border(UINT32_C(0x671));
+        assert(!settings_faulted && test_mmio_writes == 1U && test_border == UINT32_C(0x671));
+        assert(persistent_settings.auto_boot && strcmp(persistent_settings.selected_core_id, "c64") == 0);
+    }
+}
+
+static void test_restore_gate(void)
+{
+    mt_core_selection_t next;
+    const mt_core_settings_profile_t *profile;
+    test_reset(MT_C64_CORE_ID, "c64");
+    next = supervisor.active;
+    next.package.core_id = MT_VECTREX_CORE_ID;
+    strcpy(next.package.id, "vectrex");
+    /* Activation calls restore before supervisor.active has been replaced.
+     * The live shell identity, not the old active selection, is authoritative. */
+    assert(!selection_supports_borders(&next));
+    assert(restore_selection_settings(&next));
+    assert(test_mmio_writes == 0U);
+    test_core_id = MT_VECTREX_CORE_ID;
+    assert(selection_supports_borders(&next));
+    assert(!selection_supports_borders(&supervisor.active));
+    supervisor.has_active = false;
+    assert(selection_supports_borders(&next));
+    assert(restore_selection_settings(&next));
+    assert(test_mmio_writes == 1U && test_border == UINT32_C(0x670));
+    test_mmio_writes = 0U;
+    assert(profile_border_config(NULL) == UINT32_C(0x670));
+    assert(mt_supervisor_settings_remember_variant(&persistent_settings, "vectrex", "default"));
+    assert(mt_supervisor_settings_remember_borders(&persistent_settings, "vectrex", true, 4U, 15U, 20U));
+    profile = mt_supervisor_settings_find(&persistent_settings, "vectrex");
+    assert(profile_border_config(profile) == UINT32_C(0x14f9));
+    assert(restore_selection_settings(&next));
+    assert(test_mmio_writes == 1U && test_border == UINT32_C(0x14f9));
+    test_mmio_writes = 0U;
+    test_abi = 11U;
+    assert(!selection_supports_borders(&next));
+    assert(restore_selection_settings(&next));
+    assert(test_save_calls == 0U && test_mmio_writes == 0U);
+}
+
+int main(void)
+{
+    test_guards();
+    test_apply_and_failure();
+    test_restore_gate();
+    puts("PASS: board border settings guards, save ordering, rollback and restore selection");
+    return 0;
+}

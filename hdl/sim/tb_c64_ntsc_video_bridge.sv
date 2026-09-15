@@ -229,6 +229,11 @@ module tb_c64_ntsc_video_bridge;
                     "NTSC bank contains exactly one active raster");
 
         repeat (4) @(negedge source_clk);
+        check_value(dut.viewport_x == NTSC_X_OFFSET &&
+                    dut.viewport_y == NTSC_Y_OFFSET &&
+                    dut.viewport_width == NTSC_WIDTH * OUTPUT_SCALE &&
+                    dut.viewport_height == NTSC_HEIGHT * OUTPUT_SCALE,
+                    "border viewport matches the fixed NTSC scan");
         source_resetn = 1'b1;
         source_ready = 1'b1;
         pixel_resetn = 1'b1;

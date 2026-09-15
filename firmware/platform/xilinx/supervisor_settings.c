@@ -4,10 +4,13 @@
 #include <string.h>
 
 #define MT_SETTINGS_SCHEMA_V1 UINT32_C(1)
-#define MT_SETTINGS_SCHEMA UINT32_C(2)
+#define MT_SETTINGS_SCHEMA_V2 UINT32_C(2)
+#define MT_SETTINGS_SCHEMA UINT32_C(3)
 #define MT_SETTINGS_HEADER_SIZE 24U
 #define MT_SETTINGS_GLOBAL_SIZE 32U
-#define MT_SETTINGS_PROFILE_SIZE 244U
+#define MT_SETTINGS_LEGACY_PROFILE_SIZE 244U
+#define MT_SETTINGS_LEGACY_WIRE_SIZE 3960U
+#define MT_SETTINGS_PROFILE_SIZE 248U
 
 #if MT_SETTINGS_HEADER_SIZE + MT_SETTINGS_GLOBAL_SIZE + \
     MT_SETTINGS_MAX_PROFILES * MT_SETTINGS_PROFILE_SIZE != \
@@ -99,6 +102,33 @@ static bool valid_file_name(const char *text)
     return false;
 }
 
+static bool valid_cartridge_name(const char *core_id, const char *text)
+{
+    size_t index;
+    size_t component_start = 0U;
+    if (core_id == NULL || strcmp(core_id, "vectrex") != 0)
+        return valid_file_name(text);
+    if (text == NULL) return false;
+    if (text[0] == '\0') return true;
+    for (index = 0U; index < MT_SETTINGS_MEDIA_NAME_MAX; ++index) {
+        const unsigned char value = (unsigned char)text[index];
+        if (value == '\0' || value == '/') {
+            if (index == component_start || text[index - 1U] == '.' ||
+                text[index - 1U] == ' ') {
+                return false;
+            }
+            if (value == '\0') return true;
+            component_start = index + 1U;
+        } else if (value < 0x20U || value == 0x7fU || value == '\\' ||
+                   value == ':' || value == '*' || value == '?' ||
+                   value == '"' || value == '<' || value == '>' ||
+                   value == '|') {
+            return false;
+        }
+    }
+    return false;
+}
+
 static bool copy_string(char *destination, size_t capacity,
                         const char *source)
 {
@@ -113,7 +143,8 @@ static mt_core_settings_profile_t *find_profile(
     mt_supervisor_settings_t *settings, const char *core_id, bool create)
 {
     size_t index;
-    if (settings == NULL || !valid_id(core_id, MT_CORE_PACKAGE_ID_MAX,
+    if (settings == NULL || settings->profile_count > MT_SETTINGS_MAX_PROFILES ||
+        !valid_id(core_id, MT_CORE_PACKAGE_ID_MAX,
                                       false)) {
         return NULL;
     }
@@ -129,6 +160,12 @@ static mt_core_settings_profile_t *find_profile(
                       MT_CORE_PACKAGE_ID_MAX, core_id);
     settings->profiles[settings->profile_count].symbolic_keyboard = true;
     settings->profiles[settings->profile_count].joystick_port = 2U;
+    settings->profiles[settings->profile_count].border_style =
+        MT_SETTINGS_BORDER_STYLE_DEFAULT;
+    settings->profiles[settings->profile_count].border_color =
+        MT_SETTINGS_BORDER_COLOR_DEFAULT;
+    settings->profiles[settings->profile_count].border_padding =
+        MT_SETTINGS_BORDER_PADDING_DEFAULT;
     return &settings->profiles[settings->profile_count++];
 }
 
@@ -142,7 +179,7 @@ const mt_core_settings_profile_t *mt_supervisor_settings_find(
     const mt_supervisor_settings_t *settings, const char *core_id)
 {
     size_t index;
-    if (settings == NULL ||
+    if (settings == NULL || settings->profile_count > MT_SETTINGS_MAX_PROFILES ||
         !valid_id(core_id, MT_CORE_PACKAGE_ID_MAX, false)) {
         return NULL;
     }
@@ -197,7 +234,7 @@ bool mt_supervisor_settings_remember_cartridge(
 {
     mt_core_settings_profile_t *profile;
     const char *const name = file_name == NULL ? "" : file_name;
-    if (!valid_file_name(name)) return false;
+    if (!valid_cartridge_name(core_id, name)) return false;
     profile = find_profile(settings, core_id, true);
     return profile != NULL && copy_string(
         profile->cartridge_name, sizeof(profile->cartridge_name), name);
@@ -236,6 +273,26 @@ bool mt_supervisor_settings_remember_c64_cpu_turbo(
     return true;
 }
 
+static bool borders_valid(uint8_t style, uint8_t color, uint8_t padding)
+{
+    return style <= 4U && color <= 15U && padding >= 1U && padding <= 20U;
+}
+
+bool mt_supervisor_settings_remember_borders(
+    mt_supervisor_settings_t *settings, const char *core_id, bool enabled,
+    uint8_t style, uint8_t color, uint8_t padding)
+{
+    mt_core_settings_profile_t *profile;
+    if (!borders_valid(style, color, padding)) return false;
+    profile = find_profile(settings, core_id, true);
+    if (profile == NULL) return false;
+    profile->border_enabled = enabled;
+    profile->border_style = style;
+    profile->border_color = color;
+    profile->border_padding = padding;
+    return true;
+}
+
 static bool settings_valid(const mt_supervisor_settings_t *settings)
 {
     size_t index;
@@ -254,7 +311,9 @@ static bool settings_valid(const mt_supervisor_settings_t *settings)
             !valid_id(profile->variant_id, sizeof(profile->variant_id),
                       false) ||
             !valid_file_name(profile->drive8_name) ||
-            !valid_file_name(profile->cartridge_name) ||
+            !valid_cartridge_name(profile->core_id, profile->cartridge_name) ||
+            !borders_valid(profile->border_style, profile->border_color,
+                            profile->border_padding) ||
             (profile->joystick_port != 1U && profile->joystick_port != 2U)) {
             return false;
         }
@@ -299,6 +358,10 @@ static bool encode_settings(const mt_supervisor_settings_t *settings)
         output[241U] = profile->joystick_port;
         output[242U] = profile->c64_fast_roms ? 1U : 0U;
         output[243U] = profile->c64_cpu_turbo ? 1U : 0U;
+        output[244U] = profile->border_enabled ? 1U : 0U;
+        output[245U] = profile->border_style;
+        output[246U] = profile->border_color;
+        output[247U] = profile->border_padding;
     }
     crc = crc32_bytes(settings_wire + MT_SETTINGS_HEADER_SIZE,
                       MT_SETTINGS_WIRE_SIZE - MT_SETTINGS_HEADER_SIZE);
@@ -318,18 +381,23 @@ static bool wire_string(char *destination, size_t capacity,
     return true;
 }
 
-static bool decode_settings(mt_supervisor_settings_t *settings)
+static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size)
 {
     const uint32_t crc = load_u32_le(settings_wire + 16U);
     const uint32_t schema = load_u32_le(settings_wire + 8U);
     const uint32_t profile_count = load_u32_le(settings_wire + 52U);
+    const bool legacy = schema == MT_SETTINGS_SCHEMA_V1 ||
+                        schema == MT_SETTINGS_SCHEMA_V2;
+    const size_t profile_size = legacy ? MT_SETTINGS_LEGACY_PROFILE_SIZE :
+                                        MT_SETTINGS_PROFILE_SIZE;
     size_t index;
     if (memcmp(settings_wire, settings_magic, sizeof(settings_magic)) != 0 ||
-        (schema != MT_SETTINGS_SCHEMA_V1 && schema != MT_SETTINGS_SCHEMA) ||
-        load_u32_le(settings_wire + 12U) != MT_SETTINGS_WIRE_SIZE ||
+        (!legacy && schema != MT_SETTINGS_SCHEMA) ||
+        wire_size != (legacy ? MT_SETTINGS_LEGACY_WIRE_SIZE : MT_SETTINGS_WIRE_SIZE) ||
+        load_u32_le(settings_wire + 12U) != wire_size ||
         load_u32_le(settings_wire + 20U) != ~crc ||
         crc32_bytes(settings_wire + MT_SETTINGS_HEADER_SIZE,
-                    MT_SETTINGS_WIRE_SIZE - MT_SETTINGS_HEADER_SIZE) != crc ||
+                    wire_size - MT_SETTINGS_HEADER_SIZE) != crc ||
         settings_wire[24U] > 1U || profile_count > MT_SETTINGS_MAX_PROFILES) {
         return false;
     }
@@ -346,7 +414,7 @@ static bool decode_settings(mt_supervisor_settings_t *settings)
         mt_core_settings_profile_t *const profile =
             &settings_decode_candidate.profiles[index];
         const uint8_t *const input = settings_wire + MT_SETTINGS_HEADER_SIZE +
-            MT_SETTINGS_GLOBAL_SIZE + index * MT_SETTINGS_PROFILE_SIZE;
+            MT_SETTINGS_GLOBAL_SIZE + index * profile_size;
         if (!wire_string(profile->core_id, sizeof(profile->core_id), input) ||
             !wire_string(profile->variant_id, sizeof(profile->variant_id),
                          input + 24U) ||
@@ -361,9 +429,20 @@ static bool decode_settings(mt_supervisor_settings_t *settings)
         profile->joystick_port = input[241U];
         /* Schema 1 byte 242 meant the removed whole-drive warp. Never migrate
          * an old true value into the unrelated fast-ROM selection. */
-        profile->c64_fast_roms = schema == MT_SETTINGS_SCHEMA &&
+        profile->c64_fast_roms = schema != MT_SETTINGS_SCHEMA_V1 &&
                                  input[242U] != 0U;
         profile->c64_cpu_turbo = input[243U] != 0U;
+        if (legacy) {
+            profile->border_style = MT_SETTINGS_BORDER_STYLE_DEFAULT;
+            profile->border_color = MT_SETTINGS_BORDER_COLOR_DEFAULT;
+            profile->border_padding = MT_SETTINGS_BORDER_PADDING_DEFAULT;
+        } else {
+            if (input[244U] > 1U) return false;
+            profile->border_enabled = input[244U] != 0U;
+            profile->border_style = input[245U];
+            profile->border_color = input[246U];
+            profile->border_padding = input[247U];
+        }
     }
     if (!settings_valid(&settings_decode_candidate)) return false;
     *settings = settings_decode_candidate;
@@ -387,10 +466,18 @@ mt_settings_result_t mt_supervisor_settings_load(
         return settings_result(MT_SETTINGS_RECOVERY_FAILED, sd);
     sd = mt_sd_storage_read_file_optional_exact(
         MT_SETTINGS_PATH, settings_wire, sizeof(settings_wire), &found);
+    /* Re-open only the known older length. The SD service still enforces
+     * exact reads, and decoding verifies the schema/length pair and CRC. */
+    if (sd.status == MT_SD_SIZE_MISMATCH &&
+        sd.size == MT_SETTINGS_LEGACY_WIRE_SIZE) {
+        sd = mt_sd_storage_read_file_optional_exact(
+            MT_SETTINGS_PATH, settings_wire, MT_SETTINGS_LEGACY_WIRE_SIZE,
+            &found);
+    }
     if (sd.status != MT_SD_OK)
         return settings_result(MT_SETTINGS_READ_FAILED, sd);
     if (!found) return settings_result(MT_SETTINGS_MISSING, sd);
-    if (!decode_settings(settings)) {
+    if (!decode_settings(settings, sd.size)) {
         mt_supervisor_settings_defaults(settings);
         return settings_result(MT_SETTINGS_CORRUPT, sd);
     }

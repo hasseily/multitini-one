@@ -2,6 +2,7 @@
 #include "multitini_content.h"
 #include "multitini_c64_interface.h"
 #include "multitini_gameboy_interface.h"
+#include "multitini_vectrex_interface.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -57,7 +58,20 @@ mt_content_type_t mt_content_classify(const char *path)
     if (extension_is(extension, "d81")) return MT_CONTENT_D81_FUTURE;
     if (extension_is(extension, "gb")) return MT_CONTENT_GB_CART;
     if (extension_is(extension, "gbc")) return MT_CONTENT_GBC_CART;
+    if (extension_is(extension, "vec")) return MT_CONTENT_VECTREX_CART;
+    if (extension_is(extension, "bas")) return MT_CONTENT_VECTREX_BASIC;
     return MT_CONTENT_UNKNOWN;
+}
+
+mt_content_type_t mt_content_classify_for_core(uint32_t core_id, const char *path)
+{
+    const mt_content_type_t type = mt_content_classify(path);
+    const char *extension;
+    if (type != MT_CONTENT_UNKNOWN || core_id != MT_VECTREX_CORE_ID || path == NULL)
+        return type;
+    extension = strrchr(path, '.');
+    return extension != NULL && extension_is(extension + 1, "bin") ?
+        MT_CONTENT_VECTREX_CART : MT_CONTENT_UNKNOWN;
 }
 
 bool mt_content_supported_first_release(mt_content_type_t type)
@@ -65,7 +79,8 @@ bool mt_content_supported_first_release(mt_content_type_t type)
     return type == MT_CONTENT_SYSTEM_ROM || type == MT_CONTENT_PRG ||
            type == MT_CONTENT_D64 || type == MT_CONTENT_G64 ||
            type == MT_CONTENT_CRT || type == MT_CONTENT_GB_CART ||
-           type == MT_CONTENT_GBC_CART;
+           type == MT_CONTENT_GBC_CART || type == MT_CONTENT_VECTREX_CART ||
+           type == MT_CONTENT_VECTREX_BASIC;
 }
 
 bool mt_content_may_write_first_release(mt_content_type_t type)
@@ -85,6 +100,8 @@ const char *mt_content_type_name(mt_content_type_t type)
     case MT_CONTENT_D81_FUTURE: return "D81 (future)";
     case MT_CONTENT_GB_CART: return "Game Boy cartridge";
     case MT_CONTENT_GBC_CART: return "Game Boy Color cartridge";
+    case MT_CONTENT_VECTREX_CART: return "Vectrex cartridge";
+    case MT_CONTENT_VECTREX_BASIC: return "Vectrex32 BASIC";
     case MT_CONTENT_UNKNOWN: return "unknown";
     }
     return "unknown";
@@ -280,6 +297,17 @@ mt_content_validation_t mt_content_inspect(mt_content_type_t type,
         break;
     case MT_CONTENT_GBC_CART:
         status = inspect_gameboy_cart(data, size, true, &result);
+        break;
+    case MT_CONTENT_VECTREX_CART:
+        result.payload_size = size;
+        status = size == 0U ? MT_CONTENT_TOO_SMALL :
+            (size > MT_SIZE_VECTREX_CART_MAX ? MT_CONTENT_WRONG_SIZE : MT_CONTENT_VALID);
+        break;
+    case MT_CONTENT_VECTREX_BASIC:
+        result.payload_size = size;
+        status = size == 0U ? MT_CONTENT_TOO_SMALL :
+            (size > MT_SIZE_VECTREX_BASIC_MAX ? MT_CONTENT_WRONG_SIZE :
+             (memchr(data, 0, size) != NULL ? MT_CONTENT_BAD_STRUCTURE : MT_CONTENT_VALID));
         break;
     case MT_CONTENT_TAP_FUTURE:
     case MT_CONTENT_D81_FUTURE:

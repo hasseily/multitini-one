@@ -5,7 +5,12 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
+
+#define LEGACY_WIRE_SIZE 3960U
+#define LEGACY_PROFILE_SIZE 244U
+#define PROFILE_SIZE 248U
 
 static mt_sd_status_t recover_status;
 static mt_sd_status_t read_status;
@@ -13,6 +18,9 @@ static mt_sd_status_t write_status;
 static bool file_exists;
 static uint8_t stored_file[MT_SETTINGS_WIRE_SIZE];
 static size_t stored_size;
+static unsigned read_calls;
+static bool disappear_on_retry;
+static mt_sd_status_t retry_status;
 
 static void store_u32_le(uint8_t *destination, uint32_t value)
 {
@@ -35,6 +43,33 @@ static uint32_t crc32_bytes(const uint8_t *data, size_t size)
         }
     }
     return ~crc;
+}
+
+static void update_stored_crc(void)
+{
+    const uint32_t crc = crc32_bytes(stored_file + 24U, stored_size - 24U);
+    store_u32_le(stored_file + 16U, crc);
+    store_u32_le(stored_file + 20U, ~crc);
+}
+
+/* The old on-card layout had no border bytes and a different profile stride.
+ * Derive a complete legacy image, including unused slots, for both readers. */
+static void convert_stored_to_legacy(uint32_t schema)
+{
+    uint8_t current[MT_SETTINGS_WIRE_SIZE];
+    size_t index;
+    assert(stored_size == MT_SETTINGS_WIRE_SIZE);
+    memcpy(current, stored_file, sizeof(current));
+    memset(stored_file, 0, sizeof(stored_file));
+    memcpy(stored_file, current, 56U);
+    for (index = 0U; index < MT_SETTINGS_MAX_PROFILES; ++index) {
+        memcpy(stored_file + 56U + index * LEGACY_PROFILE_SIZE,
+               current + 56U + index * PROFILE_SIZE, LEGACY_PROFILE_SIZE);
+    }
+    stored_size = LEGACY_WIRE_SIZE;
+    store_u32_le(stored_file + 8U, schema);
+    store_u32_le(stored_file + 12U, LEGACY_WIRE_SIZE);
+    update_stored_crc();
 }
 
 static mt_sd_result_t sd_result(mt_sd_status_t status, size_t size)
@@ -61,11 +96,17 @@ mt_sd_result_t mt_sd_storage_read_file_optional_exact(
 {
     assert(strcmp(path, MT_SETTINGS_PATH) == 0);
     assert(destination != NULL && found != NULL);
-    assert(expected_size == MT_SETTINGS_WIRE_SIZE);
+    assert(expected_size == MT_SETTINGS_WIRE_SIZE || expected_size == LEGACY_WIRE_SIZE);
+    ++read_calls;
+    *found = false;
     if (read_status != MT_SD_OK) return sd_result(read_status, 0U);
-    *found = file_exists;
+    if (expected_size == LEGACY_WIRE_SIZE) {
+        if (disappear_on_retry) file_exists = false;
+        if (retry_status != MT_SD_OK) return sd_result(retry_status, 0U);
+    }
     if (!file_exists) return sd_result(MT_SD_OK, 0U);
-    assert(stored_size == expected_size);
+    if (stored_size != expected_size) return sd_result(MT_SD_SIZE_MISMATCH, stored_size);
+    *found = true;
     memcpy(destination, stored_file, stored_size);
     return sd_result(MT_SD_OK, stored_size);
 }
@@ -92,7 +133,289 @@ static void reset_fake(void)
     write_status = MT_SD_OK;
     file_exists = false;
     stored_size = 0U;
+    read_calls = 0U;
+    disappear_on_retry = false;
+    retry_status = MT_SD_OK;
     memset(stored_file, 0, sizeof(stored_file));
+}
+
+static void test_vectrex_cartridge_paths(void)
+{
+    static const char *const invalid_paths[] = {
+        "/game.vec", "//game.vec", "games//game.vec", "games/", ".", "..",
+        "./game.vec", "../game.vec", "games/./game.vec", "games/../game.vec",
+        "games/.. /game.vec", "games/. /game.vec", "games./game.vec",
+        "games /game.vec", "games/game.vec.", "games/game.vec ",
+        "C:/game.vec", "games:C/game.vec", "games\\game.vec",
+        "games/*game.vec", "games/game?.vec", "games/\"game.vec",
+        "games/<game.vec", "games/>game.vec", "games/|game.vec",
+        "games/\x1f" "game.vec", "games/\x7f" "game.vec"
+    };
+    static const char *const flat_cores[] = {"c64", "gbc"};
+    const char *const nested = "Classics/Arcade Games/Star Castle.vec";
+    mt_supervisor_settings_t settings;
+    mt_supervisor_settings_t loaded;
+    mt_supervisor_settings_t preserved;
+    uint8_t valid_wire[MT_SETTINGS_WIRE_SIZE];
+    char maximum_path[MT_SETTINGS_MEDIA_NAME_MAX];
+    char oversized_path[MT_SETTINGS_MEDIA_NAME_MAX + 1U];
+    size_t index;
+    const size_t cartridge_offset = 24U + 32U + 144U;
+
+    reset_fake();
+    mt_supervisor_settings_defaults(&settings);
+    assert(mt_supervisor_settings_remember_core(&settings, "vectrex", "native"));
+    assert(mt_supervisor_settings_remember_cartridge(&settings, "vectrex", nested));
+    assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
+    assert(stored_size == MT_SETTINGS_WIRE_SIZE);
+    assert(memcmp(stored_file + cartridge_offset, nested, strlen(nested) + 1U) == 0);
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
+    assert(strcmp(mt_supervisor_settings_find(&loaded, "vectrex")->cartridge_name,
+                  nested) == 0);
+    assert(mt_supervisor_settings_save(&loaded).status == MT_SETTINGS_OK);
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
+    assert(strcmp(mt_supervisor_settings_find(&loaded, "vectrex")->cartridge_name,
+                  nested) == 0);
+    preserved = settings;
+    memcpy(valid_wire, stored_file, sizeof(valid_wire));
+
+    for (index = 0U; index < sizeof(invalid_paths) / sizeof(invalid_paths[0]); ++index) {
+        uint32_t crc;
+        assert(!mt_supervisor_settings_remember_cartridge(
+            &settings, "vectrex", invalid_paths[index]));
+        assert(memcmp(&settings, &preserved, sizeof(settings)) == 0);
+        /* Validate both encoding and a CRC-valid stored path independently of
+         * the setter, so corrupted/stale files cannot bypass confinement. */
+        loaded = settings;
+        strcpy(loaded.profiles[0].cartridge_name, invalid_paths[index]);
+        assert(mt_supervisor_settings_save(&loaded).status == MT_SETTINGS_INVALID_ARGUMENT);
+        assert(memcmp(stored_file, valid_wire, sizeof(valid_wire)) == 0);
+        memset(stored_file + cartridge_offset, 0, MT_SETTINGS_MEDIA_NAME_MAX);
+        memcpy(stored_file + cartridge_offset, invalid_paths[index], strlen(invalid_paths[index]));
+        crc = crc32_bytes(stored_file + 24U, stored_size - 24U);
+        store_u32_le(stored_file + 16U, crc);
+        store_u32_le(stored_file + 20U, ~crc);
+        assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
+        assert(loaded.profile_count == 0U);
+        memcpy(stored_file, valid_wire, sizeof(valid_wire));
+    }
+
+    memset(maximum_path, 'a', sizeof(maximum_path) - 1U);
+    maximum_path[1] = '/';
+    maximum_path[sizeof(maximum_path) - 1U] = '\0';
+    assert(strlen(maximum_path) == 95U);
+    assert(mt_supervisor_settings_remember_cartridge(&settings, "vectrex", maximum_path));
+    assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
+    assert(strcmp(loaded.profiles[0].cartridge_name, maximum_path) == 0);
+    preserved = settings;
+    memset(oversized_path, 'a', sizeof(oversized_path) - 1U);
+    oversized_path[1] = '/';
+    oversized_path[sizeof(oversized_path) - 1U] = '\0';
+    assert(!mt_supervisor_settings_remember_cartridge(&settings, "vectrex", oversized_path));
+    assert(memcmp(&settings, &preserved, sizeof(settings)) == 0);
+    memcpy(loaded.profiles[0].cartridge_name, oversized_path, MT_SETTINGS_MEDIA_NAME_MAX);
+    assert(mt_supervisor_settings_save(&loaded).status == MT_SETTINGS_INVALID_ARGUMENT);
+    assert(mt_supervisor_settings_remember_cartridge(&settings, "vectrex", ""));
+    assert(settings.profiles[0].cartridge_name[0] == '\0');
+    assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
+    assert(loaded.profiles[0].cartridge_name[0] == '\0');
+    assert(mt_supervisor_settings_remember_cartridge(&settings, "vectrex", NULL));
+    assert(!mt_supervisor_settings_remember_drive8(&settings, "vectrex", nested));
+
+    for (index = 0U; index < sizeof(flat_cores) / sizeof(flat_cores[0]); ++index) {
+        uint32_t crc;
+        mt_supervisor_settings_defaults(&settings);
+        assert(mt_supervisor_settings_remember_core(&settings, flat_cores[index], "default"));
+        assert(mt_supervisor_settings_remember_cartridge(&settings, flat_cores[index], "Original.cart"));
+        preserved = settings;
+        assert(!mt_supervisor_settings_remember_cartridge(&settings, flat_cores[index], nested));
+        assert(memcmp(&settings, &preserved, sizeof(settings)) == 0);
+        assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
+        strcpy(settings.profiles[0].cartridge_name, nested);
+        assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_INVALID_ARGUMENT);
+        memset(stored_file + cartridge_offset, 0, MT_SETTINGS_MEDIA_NAME_MAX);
+        memcpy(stored_file + cartridge_offset, nested, strlen(nested));
+        crc = crc32_bytes(stored_file + 24U, stored_size - 24U);
+        store_u32_le(stored_file + 16U, crc);
+        store_u32_le(stored_file + 20U, ~crc);
+        assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
+    }
+}
+
+static void assert_default_borders(const mt_core_settings_profile_t *profile)
+{
+    assert(profile != NULL && !profile->border_enabled);
+    assert(profile->border_style == 0U && profile->border_color == 7U &&
+           profile->border_padding == 6U);
+}
+
+static void test_borders(void)
+{
+    static const uint8_t invalid[][3] = {
+        {5U, 7U, 6U}, {255U, 7U, 6U}, {0U, 16U, 6U},
+        {0U, 255U, 6U}, {0U, 7U, 0U}, {0U, 7U, 21U}, {0U, 7U, 255U}
+    };
+    static const uint8_t invalid_wire[][2] = {
+        {0U, 2U}, {1U, 5U}, {2U, 16U}, {3U, 0U}, {3U, 21U}
+    };
+    mt_supervisor_settings_t settings;
+    mt_supervisor_settings_t loaded;
+    mt_supervisor_settings_t preserved;
+    uint8_t valid_wire[MT_SETTINGS_WIRE_SIZE];
+    size_t index;
+
+    reset_fake();
+    mt_supervisor_settings_defaults(&settings);
+    preserved = settings;
+    for (index = 0U; index < sizeof(invalid) / sizeof(invalid[0]); ++index) {
+        assert(!mt_supervisor_settings_remember_borders(&settings, "vectrex", true,
+            invalid[index][0], invalid[index][1], invalid[index][2]));
+        assert(memcmp(&settings, &preserved, sizeof(settings)) == 0);
+    }
+    assert(mt_supervisor_settings_remember_core(&settings, "c64", "pal"));
+    assert(mt_supervisor_settings_remember_core(&settings, "gbc", "color"));
+    assert(mt_supervisor_settings_remember_core(&settings, "vectrex", "native"));
+    assert_default_borders(mt_supervisor_settings_find(&settings, "c64"));
+    assert_default_borders(mt_supervisor_settings_find(&settings, "gbc"));
+    assert_default_borders(mt_supervisor_settings_find(&settings, "vectrex"));
+    /* Exercise each accepted style, palette entry and padding value, both
+     * enable states, and retention when another core's profile is changed. */
+    for (index = 0U; index < 20U; ++index) {
+        const uint8_t style = (uint8_t)(index % 5U);
+        const uint8_t color = (uint8_t)(index % 16U);
+        const uint8_t padding = (uint8_t)(index + 1U);
+        const bool enabled = (index & 1U) != 0U;
+        const mt_core_settings_profile_t *profile;
+        assert(mt_supervisor_settings_remember_borders(&settings, "vectrex",
+            enabled, style, color, padding));
+        assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
+        assert(stored_file[8U] == 3U && stored_size == 4024U);
+        assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
+        profile = mt_supervisor_settings_find(&loaded, "vectrex");
+        assert(profile->border_enabled == enabled && profile->border_style == style &&
+               profile->border_color == color && profile->border_padding == padding);
+        assert_default_borders(mt_supervisor_settings_find(&loaded, "c64"));
+        assert_default_borders(mt_supervisor_settings_find(&loaded, "gbc"));
+    }
+    assert(mt_supervisor_settings_remember_borders(&settings, "c64", true, 3U, 2U, 10U));
+    assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
+    memcpy(valid_wire, stored_file, sizeof(valid_wire));
+    preserved = settings;
+    for (index = 0U; index < sizeof(invalid) / sizeof(invalid[0]); ++index) {
+        assert(!mt_supervisor_settings_remember_borders(&settings, "vectrex", false,
+            invalid[index][0], invalid[index][1], invalid[index][2]));
+        assert(memcmp(&settings, &preserved, sizeof(settings)) == 0);
+        loaded = settings;
+        loaded.profiles[0].border_style = invalid[index][0];
+        loaded.profiles[0].border_color = invalid[index][1];
+        loaded.profiles[0].border_padding = invalid[index][2];
+        assert(mt_supervisor_settings_save(&loaded).status == MT_SETTINGS_INVALID_ARGUMENT);
+        assert(memcmp(stored_file, valid_wire, sizeof(valid_wire)) == 0);
+    }
+    for (index = 0U; index < sizeof(invalid_wire) / sizeof(invalid_wire[0]); ++index) {
+        stored_file[56U + 244U + invalid_wire[index][0]] = invalid_wire[index][1];
+        update_stored_crc();
+        assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
+        assert(loaded.profile_count == 0U && !loaded.auto_boot);
+        memcpy(stored_file, valid_wire, sizeof(valid_wire));
+    }
+    assert(!mt_supervisor_settings_remember_borders(NULL, "vectrex", true, 0U, 7U, 6U));
+    assert(!mt_supervisor_settings_remember_borders(&settings, "invalid core", true, 0U, 7U, 6U));
+    assert(memcmp(&settings, &preserved, sizeof(settings)) == 0);
+}
+
+static void test_legacy_migration(void)
+{
+    mt_supervisor_settings_t settings;
+    mt_supervisor_settings_t loaded;
+    mt_supervisor_settings_t expected;
+    uint8_t legacy_wire[LEGACY_WIRE_SIZE];
+    uint32_t schema;
+    size_t index;
+    reset_fake();
+    mt_supervisor_settings_defaults(&settings);
+    assert(mt_supervisor_settings_remember_core(&settings, "c64", "ntsc"));
+    assert(mt_supervisor_settings_remember_c64_input(&settings, "c64", false, 1U));
+    assert(mt_supervisor_settings_remember_c64_fast_roms(&settings, "c64", true));
+    assert(mt_supervisor_settings_remember_c64_cpu_turbo(&settings, "c64", true));
+    assert(mt_supervisor_settings_remember_drive8(&settings, "c64", "Writable Demo.d64"));
+    assert(mt_supervisor_settings_remember_cartridge(&settings, "c64", "Fast Load.crt"));
+    assert(mt_supervisor_settings_remember_core(&settings, "gbc", "color"));
+    assert(mt_supervisor_settings_remember_cartridge(&settings, "gbc", "Yars' Revenge.gbc"));
+    assert(mt_supervisor_settings_remember_core(&settings, "vectrex", "native"));
+    assert(mt_supervisor_settings_remember_cartridge(&settings, "vectrex",
+        "Classics/Arcade Games/Star Castle.vec"));
+    /* Populate every slot to expose incorrect strides or end-of-buffer reads. */
+    for (index = 3U; index < MT_SETTINGS_MAX_PROFILES; ++index) {
+        char core_id[24];
+        (void)snprintf(core_id, sizeof(core_id), "core%u", (unsigned)index);
+        assert(mt_supervisor_settings_remember_variant(&settings, core_id, "default"));
+        assert(mt_supervisor_settings_remember_borders(&settings, core_id, true,
+            (uint8_t)(index % 5U), (uint8_t)index, (uint8_t)(index + 1U)));
+    }
+    settings.auto_boot = true;
+    expected = settings;
+    for (index = 0U; index < expected.profile_count; ++index) {
+        expected.profiles[index].border_enabled = false;
+        expected.profiles[index].border_style = 0U;
+        expected.profiles[index].border_color = 7U;
+        expected.profiles[index].border_padding = 6U;
+    }
+    for (schema = 1U; schema <= 2U; ++schema) {
+        assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
+        convert_stored_to_legacy(schema);
+        memcpy(legacy_wire, stored_file, sizeof(legacy_wire));
+        read_calls = 0U;
+        assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
+        assert(read_calls == 2U && stored_size == LEGACY_WIRE_SIZE);
+        expected.profiles[0].c64_fast_roms = schema == 2U;
+        assert(memcmp(&loaded, &expected, sizeof(loaded)) == 0);
+        for (index = 0U; index < loaded.profile_count; ++index)
+            assert_default_borders(&loaded.profiles[index]);
+        /* Read-only migration leaves old bytes intact until the user saves. */
+        assert(memcmp(stored_file, legacy_wire, sizeof(legacy_wire)) == 0);
+        assert(mt_supervisor_settings_save(&loaded).status == MT_SETTINGS_OK);
+        assert(stored_size == MT_SETTINGS_WIRE_SIZE && stored_file[8U] == 3U);
+        assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
+        assert(memcmp(&loaded, &expected, sizeof(loaded)) == 0);
+        memcpy(stored_file, legacy_wire, sizeof(legacy_wire));
+        stored_size = LEGACY_WIRE_SIZE;
+        stored_file[stored_size - 1U] ^= 1U;
+        assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
+        assert(loaded.profile_count == 0U && !loaded.auto_boot);
+    }
+    /* Unknown/truncated/oversized files cannot be mistaken for the old size. */
+    assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
+    stored_size = MT_SETTINGS_WIRE_SIZE - 1U;
+    read_calls = 0U;
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_READ_FAILED);
+    assert(read_calls == 1U && loaded.profile_count == 0U);
+    stored_size = MT_SETTINGS_WIRE_SIZE + 1U;
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_READ_FAILED);
+    stored_size = 4088U; /* The intermediate format was never shipped. */
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_READ_FAILED);
+    stored_size = 0U;
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_READ_FAILED);
+    assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
+    store_u32_le(stored_file + 8U, 2U);
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
+    store_u32_le(stored_file + 8U, 4U);
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
+    convert_stored_to_legacy(3U);
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
+    store_u32_le(stored_file + 8U, 2U);
+    retry_status = MT_SD_READ_FAILED;
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_READ_FAILED);
+    assert(loaded.profile_count == 0U);
+    retry_status = MT_SD_OK;
+    disappear_on_retry = true;
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_MISSING);
+    assert(loaded.profile_count == 0U);
+    expected = settings;
+    assert(!mt_supervisor_settings_remember_borders(&settings, "extra", true, 0U, 7U, 6U));
+    assert(memcmp(&settings, &expected, sizeof(settings)) == 0);
 }
 
 int main(void)
@@ -154,13 +477,7 @@ int main(void)
     /* Schema 1 byte 242 was the unsafe whole-drive warp. It must not silently
      * turn into the new fast-ROM selection, while byte 243 CPU turbo retains
      * its meaning. */
-    store_u32_le(stored_file + 8U, 1U);
-    {
-        const uint32_t crc = crc32_bytes(stored_file + 24U,
-                                         stored_size - 24U);
-        store_u32_le(stored_file + 16U, crc);
-        store_u32_le(stored_file + 20U, ~crc);
-    }
+    convert_stored_to_legacy(1U);
     result = mt_supervisor_settings_load(&loaded);
     assert(result.status == MT_SETTINGS_OK);
     profile = mt_supervisor_settings_find(&loaded, "c64");
@@ -223,5 +540,8 @@ int main(void)
            0);
     assert(strcmp(mt_settings_status_name((mt_settings_status_t)99),
                   "unknown settings status") == 0);
+    test_vectrex_cartridge_paths();
+    test_borders();
+    test_legacy_migration();
     return 0;
 }

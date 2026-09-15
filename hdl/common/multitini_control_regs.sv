@@ -39,6 +39,7 @@ module multitini_control_regs #(
     output logic [31:0]  rd_data,
 
     output logic [31:0]  control,
+    output logic [31:0]  border_config,
     output logic         load_submit,
     output logic [7:0]   load_kind,
     output logic [7:0]   load_data,
@@ -128,6 +129,17 @@ module multitini_control_regs #(
         end
     endfunction
 
+    function automatic logic [31:0] clamp_border(input logic [31:0] value);
+        logic [31:0] result;
+        begin
+            result = value & 32'h00001FFF;
+            if (result[3:1] > 4) result[3:1] = 0;
+            if (result[12:8] == 0) result[12:8] = 1;
+            else if (result[12:8] > 20) result[12:8] = 20;
+            clamp_border = result;
+        end
+    endfunction
+
     always_comb begin
         media_request_word = 32'd0;
         if (media_request_valid)
@@ -206,6 +218,7 @@ module multitini_control_regs #(
             MT_REG_STATUS:           rd_data = status_word;
             MT_REG_ERROR:            rd_data = error_flags;
             MT_REG_CONTROL:          rd_data = control;
+            MT_REG_BORDER_CONFIG:    rd_data = border_config;
             MT_REG_IRQ_STATUS:       rd_data = irq_status;
             MT_REG_IRQ_ENABLE:       rd_data = irq_enable;
             MT_REG_SCRATCH:          rd_data = scratch;
@@ -287,6 +300,7 @@ module multitini_control_regs #(
                     stream_offset >= stream_total)
                     error_set_mask |= MT_ERROR_BAD_WRITE;
             MT_REG_CONTROL,
+            MT_REG_BORDER_CONFIG,
             MT_REG_IRQ_ENABLE,
             MT_REG_SCRATCH,
             MT_REG_COMMAND_SEQ,
@@ -303,6 +317,7 @@ module multitini_control_regs #(
     always_ff @(posedge clk) begin
         if (!resetn) begin
             error_flags     <= 32'h00000000;
+            border_config   <= MT_BORDER_CONFIG_DEFAULT;
             control         <= MT_CONTROL_CORE_RESET_REQUEST |
                                MT_CONTROL_VIDEO_TEST_ENABLE |
                                MT_CONTROL_AUDIO_TEST_ENABLE |
@@ -446,6 +461,9 @@ module multitini_control_regs #(
                             load_error_clear <= 1'b1;
                     MT_REG_CONTROL:
                         control <= merge_strobes(control, wr_data, wr_strb);
+                    MT_REG_BORDER_CONFIG:
+                        border_config <= clamp_border(
+                            merge_strobes(border_config, wr_data, wr_strb));
                     MT_REG_IRQ_STATUS:
                         ;
                     MT_REG_IRQ_ENABLE:

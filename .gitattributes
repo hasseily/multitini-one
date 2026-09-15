@@ -23,6 +23,9 @@ hdl/common/multitini_font7x8.mem text eol=lf
 third_party/appletini/** -whitespace
 third_party/c64/upstream/** -text -whitespace
 third_party/gameboy/upstream/** -text -whitespace
+third_party/gsbasic/** -text -whitespace
+third_party/vectrex/** -text -whitespace
+third_party/vectrex32/** -text -whitespace
 
 # Local compatibility ports intentionally preserve upstream whitespace.
 hdl/board/multitini_psram_driver.sv -whitespace

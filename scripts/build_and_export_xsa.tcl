@@ -87,6 +87,8 @@ if {[string match "*ACTIVE_MACHINE=2*" $build_generics]} {
     set image_kind "C64"
 } elseif {[string match "*ACTIVE_MACHINE=1*" $build_generics]} {
     set image_kind "GBC"
+} elseif {[string match "*ACTIVE_MACHINE=3*" $build_generics]} {
+    set image_kind "VECTREX"
 } else {
     error "Build generic has no recognized ACTIVE_MACHINE value: $build_generics"
 }

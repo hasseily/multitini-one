@@ -3,6 +3,7 @@
 
 #include "multitini_c64_interface.h"
 #include "multitini_gameboy_interface.h"
+#include "multitini_vectrex_interface.h"
 
 #include <string.h>
 
@@ -143,6 +144,22 @@ static void build_gameboy(mt_core_frontend_t *frontend,
 
 /* Keep machine capabilities and labels together. Adding a machine does not
  * require another branch in the shared menu renderer or file browser. */
+static void build_vectrex(mt_core_frontend_t *frontend,
+                           const mt_core_frontend_state_t *state,
+                           mt_menu_view_t *view)
+{
+    cartridge_item(frontend, state, view, "Load a VEC or BIN cartridge; BIOS is required.");
+    frontend->media_items[view->media_item_count++] = item(
+        "Vectrex32 BASIC", "Choose program...", "Run a BAS program; F12 stops it and returns here.",
+        MT_MENU_ACTION_BROWSE_PROGRAM, 0U, true, MT_UI_COLOR_BLUE);
+    frontend->input_items[view->input_item_count++] = item(
+        "Directions", "Analog stick / arrows", "Two gamepads; keyboard controls player 1.",
+        MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
+    frontend->input_items[view->input_item_count++] = item(
+        "Buttons 1-4", "Z X C V / A B X Y", "Four independent action buttons per player.",
+        MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
+}
+
 static const core_profile_t profiles[] = {
     {
         MT_C64_CORE_ID, "Commodore 64",
@@ -158,6 +175,13 @@ static const core_profile_t profiles[] = {
          CONTENT_MASK(MT_CONTENT_GB_CART) | CONTENT_MASK(MT_CONTENT_GBC_CART),
          0U},
         false, build_gameboy
+    },
+    {
+        MT_VECTREX_CORE_ID, "Vectrex / Vectrex32 BASIC",
+        "USB analog gamepads or keyboard; F12 opens the menu.",
+        {0U, 0U, 0U, CONTENT_MASK(MT_CONTENT_VECTREX_CART),
+         CONTENT_MASK(MT_CONTENT_VECTREX_BASIC)},
+        false, build_vectrex
     }
 };
 

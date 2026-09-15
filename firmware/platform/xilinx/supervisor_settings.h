@@ -13,7 +13,10 @@
 #define MT_SETTINGS_JOURNAL_PATH "0:/multitini/settings.bin.mtj"
 #define MT_SETTINGS_MAX_PROFILES 16U
 #define MT_SETTINGS_MEDIA_NAME_MAX 96U
-#define MT_SETTINGS_WIRE_SIZE 3960U
+#define MT_SETTINGS_WIRE_SIZE 4024U
+#define MT_SETTINGS_BORDER_STYLE_DEFAULT 0U
+#define MT_SETTINGS_BORDER_COLOR_DEFAULT 7U
+#define MT_SETTINGS_BORDER_PADDING_DEFAULT 6U
 
 typedef struct {
     char core_id[MT_CORE_PACKAGE_ID_MAX];
@@ -24,6 +27,10 @@ typedef struct {
     uint8_t joystick_port;
     bool c64_fast_roms;
     bool c64_cpu_turbo;
+    bool border_enabled;
+    uint8_t border_style;
+    uint8_t border_color;
+    uint8_t border_padding;
 } mt_core_settings_profile_t;
 
 typedef struct {
@@ -70,6 +77,9 @@ bool mt_supervisor_settings_remember_c64_fast_roms(
     mt_supervisor_settings_t *settings, const char *core_id, bool enabled);
 bool mt_supervisor_settings_remember_c64_cpu_turbo(
     mt_supervisor_settings_t *settings, const char *core_id, bool enabled);
+bool mt_supervisor_settings_remember_borders(
+    mt_supervisor_settings_t *settings, const char *core_id, bool enabled,
+    uint8_t style, uint8_t color, uint8_t padding);
 
 mt_settings_result_t mt_supervisor_settings_load(
     mt_supervisor_settings_t *settings);

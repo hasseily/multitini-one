@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(multitini_host_checks LANGUAGES C)
+project(multitini_host_checks LANGUAGES C CXX)
 
 option(MULTITINI_SANITIZE "Enable address and undefined-behavior sanitizers" OFF)
 
@@ -24,13 +24,28 @@ add_library(multitini_common STATIC
     firmware/common/fatfs_time.c
     firmware/common/gameboy_boot.c
     firmware/common/gameboy_hid_input.c
+    firmware/common/vectrex_boot.c
+    firmware/common/vectrex_hid_input.c
     firmware/common/menu.c
+    firmware/common/media_browser.c
     firmware/common/supervisor.c
     firmware/common/tmp102.c
     firmware/common/ui.c
     firmware/common/xmodem.c
 )
 target_include_directories(multitini_common PUBLIC firmware/include)
+
+enable_testing()
+add_subdirectory(firmware/vectrex32)
+add_library(xilinx_vectrex_services_compile OBJECT
+    firmware/platform/xilinx/vectrex_content_service.c
+    firmware/platform/xilinx/vectrex32_service.c
+)
+target_include_directories(xilinx_vectrex_services_compile PRIVATE firmware/include)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(xilinx_vectrex_services_compile PRIVATE
+        -Wall -Wextra -Wpedantic -Werror -Wconversion -Wshadow -Wstrict-prototypes)
+endif()
 
 add_library(xilinx_main_compile OBJECT firmware/platform/xilinx/main.c)
 target_include_directories(xilinx_main_compile PRIVATE
@@ -96,7 +111,16 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     endif()
 endif()
 
-enable_testing()
+add_executable(test_vectrex_firmware tests/host/test_vectrex_firmware.c
+    firmware/platform/xilinx/vectrex_content_service.c
+    firmware/platform/xilinx/vectrex32_service.c)
+target_include_directories(test_vectrex_firmware PRIVATE firmware/platform/xilinx)
+target_link_libraries(test_vectrex_firmware PRIVATE multitini_common multitini_vectrex32)
+add_test(NAME vectrex_firmware COMMAND test_vectrex_firmware)
+
+add_executable(test_media_browser tests/host/test_media_browser.c)
+target_link_libraries(test_media_browser PRIVATE multitini_common)
+add_test(NAME media_browser COMMAND test_media_browser)
 
 add_executable(test_core_link tests/host/test_core_link.c)
 target_link_libraries(test_core_link PRIVATE multitini_common)
@@ -127,6 +151,17 @@ add_test(NAME ui COMMAND test_ui)
 add_executable(test_menu tests/host/test_menu.c)
 target_link_libraries(test_menu PRIVATE multitini_common)
 add_test(NAME menu COMMAND test_menu)
+
+# The board-handler fixture uses GCC whole-program LTO to discard unrelated
+# bare-metal startup while executing the real MMIO and settings handlers.
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME video_settings_runtime
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/scripts/test_video_settings_runtime.py"
+            --cc "${CMAKE_C_COMPILER}"
+            --build-dir "${CMAKE_BINARY_DIR}/video-settings-runtime")
+endif()
 
 add_executable(test_core_frontend tests/host/test_core_frontend.c)
 target_link_libraries(test_core_frontend PRIVATE multitini_common)
@@ -236,7 +271,8 @@ target_include_directories(test_cherryusb_ulpi PRIVATE
 add_test(NAME cherryusb_ulpi COMMAND test_cherryusb_ulpi)
 
 add_executable(test_sd_storage tests/host/test_sd_storage.c)
-target_link_libraries(test_sd_storage PRIVATE xilinx_sd_storage_host)
+target_link_libraries(test_sd_storage PRIVATE
+    xilinx_supervisor_settings_host xilinx_sd_storage_host)
 add_test(NAME sd_storage COMMAND test_sd_storage)
 
 add_executable(test_persistent_save tests/host/test_persistent_save.c)

@@ -312,11 +312,216 @@ static void test_empty_and_faults(void)
     check(!menu.visible, "Escape closes top-level menu");
 }
 
+static void test_folder_browser(void)
+{
+    mt_menu_file_t files[44] = {0};
+    mt_menu_view_t view = {0};
+    mt_menu_t menu;
+    mt_menu_action_t action;
+    mt_ui_frame_t frame;
+    char text[MT_UI_COLUMNS + 1U];
+    strcpy(files[0].name, "Vecalabeth");
+    files[0].cookie = MT_MENU_FILE_DIRECTORY | 17U;
+    files[0].size = 9U * 1024U * 1024U;
+    strcpy(files[1].name, "game.bas");
+    files[1].cookie = 123U;
+    files[1].size = 100U;
+    view.files = files;
+    view.file_count = 2U;
+    view.content_root = "0:/multitini/cores/vectrex";
+    mt_menu_init(&menu, &view);
+    menu.visible = true;
+    menu.page = MT_MENU_PAGE_MEDIA;
+    mt_menu_open_browser(&menu, MT_MENU_BROWSER_PROGRAM);
+    check(press(&menu, &view, MT_MENU_HID_LEFT).kind == MT_MENU_ACTION_NONE &&
+          press(&menu, &view, MT_MENU_HID_BACKSPACE).kind == MT_MENU_ACTION_NONE,
+          "root directory has no parent action");
+    action = press(&menu, &view, MT_MENU_HID_ENTER);
+    check(action.kind == MT_MENU_ACTION_OPEN_DIRECTORY && action.file_index == 0U &&
+          menu.browser == MT_MENU_BROWSER_PROGRAM && menu.visible, "Enter opens folder without closing browser");
+    check(press(&menu, &view, MT_MENU_HID_RIGHT).kind == MT_MENU_ACTION_OPEN_DIRECTORY,
+          "Right opens directory");
+    mt_menu_render(&menu, &view, &frame);
+    row_text(&frame, 11U, text);
+    check(strstr(text, "Folder") != NULL && strstr(text, "MiB") == NULL,
+          "folder row displays Folder instead of its size");
+    check(contains(&frame, "Enter or Right opens this folder") &&
+          contains(&frame, "[Left/Backspace] Up"), "folder navigation help is visible");
+    menu.row = 1U;
+    check(press(&menu, &view, MT_MENU_HID_RIGHT).kind == MT_MENU_ACTION_NONE,
+          "Right does not load ordinary program file");
+    action = press(&menu, &view, MT_MENU_HID_ENTER);
+    check(action.kind == MT_MENU_ACTION_LOAD_CONTENT && action.file_index == 1U,
+          "ordinary file still loads with Enter");
+    check(files[0].cookie == (MT_MENU_FILE_DIRECTORY | 17U) && files[1].cookie == 123U,
+          "menu preserves caller cookies");
+
+    strcpy(files[41].name, "..");
+    files[41].cookie = MT_MENU_FILE_DIRECTORY | MT_MENU_FILE_PARENT;
+    view.file_count = 44U;
+    action = press(&menu, &view, MT_MENU_HID_BACKSPACE);
+    check(action.kind == MT_MENU_ACTION_OPEN_DIRECTORY && action.file_index == 41U &&
+          menu.row == 41U && menu.first_row <= 41U && menu.first_row + MT_MENU_LIST_ROWS > 41U,
+          "Backspace finds and selects parent regardless of list position");
+    mt_menu_render(&menu, &view, &frame);
+    row_text(&frame, 11U + 41U - menu.first_row, text);
+    check(strstr(text, "Up") != NULL && contains(&frame, "opens the parent folder"),
+          "parent row has Up label and navigation help");
+    menu.row = 0U;
+    action = press(&menu, &view, MT_MENU_HID_LEFT);
+    check(action.kind == MT_MENU_ACTION_OPEN_DIRECTORY && action.file_index == 41U,
+          "Left navigates to parent from a child row");
+    check(press(&menu, &view, MT_MENU_HID_ENTER).kind == MT_MENU_ACTION_OPEN_DIRECTORY,
+          "Enter opens the selected parent");
+    (void)press(&menu, &view, MT_MENU_HID_ESCAPE);
+    check(menu.browser == MT_MENU_BROWSER_NONE && menu.visible,
+          "Escape still leaves folder browser for Media");
+
+    files[0].cookie = 0U;
+    view.file_count = 2U;
+    mt_menu_open_browser(&menu, MT_MENU_BROWSER_DISK_PROGRAM);
+    check(press(&menu, &view, MT_MENU_HID_BACKSPACE).kind == MT_MENU_ACTION_NONE &&
+          press(&menu, &view, MT_MENU_HID_LEFT).kind == MT_MENU_ACTION_DIRECT_DISK_PROGRAM &&
+          press(&menu, &view, MT_MENU_HID_RIGHT).kind == MT_MENU_ACTION_LOAD_DISK_PROGRAM &&
+          press(&menu, &view, MT_MENU_HID_ENTER).kind == MT_MENU_ACTION_MOUNT_AND_RUN,
+          "unflagged D64 rows retain all existing launch actions");
+}
+
+static void update_border_view(mt_menu_view_t *view, mt_menu_action_t action)
+{
+    check(action.kind == MT_MENU_ACTION_SET_BORDER, "border edit dispatches configuration");
+    view->border_enabled = (action.file_index & 1U) != 0U;
+    view->border_style = (uint8_t)((action.file_index >> 1U) & 7U);
+    view->border_color = (uint8_t)((action.file_index >> 4U) & 15U);
+    view->border_padding = (uint8_t)((action.file_index >> 8U) & 31U);
+}
+
+static void test_borders(void)
+{
+    static const char *const styles[] = {
+        "Single line", "Double line", "Corner brackets", "Dashed", "Soft glow"
+    };
+    static const char *const colors[] = {
+        "Black", "Blue", "Green", "Cyan", "Red", "Magenta", "Brown", "Light gray",
+        "Dark gray", "Light blue", "Light green", "Light cyan", "Light red",
+        "Light magenta", "Yellow", "White"
+    };
+    mt_menu_view_t view = {0};
+    mt_core_selection_t core;
+    mt_menu_t menu;
+    mt_ui_frame_t frame;
+    mt_menu_action_t action;
+    size_t index;
+    init_core(&core, 0U);
+    view.cores = &core;
+    view.core_count = 1U;
+    mt_menu_init(&menu, &view);
+    menu.visible = true;
+    menu.page = MT_MENU_PAGE_VIDEO;
+    menu.row = 2U;
+    mt_menu_render(&menu, &view, &frame);
+    check(contains(&frame, "Select a core from Cores") &&
+          contains(&frame, "Unavailable"), "border page explains missing active core");
+    check(press(&menu, &view, MT_MENU_HID_ENTER).kind == MT_MENU_ACTION_NONE,
+          "no active core cannot edit borders");
+    view.active_core_id = "old-core";
+    mt_menu_render(&menu, &view, &frame);
+    check(contains(&frame, "Unsupported") && contains(&frame, "Update this core package"),
+          "older shell has actionable unsupported message");
+    for (index = 1U; index < 5U; ++index) {
+        menu.row = index;
+        check(press(&menu, &view, MT_MENU_HID_LEFT).kind == MT_MENU_ACTION_NONE &&
+              press(&menu, &view, MT_MENU_HID_RIGHT).kind == MT_MENU_ACTION_NONE &&
+              press(&menu, &view, MT_MENU_HID_ENTER).kind == MT_MENU_ACTION_NONE,
+              "unsupported border rows never dispatch register values");
+    }
+    view.active_core_id = "core0";
+    view.border_supported = true;
+    view.border_color = 7U;
+    view.border_padding = 6U;
+    menu.row = 2U;
+    mt_menu_render(&menu, &view, &frame);
+    check(contains(&frame, "Off") && contains(&frame, "Single line") &&
+          contains(&frame, "Light gray") && contains(&frame, "Saved for this core"),
+          "default border values and per-core ownership render");
+    check(press(&menu, &view, MT_MENU_HID_LEFT).kind == MT_MENU_ACTION_NONE,
+          "left leaves an already disabled border unchanged");
+    action = press(&menu, &view, MT_MENU_HID_RIGHT);
+    check(action.file_index == 0x671U && !view.border_enabled,
+          "menu proposes exact packed enable value without mutating caller settings");
+    update_border_view(&view, action);
+    mt_menu_render(&menu, &view, &frame);
+    check(contains(&frame, "On"), "refreshed view immediately displays applied selection");
+    update_border_view(&view, press(&menu, &view, MT_MENU_HID_ENTER));
+    check(!view.border_enabled, "Enter toggles border off");
+    menu.row = 3U;
+    for (index = 0U; index < 5U; ++index) {
+        mt_menu_render(&menu, &view, &frame);
+        check(contains(&frame, styles[index]), "all five border type names fit");
+        update_border_view(&view, press(&menu, &view, MT_MENU_HID_RIGHT));
+    }
+    check(view.border_style == 0U, "style cycles after fifth type");
+    update_border_view(&view, press(&menu, &view, MT_MENU_HID_LEFT));
+    check(view.border_style == 4U, "left wraps style backwards");
+    update_border_view(&view, press(&menu, &view, MT_MENU_HID_ENTER));
+    check(view.border_style == 0U, "Enter cycles style forwards");
+    menu.row = 4U;
+    view.border_color = 0U;
+    for (index = 0U; index < 16U; ++index) {
+        mt_menu_render(&menu, &view, &frame);
+        check(contains(&frame, colors[index]), "classic color order and full labels render");
+        update_border_view(&view, press(&menu, &view, MT_MENU_HID_ENTER));
+    }
+    check(view.border_color == 0U, "all sixteen colors cycle");
+    update_border_view(&view, press(&menu, &view, MT_MENU_HID_LEFT));
+    check(view.border_color == 15U, "color wraps backwards");
+    menu.row = 5U;
+    mt_menu_render(&menu, &view, &frame);
+    check(contains(&frame, "Padding (px)") && contains(&frame, "between the image and border"),
+          "padding names output-pixel units and the external gap");
+    view.border_padding = 1U;
+    check(press(&menu, &view, MT_MENU_HID_LEFT).kind == MT_MENU_ACTION_NONE,
+          "padding left clamps at one");
+    for (index = 2U; index <= 20U; ++index) {
+        update_border_view(&view, press(&menu, &view, MT_MENU_HID_RIGHT));
+        check(view.border_padding == index, "padding advances through every supported pixel inset");
+    }
+    check(press(&menu, &view, MT_MENU_HID_RIGHT).kind == MT_MENU_ACTION_NONE,
+          "padding right clamps at twenty");
+    update_border_view(&view, press(&menu, &view, MT_MENU_HID_ENTER));
+    check(view.border_padding == 1U, "Enter cycles maximum padding back to one");
+    view.border_style = view.border_color = view.border_padding = UINT8_MAX;
+    action = press(&menu, &view, MT_MENU_HID_RIGHT);
+    update_border_view(&view, action);
+    check(view.border_style == 0U && view.border_color == 7U && view.border_padding == 7U,
+          "invalid external presentation values normalize before indexing and editing");
+    mt_menu_render(&menu, &view, &frame);
+    check(!contains(&frame, "Game window size") && contains(&frame, "6 / 6"),
+          "Video ends with border padding and exposes no game-size control");
+    menu.row = 0U;
+    check(press(&menu, &view, MT_MENU_HID_ENTER).kind == MT_MENU_ACTION_TOGGLE_VIDEO_SOURCE,
+          "existing display-source row retains its action");
+    menu.row = 1U;
+    (void)press(&menu, &view, MT_MENU_HID_RIGHT);
+    action = press(&menu, &view, MT_MENU_HID_ENTER);
+    check(action.kind == MT_MENU_ACTION_SWITCH_CORE && action.variant_index == 1U,
+          "existing variant row retains staged selection and load");
+    menu.page = MT_MENU_PAGE_VIDEO;
+    menu.row = 0U;
+    (void)press(&menu, &view, MT_MENU_HID_TAB);
+    check(menu.page == MT_MENU_PAGE_INPUT && MT_MENU_PAGE_COUNT == 6U,
+          "Video contains all border controls with no separate Borders tab");
+    menu.page = MT_MENU_PAGE_VIDEO;
+    mt_menu_render(&menu, NULL, &frame);
+}
+
 int main(void)
 {
     test_core_navigation();
     test_generic_items_and_focus();
     test_browser();
+    test_folder_browser();
+    test_borders();
     test_empty_and_faults();
     puts("PASS: scalable menu navigation, descriptors, clipping and save status");
     return 0;

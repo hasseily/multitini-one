@@ -1,0 +1,45 @@
+{
+  "source_repository": "https://github.com/hasseily/appletini-one",
+  "source_commit": "31a5d7073e61588afe834ff1bb80c06750e1a613",
+  "files": [
+    {
+      "path": "hdl/core/vectrex/chips/via6522.v",
+      "source_path": "hdl/apple/via6522.v",
+      "source_checkout_sha256": "52256b9a85839cab17862447b79dc85ac672f6b687c3ec5ecdc9af4b066353ef",
+      "license": "BSD-3-Clause",
+      "copyright": "Copyright (C) 2011 Thomas Skibo",
+      "license_text": "Retained in the source file header",
+      "changes": [
+        "Rename the module to avoid collisions with other machine cores",
+        "Expose the resolved port-A bus and DDRA for machine wiring",
+        "Make pre-tick Apple bus timer readback optional; Vectrex defaults to the live counter",
+        "Correct Timer-1 one-shot counter/PB7 behavior while retaining N+2 completion",
+        "Keep Timer 2 independent of the serial register in PHI2 and external clock modes",
+        "Drive CA2/CB2 handshake and pulse outputs for a full peripheral-clock cycle",
+        "Emit serial bits MSB first, preserve the final output bit, count eight full CB1 pulses, and retain free-running/external clock behavior"
+      ]
+    },
+    {
+      "path": "hdl/core/vectrex/chips/YM2149.sv",
+      "source_path": "hdl/apple/YM2149.sv",
+      "source_checkout_sha256": "79267211c20dfc0f4715b57db19cd5221d654870eede621db53c383e6e7999cf",
+      "license": "BSD-3-Clause",
+      "copyright": "Copyright (c) 2005 MikeJ; Copyright (c) 2016-2018 Sorgelig",
+      "license_text": "Retained in the source file header, including synthesized-form redistribution terms",
+      "earlier_source": "https://github.com/a2fpga/a2fpga_core/blob/20291afa7f7f9e438615e2cbe1d8e29de5e1f835/hdl/support/YM2149.sv",
+      "changes": [
+        "Rename the module to avoid collisions with other machine cores",
+        "Add IO_PORTS package selection and active-low port output-enable signals",
+        "Restore AY8912 input-pin readback and output-mode pin resolution while preserving the AY8913 latch option",
+        "Use a portable per-register reset and initialize tone phase/counters deterministically",
+        "Treat a zero tone period as period one"
+      ]
+    }
+  ],
+  "behavior_references": [
+    "https://www.wdc65xx.com/wdc/documentation/w65c22.pdf",
+    "https://pub.intvprime.com/ba4ef/ie/Programming/AY-3-8910-8912-Programmable-Sound-Generator-Data-Manual.pdf"
+  ],
+  "hash_note": "Source checkout SHA256 values cover the verified clean Appletini Windows files before adaptation, including checkout line endings",
+  "content": "No system ROMs, game data, sampled audio, or restricted Vectrex machine implementation was imported"
+}

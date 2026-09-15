@@ -13,6 +13,9 @@
 #define MT_MENU_FILE_NAME_MAX 96U
 #define MT_MENU_MAX_CORE_OPTIONS 8U
 #define MT_MENU_MAX_ITEMS 16U
+/* Reserved cookie flags; ordinary file and D64 cookies retain their values. */
+#define MT_MENU_FILE_DIRECTORY UINT32_C(0x80000000)
+#define MT_MENU_FILE_PARENT UINT32_C(0x40000000)
 /* The content list leaves room for the shared header, help and footer. */
 #define MT_MENU_LIST_ROWS (MT_UI_ROWS - 20U)
 
@@ -46,7 +49,9 @@ typedef enum {
     MT_MENU_ACTION_TOGGLE_CORE_OPTION,
     MT_MENU_ACTION_RESET_CORE,
     MT_MENU_ACTION_TOGGLE_AUTO_BOOT,
-    MT_MENU_ACTION_REBOOT_GOLDEN
+    MT_MENU_ACTION_REBOOT_GOLDEN,
+    MT_MENU_ACTION_OPEN_DIRECTORY,
+    MT_MENU_ACTION_SET_BORDER
 } mt_menu_action_kind_t;
 
 typedef enum {
@@ -104,6 +109,11 @@ typedef struct {
     bool video_test_enabled;
     bool settings_auto_boot;
     bool settings_faulted;
+    bool border_supported;
+    bool border_enabled;
+    uint8_t border_style;
+    uint8_t border_color;
+    uint8_t border_padding;
     mt_ui_color_t status_color;
 } mt_menu_view_t;
 
@@ -120,6 +130,7 @@ typedef struct {
 enum {
     MT_MENU_HID_ENTER = 0x28,
     MT_MENU_HID_ESCAPE = 0x29,
+    MT_MENU_HID_BACKSPACE = 0x2A,
     MT_MENU_HID_TAB = 0x2B,
     MT_MENU_HID_HOME = 0x4A,
     MT_MENU_HID_PAGE_UP = 0x4B,

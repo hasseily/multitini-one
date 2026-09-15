@@ -22,7 +22,11 @@ typedef enum {
     MT_SD_DIR_OPEN_FAILED,
     MT_SD_DIR_READ_FAILED,
     MT_SD_DIR_CLOSE_FAILED,
-    MT_SD_UNMOUNT_FAILED
+    MT_SD_UNMOUNT_FAILED,
+    MT_SD_SEEK_FAILED,
+    MT_SD_RENAME_FAILED,
+    MT_SD_FILE_BUSY,
+    MT_SD_FILE_LIMIT
 } mt_sd_status_t;
 
 typedef struct {
@@ -36,7 +40,8 @@ typedef int (*mt_sd_list_fn)(void *context, const char *name, size_t size,
 
 /*
  * One cooperative, non-reentrant FatFs owner for the application. Calls mount
- * lazily and close every FIL/DIR before returning. General reads and listings
+ * lazily. Whole-file operations close each FIL/DIR before returning; the
+ * managed file API below retains explicitly owned handles. General reads and listings
  * never mutate the card. Journaled replacement keeps a complete, checksummed
  * write-ahead copy until the ordinary target file has been synced, so an
  * interrupted commit can replay the new complete file on the next mount.
@@ -61,6 +66,23 @@ mt_sd_result_t mt_sd_storage_journal_replace(const char *path,
                                              const uint8_t *src,
                                              size_t size);
 mt_sd_result_t mt_sd_storage_unmount(void);
+
+/* Managed synchronous files share the same FatFs owner. A maximum of 16 may
+ * stay open. Unmount refuses open files; callers close them before switching
+ * cores. Duplicate access involving a writer, and rename/remove of open files,
+ * are rejected. Text and binary modes both preserve bytes on disk.
+ * r/w/a with optional b and + follow C stdio creation/access semantics.
+ * Writes sync before returning; they are not journaled atomic replacements. */
+typedef struct mt_sd_file mt_sd_file_t;
+mt_sd_result_t mt_sd_file_open(const char *path, const char *mode, mt_sd_file_t **file);
+mt_sd_result_t mt_sd_file_read(mt_sd_file_t *file, void *data, size_t capacity);
+mt_sd_result_t mt_sd_file_write(mt_sd_file_t *file, const void *data, size_t size);
+mt_sd_result_t mt_sd_file_seek(mt_sd_file_t *file, int64_t offset, int origin);
+int64_t mt_sd_file_tell(const mt_sd_file_t *file);
+int mt_sd_file_eof(const mt_sd_file_t *file); /* 0/1; -1 invalid handle */
+mt_sd_result_t mt_sd_file_close(mt_sd_file_t *file);
+mt_sd_result_t mt_sd_file_remove(const char *path);
+mt_sd_result_t mt_sd_file_rename(const char *old_path, const char *new_path);
 
 const char *mt_sd_status_name(mt_sd_status_t status);
 

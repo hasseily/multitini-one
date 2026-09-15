@@ -19,6 +19,15 @@ static const uint8_t journal_end_magic[8] = {
 
 static FATFS sd_file_system;
 static bool sd_mounted;
+#define MT_SD_OPEN_FILES 16U
+struct mt_sd_file {
+    FIL native;
+    char path[512];
+    uint64_t position;
+    BYTE access;
+    bool active, append, eof;
+};
+static mt_sd_file_t open_files[MT_SD_OPEN_FILES];
 
 static mt_sd_result_t result(mt_sd_status_t status, FRESULT backend_status,
                              size_t size)
@@ -433,6 +442,9 @@ mt_sd_result_t mt_sd_storage_journal_replace(const char *path,
 mt_sd_result_t mt_sd_storage_unmount(void)
 {
     FRESULT backend_status;
+    unsigned index;
+    for (index = 0U; index < MT_SD_OPEN_FILES; ++index)
+        if (open_files[index].active) return result(MT_SD_FILE_BUSY, FR_OK, 0U);
     if (!sd_mounted) return result(MT_SD_OK, FR_OK, 0U);
 
     backend_status = f_mount(NULL, MT_SD_VOLUME, 1U);
@@ -462,6 +474,184 @@ const char *mt_sd_status_name(mt_sd_status_t status)
     case MT_SD_DIR_READ_FAILED: return "directory read failed";
     case MT_SD_DIR_CLOSE_FAILED: return "directory close failed";
     case MT_SD_UNMOUNT_FAILED: return "unmount failed";
+    case MT_SD_SEEK_FAILED: return "seek failed";
+    case MT_SD_RENAME_FAILED: return "rename failed";
+    case MT_SD_FILE_BUSY: return "file busy";
+    case MT_SD_FILE_LIMIT: return "too many open files";
     }
     return "unknown";
+}
+
+static bool managed_file_valid(const mt_sd_file_t *file)
+{
+    unsigned index;
+    for (index = 0U; index < MT_SD_OPEN_FILES; ++index)
+        if (file == &open_files[index]) return file->active;
+    return false;
+}
+
+static bool file_path_busy(const char *path, bool writing)
+{
+    unsigned index;
+    for (index = 0U; index < MT_SD_OPEN_FILES; ++index)
+        if (open_files[index].active && paths_equal(path, open_files[index].path) &&
+            (writing || (open_files[index].access & FA_WRITE) != 0U)) return true;
+    return false;
+}
+
+mt_sd_result_t mt_sd_file_open(const char *path, const char *mode, mt_sd_file_t **file)
+{
+    BYTE flags;
+    bool binary = false, update = false;
+    size_t index;
+    mt_sd_result_t mounted;
+    FRESULT status;
+    if (file != NULL) *file = NULL;
+    if (file == NULL || path == NULL || path[0] == '\0' || strlen(path) >= 512U ||
+        mode == NULL || (mode[0] != 'r' && mode[0] != 'w' && mode[0] != 'a'))
+        return result(MT_SD_INVALID_ARGUMENT, FR_INVALID_PARAMETER, 0U);
+    for (index = 1U; mode[index] != '\0'; ++index) {
+        if (mode[index] == 'b' && !binary) binary = true;
+        else if (mode[index] == '+' && !update) update = true;
+        else return result(MT_SD_INVALID_ARGUMENT, FR_INVALID_PARAMETER, 0U);
+    }
+    flags = mode[0] == 'r' ? FA_READ : FA_WRITE;
+    if (update) flags = FA_READ | FA_WRITE;
+    if (file_path_busy(path, (flags & FA_WRITE) != 0U))
+        return result(MT_SD_FILE_BUSY, FR_OK, 0U);
+    for (index = 0U; index < MT_SD_OPEN_FILES && open_files[index].active; ++index) { }
+    if (index == MT_SD_OPEN_FILES) return result(MT_SD_FILE_LIMIT, FR_OK, 0U);
+    mounted = mt_sd_storage_mount();
+    if (mounted.status != MT_SD_OK) return mounted;
+    if (mode[0] == 'w') flags |= FA_CREATE_ALWAYS;
+    if (mode[0] == 'a') flags |= FA_OPEN_ALWAYS;
+    memset(&open_files[index], 0, sizeof(open_files[index]));
+    status = f_open(&open_files[index].native, path, flags);
+    if (status != FR_OK) return result(MT_SD_OPEN_FAILED, status, 0U);
+    open_files[index].active = true;
+    open_files[index].access = flags & (FA_READ | FA_WRITE);
+    open_files[index].append = mode[0] == 'a';
+    memcpy(open_files[index].path, path, strlen(path) + 1U);
+    /* a+ starts reading at zero; every write still seeks to the current end. */
+    if (mode[0] == 'a' && !update)
+        open_files[index].position = (uint64_t)f_size(&open_files[index].native);
+    *file = &open_files[index];
+    return result(MT_SD_OK, FR_OK, 0U);
+}
+
+mt_sd_result_t mt_sd_file_read(mt_sd_file_t *file, void *data, size_t capacity)
+{
+    size_t total = 0U;
+    FRESULT status;
+    if (!managed_file_valid(file) || (file->access & FA_READ) == 0U ||
+        (data == NULL && capacity != 0U))
+        return result(MT_SD_INVALID_ARGUMENT, FR_INVALID_PARAMETER, 0U);
+    if (capacity == 0U) return result(MT_SD_OK, FR_OK, 0U);
+    if (file->position >= (uint64_t)f_size(&file->native)) {
+        file->eof = true; return result(MT_SD_OK, FR_OK, 0U);
+    }
+    status = f_lseek(&file->native, (FSIZE_t)file->position);
+    if (status != FR_OK) return result(MT_SD_SEEK_FAILED, status, 0U);
+    while (total < capacity) {
+        const size_t remaining = capacity - total;
+        const UINT request = remaining > UINT_MAX ? UINT_MAX : (UINT)remaining;
+        UINT received = 0U;
+        status = f_read(&file->native, (uint8_t *)data + total, request, &received);
+        total += received; file->position += received;
+        if (status != FR_OK) return result(MT_SD_READ_FAILED, status, total);
+        if (received != request) { file->eof = true; break; }
+    }
+    return result(MT_SD_OK, FR_OK, total);
+}
+
+mt_sd_result_t mt_sd_file_write(mt_sd_file_t *file, const void *data, size_t size)
+{
+    mt_sd_result_t written;
+    FRESULT status;
+    uint64_t end;
+    const uint64_t native_limit = (uint64_t)(FSIZE_t)-1;
+    static const uint8_t zeroes[512] = {0U};
+    if (!managed_file_valid(file) || (file->access & FA_WRITE) == 0U ||
+        (data == NULL && size != 0U))
+        return result(MT_SD_INVALID_ARGUMENT, FR_INVALID_PARAMETER, 0U);
+    if (size == 0U) return result(MT_SD_OK, FR_OK, 0U);
+    end = (uint64_t)f_size(&file->native);
+    if (file->append) file->position = end;
+    if (file->position > INT64_MAX || size > INT64_MAX - file->position ||
+        size > native_limit || file->position > native_limit - size)
+        return result(MT_SD_TOO_LARGE, FR_INVALID_PARAMETER, 0U);
+    /* Seek itself never changes length. Materialize a zero-filled gap only
+     * when a later write goes beyond EOF, matching ordinary file semantics. */
+    status = f_lseek(&file->native, (FSIZE_t)(file->position > end ? end : file->position));
+    if (status != FR_OK) return result(MT_SD_SEEK_FAILED, status, 0U);
+    while (end < file->position) {
+        const size_t gap = file->position - end > sizeof(zeroes) ?
+            sizeof(zeroes) : (size_t)(file->position - end);
+        written = write_open_file(&file->native, zeroes, gap);
+        if (written.status != MT_SD_OK) return result(written.status, (FRESULT)written.backend_status, 0U);
+        end += gap;
+    }
+    written = write_open_file(&file->native, data, size);
+    file->position += written.size;
+    if (written.status != MT_SD_OK) return written;
+    status = f_sync(&file->native);
+    return status == FR_OK ? written : result(MT_SD_SYNC_FAILED, status, written.size);
+}
+
+mt_sd_result_t mt_sd_file_seek(mt_sd_file_t *file, int64_t offset, int origin)
+{
+    uint64_t base, position;
+    if (!managed_file_valid(file) || origin < 0 || origin > 2)
+        return result(MT_SD_INVALID_ARGUMENT, FR_INVALID_PARAMETER, 0U);
+    base = origin == 0 ? 0U : (origin == 1 ? file->position : (uint64_t)f_size(&file->native));
+    if (base > INT64_MAX || (offset >= 0 && (uint64_t)offset > INT64_MAX - base) ||
+        (offset < 0 && (uint64_t)(-(offset + 1)) + 1U > base))
+        return result(MT_SD_SEEK_FAILED, FR_INVALID_PARAMETER, 0U);
+    position = offset >= 0 ? base + (uint64_t)offset : base - ((uint64_t)(-(offset + 1)) + 1U);
+    if ((uint64_t)(FSIZE_t)position != position)
+        return result(MT_SD_SEEK_FAILED, FR_INVALID_PARAMETER, 0U);
+    file->position = position; file->eof = false;
+    return result(MT_SD_OK, FR_OK, 0U);
+}
+
+int64_t mt_sd_file_tell(const mt_sd_file_t *file)
+{ return managed_file_valid(file) ? (int64_t)file->position : -1; }
+int mt_sd_file_eof(const mt_sd_file_t *file)
+{ return managed_file_valid(file) ? (file->eof ? 1 : 0) : -1; }
+
+mt_sd_result_t mt_sd_file_close(mt_sd_file_t *file)
+{
+    FRESULT status, synced = FR_OK;
+    if (!managed_file_valid(file)) return result(MT_SD_INVALID_ARGUMENT, FR_INVALID_PARAMETER, 0U);
+    if ((file->access & FA_WRITE) != 0U) synced = f_sync(&file->native);
+    status = f_close(&file->native);
+    if (status == FR_OK) file->active = false;
+    if (synced != FR_OK) return result(MT_SD_SYNC_FAILED, synced, 0U);
+    return result(status == FR_OK ? MT_SD_OK : MT_SD_CLOSE_FAILED, status, 0U);
+}
+
+mt_sd_result_t mt_sd_file_remove(const char *path)
+{
+    FRESULT status;
+    mt_sd_result_t mounted;
+    if (path == NULL || path[0] == '\0') return result(MT_SD_INVALID_ARGUMENT, FR_INVALID_PARAMETER, 0U);
+    if (file_path_busy(path, true)) return result(MT_SD_FILE_BUSY, FR_OK, 0U);
+    mounted = mt_sd_storage_mount();
+    if (mounted.status != MT_SD_OK) return mounted;
+    status = f_unlink(path);
+    return result(status == FR_OK ? MT_SD_OK : MT_SD_UNLINK_FAILED, status, 0U);
+}
+
+mt_sd_result_t mt_sd_file_rename(const char *old_path, const char *new_path)
+{
+    FRESULT status;
+    mt_sd_result_t mounted;
+    if (old_path == NULL || new_path == NULL || old_path[0] == '\0' || new_path[0] == '\0')
+        return result(MT_SD_INVALID_ARGUMENT, FR_INVALID_PARAMETER, 0U);
+    if (file_path_busy(old_path, true) || file_path_busy(new_path, true))
+        return result(MT_SD_FILE_BUSY, FR_OK, 0U);
+    mounted = mt_sd_storage_mount();
+    if (mounted.status != MT_SD_OK) return mounted;
+    status = f_rename(old_path, new_path);
+    return result(status == FR_OK ? MT_SD_OK : MT_SD_RENAME_FAILED, status, 0U);
 }

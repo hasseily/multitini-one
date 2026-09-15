@@ -1,0 +1,4 @@
+path,source_commit,source_path,license,notice
+third_party/vectrex32/e6809/e6809.c,9b2894cacf73bdacaba32cb505289c658d981fd9,e6809.c,GPL-3.0-only,Repository LICENSE.md; original CPU author Valavan Manohararajah; duplicate static portability fix and defined invalid indexed-address result
+third_party/vectrex32/e6809/e6809.h,9b2894cacf73bdacaba32cb505289c658d981fd9,e6809.h,GPL-3.0-only,Repository LICENSE.md; unmodified header
+third_party/vectrex32/e6809/LICENSE.md,9b2894cacf73bdacaba32cb505289c658d981fd9,LICENSE.md,GPL-3.0-only,Verbatim upstream repository license

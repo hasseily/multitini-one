@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "sd_storage.h"
+#include "supervisor_settings.h"
 
 #include <assert.h>
 #include <stddef.h>
@@ -16,6 +17,8 @@ static FRESULT write_status;
 static FRESULT sync_status;
 static FRESULT close_status;
 static FRESULT unlink_status;
+static FRESULT seek_status;
+static FRESULT rename_status;
 static FRESULT dir_open_status;
 static FRESULT dir_read_status;
 static FRESULT dir_close_status;
@@ -37,9 +40,9 @@ static unsigned sync_failure_call;
 static unsigned close_failure_call;
 static bool target_exists;
 static bool journal_exists;
-static uint8_t target_data[256];
+static uint8_t target_data[MT_SETTINGS_WIRE_SIZE];
 static size_t target_size;
-static uint8_t journal_data[512];
+static uint8_t journal_data[MT_SETTINGS_WIRE_SIZE + 40U];
 static size_t journal_size;
 static unsigned dir_entry_count;
 static const char *dir_names[3];
@@ -51,8 +54,8 @@ static BYTE dir_attributes[3];
 
 static unsigned path_kind(const char *path)
 {
-    if (strcmp(path, JOURNAL_TARGET) == 0) return 1U;
-    if (strcmp(path, JOURNAL_PATH) == 0) return 2U;
+    if (strcmp(path, JOURNAL_TARGET) == 0 || strcmp(path, MT_SETTINGS_PATH) == 0) return 1U;
+    if (strcmp(path, JOURNAL_PATH) == 0 || strcmp(path, MT_SETTINGS_JOURNAL_PATH) == 0) return 2U;
     return 0U;
 }
 
@@ -77,7 +80,7 @@ FRESULT f_open(FIL *file, const char *path, BYTE mode)
     file->kind = path_kind(path);
     file->mode = mode;
     if (open_status != FR_OK) return open_status;
-    if (mode == (FA_WRITE | FA_CREATE_ALWAYS)) {
+    if ((mode & FA_CREATE_ALWAYS) != 0U) {
         assert(file->kind != 0U);
         if (file->kind == 1U) {
             target_exists = true;
@@ -87,9 +90,14 @@ FRESULT f_open(FIL *file, const char *path, BYTE mode)
             journal_size = 0U;
         }
     } else {
-        assert(mode == FA_READ);
-        if (file->kind == 1U && !target_exists) return FR_NO_FILE;
-        if (file->kind == 2U && !journal_exists) return FR_NO_FILE;
+        if (file->kind == 1U && !target_exists) {
+            if ((mode & FA_OPEN_ALWAYS) == 0U) return FR_NO_FILE;
+            target_exists = true; target_size = 0U;
+        }
+        if (file->kind == 2U && !journal_exists) {
+            if ((mode & FA_OPEN_ALWAYS) == 0U) return FR_NO_FILE;
+            journal_exists = true; journal_size = 0U;
+        }
     }
     return FR_OK;
 }
@@ -115,6 +123,8 @@ FRESULT f_read(FIL *file, void *buffer, UINT bytes_to_read,
         return read_status;
     }
     if (short_read && delivered != 0U) --delivered;
+    if ((FSIZE_t)delivered > f_size(file) - file->placeholder)
+        delivered = (UINT)(f_size(file) - file->placeholder);
     if (file->kind == 1U) {
         assert(file->placeholder + delivered <= target_size);
         memcpy(buffer, target_data + file->placeholder, delivered);
@@ -145,14 +155,14 @@ FRESULT f_write(FIL *file, const void *buffer, UINT bytes_to_write,
     if ((short_write || write_failure_call == write_calls) && delivered != 0U)
         --delivered;
     if (file->kind == 1U) {
-        assert(target_size + delivered <= sizeof(target_data));
-        memcpy(target_data + target_size, buffer, delivered);
-        target_size += delivered;
+        assert(file->placeholder + delivered <= sizeof(target_data));
+        memcpy(target_data + file->placeholder, buffer, delivered);
+        if (file->placeholder + delivered > target_size) target_size = file->placeholder + delivered;
     } else {
         assert(file->kind == 2U);
-        assert(journal_size + delivered <= sizeof(journal_data));
-        memcpy(journal_data + journal_size, buffer, delivered);
-        journal_size += delivered;
+        assert(file->placeholder + delivered <= sizeof(journal_data));
+        memcpy(journal_data + file->placeholder, buffer, delivered);
+        if (file->placeholder + delivered > journal_size) journal_size = file->placeholder + delivered;
     }
     file->placeholder += delivered;
     *bytes_written = delivered;
@@ -182,10 +192,33 @@ FRESULT f_unlink(const char *path)
     assert(path != NULL);
     ++unlink_calls;
     if (unlink_status != FR_OK) return unlink_status;
-    assert(strcmp(path, JOURNAL_PATH) == 0);
+    if (path_kind(path) == 1U) {
+        if (!target_exists) return FR_NO_FILE;
+        target_exists = false; target_size = 0U; return FR_OK;
+    }
+    assert(path_kind(path) == 2U);
     if (!journal_exists) return FR_NO_FILE;
     journal_exists = false;
     journal_size = 0U;
+    return FR_OK;
+}
+
+FRESULT f_lseek(FIL *file, FSIZE_t offset)
+{
+    if (seek_status != FR_OK) return seek_status;
+    assert(offset <= f_size(file));
+    file->placeholder = (unsigned)offset;
+    return FR_OK;
+}
+
+FRESULT f_rename(const char *old_path, const char *new_path)
+{
+    if (rename_status != FR_OK) return rename_status;
+    assert(strcmp(old_path, JOURNAL_TARGET) == 0 && strcmp(new_path, JOURNAL_PATH) == 0);
+    if (!target_exists) return FR_NO_FILE;
+    if (journal_exists) return FR_EXIST;
+    memcpy(journal_data, target_data, target_size); journal_size = target_size;
+    target_exists = false; target_size = 0U; journal_exists = true;
     return FR_OK;
 }
 
@@ -232,6 +265,8 @@ static void reset_fake(void)
     sync_status = FR_OK;
     close_status = FR_OK;
     unlink_status = FR_OK;
+    seek_status = FR_OK;
+    rename_status = FR_OK;
     dir_open_status = FR_OK;
     dir_read_status = FR_OK;
     dir_close_status = FR_OK;
@@ -275,6 +310,208 @@ static int collect_entry(void *context, const char *name, size_t size,
     list->total_size += size;
     list->saw_directory = list->saw_directory || is_directory;
     return list->stop_after != 0U && list->count == list->stop_after;
+}
+
+static void test_managed_files(void)
+{
+    mt_sd_file_t *file, *other, *files[16];
+    mt_sd_result_t value;
+    uint8_t data[16];
+    const char *modes[] = {"r", "rb", "r+", "rb+", "r+b", "w", "wb", "w+", "wb+", "w+b",
+        "a", "ab", "a+", "ab+", "a+b"};
+    unsigned index;
+    reset_fake();
+    assert(mt_sd_file_open(JOURNAL_TARGET, "rb", &file).status == MT_SD_OK);
+    assert(mt_sd_file_tell(file) == 0 && mt_sd_file_eof(file) == 0);
+    assert(mt_sd_file_write(file, "x", 1U).status == MT_SD_INVALID_ARGUMENT);
+    value = mt_sd_file_read(file, data, 1U);
+    assert(value.status == MT_SD_OK && value.size == 1U && data[0] == 0xa5U);
+    assert(mt_sd_file_tell(file) == 1 && mt_sd_file_eof(file) == 0);
+    assert(mt_sd_file_read(file, data, 1U).size == 0U && mt_sd_file_eof(file) == 1);
+    assert(mt_sd_file_seek(file, 0, 0).status == MT_SD_OK && mt_sd_file_eof(file) == 0);
+    assert(mt_sd_file_seek(file, -1, 0).status == MT_SD_SEEK_FAILED);
+    assert(mt_sd_file_seek(file, INT64_MIN, 1).status == MT_SD_SEEK_FAILED);
+    assert(mt_sd_file_seek(file, 0, 3).status == MT_SD_INVALID_ARGUMENT);
+    assert(mt_sd_file_open(JOURNAL_TARGET, "w", &other).status == MT_SD_FILE_BUSY);
+    assert(mt_sd_file_remove(JOURNAL_TARGET).status == MT_SD_FILE_BUSY);
+    assert(mt_sd_file_rename(JOURNAL_TARGET, JOURNAL_PATH).status == MT_SD_FILE_BUSY);
+    assert(mt_sd_storage_unmount().status == MT_SD_FILE_BUSY);
+    assert(mt_sd_file_close(file).status == MT_SD_OK);
+    assert(mt_sd_file_eof(file) == -1 && mt_sd_file_tell(file) == -1);
+    assert(mt_sd_file_close(file).status == MT_SD_INVALID_ARGUMENT);
+    for (index = 0U; index < sizeof(modes) / sizeof(modes[0]); ++index) {
+        assert(mt_sd_file_open(JOURNAL_TARGET, modes[index], &file).status == MT_SD_OK);
+        assert(mt_sd_file_close(file).status == MT_SD_OK);
+    }
+    assert(mt_sd_file_open(JOURNAL_TARGET, "rbb", &file).status == MT_SD_INVALID_ARGUMENT);
+    assert(mt_sd_file_open(JOURNAL_TARGET, "r++", &file).status == MT_SD_INVALID_ARGUMENT);
+    assert(mt_sd_file_open(JOURNAL_TARGET, "x", &file).status == MT_SD_INVALID_ARGUMENT);
+    assert(mt_sd_file_open(JOURNAL_TARGET, "", &file).status == MT_SD_INVALID_ARGUMENT);
+    assert(mt_sd_file_open(JOURNAL_TARGET, "wb+", &file).status == MT_SD_OK && target_size == 0U);
+    value = mt_sd_file_write(file, "abc", 3U);
+    assert(value.status == MT_SD_OK && value.size == 3U && target_size == 3U);
+    assert(mt_sd_file_seek(file, -2, 1).status == MT_SD_OK && mt_sd_file_tell(file) == 1);
+    assert(mt_sd_file_write(file, "Z", 1U).status == MT_SD_OK);
+    assert(memcmp(target_data, "aZc", 3U) == 0);
+    assert(mt_sd_file_seek(file, 2, 2).status == MT_SD_OK && mt_sd_file_tell(file) == 5);
+    assert(target_size == 3U); /* Seek cannot extend a file. */
+    assert(mt_sd_file_write(file, "!", 1U).status == MT_SD_OK);
+    assert(target_size == 6U && target_data[3] == 0 && target_data[4] == 0 && target_data[5] == '!');
+    assert(mt_sd_file_seek(file, 0, 0).status == MT_SD_OK);
+    value = mt_sd_file_read(file, data, sizeof(data));
+    assert(value.status == MT_SD_OK && value.size == 6U && mt_sd_file_eof(file) == 1);
+    assert(mt_sd_file_close(file).status == MT_SD_OK);
+    assert(mt_sd_file_open(JOURNAL_TARGET, "a+", &file).status == MT_SD_OK && mt_sd_file_tell(file) == 0);
+    assert(mt_sd_file_write(file, "?", 1U).status == MT_SD_OK && mt_sd_file_tell(file) == 7);
+    assert(target_data[6] == '?' && mt_sd_file_seek(file, 0, 0).status == MT_SD_OK);
+    assert(mt_sd_file_read(file, data, 1U).size == 1U && data[0] == 'a');
+    assert(mt_sd_file_write(file, "$", 1U).status == MT_SD_OK && target_data[7] == '$');
+    assert(mt_sd_file_close(file).status == MT_SD_OK);
+    assert(mt_sd_file_rename(JOURNAL_TARGET, JOURNAL_PATH).status == MT_SD_OK && !target_exists && journal_exists);
+    assert(mt_sd_file_remove(JOURNAL_PATH).status == MT_SD_OK && !journal_exists);
+    assert(mt_sd_file_open(JOURNAL_TARGET, "r+", &file).status == MT_SD_OPEN_FAILED);
+    assert(mt_sd_file_open(JOURNAL_TARGET, "ab", &file).status == MT_SD_OK && target_exists);
+    short_write = true;
+    assert(mt_sd_file_write(file, "abc", 3U).status == MT_SD_WRITE_FAILED);
+    short_write = false; sync_status = FR_DISK_ERR;
+    assert(mt_sd_file_write(file, "q", 1U).status == MT_SD_SYNC_FAILED);
+    sync_status = FR_OK; close_status = FR_DISK_ERR;
+    assert(mt_sd_file_close(file).status == MT_SD_CLOSE_FAILED);
+    close_status = FR_OK;
+    assert(mt_sd_file_close(file).status == MT_SD_OK);
+    assert(mt_sd_file_open(JOURNAL_TARGET, "rb", &file).status == MT_SD_OK);
+    seek_status = FR_DISK_ERR;
+    assert(mt_sd_file_read(file, data, 1U).status == MT_SD_SEEK_FAILED);
+    seek_status = FR_OK; read_status = FR_DISK_ERR;
+    assert(mt_sd_file_read(file, data, 1U).status == MT_SD_READ_FAILED);
+    read_status = FR_OK;
+    assert(mt_sd_file_close(file).status == MT_SD_OK);
+    rename_status = FR_DISK_ERR;
+    assert(mt_sd_file_rename(JOURNAL_TARGET, JOURNAL_PATH).status == MT_SD_RENAME_FAILED);
+    rename_status = FR_OK; unlink_status = FR_DISK_ERR;
+    assert(mt_sd_file_remove(JOURNAL_TARGET).status == MT_SD_UNLINK_FAILED);
+    unlink_status = FR_OK;
+    for (index = 0U; index < 16U; ++index)
+        assert(mt_sd_file_open(JOURNAL_TARGET, "rb", &files[index]).status == MT_SD_OK);
+    assert(mt_sd_file_open(JOURNAL_TARGET, "rb", &file).status == MT_SD_FILE_LIMIT);
+    for (index = 0U; index < 16U; ++index) assert(mt_sd_file_close(files[index]).status == MT_SD_OK);
+    assert(mt_sd_storage_unmount().status == MT_SD_OK);
+}
+
+static void settings_store_u32(uint8_t *data, uint32_t value)
+{
+    data[0] = (uint8_t)value;
+    data[1] = (uint8_t)(value >> 8U);
+    data[2] = (uint8_t)(value >> 16U);
+    data[3] = (uint8_t)(value >> 24U);
+}
+
+static uint32_t settings_crc32(const uint8_t *data, size_t size)
+{
+    uint32_t crc = UINT32_C(0xFFFFFFFF);
+    size_t index;
+    for (index = 0U; index < size; ++index) {
+        unsigned bit;
+        crc ^= data[index];
+        for (bit = 0U; bit < 8U; ++bit)
+            crc = (crc >> 1U) ^ (UINT32_C(0xEDB88320) & (0U - (crc & 1U)));
+    }
+    return ~crc;
+}
+
+static void test_settings_journal_migration(void)
+{
+    mt_supervisor_settings_t original;
+    mt_supervisor_settings_t expected;
+    mt_supervisor_settings_t loaded;
+    uint8_t current_wire[MT_SETTINGS_WIRE_SIZE];
+    uint8_t wire[MT_SETTINGS_WIRE_SIZE];
+    uint32_t schema;
+    size_t index;
+
+    reset_fake();
+    mt_supervisor_settings_defaults(&original);
+    assert(mt_supervisor_settings_remember_core(&original, "c64", "pal"));
+    assert(mt_supervisor_settings_remember_c64_input(&original, "c64", false, 1U));
+    assert(mt_supervisor_settings_remember_c64_fast_roms(&original, "c64", true));
+    assert(mt_supervisor_settings_remember_c64_cpu_turbo(&original, "c64", true));
+    assert(mt_supervisor_settings_remember_drive8(&original, "c64", "Writable Demo.d64"));
+    assert(mt_supervisor_settings_remember_cartridge(&original, "c64", "Fast Load.crt"));
+    assert(mt_supervisor_settings_remember_borders(&original, "c64", true, 4U, 15U, 20U));
+    assert(mt_supervisor_settings_remember_core(&original, "gbc", "color"));
+    assert(mt_supervisor_settings_remember_cartridge(&original, "gbc", "Yars' Revenge.gbc"));
+    assert(mt_supervisor_settings_remember_core(&original, "vectrex", "native"));
+    assert(mt_supervisor_settings_remember_cartridge(&original, "vectrex",
+        "Classics/Arcade Games/Star Castle.vec"));
+    assert(mt_supervisor_settings_remember_borders(&original, "vectrex", true, 2U, 9U, 3U));
+    original.auto_boot = true;
+    assert(mt_supervisor_settings_save(&original).status == MT_SETTINGS_OK);
+    assert(target_size == MT_SETTINGS_WIRE_SIZE && !journal_exists);
+    memcpy(current_wire, target_data, sizeof(current_wire));
+    for (schema = 1U; schema <= 3U; ++schema) {
+        const size_t wire_size = schema == 3U ? MT_SETTINGS_WIRE_SIZE : 3960U;
+        unsigned fault;
+        memcpy(wire, current_wire, sizeof(wire));
+        expected = original;
+        if (schema != 3U) {
+            uint32_t crc;
+            for (index = 0U; index < MT_SETTINGS_MAX_PROFILES; ++index) {
+                memcpy(wire + 56U + index * 244U,
+                       current_wire + 56U + index * 248U, 244U);
+            }
+            settings_store_u32(wire + 8U, schema);
+            settings_store_u32(wire + 12U, (uint32_t)wire_size);
+            crc = settings_crc32(wire + 24U, wire_size - 24U);
+            settings_store_u32(wire + 16U, crc);
+            settings_store_u32(wire + 20U, ~crc);
+            for (index = 0U; index < expected.profile_count; ++index) {
+                expected.profiles[index].border_enabled = false;
+                expected.profiles[index].border_style = 0U;
+                expected.profiles[index].border_color = 7U;
+                expected.profiles[index].border_padding = 6U;
+            }
+            expected.profiles[0].c64_fast_roms = schema == 2U;
+        }
+        /* Real storage optional/exact readers must accept each on-card length
+         * without writing anything when there is no outstanding journal. */
+        reset_fake();
+        memcpy(target_data, wire, wire_size);
+        target_size = wire_size;
+        assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
+        assert(memcmp(&loaded, &expected, sizeof(loaded)) == 0);
+        assert(write_calls == 0U && sync_calls == 0U && unlink_calls == 0U);
+        for (fault = 0U; fault < 3U; ++fault) {
+            mt_sd_result_t replacement;
+            reset_fake();
+            if (fault == 0U) write_failure_call = 4U; /* Target write interrupted. */
+            if (fault == 1U) sync_failure_call = 2U; /* Target sync failed. */
+            if (fault == 2U) unlink_status = FR_DISK_ERR; /* Journal still present. */
+            replacement = mt_sd_storage_journal_replace(
+                MT_SETTINGS_PATH, MT_SETTINGS_JOURNAL_PATH, wire, wire_size);
+            assert(replacement.status != MT_SD_OK && journal_exists);
+            write_failure_call = 0U;
+            sync_failure_call = 0U;
+            unlink_status = FR_OK;
+            assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
+            assert(!journal_exists && target_size == wire_size);
+            assert(memcmp(target_data, wire, wire_size) == 0);
+            assert(memcmp(&loaded, &expected, sizeof(loaded)) == 0);
+            /* Saving a migrated file always writes the complete new format. */
+            assert(mt_supervisor_settings_save(&loaded).status == MT_SETTINGS_OK);
+            assert(target_size == MT_SETTINGS_WIRE_SIZE && target_data[8U] == 3U);
+            assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
+            assert(memcmp(&loaded, &expected, sizeof(loaded)) == 0);
+        }
+        reset_fake();
+        write_failure_call = 4U;
+        assert(mt_sd_storage_journal_replace(MT_SETTINGS_PATH, MT_SETTINGS_JOURNAL_PATH,
+            wire, wire_size).status == MT_SD_WRITE_FAILED);
+        write_failure_call = 0U;
+        journal_data[24U + 100U] ^= 1U;
+        assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_RECOVERY_FAILED);
+        assert(loaded.profile_count == 0U && !loaded.auto_boot);
+        assert(journal_exists && target_size == 0U);
+    }
 }
 
 int main(void)
@@ -476,5 +713,7 @@ int main(void)
     assert(strcmp(mt_sd_status_name(MT_SD_JOURNAL_INVALID),
                   "journal invalid") == 0);
     assert(strcmp(mt_sd_status_name((mt_sd_status_t)99), "unknown") == 0);
+    test_managed_files();
+    test_settings_journal_migration();
     return 0;
 }

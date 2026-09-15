@@ -600,6 +600,16 @@ On hardware:
 
 ### Decisions recorded after the baseline plan
 
+- 2026-09-15: The owner reported successful physical testing of the VEC3
+  Vectrex/video update and requested commit and push. Border controls live in
+  Video; off-screen borders clip without shrinking the original game image.
+  Integer-size controls were removed. See `docs/VIDEO_TEST_BUILD.md` for the
+  tested bundle identity and the scope of the owner report.
+- 2026-09-14: The owner requested branch `vectrex`, a fresh Vectrex machine layer
+  reusing existing chip implementations (including Appletini ONE's VIA/PSG),
+  and Vectrex32 support. Named acceptance includes well-known Vectrex games and
+  the owner's Vecalabeth. Follow `docs/VECTREX_PLAN.md`; source/build results
+  remain separate from actual gameplay and board acceptance.
 - 2026-09-14: The owner accepts the current GBC functional baseline, including
   tested saves. The second-core reuse milestone is complete for that scope.
   Preserve PSRAM-enabled GBC `20260913` in the current package. Broader mapper,

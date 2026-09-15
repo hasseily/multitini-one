@@ -103,6 +103,11 @@ module multitini_one_top #(
     logic c64_aresetn;
     logic shell_irq;
     logic [31:0] shell_control;
+    logic [31:0] border_config;
+    logic [12:0] frame_border_config;
+    logic [11:0] viewport_x, viewport_y, viewport_width, viewport_height;
+    logic border_pixel_opaque;
+    logic [15:0] border_pixel_rgb565;
 
     logic [31:0] m_axi_araddr;
     logic [1:0]  m_axi_arburst;
@@ -436,6 +441,7 @@ module multitini_one_top #(
         .wr_strb(reg_wr_strb), .rd_en(control_rd_en),
         .rd_addr(reg_rd_addr[11:0]),
         .rd_data(control_rd_data), .control(shell_control),
+        .border_config(border_config),
         .load_submit(load_submit), .load_kind(load_kind),
         .load_data(load_data), .load_offset(load_offset),
         .load_total(load_total), .load_first(load_first),
@@ -862,6 +868,8 @@ module multitini_one_top #(
                 .diagnostic_request(video_enable),
                 .scan_x(video_scan_x), .scan_y(video_scan_y),
                 .vblank_start(video_vblank_start),
+                .viewport_x(viewport_x), .viewport_y(viewport_y),
+                .viewport_width(viewport_width), .viewport_height(viewport_height),
                 .machine_active(machine_video_active),
                 .machine_rgb565(machine_video_rgb565)
             );
@@ -951,6 +959,8 @@ module multitini_one_top #(
                 .diagnostic_request(video_enable),
                 .scan_x(video_scan_x), .scan_y(video_scan_y),
                 .vblank_start(video_vblank_start),
+                .viewport_x(viewport_x), .viewport_y(viewport_y),
+                .viewport_width(viewport_width), .viewport_height(viewport_height),
                 .machine_active(machine_video_active),
                 .machine_rgb565(machine_video_rgb565)
             );
@@ -984,10 +994,73 @@ module multitini_one_top #(
                 assign psram_ce_n = 1'b1;
                 assign psram_clk  = 1'b0;
             end
+        end else if (ACTIVE_MACHINE == 3) begin : g_vectrex_machine
+            wire [18:0] pixel_address;
+            wire [7:0] pixel_intensity;
+            wire bios_loaded, cart_loaded;
+            wire [31:0] drawn_lines, overflow_count;
+            multitini_vectrex_machine machine_adapter (
+                .clk(c64_clk),.reset(!c64_aresetn),
+                .core_reset_request(c64_core_reset_request),.pause_request(core_menu_pause),
+                .clear_load_error(c64_load_error_clear),
+                .input_code(c64_input_code),.input_value(c64_input_value),
+                .input_valid(c64_input_valid),.input_ready(c64_input_ready),
+                .load_data(c64_load_data),.load_kind(c64_load_kind),
+                .load_valid(c64_load_valid),.load_ready(c64_load_ready),
+                .load_first(c64_load_first),.load_last(c64_load_last),
+                .load_offset(c64_load_offset),.load_total(c64_load_total),
+                .load_abort(c64_load_abort),.load_abort_epoch(c64_load_abort_epoch),
+                .load_epoch(c64_load_epoch),
+                .ready(c64_ready),.core_id(c64_core_id),.load_error(c64_load_error),
+                .bios_loaded(bios_loaded),.cart_loaded(cart_loaded),
+                .audio_l(c64_audio_l),.audio_r(c64_audio_r),.audio_valid(c64_audio_valid),
+                .pixel_clk(video_clk),.pixel_address(pixel_address),
+                .pixel_intensity(pixel_intensity),.drawn_lines(drawn_lines),
+                .overflow_count(overflow_count),
+                .debug_cpu_address(),.debug_cpu_read(),.debug_cpu_write(),.debug_cpu_data(),
+                .debug_beam_x(),.debug_beam_y(),.debug_beam_valid(),
+                .debug_beam_intensity(),.debug_beam_blank()
+            );
+            multitini_vectrex_video_bridge video_bridge (
+                .pixel_clk(video_clk),.pixel_resetn(video_aresetn),.source_ready(c64_ready),
+                .scan_x(video_scan_x),.scan_y(video_scan_y),.vblank_start(video_vblank_start),
+                .pixel_address(pixel_address),.pixel_intensity(pixel_intensity),
+                .viewport_x(viewport_x), .viewport_y(viewport_y),
+                .viewport_width(viewport_width), .viewport_height(viewport_height),
+                .machine_active(machine_video_active),.machine_rgb565(machine_video_rgb565)
+            );
+            assign c64_rom_loaded={1'b0,cart_loaded,bios_loaded};
+            assign c64_cart_loaded=cart_loaded;
+            assign c64_prg_loaded=1'b0;
+            assign c64_cart_hardware_type=8'd0;
+            assign c64_prg_run_busy=1'b0;
+            assign c64_video_r=8'd0; assign c64_video_g=8'd0; assign c64_video_b=8'd0;
+            assign c64_video_de=1'b0;assign c64_video_hsync=1'b0;
+            assign c64_video_vsync=1'b0;assign c64_video_valid=1'b0;
+            assign c64_media_request_valid=1'b0;assign c64_media_request_write=1'b0;
+            assign c64_media_request_id=32'd0;assign c64_media_request_lba=32'd0;
+            assign c64_media_request_block_count=16'd0;assign c64_media_request_generation=32'd0;
+            assign c64_media_write_data=8'd0;assign c64_media_write_data_valid=1'b0;
+            assign c64_media_write_data_last=1'b0;assign c64_media_state_mounted=1'b0;
+            assign c64_media_state_dirty=1'b0;assign c64_media_state_eject_pending=1'b0;
+            assign c64_memory_addr=24'd0;assign c64_memory_write=1'b0;
+            assign c64_memory_wdata=64'd0;assign c64_memory_wstrb=8'd0;
+            assign c64_memory_valid=1'b0;assign c64_memory_ready=1'b0;
+            assign c64_memory_rdata=64'd0;assign c64_memory_rvalid=1'b0;
+            assign c64_memory_fault=1'b0;
+            assign gbc_cart_size=32'd0;assign gbc_cart_loaded=1'b0;
+            assign gbc_memory_addr=24'd0;assign gbc_memory_write=1'b0;
+            assign gbc_memory_wdata=64'd0;assign gbc_memory_wstrb=8'd0;
+            assign gbc_memory_valid=1'b0;assign gbc_memory_ready=1'b0;
+            assign gbc_memory_rdata=64'd0;assign gbc_memory_rvalid=1'b0;
+            assign gbc_memory_fault=1'b0;
+            assign psram_a_io=4'hz;assign psram_b_io=4'hz;
+            assign psram_ce_n=1'b1;assign psram_clk=1'b0;
         end else begin : g_supervisor_shell
             // The boot shell owns the shared control/UI/video plumbing but
             // deliberately contains no machine. Every core is loaded from an
             // SD package by the supervisor firmware.
+            assign viewport_x=0, viewport_y=0, viewport_width=0, viewport_height=0;
             assign c64_core_id = 32'd0;
             assign c64_ready = 1'b0;
             assign c64_load_error = 1'b0;
@@ -1076,10 +1149,25 @@ module multitini_one_top #(
         .pixel_opaque(ui_pixel_opaque), .pixel_rgb565(ui_pixel_rgb565)
     );
 
+    multitini_border_config border_settings (
+        .control_clk(control_clk), .control_resetn(control_aresetn),
+        .requested_config(border_config),
+        .pixel_clk(video_clk), .pixel_resetn(video_aresetn),
+        .vblank_start(video_vblank_start), .frame_config(frame_border_config)
+    );
+    multitini_border_overlay border_overlay (
+        .pixel_clk(video_clk), .resetn(video_aresetn),
+        .scan_x(video_scan_x), .scan_y(video_scan_y),
+        .frame_config(frame_border_config),
+        .viewport_x(viewport_x), .viewport_y(viewport_y),
+        .viewport_width(viewport_width), .viewport_height(viewport_height),
+        .pixel_opaque(border_pixel_opaque), .pixel_rgb565(border_pixel_rgb565)
+    );
     multitini_video_test video_test (
         .pixel_clk(video_clk), .resetn(video_aresetn), .enable(video_enable),
         .machine_enable(machine_video_active),
         .machine_rgb565(machine_video_rgb565),
+        .border_opaque(border_pixel_opaque), .border_rgb565(border_pixel_rgb565),
         .ui_opaque(ui_pixel_opaque), .ui_rgb565(ui_pixel_rgb565),
         .scan_x(video_scan_x), .scan_y(video_scan_y),
         .vblank_start(video_vblank_start),

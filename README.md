@@ -53,6 +53,15 @@ explicit direct-RAM shortcut for eligible BASIC programs.
 
 ## Documentation
 
+- [Video settings](docs/VIDEO_SETTINGS.md): per-core optional borders,
+  muted colors, padding, and the ABI 0.12 update requirements.
+- [Vectrex plan](docs/VECTREX_PLAN.md), [game tests](docs/VECTREX_GAME_TESTS.md),
+  [test bundle](docs/VECTREX_TEST_BUILD.md), and
+  [acceptance record](docs/VECTREX_ACCEPTANCE.md):
+  the `vectrex` development branch adds a fresh FPGA machine and ARM GS BASIC
+  runtime for Vectrex32. The owner accepted the
+  [VEC3 video update](docs/VIDEO_TEST_BUILD.md) after physical testing on
+  2026-09-15; detailed game qualification remains separately recorded.
 - [Handoff status](docs/HANDOFF_STATUS.md): current build, validation, and
   remaining limits.
 - [Shared front end](docs/SHARED_FRONTEND.md): board-tested firmware `20260920`,
@@ -77,7 +86,7 @@ the board shell is built from scripts rather than a checked-in vendor project.
 
 ## Build and check
 
-Portable checks require Python 3, CMake, a C compiler, Tclsh, Icarus Verilog
+Portable checks require Python 3, CMake, C and C++17 compilers, Tclsh, Icarus Verilog
 13 or later, and Verilator 5:
 
 ```sh

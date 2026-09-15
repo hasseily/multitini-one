@@ -33,6 +33,10 @@ void usb_hid_service_init(mt_core_link_t *link);
 int usb_hid_service_start(void);
 int usb_hid_service_stop(void);
 void usb_hid_service_poll(void);
+/* Collect reports and run the keyboard filter without issuing core commands.
+ * Pending input changes are delivered by the next ordinary poll. */
+void usb_hid_service_poll_deferred(void);
+void usb_hid_service_vectrex_controls(int controls[2][6]);
 void usb_hid_service_set_active_core(uint32_t core_id);
 void usb_hid_service_set_core_ready(bool ready);
 void usb_hid_service_set_keyboard_filter(mt_usb_keyboard_filter_fn filter,

@@ -1,0 +1,9 @@
+path,origin,commit,license,status,notes
+third_party/vectrex/cpu/mc6809i.v,jotego/jtcores,24761ad59f2abc0718a009dede5c18fec6d0e266,GPL-3.0-only AND BSD-3-Clause,sim-tested,Unmodified JTFRAME cycle-accurate 6809; Greg Miller Standard BSD grant selected; JTFRAME GPL3 license preserved
+third_party/vectrex/cpu/LICENSE-JTFRAME,jotego/jtcores,24761ad59f2abc0718a009dede5c18fec6d0e266,License-text,reviewed,Verbatim modules/jtframe/LICENSE
+third_party/vectrex/cpu/LICENSE-Greg-Miller.md,cavnex/mc6809,17e94a6ef163be8b79a9b15b2e814847b6062f0f,License-text,reviewed,Verbatim documentation/LICENSE.md; Standard BSD alternative elected
+third_party/vectrex/cpu/README-Greg-Miller.md,cavnex/mc6809,17e94a6ef163be8b79a9b15b2e814847b6062f0f,BSD-3-Clause,reviewed,Verbatim author README and historical validation evidence
+third_party/vectrex/cpu/PROVENANCE.md,Multitini One,,GPL-3.0-only,reviewed,Source pins hashes license election and wrapper clock contract
+third_party/vectrex/cpu/files.csv,Multitini One,,GPL-3.0-only,reviewed,Per-file license fragment for root manifest integration
+hdl/core/vectrex/multitini_vectrex_cpu.sv,Multitini One,,GPL-3.0-only,sim-tested,Original CPU wrapper with 16 and 64 clock divider verification
+hdl/sim/tb_vectrex_cpu.sv,Multitini One,,GPL-3.0-only,sim-tested,Original test instructions; no imported system or game ROM

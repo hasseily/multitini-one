@@ -581,6 +581,20 @@ module tb_control_regs;
         check_value(load_error_clear, "load-error clear pulse");
         expect_read(MT_REG_ERROR, 32'd0, "load errors cleared");
 
+        expect_read(MT_REG_BORDER_CONFIG,32'h670,"border default");
+        write_reg(MT_REG_BORDER_CONFIG,32'hFFFFFFFF,4'hF);
+        expect_read(MT_REG_BORDER_CONFIG,32'h14F1,"border clamp and reserved bits");
+        write_reg(MT_REG_BORDER_CONFIG,32'h00000008,4'h1);
+        expect_read(MT_REG_BORDER_CONFIG,32'h1408,"border byte strobes");
+        write_reg(MT_REG_BORDER_CONFIG,0,4'h2);
+        expect_read(MT_REG_BORDER_CONFIG,32'h108,"padding minimum");
+        expect_read(12'h0C4,32'd0,"unused register reads zero");
+        @(negedge clk);rd_en=1'b1;
+        @(negedge clk);rd_en=1'b0;
+        expect_read(MT_REG_ERROR,MT_ERROR_BAD_READ,"unused register read rejected");
+        write_reg(12'h0C4,32'd1,4'hF);
+        expect_read(MT_REG_ERROR,MT_ERROR_BAD_READ | MT_ERROR_BAD_WRITE,
+                    "unused register write rejected");
         $display("PASS: control registers");
         $finish;
     end

@@ -93,6 +93,15 @@ core/gameboy/ports/cart.v
 core/gameboy/ports/gb.v
 core/gameboy/multitini_gameboy_adapter.sv
 board/multitini_gameboy_video_bridge.sv
+[vectrex]
+../third_party/vectrex/cpu/mc6809i.v
+core/vectrex/multitini_vectrex_cpu.sv
+core/vectrex/chips/via6522.v
+core/vectrex/chips/YM2149.sv
+core/vectrex/multitini_vectrex_beam.sv
+core/vectrex/multitini_vectrex_renderer.sv
+core/vectrex/multitini_vectrex_machine.sv
+board/multitini_vectrex_video_bridge.sv
 [common]
 ../third_party/appletini/hdl/reset_sync.sv
 ../third_party/appletini/hdl/cdc_bit_sync.sv
@@ -105,6 +114,7 @@ common/multitini_axi3_regs.sv
 common/multitini_control_regs.sv
 common/multitini_psram_bist.sv
 common/multitini_async_mailbox.sv
+common/multitini_border_config.sv
 common/multitini_font7x8.mem
 common/multitini_text_overlay.sv
 common/multitini_cdc_pulse_toggle.sv
@@ -112,6 +122,7 @@ common/multitini_memory_cdc.sv
 common/multitini_psram_line_service.sv
 board/multitini_psram_driver.sv
 board/multitini_video_test.sv
+board/multitini_border_overlay.sv
 board/multitini_audio_spdif_pcm_tx.sv
 board/multitini_audio_test.sv
 [common]

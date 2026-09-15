@@ -102,6 +102,71 @@ def patch_usbh_class_info_section(component: str) -> None:
     lscript.write_text(updated, encoding="utf-8")
 
 
+def vectrex32_sources() -> list[str]:
+    """Use the same audited GS BASIC source whitelist as the host build."""
+    manifest = ROOT / "firmware/vectrex32/gsbasic_sources.txt"
+    sources = []
+    for entry in require(manifest, "GS BASIC source whitelist").read_text().splitlines():
+        entry = entry.strip()
+        if not entry or entry.startswith("#"):
+            continue
+        if not re.fullmatch(r"[A-Za-z0-9_/]+\.cpp", entry) or ".." in entry:
+            raise ValueError(f"Invalid GS BASIC source path: {entry}")
+        path = f"third_party/gsbasic/{entry}"
+        require(ROOT / path, "GS BASIC source")
+        sources.append(path)
+    if not sources or len(sources) != len(set(sources)):
+        raise ValueError("GS BASIC source whitelist is empty or contains duplicates")
+    local_sources = ["firmware/vectrex32/runtime.cpp", "firmware/vectrex32/lowlevel.cpp"]
+    for path in local_sources:
+        require(ROOT / path, "Vectrex32 adapter source")
+    return sources + local_sources
+
+
+def configure_vectrex32_cpp(component: str) -> None:
+    """Keep C compiled as C, use the C++ linker, and reserve interpreter memory."""
+    directory = WORKSPACE / component / "src"
+    config = require(directory / "UserConfig.cmake", "Vitis user configuration")
+    text = config.read_text(encoding="utf-8")
+    marker = "# Multitini Vectrex32 runtime settings"
+    if marker not in text:
+        paths = "\n".join(f'"{(ROOT / path).as_posix()}"' for path in vectrex32_sources())
+        text += (f"\n{marker}\nset(CMAKE_CXX_STANDARD 17)\n"
+                 "set(CMAKE_CXX_STANDARD_REQUIRED ON)\n"
+                 f"set_source_files_properties(\n{paths}\nPROPERTIES\n"
+                 'COMPILE_OPTIONS "-O2;-fwrapv;-fno-strict-aliasing;-fexceptions;-frtti")\n')
+        config.write_text(text, encoding="utf-8")
+    cmake = require(directory / "CMakeLists.txt", "Vitis application CMake")
+    text = cmake.read_text(encoding="utf-8")
+    # The vendor template switches the C compiler to g++ for mixed projects,
+    # which changes the meaning of existing .c firmware. CMake already selects
+    # the C++ linker when the executable contains .cpp sources.
+    text = text.replace("set(CMAKE_C_COMPILER ${CMAKE_CXX_COMPILER})", "")
+    # Keep incremental command-line builds independent of Vitis's server PATH.
+    # The vendor template otherwise emits an unqualified arm-none-eabi-size.
+    size_marker = "# Resolve size beside the selected compiler"
+    if size_marker not in text:
+        size_command = "print_elf_size(CMAKE_SIZE ${APP_NAME})"
+        if size_command not in text:
+            raise RuntimeError(f"Missing ELF size command in {cmake}")
+        text = text.replace(size_command,
+            f"{size_marker}\n"
+            'get_filename_component(_multitini_tool_dir "${CMAKE_C_COMPILER}" DIRECTORY)\n'
+            'find_program(MULTITINI_SIZE NAMES arm-none-eabi-size\n'
+            '    HINTS "${_multitini_tool_dir}" NO_DEFAULT_PATH REQUIRED)\n'
+            'set(CMAKE_SIZE "${MULTITINI_SIZE}")\n' + size_command)
+    cmake.write_text(text, encoding="utf-8")
+    lscript = require(directory / "lscript.ld", "Vitis linker script")
+    text = lscript.read_text(encoding="utf-8")
+    for symbol, value in (("_STACK_SIZE", "0x200000"), ("_HEAP_SIZE", "0x4000000")):
+        text, count = re.subn(
+            rf"(?m)^{symbol} = DEFINED\({symbol}\) \? {symbol} : [^;]+;",
+            f"{symbol} = DEFINED({symbol}) ? {symbol} : {value};", text)
+        if count != 1:
+            raise RuntimeError(f"Could not configure {symbol} in {lscript}")
+    lscript.write_text(text, encoding="utf-8")
+
+
 def enable_fatfs_lfn(domain_bsp: Path) -> None:
     """Enable FatFs long filenames in every generated xilffs config copy."""
     patches = {
@@ -525,6 +590,7 @@ def main() -> int:
         if REUSE_XPFM:
             xpfm = require(Path(REUSE_XPFM), "reused exported platform")
             validate_reused_xilffs(xpfm)
+            client.add_platform_repos(platform=str(xpfm.parent))
             print(f"Reusing exported platform: {xpfm}")
         else:
             platform = client.create_platform_component(
@@ -558,10 +624,13 @@ def main() -> int:
                 "third_party/CherryUSB/class/hid/usbh_hid.c",
                 "third_party/CherryUSB/class/vendor/xbox/usbh_xbox.c",
                 "third_party/CherryUSB/port/ehci/usb_hc_ehci.c",
-            ],
+            ] + vectrex32_sources(),
             is_skip_copy_sources=True,
         )
         add_include_directory(APP_NAME, ROOT / "firmware" / "include")
+        add_include_directory(APP_NAME, ROOT / "firmware/vectrex32")
+        add_include_directory(APP_NAME, ROOT / "firmware/vectrex32/compat")
+        add_include_directory(APP_NAME, ROOT / "third_party/gsbasic")
         add_include_directory(APP_NAME, ROOT / "firmware" / "platform" /
                               "xilinx")
         add_include_directory(APP_NAME, ROOT / "third_party" / "CherryUSB" /
@@ -577,6 +646,7 @@ def main() -> int:
         add_include_directory(APP_NAME, ROOT / "third_party" / "CherryUSB" /
                               "port" / "ehci")
         patch_usbh_class_info_section(APP_NAME)
+        configure_vectrex32_cpp(APP_NAME)
         require_success(application.build(), "diagnostic application build")
         require(WORKSPACE / APP_NAME / "build" / f"{APP_NAME}.elf",
                 "diagnostic ELF")

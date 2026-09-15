@@ -7,6 +7,8 @@
 #include "multitini_c64_xinput.h"
 #include "multitini_gameboy_hid_input.h"
 #include "multitini_gameboy_interface.h"
+#include "multitini_vectrex_hid_input.h"
+#include "multitini_vectrex_interface.h"
 #include "usb_config.h"
 #include "usbh_core.h"
 #include "usbh_hid.h"
@@ -57,6 +59,9 @@ typedef struct {
     uint8_t keyboard;
     uint8_t gamepad;
     uint8_t gamepad_state;
+    uint8_t vectrex_buttons;
+    uint8_t vectrex_hat;
+    int16_t vectrex_x, vectrex_y;
     uint8_t report_pending;
     uint8_t retry_armed;
 } mt_hid_slot_t;
@@ -103,6 +108,7 @@ static uint8_t
     __attribute__((aligned(CONFIG_USB_ALIGN_SIZE)));
 static mt_c64_hid_input_t g_c64_input;
 static mt_gameboy_hid_input_t g_gameboy_input;
+static mt_vectrex_hid_input_t g_vectrex_input;
 static uint32_t g_reports_total;
 static uint32_t g_submit_errors;
 static uint32_t g_transfer_errors;
@@ -111,6 +117,7 @@ static int g_last_error;
 static uint8_t g_started;
 static uint8_t g_power_shutdown_required;
 static uint8_t g_core_ready;
+static uint8_t g_emit_deferred;
 static uint32_t g_active_core_id;
 static mt_usb_keyboard_filter_fn g_keyboard_filter;
 static void *g_keyboard_filter_context;
@@ -121,7 +128,9 @@ static int emit_active_input(void *context, uint16_t code, uint16_t value)
     mt_link_result_t result;
     const uint8_t input_namespace = (uint8_t)(code >> 8U);
 
-    if (link == NULL || g_core_ready == 0U) return -1;
+    if (link == NULL || g_core_ready == 0U || g_emit_deferred != 0U) return -1;
+    if ((g_active_core_id == MT_VECTREX_CORE_ID) !=
+        (input_namespace == MT_INPUT_VECTREX)) return -1;
     if ((g_active_core_id == MT_GBC_CORE_ID &&
          input_namespace != MT_INPUT_GB_GAMEPAD) ||
         (g_active_core_id != MT_GBC_CORE_ID &&
@@ -145,6 +154,8 @@ static void submit_keyboard_state(uint8_t slot, uint8_t modifiers,
                                      keys, key_count);
     (void)mt_gameboy_hid_keyboard_report(&g_gameboy_input, slot, modifiers,
                                          keys, key_count);
+    (void)mt_vectrex_hid_keyboard_report(&g_vectrex_input, slot, modifiers,
+                                         keys, key_count);
 }
 
 static void submit_gamepad_state(uint8_t slot, uint8_t state)
@@ -157,11 +168,14 @@ static void disconnect_input_slot(uint8_t slot)
 {
     (void)mt_c64_hid_disconnect(&g_c64_input, slot);
     (void)mt_gameboy_hid_disconnect(&g_gameboy_input, slot);
+    (void)mt_vectrex_hid_disconnect(&g_vectrex_input, slot);
 }
 
 static void poll_active_input(void)
 {
-    if (g_active_core_id == MT_GBC_CORE_ID)
+    if (g_active_core_id == MT_VECTREX_CORE_ID)
+        (void)mt_vectrex_hid_input_poll(&g_vectrex_input);
+    else if (g_active_core_id == MT_GBC_CORE_ID)
         (void)mt_gameboy_hid_input_poll(&g_gameboy_input);
     else
         (void)mt_c64_hid_input_poll(&g_c64_input);
@@ -354,6 +368,15 @@ static void process_gamepad_report(mt_hid_slot_t *slot,
             if (!extract_bits(item, report, length, field, &raw)) continue;
             usage = usage_for_field(item, field);
 
+            /* Preserve four independent face buttons and full analog values
+             * for Vectrex; other cores retain their existing normalized map. */
+            if (item->attribute.usage_page == HID_USAGE_PAGE_BUTTON &&
+                usage >= 1U && usage <= 4U) {
+                const uint8_t bit = (uint8_t)(1U << (usage - 1U));
+                slot->vectrex_buttons = (uint8_t)((slot->vectrex_buttons &
+                    (uint8_t)~bit) | (raw != 0U ? bit : 0U));
+            }
+
             if (item->attribute.usage_page == HID_USAGE_PAGE_BUTTON &&
                 ((usage >= 1U && usage <= 4U) ||
                  usage == 9U || usage == 10U)) {
@@ -370,6 +393,12 @@ static void process_gamepad_report(mt_hid_slot_t *slot,
                 int32_t maximum;
                 const int32_t value = item_value(item, raw);
                 item_bounds(item, &minimum, &maximum);
+                if (usage == HID_DESKTOP_USAGE_X)
+                    slot->vectrex_x = mt_vectrex_axis_normalize(value, minimum, maximum);
+                if (usage == HID_DESKTOP_USAGE_Y) {
+                    const int16_t axis = mt_vectrex_axis_normalize(value, minimum, maximum);
+                    slot->vectrex_y = axis == INT16_MIN ? INT16_MAX : (int16_t)-axis;
+                }
                 if (usage == HID_DESKTOP_USAGE_X ||
                     usage == HID_DESKTOP_USAGE_RX) {
                     const int direction = axis_direction(value, minimum,
@@ -385,6 +414,7 @@ static void process_gamepad_report(mt_hid_slot_t *slot,
                     if (direction < 0) direction_value |= 0x01U;
                     else if (direction > 0) direction_value |= 0x02U;
                 } else if (usage == HID_DESKTOP_USAGE_HATSWITCH) {
+                    slot->vectrex_hat = hat_state(value, minimum);
                     direction_touched |= 0x0FU;
                     direction_value |= hat_state(value, minimum);
                 } else if (usage >= HID_DESKTOP_USAGE_DPAD_UP &&
@@ -394,6 +424,8 @@ static void process_gamepad_report(mt_hid_slot_t *slot,
                     };
                     const uint8_t mask =
                         dpad_bits[usage - HID_DESKTOP_USAGE_DPAD_UP];
+                    slot->vectrex_hat = (uint8_t)((slot->vectrex_hat &
+                        (uint8_t)~mask) | (raw != 0U ? mask : 0U));
                     direction_touched |= mask;
                     if (raw != 0U) direction_value |= mask;
                 }
@@ -405,6 +437,17 @@ static void process_gamepad_report(mt_hid_slot_t *slot,
     next = (uint8_t)((next & (uint8_t)~button_touched) | button_value);
     slot->gamepad_state = next;
     submit_gamepad_state((uint8_t)(slot - g_slots), next);
+    {
+        int16_t x = slot->vectrex_x, y = slot->vectrex_y;
+        if ((slot->vectrex_hat & 12U) != 0U)
+            x = (slot->vectrex_hat & 12U) == 12U ? 0 :
+                ((slot->vectrex_hat & 4U) != 0U ? INT16_MIN : INT16_MAX);
+        if ((slot->vectrex_hat & 3U) != 0U)
+            y = (slot->vectrex_hat & 3U) == 3U ? 0 :
+                ((slot->vectrex_hat & 1U) != 0U ? INT16_MAX : INT16_MIN);
+        (void)mt_vectrex_hid_gamepad_report(&g_vectrex_input,
+            (uint8_t)(slot - g_slots), slot->vectrex_buttons, x, y);
+    }
 }
 
 static uint32_t report_length(const mt_hid_slot_t *slot)
@@ -540,6 +583,14 @@ static void xinput_report_complete(void *argument, int bytes)
             slot->decoded_state = state;
             slot->observed_state |= state;
             submit_gamepad_state(xinput_aggregate_slot(slot), state);
+            {
+                uint8_t buttons;
+                int16_t x, y;
+                if (mt_vectrex_xinput_decode(g_xinput_reports[index],
+                    (size_t)bytes, &buttons, &x, &y) == 0)
+                    (void)mt_vectrex_hid_gamepad_report(&g_vectrex_input,
+                        xinput_aggregate_slot(slot), buttons, x, y);
+            }
         } else {
             ++g_input_errors;
             slot->last_error = decode_result;
@@ -876,11 +927,13 @@ void usb_hid_service_init(mt_core_link_t *link)
     g_started = 0U;
     g_power_shutdown_required = 0U;
     g_core_ready = 0U;
+    g_emit_deferred = 0U;
     g_active_core_id = 0U;
     g_keyboard_filter = NULL;
     g_keyboard_filter_context = NULL;
     mt_c64_hid_input_init(&g_c64_input, emit_active_input, link);
     mt_gameboy_hid_input_init(&g_gameboy_input, emit_active_input, link);
+    mt_vectrex_hid_input_init(&g_vectrex_input, emit_active_input, link);
 }
 
 void usb_hid_service_set_keyboard_filter(mt_usb_keyboard_filter_fn filter,
@@ -959,6 +1012,7 @@ int usb_hid_service_stop(void)
     }
     (void)mt_c64_hid_release_all(&g_c64_input);
     (void)mt_gameboy_hid_release_all(&g_gameboy_input);
+    (void)mt_vectrex_hid_release_all(&g_vectrex_input);
     memset(g_slots, 0, sizeof(g_slots));
     memset(g_xinput_slots, 0, sizeof(g_xinput_slots));
     if (power_result != 0) {
@@ -972,7 +1026,9 @@ void usb_hid_service_set_active_core(uint32_t core_id)
 {
     g_core_ready = 0U;
     g_active_core_id = core_id;
-    if (g_active_core_id == MT_GBC_CORE_ID)
+    if (g_active_core_id == MT_VECTREX_CORE_ID)
+        mt_vectrex_hid_reassert(&g_vectrex_input);
+    else if (g_active_core_id == MT_GBC_CORE_ID)
         mt_gameboy_hid_reassert(&g_gameboy_input);
     else
         mt_c64_hid_reassert(&g_c64_input);
@@ -983,7 +1039,9 @@ void usb_hid_service_set_core_ready(bool ready)
     const uint8_t next = ready ? 1U : 0U;
     if (next != 0U && g_core_ready == 0U) {
         g_core_ready = 1U;
-        if (g_active_core_id == MT_GBC_CORE_ID)
+        if (g_active_core_id == MT_VECTREX_CORE_ID)
+            mt_vectrex_hid_reassert(&g_vectrex_input);
+        else if (g_active_core_id == MT_GBC_CORE_ID)
             mt_gameboy_hid_reassert(&g_gameboy_input);
         else
             mt_c64_hid_reassert(&g_c64_input);
@@ -1000,6 +1058,19 @@ void usb_hid_service_poll(void)
         retry_reports();
     }
     poll_active_input();
+}
+
+void usb_hid_service_poll_deferred(void)
+{
+    const uint8_t previous = g_emit_deferred;
+    g_emit_deferred = 1U;
+    usb_hid_service_poll();
+    g_emit_deferred = previous;
+}
+
+void usb_hid_service_vectrex_controls(int controls[2][6])
+{
+    mt_vectrex_hid_controls(&g_vectrex_input, controls);
 }
 
 void cherryusb_background_poll(void)

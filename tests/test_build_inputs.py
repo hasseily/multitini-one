@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class BuildInputTests(unittest.TestCase):
     def test_hdl_manifest_is_unique_and_complete(self):
         entries = []
-        sections = {"common": [], "c64": [], "gbc": []}
+        sections = {"common": [], "c64": [], "gbc": [], "vectrex": []}
         languages = {}
         active_section = "common"
         manifest = ROOT / "hdl" / "hdl_sources.txt"
@@ -346,7 +346,7 @@ class BuildInputTests(unittest.TestCase):
             'set machine "SUPERVISOR"',
             "set active_machine 2",
             "MULTITINI_C64_VIDEO_STANDARD must be PAL or NTSC",
-            "MULTITINI_MACHINE must be SUPERVISOR, C64, or GBC",
+            "MULTITINI_MACHINE must be SUPERVISOR, C64, GBC, or VECTREX",
             "MULTITINI_ENABLE_GBC_PSRAM",
             "ACTIVE_MACHINE",
             "proc add_manifest_sources {repo_root machine}",

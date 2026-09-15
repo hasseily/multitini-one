@@ -82,6 +82,11 @@ static const mt_menu_item_t *page_items(mt_menu_page_t page,
     return items;
 }
 
+static size_t video_setting_start(const mt_menu_view_t *view)
+{
+    return active_core(view) < core_count(view) ? 2U : 1U;
+}
+
 static size_t row_count(const mt_menu_t *menu, const mt_menu_view_t *view)
 {
     size_t count = 0U;
@@ -91,7 +96,7 @@ static size_t row_count(const mt_menu_t *menu, const mt_menu_view_t *view)
     case MT_MENU_PAGE_CORES:
         return core_count(view);
     case MT_MENU_PAGE_VIDEO:
-        return active_core(view) < core_count(view) ? 2U : 1U;
+        return video_setting_start(view) + 4U;
     case MT_MENU_PAGE_SYSTEM:
         return 3U;
     default:
@@ -166,6 +171,32 @@ static mt_menu_action_t no_action(void)
     return action;
 }
 
+static bool directory_row(const mt_menu_view_t *view, size_t index)
+{
+    return view != NULL && view->files != NULL && index < view->file_count &&
+        (view->files[index].cookie & (MT_MENU_FILE_DIRECTORY | MT_MENU_FILE_PARENT)) != 0U;
+}
+
+static size_t parent_row(const mt_menu_view_t *view)
+{
+    size_t index;
+    if (view != NULL && view->files != NULL) {
+        for (index = 0U; index < view->file_count; ++index)
+            if ((view->files[index].cookie & MT_MENU_FILE_PARENT) != 0U) return index;
+    }
+    return SIZE_MAX;
+}
+
+static bool has_directories(const mt_menu_view_t *view)
+{
+    size_t index;
+    if (view != NULL && view->files != NULL) {
+        for (index = 0U; index < view->file_count; ++index)
+            if (directory_row(view, index)) return true;
+    }
+    return false;
+}
+
 static void change_variant(mt_menu_t *menu, const mt_menu_view_t *view,
                             size_t core, bool backwards)
 {
@@ -180,17 +211,74 @@ static void change_variant(mt_menu_t *menu, const mt_menu_view_t *view,
         (selected == 0U ? count - 1U : selected - 1U) : (selected + 1U) % count;
 }
 
+static mt_menu_action_t change_border(size_t row,
+                                      const mt_menu_view_t *view, uint8_t key)
+{
+    mt_menu_action_t action = no_action();
+    unsigned enabled;
+    unsigned style;
+    unsigned color;
+    unsigned padding;
+    unsigned previous;
+    unsigned config;
+    const bool backwards = key == MT_MENU_HID_LEFT;
+    if (!has_core(view) || !view->border_supported) return action;
+    enabled = view->border_enabled ? 1U : 0U;
+    style = view->border_style < 5U ? view->border_style : 0U;
+    color = view->border_color < 16U ? view->border_color : 7U;
+    padding = view->border_padding >= 1U && view->border_padding <= 20U ?
+              view->border_padding : 6U;
+    previous = enabled | (style << 1U) | (color << 4U) | (padding << 8U);
+    switch (row) {
+    case 0U:
+        enabled = key == MT_MENU_HID_ENTER ? 1U - enabled :
+                  (backwards ? 0U : 1U);
+        break;
+    case 1U:
+        style = (style + (backwards ? 4U : 1U)) % 5U;
+        break;
+    case 2U:
+        color = (color + (backwards ? 15U : 1U)) % 16U;
+        break;
+    case 3U:
+        if (backwards) padding = padding > 1U ? padding - 1U : 1U;
+        else if (key == MT_MENU_HID_ENTER) padding = padding == 20U ? 1U : padding + 1U;
+        else if (padding < 20U) ++padding;
+        break;
+    default:
+        return action;
+    }
+    config = enabled | (style << 1U) | (color << 4U) | (padding << 8U);
+    if (config != previous) {
+        action.kind = MT_MENU_ACTION_SET_BORDER;
+        action.file_index = config;
+    }
+    return action;
+}
+
+static mt_menu_action_t change_video(const mt_menu_t *menu,
+                                     const mt_menu_view_t *view, uint8_t key)
+{
+    const size_t start = video_setting_start(view);
+    mt_menu_action_t action = no_action();
+    if (!has_core(view) || !view->border_supported) return action;
+    if (menu->row >= start) action = change_border(menu->row - start, view, key);
+    return action;
+}
+
 static mt_menu_action_t activate(const mt_menu_t *menu, const mt_menu_view_t *view)
 {
     mt_menu_action_t action = no_action();
     if (menu->browser != MT_MENU_BROWSER_NONE) {
-        action.kind = menu->browser == MT_MENU_BROWSER_DRIVE8 ?
+        action.kind = directory_row(view, menu->row) ? MT_MENU_ACTION_OPEN_DIRECTORY :
+            menu->browser == MT_MENU_BROWSER_DRIVE8 ?
             MT_MENU_ACTION_MOUNT_DRIVE8 :
             (menu->browser == MT_MENU_BROWSER_DISK_PROGRAM ?
              MT_MENU_ACTION_MOUNT_AND_RUN : MT_MENU_ACTION_LOAD_CONTENT);
         action.file_index = menu->row;
     } else if (menu->page == MT_MENU_PAGE_CORES ||
-               (menu->page == MT_MENU_PAGE_VIDEO && menu->row == 1U)) {
+               (menu->page == MT_MENU_PAGE_VIDEO && menu->row == 1U &&
+                active_core(view) < core_count(view))) {
         const size_t core = menu->page == MT_MENU_PAGE_CORES ? menu->row :
                                                                active_core(view);
         if (core < core_count(view) &&
@@ -200,7 +288,9 @@ static mt_menu_action_t activate(const mt_menu_t *menu, const mt_menu_view_t *vi
             action.variant_index = menu->selected_variant[core];
         }
     } else if (menu->page == MT_MENU_PAGE_VIDEO) {
-        if (has_core(view)) action.kind = MT_MENU_ACTION_TOGGLE_VIDEO_SOURCE;
+        if (menu->row == 0U) {
+            if (has_core(view)) action.kind = MT_MENU_ACTION_TOGGLE_VIDEO_SOURCE;
+        } else action = change_video(menu, view, MT_MENU_HID_ENTER);
     } else if (menu->page == MT_MENU_PAGE_SYSTEM) {
         if (menu->row == 2U) action.kind = MT_MENU_ACTION_REBOOT_GOLDEN;
         else if (has_core(view)) action.kind = menu->row == 0U ?
@@ -271,18 +361,44 @@ mt_menu_action_t mt_menu_key_with_modifiers(mt_menu_t *menu,
                      count - 1U - menu->row : visible_rows(menu);
         break;
     case MT_MENU_HID_LEFT:
+    case MT_MENU_HID_BACKSPACE:
+        if (menu->browser != MT_MENU_BROWSER_NONE) {
+            const size_t parent = parent_row(view);
+            if (parent != SIZE_MAX) {
+                menu->row = parent;
+                action.kind = MT_MENU_ACTION_OPEN_DIRECTORY;
+                action.file_index = parent;
+            } else if (hid_usage == MT_MENU_HID_LEFT &&
+                       menu->browser == MT_MENU_BROWSER_DISK_PROGRAM &&
+                       !directory_row(view, menu->row)) {
+                action.kind = MT_MENU_ACTION_DIRECT_DISK_PROGRAM;
+                action.file_index = menu->row;
+            }
+        } else if (hid_usage == MT_MENU_HID_LEFT) {
+            if (menu->page == MT_MENU_PAGE_CORES)
+                change_variant(menu, view, menu->row, true);
+            else if (menu->page == MT_MENU_PAGE_VIDEO && menu->row == 1U &&
+                     active_core(view) < core_count(view))
+                change_variant(menu, view, active_core(view), true);
+            else if (menu->page == MT_MENU_PAGE_VIDEO)
+                action = change_video(menu, view, hid_usage);
+        }
+        break;
     case MT_MENU_HID_RIGHT:
-        if (menu->browser == MT_MENU_BROWSER_DISK_PROGRAM) {
-            action.kind = hid_usage == MT_MENU_HID_RIGHT ?
-                MT_MENU_ACTION_LOAD_DISK_PROGRAM : MT_MENU_ACTION_DIRECT_DISK_PROGRAM;
+        if (menu->browser != MT_MENU_BROWSER_NONE && directory_row(view, menu->row)) {
+            action.kind = MT_MENU_ACTION_OPEN_DIRECTORY;
+            action.file_index = menu->row;
+        } else if (menu->browser == MT_MENU_BROWSER_DISK_PROGRAM) {
+            action.kind = MT_MENU_ACTION_LOAD_DISK_PROGRAM;
             action.file_index = menu->row;
         } else if (menu->browser == MT_MENU_BROWSER_NONE) {
             if (menu->page == MT_MENU_PAGE_CORES)
-                change_variant(menu, view, menu->row,
-                                hid_usage == MT_MENU_HID_LEFT);
-            else if (menu->page == MT_MENU_PAGE_VIDEO && menu->row == 1U)
-                change_variant(menu, view, active_core(view),
-                                hid_usage == MT_MENU_HID_LEFT);
+                change_variant(menu, view, menu->row, false);
+            else if (menu->page == MT_MENU_PAGE_VIDEO && menu->row == 1U &&
+                     active_core(view) < core_count(view))
+                change_variant(menu, view, active_core(view), false);
+            else if (menu->page == MT_MENU_PAGE_VIDEO)
+                action = change_video(menu, view, hid_usage);
         }
         break;
     case MT_MENU_HID_ENTER:
@@ -316,7 +432,7 @@ static const char *page_caption(mt_menu_page_t page)
     static const char *const captions[] = {
         "Choose a system. Your media stays with each core.",
         "Load content and manage the active session.",
-        "Choose the display source and core variant.",
+        "Display and border. Saved separately for each core.",
         "Controls for the active system.",
         "Settings supplied by the active core.",
         "Startup, restart and recovery."
@@ -372,7 +488,7 @@ static mt_menu_item_t builtin_item(const mt_menu_t *menu,
     mt_menu_item_t item = {0};
     item.enabled = has_core(view);
     item.value_color = MT_UI_COLOR_MUTED;
-    if (menu->page == MT_MENU_PAGE_VIDEO) {
+    if (menu->page == MT_MENU_PAGE_VIDEO && index < video_setting_start(view)) {
         if (index == 0U) {
             item.label = "Display source";
             item.value = view != NULL && view->video_test_enabled ?
@@ -390,6 +506,45 @@ static mt_menu_item_t builtin_item(const mt_menu_t *menu,
                 menu->selected_variant[core] < variant_count(&view->cores[core]))
                 item.value = view->cores[core].package
                     .variants[menu->selected_variant[core]].label;
+        }
+    } else if (menu->page == MT_MENU_PAGE_VIDEO) {
+        static const char *const labels[] = {
+            "Border", "Border type", "Border color", "Padding (px)"
+        };
+        static const char *const styles[] = {
+            "Single line", "Double line", "Corner brackets", "Dashed", "Soft glow"
+        };
+        static const char *const colors[] = {
+            "Black", "Blue", "Green", "Cyan", "Red", "Magenta", "Brown", "Light gray",
+            "Dark gray", "Light blue", "Light green", "Light cyan", "Light red",
+            "Light magenta", "Yellow", "White"
+        };
+        static const char *const padding[] = {
+            "1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
+            "11", "12", "13", "14", "15", "16", "17", "18", "19", "20"
+        };
+        index -= video_setting_start(view);
+        item.label = labels[index];
+        item.enabled = has_core(view) && view->border_supported;
+        item.help = "Left/Right changes this setting. Enter cycles it. Saved separately for each core.";
+        if (!has_core(view)) {
+            item.value = "Unavailable";
+            item.help = "Select a core from Cores before configuring its border.";
+        } else if (!view->border_supported) {
+            item.value = "Unsupported";
+            item.help = "Update this core package to use borders. Saved settings are retained.";
+        } else if (index == 0U) {
+            item.value = view->border_enabled ? "On" : "Off";
+            item.help = "Enter toggles the border. Left turns it off; Right turns it on. Saved for this core.";
+        } else if (index == 1U) {
+            item.value = styles[view->border_style < 5U ? view->border_style : 0U];
+        } else if (index == 2U) {
+            item.value = colors[view->border_color < 16U ? view->border_color : 7U];
+            item.help = "Choose one of sixteen muted classic colors. Left/Right or Enter changes the color.";
+        } else {
+            item.value = padding[view->border_padding >= 1U && view->border_padding <= 20U ?
+                                 view->border_padding - 1U : 5U];
+            item.help = "Leave 1 to 20 output pixels between the image and border. Left/Right stops at limits; Enter cycles.";
         }
     } else {
         switch (index) {
@@ -518,7 +673,10 @@ static void render_browser(const mt_menu_t *menu, const mt_menu_view_t *view,
         const bool selected = menu->row == index;
         const size_t row = LIST_Y + index - first;
         const mt_ui_color_t bg = selected ? MT_UI_COLOR_ACTIVE : MT_UI_COLOR_ROW;
-        format_size(size_text, sizeof(size_text), view->files[index].size);
+        if (directory_row(view, index))
+            (void)snprintf(size_text, sizeof(size_text), "%s",
+                (view->files[index].cookie & MT_MENU_FILE_PARENT) != 0U ? "Up" : "Folder");
+        else format_size(size_text, sizeof(size_text), view->files[index].size);
         mt_ui_fill(frame, ITEM_X, row, ITEM_W, 1U, bg);
         if (selected) mt_ui_fill(frame, ITEM_X, row, 1U, 1U, MT_UI_COLOR_BLUE);
         field(frame, LABEL_X, row, NAME_W, view->files[index].name,
@@ -526,7 +684,16 @@ static void render_browser(const mt_menu_t *menu, const mt_menu_view_t *view,
         mt_ui_text_field(frame, SIZE_X, row, SIZE_W, size_text, MT_UI_COLOR_MUTED, bg,
                          false, true);
     }
-    if (menu->row < count) help_text(frame, view->files[menu->row].name);
+    if (menu->row < count) {
+        if ((view->files[menu->row].cookie & MT_MENU_FILE_PARENT) != 0U)
+            help_text(frame, "Enter, Left or Backspace opens the parent folder.");
+        else if (directory_row(view, menu->row)) {
+            char text[MT_MENU_FILE_NAME_MAX + 64U];
+            (void)snprintf(text, sizeof(text), "%s - Enter or Right opens this folder.",
+                           view->files[menu->row].name);
+            help_text(frame, text);
+        } else help_text(frame, view->files[menu->row].name);
+    }
 }
 
 static void render_settings(const mt_menu_t *menu, const mt_menu_view_t *view,
@@ -624,7 +791,7 @@ void mt_menu_render(const mt_menu_t *menu, const mt_menu_view_t *view,
     mt_ui_fill(frame, BODY_X, HELP_Y, 1U, 3U, MT_UI_COLOR_BLUE);
     field(frame, LABEL_X, HELP_Y, CONTENT_W,
           menu->browser == MT_MENU_BROWSER_NONE ?
-          "ABOUT THIS ITEM" : "SELECTED FILE", MT_UI_COLOR_BLUE,
+          "ABOUT THIS ITEM" : (has_directories(view) ? "SELECTED ITEM" : "SELECTED FILE"), MT_UI_COLOR_BLUE,
           MT_UI_COLOR_RAISED);
     count = row_count(menu, view);
     field(frame, ITEM_X, 6U, ITEM_W - 14U,
@@ -673,10 +840,14 @@ void mt_menu_render(const mt_menu_t *menu, const mt_menu_view_t *view,
     }
     mt_ui_fill(frame, SIDE_X, FOOTER_Y, MT_UI_COLUMNS - 4U, 1U, MT_UI_COLOR_RAISED);
     field(frame, 3U, FOOTER_Y, MT_UI_COLUMNS - 6U,
+        menu->browser != MT_MENU_BROWSER_NONE && has_directories(view) ?
+        "[Enter] Open/Load  [Right] Open folder  [Left/Backspace] Up  [PgUp/Dn] Page  [Esc] Back" :
         menu->browser == MT_MENU_BROWSER_DISK_PROGRAM ?
         "[Enter] Launch  [Right] Load  [Left] Direct  [PgUp/Dn] Page  [Esc] Back" :
         (menu->browser != MT_MENU_BROWSER_NONE ?
          "[Enter] Load  [Up/Down] Select  [PgUp/PgDn] Page  [Home/End] First/Last  [Esc] Back" :
+         menu->page == MT_MENU_PAGE_VIDEO ?
+         "[Tab/Shift+Tab] Section  [Up/Down] Select  [Left/Right] Adjust  [Enter] Apply/Cycle  [Esc/F12] Close" :
          "[Tab/Shift+Tab] Section  [Up/Down] Select  [Enter] Apply  [Esc/F12] Close"),
         MT_UI_COLOR_MUTED, MT_UI_COLOR_RAISED);
 }
