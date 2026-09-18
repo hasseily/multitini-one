@@ -5,8 +5,32 @@ docs/**,Multitini One,,GPL-3.0-only,reviewed,Original documentation except quote
 spec/**,Multitini One,,GPL-3.0-only,reviewed,Register ABI source specification
 spec/c64_interface_v0.json,Multitini One,,GPL-3.0-only,source-reviewed,C64 load and status ABI source including conservative cartridge type allowlist
 scripts/**,Multitini One,,GPL-3.0-only,reviewed,Original build and policy scripts unless a narrower row applies
-scripts/create_vitis_workspace.py,Appletini One and Multitini One,511dd24f344eafc0056b9519541a185f4c1b028b,GPL-3.0-only,pending-vitis,Multitini generator with FatFs LFN exFAT configuration R0.16 patch-2 media validation RTC timestamp hook and bounded no-card handling ported from Appletini One
+scripts/create_vitis_workspace.py,Appletini One and Multitini One,1fd4f371e8f4ef08bc63875550564590609fcfeb,GPL-3.0-only,host-tested,AMP BSP and embedded CPU1 build pattern adapted from Appletini; original bounded memory and ELF payload audits; prior FatFs adaptation at 511dd24f344eafc0056b9519541a185f4c1b028b retained
+scripts/test_video_frame_neon.py,Appletini One and Multitini One,1fd4f371e8f4ef08bc63875550564590609fcfeb,GPL-3.0-only,emulator-tested,ARM build and Unicorn setup adapted from scripts/test_video_mono_neon.py; original production NEON versus scalar frame comparison and buffer guards
 firmware/**,Multitini One,,GPL-3.0-only,reviewed,Original firmware unless a narrower row applies
+firmware/platform/xilinx/video_worker.c,Appletini One and Multitini One,1fd4f371e8f4ef08bc63875550564590609fcfeb,GPL-3.0-only,host-tested,CPU1 release adapted from ps_sources/lib/amp.c; original asynchronous bounded single-job DDR mailbox; board pending
+firmware/platform/xilinx/video_worker.h,Multitini One,,GPL-3.0-only,host-tested,Original CPU0 asynchronous video worker API
+firmware/include/multitini_video_worker.h,Multitini One,,GPL-3.0-only,host-tested,Original pointer-free memory-only AMP protocol and fixed DDR regions
+firmware/cpu1/main.c,Multitini One,,GPL-3.0-only,host-tested,Original memory-only worker with bounded immutable input and private scratch; no PL or driver accesses
+firmware/common/video_frame.c,Appletini One behavior reference and Multitini One,1fd4f371e8f4ef08bc63875550564590609fcfeb,GPL-3.0-only,emulator-tested,Original scalar and NEON native-frame implementation; phosphor decay bands and blur/glow weights follow Appletini compositor behavior with corrected >=32 knee; board throughput pending
+firmware/common/video_effects.c,Multitini One,,GPL-3.0-only,host-and-sim-tested,Original portable Q10 color matrix and LUT builder with RGB565 oracle
+hdl/common/multitini_video_effects.sv,Multitini One,,GPL-3.0-only,sim-tested,Original streaming color and spatial effects with atomic inactive-bank ownership
+hdl/common/multitini_video_capture.sv,Multitini One,,GPL-3.0-only,sim-tested,Original bounded native RGB565 capture ring and AXI3 write transport
+hdl/common/multitini_video_frame_reader.sv,Multitini One,,GPL-3.0-only,sim-tested,Original native-row scanout cache and AXI3 read transport with vblank publication
+hdl/common/multitini_video_frame_filter.sv,Multitini One,,GPL-3.0-only,sim-tested,Original four-line native RGB888 separable blur and bloom pipeline with bounded backpressure
+hdl/common/multitini_video_frame_engine.sv,Multitini One,,GPL-3.0-only,sim-tested,Original bounded AXI3 native frame DMA and pipelined RGB888 persistence engine
+hdl/sim/tb_video_frame_engine.sv,Multitini One,,GPL-3.0-only,sim-tested,Original DMA oracle and adverse AXI timing and ownership regression
+tests/host/video_frame_engine_vectors.c,Multitini One,,GPL-3.0-only,host-and-sim-tested,Original full-frame C oracle vector emitter for DMA persistence and spatial effects
+scripts/test_video_frame_engine.py,Multitini One,,GPL-3.0-only,host-and-sim-tested,Original guarded full-frame DMA regression and source-hash evidence runner
+hdl/sim/tb_video_frame_filter.sv,Multitini One,,GPL-3.0-only,sim-tested,Original C-oracle comparison and fixed-cycle throughput and reset regression
+tests/host/video_frame_filter_vectors.c,Multitini One,,GPL-3.0-only,host-and-sim-tested,Original vector emitter executing the portable frame kernel as the HDL oracle
+scripts/test_video_frame_filter.py,Multitini One,,GPL-3.0-only,host-and-sim-tested,Original guarded native filter regression and source-hash evidence runner
+hdl/common/multitini_video_framebuffer.sv,Multitini One,,GPL-3.0-only,sim-tested,Original fixed-pool register interface and capture/display integration
+hdl/common/multitini_video_frame_scheduler.sv,Multitini One,,GPL-3.0-only,sim-tested,Original autonomous ordered capture and output ownership scheduler with fixed frame cadence and explicit deadline faults; board qualification pending
+hdl/sim/tb_video_frame_scheduler.sv,Multitini One,,GPL-3.0-only,sim-tested,Original ordered scheduler regression with independent engine and vblank reader models
+scripts/test_video_frame_scheduler.py,Multitini One,,GPL-3.0-only,sim-tested,Original guarded native HDL scheduler regression runner
+hdl/sim/tb_video_frame_pipeline.sv,Multitini One,,GPL-3.0-only,sim-tested,Original end-to-end autonomous two-port DDR capture processing and scanout ordering regression
+scripts/test_video_frame_pipeline.py,Multitini One,,GPL-3.0-only,sim-tested,Original portable and real-XPM autonomous pipeline runner with source-hash evidence
 firmware/common/text_reader.c,Appletini One and Multitini One,1fd4f371e8f4ef08bc63875550564590609fcfeb,GPL-3.0-only,host-tested,Normalization and visual-line wrapping adapted from ps_sources/frontend/config_menu_text_reader.c; original portable API indexed reader lifecycle and navigation; Vitis passed; board pending
 tools/menu_preview.c,Multitini One,,GPL-3.0-only,host-tested,Original synthetic UI scenarios rendered by production firmware
 hdl/common/multitini_font7x8.mem,Appletini One,ba0aca2c4ddf3468804c5ae982f19b4891fc985e,GPL-3.0-only,sim-tested,Derived bit rows from the embedded Appletini fb16 ASCII 7x8 font

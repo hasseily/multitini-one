@@ -600,6 +600,14 @@ On hardware:
 
 ### Decisions recorded after the baseline plan
 
+- 2026-09-18: Video output must remain at nominal 60 Hz throughout gameplay,
+  with no processing-frame drops. Interruptions while changing cores are
+  acceptable. CPU polling, latest-frame selection, or repeated
+  processed frames are not acceptable ways to make persistence, blur, and
+  bloom fit their budget. Use an autonomous ordered FPGA frame pipeline;
+  CPU1 prepares controls outside the frame deadline. Qualify all effects
+  together with zero capture drops, display underruns, and deadline misses.
+  Board throughput remains a separate acceptance gate from arithmetic tests.
 - 2026-09-15: The owner reported successful physical testing of the VEC3
   Vectrex/video update and requested commit and push. Border controls live in
   Video; off-screen borders clip without shrinking the original game image.

@@ -106,6 +106,9 @@ module multitini_one_top #(
     logic [31:0] shell_control;
     logic [31:0] border_config;
     logic [31:0] vectrex_video_config;
+    wire effect_write, effect_commit, effect_busy, effect_active_valid, effect_rejected;
+    wire [9:0] effect_address;
+    wire [31:0] effect_data, effect_commit_sequence, effect_active_sequence;
     logic vectrex_overlay_loaded, vectrex_overlay_error;
     logic [1:0] vectrex_overlay_status_control;
     logic [12:0] frame_border_config;
@@ -153,6 +156,26 @@ module multitini_one_top #(
     logic [3:0]  m_axi_wstrb;
     logic        m_axi_wvalid;
 
+    wire [31:0] hp0_araddr,hp0_awaddr;
+    wire [3:0] hp0_arlen,hp0_awlen;
+    wire [2:0] hp0_arsize,hp0_awsize;
+    wire [1:0] hp0_arburst,hp0_awburst,hp0_rresp,hp0_bresp;
+    wire hp0_arvalid,hp0_arready,hp0_awvalid,hp0_awready;
+    wire hp0_rvalid,hp0_rready,hp0_rlast,hp0_wvalid,hp0_wready,hp0_wlast,hp0_bvalid,hp0_bready;
+    wire [63:0] hp0_rdata,hp0_wdata;
+    wire [7:0] hp0_wstrb;
+    wire [31:0] hp1_araddr,hp1_awaddr;
+    wire [3:0] hp1_arlen,hp1_awlen;
+    wire [2:0] hp1_arsize,hp1_awsize;
+    wire [1:0] hp1_arburst,hp1_awburst,hp1_rresp,hp1_bresp;
+    wire hp1_arvalid,hp1_arready,hp1_awvalid,hp1_awready;
+    wire hp1_rvalid,hp1_rready,hp1_rlast,hp1_wvalid,hp1_wready,hp1_wlast,hp1_bvalid,hp1_bready;
+    wire [63:0] hp1_rdata,hp1_wdata;
+    wire [7:0] hp1_wstrb;
+    wire framebuffer_use;
+    wire video_pixel_running;
+    wire [15:0] framebuffer_rgb565;
+    wire [31:0] framebuffer_rd_data;
     logic        reg_wr_en;
     logic [15:0] reg_wr_addr;
     logic [31:0] reg_wr_data;
@@ -160,6 +183,8 @@ module multitini_one_top #(
     logic        reg_rd_en;
     logic [15:0] reg_rd_addr;
     logic [31:0] reg_rd_data;
+    wire framebuffer_wr_select=reg_wr_addr>=16'h0180 && reg_wr_addr<16'h01c8;
+    wire framebuffer_rd_select=reg_rd_addr>=16'h0180 && reg_rd_addr<16'h01c8;
     logic [31:0] control_rd_data;
     logic        control_wr_en;
     logic        control_rd_en;
@@ -362,6 +387,68 @@ module multitini_one_top #(
         .FIXED_IO_mio(MIO), .FIXED_IO_ps_clk(PS_CLK),
         .FIXED_IO_ps_porb(PS_PORB), .FIXED_IO_ps_srstb(PS_SRSTB),
 
+        .S_AXI_HP0_0_araddr(hp0_araddr),
+        .S_AXI_HP0_0_arlen(hp0_arlen),
+        .S_AXI_HP0_0_arsize(hp0_arsize),
+        .S_AXI_HP0_0_arburst(hp0_arburst),
+        .S_AXI_HP0_0_arvalid(hp0_arvalid),
+        .S_AXI_HP0_0_arready(hp0_arready),
+        .S_AXI_HP0_0_awaddr(hp0_awaddr),
+        .S_AXI_HP0_0_awlen(hp0_awlen),
+        .S_AXI_HP0_0_awsize(hp0_awsize),
+        .S_AXI_HP0_0_awburst(hp0_awburst),
+        .S_AXI_HP0_0_awvalid(hp0_awvalid),
+        .S_AXI_HP0_0_awready(hp0_awready),
+        .S_AXI_HP0_0_rdata(hp0_rdata),
+        .S_AXI_HP0_0_rresp(hp0_rresp),
+        .S_AXI_HP0_0_rlast(hp0_rlast),
+        .S_AXI_HP0_0_rvalid(hp0_rvalid),
+        .S_AXI_HP0_0_rready(hp0_rready),
+        .S_AXI_HP0_0_wdata(hp0_wdata),
+        .S_AXI_HP0_0_wstrb(hp0_wstrb),
+        .S_AXI_HP0_0_wlast(hp0_wlast),
+        .S_AXI_HP0_0_wvalid(hp0_wvalid),
+        .S_AXI_HP0_0_wready(hp0_wready),
+        .S_AXI_HP0_0_bresp(hp0_bresp),
+        .S_AXI_HP0_0_bvalid(hp0_bvalid),
+        .S_AXI_HP0_0_bready(hp0_bready),
+        .S_AXI_HP0_0_arid(6'd0),.S_AXI_HP0_0_awid(6'd0),.S_AXI_HP0_0_wid(6'd0),
+        .S_AXI_HP0_0_arcache(4'd0),.S_AXI_HP0_0_awcache(4'd0),
+        .S_AXI_HP0_0_arlock(2'd0),.S_AXI_HP0_0_awlock(2'd0),
+        .S_AXI_HP0_0_arprot(3'd0),.S_AXI_HP0_0_awprot(3'd0),
+        .S_AXI_HP0_0_arqos(4'd0),.S_AXI_HP0_0_awqos(4'd0),
+        .S_AXI_HP0_0_rid(),.S_AXI_HP0_0_bid(),
+        .S_AXI_HP1_0_araddr(hp1_araddr),
+        .S_AXI_HP1_0_arlen(hp1_arlen),
+        .S_AXI_HP1_0_arsize(hp1_arsize),
+        .S_AXI_HP1_0_arburst(hp1_arburst),
+        .S_AXI_HP1_0_arvalid(hp1_arvalid),
+        .S_AXI_HP1_0_arready(hp1_arready),
+        .S_AXI_HP1_0_awaddr(hp1_awaddr),
+        .S_AXI_HP1_0_awlen(hp1_awlen),
+        .S_AXI_HP1_0_awsize(hp1_awsize),
+        .S_AXI_HP1_0_awburst(hp1_awburst),
+        .S_AXI_HP1_0_awvalid(hp1_awvalid),
+        .S_AXI_HP1_0_awready(hp1_awready),
+        .S_AXI_HP1_0_rdata(hp1_rdata),
+        .S_AXI_HP1_0_rresp(hp1_rresp),
+        .S_AXI_HP1_0_rlast(hp1_rlast),
+        .S_AXI_HP1_0_rvalid(hp1_rvalid),
+        .S_AXI_HP1_0_rready(hp1_rready),
+        .S_AXI_HP1_0_wdata(hp1_wdata),
+        .S_AXI_HP1_0_wstrb(hp1_wstrb),
+        .S_AXI_HP1_0_wlast(hp1_wlast),
+        .S_AXI_HP1_0_wvalid(hp1_wvalid),
+        .S_AXI_HP1_0_wready(hp1_wready),
+        .S_AXI_HP1_0_bresp(hp1_bresp),
+        .S_AXI_HP1_0_bvalid(hp1_bvalid),
+        .S_AXI_HP1_0_bready(hp1_bready),
+        .S_AXI_HP1_0_arid(6'd0),.S_AXI_HP1_0_awid(6'd0),.S_AXI_HP1_0_wid(6'd0),
+        .S_AXI_HP1_0_arcache(4'd0),.S_AXI_HP1_0_awcache(4'd0),
+        .S_AXI_HP1_0_arlock(2'd0),.S_AXI_HP1_0_awlock(2'd0),
+        .S_AXI_HP1_0_arprot(3'd0),.S_AXI_HP1_0_awprot(3'd0),
+        .S_AXI_HP1_0_arqos(4'd0),.S_AXI_HP1_0_awqos(4'd0),
+        .S_AXI_HP1_0_rid(),.S_AXI_HP1_0_bid(),
         .M_AXI_GP0_0_araddr(m_axi_araddr), .M_AXI_GP0_0_arburst(m_axi_arburst),
         .M_AXI_GP0_0_arcache(m_axi_arcache), .M_AXI_GP0_0_arid(m_axi_arid),
         .M_AXI_GP0_0_arlen(m_axi_arlen), .M_AXI_GP0_0_arlock(m_axi_arlock),
@@ -453,6 +540,10 @@ module multitini_one_top #(
         .rd_data(control_rd_data), .control(shell_control),
         .border_config(border_config),
         .vectrex_video_config(vectrex_video_config),
+        .effect_write(effect_write),.effect_address(effect_address),.effect_data(effect_data),
+        .effect_commit(effect_commit),.effect_commit_sequence(effect_commit_sequence),
+        .effect_busy(effect_busy),.effect_active_valid(effect_active_valid),
+        .effect_rejected(effect_rejected),.effect_active_sequence(effect_active_sequence),
         .load_submit(load_submit), .load_kind(load_kind),
         .load_data(load_data), .load_offset(load_offset),
         .load_total(load_total), .load_first(load_first),
@@ -479,8 +570,8 @@ module multitini_one_top #(
     );
 
     always_comb begin
-        control_wr_en = reg_wr_en && reg_wr_addr < 16'h1000;
-        control_rd_en = reg_rd_en && reg_rd_addr < 16'h1000;
+        control_wr_en = reg_wr_en && reg_wr_addr < 16'h1000 && !framebuffer_wr_select;
+        control_rd_en = reg_rd_en && reg_rd_addr < 16'h1000 && !framebuffer_rd_select;
         ui_vram_wr_en = reg_wr_en &&
             ((reg_wr_addr >= MT_UI_VRAM_BANK0_OFFSET &&
               reg_wr_addr < MT_UI_VRAM_BANK0_OFFSET + MT_UI_VRAM_BANK_BYTES) ||
@@ -492,7 +583,8 @@ module multitini_one_top #(
              (reg_wr_addr >= MT_UI_LEGACY_VRAM_BANK1_OFFSET &&
               reg_wr_addr < MT_UI_LEGACY_VRAM_BANK1_OFFSET +
                             MT_UI_LEGACY_VRAM_BANK_BYTES));
-        reg_rd_data = reg_rd_addr < 16'h1000 ? control_rd_data : 32'd0;
+        reg_rd_data = framebuffer_rd_select ? framebuffer_rd_data :
+                      reg_rd_addr < 16'h1000 ? control_rd_data : 32'd0;
     end
 
     assign load_mailbox_source = {load_kind, load_data, load_offset,
@@ -1218,10 +1310,95 @@ module multitini_one_top #(
         .viewport_width(viewport_width), .viewport_height(viewport_height),
         .pixel_opaque(border_pixel_opaque), .pixel_rgb565(border_pixel_rgb565)
     );
-    multitini_video_test video_test (
+    // One PS-reset crossing serves every native-video mailbox in this domain.
+    // Independent reset synchronizers could release related protocols on
+    // different pixel cycles and are rejected by the strict CDC fan-out gate.
+    (* ASYNC_REG = "TRUE" *) reg [2:0] video_control_release;
+    always @(posedge video_clk or negedge control_aresetn)
+        if(!control_aresetn)video_control_release<=0;
+        else video_control_release<={video_control_release[1:0],1'b1};
+    wire video_control_resetn=video_control_release[2];
+    multitini_video_framebuffer #(
+        .SHARED_PIXEL_RESET(1'b1),
+        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : C64_NTSC_MODE ? 404 : 382),
+        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : C64_NTSC_MODE ? 250 : 270),
+        .VIEW_X(ACTIVE_MACHINE==1 ? 480 : ACTIVE_MACHINE==3 ? 555 : C64_NTSC_MODE ? 152 : 196),
+        .VIEW_Y(ACTIVE_MACHINE==1 ? 108 : ACTIVE_MACHINE==3 ? 0 : C64_NTSC_MODE ? 40 : 0),
+        .SCALE_NUM(ACTIVE_MACHINE==1 ? 6 : ACTIVE_MACHINE==3 ? 3 : 4),
+        .SCALE_DEN(ACTIVE_MACHINE==3 ? 2 : 1)) video_framebuffer (
+        .clk(control_clk),.resetn(control_aresetn),
+        .wr_en(reg_wr_en && framebuffer_wr_select),.wr_addr(reg_wr_addr[11:0]),
+        .wr_data(reg_wr_data),.wr_strb(reg_wr_strb),.rd_addr(reg_rd_addr[11:0]),.rd_data(framebuffer_rd_data),
+        .pixel_clk(video_clk),.pixel_resetn(video_aresetn),.shared_pixel_resetn(video_control_resetn),.vblank_start(video_vblank_start),
+        .machine_ready(machine_video_active),.scan_x(video_scan_x),.scan_y(video_scan_y),
+        .machine_rgb565(machine_video_rgb565),.pixel_use(framebuffer_use),.pixel_rgb565(framebuffer_rgb565),
+        .pixel_running(video_pixel_running),
+        .araddr(hp0_araddr),
+        .arlen(hp0_arlen),
+        .arsize(hp0_arsize),
+        .arburst(hp0_arburst),
+        .arvalid(hp0_arvalid),
+        .arready(hp0_arready),
+        .awaddr(hp0_awaddr),
+        .awlen(hp0_awlen),
+        .awsize(hp0_awsize),
+        .awburst(hp0_awburst),
+        .awvalid(hp0_awvalid),
+        .awready(hp0_awready),
+        .rdata(hp0_rdata),
+        .rresp(hp0_rresp),
+        .rlast(hp0_rlast),
+        .rvalid(hp0_rvalid),
+        .rready(hp0_rready),
+        .wdata(hp0_wdata),
+        .wstrb(hp0_wstrb),
+        .wlast(hp0_wlast),
+        .wvalid(hp0_wvalid),
+        .wready(hp0_wready),
+        .bresp(hp0_bresp),
+        .bvalid(hp0_bvalid),
+        .bready(hp0_bready),
+        .fx_araddr(hp1_araddr),
+        .fx_arlen(hp1_arlen),
+        .fx_arsize(hp1_arsize),
+        .fx_arburst(hp1_arburst),
+        .fx_arvalid(hp1_arvalid),
+        .fx_arready(hp1_arready),
+        .fx_awaddr(hp1_awaddr),
+        .fx_awlen(hp1_awlen),
+        .fx_awsize(hp1_awsize),
+        .fx_awburst(hp1_awburst),
+        .fx_awvalid(hp1_awvalid),
+        .fx_awready(hp1_awready),
+        .fx_rdata(hp1_rdata),
+        .fx_rresp(hp1_rresp),
+        .fx_rlast(hp1_rlast),
+        .fx_rvalid(hp1_rvalid),
+        .fx_rready(hp1_rready),
+        .fx_wdata(hp1_wdata),
+        .fx_wstrb(hp1_wstrb),
+        .fx_wlast(hp1_wlast),
+        .fx_wvalid(hp1_wvalid),
+        .fx_wready(hp1_wready),
+        .fx_bresp(hp1_bresp),
+        .fx_bvalid(hp1_bvalid),
+        .fx_bready(hp1_bready)
+    );
+
+    multitini_video_test #(.ENABLE_EFFECTS(1'b1),.SHARED_PIXEL_RESET(1'b1),.SHARED_PIXEL_LIVENESS(1'b1),
+        .SOURCE_SCALE_NUM(ACTIVE_MACHINE == 1 ? 6 : ACTIVE_MACHINE == 3 ? 3 : 4),
+        .SOURCE_SCALE_DEN(ACTIVE_MACHINE == 3 ? 2 : 1)) video_test (
+        .control_clk(control_clk),.control_resetn(control_aresetn),.shared_pixel_resetn(video_control_resetn),
+        .shared_pixel_running(video_pixel_running),
+        .effect_write(effect_write),.effect_address(effect_address),.effect_data(effect_data),
+        .effect_commit(effect_commit),.effect_commit_sequence(effect_commit_sequence),
+        .effect_busy(effect_busy),.effect_active_valid(effect_active_valid),
+        .effect_rejected(effect_rejected),.effect_active_sequence(effect_active_sequence),
+        .viewport_x(viewport_x),.viewport_y(viewport_y),
+        .viewport_width(viewport_width),.viewport_height(viewport_height),
         .pixel_clk(video_clk), .resetn(video_aresetn), .enable(video_enable),
         .machine_enable(machine_video_active),
-        .machine_rgb565(machine_video_rgb565),
+        .machine_rgb565(framebuffer_use ? framebuffer_rgb565 : machine_video_rgb565),
         .border_opaque(border_pixel_opaque), .border_rgb565(border_pixel_rgb565),
         .ui_opaque(ui_pixel_opaque), .ui_rgb565(ui_pixel_rgb565),
         .scan_x(video_scan_x), .scan_y(video_scan_y),

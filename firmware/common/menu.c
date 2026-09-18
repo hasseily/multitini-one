@@ -78,11 +78,16 @@ static const mt_menu_item_t *page_items(mt_menu_page_t page,
         items = view->system_items;
         *count = view->system_item_count;
         break;
+    case MT_MENU_PAGE_EFFECTS:
+        items = view->effect_items;
+        *count = view->effect_item_count;
+        break;
     default:
         break;
     }
     if (items == NULL) *count = 0U;
-    if (*count > MT_MENU_MAX_ITEMS) *count = MT_MENU_MAX_ITEMS;
+    const size_t limit = page == MT_MENU_PAGE_EFFECTS ? MT_MENU_MAX_EFFECT_ITEMS : MT_MENU_MAX_ITEMS;
+    if (*count > limit) *count = limit;
     return items;
 }
 
@@ -466,6 +471,10 @@ mt_menu_action_t mt_menu_key_with_modifiers(mt_menu_t *menu,
                 change_variant(menu, view, active_core(view), true);
             else if (menu->page == MT_MENU_PAGE_VIDEO)
                 action = change_video(menu, view, hid_usage);
+            else if (menu->page == MT_MENU_PAGE_EFFECTS) {
+                action = activate(menu, view);
+                action.variant_index = 1U; /* decrease */
+            }
         }
         break;
     case MT_MENU_HID_RIGHT:
@@ -483,6 +492,10 @@ mt_menu_action_t mt_menu_key_with_modifiers(mt_menu_t *menu,
                 change_variant(menu, view, active_core(view), false);
             else if (menu->page == MT_MENU_PAGE_VIDEO)
                 action = change_video(menu, view, hid_usage);
+            else if (menu->page == MT_MENU_PAGE_EFFECTS) {
+                action = activate(menu, view);
+                action.variant_index = 2U; /* increase */
+            }
         }
         break;
     case MT_MENU_HID_ENTER:
@@ -513,7 +526,7 @@ mt_menu_action_t mt_menu_key(mt_menu_t *menu, const mt_menu_view_t *view,
 const char *mt_menu_page_name(mt_menu_page_t page)
 {
     static const char *const names[] = {
-        "Cores", "Media", "Video", "Input", "Options", "System"
+        "Cores", "Media", "Video", "Effects", "Input", "Options", "System"
     };
     return (unsigned)page < (unsigned)MT_MENU_PAGE_COUNT ? names[page] : "Cores";
 }
@@ -524,6 +537,7 @@ static const char *page_caption(mt_menu_page_t page)
         "Choose a system. Your media stays with each core.",
         "Load content and manage the active session.",
         "Display and border. Saved separately for each core.",
+        "Color and display effects. Saved separately for each core.",
         "Controls for the active system.",
         "Settings supplied by the active core.",
         "Board status, clock, documents and recovery."
@@ -1052,7 +1066,7 @@ void mt_menu_render(const mt_menu_t *menu, const mt_menu_view_t *view,
         "[Enter] Launch  [Right] Load  [Left] Direct  [PgUp/Dn] Page  [Esc] Back" :
         (menu->browser != MT_MENU_BROWSER_NONE ?
          "[Enter] Open  [Up/Down] Select  [PgUp/PgDn] Page  [Home/End] First/Last  [Esc] Back" :
-         menu->page == MT_MENU_PAGE_VIDEO ?
+         (menu->page == MT_MENU_PAGE_VIDEO || menu->page == MT_MENU_PAGE_EFFECTS) ?
          "[Tab/Shift+Tab] Section  [Up/Down] Select  [Left/Right] Adjust  [Enter] Apply/Cycle  [Esc/F12] Close" :
          "[Tab/Shift+Tab] Section  [Up/Down] Select  [Enter] Apply  [Esc/F12] Close"),
         MT_UI_COLOR_MUTED, MT_UI_COLOR_RAISED);

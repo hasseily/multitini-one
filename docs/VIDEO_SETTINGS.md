@@ -54,6 +54,14 @@ beam gain ranges from 1x to 4x with saturation. Defaults are On, 50 percent,
 and 2x. These controls preserve the same game window and border placement.
 See [Vectrex overlays](VECTREX_OVERLAYS.md) for the file format and settings.
 
+ABI 0.15 adds a separate **Effects** page after Video. It provides per-core
+color adjustments, scanlines, masks, horizontal filtering, persistence, blur,
+and bloom. Left/Right adjusts the selected control; effects default off.
+Persistence, blur, and bloom run in the FPGA at native resolution. Its ordered
+frame pipeline follows the 60 Hz output cadence; CPU1 prepares color settings.
+See [CPU1 and FPGA video effects](CPU1_VIDEO_EFFECTS.md) for the
+processing order, buffering, and validation limits.
+
 ## Acceptance
 
 Directed checks cover menu navigation, settings migration and failure recovery,

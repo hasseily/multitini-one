@@ -161,6 +161,8 @@ proc configure_processing_system {ps} {
         CONFIG.PCW_FCLK_CLK2_BUF {TRUE} \
         CONFIG.PCW_EN_RST0_PORT {1} \
         CONFIG.PCW_USE_M_AXI_GP0 {1} \
+        CONFIG.PCW_USE_S_AXI_HP0 {1} \
+        CONFIG.PCW_USE_S_AXI_HP1 {1} \
         CONFIG.PCW_USE_FABRIC_INTERRUPT {1} \
         CONFIG.PCW_IRQ_F2P_INTR {1} \
         CONFIG.PCW_IRQ_F2P_MODE {DIRECT}] $ps
@@ -297,6 +299,28 @@ set_property -dict [list \
     CONFIG.PROTOCOL {AXI3}] $gp0
 connect_bd_intf_net [get_bd_intf_pins $ps/M_AXI_GP0] $gp0
 
+# Video DMA uses independent 64-bit AXI3 read/write channels on HP0. The
+# existing direct PS FCLK0 keeps every accepted DDR transaction drainable
+# while firmware prepares a full-PL replacement.
+set hp0 [create_bd_intf_port -mode Slave \
+    -vlnv xilinx.com:interface:aximm_rtl:1.0 S_AXI_HP0_0]
+set_property -dict [list CONFIG.ADDR_WIDTH {32} CONFIG.DATA_WIDTH {64} \
+    CONFIG.ID_WIDTH {6} CONFIG.HAS_REGION {0} CONFIG.PROTOCOL {AXI3} \
+    CONFIG.MAX_BURST_LENGTH {16} CONFIG.NUM_READ_OUTSTANDING {1} \
+    CONFIG.NUM_WRITE_OUTSTANDING {1} CONFIG.READ_WRITE_MODE {READ_WRITE}] $hp0
+connect_bd_intf_net $hp0 [get_bd_intf_pins $ps/S_AXI_HP0]
+
+# The fixed-rate frame engine has its own HP port. Capture/scanout on HP0
+# never wait behind a PL arbiter shared with history and spatial processing.
+set hp1 [create_bd_intf_port -mode Slave \
+    -vlnv xilinx.com:interface:aximm_rtl:1.0 S_AXI_HP1_0]
+set_property -dict [list CONFIG.ADDR_WIDTH {32} CONFIG.DATA_WIDTH {64} \
+    CONFIG.ID_WIDTH {6} CONFIG.HAS_REGION {0} CONFIG.PROTOCOL {AXI3} \
+    CONFIG.MAX_BURST_LENGTH {16} CONFIG.NUM_READ_OUTSTANDING {1} \
+    CONFIG.NUM_WRITE_OUTSTANDING {1} CONFIG.READ_WRITE_MODE {READ_WRITE}] $hp1
+connect_bd_intf_net $hp1 [get_bd_intf_pins $ps/S_AXI_HP1]
+
+
 set control_clk [create_bd_port -dir O -type clk control_clk]
 set idelay_ref_clk [create_bd_port -dir O -type clk idelay_ref_clk]
 set video_clk [create_bd_port -dir O -type clk video_clk]
@@ -310,7 +334,7 @@ set_property CONFIG.POLARITY ACTIVE_LOW $control_aresetn
 set_property CONFIG.POLARITY ACTIVE_LOW $idelay_aresetn
 set_property CONFIG.POLARITY ACTIVE_LOW $video_aresetn
 set_property CONFIG.POLARITY ACTIVE_LOW $c64_aresetn
-set_property -dict [list CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0_0} \
+set_property -dict [list CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0_0:S_AXI_HP0_0:S_AXI_HP1_0} \
     CONFIG.ASSOCIATED_RESET {control_aresetn}] $control_clk
 set_property CONFIG.ASSOCIATED_RESET {video_aresetn} $video_clk
 set_property CONFIG.ASSOCIATED_RESET {c64_aresetn} $c64_clk
@@ -374,7 +398,8 @@ set_property -dict [list CONFIG.CONST_VAL {1} CONFIG.CONST_WIDTH {1}] \
 connect_bd_net [get_bd_pins $ps/FCLK_CLK0] \
     [get_bd_pins $idelay_wiz/clk_in1] $control_clk \
     [get_bd_pins $control_reset/slowest_sync_clk] \
-    [get_bd_pins $ps/M_AXI_GP0_ACLK]
+    [get_bd_pins $ps/M_AXI_GP0_ACLK] [get_bd_pins $ps/S_AXI_HP0_ACLK] \
+    [get_bd_pins $ps/S_AXI_HP1_ACLK]
 connect_bd_net [get_bd_pins $ps/FCLK_CLK2] \
     [get_bd_pins $video_wiz/clk_in1] [get_bd_pins $c64_wiz/clk_in1]
 connect_bd_net [get_bd_pins $ps/FCLK_RESET0_N] \
@@ -416,6 +441,13 @@ connect_bd_net $irq [get_bd_pins $ps/IRQ_F2P]
 assign_bd_address -offset 0x40000000 -range 0x00010000 \
     -target_address_space [get_bd_addr_spaces $ps/Data] \
     [get_bd_addr_segs M_AXI_GP0_0/Reg] -force
+
+assign_bd_address -offset 0x00000000 -range 0x40000000 \
+    -target_address_space [get_bd_addr_spaces S_AXI_HP0_0] \
+    [get_bd_addr_segs $ps/S_AXI_HP0/HP0_DDR_LOWOCM] -force
+assign_bd_address -offset 0x00000000 -range 0x40000000 \
+    -target_address_space [get_bd_addr_spaces S_AXI_HP1_0] \
+    [get_bd_addr_segs $ps/S_AXI_HP1/HP1_DDR_LOWOCM] -force
 
 regenerate_bd_layout
 validate_bd_design

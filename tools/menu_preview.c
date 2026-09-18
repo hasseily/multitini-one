@@ -4,6 +4,7 @@
 #include "multitini_c64_interface.h"
 #include "multitini_gameboy_interface.h"
 #include "multitini_system.h"
+#include "multitini_video_effects_frontend.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -31,6 +32,8 @@ int main(int argc, char **argv)
     mt_menu_view_t view = {0};
     mt_menu_t menu;
     mt_system_frontend_t system_frontend;
+    mt_video_effects_frontend_t effects_frontend;
+    mt_video_effects_settings_t effects;
     mt_system_snapshot_t snapshot = {0};
     mt_text_reader_t reader = {0};
     mt_ui_frame_t frame;
@@ -107,6 +110,20 @@ int main(int argc, char **argv)
         view.border_padding = 6U;
         menu.page = MT_MENU_PAGE_VIDEO;
         menu.row = 4U;
+    } else if (strcmp(scenario, "c64-effects") == 0 ||
+               strcmp(scenario, "c64-effects-frame") == 0 ||
+               strcmp(scenario, "gbc-effects-legacy") == 0) {
+        mt_video_effects_defaults(&effects);
+        effects.enabled = 1U; effects.gamma = 115U; effects.saturation = 90U;
+        effects.persistence = 1U; effects.blur = 2U; effects.bloom = 2U;
+        mt_video_effects_frontend_apply(&effects_frontend, &effects,
+            strcmp(scenario, "gbc-effects-legacy") != 0,
+            "Update this core package to enable video effects.", &view);
+        menu.page = MT_MENU_PAGE_EFFECTS;
+        menu.row = 3U;
+        if (strcmp(scenario, "c64-effects-frame") == 0)
+            (void)mt_menu_key(&menu, &view, MT_MENU_HID_END, true);
+        view.status_text = "CPU1 frame processing and FPGA effects active";
     } else if (strcmp(scenario, "gbc-input") == 0) {
         menu.page = MT_MENU_PAGE_INPUT;
     } else if (strcmp(scenario, "browser-long") == 0) {

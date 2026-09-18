@@ -4,8 +4,13 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
+import hashlib
+import json
 import re
 import shutil
+import struct
+import subprocess
 import sys
 from pathlib import Path
 
@@ -21,6 +26,12 @@ REUSE_XPFM = os.environ.get("MULTITINI_PLATFORM_XPFM")
 PLATFORM_NAME = "multitini_platform"
 DOMAIN_NAME = "standalone_ps7_cortexa9_0"
 APP_NAME = os.environ.get("MULTITINI_VITIS_APP", "diagnostic")
+CPU1_DOMAIN_NAME = "standalone_ps7_cortexa9_1"
+CPU1_APP_NAME = "video_worker"
+CPU1_ENTRY = 0x20000000
+CPU1_PRIVATE_BYTES = 0x01000000
+CPU1_READY_STAMP = ".multitini-cpu1-ready"
+CPU1_READY_DESCRIPTION = "video-worker-abi=1 USE_AMP=1 entry=0x20000000 bytes=0x01000000\n"
 XILFFS_VERSION = "xilffs_v5_5"
 XILFFS_READY_STAMP = ".multitini-xilffs-ready"
 XILFFS_READY_DESCRIPTION = (
@@ -581,6 +592,201 @@ def validate_reused_xilffs(xpfm: Path) -> None:
                 f"Reused platform lacks {marker}: {config}")
 
 
+def configure_cpu1_domain(platform: object) -> None:
+    """AMP startup pattern from Appletini One at
+    1fd4f371e8f4ef08bc63875550564590609fcfeb. No PS hardware change is needed.
+    CPU1 must not initialize the SCU or shared L2 already owned by CPU0.
+    """
+    domain = platform.add_domain(cpu="ps7_cortexa9_1", os="standalone",
+                                 name=CPU1_DOMAIN_NAME,
+                                 display_name=CPU1_DOMAIN_NAME, compiler="gcc")
+    domain.set_config(option="proc", param="proc_extra_compiler_flags",
+                      value="-DUSE_AMP=1")
+    domain.set_config(option="os", param="standalone_stdout", value="ps7_uart_1")
+    domain.regenerate()
+
+
+def validate_reused_cpu1(xpfm: Path) -> None:
+    stamp = require(xpfm.parent / CPU1_READY_STAMP,
+                    "CPU1 AMP platform stamp; rebuild without MULTITINI_PLATFORM_XPFM")
+    if stamp.read_text(encoding="utf-8") != CPU1_READY_DESCRIPTION:
+        raise RuntimeError(f"Reused CPU1 platform configuration differs: {stamp}")
+    include = xpfm.parent / "sw" / CPU1_DOMAIN_NAME / "include"
+    require(include / "xil_mmu.h", "CPU1 standalone BSP")
+    require(xpfm.parent / "sw" / CPU1_DOMAIN_NAME / "lib" / "libxil.a",
+            "CPU1 standalone library")
+
+
+def configure_amp_application(component: str, secondary: bool) -> None:
+    """Give each image a bounded linker region and explicit optimization."""
+    directory = WORKSPACE / component / "src"
+    config = require(directory / "UserConfig.cmake", "Vitis user configuration")
+    text = config.read_text(encoding="utf-8")
+    optimization = "-O3" if secondary else "-O2"
+    text, count = re.subn(r"set\(\s*USER_COMPILE_OPTIMIZATION_LEVEL\b[^)]*\)",
+                         f"set(USER_COMPILE_OPTIMIZATION_LEVEL {optimization})", text)
+    if count != 1:
+        raise RuntimeError(f"Missing optimization setting: {config}")
+    # Preserve the vendor's ARM ABI; only select NEON in its existing FPU flag.
+    text = re.sub(r"-mfpu=[A-Za-z0-9_-]+", "-mfpu=neon", text)
+    if "-mfpu=neon" not in text:
+        text += '\nlist(APPEND USER_COMPILE_OPTIONS " -mfpu=neon")\n'
+    if 'list(APPEND USER_LINK_LIBRARIES "m")' not in text:
+        text += '\nlist(APPEND USER_LINK_LIBRARIES "m")\n'
+    config.write_text(text, encoding="utf-8")
+    lscript = require(directory / "lscript.ld", "Vitis linker script")
+    text = lscript.read_text(encoding="utf-8")
+    origin = CPU1_ENTRY if secondary else 0x00100000
+    length = CPU1_PRIVATE_BYTES if secondary else CPU1_ENTRY - origin
+    text, count = re.subn(
+        r"(ps7_ddr_0_memory_0\s*:\s*ORIGIN\s*=\s*)0x[0-9a-fA-F]+"
+        r"(\s*,\s*LENGTH\s*=\s*)0x[0-9a-fA-F]+",
+        rf"\g<1>0x{origin:x}\g<2>0x{length:x}", text)
+    if count != 1:
+        raise RuntimeError(f"Could not bound DDR region: {lscript}")
+    if secondary:
+        for symbol, value in (("_STACK_SIZE", "0x40000"), ("_HEAP_SIZE", "0x10000")):
+            text, count = re.subn(
+                rf"(?m)^{symbol} = DEFINED\({symbol}\) \? {symbol} : [^;]+;",
+                f"{symbol} = DEFINED({symbol}) ? {symbol} : {value};", text)
+            if count != 1:
+                raise RuntimeError(f"Could not configure {symbol}: {lscript}")
+    elif ".mt_video_core1 :" not in text:
+        text, count = re.subn(r"(?m)^\.rodata\s*:",
+            ".mt_video_core1 : { KEEP(*(.mt_video_core1)) } > ps7_ddr_0_memory_0\n\n.rodata :",
+            text, count=1)
+        if count != 1:
+            raise RuntimeError(f"Could not add embedded CPU1 section: {lscript}")
+    lscript.write_text(text, encoding="utf-8")
+
+
+def validate_elf_memory(path: Path, base: int, length: int) -> None:
+    """Reject misplaced entry points or LOAD/BSS ranges before packaging."""
+    data = require(path, "ARM ELF").read_bytes()
+    if len(data) < 52 or data[:6] != b"\x7fELF\x01\x01":
+        raise RuntimeError(f"Expected little-endian ELF32: {path}")
+    entry, phoff = struct.unpack_from("<II", data, 24)
+    phentsize, phnum = struct.unpack_from("<HH", data, 42)
+    if entry != base or phentsize < 32 or phnum == 0:
+        raise RuntimeError(f"Unexpected ARM entry/program headers: {path}")
+    if phoff + phnum * phentsize > len(data):
+        raise RuntimeError(f"Truncated ARM program headers: {path}")
+    loads = 0
+    for index in range(phnum):
+        ptype, offset, vaddr, paddr, filesz, memsz = struct.unpack_from(
+            "<6I", data, phoff + index * phentsize)
+        if ptype != 1:
+            continue
+        loads += 1
+        if (vaddr != paddr or paddr < base or paddr + memsz > base + length or
+                filesz > memsz or offset + filesz > len(data)):
+            raise RuntimeError(f"ARM LOAD segment exceeds reserved memory: {path}")
+    if loads == 0:
+        raise RuntimeError(f"ARM ELF has no loadable segments: {path}")
+
+
+def arm_objcopy() -> Path:
+    return require(Path(os.environ["XILINX_VITIS"]) / "gnu" / "aarch32" / "nt" /
+                   "gcc-arm-none-eabi" / "bin" / "arm-none-eabi-objcopy.exe",
+                   "ARM objcopy")
+
+
+def embed_cpu1(application: object) -> Path:
+    elf = WORKSPACE / CPU1_APP_NAME / "build" / f"{CPU1_APP_NAME}.elf"
+    validate_elf_memory(elf, CPU1_ENTRY, CPU1_PRIVATE_BYTES)
+    directory = WORKSPACE / APP_NAME / "src"
+    binary = directory / "video_core1_blob.bin"
+    subprocess.run([str(arm_objcopy()), "-O", "binary", str(elf), str(binary)], check=True)
+    if not 0 < binary.stat().st_size <= CPU1_PRIVATE_BYTES:
+        raise RuntimeError("CPU1 binary exceeds its private region")
+    assembly = directory / "video_core1_blob.S"
+    assembly.write_text(
+        '/* Generated CPU1 image; do not edit. */\n'
+        '    .section .mt_video_core1, "a", %progbits\n'
+        '    .global mt_video_core1_blob_start\n'
+        '    .global mt_video_core1_blob_end\n'
+        '    .balign 32\n'
+        'mt_video_core1_blob_start:\n'
+        f'    .incbin "{binary.as_posix()}"\n'
+        'mt_video_core1_blob_end:\n', encoding="utf-8")
+    application.import_files(from_loc=str(directory), files=[assembly.name],
+                             is_skip_copy_sources=True)
+    return binary
+
+
+def capture_build_inputs(xpfm: Path) -> dict:
+    """Freeze rebuildable application inputs before either CPU is compiled."""
+    suffixes = {".c", ".h", ".cpp", ".hpp", ".S", ".s", ".ld", ".cmake", ".inc", ".i", ".txt"}
+    paths = {Path(__file__).resolve()}
+    for directory in ("firmware", "third_party/CherryUSB", "third_party/gsbasic"):
+        paths.update(path.resolve() for path in (ROOT / directory).rglob("*")
+                     if path.is_file() and path.suffix in suffixes and
+                     not any(part in {".git", "build", "__pycache__"}
+                             for part in path.relative_to(ROOT).parts))
+    files = {path.relative_to(ROOT).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+             for path in sorted(paths)}
+    platform = xpfm.resolve().parent
+    platform_files = {
+        path.relative_to(platform).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(platform.rglob("*")) if path.is_file()}
+    return {"schema": 1, "captured_utc": datetime.now(timezone.utc).isoformat(),
+            "files": files, "platform_path": str(platform),
+            "platform_files": platform_files,
+            "xsa": {"path": str(XSA.resolve()),
+                    "sha256": hashlib.sha256(XSA.read_bytes()).hexdigest()}}
+
+
+def verify_build_inputs(record: dict) -> dict:
+    """Reject sources changed during a build; audit actual compiler inputs."""
+    for name, expected in record["files"].items():
+        if hashlib.sha256((ROOT / name).read_bytes()).hexdigest() != expected:
+            raise RuntimeError(f"Application source changed during build: {name}")
+    for name, expected in record["platform_files"].items():
+        path = Path(record["platform_path"]) / name
+        if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            raise RuntimeError(f"Exported platform changed during build: {name}")
+    if hashlib.sha256(Path(record["xsa"]["path"]).read_bytes()).hexdigest() != record["xsa"]["sha256"]:
+        raise RuntimeError("Selected hardware XSA changed during application build")
+    compiled = {}
+    for app in (APP_NAME, CPU1_APP_NAME):
+        commands = WORKSPACE / app / "build" / "compile_commands.json"
+        entries = json.loads(commands.read_text(encoding="utf-8"))
+        if not entries:
+            raise RuntimeError(f"Empty compiler source list: {commands}")
+        listing = {}
+        for entry in entries:
+            path = Path(entry["file"]).resolve()
+            if path == (WORKSPACE / APP_NAME / "src/video_core1_blob.S").resolve():
+                name = "generated/video_core1_blob.S"
+            else:
+                name = path.relative_to(ROOT).as_posix()
+                if name not in record["files"]:
+                    raise RuntimeError(f"Compiled source was not captured before build: {name}")
+            listing[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+        compiled[app] = {"files": listing,
+                         "compile_commands_sha256": hashlib.sha256(commands.read_bytes()).hexdigest()}
+    return {**record, "compiled": compiled}
+
+
+def verify_embedded_cpu1(binary: Path, build_inputs: dict) -> None:
+    elf = WORKSPACE / APP_NAME / "build" / f"{APP_NAME}.elf"
+    validate_elf_memory(elf, 0x00100000, CPU1_ENTRY - 0x00100000)
+    extracted = WORKSPACE / APP_NAME / "build" / "verified_video_core1.bin"
+    subprocess.run([str(arm_objcopy()), "--dump-section",
+                    f".mt_video_core1={extracted}", str(elf)], check=True)
+    if extracted.read_bytes() != binary.read_bytes():
+        raise RuntimeError("CPU0 embedded video worker differs from selected CPU1 ELF")
+    paths = {"cpu0_elf": elf,
+             "cpu1_elf": WORKSPACE / CPU1_APP_NAME / "build" / f"{CPU1_APP_NAME}.elf",
+             "cpu1_binary": binary}
+    manifest = {name: {"path": str(path), "bytes": path.stat().st_size,
+                       "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+                for name, path in paths.items()}
+    manifest["build_inputs"] = verify_build_inputs(build_inputs)
+    (WORKSPACE / "cpu1_manifest.json").write_text(
+        json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+
 def main() -> int:
     require(XSA, "Vivado hardware platform")
     ensure_lopper_preprocessor()
@@ -590,6 +796,7 @@ def main() -> int:
         if REUSE_XPFM:
             xpfm = require(Path(REUSE_XPFM), "reused exported platform")
             validate_reused_xilffs(xpfm)
+            validate_reused_cpu1(xpfm)
             client.add_platform_repos(platform=str(xpfm.parent))
             print(f"Reusing exported platform: {xpfm}")
         else:
@@ -602,11 +809,29 @@ def main() -> int:
                 compiler="gcc",
             )
             configure_xilffs(platform)
+            configure_cpu1_domain(platform)
             require_success(platform.build(), "platform build")
             xpfm = (WORKSPACE / PLATFORM_NAME / "export" / PLATFORM_NAME /
                     f"{PLATFORM_NAME}.xpfm")
             require(xpfm, "exported platform")
             mark_xilffs_ready(xpfm)
+            (xpfm.parent / CPU1_READY_STAMP).write_text(
+                CPU1_READY_DESCRIPTION, encoding="utf-8")
+
+        if os.environ.get("MULTITINI_PLATFORM_ONLY") == "1":
+            print(f"Vitis CPU0/CPU1 platform build completed: {xpfm}")
+            return 0
+
+        build_inputs = capture_build_inputs(xpfm)
+        secondary = client.create_app_component(
+            name=CPU1_APP_NAME, platform=str(xpfm), domain=CPU1_DOMAIN_NAME,
+            template="empty_application")
+        secondary.import_files(from_loc=str(ROOT), files=[
+            "firmware/cpu1/main.c", "firmware/common/video_effects.c"],
+            is_skip_copy_sources=True)
+        add_include_directory(CPU1_APP_NAME, ROOT / "firmware" / "include")
+        configure_amp_application(CPU1_APP_NAME, secondary=True)
+        require_success(secondary.build(), "CPU1 video worker build")
 
         application = client.create_app_component(
             name=APP_NAME,
@@ -647,9 +872,12 @@ def main() -> int:
                               "port" / "ehci")
         patch_usbh_class_info_section(APP_NAME)
         configure_vectrex32_cpp(APP_NAME)
+        configure_amp_application(APP_NAME, secondary=False)
+        binary = embed_cpu1(application)
         require_success(application.build(), "diagnostic application build")
         require(WORKSPACE / APP_NAME / "build" / f"{APP_NAME}.elf",
                 "diagnostic ELF")
+        verify_embedded_cpu1(binary, build_inputs)
         print(f"Vitis diagnostic build completed: {WORKSPACE}")
         return 0
     finally:

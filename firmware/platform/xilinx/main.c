@@ -30,6 +30,9 @@
 #include "supervisor_settings.h"
 #include "text_document.h"
 #include "usb_hid_service.h"
+#include "multitini_video_effects_frontend.h"
+#include "video_effect_service.h"
+#include "video_worker.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -51,8 +54,8 @@
 
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
 #define MT_SUPERVISOR_CORE_ID UINT32_C(0)
-/* UIF1 adds USB hardening, documents, board status and shared controls. */
-#define MT_FIRMWARE_BUILD_ID UINT32_C(0x55494631)
+/* VID2 uses a fixed-rate FPGA frame engine; CPU1 prepares video controls. */
+#define MT_FIRMWARE_BUILD_ID UINT32_C(0x56494432)
 #define MT_I2C_CLOCK_HZ UINT32_C(100000)
 #define MT_I2C_BUSY_POLLS UINT32_C(1000000)
 #define MT_UART_DRAIN_POLLS UINT32_C(10000000)
@@ -119,6 +122,7 @@ static bool board_clock_available;
 static bool board_clock_valid;
 static mt_clock_time_t board_clock;
 static mt_system_frontend_t system_frontend;
+static mt_video_effects_frontend_t effects_frontend;
 static mt_text_reader_t document_reader;
 static char document_title[MT_MENU_FILE_NAME_MAX];
 static bool board_temperature_valid;
@@ -349,6 +353,16 @@ static void service_runtime(void)
         shell_read(MT_REG_CORE_ID) == MT_GBC_CORE_ID;
     (void)service_fatfs_time();
     service_usb_input();
+    {
+        static const char *last_effect_status;
+        const char *status;
+        mt_video_effect_service_poll();
+        status = mt_video_effect_service_status();
+        if (status != last_effect_status) {
+            last_effect_status = status;
+            supervisor_menu_dirty = true;
+        }
+    }
     if ((control & MT_CONTROL_CORE_RESET_REQUEST) != 0U) {
         if (c64_active && c64_services_initialized &&
             !c64_core_reset_active) {
@@ -1418,6 +1432,52 @@ static bool selection_supports_vectrex_video(const mt_core_selection_t *selectio
            (uint16_t)version >= MT_VECTREX_VIDEO_MIN_ABI_MINOR;
 }
 
+static bool selection_supports_effects(const mt_core_selection_t *selection)
+{
+    uint32_t version;
+    if (selection == NULL || selection->package.core_id == MT_SUPERVISOR_CORE_ID ||
+        selection->package.abi_major != MT_ABI_MAJOR ||
+        selection->package.abi_minor < MT_VIDEO_EFFECT_MIN_ABI_MINOR ||
+        shell_read(MT_REG_CORE_ID) != selection->package.core_id) return false;
+    version = shell_read(MT_REG_ABI_VERSION);
+    return (uint16_t)(version >> 16U) == MT_ABI_MAJOR &&
+           (uint16_t)version >= MT_VIDEO_EFFECT_MIN_ABI_MINOR;
+}
+
+static void configure_selection_effects(const mt_core_selection_t *selection)
+{
+    const mt_core_settings_profile_t *const profile = selection != NULL ?
+        mt_supervisor_settings_find(&persistent_settings, selection->package.id) : NULL;
+    mt_video_effect_service_configure(selection_supports_effects(selection),
+        profile != NULL ? &profile->video_effects : NULL);
+    supervisor_menu_dirty = true;
+}
+
+static void change_active_video_effect(size_t field, size_t direction)
+{
+    const mt_core_settings_profile_t *profile;
+    mt_video_effects_settings_t effects;
+    if (!supervisor.has_active || !selection_supports_effects(&supervisor.active) ||
+        !mt_video_effect_service_available()) {
+        set_supervisor_error("Video effects are unavailable");
+        return;
+    }
+    profile = mt_supervisor_settings_find(&persistent_settings, supervisor.active.package.id);
+    if (profile != NULL) effects = profile->video_effects;
+    else mt_video_effects_defaults(&effects);
+    if (!mt_video_effects_adjust(&effects, field, direction)) return;
+    settings_before_update = persistent_settings;
+    if (!ensure_active_settings_profile() ||
+        !mt_supervisor_settings_remember_video_effects(&persistent_settings,
+            supervisor.active.package.id, &effects) || !save_persistent_settings()) {
+        persistent_settings = settings_before_update;
+        set_supervisor_error("Effects unchanged; settings write failed");
+        return;
+    }
+    mt_video_effect_service_configure(true, &effects);
+    set_supervisor_status("Video effects saved for this core");
+}
+
 static uint32_t profile_vectrex_video_config(const mt_core_settings_profile_t *profile)
 {
     const uint32_t gain = profile != NULL && profile->vectrex_beam_gain < 4U ?
@@ -1589,6 +1649,7 @@ static bool restore_selection_settings(
     if (selection == NULL) return false;
     profile = mt_supervisor_settings_find(&persistent_settings,
                                           selection->package.id);
+    configure_selection_effects(selection);
     if (selection_supports_borders(selection)) {
         Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_BORDER_CONFIG,
                   profile_border_config(profile));
@@ -1735,6 +1796,11 @@ static mt_menu_view_t supervisor_menu_view(void)
     mt_core_frontend_apply(&supervisor_frontend, &state, &view);
     view.status_text = supervisor_status_text;
     view.status_color = supervisor_status_color;
+    if (supervisor_menu.page == MT_MENU_PAGE_EFFECTS &&
+        supervisor_status_color != MT_UI_COLOR_RED && supervisor_status_color != MT_UI_COLOR_WARNING) {
+        view.status_text = mt_video_effect_service_status();
+        view.status_color = MT_UI_COLOR_MUTED;
+    }
     view.files = supervisor_menu_files;
     view.file_count = supervisor_menu_file_count;
     if ((supervisor_menu.browser == MT_MENU_BROWSER_DOCUMENTS || (supervisor.has_active &&
@@ -1753,6 +1819,10 @@ static mt_menu_view_t supervisor_menu_view(void)
         const mt_core_settings_profile_t *const profile = supervisor.has_active ?
             mt_supervisor_settings_find(&persistent_settings, supervisor.active.package.id) : NULL;
         const uint32_t border = profile_border_config(profile);
+        mt_video_effects_frontend_apply(&effects_frontend,
+            profile != NULL ? &profile->video_effects : NULL,
+            supervisor.has_active && mt_video_effect_service_available(),
+            mt_video_effect_service_status(), &view);
         view.border_supported = supervisor.has_active &&
             selection_supports_borders(&supervisor.active);
         view.border_enabled = (border & MT_BORDER_ENABLE_MASK) != 0U;
@@ -2015,7 +2085,21 @@ static int supervisor_quiesce(void *context)
 static int supervisor_load(void *context,
                            const mt_core_selection_t *selection)
 {
-    const mt_pl_load_result_t load = mt_pl_load_selection(
+    mt_pl_load_result_t load;
+    uint64_t drain_started;
+    mt_video_effect_service_suspend();
+    drain_started = monotonic_ms(NULL);
+    while (!mt_video_effect_service_quiescent()) {
+        /* HP0 transactions must finish before PCAP resets their AXI master.
+         * CPU1 only touches reserved DDR and can finish an old job safely. */
+        usb_hid_service_poll_deferred();
+        if (monotonic_ms(NULL) - drain_started >= 1000U) {
+            if (supervisor.has_active) configure_selection_effects(&supervisor.active);
+            xil_printf("[video] DDR transport did not drain; core switch cancelled\r\n");
+            return -1;
+        }
+    }
+    load = mt_pl_load_selection(
         selection->directory,
         &selection->package.variants[selection->variant_index]);
     (void)context;
@@ -2026,6 +2110,8 @@ static int supervisor_load(void *context,
         load.status >= MT_PL_LOAD_FABRIC_INIT_FAILED) {
         mt_ui_presenter_invalidate(&supervisor_presenter);
         supervisor_menu_dirty = true;
+    } else if (supervisor.has_active) {
+        configure_selection_effects(&supervisor.active);
     }
     xil_printf("[supervisor] PCAP %s bytes=%u crc32=%08x backend=%u\r\n",
                mt_pl_load_status_name(load.status), (unsigned int)load.size,
@@ -2059,6 +2145,7 @@ static int vectrex_basic_service(void *context)
 {
     (void)context;
     service_usb_input();
+    mt_video_effect_service_poll();
     return vectrex_basic_stop ? 0 : 1;
 }
 
@@ -2897,6 +2984,8 @@ static void handle_menu_action(mt_menu_action_t action)
         change_active_border(action.file_index);
     } else if (action.kind == MT_MENU_ACTION_SET_VECTREX_VIDEO) {
         change_active_vectrex_video(action.file_index);
+    } else if (action.kind == MT_MENU_ACTION_SET_VIDEO_EFFECT) {
+        change_active_video_effect(action.file_index, action.variant_index);
     } else if (action.kind == MT_MENU_ACTION_TOGGLE_VIDEO_SOURCE) {
         const uint32_t control = shell_read(MT_REG_CONTROL);
         const bool test_enabled =
@@ -3258,6 +3347,16 @@ static void recovery_console(void)
     }
 }
 
+static void video_effect_write(uint32_t offset, uint32_t value)
+{
+    Xil_Out32(MT_SHELL_BASE_ADDRESS + offset, value);
+}
+
+static uint32_t video_effect_milliseconds(void)
+{
+    return (uint32_t)monotonic_ms(NULL);
+}
+
 int main(void)
 {
     mt_link_result_t link_status;
@@ -3265,6 +3364,13 @@ int main(void)
     int usb_status;
 
     init_platform();
+    {
+        const mt_video_effect_service_ops_t effects_ops = {
+            shell_read, video_effect_write, video_effect_milliseconds
+        };
+        mt_video_effect_service_init(&effects_ops);
+        (void)mt_video_worker_start();
+    }
     Xil_SetTlbAttributes(MT_SHELL_BASE_ADDRESS, DEVICE_MEMORY);
     mt_core_link_init_mmio(&shell_link,
         (volatile void *)(uintptr_t)MT_SHELL_BASE_ADDRESS);

@@ -16,6 +16,16 @@ static uint32_t test_vectrex_video;
 static unsigned test_mmio_writes;
 static unsigned test_save_calls;
 static mt_sd_status_t test_save_status;
+static unsigned test_effect_calls;
+static bool test_effect_available;
+static mt_video_effects_settings_t test_effects;
+
+bool mt_video_effect_service_available(void) { return test_effect_available; }
+void mt_video_effect_service_configure(bool supported, const mt_video_effects_settings_t *settings)
+{
+    if (supported && settings != NULL) test_effects = *settings;
+    ++test_effect_calls;
+}
 
 static _Noreturn void unexpected_service(void)
 {
@@ -96,7 +106,7 @@ mt_sd_result_t mt_sd_storage_journal_replace(const char *path,
     const mt_sd_result_t result = {test_save_status, 0U, size};
     assert(strcmp(path, MT_SETTINGS_PATH) == 0);
     assert(strcmp(journal_path, MT_SETTINGS_JOURNAL_PATH) == 0);
-    assert(source != NULL && source[8U] == 4U && size == 4088U);
+    assert(source != NULL && source[8U] == 5U && size == 4696U);
     /* The visible hardware state must still have its previous value while
      * the complete settings write is in progress. */
     assert(test_mmio_writes == 0U);
@@ -119,6 +129,9 @@ static void test_reset(uint32_t core_id, const char *id)
     test_vectrex_video = UINT32_C(0xB);
     test_mmio_writes = test_save_calls = 0U;
     test_save_status = MT_SD_OK;
+    test_effect_calls = 0U;
+    test_effect_available = true;
+    mt_video_effects_defaults(&test_effects);
     settings_faulted = false;
     supervisor_menu_dirty = false;
     mt_supervisor_settings_defaults(&persistent_settings);
@@ -329,6 +342,29 @@ static void test_vectrex_video_restore(void)
     assert(profile_vectrex_video_config(&invalid) == UINT32_C(0xB));
 }
 
+static void test_effect_handlers(void)
+{
+    test_reset(MT_GBC_CORE_ID, "gbc");
+    assert(selection_supports_effects(&supervisor.active));
+    change_active_video_effect(MT_VIDEO_EFFECT_ENABLED, 2U);
+    assert(test_effect_calls == 1U && test_save_calls == 1U && test_effects.enabled == 1U);
+    assert(test_mmio_writes == 0U); /* Applying is asynchronous. */
+    change_active_video_effect(MT_VIDEO_EFFECT_BLOOM, 2U);
+    assert(test_effect_calls == 2U && test_effects.bloom == 1U);
+    const mt_supervisor_settings_t before = persistent_settings;
+    test_save_status = MT_SD_WRITE_FAILED;
+    change_active_video_effect(MT_VIDEO_EFFECT_BLOOM, 2U);
+    assert(test_effect_calls == 2U && test_effects.bloom == 1U);
+    assert(memcmp(&before, &persistent_settings, sizeof(before)) == 0);
+    test_abi = 13U;
+    assert(!selection_supports_effects(&supervisor.active));
+    change_active_video_effect(MT_VIDEO_EFFECT_ENABLED, 1U);
+    assert(test_effect_calls == 2U);
+    test_abi = MT_ABI_VERSION; test_effect_available = false;
+    change_active_video_effect(MT_VIDEO_EFFECT_ENABLED, 1U);
+    assert(test_effect_calls == 2U);
+}
+
 int main(void)
 {
     test_guards();
@@ -336,6 +372,7 @@ int main(void)
     test_restore_gate();
     test_vectrex_video_guards_and_saves();
     test_vectrex_video_restore();
+    test_effect_handlers();
     puts("PASS: board border/Vectrex video guards, save ordering, rollback and restore selection");
     return 0;
 }

@@ -511,8 +511,10 @@ static void test_borders(void)
     menu.page = MT_MENU_PAGE_VIDEO;
     menu.row = 0U;
     (void)press(&menu, &view, MT_MENU_HID_TAB);
-    check(menu.page == MT_MENU_PAGE_INPUT && MT_MENU_PAGE_COUNT == 6U,
-          "Video contains all border controls with no separate Borders tab");
+    check(menu.page == MT_MENU_PAGE_EFFECTS && MT_MENU_PAGE_COUNT == 7U,
+          "shared Effects follows Video without a separate Borders tab");
+    (void)press(&menu, &view, MT_MENU_HID_TAB);
+    check(menu.page == MT_MENU_PAGE_INPUT, "Input follows shared Effects");
     menu.page = MT_MENU_PAGE_VIDEO;
     mt_menu_render(&menu, NULL, &frame);
 }

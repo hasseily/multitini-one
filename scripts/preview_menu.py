@@ -25,6 +25,9 @@ from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[1]
 SCENARIOS = {
+    "c64-effects": "Video effects and color adjustments",
+    "c64-effects-frame": "CPU1 persistence, blur and bloom",
+    "gbc-effects-legacy": "Effects unavailable on an older core image",
     "system": "System page (sample readings)",
     "clock": "Board clock editor",
     "text-reader": "Read-only text document",
@@ -49,6 +52,8 @@ SOURCES = [
     "firmware/common/system_frontend.c",
     "firmware/common/text_reader.c",
     "firmware/common/clock.c",
+    "firmware/common/video_effects.c",
+    "firmware/common/video_effects_frontend.c",
 ]
 FONT = ROOT / "hdl/common/multitini_font7x8.mem"
 OVERLAY = ROOT / "hdl/common/multitini_text_overlay.sv"
@@ -168,7 +173,8 @@ def main() -> int:
     output.mkdir(parents=True, exist_ok=True)
     provenance = SOURCES + [
         "firmware/include/multitini_menu.h", "firmware/include/multitini_ui.h",
-        "firmware/include/multitini_core_frontend.h", "scripts/preview_menu.py",
+          "firmware/include/multitini_core_frontend.h", "scripts/preview_menu.py",
+          "firmware/include/multitini_video_effects.h", "firmware/include/multitini_video_effects_frontend.h",
         "firmware/include/multitini_regs.h", "hdl/generated/multitini_regs_pkg.sv",
         str(FONT.relative_to(ROOT)), str(OVERLAY.relative_to(ROOT)),
         str(SPEC.relative_to(ROOT)),
@@ -186,7 +192,7 @@ def main() -> int:
         subprocess.run([
             str(compiler_path), "-std=c11", "-Wall", "-Wextra", "-Werror",
             "-I", str(ROOT / "firmware/include"),
-            *(str(ROOT / source) for source in SOURCES), "-o", str(helper),
+            *(str(ROOT / source) for source in SOURCES), "-lm", "-o", str(helper),
         ], check=True, cwd=ROOT, env=compiler_env, timeout=60)
     else:
         helper = args.helper.resolve()

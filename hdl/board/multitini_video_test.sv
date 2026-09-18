@@ -12,12 +12,26 @@ module multitini_video_test #(
     parameter int V_ACTIVE = 1080,
     parameter int V_FRONT  = 4,
     parameter int V_SYNC   = 5,
-    parameter int V_TOTAL  = 1125
+    parameter int V_TOTAL  = 1125,
+    parameter bit ENABLE_EFFECTS = 1'b0,
+    parameter integer SOURCE_SCALE_NUM = 4,
+    parameter integer SOURCE_SCALE_DEN = 1,
+    parameter bit SHARED_PIXEL_RESET = 1'b0,
+    parameter bit SHARED_PIXEL_LIVENESS = 1'b0
 ) (
     input  logic       pixel_clk,
     input  logic       resetn,
     input  logic       enable,
     input  logic       machine_enable,
+    input  wire control_clk, control_resetn, shared_pixel_resetn, shared_pixel_running,
+    input  wire effect_write,
+    input  wire [9:0] effect_address,
+    input  wire [31:0] effect_data,
+    input  wire effect_commit,
+    input  wire [31:0] effect_commit_sequence,
+    output wire effect_busy, effect_active_valid, effect_rejected,
+    output wire [31:0] effect_active_sequence,
+    input wire [11:0] viewport_x, viewport_y, viewport_width, viewport_height,
     input  logic [15:0] machine_rgb565,
     input  logic        border_opaque,
     input  logic [15:0] border_rgb565,
@@ -260,6 +274,47 @@ module multitini_video_test #(
             diagnostic_rgb565_q <= diagnostic_rgb565;
     end
 
+    generate if (ENABLE_EFFECTS) begin : g_effects
+        wire [15:0] processed_rgb;
+        wire processed_de, processed_hsync, processed_vsync;
+        wire in_viewport = scan_x >= viewport_x && scan_y >= viewport_y &&
+            {1'b0,scan_x} < {1'b0,viewport_x}+{1'b0,viewport_width} &&
+            {1'b0,scan_y} < {1'b0,viewport_y}+{1'b0,viewport_height};
+        multitini_video_effects #(.SOURCE_SCALE_NUM(SOURCE_SCALE_NUM),
+            .SOURCE_SCALE_DEN(SOURCE_SCALE_DEN),.SHARED_PIXEL_RESET(SHARED_PIXEL_RESET),
+            .SHARED_PIXEL_LIVENESS(SHARED_PIXEL_LIVENESS)) effects_i (
+            .control_clk(control_clk),.control_resetn(control_resetn),
+            .effect_write(effect_write),.effect_address(effect_address),.effect_data(effect_data),
+            .effect_commit(effect_commit),.effect_commit_sequence(effect_commit_sequence),
+            .effect_busy(effect_busy),.effect_active_valid(effect_active_valid),
+            .effect_rejected(effect_rejected),.effect_active_sequence(effect_active_sequence),
+            .pixel_clk(pixel_clk),.pixel_resetn(resetn),.shared_pixel_resetn(shared_pixel_resetn),
+            .shared_pixel_running(shared_pixel_running),.vblank_start(vblank_start),
+            .pixel_rgb565(selected_rgb565),
+            .pixel_effect_enable(active && use_machine && !ui_opaque && !border_opaque && in_viewport),
+            .pixel_x(scan_x-viewport_x),.pixel_y(scan_y-viewport_y),
+            .pixel_de(active),
+            .pixel_hsync(x >= H_ACTIVE+H_FRONT && x < H_ACTIVE+H_FRONT+H_SYNC),
+            .pixel_vsync(y >= V_ACTIVE+V_FRONT && y < V_ACTIVE+V_FRONT+V_SYNC),
+            .output_rgb565(processed_rgb),.output_de(processed_de),
+            .output_hsync(processed_hsync),.output_vsync(processed_vsync)
+        );
+        // Preserve the physical IOB stage and forwarded DVI-clock relation.
+        // Every selected pixel, including unmodified text/borders/standby,
+        // travels through the same nine stages as DE and both sync signals.
+        always_ff @(posedge pixel_clk) begin
+            if (!resetn) begin
+                dvi_red<=0;dvi_grn<=0;dvi_blu<=0;dvi_de<=0;dvi_hsync<=0;dvi_vsync<=0;
+            end else begin
+                dvi_red<=processed_de ? processed_rgb[15:11] : 0;
+                dvi_grn<=processed_de ? processed_rgb[10:5] : 0;
+                dvi_blu<=processed_de ? processed_rgb[4:0] : 0;
+                dvi_de<=processed_de;dvi_hsync<=processed_hsync;dvi_vsync<=processed_vsync;
+            end
+        end
+    end else begin : g_direct
+        assign effect_busy=1'b0, effect_active_valid=1'b0, effect_rejected=1'b0;
+        assign effect_active_sequence=32'd0;
     always_ff @(posedge pixel_clk) begin
         if (!resetn) begin
             dvi_red   <= 5'd0;
@@ -279,6 +334,8 @@ module multitini_video_test #(
                          y < V_ACTIVE + V_FRONT + V_SYNC;
         end
     end
+
+    end endgenerate
 
     ODDR #(
         .DDR_CLK_EDGE("OPPOSITE_EDGE"),

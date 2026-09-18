@@ -15,6 +15,7 @@
 #define MT_MENU_FILE_NAME_MAX 96U
 #define MT_MENU_MAX_CORE_OPTIONS 8U
 #define MT_MENU_MAX_ITEMS 16U
+#define MT_MENU_MAX_EFFECT_ITEMS 32U
 /* Reserved cookie flags; ordinary file and D64 cookies retain their values. */
 #define MT_MENU_FILE_DIRECTORY UINT32_C(0x80000000)
 #define MT_MENU_FILE_PARENT UINT32_C(0x40000000)
@@ -28,6 +29,7 @@ typedef enum {
     MT_MENU_PAGE_CORES = 0,
     MT_MENU_PAGE_MEDIA,
     MT_MENU_PAGE_VIDEO,
+    MT_MENU_PAGE_EFFECTS,
     MT_MENU_PAGE_INPUT,
     MT_MENU_PAGE_CORE_CONFIG,
     MT_MENU_PAGE_SYSTEM,
@@ -63,7 +65,8 @@ typedef enum {
     MT_MENU_ACTION_OPEN_TEXT,
     MT_MENU_ACTION_EDIT_CLOCK,
     MT_MENU_ACTION_SET_CLOCK,
-    MT_MENU_ACTION_RESTART_USB
+    MT_MENU_ACTION_RESTART_USB,
+    MT_MENU_ACTION_SET_VIDEO_EFFECT
 } mt_menu_action_kind_t;
 
 typedef enum {
@@ -130,6 +133,8 @@ typedef struct {
     size_t input_item_count;
     const mt_menu_item_t *system_items;
     size_t system_item_count;
+    const mt_menu_item_t *effect_items;
+    size_t effect_item_count;
     mt_text_reader_t *text_reader;
     const char *text_title;
     bool clock_available;

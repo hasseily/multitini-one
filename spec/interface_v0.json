@@ -2,7 +2,7 @@
   "schema_version": 1,
   "abi": {
     "major": 0,
-    "minor": 13
+    "minor": 15
   },
   "magic": "0x4D543031",
   "shell_id": "0x4D544F4E",
@@ -256,6 +256,144 @@
       "access": "ro",
       "reset": "0x00000000",
       "description": "Vectrex overlay state: loaded[0], error[1]. Zero on other cores."
+    },
+    {
+      "name": "VIDEO_EFFECT_ADDRESS",
+      "offset": "0x140",
+      "access": "rw",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "VIDEO_EFFECT_DATA",
+      "offset": "0x144",
+      "access": "wo",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "VIDEO_EFFECT_COMMIT",
+      "offset": "0x148",
+      "access": "wo",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "VIDEO_EFFECT_STATUS",
+      "offset": "0x14C",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "VIDEO_EFFECT_SEQUENCE",
+      "offset": "0x150",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "VIDEO_FRAME_CONTROL",
+      "offset": "0x180",
+      "access": "rw",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "VIDEO_FRAME_STATUS",
+      "offset": "0x184",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "VIDEO_FRAME_CAPTURE_PRODUCER",
+      "offset": "0x188",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "VIDEO_FRAME_CAPTURE_CONSUMER",
+      "offset": "0x18C",
+      "access": "rw",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "VIDEO_FRAME_DISPLAY_SUBMIT",
+      "offset": "0x190",
+      "access": "wo",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "VIDEO_FRAME_DISPLAY_ACTIVE",
+      "offset": "0x194",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "VIDEO_FRAME_GEOMETRY",
+      "offset": "0x198",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "VIDEO_FRAME_STRIDE",
+      "offset": "0x19C",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "VIDEO_FRAME_CAPTURE_DROPS",
+      "offset": "0x1A0",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "VIDEO_FRAME_AXI_ERRORS",
+      "offset": "0x1A4",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "VIDEO_FRAME_DISPLAY_UNDERRUNS",
+      "offset": "0x1A8",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "VIDEO_FRAME_ERROR_CLEAR",
+      "offset": "0x1AC",
+      "access": "wo",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "VIDEO_FRAME_OPTIONS",
+      "offset": "0x1B0",
+      "access": "rw",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "VIDEO_FRAME_PROCESSED",
+      "offset": "0x1B4",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "VIDEO_FRAME_DEADLINES",
+      "offset": "0x1B8",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "VIDEO_FRAME_ENGINE_CYCLES",
+      "offset": "0x1BC",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "VIDEO_FRAME_ENGINE_MAX_STALL",
+      "offset": "0x1C0",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "VIDEO_FRAME_ENGINE_ERRORS",
+      "offset": "0x1C4",
+      "access": "ro",
+      "reset": "0x00000000"
     }
   ],
   "bitfields": {
@@ -372,7 +510,27 @@
     "VECTREX_VIDEO_CONFIG_MASK": "0x0000001F",
     "VECTREX_VIDEO_CONFIG_DEFAULT": "0x0000000B",
     "VECTREX_OVERLAY_STATUS_LOADED": "0x00000001",
-    "VECTREX_OVERLAY_STATUS_ERROR": "0x00000002"
+    "VECTREX_OVERLAY_STATUS_ERROR": "0x00000002",
+    "VIDEO_EFFECT_MIN_ABI_MINOR": 15,
+    "VIDEO_EFFECT_STATUS_BUSY": "0x00000001",
+    "VIDEO_EFFECT_STATUS_VALID": "0x00000002",
+    "VIDEO_EFFECT_STATUS_REJECTED": "0x00000004",
+    "VIDEO_EFFECT_STATUS_SUPPORTED": "0x00000008",
+    "VIDEO_EFFECT_HEADER_WORDS": 13,
+    "VIDEO_EFFECT_LUT_OFFSET": "0x00000100",
+    "VIDEO_EFFECT_LUT_WORDS": 256,
+    "VIDEO_FRAME_MIN_ABI_MINOR": 15,
+    "VIDEO_FRAME_CAPTURE_ENABLE": "0x00000001",
+    "VIDEO_FRAME_DISPLAY_ENABLE": "0x00000002",
+    "VIDEO_FRAME_STATUS_CAPTURE_BUSY": "0x00000001",
+    "VIDEO_FRAME_STATUS_DISPLAY_PENDING": "0x00000002",
+    "VIDEO_FRAME_STATUS_DISPLAY_ACTIVE": "0x00000004",
+    "VIDEO_FRAME_STATUS_QUIESCENT": "0x00000008",
+    "VIDEO_FRAME_STATUS_ERROR": "0x00000010",
+    "VIDEO_FRAME_AUTONOMOUS_ENABLE": "0x00000004",
+    "VIDEO_FRAME_STATUS_AUTONOMOUS_SUPPORTED": "0x00000020",
+    "VIDEO_FRAME_STATUS_ENGINE_BUSY": "0x00000040",
+    "VIDEO_FRAME_STATUS_SCHEDULER_FAULT": "0x00000080"
   },
   "commands": {
     "PING": 0,

@@ -225,3 +225,70 @@ Firmware journals `<cartridge>.sav` before returning success. A failed
 completion leaves the image dirty; detach, reset, core switching, and golden
 reboot must not proceed until a retry succeeds. RTC state and mapper-internal
 MBC7/TAMA backup storage are not part of this transfer.
+
+## Shared video processing (ABI 0.15)
+
+CPU0 owns these registers. CPU1 receives color-settings jobs through an uncached
+mailbox and never accesses PL. The FPGA schedules frames autonomously in order
+at the fixed 60 Hz output cadence. Firmware must check both package and hardware
+versions before using the new register ranges.
+
+| Register | Offset | Meaning |
+| --- | --- | --- |
+| VIDEO_EFFECT_ADDRESS | 0x140 | Inactive-bank word address, bits 9:0 |
+| VIDEO_EFFECT_DATA | 0x144 | Write the selected word |
+| VIDEO_EFFECT_COMMIT | 0x148 | Commit a complete bank with a nonzero sequence |
+| VIDEO_EFFECT_STATUS | 0x14c | Busy bit 0, valid bit 1, rejected bit 2, supported bit 3 |
+| VIDEO_EFFECT_SEQUENCE | 0x150 | Sequence active in the pixel domain |
+| VIDEO_FRAME_CONTROL | 0x180 | Capture bit 0, display bit 1, autonomous bit 2; normal operation writes 7 |
+| VIDEO_FRAME_STATUS | 0x184 | Capture busy, display pending, display active, quiescent, error, autonomous supported, engine busy, scheduler fault in bits 0–7 |
+| VIDEO_FRAME_CAPTURE_PRODUCER | 0x188 | Published capture count |
+| VIDEO_FRAME_CAPTURE_CONSUMER | 0x18c | Released capture count |
+| VIDEO_FRAME_DISPLAY_SUBMIT | 0x190 | Atomic sequence[31:2] and output slot[1:0] |
+| VIDEO_FRAME_DISPLAY_ACTIVE | 0x194 | Acknowledged active sequence and slot |
+| VIDEO_FRAME_GEOMETRY | 0x198 | Width[15:0], height[31:16] |
+| VIDEO_FRAME_STRIDE | 0x19c | Native RGB565 row stride in bytes |
+| VIDEO_FRAME_CAPTURE_DROPS | 0x1a0 | Dropped complete capture attempts |
+| VIDEO_FRAME_AXI_ERRORS | 0x1a4 | Read/write response error count |
+| VIDEO_FRAME_DISPLAY_UNDERRUNS | 0x1a8 | Display fallback count |
+| VIDEO_FRAME_ERROR_CLEAR | 0x1ac | Write 1 while disabled and quiescent to clear reported errors/counters |
+| VIDEO_FRAME_OPTIONS | 0x1b0 | Persistence[1:0], blur[3:2], bloom[5:4]; latched per job |
+| VIDEO_FRAME_PROCESSED | 0x1b4 | Successful processing completions since reset |
+| VIDEO_FRAME_DEADLINES | 0x1b8 | Missed presentation deadlines; any nonzero value fails qualification |
+| VIDEO_FRAME_ENGINE_CYCLES | 0x1bc | Most recent job clock count, including DDR stalls |
+| VIDEO_FRAME_ENGINE_MAX_STALL | 0x1c0 | Maximum consecutive AXI stall clocks since reset/error clear |
+| VIDEO_FRAME_ENGINE_ERRORS | 0x1c4 | HP1 processing error count |
+
+Effect addresses 0–8 hold signed Q10 matrix coefficients. Addresses 9–11 are
+reserved zero offsets. Address 12 holds scanlines[1:0], mask[3:2], horizontal
+filter[5:4], and master enable[6]. Addresses 0x100–0x1ff hold packed
+`0x00BBGGRR` LUT entries. All 269 words must be supplied before commit.
+Partial/invalid writes and writes to a pending bank are rejected. The pixel
+domain swaps the complete bank at vblank and acknowledges before it is reused.
+
+Capture/output pools each contain four fixed 1 MiB slots, based at 0x22000000
+and 0x22400000 respectively. Producer minus consumer is an unsigned count
+bounded by four, including wrap. Consumer may release only published frames;
+capture never overwrites a retained slot. Rows have 128-byte-aligned stride.
+The hardware scheduler consumes the oldest capture, releases it only after
+the engine's complete write-response fence, and excludes active and pending
+output slots from allocation. Persistence history is dense `0x00BBGGRR` at
+0x22800000, with a reserved size of 2 MiB. HP0 owns capture/scanout; HP1 owns
+native frame processing. Neither CPU accesses these three memory pools.
+
+Autonomous mode requires both capture and display enabled. While it owns the
+ring, manual consumer and display-submit writes are rejected, and control
+may only remain 7 or become 0. Disable and drain before switching ownership.
+The manual ring registers remain available for isolated transport diagnostics.
+Writing options while running takes effect at the next job without stopping
+the ordered identity/effects path. A change to these options resets history.
+
+Display publication is acknowledged after vblank adoption and old-read drain.
+Disabling transport preserves ownership until outstanding HP0 and HP1 transactions
+finish. `QUIESCENT` requires control zero and all engines drained; firmware
+must observe it before PCAP. Error clearing only changes diagnostics, never
+ring ownership or outstanding AXI handshakes. Underruns, capture drops, DDR
+errors, and missed deadlines set the error status and stop new autonomous jobs.
+There is no latest-frame selection or tolerated performance drop count.
+See `docs/CPU1_VIDEO_EFFECTS.md` for
+processing order, DDR ownership, and the fault fallback contract.

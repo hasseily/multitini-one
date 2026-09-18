@@ -6,14 +6,21 @@
 #define MT_SETTINGS_SCHEMA_V1 UINT32_C(1)
 #define MT_SETTINGS_SCHEMA_V2 UINT32_C(2)
 #define MT_SETTINGS_SCHEMA_V3 UINT32_C(3)
-#define MT_SETTINGS_SCHEMA UINT32_C(4)
+#define MT_SETTINGS_SCHEMA_V4 UINT32_C(4)
+#define MT_SETTINGS_SCHEMA UINT32_C(5)
 #define MT_SETTINGS_HEADER_SIZE 24U
 #define MT_SETTINGS_GLOBAL_SIZE 32U
 #define MT_SETTINGS_LEGACY_PROFILE_SIZE 244U
 #define MT_SETTINGS_LEGACY_WIRE_SIZE 3960U
 #define MT_SETTINGS_V3_PROFILE_SIZE 248U
 #define MT_SETTINGS_V3_WIRE_SIZE 4024U
-#define MT_SETTINGS_PROFILE_SIZE 252U
+#define MT_SETTINGS_V4_PROFILE_SIZE 252U
+#define MT_SETTINGS_V4_WIRE_SIZE 4088U
+#define MT_SETTINGS_PROFILE_SIZE 290U
+#define MT_SETTINGS_EFFECTS_OFFSET 252U
+
+_Static_assert(MT_SETTINGS_EFFECTS_OFFSET + MT_VIDEO_EFFECT_COUNT * 2U ==
+               MT_SETTINGS_PROFILE_SIZE, "Video controls require a settings schema update");
 
 #if MT_SETTINGS_HEADER_SIZE + MT_SETTINGS_GLOBAL_SIZE + \
     MT_SETTINGS_MAX_PROFILES * MT_SETTINGS_PROFILE_SIZE != \
@@ -174,6 +181,7 @@ static mt_core_settings_profile_t *find_profile(
         MT_SETTINGS_VECTREX_BEAM_GAIN_DEFAULT;
     settings->profiles[settings->profile_count].vectrex_overlay_opacity =
         MT_SETTINGS_VECTREX_OVERLAY_OPACITY_DEFAULT;
+    mt_video_effects_defaults(&settings->profiles[settings->profile_count].video_effects);
     return &settings->profiles[settings->profile_count++];
 }
 
@@ -316,6 +324,18 @@ bool mt_supervisor_settings_remember_vectrex_video(
     return true;
 }
 
+bool mt_supervisor_settings_remember_video_effects(
+    mt_supervisor_settings_t *settings, const char *core_id,
+    const mt_video_effects_settings_t *effects)
+{
+    mt_core_settings_profile_t *profile;
+    if (!mt_video_effects_settings_valid(effects)) return false;
+    profile = find_profile(settings, core_id, true);
+    if (profile == NULL) return false;
+    profile->video_effects = *effects;
+    return true;
+}
+
 static bool settings_valid(const mt_supervisor_settings_t *settings)
 {
     size_t index;
@@ -338,6 +358,7 @@ static bool settings_valid(const mt_supervisor_settings_t *settings)
             !borders_valid(profile->border_style, profile->border_color,
                             profile->border_padding) ||
             profile->vectrex_beam_gain > 3U || profile->vectrex_overlay_opacity > 3U ||
+            !mt_video_effects_settings_valid(&profile->video_effects) ||
             (profile->joystick_port != 1U && profile->joystick_port != 2U)) {
             return false;
         }
@@ -371,6 +392,7 @@ static bool encode_settings(const mt_supervisor_settings_t *settings)
             &settings->profiles[index];
         uint8_t *const output = settings_wire + MT_SETTINGS_HEADER_SIZE +
             MT_SETTINGS_GLOBAL_SIZE + index * MT_SETTINGS_PROFILE_SIZE;
+        unsigned effect;
         memcpy(output, profile->core_id, strlen(profile->core_id));
         memcpy(output + 24U, profile->variant_id,
                strlen(profile->variant_id));
@@ -389,6 +411,12 @@ static bool encode_settings(const mt_supervisor_settings_t *settings)
         output[248U] = profile->vectrex_overlay_enabled ? 1U : 0U;
         output[249U] = profile->vectrex_beam_gain;
         output[250U] = profile->vectrex_overlay_opacity;
+        for (effect = 0U; effect < MT_VIDEO_EFFECT_COUNT; ++effect) {
+            const uint16_t value = (uint16_t)mt_video_effects_get(
+                &profile->video_effects, (mt_video_effect_id_t)effect);
+            output[MT_SETTINGS_EFFECTS_OFFSET + effect * 2U] = (uint8_t)value;
+            output[MT_SETTINGS_EFFECTS_OFFSET + effect * 2U + 1U] = (uint8_t)(value >> 8U);
+        }
     }
     crc = crc32_bytes(settings_wire + MT_SETTINGS_HEADER_SIZE,
                       MT_SETTINGS_WIRE_SIZE - MT_SETTINGS_HEADER_SIZE);
@@ -417,12 +445,14 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
                         schema == MT_SETTINGS_SCHEMA_V2;
     const size_t profile_size = legacy ? MT_SETTINGS_LEGACY_PROFILE_SIZE :
         (schema == MT_SETTINGS_SCHEMA_V3 ? MT_SETTINGS_V3_PROFILE_SIZE :
-                                         MT_SETTINGS_PROFILE_SIZE);
+         schema == MT_SETTINGS_SCHEMA_V4 ? MT_SETTINGS_V4_PROFILE_SIZE : MT_SETTINGS_PROFILE_SIZE);
     const size_t expected_size = legacy ? MT_SETTINGS_LEGACY_WIRE_SIZE :
-        (schema == MT_SETTINGS_SCHEMA_V3 ? MT_SETTINGS_V3_WIRE_SIZE : MT_SETTINGS_WIRE_SIZE);
+        (schema == MT_SETTINGS_SCHEMA_V3 ? MT_SETTINGS_V3_WIRE_SIZE :
+         schema == MT_SETTINGS_SCHEMA_V4 ? MT_SETTINGS_V4_WIRE_SIZE : MT_SETTINGS_WIRE_SIZE);
     size_t index;
     if (memcmp(settings_wire, settings_magic, sizeof(settings_magic)) != 0 ||
-        (!legacy && schema != MT_SETTINGS_SCHEMA_V3 && schema != MT_SETTINGS_SCHEMA) ||
+        (!legacy && schema != MT_SETTINGS_SCHEMA_V3 && schema != MT_SETTINGS_SCHEMA_V4 &&
+         schema != MT_SETTINGS_SCHEMA) ||
         wire_size != expected_size ||
         load_u32_le(settings_wire + 12U) != wire_size ||
         load_u32_le(settings_wire + 20U) != ~crc ||
@@ -431,10 +461,10 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
         settings_wire[24U] > 1U || profile_count > MT_SETTINGS_MAX_PROFILES) {
         return false;
     }
-    if (schema == MT_SETTINGS_SCHEMA) {
+    if (schema >= MT_SETTINGS_SCHEMA_V4) {
         for (index = 0U; index < MT_SETTINGS_MAX_PROFILES; ++index) {
             if (settings_wire[MT_SETTINGS_HEADER_SIZE + MT_SETTINGS_GLOBAL_SIZE +
-                              index * MT_SETTINGS_PROFILE_SIZE + 251U] != 0U) return false;
+                              index * profile_size + 251U] != 0U) return false;
         }
     }
     mt_supervisor_settings_defaults(&settings_decode_candidate);
@@ -479,7 +509,7 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
             profile->border_color = input[246U];
             profile->border_padding = input[247U];
         }
-        if (schema != MT_SETTINGS_SCHEMA) {
+        if (schema < MT_SETTINGS_SCHEMA_V4) {
             profile->vectrex_overlay_enabled = true;
             profile->vectrex_beam_gain = MT_SETTINGS_VECTREX_BEAM_GAIN_DEFAULT;
             profile->vectrex_overlay_opacity = MT_SETTINGS_VECTREX_OVERLAY_OPACITY_DEFAULT;
@@ -488,6 +518,17 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
             profile->vectrex_overlay_enabled = input[248U] != 0U;
             profile->vectrex_beam_gain = input[249U];
             profile->vectrex_overlay_opacity = input[250U];
+        }
+        mt_video_effects_defaults(&profile->video_effects);
+        if (schema == MT_SETTINGS_SCHEMA) {
+            unsigned effect;
+            for (effect = 0U; effect < MT_VIDEO_EFFECT_COUNT; ++effect) {
+                const size_t offset = MT_SETTINGS_EFFECTS_OFFSET + effect * 2U;
+                int value = (int)input[offset] | ((int)input[offset + 1U] << 8U);
+                if (value >= 32768) value -= 65536;
+                if (!mt_video_effects_set(&profile->video_effects,
+                                          (mt_video_effect_id_t)effect, value)) return false;
+            }
         }
     }
     if (!settings_valid(&settings_decode_candidate)) return false;
@@ -515,7 +556,8 @@ mt_settings_result_t mt_supervisor_settings_load(
     /* Re-open only the known older length. The SD service still enforces
      * exact reads, and decoding verifies the schema/length pair and CRC. */
     if (sd.status == MT_SD_SIZE_MISMATCH &&
-        (sd.size == MT_SETTINGS_LEGACY_WIRE_SIZE || sd.size == MT_SETTINGS_V3_WIRE_SIZE)) {
+        (sd.size == MT_SETTINGS_LEGACY_WIRE_SIZE || sd.size == MT_SETTINGS_V3_WIRE_SIZE ||
+         sd.size == MT_SETTINGS_V4_WIRE_SIZE)) {
         sd = mt_sd_storage_read_file_optional_exact(
             MT_SETTINGS_PATH, settings_wire, sd.size,
             &found);

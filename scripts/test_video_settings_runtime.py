@@ -33,7 +33,8 @@ def main() -> int:
         "-Ifirmware/include", "-Ifirmware/platform/xilinx",
         "tests/host/test_video_settings_runtime.c",
         "firmware/platform/xilinx/supervisor_settings.c",
-        "-Wl,--gc-sections", "-o", str(binary),
+        "firmware/common/video_effects.c", "firmware/common/video_effects_frontend.c",
+        "-Wl,--gc-sections", "-lm", "-o", str(binary),
     ]
     for command in (compile_command, [str(binary)]):
         result = subprocess.run(launcher + command, check=False)

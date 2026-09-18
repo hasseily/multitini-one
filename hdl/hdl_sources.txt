@@ -118,6 +118,13 @@ common/multitini_control_regs.sv
 common/multitini_psram_bist.sv
 common/multitini_async_mailbox.sv
 common/multitini_border_config.sv
+common/multitini_video_effects.sv
+common/multitini_video_capture.sv
+common/multitini_video_frame_reader.sv
+common/multitini_video_frame_filter.sv
+common/multitini_video_frame_engine.sv
+common/multitini_video_frame_scheduler.sv
+common/multitini_video_framebuffer.sv
 common/multitini_font7x8.mem
 common/multitini_text_overlay.sv
 common/multitini_cdc_pulse_toggle.sv

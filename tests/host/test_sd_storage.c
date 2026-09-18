@@ -551,18 +551,18 @@ static void test_settings_journal_migration(void)
     assert(mt_supervisor_settings_save(&original).status == MT_SETTINGS_OK);
     assert(target_size == MT_SETTINGS_WIRE_SIZE && !journal_exists);
     memcpy(current_wire, target_data, sizeof(current_wire));
-    for (schema = 1U; schema <= 4U; ++schema) {
-        const size_t wire_size = schema == 4U ? MT_SETTINGS_WIRE_SIZE :
-            (schema == 3U ? 4024U : 3960U);
+    for (schema = 1U; schema <= 5U; ++schema) {
+        const size_t wire_size = schema == 5U ? MT_SETTINGS_WIRE_SIZE :
+            (schema == 4U ? 4088U : (schema == 3U ? 4024U : 3960U));
         unsigned fault;
         memcpy(wire, current_wire, sizeof(wire));
         expected = original;
-        if (schema != 4U) {
+        if (schema != 5U) {
             uint32_t crc;
-            const size_t profile_size = schema == 3U ? 248U : 244U;
+            const size_t profile_size = schema == 4U ? 252U : schema == 3U ? 248U : 244U;
             for (index = 0U; index < MT_SETTINGS_MAX_PROFILES; ++index) {
                 memcpy(wire + 56U + index * profile_size,
-                       current_wire + 56U + index * 252U, profile_size);
+                       current_wire + 56U + index * 290U, profile_size);
             }
             settings_store_u32(wire + 8U, schema);
             settings_store_u32(wire + 12U, (uint32_t)wire_size);
@@ -576,9 +576,12 @@ static void test_settings_journal_migration(void)
                     expected.profiles[index].border_color = 7U;
                     expected.profiles[index].border_padding = 6U;
                 }
-                expected.profiles[index].vectrex_overlay_enabled = true;
-                expected.profiles[index].vectrex_beam_gain = 1U;
-                expected.profiles[index].vectrex_overlay_opacity = 1U;
+                if (schema < 4U) {
+                    expected.profiles[index].vectrex_overlay_enabled = true;
+                    expected.profiles[index].vectrex_beam_gain = 1U;
+                    expected.profiles[index].vectrex_overlay_opacity = 1U;
+                }
+                mt_video_effects_defaults(&expected.profiles[index].video_effects);
             }
             expected.profiles[0].c64_fast_roms = schema != 1U;
         }
@@ -608,7 +611,7 @@ static void test_settings_journal_migration(void)
             assert(memcmp(&loaded, &expected, sizeof(loaded)) == 0);
             /* Saving a migrated file always writes the complete new format. */
             assert(mt_supervisor_settings_save(&loaded).status == MT_SETTINGS_OK);
-            assert(target_size == MT_SETTINGS_WIRE_SIZE && target_data[8U] == 4U);
+            assert(target_size == MT_SETTINGS_WIRE_SIZE && target_data[8U] == 5U);
             assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
             assert(memcmp(&loaded, &expected, sizeof(loaded)) == 0);
         }

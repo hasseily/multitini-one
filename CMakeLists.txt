@@ -38,12 +38,18 @@ add_library(multitini_common STATIC
     firmware/common/text_reader.c
     firmware/common/tmp102.c
     firmware/common/ui.c
+    firmware/common/video_effects.c
+    firmware/common/video_effects_frontend.c
+    firmware/common/video_frame.c
     firmware/common/xmodem.c
 )
 target_include_directories(multitini_common PUBLIC firmware/include)
+if(NOT MSVC AND NOT CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
+    target_link_libraries(multitini_common PUBLIC m)
+endif()
 
 enable_testing()
-foreach(component clock text_reader system_frontend menu_services)
+foreach(component clock text_reader system_frontend menu_services video_effects video_effects_frontend video_frame)
     add_executable(test_${component} tests/host/test_${component}.c)
     target_link_libraries(test_${component} PRIVATE multitini_common)
     add_test(NAME ${component} COMMAND test_${component})
@@ -100,6 +106,7 @@ target_include_directories(xilinx_supervisor_settings_host PUBLIC
     firmware/include
     firmware/platform/xilinx
 )
+target_link_libraries(xilinx_supervisor_settings_host PUBLIC multitini_common)
 
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(multitini_common PRIVATE
@@ -142,6 +149,13 @@ add_executable(test_vectrex_firmware tests/host/test_vectrex_firmware.c
 target_include_directories(test_vectrex_firmware PRIVATE firmware/platform/xilinx)
 target_link_libraries(test_vectrex_firmware PRIVATE multitini_common multitini_vectrex32)
 add_test(NAME vectrex_firmware COMMAND test_vectrex_firmware)
+
+add_executable(test_video_effect_service tests/host/test_video_effect_service.c
+    firmware/platform/xilinx/video_effect_service.c
+    firmware/platform/xilinx/video_frame_service.c)
+target_include_directories(test_video_effect_service PRIVATE firmware/platform/xilinx)
+target_link_libraries(test_video_effect_service PRIVATE multitini_common)
+add_test(NAME video_effect_service COMMAND test_video_effect_service)
 
 add_executable(test_media_browser tests/host/test_media_browser.c)
 target_link_libraries(test_media_browser PRIVATE multitini_common)

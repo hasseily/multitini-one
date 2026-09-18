@@ -38,6 +38,7 @@ vitis_workspace/
 *.pb
 xsim.dir/
 dfx_runtime.txt
+/clockInfo.txt
 *.elf
 *.bin
 *.hex

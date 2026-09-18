@@ -30,6 +30,8 @@ module multitini_control_regs #(
     input  logic         ui_active_bank,
     input  logic         ui_active_dense,
     input  logic         ui_submit_ready,
+    input  logic         effect_busy, effect_active_valid, effect_rejected,
+    input  logic [31:0]  effect_active_sequence,
 
     input  logic         wr_en,
     input  logic [11:0]  wr_addr,
@@ -42,6 +44,9 @@ module multitini_control_regs #(
     output logic [31:0]  control,
     output logic [31:0]  border_config,
     output logic [31:0]  vectrex_video_config,
+    output logic         effect_write, effect_commit,
+    output logic [9:0]   effect_address,
+    output logic [31:0]  effect_data, effect_commit_sequence,
     output logic         load_submit,
     output logic [7:0]   load_kind,
     output logic [7:0]   load_data,
@@ -224,6 +229,10 @@ module multitini_control_regs #(
             MT_REG_BORDER_CONFIG:    rd_data = border_config;
             MT_REG_VECTREX_VIDEO_CONFIG: rd_data = vectrex_video_config;
             MT_REG_VECTREX_OVERLAY_STATUS: rd_data = {30'd0, vectrex_overlay_status};
+            MT_REG_VIDEO_EFFECT_ADDRESS: rd_data = {22'd0, effect_address};
+            MT_REG_VIDEO_EFFECT_STATUS: rd_data = {28'd0, 1'b1, effect_rejected,
+                                                   effect_active_valid, effect_busy};
+            MT_REG_VIDEO_EFFECT_SEQUENCE: rd_data = effect_active_sequence;
             MT_REG_IRQ_STATUS:       rd_data = irq_status;
             MT_REG_IRQ_ENABLE:       rd_data = irq_enable;
             MT_REG_SCRATCH:          rd_data = scratch;
@@ -304,6 +313,12 @@ module multitini_control_regs #(
                     stream_burst_pending || load_submit ||
                     stream_offset >= stream_total)
                     error_set_mask |= MT_ERROR_BAD_WRITE;
+            MT_REG_VIDEO_EFFECT_ADDRESS:
+                if (wr_strb != 4'hF || wr_data[31:10] != 0)
+                    error_set_mask |= MT_ERROR_BAD_WRITE;
+            MT_REG_VIDEO_EFFECT_DATA, MT_REG_VIDEO_EFFECT_COMMIT:
+                if (wr_strb != 4'hF || effect_busy)
+                    error_set_mask |= MT_ERROR_BAD_WRITE;
             MT_REG_CONTROL,
             MT_REG_BORDER_CONFIG,
             MT_REG_VECTREX_VIDEO_CONFIG,
@@ -325,6 +340,11 @@ module multitini_control_regs #(
             error_flags     <= 32'h00000000;
             border_config   <= MT_BORDER_CONFIG_DEFAULT;
             vectrex_video_config <= MT_VECTREX_VIDEO_CONFIG_DEFAULT;
+            effect_write <= 0;
+            effect_commit <= 0;
+            effect_address <= 0;
+            effect_data <= 0;
+            effect_commit_sequence <= 0;
             control         <= MT_CONTROL_CORE_RESET_REQUEST |
                                MT_CONTROL_VIDEO_TEST_ENABLE |
                                MT_CONTROL_AUDIO_TEST_ENABLE |
@@ -402,6 +422,8 @@ module multitini_control_regs #(
             media_complete <= 1'b0;
             media_data_pop <= 1'b0;
             ui_submit <= 1'b0;
+            effect_write <= 1'b0;
+            effect_commit <= 1'b0;
             error_flags <= (error_flags & ~error_clear_mask) | error_set_mask;
             irq_status <= (irq_status & ~irq_clear_mask) |
                           ((|error_set_mask) ? 32'd1 : 32'd0);
@@ -476,6 +498,19 @@ module multitini_control_regs #(
                         vectrex_video_config <=
                             merge_strobes(vectrex_video_config, wr_data, wr_strb) &
                             MT_VECTREX_VIDEO_CONFIG_MASK;
+                    MT_REG_VIDEO_EFFECT_ADDRESS:
+                        if (wr_strb == 4'hF && wr_data[31:10] == 0)
+                            effect_address <= wr_data[9:0];
+                    MT_REG_VIDEO_EFFECT_DATA:
+                        if (wr_strb == 4'hF && !effect_busy) begin
+                            effect_data <= wr_data;
+                            effect_write <= 1;
+                        end
+                    MT_REG_VIDEO_EFFECT_COMMIT:
+                        if (wr_strb == 4'hF && !effect_busy) begin
+                            effect_commit_sequence <= wr_data;
+                            effect_commit <= 1;
+                        end
                     MT_REG_IRQ_STATUS:
                         ;
                     MT_REG_IRQ_ENABLE:

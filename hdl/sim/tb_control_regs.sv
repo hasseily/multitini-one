@@ -15,6 +15,11 @@ module tb_control_regs;
     logic [31:0] rd_data;
     logic [31:0] control;
     logic irq;
+    logic effect_busy=0,effect_active_valid=0,effect_rejected=0;
+    logic [31:0] effect_active_sequence=0;
+    wire effect_write,effect_commit;
+    wire [9:0] effect_address;
+    wire [31:0] effect_data,effect_commit_sequence;
     logic load_submit_ready = 1'b1;
     logic core_load_error = 1'b0;
     logic [1:0] vectrex_overlay_status = 2'b00;
@@ -72,6 +77,9 @@ module tb_control_regs;
     always #5 clk = !clk;
 
     multitini_control_regs #(.SHELL_BUILD_ID(32'h12345678)) dut (
+        .effect_busy(effect_busy),.effect_active_valid(effect_active_valid),.effect_rejected(effect_rejected),
+        .effect_active_sequence(effect_active_sequence),.effect_write(effect_write),.effect_commit(effect_commit),
+        .effect_address(effect_address),.effect_data(effect_data),.effect_commit_sequence(effect_commit_sequence),
         .clk(clk), .resetn(resetn), .core_id(32'h43363420),
         .core_variant_index(32'd1),
         .core_ready(1'b1), .load_submit_ready(load_submit_ready),
@@ -611,6 +619,30 @@ module tb_control_regs;
         write_reg(12'h0CC,32'd1,4'hF);
         expect_read(MT_REG_ERROR,MT_ERROR_BAD_READ | MT_ERROR_BAD_WRITE,
                     "unused register write rejected");
+        write_reg(MT_REG_ERROR,32'hffffffff,4'hf);
+        expect_read(MT_REG_VIDEO_EFFECT_ADDRESS,0,"effect address reset");
+        expect_read(MT_REG_VIDEO_EFFECT_STATUS,8,"effect capability present");
+        write_reg(MT_REG_VIDEO_EFFECT_ADDRESS,32'h123,4'hf);
+        expect_read(MT_REG_VIDEO_EFFECT_ADDRESS,32'h123,"effect address write");
+        write_reg(MT_REG_VIDEO_EFFECT_ADDRESS,32'h234,4'h1);
+        expect_read(MT_REG_VIDEO_EFFECT_ADDRESS,32'h123,"effect partial address rejected");
+        write_reg(MT_REG_VIDEO_EFFECT_ADDRESS,32'h400,4'hf);
+        expect_read(MT_REG_VIDEO_EFFECT_ADDRESS,32'h123,"effect wide address rejected");
+        write_reg(MT_REG_VIDEO_EFFECT_DATA,32'h87654321,4'hf);
+        check_value(effect_write && effect_data==32'h87654321,"effect complete word pulse");
+        write_reg(MT_REG_VIDEO_EFFECT_DATA,32'h12345678,4'h7);
+        check_value(!effect_write && effect_data==32'h87654321,"effect partial word rejected");
+        write_reg(MT_REG_VIDEO_EFFECT_COMMIT,32'h10203040,4'hf);
+        check_value(effect_commit && effect_commit_sequence==32'h10203040,"effect commit pulse");
+        effect_busy=1;
+        write_reg(MT_REG_VIDEO_EFFECT_DATA,32'hffffffff,4'hf);
+        check_value(!effect_write && effect_data==32'h87654321,"effect busy write rejected");
+        write_reg(MT_REG_VIDEO_EFFECT_COMMIT,32'hffffffff,4'hf);
+        check_value(!effect_commit && effect_commit_sequence==32'h10203040,"effect busy commit rejected");
+        effect_active_valid=1;effect_rejected=1;effect_active_sequence=32'h10203040;
+        expect_read(MT_REG_VIDEO_EFFECT_STATUS,15,"effect status bits");
+        expect_read(MT_REG_VIDEO_EFFECT_SEQUENCE,32'h10203040,"effect committed sequence");
+        expect_read(MT_REG_ERROR,MT_ERROR_BAD_WRITE,"effect malformed writes are reported");
         $display("PASS: control registers");
         $finish;
     end

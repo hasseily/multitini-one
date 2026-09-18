@@ -3,6 +3,7 @@
 #define MULTITINI_XILINX_SUPERVISOR_SETTINGS_H
 
 #include "multitini_core_package.h"
+#include "multitini_video_effects.h"
 #include "sd_storage.h"
 
 #include <stdbool.h>
@@ -13,7 +14,7 @@
 #define MT_SETTINGS_JOURNAL_PATH "0:/multitini/settings.bin.mtj"
 #define MT_SETTINGS_MAX_PROFILES 16U
 #define MT_SETTINGS_MEDIA_NAME_MAX 96U
-#define MT_SETTINGS_WIRE_SIZE 4088U
+#define MT_SETTINGS_WIRE_SIZE 4696U
 #define MT_SETTINGS_BORDER_STYLE_DEFAULT 0U
 #define MT_SETTINGS_BORDER_COLOR_DEFAULT 7U
 #define MT_SETTINGS_BORDER_PADDING_DEFAULT 6U
@@ -36,6 +37,7 @@ typedef struct {
     bool vectrex_overlay_enabled;
     uint8_t vectrex_beam_gain;
     uint8_t vectrex_overlay_opacity;
+    mt_video_effects_settings_t video_effects;
 } mt_core_settings_profile_t;
 
 typedef struct {
@@ -88,6 +90,9 @@ bool mt_supervisor_settings_remember_borders(
 bool mt_supervisor_settings_remember_vectrex_video(
     mt_supervisor_settings_t *settings, const char *core_id, bool enabled,
     uint8_t beam_gain, uint8_t overlay_opacity);
+bool mt_supervisor_settings_remember_video_effects(
+    mt_supervisor_settings_t *settings, const char *core_id,
+    const mt_video_effects_settings_t *effects);
 
 mt_settings_result_t mt_supervisor_settings_load(
     mt_supervisor_settings_t *settings);

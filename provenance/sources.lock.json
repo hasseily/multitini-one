@@ -23,6 +23,13 @@
       "use": "Selected USB3300 startup and shutdown checks; USB host lifecycle and hub allocation cleanup; native PHY test fixture and Python test runner; bounded text normalization and wrapping. Adapted file origins are recorded in licenses/files.csv. Earlier board and USB import pins remain unchanged."
     },
     {
+      "name": "Appletini One CPU1 AMP startup and build pattern",
+      "url": "https://github.com/hasseily/appletini-one.git",
+      "commit": "1fd4f371e8f4ef08bc63875550564590609fcfeb",
+      "license": "GPL-3.0-only",
+      "use": "Selected ps_sources/lib/amp.c CPU1 release sequence and scripts/create_vitis_workspace.py AMP BSP and embedded-image build pattern. Also references compositor phosphor decay bands and blur/glow weights for the original Multitini native-frame implementation, and the ARM/Unicorn test setup. Multitini memory-only mailbox, worker and streaming transport are original. Per-file origins in licenses/files.csv."
+    },
+    {
       "name": "CherryUSB",
       "url": "https://github.com/hasseily/CherryUSB.git",
       "commit": "825dc4166ef4b92ced2b15446c668e74f2bc064c",
