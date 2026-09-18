@@ -603,13 +603,17 @@ On hardware:
 
 ### Decisions recorded after the baseline plan
 
+- 2026-09-18: The owner confirmed the VID5 blur correction is fixed on the
+  board and requested closing the GBC startup investigation. Preserve the
+  exact delivered core update and retained VID4 firmware/Vectrex. The startup
+  report is no longer an active task or acceptance blocker; no cause or fix
+  is claimed.
 - 2026-09-18: VID4's inverse-square blur correction was too faint on C64 and
   GBC. Keep source-aware strength, but require distinct Light/Medium/Strong
   results in the actual RGB565 pixels, with preserved handheld detail on
   Light. Numerical display-space variance alone is not visual acceptance.
   Deliver the correction as a C64 PAL/GBC core update using the existing
-  firmware. The separately reported intermittent GBC startup failure remains
-  unresolved until reproduced and diagnosed.
+  firmware.
 - 2026-09-18: Native-resolution blur must account for each adapter's output
   scale. Keep the existing Vectrex appearance while reducing blur on enlarged
   low-resolution source pixels; apply the correction independently per axis

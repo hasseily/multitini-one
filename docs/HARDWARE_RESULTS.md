@@ -1,13 +1,31 @@
 # Hardware Results
 
+## 2026-09-18: VID5 blur accepted; startup investigation closed
+
+Following delivery of the VID5 C64 PAL and Game Boy / Game Boy Color update,
+the owner confirmed: "Blur is fixed." This records owner-reported on-card
+acceptance of the blur correction. No additional board measurements or
+per-level test sequence were supplied.
+
+The accepted delivery is `build/core-update-video-vid5.zip`, source commit
+`81ad9271fb5fb16bdca35bd6bfd979413db44eac`, SHA-256
+`389d5cb63f488667b9f54d43ff4bd44d8c4a53d998a8a7b9b82b2e76ff79774f`.
+Its exact C64/GBC payloads and the retained VID4 firmware/Vectrex combination
+remain unchanged. The original package and its pre-installation audit
+records are preserved.
+
+The owner also instructed us to forget the GBC startup issue. That
+investigation is closed at the owner's request and is no longer an active
+task or acceptance blocker. No startup cause or corrective fix is claimed.
+
 ## 2026-09-18: VID4 GBC startup failure and weak blur
 
 After the VID4 delivery, the owner reported a Game Boy boot screen with
 garbled text at the bottom, followed by a white screen instead of gameplay.
 The owner then reported that GBC worked again. The failing state was not
 captured over UART, and no cause or corrective action has been established.
-This is an unresolved intermittent startup regression, not a passing GBC
-acceptance result. A later passive UART read found the owner had switched
+At that point the intermittent startup report was unresolved. A later
+passive UART read found the owner had switched
 to the VID4 C64 core; its identifiers and CPU1 Ready state were correct.
 
 The owner also reported that blur was barely visible on C64 and not visible
@@ -41,8 +59,8 @@ The external memory endpoint is modeled and the mailbox uses the portable
 XPM model. This does not test physical PSRAM storage, pin timing, the mapper
 or Game Boy CPU execution. The production write response echoes the held
 write data rather than reading it back, so a successful upload transport
-does not independently verify the stored cartridge. The startup issue
-remains unresolved.
+does not independently verify the stored cartridge. The investigation was
+subsequently closed at the owner's request, as recorded above.
 
 ## 2026-09-14: shared interface firmware 20260920 board tested
 

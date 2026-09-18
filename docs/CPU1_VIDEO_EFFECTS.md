@@ -432,8 +432,8 @@ The immutable evidence archive is
 `7e1f4810ac496c52d02bebaa47d3cef1f70be0c7aecb3cca151848c3cc61b0ae`.
 It includes source hashes, full test logs, the negative controls and a
 synthetic preview produced by the actual RGB565 C reference. On-card blur
-acceptance and the separately reported intermittent GBC startup failure
-remain open.
+acceptance was pending at delivery; the owner's subsequent confirmation
+is recorded below.
 
 ### Core-only delivery
 
@@ -487,5 +487,20 @@ captured inputs match the built sources. Each exported XSA contains the
 exact selected bitstream and retains the VID4 PS initialization bytes.
 The GBC build adds 233 LUTs and 10 flip-flops overall versus VID4, with no
 added block RAM or DSPs. Processing latency and frame-memory traffic do not
-change. The narrow timing margins make these test images; neither has yet
-received on-card visual or sustained 60 Hz gameplay acceptance.
+change. The narrow timing margins make these test images. The owner has
+since accepted the blur correction; sustained 60 Hz gameplay measurement
+remains separate from that visual confirmation.
+
+### Owner acceptance
+
+After the VID5 delivery, the owner confirmed "Blur is fixed" and requested
+closing the GBC startup investigation. Blur is accepted on the board, and
+the startup investigation is no longer an active task or acceptance blocker.
+No startup cause or corrective fix was established.
+
+Preserve the tested `build/core-update-video-vid5.zip` unchanged: SHA-256
+`389d5cb63f488667b9f54d43ff4bd44d8c4a53d998a8a7b9b82b2e76ff79774f`,
+source commit `81ad9271fb5fb16bdca35bd6bfd979413db44eac`, with the retained
+VID4 firmware and Vectrex. This acceptance record does not rebuild or
+replace any delivered artifact. See [Hardware results](HARDWARE_RESULTS.md)
+for the owner-reported scope.
