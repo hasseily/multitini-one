@@ -43,6 +43,7 @@
 
 #include "platform.h"
 #include "sleep.h"
+#include "xdevcfg_hw.h"
 #include "xiicps.h"
 #include "xil_io.h"
 #include "xil_mmu.h"
@@ -54,8 +55,8 @@
 
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
 #define MT_SUPERVISOR_CORE_ID UINT32_C(0)
-/* VID3 uses source-resolution FPGA effects; CPU1 prepares video controls. */
-#define MT_FIRMWARE_BUILD_ID UINT32_C(0x56494433)
+/* VID4 combines source-scaled blur and the staged GP0 read fix (ABI 0.15). */
+#define MT_FIRMWARE_BUILD_ID UINT32_C(0x56494434)
 #define MT_I2C_CLOCK_HZ UINT32_C(100000)
 #define MT_I2C_BUSY_POLLS UINT32_C(1000000)
 #define MT_UART_DRAIN_POLLS UINT32_C(10000000)
@@ -77,6 +78,13 @@
 #define MT_SLCR_UNLOCK_KEY UINT32_C(0x0000DF0D)
 #define MT_PS_RESET_CONTROL UINT32_C(0xF8000200)
 #define MT_PS_SOFTWARE_RESET UINT32_C(0x00000001)
+#define MT_SLCR_FPGA_RESET UINT32_C(0xF8000240)
+#define MT_SLCR_LEVEL_SHIFTER UINT32_C(0xF8000900)
+#define MT_SLCR_IO_PLL_CONTROL UINT32_C(0xF8000108)
+#define MT_SLCR_ARM_PLL_CONTROL UINT32_C(0xF8000100)
+#define MT_SLCR_DDR_PLL_CONTROL UINT32_C(0xF8000104)
+#define MT_SLCR_FCLK0_CONTROL UINT32_C(0xF8000170)
+#define MT_SLCR_FCLK2_CONTROL UINT32_C(0xF8000190)
 
 static XIicPs i2c_instance;
 static mt_core_link_t shell_link;
@@ -161,6 +169,7 @@ static bool remember_active_drive8(const char *file_name);
 static bool remember_active_cartridge(const char *file_name);
 static bool remember_c64_input_settings(void);
 static uint32_t shell_read(uint32_t offset);
+static void print_read_only_diagnostics(const char *stage);
 static void set_supervisor_status(const char *text);
 static void set_supervisor_warning(const char *text);
 static void set_supervisor_error(const char *text);
@@ -1153,7 +1162,8 @@ static void handle_c64_cart_detach(void)
         (void)remember_active_cartridge(NULL);
 }
 
-static bool read_extended_command(char *buffer, size_t capacity)
+static bool read_extended_command(char *buffer, size_t capacity,
+                                  bool recovery_only)
 {
     size_t length = 0U;
     bool overflow = false;
@@ -1161,7 +1171,10 @@ static bool read_extended_command(char *buffer, size_t capacity)
     for (;;) {
         uint8_t byte;
         char input;
-        while (uart0_try_read_byte(&byte) == 0) service_runtime();
+        while (uart0_try_read_byte(&byte) == 0) {
+            /* Recovery starts before the shell and board services are usable. */
+            if (!recovery_only) service_runtime();
+        }
         input = (char)byte;
         if (input == '\r' || input == '\n') {
             break;
@@ -1190,12 +1203,12 @@ static bool wait_uart0_transmit_idle(void)
     return false;
 }
 
-static void reboot_to_golden(void)
+static void reboot_to_golden(bool recovery_only)
 {
     int usb_stop_result;
     mt_sd_result_t unmount_result;
 
-    if (set_core_reset_request(true) != 0) {
+    if (!recovery_only && set_core_reset_request(true) != 0) {
         xil_printf("media flush or core reset failed; reboot cancelled\r\n");
         set_supervisor_error("Reboot cancelled; media flush or core reset failed");
         return;
@@ -1203,8 +1216,10 @@ static void reboot_to_golden(void)
     xil_printf("rebooting to golden at QSPI offset 0x00000000\r\n");
     if (!wait_uart0_transmit_idle()) {
         xil_printf("UART did not drain; reboot cancelled\r\n");
-        (void)set_core_reset_request(false);
-        set_supervisor_error("Reboot cancelled; UART did not drain");
+        if (!recovery_only) {
+            (void)set_core_reset_request(false);
+            set_supervisor_error("Reboot cancelled; UART did not drain");
+        }
         return;
     }
 
@@ -1212,24 +1227,28 @@ static void reboot_to_golden(void)
     DATA_SYNC;
     if ((Xil_In32(MT_DEVCFG_MULTIBOOT) & MT_DEVCFG_MULTIBOOT_MASK) != 0U) {
         xil_printf("multiboot readback failed; reboot cancelled\r\n");
-        (void)set_core_reset_request(false);
-        set_supervisor_error("Reboot cancelled; multiboot readback failed");
+        if (!recovery_only) {
+            (void)set_core_reset_request(false);
+            set_supervisor_error("Reboot cancelled; multiboot readback failed");
+        }
         return;
     }
 
-    usb_stop_result = usb_hid_service_stop();
-    if (usb_stop_result != 0) {
-        xil_printf("USB1 VBUS shutdown failed (%d); reboot cancelled\r\n",
-                   usb_stop_result);
-        (void)set_core_reset_request(false);
-        set_supervisor_error("Reboot cancelled; USB shutdown failed");
-        return;
-    }
-    unmount_result = mt_sd_storage_unmount();
-    if (unmount_result.status != MT_SD_OK) {
-        xil_printf("SD unmount warning: %s backend=%u\r\n",
-                   mt_sd_status_name(unmount_result.status),
-                   unmount_result.backend_status);
+    if (!recovery_only) {
+        usb_stop_result = usb_hid_service_stop();
+        if (usb_stop_result != 0) {
+            xil_printf("USB1 VBUS shutdown failed (%d); reboot cancelled\r\n",
+                       usb_stop_result);
+            (void)set_core_reset_request(false);
+            set_supervisor_error("Reboot cancelled; USB shutdown failed");
+            return;
+        }
+        unmount_result = mt_sd_storage_unmount();
+        if (unmount_result.status != MT_SD_OK) {
+            xil_printf("SD unmount warning: %s backend=%u\r\n",
+                       mt_sd_status_name(unmount_result.status),
+                       unmount_result.backend_status);
+        }
     }
 
     Xil_Out32(MT_SLCR_UNLOCK, MT_SLCR_UNLOCK_KEY);
@@ -1250,13 +1269,15 @@ static void handle_extended_command(bool recovery_only)
     char *argument;
     char *argument_end;
 
-    if (!read_extended_command(extended, sizeof(extended))) {
+    if (!read_extended_command(extended, sizeof(extended), recovery_only)) {
         if (!recovery_only && strncmp(extended, "c64rx", 5U) == 0) {
             leave_core_in_reset();
         }
         xil_printf("extended command is too long\r\n");
     } else if (strcmp(extended, "reboot") == 0) {
-        reboot_to_golden();
+        reboot_to_golden(recovery_only);
+    } else if (strcmp(extended, "diag") == 0) {
+        print_read_only_diagnostics("command");
     } else if (!recovery_only &&
                strncmp(extended, "c64rx", 5U) == 0 &&
                (extended[5] == '\0' || extended[5] == ' ' ||
@@ -1331,7 +1352,7 @@ static void handle_extended_command(bool recovery_only)
     }
 
     if (recovery_only) {
-        xil_printf("recovery command: :reboot return to golden updater\r\n");
+        xil_printf("recovery commands: :diag read status; :reboot return to golden updater\r\n");
     } else {
         print_help();
     }
@@ -3180,7 +3201,7 @@ static void handle_menu_action(mt_menu_action_t action)
             }
         }
     } else if (action.kind == MT_MENU_ACTION_REBOOT_GOLDEN) {
-        reboot_to_golden();
+        reboot_to_golden(false);
     }
 }
 
@@ -3336,13 +3357,13 @@ static void service_system_page(void)
 
 static void recovery_console(void)
 {
-    xil_printf("recovery command: :reboot return to golden updater\r\n");
+    xil_printf("recovery commands: :diag read status; :reboot return to golden updater\r\n");
     for (;;) {
         const char input = inbyte();
         if (input == ':') {
             handle_extended_command(true);
         } else if (input != '\r' && input != '\n') {
-            xil_printf("shell unavailable; only :reboot is accepted\r\n");
+            xil_printf("shell unavailable; only :diag or :reboot is accepted\r\n");
         }
     }
 }
@@ -3357,33 +3378,106 @@ static uint32_t video_effect_milliseconds(void)
     return (uint32_t)monotonic_ms(NULL);
 }
 
+static void print_boot_ps_status(void)
+{
+    const uint32_t interrupts = Xil_In32(
+        XPAR_XDEVCFG_0_BASEADDR + XDCFG_INT_STS_OFFSET);
+    /* PS registers only: safe to report before attempting any PL access. */
+    xil_printf("boot PS: fpga_rst=%08x lvl_shftr=%08x multiboot=%08x\r\n",
+               (unsigned int)Xil_In32(MT_SLCR_FPGA_RESET),
+               (unsigned int)Xil_In32(MT_SLCR_LEVEL_SHIFTER),
+               (unsigned int)Xil_In32(MT_DEVCFG_MULTIBOOT));
+    xil_printf("boot DevCfg: ctrl=%08x status=%08x irq=%08x pcfg_done_irq=%u\r\n",
+               (unsigned int)Xil_In32(XPAR_XDEVCFG_0_BASEADDR + XDCFG_CTRL_OFFSET),
+               (unsigned int)Xil_In32(XPAR_XDEVCFG_0_BASEADDR + XDCFG_STATUS_OFFSET),
+               (unsigned int)interrupts,
+               (interrupts & XDCFG_IXR_PCFG_DONE_MASK) != 0U ? 1U : 0U);
+    xil_printf("boot clocks: fclk0_ctrl=%08x fclk2_ctrl=%08x io_pll_ctrl=%08x\r\n",
+               (unsigned int)Xil_In32(MT_SLCR_FCLK0_CONTROL),
+               (unsigned int)Xil_In32(MT_SLCR_FCLK2_CONTROL),
+               (unsigned int)Xil_In32(MT_SLCR_IO_PLL_CONTROL));
+    xil_printf("boot PLL: arm_ctrl=%08x ddr_ctrl=%08x\r\n",
+               (unsigned int)Xil_In32(MT_SLCR_ARM_PLL_CONTROL),
+               (unsigned int)Xil_In32(MT_SLCR_DDR_PLL_CONTROL));
+}
+
+static void print_read_only_diagnostics(const char *stage)
+{
+    static const uint32_t offsets[] = {
+        MT_REG_MAGIC, MT_REG_ABI_VERSION, MT_REG_SHELL_ID,
+        MT_REG_SHELL_BUILD_ID, MT_REG_CORE_ID, MT_REG_CONTROL, MT_REG_UI_STATUS
+    };
+    mt_video_worker_status_t worker;
+    unsigned int i;
+    xil_printf("diagnostic stage: %s\r\n", stage);
+    print_boot_ps_status();
+    /* Fixed status addresses only. No runtime polling or peripheral writes. */
+    for (i = 0U; i < 4U; ++i) {
+        const uint32_t value = Xil_In32(MT_SHELL_BASE_ADDRESS + MT_REG_MAGIC);
+        xil_printf("magic repeat %u=%08x\r\n", i, (unsigned int)value);
+    }
+    for (i = 0U; i < sizeof(offsets) / sizeof(offsets[0]); ++i) {
+        const uint32_t value = Xil_In32(MT_SHELL_BASE_ADDRESS + offsets[i]);
+        xil_printf("shell read +%08x=%08x\r\n",
+                   (unsigned int)offsets[i], (unsigned int)value);
+    }
+    worker = mt_video_worker_status();
+    xil_printf("CPU1 state=%u seq=%08x epoch=%08x bytes=%u result=%d\r\n",
+               (unsigned int)worker.state, (unsigned int)worker.sequence,
+               (unsigned int)worker.epoch, (unsigned int)worker.output_size,
+               worker.result);
+}
+
+static uint32_t boot_probe_read32(void *context, uint32_t offset)
+{
+    const uint32_t value = Xil_In32((uintptr_t)context + offset);
+    /* Log only reads the probe already performs, after each read completes. */
+    xil_printf("shell probe read +%08x=%08x\r\n",
+               (unsigned int)offset, (unsigned int)value);
+    return value;
+}
+
 int main(void)
 {
     mt_link_result_t link_status;
     int status;
     int usb_status;
+    uint32_t ui_status;
 
     init_platform();
+    xil_printf("\r\nMultitini One diagnostic firmware build=%08x\r\n",
+               (unsigned int)MT_FIRMWARE_BUILD_ID);
+    Xil_SetTlbAttributes(MT_SHELL_BASE_ADDRESS, DEVICE_MEMORY);
+    mt_core_link_init_mmio(&shell_link,
+        (volatile void *)(uintptr_t)MT_SHELL_BASE_ADDRESS);
+    print_read_only_diagnostics("before CPU1 release");
     {
         const mt_video_effect_service_ops_t effects_ops = {
             shell_read, video_effect_write, video_effect_milliseconds
         };
         mt_video_effect_service_init(&effects_ops);
-        (void)mt_video_worker_start();
+        xil_printf("CPU1 settings worker release: %s\r\n",
+                   mt_video_worker_start() ? "ok" : "failed");
     }
-    Xil_SetTlbAttributes(MT_SHELL_BASE_ADDRESS, DEVICE_MEMORY);
+    print_read_only_diagnostics("after CPU1 release");
+
+    shell_link.read32 = boot_probe_read32;
+    link_status = mt_core_link_probe(&shell_link);
     mt_core_link_init_mmio(&shell_link,
         (volatile void *)(uintptr_t)MT_SHELL_BASE_ADDRESS);
-
-    xil_printf("\r\nMultitini One diagnostic firmware build=%08x\r\n",
-               (unsigned int)MT_FIRMWARE_BUILD_ID);
-    link_status = mt_core_link_probe(&shell_link);
     xil_printf("shell probe: %s\r\n", mt_link_result_name(link_status));
     if (link_status != MT_LINK_OK) {
+        xil_printf("probe expected: magic=%08x abi-major=%u\r\n",
+                   (unsigned int)MT_MAGIC,
+                   (unsigned int)MT_ABI_MAJOR);
         xil_printf("shell unavailable; diagnostic outputs remain in reset defaults\r\n");
         recovery_console();
     }
-    if ((shell_read(MT_REG_UI_STATUS) & MT_UI_STATUS_DENSE_LAYOUT) == 0U) {
+    ui_status = shell_read(MT_REG_UI_STATUS);
+    if ((ui_status & MT_UI_STATUS_DENSE_LAYOUT) == 0U) {
+        xil_printf("dense text probe: ui_status=%08x required=%08x\r\n",
+                   (unsigned int)ui_status,
+                   (unsigned int)MT_UI_STATUS_DENSE_LAYOUT);
         xil_printf("shell lacks dense text; install matching firmware/FPGA package\r\n");
         recovery_console();
     }

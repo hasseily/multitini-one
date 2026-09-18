@@ -153,9 +153,9 @@ measurement of worst-case board service time.
 The Vitis builder creates separate CPU0 and CPU1 BSPs (`USE_AMP=1` on CPU1),
 bounds ELF load/BSS ranges, embeds the exact CPU1 binary in CPU0, and writes
 `cpu1_manifest.json`. Boot order remains FSBL, PL, CPU0. Use the new HP0+HP1
-hardware platform and matching FSBL, not an older platform export. VID3 uses
-build ID `0x56494433` and retains ABI 0.15; the earlier VID2 test bundle uses
-`0x56494432`.
+hardware platform and matching FSBL, not an older platform export. VID4 uses
+build ID `0x56494434` and retains ABI 0.15. Earlier VID3 and VID2 test bundles
+use `0x56494433` and `0x56494432` respectively.
 
 Settings schema 5 has 290-byte profiles and a 4696-byte file. Nineteen signed
 little-endian 16-bit fields occupy bytes 252–289. Schemas 1–4 migrate with
@@ -293,6 +293,72 @@ and 97.51–100% of nets. The bundle includes all five reference checkpoints,
 their source/settings records, exact build scripts, and rebuild instructions.
 Earlier failed NTSC attempts are archived as historical failures.
 
-The package manifest records exact file hashes. Narrow margins and pending
-board acceptance make this a test bundle. No image was flashed; appearance
-and uninterrupted 60 Hz gameplay under physical board load remain unverified.
+The package manifest records exact file hashes. Narrow margins make this a
+test bundle. The subsequent board test exposed the boot regression below;
+appearance and uninterrupted 60 Hz gameplay under physical board load remain
+unverified.
+
+## GP0 boot regression and recovery, 2026-09-18
+
+After installing VID3 from SD and power cycling, the monitor reported no
+signal. UART0 on USB0 showed a failed shell probe: MAGIC read `4D5C383D`
+instead of `4D543031`. Other constant registers were corrupted as well.
+VIDE diagnostics reproduced the same values before CPU1 release and after
+the worker reached Ready. PS reset, level-shifter, and clock-divider reads
+matched the selected hardware platform; these are register observations,
+not measurements of the physical clock or DVI pins.
+
+The GP0 adapter previously followed live ARADDR after the read handshake.
+Its delayed read-enable could therefore apply a side effect to a different
+address. The adapter now retains the accepted address, ID, and transfer
+validity for a full decode cycle before capturing the response. Register
+side effects consume the same retained address on that capture edge, once.
+Response backpressure and reset preserve this ownership. This also removes
+the PS address-launch delay from the large register-decode timing path.
+It adds one register-read cycle and no clock, crossing, or video stage.
+
+The original adapter fails the new address-ownership regression; the fixed
+adapter passes the existing tests and 24 additional read transactions.
+The control-bank regression also passes. The VIDF supervisor test built from
+this fix has setup +0.394 ns, hold +0.071 ns, pulse-width +1.833 ns, and minimum
+bus-skew +5.933 ns, with no critical CDC findings or unrouted nets.
+
+USB0 upload and flash verification passed for the VIDF supervisor with the
+unchanged VIDE CPU firmware. Its first board boot returned correct MAGIC,
+ABI, shell ID, build ID, and core ID both before and after CPU1 release.
+The shell probe passed, SD catalog loading succeeded, and supervisor standby
+completed. A later `:diag` returned the same correct identifiers. This
+establishes recovery of register access and startup on this board; it does
+not identify the physical cause of the former read-data corruption or prove
+display cadence. The owner then loaded the existing VID3 Game Boy Color core
+and confirmed that the game was visible. This confirms display recovery on
+the VIDE CPU / VIDF supervisor boot followed by that existing GBC image.
+Sustained 60 Hz output and zero processing drops under load remain unmeasured.
+Existing SD core images must also receive the shared adapter fix; the
+supervisor test alone does not update them.
+
+Recovery `:reboot` now bypasses uninitialized runtime/media/USB services when
+the shell probe fails, retaining UART drain and verified multiboot reset.
+The normal runtime path still flushes media and shuts USB power down.
+The recovery command and the subsequent USB0 update were exercised on the
+board. Fixed read-only `:diag` output remains available in either console;
+its DevCfg `pcfg_done_irq` is a sticky interrupt flag, not a live DONE pin.
+
+The first attempt to install the matching VID4 firmware was cancelled before
+flash access: the active GBC core could not flush its battery save. The
+normal reboot guard correctly refused the reset. The old GBC image still
+contains the read-side-effect defect, but
+the generic flush error does not establish whether that defect or another
+media failure caused the refusal. No save-protection check was bypassed.
+
+The owner then authorized terminating the game and physically power-cycled
+the card. USB0 upload, CRC verification, secondary-slot programming, and
+flash verification completed for the matching VID4 firmware. CPU and FPGA
+both report `56494434`; all eight repeated MAGIC reads and the fixed
+identifiers before and after CPU1 release are correct. The shell probe,
+CPU1 startup, SD catalog, and supervisor standby all pass. The installed
+5,030,420-byte `FIRMWARE.BIN` has SHA-256
+`8dc98614ba2638c59950b5c182e92855ecc8c2b32b107446b3adc65857bb6036`.
+The matching machine images still require installation on SD. The earlier
+GBC display confirmation does not establish sustained 60 Hz performance
+for these new images.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Package explicit VID3/ABI 0.15 builds after source and timing signoff.
+"""Package explicit VID4/ABI 0.15 builds after source and timing signoff.
 
 No discovery or fallback selects an FPGA image, FSBL, platform, or application.
 Use --check-only to audit an already completed matrix without packaging it.
@@ -28,7 +28,7 @@ import audit_vectrex_package as audit
 import capture_vectrex_build_inputs as hardware_inputs
 
 ROOT = Path(__file__).resolve().parents[1]
-BUILD_ID = "56494433"
+BUILD_ID = "56494434"
 ABI = "0.15"
 GUARD = [sys.executable, "-u", str(ROOT / "scripts/run_native_tool.py"), "--"]
 REQUIRED_REPORTS = {
@@ -217,7 +217,7 @@ def verify_hardware(directory, machine, *, ntsc=False):
     require(manifest.get("image_kind") == machine and manifest.get("part") == "xc7z020clg484-2" and
             manifest.get("top") == "multitini_one_top", "Wrong FPGA build manifest")
     generics = manifest["generic"]
-    require(re.search(r"SHELL_BUILD_ID=32'h" + BUILD_ID + r"\b", generics, re.I), "FPGA build is not VID3")
+    require(re.search(r"SHELL_BUILD_ID=32'h" + BUILD_ID + r"\b", generics, re.I), "FPGA build is not VID4")
     active = {"C64": 0, "GBC": 1, "SUPERVISOR": 2, "VECTREX": 3}[machine]
     require(re.search(rf"\bACTIVE_MACHINE={active}\b", generics), "Wrong FPGA active machine")
     require(f"C64_NTSC_MODE=1'b{int(ntsc)}" in generics, "Wrong FPGA PAL/NTSC generic")
@@ -287,7 +287,7 @@ def verify_cpu_images(workspace):
     record = manifest["build_inputs"]
     verify_sources(record["files"])
     require(re.search(r"MT_FIRMWARE_BUILD_ID\s+UINT32_C\(0x" + BUILD_ID + r"\)",
-                      (ROOT / "firmware/platform/xilinx/main.c").read_text(), re.I), "Firmware source is not VID3")
+                      (ROOT / "firmware/platform/xilinx/main.c").read_text(), re.I), "Firmware source is not VID4")
     require("#define MT_ABI_MAJOR 0U" in (ROOT / "firmware/include/multitini_regs.h").read_text() and
             "#define MT_ABI_MINOR 15U" in (ROOT / "firmware/include/multitini_regs.h").read_text() and
             "MT_ABI_MINOR = 16'd15" in (ROOT / "hdl/generated/multitini_regs_pkg.sv").read_text(),
@@ -474,7 +474,7 @@ def main():
     write_json(out / "evidence/payload-audit.json", payload)
     write_json(out / "evidence/timing-audit.json", {name: build["timing"] for name, build in builds.items()})
     (out / "README.txt").write_text(
-        "Multitini VID3 source-resolution video test bundle / ABI 0.15\n\n"
+        "Multitini VID4 source-resolution video test bundle / ABI 0.15\n\n"
         "Copy sd/ contents to the SD card, preserving existing user media and settings.\n"
         "Use the existing golden updater for FIRMWARE.BIN. No flash is performed here.\n"
         "The supervisor and all supplied machine cores form one matching HP0+HP1/ABI15 set.\n"
