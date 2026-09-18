@@ -515,6 +515,99 @@ static void test_borders(void)
     mt_menu_render(&menu, NULL, &frame);
 }
 
+static void update_vectrex_video_view(mt_menu_view_t *view, mt_menu_action_t action)
+{
+    check(action.kind == MT_MENU_ACTION_SET_VECTREX_VIDEO, "Vectrex edit dispatches video config");
+    view->vectrex_overlay_enabled = (action.file_index & 1U) != 0U;
+    view->vectrex_beam_gain = (uint8_t)((action.file_index >> 1U) & 3U);
+    view->vectrex_overlay_opacity = (uint8_t)((action.file_index >> 3U) & 3U);
+}
+
+static void test_vectrex_video(void)
+{
+    static const char *const brightness[] = {"25%", "50%", "75%", "100%"};
+    static const char *const beam[] = {"1x", "2x", "3x", "4x"};
+    mt_core_selection_t core;
+    mt_menu_view_t view = {0};
+    mt_menu_t menu;
+    mt_ui_frame_t frame;
+    mt_menu_file_t file = {0};
+    mt_menu_action_t action;
+    size_t index;
+    init_core(&core, 0U);
+    view.cores = &core; view.core_count = 1U; view.active_core_id = "core0";
+    view.vectrex_video_supported = true; /* A stale capability cannot expose another core's controls. */
+    mt_menu_init(&menu, &view); menu.visible = true; menu.page = MT_MENU_PAGE_VIDEO;
+    (void)press(&menu, &view, MT_MENU_HID_END);
+    mt_menu_render(&menu, &view, &frame);
+    check(menu.row == 5U && !contains(&frame, "Overlay enabled"), "other cores retain six Video rows");
+    strcpy(core.package.id, "vectrex"); view.active_core_id = "vectrex";
+    view.vectrex_video_supported = false;
+    menu.row = 6U;
+    mt_menu_render(&menu, &view, &frame);
+    check(contains(&frame, "Overlay enabled") && contains(&frame, "Update the Vectrex core package"),
+          "old Vectrex image has clear unsupported controls");
+    for (index = 6U; index < 9U; ++index) {
+        menu.row = index;
+        check(press(&menu, &view, MT_MENU_HID_ENTER).kind == MT_MENU_ACTION_NONE &&
+              press(&menu, &view, MT_MENU_HID_LEFT).kind == MT_MENU_ACTION_NONE &&
+              press(&menu, &view, MT_MENU_HID_RIGHT).kind == MT_MENU_ACTION_NONE,
+              "unsupported Vectrex controls never dispatch");
+    }
+    view.vectrex_video_supported = true;
+    view.vectrex_overlay_enabled = true;
+    view.vectrex_beam_gain = 1U; view.vectrex_overlay_opacity = 1U;
+    menu.row = 6U;
+    mt_menu_render(&menu, &view, &frame);
+    check(contains(&frame, "50%") && contains(&frame, "2x") && contains(&frame, "No overlay loaded"),
+          "default brightness values and missing artwork help render");
+    action = press(&menu, &view, MT_MENU_HID_LEFT);
+    check(action.file_index == 0xAU && view.vectrex_overlay_enabled,
+          "overlay Off proposes packed value without mutating caller state");
+    update_vectrex_video_view(&view, action);
+    check(press(&menu, &view, MT_MENU_HID_LEFT).kind == MT_MENU_ACTION_NONE,
+          "overlay Off does not issue redundant writes");
+    update_vectrex_video_view(&view, press(&menu, &view, MT_MENU_HID_RIGHT));
+    view.vectrex_overlay_loaded = true;
+    mt_menu_render(&menu, &view, &frame);
+    check(contains(&frame, "An overlay is loaded"), "loaded overlay status renders");
+    view.vectrex_overlay_error = true;
+    mt_menu_render(&menu, &view, &frame);
+    check(contains(&frame, "Overlay load failed"), "failed artwork load has actionable help");
+    menu.row = 7U; view.vectrex_overlay_opacity = 0U;
+    for (index = 0U; index < 4U; ++index) {
+        mt_menu_render(&menu, &view, &frame);
+        check(contains(&frame, brightness[index]), "all overlay brightness percentages render");
+        update_vectrex_video_view(&view, press(&menu, &view, MT_MENU_HID_RIGHT));
+        check(view.vectrex_beam_gain == 1U && view.vectrex_overlay_enabled,
+              "artwork brightness preserves beam and enabled setting");
+    }
+    update_vectrex_video_view(&view, press(&menu, &view, MT_MENU_HID_LEFT));
+    check(view.vectrex_overlay_opacity == 3U, "artwork brightness wraps backward");
+    menu.row = 8U; view.vectrex_beam_gain = 0U;
+    for (index = 0U; index < 4U; ++index) {
+        mt_menu_render(&menu, &view, &frame);
+        check(contains(&frame, beam[index]) && contains(&frame, "9 / 9"), "all beam multipliers fit the Video page");
+        update_vectrex_video_view(&view, press(&menu, &view, MT_MENU_HID_ENTER));
+        check(view.vectrex_overlay_opacity == 3U, "beam gain preserves artwork brightness");
+    }
+    view.vectrex_beam_gain = view.vectrex_overlay_opacity = UINT8_MAX;
+    update_vectrex_video_view(&view, press(&menu, &view, MT_MENU_HID_LEFT));
+    check(view.vectrex_beam_gain == 0U && view.vectrex_overlay_opacity == 1U,
+          "invalid presentation values normalize before indexing");
+    strcpy(file.name, "Star Castle.ovr"); view.files = &file; view.file_count = 1U;
+    mt_menu_open_browser(&menu, MT_MENU_BROWSER_OVERLAY);
+    mt_menu_render(&menu, &view, &frame);
+    check(contains(&frame, "Load overlay") && !contains(&frame, "Load program"),
+          "overlay browser has its own title");
+    action = press(&menu, &view, MT_MENU_HID_ENTER);
+    check(action.kind == MT_MENU_ACTION_LOAD_CONTENT && action.file_index == 0U,
+          "overlay browser loads through the existing content action");
+    file.cookie = MT_MENU_FILE_DIRECTORY;
+    check(press(&menu, &view, MT_MENU_HID_ENTER).kind == MT_MENU_ACTION_OPEN_DIRECTORY,
+          "overlay browser retains nested directory navigation");
+}
+
 int main(void)
 {
     test_core_navigation();
@@ -522,6 +615,7 @@ int main(void)
     test_browser();
     test_folder_browser();
     test_borders();
+    test_vectrex_video();
     test_empty_and_faults();
     puts("PASS: scalable menu navigation, descriptors, clipping and save status");
     return 0;

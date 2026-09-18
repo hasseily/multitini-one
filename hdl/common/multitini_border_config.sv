@@ -8,13 +8,15 @@ module multitini_border_config (
     input logic control_clk, control_resetn,
     input logic [31:0] requested_config,
     input logic pixel_clk, pixel_resetn, vblank_start,
-    output logic [12:0] frame_config
+    output logic [12:0] frame_config,
+    output wire control_pixel_running
 );
     import multitini_regs_pkg::*;
     logic [12:0] sent_config, destination, pending_config;
     logic ready, valid;
     logic force_send;
     wire pixel_running;
+    assign control_pixel_running = pixel_running;
     wire [12:0] requested = requested_config[12:0];
     wire changed = (force_send || requested != sent_config) && pixel_running;
     cdc_bit_sync pixel_reset_sync (

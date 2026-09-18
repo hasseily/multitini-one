@@ -2,6 +2,7 @@
 #include "multitini_vectrex_boot.h"
 #include "multitini_vectrex_hid_input.h"
 #include "multitini_vectrex_interface.h"
+#include "multitini_vectrex_overlay.h"
 #include "multitini_core_frontend.h"
 #include "multitini_media_browser.h"
 #include "vectrex_content_service.h"
@@ -25,6 +26,10 @@ static int bios_missing, file_fail;
 static size_t cart_size = 32769U;
 static unsigned basic_runs, asset_reads;
 static unsigned content_reads, bios_reads;
+static unsigned overlay_reads;
+static size_t overlay_size = MT_VECTREX_OVERLAY_BYTES;
+static bool overlay_present, overlay_read_failed;
+static char last_overlay_path[512];
 static const char *expected_program_path = "0:/games/vectrex/test.bas";
 static const char *expected_basic_root = "0:/games/vectrex";
 static const char *expected_basic_name = "test.bas";
@@ -57,13 +62,25 @@ static const char program[] =
     "f=FOpen(\"asset.txt\",\"r\")\ns=FGets(f)\ncall FClose(f)\n";
 
 static uint32_t read32(void *ctx, uint32_t offset)
-{ return ((shell_t *)ctx)->regs[offset / 4U]; }
+{
+    shell_t *s = ctx;
+    if (offset == MT_REG_STREAM_STATUS)
+        return s->offset == s->size ? MT_STREAM_STATUS_DRAINED : MT_STREAM_STATUS_READY;
+    return s->regs[offset / 4U];
+}
 
 static void write32(void *ctx, uint32_t offset, uint32_t value)
 {
     shell_t *s = ctx;
     s->regs[offset / 4U] = value;
-    if (offset == MT_REG_COMMAND_DOORBELL) {
+    if (offset == MT_REG_STREAM_DATA_BURST) {
+        unsigned lane;
+        for (lane = 0U; lane < 4U && s->offset < s->size; ++lane) {
+            if (s->offset < sizeof(s->packet))
+                s->packet[s->offset] = (uint8_t)(value >> (lane * 8U));
+            ++s->offset;
+        }
+    } else if (offset == MT_REG_COMMAND_DOORBELL) {
         uint32_t op = s->regs[MT_REG_COMMAND_OPCODE / 4U];
         uint32_t a = s->regs[MT_REG_COMMAND_ARG0 / 4U];
         uint32_t b = s->regs[MT_REG_COMMAND_ARG1 / 4U];
@@ -88,6 +105,9 @@ static void write32(void *ctx, uint32_t offset, uint32_t value)
             ++s->completed[s->kind];
             if (s->kind == MT_LOAD_VECTREX_MODE) s->mode = s->packet[0];
             if (s->kind == MT_LOAD_VECTREX_LINE) memcpy(s->line, s->packet, sizeof(s->line));
+            if (s->kind == MT_LOAD_VECTREX_OVERLAY)
+                s->regs[MT_REG_VECTREX_OVERLAY_STATUS / 4U] =
+                    s->size == 1U ? 0U : MT_VECTREX_OVERLAY_STATUS_LOADED;
         }
         s->regs[MT_REG_RESPONSE_STATUS / 4U] = response;
         s->regs[MT_REG_RESPONSE_SEQ / 4U] = value;
@@ -107,6 +127,16 @@ mt_sd_result_t mt_sd_storage_read_file_exact(const char *path, uint8_t *data, si
 mt_sd_result_t mt_sd_storage_read_file_max(const char *path, uint8_t *data, size_t cap)
 {
     mt_sd_result_t r = {MT_SD_OK, 0U, cart_size};
+    if (cap == MT_VECTREX_OVERLAY_BYTES) {
+        ++overlay_reads;
+        assert(strlen(path) < sizeof(last_overlay_path)); strcpy(last_overlay_path, path);
+        r.size = overlay_size;
+        if (!overlay_present) { r.status = MT_SD_OPEN_FAILED; r.backend_status = 4U; return r; }
+        if (overlay_read_failed) { r.status = MT_SD_READ_FAILED; return r; }
+        if (overlay_size > cap) { r.status = MT_SD_TOO_LARGE; return r; }
+        memset(data, 0xA5, overlay_size);
+        return r;
+    }
     ++content_reads; assert(strlen(path) < sizeof(last_content_path)); strcpy(last_content_path, path);
     if (file_fail) { r.status = MT_SD_READ_FAILED; return r; }
     if (cap == MT_SIZE_VECTREX_BASIC_MAX) {
@@ -121,6 +151,17 @@ mt_sd_result_t mt_sd_storage_read_file_max(const char *path, uint8_t *data, size
         assert(strcmp(path, expected_cart_path) == 0);
         if (r.size > cap) { r.status = MT_SD_TOO_LARGE; return r; }
         memset(data, 0xA5, r.size);
+    }
+    return r;
+}
+
+mt_sd_result_t mt_sd_storage_read_file_optional_max(const char *path, uint8_t *data,
+    size_t capacity, bool *found)
+{
+    mt_sd_result_t r = mt_sd_storage_read_file_max(path, data, capacity);
+    *found = r.status == MT_SD_OK;
+    if (r.status == MT_SD_OPEN_FAILED && r.backend_status == 4U) {
+        r.status = MT_SD_OK; r.size = 0U;
     }
     return r;
 }
@@ -580,6 +621,64 @@ int main(void)
         vectrex_content_service_init(&link, long_root, NULL, NULL, basic, NULL);
         reject_content_path("rom.vec");
     }
-    puts("Vectrex firmware content, input, boot failure and BASIC streaming tests passed");
+    {
+        unsigned before, resets;
+        vectrex_content_service_init(&link, "0:/games/vectrex", NULL, NULL, basic, NULL);
+        expected_cart_path = "0:/games/vectrex/Arcade/berzerk.vec";
+        bios_missing = 0; file_fail = 0; cart_size = 8192U;
+        shell.regs[MT_REG_CORE_ID / 4U] = MT_VECTREX_CORE_ID;
+        shell.regs[MT_REG_ABI_VERSION / 4U] = 12U;
+        before = overlay_reads;
+        assert(vectrex_content_service_load("Arcade/berzerk.vec").status == MT_VECTREX_CONTENT_OK);
+        assert(overlay_reads == before); /* Deployed VEC3 never sees the new stream. */
+        assert(vectrex_content_service_load("art.ovr").status == MT_VECTREX_CONTENT_OVERLAY_UNSUPPORTED);
+        shell.regs[MT_REG_ABI_VERSION / 4U] = 13U;
+        overlay_present = true;
+        assert(vectrex_content_service_load("Arcade/berzerk.vec").status == MT_VECTREX_CONTENT_OK);
+        assert(strcmp(last_overlay_path, "0:/games/vectrex/Arcade/berzerk.ovr") == 0);
+        assert(shell.regs[MT_REG_VECTREX_OVERLAY_STATUS / 4U] == MT_VECTREX_OVERLAY_STATUS_LOADED);
+        assert(vectrex_content_service_overlay_warning()[0] == '\0');
+        before = shell.completed[MT_LOAD_VECTREX_OVERLAY];
+        reject_content_path("../art.ovr");
+        file_fail = 1;
+        assert(vectrex_content_service_load("Arcade/berzerk.vec").status == MT_VECTREX_CONTENT_READ_FAILED);
+        file_fail = 0;
+        assert(shell.completed[MT_LOAD_VECTREX_OVERLAY] == before);
+        resets = shell.reset_count;
+        overlay_size = 506920U;
+        assert(vectrex_content_service_load("Other/art.OVR").status == MT_VECTREX_CONTENT_OK);
+        assert(shell.reset_count == resets && shell.size == MT_VECTREX_OVERLAY_BYTES);
+        assert(strcmp(vectrex_content_service_cartridge_name(), "Arcade/berzerk.vec") == 0);
+        before = shell.completed[MT_LOAD_VECTREX_OVERLAY];
+        overlay_size = 7U;
+        assert(vectrex_content_service_load("art.ovr").status == MT_VECTREX_CONTENT_REJECTED);
+        assert(shell.completed[MT_LOAD_VECTREX_OVERLAY] == before);
+        assert(shell.regs[MT_REG_VECTREX_OVERLAY_STATUS / 4U] == MT_VECTREX_OVERLAY_STATUS_LOADED);
+        overlay_size = MT_VECTREX_OVERLAY_BYTES;
+        overlay_present = false;
+        assert(vectrex_content_service_load("Arcade/berzerk.vec").status == MT_VECTREX_CONTENT_OK);
+        assert(shell.regs[MT_REG_VECTREX_OVERLAY_STATUS / 4U] == 0U);
+        assert(vectrex_content_service_overlay_warning()[0] == '\0');
+        overlay_present = true; overlay_read_failed = true;
+        assert(vectrex_content_service_load("Arcade/berzerk.vec").status == MT_VECTREX_CONTENT_OK);
+        assert(vectrex_content_service_overlay_warning()[0] != '\0');
+        assert(shell.regs[MT_REG_VECTREX_OVERLAY_STATUS / 4U] == 0U);
+        overlay_read_failed = false;
+        assert(vectrex_content_service_boot_bios().status == MT_VECTREX_CONTENT_OK);
+        assert(strcmp(last_overlay_path, "0:/games/vectrex/Mine_Storm.ovr") == 0);
+        expected_program_path = "0:/games/vectrex/Vecalabeth/vec.bas";
+        expected_basic_root = "0:/games/vectrex/Vecalabeth";
+        expected_basic_name = "vec.bas";
+        expected_asset_path = "0:/games/vectrex/Vecalabeth/asset.txt";
+        program_override = NULL;
+        assert(vectrex_content_service_load("Vecalabeth/vec.bas").status == MT_VECTREX_CONTENT_OK);
+        assert(strcmp(last_overlay_path, "0:/games/vectrex/Vecalabeth/vec.ovr") == 0);
+        assert(shell.regs[MT_REG_VECTREX_OVERLAY_STATUS / 4U] == MT_VECTREX_OVERLAY_STATUS_LOADED);
+        assert(mt_core_frontend_accepts_content(MT_VECTREX_CORE_ID,
+            MT_MENU_BROWSER_OVERLAY, MT_CONTENT_VECTREX_OVERLAY));
+        assert(!mt_core_frontend_accepts_content(MT_VECTREX_CORE_ID,
+            MT_MENU_BROWSER_PROGRAM, MT_CONTENT_VECTREX_OVERLAY));
+    }
+    puts("Vectrex firmware content, overlays, input, boot failure and BASIC streaming tests passed");
     return 0;
 }

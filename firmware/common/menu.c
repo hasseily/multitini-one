@@ -87,6 +87,11 @@ static size_t video_setting_start(const mt_menu_view_t *view)
     return active_core(view) < core_count(view) ? 2U : 1U;
 }
 
+static bool vectrex_video_visible(const mt_menu_view_t *view)
+{
+    return has_core(view) && strcmp(view->active_core_id, "vectrex") == 0;
+}
+
 static size_t row_count(const mt_menu_t *menu, const mt_menu_view_t *view)
 {
     size_t count = 0U;
@@ -96,7 +101,7 @@ static size_t row_count(const mt_menu_t *menu, const mt_menu_view_t *view)
     case MT_MENU_PAGE_CORES:
         return core_count(view);
     case MT_MENU_PAGE_VIDEO:
-        return video_setting_start(view) + 4U;
+        return video_setting_start(view) + 4U + (vectrex_video_visible(view) ? 3U : 0U);
     case MT_MENU_PAGE_SYSTEM:
         return 3U;
     default:
@@ -261,6 +266,38 @@ static mt_menu_action_t change_video(const mt_menu_t *menu,
 {
     const size_t start = video_setting_start(view);
     mt_menu_action_t action = no_action();
+    if (menu->row >= start + 4U) {
+        unsigned enabled;
+        unsigned gain;
+        unsigned opacity;
+        unsigned previous;
+        unsigned config;
+        const bool backwards = key == MT_MENU_HID_LEFT;
+        if (!vectrex_video_visible(view) || !view->vectrex_video_supported) return action;
+        enabled = view->vectrex_overlay_enabled ? 1U : 0U;
+        gain = view->vectrex_beam_gain < 4U ? view->vectrex_beam_gain : 1U;
+        opacity = view->vectrex_overlay_opacity < 4U ? view->vectrex_overlay_opacity : 1U;
+        previous = enabled | (gain << 1U) | (opacity << 3U);
+        switch (menu->row - start - 4U) {
+        case 0U:
+            enabled = key == MT_MENU_HID_ENTER ? 1U - enabled : (backwards ? 0U : 1U);
+            break;
+        case 1U:
+            opacity = (opacity + (backwards ? 3U : 1U)) % 4U;
+            break;
+        case 2U:
+            gain = (gain + (backwards ? 3U : 1U)) % 4U;
+            break;
+        default:
+            return action;
+        }
+        config = enabled | (gain << 1U) | (opacity << 3U);
+        if (config != previous) {
+            action.kind = MT_MENU_ACTION_SET_VECTREX_VIDEO;
+            action.file_index = config;
+        }
+        return action;
+    }
     if (!has_core(view) || !view->border_supported) return action;
     if (menu->row >= start) action = change_border(menu->row - start, view, key);
     return action;
@@ -449,6 +486,8 @@ static const char *browser_title(mt_menu_browser_t browser)
         return "Mount & Run";
     case MT_MENU_BROWSER_CARTRIDGE:
         return "Load cartridge";
+    case MT_MENU_BROWSER_OVERLAY:
+        return "Load overlay";
     default:
         return "Load program";
     }
@@ -524,6 +563,37 @@ static mt_menu_item_t builtin_item(const mt_menu_t *menu,
             "11", "12", "13", "14", "15", "16", "17", "18", "19", "20"
         };
         index -= video_setting_start(view);
+        if (index >= 4U) {
+            static const char *const vectrex_labels[] = {
+                "Overlay enabled", "Overlay brightness", "Beam brightness"
+            };
+            static const char *const opacity[] = {"25%", "50%", "75%", "100%"};
+            static const char *const gain[] = {"1x", "2x", "3x", "4x"};
+            index -= 4U;
+            if (index >= 3U || !vectrex_video_visible(view)) return item;
+            item.label = vectrex_labels[index];
+            item.enabled = view->vectrex_video_supported;
+            item.help = "Left/Right or Enter changes this setting. Saved for Vectrex.";
+            if (!item.enabled) {
+                item.value = "Unsupported";
+                item.help = "Update the Vectrex core package to use overlays and beam brightness. Saved settings are retained.";
+            } else if (index == 0U) {
+                item.value = view->vectrex_overlay_enabled ? "On" : "Off";
+                item.help = view->vectrex_overlay_error ?
+                    "Overlay load failed. Select a valid .ovr file from Media. The game can run without an overlay." :
+                    (view->vectrex_overlay_loaded ?
+                     "An overlay is loaded. Enter toggles it; Left turns it off and Right turns it on." :
+                     "No overlay loaded. Select a .ovr file from Media, or place a matching file beside the game.");
+            } else if (index == 1U) {
+                item.value = opacity[view->vectrex_overlay_opacity < 4U ?
+                    view->vectrex_overlay_opacity : 1U];
+                item.help = "Set artwork brightness from 25% to 100%. Beam brightness is controlled separately.";
+            } else {
+                item.value = gain[view->vectrex_beam_gain < 4U ? view->vectrex_beam_gain : 1U];
+                item.help = "Multiply vector brightness from 1x to 4x. Brighter values may make highlights reach full white.";
+            }
+            return item;
+        }
         item.label = labels[index];
         item.enabled = has_core(view) && view->border_supported;
         item.help = "Left/Right changes this setting. Enter cycles it. Saved separately for each core.";

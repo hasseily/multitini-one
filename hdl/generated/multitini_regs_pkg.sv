@@ -3,7 +3,7 @@
 `timescale 1ns / 1ps
 package multitini_regs_pkg;
     localparam logic [15:0] MT_ABI_MAJOR = 16'd0;
-    localparam logic [15:0] MT_ABI_MINOR = 16'd12;
+    localparam logic [15:0] MT_ABI_MINOR = 16'd13;
     localparam logic [31:0] MT_ABI_VERSION = {MT_ABI_MAJOR, MT_ABI_MINOR};
     localparam logic [31:0] MT_MAGIC = 32'h4D543031;
     localparam logic [31:0] MT_SHELL_ID = 32'h4D544F4E;
@@ -48,6 +48,8 @@ package multitini_regs_pkg;
     localparam logic [11:0] MT_REG_STREAM_DATA_BURST = 12'h0B8;
     localparam logic [11:0] MT_REG_STREAM_STATUS = 12'h0BC;
     localparam logic [11:0] MT_REG_BORDER_CONFIG = 12'h0C0;
+    localparam logic [11:0] MT_REG_VECTREX_VIDEO_CONFIG = 12'h0C4;
+    localparam logic [11:0] MT_REG_VECTREX_OVERLAY_STATUS = 12'h0C8;
 
     localparam logic [31:0] MT_CONTROL_CORE_RESET_REQUEST = 32'h00000001;
     localparam logic [31:0] MT_CONTROL_VIDEO_TEST_ENABLE = 32'h00000002;
@@ -142,6 +144,16 @@ package multitini_regs_pkg;
     localparam logic [31:0] MT_BORDER_MIN_PADDING = 32'h00000001;
     localparam logic [31:0] MT_BORDER_MAX_PADDING = 32'h00000014;
     localparam logic [31:0] MT_BORDER_STYLE_MAX = 32'h00000004;
+    localparam logic [31:0] MT_VECTREX_VIDEO_MIN_ABI_MINOR = 32'h0000000D;
+    localparam logic [31:0] MT_VECTREX_OVERLAY_ENABLE_MASK = 32'h00000001;
+    localparam logic [31:0] MT_VECTREX_BEAM_GAIN_SHIFT = 32'h00000001;
+    localparam logic [31:0] MT_VECTREX_BEAM_GAIN_MASK = 32'h00000006;
+    localparam logic [31:0] MT_VECTREX_OVERLAY_OPACITY_SHIFT = 32'h00000003;
+    localparam logic [31:0] MT_VECTREX_OVERLAY_OPACITY_MASK = 32'h00000018;
+    localparam logic [31:0] MT_VECTREX_VIDEO_CONFIG_MASK = 32'h0000001F;
+    localparam logic [31:0] MT_VECTREX_VIDEO_CONFIG_DEFAULT = 32'h0000000B;
+    localparam logic [31:0] MT_VECTREX_OVERLAY_STATUS_LOADED = 32'h00000001;
+    localparam logic [31:0] MT_VECTREX_OVERLAY_STATUS_ERROR = 32'h00000002;
 
     localparam logic [31:0] MT_COMMAND_PING = 32'h00000000;
     localparam logic [31:0] MT_COMMAND_GET_STATUS = 32'h00000001;

@@ -29,6 +29,8 @@ PREAMBLE = r'''
 #include "multitini_c64_hid_input.h"
 #include "multitini_c64_interface.h"
 #include "multitini_gameboy_interface.h"
+#include "multitini_vectrex_interface.h"
+#include "vectrex_content_service.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -45,10 +47,19 @@ static uint8_t supervisor_menu_keys[MT_C64_HID_SLOT_COUNT][MT_C64_HID_USAGE_BYTE
 static mt_ui_color_t supervisor_status_color;
 static uint64_t now_ms;
 static uint32_t status_word, committed_status;
+static uint32_t core_id, core_status, core_control;
 static unsigned commits, hidden_commits, shown_commits, writes, runtime_polls;
 static unsigned countdown, errors, reads, actions, outcome, keyboard_checks;
 static bool stall, nested_hide, expected_visible;
-static const mt_menu_file_t files[8] = {{"one.d64", 1U, 0U}};
+static const mt_menu_file_t supervisor_menu_files[8] = {
+    {"one.d64", 1U, 0U}, {"artwork.OVR", 777600U, 0U},
+    {"folder.ovr", 0U, MT_MENU_FILE_DIRECTORY}, {"game.vec", 32768U, 0U},
+    {"game.bas", 100U, 0U}, {"five", 0U, 0U}, {"six", 0U, 0U}, {"seven", 0U, 0U}
+};
+static size_t supervisor_menu_file_count = 8U;
+static bool core_ready;
+static unsigned input_changes, content_loads;
+static mt_vectrex_content_result_t content_result;
 static const mt_menu_item_t media_items[5] = {
     {"Disk", "mounted", "", MT_MENU_ACTION_BROWSE_DRIVE8, 0U, true, MT_UI_COLOR_TEXT}
 };
@@ -56,7 +67,11 @@ static const mt_core_selection_t cores[2] = {0};
 static uint64_t monotonic_ms(void *context) {(void)context; return now_ms;}
 static void usleep(unsigned microseconds) {now_ms += microseconds / 1000U;}
 static uint32_t shell_read(uint32_t offset) {
-    assert(offset == MT_REG_UI_STATUS); ++reads; return status_word;
+    ++reads;
+    if (offset == MT_REG_CORE_ID) return core_id;
+    if (offset == MT_REG_STATUS) return core_status;
+    if (offset == MT_REG_CONTROL) return core_control;
+    assert(offset == MT_REG_UI_STATUS); return status_word;
 }
 static uint32_t supervisor_ui_read(void *context, uint32_t offset) {
     (void)context; return shell_read(offset);
@@ -78,7 +93,7 @@ static void supervisor_ui_write(void *context, uint32_t offset, uint32_t value) 
 static mt_menu_view_t supervisor_menu_view(void) {
     mt_menu_view_t view = {0};
     view.cores = cores; view.core_count = 2U;
-    view.files = files; view.file_count = 8U;
+    view.files = supervisor_menu_files; view.file_count = supervisor_menu_file_count;
     view.media_items = media_items; view.media_item_count = 5U;
     view.status_color = supervisor_status_color;
     return view;
@@ -110,6 +125,15 @@ static void set_supervisor_error(const char *text) {
     (void)text; ++errors; supervisor_status_color = MT_UI_COLOR_RED;
     supervisor_menu_dirty = true;
 }
+void usb_hid_service_set_core_ready(bool ready) {
+    core_ready = ready; ++input_changes;
+}
+mt_vectrex_content_result_t vectrex_content_service_load(const char *name) {
+    ++content_loads;
+    if (mt_content_classify(name) != MT_CONTENT_VECTREX_OVERLAY) assert(!core_ready);
+    service_runtime(); /* A blocking upload continues to receive USB reports. */
+    return content_result;
+}
 static void handle_menu_action(mt_menu_action_t action);
 '''
 
@@ -130,6 +154,9 @@ static void reset_fixture(bool visible) {
     supervisor_menu.row = 2U;
     supervisor.has_active = true;
     supervisor.active.package.core_id = MT_C64_CORE_ID;
+    core_id = MT_C64_CORE_ID; core_status = MT_STATUS_CORE_READY; core_control = 0U;
+    core_ready = true; input_changes = content_loads = 0U;
+    memset(&content_result, 0, sizeof(content_result));
     supervisor_status_color = MT_UI_COLOR_TEXT;
     now_ms = commits = hidden_commits = shown_commits = writes = 0U;
     runtime_polls = countdown = errors = reads = actions = keyboard_checks = 0U;
@@ -151,6 +178,7 @@ static bool progress_expected(mt_menu_action_kind_t kind) {
 static void handle_menu_action(mt_menu_action_t action) {
     ++actions;
     assert(supervisor_menu.visible == expected_visible);
+    assert(supervisor_menu_action_active);
     if (menu_action_needs_core_progress(action)) {
         assert(supervisor_menu_action_active);
         assert(!supervisor_presenter.pending);
@@ -162,8 +190,10 @@ static void handle_menu_action(mt_menu_action_t action) {
             assert(commits == commits_before);
             assert(supervisor_menu.visible == expected_visible);
         }
-        service_runtime();
     }
+    service_runtime();
+    if (action.kind == MT_MENU_ACTION_LOAD_CONTENT && core_id == MT_VECTREX_CORE_ID)
+        (void)load_vectrex_content_with_input(supervisor_menu_files[action.file_index].name);
     if (action.kind == MT_MENU_ACTION_SWITCH_CORE && outcome != NO_CHANGE) {
         /* Reconfiguration/rollback resets both banks; production load() does this. */
         mt_ui_presenter_invalidate(&supervisor_presenter);
@@ -203,7 +233,7 @@ static void dispatch(mt_menu_action_kind_t kind) {
 }
 static void all_actions(void) {
     unsigned kind;
-    for (kind = MT_MENU_ACTION_NONE; kind <= MT_MENU_ACTION_SET_BORDER; ++kind) {
+    for (kind = MT_MENU_ACTION_NONE; kind <= MT_MENU_ACTION_BROWSE_OVERLAY; ++kind) {
         mt_menu_action_t action = {(mt_menu_action_kind_t)kind, 0U, 0U, 0U};
         reset_fixture(true);
         assert(menu_action_needs_core_progress(action) == progress_expected(action.kind));
@@ -363,6 +393,75 @@ static void basic_keyboard_stop(void) {
         assert(supervisor_menu.visible == expected_visible && writes == 0U);
     }
 }
+static void overlay_upload_stays_paused(void) {
+    unsigned result, ready;
+    for (result = SUCCESS; result <= FAILURE; ++result) {
+        for (ready = 0U; ready <= 1U; ++ready) {
+            mt_menu_action_t action = {MT_MENU_ACTION_LOAD_CONTENT, 0U, 0U, 1U};
+            reset_fixture(true);
+            core_id = supervisor.active.package.core_id = MT_VECTREX_CORE_ID;
+            core_ready = ready != 0U;
+            outcome = result;
+            content_result.status = result == FAILURE ? MT_VECTREX_CONTENT_TRANSFER_FAILED :
+                                                       MT_VECTREX_CONTENT_OK;
+            mt_menu_open_browser(&supervisor_menu, MT_MENU_BROWSER_OVERLAY);
+            supervisor_menu.row = 1U;
+            assert(!menu_action_needs_core_progress(action));
+            pending_menu_action = action;
+            service_supervisor_menu();
+            assert(actions == 1U && content_loads == 1U && hidden_commits == 0U);
+            assert((status_word & MT_UI_STATUS_VISIBLE) != 0U);
+            assert(input_changes == 0U && core_ready == (ready != 0U));
+            assert(keyboard_checks >= 2U && !supervisor_menu_action_active);
+            assert(pending_menu_action.kind == MT_MENU_ACTION_NONE);
+            settle_menu();
+            assert(supervisor_menu.browser ==
+                (result == SUCCESS ? MT_MENU_BROWSER_NONE : MT_MENU_BROWSER_OVERLAY));
+            /* The exemption requires an actual artwork file on live Vectrex. */
+            action.file_index = 2U; assert(menu_action_needs_core_progress(action));
+            action.file_index = 3U; assert(menu_action_needs_core_progress(action));
+            action.file_index = 4U; assert(menu_action_needs_core_progress(action));
+            action.file_index = 8U; assert(menu_action_needs_core_progress(action));
+            action.file_index = 1U; core_id = MT_GBC_CORE_ID;
+            assert(menu_action_needs_core_progress(action));
+        }
+    }
+}
+static void failed_content_restores_running_input(void) {
+    static const char *const names[] = {"games/deep/missing.vec", "programs/game.bas"};
+    unsigned status, ready, reset;
+    size_t name;
+    for (name = 0U; name < sizeof(names) / sizeof(names[0]); ++name) {
+        for (status = MT_VECTREX_CONTENT_OK; status <= MT_VECTREX_CONTENT_OVERLAY_UNSUPPORTED; ++status) {
+            for (ready = 0U; ready <= 1U; ++ready) {
+                for (reset = 0U; reset <= 1U; ++reset) {
+                    mt_vectrex_content_result_t actual;
+                    const bool early_failure = status == MT_VECTREX_CONTENT_READ_FAILED ||
+                        status == MT_VECTREX_CONTENT_REJECTED ||
+                        status == MT_VECTREX_CONTENT_INVALID_ARGUMENT;
+                    const bool recover = status == MT_VECTREX_CONTENT_OK ||
+                        (early_failure && ready != 0U && reset == 0U);
+                    reset_fixture(true);
+                    core_status = ready ? MT_STATUS_CORE_READY : 0U;
+                    core_control = reset ? MT_CONTROL_CORE_RESET_REQUEST : 0U;
+                    content_result.status = (mt_vectrex_content_status_t)status;
+                    content_result.sd.status = MT_SD_READ_FAILED;
+                    content_result.sd.backend_status = 17U;
+                    actual = load_vectrex_content_with_input(names[name]);
+                    assert(actual.status == content_result.status);
+                    assert(actual.sd.status == MT_SD_READ_FAILED && actual.sd.backend_status == 17U);
+                    assert(core_ready == recover && input_changes == (recover ? 2U : 1U));
+                    assert(content_loads == 1U);
+                    /* Manual artwork, including read/transfer failures, never
+                     * changes an existing game's input readiness. */
+                    input_changes = 0U; core_ready = ready != 0U;
+                    (void)load_vectrex_content_with_input("games/deep/choice.OVR");
+                    assert(input_changes == 0U && core_ready == (ready != 0U));
+                }
+            }
+        }
+    }
+}
 int main(int argc, char **argv) {
     assert(argc == 2);
     if (strcmp(argv[1], "actions") == 0) all_actions();
@@ -372,6 +471,8 @@ int main(int argc, char **argv) {
     else if (strcmp(argv[1], "failure") == 0) failed_hide();
     else if (strcmp(argv[1], "exit") == 0) explicit_exit();
     else if (strcmp(argv[1], "basic") == 0) basic_keyboard_stop();
+    else if (strcmp(argv[1], "overlay") == 0) overlay_upload_stays_paused();
+    else if (strcmp(argv[1], "content-input") == 0) failed_content_restores_running_input();
     else assert(false);
     printf("PASS: menu runtime %s\n", argv[1]);
     return 0;
@@ -394,6 +495,7 @@ class MenuRuntimeTests(unittest.TestCase):
             "static bool supervisor_keyboard_filter(void *context,",
             "static bool hide_menu_for_core_action(void)\n{",
             "static bool menu_action_needs_core_progress(",
+            "static mt_vectrex_content_result_t load_vectrex_content_with_input(",
             "static void service_supervisor_menu(void)\n{",
         )
         harness = directory / "menu_runtime.c"
@@ -405,7 +507,11 @@ class MenuRuntimeTests(unittest.TestCase):
             sys.executable, str(ROOT / "scripts/run_native_tool.py"), "--",
             compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wpedantic",
             "-I", str(ROOT / "firmware/include"), str(harness),
+            "-I", str(ROOT / "firmware/platform/xilinx"),
             str(ROOT / "firmware/common/menu.c"), str(ROOT / "firmware/common/ui.c"),
+            str(ROOT / "firmware/common/content_type.c"),
+            str(ROOT / "firmware/common/vectrex_overlay.c"),
+            str(ROOT / "firmware/common/core_link.c"),
             "-o", str(cls.executable),
         ], capture_output=True, text=True, timeout=60)
         if compile_result.returncode:
@@ -438,6 +544,12 @@ class MenuRuntimeTests(unittest.TestCase):
 
     def test_basic_game_keys_pass_through_and_only_fresh_f12_requests_stop(self):
         self.run_scenario("basic")
+
+    def test_manual_overlay_upload_keeps_game_paused_and_blocks_menu_reentry(self):
+        self.run_scenario("overlay")
+
+    def test_failed_load_restores_input_only_for_a_preserved_running_machine(self):
+        self.run_scenario("content-input")
 
 
 if __name__ == "__main__":

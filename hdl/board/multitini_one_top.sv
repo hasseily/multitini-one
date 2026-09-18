@@ -97,6 +97,7 @@ module multitini_one_top #(
     logic idelay_ref_clk;
     logic video_clk;
     logic c64_clk;
+    logic c64_capture_clk;
     logic control_aresetn;
     logic idelay_aresetn;
     logic video_aresetn;
@@ -104,7 +105,11 @@ module multitini_one_top #(
     logic shell_irq;
     logic [31:0] shell_control;
     logic [31:0] border_config;
+    logic [31:0] vectrex_video_config;
+    logic vectrex_overlay_loaded, vectrex_overlay_error;
+    logic [1:0] vectrex_overlay_status_control;
     logic [12:0] frame_border_config;
+    wire video_running_control;
     logic [11:0] viewport_x, viewport_y, viewport_width, viewport_height;
     logic border_pixel_opaque;
     logic [15:0] border_pixel_rgb565;
@@ -202,14 +207,17 @@ module multitini_one_top #(
     logic        load_epoch;
     logic        load_abort;
     logic        load_abort_epoch;
+    logic [7:0]  load_abort_kind;
     logic        load_error_clear;
     logic        c64_load_abort;
     logic        c64_load_abort_epoch;
+    logic [7:0]  c64_load_abort_kind;
     logic        load_abort_submit_ready;
     logic        load_abort_pending;
     logic        load_abort_pending_epoch;
-    logic [0:0]  load_abort_mailbox_source;
-    logic [0:0]  load_abort_mailbox_destination;
+    logic [7:0]  load_abort_pending_kind;
+    logic [8:0]  load_abort_mailbox_source;
+    logic [8:0]  load_abort_mailbox_destination;
     logic        c64_load_error_clear;
     logic [82:0] load_mailbox_source;
     logic [82:0] load_mailbox_destination;
@@ -377,6 +385,7 @@ module multitini_one_top #(
 
         .control_clk(control_clk), .idelay_ref_clk(idelay_ref_clk),
         .video_clk(video_clk), .c64_clk(c64_clk),
+        .c64_capture_clk(c64_capture_clk),
         .control_aresetn(control_aresetn),
         .idelay_aresetn(idelay_aresetn),
         .video_aresetn(video_aresetn), .c64_aresetn(c64_aresetn),
@@ -418,6 +427,7 @@ module multitini_one_top #(
         .core_ready(c64_ready_control),
         .load_submit_ready(load_submit_ready),
         .core_load_error(c64_load_error_control),
+        .vectrex_overlay_status(vectrex_overlay_status_control),
         .input_submit_ready(input_submit_ready),
         .media_request_valid(media_request_valid_control),
         .media_request_write(media_request_write_control),
@@ -442,11 +452,13 @@ module multitini_one_top #(
         .rd_addr(reg_rd_addr[11:0]),
         .rd_data(control_rd_data), .control(shell_control),
         .border_config(border_config),
+        .vectrex_video_config(vectrex_video_config),
         .load_submit(load_submit), .load_kind(load_kind),
         .load_data(load_data), .load_offset(load_offset),
         .load_total(load_total), .load_first(load_first),
         .load_last(load_last), .load_epoch(load_epoch),
         .load_abort(load_abort), .load_abort_epoch(load_abort_epoch),
+        .load_abort_kind(load_abort_kind),
         .load_error_clear(load_error_clear),
         .input_submit(input_submit), .input_code(input_code),
         .input_value(input_value),
@@ -558,24 +570,45 @@ module multitini_one_top #(
         .din(c64_load_error_launch), .dout(c64_load_error_control)
     );
 
-    // Carry the abort event and its stream epoch through one coherent
+    generate
+        if (ACTIVE_MACHINE == 3) begin : g_vectrex_overlay_status
+            // Both source levels are registered in the Vectrex clock domain.
+            cdc_bit_sync loaded_sync (
+                .clk(control_clk), .resetn(control_aresetn),
+                .din(vectrex_overlay_loaded), .dout(vectrex_overlay_status_control[0])
+            );
+            cdc_bit_sync error_sync (
+                .clk(control_clk), .resetn(control_aresetn),
+                .din(vectrex_overlay_error), .dout(vectrex_overlay_status_control[1])
+            );
+        end else begin : g_no_vectrex_overlay_status
+            assign vectrex_overlay_loaded = 1'b0;
+            assign vectrex_overlay_error = 1'b0;
+            assign vectrex_overlay_status_control = 2'b00;
+        end
+    endgenerate
+
+    // Carry the abort event, stream kind and epoch through one coherent
     // handshake.  The destination accepts it immediately, so dst_valid is a
     // single core-clock pulse and the epoch cannot lag or lead that pulse.
     always_ff @(posedge control_clk) begin
         if (!control_aresetn) begin
             load_abort_pending <= 1'b0;
             load_abort_pending_epoch <= 1'b0;
+            load_abort_pending_kind <= 8'd0;
         end else if (load_abort) begin
             load_abort_pending <= 1'b1;
             load_abort_pending_epoch <= load_abort_epoch;
+            load_abort_pending_kind <= load_abort_kind;
         end else if (load_abort_pending && load_abort_submit_ready) begin
             load_abort_pending <= 1'b0;
         end
     end
 
-    assign load_abort_mailbox_source = load_abort_pending_epoch;
+    assign load_abort_mailbox_source = {load_abort_pending_kind, load_abort_pending_epoch};
     assign c64_load_abort_epoch = load_abort_mailbox_destination[0];
-    multitini_async_mailbox #(.WIDTH(1)) c64_load_abort_mailbox (
+    assign c64_load_abort_kind = load_abort_mailbox_destination[8:1];
+    multitini_async_mailbox #(.WIDTH(9)) c64_load_abort_mailbox (
         .src_clk(control_clk), .src_resetn(control_aresetn),
         .src_data(load_abort_mailbox_source),
         .src_valid(load_abort_pending),
@@ -997,6 +1030,12 @@ module multitini_one_top #(
         end else if (ACTIVE_MACHINE == 3) begin : g_vectrex_machine
             wire [18:0] pixel_address;
             wire [7:0] pixel_intensity;
+            wire [9:0] source_x, source_y;
+            wire [15:0] overlay_rgba;
+            wire [4:0] overlay_frame_config;
+            wire overlay_valid, overlay_load_ready, machine_load_ready;
+            wire overlay_load_select=c64_load_kind==8'h45;
+            assign c64_load_ready=overlay_load_select ? overlay_load_ready : machine_load_ready;
             wire bios_loaded, cart_loaded;
             wire [31:0] drawn_lines, overflow_count;
             multitini_vectrex_machine machine_adapter (
@@ -1006,7 +1045,7 @@ module multitini_one_top #(
                 .input_code(c64_input_code),.input_value(c64_input_value),
                 .input_valid(c64_input_valid),.input_ready(c64_input_ready),
                 .load_data(c64_load_data),.load_kind(c64_load_kind),
-                .load_valid(c64_load_valid),.load_ready(c64_load_ready),
+                .load_valid(c64_load_valid && !overlay_load_select),.load_ready(machine_load_ready),
                 .load_first(c64_load_first),.load_last(c64_load_last),
                 .load_offset(c64_load_offset),.load_total(c64_load_total),
                 .load_abort(c64_load_abort),.load_abort_epoch(c64_load_abort_epoch),
@@ -1025,9 +1064,26 @@ module multitini_one_top #(
                 .pixel_clk(video_clk),.pixel_resetn(video_aresetn),.source_ready(c64_ready),
                 .scan_x(video_scan_x),.scan_y(video_scan_y),.vblank_start(video_vblank_start),
                 .pixel_address(pixel_address),.pixel_intensity(pixel_intensity),
+                .overlay_rgba(overlay_rgba),.overlay_valid(overlay_valid),.video_config(overlay_frame_config),
+                .source_x(source_x),.source_y(source_y),
                 .viewport_x(viewport_x), .viewport_y(viewport_y),
                 .viewport_width(viewport_width), .viewport_height(viewport_height),
                 .machine_active(machine_video_active),.machine_rgb565(machine_video_rgb565)
+            );
+            multitini_vectrex_overlay overlay_i (
+                .clk(c64_clk),.capture_clk(c64_capture_clk),.resetn(c64_aresetn),
+                .control_clk(control_clk),.control_resetn(control_aresetn),.video_config(vectrex_video_config),
+                .control_pixel_running(video_running_control),
+                .pixel_clk(video_clk),.pixel_resetn(video_aresetn),.vblank_start(video_vblank_start),
+                .source_x(source_x),.source_y(source_y),.pixel_rgba(overlay_rgba),.pixel_valid(overlay_valid),
+                .frame_config(overlay_frame_config),
+                .load_data(c64_load_data),.load_valid(c64_load_valid && overlay_load_select),
+                .load_ready(overlay_load_ready),.load_first(c64_load_first),.load_last(c64_load_last),
+                .load_offset(c64_load_offset),.load_total(c64_load_total),.load_epoch(c64_load_epoch),
+                .load_abort(c64_load_abort && c64_load_abort_kind==8'h45),.load_abort_epoch(c64_load_abort_epoch),
+                .transport_abort(c64_load_abort),
+                .loaded(vectrex_overlay_loaded),.error(vectrex_overlay_error),
+                .psram_a_io(psram_a_io),.psram_b_io(psram_b_io),.psram_ce_n(psram_ce_n),.psram_clk(psram_clk)
             );
             assign c64_rom_loaded={1'b0,cart_loaded,bios_loaded};
             assign c64_cart_loaded=cart_loaded;
@@ -1054,8 +1110,6 @@ module multitini_one_top #(
             assign gbc_memory_valid=1'b0;assign gbc_memory_ready=1'b0;
             assign gbc_memory_rdata=64'd0;assign gbc_memory_rvalid=1'b0;
             assign gbc_memory_fault=1'b0;
-            assign psram_a_io=4'hz;assign psram_b_io=4'hz;
-            assign psram_ce_n=1'b1;assign psram_clk=1'b0;
         end else begin : g_supervisor_shell
             // The boot shell owns the shared control/UI/video plumbing but
             // deliberately contains no machine. Every core is loaded from an
@@ -1153,7 +1207,8 @@ module multitini_one_top #(
         .control_clk(control_clk), .control_resetn(control_aresetn),
         .requested_config(border_config),
         .pixel_clk(video_clk), .pixel_resetn(video_aresetn),
-        .vblank_start(video_vblank_start), .frame_config(frame_border_config)
+        .vblank_start(video_vblank_start), .frame_config(frame_border_config),
+        .control_pixel_running(video_running_control)
     );
     multitini_border_overlay border_overlay (
         .pixel_clk(video_clk), .resetn(video_aresetn),

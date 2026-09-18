@@ -37,8 +37,12 @@ class BuildInputTests(unittest.TestCase):
             sections[active_section].append(entry)
             languages[entry] = language
         self.assertEqual(len(entries), len(set(entries)))
-        self.assertTrue(entries[-4].endswith("multitini_pins.xdc"))
-        self.assertEqual(entries[-3], "board/multitini_psram_iob.xdc")
+        # Machine electrical overrides follow the shared pin defaults, and
+        # generated clocks exist before the common asynchronous grouping.
+        self.assertTrue(entries[-5].endswith("multitini_pins.xdc"))
+        self.assertEqual(entries[-4], "board/multitini_psram_iob.xdc")
+        self.assertEqual(entries[-3], "board/multitini_vectrex_psram_timing.xdc")
+        self.assertIn(entries[-3], sections["vectrex"])
         self.assertEqual(entries[-2], "board/multitini_timing.xdc")
         self.assertEqual(entries[-1], "board/multitini_psram_timing.xdc")
         for entry in entries:

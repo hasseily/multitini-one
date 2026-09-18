@@ -47,8 +47,8 @@
 
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
 #define MT_SUPERVISOR_CORE_ID UINT32_C(0)
-/* VEC3 adds per-core borders, retaining nested media navigation. */
-#define MT_FIRMWARE_BUILD_ID UINT32_C(0x56454333)
+/* VEC4 adds Vectrex overlays and independent artwork/beam brightness. */
+#define MT_FIRMWARE_BUILD_ID UINT32_C(0x56454334)
 #define MT_I2C_CLOCK_HZ UINT32_C(100000)
 #define MT_I2C_BUSY_POLLS UINT32_C(1000000)
 #define MT_UART_DRAIN_POLLS UINT32_C(10000000)
@@ -1370,6 +1370,53 @@ static bool selection_supports_borders(const mt_core_selection_t *selection)
            (uint16_t)version >= MT_BORDER_MIN_ABI_MINOR;
 }
 
+static bool selection_supports_vectrex_video(const mt_core_selection_t *selection)
+{
+    uint32_t version;
+    if (selection == NULL || selection->package.core_id != MT_VECTREX_CORE_ID ||
+        shell_read(MT_REG_CORE_ID) != MT_VECTREX_CORE_ID) return false;
+    version = shell_read(MT_REG_ABI_VERSION);
+    return (uint16_t)(version >> 16U) == MT_ABI_MAJOR &&
+           (uint16_t)version >= MT_VECTREX_VIDEO_MIN_ABI_MINOR;
+}
+
+static uint32_t profile_vectrex_video_config(const mt_core_settings_profile_t *profile)
+{
+    const uint32_t gain = profile != NULL && profile->vectrex_beam_gain < 4U ?
+        profile->vectrex_beam_gain : MT_SETTINGS_VECTREX_BEAM_GAIN_DEFAULT;
+    const uint32_t opacity = profile != NULL && profile->vectrex_overlay_opacity < 4U ?
+        profile->vectrex_overlay_opacity : MT_SETTINGS_VECTREX_OVERLAY_OPACITY_DEFAULT;
+    return (profile == NULL || profile->vectrex_overlay_enabled ?
+            MT_VECTREX_OVERLAY_ENABLE_MASK : UINT32_C(0)) |
+           (gain << MT_VECTREX_BEAM_GAIN_SHIFT) | (opacity << MT_VECTREX_OVERLAY_OPACITY_SHIFT);
+}
+
+static void change_active_vectrex_video(size_t packed)
+{
+    const uint32_t value = (uint32_t)packed;
+    if (!supervisor.has_active || !selection_supports_vectrex_video(&supervisor.active)) {
+        set_supervisor_error("Vectrex video controls are unavailable");
+        return;
+    }
+    if ((size_t)value != packed || (value & ~MT_VECTREX_VIDEO_CONFIG_MASK) != 0U) {
+        set_supervisor_error("Invalid Vectrex video setting");
+        return;
+    }
+    settings_before_update = persistent_settings;
+    if (!ensure_active_settings_profile() ||
+        !mt_supervisor_settings_remember_vectrex_video(&persistent_settings,
+            supervisor.active.package.id, (value & MT_VECTREX_OVERLAY_ENABLE_MASK) != 0U,
+            (uint8_t)((value & MT_VECTREX_BEAM_GAIN_MASK) >> MT_VECTREX_BEAM_GAIN_SHIFT),
+            (uint8_t)((value & MT_VECTREX_OVERLAY_OPACITY_MASK) >> MT_VECTREX_OVERLAY_OPACITY_SHIFT)) ||
+        !save_persistent_settings()) {
+        persistent_settings = settings_before_update;
+        set_supervisor_error("Vectrex video unchanged; settings write failed");
+        return;
+    }
+    Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_VECTREX_VIDEO_CONFIG, value);
+    set_supervisor_status("Video settings saved for Vectrex");
+}
+
 static uint32_t profile_border_config(const mt_core_settings_profile_t *profile)
 {
     const uint32_t style = profile != NULL && profile->border_style < 5U ?
@@ -1508,6 +1555,10 @@ static bool restore_selection_settings(
         Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_BORDER_CONFIG,
                   profile_border_config(profile));
     }
+    if (selection_supports_vectrex_video(selection)) {
+        Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_VECTREX_VIDEO_CONFIG,
+                  profile_vectrex_video_config(profile));
+    }
     if (selection->package.core_id == MT_C64_CORE_ID) {
         set_c64_cpu_turbo(selection->package.abi_minor >= 8U &&
                           profile != NULL && profile->c64_cpu_turbo);
@@ -1641,6 +1692,8 @@ static mt_menu_view_t supervisor_menu_view(void)
         state.cartridge_attached = vectrex_content_service_cartridge_attached();
         state.cartridge_name = vectrex_content_service_cartridge_name();
     }
+    view.vectrex_video_supported = supervisor.has_active &&
+        selection_supports_vectrex_video(&supervisor.active);
     mt_core_frontend_apply(&supervisor_frontend, &state, &view);
     view.status_text = supervisor_status_text;
     view.status_color = supervisor_status_color;
@@ -1668,6 +1721,18 @@ static mt_menu_view_t supervisor_menu_view(void)
         view.border_style = (uint8_t)((border & MT_BORDER_STYLE_MASK) >> MT_BORDER_STYLE_SHIFT);
         view.border_color = (uint8_t)((border & MT_BORDER_COLOR_MASK) >> MT_BORDER_COLOR_SHIFT);
         view.border_padding = (uint8_t)((border & MT_BORDER_PADDING_MASK) >> MT_BORDER_PADDING_SHIFT);
+        {
+            const uint32_t video = profile_vectrex_video_config(profile);
+            uint32_t overlay_status = 0U;
+            if (view.vectrex_video_supported)
+                overlay_status = shell_read(MT_REG_VECTREX_OVERLAY_STATUS);
+            view.vectrex_overlay_enabled = (video & MT_VECTREX_OVERLAY_ENABLE_MASK) != 0U;
+            view.vectrex_beam_gain = (uint8_t)((video & MT_VECTREX_BEAM_GAIN_MASK) >> MT_VECTREX_BEAM_GAIN_SHIFT);
+            view.vectrex_overlay_opacity = (uint8_t)((video & MT_VECTREX_OVERLAY_OPACITY_MASK) >> MT_VECTREX_OVERLAY_OPACITY_SHIFT);
+            view.vectrex_overlay_loaded = (overlay_status & MT_VECTREX_OVERLAY_STATUS_LOADED) != 0U;
+            view.vectrex_overlay_error = (overlay_status & MT_VECTREX_OVERLAY_STATUS_ERROR) != 0U ||
+                (view.vectrex_video_supported && vectrex_content_service_overlay_warning()[0] != '\0');
+        }
     }
     return view;
 }
@@ -2172,11 +2237,18 @@ static bool menu_action_needs_core_progress(mt_menu_action_t action)
     case MT_MENU_ACTION_LOAD_DISK_PROGRAM:
     case MT_MENU_ACTION_DIRECT_DISK_PROGRAM:
     case MT_MENU_ACTION_EJECT_DRIVE8:
-    case MT_MENU_ACTION_LOAD_CONTENT:
     case MT_MENU_ACTION_DETACH_CARTRIDGE:
     case MT_MENU_ACTION_RESET_CORE:
     case MT_MENU_ACTION_REBOOT_GOLDEN:
         return true;
+    case MT_MENU_ACTION_LOAD_CONTENT:
+        /* Artwork uploads do not need the CPU to run. Keep the visible menu
+         * pausing the game while the independent overlay engine transfers. */
+        return action.file_index >= supervisor_menu_file_count ||
+               (supervisor_menu_files[action.file_index].cookie & MT_MENU_FILE_DIRECTORY) != 0U ||
+               mt_content_classify(supervisor_menu_files[action.file_index].name) !=
+                   MT_CONTENT_VECTREX_OVERLAY ||
+               shell_read(MT_REG_CORE_ID) != MT_VECTREX_CORE_ID;
     case MT_MENU_ACTION_TOGGLE_CORE_OPTION:
         /* C64 option zero swaps the ROM pair and restarts the machine.
          * Turbo, input, video and startup settings apply while paused. */
@@ -2186,6 +2258,26 @@ static bool menu_action_needs_core_progress(mt_menu_action_t action)
     default:
         return false;
     }
+}
+
+static mt_vectrex_content_result_t load_vectrex_content_with_input(const char *name)
+{
+    const bool overlay = mt_content_classify(name) == MT_CONTENT_VECTREX_OVERLAY;
+    mt_vectrex_content_result_t result;
+    if (!overlay) usb_hid_service_set_core_ready(false);
+    result = vectrex_content_service_load(name);
+    if (!overlay &&
+        (result.status == MT_VECTREX_CONTENT_OK ||
+         ((result.status == MT_VECTREX_CONTENT_READ_FAILED ||
+           result.status == MT_VECTREX_CONTENT_REJECTED ||
+           result.status == MT_VECTREX_CONTENT_INVALID_ARGUMENT) &&
+          (shell_read(MT_REG_STATUS) & MT_STATUS_CORE_READY) != 0U &&
+          (shell_read(MT_REG_CONTROL) & MT_CONTROL_CORE_RESET_REQUEST) == 0U))) {
+        /* Early file/validation failures preserve the running machine. A
+         * transfer or BASIC failure may have changed it, so leave those held. */
+        usb_hid_service_set_core_ready(true);
+    }
+    return result;
 }
 
 static int native_load_key(void *context, uint8_t scan, bool pressed)
@@ -2327,6 +2419,10 @@ static void handle_menu_action(mt_menu_action_t action)
         open_menu_browser(MT_MENU_BROWSER_CARTRIDGE);
     } else if (action.kind == MT_MENU_ACTION_BROWSE_PROGRAM) {
         open_menu_browser(MT_MENU_BROWSER_PROGRAM);
+    } else if (action.kind == MT_MENU_ACTION_BROWSE_OVERLAY) {
+        if (supervisor.has_active && selection_supports_vectrex_video(&supervisor.active))
+            open_menu_browser(MT_MENU_BROWSER_OVERLAY);
+        else set_supervisor_warning("Update the Vectrex core for overlays");
     } else if (action.kind == MT_MENU_ACTION_OPEN_DIRECTORY) {
         mt_media_browser_t directory = vectrex_media_browser;
         const mt_menu_file_t *entry;
@@ -2487,14 +2583,17 @@ static void handle_menu_action(mt_menu_action_t action)
                 return;
             }
             const bool basic = mt_content_classify(name) == MT_CONTENT_VECTREX_BASIC;
-            usb_hid_service_set_core_ready(false);
-            const mt_vectrex_content_result_t result = vectrex_content_service_load(name);
+            const bool overlay = mt_content_classify(name) == MT_CONTENT_VECTREX_OVERLAY;
+            const mt_vectrex_content_result_t result = load_vectrex_content_with_input(name);
             if (result.status == MT_VECTREX_CONTENT_OK) {
                 mt_menu_close_browser(&supervisor_menu);
-                usb_hid_service_set_core_ready(true);
-                if (dac_ready) set_audio(basic, false);
-                set_video_test(false);
-                if (!basic && strlen(name) >= MT_SETTINGS_MEDIA_NAME_MAX) {
+                if (!overlay) {
+                    if (dac_ready) set_audio(basic, false);
+                    set_video_test(false);
+                }
+                if (overlay) {
+                    set_supervisor_status("Vectrex overlay loaded");
+                } else if (!basic && strlen(name) >= MT_SETTINGS_MEDIA_NAME_MAX) {
                     if (remember_active_cartridge(NULL))
                         set_supervisor_warning("Cartridge loaded; long path cannot be remembered");
                     else
@@ -2504,11 +2603,15 @@ static void handle_menu_action(mt_menu_action_t action)
                         basic ? "BASIC finished; choose a program to run again" : "Vectrex cartridge loaded",
                         "Loaded; settings write failed");
                 }
+                if (supervisor_status_color != MT_UI_COLOR_RED &&
+                    vectrex_content_service_overlay_warning()[0] != '\0')
+                    set_supervisor_warning(vectrex_content_service_overlay_warning());
             } else {
                 xil_printf("[Vectrex] load failed: %s sd=%s link=%s\r\n",
                     vectrex_content_status_name(result.status), mt_sd_status_name(result.sd.status),
                     mt_link_result_name(result.link));
-                set_supervisor_error(basic && vectrex32_service_error()[0] != '\0' ?
+                set_supervisor_error(overlay ? vectrex_content_status_name(result.status) :
+                    basic && vectrex32_service_error()[0] != '\0' ?
                     vectrex32_service_error() : "Vectrex load failed; check BIOS and file");
             }
         } else if (shell_read(MT_REG_CORE_ID) == MT_GBC_CORE_ID) {
@@ -2650,6 +2753,8 @@ static void handle_menu_action(mt_menu_action_t action)
         }
     } else if (action.kind == MT_MENU_ACTION_SET_BORDER) {
         change_active_border(action.file_index);
+    } else if (action.kind == MT_MENU_ACTION_SET_VECTREX_VIDEO) {
+        change_active_vectrex_video(action.file_index);
     } else if (action.kind == MT_MENU_ACTION_TOGGLE_VIDEO_SOURCE) {
         const uint32_t control = shell_read(MT_REG_CONTROL);
         const bool test_enabled =
@@ -2858,16 +2963,16 @@ static void service_supervisor_menu(void)
     if (pending_menu_action.kind != MT_MENU_ACTION_NONE) {
         const mt_menu_action_t action = pending_menu_action;
         pending_menu_action.kind = MT_MENU_ACTION_NONE;
+        supervisor_menu_action_active = true;
         if (menu_action_needs_core_progress(action)) {
-            supervisor_menu_action_active = true;
             if (hide_menu_for_core_action()) {
                 set_supervisor_status("Applying selection...");
                 handle_menu_action(action);
             }
-            supervisor_menu_action_active = false;
         } else {
             handle_menu_action(action);
         }
+        supervisor_menu_action_active = false;
     }
     if (!supervisor_menu_dirty) return;
     view = supervisor_menu_view();

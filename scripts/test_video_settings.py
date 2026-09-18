@@ -18,7 +18,8 @@ SOURCES = ["hdl/generated/multitini_regs_pkg.sv", "hdl/sim/xilinx_primitives.sv"
            "hdl/common/multitini_async_mailbox.sv", "hdl/common/multitini_border_config.sv",
            "hdl/common/multitini_control_regs.sv", "hdl/board/multitini_video_test.sv",
            "hdl/board/multitini_c64_video_bridge.sv", "hdl/board/multitini_gameboy_video_bridge.sv",
-           "hdl/board/multitini_vectrex_video_bridge.sv"]
+           "hdl/board/multitini_vectrex_video_bridge.sv",
+           "hdl/core/vectrex/multitini_vectrex_compositor.sv"]
 
 def run(name, parameters=()):
     output = BUILD / (name + "".join(parameters).replace("=", "_") + ".vvp")

@@ -18,6 +18,7 @@ for leaf in ("beam","renderer","video_bridge"):
              IVERILOG,"-g2012","-s",top,"-o",str(image)]
     if leaf=="video_bridge":
         command += [str(ROOT/"third_party/appletini/hdl/cdc_bit_sync.sv"),
+                    str(ROOT/"hdl/core/vectrex/multitini_vectrex_compositor.sv"),
                     str(ROOT/"hdl/board/multitini_vectrex_video_bridge.sv")]
     else:
         command += [str(ROOT/f"hdl/core/vectrex/multitini_vectrex_{leaf}.sv")]

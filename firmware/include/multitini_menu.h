@@ -51,7 +51,9 @@ typedef enum {
     MT_MENU_ACTION_TOGGLE_AUTO_BOOT,
     MT_MENU_ACTION_REBOOT_GOLDEN,
     MT_MENU_ACTION_OPEN_DIRECTORY,
-    MT_MENU_ACTION_SET_BORDER
+    MT_MENU_ACTION_SET_BORDER,
+    MT_MENU_ACTION_SET_VECTREX_VIDEO,
+    MT_MENU_ACTION_BROWSE_OVERLAY
 } mt_menu_action_kind_t;
 
 typedef enum {
@@ -59,7 +61,8 @@ typedef enum {
     MT_MENU_BROWSER_DRIVE8,
     MT_MENU_BROWSER_DISK_PROGRAM,
     MT_MENU_BROWSER_CARTRIDGE,
-    MT_MENU_BROWSER_PROGRAM
+    MT_MENU_BROWSER_PROGRAM,
+    MT_MENU_BROWSER_OVERLAY
 } mt_menu_browser_t;
 
 typedef struct {
@@ -114,6 +117,12 @@ typedef struct {
     uint8_t border_style;
     uint8_t border_color;
     uint8_t border_padding;
+    bool vectrex_video_supported;
+    bool vectrex_overlay_enabled;
+    bool vectrex_overlay_loaded;
+    bool vectrex_overlay_error;
+    uint8_t vectrex_beam_gain;
+    uint8_t vectrex_overlay_opacity;
     mt_ui_color_t status_color;
 } mt_menu_view_t;
 

@@ -38,6 +38,22 @@ loads. New firmware always requests dense mode and requires ABI 0.11 packages.
 
 ## Video and audio
 
+The Vectrex shell extension in ABI 0.13 provides `VECTREX_VIDEO_CONFIG`
+(0x0C4) and `VECTREX_OVERLAY_STATUS` (0x0C8). Configuration holds overlay enable
+in bit 0, beam-gain index in bits 2:1, and artwork-opacity index in bits 4:3;
+reserved bits read zero. The default is 0xB (enabled, 2x beam, 50% artwork).
+Changes take effect coherently at vertical blank. Read-only status reports
+loaded in bit 0 and error in bit 1; other machine images report zero.
+
+Vectrex stream type 0x45 accepts 777600 bytes of row-major 540x720 ABGR4444
+artwork, or one zero byte to clear it. Firmware pads a short even file with
+transparent black. A new transfer invalidates the prior image immediately;
+only a complete, valid, non-aborted transfer publishes the new image. Final
+stream acceptance can precede the last physical memory write, so firmware
+polls loaded/error status after STREAM_END. Overlay errors remain independent
+of native machine readiness. Soft machine reset retains the overlay. Firmware
+must check the actual core ID and ABI before using the extension.
+
 Video is unscaled RGB888 plus active-high data enable and explicit syncs. The
 adapter documents its pixel clock, polarities, active region, and PAL/NTSC
 cadence. `video_valid` marks a new pixel sample. The shell owns conversion to

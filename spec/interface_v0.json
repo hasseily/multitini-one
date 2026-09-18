@@ -2,7 +2,7 @@
   "schema_version": 1,
   "abi": {
     "major": 0,
-    "minor": 12
+    "minor": 13
   },
   "magic": "0x4D543031",
   "shell_id": "0x4D544F4E",
@@ -242,6 +242,20 @@
       "access": "rw",
       "reset": "0x00000670",
       "description": "Frame-latched border: enable[0], style[3:1], color[7:4], padding[12:8]. Reserved bits read zero; invalid style becomes Single line and padding clamps to 1..20."
+    },
+    {
+      "name": "VECTREX_VIDEO_CONFIG",
+      "offset": "0x0C4",
+      "access": "rw",
+      "reset": "0x0000000B",
+      "description": "Vectrex frame-latched video: overlay enable[0], beam gain index[2:1] (1x..4x), artwork opacity index[4:3] (25%..100%). Reserved bits read zero. Requires Vectrex core and ABI 0.13."
+    },
+    {
+      "name": "VECTREX_OVERLAY_STATUS",
+      "offset": "0x0C8",
+      "access": "ro",
+      "reset": "0x00000000",
+      "description": "Vectrex overlay state: loaded[0], error[1]. Zero on other cores."
     }
   ],
   "bitfields": {
@@ -348,7 +362,17 @@
     "BORDER_CONFIG_DEFAULT": "0x00000670",
     "BORDER_MIN_PADDING": 1,
     "BORDER_MAX_PADDING": 20,
-    "BORDER_STYLE_MAX": 4
+    "BORDER_STYLE_MAX": 4,
+    "VECTREX_VIDEO_MIN_ABI_MINOR": 13,
+    "VECTREX_OVERLAY_ENABLE_MASK": "0x00000001",
+    "VECTREX_BEAM_GAIN_SHIFT": 1,
+    "VECTREX_BEAM_GAIN_MASK": "0x00000006",
+    "VECTREX_OVERLAY_OPACITY_SHIFT": 3,
+    "VECTREX_OVERLAY_OPACITY_MASK": "0x00000018",
+    "VECTREX_VIDEO_CONFIG_MASK": "0x0000001F",
+    "VECTREX_VIDEO_CONFIG_DEFAULT": "0x0000000B",
+    "VECTREX_OVERLAY_STATUS_LOADED": "0x00000001",
+    "VECTREX_OVERLAY_STATUS_ERROR": "0x00000002"
   },
   "commands": {
     "PING": 0,

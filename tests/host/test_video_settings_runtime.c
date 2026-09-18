@@ -12,6 +12,7 @@
 static uint32_t test_core_id;
 static uint32_t test_abi;
 static uint32_t test_border;
+static uint32_t test_vectrex_video;
 static unsigned test_mmio_writes;
 static unsigned test_save_calls;
 static mt_sd_status_t test_save_status;
@@ -73,6 +74,7 @@ void Xil_Out32(uintptr_t address, uint32_t value)
 {
     ++test_mmio_writes;
     if (address == MT_SHELL_BASE_ADDRESS + MT_REG_BORDER_CONFIG) test_border = value;
+    else if (address == MT_SHELL_BASE_ADDRESS + MT_REG_VECTREX_VIDEO_CONFIG) test_vectrex_video = value;
     else assert(!"Unexpected MMIO write");
 }
 
@@ -94,7 +96,7 @@ mt_sd_result_t mt_sd_storage_journal_replace(const char *path,
     const mt_sd_result_t result = {test_save_status, 0U, size};
     assert(strcmp(path, MT_SETTINGS_PATH) == 0);
     assert(strcmp(journal_path, MT_SETTINGS_JOURNAL_PATH) == 0);
-    assert(source != NULL && source[8U] == 3U && size == 4024U);
+    assert(source != NULL && source[8U] == 4U && size == 4088U);
     /* The visible hardware state must still have its previous value while
      * the complete settings write is in progress. */
     assert(test_mmio_writes == 0U);
@@ -114,6 +116,7 @@ static void test_reset(uint32_t core_id, const char *id)
     test_core_id = core_id;
     test_abi = MT_ABI_VERSION;
     test_border = UINT32_C(0x670);
+    test_vectrex_video = UINT32_C(0xB);
     test_mmio_writes = test_save_calls = 0U;
     test_save_status = MT_SD_OK;
     settings_faulted = false;
@@ -124,6 +127,7 @@ static void test_reset(uint32_t core_id, const char *id)
 static void assert_unchanged(const mt_supervisor_settings_t *before)
 {
     assert(test_mmio_writes == 0U && test_border == UINT32_C(0x670));
+    assert(test_vectrex_video == UINT32_C(0xB));
     assert(memcmp(before, &persistent_settings, sizeof(*before)) == 0);
     assert(supervisor_status_color == MT_UI_COLOR_RED);
 }
@@ -221,7 +225,8 @@ static void test_restore_gate(void)
     supervisor.has_active = false;
     assert(selection_supports_borders(&next));
     assert(restore_selection_settings(&next));
-    assert(test_mmio_writes == 1U && test_border == UINT32_C(0x670));
+    assert(test_mmio_writes == 2U && test_border == UINT32_C(0x670));
+    assert(test_vectrex_video == UINT32_C(0xB));
     test_mmio_writes = 0U;
     assert(profile_border_config(NULL) == UINT32_C(0x670));
     assert(mt_supervisor_settings_remember_variant(&persistent_settings, "vectrex", "default"));
@@ -229,7 +234,7 @@ static void test_restore_gate(void)
     profile = mt_supervisor_settings_find(&persistent_settings, "vectrex");
     assert(profile_border_config(profile) == UINT32_C(0x14f9));
     assert(restore_selection_settings(&next));
-    assert(test_mmio_writes == 1U && test_border == UINT32_C(0x14f9));
+    assert(test_mmio_writes == 2U && test_border == UINT32_C(0x14f9));
     test_mmio_writes = 0U;
     test_abi = 11U;
     assert(!selection_supports_borders(&next));
@@ -237,11 +242,100 @@ static void test_restore_gate(void)
     assert(test_save_calls == 0U && test_mmio_writes == 0U);
 }
 
+static void test_vectrex_video_guards_and_saves(void)
+{
+    static const mt_sd_status_t failures[] = {
+        MT_SD_OPEN_FAILED, MT_SD_WRITE_FAILED, MT_SD_SYNC_FAILED,
+        MT_SD_CLOSE_FAILED, MT_SD_UNLINK_FAILED
+    };
+    mt_supervisor_settings_t before;
+    size_t index;
+    test_reset(MT_VECTREX_CORE_ID, "vectrex");
+    before = persistent_settings;
+    test_abi = 12U;
+    change_active_vectrex_video(UINT32_C(0x1F));
+    assert_unchanged(&before);
+    test_abi = UINT32_C(0x1000D);
+    change_active_vectrex_video(UINT32_C(0x1F));
+    assert_unchanged(&before);
+    test_abi = MT_ABI_VERSION; test_core_id = MT_GBC_CORE_ID;
+    change_active_vectrex_video(UINT32_C(0x1F));
+    assert_unchanged(&before);
+    test_core_id = MT_VECTREX_CORE_ID; supervisor.has_active = false;
+    change_active_vectrex_video(UINT32_C(0x1F));
+    assert_unchanged(&before);
+    supervisor.has_active = true;
+    change_active_vectrex_video(UINT32_C(0x20));
+    assert_unchanged(&before);
+    if (SIZE_MAX > UINT32_MAX) {
+        change_active_vectrex_video((size_t)UINT32_MAX + 1U);
+        assert_unchanged(&before);
+    }
+    assert(test_save_calls == 0U);
+    test_reset(MT_C64_CORE_ID, "c64"); before = persistent_settings;
+    change_active_vectrex_video(UINT32_C(0x1F));
+    assert_unchanged(&before);
+    assert(test_save_calls == 0U);
+    for (index = 0U; index < 32U; ++index) {
+        const mt_core_settings_profile_t *profile;
+        test_reset(MT_VECTREX_CORE_ID, "vectrex");
+        change_active_vectrex_video(index);
+        assert(test_mmio_writes == 1U && test_save_calls == 1U);
+        assert(test_vectrex_video == index && test_border == UINT32_C(0x670));
+        profile = mt_supervisor_settings_find(&persistent_settings, "vectrex");
+        assert(profile != NULL && profile_vectrex_video_config(profile) == index);
+    }
+    for (index = 0U; index < sizeof(failures) / sizeof(failures[0]); ++index) {
+        test_reset(MT_VECTREX_CORE_ID, "vectrex");
+        assert(mt_supervisor_settings_remember_core(&persistent_settings, "c64", "pal"));
+        persistent_settings.auto_boot = true; before = persistent_settings;
+        test_save_status = failures[index];
+        change_active_vectrex_video(UINT32_C(0x1F));
+        assert_unchanged(&before);
+        assert(settings_faulted && test_save_calls == 1U);
+        test_save_status = MT_SD_OK;
+        change_active_vectrex_video(UINT32_C(0x1F));
+        assert(!settings_faulted && test_save_calls == 2U && test_mmio_writes == 1U);
+        assert(test_vectrex_video == UINT32_C(0x1F) && persistent_settings.auto_boot);
+        assert(strcmp(persistent_settings.selected_core_id, "c64") == 0);
+    }
+}
+
+static void test_vectrex_video_restore(void)
+{
+    mt_core_selection_t next;
+    mt_core_settings_profile_t invalid = {0};
+    test_reset(MT_C64_CORE_ID, "c64");
+    next = supervisor.active; next.package.core_id = MT_VECTREX_CORE_ID;
+    strcpy(next.package.id, "vectrex");
+    assert(!selection_supports_vectrex_video(NULL));
+    assert(!selection_supports_vectrex_video(&next));
+    assert(restore_selection_settings(&next) && test_mmio_writes == 0U);
+    test_core_id = MT_VECTREX_CORE_ID;
+    assert(selection_supports_vectrex_video(&next));
+    assert(!selection_supports_vectrex_video(&supervisor.active));
+    assert(mt_supervisor_settings_remember_variant(&persistent_settings, "vectrex", "default"));
+    assert(mt_supervisor_settings_remember_vectrex_video(&persistent_settings, "vectrex", false, 3U, 2U));
+    assert(restore_selection_settings(&next));
+    assert(test_mmio_writes == 2U && test_vectrex_video == UINT32_C(0x16));
+    test_mmio_writes = 0U; test_vectrex_video = UINT32_C(0x1F); test_abi = 12U;
+    assert(!selection_supports_vectrex_video(&next));
+    assert(restore_selection_settings(&next));
+    assert(test_mmio_writes == 1U && test_vectrex_video == UINT32_C(0x1F));
+    assert(test_save_calls == 0U);
+    assert(profile_vectrex_video_config(NULL) == UINT32_C(0xB));
+    invalid.vectrex_overlay_enabled = true;
+    invalid.vectrex_beam_gain = invalid.vectrex_overlay_opacity = UINT8_MAX;
+    assert(profile_vectrex_video_config(&invalid) == UINT32_C(0xB));
+}
+
 int main(void)
 {
     test_guards();
     test_apply_and_failure();
     test_restore_gate();
-    puts("PASS: board border settings guards, save ordering, rollback and restore selection");
+    test_vectrex_video_guards_and_saves();
+    test_vectrex_video_restore();
+    puts("PASS: board border/Vectrex video guards, save ordering, rollback and restore selection");
     return 0;
 }

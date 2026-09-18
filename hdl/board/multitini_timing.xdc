@@ -49,9 +49,10 @@ set control_root_clock [get_clocks -quiet clk_fpga_0]
 set video_root_clock [get_clocks -quiet \
     -filter {NAME =~ *clk_out1*zynq_ps_bd_clk_wiz_video*}]
 # The block-design cell keeps its historical c64 name but generates the active
-# build-selected C64 or GBC machine clock.
+# build-selected machine clock. Vectrex also uses the same MMCM's phase-
+# related second output for PSRAM capture; keep both in one timing group.
 set machine_root_clock [get_clocks -quiet \
-    -filter {NAME =~ *clk_out1*zynq_ps_bd_clk_wiz_c64*}]
+    -filter {NAME =~ *clk_out*zynq_ps_bd_clk_wiz_c64*}]
 set control_clocks [get_clocks -quiet -include_generated_clocks \
     $control_root_clock]
 set video_clocks [get_clocks -quiet -include_generated_clocks \

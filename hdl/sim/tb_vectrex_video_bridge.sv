@@ -17,6 +17,7 @@ module tb_vectrex_video_bridge;
         .pixel_clk(clk),.pixel_resetn(resetn),.source_ready(ready),
         .scan_x(x),.scan_y(y),.vblank_start(vblank),.pixel_address(address),
         .pixel_intensity(intensity),.machine_active(active),.machine_rgb565(rgb),
+        .overlay_rgba(16'd0),.overlay_valid(1'b0),.video_config(5'd0),.source_x(),.source_y(),
         .viewport_x(viewport_x),.viewport_y(viewport_y),
         .viewport_width(viewport_width),.viewport_height(viewport_height)
     );

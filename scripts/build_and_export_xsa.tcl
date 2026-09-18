@@ -35,7 +35,7 @@ proc require_one_object {description objects} {
     }
 }
 
-proc require_packed_iob_registers {description pattern expected_count} {
+proc require_packed_iob_registers {description pattern expected_count {site_pattern "OLOGIC_*"}} {
     set registers [get_cells -hierarchical -quiet -regexp $pattern]
     set count [llength $registers]
     if {$count != $expected_count} {
@@ -45,8 +45,8 @@ proc require_packed_iob_registers {description pattern expected_count} {
         if {[get_property IOB $register] ne "TRUE"} {
             error "$description register is not marked for I/O packing: $register"
         }
-        if {![string match "OLOGIC_*" [get_property LOC $register]]} {
-            error "$description register is not physically packed into OLOGIC: $register"
+        if {![string match $site_pattern [get_property LOC $register]]} {
+            error "$description register is not physically packed into $site_pattern: $register"
         }
     }
 }
@@ -94,6 +94,7 @@ if {[string match "*ACTIVE_MACHINE=2*" $build_generics]} {
 }
 set psram_active [expr {
     [string match "*ACTIVE_MACHINE=0*" $build_generics] ||
+    [string match "*ACTIVE_MACHINE=3*" $build_generics] ||
     [string match "*ENABLE_GBC_PSRAM=1'b1*" $build_generics]
 }]
 
@@ -177,7 +178,7 @@ foreach cdc_line [split $cdc_text "\n"] {
         continue
     }
     incr cdc_detail_critical
-    if {$psram_active && [regexp \
+    if {$psram_active && $image_kind ne "VECTREX" && [regexp \
             {CDC-13[ \t]+Critical.*False Path[ \t]+psram_[ab]_io\[[0-3]\][ \t]+.*u_[ab]_iddr/D[ \t]*$} \
             $cdc_line]} {
         incr cdc_psram_waived
@@ -188,12 +189,53 @@ foreach cdc_line [split $cdc_text "\n"] {
 if {$cdc_summary_critical != $cdc_detail_critical} {
     error "CDC report summary/detail mismatch: summary=$cdc_summary_critical detail=$cdc_detail_critical"
 }
-set expected_psram_waivers [expr {$psram_active ? 8 : 0}]
+set expected_psram_waivers [expr {$psram_active && $image_kind ne "VECTREX" ? 8 : 0}]
 if {$cdc_psram_waived != $expected_psram_waivers} {
     error "Expected $expected_psram_waivers external PSRAM CDC waivers; found $cdc_psram_waived"
 }
 if {[llength $cdc_unexpected_critical] != 0} {
     error "CDC gate found unexpected critical crossings: $cdc_unexpected_critical"
+}
+if {$image_kind eq "VECTREX"} {
+    if {[get_property DRIVE [get_ports psram_clk]] != 12 ||
+        [get_property SLEW [get_ports psram_clk]] ne "FAST"} {
+        error "Vectrex PSRAM clock requires the captured DRIVE12/FAST setting"
+    }
+    set capture_clock [get_clocks -quiet -filter {NAME =~ *clk_out2*zynq_ps_bd_clk_wiz_c64*}]
+    set transmit_clock [get_clocks -quiet -filter {NAME =~ *clk_out1*zynq_ps_bd_clk_wiz_c64*}]
+    require_one_object "Vectrex PSRAM capture clock" $capture_clock
+    set capture_period [get_property PERIOD $capture_clock]
+    set transmit_period [get_property PERIOD $transmit_clock]
+    set capture_rise [lindex [get_property WAVEFORM $capture_clock] 0]
+    if {abs($capture_period - $transmit_period) > 0.001 ||
+        abs($capture_rise - $capture_period * 279.0 / 360.0) > 0.05} {
+        error "Vectrex PSRAM capture clock must match the 279-degree machine clock phase"
+    }
+    require_packed_iob_registers "Vectrex PSRAM input" \
+        {.*psram_i/sample_[ab]_reg\[[0-3]\]$} 8 "ILOGIC_*"
+    # Unlike the tunable C64/GBC PHY, this fixed capture path is statically
+    # timed. Every physical input must have both setup and hold paths; a
+    # forgotten input delay or an overriding false path is a build failure.
+    set vectrex_data_ports [get_ports {psram_a_io[*] psram_b_io[*]}]
+    if {[llength $vectrex_data_ports] != 8} {
+        error "Vectrex PSRAM timing requires all eight data pins"
+    }
+    report_timing -from $vectrex_data_ports \
+        -delay_type max -max_paths 16 -nworst 1 \
+        -file [file join $report_dir psram_input_setup.rpt]
+    report_timing -from $vectrex_data_ports \
+        -delay_type min -max_paths 16 -nworst 1 \
+        -file [file join $report_dir psram_input_hold.rpt]
+    foreach data_pin $vectrex_data_ports {
+        foreach delay_type {max min} {
+            set input_path [get_timing_paths -quiet -from $data_pin \
+                -delay_type $delay_type -max_paths 1]
+            require_one_object "Vectrex PSRAM $delay_type input path for $data_pin" $input_path
+            if {[get_property SLACK $input_path] < 0} {
+                error "Vectrex PSRAM $delay_type input timing failed for $data_pin"
+            }
+        }
+    }
 }
 report_bus_skew -warn_on_violation -file [file join $report_dir bus_skew.rpt]
 report_drc -file [file join $report_dir drc.rpt]

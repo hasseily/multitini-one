@@ -126,7 +126,8 @@ proc add_manifest_sources {repo_root machine} {
         if {$extension eq ".xdc"} {
             add_files -fileset constrs_1 -norecurse $source
             if {[file tail $source] in {
-                    "multitini_timing.xdc" "multitini_psram_timing.xdc"}} {
+                    "multitini_timing.xdc" "multitini_psram_timing.xdc"
+                    "multitini_vectrex_psram_timing.xdc"}} {
                 set_property USED_IN_SYNTHESIS false [get_files $source]
             }
         } else {
@@ -260,7 +261,12 @@ set_property default_lib work [current_project]
 add_manifest_sources $repo_root $machine
 set psram_timing_file [require_file \
     [file join $repo_root hdl board multitini_psram_timing.xdc]]
-if {$machine eq "SUPERVISOR" || $machine eq "VECTREX" ||
+if {$machine eq "VECTREX"} {
+    # The Vectrex PHY has fixed falling-edge capture, covered by its own
+    # input-delay constraints. Do not inherit the tunable PHY's false paths.
+    set_property USED_IN_IMPLEMENTATION false [get_files $psram_timing_file]
+}
+if {$machine eq "SUPERVISOR" ||
     ($machine eq "GBC" && !$enable_gbc_psram)} {
     set psram_iob_file [require_file \
         [file join $repo_root hdl board multitini_psram_iob.xdc]]
@@ -295,6 +301,7 @@ set control_clk [create_bd_port -dir O -type clk control_clk]
 set idelay_ref_clk [create_bd_port -dir O -type clk idelay_ref_clk]
 set video_clk [create_bd_port -dir O -type clk video_clk]
 set c64_clk [create_bd_port -dir O -type clk c64_clk]
+set c64_capture_clk [create_bd_port -dir O -type clk c64_capture_clk]
 set control_aresetn [create_bd_port -dir O -type rst control_aresetn]
 set idelay_aresetn [create_bd_port -dir O -type rst idelay_aresetn]
 set video_aresetn [create_bd_port -dir O -type rst video_aresetn]
@@ -338,6 +345,14 @@ set_property -dict [list \
     CONFIG.PRIM_SOURCE {No_buffer} \
     CONFIG.RESET_PORT {resetn} \
     CONFIG.RESET_TYPE {ACTIVE_LOW}] $c64_wiz
+if {$machine eq "VECTREX"} {
+    # A phase-related input clock centers PSRAM sampling in its routed
+    # round-trip data window. Only the eight input IOB registers use it.
+    set_property -dict [list CONFIG.NUM_OUT_CLKS {2} \
+        CONFIG.CLKOUT2_USED {true} \
+        CONFIG.CLKOUT2_REQUESTED_OUT_FREQ $c64_clock_mhz \
+        CONFIG.CLKOUT2_REQUESTED_PHASE {279.000}] $c64_wiz
+}
 
 set control_reset [create_bd_cell -type ip \
     -vlnv xilinx.com:ip:proc_sys_reset:5.0 reset_control]
@@ -388,6 +403,11 @@ connect_bd_net [get_bd_pins $video_reset/peripheral_aresetn] $video_aresetn
 
 connect_bd_net [get_bd_pins $c64_wiz/clk_out1] $c64_clk \
     [get_bd_pins $c64_reset/slowest_sync_clk]
+if {$machine eq "VECTREX"} {
+    connect_bd_net [get_bd_pins $c64_wiz/clk_out2] $c64_capture_clk
+} else {
+    connect_bd_net [get_bd_pins $c64_wiz/clk_out1] $c64_capture_clk
+}
 connect_bd_net [get_bd_pins $c64_wiz/locked] \
     [get_bd_pins $c64_reset/dcm_locked]
 connect_bd_net [get_bd_pins $c64_reset/peripheral_aresetn] $c64_aresetn
@@ -421,6 +441,11 @@ set_property generic \
     "SHELL_BUILD_ID=32'h${git_id} C64_NTSC_MODE=1'b${c64_ntsc_mode} ACTIVE_MACHINE=${active_machine} ENABLE_GBC_PSRAM=1'b${enable_gbc_psram}" \
     [get_filesets sources_1]
 update_compile_order -fileset sources_1
+if {$machine eq "VECTREX"} {
+    # Revisit the sparse residual routed paths after normal placement/routing.
+    set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true [get_runs impl_1]
+    set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
+}
 
 puts "Created $project_dir/$project_name.xpr"
 puts "SHELL_BUILD_ID=0x$git_id"

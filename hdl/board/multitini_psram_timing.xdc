@@ -3,7 +3,7 @@
 # Multitini One PSRAM source-synchronous timing
 #
 # create_project.tcl enables this implementation-only constraint set for the
-# C64 and for an explicitly PSRAM-enabled GBC build. It is disabled for the
+# C64, Vectrex and an explicitly PSRAM-enabled GBC build. It is disabled for the
 # supervisor and first-pass GBC builds, where the PSRAM pins are static.
 ################################################################################
 

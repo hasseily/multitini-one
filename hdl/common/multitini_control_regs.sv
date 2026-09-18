@@ -11,6 +11,7 @@ module multitini_control_regs #(
     input  logic         core_ready,
     input  logic         load_submit_ready,
     input  logic         core_load_error,
+    input  logic [1:0]   vectrex_overlay_status,
     input  logic         input_submit_ready,
     input  logic         media_request_valid,
     input  logic         media_request_write,
@@ -40,6 +41,7 @@ module multitini_control_regs #(
 
     output logic [31:0]  control,
     output logic [31:0]  border_config,
+    output logic [31:0]  vectrex_video_config,
     output logic         load_submit,
     output logic [7:0]   load_kind,
     output logic [7:0]   load_data,
@@ -50,6 +52,7 @@ module multitini_control_regs #(
     output logic         load_epoch,
     output logic         load_abort,
     output logic         load_abort_epoch,
+    output logic [7:0]   load_abort_kind,
     output logic         load_error_clear,
     output logic         input_submit,
     output logic [15:0]  input_code,
@@ -219,6 +222,8 @@ module multitini_control_regs #(
             MT_REG_ERROR:            rd_data = error_flags;
             MT_REG_CONTROL:          rd_data = control;
             MT_REG_BORDER_CONFIG:    rd_data = border_config;
+            MT_REG_VECTREX_VIDEO_CONFIG: rd_data = vectrex_video_config;
+            MT_REG_VECTREX_OVERLAY_STATUS: rd_data = {30'd0, vectrex_overlay_status};
             MT_REG_IRQ_STATUS:       rd_data = irq_status;
             MT_REG_IRQ_ENABLE:       rd_data = irq_enable;
             MT_REG_SCRATCH:          rd_data = scratch;
@@ -301,6 +306,7 @@ module multitini_control_regs #(
                     error_set_mask |= MT_ERROR_BAD_WRITE;
             MT_REG_CONTROL,
             MT_REG_BORDER_CONFIG,
+            MT_REG_VECTREX_VIDEO_CONFIG,
             MT_REG_IRQ_ENABLE,
             MT_REG_SCRATCH,
             MT_REG_COMMAND_SEQ,
@@ -318,6 +324,7 @@ module multitini_control_regs #(
         if (!resetn) begin
             error_flags     <= 32'h00000000;
             border_config   <= MT_BORDER_CONFIG_DEFAULT;
+            vectrex_video_config <= MT_VECTREX_VIDEO_CONFIG_DEFAULT;
             control         <= MT_CONTROL_CORE_RESET_REQUEST |
                                MT_CONTROL_VIDEO_TEST_ENABLE |
                                MT_CONTROL_AUDIO_TEST_ENABLE |
@@ -359,6 +366,7 @@ module multitini_control_regs #(
             load_epoch      <= 1'b0;
             load_abort      <= 1'b0;
             load_abort_epoch <= 1'b0;
+            load_abort_kind  <= 8'd0;
             load_error_clear <= 1'b0;
             input_submit    <= 1'b0;
             input_code      <= 16'd0;
@@ -464,6 +472,10 @@ module multitini_control_regs #(
                     MT_REG_BORDER_CONFIG:
                         border_config <= clamp_border(
                             merge_strobes(border_config, wr_data, wr_strb));
+                    MT_REG_VECTREX_VIDEO_CONFIG:
+                        vectrex_video_config <=
+                            merge_strobes(vectrex_video_config, wr_data, wr_strb) &
+                            MT_VECTREX_VIDEO_CONFIG_MASK;
                     MT_REG_IRQ_STATUS:
                         ;
                     MT_REG_IRQ_ENABLE:
@@ -625,6 +637,10 @@ module multitini_control_regs #(
                                     load_submit <= 1'b0;
                                     load_abort <= 1'b1;
                                     load_abort_epoch <= stream_epoch;
+                                    // Repeated aborts identify the same stream
+                                    // even after stream_kind has been cleared.
+                                    if (!stream_aborted)
+                                        load_abort_kind <= stream_kind;
                                     stream_aborted <= 1'b1;
                                 end
                                 MT_COMMAND_MEDIA_MOUNT: begin

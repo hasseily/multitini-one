@@ -15,7 +15,7 @@ typedef struct {
     uint32_t core_id;
     const char *description;
     const char *input_help;
-    uint32_t browser_types[MT_MENU_BROWSER_PROGRAM + 1U];
+    uint32_t browser_types[MT_MENU_BROWSER_OVERLAY + 1U];
     bool disk_program_browser;
     build_profile_fn build;
 } core_profile_t;
@@ -150,6 +150,10 @@ static void build_vectrex(mt_core_frontend_t *frontend,
 {
     cartridge_item(frontend, state, view, "Load a VEC or BIN cartridge; BIOS is required.");
     frontend->media_items[view->media_item_count++] = item(
+        "Overlay", "Choose file...", "Load MiSTer OVR artwork without restarting the game.",
+        MT_MENU_ACTION_BROWSE_OVERLAY, 0U,
+        view->vectrex_video_supported, MT_UI_COLOR_BLUE);
+    frontend->media_items[view->media_item_count++] = item(
         "Vectrex32 BASIC", "Choose program...", "Run a BAS program; F12 stops it and returns here.",
         MT_MENU_ACTION_BROWSE_PROGRAM, 0U, true, MT_UI_COLOR_BLUE);
     frontend->input_items[view->input_item_count++] = item(
@@ -180,7 +184,7 @@ static const core_profile_t profiles[] = {
         MT_VECTREX_CORE_ID, "Vectrex / Vectrex32 BASIC",
         "USB analog gamepads or keyboard; F12 opens the menu.",
         {0U, 0U, 0U, CONTENT_MASK(MT_CONTENT_VECTREX_CART),
-         CONTENT_MASK(MT_CONTENT_VECTREX_BASIC)},
+         CONTENT_MASK(MT_CONTENT_VECTREX_BASIC), CONTENT_MASK(MT_CONTENT_VECTREX_OVERLAY)},
         false, build_vectrex
     }
 };
@@ -222,7 +226,7 @@ bool mt_core_frontend_browser_supported(uint32_t core_id,
                                         mt_menu_browser_t browser)
 {
     const core_profile_t *const profile = find_profile(core_id);
-    if (profile == NULL || (unsigned)browser > MT_MENU_BROWSER_PROGRAM)
+    if (profile == NULL || (unsigned)browser > MT_MENU_BROWSER_OVERLAY)
         return false;
     return browser == MT_MENU_BROWSER_DISK_PROGRAM ?
         profile->disk_program_browser : profile->browser_types[browser] != 0U;
@@ -233,7 +237,7 @@ bool mt_core_frontend_accepts_content(uint32_t core_id,
                                       mt_content_type_t type)
 {
     const core_profile_t *const profile = find_profile(core_id);
-    if (profile == NULL || (unsigned)browser > MT_MENU_BROWSER_PROGRAM ||
+    if (profile == NULL || (unsigned)browser > MT_MENU_BROWSER_OVERLAY ||
         (unsigned)type >= 32U) return false;
     return (profile->browser_types[browser] & CONTENT_MASK(type)) != 0U;
 }

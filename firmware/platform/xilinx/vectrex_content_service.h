@@ -14,7 +14,7 @@ typedef enum {
     MT_VECTREX_CONTENT_OK = 0, MT_VECTREX_CONTENT_INVALID_ARGUMENT,
     MT_VECTREX_CONTENT_READ_FAILED, MT_VECTREX_CONTENT_REJECTED,
     MT_VECTREX_CONTENT_TRANSFER_FAILED, MT_VECTREX_CONTENT_BASIC_FAILED,
-    MT_VECTREX_CONTENT_NO_BASIC_PROGRAM
+    MT_VECTREX_CONTENT_NO_BASIC_PROGRAM, MT_VECTREX_CONTENT_OVERLAY_UNSUPPORTED
 } mt_vectrex_content_status_t;
 typedef struct {
     mt_vectrex_content_status_t status;
@@ -35,6 +35,8 @@ mt_vectrex_content_result_t vectrex_content_service_restart_basic(void);
 bool vectrex_content_service_cartridge_attached(void);
 bool vectrex_content_service_basic_selected(void);
 const char *vectrex_content_service_cartridge_name(void);
+/* Empty when the last accepted content operation had no artwork warning. */
+const char *vectrex_content_service_overlay_warning(void);
 int vectrex_content_service_read_bios(uint16_t address, uint8_t *data, size_t count);
 const char *vectrex_content_status_name(mt_vectrex_content_status_t);
 #endif

@@ -17,6 +17,7 @@ module tb_control_regs;
     logic irq;
     logic load_submit_ready = 1'b1;
     logic core_load_error = 1'b0;
+    logic [1:0] vectrex_overlay_status = 2'b00;
     logic load_submit;
     logic [7:0] load_kind;
     logic [7:0] load_data;
@@ -27,6 +28,7 @@ module tb_control_regs;
     logic load_epoch;
     logic load_abort;
     logic load_abort_epoch;
+    logic [7:0] load_abort_kind;
     logic load_error_clear;
     logic input_submit_ready = 1'b1;
     logic input_submit;
@@ -74,6 +76,7 @@ module tb_control_regs;
         .core_variant_index(32'd1),
         .core_ready(1'b1), .load_submit_ready(load_submit_ready),
         .core_load_error(core_load_error),
+        .vectrex_overlay_status(vectrex_overlay_status),
         .input_submit_ready(input_submit_ready),
         .media_request_valid(media_request_valid),
         .media_request_write(media_request_write),
@@ -99,6 +102,7 @@ module tb_control_regs;
         .load_total(load_total), .load_first(load_first),
         .load_last(load_last), .load_epoch(load_epoch),
         .load_abort(load_abort), .load_abort_epoch(load_abort_epoch),
+        .load_abort_kind(load_abort_kind),
         .load_error_clear(load_error_clear),
         .input_submit(input_submit), .input_code(input_code),
         .input_value(input_value),
@@ -357,14 +361,14 @@ module tb_control_regs;
         write_reg(MT_REG_COMMAND_SEQ, 32'd10, 4'hF);
         write_reg(MT_REG_COMMAND_OPCODE, MT_COMMAND_STREAM_ABORT, 4'hF);
         write_reg(MT_REG_COMMAND_DOORBELL, 32'd10, 4'hF);
-        check_value(load_abort && load_abort_epoch == dut.stream_epoch &&
+        check_value(load_abort && load_abort_epoch == dut.stream_epoch && load_abort_kind == 8'h01 &&
                     dut.stream_aborted,
                     "stream abort emits and marks the current epoch");
         expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_OK, "stream abort");
         write_reg(MT_REG_COMMAND_SEQ, 32'd110, 4'hF);
         write_reg(MT_REG_COMMAND_OPCODE, MT_COMMAND_STREAM_ABORT, 4'hF);
         write_reg(MT_REG_COMMAND_DOORBELL, 32'd110, 4'hF);
-        check_value(load_abort && load_abort_epoch == dut.stream_epoch &&
+        check_value(load_abort && load_abort_epoch == dut.stream_epoch && load_abort_kind == 8'h01 &&
                     dut.stream_aborted,
                     "repeated stream abort keeps the same epoch");
         expect_read(MT_REG_STATUS,
@@ -582,17 +586,29 @@ module tb_control_regs;
         expect_read(MT_REG_ERROR, 32'd0, "load errors cleared");
 
         expect_read(MT_REG_BORDER_CONFIG,32'h670,"border default");
+        expect_read(MT_REG_VECTREX_VIDEO_CONFIG,32'hB,"Vectrex video default");
+        write_reg(MT_REG_VECTREX_VIDEO_CONFIG,32'hFFFFFFFF,4'hF);
+        expect_read(MT_REG_VECTREX_VIDEO_CONFIG,32'h1F,"Vectrex reserved bits");
+        write_reg(MT_REG_VECTREX_VIDEO_CONFIG,32'h00,4'h2);
+        expect_read(MT_REG_VECTREX_VIDEO_CONFIG,32'h1F,"Vectrex byte strobes");
+        write_reg(MT_REG_VECTREX_VIDEO_CONFIG,32'hB,4'h1);
+        expect_read(MT_REG_VECTREX_VIDEO_CONFIG,32'hB,"Vectrex config restore");
+        expect_read(MT_REG_VECTREX_OVERLAY_STATUS,32'h0,"Vectrex status reset");
+        vectrex_overlay_status = 2'b01;
+        expect_read(MT_REG_VECTREX_OVERLAY_STATUS,32'h1,"Vectrex loaded status");
+        vectrex_overlay_status = 2'b10;
+        expect_read(MT_REG_VECTREX_OVERLAY_STATUS,32'h2,"Vectrex error status");
         write_reg(MT_REG_BORDER_CONFIG,32'hFFFFFFFF,4'hF);
         expect_read(MT_REG_BORDER_CONFIG,32'h14F1,"border clamp and reserved bits");
         write_reg(MT_REG_BORDER_CONFIG,32'h00000008,4'h1);
         expect_read(MT_REG_BORDER_CONFIG,32'h1408,"border byte strobes");
         write_reg(MT_REG_BORDER_CONFIG,0,4'h2);
         expect_read(MT_REG_BORDER_CONFIG,32'h108,"padding minimum");
-        expect_read(12'h0C4,32'd0,"unused register reads zero");
+        expect_read(12'h0CC,32'd0,"unused register reads zero");
         @(negedge clk);rd_en=1'b1;
         @(negedge clk);rd_en=1'b0;
         expect_read(MT_REG_ERROR,MT_ERROR_BAD_READ,"unused register read rejected");
-        write_reg(12'h0C4,32'd1,4'hF);
+        write_reg(12'h0CC,32'd1,4'hF);
         expect_read(MT_REG_ERROR,MT_ERROR_BAD_READ | MT_ERROR_BAD_WRITE,
                     "unused register write rejected");
         $display("PASS: control registers");

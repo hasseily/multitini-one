@@ -37,6 +37,22 @@ be remembered. BASIC Reset uses the full in-session path.
 The shared browser retains its 95-byte individual-name and 144-entry limits
 (including the parent entry). Larger directories should be split into folders.
 
+With an ABI 0.13 Vectrex image, put MiSTer `.ovr` artwork beside the matching
+game and give it the same filename stem: `Arcade/berzerk.vec` uses
+`Arcade/berzerk.ovr`, and `Vecalabeth/vec.bas` uses `Vecalabeth/vec.ovr`.
+The BIOS-only Mine Storm game uses `Mine_Storm.ovr` in the media root.
+The separate **Overlay** media browser loads artwork without resetting a
+running native game. Switching content without a usable sidecar clears the
+old artwork. Missing artwork is normal; malformed or unreadable sidecars
+produce a warning while the selected game still runs. Invalid manual overlay
+files preserve the current artwork.
+
+Use the three Vectrex controls in **Video** to hide artwork or adjust its
+brightness and the beam gain. The defaults are artwork On at 50 percent and
+2x beam gain. Native games and Vectrex32 use the same overlay display path.
+An updated firmware and Vectrex image are both required; older cores retain
+their existing behavior. See [overlay format and provenance](VECTREX_OVERLAYS.md).
+
 BASIC runs synchronously in the existing menu action. Cooperative callbacks
 service USB during computation, drawing, and frame waits. F12 stops the
 program and returns to the menu. Selecting it again or choosing Reset core

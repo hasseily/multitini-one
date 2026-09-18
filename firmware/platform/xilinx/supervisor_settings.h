@@ -13,10 +13,12 @@
 #define MT_SETTINGS_JOURNAL_PATH "0:/multitini/settings.bin.mtj"
 #define MT_SETTINGS_MAX_PROFILES 16U
 #define MT_SETTINGS_MEDIA_NAME_MAX 96U
-#define MT_SETTINGS_WIRE_SIZE 4024U
+#define MT_SETTINGS_WIRE_SIZE 4088U
 #define MT_SETTINGS_BORDER_STYLE_DEFAULT 0U
 #define MT_SETTINGS_BORDER_COLOR_DEFAULT 7U
 #define MT_SETTINGS_BORDER_PADDING_DEFAULT 6U
+#define MT_SETTINGS_VECTREX_BEAM_GAIN_DEFAULT 1U
+#define MT_SETTINGS_VECTREX_OVERLAY_OPACITY_DEFAULT 1U
 
 typedef struct {
     char core_id[MT_CORE_PACKAGE_ID_MAX];
@@ -31,6 +33,9 @@ typedef struct {
     uint8_t border_style;
     uint8_t border_color;
     uint8_t border_padding;
+    bool vectrex_overlay_enabled;
+    uint8_t vectrex_beam_gain;
+    uint8_t vectrex_overlay_opacity;
 } mt_core_settings_profile_t;
 
 typedef struct {
@@ -80,6 +85,9 @@ bool mt_supervisor_settings_remember_c64_cpu_turbo(
 bool mt_supervisor_settings_remember_borders(
     mt_supervisor_settings_t *settings, const char *core_id, bool enabled,
     uint8_t style, uint8_t color, uint8_t padding);
+bool mt_supervisor_settings_remember_vectrex_video(
+    mt_supervisor_settings_t *settings, const char *core_id, bool enabled,
+    uint8_t beam_gain, uint8_t overlay_opacity);
 
 mt_settings_result_t mt_supervisor_settings_load(
     mt_supervisor_settings_t *settings);

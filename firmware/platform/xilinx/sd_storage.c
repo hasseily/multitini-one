@@ -249,6 +249,23 @@ mt_sd_result_t mt_sd_storage_read_file_optional_exact(
     return read_result;
 }
 
+mt_sd_result_t mt_sd_storage_read_file_optional_max(
+    const char *path, uint8_t *dst, size_t capacity, bool *found)
+{
+    mt_sd_result_t read_result;
+    if (found == NULL) {
+        return result(MT_SD_INVALID_ARGUMENT, FR_INVALID_PARAMETER, 0U);
+    }
+    *found = false;
+    read_result = mt_sd_storage_read_file_max(path, dst, capacity);
+    if (read_result.status == MT_SD_OPEN_FAILED &&
+        read_result.backend_status == (unsigned)FR_NO_FILE) {
+        return result(MT_SD_OK, FR_OK, 0U);
+    }
+    if (read_result.status == MT_SD_OK) *found = true;
+    return read_result;
+}
+
 mt_sd_result_t mt_sd_storage_list(const char *path, mt_sd_list_fn callback,
                                   void *context)
 {

@@ -18,7 +18,8 @@ typedef enum {
     MT_CONTENT_GB_CART,
     MT_CONTENT_GBC_CART,
     MT_CONTENT_VECTREX_CART,
-    MT_CONTENT_VECTREX_BASIC
+    MT_CONTENT_VECTREX_BASIC,
+    MT_CONTENT_VECTREX_OVERLAY
 } mt_content_type_t;
 
 typedef enum {

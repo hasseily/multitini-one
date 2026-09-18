@@ -26,6 +26,7 @@ add_library(multitini_common STATIC
     firmware/common/gameboy_hid_input.c
     firmware/common/vectrex_boot.c
     firmware/common/vectrex_hid_input.c
+    firmware/common/vectrex_overlay.c
     firmware/common/menu.c
     firmware/common/media_browser.c
     firmware/common/supervisor.c
@@ -125,6 +126,10 @@ add_test(NAME media_browser COMMAND test_media_browser)
 add_executable(test_core_link tests/host/test_core_link.c)
 target_link_libraries(test_core_link PRIVATE multitini_common)
 add_test(NAME core_link COMMAND test_core_link)
+
+add_executable(test_vectrex_overlay tests/host/test_vectrex_overlay.c)
+target_link_libraries(test_vectrex_overlay PRIVATE multitini_common)
+add_test(NAME vectrex_overlay COMMAND test_vectrex_overlay)
 
 add_executable(test_core_package tests/host/test_core_package.c)
 target_link_libraries(test_core_package PRIVATE multitini_common)

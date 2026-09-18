@@ -10,7 +10,9 @@
 
 #define LEGACY_WIRE_SIZE 3960U
 #define LEGACY_PROFILE_SIZE 244U
-#define PROFILE_SIZE 248U
+#define V3_WIRE_SIZE 4024U
+#define V3_PROFILE_SIZE 248U
+#define PROFILE_SIZE 252U
 
 static mt_sd_status_t recover_status;
 static mt_sd_status_t read_status;
@@ -52,23 +54,24 @@ static void update_stored_crc(void)
     store_u32_le(stored_file + 20U, ~crc);
 }
 
-/* The old on-card layout had no border bytes and a different profile stride.
- * Derive a complete legacy image, including unused slots, for both readers. */
+/* Derive each shipped older layout, including every unused profile slot. */
 static void convert_stored_to_legacy(uint32_t schema)
 {
     uint8_t current[MT_SETTINGS_WIRE_SIZE];
+    const size_t profile_size = schema == 3U ? V3_PROFILE_SIZE : LEGACY_PROFILE_SIZE;
+    const size_t wire_size = schema == 3U ? V3_WIRE_SIZE : LEGACY_WIRE_SIZE;
     size_t index;
     assert(stored_size == MT_SETTINGS_WIRE_SIZE);
     memcpy(current, stored_file, sizeof(current));
     memset(stored_file, 0, sizeof(stored_file));
     memcpy(stored_file, current, 56U);
     for (index = 0U; index < MT_SETTINGS_MAX_PROFILES; ++index) {
-        memcpy(stored_file + 56U + index * LEGACY_PROFILE_SIZE,
-               current + 56U + index * PROFILE_SIZE, LEGACY_PROFILE_SIZE);
+        memcpy(stored_file + 56U + index * profile_size,
+               current + 56U + index * PROFILE_SIZE, profile_size);
     }
-    stored_size = LEGACY_WIRE_SIZE;
+    stored_size = wire_size;
     store_u32_le(stored_file + 8U, schema);
-    store_u32_le(stored_file + 12U, LEGACY_WIRE_SIZE);
+    store_u32_le(stored_file + 12U, (uint32_t)wire_size);
     update_stored_crc();
 }
 
@@ -96,11 +99,12 @@ mt_sd_result_t mt_sd_storage_read_file_optional_exact(
 {
     assert(strcmp(path, MT_SETTINGS_PATH) == 0);
     assert(destination != NULL && found != NULL);
-    assert(expected_size == MT_SETTINGS_WIRE_SIZE || expected_size == LEGACY_WIRE_SIZE);
+    assert(expected_size == MT_SETTINGS_WIRE_SIZE || expected_size == LEGACY_WIRE_SIZE ||
+           expected_size == V3_WIRE_SIZE);
     ++read_calls;
     *found = false;
     if (read_status != MT_SD_OK) return sd_result(read_status, 0U);
-    if (expected_size == LEGACY_WIRE_SIZE) {
+    if (expected_size != MT_SETTINGS_WIRE_SIZE) {
         if (disappear_on_retry) file_exists = false;
         if (retry_status != MT_SD_OK) return sd_result(retry_status, 0U);
     }
@@ -291,7 +295,7 @@ static void test_borders(void)
         assert(mt_supervisor_settings_remember_borders(&settings, "vectrex",
             enabled, style, color, padding));
         assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
-        assert(stored_file[8U] == 3U && stored_size == 4024U);
+        assert(stored_file[8U] == 4U && stored_size == 4088U);
         assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
         profile = mt_supervisor_settings_find(&loaded, "vectrex");
         assert(profile->border_enabled == enabled && profile->border_style == style &&
@@ -326,12 +330,66 @@ static void test_borders(void)
     assert(memcmp(&settings, &preserved, sizeof(settings)) == 0);
 }
 
+static void test_vectrex_video_settings(void)
+{
+    static const uint8_t bad_wire[][2] = {{0U, 2U}, {1U, 4U}, {2U, 4U}, {3U, 1U}};
+    mt_supervisor_settings_t settings;
+    mt_supervisor_settings_t loaded;
+    mt_supervisor_settings_t before;
+    uint8_t valid_wire[MT_SETTINGS_WIRE_SIZE];
+    size_t value;
+    reset_fake();
+    mt_supervisor_settings_defaults(&settings);
+    before = settings;
+    assert(!mt_supervisor_settings_remember_vectrex_video(&settings, "vectrex", true, 4U, 1U));
+    assert(!mt_supervisor_settings_remember_vectrex_video(&settings, "vectrex", true, 1U, 255U));
+    assert(!mt_supervisor_settings_remember_vectrex_video(&settings, "c64", true, 1U, 1U));
+    assert(!mt_supervisor_settings_remember_vectrex_video(&settings, NULL, true, 1U, 1U));
+    assert(!mt_supervisor_settings_remember_vectrex_video(NULL, "vectrex", true, 1U, 1U));
+    assert(memcmp(&settings, &before, sizeof(settings)) == 0);
+    assert(mt_supervisor_settings_remember_core(&settings, "vectrex", "native"));
+    assert(mt_supervisor_settings_remember_variant(&settings, "c64", "pal"));
+    assert(settings.profiles[0].vectrex_overlay_enabled &&
+           settings.profiles[0].vectrex_beam_gain == 1U && settings.profiles[0].vectrex_overlay_opacity == 1U);
+    for (value = 0U; value < 32U; ++value) {
+        const bool enabled = (value & 1U) != 0U;
+        const uint8_t gain = (uint8_t)((value >> 1U) & 3U);
+        const uint8_t opacity = (uint8_t)((value >> 3U) & 3U);
+        assert(mt_supervisor_settings_remember_vectrex_video(&settings, "vectrex", enabled, gain, opacity));
+        assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
+        assert(stored_file[8U] == 4U && stored_size == 4088U && stored_file[56U + 251U] == 0U);
+        assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
+        assert(memcmp(&loaded, &settings, sizeof(settings)) == 0);
+        assert(loaded.profiles[1].vectrex_beam_gain == 1U &&
+               loaded.profiles[1].vectrex_overlay_opacity == 1U);
+    }
+    memcpy(valid_wire, stored_file, sizeof(valid_wire));
+    before = settings;
+    loaded = settings; loaded.profiles[0].vectrex_beam_gain = 4U;
+    assert(mt_supervisor_settings_save(&loaded).status == MT_SETTINGS_INVALID_ARGUMENT);
+    loaded = settings; loaded.profiles[0].vectrex_overlay_opacity = 255U;
+    assert(mt_supervisor_settings_save(&loaded).status == MT_SETTINGS_INVALID_ARGUMENT);
+    assert(memcmp(stored_file, valid_wire, sizeof(valid_wire)) == 0);
+    for (value = 0U; value < sizeof(bad_wire) / sizeof(bad_wire[0]); ++value) {
+        stored_file[56U + 248U + bad_wire[value][0]] = bad_wire[value][1];
+        update_stored_crc();
+        assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
+        assert(loaded.profile_count == 0U);
+        memcpy(stored_file, valid_wire, sizeof(valid_wire));
+    }
+    /* Reserved bytes are rejected even in unused profile slots with a valid CRC. */
+    stored_file[MT_SETTINGS_WIRE_SIZE - 1U] = 1U;
+    update_stored_crc();
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
+    assert(memcmp(&settings, &before, sizeof(settings)) == 0);
+}
+
 static void test_legacy_migration(void)
 {
     mt_supervisor_settings_t settings;
     mt_supervisor_settings_t loaded;
     mt_supervisor_settings_t expected;
-    uint8_t legacy_wire[LEGACY_WIRE_SIZE];
+    uint8_t legacy_wire[V3_WIRE_SIZE];
     uint32_t schema;
     size_t index;
     reset_fake();
@@ -356,32 +414,41 @@ static void test_legacy_migration(void)
             (uint8_t)(index % 5U), (uint8_t)index, (uint8_t)(index + 1U)));
     }
     settings.auto_boot = true;
-    expected = settings;
-    for (index = 0U; index < expected.profile_count; ++index) {
-        expected.profiles[index].border_enabled = false;
-        expected.profiles[index].border_style = 0U;
-        expected.profiles[index].border_color = 7U;
-        expected.profiles[index].border_padding = 6U;
-    }
-    for (schema = 1U; schema <= 2U; ++schema) {
+    assert(mt_supervisor_settings_remember_vectrex_video(&settings, "vectrex", false, 3U, 0U));
+    for (schema = 1U; schema <= 3U; ++schema) {
+        const size_t wire_size = schema == 3U ? V3_WIRE_SIZE : LEGACY_WIRE_SIZE;
+        expected = settings;
+        for (index = 0U; index < expected.profile_count; ++index) {
+            if (schema < 3U) {
+                expected.profiles[index].border_enabled = false;
+                expected.profiles[index].border_style = 0U;
+                expected.profiles[index].border_color = 7U;
+                expected.profiles[index].border_padding = 6U;
+            }
+            expected.profiles[index].vectrex_overlay_enabled = true;
+            expected.profiles[index].vectrex_beam_gain = 1U;
+            expected.profiles[index].vectrex_overlay_opacity = 1U;
+        }
         assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
         convert_stored_to_legacy(schema);
-        memcpy(legacy_wire, stored_file, sizeof(legacy_wire));
+        memcpy(legacy_wire, stored_file, wire_size);
         read_calls = 0U;
         assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
-        assert(read_calls == 2U && stored_size == LEGACY_WIRE_SIZE);
-        expected.profiles[0].c64_fast_roms = schema == 2U;
+        assert(read_calls == 2U && stored_size == wire_size);
+        expected.profiles[0].c64_fast_roms = schema != 1U;
         assert(memcmp(&loaded, &expected, sizeof(loaded)) == 0);
-        for (index = 0U; index < loaded.profile_count; ++index)
-            assert_default_borders(&loaded.profiles[index]);
+        if (schema < 3U) {
+            for (index = 0U; index < loaded.profile_count; ++index)
+                assert_default_borders(&loaded.profiles[index]);
+        }
         /* Read-only migration leaves old bytes intact until the user saves. */
-        assert(memcmp(stored_file, legacy_wire, sizeof(legacy_wire)) == 0);
+        assert(memcmp(stored_file, legacy_wire, wire_size) == 0);
         assert(mt_supervisor_settings_save(&loaded).status == MT_SETTINGS_OK);
-        assert(stored_size == MT_SETTINGS_WIRE_SIZE && stored_file[8U] == 3U);
+        assert(stored_size == MT_SETTINGS_WIRE_SIZE && stored_file[8U] == 4U);
         assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
         assert(memcmp(&loaded, &expected, sizeof(loaded)) == 0);
-        memcpy(stored_file, legacy_wire, sizeof(legacy_wire));
-        stored_size = LEGACY_WIRE_SIZE;
+        memcpy(stored_file, legacy_wire, wire_size);
+        stored_size = wire_size;
         stored_file[stored_size - 1U] ^= 1U;
         assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
         assert(loaded.profile_count == 0U && !loaded.auto_boot);
@@ -394,16 +461,17 @@ static void test_legacy_migration(void)
     assert(read_calls == 1U && loaded.profile_count == 0U);
     stored_size = MT_SETTINGS_WIRE_SIZE + 1U;
     assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_READ_FAILED);
-    stored_size = 4088U; /* The intermediate format was never shipped. */
+    stored_size = 4152U; /* Unknown larger layout. */
     assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_READ_FAILED);
     stored_size = 0U;
     assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_READ_FAILED);
     assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
     store_u32_le(stored_file + 8U, 2U);
     assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
-    store_u32_le(stored_file + 8U, 4U);
+    store_u32_le(stored_file + 8U, 5U);
     assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
-    convert_stored_to_legacy(3U);
+    convert_stored_to_legacy(1U);
+    store_u32_le(stored_file + 8U, 3U);
     assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
     store_u32_le(stored_file + 8U, 2U);
     retry_status = MT_SD_READ_FAILED;
@@ -542,6 +610,7 @@ int main(void)
                   "unknown settings status") == 0);
     test_vectrex_cartridge_paths();
     test_borders();
+    test_vectrex_video_settings();
     test_legacy_migration();
     return 0;
 }

@@ -94,6 +94,9 @@ core/gameboy/ports/gb.v
 core/gameboy/multitini_gameboy_adapter.sv
 board/multitini_gameboy_video_bridge.sv
 [vectrex]
+core/vectrex/multitini_vectrex_psram_burst.sv
+core/vectrex/multitini_vectrex_overlay.sv
+core/vectrex/multitini_vectrex_compositor.sv
 ../third_party/vectrex/cpu/mc6809i.v
 core/vectrex/multitini_vectrex_cpu.sv
 core/vectrex/chips/via6522.v
@@ -130,5 +133,8 @@ board/multitini_gameboy_psram_path.sv
 board/multitini_one_top.sv
 ../third_party/appletini/constraints/multitini_pins.xdc
 board/multitini_psram_iob.xdc
+[vectrex]
+board/multitini_vectrex_psram_timing.xdc
+[common]
 board/multitini_timing.xdc
 board/multitini_psram_timing.xdc

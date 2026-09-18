@@ -444,20 +444,23 @@ static void test_settings_journal_migration(void)
     assert(mt_supervisor_settings_remember_cartridge(&original, "vectrex",
         "Classics/Arcade Games/Star Castle.vec"));
     assert(mt_supervisor_settings_remember_borders(&original, "vectrex", true, 2U, 9U, 3U));
+    assert(mt_supervisor_settings_remember_vectrex_video(&original, "vectrex", false, 3U, 0U));
     original.auto_boot = true;
     assert(mt_supervisor_settings_save(&original).status == MT_SETTINGS_OK);
     assert(target_size == MT_SETTINGS_WIRE_SIZE && !journal_exists);
     memcpy(current_wire, target_data, sizeof(current_wire));
-    for (schema = 1U; schema <= 3U; ++schema) {
-        const size_t wire_size = schema == 3U ? MT_SETTINGS_WIRE_SIZE : 3960U;
+    for (schema = 1U; schema <= 4U; ++schema) {
+        const size_t wire_size = schema == 4U ? MT_SETTINGS_WIRE_SIZE :
+            (schema == 3U ? 4024U : 3960U);
         unsigned fault;
         memcpy(wire, current_wire, sizeof(wire));
         expected = original;
-        if (schema != 3U) {
+        if (schema != 4U) {
             uint32_t crc;
+            const size_t profile_size = schema == 3U ? 248U : 244U;
             for (index = 0U; index < MT_SETTINGS_MAX_PROFILES; ++index) {
-                memcpy(wire + 56U + index * 244U,
-                       current_wire + 56U + index * 248U, 244U);
+                memcpy(wire + 56U + index * profile_size,
+                       current_wire + 56U + index * 252U, profile_size);
             }
             settings_store_u32(wire + 8U, schema);
             settings_store_u32(wire + 12U, (uint32_t)wire_size);
@@ -465,12 +468,17 @@ static void test_settings_journal_migration(void)
             settings_store_u32(wire + 16U, crc);
             settings_store_u32(wire + 20U, ~crc);
             for (index = 0U; index < expected.profile_count; ++index) {
-                expected.profiles[index].border_enabled = false;
-                expected.profiles[index].border_style = 0U;
-                expected.profiles[index].border_color = 7U;
-                expected.profiles[index].border_padding = 6U;
+                if (schema < 3U) {
+                    expected.profiles[index].border_enabled = false;
+                    expected.profiles[index].border_style = 0U;
+                    expected.profiles[index].border_color = 7U;
+                    expected.profiles[index].border_padding = 6U;
+                }
+                expected.profiles[index].vectrex_overlay_enabled = true;
+                expected.profiles[index].vectrex_beam_gain = 1U;
+                expected.profiles[index].vectrex_overlay_opacity = 1U;
             }
-            expected.profiles[0].c64_fast_roms = schema == 2U;
+            expected.profiles[0].c64_fast_roms = schema != 1U;
         }
         /* Real storage optional/exact readers must accept each on-card length
          * without writing anything when there is no outstanding journal. */
@@ -498,7 +506,7 @@ static void test_settings_journal_migration(void)
             assert(memcmp(&loaded, &expected, sizeof(loaded)) == 0);
             /* Saving a migrated file always writes the complete new format. */
             assert(mt_supervisor_settings_save(&loaded).status == MT_SETTINGS_OK);
-            assert(target_size == MT_SETTINGS_WIRE_SIZE && target_data[8U] == 3U);
+            assert(target_size == MT_SETTINGS_WIRE_SIZE && target_data[8U] == 4U);
             assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
             assert(memcmp(&loaded, &expected, sizeof(loaded)) == 0);
         }
@@ -597,6 +605,31 @@ int main(void)
             destination, sizeof(destination), &found);
         assert(result.status == MT_SD_OK && found);
         assert(memcmp(destination, data, sizeof(data)) == 0);
+    }
+
+    {
+        bool found = true;
+        open_status = FR_NO_FILE;
+        result = mt_sd_storage_read_file_optional_max("0:/art.ovr", destination,
+            sizeof(destination), &found);
+        assert(result.status == MT_SD_OK && !found && result.size == 0U);
+        open_status = FR_DISK_ERR;
+        result = mt_sd_storage_read_file_optional_max("0:/art.ovr", destination,
+            sizeof(destination), &found);
+        assert(result.status == MT_SD_OPEN_FAILED && !found);
+        open_status = FR_OK;
+        fake_file_size = sizeof(data) - 2U;
+        result = mt_sd_storage_read_file_optional_max("0:/art.ovr", destination,
+            sizeof(destination), &found);
+        assert(result.status == MT_SD_OK && found && result.size == sizeof(data) - 2U);
+        assert(memcmp(destination, data, result.size) == 0);
+        fake_file_size = sizeof(data) + 1U;
+        result = mt_sd_storage_read_file_optional_max("0:/art.ovr", destination,
+            sizeof(destination), &found);
+        assert(result.status == MT_SD_TOO_LARGE && !found);
+        assert(mt_sd_storage_read_file_optional_max("0:/art.ovr", destination,
+            sizeof(destination), NULL).status == MT_SD_INVALID_ARGUMENT);
+        fake_file_size = sizeof(data);
     }
 
     dir_names[0] = "disk.d64";

@@ -48,6 +48,12 @@ The reset value is `0x00000670`. Control-to-video transfer preserves the whole
 setting and applies changes at vertical blank.
 No game clocks, source timing, or framebuffer contents depend on these settings.
 
+Vectrex ABI 0.13 also adds **Overlay**, **Overlay brightness** and **Beam
+brightness** to this page. Artwork brightness ranges from 25 to 100 percent;
+beam gain ranges from 1x to 4x with saturation. Defaults are On, 50 percent,
+and 2x. These controls preserve the same game window and border placement.
+See [Vectrex overlays](VECTREX_OVERLAYS.md) for the file format and settings.
+
 ## Acceptance
 
 Directed checks cover menu navigation, settings migration and failure recovery,
