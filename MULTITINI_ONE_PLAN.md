@@ -2,6 +2,9 @@
 
 Status: planning baseline, written 2026-08-29
 
+Scope update, 2026-09-18: ship one C64 variant, PAL, with nominal 60 Hz DVI
+output. C64 NTSC is no longer part of the build, package, or release gates.
+
 ## 1. Goal
 
 Use the Appletini ONE card as a stand-alone FPGA computer, outside an Apple II.
@@ -14,7 +17,7 @@ on this board with a clean path to more cores.
 
 The first C64 release should support:
 
-- PAL and NTSC video through the board's DVI output.
+- One PAL C64 variant through the board's nominal 60 Hz DVI output.
 - Audio through the AK4493 DAC, with SPDIF as a useful test path.
 - USB keyboard and common USB gamepads.
 - C64 system ROMs supplied by the user unless shipping rights are secured.
@@ -274,7 +277,7 @@ First show a stand-alone test pattern through the existing TFP410 path. Then
 show raw C64 video without a scaler. Add a small scaler only if the display path
 needs one.
 
-Test PAL and NTSC separately. Record:
+Test the PAL C64 source and nominal 60 Hz output. Record:
 
 - Core pixel and line rates.
 - DVI output mode and pixel clock.
@@ -480,7 +483,7 @@ Tasks:
 
 Gate:
 
-- The core reaches the C64 ready screen in PAL and NTSC.
+- The PAL core reaches the C64 ready screen on the nominal 60 Hz output.
 - Keyboard and joystick work.
 - A SID test plays through the DAC.
 - Timing closes with no unmatched clock or timing-rule query.
@@ -679,7 +682,7 @@ connect DVI, audio, a USB keyboard or pad, and an SD card, then:
 1. Boot into a clear menu or simple start screen.
 2. Select user-supplied C64 ROMs.
 3. Load a PRG, mount a D64 or G64 image, or load a supported CRT file.
-4. Run it with stable PAL or NTSC video and sound.
+4. Run the PAL core with stable nominal 60 Hz output and sound.
 5. Save disk changes without file loss.
 6. Reset, power off, update, and recover without a development tool in the
    normal case.

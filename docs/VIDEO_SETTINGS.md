@@ -25,8 +25,9 @@ the 1920×1080 output, not emulated machine pixels. The C64's own VIC border is
 part of its machine image and remains intact.
 
 The original centered game windows are preserved: C64 PAL is 1528×1080,
-C64 NTSC is 1616×1000, Game Boy / Color is 960×864, and Vectrex / Vectrex32
-is 810×1080. There is no game-window size control.
+Game Boy / Color is 960×864, and Vectrex / Vectrex32 is 810×1080. There is no
+game-window size control. The current package supplies one C64 variant, PAL;
+display output remains nominal 60 Hz.
 
 Firmware and core images with shell ABI 0.12 provide these controls. Older ABI
 0.11 images still load; the new Video controls explain that an updated core

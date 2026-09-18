@@ -12,6 +12,9 @@ streaming color pipeline. CPU1 computes color tables when settings change;
 CPU0 handles USB, storage, UI, and register access. Neither CPU schedules
 individual video frames or touches the capture, output, or history pools.
 
+The VID4 package supplies one C64 variant, PAL, alongside GBC and Vectrex.
+C64 NTSC is excluded from the current build and package set.
+
 ## Fixed output cadence
 
 All machine variants use a 148.5 MHz pixel clock and 2200 × 1125 total timing.
@@ -90,7 +93,7 @@ then rounds the blend to the nearest RGB888 value before the next pass.
 | Source adapter | Output scale | Blur blend per axis |
 | --- | ---: | ---: |
 | Vectrex / Vectrex32 | 3:2 | 1 |
-| C64 PAL / NTSC | 4:1 | 9/64 |
+| C64 PAL | 4:1 | 9/64 |
 | Game Boy / Color | 6:1 | 1/16 |
 
 Light remains horizontal only. Medium and Strong normalize the horizontal
@@ -362,3 +365,37 @@ CPU1 startup, SD catalog, and supervisor standby all pass. The installed
 The matching machine images still require installation on SD. The earlier
 GBC display confirmation does not establish sustained 60 Hz performance
 for these new images.
+
+## VID4 qualified build matrix, 2026-09-18
+
+The selected set is `build/v46` CPU firmware and the four `vid4-r1` FPGA
+builds below, using the unchanged HP0+HP1 platform from `build/v40`.
+C64 has one packaged variant, PAL. Its source timing remains PAL while
+the shared display raster remains nominal 60 Hz. The NTSC attempt is
+excluded from the package and is no longer a release requirement.
+
+| Image | Setup slack | Hold slack | Pulse-width slack |
+| --- | ---: | ---: | ---: |
+| Supervisor | +0.386 ns | +0.071 ns | +1.833 ns |
+| C64 PAL | +0.166 ns | +0.031 ns | +0.265 ns |
+| GBC with PSRAM | +0.333 ns | +0.025 ns | +0.265 ns |
+| Vectrex | +0.067 ns | +0.003 ns | +1.833 ns |
+
+All four passed the full routing, timing coverage, bus-skew, and CDC gates.
+C64 and GBC retain only the eight reviewed external PSRAM CDC waivers.
+All captured CPU and FPGA source hashes match the selected build inputs.
+The focused recovery suite passed 14 tests, the package gate suite passed
+10 tests, and the strict host compile of the Xilinx entry point passed.
+
+Each FPGA build used fresh synthesis and an explicitly selected immutable
+checkpoint: the qualified VIDF supervisor or the corresponding qualified
+VID3 machine image. Automatic checkpoint selection remained disabled with
+the `TimingClosure` directive. Actual reuse was 97.11–98.31% of cells and
+85.68–93.37% of nets; no fallback or timing-constraint relaxation was used.
+The package retains the exact checkpoints, source captures, settings,
+platform, reports, compile commands, and payload audits needed to rebuild.
+
+The final firmware must match the installed VID4 supervisor image byte for
+byte. Machine images still need copying to the SD card and board validation.
+The narrow timing margins make this a test bundle; the physical gameplay
+checks for sustained 60 Hz and zero processing drops remain outstanding.

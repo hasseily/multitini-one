@@ -377,7 +377,7 @@ def verify_core(directory, variants):
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--workspace", required=True, type=Path)
-    for name in ("supervisor", "c64-pal", "c64-ntsc", "gbc", "vectrex"):
+    for name in ("supervisor", "c64-pal", "gbc", "vectrex"):
         result.add_argument("--" + name + "-dir", required=True, type=Path)
     result.add_argument("--vitis", type=Path, default=Path(os.environ.get("XILINX_VITIS", "C:/Xilinx/2025.2/Vitis")))
     result.add_argument("--output", type=Path, default=ROOT / "build/firmware-cpu1-video")
@@ -393,7 +393,7 @@ def main():
     cpu = verify_cpu_images(workspace)
     builds = {}
     for name, machine, ntsc in (("supervisor", "SUPERVISOR", False), ("c64-pal", "C64", False),
-                              ("c64-ntsc", "C64", True), ("gbc", "GBC", False), ("vectrex", "VECTREX", False)):
+                              ("gbc", "GBC", False), ("vectrex", "VECTREX", False)):
         directory = getattr(args, name.replace("-", "_") + "_dir").resolve()
         builds[name] = verify_hardware(directory, machine, ntsc=ntsc)
         require(builds[name]["ps7_init_sha256"] == cpu["ps7_init_sha256"], "FPGA PS configuration differs from selected HP0+HP1 FSBL")
@@ -442,7 +442,7 @@ def main():
     run([ROOT / "scripts/make_firmware_bin.bat", out / "sd/FIRMWARE.BIN", out / "inputs/fsbl.elf",
          out / "inputs/supervisor.bit", out / "inputs/diagnostic.elf"], vitis=vitis)
     core_audits = {}
-    core_specs = (("c64", "Commodore 64", "0x43363420", [("pal", "PAL", "c64-pal"), ("ntsc", "NTSC", "c64-ntsc")]),
+    core_specs = (("c64", "Commodore 64", "0x43363420", [("pal", "PAL", "c64-pal")]),
                   ("gbc", "Game Boy Color", "0x47424320", [("native", "Game Boy / Game Boy Color", "gbc")]),
                   ("vectrex", "Vectrex", "0x56454358", [("native", "Vectrex / Vectrex32", "vectrex")]))
     with tempfile.TemporaryDirectory(prefix="cpu1-video-audit-", dir=ROOT / "build") as temporary:
@@ -478,6 +478,7 @@ def main():
         "Copy sd/ contents to the SD card, preserving existing user media and settings.\n"
         "Use the existing golden updater for FIRMWARE.BIN. No flash is performed here.\n"
         "The supervisor and all supplied machine cores form one matching HP0+HP1/ABI15 set.\n"
+        "C64 supplies one PAL variant; the display output remains nominal 60 Hz.\n"
         "The FPGA scheduler consumes captures in order against the 60 Hz output cadence.\n"
         "HP0 serves capture and scanout; HP1 serves persistence, blur, and bloom.\n"
         "Blur follows each core's source-to-display scale; Vectrex keeps its prior strength.\n"
