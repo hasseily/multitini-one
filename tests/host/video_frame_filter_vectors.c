@@ -27,11 +27,14 @@ static FILE *open_output(const char *directory,const char *name)
 }
 int main(int argc,char **argv)
 {
-    if(argc!=5)return 2;
+    if(argc!=5 && argc!=7)return 2;
     uint32_t width=(uint32_t)strtoul(argv[1],NULL,10);
     uint32_t height=(uint32_t)strtoul(argv[2],NULL,10);
     unsigned exhaustive=(unsigned)strtoul(argv[4],NULL,10);
+    uint32_t scale_num=argc==7 ? (uint32_t)strtoul(argv[5],NULL,10) : 3U;
+    uint32_t scale_den=argc==7 ? (uint32_t)strtoul(argv[6],NULL,10) : 2U;
     if(width==0 || width>640 || height==0 || height>720 || exhaustive>1)return 2;
+    if(scale_num==0 || scale_num>64 || scale_den==0 || scale_den>64)return 2;
     uint32_t count=width*height;
     uint16_t *input=calloc(count,sizeof(*input)),*output=calloc(count,sizeof(*output));
     uint32_t *history=calloc(count,sizeof(*history)),*base=calloc(count,sizeof(*base));
@@ -65,7 +68,8 @@ int main(int argc,char **argv)
             }
             fprintf(inputs,"%06" PRIx32 "\n",persisted[i]);
         }
-        if(!mt_video_frame_process(input,output,history,base,scratch,width,height,&options,0U,pattern!=4))return 4;
+        if(!mt_video_frame_process_scaled(input,output,history,base,scratch,width,height,
+                                          scale_num,scale_den,&options,0U,pattern!=4))return 4;
         for(uint32_t i=0;i<count;++i)fprintf(expected,"%04x\n",(unsigned)output[i]);
         /* Filter must ignore the persistence bits owned by its DMA caller. */
         fprintf(settings,"%02x\n",(bloom<<4)|(blur<<2)|(job&3U));

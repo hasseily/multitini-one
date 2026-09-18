@@ -2,6 +2,7 @@
 `timescale 1ns/1ps
 module tb_video_frame_engine;
     parameter integer WIDTH=13,HEIGHT=9,JOBS=68,FAULT_TESTS=1;
+    parameter integer SCALE_NUM=3,SCALE_DEN=2;
     localparam integer STRIDE=((WIDTH+63)/64)*128,PIXELS=WIDTH*HEIGHT;
     localparam integer FRAME_WORDS=((WIDTH+3)/4)*HEIGHT,HISTORY_WORDS=(PIXELS+1)/2;
     reg clk=0,resetn=0,clear_errors=0,start=0,history_reset=0;
@@ -21,7 +22,8 @@ module tb_video_frame_engine;
     reg rlast=0,rvalid=0,bvalid=0;
     wire [63:0] wdata;
     wire [7:0] wstrb;
-    multitini_video_frame_engine #(.WIDTH(WIDTH),.HEIGHT(HEIGHT),.STRIDE(STRIDE)) dut(.*);
+    multitini_video_frame_engine #(.WIDTH(WIDTH),.HEIGHT(HEIGHT),.STRIDE(STRIDE),
+        .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN)) dut(.*);
 
     reg [15:0] inputs[0:JOBS*PIXELS-1],expected[0:JOBS*PIXELS-1];
     reg [31:0] old[0:JOBS*PIXELS-1],expected_history[0:JOBS*PIXELS-1];

@@ -47,6 +47,8 @@ replacement are separate from steady-state processing qualification.
    persistence/blur/bloom settings.
 2. Blur is horizontal three-tap for Light, separable three-tap for Medium,
    and separable five-tap for Strong. Edges repeat their nearest pixel.
+   VID3 scales each blur pass by the source-to-output pixel ratio as described
+   below; the Vectrex reference appearance is preserved.
 3. Bloom adds a filtered halo at one eighth, one quarter, or one half strength,
    with saturation. It operates independently of blur. Neither blur nor bloom
    feeds back into persistence history. The spatial filter retains four RGB888
@@ -64,6 +66,45 @@ replacement are separate from steady-state processing qualification.
 Menus, diagnostic backgrounds, and decorative borders retain their colors.
 Streaming filters repeat image and overlay boundaries. Frame processing
 includes any artwork already composed by the active machine adapter.
+
+The output-resolution horizontal filter uses balanced, bounded-width sums
+to shorten its 148.5 MHz arithmetic path. Its kernels, rounding, saturation,
+border handling, and pipeline latency are unchanged.
+
+## Blur across source resolutions
+
+The same native filter spans more display pixels when a core has a lower
+source resolution. For example, the old Light filter's one-pixel neighbor is
+six display pixels away for Game Boy / Color, but only 1.5 pixels away for
+Vectrex. VID3 uses the actual scaling ratio already supplied by the machine
+adapter, rather than choosing strength by core name or inferring it from
+frame dimensions alone.
+
+The reference is Vectrex's 3:2 scale. For output scale `s`, each horizontal
+or vertical blur pass blends its center with the filtered value by
+`min(1, (1.5 / s)^2)`. This normalizes the filter's spatial variance in display
+pixels before integer rounding. The factor uses Q8 precision, rounded to the
+nearest value. Each pass retains the existing integer filter calculation,
+then rounds the blend to the nearest RGB888 value before the next pass.
+
+| Source adapter | Output scale | Blur blend per axis |
+| --- | ---: | ---: |
+| Vectrex / Vectrex32 | 3:2 | 1 |
+| C64 PAL / NTSC | 4:1 | 9/64 |
+| Game Boy / Color | 6:1 | 1/16 |
+
+Light remains horizontal only. Medium and Strong normalize the horizontal
+and vertical passes separately, keeping narrow features clearer on enlarged
+native pixels. Bloom retains its existing independent halo calculation, and
+neither spatial effect enters persistence history. Off remains an identity
+operation. The register ABI and saved setting values are unchanged.
+
+The weights are build-time constants. The implementation reuses the native
+line buffers and frame transport; no extra DDR pass or CPU frame work is
+introduced. Throughput and the 60 Hz gameplay acceptance gate are unchanged.
+Two additional pipeline stages add two clocks to the filter's fixed frame
+overhead. Sustained throughput remains one pixel per clock, with the existing
+frame schedule.
 
 ## Memory and ownership
 
@@ -112,8 +153,9 @@ measurement of worst-case board service time.
 The Vitis builder creates separate CPU0 and CPU1 BSPs (`USE_AMP=1` on CPU1),
 bounds ELF load/BSS ranges, embeds the exact CPU1 binary in CPU0, and writes
 `cpu1_manifest.json`. Boot order remains FSBL, PL, CPU0. Use the new HP0+HP1
-hardware platform and matching FSBL, not an older platform export. The VID2
-package build ID is `0x56494432` and its ABI is 0.15.
+hardware platform and matching FSBL, not an older platform export. VID3 uses
+build ID `0x56494433` and retains ABI 0.15; the earlier VID2 test bundle uses
+`0x56494432`.
 
 Settings schema 5 has 290-byte profiles and a 4696-byte file. Nineteen signed
 little-endian 16-bit fields occupy bytes 252–289. Schemas 1–4 migrate with
@@ -192,3 +234,65 @@ Sanitizer instrumentation covers `multitini_common` and
 
 The narrow setup margins qualify this as a test bundle. No image was flashed,
 and uninterrupted 60 Hz gameplay under board load remains unverified.
+
+## VID3 blur validation, 2026-09-18
+
+Light blur preserves 59/63 (94%) of the alternating one-pixel handheld test
+pattern's contrast, compared with zero under the previous native kernel.
+The same tests cover a generic 240x160 source as well as the current 160x144
+Game Boy / Color source; this does not add a GBA core. All 64 Vectrex option
+combinations match the frozen pre-change output and history checksum.
+
+At a common 48-display-pixel period, measured contrast response differs from
+Vectrex by less than half a percentage point across the packaged source
+geometries. This compares blur with Off and averages RGB565 quantizer phases;
+it does not claim identical kernels at every spatial frequency.
+
+The updated reference passed 580 Cortex-A9 NEON/scalar comparisons, including
+all 64 option combinations at six scale ratios. Host validation passed 45 GCC
+tests, 44 Clang ASan/UBSan tests, and 180 Python tests with two skips. The
+sanitizer instrumentation scope remains the same as VID2.
+
+The FPGA filter matched 664,460 reference pixels across 884 jobs. The DMA
+engine matched 1,117,988 output/history pixels across 753 jobs. Under the
+documented injected AXI stalls, the largest 640x720 test took 843,733 clocks
+against a 2,216,666-clock frame budget. Portable and real-XPM integration
+checks passed for all three scaling ratios, including source pauses, ordered
+presentation, live options, drain, and restart. These simulations retain the
+two-frame presentation latency; they do not measure physical DDR contention.
+
+The balanced output-resolution horizontal filter passed 523,264 exhaustive
+center/neighbor-sum/mode cases against the integer kernels. Streaming checks
+passed at all three scales, including composition alignment and 24 actual
+CPU1-generated color tables. All six real-XPM scale/reset configurations
+passed with the same frozen source. The refactor adds no pipeline stages.
+
+## VID3 qualified build matrix, 2026-09-18
+
+Packaging selects the five `vid3-r2` FPGA builds and the matching `build/v43`
+CPU firmware, using the HP0+HP1 platform exported in `build/v40`.
+
+| Image | Setup slack | Hold slack | Pulse-width slack |
+| --- | ---: | ---: | ---: |
+| Supervisor | +0.393 ns | +0.071 ns | +1.833 ns |
+| C64 PAL | +0.154 ns | +0.081 ns | +0.265 ns |
+| C64 NTSC | +0.171 ns | +0.030 ns | +0.265 ns |
+| GBC with PSRAM | +0.337 ns | +0.025 ns | +0.265 ns |
+| Vectrex | +0.053 ns | +0.003 ns | +1.833 ns |
+
+All five builds passed routing, timing coverage, bus-skew, and CDC gates.
+C64 and GBC retain only the eight reviewed external PSRAM CDC waivers.
+The NTSC clock audit confirmed unchanged clock definitions and no unclocked
+or unconstrained endpoints after the physical clock-buffer optimizations.
+
+Each build ran fresh synthesis with an explicitly selected, immutable
+same-core implementation checkpoint. `AUTO_INCREMENTAL_CHECKPOINT=0` and
+`INCREMENTAL_CHECKPOINT.DIRECTIVE=TimingClosure` prevented automatic reference
+selection and targeted timing closure. Measured reuse was 98.97–100% of cells
+and 97.51–100% of nets. The bundle includes all five reference checkpoints,
+their source/settings records, exact build scripts, and rebuild instructions.
+Earlier failed NTSC attempts are archived as historical failures.
+
+The package manifest records exact file hashes. Narrow margins and pending
+board acceptance make this a test bundle. No image was flashed; appearance
+and uninterrupted 60 Hz gameplay under physical board load remain unverified.

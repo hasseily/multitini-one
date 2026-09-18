@@ -54,8 +54,8 @@
 
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
 #define MT_SUPERVISOR_CORE_ID UINT32_C(0)
-/* VID2 uses a fixed-rate FPGA frame engine; CPU1 prepares video controls. */
-#define MT_FIRMWARE_BUILD_ID UINT32_C(0x56494432)
+/* VID3 uses source-resolution FPGA effects; CPU1 prepares video controls. */
+#define MT_FIRMWARE_BUILD_ID UINT32_C(0x56494433)
 #define MT_I2C_CLOCK_HZ UINT32_C(100000)
 #define MT_I2C_BUSY_POLLS UINT32_C(1000000)
 #define MT_UART_DRAIN_POLLS UINT32_C(10000000)

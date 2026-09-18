@@ -13,6 +13,7 @@
 // a partially acknowledged result. A wedged AXI slave keeps busy asserted.
 module multitini_video_frame_engine #(
     parameter integer WIDTH=540, HEIGHT=720,
+    parameter integer SCALE_NUM=3, SCALE_DEN=2,
     parameter integer STRIDE=((WIDTH+63)/64)*128,
     parameter [31:0] CAPTURE_BASE=32'h22000000,
     parameter [31:0] OUTPUT_BASE=32'h22400000,
@@ -223,7 +224,8 @@ module multitini_video_frame_engine #(
                       (!use_history || !old_empty) && p0_ready;
     assign source_pop=input_accept && (source_lane==3 || input_x==WIDTH-1);
     assign old_pop=input_accept && use_history && (input_pixels[0] || input_pixels==PIXELS-1);
-    multitini_video_frame_filter #(.WIDTH(WIDTH),.HEIGHT(HEIGHT)) filter(
+    multitini_video_frame_filter #(.WIDTH(WIDTH),.HEIGHT(HEIGHT),
+        .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN)) filter(
         .clk(clk),.resetn(resetn),.start(begin_job),.options(options),
         .in_valid(p2_valid && history_pack_ready),.in_ready(filter_in_ready),.in_rgb(p2_rgb),
         .out_valid(filter_out_valid),.out_ready(filter_out_ready),.out_rgb565(filter_out_rgb),

@@ -159,7 +159,8 @@ module multitini_video_framebuffer #(
         .transport_error(transport_error),.busy(scheduler_busy),.quiescent(scheduler_quiet),
         .processed_frames(processed_frames),.deadline_misses(deadline_misses),.sticky_error(scheduler_error));
 
-    multitini_video_frame_engine #(.WIDTH(WIDTH),.HEIGHT(HEIGHT),.STRIDE(((WIDTH+63)/64)*128)) engine_i(
+    multitini_video_frame_engine #(.WIDTH(WIDTH),.HEIGHT(HEIGHT),.STRIDE(((WIDTH+63)/64)*128),
+        .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN)) engine_i(
         .clk(clk),.resetn(resetn),.start(engine_start),.clear_errors(clear_errors),
         .input_slot(engine_input_slot),.output_slot(engine_output_slot),
         .options(engine_options),.history_reset(engine_history_reset),

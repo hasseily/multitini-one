@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Package explicit VID2/ABI 0.15 builds after source and timing signoff.
+"""Package explicit VID3/ABI 0.15 builds after source and timing signoff.
 
 No discovery or fallback selects an FPGA image, FSBL, platform, or application.
 Use --check-only to audit an already completed matrix without packaging it.
@@ -28,7 +28,7 @@ import audit_vectrex_package as audit
 import capture_vectrex_build_inputs as hardware_inputs
 
 ROOT = Path(__file__).resolve().parents[1]
-BUILD_ID = "56494432"
+BUILD_ID = "56494433"
 ABI = "0.15"
 GUARD = [sys.executable, "-u", str(ROOT / "scripts/run_native_tool.py"), "--"]
 REQUIRED_REPORTS = {
@@ -217,7 +217,7 @@ def verify_hardware(directory, machine, *, ntsc=False):
     require(manifest.get("image_kind") == machine and manifest.get("part") == "xc7z020clg484-2" and
             manifest.get("top") == "multitini_one_top", "Wrong FPGA build manifest")
     generics = manifest["generic"]
-    require(re.search(r"SHELL_BUILD_ID=32'h" + BUILD_ID + r"\b", generics, re.I), "FPGA build is not VID2")
+    require(re.search(r"SHELL_BUILD_ID=32'h" + BUILD_ID + r"\b", generics, re.I), "FPGA build is not VID3")
     active = {"C64": 0, "GBC": 1, "SUPERVISOR": 2, "VECTREX": 3}[machine]
     require(re.search(rf"\bACTIVE_MACHINE={active}\b", generics), "Wrong FPGA active machine")
     require(f"C64_NTSC_MODE=1'b{int(ntsc)}" in generics, "Wrong FPGA PAL/NTSC generic")
@@ -287,7 +287,7 @@ def verify_cpu_images(workspace):
     record = manifest["build_inputs"]
     verify_sources(record["files"])
     require(re.search(r"MT_FIRMWARE_BUILD_ID\s+UINT32_C\(0x" + BUILD_ID + r"\)",
-                      (ROOT / "firmware/platform/xilinx/main.c").read_text(), re.I), "Firmware source is not VID2")
+                      (ROOT / "firmware/platform/xilinx/main.c").read_text(), re.I), "Firmware source is not VID3")
     require("#define MT_ABI_MAJOR 0U" in (ROOT / "firmware/include/multitini_regs.h").read_text() and
             "#define MT_ABI_MINOR 15U" in (ROOT / "firmware/include/multitini_regs.h").read_text() and
             "MT_ABI_MINOR = 16'd15" in (ROOT / "hdl/generated/multitini_regs_pkg.sv").read_text(),
@@ -474,12 +474,14 @@ def main():
     write_json(out / "evidence/payload-audit.json", payload)
     write_json(out / "evidence/timing-audit.json", {name: build["timing"] for name, build in builds.items()})
     (out / "README.txt").write_text(
-        "Multitini VID2 autonomous video test bundle / ABI 0.15\n\n"
+        "Multitini VID3 source-resolution video test bundle / ABI 0.15\n\n"
         "Copy sd/ contents to the SD card, preserving existing user media and settings.\n"
         "Use the existing golden updater for FIRMWARE.BIN. No flash is performed here.\n"
         "The supervisor and all supplied machine cores form one matching HP0+HP1/ABI15 set.\n"
         "The FPGA scheduler consumes captures in order against the 60 Hz output cadence.\n"
         "HP0 serves capture and scanout; HP1 serves persistence, blur, and bloom.\n"
+        "Blur follows each core's source-to-display scale; Vectrex keeps its prior strength.\n"
+        "Low-resolution cores use lighter weights without another frame-buffer pass.\n"
         "The hardware scheduler owns frame buffers and reports missed deadlines as faults.\n"
         "CPU1 computes color-control tables only, in private memory and the shared mailbox.\n"
         "CPU0 installs settings and drains all video engines before a core change.\n"
@@ -487,6 +489,7 @@ def main():
         "No ROMs, games, user data, or settings file are supplied. Board checks are pending.\n\n"
         "source.zip contains the exact dirty source snapshot and license/provenance files.\n"
         "Per-build inputs, timing/CDC reports, compile commands, and payload audits are in evidence/.\n"
+        "Any recovery passes and added implementation settings are archived in validation evidence.\n"
         "Rebuild with Vivado/Vitis 2025.2 and source scripts; selected generics are in each\n"
         "build_manifest.txt and build.tcl. The exported CPU0/CPU1 platform is archived in\n"
         "inputs/used-vitis-platform.zip, with its HP0+HP1 XSA in inputs/platform.xsa.\n"

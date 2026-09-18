@@ -600,6 +600,10 @@ On hardware:
 
 ### Decisions recorded after the baseline plan
 
+- 2026-09-18: Native-resolution blur must account for each adapter's output
+  scale. Keep the existing Vectrex appearance while reducing blur on enlarged
+  low-resolution source pixels; apply the correction independently per axis
+  without adding frame transfers or relaxing uninterrupted 60 Hz gameplay.
 - 2026-09-18: Video output must remain at nominal 60 Hz throughout gameplay,
   with no processing-frame drops. Interruptions while changing cores are
   acceptable. CPU polling, latest-frame selection, or repeated

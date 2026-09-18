@@ -28,29 +28,44 @@ def main():
     before = hashes()
     logs = []
 
-    def run(arguments):
+    def run(arguments, expected_failure=False):
         result = subprocess.run(guard + arguments, cwd=ROOT, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, errors="replace")
-        logs.append({"command": arguments, "returncode": result.returncode, "output": result.stdout})
+        logs.append({"command": arguments, "returncode": result.returncode,
+                     "expected_failure": expected_failure, "output": result.stdout})
         print(result.stdout, end="", flush=True)
-        if result.returncode:
+        if (result.returncode != 0) != expected_failure:
             raise RuntimeError("Native frame filter check failed")
         return result.stdout
 
     oracle = build / ("vectors.exe" if os.name == "nt" else "vectors")
     run([tool("gcc"), "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-Ifirmware/include",
          "tests/host/video_frame_filter_vectors.c", "firmware/common/video_frame.c", "-o", str(oracle)])
-    cases = [(13, 9, 80, 1), (1, 1, 80, 1), (2, 3, 80, 1)]
+    for num, den in ((0, 1), (1, 0), (-1, 2), (2, -1), (65, 1), (1, 65)):
+        simulation = build / "invalid-scale.vvp"
+        run([tool("iverilog"), "-g2012", "-s", "multitini_video_frame_filter",
+             "-P", f"multitini_video_frame_filter.SCALE_NUM={num}",
+             "-P", f"multitini_video_frame_filter.SCALE_DEN={den}",
+             "-o", str(simulation), str(ROOT / sources[0])])
+        output = run([tool("vvp"), str(simulation)], expected_failure=True)
+        if "Blur scale parameters must be in the range 1..64" not in output:
+            raise RuntimeError("Invalid scale did not fail through the parameter guard")
+    cases = [(width, height, 80, 1, num, den)
+             for num, den in ((3, 2), (4, 1), (6, 1))
+             for width, height in ((13, 9), (1, 1), (2, 3))]
+    cases += [(13, 9, 80, 1, 1, 1), (13, 9, 80, 1, 5, 2)]
     if not args.small_only:
-        cases += [(160, 144, 1, 0), (382, 270, 1, 0), (404, 250, 1, 0), (540, 720, 1, 0)]
-    for width, height, jobs, stalls in cases:
-        directory = build / f"{width}x{height}"
+        cases += [(160, 144, 1, 0, 6, 1), (382, 270, 1, 0, 4, 1),
+                  (404, 250, 1, 0, 4, 1), (540, 720, 1, 0, 3, 2)]
+    for width, height, jobs, stalls, num, den in cases:
+        directory = build / f"{width}x{height}-s{num}-{den}"
         directory.mkdir(exist_ok=True)
-        run([str(oracle), str(width), str(height), str(directory), str(int(jobs > 1))])
+        run([str(oracle), str(width), str(height), str(directory), str(int(jobs > 1)), str(num), str(den)])
         simulation = directory / "filter.vvp"
         run([tool("iverilog"), "-g2012", "-Wall", "-Wimplicit", "-s", "tb_video_frame_filter",
              "-P", f"tb_video_frame_filter.WIDTH={width}", "-P", f"tb_video_frame_filter.HEIGHT={height}",
              "-P", f"tb_video_frame_filter.JOBS={jobs}", "-P", f"tb_video_frame_filter.STALL={stalls}",
+             "-P", f"tb_video_frame_filter.SCALE_NUM={num}", "-P", f"tb_video_frame_filter.SCALE_DEN={den}",
              "-o", str(simulation), str(ROOT / sources[0]), str(ROOT / sources[1])])
         output = run([tool("vvp"), str(simulation), "+vectors=" + directory.as_posix()])
         if "PASS native frame filter:" not in output:

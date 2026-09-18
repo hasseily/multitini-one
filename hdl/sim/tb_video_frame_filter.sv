@@ -2,6 +2,7 @@
 `timescale 1ns/1ps
 module tb_video_frame_filter;
     parameter integer WIDTH=13,HEIGHT=9,JOBS=80,STALL=1;
+    parameter integer SCALE_NUM=3,SCALE_DEN=2;
     localparam integer PIXELS=WIDTH*HEIGHT;
     reg clk=0,resetn=0,start=0,in_valid=0,out_ready=0;
     always #3.75 clk=!clk;
@@ -9,7 +10,8 @@ module tb_video_frame_filter;
     reg [23:0] in_rgb=0;
     wire in_ready,out_valid,busy,done;
     wire [15:0] out_rgb565;
-    multitini_video_frame_filter #(.WIDTH(WIDTH),.HEIGHT(HEIGHT)) dut(.*);
+    multitini_video_frame_filter #(.WIDTH(WIDTH),.HEIGHT(HEIGHT),
+        .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN)) dut(.*);
     reg [23:0] inputs[0:JOBS*PIXELS-1];
     reg [15:0] expected[0:JOBS*PIXELS-1];
     reg [5:0] configurations[0:JOBS-1];
@@ -87,14 +89,14 @@ module tb_video_frame_filter;
             wait(done);#1;
             job_cycles=cycles-start_cycle;
             if(sent!=PIXELS || received!=PIXELS || busy)$fatal(1,"Incorrect completion counts/state");
-            if(STALL==0 && job_cycles>(WIDTH+2)*(HEIGHT+2)+10)
+            if(STALL==0 && job_cycles>(WIDTH+2)*(HEIGHT+2)+12)
                 $fatal(1,"Flowing filter exceeded fixed cycle budget: %0d",job_cycles);
             @(negedge clk);running=0;in_valid=0;out_ready=0;
             repeat(3)@(negedge clk);
             if(done || out_valid)$fatal(1,"Job completion/output repeated");
         end
         $display("PASS native frame filter: %0dx%0d, %0d jobs, %0d pixels, stalls=%0d, last cycles=%0d budget=%0d",
-            WIDTH,HEIGHT,JOBS,total,STALL,job_cycles,(WIDTH+2)*(HEIGHT+2)+10);
+            WIDTH,HEIGHT,JOBS,total,STALL,job_cycles,(WIDTH+2)*(HEIGHT+2)+12);
         $finish;
     end
     initial begin #100000000;$fatal(1,"Filter simulation timeout");end

@@ -47,7 +47,8 @@ def build_arm():
     objects = []
     for variant in ("neon", "scalar"):
         obj = BUILD / f"{variant}.o"
-        extra = [f"-Dmt_video_frame_process=mt_video_frame_process_{variant}"]
+        extra = [f"-Dmt_video_frame_process=mt_video_frame_process_{variant}",
+                 f"-Dmt_video_frame_process_scaled=mt_video_frame_process_scaled_{variant}"]
         if variant == "scalar":
             extra += ["-DMT_VIDEO_FRAME_SCALAR=1", "-fno-tree-vectorize"]
         run([compiler] + flags + extra + ["-c", ROOT / "firmware/common/video_frame.c", "-o", obj])
@@ -56,7 +57,7 @@ def build_arm():
     wrapper.write_text('''#include <stdint.h>
 #include <stddef.h>
 #include "multitini_video_frame.h"
-uint32_t params[6];
+uint32_t params[7];
 uint16_t pixels[460800] __attribute__((aligned(32)));
 uint16_t output[2][460800] __attribute__((aligned(32)));
 uint32_t history[2][460800] __attribute__((aligned(32)));
@@ -74,14 +75,14 @@ void *memmove(void *destination,const void *source,size_t size) {
     else while(size--) *d++=*s++;
     return destination;
 }
-#define DECLARE(name) bool name(const uint16_t*,uint16_t*,uint32_t*,uint32_t*,uint32_t*,uint32_t,uint32_t,const mt_video_frame_options_t*,uint32_t,bool)
-DECLARE(mt_video_frame_process_neon);
-DECLARE(mt_video_frame_process_scalar);
+#define DECLARE(name) bool name(const uint16_t*,uint16_t*,uint32_t*,uint32_t*,uint32_t*,uint32_t,uint32_t,uint32_t,uint32_t,const mt_video_frame_options_t*,uint32_t,bool)
+DECLARE(mt_video_frame_process_scaled_neon);
+DECLARE(mt_video_frame_process_scaled_scalar);
 #define RUN(name,index) void run_##name(void){ \\
     mt_video_frame_options_t options={(uint8_t)params[2],(uint8_t)(params[2]>>8), \\
         (uint8_t)(params[2]>>16),(uint8_t)(params[2]>>24)}; \\
-    success=mt_video_frame_process_##name(pixels,output[index],history[index],base[index], \\
-        scratch[index],params[0],params[1],&options,params[3],params[4]!=0);}
+    success=mt_video_frame_process_scaled_##name(pixels,output[index],history[index],base[index], \\
+        scratch[index],params[0],params[1],params[5],params[6],&options,params[3],params[4]!=0);}
 RUN(neon,0)
 RUN(scalar,1)
 ''')
@@ -137,8 +138,23 @@ def main():
     cases += [(256, 1, (1, strength, 0, 0), steps, False)
               for strength, bound in ((1, 18), (2, 24), (3, 33))
               for steps in (bound-1, bound, 64)]
+    cases = [(*case, 3, 2) for case in cases]
+    # Every mode runs through vector bodies and scalar tails at both production
+    # integer scales, equivalent baseline ratios, and the coefficient bounds.
+    scales = ((4, 1), (6, 1), (6, 4), (1, 64), (64, 1))
+    cases += [(17, 9, (1, persistence, blur, bloom), 2, False, num, den)
+              for num, den in scales for persistence in range(4)
+              for blur in range(4) for bloom in range(4)]
+    cases += [(w, h, (1, rng.randrange(4), rng.randrange(1, 4), rng.randrange(4)),
+               1, False, num, den)
+              for num, den in scales
+              for w in (1, 2, 3, 7, 8, 9, 15, 16, 31, 33, 63, 65)
+              for h in (1, 3)]
+    cases += [(w, h, (1, 3, 3, 3), 1, False, num, den)
+              for w, h, num, den in ((160, 144, 6, 1), (240, 160, 6, 1),
+                                      (382, 270, 4, 1), (404, 250, 4, 1))]
     count = 0
-    for width, height, options, steps, reset in cases:
+    for width, height, options, steps, reset, scale_num, scale_den in cases:
         size = width * height
         pixels = list(range(65536)) if size == 65536 else [rng.randrange(65536) for _ in range(size)]
         prior = [rng.randrange(1 << 24) for _ in range(size)]
@@ -153,7 +169,8 @@ def main():
                 if size < MAX_PIXELS:
                     cpu.mem_write(symbols[name] + (index * MAX_PIXELS + size) * item, b"\xa5" * item * 8)
         packed_options = sum(value << (8 * index) for index, value in enumerate(options))
-        cpu.mem_write(symbols["params"], struct.pack("<6I", width, height, packed_options, steps, reset, 0))
+        cpu.mem_write(symbols["params"], struct.pack("<7I", width, height, packed_options,
+                                                    steps, reset, scale_num, scale_den))
         for variant in ("neon", "scalar"):
             cpu.reg_write(UC_ARM_REG_SP, 0x1F00000)
             cpu.reg_write(UC_ARM_REG_LR, stop)
@@ -166,7 +183,7 @@ def main():
             neon = cpu.mem_read(symbols[name], size * item)
             scalar = cpu.mem_read(symbols[name] + MAX_PIXELS * item, size * item)
             if neon != scalar:
-                raise AssertionError(f"NEON/scalar {name} differs: {width}x{height} {options} steps={steps} reset={reset}")
+                raise AssertionError(f"NEON/scalar {name} differs: {width}x{height} scale={scale_num}/{scale_den} {options} steps={steps} reset={reset}")
         for name, item in (("output", 2), ("history", 4), ("base", 4), ("scratch", 4)):
             if size < MAX_PIXELS:
                 for index in range(2):
@@ -174,7 +191,7 @@ def main():
                     if guard != b"\xa5" * item * 8:
                         raise AssertionError(f"Buffer overrun in {name}")
         count += 1
-    print(f"Cortex-A9 NEON/scalar matched: {count} cases; all 65536 RGB565 inputs; tail guards intact")
+    print(f"Cortex-A9 NEON/scalar matched: {count} cases; six scale ratios; all 65536 RGB565 inputs; tail guards intact")
     return 0
 
 

@@ -40,17 +40,22 @@ def main():
     oracle = build / ("vectors.exe" if os.name == "nt" else "vectors")
     run([tool("gcc"), "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-Ifirmware/include",
          sources[3], sources[4], "-o", str(oracle)])
-    cases = [(13, 9, 68, 1), (1, 1, 68, 0), (2, 3, 68, 0)]
+    cases = [(width, height, 68, int(width == 13), num, den)
+             for num, den in ((3, 2), (4, 1), (6, 1))
+             for width, height in ((13, 9), (1, 1), (2, 3))]
+    cases += [(13, 9, 68, 0, 1, 1), (13, 9, 68, 0, 5, 2)]
     if not args.small_only:
-        cases += [(160, 144, 1, 0), (382, 270, 1, 0), (404, 250, 1, 0), (540, 720, 1, 0), (640, 720, 1, 0)]
-    for width, height, jobs, faults in cases:
-        directory = build / f"{width}x{height}"
+        cases += [(160, 144, 1, 0, 6, 1), (382, 270, 1, 0, 4, 1), (404, 250, 1, 0, 4, 1),
+                  (540, 720, 1, 0, 3, 2), (640, 720, 1, 0, 3, 2)]
+    for width, height, jobs, faults, num, den in cases:
+        directory = build / f"{width}x{height}-s{num}-{den}"
         directory.mkdir(exist_ok=True)
-        run([str(oracle), str(width), str(height), str(directory), str(int(jobs > 1))])
+        run([str(oracle), str(width), str(height), str(directory), str(int(jobs > 1)), str(num), str(den)])
         simulation = directory / "engine.vvp"
         run([tool("iverilog"), "-g2012", "-Wall", "-Wimplicit", "-s", "tb_video_frame_engine",
              "-P", f"tb_video_frame_engine.WIDTH={width}", "-P", f"tb_video_frame_engine.HEIGHT={height}",
              "-P", f"tb_video_frame_engine.JOBS={jobs}", "-P", f"tb_video_frame_engine.FAULT_TESTS={faults}",
+             "-P", f"tb_video_frame_engine.SCALE_NUM={num}", "-P", f"tb_video_frame_engine.SCALE_DEN={den}",
              "-o", str(simulation)] + [str(ROOT / path) for path in sources[:3]])
         output = run([tool("vvp"), str(simulation), "+vectors=" + directory.as_posix()])
         if "PASS frame engine oracle/deadline:" not in output:

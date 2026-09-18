@@ -50,7 +50,7 @@ void mt_video_effects_frontend_apply(mt_video_effects_frontend_t *frontend,
         "Simulate aperture grille, staggered shadow mask, or LCD pixel grid at output resolution.",
         "Soften or sharpen horizontal edges. Filtering stops at image and menu boundaries.",
         "Keep a fading phosphor trail behind moving pixels. Off preserves original motion.",
-        "Soften neighboring pixels at the original machine resolution.",
+        "Soften edges with strength adjusted for the game's resolution.",
         "Add a soft light halo around bright pixels. Independent of blur and persistence."
     };
     static const char *const tints[] = {"Color", "White", "Green", "Amber", "Sepia"};

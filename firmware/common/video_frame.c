@@ -100,7 +100,8 @@ static uint8x8x4_t decay8(uint8x8x4_t old, unsigned strength, uint32_t steps)
 
 static inline __attribute__((always_inline)) uint8x8x4_t filter8(
                           const uint32_t *a, const uint32_t *b, const uint32_t *c,
-                          const uint32_t *d, const uint32_t *e, bool wide)
+                          const uint32_t *d, const uint32_t *e, bool wide,
+                          unsigned alpha)
 {
     const uint8x8x4_t va = vld4_u8((const uint8_t *)a);
     const uint8x8x4_t vb = vld4_u8((const uint8_t *)b);
@@ -123,13 +124,24 @@ static inline __attribute__((always_inline)) uint8x8x4_t filter8(
             out.val[channel] = vshrn_n_u16(sum, 2);
         }
     }
+    if (alpha != 256U) {
+        const uint8x8x4_t center = wide ? vc : vb;
+        if (alpha == 0U) out = center;
+        else {
+            for (unsigned channel = 0U; channel < 3U; ++channel) {
+                uint16x8_t sum = vmull_u8(center.val[channel], vdup_n_u8((uint8_t)(256U-alpha)));
+                sum = vmlal_u8(sum, out.val[channel], vdup_n_u8((uint8_t)alpha));
+                out.val[channel] = vshrn_n_u16(vaddq_u16(sum, vdupq_n_u16(128U)), 8);
+            }
+        }
+    }
     out.val[3] = vdup_n_u8(0);
     return out;
 }
 #endif
 
 static uint32_t filter1(uint32_t a, uint32_t b, uint32_t c,
-                        uint32_t d, uint32_t e, bool wide)
+                        uint32_t d, uint32_t e, bool wide, unsigned alpha)
 {
     uint32_t output = 0U;
     for (unsigned shift = 0U; shift < 24U; shift += 8U) {
@@ -137,7 +149,9 @@ static uint32_t filter1(uint32_t a, uint32_t b, uint32_t c,
         const uint32_t cv = (c >> shift) & 255U;
         const uint32_t sum = wide ? av + 2U*bv + 2U*cv +
             2U*((d >> shift)&255U) + ((e >> shift)&255U) : av + 2U*bv + cv;
-        output |= (sum >> (wide ? 3U : 2U)) << shift;
+        const uint32_t filtered = sum >> (wide ? 3U : 2U);
+        const uint32_t center = wide ? cv : bv;
+        output |= (((256U-alpha)*center + alpha*filtered + 128U) >> 8U) << shift;
     }
     return output;
 }
@@ -148,7 +162,7 @@ static uint32_t clamp_index(int32_t index, uint32_t extent)
 }
 
 static void horizontal(const uint32_t *input, uint32_t *output,
-                       uint32_t width, uint32_t height, bool wide)
+                       uint32_t width, uint32_t height, bool wide, unsigned alpha)
 {
     const uint32_t radius = wide ? 2U : 1U;
     for (uint32_t y = 0U; y < height; ++y) {
@@ -159,7 +173,7 @@ static void horizontal(const uint32_t *input, uint32_t *output,
             if (x >= radius && x + 8U + radius <= width) {
                 const uint8x8x4_t value = filter8(row + x - radius, row + x - radius + 1U,
                     row + x - radius + 2U, wide ? row + x + 1U : row,
-                    wide ? row + x + 2U : row, wide);
+                    wide ? row + x + 2U : row, wide, alpha);
                 vst4_u8((uint8_t *)(output + y*width + x), value);
                 x += 8U;
                 continue;
@@ -168,7 +182,7 @@ static void horizontal(const uint32_t *input, uint32_t *output,
             const int32_t first = (int32_t)x - (int32_t)radius;
             output[y*width + x] = filter1(row[clamp_index(first, width)],
                 row[clamp_index(first + 1, width)], row[clamp_index(first + 2, width)],
-                row[clamp_index(first + 3, width)], row[clamp_index(first + 4, width)], wide);
+                row[clamp_index(first + 3, width)], row[clamp_index(first + 4, width)], wide, alpha);
             ++x;
         }
     }
@@ -189,7 +203,7 @@ static uint32_t glow(uint32_t base, uint32_t halo, unsigned strength)
  * Fusing the final pass avoids another full-size halo/output memory traversal. */
 static void vertical(const uint32_t *input, uint32_t *rgb_output, uint16_t *output,
                      const uint32_t *base, uint32_t width, uint32_t height,
-                     bool wide, unsigned bloom)
+                     bool wide, unsigned bloom, unsigned alpha)
 {
     const int32_t radius = wide ? 2 : 1;
     for (uint32_t y = 0U; y < height; ++y) {
@@ -202,7 +216,7 @@ static void vertical(const uint32_t *input, uint32_t *rgb_output, uint16_t *outp
         uint32_t x = 0U;
 #if FRAME_NEON
         for (; x + 8U <= width; x += 8U) {
-            uint8x8x4_t value = filter8(a+x, b+x, c+x, d+x, e+x, wide);
+            uint8x8x4_t value = filter8(a+x, b+x, c+x, d+x, e+x, wide, alpha);
             if (bloom != 0U) {
                 const uint8x8x4_t center = vld4_u8((const uint8_t *)(base+y*width+x));
                 const int8x8_t amount = vdup_n_s8((int8_t)bloom - 4);
@@ -215,25 +229,34 @@ static void vertical(const uint32_t *input, uint32_t *rgb_output, uint16_t *outp
         }
 #endif
         for (; x < width; ++x) {
-            const uint32_t filtered = filter1(a[x], b[x], c[x], d[x], e[x], wide);
+            const uint32_t filtered = filter1(a[x], b[x], c[x], d[x], e[x], wide, alpha);
             if (bloom != 0U) output[y*width+x] = pack565(glow(base[y*width+x], filtered, bloom));
             else rgb_output[y*width+x] = filtered;
         }
     }
 }
 
-bool mt_video_frame_process(const uint16_t *input, uint16_t *output,
+bool mt_video_frame_process_scaled(const uint16_t *input, uint16_t *output,
                            uint32_t *history, uint32_t *base, uint32_t *scratch,
                            uint32_t width, uint32_t height,
+                           uint32_t scale_num, uint32_t scale_den,
                            const mt_video_frame_options_t *options,
                            uint32_t decay_steps, bool reset_history)
 {
     uint32_t i = 0U;
     if (input == NULL || output == NULL || history == NULL || base == NULL || scratch == NULL ||
         options == NULL || width == 0U || height == 0U || width > 640U || height > 720U ||
+        scale_num == 0U || scale_num > 64U || scale_den == 0U || scale_den > 64U ||
         options->enabled > 1U || options->persistence > 3U || options->blur > 3U || options->bloom > 3U)
         return false;
     const uint32_t pixels = width * height;
+    /* Match the Vectrex 3/2 display-pixel footprint: kernel variance scales
+     * with pixel pitch squared. Blend each blur axis independently after its
+     * legacy floor operation. Bloom keeps its existing kernel and intensity.
+     * Bounded scale operands keep this rounded Q8 coefficient in uint32_t. */
+    const uint32_t squared_num = scale_num * scale_num;
+    unsigned alpha = (2304U * scale_den * scale_den + 2U * squared_num) / (4U * squared_num);
+    if (alpha > 256U) alpha = 256U;
     if (decay_steps > 64U) decay_steps = 64U;
     /* The maximum channel follows the same integer recurrence as the RGB
      * components. Exhausting all 256 maxima gives these exact extinction
@@ -266,13 +289,13 @@ bool mt_video_frame_process(const uint16_t *input, uint16_t *output,
         history[i] = base[i] = current;
     }
     if (options->blur != 0U) {
-        horizontal(base, scratch, width, height, options->blur == 3U);
+        horizontal(base, scratch, width, height, options->blur == 3U, alpha);
         if (options->blur == 1U) memcpy(base, scratch, (size_t)pixels*sizeof(*base));
-        else vertical(scratch, base, NULL, NULL, width, height, options->blur == 3U, 0U);
+        else vertical(scratch, base, NULL, NULL, width, height, options->blur == 3U, 0U, alpha);
     }
     if (options->bloom != 0U) {
-        horizontal(history, scratch, width, height, options->bloom == 3U);
-        vertical(scratch, NULL, output, base, width, height, options->bloom == 3U, options->bloom);
+        horizontal(history, scratch, width, height, options->bloom == 3U, 256U);
+        vertical(scratch, NULL, output, base, width, height, options->bloom == 3U, options->bloom, 256U);
     } else {
         i = 0U;
 #if FRAME_NEON
@@ -282,4 +305,14 @@ bool mt_video_frame_process(const uint16_t *input, uint16_t *output,
         for (; i < pixels; ++i) output[i] = pack565(base[i]);
     }
     return true;
+}
+
+bool mt_video_frame_process(const uint16_t *input, uint16_t *output,
+                           uint32_t *history, uint32_t *base, uint32_t *scratch,
+                           uint32_t width, uint32_t height,
+                           const mt_video_frame_options_t *options,
+                           uint32_t decay_steps, bool reset_history)
+{
+    return mt_video_frame_process_scaled(input, output, history, base, scratch,
+        width, height, 3U, 2U, options, decay_steps, reset_history);
 }

@@ -6,6 +6,18 @@
 module tb_video_frame_pipeline;
     parameter integer SCALE_NUM=4,SCALE_DEN=1;
     parameter bit SOURCE_PAUSE_TEST=0,EXPECT_SOURCE_FAILURE=0;
+    // The frame-order scoreboard uses solid colors. Separately prove the
+    // real framebuffer->engine->filter wiring changes a nonuniform tap
+    // response at the same small geometry for all three display scales.
+    initial begin
+        #1;
+        if(dut.engine_i.filter.SCALE_NUM!=SCALE_NUM || dut.engine_i.filter.SCALE_DEN!=SCALE_DEN)
+            $fatal(1,"Frame engine lost the framebuffer display scale");
+        if(dut.engine_i.filter.normalized_blur(8'd0,8'd64)!==
+           (SCALE_NUM==6 && SCALE_DEN==1 ? 8'd4 :
+            SCALE_NUM==4 && SCALE_DEN==1 ? 8'd9 : 8'd64))
+            $fatal(1,"Frame engine blur response did not reflect its display scale");
+    end
     localparam integer WIDTH=13,HEIGHT=8,VIEW_X=16,VIEW_Y=2;
     localparam integer OUT_WIDTH=WIDTH*SCALE_NUM/SCALE_DEN;
     localparam integer OUT_HEIGHT=HEIGHT*SCALE_NUM/SCALE_DEN;

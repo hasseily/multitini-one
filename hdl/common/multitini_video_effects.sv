@@ -230,17 +230,31 @@ module multitini_video_effects #(
     endfunction
     function automatic [7:0] horizontal_filter(input [7:0] center, left, right,
         input [1:0] mode);
-        reg signed [12:0] value;
+        reg [8:0] neighbors;
+        reg [9:0] rounded_neighbors;
+        reg [10:0] weighted_center, soft_numerator;
+        reg [9:0] strong_numerator;
+        reg signed [11:0] sharp;
         begin
+            neighbors = {1'b0,left} + {1'b0,right};
+            rounded_neighbors = {1'b0,neighbors} + 10'd2;
+            // Balance the center and neighbor paths. Explicit widths avoid
+            // wide signed intermediates and a shared saturation comparator.
+            // 6*center+2 uses two shifted terms and one bounded adder.
+            weighted_center = {1'b0,center,2'b10} + {2'b0,center,1'b0};
+            soft_numerator = weighted_center + {1'b0,rounded_neighbors};
+            strong_numerator = {1'b0,center,1'b0} + rounded_neighbors;
+            sharp = $signed({1'b0,weighted_center}) - $signed({3'b0,neighbors});
             case (mode)
-                1: value = (left + (13'sd6 * $signed({1'b0,center})) + right + 4) >>> 3;
-                2: value = (left + (13'sd2 * $signed({1'b0,center})) + right + 2) >>> 2;
-                3: value = ((13'sd6 * $signed({1'b0,center})) - $signed({1'b0,left}) - $signed({1'b0,right}) + 2) >>> 2;
-                default: value = center;
+                // Soft/Strong maxima are 2044/1022, so their rounded
+                // eight-bit results need no clipping. Sharp is -508..1532;
+                // its sign and overflow bits implement clipping after /4.
+                2'd1: horizontal_filter = soft_numerator[10:3];
+                2'd2: horizontal_filter = strong_numerator[9:2];
+                2'd3: horizontal_filter = sharp[11] ? 8'd0 :
+                                         sharp[10] ? 8'd255 : sharp[9:2];
+                default: horizontal_filter = center;
             endcase
-            if (value < 0) horizontal_filter = 0;
-            else if (value > 255) horizontal_filter = 255;
-            else horizontal_filter = value[7:0];
         end
     endfunction
     function automatic [7:0] spatial_channel(input [7:0] value, input integer channel,

@@ -166,7 +166,42 @@ module tb_video_effects;
             for(column=0;column<8;column=column+1)pixel(0,0,column,99,0,0,0,0);
         end
     endtask
+    task check_horizontal_arithmetic;
+        integer center_value,neighbor_sum,left_value,right_value,filter_mode;
+        integer reference_value,arithmetic_checks;
+        reg [7:0] actual_value;
+        begin
+            arithmetic_checks=0;
+            // Both kernels depend only on left+right, and all intermediate
+            // values fit their declared widths. These representative splits
+            // cover every possible RGB8 triple without repeating equal sums.
+            for(center_value=0;center_value<256;center_value=center_value+1)
+                for(neighbor_sum=0;neighbor_sum<=510;neighbor_sum=neighbor_sum+1)begin
+                    left_value=neighbor_sum>255?255:neighbor_sum;
+                    right_value=neighbor_sum-left_value;
+                    for(filter_mode=0;filter_mode<4;filter_mode=filter_mode+1)begin
+                        case(filter_mode)
+                            1:reference_value=(left_value+6*center_value+right_value+4)>>3;
+                            2:reference_value=(left_value+2*center_value+right_value+2)>>2;
+                            3:reference_value=(6*center_value-left_value-right_value+2)>>>2;
+                            default:reference_value=center_value;
+                        endcase
+                        if(reference_value<0)reference_value=0;
+                        if(reference_value>255)reference_value=255;
+                        actual_value=dut.horizontal_filter(center_value[7:0],left_value[7:0],
+                                                          right_value[7:0],filter_mode[1:0]);
+                        if(actual_value!==reference_value[7:0])
+                            $fatal(1,"Horizontal arithmetic c=%0d l=%0d r=%0d mode=%0d expected=%0d got=%0d",
+                                   center_value,left_value,right_value,filter_mode,reference_value,actual_value);
+                        arithmetic_checks=arithmetic_checks+1;
+                    end
+                end
+            if(arithmetic_checks!=523264)$fatal(1,"Horizontal arithmetic coverage incomplete");
+            $display("PASS horizontal arithmetic: %0d center/sum/mode cases cover all RGB8 triples",arithmetic_checks);
+        end
+    endtask
     initial begin
+        if(SCALE_NUM==4 && SCALE_DEN==1 && !SHARED_PIXEL_RESET)check_horizontal_arithmetic();
         for(k=0;k<9;k=k+1)expected_queue[k]=0;
         identity();
         repeat(5)@(negedge control_clk);control_resetn=1;pixel_resetn=1;

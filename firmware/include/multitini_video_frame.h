@@ -57,10 +57,24 @@ typedef struct {
  * output are RGB565; history/base/scratch are packed 0x00BBGGRR RGB888.
  * History survives calls; base/scratch are disposable. Decay steps count
  * elapsed 60Hz periods, clamped to 0..64. Reset on epoch, geometry, or option
- * changes. No device access is permitted. */
+ * changes. No device access is permitted. The compatibility entrypoint uses
+ * the original Vectrex display scale of 3/2 and preserves its exact output. */
 bool mt_video_frame_process(const uint16_t *input, uint16_t *output,
                             uint32_t *history, uint32_t *base, uint32_t *scratch,
                             uint32_t width, uint32_t height,
+                            const mt_video_frame_options_t *options,
+                            uint32_t decay_steps,
+                            bool reset_history);
+
+/* Display scale is explicit, independent of source dimensions. Both operands
+ * must be in 1..64. Only blur is normalized to the 3/2 baseline: each axis
+ * blends its old floored kernel with the center using rounded Q8 variance
+ * compensation, capped at the baseline strength. Light filters horizontally;
+ * Medium and Strong filter both axes. Bloom and persistence are unchanged. */
+bool mt_video_frame_process_scaled(const uint16_t *input, uint16_t *output,
+                            uint32_t *history, uint32_t *base, uint32_t *scratch,
+                            uint32_t width, uint32_t height,
+                            uint32_t scale_num, uint32_t scale_den,
                             const mt_video_frame_options_t *options,
                             uint32_t decay_steps,
                             bool reset_history);
