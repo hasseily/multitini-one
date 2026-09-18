@@ -3,7 +3,8 @@
 
 // Single-beat AXI3 slave used for the PS GP0 register window. Address and data
 // channels are buffered independently. Bursts and non-word transfers return
-// SLVERR and do not reach the register bank.
+// SLVERR and do not reach the register bank. A read address is retained for a
+// full decode cycle before its response and register side effects are sampled.
 module multitini_axi3_regs (
     input  logic         aclk,
     input  logic         aresetn,
@@ -73,6 +74,10 @@ module multitini_axi3_regs (
     logic [31:0] wdata_q;
     logic [3:0]  wstrb_q;
     logic        wlast_q;
+    logic        ar_pending;
+    logic [11:0] arid_q;
+    logic [15:0] araddr_q;
+    logic        ar_word_q;
 
     wire aw_take = s_axi_awvalid && s_axi_awready;
     wire w_take  = s_axi_wvalid && s_axi_wready;
@@ -91,8 +96,12 @@ module multitini_axi3_regs (
 
     assign s_axi_awready = !aw_hold && !s_axi_bvalid;
     assign s_axi_wready  = !w_hold && !s_axi_bvalid;
-    assign s_axi_arready = !s_axi_rvalid;
-    assign reg_rd_addr   = s_axi_araddr[15:0];
+    assign s_axi_arready = !ar_pending && !s_axi_rvalid;
+    assign reg_rd_addr   = araddr_q;
+    // The bank consumes this pulse on the same edge that captures RDATA.
+    // Neither a changed live ARADDR nor a stalled response can repeat or
+    // redirect a register side effect after its address was accepted.
+    assign reg_rd_en = aresetn && ar_pending && ar_word_q;
 
     // Attributes are intentionally accepted but have no effect in this
     // device-register slave.
@@ -125,10 +134,12 @@ module multitini_axi3_regs (
             reg_wr_addr  <= '0;
             reg_wr_data  <= '0;
             reg_wr_strb  <= '0;
-            reg_rd_en    <= 1'b0;
+            ar_pending   <= 1'b0;
+            arid_q       <= '0;
+            araddr_q     <= '0;
+            ar_word_q    <= 1'b0;
         end else begin
             reg_wr_en <= 1'b0;
-            reg_rd_en <= 1'b0;
 
             if (s_axi_bvalid && s_axi_bready)
                 s_axi_bvalid <= 1'b0;
@@ -168,13 +179,19 @@ module multitini_axi3_regs (
             end
 
             if (ar_take) begin
-                s_axi_rid    <= s_axi_arid;
+                ar_pending <= 1'b1;
+                arid_q     <= s_axi_arid;
+                araddr_q   <= s_axi_araddr[15:0];
+                ar_word_q  <= s_axi_arlen == 4'd0 && s_axi_arsize == 3'b010;
+            end
+
+            if (ar_pending) begin
+                ar_pending   <= 1'b0;
+                s_axi_rid    <= arid_q;
                 s_axi_rdata  <= reg_rd_data;
-                s_axi_rresp  <= (s_axi_arlen == 4'd0 && s_axi_arsize == 3'b010)
-                                ? AXI_OKAY : AXI_SLVERR;
+                s_axi_rresp  <= ar_word_q ? AXI_OKAY : AXI_SLVERR;
                 s_axi_rlast  <= 1'b1;
                 s_axi_rvalid <= 1'b1;
-                reg_rd_en    <= s_axi_arlen == 4'd0 && s_axi_arsize == 3'b010;
             end
         end
     end
