@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* Shared USB keyboard, HID gamepad, and XInput adapter on USB1. */
+/* Startup hardening adapted from Appletini ONE 1fd4f371e8f4ef08bc63875550564590609fcfeb. */
 #include "usb_hid_service.h"
 
 #include "cherryusb_platform.h"
@@ -945,6 +946,7 @@ void usb_hid_service_set_keyboard_filter(mt_usb_keyboard_filter_fn filter,
 
 int usb_hid_service_start(void)
 {
+    struct usbh_bus *const bus = &g_usbhost_bus[CHERRYUSB_USB1_BUSID];
     int cleanup_result;
     int result;
     if (g_started != 0U) return 0;
@@ -958,23 +960,21 @@ int usb_hid_service_start(void)
     }
     xil_printf("[usb1] CherryUSB keyboard/gamepad host start\r\n");
     result = usbh_initialize(CHERRYUSB_USB1_BUSID, MT_USB1_BASE, host_event);
+    g_power_shutdown_required = 1U;
     if (result == 0) {
         g_started = 1U;
-        result = cherryusb_usb1_host_power_start();
-        if (result == 0) {
-            g_power_shutdown_required = 1U;
+        /* This CherryUSB revision discards usbh_hub_initialize() failures.
+         * Do not apply connector power unless both hub handles exist. */
+        if (bus->hub_mq == NULL || bus->hub_sem == NULL) {
+            result = cherryusb_usb1_power_result();
+            if (result == 0) result = -USB_ERR_IO;
         } else {
-            if (cherryusb_usb1_power_stop_result() != 0) {
-                g_power_shutdown_required = 1U;
-            }
-            cleanup_result = usb_hid_service_stop();
-            if (cleanup_result != 0) {
-                result = cleanup_result;
-            }
+            result = cherryusb_usb1_host_power_start();
         }
     }
     if (result != 0) {
-        g_started = 0U;
+        cleanup_result = usb_hid_service_stop();
+        if (cleanup_result != 0) result = cleanup_result;
         g_last_error = result;
         xil_printf("[usb1] host start failed: %d\r\n", result);
     }
@@ -994,20 +994,13 @@ int usb_hid_service_stop(void)
     }
     if (g_started != 0U) {
         (void)usbh_deinitialize(CHERRYUSB_USB1_BUSID);
-        if (power_result != 0 &&
-            cherryusb_usb1_power_stop_result() == 0) {
-            /* The independent pre-stop failed, but the low-level deinit hook
-             * subsequently removed and verified VBUS. */
-            power_result = 0;
-            g_power_shutdown_required = 0U;
-        } else if (power_result != 0) {
-            /* If CherryUSB returned before the low-level hook, make one final
-             * independent attempt while the ULPI viewport is still active. */
+        /* Deinit retries power removal and may fail after our first success.
+         * Retain its result, and retry while the PHY clock is still live. */
+        power_result = cherryusb_usb1_power_stop_result();
+        if (power_result != 0) {
             power_result = cherryusb_usb1_host_power_stop();
-            if (power_result == 0) {
-                g_power_shutdown_required = 0U;
-            }
         }
+        g_power_shutdown_required = (power_result != 0) ? 1U : 0U;
         g_started = 0U;
     }
     (void)mt_c64_hid_release_all(&g_c64_input);
@@ -1173,10 +1166,10 @@ void usb_hid_service_dump_status(void)
         }
         xil_printf("\r\n");
     }
-    xil_printf("usb1 phy setup_rc=%d disable_rc=%d drive_known=%u drive=%u "
+    xil_printf("usb1 phy cached: setup_rc=%d disable_rc=%d drive_known=%u drive=%u "
                "vbus_known=%u vbus_valid=%u ulpi_err=%d timeouts=%u "
                "id=%04x:%04x func=%02x iface=%02x otg=%02x int=%02x "
-               "debug=%02x otgsc=%08x viewport=%08x\r\n",
+               "viewport=%08x\r\n",
                phy.power_result, phy.disable_result,
                (unsigned int)phy.vbus_drive_known,
                (unsigned int)phy.vbus_drive_enabled,
@@ -1188,6 +1181,5 @@ void usb_hid_service_dump_status(void)
                (unsigned int)phy.interface_control,
                (unsigned int)phy.otg_control,
                (unsigned int)phy.interrupt_status,
-               (unsigned int)phy.debug, (unsigned int)phy.otgsc,
                (unsigned int)phy.viewport);
 }

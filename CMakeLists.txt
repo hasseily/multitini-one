@@ -37,6 +37,10 @@ add_library(multitini_common STATIC
 target_include_directories(multitini_common PUBLIC firmware/include)
 
 enable_testing()
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME usb1_phy_startup COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/test_usb1_phy_startup.py)
+set_tests_properties(usb1_phy_startup PROPERTIES ENVIRONMENT "CC=${CMAKE_C_COMPILER}")
 add_subdirectory(firmware/vectrex32)
 add_library(xilinx_vectrex_services_compile OBJECT
     firmware/platform/xilinx/vectrex_content_service.c

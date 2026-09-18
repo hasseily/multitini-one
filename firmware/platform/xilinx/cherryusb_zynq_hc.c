@@ -1,11 +1,13 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* Ported from hasseily/appletini-one for Multitini One USB1 host service. */
+/* Startup hardening adapted from Appletini ONE 1fd4f371e8f4ef08bc63875550564590609fcfeb. */
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 
 #include "sleep.h"
 #include "xil_cache.h"
+#include "xil_io.h"
 #include "xil_printf.h"
 #include "xil_types.h"
 #include "xparameters.h"
@@ -23,8 +25,8 @@
 #define CHERRYUSB_USB1_BASE 0xE0003000U
 #endif
 
-#define REG_READ(addr) (*(volatile uint32_t *)(uintptr_t)(addr))
-#define REG_WRITE(addr, value) (*(volatile uint32_t *)(uintptr_t)(addr) = (uint32_t)(value))
+#define REG_READ(addr) Xil_In32((UINTPTR)(addr))
+#define REG_WRITE(addr, value) Xil_Out32((UINTPTR)(addr), (uint32_t)(value))
 #define CHERRYUSB_ULPI_TIMEOUT_US UINT32_C(5000)
 #define CHERRYUSB_ULPI_ERR_WAKE_TIMEOUT (-1001)
 #define CHERRYUSB_ULPI_ERR_TRANSACTION_TIMEOUT (-1002)
@@ -39,6 +41,7 @@
 
 static uint8_t g_usb1_hc_running;
 static uint8_t g_usb1_irq_polling;
+static uint8_t g_usb1_hc_initialized;
 static cherryusb_usb1_phy_status_t g_usb1_phy;
 
 static int usbps_ulpi_wait_clear(uintptr_t base, uint32_t mask, int error)
@@ -221,6 +224,7 @@ static int usb3300_wait_vbus_state(uintptr_t base, uint8_t expected_valid,
         if (g_usb1_phy.vbus_valid == expected_valid) {
             return 0;
         }
+        cherryusb_background_poll();
         usleep(1000U);
     }
 
@@ -308,6 +312,9 @@ static int usbps_wait_controller_reset(uintptr_t base)
         if ((REG_READ(base + XUSBPS_CMD_OFFSET) & XUSBPS_CMD_RST_MASK) == 0U) {
             return 0;
         }
+        if ((elapsed % 1000U) == 0U) {
+            cherryusb_background_poll();
+        }
         usleep(10U);
     }
     g_usb1_phy.last_error = CHERRYUSB_ULPI_ERR_CONTROLLER_RESET_TIMEOUT;
@@ -342,14 +349,32 @@ static void usbps_set_host_mode(uintptr_t base)
 void usb_hc_low_level_init(struct usbh_bus *bus)
 {
     uintptr_t base = bus->hcd.reg_base;
+    uint32_t portsc;
 
     g_usb1_hc_running = 0U;
     g_usb1_phy.power_result = 0;
     g_usb1_phy.disable_result = 0;
+    g_usb1_phy.identity_valid = 0U;
+    g_usb1_phy.vbus_drive_known = 0U;
+    g_usb1_phy.vbus_valid_known = 0U;
     usb_phy_early_init();
+    g_usb1_hc_initialized = 1U;
 
+    /* A previous stop may leave the ULPI clock suspended. Wake it before
+     * resetting the controller without clearing pending W1C port changes. */
+    portsc = usbps_portsc_clean(REG_READ(base + XUSBPS_PORTSCR1_OFFSET));
+    if ((portsc & XUSBPS_PORTSCR_PHCD_MASK) != 0U) {
+        REG_WRITE(base + XUSBPS_PORTSCR1_OFFSET,
+                  portsc & ~XUSBPS_PORTSCR_PHCD_MASK);
+        usleep(1000U);
+    }
+    REG_WRITE(base + XUSBPS_IER_OFFSET, 0U);
     REG_WRITE(base + XUSBPS_CMD_OFFSET, 0U);
-    XUsbPs_ResetHw(base);
+    REG_WRITE(base + XUSBPS_CMD_OFFSET, XUSBPS_CMD_RST_MASK);
+    g_usb1_phy.power_result = usbps_wait_controller_reset(base);
+    if (g_usb1_phy.power_result != 0) {
+        return;
+    }
     usleep(1000U);
 
     usbps_set_host_mode(base);
@@ -358,8 +383,10 @@ void usb_hc_low_level_init(struct usbh_bus *bus)
 
 void usb_hc_low_level2_init(struct usbh_bus *bus)
 {
-    usbps_set_host_mode(bus->hcd.reg_base);
-    g_usb1_phy.power_result = usb3300_host_prepare(bus->hcd.reg_base);
+    if (g_usb1_phy.power_result == 0) {
+        usbps_set_host_mode(bus->hcd.reg_base);
+        g_usb1_phy.power_result = usb3300_host_prepare(bus->hcd.reg_base);
+    }
     if (g_usb1_phy.power_result != 0) {
         xil_printf("[usb1] ULPI host VBUS failed: %d viewport=%08x\r\n",
                    g_usb1_phy.power_result,
@@ -415,61 +442,13 @@ uint32_t cherryusb_usb1_portsc(void)
     return REG_READ(CHERRYUSB_USB1_BASE + XUSBPS_PORTSCR1_OFFSET);
 }
 
+/* Status reads must not wake or transact with a running PHY. The snapshot
+ * describes the most recent startup/shutdown, not a fresh electrical sample. */
 void cherryusb_usb1_phy_status(cherryusb_usb1_phy_status_t *status)
 {
-    uint8_t value;
-    int result;
-
-    if (status == NULL) {
-        return;
+    if (status != NULL) {
+        *status = g_usb1_phy;
     }
-
-    g_usb1_phy.vbus_drive_known = 0U;
-    g_usb1_phy.vbus_valid_known = 0U;
-    g_usb1_phy.otgsc = REG_READ(CHERRYUSB_USB1_BASE + XUSBPS_OTGCSR_OFFSET);
-    result = usb3300_read_identity(CHERRYUSB_USB1_BASE);
-    if (result == 0) {
-        result = usbps_ulpi_read(CHERRYUSB_USB1_BASE,
-                                 CHERRYUSB_ULPI_REG_FUNCTION_CONTROL,
-                                 &g_usb1_phy.function_control);
-    }
-    if (result == 0) {
-        result = usbps_ulpi_read(CHERRYUSB_USB1_BASE,
-                                 CHERRYUSB_ULPI_REG_INTERFACE_CONTROL,
-                                 &g_usb1_phy.interface_control);
-    }
-    if (result == 0) {
-        result = usbps_ulpi_read(CHERRYUSB_USB1_BASE,
-                                 CHERRYUSB_ULPI_REG_OTG_CONTROL,
-                                 &g_usb1_phy.otg_control);
-        if (result == 0) {
-            g_usb1_phy.vbus_drive_known = 1U;
-        }
-    }
-    if (result == 0) {
-        result = usbps_ulpi_read(CHERRYUSB_USB1_BASE,
-                                 CHERRYUSB_ULPI_REG_INTERRUPT_STATUS,
-                                 &g_usb1_phy.interrupt_status);
-        if (result == 0) {
-            g_usb1_phy.vbus_valid_known = 1U;
-        }
-    }
-    if (result == 0) {
-        result = usbps_ulpi_read(CHERRYUSB_USB1_BASE,
-                                 CHERRYUSB_ULPI_REG_DEBUG, &value);
-        if (result == 0) {
-            g_usb1_phy.debug = value;
-        }
-    }
-    if (result != 0) {
-        g_usb1_phy.last_error = result;
-    }
-    g_usb1_phy.vbus_drive_enabled =
-        cherryusb_usb3300_vbus_is_enabled(g_usb1_phy.otg_control);
-    g_usb1_phy.vbus_valid =
-        ((g_usb1_phy.interrupt_status &
-          CHERRYUSB_ULPI_INTERRUPT_VBUS_VALID) != 0U) ? 1U : 0U;
-    *status = g_usb1_phy;
 }
 
 int cherryusb_usb1_power_result(void)
@@ -482,6 +461,11 @@ int cherryusb_usb1_host_power_start(void)
     uint32_t command;
     uint32_t status;
 
+    if (g_usb1_hc_initialized == 0U) {
+        g_usb1_phy.power_result = CHERRYUSB_ULPI_ERR_CONTROLLER_NOT_RUNNING;
+        g_usb1_phy.last_error = CHERRYUSB_ULPI_ERR_CONTROLLER_NOT_RUNNING;
+        return g_usb1_phy.power_result;
+    }
     if (g_usb1_phy.power_result != 0) {
         return g_usb1_phy.power_result;
     }
@@ -521,6 +505,9 @@ int cherryusb_usb1_host_power_stop(void)
      * CherryUSB EHCI teardown path. usb_hc_deinit() can return before its
      * low-level hook when the controller fails to halt. */
     g_usb1_hc_running = 0U;
+    if (g_usb1_hc_initialized == 0U) {
+        return 0;
+    }
     result = usb3300_host_power_disable(CHERRYUSB_USB1_BASE);
     g_usb1_phy.disable_result = result;
     if (result != 0) {

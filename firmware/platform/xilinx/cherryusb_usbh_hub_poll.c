@@ -5,6 +5,8 @@
  *
  * Modified for cooperative bare-metal Zynq-7000 polling in Appletini and
  * Multitini One.
+ * Hub allocation cleanup adapted from Appletini ONE
+ * 1fd4f371e8f4ef08bc63875550564590609fcfeb.
  */
 #include "usbh_core.h"
 #include "usbh_hub.h"
@@ -784,6 +786,8 @@ int usbh_hub_initialize(struct usbh_bus *bus)
     bus->hub_sem = usb_osal_sem_create(0);
     if (bus->hub_sem == NULL) {
         USB_LOG_ERR("Failed to create hub sem\r\n");
+        usb_osal_mq_delete(bus->hub_mq);
+        bus->hub_mq = NULL;
         return -1;
     }
 

@@ -40,8 +40,9 @@ scripts/c64sim/iec.py,Multitini One,,GPL-3.0-only,host-tested,IEC serial bus and
 scripts/c64sim/system.py,Multitini One,,GPL-3.0-only,host-tested,Lockstep C64 plus 1541 system harness
 scripts/c64sim/via.py,Multitini One,,GPL-3.0-only,host-tested,MOS 6522 VIA model mirroring iecdrv_via6522.vhd
 firmware/platform/xilinx/cherryusb_baremetal_osal.c,Appletini One,39992a3ca4ac09b25f0b40a941353f8e8da7146e,GPL-3.0-only,pending-hardware,Cooperative bare-metal CherryUSB OSAL port
-firmware/platform/xilinx/cherryusb_usbh_hub_poll.c,CherryUSB and Appletini One,39992a3ca4ac09b25f0b40a941353f8e8da7146e,Apache-2.0,pending-hardware,Modified CherryUSB hub class for cooperative polling
-firmware/platform/xilinx/cherryusb_zynq_hc.c,Appletini One,39992a3ca4ac09b25f0b40a941353f8e8da7146e,GPL-3.0-only,pending-hardware,Zynq-7000 EHCI low-level and cache port
+firmware/platform/xilinx/cherryusb_usbh_hub_poll.c,CherryUSB and Appletini One and Multitini One,1fd4f371e8f4ef08bc63875550564590609fcfeb,Apache-2.0,pending-hardware,Modified cooperative CherryUSB hub class; allocation cleanup adapted from ps_sources/frontend/cherryusb_usbh_hub_poll.c; retains sakumisu copyright and Apache notice; original import pin 39992a3ca4ac09b25f0b40a941353f8e8da7146e
+firmware/platform/xilinx/cherryusb_zynq_hc.c,Appletini One and Multitini One,1fd4f371e8f4ef08bc63875550564590609fcfeb,GPL-3.0-only,pending-hardware,Zynq-7000 EHCI startup and shutdown hardening adapted from ps_sources/frontend/cherryusb_zynq_hc.c; original import pin 39992a3ca4ac09b25f0b40a941353f8e8da7146e
+firmware/platform/xilinx/usb_hid_service.c,Appletini One and Multitini One,1fd4f371e8f4ef08bc63875550564590609fcfeb,GPL-3.0-only,pending-hardware,Original shared Multitini input service with startup validation and partial initialization cleanup adapted from ps_sources/frontend/usb_hid_service.c
 firmware/platform/xilinx/cherryusb_platform.h,Appletini One,39992a3ca4ac09b25f0b40a941353f8e8da7146e,GPL-3.0-only,pending-hardware,CherryUSB Zynq platform contract
 firmware/platform/xilinx/usb_config.h,Appletini One,39992a3ca4ac09b25f0b40a941353f8e8da7146e,GPL-3.0-only,pending-hardware,CherryUSB host limits and cache configuration
 firmware/platform/xilinx/usb_phy_init.c,Appletini One,39992a3ca4ac09b25f0b40a941353f8e8da7146e,GPL-3.0-only,pending-hardware,Zynq USB clock reset and PHY initialization
@@ -93,6 +94,8 @@ hdl/core/c64/ports/c1541_gcr.sv,MiSTer C64 and Multitini One,62fc697e3c9b5982c9d
 hdl/generated/**,Multitini One,,GPL-3.0-only,generated,Generated from spec/interface_v0.json
 hdl/sim/**,Multitini One,,GPL-3.0-only,pending-simulator,Original testbenches
 tests/**,Multitini One,,GPL-3.0-only,reviewed,Original host tests
+tests/host/test_usb1_phy_startup.c,Appletini One and Multitini One,1fd4f371e8f4ef08bc63875550564590609fcfeb,GPL-3.0-only,source-reviewed,USB3300 MMIO model and startup scenarios adapted from scripts/fixtures/usb1_phy_startup.c; expanded for Multitini lifecycle and cleanup behavior
+tests/test_usb1_phy_startup.py,Appletini One and Multitini One,1fd4f371e8f4ef08bc63875550564590609fcfeb,GPL-3.0-only,source-reviewed,Native USB host test runner and generated stub declarations adapted from scripts/test_usb1_phy_startup.py; modified for Multitini fixture paths and safe Windows tool launching
 tests/host/test_c64_content.c,Multitini One,,GPL-3.0-only,host-tested,PRG and conservative CRT validator regression
 tests/host/test_c64_content_service.c,Multitini One,,GPL-3.0-only,host-tested,C64 PRG and CRT service regression
 tests/host/test_c64_g64.c,Multitini One,,GPL-3.0-only,host-tested,Strict G64 parser regression
