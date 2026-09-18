@@ -198,7 +198,9 @@ def verify_hardware_source_archive(directory, files):
                     "FPGA build configuration changed after source capture: " + name)
 
 
-def verify_hardware(directory, machine, *, ntsc=False):
+def verify_hardware(directory, machine, *, ntsc=False, build_id=None):
+    expected_build_id = BUILD_ID if build_id is None else build_id
+    require(re.fullmatch(r"[0-9A-Fa-f]{8}", expected_build_id) is not None, "Invalid expected FPGA build ID")
     record = json.loads((directory / "source-inputs.json").read_text())
     require(record["machine"] == machine, "Wrong source-capture machine")
     configuration = record["configuration"]
@@ -217,7 +219,7 @@ def verify_hardware(directory, machine, *, ntsc=False):
     require(manifest.get("image_kind") == machine and manifest.get("part") == "xc7z020clg484-2" and
             manifest.get("top") == "multitini_one_top", "Wrong FPGA build manifest")
     generics = manifest["generic"]
-    require(re.search(r"SHELL_BUILD_ID=32'h" + BUILD_ID + r"\b", generics, re.I), "FPGA build is not VID4")
+    require(re.search(r"SHELL_BUILD_ID=32'h" + expected_build_id + r"\b", generics, re.I), "Wrong FPGA build ID")
     active = {"C64": 0, "GBC": 1, "SUPERVISOR": 2, "VECTREX": 3}[machine]
     require(re.search(rf"\bACTIVE_MACHINE={active}\b", generics), "Wrong FPGA active machine")
     require(f"C64_NTSC_MODE=1'b{int(ntsc)}" in generics, "Wrong FPGA PAL/NTSC generic")
