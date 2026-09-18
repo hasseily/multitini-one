@@ -7,7 +7,7 @@
 
 static uint16_t read_le16(const uint8_t *data)
 {
-    return (uint16_t)data[0] | ((uint16_t)data[1] << 8);
+    return (uint16_t)((uint16_t)data[0] | ((uint16_t)data[1] << 8));
 }
 
 static uint32_t read_le32(const uint8_t *data)

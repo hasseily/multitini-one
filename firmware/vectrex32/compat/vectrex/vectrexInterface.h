@@ -7,7 +7,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(_MSC_VER)
+static inline int strcasecmp(const char *left, const char *right)
+{ return _stricmp(left, right); }
+static inline int strncasecmp(const char *left, const char *right, size_t count)
+{ return _strnicmp(left, right, count); }
+#else
 #include <strings.h>
+#endif
 #include <limits.h>
 #include <math.h>
 extern int usbKeyboardAvailable;

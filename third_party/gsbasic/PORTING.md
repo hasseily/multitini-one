@@ -16,7 +16,7 @@ original bytes, including original line endings and text encoding.
 | --- | --- |
 | BuiltInFunctions.cpp | Remove directory enumeration that bypasses the confined asset callbacks. |
 | CallSpec.cpp | Read the procedure/builtin/structure union through its type discriminator when resolving a call name. |
-| Executive.cpp / Executive.h | Add memory source loading and confined INCLUDE/CHAIN callbacks; bound source lines before string construction; retain include locations and duplicate suppression; poll cancellation; preserve runtime errors; clear chain state correctly; reject embedded monitor commands; avoid empty-line underflow and unsafe trace formatting. |
+| Executive.cpp / Executive.h | Add memory source loading and confined INCLUDE/CHAIN callbacks; bound source lines before string construction; retain include locations and duplicate suppression; poll cancellation; preserve runtime errors; clear chain state correctly; reject embedded monitor commands; avoid empty-line underflow and unsafe trace formatting. Pass C string pointers rather than String objects to variadic file-location formatting. |
 | Expression.cpp / Expression.h | Use pointer-width integer tags on 64-bit hosts and explicit signed 32-bit numeric encoding. |
 | GSBCommon.h | Replace the MIPS breakpoint instruction with a portable compiler trap; keep MinGW's existing intrinsic. |
 | GSBString.cpp / GSBString.h | Use pointer-width tags and a compiler byte-order check for little-endian builds. Check the 65535-byte string limit before allocation/copy, retain explicit lengths for short binary strings, return a valid empty C string, bound substring arithmetic, and format large floating-point values safely. |

@@ -21,7 +21,7 @@ extern "C" {
 }
 #endif
 extern "C" void ClearVectrex();
-extern int disableSprites;
+extern "C" int disableSprites;
 extern ErrorCode mt_v32_read_source(const char *,std::string &,bool);
 
 
@@ -785,7 +785,7 @@ void Executive::DisplayError(FILE *output, const Array<String> &lines, const Err
 			if (fileIndex && fileIndex <= _includeFiles.size())
 			{
 //				Print(output, ("In file " + _includeFiles[fileIndex - 1] + ", line ").c_str(), error.LineNumber(), ", column ", error.Column(), ": ");
-                VFPRINT(output, "In file %s, line %i, column %i: ", _includeFiles[fileIndex - 1],error.LineNumber() , error.Column());
+                VFPRINT(output, "In file %s, line %i, column %i: ", _includeFiles[fileIndex - 1].c_str(),error.LineNumber() , error.Column());
 			}
 			else
             {
@@ -833,7 +833,7 @@ Error Executive::Execute(const PtrArray<Statement> &codeBlock, int &pc)
 			uint16_t fileIndex = stmt->FileIndex();
 			if (fileIndex && fileIndex <= _includeFiles.size())
 //				Print(stdout, ("^C\r\nBreak in file " + _includeFiles[fileIndex - 1] + ", line ").c_str(), stmt->LineNumber(), "\r\n");
-                VFPRINT(stdout, "^C\r\nBreak in file %s, line %i ", _includeFiles[fileIndex - 1], stmt->LineNumber());
+                VFPRINT(stdout, "^C\r\nBreak in file %s, line %i ", _includeFiles[fileIndex - 1].c_str(), stmt->LineNumber());
 			else
 //				Print(stdout, "^C\r\nBreak at line ", stmt->LineNumber(), "\r\n");
                 VFPRINT(stdout, "^C\r\nBreak in line %i ", stmt->LineNumber());
@@ -846,7 +846,7 @@ Error Executive::Execute(const PtrArray<Statement> &codeBlock, int &pc)
 				uint16_t fileIndex = stmt->FileIndex();
 				if (fileIndex && fileIndex <= _includeFiles.size())
 //					Print(stdout, ("\r\nBreak in file " + _includeFiles[fileIndex - 1] + ", line ").c_str(), stmt->LineNumber(), "\r\n");
-                VFPRINT(stdout, "C\r\nBreak in file %s, line %i ", _includeFiles[fileIndex - 1], stmt->LineNumber());
+                VFPRINT(stdout, "C\r\nBreak in file %s, line %i ", _includeFiles[fileIndex - 1].c_str(), stmt->LineNumber());
 				else
 //					Print(stdout, "\r\nBreak at line ", stmt->LineNumber(), "\r\n");
                 VFPRINT(stdout, "C\r\nBreak in line %i ", stmt->LineNumber());
@@ -869,7 +869,7 @@ Error Executive::Execute(const PtrArray<Statement> &codeBlock, int &pc)
 				size_t fileIndex = stmt->FileIndex();
                 if (fileIndex && fileIndex <= _includeFiles.size())
 //                  Print(stdout, ("\r\nBreak in file " + _includeFiles[fileIndex - 1] + ", line ").c_str(), stmt->LineNumber(), "\r\n");
-                VFPRINT(stdout, "C\r\nBreak in file %s, line %i ", _includeFiles[fileIndex - 1], stmt->LineNumber());
+                VFPRINT(stdout, "C\r\nBreak in file %s, line %i ", _includeFiles[fileIndex - 1].c_str(), stmt->LineNumber());
 				else
 //                  Print(stdout, "\r\nBreak at line ", stmt->LineNumber(), "\r\n");
                 VFPRINT(stdout, "C\r\nBreak in line %i ", stmt->LineNumber());
@@ -892,7 +892,7 @@ Error Executive::Execute(const PtrArray<Statement> &codeBlock, int &pc)
 				size_t fileIndex = stmt->FileIndex();
 				if (fileIndex && fileIndex <= _includeFiles.size())
 //                  Print(stdout, ("\r\nBreak in file " + _includeFiles[fileIndex - 1] + ", line ").c_str(), stmt->LineNumber(), "\r\n");
-                VFPRINT(stdout, "C\r\nBreak in file %s, line %i ", _includeFiles[fileIndex - 1], stmt->LineNumber());
+                VFPRINT(stdout, "C\r\nBreak in file %s, line %i ", _includeFiles[fileIndex - 1].c_str(), stmt->LineNumber());
 				else
 //                  Print(stdout, "\r\nBreak at line ", stmt->LineNumber(), "\r\n");
                 VFPRINT(stdout, "C\r\nBreak in line %i ",stmt->LineNumber());
@@ -925,7 +925,7 @@ Error Executive::Execute(const PtrArray<Statement> &codeBlock, int &pc)
 							size_t fileIndex = stmt->FileIndex();
 							if (fileIndex && fileIndex <= _includeFiles.size())
 //                  Print(stdout, ("\r\nBreak in file " + _includeFiles[fileIndex - 1] + ", line ").c_str(), stmt->LineNumber(), "\r\n");
-                VFPRINT(stdout, "C\r\nBreak in file %s, line %i ", _includeFiles[fileIndex - 1], stmt->LineNumber());
+                VFPRINT(stdout, "C\r\nBreak in file %s, line %i ", _includeFiles[fileIndex - 1].c_str(), stmt->LineNumber());
 							else
 //                  Print(stdout, "\r\nBreak at line ", stmt->LineNumber(), "\r\n");
                 VFPRINT(stdout, "C\r\nBreak in line %i ", stmt->LineNumber());
@@ -1092,7 +1092,7 @@ Error Executive::BreakpointCommand(StatementBp::BreakpointCommand cmd, uint16_t 
 				bp = ExtractLineNumber(bp);
 				if (bpFileIndex && bpFileIndex <= _includeFiles.size())
 //					Print(stdout, ("   " + _includeFiles[bpFileIndex - 1] + "[").c_str(), int(bp), "]\r\n");
-                VFPRINT(stdout, "   %s[%i]\r\n", _includeFiles[bpFileIndex - 1], int(bp));
+                VFPRINT(stdout, "   %s[%i]\r\n", _includeFiles[bpFileIndex - 1].c_str(), int(bp));
 				else
 //					Print(stdout, "   ", int(_breakpoints[i]), "\r\n");
                 VFPRINT(stdout, "   %i\r\n", int(_breakpoints[i]));

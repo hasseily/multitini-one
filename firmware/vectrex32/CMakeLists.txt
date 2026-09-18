@@ -10,7 +10,7 @@ list(TRANSFORM GSBASIC_FILES PREPEND "${GSBASIC_ROOT}/")
 add_library(multitini_vectrex32 STATIC ${GSBASIC_FILES} runtime.cpp lowlevel.cpp)
 target_include_directories(multitini_vectrex32 PUBLIC ${CMAKE_CURRENT_LIST_DIR}
     PRIVATE ${GSBASIC_ROOT} ${CMAKE_CURRENT_LIST_DIR}/compat)
-target_compile_features(multitini_vectrex32 PRIVATE cxx_std_17)
+target_compile_features(multitini_vectrex32 PUBLIC cxx_std_17)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(multitini_vectrex32 PRIVATE -fwrapv -fno-strict-aliasing)
 endif()

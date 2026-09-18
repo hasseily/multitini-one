@@ -6,6 +6,9 @@ option(MULTITINI_SANITIZE "Enable address and undefined-behavior sanitizers" OFF
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
+if(MSVC OR CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+endif()
 
 add_library(multitini_common STATIC
     firmware/common/ak4493.c
@@ -121,11 +124,11 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     )
     if(MULTITINI_SANITIZE)
         target_compile_options(multitini_common PUBLIC
-            -fsanitize=address,undefined -fno-omit-frame-pointer
+            -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all
         )
         target_link_options(multitini_common PUBLIC -fsanitize=address,undefined)
         target_compile_options(xilinx_supervisor_settings_host PUBLIC
-            -fsanitize=address,undefined -fno-omit-frame-pointer
+            -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all
         )
         target_link_options(xilinx_supervisor_settings_host PUBLIC
             -fsanitize=address,undefined
