@@ -1,5 +1,49 @@
 # Hardware Results
 
+## 2026-09-18: VID4 GBC startup failure and weak blur
+
+After the VID4 delivery, the owner reported a Game Boy boot screen with
+garbled text at the bottom, followed by a white screen instead of gameplay.
+The owner then reported that GBC worked again. The failing state was not
+captured over UART, and no cause or corrective action has been established.
+This is an unresolved intermittent startup regression, not a passing GBC
+acceptance result. A later passive UART read found the owner had switched
+to the VID4 C64 core; its identifiers and CPU1 Ready state were correct.
+
+The owner also reported that blur was barely visible on C64 and not visible
+on Game Boy / Game Boy Color. The VID3/VID4 inverse-square scale correction
+reduces each blur axis to 36/256 on C64 and 16/256 on GBC before RGB565
+quantization. The existing numerical normalization tests did not establish
+useful visible separation between the blur levels on these cores.
+
+The accepted historical GBC baseline below remains distinct from VID4.
+VID4 build, timing, and payload checks do not establish reliable cartridge
+startup or sustained 60 Hz gameplay on the board.
+
+A focused source comparison found that the VID3-to-VID4 GBC FPGA change
+was the shared register-read adapter fix and build identity. The cartridge
+loader, PSRAM logic, video logic, clocks and constraints were unchanged.
+The staged read does not alter write-channel ownership, and stream-status
+reads have no cartridge-write side effect. This inspection found no cause
+for the reported startup failure.
+
+`scripts/test_axi_gameboy_loader.py` now exercises the actual AXI adapter,
+control bank, asynchronous mailbox, GBC cartridge loader and returned
+status synchronizers together. Two random seeds and three uploads per seed
+check 196,616 cartridge bytes, including 456 header bytes, with independent
+write-channel arrival, response backpressure, scrambled read addresses,
+partial final words, consecutive loads and a drained reset. The test also
+withholds the final memory response and verifies that execution and the
+firmware-visible Ready status remain blocked until completion. All checks
+pass; no production upload logic was changed.
+
+The external memory endpoint is modeled and the mailbox uses the portable
+XPM model. This does not test physical PSRAM storage, pin timing, the mapper
+or Game Boy CPU execution. The production write response echoes the held
+write data rather than reading it back, so a successful upload transport
+does not independently verify the stored cartridge. The startup issue
+remains unresolved.
+
 ## 2026-09-14: shared interface firmware 20260920 board tested
 
 The owner confirmed that firmware `20260920` was flashed and board tested,
