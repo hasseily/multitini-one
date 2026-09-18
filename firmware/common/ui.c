@@ -87,6 +87,60 @@ void mt_ui_text_field(mt_ui_frame_t *frame, size_t column, size_t row,
     }
 }
 
+void mt_ui_checkbox(mt_ui_frame_t *frame, size_t column, size_t row,
+                    bool checked, mt_ui_control_state_t state,
+                    mt_ui_color_t background)
+{
+    const mt_ui_color_t foreground = state == MT_UI_CONTROL_ENABLED ?
+        MT_UI_COLOR_BLUE : MT_UI_COLOR_MUTED;
+    mt_ui_text(frame, column, row, checked ? "[x]" : "[ ]",
+                foreground, background, false);
+}
+
+void mt_ui_slider(mt_ui_frame_t *frame, size_t column, size_t row,
+                  size_t width, uint32_t value, uint32_t minimum,
+                  uint32_t maximum, mt_ui_control_state_t state,
+                  mt_ui_color_t background)
+{
+    const mt_ui_color_t foreground = state == MT_UI_CONTROL_ENABLED ?
+        MT_UI_COLOR_BLUE : MT_UI_COLOR_MUTED;
+    size_t thumb = 0U;
+    size_t index;
+
+    if (frame == NULL || column >= MT_UI_COLUMNS || row >= MT_UI_ROWS)
+        return;
+    if (width > MT_UI_COLUMNS - column) width = MT_UI_COLUMNS - column;
+    if (width == 0U) return;
+    if (width > 2U && maximum > minimum) {
+        const uint32_t range = maximum - minimum;
+        if (value < minimum) value = minimum;
+        if (value > maximum) value = maximum;
+        /* Clip width before multiplying. Even the full uint32_t range fits
+         * in this uint64_t product for the fixed text-plane column count. */
+        thumb = (size_t)(((uint64_t)(value - minimum) * (width - 3U) +
+                           range / 2U) / range);
+    }
+    for (index = 0U; index < width; ++index) {
+        char character;
+        if (width == 1U) character = '|';
+        else if (index == 0U) character = '[';
+        else if (index == width - 1U) character = ']';
+        else character = index - 1U == thumb ? '|' : '-';
+        frame->cells[row * MT_UI_COLUMNS + column + index] =
+            mt_ui_cell(character, foreground, background, false);
+    }
+}
+
+void mt_ui_control_hint(mt_ui_frame_t *frame, size_t column, size_t row,
+                        size_t width, mt_ui_control_state_t state,
+                        mt_ui_color_t background)
+{
+    const char *text = state == MT_UI_CONTROL_ENABLED ? "" :
+                       state == MT_UI_CONTROL_LOCKED ? "Locked" : "Disabled";
+    mt_ui_text_field(frame, column, row, width, text, MT_UI_COLOR_MUTED,
+                     background, false, false);
+}
+
 char mt_ui_character(const mt_ui_frame_t *frame, size_t column, size_t row)
 {
     if (frame == NULL || column >= MT_UI_COLUMNS || row >= MT_UI_ROWS)

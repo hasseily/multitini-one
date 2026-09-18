@@ -61,7 +61,8 @@ static bool core_ready;
 static unsigned input_changes, content_loads;
 static mt_vectrex_content_result_t content_result;
 static const mt_menu_item_t media_items[5] = {
-    {"Disk", "mounted", "", MT_MENU_ACTION_BROWSE_DRIVE8, 0U, true, MT_UI_COLOR_TEXT}
+    {.label="Disk", .value="mounted", .help="", .action=MT_MENU_ACTION_BROWSE_DRIVE8,
+     .enabled=true, .value_color=MT_UI_COLOR_TEXT}
 };
 static const mt_core_selection_t cores[2] = {0};
 static uint64_t monotonic_ms(void *context) {(void)context; return now_ms;}
@@ -509,6 +510,7 @@ class MenuRuntimeTests(unittest.TestCase):
             "-I", str(ROOT / "firmware/include"), str(harness),
             "-I", str(ROOT / "firmware/platform/xilinx"),
             str(ROOT / "firmware/common/menu.c"), str(ROOT / "firmware/common/ui.c"),
+            str(ROOT / "firmware/common/text_reader.c"), str(ROOT / "firmware/common/clock.c"),
             str(ROOT / "firmware/common/content_type.c"),
             str(ROOT / "firmware/common/vectrex_overlay.c"),
             str(ROOT / "firmware/common/core_link.c"),

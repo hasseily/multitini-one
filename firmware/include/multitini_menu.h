@@ -4,6 +4,8 @@
 
 #include "multitini_supervisor.h"
 #include "multitini_ui.h"
+#include "multitini_clock.h"
+#include "multitini_text_reader.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -16,6 +18,9 @@
 /* Reserved cookie flags; ordinary file and D64 cookies retain their values. */
 #define MT_MENU_FILE_DIRECTORY UINT32_C(0x80000000)
 #define MT_MENU_FILE_PARENT UINT32_C(0x40000000)
+#define MT_MENU_FILE_TEXT UINT32_C(0x20000000)
+#define MT_MENU_TEXT_COLUMNS 95U
+#define MT_MENU_TEXT_ROWS 40U
 /* The content list leaves room for the shared header, help and footer. */
 #define MT_MENU_LIST_ROWS (MT_UI_ROWS - 20U)
 
@@ -53,7 +58,12 @@ typedef enum {
     MT_MENU_ACTION_OPEN_DIRECTORY,
     MT_MENU_ACTION_SET_BORDER,
     MT_MENU_ACTION_SET_VECTREX_VIDEO,
-    MT_MENU_ACTION_BROWSE_OVERLAY
+    MT_MENU_ACTION_BROWSE_OVERLAY,
+    MT_MENU_ACTION_BROWSE_DOCUMENTS,
+    MT_MENU_ACTION_OPEN_TEXT,
+    MT_MENU_ACTION_EDIT_CLOCK,
+    MT_MENU_ACTION_SET_CLOCK,
+    MT_MENU_ACTION_RESTART_USB
 } mt_menu_action_kind_t;
 
 typedef enum {
@@ -62,7 +72,8 @@ typedef enum {
     MT_MENU_BROWSER_DISK_PROGRAM,
     MT_MENU_BROWSER_CARTRIDGE,
     MT_MENU_BROWSER_PROGRAM,
-    MT_MENU_BROWSER_OVERLAY
+    MT_MENU_BROWSER_OVERLAY,
+    MT_MENU_BROWSER_DOCUMENTS
 } mt_menu_browser_t;
 
 typedef struct {
@@ -70,6 +81,12 @@ typedef struct {
     size_t size;
     uint32_t cookie;
 } mt_menu_file_t;
+
+typedef enum {
+    MT_MENU_CONTROL_VALUE = 0,
+    MT_MENU_CONTROL_CHECKBOX,
+    MT_MENU_CONTROL_SLIDER
+} mt_menu_control_t;
 
 typedef struct {
     const char *label;
@@ -79,6 +96,10 @@ typedef struct {
     size_t argument;
     bool enabled;
     mt_ui_color_t value_color;
+    mt_menu_control_t control;
+    uint32_t control_value;
+    uint32_t control_min;
+    uint32_t control_max;
 } mt_menu_item_t;
 
 typedef mt_menu_item_t mt_menu_core_option_t;
@@ -107,6 +128,13 @@ typedef struct {
     size_t media_item_count;
     const mt_menu_item_t *input_items;
     size_t input_item_count;
+    const mt_menu_item_t *system_items;
+    size_t system_item_count;
+    mt_text_reader_t *text_reader;
+    const char *text_title;
+    bool clock_available;
+    bool clock_valid;
+    mt_clock_time_t clock;
     bool save_dirty;
     bool save_faulted;
     bool video_test_enabled;
@@ -134,6 +162,9 @@ typedef struct {
     size_t selected_variant[MT_MENU_MAX_CORES];
     size_t page_row[MT_MENU_PAGE_COUNT];
     size_t first_row;
+    bool clock_edit;
+    size_t clock_field;
+    mt_clock_time_t clock;
 } mt_menu_t;
 
 enum {

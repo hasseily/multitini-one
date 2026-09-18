@@ -26,6 +26,8 @@ static unsigned mount_calls;
 static unsigned unmount_calls;
 static unsigned open_calls;
 static unsigned read_calls;
+static unsigned read_failure_call;
+static UINT largest_read_request;
 static unsigned write_calls;
 static unsigned sync_calls;
 static unsigned close_calls;
@@ -118,9 +120,10 @@ FRESULT f_read(FIL *file, void *buffer, UINT bytes_to_read,
     assert(buffer != NULL);
     assert(bytes_read != NULL);
     ++read_calls;
-    if (read_status != FR_OK) {
+    if (bytes_to_read > largest_read_request) largest_read_request = bytes_to_read;
+    if (read_status != FR_OK || read_calls == read_failure_call) {
         *bytes_read = 0U;
-        return read_status;
+        return read_status == FR_OK ? FR_DISK_ERR : read_status;
     }
     if (short_read && delivered != 0U) --delivered;
     if ((FSIZE_t)delivered > f_size(file) - file->placeholder)
@@ -274,6 +277,8 @@ static void reset_fake(void)
     unmount_calls = 0U;
     open_calls = 0U;
     read_calls = 0U;
+    read_failure_call = 0U;
+    largest_read_request = 0U;
     write_calls = 0U;
     sync_calls = 0U;
     close_calls = 0U;
@@ -310,6 +315,103 @@ static int collect_entry(void *context, const char *name, size_t size,
     list->total_size += size;
     list->saw_directory = list->saw_directory || is_directory;
     return list->stop_after != 0U && list->count == list->stop_after;
+}
+
+static void prefix_progress(void *context)
+{
+    unsigned *const calls = context;
+    assert(calls != NULL && read_calls == *calls + 1U && close_calls == 0U);
+    assert(largest_read_request <= 4096U);
+    ++*calls;
+}
+
+static void test_prefix_reads(void)
+{
+    uint8_t data[10000], destination[10000];
+    bool truncated = true;
+    unsigned progress_calls = 0U;
+    size_t index;
+    mt_sd_result_t value;
+    for (index = 0U; index < sizeof(data); ++index) data[index] = (uint8_t)index;
+
+    reset_fake();
+    fake_file_size = sizeof(data); fake_file_data = data;
+    memset(destination, 0xA5, sizeof(destination));
+    value = mt_sd_storage_read_file_prefix("prefix.txt", destination, 5000U,
+                                            &truncated, prefix_progress, &progress_calls);
+    assert(value.status == MT_SD_OK && value.size == 5000U && truncated);
+    assert(read_calls == 2U && progress_calls == 2U && close_calls == 1U);
+    assert(largest_read_request == 4096U && memcmp(destination, data, 5000U) == 0);
+    assert(destination[5000] == 0xA5U);
+    assert(mt_sd_storage_unmount().status == MT_SD_OK);
+
+    reset_fake(); progress_calls = 0U;
+    fake_file_size = sizeof(data); fake_file_data = data;
+    value = mt_sd_storage_read_file_prefix("prefix.txt", destination, sizeof(destination),
+                                            &truncated, prefix_progress, &progress_calls);
+    assert(value.status == MT_SD_OK && value.size == sizeof(data) && !truncated);
+    assert(read_calls == 3U && progress_calls == 3U && close_calls == 1U);
+    assert(memcmp(destination, data, sizeof(data)) == 0);
+
+    reset_fake(); progress_calls = 0U;
+    value = mt_sd_storage_read_file_prefix("empty.txt", destination, sizeof(destination),
+                                            &truncated, prefix_progress, &progress_calls);
+    assert(value.status == MT_SD_OK && value.size == 0U && !truncated);
+    assert(read_calls == 0U && progress_calls == 0U && close_calls == 1U);
+
+    reset_fake();
+    fake_file_size = sizeof(data); fake_file_data = data;
+    value = mt_sd_storage_read_file_prefix("prefix.txt", destination, 0U,
+                                            &truncated, NULL, NULL);
+    assert(value.status == MT_SD_OK && value.size == 0U && truncated);
+    assert(read_calls == 0U && close_calls == 1U);
+
+    reset_fake();
+    fake_file_size = UINT64_MAX; fake_file_data = data;
+    value = mt_sd_storage_read_file_prefix("large.txt", destination, 8U,
+                                            &truncated, NULL, NULL);
+    assert(value.status == MT_SD_OK && value.size == 8U && truncated);
+    assert(read_calls == 1U && close_calls == 1U && memcmp(destination, data, 8U) == 0);
+
+    reset_fake(); progress_calls = 0U;
+    fake_file_size = sizeof(data); fake_file_data = data;
+    read_failure_call = 2U; close_status = FR_INVALID_PARAMETER;
+    value = mt_sd_storage_read_file_prefix("prefix.txt", destination, sizeof(destination),
+                                            &truncated, prefix_progress, &progress_calls);
+    assert(value.status == MT_SD_READ_FAILED && value.backend_status == FR_DISK_ERR && value.size == 4096U);
+    assert(read_calls == 2U && progress_calls == 1U && close_calls == 1U);
+    assert(mt_sd_storage_unmount().status == MT_SD_OK);
+
+    reset_fake(); progress_calls = 0U;
+    fake_file_size = sizeof(data); fake_file_data = data; short_read = true;
+    value = mt_sd_storage_read_file_prefix("prefix.txt", destination, sizeof(destination),
+                                            &truncated, prefix_progress, &progress_calls);
+    assert(value.status == MT_SD_READ_FAILED && value.size == 4095U);
+    assert(read_calls == 1U && progress_calls == 0U && close_calls == 1U);
+
+    reset_fake();
+    fake_file_size = 4U; fake_file_data = data; close_status = FR_DISK_ERR;
+    value = mt_sd_storage_read_file_prefix("prefix.txt", destination, sizeof(destination),
+                                            &truncated, NULL, NULL);
+    assert(value.status == MT_SD_CLOSE_FAILED && value.size == 4U && close_calls == 1U);
+    assert(mt_sd_storage_unmount().status == MT_SD_OK);
+
+    reset_fake(); mount_status = FR_DISK_ERR;
+    value = mt_sd_storage_read_file_prefix("prefix.txt", destination, sizeof(destination),
+                                            &truncated, NULL, NULL);
+    assert(value.status == MT_SD_MOUNT_FAILED && !truncated && open_calls == 0U && close_calls == 0U);
+    reset_fake(); open_status = FR_NO_FILE;
+    value = mt_sd_storage_read_file_prefix("prefix.txt", destination, sizeof(destination),
+                                            &truncated, NULL, NULL);
+    assert(value.status == MT_SD_OPEN_FAILED && !truncated && read_calls == 0U && close_calls == 0U);
+    reset_fake();
+    assert(mt_sd_storage_read_file_prefix(NULL, destination, sizeof(destination), &truncated, NULL, NULL).status ==
+           MT_SD_INVALID_ARGUMENT);
+    assert(mt_sd_storage_read_file_prefix("prefix.txt", NULL, 0U, &truncated, NULL, NULL).status ==
+           MT_SD_INVALID_ARGUMENT);
+    assert(mt_sd_storage_read_file_prefix("prefix.txt", destination, sizeof(destination), NULL, NULL, NULL).status ==
+           MT_SD_INVALID_ARGUMENT);
+    assert(mount_calls == 0U && open_calls == 0U);
 }
 
 static void test_managed_files(void)
@@ -746,6 +848,7 @@ int main(void)
     assert(strcmp(mt_sd_status_name(MT_SD_JOURNAL_INVALID),
                   "journal invalid") == 0);
     assert(strcmp(mt_sd_status_name((mt_sd_status_t)99), "unknown") == 0);
+    test_prefix_reads();
     test_managed_files();
     test_settings_journal_migration();
     return 0;

@@ -3,6 +3,7 @@
 #include "multitini_core_frontend.h"
 #include "multitini_c64_interface.h"
 #include "multitini_gameboy_interface.h"
+#include "multitini_system.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -29,6 +30,9 @@ int main(int argc, char **argv)
     mt_core_frontend_t frontend;
     mt_menu_view_t view = {0};
     mt_menu_t menu;
+    mt_system_frontend_t system_frontend;
+    mt_system_snapshot_t snapshot = {0};
+    mt_text_reader_t reader = {0};
     mt_ui_frame_t frame;
     size_t index;
     const char *scenario;
@@ -135,6 +139,41 @@ int main(int argc, char **argv)
         view.status_text = "Preview fixtures: settings are illustrative only.";
         menu.page = MT_MENU_PAGE_CORE_CONFIG;
         (void)mt_menu_key(&menu, &view, MT_MENU_HID_END, true);
+    } else if (strcmp(scenario, "system") == 0 || strcmp(scenario, "clock") == 0) {
+        view.settings_auto_boot = false;
+        snapshot.firmware_build = UINT32_C(0x55494631);
+        snapshot.shell_build = UINT32_C(0x56454333);
+        snapshot.abi = 12U;
+        snapshot.uptime_seconds = 93784U;
+        snapshot.temperature_valid = true;
+        snapshot.temperature_micro_c = 42375000;
+        snapshot.clock_available = snapshot.clock_valid = true;
+        snapshot.clock = (mt_clock_time_t){2026U, 9U, 18U, 14U, 32U, 8U};
+        snapshot.usb_started = snapshot.dac_ready = snapshot.audio_muted = true;
+        snapshot.keyboards = 1U; snapshot.gamepads = 2U;
+        snapshot.catalog_status = "ok"; snapshot.catalog_count = 3U;
+        mt_system_frontend_apply(&system_frontend, &snapshot, &view);
+        menu.page = MT_MENU_PAGE_SYSTEM;
+        menu.row = 3U;
+        if (strcmp(scenario, "clock") == 0)
+            (void)mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true);
+    } else if (strcmp(scenario, "text-reader") == 0) {
+        static const char document[] =
+            "MULTITINI ONE - QUICK START\r\n\r\n"
+            "Open the menu with F12. Use Tab to choose a section, arrows to select an item, and Enter to open it.\r\n\r\n"
+            "READING DOCUMENTS\r\n"
+            "TXT files appear beside your games. You can also use System > Read documents to browse the multitini folder.\r\n\r\n"
+            "Up / Down\tScroll one line\r\n"
+            "Left / Right\tScroll one page\r\n"
+            "Home / End\tJump to the beginning or end\r\n"
+            "Escape\t\tReturn to the same selected file\r\n\r\n"
+            "The active core stays paused while you read. Opening a document does not load, eject, or replace game media.\r\n\r\n"
+            "This preview uses synthetic instructions and sample status values. It is not a board capture.\r\n";
+        if (mt_text_reader_open(&reader, document, sizeof(document) - 1U, false,
+                               MT_MENU_TEXT_COLUMNS, MT_MENU_TEXT_ROWS) != MT_TEXT_READER_OK) return 2;
+        view.text_reader = &reader; view.text_title = "Getting started.txt";
+        menu.page = MT_MENU_PAGE_SYSTEM;
+        menu.browser = MT_MENU_BROWSER_DOCUMENTS;
     } else if (strcmp(scenario, "catalog-16") == 0) {
         for (index = 2U; index < MT_MENU_MAX_CORES; ++index) {
             char id[24];
@@ -160,5 +199,6 @@ int main(int argc, char **argv)
         printf("%04x%c", (unsigned)frame.cells[index],
                (index + 1U) % MT_UI_COLUMNS == 0U ? '\n' : ' ');
     }
+    mt_text_reader_close(&reader);
     return ferror(stdout) ? 1 : 0;
 }

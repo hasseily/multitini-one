@@ -74,7 +74,7 @@ class ExfatSupportTests(unittest.TestCase):
                   "fatfs_time.c").read_text(encoding="utf-8")
         self.assertIn("MT_PCF8563_I2C_ADDRESS", main)
         self.assertIn("service_fatfs_time();", main)
-        self.assertIn("mt_fatfs_time_update_from_pcf8563(registers)", main)
+        self.assertIn("mt_fatfs_time_update_from_pcf8563(registers + 2U)", main)
         self.assertIn("DWORD multitini_fatfs_get_fattime(void)", hook)
         self.assertIn("mt_fatfs_time_current()", hook)
         self.assertIn("cached_fattime_valid ? cached_fattime", common)

@@ -21,17 +21,21 @@
 #include "multitini_media_browser.h"
 #include "multitini_regs.h"
 #include "multitini_supervisor.h"
+#include "multitini_system.h"
 #include "multitini_tmp102.h"
 #include "multitini_ui.h"
 #include "multitini_xmodem.h"
 #include "pl_loader.h"
 #include "sd_storage.h"
 #include "supervisor_settings.h"
+#include "text_document.h"
 #include "usb_hid_service.h"
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "platform.h"
@@ -47,8 +51,8 @@
 
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
 #define MT_SUPERVISOR_CORE_ID UINT32_C(0)
-/* VEC4 adds Vectrex overlays and independent artwork/beam brightness. */
-#define MT_FIRMWARE_BUILD_ID UINT32_C(0x56454334)
+/* UIF1 adds USB hardening, documents, board status and shared controls. */
+#define MT_FIRMWARE_BUILD_ID UINT32_C(0x55494631)
 #define MT_I2C_CLOCK_HZ UINT32_C(100000)
 #define MT_I2C_BUSY_POLLS UINT32_C(1000000)
 #define MT_UART_DRAIN_POLLS UINT32_C(10000000)
@@ -111,6 +115,15 @@ typedef enum {
 } c64_rom_stage_result_t;
 
 static XTime last_fatfs_time_poll;
+static bool board_clock_available;
+static bool board_clock_valid;
+static mt_clock_time_t board_clock;
+static mt_system_frontend_t system_frontend;
+static mt_text_reader_t document_reader;
+static char document_title[MT_MENU_FILE_NAME_MAX];
+static bool board_temperature_valid;
+static int32_t board_temperature_micro_c;
+static uint64_t last_system_refresh_ms;
 static mt_core_catalog_sd_t core_catalog;
 static mt_supervisor_t supervisor;
 static mt_menu_t supervisor_menu;
@@ -216,13 +229,38 @@ static int board_i2c_read(XIicPs *i2c, uint8_t address, uint8_t reg,
 
 static int refresh_fatfs_time_from_rtc(void)
 {
-    uint8_t registers[MT_PCF8563_TIME_REGISTER_COUNT];
+    uint8_t registers[MT_PCF8563_TIME_REGISTER_COUNT + 2U];
     if (board_i2c_read(&i2c_instance, MT_PCF8563_I2C_ADDRESS,
-                       MT_PCF8563_SECONDS_REGISTER, registers,
+                       0U, registers,
                        (int)sizeof(registers)) != 0) {
+        board_clock_available = board_clock_valid = false;
         return -1;
     }
-    return mt_fatfs_time_update_from_pcf8563(registers) ? 0 : -2;
+    board_clock_available = true;
+    board_clock_valid = (registers[0] & UINT8_C(0x20)) == 0U &&
+        mt_clock_decode(registers + 2U, &board_clock);
+    return board_clock_valid && mt_fatfs_time_update_from_pcf8563(registers + 2U) ? 0 : -2;
+}
+
+static bool set_board_clock(const mt_clock_time_t *time)
+{
+    uint8_t payload[10] = {0};
+    uint8_t controls[2];
+    /* Write normal running mode and all seven time registers in one transfer.
+     * Preserve unrelated alarm/timer control bits. A failed transfer is
+     * reported; the editor remains open for retry. */
+    if (!i2c_ready || !mt_clock_encode(time, payload + 3U) ||
+        board_i2c_read(&i2c_instance, MT_PCF8563_I2C_ADDRESS, 0U, controls, 2) != 0)
+        return false;
+    payload[1] = (uint8_t)(controls[0] & (uint8_t)~UINT8_C(0x20));
+    payload[2] = controls[1];
+    if (XIicPs_MasterSendPolled(&i2c_instance, payload, (int)sizeof(payload),
+                              MT_PCF8563_I2C_ADDRESS) != XST_SUCCESS ||
+        wait_i2c_idle(&i2c_instance) != 0) {
+        board_clock_valid = false;
+        return false;
+    }
+    return refresh_fatfs_time_from_rtc() == 0 && mt_clock_readback_matches(time, &board_clock);
 }
 
 static int service_fatfs_time(void)
@@ -1699,8 +1737,8 @@ static mt_menu_view_t supervisor_menu_view(void)
     view.status_color = supervisor_status_color;
     view.files = supervisor_menu_files;
     view.file_count = supervisor_menu_file_count;
-    if (supervisor.has_active &&
-        supervisor.active.package.core_id == MT_VECTREX_CORE_ID &&
+    if ((supervisor_menu.browser == MT_MENU_BROWSER_DOCUMENTS || (supervisor.has_active &&
+        supervisor.active.package.core_id == MT_VECTREX_CORE_ID)) &&
         supervisor_menu.browser != MT_MENU_BROWSER_NONE &&
         vectrex_browser_path[0] != '\0')
         view.content_root = vectrex_browser_path;
@@ -1734,7 +1772,46 @@ static mt_menu_view_t supervisor_menu_view(void)
                 (view.vectrex_video_supported && vectrex_content_service_overlay_warning()[0] != '\0');
         }
     }
+    {
+        mt_usb_hid_status_t usb;
+        mt_system_snapshot_t snapshot = {0};
+        usb_hid_service_get_status(&usb);
+        snapshot.firmware_build = MT_FIRMWARE_BUILD_ID;
+        snapshot.shell_build = shell_read(MT_REG_SHELL_BUILD_ID);
+        snapshot.abi = shell_read(MT_REG_ABI_VERSION);
+        snapshot.uptime_seconds = monotonic_ms(NULL) / 1000U;
+        snapshot.temperature_valid = board_temperature_valid;
+        snapshot.temperature_micro_c = board_temperature_micro_c;
+        snapshot.clock_available = board_clock_available;
+        snapshot.clock_valid = board_clock_valid;
+        snapshot.clock = board_clock;
+        snapshot.usb_started = usb.started != 0U;
+        snapshot.keyboards = usb.keyboards;
+        snapshot.gamepads = usb.gamepads;
+        snapshot.usb_submit_errors = usb.submit_errors;
+        snapshot.usb_transfer_errors = usb.transfer_errors;
+        snapshot.usb_input_errors = usb.input_errors;
+        snapshot.usb_last_error = usb.last_error;
+        snapshot.catalog_status = mt_sd_status_name(core_catalog.sd.status);
+        snapshot.catalog_count = core_catalog.count;
+        snapshot.catalog_rejected = core_catalog.rejected;
+        snapshot.dac_ready = dac_ready;
+        snapshot.audio_muted = supervisor_menu.visible ||
+            (shell_read(MT_REG_CONTROL) & MT_CONTROL_AUDIO_MUTE) != 0U;
+        mt_system_frontend_apply(&system_frontend, &snapshot, &view);
+        view.text_reader = &document_reader;
+        view.text_title = document_title;
+    }
     return view;
+}
+
+static bool is_text_document(const char *name)
+{
+    const size_t length = name == NULL ? 0U : strlen(name);
+    if (length < 4U) return false;
+    name += length - 4U;
+    return name[0] == '.' && (name[1] == 't' || name[1] == 'T') &&
+        (name[2] == 'x' || name[2] == 'X') && (name[3] == 't' || name[3] == 'T');
 }
 
 static int collect_menu_file(void *context, const char *name, size_t size,
@@ -1745,21 +1822,31 @@ static int collect_menu_file(void *context, const char *name, size_t size,
         supervisor.has_active ? supervisor.active.package.core_id : 0U, name);
     size_t name_size;
     bool accepted;
-    const bool folders = supervisor.has_active &&
-        supervisor.active.package.core_id == MT_VECTREX_CORE_ID;
-    if (folders && !mt_media_browser_valid_component(name)) return 0;
+    const bool document = !is_directory && is_text_document(name);
+    const bool folders = browser == MT_MENU_BROWSER_DOCUMENTS || (supervisor.has_active &&
+        supervisor.active.package.core_id == MT_VECTREX_CORE_ID);
+    if (!mt_media_browser_valid_component(name)) return 0;
     accepted = is_directory ? folders :
-        supervisor.has_active && mt_core_frontend_accepts_content(
-            supervisor.active.package.core_id, browser, type);
-    if (!accepted || supervisor_menu_file_count >= MT_MENU_MAX_FILES)
-        return 0;
+        document || (supervisor.has_active && browser != MT_MENU_BROWSER_DOCUMENTS &&
+            mt_core_frontend_accepts_content(supervisor.active.package.core_id, browser, type));
+    if (!accepted) return 0;
     name_size = strlen(name);
     if (name_size == 0U || name_size >= MT_MENU_FILE_NAME_MAX) return 0;
+    /* Documents cannot crowd usable media or folders out of a full list. */
+    if (supervisor_menu_file_count >= MT_MENU_MAX_FILES) {
+        size_t index;
+        if (document) return 0;
+        for (index = supervisor_menu_file_count; index > 0U; --index)
+            if ((supervisor_menu_files[index - 1U].cookie & MT_MENU_FILE_TEXT) != 0U) break;
+        if (index == 0U) return 0;
+        --supervisor_menu_file_count;
+        supervisor_menu_files[index - 1U] = supervisor_menu_files[supervisor_menu_file_count];
+    }
     memcpy(supervisor_menu_files[supervisor_menu_file_count].name,
            name, name_size + 1U);
     supervisor_menu_files[supervisor_menu_file_count].size = size;
     supervisor_menu_files[supervisor_menu_file_count].cookie =
-        is_directory ? MT_MENU_FILE_DIRECTORY : 0U;
+        is_directory ? MT_MENU_FILE_DIRECTORY : document ? MT_MENU_FILE_TEXT : 0U;
     ++supervisor_menu_file_count;
     return 0;
 }
@@ -1864,6 +1951,12 @@ static void list_vectrex_browser(mt_menu_browser_t browser,
 static void open_menu_browser(mt_menu_browser_t browser)
 {
     mt_sd_result_t list_result;
+    if (browser == MT_MENU_BROWSER_DOCUMENTS) {
+        mt_media_browser_t directory;
+        if (mt_media_browser_init(&directory, "0:/multitini"))
+            list_vectrex_browser(browser, &directory);
+        return;
+    }
     if (!supervisor.has_active || !mt_core_frontend_browser_supported(
             supervisor.active.package.core_id, browser)) {
         set_supervisor_status("This core has no media browser yet");
@@ -2372,6 +2465,14 @@ static void launch_disk_program_native(uint32_t cookie)
         "LOAD sent; settings write failed");
 }
 
+static void document_read_progress(void *context)
+{
+    (void)context;
+    /* FatFs owns the current read. Poll USB without re-entering SD or the
+     * shared core command channel while loading a document. */
+    usb_hid_service_poll_deferred();
+}
+
 static void handle_menu_action(mt_menu_action_t action)
 {
     if (action.kind == MT_MENU_ACTION_SWITCH_CORE) {
@@ -2419,6 +2520,47 @@ static void handle_menu_action(mt_menu_action_t action)
         open_menu_browser(MT_MENU_BROWSER_CARTRIDGE);
     } else if (action.kind == MT_MENU_ACTION_BROWSE_PROGRAM) {
         open_menu_browser(MT_MENU_BROWSER_PROGRAM);
+    } else if (action.kind == MT_MENU_ACTION_BROWSE_DOCUMENTS) {
+        open_menu_browser(MT_MENU_BROWSER_DOCUMENTS);
+    } else if (action.kind == MT_MENU_ACTION_OPEN_TEXT) {
+        char path[640];
+        const mt_menu_view_t view = supervisor_menu_view();
+        const mt_menu_file_t *entry;
+        int length;
+        mt_text_document_result_t result;
+        if (action.file_index >= supervisor_menu_file_count ||
+            supervisor_menu.browser == MT_MENU_BROWSER_NONE ||
+            supervisor_menu.browser == MT_MENU_BROWSER_DISK_PROGRAM || view.content_root == NULL)
+            return;
+        entry = &supervisor_menu_files[action.file_index];
+        if ((entry->cookie & MT_MENU_FILE_TEXT) == 0U ||
+            !mt_media_browser_valid_component(entry->name) || !is_text_document(entry->name)) return;
+        length = snprintf(path, sizeof(path), "%s/%s", view.content_root, entry->name);
+        if (length < 0 || (size_t)length >= sizeof(path)) {
+            set_supervisor_error("Document path is too long");
+            return;
+        }
+        result = mt_text_document_load(&document_reader, path,
+            MT_MENU_TEXT_COLUMNS, MT_MENU_TEXT_ROWS, document_read_progress, NULL);
+        if (result == MT_TEXT_DOCUMENT_OK) {
+            memcpy(document_title, entry->name, strlen(entry->name) + 1U);
+            set_supervisor_status("Reading document; Escape returns to the browser");
+        } else {
+            set_supervisor_error(result == MT_TEXT_DOCUMENT_NO_MEMORY ? "Not enough memory for this document" :
+                result == MT_TEXT_DOCUMENT_DECODE_FAILED ? "Unsupported document encoding" :
+                result == MT_TEXT_DOCUMENT_CLOSE_FAILED ? "Could not close the document on SD" :
+                "Could not read the document from SD");
+        }
+    } else if (action.kind == MT_MENU_ACTION_SET_CLOCK) {
+        if (supervisor_menu.clock_edit && set_board_clock(&supervisor_menu.clock)) {
+            supervisor_menu.clock_edit = false;
+            set_supervisor_status("Board clock saved");
+        } else set_supervisor_error("Clock write or verification failed; retry Save time");
+    } else if (action.kind == MT_MENU_ACTION_RESTART_USB) {
+        int status = usb_hid_service_stop();
+        if (status == 0) status = usb_hid_service_start();
+        memset(supervisor_menu_keys, 0, sizeof(supervisor_menu_keys));
+        set_supervisor_outcome(status == 0, "USB restarted; detecting devices", "USB restart failed; check connections");
     } else if (action.kind == MT_MENU_ACTION_BROWSE_OVERLAY) {
         if (supervisor.has_active && selection_supports_vectrex_video(&supervisor.active))
             open_menu_browser(MT_MENU_BROWSER_OVERLAY);
@@ -2427,8 +2569,8 @@ static void handle_menu_action(mt_menu_action_t action)
         mt_media_browser_t directory = vectrex_media_browser;
         const mt_menu_file_t *entry;
         bool changed;
-        if (!supervisor.has_active ||
-            supervisor.active.package.core_id != MT_VECTREX_CORE_ID ||
+        if ((supervisor_menu.browser != MT_MENU_BROWSER_DOCUMENTS && (!supervisor.has_active ||
+            supervisor.active.package.core_id != MT_VECTREX_CORE_ID)) ||
             supervisor_menu.browser == MT_MENU_BROWSER_NONE ||
             action.file_index >= supervisor_menu_file_count) return;
         entry = &supervisor_menu_files[action.file_index];
@@ -3083,6 +3225,26 @@ static void initialize_supervisor_menu(void)
     usb_hid_service_set_keyboard_filter(supervisor_keyboard_filter, NULL);
 }
 
+static void service_system_page(void)
+{
+    uint64_t now;
+    uint8_t raw[2];
+    if (!supervisor_menu_ready || !supervisor_menu.visible ||
+        supervisor_menu.page != MT_MENU_PAGE_SYSTEM ||
+        supervisor_menu.browser != MT_MENU_BROWSER_NONE || supervisor_menu.clock_edit) {
+        last_system_refresh_ms = 0U;
+        return;
+    }
+    now = monotonic_ms(NULL);
+    if (last_system_refresh_ms != 0U && now - last_system_refresh_ms < 1000U) return;
+    last_system_refresh_ms = now;
+    board_temperature_valid = i2c_ready &&
+        board_i2c_read(&i2c_instance, MT_TMP102_I2C_ADDRESS,
+                       MT_TMP102_TEMPERATURE_REGISTER, raw, 2) == 0 &&
+        mt_tmp102_decode_micro_c(raw, &board_temperature_micro_c) == 0;
+    supervisor_menu_dirty = true;
+}
+
 static void recovery_console(void)
 {
     xil_printf("recovery command: :reboot return to golden updater\r\n");
@@ -3155,6 +3317,7 @@ int main(void)
         uint8_t byte;
         char input;
         service_runtime();
+        service_system_page();
         service_supervisor_menu();
         if (uart0_try_read_byte(&byte) == 0) continue;
         input = (char)byte;

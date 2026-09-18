@@ -111,8 +111,10 @@ static void test_generic_items_and_focus(void)
     size_t index;
     for (index = 0U; index < MT_MENU_MAX_ITEMS; ++index) {
         mt_menu_item_t item = {
-            "New core setting", "Custom value", "Help supplied by a future core.",
-            MT_MENU_ACTION_TOGGLE_CORE_OPTION, 100U + index, true, MT_UI_COLOR_MUTED
+            .label = "New core setting", .value = "Custom value",
+            .help = "Help supplied by a future core.",
+            .action = MT_MENU_ACTION_TOGGLE_CORE_OPTION,
+            .argument = 100U + index, .enabled = true, .value_color = MT_UI_COLOR_MUTED
         };
         items[index] = item;
     }

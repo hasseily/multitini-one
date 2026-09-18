@@ -152,6 +152,101 @@ static void test_text(void)
           "out of bounds and empty fields perform no writes");
 }
 
+static void check_text(const mt_ui_frame_t *frame, size_t column, size_t row,
+                       const char *text, const char *message)
+{
+    size_t index;
+    for (index = 0U; text[index] != '\0'; ++index)
+        check(mt_ui_character(frame, column + index, row) == text[index], message);
+}
+
+static void test_controls(void)
+{
+    struct {
+        uint32_t before;
+        mt_ui_frame_t frame;
+        uint32_t after;
+    } guarded = {UINT32_C(0x12345678), {{0}}, UINT32_C(0x87654321)};
+    mt_ui_frame_t *const frame = &guarded.frame;
+    mt_ui_frame_t saved;
+    mt_ui_clear(frame, MT_UI_COLOR_BACKGROUND);
+    mt_ui_checkbox(frame, 2U, 3U, true, MT_UI_CONTROL_ENABLED, MT_UI_COLOR_ROW);
+    check_text(frame, 2U, 3U, "[x]", "checked control has visible mark");
+    mt_ui_checkbox(frame, 2U, 3U, false, MT_UI_CONTROL_DISABLED, MT_UI_COLOR_ROW);
+    check_text(frame, 2U, 3U, "[ ]", "unchecked control erases the mark");
+    check(frame->cells[3U * MT_UI_COLUMNS + 3U] ==
+          mt_ui_cell(' ', MT_UI_COLOR_MUTED, MT_UI_COLOR_ROW, false),
+          "disabled checkbox uses muted opaque row colors");
+
+    mt_ui_slider(frame, 2U, 4U, 7U, 15U, 10U, 20U,
+                  MT_UI_CONTROL_ENABLED, MT_UI_COLOR_ACTIVE);
+    check_text(frame, 2U, 4U, "[--|--]", "midpoint slider position");
+    mt_ui_slider(frame, 2U, 4U, 7U, 0U, 10U, 20U,
+                  MT_UI_CONTROL_ENABLED, MT_UI_COLOR_ACTIVE);
+    check_text(frame, 2U, 4U, "[|----]", "slider clamps below minimum");
+    mt_ui_slider(frame, 2U, 4U, 7U, UINT32_MAX, 10U, 20U,
+                  MT_UI_CONTROL_LOCKED, MT_UI_COLOR_ACTIVE);
+    check_text(frame, 2U, 4U, "[----|]", "slider clamps above maximum");
+    check(frame->cells[4U * MT_UI_COLUMNS + 7U] ==
+          mt_ui_cell('|', MT_UI_COLOR_MUTED, MT_UI_COLOR_ACTIVE, false),
+          "locked slider retains position with muted colors");
+    mt_ui_slider(frame, 2U, 4U, 7U, UINT32_MAX / 2U, 0U, UINT32_MAX,
+                  MT_UI_CONTROL_ENABLED, MT_UI_COLOR_ACTIVE);
+    check_text(frame, 2U, 4U, "[--|--]", "full uint32 range scales without overflow");
+    mt_ui_slider(frame, 2U, 4U, 7U, 10U, 10U, 10U,
+                  MT_UI_CONTROL_ENABLED, MT_UI_COLOR_ACTIVE);
+    check_text(frame, 2U, 4U, "[|----]", "empty range has a stable first position");
+    mt_ui_slider(frame, 2U, 4U, 7U, 10U, 20U, 10U,
+                  MT_UI_CONTROL_ENABLED, MT_UI_COLOR_ACTIVE);
+    check_text(frame, 2U, 4U, "[|----]", "reversed range does not divide or underflow");
+    mt_ui_slider(frame, 2U, 5U, 1U, 10U, 0U, 10U,
+                  MT_UI_CONTROL_ENABLED, MT_UI_COLOR_ROW);
+    mt_ui_slider(frame, 4U, 5U, 2U, 10U, 0U, 10U,
+                  MT_UI_CONTROL_ENABLED, MT_UI_COLOR_ROW);
+    check_text(frame, 2U, 5U, "| [] ", "narrow controls stay inside their bounds");
+
+    mt_ui_control_hint(frame, 2U, 6U, 9U, MT_UI_CONTROL_DISABLED, MT_UI_COLOR_ROW);
+    check_text(frame, 2U, 6U, "Disabled ", "disabled hint is explicit and padded");
+    mt_ui_control_hint(frame, 2U, 6U, 9U, MT_UI_CONTROL_LOCKED, MT_UI_COLOR_ROW);
+    check_text(frame, 2U, 6U, "Locked   ", "locked hint clears the longer old hint");
+    mt_ui_control_hint(frame, 2U, 6U, 9U, MT_UI_CONTROL_ENABLED, MT_UI_COLOR_ROW);
+    check_text(frame, 2U, 6U, "         ", "enabled hint clears stale state text");
+
+    mt_ui_slider(frame, MT_UI_COLUMNS - 7U, MT_UI_ROWS - 1U, SIZE_MAX,
+                  UINT32_MAX, 0U, UINT32_MAX, MT_UI_CONTROL_ENABLED, MT_UI_COLOR_ROW);
+    check_text(frame, MT_UI_COLUMNS - 7U, MT_UI_ROWS - 1U, "[----|]",
+                "SIZE_MAX width clips before range arithmetic");
+    mt_ui_checkbox(frame, MT_UI_COLUMNS - 1U, MT_UI_ROWS - 1U, true,
+                    MT_UI_CONTROL_ENABLED, MT_UI_COLOR_ROW);
+    check(mt_ui_character(frame, MT_UI_COLUMNS - 1U, MT_UI_ROWS - 1U) == '[',
+          "checkbox clips at the final cell");
+    mt_ui_control_hint(frame, MT_UI_COLUMNS - 2U, MT_UI_ROWS - 1U, SIZE_MAX,
+                        MT_UI_CONTROL_LOCKED, MT_UI_COLOR_ROW);
+    check_text(frame, MT_UI_COLUMNS - 2U, MT_UI_ROWS - 1U, "..",
+                "state hint clips without crossing the last row");
+    saved = *frame;
+    mt_ui_checkbox(frame, SIZE_MAX, 0U, true, MT_UI_CONTROL_ENABLED, MT_UI_COLOR_ROW);
+    mt_ui_checkbox(frame, 0U, SIZE_MAX, true, MT_UI_CONTROL_ENABLED, MT_UI_COLOR_ROW);
+    mt_ui_checkbox(NULL, 0U, 0U, true, MT_UI_CONTROL_ENABLED, MT_UI_COLOR_ROW);
+    mt_ui_slider(frame, SIZE_MAX, 0U, SIZE_MAX, 1U, 0U, 2U,
+                  MT_UI_CONTROL_ENABLED, MT_UI_COLOR_ROW);
+    mt_ui_slider(frame, 0U, SIZE_MAX, SIZE_MAX, 1U, 0U, 2U,
+                  MT_UI_CONTROL_ENABLED, MT_UI_COLOR_ROW);
+    mt_ui_slider(frame, 0U, 0U, 0U, 1U, 0U, 2U,
+                  MT_UI_CONTROL_ENABLED, MT_UI_COLOR_ROW);
+    mt_ui_slider(NULL, 0U, 0U, 7U, 1U, 0U, 2U,
+                  MT_UI_CONTROL_ENABLED, MT_UI_COLOR_ROW);
+    mt_ui_control_hint(frame, SIZE_MAX, 0U, SIZE_MAX,
+                        MT_UI_CONTROL_DISABLED, MT_UI_COLOR_ROW);
+    mt_ui_control_hint(frame, 0U, SIZE_MAX, SIZE_MAX,
+                        MT_UI_CONTROL_DISABLED, MT_UI_COLOR_ROW);
+    mt_ui_control_hint(NULL, 0U, 0U, 7U, MT_UI_CONTROL_DISABLED, MT_UI_COLOR_ROW);
+    check(memcmp(frame, &saved, sizeof(saved)) == 0,
+          "invalid and empty controls do not change the frame");
+    check(guarded.before == UINT32_C(0x12345678) &&
+          guarded.after == UINT32_C(0x87654321), "controls preserve surrounding memory");
+}
+
 static void test_legacy_presenter(void)
 {
     mt_ui_frame_t frame;
@@ -322,8 +417,9 @@ static void test_cached_presenter(void)
 int main(void)
 {
     test_text();
+    test_controls();
     test_legacy_presenter();
     test_cached_presenter();
-    puts("PASS: clipped UI fields, atomic commits, and per-bank presentation cache");
+    puts("PASS: clipped UI fields and controls, atomic commits, and per-bank presentation cache");
     return 0;
 }

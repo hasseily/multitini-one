@@ -202,6 +202,44 @@ mt_sd_result_t mt_sd_storage_read_file_max(const char *path, uint8_t *dst,
     return close_read_file(&file, read_result);
 }
 
+mt_sd_result_t mt_sd_storage_read_file_prefix(const char *path, uint8_t *dst,
+                                              size_t capacity, bool *truncated,
+                                              void (*progress)(void *),
+                                              void *context)
+{
+    FIL file;
+    FRESULT backend_status;
+    FSIZE_t backend_size;
+    mt_sd_result_t mount_result;
+    size_t target, total = 0U;
+
+    if (truncated != NULL) *truncated = false;
+    if (path == NULL || dst == NULL || truncated == NULL)
+        return result(MT_SD_INVALID_ARGUMENT, FR_INVALID_PARAMETER, 0U);
+    mount_result = mt_sd_storage_mount();
+    if (mount_result.status != MT_SD_OK) return mount_result;
+    backend_status = f_open(&file, path, FA_READ | FA_OPEN_EXISTING);
+    if (backend_status != FR_OK)
+        return result(MT_SD_OPEN_FAILED, backend_status, 0U);
+
+    backend_size = f_size(&file);
+    *truncated = backend_size > (FSIZE_t)capacity;
+    target = *truncated ? capacity : (size_t)backend_size;
+    while (total < target) {
+        const size_t remaining = target - total;
+        const UINT request = remaining > 4096U ? 4096U : (UINT)remaining;
+        UINT received = 0U;
+        backend_status = f_read(&file, dst + total, request, &received);
+        if (received > request)
+            return close_read_file(&file, result(MT_SD_READ_FAILED, backend_status, total));
+        total += received;
+        if (backend_status != FR_OK || received != request)
+            return close_read_file(&file, result(MT_SD_READ_FAILED, backend_status, total));
+        if (progress != NULL) progress(context);
+    }
+    return close_read_file(&file, result(MT_SD_OK, FR_OK, total));
+}
+
 mt_sd_result_t mt_sd_storage_read_file_exact(const char *path, uint8_t *dst,
                                              size_t expected_size)
 {

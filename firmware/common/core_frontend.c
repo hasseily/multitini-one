@@ -28,7 +28,8 @@ static mt_menu_item_t item(const char *label, const char *value,
                             mt_ui_color_t color)
 {
     const mt_menu_item_t result = {
-        label, value, help, action, argument, enabled, color
+        .label = label, .value = value, .help = help, .action = action,
+        .argument = argument, .enabled = enabled, .value_color = color
     };
     return result;
 }
@@ -104,6 +105,10 @@ static void build_c64(mt_core_frontend_t *frontend,
             "CPU turbo", state->cpu_turbo_enabled ? "Smart 2x" : "Off",
             "Enable Smart 2x CPU acceleration; drive timing remains native.",
             MT_MENU_ACTION_TOGGLE_CORE_OPTION, 1U, true, MT_UI_COLOR_BLUE);
+        frontend->core_options[0].control = MT_MENU_CONTROL_CHECKBOX;
+        frontend->core_options[0].control_value = state->fast_roms_active ? 1U : 0U;
+        frontend->core_options[1].control = MT_MENU_CONTROL_CHECKBOX;
+        frontend->core_options[1].control_value = state->cpu_turbo_enabled ? 1U : 0U;
     }
 }
 

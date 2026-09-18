@@ -25,6 +25,9 @@ from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[1]
 SCENARIOS = {
+    "system": "System page (sample readings)",
+    "clock": "Board clock editor",
+    "text-reader": "Read-only text document",
     "standby": "Standby and core library",
     "c64-media": "Commodore 64 media",
     "c64-options": "Commodore 64 settings",
@@ -43,6 +46,9 @@ SOURCES = [
     "firmware/common/menu.c",
     "firmware/common/ui.c",
     "firmware/common/core_frontend.c",
+    "firmware/common/system_frontend.c",
+    "firmware/common/text_reader.c",
+    "firmware/common/clock.c",
 ]
 FONT = ROOT / "hdl/common/multitini_font7x8.mem"
 OVERLAY = ROOT / "hdl/common/multitini_text_overlay.sv"

@@ -27,6 +27,12 @@ typedef enum {
     MT_UI_COLOR_WHITE
 } mt_ui_color_t;
 
+typedef enum {
+    MT_UI_CONTROL_ENABLED = 0,
+    MT_UI_CONTROL_DISABLED,
+    MT_UI_CONTROL_LOCKED
+} mt_ui_control_state_t;
+
 typedef struct {
     uint16_t cells[MT_UI_COLUMNS * MT_UI_ROWS];
 } mt_ui_frame_t;
@@ -67,6 +73,23 @@ void mt_ui_text_field(mt_ui_frame_t *frame, size_t column, size_t row,
                       size_t width, const char *text,
                       mt_ui_color_t foreground, mt_ui_color_t background,
                       bool transparent_background, bool right_aligned);
+/* ASCII controls use opaque backgrounds and mute unavailable controls.
+ * Draw a separate control hint when the reason must remain visible. */
+void mt_ui_checkbox(mt_ui_frame_t *frame, size_t column, size_t row,
+                    bool checked, mt_ui_control_state_t state,
+                    mt_ui_color_t background);
+/* Width includes both brackets. Values clamp to the inclusive range; an
+ * empty or reversed range places the thumb at the start. Widths of one and
+ * two cells draw a thumb and brackets respectively. The caller supplies a
+ * numeric value beside the slider. Clipping uses the visible width. */
+void mt_ui_slider(mt_ui_frame_t *frame, size_t column, size_t row,
+                  size_t width, uint32_t value, uint32_t minimum,
+                  uint32_t maximum, mt_ui_control_state_t state,
+                  mt_ui_color_t background);
+/* Clears the field for enabled controls; otherwise shows Disabled or Locked. */
+void mt_ui_control_hint(mt_ui_frame_t *frame, size_t column, size_t row,
+                        size_t width, mt_ui_control_state_t state,
+                        mt_ui_color_t background);
 char mt_ui_character(const mt_ui_frame_t *frame, size_t column, size_t row);
 void mt_ui_presenter_init(mt_ui_presenter_t *presenter);
 /* Call after every overlay/PL reset or reconfiguration, or external VRAM

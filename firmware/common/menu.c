@@ -74,6 +74,10 @@ static const mt_menu_item_t *page_items(mt_menu_page_t page,
         items = view->core_options;
         *count = view->core_option_count;
         break;
+    case MT_MENU_PAGE_SYSTEM:
+        items = view->system_items;
+        *count = view->system_item_count;
+        break;
     default:
         break;
     }
@@ -103,7 +107,9 @@ static size_t row_count(const mt_menu_t *menu, const mt_menu_view_t *view)
     case MT_MENU_PAGE_VIDEO:
         return video_setting_start(view) + 4U + (vectrex_video_visible(view) ? 3U : 0U);
     case MT_MENU_PAGE_SYSTEM:
-        return 3U;
+        if (view == NULL || view->system_items == NULL) return 3U;
+        (void)page_items(menu->page, view, &count);
+        return count;
     default:
         (void)page_items(menu->page, view, &count);
         return count;
@@ -307,7 +313,10 @@ static mt_menu_action_t activate(const mt_menu_t *menu, const mt_menu_view_t *vi
 {
     mt_menu_action_t action = no_action();
     if (menu->browser != MT_MENU_BROWSER_NONE) {
+        if (view == NULL || view->files == NULL || menu->row >= view->file_count)
+            return action;
         action.kind = directory_row(view, menu->row) ? MT_MENU_ACTION_OPEN_DIRECTORY :
+            (view->files[menu->row].cookie & MT_MENU_FILE_TEXT) != 0U ? MT_MENU_ACTION_OPEN_TEXT :
             menu->browser == MT_MENU_BROWSER_DRIVE8 ?
             MT_MENU_ACTION_MOUNT_DRIVE8 :
             (menu->browser == MT_MENU_BROWSER_DISK_PROGRAM ?
@@ -328,7 +337,8 @@ static mt_menu_action_t activate(const mt_menu_t *menu, const mt_menu_view_t *vi
         if (menu->row == 0U) {
             if (has_core(view)) action.kind = MT_MENU_ACTION_TOGGLE_VIDEO_SOURCE;
         } else action = change_video(menu, view, MT_MENU_HID_ENTER);
-    } else if (menu->page == MT_MENU_PAGE_SYSTEM) {
+    } else if (menu->page == MT_MENU_PAGE_SYSTEM &&
+               (view == NULL || view->system_items == NULL)) {
         if (menu->row == 2U) action.kind = MT_MENU_ACTION_REBOOT_GOLDEN;
         else if (has_core(view)) action.kind = menu->row == 0U ?
             MT_MENU_ACTION_RESET_CORE : MT_MENU_ACTION_TOGGLE_AUTO_BOOT;
@@ -353,10 +363,47 @@ mt_menu_action_t mt_menu_key_with_modifiers(mt_menu_t *menu,
     if (menu == NULL || !pressed) return action;
     normalize(menu, view);
     if (hid_usage == MT_MENU_HID_F12) {
+        if (view != NULL && view->text_reader != NULL)
+            mt_text_reader_close(view->text_reader);
+        menu->clock_edit = false;
         menu->visible = !menu->visible;
         return action;
     }
     if (!menu->visible) return action;
+    if (view != NULL && view->text_reader != NULL && view->text_reader->active) {
+        if (hid_usage == MT_MENU_HID_ESCAPE || hid_usage == MT_MENU_HID_BACKSPACE) {
+            mt_text_reader_close(view->text_reader);
+        } else {
+            switch (hid_usage) {
+            case MT_MENU_HID_UP: (void)mt_text_reader_navigate(view->text_reader, MT_TEXT_READER_UP); break;
+            case MT_MENU_HID_DOWN: (void)mt_text_reader_navigate(view->text_reader, MT_TEXT_READER_DOWN); break;
+            case MT_MENU_HID_LEFT:
+            case MT_MENU_HID_PAGE_UP: (void)mt_text_reader_navigate(view->text_reader, MT_TEXT_READER_PAGE_UP); break;
+            case MT_MENU_HID_RIGHT:
+            case MT_MENU_HID_PAGE_DOWN: (void)mt_text_reader_navigate(view->text_reader, MT_TEXT_READER_PAGE_DOWN); break;
+            case MT_MENU_HID_HOME: (void)mt_text_reader_navigate(view->text_reader, MT_TEXT_READER_HOME); break;
+            case MT_MENU_HID_END: (void)mt_text_reader_navigate(view->text_reader, MT_TEXT_READER_END); break;
+            default: break;
+            }
+        }
+        return action;
+    }
+    if (menu->clock_edit) {
+        if (hid_usage == MT_MENU_HID_ESCAPE || hid_usage == MT_MENU_HID_BACKSPACE)
+            menu->clock_edit = false;
+        else if (hid_usage == MT_MENU_HID_UP)
+            menu->clock_field = menu->clock_field == 0U ? 6U : menu->clock_field - 1U;
+        else if (hid_usage == MT_MENU_HID_DOWN || hid_usage == MT_MENU_HID_TAB)
+            menu->clock_field = (menu->clock_field + 1U) % 7U;
+        else if (hid_usage == MT_MENU_HID_LEFT || hid_usage == MT_MENU_HID_RIGHT)
+            mt_clock_adjust(&menu->clock, menu->clock_field,
+                            hid_usage == MT_MENU_HID_LEFT ? -1 : 1);
+        else if (hid_usage == MT_MENU_HID_ENTER) {
+            if (menu->clock_field == 6U) action.kind = MT_MENU_ACTION_SET_CLOCK;
+            else menu->clock_field++;
+        }
+        return action;
+    }
     if (hid_usage == MT_MENU_HID_ESCAPE) {
         if (menu->browser != MT_MENU_BROWSER_NONE) mt_menu_close_browser(menu);
         else menu->visible = false;
@@ -440,6 +487,13 @@ mt_menu_action_t mt_menu_key_with_modifiers(mt_menu_t *menu,
         break;
     case MT_MENU_HID_ENTER:
         action = activate(menu, view);
+        if (action.kind == MT_MENU_ACTION_EDIT_CLOCK && view != NULL && view->clock_available) {
+            const mt_clock_time_t initial = {2026U, 1U, 1U, 0U, 0U, 0U};
+            menu->clock = view->clock_valid && view->clock.year >= 2000U ? view->clock : initial;
+            menu->clock_field = 0U;
+            menu->clock_edit = true;
+            action = no_action();
+        }
         break;
     default:
         break;
@@ -472,7 +526,7 @@ static const char *page_caption(mt_menu_page_t page)
         "Display and border. Saved separately for each core.",
         "Controls for the active system.",
         "Settings supplied by the active core.",
-        "Startup, restart and recovery."
+        "Board status, clock, documents and recovery."
     };
     return (unsigned)page < (unsigned)MT_MENU_PAGE_COUNT ? captions[page] : "";
 }
@@ -488,6 +542,8 @@ static const char *browser_title(mt_menu_browser_t browser)
         return "Load cartridge";
     case MT_MENU_BROWSER_OVERLAY:
         return "Load overlay";
+    case MT_MENU_BROWSER_DOCUMENTS:
+        return "Read documents";
     default:
         return "Load program";
     }
@@ -572,6 +628,11 @@ static mt_menu_item_t builtin_item(const mt_menu_t *menu,
             index -= 4U;
             if (index >= 3U || !vectrex_video_visible(view)) return item;
             item.label = vectrex_labels[index];
+            item.control = index == 0U ? MT_MENU_CONTROL_CHECKBOX : MT_MENU_CONTROL_SLIDER;
+            item.control_value = index == 0U ? (view->vectrex_overlay_enabled ? 1U : 0U) :
+                index == 1U ? (view->vectrex_overlay_opacity < 4U ? view->vectrex_overlay_opacity : 1U) :
+                (view->vectrex_beam_gain < 4U ? view->vectrex_beam_gain : 1U);
+            item.control_max = index == 0U ? 1U : 3U;
             item.enabled = view->vectrex_video_supported;
             item.help = "Left/Right or Enter changes this setting. Saved for Vectrex.";
             if (!item.enabled) {
@@ -595,6 +656,16 @@ static mt_menu_item_t builtin_item(const mt_menu_t *menu,
             return item;
         }
         item.label = labels[index];
+        if (index == 0U) {
+            item.control = MT_MENU_CONTROL_CHECKBOX;
+            item.control_value = view != NULL && view->border_enabled ? 1U : 0U;
+        } else if (index == 3U) {
+            item.control = MT_MENU_CONTROL_SLIDER;
+            item.control_min = 1U;
+            item.control_max = 20U;
+            item.control_value = view != NULL && view->border_padding >= 1U && view->border_padding <= 20U ?
+                view->border_padding : 6U;
+        }
         item.enabled = has_core(view) && view->border_supported;
         item.help = "Left/Right changes this setting. Enter cycles it. Saved separately for each core.";
         if (!has_core(view)) {
@@ -627,6 +698,8 @@ static mt_menu_item_t builtin_item(const mt_menu_t *menu,
         case 1:
             item.label = "Autoboot current core";
             item.value = view != NULL && view->settings_auto_boot ? "On" : "Off";
+            item.control = MT_MENU_CONTROL_CHECKBOX;
+            item.control_value = view != NULL && view->settings_auto_boot ? 1U : 0U;
             item.help = "Starts this core at power-on. Off keeps the standby "
                         "screen until you choose a core.";
             break;
@@ -659,6 +732,16 @@ static void draw_item(mt_ui_frame_t *frame, size_t row, bool selected,
     field(frame, LABEL_X, row, LABEL_W, item->label, label_color, bg);
     mt_ui_text_field(frame, VALUE_X, row, VALUE_W, item->value, color, bg,
                      false, true);
+    if (item->control != MT_MENU_CONTROL_VALUE) {
+        const mt_ui_control_state_t state = item->enabled ? MT_UI_CONTROL_ENABLED : MT_UI_CONTROL_DISABLED;
+        if (item->control == MT_MENU_CONTROL_CHECKBOX)
+            mt_ui_checkbox(frame, VALUE_X, row, item->control_value != 0U, state, bg);
+        else
+            mt_ui_slider(frame, VALUE_X, row, 20U, item->control_value,
+                          item->control_min, item->control_max, state, bg);
+    }
+    if (!item->enabled && (item->action != MT_MENU_ACTION_NONE || item->control != MT_MENU_CONTROL_VALUE))
+        mt_ui_control_hint(frame, VALUE_X, row + 1U, VALUE_W, MT_UI_CONTROL_DISABLED, MT_UI_COLOR_PANEL);
 }
 
 static void render_empty(mt_ui_frame_t *frame, const char *title, const char *detail)
@@ -750,7 +833,7 @@ static void render_browser(const mt_menu_t *menu, const mt_menu_view_t *view,
         mt_ui_fill(frame, ITEM_X, row, ITEM_W, 1U, bg);
         if (selected) mt_ui_fill(frame, ITEM_X, row, 1U, 1U, MT_UI_COLOR_BLUE);
         field(frame, LABEL_X, row, NAME_W, view->files[index].name,
-              MT_UI_COLOR_TEXT, bg);
+              (view->files[index].cookie & MT_MENU_FILE_TEXT) != 0U ? MT_UI_COLOR_WARNING : MT_UI_COLOR_TEXT, bg);
         mt_ui_text_field(frame, SIZE_X, row, SIZE_W, size_text, MT_UI_COLOR_MUTED, bg,
                          false, true);
     }
@@ -762,7 +845,9 @@ static void render_browser(const mt_menu_t *menu, const mt_menu_view_t *view,
             (void)snprintf(text, sizeof(text), "%s - Enter or Right opens this folder.",
                            view->files[menu->row].name);
             help_text(frame, text);
-        } else help_text(frame, view->files[menu->row].name);
+        } else if ((view->files[menu->row].cookie & MT_MENU_FILE_TEXT) != 0U)
+            help_text(frame, "Enter reads this document. Escape returns to the same file and scroll position.");
+        else help_text(frame, view->files[menu->row].name);
     }
 }
 
@@ -773,7 +858,7 @@ static void render_settings(const mt_menu_t *menu, const mt_menu_view_t *view,
     size_t count;
     const mt_menu_item_t *items = page_items(menu->page, view, &count);
     const bool builtins = menu->page == MT_MENU_PAGE_VIDEO ||
-                          menu->page == MT_MENU_PAGE_SYSTEM;
+        (menu->page == MT_MENU_PAGE_SYSTEM && (view == NULL || view->system_items == NULL));
     if (builtins) count = row_count(menu, view);
     if (count == 0U) {
         render_empty(frame, has_core(view) ? "Everything is ready." :
@@ -795,6 +880,48 @@ static void render_settings(const mt_menu_t *menu, const mt_menu_view_t *view,
                 (item.enabled ? "Enter applies the selected setting." :
                                 "This item is informational."));
     }
+}
+
+static void render_document(const mt_menu_view_t *view, mt_ui_frame_t *frame)
+{
+    const mt_text_reader_t *const reader = view->text_reader;
+    char text[MT_MENU_TEXT_COLUMNS + 1U];
+    size_t row;
+    mt_ui_fill(frame, BODY_X, 6U, BODY_W, HELP_Y - 6U, MT_UI_COLOR_PANEL);
+    field(frame, ITEM_X, 6U, ITEM_W, view->text_title, MT_UI_COLOR_TEXT, MT_UI_COLOR_PANEL);
+    (void)snprintf(text, sizeof(text), "%lu-%lu / %lu lines%s",
+        (unsigned long)(reader->line_count == 0U ? 0U : reader->top + 1U),
+        (unsigned long)(reader->line_count - reader->top < MT_MENU_TEXT_ROWS ? reader->line_count : reader->top + MT_MENU_TEXT_ROWS),
+        (unsigned long)reader->line_count, reader->truncated ? "  |  First 256 KiB only" : "");
+    field(frame, ITEM_X, 8U, ITEM_W, text, reader->truncated ? MT_UI_COLOR_WARNING : MT_UI_COLOR_MUTED, MT_UI_COLOR_PANEL);
+    if (reader->line_count == 0U)
+        field(frame, ITEM_X, LIST_Y, ITEM_W, "This document is empty.", MT_UI_COLOR_MUTED, MT_UI_COLOR_PANEL);
+    for (row = 0U; row < MT_MENU_TEXT_ROWS && reader->top + row < reader->line_count; ++row) {
+        if (mt_text_reader_line(reader, reader->top + row, text, sizeof(text)))
+            field(frame, ITEM_X, LIST_Y + row, MT_MENU_TEXT_COLUMNS, text, MT_UI_COLOR_TEXT, MT_UI_COLOR_PANEL);
+    }
+    help_text(frame, "Read-only document. Up/Down scrolls one line; Left/Right or Page Up/Down scrolls a page. Escape returns to the file browser.");
+}
+
+static void render_clock(const mt_menu_t *menu, mt_ui_frame_t *frame)
+{
+    static const char *const labels[] = {"Year", "Month", "Day", "Hour", "Minute", "Second", "Save time"};
+    const unsigned values[] = {menu->clock.year, menu->clock.month, menu->clock.day,
+        menu->clock.hour, menu->clock.minute, menu->clock.second};
+    size_t index;
+    mt_ui_fill(frame, BODY_X, 6U, BODY_W, HELP_Y - 6U, MT_UI_COLOR_PANEL);
+    field(frame, ITEM_X, 6U, ITEM_W, "Set board clock", MT_UI_COLOR_TEXT, MT_UI_COLOR_PANEL);
+    field(frame, ITEM_X, 8U, ITEM_W, "Edit local date and time, then select Save time.", MT_UI_COLOR_MUTED, MT_UI_COLOR_PANEL);
+    for (index = 0U; index < 7U; ++index) {
+        char value[16];
+        mt_menu_item_t item = {0};
+        if (index < 6U) (void)snprintf(value, sizeof(value), index == 0U ? "%04u" : "%02u", values[index]);
+        else (void)snprintf(value, sizeof(value), "Apply");
+        item.label = labels[index]; item.value = value;
+        item.enabled = true; item.value_color = MT_UI_COLOR_BLUE;
+        draw_item(frame, LIST_Y + index * 2U, menu->clock_field == index, &item);
+    }
+    help_text(frame, "Left/Right changes a value. Up/Down selects a field. Enter advances or saves. Escape cancels without changing the clock.");
 }
 
 void mt_menu_render(const mt_menu_t *menu, const mt_menu_view_t *view,
@@ -855,7 +982,9 @@ void mt_menu_render(const mt_menu_t *menu, const mt_menu_view_t *view,
               MT_UI_COLOR_BLUE, MT_UI_COLOR_PANEL);
     field(frame, SIDE_X + 2U, HELP_Y - 3U, SIDE_W - 3U, text,
           MT_UI_COLOR_MUTED, MT_UI_COLOR_PANEL);
-    field(frame, SIDE_X + 2U, HELP_Y, SIDE_W - 3U, "Tab section",
+    field(frame, SIDE_X + 2U, HELP_Y, SIDE_W - 3U,
+          view != NULL && view->text_reader != NULL && view->text_reader->active ?
+          "Esc back" : menu->clock_edit ? "Tab next field" : "Tab section",
           MT_UI_COLOR_MUTED, MT_UI_COLOR_PANEL);
     mt_ui_fill(frame, BODY_X, HELP_Y, BODY_W, 3U, MT_UI_COLOR_RAISED);
     mt_ui_fill(frame, BODY_X, HELP_Y, 1U, 3U, MT_UI_COLOR_BLUE);
@@ -881,7 +1010,11 @@ void mt_menu_render(const mt_menu_t *menu, const mt_menu_view_t *view,
            view->input_help : page_caption(menu->page)) :
           (view != NULL ? view->content_root : NULL), MT_UI_COLOR_MUTED,
           MT_UI_COLOR_PANEL);
-    if (menu->browser != MT_MENU_BROWSER_NONE)
+    if (view != NULL && view->text_reader != NULL && view->text_reader->active)
+        render_document(view, frame);
+    else if (menu->clock_edit)
+        render_clock(menu, frame);
+    else if (menu->browser != MT_MENU_BROWSER_NONE)
         render_browser(menu, view, frame, menu->first_row);
     else if (menu->page == MT_MENU_PAGE_CORES)
         render_cores(menu, view, frame, menu->first_row);
@@ -910,12 +1043,15 @@ void mt_menu_render(const mt_menu_t *menu, const mt_menu_view_t *view,
     }
     mt_ui_fill(frame, SIDE_X, FOOTER_Y, MT_UI_COLUMNS - 4U, 1U, MT_UI_COLOR_RAISED);
     field(frame, 3U, FOOTER_Y, MT_UI_COLUMNS - 6U,
+        view != NULL && view->text_reader != NULL && view->text_reader->active ?
+        "[Up/Down] Line  [Left/Right/PgUp/PgDn] Page  [Home/End] First/Last  [Esc] Back  [F12] Close" :
+        menu->clock_edit ? "[Up/Down] Field  [Left/Right] Adjust  [Enter] Next/Save  [Esc] Cancel" :
         menu->browser != MT_MENU_BROWSER_NONE && has_directories(view) ?
         "[Enter] Open/Load  [Right] Open folder  [Left/Backspace] Up  [PgUp/Dn] Page  [Esc] Back" :
         menu->browser == MT_MENU_BROWSER_DISK_PROGRAM ?
         "[Enter] Launch  [Right] Load  [Left] Direct  [PgUp/Dn] Page  [Esc] Back" :
         (menu->browser != MT_MENU_BROWSER_NONE ?
-         "[Enter] Load  [Up/Down] Select  [PgUp/PgDn] Page  [Home/End] First/Last  [Esc] Back" :
+         "[Enter] Open  [Up/Down] Select  [PgUp/PgDn] Page  [Home/End] First/Last  [Esc] Back" :
          menu->page == MT_MENU_PAGE_VIDEO ?
          "[Tab/Shift+Tab] Section  [Up/Down] Select  [Left/Right] Adjust  [Enter] Apply/Cycle  [Esc/F12] Close" :
          "[Tab/Shift+Tab] Section  [Up/Down] Select  [Enter] Apply  [Esc/F12] Close"),

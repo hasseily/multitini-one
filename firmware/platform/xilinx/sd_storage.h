@@ -49,6 +49,14 @@ typedef int (*mt_sd_list_fn)(void *context, const char *name, size_t size,
 mt_sd_result_t mt_sd_storage_mount(void);
 mt_sd_result_t mt_sd_storage_read_file_max(const char *path, uint8_t *dst,
                                            size_t capacity);
+/* Read at most capacity bytes, setting truncated when the file is larger.
+ * Uses a temporary read-only file and closes it before returning. Successful
+ * reads call progress after each chunk of at most 4 KiB. The callback must
+ * not reenter storage or initiate core/menu actions. */
+mt_sd_result_t mt_sd_storage_read_file_prefix(const char *path, uint8_t *dst,
+                                              size_t capacity, bool *truncated,
+                                              void (*progress)(void *),
+                                              void *context);
 mt_sd_result_t mt_sd_storage_read_file_exact(const char *path, uint8_t *dst,
                                              size_t expected_size);
 /* A missing file is a successful empty result with *found=false. Other open,

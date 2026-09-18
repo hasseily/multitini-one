@@ -9,6 +9,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 add_library(multitini_common STATIC
     firmware/common/ak4493.c
+    firmware/common/clock.c
     firmware/common/c64_boot.c
     firmware/common/c64_content.c
     firmware/common/c64_native_load.c
@@ -30,6 +31,8 @@ add_library(multitini_common STATIC
     firmware/common/menu.c
     firmware/common/media_browser.c
     firmware/common/supervisor.c
+    firmware/common/system_frontend.c
+    firmware/common/text_reader.c
     firmware/common/tmp102.c
     firmware/common/ui.c
     firmware/common/xmodem.c
@@ -37,6 +40,20 @@ add_library(multitini_common STATIC
 target_include_directories(multitini_common PUBLIC firmware/include)
 
 enable_testing()
+foreach(component clock text_reader system_frontend menu_services)
+    add_executable(test_${component} tests/host/test_${component}.c)
+    target_link_libraries(test_${component} PRIVATE multitini_common)
+    add_test(NAME ${component} COMMAND test_${component})
+endforeach()
+add_executable(test_text_document tests/host/test_text_document.c
+    firmware/platform/xilinx/text_document.c)
+target_include_directories(test_text_document PRIVATE firmware/platform/xilinx)
+target_link_libraries(test_text_document PRIVATE multitini_common)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_text_document PRIVATE
+        -Wall -Wextra -Wpedantic -Werror -Wconversion -Wshadow -Wstrict-prototypes)
+endif()
+add_test(NAME text_document COMMAND test_text_document)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_test(NAME usb1_phy_startup COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_SOURCE_DIR}/tests/test_usb1_phy_startup.py)
