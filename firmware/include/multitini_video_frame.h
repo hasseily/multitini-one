@@ -67,10 +67,11 @@ bool mt_video_frame_process(const uint16_t *input, uint16_t *output,
                             bool reset_history);
 
 /* Display scale is explicit, independent of source dimensions. Both operands
- * must be in 1..64. Only blur is normalized to the 3/2 baseline: each axis
- * blends its old floored kernel with the center using rounded Q8 variance
- * compensation, capped at the baseline strength. Light filters horizontally;
- * Medium and Strong filter both axes. Bloom and persistence are unchanged. */
+ * must be in 1..64. Each blur axis blends its old floored kernel with the
+ * center using Q8 alpha=min(256,round(384*blur_level/scale)). This preserves
+ * the 3/2 baseline and gives enlarged pixels distinct quantized levels.
+ * Light filters horizontally; Medium and Strong filter both axes.
+ * Bloom and persistence are unchanged. */
 bool mt_video_frame_process_scaled(const uint16_t *input, uint16_t *output,
                             uint32_t *history, uint32_t *base, uint32_t *scratch,
                             uint32_t width, uint32_t height,

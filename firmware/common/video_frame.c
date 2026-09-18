@@ -250,12 +250,11 @@ bool mt_video_frame_process_scaled(const uint16_t *input, uint16_t *output,
         options->enabled > 1U || options->persistence > 3U || options->blur > 3U || options->bloom > 3U)
         return false;
     const uint32_t pixels = width * height;
-    /* Match the Vectrex 3/2 display-pixel footprint: kernel variance scales
-     * with pixel pitch squared. Blend each blur axis independently after its
-     * legacy floor operation. Bloom keeps its existing kernel and intensity.
-     * Bounded scale operands keep this rounded Q8 coefficient in uint32_t. */
-    const uint32_t squared_num = scale_num * scale_num;
-    unsigned alpha = (2304U * scale_den * scale_den + 2U * squared_num) / (4U * squared_num);
+    /* Separate visible levels after RGB565 quantization, while preserving
+     * the legacy 3:2 response and reducing Light on enlarged source pixels.
+     * Blend each axis after the legacy floor operation. The bounded scale
+     * operands keep this rounded Q8 coefficient in uint32_t. */
+    unsigned alpha = (384U * options->blur * scale_den + scale_num / 2U) / scale_num;
     if (alpha > 256U) alpha = 256U;
     if (decay_steps > 64U) decay_steps = 64U;
     /* The maximum channel follows the same integer recurrence as the RGB

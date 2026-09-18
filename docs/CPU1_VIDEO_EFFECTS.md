@@ -50,8 +50,8 @@ replacement are separate from steady-state processing qualification.
    persistence/blur/bloom settings.
 2. Blur is horizontal three-tap for Light, separable three-tap for Medium,
    and separable five-tap for Strong. Edges repeat their nearest pixel.
-   VID3 scales each blur pass by the source-to-output pixel ratio as described
-   below; the Vectrex reference appearance is preserved.
+   Each blur pass scales by the source-to-output pixel ratio and the selected
+   level as described below; the Vectrex reference appearance is preserved.
 3. Bloom adds a filtered halo at one eighth, one quarter, or one half strength,
    with saturation. It operates independently of blur. Neither blur nor bloom
    feeds back into persistence history. The spatial filter retains four RGB888
@@ -79,35 +79,40 @@ border handling, and pipeline latency are unchanged.
 The same native filter spans more display pixels when a core has a lower
 source resolution. For example, the old Light filter's one-pixel neighbor is
 six display pixels away for Game Boy / Color, but only 1.5 pixels away for
-Vectrex. VID3 uses the actual scaling ratio already supplied by the machine
+Vectrex. Blur uses the actual scaling ratio already supplied by the machine
 adapter, rather than choosing strength by core name or inferring it from
 frame dimensions alone.
 
-The reference is Vectrex's 3:2 scale. For output scale `s`, each horizontal
-or vertical blur pass blends its center with the filtered value by
-`min(1, (1.5 / s)^2)`. This normalizes the filter's spatial variance in display
-pixels before integer rounding. The factor uses Q8 precision, rounded to the
-nearest value. Each pass retains the existing integer filter calculation,
-then rounds the blend to the nearest RGB888 value before the next pass.
+VID3/VID4 used inverse-square compensation against Vectrex's 3:2 scale.
+The owner reported that this left C64 blur barely visible and GBC blur
+invisible. The small RGB888 changes could also disappear when stored as
+RGB565. Matching numerical display-space variance was not sufficient to
+give useful blur levels on a pixel-art image.
 
-| Source adapter | Output scale | Blur blend per axis |
-| --- | ---: | ---: |
-| Vectrex / Vectrex32 | 3:2 | 1 |
-| C64 PAL | 4:1 | 9/64 |
-| Game Boy / Color | 6:1 | 1/16 |
+The VID5 C64/GBC update uses inverse-linear scaling with separate strengths.
+For output scale `s` and level `L` (Light=1, Medium=2, Strong=3), each pass
+uses Q8 alpha `min(256, round(384 * L / s))`. It retains the existing floored
+kernel calculation, then rounds the blend with the center to RGB888.
 
-Light remains horizontal only. Medium and Strong normalize the horizontal
-and vertical passes separately, keeping narrow features clearer on enlarged
-native pixels. Bloom retains its existing independent halo calculation, and
+| Source adapter | Output scale | Light per axis | Medium per axis | Strong per axis |
+| --- | ---: | ---: | ---: | ---: |
+| Vectrex / Vectrex32 | 3:2 | 1 | 1 | 1 |
+| C64 PAL | 4:1 | 3/8 | 3/4 | 1 |
+| Game Boy / Color | 6:1 | 1/4 | 1/2 | 3/4 |
+
+Light remains horizontal only. Medium and Strong blend the horizontal and
+vertical passes separately. Light preserves handheld detail while the
+larger levels progressively soften it. The frozen Vectrex result remains
+unchanged. Bloom retains its existing independent halo calculation, and
 neither spatial effect enters persistence history. Off remains an identity
 operation. The register ABI and saved setting values are unchanged.
 
 The weights are build-time constants. The implementation reuses the native
 line buffers and frame transport; no extra DDR pass or CPU frame work is
 introduced. Throughput and the 60 Hz gameplay acceptance gate are unchanged.
-Two additional pipeline stages add two clocks to the filter's fixed frame
-overhead. Sustained throughput remains one pixel per clock, with the existing
-frame schedule.
+VID3 introduced two blend stages; VID5 changes their coefficients without
+adding stages. The filter retains nine pipeline clocks, one pixel per clock
+throughput, and the existing frame schedule.
 
 ## Memory and ownership
 
@@ -123,7 +128,6 @@ frame schedule.
 | Native frame | Dimensions | RGB565 stride |
 | --- | --- | --- |
 | C64 PAL | 382 × 270 | 768 bytes |
-| C64 NTSC | 404 × 250 | 896 bytes |
 | Game Boy / Color | 160 × 144 | 384 bytes |
 | Vectrex | 540 × 720 | 1152 bytes |
 
@@ -399,3 +403,34 @@ The final firmware must match the installed VID4 supervisor image byte for
 byte. Machine images still need copying to the SD card and board validation.
 The narrow timing margins make this a test bundle; the physical gameplay
 checks for sustained 60 Hz and zero processing drops remain outstanding.
+
+## VID5 blur validation, 2026-09-18
+
+VID5 responds to the owner's report that VID4 blur was barely visible on
+C64 and invisible on Game Boy / Game Boy Color. The reference and FPGA now
+use the level-dependent coefficients described above. This changes only
+the spatial blend. Frame sizes, line storage, pipeline depth, clocks,
+registers, memory transfers, bloom and persistence remain unchanged.
+
+Focused RGB565 tests check stored red, green and blue values: visible,
+progressive changes between levels, monotonic edges, preserved flat fields,
+and readable-detail bounds for Light. Both the faint VID4 curve and the
+original unscaled handheld blur fail these new checks. The frozen Vectrex
+output hash remains `d180bb5d`. GCC, Clang ASan/UBSan, and 580 ARM
+NEON/scalar reference cases pass.
+
+Full spatial-filter and DMA-engine comparisons against the C reference
+pass, including all machine frame sizes and the maximum 640-by-720 engine
+case. That case finishes in 843,733 cycles against a 2,216,666-cycle frame
+budget with the test's bounded memory stalls. Portable and actual-XPM
+display-pipeline simulations pass at C64, GBC and Vectrex scales, including
+source pauses, live option changes, reset and drain. These are simulation
+results, not physical DDR-contention or sustained gameplay measurements.
+
+The immutable evidence archive is
+`build/video-vid5-validation-evidence.zip`, SHA-256
+`7e1f4810ac496c52d02bebaa47d3cef1f70be0c7aecb3cca151848c3cc61b0ae`.
+It includes source hashes, full test logs, the negative controls and a
+synthetic preview produced by the actual RGB565 C reference. On-card blur
+acceptance and the separately reported intermittent GBC startup failure
+remain open.

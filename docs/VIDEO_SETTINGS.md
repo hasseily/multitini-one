@@ -60,11 +60,12 @@ color adjustments, scanlines, masks, horizontal filtering, persistence, blur,
 and bloom. Left/Right adjusts the selected control; effects default off.
 Persistence, blur, and bloom run in the FPGA at native resolution. Its ordered
 frame pipeline follows the 60 Hz output cadence; CPU1 prepares color settings.
-VID3 adjusts blur strength for the source-to-output scale, so Light does not
-spread as strongly across the large pixels of low-resolution cores. Vectrex
-retains its existing blur levels. Existing saved Off/Light/Medium/Strong
-choices require no migration; use the matching VID4 core images, which also
-include the register-read fix described in the build notes.
+Blur strength follows the source-to-output scale. The VID5 C64/GBC core
+update strengthens the levels after VID4 proved too faint on the board.
+Light preserves small handheld details; Medium and Strong progressively
+soften them. Vectrex retains its existing blur levels. Saved
+Off/Light/Medium/Strong choices require no migration. The update uses the
+installed VID4 firmware and retains the register-read fix.
 See [CPU1 and FPGA video effects](CPU1_VIDEO_EFFECTS.md) for the
 processing order, buffering, and validation limits.
 

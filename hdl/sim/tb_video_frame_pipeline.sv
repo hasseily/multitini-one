@@ -13,10 +13,12 @@ module tb_video_frame_pipeline;
         #1;
         if(dut.engine_i.filter.SCALE_NUM!=SCALE_NUM || dut.engine_i.filter.SCALE_DEN!=SCALE_DEN)
             $fatal(1,"Frame engine lost the framebuffer display scale");
-        if(dut.engine_i.filter.normalized_blur(8'd0,8'd64)!==
-           (SCALE_NUM==6 && SCALE_DEN==1 ? 8'd4 :
-            SCALE_NUM==4 && SCALE_DEN==1 ? 8'd9 : 8'd64))
-            $fatal(1,"Frame engine blur response did not reflect its display scale");
+        for(integer mode=1;mode<=3;mode=mode+1)begin
+            if(dut.engine_i.filter.normalized_blur(8'd0,8'd64,mode[1:0])!==
+               (SCALE_NUM==6 && SCALE_DEN==1 ? mode*16 :
+                SCALE_NUM==4 && SCALE_DEN==1 ? (mode==3 ? 64 : mode*24) : 64))
+                $fatal(1,"Frame engine blur response did not reflect its scale and level");
+        end
     end
     localparam integer WIDTH=13,HEIGHT=8,VIEW_X=16,VIEW_Y=2;
     localparam integer OUT_WIDTH=WIDTH*SCALE_NUM/SCALE_DEN;

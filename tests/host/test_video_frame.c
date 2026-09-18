@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "multitini_video_frame.h"
 #include <assert.h>
-#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -188,13 +187,13 @@ static void invalid(void)
     }
 }
 
-typedef struct { uint32_t width,height,num,den,period; } geometry_t;
+typedef struct { uint32_t width,height,num,den; } geometry_t;
 static const geometry_t geometries[]={
-    {160U,144U,6U,1U,8U},   /* Current GBC: 960x864 viewport. */
-    {240U,160U,6U,1U,8U},   /* Generic GBA example, not a shipped core. */
-    {382U,270U,4U,1U,12U},
-    {404U,250U,4U,1U,12U},
-    {540U,720U,3U,2U,32U}
+    {160U,144U,6U,1U},   /* Current GBC: 960x864 viewport. */
+    {240U,160U,6U,1U},   /* Generic GBA example, not a shipped core. */
+    {382U,270U,4U,1U},
+    {404U,250U,4U,1U},
+    {540U,720U,3U,2U}
 };
 
 static void scaled(const geometry_t *g, uint8_t persistence_mode, uint8_t blur,
@@ -205,9 +204,7 @@ static void scaled(const geometry_t *g, uint8_t persistence_mode, uint8_t blur,
         g->width,g->height,g->num,g->den,&options,0U,reset));
 }
 
-static unsigned green(uint16_t pixel) { return (pixel>>5U)&63U; }
-
-static void scaled_identity_and_handheld_detail(void)
+static void scaled_identity(void)
 {
     for(unsigned kind=0U;kind<sizeof(geometries)/sizeof(geometries[0]);++kind) {
         const geometry_t *const g=&geometries[kind];
@@ -220,31 +217,6 @@ static void scaled_identity_and_handheld_detail(void)
             scaled(g,0U,blur,0U,true);
             for(unsigned i=0U;i<pixels;++i)assert(output[i]==input[i]);
         }
-        if(kind>=2U)continue;
-        const unsigned center=(g->height/2U)*g->width+g->width/2U;
-        memset(input,0,pixels*sizeof(*input));input[center]=0xffffU;
-        scaled(g,0U,1U,0U,true);
-        /* Product acceptance: Light preserves tiny handheld details. The old
-         * native H3 kernel retained only half the isolated peak. */
-        assert(green(output[center])*100U>=63U*85U && green(output[center])<63U);
-        assert(output[center-1U]==output[center+1U]);
-        assert(output[center-g->width]==0U && output[center+g->width]==0U);
-        for(unsigned i=0U;i<pixels;++i)input[i]=(i%g->width)&1U ? 0xffffU : 0U;
-        scaled(g,0U,1U,0U,true);
-        const unsigned low=green(output[g->width+4U]);
-        const unsigned high=green(output[g->width+5U]);
-        assert(high>low && (high-low)*100U>=63U*85U);
-        for(unsigned i=0U;i<pixels;++i)input[i]=i%g->width>=g->width/2U ? 0xffffU : 0U;
-        scaled(g,0U,1U,0U,true);
-        for(unsigned y=0U;y<g->height;++y) {
-            const unsigned row=y*g->width;
-            for(unsigned x=1U;x<g->width;++x)assert(green(output[row+x])>=green(output[row+x-1U]));
-            assert(output[row]==0U && output[row+g->width-1U]==0xffffU);
-            assert(green(output[row+g->width/2U-1U])<=7U);
-            assert(green(output[row+g->width/2U])>=56U);
-        }
-        printf("Handheld %ux%u Light: peak >=85%%, fine-column contrast %u/63, monotone edges\n",
-               g->width,g->height,high-low);
     }
 }
 
@@ -294,74 +266,85 @@ static void unaffected_bloom_and_history(void)
     }
 }
 
-static void impulse_footprint(void)
+/* Acceptance uses the displayed RGB565 codes directly: no extra precision,
+ * synthetic history values, or quantizer-phase averaging can conceal a blur
+ * level which disappears on the display. These broad bounds describe the
+ * desired detail/visibility tradeoff; they do not reproduce filter weights. */
+static unsigned channel_code(uint16_t pixel, unsigned channel)
 {
-    /* Average all four RGB565 green quantizer phases. This measures the
-     * visible spatial response without letting a 2-bit output truncation
-     * erase a deliberately faint neighbor. No filter weights are reproduced. */
-    for(unsigned scale=0U;scale<sizeof(geometries)/sizeof(geometries[0]);++scale) {
-        geometry_t g={17U,9U,geometries[scale].num,geometries[scale].den,0U};
-        for(uint8_t blur=1U;blur<=3U;++blur) {
-            double area=0.0,xmoment=0.0,ymoment=0.0,xcenter=0.0,ycenter=0.0;
-            for(unsigned offset=0U;offset<4U;++offset) {
-                for(unsigned i=0U;i<153U;++i){input[i]=0U;history[i]=offset<<8U;}
-                history[4U*17U+8U]=(248U+offset)<<8U;
-                scaled(&g,1U,blur,0U,false);
-                for(unsigned y=0U;y<9U;++y)for(unsigned x=0U;x<17U;++x) {
-                    const double value=(double)green(output[y*17U+x]);
-                    const double dx=((double)x-8.0)*(double)g.num/(double)g.den;
-                    const double dy=((double)y-4.0)*(double)g.num/(double)g.den;
-                    area+=value;xmoment+=value*dx*dx;ymoment+=value*dy*dy;
-                    xcenter+=value*dx;ycenter+=value*dy;
+    const unsigned shifts[3]={11U,5U,0U}, maxima[3]={31U,63U,31U};
+    return (pixel>>shifts[channel])&maxima[channel];
+}
+
+static void quantized_level_visibility(void)
+{
+    const unsigned shifts[3]={11U,5U,0U}, maxima[3]={31U,63U,31U};
+    const geometry_t cases[]={{17U,9U,6U,1U},{17U,9U,4U,1U}};
+    /* Light keeps fine details, Medium visibly softens them, and Strong may
+     * disperse an isolated dot. Keep the handheld Light peak above 85%. */
+    const unsigned minimum_peak_percent[2][3]={{85U,50U,15U},{76U,30U,3U}};
+    const unsigned maximum_peak_percent[2][3]={{90U,62U,25U},{85U,45U,10U}};
+    for(unsigned scale=0U;scale<2U;++scale) {
+        const geometry_t *const g=&cases[scale];
+        const unsigned center=4U*17U+8U;
+        for(unsigned channel=0U;channel<3U;++channel) {
+            const unsigned maximum=maxima[channel], shift=shifts[channel];
+            const uint16_t full=(uint16_t)(maximum<<shift);
+            unsigned prior_peak=maximum, prior_contrast=maximum;
+            unsigned prior_edge_change=0U;
+            for(uint8_t blur=1U;blur<=3U;++blur) {
+                memset(input,0,153U*sizeof(*input));input[center]=full;
+                scaled(g,0U,blur,0U,true);
+                const unsigned peak=channel_code(output[center],channel);
+                assert(peak*100U>=maximum*minimum_peak_percent[scale][blur-1U]);
+                assert(peak*100U<=maximum*maximum_peak_percent[scale][blur-1U]);
+                assert(peak<prior_peak && (prior_peak-peak)*100U>=maximum*10U);
+                prior_peak=peak;
+                assert(output[center-1U]==output[center+1U]);
+                assert(output[center-g->width]==output[center+g->width]);
+                assert(channel_code(output[center-1U],channel)>=maximum/20U);
+                if(blur==1U)assert(output[center-g->width]==0U);
+                else assert(output[center-g->width]!=0U);
+                for(unsigned i=0U;i<153U;++i)assert((output[i]&~full)==0U);
+                /* Even one-pixel stripes retain useful contrast on Light.
+                 * Every subsequent mode must reduce it by visible RGB codes. */
+                for(unsigned y=0U;y<g->height;++y)for(unsigned x=0U;x<g->width;++x)
+                    input[y*g->width+x]=(x&1U)!=0U ? full : 0U;
+                scaled(g,0U,blur,0U,true);
+                const unsigned high=channel_code(output[center+1U],channel);
+                const unsigned low=channel_code(output[center],channel);
+                assert(high>=low);
+                const unsigned contrast=high-low;
+                assert(contrast<prior_contrast && (prior_contrast-contrast)*100U>=maximum*10U);
+                prior_contrast=contrast;
+                if(blur==1U) {
+                    const unsigned detail_floor=scale==0U ? 70U : 55U;
+                    assert(contrast*100U>=maximum*detail_floor);
+                    assert(contrast*100U<=maximum*80U);
                 }
+                /* Midtone edges test quantization without white clipping.
+                 * Each mode must make a distinct stored-code change, stay
+                 * monotone, and preserve the flat regions beyond its radius. */
+                const unsigned dark=maximum/4U, light=maximum*3U/4U;
+                for(unsigned y=0U;y<g->height;++y)for(unsigned x=0U;x<g->width;++x)
+                    input[y*g->width+x]=(uint16_t)((x<8U ? dark : light)<<shift);
+                scaled(g,0U,blur,0U,true);
+                const unsigned shoulder=channel_code(output[center-1U],channel);
+                const unsigned top=channel_code(output[center],channel);
+                assert(shoulder>dark && top<light);
+                const unsigned edge_change=(shoulder-dark)+(light-top);
+                assert(edge_change>prior_edge_change);
+                prior_edge_change=edge_change;
+                for(unsigned y=0U;y<g->height;++y) {
+                    const unsigned row=y*g->width;
+                    assert(channel_code(output[row+4U],channel)==dark);
+                    assert(channel_code(output[row+11U],channel)==light);
+                    for(unsigned x=1U;x<g->width;++x)
+                        assert(channel_code(output[row+x],channel)>=channel_code(output[row+x-1U],channel));
+                }
+                printf("RGB565 scale%u channel%u blur%u: peak %u/%u, stripe contrast %u/%u, midtone edge change %u codes\n",
+                    g->num,channel,(unsigned)blur,peak,maximum,contrast,maximum,edge_change);
             }
-            const double expected=blur==3U ? 3.375 : 1.125;
-            assert(area>0.0 && fabs(xcenter)<0.001 && fabs(ycenter)<0.001);
-            /* Twelve percent allows integer rounding of faint taps, while
-             * rejecting the old 7x/16x display-space variance mismatch. */
-            assert(fabs(xmoment/area-expected)<=expected*0.12);
-            if(blur==1U)assert(ymoment==0.0);
-            else assert(fabs(ymoment/area-expected)<=expected*0.12);
-        }
-    }
-}
-
-static double response_48_pixels(const geometry_t *g,uint8_t blur)
-{
-    const double tau=6.28318530717958647692;
-    double out_cos=0.0,out_sin=0.0,raw_cos=0.0,raw_sin=0.0;
-    const unsigned samples=(g->width-4U)/g->period*g->period;
-    for(unsigned offset=0U;offset<4U;++offset) {
-        for(unsigned y=0U;y<g->height;++y)for(unsigned x=0U;x<g->width;++x) {
-            const unsigned value=(unsigned)lround(124.0+96.0*cos(tau*(double)x/(double)g->period))+offset;
-            input[y*g->width+x]=0U;history[y*g->width+x]=value<<8U;
-        }
-        scaled(g,1U,blur,0U,false);
-        for(unsigned x=2U;x<samples+2U;++x) {
-            const double angle=tau*(double)x/(double)g->period;
-            const double c=cos(angle),s=sin(angle);
-            const unsigned i=(g->height/2U)*g->width+x;
-            const double result=(double)green(output[i]);
-            const double raw=(double)((history[i]>>10U)&63U);
-            out_cos+=result*c;out_sin+=result*s;raw_cos+=raw*c;raw_sin+=raw*s;
-        }
-    }
-    return hypot(out_cos,out_sin)/hypot(raw_cos,raw_sin);
-}
-
-static void display_space_response(void)
-{
-    const geometry_t *const vectrex=&geometries[4];
-    for(uint8_t blur=1U;blur<=3U;++blur) {
-        const double baseline=response_48_pixels(vectrex,blur);
-        for(unsigned kind=0U;kind<4U;++kind) {
-            const double ratio=response_48_pixels(&geometries[kind],blur);
-            /* Same screen-space frequency, normalized against blur Off.
-             * The two-percentage-point limit is perceptual acceptance, not
-             * an oracle generated from the blend coefficients. */
-            assert(fabs(ratio-baseline)<=0.02);
-            printf("Display response %ux%u blur%u: %.5f, Vectrex %.5f\n",
-                geometries[kind].width,geometries[kind].height,(unsigned)blur,ratio,baseline);
         }
     }
 }
@@ -370,8 +353,8 @@ int main(void)
 {
     identity(); uniform_and_edges(); persistence(); persistence_extinction();
     blur_and_bloom(); invalid();
-    legacy_baseline();scaled_identity_and_handheld_detail();unaffected_bloom_and_history();
-    impulse_footprint();display_space_response();
+    legacy_baseline();scaled_identity();unaffected_bloom_and_history();
+    quantized_level_visibility();
     puts("CPU1 video frame effects passed");
     return 0;
 }

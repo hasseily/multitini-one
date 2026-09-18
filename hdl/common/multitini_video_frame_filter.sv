@@ -4,8 +4,8 @@
 // Native-frame spatial filter. The caller supplies already persisted RGB888
 // pixels in 0xBBGGRR order; persistence is deliberately outside this feedback-
 // free filter. Four raw line RAMs serve both independent three/five-tap paths.
-// Blur is normalized to the reference 3:2 display scale. Bloom retains its
-// original taps. Both branches share the raw window and four line RAMs.
+// Blur strength follows display scale and the selected level. Bloom retains
+// its original taps. Both branches share the raw window and four line RAMs.
 // A flowing job takes (WIDTH+2)*(HEIGHT+2) samples plus nine pipeline clocks.
 module multitini_video_frame_filter #(
     parameter integer WIDTH=540, HEIGHT=720,
@@ -25,9 +25,13 @@ module multitini_video_frame_filter #(
     // Scale parameters are static positive ratios in the range 1..64.
     // A safe denominator lets simulation report bad parameters explicitly
     // instead of first evaluating an elaboration-time division by zero.
-    localparam integer ALPHA_DEN=SCALE_NUM>=1 && SCALE_NUM<=64 ? 4*SCALE_NUM*SCALE_NUM : 4;
-    localparam integer ALPHA_ROUNDED=(2304*SCALE_DEN*SCALE_DEN+ALPHA_DEN/2)/ALPHA_DEN;
-    localparam integer BLUR_ALPHA=ALPHA_ROUNDED>256 ? 256 : ALPHA_ROUNDED;
+    localparam integer ALPHA_DEN=SCALE_NUM>=1 && SCALE_NUM<=64 ? SCALE_NUM : 1;
+    localparam integer LIGHT_ROUNDED=(384*SCALE_DEN+ALPHA_DEN/2)/ALPHA_DEN;
+    localparam integer MEDIUM_ROUNDED=(768*SCALE_DEN+ALPHA_DEN/2)/ALPHA_DEN;
+    localparam integer STRONG_ROUNDED=(1152*SCALE_DEN+ALPHA_DEN/2)/ALPHA_DEN;
+    localparam integer BLUR_ALPHA_LIGHT=LIGHT_ROUNDED>256 ? 256 : LIGHT_ROUNDED;
+    localparam integer BLUR_ALPHA_MEDIUM=MEDIUM_ROUNDED>256 ? 256 : MEDIUM_ROUNDED;
+    localparam integer BLUR_ALPHA_STRONG=STRONG_ROUNDED>256 ? 256 : STRONG_ROUNDED;
     // synthesis translate_off
     initial begin
         if(SCALE_NUM<1 || SCALE_NUM>64 || SCALE_DEN<1 || SCALE_DEN>64)
@@ -105,14 +109,22 @@ module multitini_video_frame_filter #(
         end
     endfunction
     // Blend after the legacy floor operation, rounding only the blend. The
-    // signed difference keeps constant multiplication small; known scales
-    // simplify to shifts (16) or a shift/add (36), with no DSP requirement.
-    function automatic [7:0] normalized_blur(input [7:0] center,filtered);
+    // Inverse-linear scaling preserves handheld details without suppressing
+    // the effect below RGB565 precision. Each level has a static coefficient:
+    // C64 96/192/256, GBC 64/128/192, Vectrex 256/256/256. Constant products
+    // reduce to shifts/adds; the latched job mode selects between them.
+    function automatic [7:0] normalized_blur(input [7:0] center,filtered,
+                                            input [1:0] blur_mode);
         reg signed [8:0] difference;
         reg signed [17:0] weighted;
         begin
             difference=$signed({1'b0,filtered})-$signed({1'b0,center});
-            weighted=$signed({1'b0,center,8'b0})+difference*BLUR_ALPHA+18'sd128;
+            case(blur_mode)
+                2:weighted=difference*BLUR_ALPHA_MEDIUM;
+                3:weighted=difference*BLUR_ALPHA_STRONG;
+                default:weighted=difference*BLUR_ALPHA_LIGHT;
+            endcase
+            weighted=$signed({1'b0,center,8'b0})+weighted+18'sd128;
             normalized_blur=weighted[15:8];
         end
     endfunction
@@ -222,9 +234,9 @@ module multitini_video_frame_filter #(
                         bloom_h5[row][channel]<=h5[row][channel];
                         if(row>=1 && row<=3)
                             blur_h[row][channel]<=normalized_blur(center3[row][channel],
-                                blur==3 ? h5[row][channel] : h3[row-1][channel]);
+                                blur==3 ? h5[row][channel] : h3[row-1][channel],blur);
                         else
-                            blur_h[row][channel]<=normalized_blur(center3[row][channel],h5[row][channel]);
+                            blur_h[row][channel]<=normalized_blur(center3[row][channel],h5[row][channel],blur);
                     end
                     for(row=0;row<3;row=row+1)bloom_h3[row][channel]<=h3[row][channel];
                     raw4[channel]<=raw3[channel];
@@ -254,7 +266,7 @@ module multitini_video_frame_filter #(
                 s7_valid<=s6_valid;s7_last<=s6_last;
                 if(s6_valid)for(channel=0;channel<3;channel=channel+1)begin
                     bloom3[channel]<=vertical3[channel];bloom5[channel]<=vertical5[channel];
-                    normalized_vertical[channel]<=normalized_blur(blur_center6[channel],blur_vertical[channel]);
+                    normalized_vertical[channel]<=normalized_blur(blur_center6[channel],blur_vertical[channel],blur);
                     raw7[channel]<=raw6[channel];horizontal7[channel]<=horizontal6[channel];
                 end
                 out_valid<=s7_valid;out_last<=s7_last;
