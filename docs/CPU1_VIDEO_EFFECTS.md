@@ -434,3 +434,58 @@ It includes source hashes, full test logs, the negative controls and a
 synthetic preview produced by the actual RGB565 C reference. On-card blur
 acceptance and the separately reported intermittent GBC startup failure
 remain open.
+
+### Core-only delivery
+
+`scripts/package_video_blur_update.py` packages two explicit VID5 builds:
+C64 PAL and Game Boy / Game Boy Color, at ABI 0.15. Supply the original
+`build/firmware-video-vid4.zip` and its expected SHA-256
+`e31d5fa603ca2eb4986acba6b8309eb9280c4d3b8eda1e6de02f7e7966ef8d81`.
+The packager verifies its retained components against that archive's
+historical sources. It verifies the two new FPGA builds against their
+captured source inputs and the current checkout. It does not rebuild or
+emit the retained CPU, FSBL, supervisor or Vectrex.
+
+The update's `sd/` directory contains exactly four files:
+
+- `multitini/cores/c64/core.cfg`
+- `multitini/cores/c64/c64-pal.bin`
+- `multitini/cores/gbc/core.cfg`
+- `multitini/cores/gbc/gbc-native.bin`
+
+Merge these files into the same SD paths and reload the core. Keep existing
+media, saves and settings. No firmware flash is needed. The installed
+firmware and supervisor remain VID4 (`56494434`), while the two new cores
+report VID5 (`56494435`). Both use the same ABI 0.15 contract. Vectrex stays
+on its existing image, and no C64 NTSC variant is included.
+
+The package carries the exact new source/license archive, BIT/XSA inputs,
+static same-core reference checkpoints, scripts, source captures, timing
+reports and validation evidence. `baseline-dependency.json` pins the
+original VID4 archive and its retained component hashes. Keep that original
+archive for the unchanged firmware/supervisor/Vectrex source provenance.
+The focused packager suite passes 12 tests, and all 10 existing full-bundle
+package tests still pass. The new gates reject changed source or payload
+copies, a mismatched XSA bitstream, altered synthesis/signoff recipes,
+incorrect incremental settings/reuse, and unexpected SD files.
+
+### Qualified VID5 builds
+
+The selected images are `vivado-cpu1-video-vid5-r1-c64-pal` and
+`vivado-cpu1-video-vid5-r1-gbc`, both using fresh synthesis with their exact
+qualified VID4 same-core checkpoints. Automatic checkpoint updates remain
+disabled with `TimingClosure`. No timing constraint or gate was relaxed.
+
+| Image | Setup slack | Hold slack | Pulse-width slack | Minimum bus-skew slack |
+| --- | ---: | ---: | ---: | ---: |
+| C64 PAL | +0.061 ns | +0.040 ns | +0.265 ns | +5.963 ns |
+| GBC with PSRAM | +0.313 ns | +0.025 ns | +0.265 ns | +5.839 ns |
+
+Both pass routing, timing coverage, bus-skew and CDC gates, retaining only
+the eight reviewed external PSRAM CDC waivers. The 82 C64 and 90 GBC
+captured inputs match the built sources. Each exported XSA contains the
+exact selected bitstream and retains the VID4 PS initialization bytes.
+The GBC build adds 233 LUTs and 10 flip-flops overall versus VID4, with no
+added block RAM or DSPs. Processing latency and frame-memory traffic do not
+change. The narrow timing margins make these test images; neither has yet
+received on-card visual or sustained 60 Hz gameplay acceptance.
