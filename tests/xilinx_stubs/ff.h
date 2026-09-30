@@ -43,6 +43,7 @@ typedef struct {
 #define FA_OPEN_ALWAYS UINT32_C(0x10)
 #define AM_DIR UINT32_C(0x10)
 
+FRESULT f_stat(const char *path, FILINFO *info);
 FRESULT f_mount(FATFS *file_system, const char *path, BYTE option);
 FRESULT f_open(FIL *file, const char *path, BYTE mode);
 FSIZE_t f_size(const FIL *file);

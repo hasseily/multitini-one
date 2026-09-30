@@ -63,14 +63,15 @@ and interrupted settings journals. The native USB fixtures work on macOS,
 Linux and Windows; only native Mach-O tests bypass the ELF discovery section.
 The production linker retains that section.
 
-The host suite passes 49 tests. The applicable Python suite passes 139 tests.
+The host suite passes 51 tests. The applicable Python suite passes 139 tests.
 The full Python discovery also finds C64 simulator/fast-ROM tests which need
 absent local `1541-II.251968-03.bin` and generated `c64fast/bin` images. Those
 baseline artifacts are not added by this import.
 
 These imports have not yet been qualified on Multitini hardware. Accepted
-release packages remain unchanged. Display switching and golden update
-integration are still in progress on the parity branch.
+release packages remain unchanged. Display switching is still in progress on the parity branch.
+Golden update integration and its host failure tests are complete; see
+[golden recovery images](golden-update.md).
 
 ## Timing and build checks
 

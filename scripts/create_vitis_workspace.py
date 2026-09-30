@@ -28,6 +28,7 @@ DOMAIN_NAME = "standalone_ps7_cortexa9_0"
 APP_NAME = os.environ.get("MULTITINI_VITIS_APP", "diagnostic")
 CPU1_DOMAIN_NAME = "standalone_ps7_cortexa9_1"
 CPU1_APP_NAME = "video_worker"
+GOLDEN_APP_NAME = "golden"
 CPU1_ENTRY = 0x20000000
 CPU1_PRIVATE_BYTES = 0x01000000
 CPU1_READY_STAMP = ".multitini-cpu1-ready"
@@ -823,6 +824,17 @@ def main() -> int:
             return 0
 
         build_inputs = capture_build_inputs(xpfm)
+        golden = client.create_app_component(
+            name=GOLDEN_APP_NAME, platform=str(xpfm), domain=DOMAIN_NAME,
+            template="empty_application")
+        golden.import_files(from_loc=str(ROOT), files=["firmware/golden"],
+                            is_skip_copy_sources=True)
+        add_include_directory(GOLDEN_APP_NAME, ROOT / "firmware/golden/lib")
+        configure_amp_application(GOLDEN_APP_NAME, secondary=False)
+        require_success(golden.build(), "golden recovery application build")
+        validate_elf_memory(WORKSPACE / GOLDEN_APP_NAME / "build" / "golden.elf",
+                            0x00100000, CPU1_ENTRY - 0x00100000)
+
         secondary = client.create_app_component(
             name=CPU1_APP_NAME, platform=str(xpfm), domain=CPU1_DOMAIN_NAME,
             template="empty_application")
@@ -842,6 +854,7 @@ def main() -> int:
         application.import_files(
             from_loc=str(ROOT),
             files=[
+                "firmware/golden/lib",
                 "firmware/common",
                 "firmware/include",
                 "firmware/platform/xilinx",
@@ -852,6 +865,7 @@ def main() -> int:
             ] + vectrex32_sources(),
             is_skip_copy_sources=True,
         )
+        add_include_directory(APP_NAME, ROOT / "firmware/golden/lib")
         add_include_directory(APP_NAME, ROOT / "firmware" / "include")
         add_include_directory(APP_NAME, ROOT / "firmware/vectrex32")
         add_include_directory(APP_NAME, ROOT / "firmware/vectrex32/compat")

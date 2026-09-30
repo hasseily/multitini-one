@@ -90,6 +90,8 @@ if not exist "%BOOTGEN%" (
 set "PACKAGE_TOKEN=%RANDOM%%RANDOM%"
 set "TMP_BIF=%TEMP%\multitini_firmware_%PACKAGE_TOKEN%.bif"
 set "TMP_OUT=%~dp1.%~n1.%PACKAGE_TOKEN%.tmp.bin"
+set "TMP_RAW=%~dp1.%~n1.%PACKAGE_TOKEN%.raw.bin"
+if exist "%TMP_RAW%" exit /b 1
 if exist "%TMP_BIF%" (
     echo ERROR: temporary BIF already exists: %TMP_BIF%
     exit /b 1
@@ -123,23 +125,27 @@ echo KIND: %BIT_KIND%
 echo APP : %APP_ELF%
 echo.
 
-call "%BOOTGEN%" -arch zynq -image "%TMP_BIF%" -o "%TMP_OUT%" -w on
+call "%BOOTGEN%" -arch zynq -image "%TMP_BIF%" -o "%TMP_RAW%" -w on
 set "PACK_RC=%ERRORLEVEL%"
 if not "%PACK_RC%"=="0" (
     echo ERROR: bootgen failed ^(errorlevel %PACK_RC%^)
     goto :fail_with_rc
 )
-if not exist "%TMP_OUT%" (
+if not exist "%TMP_RAW%" (
     echo ERROR: bootgen reported success but produced no image
     set "PACK_RC=1"
     goto :fail_with_rc
 )
-for %%I in ("%TMP_OUT%") do if %%~zI LEQ 0 (
+for %%I in ("%TMP_RAW%") do if %%~zI LEQ 0 (
     echo ERROR: bootgen produced an empty image: %TMP_OUT%
     set "PACK_RC=1"
     goto :fail_with_rc
 )
 
+python "%~dp0image_manifest.py" append "%TMP_RAW%" "%TMP_OUT%" --role firmware --recovery-capable --max-size 0x00DF0000
+if errorlevel 1 goto :fail
+
+del /q "%TMP_RAW%" >nul 2>nul
 move /y "%TMP_OUT%" "%OUT_BIN%" >nul
 if errorlevel 1 (
     echo ERROR: could not install packaged image at: %OUT_BIN%
@@ -164,6 +170,7 @@ exit /b 2
 set "PACK_RC=1"
 
 :fail_with_rc
+del /q "%TMP_RAW%" >nul 2>nul
 del /q "%TMP_BIF%" >nul 2>nul
 del /q "%TMP_OUT%" >nul 2>nul
 exit /b %PACK_RC%

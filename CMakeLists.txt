@@ -102,6 +102,8 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 add_test(NAME text_document COMMAND test_text_document)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME image_manifest COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/scripts/test_image_manifest.py)
 add_test(NAME usb1_phy_startup COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_SOURCE_DIR}/tests/test_usb1_phy_startup.py)
 set_tests_properties(usb1_phy_startup PROPERTIES ENVIRONMENT "CC=${CMAKE_C_COMPILER}")
@@ -369,3 +371,23 @@ target_link_libraries(test_supervisor_settings PRIVATE
     xilinx_supervisor_settings_host
 )
 add_test(NAME supervisor_settings COMMAND test_supervisor_settings)
+
+# Compile every imported recovery source against the BSP API fixtures, and run
+# the production self-update engine with a page/sector fault-injection NOR.
+file(GLOB GOLDEN_BOOT_SOURCES CONFIGURE_DEPENDS firmware/golden/bootloader/*.c)
+add_library(golden_compile OBJECT ${GOLDEN_BOOT_SOURCES}
+    firmware/golden/lib/qspi_nor.c firmware/golden/lib/uart.c)
+target_include_directories(golden_compile PRIVATE tests/xilinx_stubs)
+add_executable(test_golden_self_update tests/host/test_golden_self_update.c
+    firmware/golden/lib/golden_self_update.c firmware/golden/lib/crc32.c)
+target_include_directories(test_golden_self_update PRIVATE
+    tests/xilinx_stubs firmware/golden/lib)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_golden_self_update PRIVATE -Wall -Wextra -Werror)
+    if(MULTITINI_SANITIZE)
+        target_compile_options(test_golden_self_update PRIVATE
+            -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all)
+        target_link_options(test_golden_self_update PRIVATE -fsanitize=address,undefined)
+    endif()
+endif()
+add_test(NAME golden_self_update COMMAND test_golden_self_update)

@@ -25,6 +25,7 @@
 #include "multitini_tmp102.h"
 #include "multitini_ui.h"
 #include "multitini_xmodem.h"
+#include "../../golden/lib/golden_self_update.h"
 #include "pl_loader.h"
 #include "sd_storage.h"
 #include "supervisor_settings.h"
@@ -1203,17 +1204,22 @@ static bool wait_uart0_transmit_idle(void)
     return false;
 }
 
-static void reboot_to_golden(bool recovery_only)
+static void reboot_to_qspi(uint32_t offset, bool recovery_only)
 {
     int usb_stop_result;
     mt_sd_result_t unmount_result;
 
+    if (offset != GOLDEN_SELF_UPDATE_PRIMARY_OFFSET &&
+        offset != GOLDEN_SELF_UPDATE_TRIAL_OFFSET) {
+        xil_printf("invalid golden boot offset; reboot cancelled\r\n");
+        return;
+    }
     if (!recovery_only && set_core_reset_request(true) != 0) {
         xil_printf("media flush or core reset failed; reboot cancelled\r\n");
         set_supervisor_error("Reboot cancelled; media flush or core reset failed");
         return;
     }
-    xil_printf("rebooting to golden at QSPI offset 0x00000000\r\n");
+    xil_printf("rebooting to golden at QSPI offset 0x%08x\r\n", offset);
     if (!wait_uart0_transmit_idle()) {
         xil_printf("UART did not drain; reboot cancelled\r\n");
         if (!recovery_only) {
@@ -1223,9 +1229,10 @@ static void reboot_to_golden(bool recovery_only)
         return;
     }
 
-    Xil_Out32(MT_DEVCFG_MULTIBOOT, 0U);
+    Xil_Out32(MT_DEVCFG_MULTIBOOT, offset / UINT32_C(0x8000));
     DATA_SYNC;
-    if ((Xil_In32(MT_DEVCFG_MULTIBOOT) & MT_DEVCFG_MULTIBOOT_MASK) != 0U) {
+    if ((Xil_In32(MT_DEVCFG_MULTIBOOT) & MT_DEVCFG_MULTIBOOT_MASK) !=
+        offset / UINT32_C(0x8000)) {
         xil_printf("multiboot readback failed; reboot cancelled\r\n");
         if (!recovery_only) {
             (void)set_core_reset_request(false);
@@ -1263,6 +1270,54 @@ static void reboot_to_golden(bool recovery_only)
     }
 }
 
+static void reboot_to_golden(bool recovery_only)
+{
+    reboot_to_qspi(GOLDEN_SELF_UPDATE_PRIMARY_OFFSET, recovery_only);
+}
+
+/* Explicit command only. FatFs is borrowed after all runtime owners have
+ * closed their files. The recovery console can use this with no PL or USB. */
+static void self_update_golden(bool recovery_only)
+{
+    golden_self_update_result_t result;
+    mt_sd_result_t storage;
+    bool stopped_usb = false;
+    if (!recovery_only) {
+        if (set_core_reset_request(true) != 0) {
+            set_supervisor_error("Golden update cancelled; media flush failed");
+            return;
+        }
+        stopped_usb = true;
+        if (usb_hid_service_stop() != 0) {
+            xil_printf("golden update cancelled; USB shutdown failed\r\n");
+            goto restore;
+        }
+    }
+    storage = mt_sd_storage_unmount();
+    if (storage.status == MT_SD_OK) storage = mt_sd_storage_mount();
+    if (storage.status != MT_SD_OK) {
+        xil_printf("golden update cancelled; SD unavailable or busy: %s\r\n",
+                   mt_sd_status_name(storage.status));
+        goto restore;
+    }
+    if (golden_self_update_run("0:/BOOT.BIN", XPAR_XUARTPS_0_BASEADDR,
+                               XPAR_XUARTPS_0_BASEADDR, &result) == 0 &&
+        result.updated && result.verified && result.reset_required &&
+        result.boot_offset == GOLDEN_SELF_UPDATE_TRIAL_OFFSET) {
+        (void)mt_sd_storage_unmount();
+        reboot_to_qspi(result.boot_offset, recovery_only);
+    } else {
+        xil_printf("golden update failed (%d): %s\r\n",
+                   result.error_code, result.error_msg);
+    }
+restore:
+    if (!recovery_only) {
+        if (stopped_usb) (void)usb_hid_service_start();
+        (void)set_core_reset_request(false);
+        set_supervisor_error("Golden update did not reboot; see serial diagnostics");
+    }
+}
+
 static void handle_extended_command(bool recovery_only)
 {
     char extended[MT_EXTENDED_COMMAND_CAPACITY];
@@ -1276,6 +1331,8 @@ static void handle_extended_command(bool recovery_only)
         xil_printf("extended command is too long\r\n");
     } else if (strcmp(extended, "reboot") == 0) {
         reboot_to_golden(recovery_only);
+    } else if (strcmp(extended, "selfupdate") == 0) {
+        self_update_golden(recovery_only);
     } else if (strcmp(extended, "diag") == 0) {
         print_read_only_diagnostics("command");
     } else if (!recovery_only &&
@@ -1352,7 +1409,7 @@ static void handle_extended_command(bool recovery_only)
     }
 
     if (recovery_only) {
-        xil_printf("recovery commands: :diag read status; :reboot return to golden updater\r\n");
+        xil_printf("recovery commands: :diag read status; :reboot return to golden updater; :selfupdate stage BOOT.BIN\r\n");
     } else {
         print_help();
     }
@@ -3399,7 +3456,7 @@ static void service_system_page(void)
 
 static void recovery_console(void)
 {
-    xil_printf("recovery commands: :diag read status; :reboot return to golden updater\r\n");
+    xil_printf("recovery commands: :diag read status; :reboot return to golden updater; :selfupdate stage BOOT.BIN\r\n");
     for (;;) {
         const char input = inbyte();
         if (input == ':') {

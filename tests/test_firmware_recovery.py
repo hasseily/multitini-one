@@ -17,14 +17,14 @@ ROOT = Path(__file__).resolve().parents[1]
 class FirmwareRecoveryTests(unittest.TestCase):
     def test_reboot_command_clears_multiboot_before_ps_reset(self):
         source = (ROOT / "firmware/platform/xilinx/main.c").read_text()
-        body = source.split("static void reboot_to_golden(bool recovery_only)", 1)[1]
+        body = source.split("static void reboot_to_qspi(uint32_t offset, bool recovery_only)", 1)[1]
         body = body.split("\n}\n", 1)[0]
 
         media_flush = body.index("set_core_reset_request(true)")
         usb_power_stop = body.index("usb_hid_service_stop()")
         usb_power_failure = body.index("USB1 VBUS shutdown failed")
         drain = body.index("wait_uart0_transmit_idle()")
-        clear = body.index("Xil_Out32(MT_DEVCFG_MULTIBOOT, 0U)")
+        clear = body.index("Xil_Out32(MT_DEVCFG_MULTIBOOT, offset / UINT32_C(0x8000))")
         barrier = body.index("DATA_SYNC", clear)
         readback = body.index("Xil_In32(MT_DEVCFG_MULTIBOOT)")
         unlock = body.index("Xil_Out32(MT_SLCR_UNLOCK, MT_SLCR_UNLOCK_KEY)")
@@ -93,7 +93,7 @@ class FirmwareRecoveryTests(unittest.TestCase):
             self.skipTest("host C compiler unavailable")
         source = (ROOT / "firmware/platform/xilinx/main.c").read_text()
         functions = []
-        for name in ("read_extended_command", "wait_uart0_transmit_idle", "reboot_to_golden"):
+        for name in ("read_extended_command", "wait_uart0_transmit_idle", "reboot_to_qspi", "reboot_to_golden"):
             match = re.search(r"^static (?:bool|void) " + name + r"\(.*?^}\n",
                               source, re.MULTILINE | re.DOTALL)
             self.assertIsNotNone(match, name)
@@ -108,6 +108,8 @@ class FirmwareRecoveryTests(unittest.TestCase):
 #include <stdint.h>
 #include <string.h>
 #include <setjmp.h>
+#define GOLDEN_SELF_UPDATE_PRIMARY_OFFSET 0U
+#define GOLDEN_SELF_UPDATE_TRIAL_OFFSET 0x100000U
 #define MT_UART_DRAIN_POLLS 4U
 #define XPAR_XUARTPS_0_BASEADDR 0xe0000000U
 #define XUARTPS_SR_OFFSET 0x2cU
@@ -119,6 +121,7 @@ typedef struct { int status; unsigned backend_status; } mt_sd_result_t;
 static int runtime_calls, reset_calls, usb_calls, sd_calls, ui_calls;
 static int reset_failure, usb_failure, drain_failure, readback_failure;
 static int writes, barriers;
+static uint32_t expected_multiboot;
 static jmp_buf reset_jump;
 static const char *input;
 static unsigned input_position, polls;
@@ -147,11 +150,11 @@ static uint32_t XUartPs_ReadReg(uint32_t base, uint32_t offset) {
         harness += definitions + r'''
 static uint32_t Xil_In32(uint32_t address) {
     assert(address == MT_DEVCFG_MULTIBOOT);
-    return readback_failure ? 1U : 0U;
+    return readback_failure ? 1U : expected_multiboot;
 }
 static void Xil_Out32(uint32_t address, uint32_t value) {
     ++writes;
-    if (address == MT_DEVCFG_MULTIBOOT) { assert(value == 0U); return; }
+    if (address == MT_DEVCFG_MULTIBOOT) { assert(value == expected_multiboot); return; }
     if (address == MT_SLCR_UNLOCK) { assert(value == MT_SLCR_UNLOCK_KEY); return; }
     if (address == MT_PS_RESET_CONTROL) {
         assert(value == MT_PS_SOFTWARE_RESET && writes == 3 && barriers >= 2);
@@ -164,7 +167,7 @@ static void Xil_Out32(uint32_t address, uint32_t value) {
 static void clear(void) {
     runtime_calls = reset_calls = usb_calls = sd_calls = ui_calls = 0;
     reset_failure = usb_failure = drain_failure = readback_failure = 0;
-    writes = barriers = 0; input_position = polls = 0;
+    writes = barriers = 0; expected_multiboot = 0; input_position = polls = 0;
 }
 static void expect_no_services(void) {
     assert(!runtime_calls && !reset_calls && !usb_calls && !sd_calls && !ui_calls);
@@ -194,6 +197,11 @@ int main(void) {
     clear();
     if (setjmp(reset_jump) == 0) { reboot_to_golden(false); assert(!"reset missing"); }
     assert(reset_calls == 1 && usb_calls == 1 && sd_calls == 1 && writes == 3);
+    clear(); expected_multiboot = 0x20U;
+    if (setjmp(reset_jump) == 0) { reboot_to_qspi(0x100000U, true); assert(!"reset missing"); }
+    expect_no_services(); assert(writes == 3);
+    clear(); reboot_to_qspi(0x200000U, true);
+    expect_no_services(); assert(writes == 0);
     return 0;
 }
 '''
