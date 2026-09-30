@@ -7,6 +7,7 @@
 // the old slot can then be reused. A cache miss falls back to the direct machine
 // path for the rest of that scanout frame, never reading uninitialized RAM.
 module multitini_video_frame_reader #(
+    parameter bit DYNAMIC_DISPLAY=1'b0,
     parameter integer WIDTH = 382,
     parameter integer HEIGHT = 270,
     parameter integer VIEW_X = 196,
@@ -17,6 +18,8 @@ module multitini_video_frame_reader #(
     parameter bit SHARED_PIXEL_RESET = 1'b0,
     parameter bit SHARED_PIXEL_LIVENESS = 1'b0
 ) (
+    input wire [11:0] display_view_x, display_view_y, display_view_width, display_view_height,
+    input wire [3:0] display_scale_num, display_scale_den,
     input wire clk, resetn, enable,
     input wire submit,
     input wire [31:0] submit_value,
@@ -41,6 +44,12 @@ module multitini_video_frame_reader #(
     input wire rlast, rvalid,
     output wire rready
 );
+    wire [11:0] view_x=DYNAMIC_DISPLAY ? display_view_x : VIEW_X;
+    wire [11:0] view_y=DYNAMIC_DISPLAY ? display_view_y : VIEW_Y;
+    wire [11:0] view_width=DYNAMIC_DISPLAY ? display_view_width : WIDTH*SCALE_NUM/SCALE_DEN;
+    wire [11:0] view_height=DYNAMIC_DISPLAY ? display_view_height : HEIGHT*SCALE_NUM/SCALE_DEN;
+    wire [3:0] scale_num=DYNAMIC_DISPLAY ? display_scale_num : SCALE_NUM;
+    wire [3:0] scale_den=DYNAMIC_DISPLAY ? display_scale_den : SCALE_DEN;
     localparam integer WORDS = (WIDTH + 3) / 4;
     localparam integer STRIDE = ((WIDTH + 63) / 64) * 128;
     localparam integer OUT_WIDTH = WIDTH * SCALE_NUM / SCALE_DEN;
@@ -262,10 +271,10 @@ module multitini_video_frame_reader #(
     reg [3:0] horizontal_phase, vertical_phase;
     // One pixel lookahead compensates the synchronous BRAM read. The
     // existing machine bridge presents data at the current scan coordinate.
-    wire prefetch = scan_x >= VIEW_X-1 && scan_x < VIEW_X+OUT_WIDTH-1 &&
-                    scan_y >= VIEW_Y && scan_y < VIEW_Y+OUT_HEIGHT;
-    wire visible = scan_x >= VIEW_X && scan_x < VIEW_X+OUT_WIDTH &&
-                   scan_y >= VIEW_Y && scan_y < VIEW_Y+OUT_HEIGHT;
+    wire prefetch = scan_x >= view_x-1 && scan_x < view_x+view_width-1 &&
+                    scan_y >= view_y && scan_y < view_y+view_height;
+    wire visible = scan_x >= view_x && scan_x < view_x+view_width &&
+                   scan_y >= view_y && scan_y < view_y+view_height;
     wire cache_hit = line_valid[read_bank] && line_row[read_bank] == source_y &&
                      line_epoch[read_bank] == epoch;
     assign pixel_use = enabled_pixel && !frame_failed && visible && pixel_cached;
@@ -302,21 +311,21 @@ module multitini_video_frame_reader #(
             // three/six. Each source row repeats at the existing core ratio;
             // the circular cache bank advances only when source_y advances.
             if (scan_x==0) begin
-                if (scan_y<=VIEW_Y || scan_y>=VIEW_Y+OUT_HEIGHT) begin
+                if (scan_y<=view_y || scan_y>=view_y+view_height) begin
                     source_y<=0;vertical_phase<=0;read_bank<=0;
-                end else if (vertical_phase+SCALE_DEN>=SCALE_NUM) begin
+                end else if (vertical_phase+scale_den>=scale_num) begin
                     source_y<=source_y+1'b1;
-                    vertical_phase<=vertical_phase+SCALE_DEN-SCALE_NUM;
+                    vertical_phase<=vertical_phase+scale_den-scale_num;
                     read_bank<=read_bank==2 ? 0 : read_bank+1'b1;
-                end else vertical_phase<=vertical_phase+SCALE_DEN;
+                end else vertical_phase<=vertical_phase+scale_den;
             end
-            if (scan_x==VIEW_X-2) begin
+            if (scan_x==view_x-2) begin
                 source_x<=0;horizontal_phase<=0;
             end else if (prefetch) begin
-                if (horizontal_phase+SCALE_DEN>=SCALE_NUM) begin
+                if (horizontal_phase+scale_den>=scale_num) begin
                     source_x<=source_x+1'b1;
-                    horizontal_phase<=horizontal_phase+SCALE_DEN-SCALE_NUM;
-                end else horizontal_phase<=horizontal_phase+SCALE_DEN;
+                    horizontal_phase<=horizontal_phase+scale_den-scale_num;
+                end else horizontal_phase<=horizontal_phase+scale_den;
             end
             pixel_select<=source_x[1:0];
             pixel_cached<=prefetch && cache_hit;

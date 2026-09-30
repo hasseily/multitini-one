@@ -66,6 +66,9 @@ explicit direct-RAM shortcut for eligible BASIC programs.
   remaining limits.
 - [Shared front end](docs/SHARED_FRONTEND.md): board-tested firmware `20260920`,
   Appletini-style layout, core profiles, automatic pause, efficient redraws, and previews.
+- [Appletini shared-platform imports](docs/appletini-parity.md): controller
+  mapping, USB recovery, display modes, golden self-update, and build hardening;
+  local test results and remaining board gates.
 - [Multicore runtime](docs/MULTICORE_RUNTIME.md): packages, menu controls,
   settings, core switching, and GBC saves.
 - [GBC baseline](docs/GBC_BASELINE.md): accepted gameplay and save behavior,

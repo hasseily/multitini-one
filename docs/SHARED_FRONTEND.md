@@ -39,8 +39,10 @@ and `config_menu_help.c`. No sibling files or new font assets were copied.
 The overlay has **128x60 cells**, up from 80x36. The existing 7x8 font uses
 2x scaling: glyphs are 14x16 pixels inside 15x18 cells. This reduces the
 nominal horizontal gap from three pixels to one and the vertical gap from
-six pixels to two. The display remains 1920x1080; no new font asset or video
-clock is introduced. There are 2.67 times as many text cells.
+six pixels to two at the default 1920x1080 resolution. ABI 0.16 also provides
+five smaller [display modes](VIDEO_SETTINGS.md). They retain all 128x60 cells
+with the same font at 1x scale, centered within smaller cells. There are 2.67
+times as many text cells as the original overlay.
 
 ## Pause while configuring
 

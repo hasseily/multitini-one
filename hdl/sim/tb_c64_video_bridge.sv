@@ -2,6 +2,7 @@
 `timescale 1ns / 1ps
 
 module tb_c64_video_bridge;
+    parameter bit DYNAMIC_DISPLAY=0;
     localparam int SOURCE_WIDTH = 8;
     localparam int SOURCE_HEIGHT = 4;
     localparam int OUTPUT_SCALE = 2;
@@ -60,9 +61,13 @@ module tb_c64_video_bridge;
 
     multitini_c64_video_bridge #(
         .SOURCE_WIDTH(SOURCE_WIDTH), .SOURCE_HEIGHT(SOURCE_HEIGHT),
-        .OUTPUT_SCALE(OUTPUT_SCALE), .OUTPUT_X_OFFSET(OUTPUT_X_OFFSET),
+        .DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),
+        .OUTPUT_SCALE(DYNAMIC_DISPLAY ? 4 : OUTPUT_SCALE), .OUTPUT_X_OFFSET(OUTPUT_X_OFFSET),
         .OUTPUT_Y_OFFSET(OUTPUT_Y_OFFSET)
     ) dut (
+        .display_view_x(12'(OUTPUT_X_OFFSET)),.display_view_y(12'(OUTPUT_Y_OFFSET)),
+        .display_view_width(12'(SOURCE_WIDTH*OUTPUT_SCALE)),.display_view_height(12'(SOURCE_HEIGHT*OUTPUT_SCALE)),
+        .display_scale_num(4'(OUTPUT_SCALE)),.display_scale_den(4'd1),
         .source_clk(source_clk), .source_resetn(source_resetn),
         .source_ready(source_ready),
         .source_r(source_r), .source_g(source_g), .source_b(source_b),

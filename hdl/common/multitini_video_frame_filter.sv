@@ -8,9 +8,11 @@
 // its original taps. Both branches share the raw window and four line RAMs.
 // A flowing job takes (WIDTH+2)*(HEIGHT+2) samples plus nine pipeline clocks.
 module multitini_video_frame_filter #(
+    parameter bit DYNAMIC_DISPLAY=1'b0,
     parameter integer WIDTH=540, HEIGHT=720,
     parameter integer SCALE_NUM=3, SCALE_DEN=2
 )(
+    input wire [3:0] display_scale_num,display_scale_den,
     input wire clk,resetn,
     input wire start,
     input wire [5:0] options,
@@ -113,13 +115,30 @@ module multitini_video_frame_filter #(
     // the effect below RGB565 precision. Each level has a static coefficient:
     // C64 96/192/256, GBC 64/128/192, Vectrex 256/256/256. Constant products
     // reduce to shifts/adds; the latched job mode selects between them.
+    // Geometry changes only with the entire engine drained. Keep the same
+    // output-pixel blur radius for each fitted scale; all coefficients are
+    // precomputed Q8 constants, selected before the registered blend stage.
+    function automatic [8:0] display_alpha(input [1:0] level);
+        begin
+            if(display_scale_den==2)display_alpha=256;
+            else case(display_scale_num)
+                2:display_alpha=level==1 ? 192 : 256;
+                3:display_alpha=level==1 ? 128 : 256;
+                4:display_alpha=level==1 ? 96 : level==2 ? 192 : 256;
+                5:display_alpha=level==1 ? 77 : level==2 ? 154 : 230;
+                6:display_alpha=level==1 ? 64 : level==2 ? 128 : 192;
+                default:display_alpha=256;
+            endcase
+        end
+    endfunction
     function automatic [7:0] normalized_blur(input [7:0] center,filtered,
                                             input [1:0] blur_mode);
         reg signed [8:0] difference;
         reg signed [17:0] weighted;
         begin
             difference=$signed({1'b0,filtered})-$signed({1'b0,center});
-            case(blur_mode)
+            if(DYNAMIC_DISPLAY)weighted=difference*$signed({1'b0,display_alpha(blur_mode)});
+            else case(blur_mode)
                 2:weighted=difference*BLUR_ALPHA_MEDIUM;
                 3:weighted=difference*BLUR_ALPHA_STRONG;
                 default:weighted=difference*BLUR_ALPHA_LIGHT;

@@ -96,11 +96,13 @@ endmodule
 //   [6:0] ASCII. Firmware writes the inactive bank and commits it atomically;
 // the video side changes visibility/bank only at vertical blank.
 module multitini_text_overlay #(
+    parameter bit DYNAMIC_DISPLAY=1'b0,
     parameter int H_ACTIVE = 1920,
     parameter int H_TOTAL = 2200,
     parameter int V_ACTIVE = 1080,
     parameter int V_TOTAL = 1125
 ) (
+    input wire [11:0] display_h_active,display_h_total,display_v_active,display_v_total,
     input  logic        control_clk,
     input  logic        control_resetn,
     input  logic        vram_wr_en,
@@ -258,8 +260,17 @@ module multitini_text_overlay #(
     always_comb cell_q = active_bank ? bank1_q : bank0_q;
 
     assign columns = active_dense ? MT_UI_COLUMNS : MT_UI_LEGACY_COLUMNS;
-    assign cell_width = active_dense ? MT_UI_CELL_WIDTH : MT_UI_LEGACY_CELL_WIDTH;
-    assign cell_height = active_dense ? MT_UI_CELL_HEIGHT : MT_UI_LEGACY_CELL_HEIGHT;
+    wire compact=DYNAMIC_DISPLAY && display_h_active<1920;
+    assign cell_width = compact ? (active_dense ? display_h_active/128 : display_h_active/80) :
+                       active_dense ? MT_UI_CELL_WIDTH : MT_UI_LEGACY_CELL_WIDTH;
+    assign cell_height = compact ? (active_dense ? display_v_active/60 : display_v_active/36) :
+                        active_dense ? MT_UI_CELL_HEIGHT : MT_UI_LEGACY_CELL_HEIGHT;
+    wire [11:0] text_width=compact ? columns*cell_width : H_ACTIVE;
+    wire [11:0] text_height=compact ? (active_dense ? 60 : 36)*cell_height : V_ACTIVE;
+    wire [11:0] h_total=DYNAMIC_DISPLAY ? display_h_total : H_TOTAL;
+    wire [11:0] v_total=DYNAMIC_DISPLAY ? display_v_total : V_TOTAL;
+    wire [4:0] compact_glyph_x=(cell_width-7)>>1;
+    wire [4:0] compact_glyph_y=(cell_height-8)>>1;
 
     // The text BRAM, synchronous font ROM, and registered glyph/color output
     // add three cycles before multitini_video_test samples the overlay.  A
@@ -311,10 +322,10 @@ module multitini_text_overlay #(
                 fetch_row_base <= '0;
                 fetch_address <= '0;
                 fetch_active <= 1'b1;
-            end else if (fetch_x == H_TOTAL - 1) begin
+            end else if (fetch_x == h_total - 1) begin
                 fetch_x <= 12'd0;
                 fetch_local_x <= 5'd0;
-                if (fetch_y == V_TOTAL - 1) begin
+                if (fetch_y == v_total - 1) begin
                     fetch_y <= 12'd0;
                     fetch_local_y <= 5'd0;
                     fetch_row_base <= '0;
@@ -322,7 +333,7 @@ module multitini_text_overlay #(
                     fetch_active <= 1'b1;
                 end else begin
                     fetch_y <= fetch_y + 12'd1;
-                    if (fetch_y < V_ACTIVE - 1) begin
+                    if (fetch_y < text_height - 1) begin
                         fetch_active <= 1'b1;
                         if (fetch_local_y == cell_height - 1) begin
                             fetch_local_y <= 5'd0;
@@ -341,7 +352,7 @@ module multitini_text_overlay #(
                 end
             end else begin
                 fetch_x <= fetch_x + 12'd1;
-                if (fetch_y < V_ACTIVE && fetch_x < H_ACTIVE - 1) begin
+                if (fetch_y < text_height && fetch_x < text_width - 1) begin
                     fetch_active <= 1'b1;
                     if (fetch_local_x == cell_width - 1) begin
                         fetch_local_x <= 5'd0;
@@ -399,7 +410,13 @@ module multitini_text_overlay #(
     always_comb begin
         glyph_row = 8'd0;
         glyph_pixel = 1'b0;
-        if (active_dense) begin
+        if (compact) begin
+            if(local_y_qq>=compact_glyph_y && local_y_qq<compact_glyph_y+8)
+                glyph_row=glyph_q[((local_y_qq-compact_glyph_y)*8)+:8];
+            if(local_x_qq>=compact_glyph_x && local_x_qq<compact_glyph_x+7 &&
+               local_y_qq>=compact_glyph_y && local_y_qq<compact_glyph_y+8)
+                glyph_pixel=glyph_row[local_x_qq-compact_glyph_x];
+        end else if (active_dense) begin
             if (local_y_qq >= MT_UI_GLYPH_Y &&
                 local_y_qq < MT_UI_GLYPH_Y + 8 * MT_UI_FONT_SCALE)
                 glyph_row = glyph_q[(((local_y_qq - MT_UI_GLYPH_Y) /

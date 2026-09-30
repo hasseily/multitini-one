@@ -5,9 +5,11 @@
 // matches the three registered arithmetic/style stages without delaying game,
 // UI, or DVI timing. Signed edge distances clip safely at every screen edge.
 module multitini_border_overlay #(
+    parameter bit DYNAMIC_DISPLAY=1'b0,
     parameter integer H_ACTIVE=1920, H_TOTAL=2200,
     parameter integer V_ACTIVE=1080, V_TOTAL=1125
 ) (
+    input wire [11:0] display_h_active,display_h_total,display_v_active,display_v_total,
     input logic pixel_clk, resetn,
     input logic [11:0] scan_x, scan_y,
     input logic [12:0] frame_config,
@@ -15,6 +17,10 @@ module multitini_border_overlay #(
     output logic pixel_opaque,
     output logic [15:0] pixel_rgb565
 );
+    wire [11:0] h_active=DYNAMIC_DISPLAY ? display_h_active : H_ACTIVE;
+    wire [11:0] h_total=DYNAMIC_DISPLAY ? display_h_total : H_TOTAL;
+    wire [11:0] v_active=DYNAMIC_DISPLAY ? display_v_active : V_ACTIVE;
+    wire [11:0] v_total=DYNAMIC_DISPLAY ? display_v_total : V_TOTAL;
     logic signed [13:0] left_edge, right_edge, top_edge, bottom_edge;
     logic [11:0] fetch_x, fetch_y;
     logic signed [13:0] dl_q, dr_q, dt_q, db_q;
@@ -54,9 +60,9 @@ module multitini_border_overlay #(
         bottom_edge=$signed({2'b0,viewport_y})+$signed({2'b0,viewport_height})+
                     $signed({9'b0,padding});
         fetch_x=scan_x+12'd3; fetch_y=scan_y;
-        if (scan_x>=H_TOTAL-3) begin
-            fetch_x=scan_x-(H_TOTAL-3);
-            fetch_y=scan_y==V_TOTAL-1 ? 12'd0 : scan_y+12'd1;
+        if (scan_x>=h_total-3) begin
+            fetch_x=scan_x-(h_total-3);
+            fetch_y=scan_y==v_total-1 ? 12'd0 : scan_y+12'd1;
         end
         draw_pixel=0; shaded=color_qq;
         case (style_qq)
@@ -87,7 +93,7 @@ module multitini_border_overlay #(
             dt_q<=top_edge-$signed({2'b0,fetch_y});
             db_q<=$signed({2'b0,fetch_y})-bottom_edge;
             active_q<=frame_config[0] && viewport_width!=0 && viewport_height!=0 &&
-                      fetch_x<H_ACTIVE && fetch_y<V_ACTIVE;
+                      fetch_x<h_active && fetch_y<v_active;
             style_q<=frame_config[3:1]; color_q<=palette(frame_config[7:4]);
             distance_qq<=max2(max2(dl_q,dr_q),max2(dt_q,db_q));
             active_qq<=active_q; style_qq<=style_q; color_qq<=color_q;

@@ -15,8 +15,11 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--small-only", action="store_true")
+    parser.add_argument("--dynamic-display", action="store_true")
     args = parser.parse_args()
     build = ROOT / "build/video-frame-filter-tests"
+    if args.dynamic_display:
+        build /= "dynamic-display"
     build.mkdir(parents=True, exist_ok=True)
     runtime = Path(os.environ.get("MULTITINI_UCRT_BIN", "C:/msys64/ucrt64/bin"))
     tool = lambda name: str(runtime / (name + ".exe")) if os.name == "nt" else name
@@ -50,10 +53,12 @@ def main():
         output = run([tool("vvp"), str(simulation)], expected_failure=True)
         if "Blur scale parameters must be in the range 1..64" not in output:
             raise RuntimeError("Invalid scale did not fail through the parameter guard")
+    ratios = ((1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (6, 1), (3, 2)) if args.dynamic_display else ((3, 2), (4, 1), (6, 1))
     cases = [(width, height, 80, 1, num, den)
-             for num, den in ((3, 2), (4, 1), (6, 1))
+             for num, den in ratios
              for width, height in ((13, 9), (1, 1), (2, 3))]
-    cases += [(13, 9, 80, 1, 1, 1), (13, 9, 80, 1, 5, 2)]
+    if not args.dynamic_display:
+        cases += [(13, 9, 80, 1, 1, 1), (13, 9, 80, 1, 5, 2)]
     if not args.small_only:
         cases += [(160, 144, 1, 0, 6, 1), (382, 270, 1, 0, 4, 1),
                   (404, 250, 1, 0, 4, 1), (540, 720, 1, 0, 3, 2)]
@@ -66,6 +71,7 @@ def main():
              "-P", f"tb_video_frame_filter.WIDTH={width}", "-P", f"tb_video_frame_filter.HEIGHT={height}",
              "-P", f"tb_video_frame_filter.JOBS={jobs}", "-P", f"tb_video_frame_filter.STALL={stalls}",
              "-P", f"tb_video_frame_filter.SCALE_NUM={num}", "-P", f"tb_video_frame_filter.SCALE_DEN={den}",
+             "-P", f"tb_video_frame_filter.DYNAMIC_DISPLAY={int(args.dynamic_display)}",
              "-o", str(simulation), str(ROOT / sources[0]), str(ROOT / sources[1])])
         output = run([tool("vvp"), str(simulation), "+vectors=" + directory.as_posix()])
         if "PASS native frame filter:" not in output:
@@ -73,7 +79,8 @@ def main():
     after = hashes()
     changed = [path for path in sources if before[path] != after[path]]
     (build / "validation.json").write_text(json.dumps({"passed": not changed, "source_sha256": before,
-        "source_sha256_after": after, "changed_sources": changed, "cases": cases, "logs": logs},
+        "source_sha256_after": after, "changed_sources": changed, "dynamic_display": args.dynamic_display,
+        "cases": cases, "logs": logs},
         indent=2) + "\n", encoding="utf-8")
     if before != after:
         raise RuntimeError("Filter validation inputs changed during the run: " + ", ".join(changed))

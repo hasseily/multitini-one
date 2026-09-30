@@ -5,6 +5,12 @@ Status: planning baseline, written 2026-08-29
 Scope update, 2026-09-18: ship one C64 variant, PAL, with nominal 60 Hz DVI
 output. C64 NTSC is no longer part of the build, package, or release gates.
 
+Scope update, 2026-09-30: import the remaining applicable Appletini shared
+platform work, including optional display and golden-update follow-ups, on a
+new branch. Six nominal 60 Hz output modes preserve complete centered machine
+images. 1080p remains the reset default; smaller modes use fixed fit scales.
+See [the parity record](docs/appletini-parity.md) for scope and test limits.
+
 ## 1. Goal
 
 Use the Appletini ONE card as a stand-alone FPGA computer, outside an Apple II.
@@ -603,6 +609,11 @@ On hardware:
 
 ### Decisions recorded after the baseline plan
 
+- 2026-09-30: The owner requested all remaining applicable Appletini imports,
+  including the optional follow-ups, committed on a new branch. This includes
+  controller mapping and transports, timing/build hardening, six display modes,
+  and recoverable golden self-update. Apple bus and slot-card behavior remains
+  outside the standalone product. Local tests do not establish board support.
 - 2026-09-18: The owner confirmed the VID5 blur correction is fixed on the
   board and requested closing the GBC startup investigation. Preserve the
   exact delivered core update and retained VID4 firmware/Vectrex. The startup

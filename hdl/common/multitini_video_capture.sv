@@ -4,12 +4,15 @@
 // existing scaled image, never backpressures the core, and publishes only after
 // every AXI write response succeeds. Each padded row is a multiple of 128 bytes.
 module multitini_video_capture #(
+    parameter bit DYNAMIC_DISPLAY=1'b0,
     parameter integer WIDTH=382, HEIGHT=270,
     parameter integer VIEW_X=196, VIEW_Y=0,
     parameter integer SCALE_NUM=4, SCALE_DEN=1,
     parameter [31:0] BASE=32'h22000000,
     parameter bit SHARED_PIXEL_RESET=1'b0
 ) (
+    input wire [11:0] display_view_x, display_view_y, display_view_width, display_view_height,
+    input wire [3:0] display_scale_num, display_scale_den,
     input wire clk,resetn,enable,
     input wire [31:0] consumer,
     output reg [31:0] producer,drops,errors,
@@ -26,6 +29,12 @@ module multitini_video_capture #(
     output wire wlast,wvalid,input wire wready,
     input wire [1:0] bresp,input wire bvalid,output wire bready
 );
+    wire [11:0] view_x=DYNAMIC_DISPLAY ? display_view_x : VIEW_X;
+    wire [11:0] view_y=DYNAMIC_DISPLAY ? display_view_y : VIEW_Y;
+    wire [11:0] view_width=DYNAMIC_DISPLAY ? display_view_width : WIDTH*SCALE_NUM/SCALE_DEN;
+    wire [11:0] view_height=DYNAMIC_DISPLAY ? display_view_height : HEIGHT*SCALE_NUM/SCALE_DEN;
+    wire [3:0] scale_num=DYNAMIC_DISPLAY ? display_scale_num : SCALE_NUM;
+    wire [3:0] scale_den=DYNAMIC_DISPLAY ? display_scale_den : SCALE_DEN;
     localparam integer STRIDE_PIXELS=((WIDTH+63)/64)*64;
     localparam integer PAD_PIXELS=STRIDE_PIXELS-WIDTH;
     localparam integer FRAME_PIXELS=STRIDE_PIXELS*HEIGHT;
@@ -74,21 +83,21 @@ module multitini_video_capture #(
     always @(posedge pixel_clk)begin
         if(!pixel_run)begin horizontal_phase<=0;vertical_phase<=0;end
         else begin
-            if(scan_x==VIEW_X-1)horizontal_phase<=0;
-            else if(scan_x>=VIEW_X && scan_x<VIEW_X+VIEW_WIDTH)
-                horizontal_phase<=horizontal_phase==SCALE_NUM-1 ? 0 : horizontal_phase+1'b1;
+            if(scan_x==view_x-1)horizontal_phase<=0;
+            else if(scan_x>=view_x && scan_x<view_x+view_width)
+                horizontal_phase<=horizontal_phase==scale_num-1 ? 0 : horizontal_phase+1'b1;
             if(scan_x==0)begin
-                if(scan_y<=VIEW_Y || scan_y>=VIEW_Y+VIEW_HEIGHT)vertical_phase<=0;
-                else vertical_phase<=vertical_phase==SCALE_NUM-1 ? 0 : vertical_phase+1'b1;
+                if(scan_y<=view_y || scan_y>=view_y+view_height)vertical_phase<=0;
+                else vertical_phase<=vertical_phase==scale_num-1 ? 0 : vertical_phase+1'b1;
             end
         end
     end
-    wire selected_row=scan_y>=VIEW_Y && scan_y<VIEW_Y+VIEW_HEIGHT &&
-        (SCALE_DEN==2 ? vertical_phase!=1 : vertical_phase==0);
-    wire native_sample=scan_x>=VIEW_X && scan_x<VIEW_X+VIEW_WIDTH &&
-        (SCALE_DEN==2 ? horizontal_phase!=1 : horizontal_phase==0);
-    wire padding_sample=PAD_PIXELS!=0 && scan_x>=VIEW_X+VIEW_WIDTH &&
-                        scan_x<VIEW_X+VIEW_WIDTH+PAD_PIXELS;
+    wire selected_row=scan_y>=view_y && scan_y<view_y+view_height &&
+        (scale_den==2 ? vertical_phase!=1 : vertical_phase==0);
+    wire native_sample=scan_x>=view_x && scan_x<view_x+view_width &&
+        (scale_den==2 ? horizontal_phase!=1 : horizontal_phase==0);
+    wire padding_sample=PAD_PIXELS!=0 && scan_x>=view_x+view_width &&
+                        scan_x<view_x+view_width+PAD_PIXELS;
     wire sample=capturing && selected_row && (native_sample || padding_sample);
     wire [15:0] sampled_pixel=padding_sample?16'd0:rgb565;
     reg [1:0] pack_index;

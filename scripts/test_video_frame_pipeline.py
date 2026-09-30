@@ -16,13 +16,16 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--xpm", action="store_true", help="Use Vivado's real XPM models")
-    parser.add_argument("--scale", choices=("4", "6", "3:2"), action="append")
+    parser.add_argument("--scale", choices=("1", "2", "3", "4", "5", "6", "3:2"), action="append")
+    parser.add_argument("--dynamic-display", action="store_true", help="Runtime scaling and hardware pause/drain/reset/restart")
     parser.add_argument("--source-pause", action="store_true", help="Hold source readiness low for four complete frames")
     parser.add_argument("--expect-source-failure", action="store_true", help="Record the pre-fix readiness fault through recovery")
     args = parser.parse_args()
     if args.expect_source_failure:
         args.source_pause = True
     build = ROOT / "build/video-frame-pipeline-tests"
+    if args.dynamic_display:
+        build /= "dynamic-display"
     if args.source_pause:
         build /= "source-pause-before-fix" if args.expect_source_failure else "source-pause"
     build /= "xpm" if args.xpm else "portable"
@@ -64,14 +67,14 @@ def main():
             wrappers = build / "wrappers.sv"
             wrappers.write_text("\n".join(
                 f"module pipeline_{n}_{d}; tb_video_frame_pipeline #(.SCALE_NUM({n}),.SCALE_DEN({d}),"
-                f".SOURCE_PAUSE_TEST({int(args.source_pause)}),.EXPECT_SOURCE_FAILURE({int(args.expect_source_failure)})) test(); endmodule"
-                for n, d in ((4, 1), (6, 1), (3, 2))) + "\n", encoding="ascii")
+                f".DYNAMIC_DISPLAY({int(args.dynamic_display)}),.SOURCE_PAUSE_TEST({int(args.source_pause)}),.EXPECT_SOURCE_FAILURE({int(args.expect_source_failure)})) test(); endmodule"
+                for n, d in ((1,1),(2,1),(3,1),(4,1),(5,1),(6,1),(3,2))) + "\n", encoding="ascii")
             run([tool("xvlog"), "--sv"] + [ROOT / path for path in sources] +
                 [wrappers, vivado / "data/verilog/src/glbl.v"], "design-compile")
         else:
             runtime = Path(os.environ.get("MULTITINI_UCRT_BIN", "C:/msys64/ucrt64/bin"))
             tool = lambda name: runtime / (name + ".exe") if os.name == "nt" else name
-        for scale in args.scale or ("4", "6", "3:2"):
+        for scale in args.scale or (("1", "2", "3", "4", "5", "6", "3:2") if args.dynamic_display else ("4", "6", "3:2")):
             n, d = (3, 2) if scale == "3:2" else (int(scale), 1)
             name = f"pipeline_{n}_{d}"
             if args.xpm:
@@ -82,6 +85,7 @@ def main():
                 simulation = build / (name + ".vvp")
                 run([tool("iverilog"), "-g2012", "-Wall", "-Wimplicit", "-s", "tb_video_frame_pipeline",
                      "-P", f"tb_video_frame_pipeline.SCALE_NUM={n}", "-P", f"tb_video_frame_pipeline.SCALE_DEN={d}",
+                     "-P", f"tb_video_frame_pipeline.DYNAMIC_DISPLAY={int(args.dynamic_display)}",
                      "-P", f"tb_video_frame_pipeline.SOURCE_PAUSE_TEST={int(args.source_pause)}",
                      "-P", f"tb_video_frame_pipeline.EXPECT_SOURCE_FAILURE={int(args.expect_source_failure)}",
                      "-o", simulation] + [ROOT / path for path in sources], name + "-compile")
@@ -94,7 +98,7 @@ def main():
     finally:
         after = hashes()
         (build / "validation.json").write_text(json.dumps({"passed": success and before == after,
-            "source_pause": args.source_pause, "expected_source_failure": args.expect_source_failure,
+            "dynamic_display": args.dynamic_display, "source_pause": args.source_pause, "expected_source_failure": args.expect_source_failure,
             "source_sha256": before, "source_sha256_after": after, "vendor_sha256": vendor_hashes,
             "logs": logs}, indent=2) + "\n", encoding="utf-8")
     if before != after:

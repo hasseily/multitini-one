@@ -34,12 +34,15 @@ endmodule
 // producer from the 60 Hz output: the producer publishes complete frames only,
 // the consumer swaps only at output vblank, and a missing frame repeats cleanly.
 module multitini_gameboy_video_bridge #(
+    parameter bit DYNAMIC_DISPLAY=1'b0,
     parameter integer SOURCE_WIDTH    = 160,
     parameter integer SOURCE_HEIGHT   = 144,
     parameter integer OUTPUT_SCALE    = 6,
     parameter integer OUTPUT_X_OFFSET = 480,
     parameter integer OUTPUT_Y_OFFSET = 108
 ) (
+    input wire [11:0] display_view_x, display_view_y, display_view_width, display_view_height,
+    input wire [3:0] display_scale_num, display_scale_den,
     input  logic        source_clk,
     input  logic        source_resetn,
     input  logic        source_ready,
@@ -386,20 +389,25 @@ module multitini_gameboy_video_bridge #(
         end
     end
 
+    wire [11:0] view_x=DYNAMIC_DISPLAY ? display_view_x : OUTPUT_X_OFFSET;
+    wire [11:0] view_y=DYNAMIC_DISPLAY ? display_view_y : OUTPUT_Y_OFFSET;
+    wire [11:0] view_width=DYNAMIC_DISPLAY ? display_view_width : SCALED_WIDTH;
+    wire [11:0] view_height=DYNAMIC_DISPLAY ? display_view_height : SCALED_HEIGHT;
+    wire [3:0] scale_num=DYNAMIC_DISPLAY ? display_scale_num : OUTPUT_SCALE;
     // The border overlay consumes the original fixed machine viewport.
-    assign viewport_x = OUTPUT_X_OFFSET;
-    assign viewport_y = OUTPUT_Y_OFFSET;
-    assign viewport_width = SCALED_WIDTH;
-    assign viewport_height = SCALED_HEIGHT;
+    assign viewport_x = view_x;
+    assign viewport_y = view_y;
+    assign viewport_width = view_width;
+    assign viewport_height = view_height;
 
     // Prefetch two coordinates ahead of the registered DVI output, matching
     // the common C64 path's proven synchronous-RAM alignment.
     assign prefetch_active =
-        vertical_fetch_active && scan_x >= OUTPUT_X_OFFSET - 2 &&
-        scan_x < OUTPUT_X_OFFSET + SCALED_WIDTH - 2;
+        vertical_fetch_active && scan_x >= view_x - 2 &&
+        scan_x < view_x + view_width - 2;
     assign output_active =
-        vertical_fetch_active && scan_x >= OUTPUT_X_OFFSET &&
-        scan_x < OUTPUT_X_OFFSET + SCALED_WIDTH;
+        vertical_fetch_active && scan_x >= view_x &&
+        scan_x < view_x + view_width;
     assign pixel_read_enable = machine_active && display_valid && prefetch_active;
 
     always_comb begin
@@ -432,14 +440,14 @@ module multitini_gameboy_video_bridge #(
                     vertical_repeat_count <= '0;
                     source_row_index      <= '0;
                     vertical_fetch_active <= 1'b0;
-                end else if (scan_y == OUTPUT_Y_OFFSET) begin
+                end else if (scan_y == view_y) begin
                     read_line_base          <= '0;
                     read_address            <= '0;
                     vertical_repeat_count   <= '0;
                     source_row_index        <= '0;
                     vertical_fetch_active   <= 1'b1;
                 end else if (vertical_fetch_active) begin
-                    if (vertical_repeat_count == OUTPUT_SCALE - 1) begin
+                    if (vertical_repeat_count == scale_num - 1) begin
                         vertical_repeat_count <= '0;
                         if (source_row_index == SOURCE_HEIGHT - 1) begin
                             read_line_base        <= '0;
@@ -459,7 +467,7 @@ module multitini_gameboy_video_bridge #(
             end
 
             if (pixel_read_enable) begin
-                if (horizontal_repeat_count == OUTPUT_SCALE - 1) begin
+                if (horizontal_repeat_count == scale_num - 1) begin
                     horizontal_repeat_count <= '0;
                     read_address <= read_address + 1'b1;
                 end else begin

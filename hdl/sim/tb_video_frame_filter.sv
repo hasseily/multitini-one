@@ -3,6 +3,7 @@
 module tb_video_frame_filter;
     parameter integer WIDTH=13,HEIGHT=9,JOBS=80,STALL=1;
     parameter integer SCALE_NUM=3,SCALE_DEN=2;
+    parameter bit DYNAMIC_DISPLAY=1'b0;
     localparam integer PIXELS=WIDTH*HEIGHT;
     reg clk=0,resetn=0,start=0,in_valid=0,out_ready=0;
     always #3.75 clk=!clk;
@@ -11,7 +12,8 @@ module tb_video_frame_filter;
     wire in_ready,out_valid,busy,done;
     wire [15:0] out_rgb565;
     multitini_video_frame_filter #(.WIDTH(WIDTH),.HEIGHT(HEIGHT),
-        .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN)) dut(.*);
+        .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN),.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY)) dut(
+        .display_scale_num(4'(SCALE_NUM)),.display_scale_den(4'(SCALE_DEN)),.*);
     reg [23:0] inputs[0:JOBS*PIXELS-1];
     reg [15:0] expected[0:JOBS*PIXELS-1];
     reg [5:0] configurations[0:JOBS-1];

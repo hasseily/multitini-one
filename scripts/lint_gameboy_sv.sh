@@ -34,6 +34,9 @@ iverilog -g2012 -Wall -Wimplicit -i -s multitini_one_top \
     -P multitini_one_top.ACTIVE_MACHINE=1 \
     -o "$sim_build/multitini_gameboy_top.vvp" \
     "$repo_root/hdl/generated/multitini_regs_pkg.sv" \
+    "$repo_root/hdl/common/multitini_display_pkg.sv" \
+    "$repo_root/hdl/common/multitini_display_control.sv" \
+    "$repo_root/hdl/common/multitini_display_geometry.sv" \
     "$repo_root/hdl/core/multitini_core_interface.sv" \
     "${local_sources[@]}" \
     "$repo_root/hdl/core/gameboy/multitini_gameboy_adapter.sv" \

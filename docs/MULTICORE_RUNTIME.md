@@ -173,9 +173,12 @@ recovery way to toggle the menu.
   battery-backed external RAM, shows `Saved`, `Pending write`, or
   `WRITE FAILED`, and keeps the core in reset after cartridge detach.
 - Video selects active-core video or the branded Multitini standby screen and applies the active
-  core's timing variant. Physical output timing remains the currently
-  qualified 1920x1080 60 Hz mode.
+  core's timing variant. ABI 0.16 adds six nominal 60 Hz output resolutions;
+  see [Video settings](VIDEO_SETTINGS.md). The reset default is 1920x1080.
+  New display switching still needs physical qualification.
 - Input selects the C64 symbolic/positional keyboard map and joystick port.
+  Controller setup maps axes and buttons for nine shared USB slots with live
+  preview; see [Appletini imports](appletini-parity.md).
   GBC uses the shared USB gamepad path plus arrows, Z, X, Enter, and right
   Shift as a complete keyboard fallback.
 - Core config contains options supplied by the active core service. C64

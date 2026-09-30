@@ -15,6 +15,11 @@ the accepted Vectrex and DDR video work. The sibling repository is read-only.
 - Six selectable display resolutions with safe clock changes and fallback.
 - Recoverable golden self-update and validated image manifests.
 
+All remaining applicable imports, including the optional display and golden
+follow-ups, are implemented on branch `appletini-parity`. This is source and
+local-test parity with the pinned Appletini shared platform. Board acceptance
+is a separate gate. No Genesis core is added in this change.
+
 Existing USB3300 startup, exFAT, long filenames, RTC timestamps, text reader,
 and CPU1 support are already imported. Apple bus, disk, SmartPort, TransWarp,
 and slot-2 card features have no corresponding standalone Multitini service.
@@ -63,15 +68,33 @@ and interrupted settings journals. The native USB fixtures work on macOS,
 Linux and Windows; only native Mach-O tests bypass the ELF discovery section.
 The production linker retains that section.
 
-The host suite passes 51 tests. The applicable Python suite passes 139 tests.
-The full Python discovery also finds C64 simulator/fast-ROM tests which need
-absent local `1541-II.251968-03.bin` and generated `c64fast/bin` images. Those
-baseline artifacts are not added by this import.
+The host suite passes 52 tests, both normally and with AddressSanitizer and
+UndefinedBehaviorSanitizer. The applicable Python suite passes 140 tests
+(discovery excluding `test_c64sim` and `test_c64fast`). Full discovery also
+finds ROM-dependent tests which need absent local `1541-II.251968-03.bin` and
+generated `c64fast/bin` images. Those baseline artifacts are not added by this
+import; the full `make check` gate therefore cannot pass in this checkout.
+
+Display simulation checks all six complete output frames, sync polarities,
+128×60 compact menus, direct core scanout and all four common shell builds.
+Clock tests include independent AXI channel stalls, failed writes, relock,
+geometry acknowledgement, fallback, and a DDR owner that never drains.
+Native DDR reader, filtering and complete pipeline checks pass at scales
+1, 2, 3, 4, 5, 6 and 3:2, including outstanding write responses during drain,
+pixel reset, restart and history clearing. Blur matches the C reference under
+backpressure. The existing common HDL suite, C64/GBC lint, generated-file
+checks, import audits and repository policy checks also pass locally.
 
 These imports have not yet been qualified on Multitini hardware. Accepted
-release packages remain unchanged. Display switching is still in progress on the parity branch.
-Golden update integration and its host failure tests are complete; see
-[golden recovery images](golden-update.md).
+release packages remain unchanged. See [display settings](VIDEO_SETTINGS.md)
+and [golden recovery images](golden-update.md) for operation, register/image
+contracts, regression commands, and the remaining physical tests.
+
+Before publishing an image, run the vendor build and its timing/CDC/PSRAM
+gates for the supervisor and each machine. On the board, check every output
+mode and core transition with effects enabled, controller reconnect/recovery,
+and staged golden boot/repair including interrupted updates. Publish the exact
+source archive and build-input manifest with any new public image.
 
 ## Timing and build checks
 

@@ -2,6 +2,11 @@
 `timescale 1ns / 1ps
 
 module tb_border_overlay;
+    parameter bit DYNAMIC_DISPLAY=0;
+    localparam integer HA=DYNAMIC_DISPLAY ? 1024 : 1920;
+    localparam integer VA=DYNAMIC_DISPLAY ? 768 : 1080;
+    localparam integer HT=DYNAMIC_DISPLAY ? 1344 : 2200;
+    localparam integer VT=DYNAMIC_DISPLAY ? 806 : 1125;
     reg clk=0, resetn=0;
     always #5 clk=~clk;
     reg [11:0] scan_x=0, scan_y=0;
@@ -10,7 +15,9 @@ module tb_border_overlay;
     wire opaque;
     wire [15:0] rgb;
     integer checks=0, lit=0;
-    multitini_border_overlay dut(
+    multitini_border_overlay #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY)) dut(
+        .display_h_active(12'(HA)),.display_h_total(12'(HT)),
+        .display_v_active(12'(VA)),.display_v_total(12'(VT)),
         .pixel_clk(clk),.resetn(resetn),.scan_x(scan_x),.scan_y(scan_y),
         .frame_config(config_word),.viewport_x(vx),.viewport_y(vy),
         .viewport_width(vw),.viewport_height(vh),
@@ -55,7 +62,7 @@ module tb_border_overlay;
                 for(layer=0;layer<4;layer=layer+1)
                     if(perimeter(x,y,l-layer,t-layer,r+layer,b+layer)) shade=layer;
             end else if(perimeter(x,y,l,t,r,b)) shade=0;
-            if(config_word[0] && vw!=0 && vh!=0 && x<1920 && y<1080 && shade>=0) begin
+            if(config_word[0] && vw!=0 && vh!=0 && x<HA && y<VA && shade>=0) begin
                 c=color(config_word[7:4]);
                 c={c[23:16]>>shade,c[15:8]>>shade,c[7:0]>>shade};
                 expected={1'b1,c[23:19],c[15:10],c[7:3]};
@@ -65,10 +72,10 @@ module tb_border_overlay;
     task automatic check_pixel(input integer x,y);
         reg [16:0] wanted;
         begin
-            if(x>=0 && x<2200 && y>=0 && y<1125) begin
+            if(x>=0 && x<HT && y>=0 && y<VT) begin
                 @(negedge clk);
-                scan_x=x>=3 ? x-3 : 2197+x;
-                scan_y=x>=3 ? y : (y==0 ? 1124 : y-1);
+                scan_x=x>=3 ? x-3 : (HT-3)+x;
+                scan_y=x>=3 ? y : (y==0 ? (VT-1) : y-1);
                 repeat(3) @(posedge clk);
                 #1;
                 wanted=expected(x,y);
@@ -91,12 +98,12 @@ module tb_border_overlay;
         // Full-sized games, scaled windows, and a viewport touching all edges.
         for(geometry=0;geometry<6;geometry=geometry+1) begin
             case(geometry)
-            0:begin vx=555;vy=0;vw=810;vh=1080;end
-            1:begin vx=196;vy=0;vw=1528;vh=1080;end
+            0:begin vx=555;vy=0;vw=810;vh=VA;end
+            1:begin vx=196;vy=0;vw=1528;vh=VA;end
             2:begin vx=152;vy=40;vw=1616;vh=1000;end
             3:begin vx=480;vy=108;vw=960;vh=864;end
             4:begin vx=825;vy=360;vw=270;vh=360;end
-            5:begin vx=0;vy=0;vw=1920;vh=1080;end
+            5:begin vx=0;vy=0;vw=HA;vh=VA;end
             endcase
             for(style=0;style<5;style=style+1)
             for(palette_index=0;palette_index<16;palette_index=palette_index+1)
@@ -106,7 +113,7 @@ module tb_border_overlay;
                 for(d=-4;d<=4;d=d+1) begin
                     // Edges, gaps, style thickness and each clipped endpoint.
                     check_pixel(vx-pad-1+d,0);
-                    check_pixel(vx-pad-1+d,1079);
+                    check_pixel(vx-pad-1+d,(VA-1));
                     check_pixel(vx+vw+pad+d,540);
                     check_pixel(960,vy-pad-1+d);
                     check_pixel(960,vy+vh+pad+d);
@@ -118,7 +125,7 @@ module tb_border_overlay;
                     end
                 end
                 check_pixel(vx,vy); check_pixel(vx+vw-1,vy+vh-1);
-                check_pixel(1920,540); check_pixel(960,1080);
+                check_pixel(HA,540); check_pixel(960,VA);
             end
         end
         // Disabled and empty-window guards.
@@ -126,31 +133,31 @@ module tb_border_overlay;
         check_pixel(473,108); check_pixel(960,101);
         vw=0;config_word=13'h679;check_pixel(473,108);
 
-        // One continuous 1080p timing raster checks the three-stage lookahead
+        // One continuous VAp timing raster checks the three-stage lookahead
         // including line/frame boundaries, and optionally emits actual pixels.
-        vx=555;vy=0;vw=810;vh=1080;config_word=13'h699;
+        vx=555;vy=0;vw=810;vh=VA;config_word=13'h699;
         fd=0;
         if($value$plusargs("capture=%s",capture)) begin
             fd=$fopen(capture,"wb");
             if(!fd) $fatal(1,"Cannot open capture");
-            $fwrite(fd,"P6\n1920 1080\n255\n");
+            $fwrite(fd,"P6\nHA VA\n255\n");
         end
         // Prime with the last clocks of the preceding frame.
-        for(x=2196;x<2200;x=x+1) begin
-            @(negedge clk);scan_x=x;scan_y=1124;
+        for(x=(HT-4);x<HT;x=x+1) begin
+            @(negedge clk);scan_x=x;scan_y=(VT-1);
         end
-        for(y=0;y<1125;y=y+1)
-        for(x=0;x<2200;x=x+1) begin
+        for(y=0;y<VT;y=y+1)
+        for(x=0;x<HT;x=x+1) begin
             @(posedge clk); #1;
             wanted=expected(x,y);
             if(opaque !== wanted[16] || (opaque && rgb !== wanted[15:0]))
                 $fatal(1,"Raster alignment (%0d,%0d) got=%b:%h expected=%h",x,y,opaque,rgb,wanted);
             checks=checks+1;
-            if(fd && x<1920 && y<1080) begin
+            if(fd && x<HA && y<VA) begin
                 // Original calibration pattern inside the game rectangle.
                 out_rgb=24'h000000;
                 if(x>=vx && x<vx+vw && y>=vy && y<vy+vh)
-                    out_rgb=(x==vx || x==vx+vw-1 || y==0 || y==1079) ?
+                    out_rgb=(x==vx || x==vx+vw-1 || y==0 || y==(VA-1)) ?
                             24'h707070 : ((x%90==15 || y%90==15) ? 24'h233025 : 24'h060907);
                 if(opaque) out_rgb={{rgb[15:11],rgb[15:13]},
                                    {rgb[10:5],rgb[10:9]}, {rgb[4:0],rgb[4:2]}};

@@ -498,8 +498,8 @@ static void test_borders(void)
     check(view.border_style == 0U && view.border_color == 7U && view.border_padding == 7U,
           "invalid external presentation values normalize before indexing and editing");
     mt_menu_render(&menu, &view, &frame);
-    check(!contains(&frame, "Game window size") && contains(&frame, "6 / 6"),
-          "Video ends with border padding and exposes no game-size control");
+    check(!contains(&frame, "Game window size") && contains(&frame, "6 / 7"),
+          "Video includes resolution after border padding and exposes no game-size control");
     menu.row = 0U;
     check(press(&menu, &view, MT_MENU_HID_ENTER).kind == MT_MENU_ACTION_TOGGLE_VIDEO_SOURCE,
           "existing display-source row retains its action");
@@ -544,7 +544,18 @@ static void test_vectrex_video(void)
     mt_menu_init(&menu, &view); menu.visible = true; menu.page = MT_MENU_PAGE_VIDEO;
     (void)press(&menu, &view, MT_MENU_HID_END);
     mt_menu_render(&menu, &view, &frame);
-    check(menu.row == 5U && !contains(&frame, "Overlay enabled"), "other cores retain six Video rows");
+    check(menu.row == 6U && !contains(&frame, "Overlay enabled"), "other cores have seven Video rows including display resolution");
+    check(contains(&frame, "Display resolution"), "resolution is available in Video");
+    check(press(&menu,&view,MT_MENU_HID_RIGHT).kind==MT_MENU_ACTION_NONE,
+          "older shells cannot change resolution");
+    view.display_supported=true;view.display_mode=0;
+    action=press(&menu,&view,MT_MENU_HID_LEFT);
+    check(action.kind==MT_MENU_ACTION_SET_DISPLAY_MODE && action.file_index==5U,
+          "display resolution wraps backwards");
+    view.display_mode=5;
+    action=press(&menu,&view,MT_MENU_HID_RIGHT);
+    check(action.kind==MT_MENU_ACTION_SET_DISPLAY_MODE && action.file_index==0U,
+          "display resolution wraps forward to safe default");
     strcpy(core.package.id, "vectrex"); view.active_core_id = "vectrex";
     view.vectrex_video_supported = false;
     menu.row = 6U;
@@ -591,7 +602,7 @@ static void test_vectrex_video(void)
     menu.row = 8U; view.vectrex_beam_gain = 0U;
     for (index = 0U; index < 4U; ++index) {
         mt_menu_render(&menu, &view, &frame);
-        check(contains(&frame, beam[index]) && contains(&frame, "9 / 9"), "all beam multipliers fit the Video page");
+        check(contains(&frame, beam[index]) && contains(&frame, "9 / 10"), "all beam multipliers fit the Video page");
         update_vectrex_video_view(&view, press(&menu, &view, MT_MENU_HID_ENTER));
         check(view.vectrex_overlay_opacity == 3U, "beam gain preserves artwork brightness");
     }

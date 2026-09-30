@@ -20,18 +20,70 @@ active and reports the storage error.
 The border sits outside the complete machine image and below the menu. It is
 hidden on the standby screen. Borders never resize the game window. Parts
 outside the display are clipped: Vectrex has visible side
-borders while the horizontal borders lie off-screen. Padding uses physical pixels in
-the 1920×1080 output, not emulated machine pixels. The C64's own VIC border is
+borders while the horizontal borders lie off-screen at 1080p. Padding uses
+physical output pixels, not emulated machine pixels. The C64's own VIC border is
 part of its machine image and remains intact.
 
-The original centered game windows are preserved: C64 PAL is 1528×1080,
-Game Boy / Color is 960×864, and Vectrex / Vectrex32 is 810×1080. There is no
-game-window size control. The current package supplies one C64 variant, PAL;
-display output remains nominal 60 Hz.
+At the default 1920×1080 resolution, the original centered game windows are
+preserved: C64 PAL is 1528×1080, Game Boy / Color is 960×864, and Vectrex /
+Vectrex32 is 810×1080. There is no game-window size control. The current package
+supplies one C64 variant, PAL; display output remains nominal 60 Hz.
 
 Firmware and core images with shell ABI 0.12 provide these controls. Older ABI
 0.11 images still load; the new Video controls explain that an updated core
 image is needed. Update all packaged variants to use the feature on every core.
+
+## Display resolution
+
+ABI 0.16 adds **Display resolution** at the end of Video. Left/Right or Enter
+cycles these modes. Mode 0 is the power-on default. Each mode centers the
+complete machine image, without cropping:
+
+| Mode | Output | Pixel clock | C64 scale | GBC scale | Vectrex scale |
+| --- | --- | --- | --- | --- | --- |
+| 0 | 1920×1080 | 148.5 MHz | 4× | 6× | 3:2 |
+| 1 | 1024×768 | 65 MHz | 2× | 5× | 1× |
+| 2 | 1200×800 | 67.5 MHz | 2× | 5× | 1× |
+| 3 | 1280×1024 | 108 MHz | 3× | 6× | 1× |
+| 4 | 1360×768 | 85.5 MHz | 2× | 5× | 1× |
+| 5 | 1680×1050 | 119 MHz | 3× | 6× | 1× |
+
+All modes are about 60 Hz. Blur strength and scanline spacing follow the actual
+scale. The native DDR images retain their original dimensions and addresses.
+All 128×60 menu cells remain visible; smaller outputs use the existing 7×8 font
+at 1×, centered in each cell. Border padding remains measured in output pixels.
+
+Resolution is one global setting, restored after boot and core changes. It is
+saved only after the clock and first frame acknowledge the change. A failed
+settings write restores the previous setting and attempts to restore its mode.
+Older core packages keep 1080p and retain the saved preference for newer cores.
+
+The clock transaction cannot determine whether a monitor accepts a mode; there
+is no EDID negotiation. Serial command `:display 0` restores and saves 1080p.
+New modes and live switching still require board and monitor qualification.
+
+The shared register ABI is:
+
+| Register | Meaning |
+| --- | --- |
+| `DISPLAY_REQUEST`, `0x1D0` | Write mode 0–5 with all byte lanes; other values or writes while busy set an error |
+| `DISPLAY_STATUS`, `0x1D4` | Active mode in bits 3:0; busy in bit 8; error in bit 9; video held in bit 10 |
+| `DISPLAY_MODES`, `0x1D8` | Supported-mode mask `0x3F` |
+
+The control clock stays fixed. A private AXI master drains capture, scanout,
+and filtering before reprogramming the pixel MMCM. The geometry crosses as one
+acknowledged mailbox while scanout is held in reset. Mailbox clocks and reset
+ownership remain live while the pixel datapath resets. Filter coefficients
+change in the control domain only after native DDR jobs drain.
+
+Clock failure attempts the default dividers once, preserving an error flag.
+Repeated failure waits for a new explicit request. A drain timeout keeps the
+old pixel clock running until outstanding owners finish; it never resets a
+live owner to make the transaction appear complete.
+
+New core packages use ABI 0.16 and firmware build `PRY1`. Historical VID4/VID5
+release scripts retain their original ABI and build IDs. Package newly built
+cores with `scripts/make_core_package.py`, whose default now matches ABI 0.16.
 
 ## Implementation contract
 
@@ -80,3 +132,10 @@ Focused checks can be rerun with `scripts/test_video_settings.py`,
 `scripts/test_video_border.py`, and `scripts/test_video_settings_runtime.py`.
 The last script executes the actual board handlers with mocked MMIO and storage;
 it checks version guards, save ordering, live rollback and core-switch restore.
+
+`make hdl-display-test` checks all six timing/polarity presets, compact text,
+direct C64/GBC/Vectrex scanout, clock faults, and native DDR filter/reader/drain
+behavior at all supported scale ratios. The filter compares against the C
+reference under backpressure. `tests/test_display_runtime.py` runs the actual
+board display transaction with mocked clocks and storage, including rollback,
+timeouts, old-core guards and effects restart.

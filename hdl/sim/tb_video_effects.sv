@@ -2,6 +2,7 @@
 `timescale 1ns/1ps
 module tb_video_effects;
     parameter integer SCALE_NUM=4, SCALE_DEN=1;
+    parameter bit DYNAMIC_DISPLAY=0;
     parameter bit SHARED_PIXEL_RESET=0;
     parameter bit SHARED_PIXEL_LIVENESS=SHARED_PIXEL_RESET;
     reg control_clk=0,pixel_clk=0,control_resetn=0,pixel_resetn=0;
@@ -31,8 +32,9 @@ module tb_video_effects;
     reg [11:0] x=0,y=0;
     wire [15:0] output_rgb;
     wire output_de,output_hs,output_vs;
-    multitini_video_effects #(.SOURCE_SCALE_NUM(SCALE_NUM),.SOURCE_SCALE_DEN(SCALE_DEN),
+    multitini_video_effects #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.SOURCE_SCALE_NUM(SCALE_NUM),.SOURCE_SCALE_DEN(SCALE_DEN),
         .SHARED_PIXEL_RESET(SHARED_PIXEL_RESET),.SHARED_PIXEL_LIVENESS(SHARED_PIXEL_LIVENESS)) dut(
+        .display_scale_num(4'(SCALE_NUM)),.display_scale_den(4'(SCALE_DEN)),
         .control_clk(control_clk),.control_resetn(control_resetn),
         .effect_write(write),.effect_address(address),.effect_data(data),
         .effect_commit(commit),.effect_commit_sequence(commit_seq),
@@ -201,7 +203,7 @@ module tb_video_effects;
         end
     endtask
     initial begin
-        if(SCALE_NUM==4 && SCALE_DEN==1 && !SHARED_PIXEL_RESET)check_horizontal_arithmetic();
+        if(SCALE_NUM==4 && SCALE_DEN==1 && !SHARED_PIXEL_RESET && !DYNAMIC_DISPLAY)check_horizontal_arithmetic();
         for(k=0;k<9;k=k+1)expected_queue[k]=0;
         identity();
         repeat(5)@(negedge control_clk);control_resetn=1;pixel_resetn=1;

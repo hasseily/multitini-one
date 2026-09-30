@@ -117,7 +117,7 @@ static int qspi_read_jedec_id(qspi_nor_t *n, uint8_t id[3])
 
 int qspi_nor_init(qspi_nor_t *n, uint8_t addr_bytes, uint32_t sector_size)
 {
-    XQspiPs_Config cfg;
+    XQspiPs_Config cfg = {0};
     int status;
     uint8_t jedec_id[3] = { 0U, 0U, 0U };
 

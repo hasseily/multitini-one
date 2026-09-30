@@ -36,7 +36,7 @@ module tb_text_overlay;
         end else scan_x <= scan_x + 12'd1;
     end
 
-    multitini_text_overlay dut (.*);
+    multitini_text_overlay dut (.display_h_active(12'd0),.display_h_total(12'd0),.display_v_active(12'd0),.display_v_total(12'd0),.*);
 
     task automatic check_value(input logic condition, input string message);
         if (condition !== 1'b1) $fatal(1, "%s", message);

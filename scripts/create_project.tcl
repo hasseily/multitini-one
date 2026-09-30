@@ -356,8 +356,43 @@ set_property -dict [list \
     CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {148.5} \
     CONFIG.PRIM_IN_FREQ {150.000} \
     CONFIG.PRIM_SOURCE {No_buffer} \
+    CONFIG.USE_DYN_RECONFIG {true} \
+    CONFIG.INTERFACE_SELECTION {Enable_AXI} \
+    CONFIG.PHASE_DUTY_CONFIG {false} \
     CONFIG.RESET_PORT {resetn} \
     CONFIG.RESET_TYPE {ACTIVE_LOW}] $video_wiz
+
+# Pixel mode controller in multitini_one_top is the only clock-config master.
+# Export individual AXI write pins, avoiding a new PS address range.
+foreach {name direction width} {
+    awaddr I 11 awvalid I 1 awready O 1
+    wdata I 32 wvalid I 1 wready O 1
+    bresp O 2 bvalid O 1 bready I 1
+} {
+    if {$width == 1} {
+        set port [create_bd_port -dir $direction pixel_clock_$name]
+    } else {
+        set port [create_bd_port -dir $direction -from [expr {$width - 1}] -to 0 pixel_clock_$name]
+    }
+    connect_bd_net $port [get_bd_pins $video_wiz/s_axi_$name]
+}
+set pixel_clock_locked [create_bd_port -dir O pixel_clock_locked]
+connect_bd_net $pixel_clock_locked [get_bd_pins $video_wiz/locked]
+foreach {name width value pins} {
+    pixel_clock_zero 1 0 {s_axi_arvalid}
+    pixel_clock_one 1 1 {s_axi_rready}
+    pixel_clock_araddr_zero 11 0 {s_axi_araddr}
+    pixel_clock_all_bytes 4 15 {s_axi_wstrb}
+} {
+    set cell [create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 $name]
+    set_property -dict [list CONFIG.CONST_WIDTH $width CONFIG.CONST_VAL $value] $cell
+    foreach pin $pins {
+        connect_bd_net [get_bd_pins $name/dout] [get_bd_pins $video_wiz/$pin]
+    }
+}
+set pixel_clock_resetn [create_bd_port -dir I -type rst pixel_clock_resetn]
+set_property CONFIG.POLARITY ACTIVE_LOW $pixel_clock_resetn
+connect_bd_net $pixel_clock_resetn [get_bd_pins $video_wiz/s_axi_aresetn]
 
 # The requested frequency is selected above for the active machine. The cell
 # and ports keep their historical c64 names to avoid unnecessary block-design
@@ -397,7 +432,7 @@ set_property -dict [list CONFIG.CONST_VAL {1} CONFIG.CONST_WIDTH {1}] \
 # half of the control domain wait on one can strand the first shell probe after
 # configuration. FCLK0 and FCLK_RESET0_N remain sourced by the PS.
 connect_bd_net [get_bd_pins $ps/FCLK_CLK0] \
-    [get_bd_pins $idelay_wiz/clk_in1] $control_clk \
+    [get_bd_pins $idelay_wiz/clk_in1] [get_bd_pins $video_wiz/s_axi_aclk] $control_clk \
     [get_bd_pins $control_reset/slowest_sync_clk] \
     [get_bd_pins $ps/M_AXI_GP0_ACLK] [get_bd_pins $ps/S_AXI_HP0_ACLK] \
     [get_bd_pins $ps/S_AXI_HP1_ACLK]

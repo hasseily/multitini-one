@@ -12,6 +12,7 @@
 #include "multitini_c64_native_load.h"
 #include "multitini_c64_rom_files.h"
 #include "multitini_content.h"
+#include "multitini_display.h"
 #include "multitini_core_frontend.h"
 #include "multitini_core_link.h"
 #include "multitini_fatfs_time.h"
@@ -56,8 +57,8 @@
 
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
 #define MT_SUPERVISOR_CORE_ID UINT32_C(0)
-/* VID4 combines source-scaled blur and the staged GP0 read fix (ABI 0.15). */
-#define MT_FIRMWARE_BUILD_ID UINT32_C(0x56494434)
+/* PRY1: Appletini shared-platform parity, including display ABI 0.16. */
+#define MT_FIRMWARE_BUILD_ID UINT32_C(0x50525931)
 #define MT_I2C_CLOCK_HZ UINT32_C(100000)
 #define MT_I2C_BUSY_POLLS UINT32_C(1000000)
 #define MT_UART_DRAIN_POLLS UINT32_C(10000000)
@@ -1318,6 +1319,8 @@ restore:
     }
 }
 
+static void change_display_mode(size_t mode);
+
 static void handle_extended_command(bool recovery_only)
 {
     char extended[MT_EXTENDED_COMMAND_CAPACITY];
@@ -1333,6 +1336,9 @@ static void handle_extended_command(bool recovery_only)
         reboot_to_golden(recovery_only);
     } else if (strcmp(extended, "selfupdate") == 0) {
         self_update_golden(recovery_only);
+    } else if (!recovery_only && strncmp(extended, "display ", 8U) == 0 &&
+               extended[8]>='0' && extended[8]<='5' && extended[9]=='\0') {
+        change_display_mode((size_t)(extended[8]-'0'));
     } else if (strcmp(extended, "diag") == 0) {
         print_read_only_diagnostics("command");
     } else if (!recovery_only &&
@@ -1426,6 +1432,7 @@ static void supervisor_ui_write(void *context, uint32_t offset,
 {
     (void)context;
     Xil_Out32(MT_SHELL_BASE_ADDRESS + offset, value);
+    DATA_SYNC;
 }
 
 static void set_supervisor_status(const char *text)
@@ -1529,6 +1536,54 @@ static void configure_selection_effects(const mt_core_selection_t *selection)
     mt_video_effect_service_configure(selection_supports_effects(selection),
         profile != NULL ? &profile->video_effects : NULL);
     supervisor_menu_dirty = true;
+}
+
+static void video_effect_write(uint32_t offset, uint32_t value);
+static uint32_t video_effect_milliseconds(void);
+static const mt_display_ops_t display_bus = {
+    shell_read, video_effect_write, video_effect_milliseconds
+};
+
+static bool apply_display_mode(uint8_t mode)
+{
+    if (!mt_display_supported(&display_bus)) return mode == 0U;
+    const uint32_t status = shell_read(MT_REG_DISPLAY_STATUS);
+    if (status == mode) return true;
+    mt_video_effect_service_suspend();
+    const uint64_t started = monotonic_ms(NULL);
+    while (!mt_video_effect_service_quiescent()) {
+        usb_hid_service_poll_deferred();
+        if (monotonic_ms(NULL) - started >= 1000U) return false;
+    }
+    const mt_display_result_t result = mt_display_apply(&display_bus, mode);
+    /* Pixel reset discards overlay commits and effect tables. Rebuild from
+     * the complete settings snapshot after the acknowledged geometry change. */
+    mt_ui_presenter_invalidate(&supervisor_presenter);
+    supervisor_menu_dirty = true;
+    xil_printf("[display] mode=%u result=%u status=%08x\r\n",
+               (unsigned)mode, (unsigned)result, shell_read(MT_REG_DISPLAY_STATUS));
+    return result == MT_DISPLAY_OK;
+}
+
+static void change_display_mode(size_t mode)
+{
+    if (mode >= MT_DISPLAY_MODE_COUNT || !mt_display_supported(&display_bus)) {
+        set_supervisor_warning("Update the core package for display modes");
+        return;
+    }
+    const uint8_t previous = persistent_settings.display_mode;
+    bool ok = apply_display_mode((uint8_t)mode);
+    if (ok) {
+        persistent_settings.display_mode = (uint8_t)mode;
+        if (!save_persistent_settings()) {
+            persistent_settings.display_mode = previous;
+            (void)apply_display_mode(previous);
+            ok = false;
+        }
+    }
+    configure_selection_effects(supervisor.has_active ? &supervisor.active : NULL);
+    set_supervisor_outcome(ok, "Display resolution saved",
+                          "Display change failed; see serial diagnostics");
 }
 
 static void change_active_video_effect(size_t field, size_t direction)
@@ -1727,6 +1782,10 @@ static bool restore_selection_settings(
     if (selection == NULL) return false;
     profile = mt_supervisor_settings_find(&persistent_settings,
                                           selection->package.id);
+    if (mt_display_supported(&display_bus) && !apply_display_mode(persistent_settings.display_mode)) {
+        xil_printf("[display] saved resolution failed; using hardware fallback\r\n");
+        ok = false;
+    }
     configure_selection_effects(selection);
     if (selection_supports_borders(selection)) {
         Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_BORDER_CONFIG,
@@ -1897,6 +1956,9 @@ static mt_menu_view_t supervisor_menu_view(void)
         supervisor_menu.browser != MT_MENU_BROWSER_NONE &&
         vectrex_browser_path[0] != '\0')
         view.content_root = vectrex_browser_path;
+    view.display_supported = mt_display_supported(&display_bus);
+    view.display_mode = view.display_supported ?
+        (uint8_t)(shell_read(MT_REG_DISPLAY_STATUS) & 15U) : 0U;
     view.video_test_enabled =
         (shell_read(MT_REG_CONTROL) & MT_CONTROL_VIDEO_TEST_ENABLE) != 0U;
     view.settings_auto_boot = persistent_settings.auto_boot &&
@@ -3091,6 +3153,8 @@ static void handle_menu_action(mt_menu_action_t action)
         change_active_border(action.file_index);
     } else if (action.kind == MT_MENU_ACTION_SET_VECTREX_VIDEO) {
         change_active_vectrex_video(action.file_index);
+    } else if (action.kind == MT_MENU_ACTION_SET_DISPLAY_MODE) {
+        change_display_mode(action.file_index);
     } else if (action.kind == MT_MENU_ACTION_SET_VIDEO_EFFECT) {
         change_active_video_effect(action.file_index, action.variant_index);
     } else if (action.kind == MT_MENU_ACTION_TOGGLE_VIDEO_SOURCE) {
@@ -3382,6 +3446,9 @@ static void initialize_supervisor_menu(void)
     for (uint8_t slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot)
         (void)usb_hid_service_set_gamepad_config(slot, &persistent_settings.gamepads[slot]);
 
+    if (mt_display_supported(&display_bus) && !apply_display_mode(persistent_settings.display_mode))
+        set_supervisor_warning("Saved display resolution failed; using fallback");
+
     if (persistent_settings.auto_boot) {
         if (!configured_auto_boot_selection(&startup_auto_selection)) {
             set_supervisor_warning("Autoboot target unavailable");
@@ -3462,7 +3529,7 @@ static void recovery_console(void)
         if (input == ':') {
             handle_extended_command(true);
         } else if (input != '\r' && input != '\n') {
-            xil_printf("shell unavailable; only :diag or :reboot is accepted\r\n");
+            xil_printf("shell unavailable; use :diag, :reboot, or :selfupdate\r\n");
         }
     }
 }
@@ -3470,6 +3537,7 @@ static void recovery_console(void)
 static void video_effect_write(uint32_t offset, uint32_t value)
 {
     Xil_Out32(MT_SHELL_BASE_ADDRESS + offset, value);
+    DATA_SYNC;
 }
 
 static uint32_t video_effect_milliseconds(void)

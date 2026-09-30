@@ -15,6 +15,11 @@ run_test() {
     (cd "$sim_build" && vvp "$name.vvp")
 }
 
+run_test tb_display_control \
+    "$repo_root/hdl/common/multitini_display_pkg.sv" \
+    "$repo_root/hdl/common/multitini_display_control.sv" \
+    "$repo_root/hdl/sim/tb_display_control.sv"
+
 run_test tb_control_regs \
     "$repo_root/hdl/generated/multitini_regs_pkg.sv" \
     "$repo_root/hdl/common/multitini_control_regs.sv" \

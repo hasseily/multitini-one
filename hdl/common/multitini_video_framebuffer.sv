@@ -4,10 +4,16 @@
 // configures effects and reads diagnostics, while hardware schedules every
 // frame in order. The manual ring interface remains for isolated diagnostics.
 module multitini_video_framebuffer #(
+    parameter bit DYNAMIC_DISPLAY=1'b0,
     parameter integer WIDTH=382,HEIGHT=270,VIEW_X=196,VIEW_Y=0,
     parameter integer SCALE_NUM=4,SCALE_DEN=1,
     parameter bit SHARED_PIXEL_RESET=1'b0
 )(
+    input wire [11:0] display_view_x, display_view_y, display_view_width, display_view_height,
+    input wire [3:0] display_scale_num, display_scale_den,
+    input wire [3:0] display_filter_scale_num,display_filter_scale_den,
+    input wire display_pause,
+    output wire display_quiescent,
     input wire clk,resetn,wr_en,
     input wire [11:0] wr_addr,rd_addr,
     input wire [31:0] wr_data,input wire [3:0] wr_strb,
@@ -51,13 +57,15 @@ module multitini_video_framebuffer #(
     wire [1:0] engine_input_slot,engine_output_slot;
     wire [5:0] engine_options;
     wire [31:0] engine_errors,engine_cycles,engine_max_stall;
+    wire paused=DYNAMIC_DISPLAY && display_pause;
     wire automatic_mode=control[2] || autonomous_owned;
     wire [31:0] selected_consumer=automatic_mode ? hardware_consumer : consumer;
-    wire selected_submit=control[1] && (automatic_mode ? hardware_submit : submit);
+    wire selected_submit=control[1] && !paused && (automatic_mode ? hardware_submit : submit);
     wire [31:0] selected_value=automatic_mode ? hardware_value : submit_value;
     // The registered enable must have fallen before IDLE means drained:
     // otherwise a just-completed capture could re-arm on the next clock.
     wire all_quiet=!capture_enable && capture_quiet && reader_quiet && scheduler_quiet && !engine_busy;
+    assign display_quiescent=all_quiet;
     wire transport_error=capture_errors!=capture_error_base || read_errors!=read_error_base ||
                          capture_drops!=drop_base || underruns!=underrun_base;
     wire [31:0] outstanding=producer-selected_consumer;
@@ -77,9 +85,13 @@ module multitini_video_framebuffer #(
             submit<=0;clear_errors<=0;
             // Launch a registered level into the pixel-domain synchronizer;
             // autonomous error/ownership logic must not precede that crossing.
-            capture_enable<=control[0] && (!automatic_mode || !scheduler_error);
+            capture_enable<=control[0] && !paused && (!automatic_mode || !scheduler_error);
             if(control[2])autonomous_owned<=1;
             else if(scheduler_quiet && !engine_busy)autonomous_owned<=0;
+            if(paused && all_quiet)begin
+                capture_error_base<=capture_errors;read_error_base<=read_errors;
+                drop_base<=capture_drops;underrun_base<=underruns;clear_errors<=1;
+            end
             if(wr_en)begin
                 if(wr_strb!=4'hf)bad_write<=1;
                 else case(wr_addr)
@@ -121,8 +133,11 @@ module multitini_video_framebuffer #(
             default:rd_data=0;
         endcase
     end
-    multitini_video_capture #(.WIDTH(WIDTH),.HEIGHT(HEIGHT),.VIEW_X(VIEW_X),.VIEW_Y(VIEW_Y),
+    multitini_video_capture #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.WIDTH(WIDTH),.HEIGHT(HEIGHT),.VIEW_X(VIEW_X),.VIEW_Y(VIEW_Y),
         .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN),.SHARED_PIXEL_RESET(SHARED_PIXEL_RESET)) capture_i(
+        .display_view_x(display_view_x),.display_view_y(display_view_y),
+        .display_view_width(display_view_width),.display_view_height(display_view_height),
+        .display_scale_num(display_scale_num),.display_scale_den(display_scale_den),
         .clk(clk),.resetn(resetn),.enable(capture_enable),
         .consumer(selected_consumer),.producer(producer),
         .drops(capture_drops),.errors(capture_errors),.busy(capture_busy),.quiescent(capture_quiet),
@@ -135,10 +150,13 @@ module multitini_video_framebuffer #(
         .awaddr(awaddr),.awlen(awlen),.awsize(awsize),.awburst(awburst),.awvalid(awvalid),.awready(awready),
         .wdata(wdata),.wstrb(wstrb),.wlast(wlast),.wvalid(wvalid),.wready(wready),
         .bresp(bresp),.bvalid(bvalid),.bready(bready));
-    multitini_video_frame_reader #(.WIDTH(WIDTH),.HEIGHT(HEIGHT),.VIEW_X(VIEW_X),.VIEW_Y(VIEW_Y),
+    multitini_video_frame_reader #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.WIDTH(WIDTH),.HEIGHT(HEIGHT),.VIEW_X(VIEW_X),.VIEW_Y(VIEW_Y),
         .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN),.SHARED_PIXEL_RESET(SHARED_PIXEL_RESET),
         .SHARED_PIXEL_LIVENESS(1'b1)) reader_i(
-        .clk(clk),.resetn(resetn),.enable(control[1]),.submit(selected_submit),.submit_value(selected_value),
+        .display_view_x(display_view_x),.display_view_y(display_view_y),
+        .display_view_width(display_view_width),.display_view_height(display_view_height),
+        .display_scale_num(display_scale_num),.display_scale_den(display_scale_den),
+        .clk(clk),.resetn(resetn),.enable(control[1] && !paused),.submit(selected_submit),.submit_value(selected_value),
         .submit_ready(submit_ready),.active_value(active_value),.active_valid(active_valid),
         .busy(reader_busy),.quiescent(reader_quiet),.error_count(read_errors),.underrun_count(underruns),
         .pixel_clk(pixel_clk),.pixel_resetn(pixel_resetn),.shared_pixel_resetn(shared_pixel_resetn),.scan_x(scan_x),.scan_y(scan_y),.vblank_start(vblank_start),
@@ -148,7 +166,7 @@ module multitini_video_framebuffer #(
         .rdata(rdata),.rresp(rresp),.rlast(rlast),.rvalid(rvalid),.rready(rready));
 
     multitini_video_frame_scheduler scheduler_i(
-        .clk(clk),.resetn(resetn),.enable(control[2]),.clear_errors(clear_errors),
+        .clk(clk),.resetn(resetn),.enable(control[2] && !paused),.clear_errors(clear_errors),
         .options(options),.frame_tick(frame_tick),.capture_producer(producer),
         .capture_consumer(hardware_consumer),.reader_submit_ready(submit_ready),
         .reader_active_valid(active_valid),.reader_active_value(active_value),.reader_quiescent(reader_quiet),
@@ -159,8 +177,9 @@ module multitini_video_framebuffer #(
         .transport_error(transport_error),.busy(scheduler_busy),.quiescent(scheduler_quiet),
         .processed_frames(processed_frames),.deadline_misses(deadline_misses),.sticky_error(scheduler_error));
 
-    multitini_video_frame_engine #(.WIDTH(WIDTH),.HEIGHT(HEIGHT),.STRIDE(((WIDTH+63)/64)*128),
+    multitini_video_frame_engine #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.WIDTH(WIDTH),.HEIGHT(HEIGHT),.STRIDE(((WIDTH+63)/64)*128),
         .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN)) engine_i(
+        .display_scale_num(display_filter_scale_num),.display_scale_den(display_filter_scale_den),
         .clk(clk),.resetn(resetn),.start(engine_start),.clear_errors(clear_errors),
         .input_slot(engine_input_slot),.output_slot(engine_output_slot),
         .options(engine_options),.history_reset(engine_history_reset),

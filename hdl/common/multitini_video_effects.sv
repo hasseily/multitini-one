@@ -6,11 +6,13 @@
 // Both LUT banks have independent control-write / pixel-read ports. A coherent
 // mailbox transfers coefficients and bank ownership only at vertical blank.
 module multitini_video_effects #(
+    parameter bit DYNAMIC_DISPLAY=1'b0,
     parameter integer SOURCE_SCALE_NUM = 4,
     parameter integer SOURCE_SCALE_DEN = 1,
     parameter bit SHARED_PIXEL_RESET = 1'b0,
     parameter bit SHARED_PIXEL_LIVENESS = 1'b0
 ) (
+    input wire [3:0] display_scale_num,display_scale_den,
     input wire control_clk, control_resetn,
     input wire effect_write,
     input wire [9:0] effect_address,
@@ -323,7 +325,17 @@ module multitini_video_effects #(
             x_phase[2] <= modulo_three(x_mod_sum);
             y_phase[2] <= modulo_three(y_mod_sum);
             scanline_pipe[6:3] <= scanline_pipe[5:2];
-            if(SOURCE_SCALE_DEN==2)scanline_pipe[2]<=modulo_three(y_mod_sum)==1;
+            if(DYNAMIC_DISPLAY)begin
+                if(display_scale_den==2)scanline_pipe[2]<=modulo_three(y_mod_sum)==1;
+                else case(display_scale_num)
+                    1:scanline_pipe[2]<=0;
+                    2:scanline_pipe[2]<=y_pipe[1][0];
+                    3:scanline_pipe[2]<=modulo_three(y_mod_sum)==2;
+                    4:scanline_pipe[2]<=y_pipe[1][1];
+                    5:scanline_pipe[2]<=(y_pipe[1] % 5)>=3;
+                    default:scanline_pipe[2]<=y_pipe[1][0] ? modulo_three(y_mod_sum)!=1 : modulo_three(y_mod_sum)==1;
+                endcase
+            end else if(SOURCE_SCALE_DEN==2)scanline_pipe[2]<=modulo_three(y_mod_sum)==1;
             else if(SOURCE_SCALE_NUM==6)
                 scanline_pipe[2]<=y_pipe[1][0] ? modulo_three(y_mod_sum)!=1 : modulo_three(y_mod_sum)==1;
             else scanline_pipe[2]<=y_pipe[1][1];

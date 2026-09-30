@@ -23,7 +23,7 @@ module tb_video_frame_engine;
     wire [63:0] wdata;
     wire [7:0] wstrb;
     multitini_video_frame_engine #(.WIDTH(WIDTH),.HEIGHT(HEIGHT),.STRIDE(STRIDE),
-        .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN)) dut(.*);
+        .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN)) dut(.display_scale_num(4'd0),.display_scale_den(4'd0),.*);
 
     reg [15:0] inputs[0:JOBS*PIXELS-1],expected[0:JOBS*PIXELS-1];
     reg [31:0] old[0:JOBS*PIXELS-1],expected_history[0:JOBS*PIXELS-1];

@@ -1,6 +1,9 @@
 # Relative to hdl/. Order matters for packages and interfaces.
 [common]
 generated/multitini_regs_pkg.sv
+common/multitini_display_pkg.sv
+common/multitini_display_control.sv
+common/multitini_display_geometry.sv
 core/multitini_core_interface.sv
 [c64]
 core/c64/multitini_c64_defs_pkg.sv

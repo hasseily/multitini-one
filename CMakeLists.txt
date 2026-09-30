@@ -21,6 +21,7 @@ add_library(multitini_common STATIC
     firmware/common/c64_rom_files.c
     firmware/common/c64_hid_input.c
     firmware/common/c64_xinput.c
+    firmware/common/display.c
     firmware/common/content_type.c
     firmware/common/core_frontend.c
     firmware/common/core_package.c
@@ -391,3 +392,6 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     endif()
 endif()
 add_test(NAME golden_self_update COMMAND test_golden_self_update)
+add_executable(test_display tests/host/test_display.c)
+target_link_libraries(test_display PRIVATE multitini_common)
+add_test(NAME display COMMAND test_display)

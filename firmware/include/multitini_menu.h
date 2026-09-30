@@ -69,7 +69,8 @@ typedef enum {
     MT_MENU_ACTION_RESTART_USB,
     MT_MENU_ACTION_SET_VIDEO_EFFECT,
     MT_MENU_ACTION_EDIT_GAMEPADS,
-    MT_MENU_ACTION_SET_GAMEPADS
+    MT_MENU_ACTION_SET_GAMEPADS,
+    MT_MENU_ACTION_SET_DISPLAY_MODE
 } mt_menu_action_kind_t;
 
 typedef enum {
@@ -146,6 +147,8 @@ typedef struct {
     mt_clock_time_t clock;
     bool save_dirty;
     bool save_faulted;
+    bool display_supported;
+    uint8_t display_mode;
     bool video_test_enabled;
     bool settings_auto_boot;
     bool settings_faulted;

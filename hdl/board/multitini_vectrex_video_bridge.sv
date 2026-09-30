@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns / 1ps
 
-// Fixed portrait 540x720 intensity image at 3:2 scale in the 1080p scan.
+// Portrait 540x720 intensity image: 3:2 at 1080p, 1:1 in smaller modes.
 // Seven-pixel lookahead covers address, synchronous RAM and compositing stages.
 // Incremental phases avoid division on the 148.5 MHz scanout path.
-module multitini_vectrex_video_bridge (
+module multitini_vectrex_video_bridge #(parameter bit DYNAMIC_DISPLAY=1'b0) (
+    input wire [11:0] display_view_x, display_view_y, display_view_width, display_view_height,
+    input wire [3:0] display_scale_num, display_scale_den,
+
     input wire pixel_clk, pixel_resetn,
     input wire source_ready,
     input wire [11:0] scan_x, scan_y,
@@ -27,8 +30,12 @@ module multitini_vectrex_video_bridge (
     reg [14:0] pixel_address_low;
     reg [2:0] pixel_address_high;
     assign pixel_address={pixel_address_high,pixel_address_bit15,pixel_address_low};
-    assign viewport_x=12'd555, viewport_y=12'd0;
-    assign viewport_width=12'd810, viewport_height=12'd1080;
+    assign viewport_x=DYNAMIC_DISPLAY ? display_view_x : 12'd555;
+    assign viewport_y=DYNAMIC_DISPLAY ? display_view_y : 12'd0;
+    assign viewport_width=DYNAMIC_DISPLAY ? display_view_width : 12'd810;
+    assign viewport_height=DYNAMIC_DISPLAY ? display_view_height : 12'd1080;
+    wire unit_scale=DYNAMIC_DISPLAY && display_scale_den==1;
+    wire visible_y=scan_y>=viewport_y && scan_y<viewport_y+viewport_height;
 
     wire source_ready_pixel;
     reg [18:0] row_address;
@@ -52,18 +59,18 @@ module multitini_vectrex_video_bridge (
             artwork_sample<=overlay_rgba;artwork_valid_sample<=overlay_valid;
             if (vblank_start) machine_active<=source_ready_pixel;
             if (scan_x==0) begin
-                if (scan_y==0 || scan_y>=1080) begin
+                if (scan_y<=viewport_y || scan_y>=viewport_y+viewport_height) begin
                     row_address<=0;vertical_phase<=0;source_y<=0;
                 end else begin
-                    if (vertical_phase!=0) begin row_address<=row_address+19'd540;source_y<=source_y+1'b1;end
+                    if (unit_scale || vertical_phase!=0) begin row_address<=row_address+19'd540;source_y<=source_y+1'b1;end
                     vertical_phase<=vertical_phase==2 ? 0 : vertical_phase+1'b1;
                 end
             end
-            if (scan_x==548 && scan_y<1080) begin
+            if (scan_x==viewport_x-7 && visible_y) begin
                 {pixel_address_high,pixel_address_bit15,pixel_address_low}<=row_address;
                 horizontal_phase<=0;source_x<=0;
-            end else if (scan_x>=549 && scan_x<=1357 && scan_y<1080) begin
-                if (horizontal_phase!=0) begin
+            end else if (scan_x>=viewport_x-6 && scan_x<viewport_x+viewport_width-7 && visible_y) begin
+                if (unit_scale || horizontal_phase!=0) begin
                     {pixel_address_high,pixel_address_bit15,pixel_address_low}<=pixel_address+1'b1;
                     source_x<=source_x+1'b1;
                 end
@@ -73,7 +80,7 @@ module multitini_vectrex_video_bridge (
     end
     multitini_vectrex_compositor compositor_i(
         .clk(pixel_clk),.resetn(pixel_resetn),
-        .visible(scan_x>=551 && scan_x<1361 && scan_y<1080),
+        .visible(scan_x>=viewport_x-4 && scan_x<viewport_x+viewport_width-4 && visible_y),
         .intensity(intensity_sample),.rgba(artwork_sample),.artwork_valid(artwork_valid_sample),
         .video_config(video_config),.rgb565(machine_rgb565));
 endmodule

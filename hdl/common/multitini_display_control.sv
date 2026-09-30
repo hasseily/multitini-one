@@ -1,5 +1,5 @@
 `timescale 1ns / 1ps
-// Apply one mode as a transaction: drain HP0, blank/reset scanout, change
+// Apply one mode as a transaction: drain HP0/HP1, blank/reset scanout, change
 // the MMCM, wait for relock, then commit geometry. Native DDR frame dimensions never change.
 // Clocking Wizard owns the device-specific DRP calculations (PG065).
 module multitini_display_control #(
@@ -64,7 +64,8 @@ module multitini_display_control #(
     assign reader_pause = state != IDLE && state != START_VIDEO && state != WAIT_FRAME;
     // Stop new DMA first, then let the old pixel clock drain every owner.
     // Mailbox clocks remain alive through the later pixel reset.
-    assign video_hold = reader_pause && state != QUIESCE && state != RECOVER_DRAIN;
+    assign video_hold = reader_pause && state != QUIESCE && state != RECOVER_DRAIN &&
+                        (state != FAILED || reader_quiescent);
     assign clock_bready = 1'b1;
     assign clock_resetn = resetn && state != RECOVER_RESET;
 
@@ -101,7 +102,8 @@ module multitini_display_control #(
                         timeout_count <= 0;
                         // FAILED may retain half of a stalled AXI write.
                         // A fresh request first resets that private link.
-                        state <= state == FAILED ? RECOVER_DRAIN : QUIESCE;
+                        if(state == FAILED) state <= RECOVER_DRAIN;
+                        else state <= QUIESCE;
                     end
                 end
                 QUIESCE: if (reader_quiescent && clock_locked) begin

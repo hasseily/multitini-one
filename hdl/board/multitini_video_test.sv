@@ -5,6 +5,7 @@
 // a 148.5 MHz pixel clock. The machine framebuffer is selected only when its
 // bridge has latched machine_enable at vblank; otherwise diagnostics remain on.
 module multitini_video_test #(
+    parameter bit DYNAMIC_DISPLAY=1'b0,
     parameter int H_ACTIVE = 1920,
     parameter int H_FRONT  = 88,
     parameter int H_SYNC   = 44,
@@ -19,6 +20,10 @@ module multitini_video_test #(
     parameter bit SHARED_PIXEL_RESET = 1'b0,
     parameter bit SHARED_PIXEL_LIVENESS = 1'b0
 ) (
+    input wire [11:0] display_h_active,display_h_front,display_h_sync,display_h_total,
+    input wire [11:0] display_v_active,display_v_front,display_v_sync,display_v_total,
+    input wire display_h_positive,display_v_positive,
+    input wire [3:0] display_scale_num,display_scale_den,
     input  logic       pixel_clk,
     input  logic       resetn,
     input  logic       enable,
@@ -69,6 +74,9 @@ module multitini_video_test #(
     logic active;
     logic use_machine;
     logic unused_enable;
+    wire compact=DYNAMIC_DISPLAY && display_h_active<1920;
+    wire [11:0] brand_x=compact ? {x[10:0],1'b0} : x;
+    wire [11:0] brand_y=compact ? {y[10:0],1'b0} : y;
     logic [11:0] main_dx;
     logic [11:0] main_dy;
     logic [11:0] one_dx;
@@ -184,35 +192,45 @@ module multitini_video_test #(
         endcase
     endfunction
 
+    wire [11:0] h_active=DYNAMIC_DISPLAY ? display_h_active : H_ACTIVE;
+    wire [11:0] h_front=DYNAMIC_DISPLAY ? display_h_front : H_FRONT;
+    wire [11:0] h_sync=DYNAMIC_DISPLAY ? display_h_sync : H_SYNC;
+    wire [11:0] h_total=DYNAMIC_DISPLAY ? display_h_total : H_TOTAL;
+    wire [11:0] v_active=DYNAMIC_DISPLAY ? display_v_active : V_ACTIVE;
+    wire [11:0] v_front=DYNAMIC_DISPLAY ? display_v_front : V_FRONT;
+    wire [11:0] v_sync=DYNAMIC_DISPLAY ? display_v_sync : V_SYNC;
+    wire [11:0] v_total=DYNAMIC_DISPLAY ? display_v_total : V_TOTAL;
+    wire h_positive=!DYNAMIC_DISPLAY || display_h_positive;
+    wire v_positive=!DYNAMIC_DISPLAY || display_v_positive;
     assign scan_x = x;
     assign scan_y = y;
-    assign vblank_start = resetn && x == 0 && y == V_ACTIVE;
+    assign vblank_start = resetn && x == 0 && y == v_active;
     assign unused_enable = enable;
 
     always_ff @(posedge pixel_clk) begin
         if (!resetn) begin
             x <= 12'd0;
             y <= 12'd0;
-        end else if (x == H_TOTAL - 1) begin
+        end else if (x == h_total - 1) begin
             x <= 12'd0;
-            y <= (y == V_TOTAL - 1) ? 12'd0 : y + 12'd1;
+            y <= (y == v_total - 1) ? 12'd0 : y + 12'd1;
         end else begin
             x <= x + 12'd1;
         end
     end
 
     always_comb begin
-        active = x < H_ACTIVE && y < V_ACTIVE;
+        active = x < h_active && y < v_active;
         // machine_enable is the bridge's vblank-latched mode decision. The raw
         // diagnostic request must not override it here or DVI can change source
         // in the middle of an active scan.
         use_machine = machine_enable;
-        main_dx = x - MAIN_X0;
-        main_dy = y - MAIN_Y0;
-        one_dx = x - ONE_X0;
-        one_dy = y - ONE_Y0;
-        hint_dx = x - HINT_X0;
-        hint_dy = y - HINT_Y0;
+        main_dx = brand_x - MAIN_X0;
+        main_dy = brand_y - MAIN_Y0;
+        one_dx = brand_x - ONE_X0;
+        one_dy = brand_y - ONE_Y0;
+        hint_dx = brand_x - HINT_X0;
+        hint_dy = brand_y - HINT_Y0;
         main_index = main_dx[10:7];
         main_column = main_dx[6:4];
         main_row = main_dy[6:4];
@@ -225,33 +243,33 @@ module multitini_video_test #(
         main_glyph = standby_glyph(main_character(main_index));
         one_glyph = standby_glyph(one_character(one_index));
         hint_glyph = standby_glyph(hint_character(hint_index));
-        main_pixel = x >= MAIN_X0 && x < MAIN_X0 + MAIN_WIDTH &&
-                     y >= MAIN_Y0 && y < MAIN_Y0 + MAIN_HEIGHT &&
+        main_pixel = brand_x >= MAIN_X0 && brand_x < MAIN_X0 + MAIN_WIDTH &&
+                     brand_y >= MAIN_Y0 && brand_y < MAIN_Y0 + MAIN_HEIGHT &&
                      main_column < 5 &&
                      main_glyph[34 - (main_row * 5 + main_column)];
-        one_pixel = x >= ONE_X0 && x < ONE_X0 + ONE_WIDTH &&
-                    y >= ONE_Y0 && y < ONE_Y0 + ONE_HEIGHT &&
+        one_pixel = brand_x >= ONE_X0 && brand_x < ONE_X0 + ONE_WIDTH &&
+                    brand_y >= ONE_Y0 && brand_y < ONE_Y0 + ONE_HEIGHT &&
                     one_column < 5 &&
                     one_glyph[34 - (one_row * 5 + one_column)];
-        hint_pixel = x >= HINT_X0 && x < HINT_X0 + HINT_WIDTH &&
-                     y >= HINT_Y0 && y < HINT_Y0 + HINT_HEIGHT &&
+        hint_pixel = brand_x >= HINT_X0 && brand_x < HINT_X0 + HINT_WIDTH &&
+                     brand_y >= HINT_Y0 && brand_y < HINT_Y0 + HINT_HEIGHT &&
                      hint_column < 5 &&
                      hint_glyph[34 - (hint_row * 5 + hint_column)];
 
         // Branded standby instead of failure-like color bars. Power-of-two
         // cell sizes keep this path shallow enough for the 148.5 MHz output.
         diagnostic_rgb565 = 16'h0842;
-        if (x < H_ACTIVE && y < V_ACTIVE &&
-            (x[6:0] == 7'd0 || y[6:0] == 7'd0))
+        if (x < h_active && y < v_active &&
+            (brand_x[6:0] == 7'd0 || brand_y[6:0] == 7'd0))
             diagnostic_rgb565 = 16'h1063;
-        if (x >= 12'd256 && x < 12'd1664 &&
-            y >= 12'd300 && y < 12'd780)
+        if (brand_x >= 12'd256 && brand_x < 12'd1664 &&
+            brand_y >= 12'd300 && brand_y < 12'd780)
             diagnostic_rgb565 = 16'h1084;
-        if (x >= 12'd384 && x < 12'd960 &&
-            y >= 12'd352 && y < 12'd360)
+        if (brand_x >= 12'd384 && brand_x < 12'd960 &&
+            brand_y >= 12'd352 && brand_y < 12'd360)
             diagnostic_rgb565 = 16'h2DFF;
-        if (x >= 12'd960 && x < 12'd1536 &&
-            y >= 12'd352 && y < 12'd360)
+        if (brand_x >= 12'd960 && brand_x < 12'd1536 &&
+            brand_y >= 12'd352 && brand_y < 12'd360)
             diagnostic_rgb565 = 16'hF15F;
         if (main_pixel)
             diagnostic_rgb565 = main_index < 4'd5 ? 16'h2DFF : 16'hF15F;
@@ -280,9 +298,10 @@ module multitini_video_test #(
         wire in_viewport = scan_x >= viewport_x && scan_y >= viewport_y &&
             {1'b0,scan_x} < {1'b0,viewport_x}+{1'b0,viewport_width} &&
             {1'b0,scan_y} < {1'b0,viewport_y}+{1'b0,viewport_height};
-        multitini_video_effects #(.SOURCE_SCALE_NUM(SOURCE_SCALE_NUM),
+        multitini_video_effects #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.SOURCE_SCALE_NUM(SOURCE_SCALE_NUM),
             .SOURCE_SCALE_DEN(SOURCE_SCALE_DEN),.SHARED_PIXEL_RESET(SHARED_PIXEL_RESET),
             .SHARED_PIXEL_LIVENESS(SHARED_PIXEL_LIVENESS)) effects_i (
+            .display_scale_num(display_scale_num),.display_scale_den(display_scale_den),
             .control_clk(control_clk),.control_resetn(control_resetn),
             .effect_write(effect_write),.effect_address(effect_address),.effect_data(effect_data),
             .effect_commit(effect_commit),.effect_commit_sequence(effect_commit_sequence),
@@ -294,8 +313,8 @@ module multitini_video_test #(
             .pixel_effect_enable(active && use_machine && !ui_opaque && !border_opaque && in_viewport),
             .pixel_x(scan_x-viewport_x),.pixel_y(scan_y-viewport_y),
             .pixel_de(active),
-            .pixel_hsync(x >= H_ACTIVE+H_FRONT && x < H_ACTIVE+H_FRONT+H_SYNC),
-            .pixel_vsync(y >= V_ACTIVE+V_FRONT && y < V_ACTIVE+V_FRONT+V_SYNC),
+            .pixel_hsync((x >= h_active+h_front && x < h_active+h_front+h_sync) ^ !h_positive),
+            .pixel_vsync((y >= v_active+v_front && y < v_active+v_front+v_sync) ^ !v_positive),
             .output_rgb565(processed_rgb),.output_de(processed_de),
             .output_hsync(processed_hsync),.output_vsync(processed_vsync)
         );
@@ -328,10 +347,10 @@ module multitini_video_test #(
             dvi_grn   <= active ? selected_rgb565[10:5] : 6'd0;
             dvi_blu   <= active ? selected_rgb565[4:0] : 5'd0;
             dvi_de    <= active;
-            dvi_hsync <= x >= H_ACTIVE + H_FRONT &&
-                         x < H_ACTIVE + H_FRONT + H_SYNC;
-            dvi_vsync <= y >= V_ACTIVE + V_FRONT &&
-                         y < V_ACTIVE + V_FRONT + V_SYNC;
+            dvi_hsync <= (x >= h_active + h_front &&
+                         x < h_active + h_front + h_sync) ^ !h_positive;
+            dvi_vsync <= (y >= v_active + v_front &&
+                         y < v_active + v_front + v_sync) ^ !v_positive;
         end
     end
 

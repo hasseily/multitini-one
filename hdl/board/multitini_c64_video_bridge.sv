@@ -43,6 +43,7 @@ module multitini_c64_frame_bank #(
 endmodule
 
 module multitini_c64_video_bridge #(
+    parameter bit DYNAMIC_DISPLAY=1'b0,
     parameter bit     NTSC_MODE        = 1'b0,
     parameter integer SOURCE_WIDTH    = NTSC_MODE ? 404 : 382,
     parameter integer SOURCE_HEIGHT   = NTSC_MODE ? 250 : 270,
@@ -50,6 +51,8 @@ module multitini_c64_video_bridge #(
     parameter integer OUTPUT_X_OFFSET = NTSC_MODE ? 152 : 196,
     parameter integer OUTPUT_Y_OFFSET = NTSC_MODE ? 40 : 0
 ) (
+    input wire [11:0] display_view_x, display_view_y, display_view_width, display_view_height,
+    input wire [3:0] display_scale_num, display_scale_den,
     input  logic        source_clk,
     input  logic        source_resetn,
     input  logic        source_ready,
@@ -497,25 +500,31 @@ module multitini_c64_video_bridge #(
         end
     end
 
+    wire [11:0] view_x=DYNAMIC_DISPLAY ? display_view_x : OUTPUT_X_OFFSET;
+    wire [11:0] view_y=DYNAMIC_DISPLAY ? display_view_y : OUTPUT_Y_OFFSET;
+    wire [11:0] view_width=DYNAMIC_DISPLAY ? display_view_width : SCALED_WIDTH;
+    wire [11:0] view_height=DYNAMIC_DISPLAY ? display_view_height : SCALED_HEIGHT;
+    wire [3:0] scale_num=DYNAMIC_DISPLAY ? display_scale_num : OUTPUT_SCALE;
+    reg [3:0] vertical_repeat_count;
     // The border overlay consumes the original fixed machine viewport.
-    assign viewport_x = OUTPUT_X_OFFSET;
-    assign viewport_y = OUTPUT_Y_OFFSET;
-    assign viewport_width = SCALED_WIDTH;
-    assign viewport_height = SCALED_HEIGHT;
+    assign viewport_x = view_x;
+    assign viewport_y = view_y;
+    assign viewport_width = view_width;
+    assign viewport_height = view_height;
 
     // Request two coordinates ahead. The first stage is the synchronous RAM
     // output and the second registers the selected four-bit index, splitting
     // the distributed bank mux from palette expansion and the DVI register.
     assign prefetch_active =
-        scan_y >= OUTPUT_Y_OFFSET &&
-        scan_y < OUTPUT_Y_OFFSET + SCALED_HEIGHT &&
-        scan_x >= OUTPUT_X_OFFSET - 2 &&
-        scan_x < OUTPUT_X_OFFSET + SCALED_WIDTH - 2;
+        scan_y >= view_y &&
+        scan_y < view_y + view_height &&
+        scan_x >= view_x - 2 &&
+        scan_x < view_x + view_width - 2;
     assign output_active =
-        scan_y >= OUTPUT_Y_OFFSET &&
-        scan_y < OUTPUT_Y_OFFSET + SCALED_HEIGHT &&
-        scan_x >= OUTPUT_X_OFFSET &&
-        scan_x < OUTPUT_X_OFFSET + SCALED_WIDTH;
+        scan_y >= view_y &&
+        scan_y < view_y + view_height &&
+        scan_x >= view_x &&
+        scan_x < view_x + view_width;
     assign pixel_read_enable = machine_active && display_valid && prefetch_active;
 
     always_comb begin
@@ -537,25 +546,29 @@ module multitini_c64_video_bridge #(
             read_line_base          <= '0;
             read_address            <= '0;
             horizontal_repeat_count <= '0;
+            vertical_repeat_count <= '0;
             selected_palette_index  <= 4'd0;
         end else begin
             selected_palette_index <= selected_bank_read_data;
             if (scan_x == 0) begin
                 horizontal_repeat_count <= '0;
-                if (scan_y <= OUTPUT_Y_OFFSET) begin
+                if (scan_y <= view_y) begin
+                    vertical_repeat_count <= 0;
                     read_line_base <= '0;
                     read_address   <= '0;
-                end else if (scan_y < OUTPUT_Y_OFFSET + SCALED_HEIGHT &&
-                             ((scan_y - OUTPUT_Y_OFFSET) % OUTPUT_SCALE) == 0) begin
+                end else if (scan_y < view_y + view_height &&
+                             vertical_repeat_count == scale_num-1) begin
+                    vertical_repeat_count <= 0;
                     read_line_base <= read_line_base + SOURCE_WIDTH;
                     read_address   <= read_line_base + SOURCE_WIDTH;
                 end else begin
+                    vertical_repeat_count <= vertical_repeat_count+1'b1;
                     read_address <= read_line_base;
                 end
             end
 
             if (pixel_read_enable) begin
-                if (horizontal_repeat_count == OUTPUT_SCALE - 1) begin
+                if (horizontal_repeat_count == scale_num - 1) begin
                     horizontal_repeat_count <= '0;
                     read_address <= read_address + 1'b1;
                 end else begin

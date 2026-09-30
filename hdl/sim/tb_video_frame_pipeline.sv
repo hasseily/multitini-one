@@ -5,6 +5,9 @@
 // writes enable/options only; it never advances either ownership ring.
 module tb_video_frame_pipeline;
     parameter integer SCALE_NUM=4,SCALE_DEN=1;
+    parameter bit DYNAMIC_DISPLAY=0;
+    reg display_pause=0,display_pixel_hold=0;
+    wire display_quiescent;
     parameter bit SOURCE_PAUSE_TEST=0,EXPECT_SOURCE_FAILURE=0;
     // The frame-order scoreboard uses solid colors. Separately prove the
     // real framebuffer->engine->filter wiring changes a nonuniform tap
@@ -15,8 +18,8 @@ module tb_video_frame_pipeline;
             $fatal(1,"Frame engine lost the framebuffer display scale");
         for(integer mode=1;mode<=3;mode=mode+1)begin
             if(dut.engine_i.filter.normalized_blur(8'd0,8'd64,mode[1:0])!==
-               (SCALE_NUM==6 && SCALE_DEN==1 ? mode*16 :
-                SCALE_NUM==4 && SCALE_DEN==1 ? (mode==3 ? 64 : mode*24) : 64))
+               ((64 * ( (384*mode*SCALE_DEN+SCALE_NUM/2)/SCALE_NUM > 256 ? 256 :
+                        (384*mode*SCALE_DEN+SCALE_NUM/2)/SCALE_NUM) + 128)/256))
                 $fatal(1,"Frame engine blur response did not reflect its scale and level");
         end
     end
@@ -57,11 +60,16 @@ module tb_video_frame_pipeline;
     wire [7:0] wstrb[0:1];
     reg [63:0] rdata[0:1];
     reg [1:0] bvalid=0,rvalid=0,rlast=0;
-    multitini_video_framebuffer #(.WIDTH(WIDTH),.HEIGHT(HEIGHT),.VIEW_X(VIEW_X),.VIEW_Y(VIEW_Y),
+    multitini_video_framebuffer #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.WIDTH(WIDTH),.HEIGHT(HEIGHT),.VIEW_X(VIEW_X),.VIEW_Y(VIEW_Y),
         .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN),.SHARED_PIXEL_RESET(1)) dut(
+        .display_filter_scale_num(4'(SCALE_NUM)),.display_filter_scale_den(4'(SCALE_DEN)),
+        .display_pause(display_pause),.display_quiescent(display_quiescent),
+        .display_view_x(12'(VIEW_X)),.display_view_y(12'(VIEW_Y)),
+        .display_view_width(12'(OUT_WIDTH)),.display_view_height(12'(OUT_HEIGHT)),
+        .display_scale_num(4'(SCALE_NUM)),.display_scale_den(4'(SCALE_DEN)),
         .clk(clk),.resetn(resetn),.wr_en(wr_en),.wr_addr(wr_addr),.rd_addr(rd_addr),
         .wr_data(wr_data),.wr_strb(4'hf),.rd_data(rd_data),
-        .pixel_clk(pixel_clk),.pixel_resetn(shared_pixel_resetn),.shared_pixel_resetn(shared_pixel_resetn),
+        .pixel_clk(pixel_clk),.pixel_resetn(shared_pixel_resetn && !display_pixel_hold),.shared_pixel_resetn(shared_pixel_resetn),
         .vblank_start(vblank_start),.machine_ready(machine_ready),.scan_x(scan_x),.scan_y(scan_y),
         .machine_rgb565(machine_rgb565),.pixel_use(pixel_use),.pixel_rgb565(pixel_rgb565),
         .awaddr(awaddr[0]),.awlen(awlen[0]),.awsize(awsize[0]),.awburst(awburst[0]),.awvalid(awvalid[0]),.awready(awready[0]),
@@ -350,14 +358,14 @@ module tb_video_frame_pipeline;
         // Stop after a job owns an accepted write. Its B response remains
         // pending across disable; quiescence must retain that ownership.
         wait(response_pending[1]);@(negedge clk);hold_engine_response=1;check_running=0;
-        write_reg(12'h180,0);
+        if(DYNAMIC_DISPLAY)display_pause=1;else write_reg(12'h180,0);
         repeat(80)@(negedge clk);
         if(!dut.engine_busy || dut.all_quiet)$fatal(1,"Disable cancelled an accepted engine response");
         hold_engine_response=0;
         wait_cycles=0;
         while(!dut.all_quiet && wait_cycles<100000)begin @(negedge clk);wait_cycles=wait_cycles+1;end
         if(!dut.all_quiet)$fatal(1,"Pipeline did not drain after disable");
-        rd_addr=12'h184;#1;if(!rd_data[3])$fatal(1,"Public QUIESCENT status disagrees with drain");
+        rd_addr=12'h184;#1;if(DYNAMIC_DISPLAY ? !display_quiescent : !rd_data[3])$fatal(1,"Public QUIESCENT status disagrees with drain");
         if(reading || writing || response_pending || rvalid || bvalid)$fatal(1,"Quiescent before AXI drain");
         saved_beats=beat_count;repeat(1000)@(negedge clk);
         if(beat_count!=saved_beats || arvalid || awvalid)$fatal(1,"New DDR traffic after quiescence");
@@ -366,13 +374,20 @@ module tb_video_frame_pipeline;
         // Match firmware's restart sequence. Intentional disable can cancel
         // a partial capture/cache refill, counted separately from steady-run
         // drops. ERROR_CLEAR is legal only after every accepted AXI drained.
-        write_reg(12'h1ac,1);assert_clean();
+        if(DYNAMIC_DISPLAY)begin
+            display_pixel_hold=1;repeat(100)@(negedge clk);
+            if(!display_quiescent || beat_count!=saved_beats)$fatal(1,"DMA resumed during pixel reset");
+        end else write_reg(12'h1ac,1);
+        assert_clean();
         rd_addr=12'h184;#1;if(rd_data[4])$fatal(1,"Public error status survived disabled ERROR_CLEAR");
         // Restart at a much darker source level; retaining old persistence
         // would visibly contaminate the first restarted output.
         epoch=1;epoch_start_frame=frame_number;oracle_valid=0;segment_jobs=0;
         display_started=0;segment_displayed=0;latency=-1;
-        write_reg(12'h1b0,6'b11_11_11);write_reg(12'h180,7);check_running=1;
+        write_reg(12'h1b0,6'b11_11_11);
+        if(DYNAMIC_DISPLAY)begin display_pixel_hold=0;display_pause=0;end
+        else write_reg(12'h180,7);
+        check_running=1;
         wait(segment_displayed>=6);wait(frame_pixels==OUT_WIDTH*OUT_HEIGHT);#1;assert_clean();
         $display("PASS autonomous frame pipeline: scale%0d/%0d jobs%0d displayed%0d pixels%0d latency%0d paused-source%0d; ordered/live options/drain/restart/history",
             SCALE_NUM,SCALE_DEN,jobs,displayed,checked_pixels,latency,source_pause_frames);

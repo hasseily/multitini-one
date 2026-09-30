@@ -1,9 +1,9 @@
-.PHONY: check generate check-generated repo-check host-build host-test host-sanitize hdl-test hdl-xsim-test c64-lint gameboy-lint clean
+.PHONY: check generate check-generated repo-check host-build host-test host-sanitize hdl-test hdl-display-test hdl-xsim-test c64-lint gameboy-lint clean
 
 PYTHON ?= python3
 HOST_BUILD_DIR ?= build-host
 
-check: check-generated repo-check host-test host-sanitize hdl-test c64-lint gameboy-lint
+check: check-generated repo-check host-test host-sanitize hdl-test hdl-display-test c64-lint gameboy-lint
 
 generate:
 	$(PYTHON) scripts/generate_registers.py
@@ -39,6 +39,12 @@ host-sanitize:
 
 hdl-test:
 	./scripts/run_hdl_tests.sh
+
+hdl-display-test:
+	$(PYTHON) scripts/test_display_modes.py
+	$(PYTHON) scripts/test_video_frame_filter.py --small-only --dynamic-display
+	$(PYTHON) scripts/test_video_frame_reader.py --dynamic-display
+	$(PYTHON) scripts/test_video_frame_pipeline.py --dynamic-display
 
 hdl-xsim-test:
 	sh ./scripts/run_xsim_tests.sh

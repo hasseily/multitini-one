@@ -3,7 +3,7 @@
 `timescale 1ns / 1ps
 package multitini_regs_pkg;
     localparam logic [15:0] MT_ABI_MAJOR = 16'd0;
-    localparam logic [15:0] MT_ABI_MINOR = 16'd15;
+    localparam logic [15:0] MT_ABI_MINOR = 16'd16;
     localparam logic [31:0] MT_ABI_VERSION = {MT_ABI_MAJOR, MT_ABI_MINOR};
     localparam logic [31:0] MT_MAGIC = 32'h4D543031;
     localparam logic [31:0] MT_SHELL_ID = 32'h4D544F4E;
@@ -73,6 +73,9 @@ package multitini_regs_pkg;
     localparam logic [11:0] MT_REG_VIDEO_FRAME_ENGINE_CYCLES = 12'h1BC;
     localparam logic [11:0] MT_REG_VIDEO_FRAME_ENGINE_MAX_STALL = 12'h1C0;
     localparam logic [11:0] MT_REG_VIDEO_FRAME_ENGINE_ERRORS = 12'h1C4;
+    localparam logic [11:0] MT_REG_DISPLAY_REQUEST = 12'h1D0;
+    localparam logic [11:0] MT_REG_DISPLAY_STATUS = 12'h1D4;
+    localparam logic [11:0] MT_REG_DISPLAY_MODES = 12'h1D8;
 
     localparam logic [31:0] MT_CONTROL_CORE_RESET_REQUEST = 32'h00000001;
     localparam logic [31:0] MT_CONTROL_VIDEO_TEST_ENABLE = 32'h00000002;

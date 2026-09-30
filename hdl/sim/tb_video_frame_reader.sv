@@ -3,6 +3,7 @@
 module tb_video_frame_reader;
     parameter integer SCALE_NUM=4, SCALE_DEN=1;
     parameter bit SHARED_PIXEL_RESET=0;
+    parameter bit DYNAMIC_DISPLAY=0;
     localparam integer WIDTH=68, HEIGHT=9, VIEW_X=12, VIEW_Y=2;
     localparam integer OUT_WIDTH=WIDTH*SCALE_NUM/SCALE_DEN;
     localparam integer OUT_HEIGHT=HEIGHT*SCALE_NUM/SCALE_DEN;
@@ -58,9 +59,9 @@ module tb_video_frame_reader;
     wire [31:0] address_now=read_base+beat*8;
     wire [63:0] rdata={memory_pixel(address_now+6),memory_pixel(address_now+4),
                        memory_pixel(address_now+2),memory_pixel(address_now)};
-    multitini_video_frame_reader #(.WIDTH(WIDTH),.HEIGHT(HEIGHT),
+    multitini_video_frame_reader #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.WIDTH(WIDTH),.HEIGHT(HEIGHT),
         .VIEW_X(VIEW_X),.VIEW_Y(VIEW_Y),.SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN),
-        .SHARED_PIXEL_RESET(SHARED_PIXEL_RESET),.SHARED_PIXEL_LIVENESS(SHARED_PIXEL_RESET)) dut(.*);
+        .SHARED_PIXEL_RESET(SHARED_PIXEL_RESET),.SHARED_PIXEL_LIVENESS(SHARED_PIXEL_RESET)) dut(.display_view_x(12'(VIEW_X)),.display_view_y(12'(VIEW_Y)),.display_view_width(12'(OUT_WIDTH)),.display_view_height(12'(OUT_HEIGHT)),.display_scale_num(4'(SCALE_NUM)),.display_scale_den(4'(SCALE_DEN)),.*);
     always @(posedge clk) begin
         cycle<=cycle+1;
         if (arvalid && arready) begin

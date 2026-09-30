@@ -12,6 +12,7 @@
 // exists. A bad response completes/drains the job with error, never publishes
 // a partially acknowledged result. A wedged AXI slave keeps busy asserted.
 module multitini_video_frame_engine #(
+    parameter bit DYNAMIC_DISPLAY=1'b0,
     parameter integer WIDTH=540, HEIGHT=720,
     parameter integer SCALE_NUM=3, SCALE_DEN=2,
     parameter integer STRIDE=((WIDTH+63)/64)*128,
@@ -20,6 +21,7 @@ module multitini_video_frame_engine #(
     parameter [31:0] HISTORY_BASE=32'h22800000,
     parameter integer FIFO_DEPTH=64
 ) (
+    input wire [3:0] display_scale_num,display_scale_den,
     input wire clk,resetn,clear_errors,start,
     input wire [1:0] input_slot,output_slot,
     input wire [5:0] options,
@@ -224,8 +226,9 @@ module multitini_video_frame_engine #(
                       (!use_history || !old_empty) && p0_ready;
     assign source_pop=input_accept && (source_lane==3 || input_x==WIDTH-1);
     assign old_pop=input_accept && use_history && (input_pixels[0] || input_pixels==PIXELS-1);
-    multitini_video_frame_filter #(.WIDTH(WIDTH),.HEIGHT(HEIGHT),
+    multitini_video_frame_filter #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.WIDTH(WIDTH),.HEIGHT(HEIGHT),
         .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN)) filter(
+        .display_scale_num(display_scale_num),.display_scale_den(display_scale_den),
         .clk(clk),.resetn(resetn),.start(begin_job),.options(options),
         .in_valid(p2_valid && history_pack_ready),.in_ready(filter_in_ready),.in_rgb(p2_rgb),
         .out_valid(filter_out_valid),.out_ready(filter_out_ready),.out_rgb565(filter_out_rgb),

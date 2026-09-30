@@ -511,7 +511,7 @@ class MenuRuntimeTests(unittest.TestCase):
             compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wpedantic",
             "-I", str(ROOT / "firmware/include"), str(harness),
             "-I", str(ROOT / "firmware/platform/xilinx"),
-            str(ROOT / "firmware/common/menu.c"), str(ROOT / "firmware/common/gamepad.c"), str(ROOT / "firmware/common/ui.c"),
+            str(ROOT / "firmware/common/display.c"), str(ROOT / "firmware/common/menu.c"), str(ROOT / "firmware/common/gamepad.c"), str(ROOT / "firmware/common/ui.c"),
             str(ROOT / "firmware/common/text_reader.c"), str(ROOT / "firmware/common/clock.c"),
             str(ROOT / "firmware/common/content_type.c"),
             str(ROOT / "firmware/common/vectrex_overlay.c"),
