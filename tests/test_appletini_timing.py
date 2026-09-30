@@ -22,6 +22,17 @@ foreach group {video_framebuffer/capture/fifo_i/gen_cdc_pntr.wr_pntr_cdc_inst vi
         lappend sources [format {%s/src_gray_ff_reg[%d]} $group $bit]
     }
 }
+set machine 0
+if {[string match "genesis-*" $scenario]} {
+    set machine 4
+    set sources [lrange $sources 0 17]
+    foreach direction {wr rd} {
+        for {set bit 0} {$bit < 9} {incr bit} {
+            lappend sources [format {genesis_video/capture/fifo_i/gen_cdc_pntr.%s_pntr_cdc_inst/src_gray_ff_reg[%d]} $direction $bit]
+        }
+    }
+    if {$scenario eq "genesis-missing-fifo"} {set sources [lrange $sources 0 26]}
+}
 if {$scenario eq "missing-bit"} {set sources [lrange $sources 0 end-1]}
 set multitini_cdc_first {sampler/sync_meta_reg}
 proc get_cells {args} {
@@ -42,21 +53,24 @@ proc get_property {property object} {
         REQUIREMENT {if {$::scenario eq "unbounded"} {return Inf}; if {$::scenario eq "wrong-bound"} {return 20.0}; return 10.0}
         SLACK {if {$::scenario eq "violated"} {return -0.001}; if {$::scenario eq "infinite-slack"} {return Inf}; return 0.5}
         ENDPOINT_PIN {return [string map {src_gray_ff_reg {dest_graysync_ff_reg[0]}} $object]}
-        GENERIC {return ACTIVE_MACHINE=0}
+        GENERIC {return ACTIVE_MACHINE=$::machine}
         ASYNC_REG {return [expr {$::scenario ne "unsafe-target"}]}
     }
     error "Unexpected property $property"
 }
 '''
         for scenario in ('pass', 'missing-bit', 'false-path', 'unbounded', 'wrong-bound',
-                         'violated', 'infinite-slack', 'unsafe-target'):
+                         'violated', 'infinite-slack', 'unsafe-target',
+                         'genesis-pass', 'genesis-missing-fifo'):
             with self.subTest(scenario=scenario):
                 result = self.run_tcl(f'set scenario {scenario}\n' + stub +
                     f'if {{[catch {{source {{{ROOT / "scripts/check_video_bus_constraints.tcl"}}}}} error]}} {{puts stderr $error; exit 1}}\n')
-                self.assertEqual(result.returncode, 0 if scenario == 'pass' else 1,
+                self.assertEqual(result.returncode, 0 if scenario in ('pass', 'genesis-pass') else 1,
                                  result.stdout + result.stderr)
                 if scenario == 'pass':
                     self.assertIn('24 effective Gray-pointer', result.stdout)
+                elif scenario == 'genesis-pass':
+                    self.assertIn('36 effective Gray-pointer', result.stdout)
 
     def test_run_profile_is_idempotent_and_sets_child_threads(self):
         script = r'''

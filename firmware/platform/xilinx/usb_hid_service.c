@@ -10,6 +10,8 @@
 #include "multitini_gameboy_interface.h"
 #include "multitini_vectrex_hid_input.h"
 #include "multitini_vectrex_interface.h"
+#include "multitini_genesis_hid_input.h"
+#include "multitini_genesis_interface.h"
 #include "usb_config.h"
 #include "usbh_core.h"
 #include "usbh_hid.h"
@@ -117,6 +119,7 @@ static bool g_gamepad_preview;
 static mt_c64_hid_input_t g_c64_input;
 static mt_gameboy_hid_input_t g_gameboy_input;
 static mt_vectrex_hid_input_t g_vectrex_input;
+static mt_genesis_hid_input_t g_genesis_input;
 static uint32_t g_reports_total;
 static uint32_t g_submit_errors;
 static uint32_t g_transfer_errors;
@@ -139,6 +142,8 @@ static int emit_active_input(void *context, uint16_t code, uint16_t value)
     if (link == NULL || g_core_ready == 0U || g_emit_deferred != 0U) return -1;
     if ((g_active_core_id == MT_VECTREX_CORE_ID) !=
         (input_namespace == MT_INPUT_VECTREX)) return -1;
+    if ((g_active_core_id == MT_GENESIS_CORE_ID) !=
+        (input_namespace == MT_INPUT_GENESIS_GAMEPAD)) return -1;
     if ((g_active_core_id == MT_GBC_CORE_ID &&
          input_namespace != MT_INPUT_GB_GAMEPAD) ||
         (g_active_core_id != MT_GBC_CORE_ID &&
@@ -164,6 +169,8 @@ static void submit_keyboard_state(uint8_t slot, uint8_t modifiers,
                                          keys, key_count);
     (void)mt_vectrex_hid_keyboard_report(&g_vectrex_input, slot, modifiers,
                                          keys, key_count);
+    (void)mt_genesis_hid_keyboard_report(&g_genesis_input, slot, modifiers,
+                                         keys, key_count);
 }
 
 static void submit_gamepad_state(uint8_t slot, uint8_t state)
@@ -177,6 +184,7 @@ static void disconnect_input_slot(uint8_t slot)
     (void)mt_c64_hid_disconnect(&g_c64_input, slot);
     (void)mt_gameboy_hid_disconnect(&g_gameboy_input, slot);
     (void)mt_vectrex_hid_disconnect(&g_vectrex_input, slot);
+    (void)mt_genesis_hid_disconnect(&g_genesis_input, slot);
 }
 
 static void poll_active_input(void)
@@ -185,6 +193,8 @@ static void poll_active_input(void)
         (void)mt_vectrex_hid_input_poll(&g_vectrex_input);
     else if (g_active_core_id == MT_GBC_CORE_ID)
         (void)mt_gameboy_hid_input_poll(&g_gameboy_input);
+    else if (g_active_core_id == MT_GENESIS_CORE_ID)
+        (void)mt_genesis_hid_input_poll(&g_genesis_input);
     else
         (void)mt_c64_hid_input_poll(&g_c64_input);
 }
@@ -335,6 +345,7 @@ static void deliver_gamepad(uint8_t index)
         memset(state.axis, 0, sizeof(state.axis));
     }
     submit_gamepad_state(index, mt_gamepad_digital(&state));
+    (void)mt_genesis_hid_gamepad_report(&g_genesis_input, index, &state);
     int16_t x = state.axis[MT_GAMEPAD_AXIS_X];
     const int16_t down = state.axis[MT_GAMEPAD_AXIS_Y];
     int16_t y = down == INT16_MIN ? INT16_MAX : (int16_t)-down;
@@ -989,6 +1000,7 @@ void usb_hid_service_init(mt_core_link_t *link)
     mt_c64_hid_input_init(&g_c64_input, emit_active_input, link);
     mt_gameboy_hid_input_init(&g_gameboy_input, emit_active_input, link);
     mt_vectrex_hid_input_init(&g_vectrex_input, emit_active_input, link);
+    mt_genesis_hid_input_init(&g_genesis_input, emit_active_input, link);
 }
 
 void usb_hid_service_set_keyboard_filter(mt_usb_keyboard_filter_fn filter,
@@ -1061,10 +1073,13 @@ int usb_hid_service_stop(void)
     (void)mt_c64_hid_release_all(&g_c64_input);
     (void)mt_gameboy_hid_release_all(&g_gameboy_input);
     (void)mt_vectrex_hid_release_all(&g_vectrex_input);
+    (void)mt_genesis_hid_release_all(&g_genesis_input);
     memset(g_slots, 0, sizeof(g_slots));
     memset(g_xinput_slots, 0, sizeof(g_xinput_slots));
-    for (uint8_t i = 0U; i < MT_GAMEPAD_SLOTS; ++i)
+    for (uint8_t i = 0U; i < MT_GAMEPAD_SLOTS; ++i) {
+        disconnect_input_slot(i);
         mt_gamepad_disconnect(&g_gamepads, i);
+    }
     memset(g_vendor_slots, 0, sizeof(g_vendor_slots));
     memset(g_release_guard, 0, sizeof(g_release_guard));
     if (power_result != 0) {
@@ -1082,6 +1097,8 @@ void usb_hid_service_set_active_core(uint32_t core_id)
         mt_vectrex_hid_reassert(&g_vectrex_input);
     else if (g_active_core_id == MT_GBC_CORE_ID)
         mt_gameboy_hid_reassert(&g_gameboy_input);
+    else if (g_active_core_id == MT_GENESIS_CORE_ID)
+        mt_genesis_hid_reassert(&g_genesis_input);
     else
         mt_c64_hid_reassert(&g_c64_input);
 }
@@ -1095,6 +1112,8 @@ void usb_hid_service_set_core_ready(bool ready)
             mt_vectrex_hid_reassert(&g_vectrex_input);
         else if (g_active_core_id == MT_GBC_CORE_ID)
             mt_gameboy_hid_reassert(&g_gameboy_input);
+        else if (g_active_core_id == MT_GENESIS_CORE_ID)
+            mt_genesis_hid_reassert(&g_genesis_input);
         else
             mt_c64_hid_reassert(&g_c64_input);
         poll_active_input();

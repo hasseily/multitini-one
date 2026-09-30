@@ -79,12 +79,15 @@ if {[string match "*ACTIVE_MACHINE=2*" $build_generics]} {
     set image_kind "GBC"
 } elseif {[string match "*ACTIVE_MACHINE=3*" $build_generics]} {
     set image_kind "VECTREX"
+} elseif {[string match "*ACTIVE_MACHINE=4*" $build_generics]} {
+    set image_kind "GENESIS"
 } else {
     error "Build generic has no recognized ACTIVE_MACHINE value: $build_generics"
 }
 set psram_active [expr {
     [string match "*ACTIVE_MACHINE=0*" $build_generics] ||
     [string match "*ACTIVE_MACHINE=3*" $build_generics] ||
+    [string match "*ACTIVE_MACHINE=4*" $build_generics] ||
     [string match "*ENABLE_GBC_PSRAM=1'b1*" $build_generics]
 }]
 
@@ -102,6 +105,9 @@ if {[string match {*C64_NTSC_MODE=1'b1*} $build_generics]} {
     lappend capture_command --c64-video-standard NTSC
 }
 if {$image_kind eq "GBC" && $psram_active} {lappend capture_command --gbc-psram}
+if {$image_kind eq "GENESIS" && [string match {*GENESIS_PAL_MODE=1'b1*} $build_generics]} {
+    lappend capture_command --genesis-pal
+}
 puts [exec {*}$capture_command]
 
 reset_run synth_1
@@ -140,6 +146,28 @@ foreach {description pattern} {
 require_one_object "audio BCLK generated clock" [get_clocks -quiet audio_bclk]
 require_one_object "forwarded audio BCLK" [get_clocks -quiet audio_bclk_out]
 require_one_object "forwarded DVI clock" [get_clocks -quiet dvi_clk_out]
+if {$image_kind eq "GENESIS"} {
+    set chip_gate [get_cells -hierarchical -quiet \
+        -filter {NAME =~ *g_genesis_machine/machine_adapter/chip_clock_i && REF_NAME == BUFGCE}]
+    require_one_object "Genesis glitch-free chip clock buffer" $chip_gate
+    set chip_input_clocks [get_clocks -of_objects [get_pins $chip_gate/I]]
+    set chip_output_clocks [get_clocks -of_objects [get_pins $chip_gate/O]]
+    require_one_object "Genesis chip parent clock" $chip_input_clocks
+    require_one_object "Genesis chip gated clock" $chip_output_clocks
+    if {[get_property PERIOD $chip_input_clocks] != [get_property PERIOD $chip_output_clocks]} {
+        error "Genesis clock gate unexpectedly changes the chip frequency"
+    }
+    require_one_object "Genesis audio divider source" [get_pins -hierarchical -quiet \
+        -filter {NAME =~ *g_genesis_machine/machine_adapter/machine_i/audio_divider_reg/C}]
+    require_one_object "Genesis audio divider output" [get_pins -hierarchical -quiet \
+        -filter {NAME =~ *g_genesis_machine/machine_adapter/machine_i/audio_divider_reg/Q}]
+    set genesis_audio_clock [get_clocks -quiet genesis_audio_clk]
+    require_one_object "Genesis related audio clock" $genesis_audio_clock
+    if {abs([get_property PERIOD $genesis_audio_clock] -
+            2.0 * [get_property PERIOD $chip_input_clocks]) > 0.0005} {
+        error "Genesis audio clock must remain exactly half the chip parent frequency"
+    }
+}
 set psram_forwarded_clocks [get_clocks -quiet psram_clk_out]
 if {$psram_active} {
     require_one_object "forwarded PSRAM clock" $psram_forwarded_clocks

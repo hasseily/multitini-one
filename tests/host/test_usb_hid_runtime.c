@@ -5,6 +5,24 @@
 #include "../../firmware/platform/xilinx/usb_hid_service.c"
 static XTime fake_now;
 static unsigned submits;
+static uint32_t input_regs[MT_REGISTER_SPAN / 4U];
+static uint16_t routed_code, routed_value;
+static unsigned routed_events;
+static uint32_t input_read(void *context, uint32_t offset)
+{ (void)context; return input_regs[offset / 4U]; }
+static void input_write(void *context, uint32_t offset, uint32_t value)
+{
+    (void)context;
+    input_regs[offset / 4U] = value;
+    if (offset == MT_REG_COMMAND_DOORBELL) {
+        assert(input_regs[MT_REG_COMMAND_OPCODE / 4U] == MT_COMMAND_INPUT_EVENT);
+        routed_code = (uint16_t)input_regs[MT_REG_COMMAND_ARG0 / 4U];
+        routed_value = (uint16_t)input_regs[MT_REG_COMMAND_ARG1 / 4U];
+        ++routed_events;
+        input_regs[MT_REG_RESPONSE_STATUS / 4U] = MT_RESPONSE_OK;
+        input_regs[MT_REG_RESPONSE_SEQ / 4U] = value;
+    }
+}
 struct usbh_bus g_usbhost_bus[CONFIG_USBHOST_MAX_BUS];
 void XTime_GetTime(XTime *value) { *value = fake_now; }
 int xil_printf(const char *format, ...) { (void)format; return 0; }
@@ -73,8 +91,10 @@ int main(void)
     usb_gamepad_input_report((uint8_t)vendor, &report, 2U, 0U);
     assert(g_gameboy_input.gamepads[vendor] == 0x18U);
     assert(g_vectrex_input.pad_buttons[vendor] == 1U && g_vectrex_input.pad_x[vendor] == INT16_MAX);
+    assert(g_genesis_input.gamepad[vendor] == (MT_GENESIS_A | MT_GENESIS_RIGHT));
     usb_hid_service_set_menu_capture(true);
     assert(g_gameboy_input.gamepads[vendor] == 0U && g_vectrex_input.pad_buttons[vendor] == 0U);
+    assert(g_genesis_input.gamepad[vendor] == 0U);
     assert(g_gamepads.raw[vendor].buttons == 1U); /* preview remains live */
     usb_hid_service_set_menu_capture(false);
     assert(g_gameboy_input.gamepads[vendor] == 0U); /* held menu button blocked */
@@ -83,6 +103,35 @@ int main(void)
     report.buttons = 2U;
     usb_gamepad_input_report((uint8_t)vendor, &report, 8U, 0U);
     assert(g_gameboy_input.gamepads[vendor] == 0x20U);
+    assert(g_genesis_input.gamepad[vendor] == MT_GENESIS_B);
+    {
+        mt_core_link_t link;
+        mt_core_link_init(&link, NULL, input_read, input_write);
+        g_genesis_input.context = &link;
+        usb_hid_service_set_active_core(MT_GENESIS_CORE_ID);
+        usb_hid_service_set_core_ready(true);
+        assert(routed_events == 2U && routed_code == 0x3001U && routed_value == 0U);
+        report.buttons = 0x24U; /* X and RB must remain separate C and Z. */
+        usb_gamepad_input_report((uint8_t)vendor, &report, 8U, 0U);
+        assert(routed_code == 0x3000U && routed_value == (MT_GENESIS_C | MT_GENESIS_Z));
+        assert(emit_active_input(&link, 0x1000U, 1U) == -1);
+        usb_hid_service_set_active_core(MT_GBC_CORE_ID);
+        assert(emit_active_input(&link, 0x3000U, 1U) == -1);
+        usb_hid_service_set_active_core(MT_GENESIS_CORE_ID);
+        usb_hid_service_set_core_ready(true);
+        usb_hid_service_set_menu_capture(true);
+        assert(routed_value == 0U);
+        usb_hid_service_set_menu_capture(false);
+        report.buttons = 0U;
+        usb_gamepad_input_report((uint8_t)vendor, &report, 8U, 0U);
+        report.buttons = 1U;
+        usb_gamepad_input_report((uint8_t)vendor, &report, 8U, 0U);
+        assert(routed_value == MT_GENESIS_A);
+        usb_gamepad_input_disconnect((uint8_t)vendor);
+        assert(routed_value == 0U);
+        usb_hid_service_set_core_ready(false);
+        g_genesis_input.context = NULL;
+    }
     /* Shared slot disconnect cannot release either neighboring transport. */
     usb_gamepad_input_disconnect((uint8_t)vendor);
     assert(!g_gamepads.raw[vendor].connected && (g_gamepads.allocated & 0x102U) == 0x102U);

@@ -4,6 +4,7 @@
 #include "multitini_gameboy_interface.h"
 #include "multitini_vectrex_interface.h"
 #include "multitini_vectrex_overlay.h"
+#include "multitini_genesis_content.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -62,6 +63,9 @@ mt_content_type_t mt_content_classify(const char *path)
     if (extension_is(extension, "vec")) return MT_CONTENT_VECTREX_CART;
     if (extension_is(extension, "bas")) return MT_CONTENT_VECTREX_BASIC;
     if (extension_is(extension, "ovr")) return MT_CONTENT_VECTREX_OVERLAY;
+    if (extension_is(extension, "md") || extension_is(extension, "gen"))
+        return MT_CONTENT_GENESIS_CART;
+    if (extension_is(extension, "smd")) return MT_CONTENT_GENESIS_SMD;
     return MT_CONTENT_UNKNOWN;
 }
 
@@ -69,11 +73,14 @@ mt_content_type_t mt_content_classify_for_core(uint32_t core_id, const char *pat
 {
     const mt_content_type_t type = mt_content_classify(path);
     const char *extension;
-    if (type != MT_CONTENT_UNKNOWN || core_id != MT_VECTREX_CORE_ID || path == NULL)
+    if (type != MT_CONTENT_UNKNOWN || path == NULL)
         return type;
     extension = strrchr(path, '.');
-    return extension != NULL && extension_is(extension + 1, "bin") ?
-        MT_CONTENT_VECTREX_CART : MT_CONTENT_UNKNOWN;
+    if (extension == NULL || !extension_is(extension + 1, "bin"))
+        return MT_CONTENT_UNKNOWN;
+    if (core_id == MT_VECTREX_CORE_ID) return MT_CONTENT_VECTREX_CART;
+    if (core_id == MT_GENESIS_CORE_ID) return MT_CONTENT_GENESIS_CART;
+    return MT_CONTENT_UNKNOWN;
 }
 
 bool mt_content_supported_first_release(mt_content_type_t type)
@@ -82,7 +89,8 @@ bool mt_content_supported_first_release(mt_content_type_t type)
            type == MT_CONTENT_D64 || type == MT_CONTENT_G64 ||
            type == MT_CONTENT_CRT || type == MT_CONTENT_GB_CART ||
            type == MT_CONTENT_GBC_CART || type == MT_CONTENT_VECTREX_CART ||
-           type == MT_CONTENT_VECTREX_BASIC || type == MT_CONTENT_VECTREX_OVERLAY;
+           type == MT_CONTENT_VECTREX_BASIC || type == MT_CONTENT_VECTREX_OVERLAY ||
+           type == MT_CONTENT_GENESIS_CART || type == MT_CONTENT_GENESIS_SMD;
 }
 
 bool mt_content_may_write_first_release(mt_content_type_t type)
@@ -105,6 +113,8 @@ const char *mt_content_type_name(mt_content_type_t type)
     case MT_CONTENT_VECTREX_CART: return "Vectrex cartridge";
     case MT_CONTENT_VECTREX_BASIC: return "Vectrex32 BASIC";
     case MT_CONTENT_VECTREX_OVERLAY: return "Vectrex overlay";
+    case MT_CONTENT_GENESIS_CART: return "Genesis / Mega Drive cartridge";
+    case MT_CONTENT_GENESIS_SMD: return "Genesis / Mega Drive SMD cartridge";
     case MT_CONTENT_UNKNOWN: return "unknown";
     }
     return "unknown";
@@ -317,6 +327,18 @@ mt_content_validation_t mt_content_inspect(mt_content_type_t type,
         status = size == 0U ? MT_CONTENT_TOO_SMALL :
             (mt_vectrex_overlay_valid_size(size) ? MT_CONTENT_VALID : MT_CONTENT_WRONG_SIZE);
         break;
+    case MT_CONTENT_GENESIS_CART:
+    case MT_CONTENT_GENESIS_SMD: {
+        mt_genesis_content_info_t genesis;
+        status = mt_genesis_content_inspect(data, size,
+            type == MT_CONTENT_GENESIS_SMD ? MT_GENESIS_FORMAT_SMD : MT_GENESIS_FORMAT_RAW,
+            &genesis);
+        if (status == MT_CONTENT_VALID) {
+            result.payload_size = genesis.rom_size;
+            result.payload_offset = type == MT_CONTENT_GENESIS_SMD ? 512U : 0U;
+        }
+        break;
+    }
     case MT_CONTENT_TAP_FUTURE:
     case MT_CONTENT_D81_FUTURE:
     case MT_CONTENT_UNKNOWN:

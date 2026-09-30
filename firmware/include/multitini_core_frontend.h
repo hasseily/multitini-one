@@ -26,6 +26,7 @@ typedef struct {
     bool fast_roms_active;
     bool fast_roms_fallback;
     bool cpu_turbo_enabled;
+    uint8_t genesis_three_button_mask;
 } mt_core_frontend_state_t;
 
 typedef struct {

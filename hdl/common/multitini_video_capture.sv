@@ -9,7 +9,10 @@ module multitini_video_capture #(
     parameter integer VIEW_X=196, VIEW_Y=0,
     parameter integer SCALE_NUM=4, SCALE_DEN=1,
     parameter [31:0] BASE=32'h22000000,
-    parameter bit SHARED_PIXEL_RESET=1'b0
+    parameter bit SHARED_PIXEL_RESET=1'b0,
+    // Sparse source streams can end early on a malformed chip field. Never
+    // concatenate their partial pixels with the following field.
+    parameter bit ABORT_INCOMPLETE_ON_VBLANK=1'b0
 ) (
     input wire [11:0] display_view_x, display_view_y, display_view_width, display_view_height,
     input wire [3:0] display_scale_num, display_scale_den,
@@ -126,7 +129,9 @@ module multitini_video_capture #(
                 else begin finish_bad<=1;finish_launch<=1;end
             end
             if(capturing && (!machine_ready || !enable_pixel))capture_bad<=1;
-            if(sample) begin
+            if(ABORT_INCOMPLETE_ON_VBLANK && vblank_start && capturing)begin
+                capturing<=0;capture_bad<=1;finish_bad<=1;finish_launch<=1;
+            end else if(sample) begin
                 if(pack_index!=3)pack[pack_index*16+:16]<=sampled_pixel;
                 pack_index<=pack_index+1'b1;
                 sample_count<=sample_count+1'b1;

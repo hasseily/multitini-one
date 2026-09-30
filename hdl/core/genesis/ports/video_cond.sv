@@ -1,0 +1,217 @@
+//
+// video_cond.sv
+//
+// Copyright (c) 2023 Alexey Melnikov
+// 
+// This source file is free software: you can redistribute it and/or modify 
+// it under the terms of the GNU General Public License as published 
+// by the Free Software Foundation, either version 3 of the License, or 
+// (at your option) any later version. 
+// 
+// This source file is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of 
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the 
+// GNU General Public License for more details.
+// 
+// You should have received a copy of the GNU General Public License 
+// along with this program.  If not, see <http://www.gnu.org/licenses/>. 
+//
+
+// Multitini port, 2026-09-30: fixed negative input sync polarity;
+// original RGB/blank alignment replaces the MiSTer cleaner and optional
+// composite blender. Multitini owns display filtering after capture.
+module multitini_genesis_video_cond
+(
+	input             clk,
+
+	input             vdp_hclk1,
+	input             vdp_de_h,
+	input             vdp_de_v,
+	input             vdp_intfield,
+	input             vdp_m2,
+	input             vdp_m5,
+	input             vdp_rs1,
+
+	input       [7:0] r_in,
+	input       [7:0] g_in,
+	input       [7:0] b_in,
+	input             hs_in,
+	input             vs_in,
+
+	input             pal,
+	input             border_en,
+	input             h40corr,
+	input             blender,
+
+	output reg [11:0] arx,
+	output reg [11:0] ary,
+	
+	output reg        ce_pix,
+	output reg        interlace,
+	output reg        f1,
+
+	output reg  [7:0] r_out,
+	output reg  [7:0] g_out,
+	output reg  [7:0] b_out,
+	output reg        hs_out,
+	output reg        vs_out,
+	output reg        hbl_out,
+	output reg        vbl_out
+);
+// Declarations precede use for both Icarus and Vivado.
+reg [1:0] res_h = 0;
+reg [1:0] res_v = 0;
+reg hs_d;
+wire hs_begin;
+wire hs_end;
+reg hs_clean;
+reg [12:0] hcnt;
+reg vde_brd, vde_nobrd;
+reg hde_brd;
+wire vbl;
+wire hbl;
+
+
+ // 248/256/320/320cor
+ // 192/224/240
+
+function [11:0] aspect_x(input [3:0] mode);
+ case(mode)
+  0:aspect_x=31;1:aspect_x=62;2:aspect_x=124;
+  4,8,12:aspect_x=32;5,9:aspect_x=64;6,10:aspect_x=128;
+  13:aspect_x=10;14:aspect_x=4;default:aspect_x=0;
+ endcase
+endfunction
+function [11:0] aspect_y(input [3:0] mode);
+ case(mode)
+  0,4,8,12:aspect_y=21;1,5,9:aspect_y=49;2,6,10:aspect_y=105;
+  13:aspect_y=7;14:aspect_y=3;default:aspect_y=0;
+ endcase
+endfunction
+
+always @(posedge clk) begin
+	if(border_en) begin
+		arx = (res_h[1] & h40corr) ? 12'd350 : 12'd320;
+		ary = pal ? 12'd288 : 12'd239;
+	end
+	else begin
+		arx <= aspect_x({res_h+(res_h[1]&h40corr),res_v});
+		ary <= aspect_y({res_h+(res_h[1]&h40corr),res_v});
+	end
+end
+
+
+always @(posedge clk) hs_d <= hs_in;
+
+assign hs_begin = hs_d & ~hs_in;
+assign hs_end = ~hs_d & hs_in;
+
+
+
+always @(posedge clk) begin
+	hcnt <= hcnt + 1'd1;
+
+	// Filter double HSync pulses around VSync
+	if(hs_begin & (hcnt[12] | vde_nobrd)) begin
+		hcnt <= 0;
+		hs_clean <= 0;
+	end
+
+	// 4.7us pulse
+	if(hcnt == 504) hs_clean <= 1;
+end
+
+// The pixel clock changes during HSync in 320 mode. This can cause issues with some DirectVideo DACs.
+// Generate stable ce_pix during HSync to avoid the issue.
+always @(posedge clk) begin
+	reg vdp_hclk1_d, hclk1_ce, ce_pix_gen;
+	reg [4:0] hclk_cycle_cnt, hclk_cycle_size;
+
+	vdp_hclk1_d <= vdp_hclk1;
+	hclk1_ce <= ~vdp_hclk1_d & vdp_hclk1;
+
+	hclk_cycle_cnt <= hclk_cycle_cnt + 1'b1;
+	if (vdp_de_h & hs_in) begin
+		if (~vdp_hclk1_d & vdp_hclk1) begin
+			hclk_cycle_cnt <= 0;
+			hclk_cycle_size <= hclk_cycle_cnt;
+		end
+	end else if (hclk_cycle_cnt == hclk_cycle_size) begin
+		hclk_cycle_cnt <= 0;
+	end
+
+	ce_pix_gen <= (hclk_cycle_cnt == hclk_cycle_size);
+
+	ce_pix <= ~hs_in ? ce_pix_gen : hclk1_ce;
+end
+
+
+
+always @(posedge clk) begin
+	reg        pal_r;
+	reg  [8:0] vcnt;
+	reg  [8:0] vbl_s, vbl_e;
+	reg  [8:0] vbl_start, vbl_end;
+	reg [12:0] hbl_start, hbl_end;
+
+	if(hs_end) vcnt <= vcnt + 1'd1;
+	if(~vs_in) begin
+		vcnt <= 0;
+		pal_r <= pal;
+		if(vcnt) begin
+			f1 <= vdp_intfield;
+			interlace <= f1 ^ vdp_intfield;
+		end
+	end
+
+	vbl_s     <= pal_r ? 9'd47  : 9'd20;
+	vbl_e     <= pal_r ? 9'd286 : 9'd259;
+
+	vbl_start <= res_v[1] ? vbl_s : res_v[0] ? (vbl_s+9'd8) : (vbl_s+9'd21);
+	vbl_end   <= res_v[1] ? vbl_e : res_v[0] ? (vbl_e-9'd8) : (vbl_e-9'd27);
+
+	hbl_start <= res_h[1] ? 13'((55    )*20) : 13'((53    )*20);
+	hbl_end   <= res_h[1] ? 13'((55+280)*20) : 13'((53+280)*20);
+
+	vde_brd   <= pal_r ? (vcnt >= 22 && vcnt < 310) : (vcnt >= 20 && vcnt < 259);
+	vde_nobrd <= (vcnt >= vbl_start && vcnt <= vbl_end);
+	hde_brd   <= (hcnt >= hbl_start && hcnt <= hbl_end);
+end
+
+always @(posedge clk) begin
+	reg [8:0] pcnt;
+	reg [1:0] tmp_h;
+	reg       vde_d;
+
+	if(~vs_in) begin
+		res_v <= ~vdp_m5 ? 2'd0 : ~vdp_m2 ? 2'd1 : 2'd2;
+		res_h <= tmp_h;
+	end
+
+	if(vdp_de_h & ce_pix) pcnt <= pcnt + 1'd1;
+
+	if(hs_begin) begin
+		pcnt <= 0;
+		vde_d <= vde_nobrd;
+		if(~vde_d && vde_nobrd && pcnt) tmp_h <= (pcnt > 300) ? 2'd2 : (pcnt > 252) ? 2'd1 : 2'd0;
+	end
+end
+
+assign vbl = ~(border_en ? vde_brd : vde_nobrd);
+assign hbl = ~(border_en ? hde_brd : vdp_de_h);
+
+// MD board syncs are active low. Export active-high frame sync and
+// align vertical blank transitions with the first active pixel of a line.
+always @(posedge clk) if(ce_pix) begin
+ r_out <= r_in; g_out <= g_in; b_out <= b_in;
+ hs_out <= ~hs_clean;
+ hbl_out <= hbl || !hs_clean;
+ if(interlace && f1) begin
+  vs_out <= ~vs_in;
+  vbl_out <= vbl || !vs_in;
+ end else begin
+  if(!hs_out && !hs_clean) vs_out <= ~vs_in;
+  if(hbl_out && !hbl && hs_clean) vbl_out <= vbl || !vs_in;
+ end
+end
+endmodule

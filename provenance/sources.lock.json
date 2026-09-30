@@ -91,6 +91,13 @@
       "commit": "be2ea4fee3c5ebc239b8b20aad9738bee89f8ff0",
       "license": "GPL-3.0-only",
       "use": "USB controllers and recovery, controller mapping behavior, display modes, timing and build checks, golden self-update. Per-file adapted sources are recorded in licenses/files.csv."
+    },
+    {
+      "name": "MiSTer Mega Drive (Nuked-MD)",
+      "url": "https://github.com/MiSTer-devel/MegaDrive_MiSTer.git",
+      "commit": "083e1b1f4db8ffb32d6e8f83cf822fedc6184a61",
+      "license": "GPL-2.0-or-later Nuked-MD and helpers; GPL-3.0-or-later audio/video conditioning; MIT audio filters",
+      "use": "Exact selected chip models and licensed conditioning/pad helpers; no console/game ROM, image asset, VM2413 NonCommercial code, or Intel generated IP. Per-file grants in third_party/genesis/import_manifest.json and licenses/files.csv."
     }
   ]
 }

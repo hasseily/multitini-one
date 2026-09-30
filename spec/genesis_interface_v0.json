@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "abi": {"major": 0, "minor": 16},
+  "core_id": "0x4D442020",
+  "clocks_hz": {
+    "CORE_NTSC": 107386000,
+    "CORE_PAL": 106406000,
+    "AUDIO_SAMPLE": 48000
+  },
+  "load_kinds": {
+    "GENESIS_CART": "0x30",
+    "GENESIS_SAVE": "0x31",
+    "GENESIS_CONFIG": "0x32"
+  },
+  "sizes": {
+    "GENESIS_CART_MIN": 512,
+    "GENESIS_CART_MAX": 8388608,
+    "GENESIS_SAVE": 65536,
+    "GENESIS_CONFIG": 16
+  },
+  "input_namespaces": {
+    "GENESIS_GAMEPAD": "0x30"
+  },
+  "regions": {
+    "AUTO": 0,
+    "US": 1,
+    "EU": 2,
+    "JP": 3
+  },
+  "config": {
+    "MAGIC": "0x3130444D",
+    "REGION_OFFSET": 4,
+    "SIX_BUTTON_OFFSET": 5,
+    "FM_CHIP_OFFSET": 6,
+    "LOWPASS_OFFSET": 7,
+    "RESERVED_OFFSET": 8,
+    "SIX_BUTTON_DEFAULT": 3,
+    "FM_CHIP_DEFAULT": 0,
+    "LOWPASS_DEFAULT": 1
+  },
+  "buttons": {
+    "RIGHT": 0,
+    "LEFT": 1,
+    "DOWN": 2,
+    "UP": 3,
+    "A": 4,
+    "B": 5,
+    "C": 6,
+    "START": 7,
+    "MODE": 8,
+    "X": 9,
+    "Y": 10,
+    "Z": 11
+  }
+}

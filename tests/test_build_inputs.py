@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class BuildInputTests(unittest.TestCase):
     def test_hdl_manifest_is_unique_and_complete(self):
         entries = []
-        sections = {"common": [], "c64": [], "gbc": [], "vectrex": []}
+        sections = {"common": [], "c64": [], "gbc": [], "vectrex": [], "genesis": []}
         languages = {}
         active_section = "common"
         manifest = ROOT / "hdl" / "hdl_sources.txt"
@@ -124,6 +124,15 @@ class BuildInputTests(unittest.TestCase):
                 self.assertIn(entry, sections["c64"])
             if entry.startswith(("core/gameboy/", "../third_party/gameboy/")):
                 self.assertIn(entry, sections["gbc"])
+            if entry.startswith(("core/genesis/", "../third_party/genesis/")):
+                self.assertIn(entry, sections["genesis"])
+        for entry in ("core/genesis/multitini_genesis_adapter.sv",
+                      "core/genesis/multitini_genesis_machine.sv",
+                      "board/multitini_genesis_video_bridge.sv",
+                      "../third_party/genesis/upstream/rtl/nuked-md/68k_ucode.txt",
+                      "../third_party/genesis/upstream/rtl/nuked-md/68k_ncode.txt"):
+            self.assertIn(entry, sections["genesis"])
+        self.assertNotIn("../third_party/genesis/upstream/rtl/cartridge.sv", joined)
         self.assertIn("board/multitini_gameboy_psram_path.sv",
                       sections["common"])
         self.assertFalse(set(sections["common"]) & set(sections["c64"]))
@@ -350,7 +359,11 @@ class BuildInputTests(unittest.TestCase):
             'set machine "SUPERVISOR"',
             "set active_machine 2",
             "MULTITINI_C64_VIDEO_STANDARD must be PAL or NTSC",
-            "MULTITINI_MACHINE must be SUPERVISOR, C64, GBC, or VECTREX",
+            "MULTITINI_MACHINE must be SUPERVISOR, C64, GBC, VECTREX, or GENESIS",
+            "MULTITINI_GENESIS_PAL must be 0 or 1",
+            "GENESIS_PAL_MODE=1'b${genesis_pal_mode}",
+            "CONFIG.PCW_USE_S_AXI_HP2 {1}",
+            "S_AXI_HP0_0:S_AXI_HP1_0:S_AXI_HP2_0",
             "MULTITINI_ENABLE_GBC_PSRAM",
             "ACTIVE_MACHINE",
             "proc add_manifest_sources {repo_root machine}",

@@ -19,7 +19,9 @@ typedef enum {
     MT_CONTENT_GBC_CART,
     MT_CONTENT_VECTREX_CART,
     MT_CONTENT_VECTREX_BASIC,
-    MT_CONTENT_VECTREX_OVERLAY
+    MT_CONTENT_VECTREX_OVERLAY,
+    MT_CONTENT_GENESIS_CART,
+    MT_CONTENT_GENESIS_SMD
 } mt_content_type_t;
 
 typedef enum {
@@ -53,7 +55,7 @@ typedef struct {
 } mt_content_info_t;
 
 mt_content_type_t mt_content_classify(const char *path);
-/* .bin remains ambiguous globally; only a Vectrex browser treats it as cart. */
+/* .bin remains ambiguous globally; machine browsers resolve its meaning. */
 mt_content_type_t mt_content_classify_for_core(uint32_t core_id, const char *path);
 bool mt_content_supported_first_release(mt_content_type_t type);
 bool mt_content_may_write_first_release(mt_content_type_t type);

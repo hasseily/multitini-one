@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "source": {
+    "name": "MiSTer Mega Drive (Nuked-MD)",
+    "url": "https://github.com/MiSTer-devel/MegaDrive_MiSTer.git",
+    "commit": "083e1b1f4db8ffb32d6e8f83cf822fedc6184a61"
+  },
+  "destination": "third_party/genesis/upstream",
+  "resolved_groups": [
+    {
+      "license": "GPL-2.0-or-later",
+      "basis": "File-local notices for chip entry points and helpers; enclosed Nuked-MD LICENSE and chip notices cover unmarked subsidiary chip models, microcode tables, and associated documentation.",
+      "paths": [
+        "README.md",
+        "rtl/cartridge.sv",
+        "rtl/nuked-md/68k.v",
+        "rtl/nuked-md/68k_ncode.txt",
+        "rtl/nuked-md/68k_ucode.txt",
+        "rtl/nuked-md/Progress.md",
+        "rtl/nuked-md/README.md",
+        "rtl/nuked-md/fc1004.v",
+        "rtl/nuked-md/md_board.v",
+        "rtl/nuked-md/tmss.v",
+        "rtl/nuked-md/vram.v",
+        "rtl/nuked-md/ym3438.v",
+        "rtl/nuked-md/ym3438_ch.v",
+        "rtl/nuked-md/ym3438_detune.v",
+        "rtl/nuked-md/ym3438_eg.v",
+        "rtl/nuked-md/ym3438_fsm.v",
+        "rtl/nuked-md/ym3438_io.v",
+        "rtl/nuked-md/ym3438_lfo.v",
+        "rtl/nuked-md/ym3438_op.v",
+        "rtl/nuked-md/ym3438_pg.v",
+        "rtl/nuked-md/ym3438_prescaler.v",
+        "rtl/nuked-md/ym3438_regs.v",
+        "rtl/nuked-md/ym6045.v",
+        "rtl/nuked-md/ym6046.v",
+        "rtl/nuked-md/ym7101.v",
+        "rtl/nuked-md/ym_lib.v",
+        "rtl/nuked-md/z80.v",
+        "rtl/pad_io.sv",
+        "sys/iir_filter.v"
+      ]
+    },
+    {
+      "license": "GPL-3.0-or-later",
+      "basis": "Explicit file-local GPL version 3 or later grant.",
+      "paths": [
+        "rtl/audio_cond.sv",
+        "rtl/video_cond.sv"
+      ]
+    },
+    {
+      "license": "MIT",
+      "basis": "Complete file-local MIT grant retained unmodified.",
+      "paths": [
+        "rtl/audio_iir_filter.v",
+        "rtl/genesis_lpf.v"
+      ]
+    },
+    {
+      "license": "License-text",
+      "basis": "Exact enclosed GNU General Public License version 2 text; distribution notice retained.",
+      "paths": [
+        "rtl/nuked-md/LICENSE"
+      ]
+    }
+  ],
+  "unresolved": [],
+  "excluded_globs": [
+    "releases/**",
+    "rtl/VM2413/**",
+    "rtl/SVP/**",
+    "rtl/EEPROM*",
+    "rtl/mboot.mif",
+    "rtl/pll*",
+    "rtl/sdram.sv",
+    "*.rbf",
+    "**/*.rbf",
+    "**/*.bin",
+    "**/*.mif",
+    "**/*.png",
+    "**/*.jpg",
+    "**/*.jpeg"
+  ],
+  "notes": [
+    "TMSS boot ROM data is excluded. The chip model remains imported, with TMSS disabled in the adapter.",
+    "68k_ucode.txt and 68k_ncode.txt are CPU implementation microcode tables under the Nuked-MD source license, not console boot or cartridge content.",
+    "VM2413 has a NonCommercial grant and is excluded; undocumented SVP and EEPROM dependencies are outside this licensed subset.",
+    "cartridge.sv is an exact licensed mapper behavior reference; the Multitini port uses its own board-independent cartridge adapter."
+  ]
+}

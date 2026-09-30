@@ -4,6 +4,7 @@
 #include "multitini_c64_interface.h"
 #include "multitini_gameboy_interface.h"
 #include "multitini_vectrex_interface.h"
+#include "multitini_genesis_interface.h"
 
 #include <string.h>
 
@@ -169,6 +170,44 @@ static void build_vectrex(mt_core_frontend_t *frontend,
         MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
 }
 
+static void build_genesis(mt_core_frontend_t *frontend,
+                          const mt_core_frontend_state_t *state,
+                          mt_menu_view_t *view)
+{
+    cartridge_item(frontend, state, view, "Load an MD, GEN, BIN or SMD cartridge image.");
+    frontend->media_items[view->media_item_count++] = item(
+        "Cartridge save", state->save_faulted ? "Write failed" :
+            (state->save_dirty ? "Changes pending" :
+             (state->save_active ? "Saved to SD" : "No cartridge")),
+        "SRAM and EEPROM changes save automatically; eject waits for a safe flush.",
+        MT_MENU_ACTION_NONE, 0U, false,
+        state->save_faulted ? MT_UI_COLOR_RED :
+            (state->save_dirty ? MT_UI_COLOR_WARNING :
+             (state->save_active ? MT_UI_COLOR_SUCCESS : MT_UI_COLOR_MUTED)));
+    view->save_dirty = state->save_dirty;
+    view->save_faulted = state->save_faulted;
+    frontend->input_items[view->input_item_count++] = item(
+        "Directions", "Arrow keys / gamepad", "Two gamepads; keyboard controls player 1.",
+        MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
+    frontend->input_items[view->input_item_count++] = item(
+        "A / B / C", "Z / X / C", "Gamepad A/B/X map to Genesis A/B/C.",
+        MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
+    frontend->input_items[view->input_item_count++] = item(
+        "X / Y / Z", "A / S / D", "Gamepad Y/LB/RB map to Genesis X/Y/Z.",
+        MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
+    frontend->input_items[view->input_item_count++] = item(
+        "Start / Mode", "Enter / Right Shift", "Gamepad Menu/View map to Start/Mode.",
+        MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
+    for (unsigned player = 0U; player < 2U; ++player) {
+        const bool three = (state->genesis_three_button_mask & (1U << player)) != 0U;
+        frontend->core_options[view->core_option_count++] = item(
+            player == 0U ? "Controller 1" : "Controller 2",
+            three ? "3 buttons" : "6 buttons",
+            "Change controller protocol. Reloads the cartridge after saving its RAM.",
+            MT_MENU_ACTION_TOGGLE_CORE_OPTION, player, true, MT_UI_COLOR_BLUE);
+    }
+}
+
 static const core_profile_t profiles[] = {
     {
         MT_C64_CORE_ID, "Commodore 64",
@@ -191,6 +230,13 @@ static const core_profile_t profiles[] = {
         {0U, 0U, 0U, CONTENT_MASK(MT_CONTENT_VECTREX_CART),
          CONTENT_MASK(MT_CONTENT_VECTREX_BASIC), CONTENT_MASK(MT_CONTENT_VECTREX_OVERLAY)},
         false, build_vectrex
+    },
+    {
+        MT_GENESIS_CORE_ID, "Genesis / Mega Drive",
+        "Two gamepads with six action buttons or the keyboard controls below.",
+        {0U, 0U, 0U, CONTENT_MASK(MT_CONTENT_GENESIS_CART) |
+                         CONTENT_MASK(MT_CONTENT_GENESIS_SMD), 0U},
+        false, build_genesis
     }
 };
 

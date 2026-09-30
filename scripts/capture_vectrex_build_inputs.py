@@ -36,6 +36,15 @@ def inputs(machine: str) -> list[Path]:
     paths.update(path for base in ("licenses", "provenance", "spec")
                  for path in (ROOT / base).rglob("*") if path.is_file())
     paths.update((ROOT / "LICENSE", ROOT / "MULTITINI_ONE_PLAN.md"))
+    if machine == "GENESIS":
+        # Preserve enclosed license notices, exact originals for every helper
+        # port, and the scripts that reproduce those ports in public bundles.
+        paths.update(path for path in (ROOT / "third_party/genesis").rglob("*")
+                     if path.is_file())
+        paths.update(ROOT / "scripts" / name for name in (
+            "generate_genesis_interface.py", "port_genesis_core.py", "audit_genesis_import.py",
+            "test_genesis_vdp_pair.py"))
+        paths.add(ROOT / "hdl/sim/tb_genesis_vdp_pair.sv")
     section = "common"
     for line in (ROOT / "hdl/hdl_sources.txt").read_text().splitlines():
         line = line.strip()
@@ -67,9 +76,10 @@ def archive_inputs(output: Path, record: dict) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--machine", choices=("C64", "GBC", "VECTREX", "SUPERVISOR"))
+    parser.add_argument("--machine", choices=("C64", "GBC", "VECTREX", "GENESIS", "SUPERVISOR"))
     parser.add_argument("--c64-video-standard", choices=("PAL", "NTSC"), default="PAL")
     parser.add_argument("--gbc-psram", action="store_true")
+    parser.add_argument("--genesis-pal", action="store_true")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--verify", action="store_true")
     args = parser.parse_args()
@@ -95,12 +105,15 @@ def main() -> int:
         parser.error("--machine is required when capturing inputs")
     if args.gbc_psram and args.machine != "GBC":
         parser.error("--gbc-psram requires --machine GBC")
+    if args.genesis_pal and args.machine != "GENESIS":
+        parser.error("--genesis-pal requires --machine GENESIS")
     record = {
         "schema": 1,
         "machine": args.machine,
         "configuration": {
             "c64_video_standard": args.c64_video_standard if args.machine == "C64" else None,
             "gbc_psram": args.gbc_psram,
+            "genesis_pal": args.genesis_pal,
         },
         "captured_utc": datetime.now(timezone.utc).isoformat(),
         "git_head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),

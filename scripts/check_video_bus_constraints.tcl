@@ -58,7 +58,11 @@ namespace eval multitini_cdc_gate {
     }
     # A supervisor image may trim the inactive capture FIFO. Machine images
     # must retain both directions; a partially removed FIFO is never accepted.
-    if {$fifo_groups != 2 && !($fifo_groups == 0 && [string match {*ACTIVE_MACHINE=2*} $generics])} {
+    # Genesis additionally captures its native source frame across the machine
+    # to control-clock boundary before the common effects pipeline.
+    set expected_fifo_groups [expr {[string match {*ACTIVE_MACHINE=4*} $generics] ? 4 : 2}]
+    if {$fifo_groups != $expected_fifo_groups &&
+        !($fifo_groups == 0 && [string match {*ACTIVE_MACHINE=2*} $generics])} {
         error "Capture FIFO Gray crossing census changed: $fifo_groups groups"
     }
     if {![info exists ::multitini_cdc_first] || [llength $::multitini_cdc_first] == 0} {

@@ -98,9 +98,11 @@ def main():
             common.append(path);source_list([path.relative_to(ROOT).as_posix()])
     common += source_list(["hdl/board/multitini_c64_video_bridge.sv",
         "hdl/board/multitini_gameboy_video_bridge.sv", "hdl/board/multitini_vectrex_video_bridge.sv",
+        "hdl/core/genesis/multitini_genesis_video_normalizer.sv",
+        "hdl/board/multitini_genesis_video_bridge.sv",
         "hdl/core/vectrex/multitini_vectrex_compositor.sv", "hdl/sim/xilinx_primitives.sv",
         "hdl/sim/video_fifo_model.sv"])
-    for machine in range(4):
+    for machine in range(5):
         run([tool("iverilog"),"-g2012","-i","-s","multitini_one_top","-P",
              f"multitini_one_top.ACTIVE_MACHINE={machine}","-o",build/f"shell-{machine}.vvp"]+common,
              f"shell-{machine}-elaborate")
@@ -108,7 +110,7 @@ def main():
     if tracked!=after:raise RuntimeError("Display validation inputs changed during the run")
     (build/"validation.json").write_text(json.dumps({"passed":True,"logs":logs,
         "source_sha256":tracked,"source_sha256_after":after},indent=2)+"\n")
-    print("PASS clock faults and all four common shell configurations")
+    print("PASS clock faults and all five common shell configurations")
     return 0
 if __name__=="__main__":
     raise SystemExit(main())

@@ -259,6 +259,7 @@ class DocumentBrowserRuntimeTests(unittest.TestCase):
             "-Wshadow", "-Wstrict-prototypes", "-I", str(ROOT / "firmware/include"),
             str(harness), str(ROOT / "firmware/common/core_frontend.c"),
             str(ROOT / "firmware/common/content_type.c"),
+            str(ROOT / "firmware/common/genesis_content.c"),
             str(ROOT / "firmware/common/media_browser.c"),
             str(ROOT / "firmware/common/core_link.c"),
             str(ROOT / "firmware/common/vectrex_overlay.c"), "-o", str(cls.executable),

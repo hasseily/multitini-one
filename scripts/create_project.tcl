@@ -24,6 +24,16 @@ if {[info exists ::env(MULTITINI_MACHINE)]} {
 }
 set c64_video_standard "PAL"
 set c64_ntsc_mode 0
+set genesis_pal_mode 0
+if {[info exists ::env(MULTITINI_GENESIS_PAL)]} {
+    set genesis_pal_mode [string trim $::env(MULTITINI_GENESIS_PAL)]
+    if {$genesis_pal_mode ni {0 1}} {
+        error "MULTITINI_GENESIS_PAL must be 0 or 1"
+    }
+    if {$machine ne "GENESIS"} {
+        error "MULTITINI_GENESIS_PAL is valid only for GENESIS builds"
+    }
+}
 set active_machine 2
 switch -- $machine {
     SUPERVISOR {
@@ -63,8 +73,15 @@ switch -- $machine {
         set c64_video_standard "N/A"
         set active_machine 3
     }
+    GENESIS {
+        # Nuked-MD MCLK2 clocks the chip model at twice its master clock.
+        # Cartridge traffic crosses to the independent 133 MHz PSRAM service.
+        set c64_clock_mhz [expr {$genesis_pal_mode ? 106.406000 : 107.386000}]
+        set c64_video_standard "N/A"
+        set active_machine 4
+    }
     default {
-        error "MULTITINI_MACHINE must be SUPERVISOR, C64, GBC, or VECTREX"
+        error "MULTITINI_MACHINE must be SUPERVISOR, C64, GBC, VECTREX, or GENESIS"
     }
 }
 
@@ -101,7 +118,7 @@ proc add_manifest_sources {repo_root machine} {
         }
         if {[regexp {^\[([A-Za-z0-9_]+)\]$} $relative -> section]} {
             set active_section [string toupper $section]
-            if {$active_section ni {COMMON C64 GBC VECTREX}} {
+            if {$active_section ni {COMMON C64 GBC VECTREX GENESIS}} {
                 error "Unknown source-manifest section: $relative"
             }
             continue
@@ -127,7 +144,8 @@ proc add_manifest_sources {repo_root machine} {
             add_files -fileset constrs_1 -norecurse $source
             if {[file tail $source] in {
                     "multitini_timing.xdc" "multitini_psram_timing.xdc"
-                    "multitini_vectrex_psram_timing.xdc"}} {
+                    "multitini_vectrex_psram_timing.xdc"
+                    "multitini_genesis_timing.xdc"}} {
                 set_property USED_IN_SYNTHESIS false [get_files $source]
                 set_property PROCESSING_ORDER LATE [get_files $source]
             }
@@ -137,6 +155,10 @@ proc add_manifest_sources {repo_root machine} {
                 set_property file_type SystemVerilog [get_files $source]
             } elseif {$extension eq ".vhd" || $extension eq ".vhdl"} {
                 set_property file_type {VHDL 2008} [get_files $source]
+            } elseif {$extension eq ".txt"} {
+                # Nuked-MD's licensed CPU implementation tables retain their
+                # upstream names for $readmemb and travel with every build.
+                set_property file_type {Memory Initialization Files} [get_files $source]
             } elseif {$extension ne ".v" && $extension ne ".mem" &&
                       $extension ne ".hex"} {
                 error "Unsupported source-manifest extension: $source"
@@ -164,6 +186,7 @@ proc configure_processing_system {ps} {
         CONFIG.PCW_USE_M_AXI_GP0 {1} \
         CONFIG.PCW_USE_S_AXI_HP0 {1} \
         CONFIG.PCW_USE_S_AXI_HP1 {1} \
+        CONFIG.PCW_USE_S_AXI_HP2 {1} \
         CONFIG.PCW_USE_FABRIC_INTERRUPT {1} \
         CONFIG.PCW_IRQ_F2P_INTR {1} \
         CONFIG.PCW_IRQ_F2P_MODE {DIRECT}] $ps
@@ -321,6 +344,17 @@ set_property -dict [list CONFIG.ADDR_WIDTH {32} CONFIG.DATA_WIDTH {64} \
     CONFIG.NUM_WRITE_OUTSTANDING {1} CONFIG.READ_WRITE_MODE {READ_WRITE}] $hp1
 connect_bd_intf_net $hp1 [get_bd_intf_pins $ps/S_AXI_HP1]
 
+# Genesis captures its source frames directly into a separate DDR pool. This
+# avoids spending machine BRAM on complete triple-buffered raster frames.
+# Keep the port present in every image so the generated wrapper stays stable.
+set hp2 [create_bd_intf_port -mode Slave \
+    -vlnv xilinx.com:interface:aximm_rtl:1.0 S_AXI_HP2_0]
+set_property -dict [list CONFIG.ADDR_WIDTH {32} CONFIG.DATA_WIDTH {64} \
+    CONFIG.ID_WIDTH {6} CONFIG.HAS_REGION {0} CONFIG.PROTOCOL {AXI3} \
+    CONFIG.MAX_BURST_LENGTH {16} CONFIG.NUM_READ_OUTSTANDING {1} \
+    CONFIG.NUM_WRITE_OUTSTANDING {1} CONFIG.READ_WRITE_MODE {READ_WRITE}] $hp2
+connect_bd_intf_net $hp2 [get_bd_intf_pins $ps/S_AXI_HP2]
+
 
 set control_clk [create_bd_port -dir O -type clk control_clk]
 set idelay_ref_clk [create_bd_port -dir O -type clk idelay_ref_clk]
@@ -335,7 +369,7 @@ set_property CONFIG.POLARITY ACTIVE_LOW $control_aresetn
 set_property CONFIG.POLARITY ACTIVE_LOW $idelay_aresetn
 set_property CONFIG.POLARITY ACTIVE_LOW $video_aresetn
 set_property CONFIG.POLARITY ACTIVE_LOW $c64_aresetn
-set_property -dict [list CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0_0:S_AXI_HP0_0:S_AXI_HP1_0} \
+set_property -dict [list CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0_0:S_AXI_HP0_0:S_AXI_HP1_0:S_AXI_HP2_0} \
     CONFIG.ASSOCIATED_RESET {control_aresetn}] $control_clk
 set_property CONFIG.ASSOCIATED_RESET {video_aresetn} $video_clk
 set_property CONFIG.ASSOCIATED_RESET {c64_aresetn} $c64_clk
@@ -435,7 +469,7 @@ connect_bd_net [get_bd_pins $ps/FCLK_CLK0] \
     [get_bd_pins $idelay_wiz/clk_in1] [get_bd_pins $video_wiz/s_axi_aclk] $control_clk \
     [get_bd_pins $control_reset/slowest_sync_clk] \
     [get_bd_pins $ps/M_AXI_GP0_ACLK] [get_bd_pins $ps/S_AXI_HP0_ACLK] \
-    [get_bd_pins $ps/S_AXI_HP1_ACLK]
+    [get_bd_pins $ps/S_AXI_HP1_ACLK] [get_bd_pins $ps/S_AXI_HP2_ACLK]
 connect_bd_net [get_bd_pins $ps/FCLK_CLK2] \
     [get_bd_pins $video_wiz/clk_in1] [get_bd_pins $c64_wiz/clk_in1]
 connect_bd_net [get_bd_pins $ps/FCLK_RESET0_N] \
@@ -484,6 +518,9 @@ assign_bd_address -offset 0x00000000 -range 0x40000000 \
 assign_bd_address -offset 0x00000000 -range 0x40000000 \
     -target_address_space [get_bd_addr_spaces S_AXI_HP1_0] \
     [get_bd_addr_segs $ps/S_AXI_HP1/HP1_DDR_LOWOCM] -force
+assign_bd_address -offset 0x00000000 -range 0x40000000 \
+    -target_address_space [get_bd_addr_spaces S_AXI_HP2_0] \
+    [get_bd_addr_segs $ps/S_AXI_HP2/HP2_DDR_LOWOCM] -force
 
 regenerate_bd_layout
 validate_bd_design
@@ -506,7 +543,7 @@ if {[info exists ::env(MULTITINI_BUILD_ID)]} {
     }
 }
 set_property generic \
-    "SHELL_BUILD_ID=32'h${git_id} C64_NTSC_MODE=1'b${c64_ntsc_mode} ACTIVE_MACHINE=${active_machine} ENABLE_GBC_PSRAM=1'b${enable_gbc_psram}" \
+    "SHELL_BUILD_ID=32'h${git_id} C64_NTSC_MODE=1'b${c64_ntsc_mode} ACTIVE_MACHINE=${active_machine} ENABLE_GBC_PSRAM=1'b${enable_gbc_psram} GENESIS_PAL_MODE=1'b${genesis_pal_mode}" \
     [get_filesets sources_1]
 update_compile_order -fileset sources_1
 source [file join $script_dir configure_vivado_run_profile.tcl]

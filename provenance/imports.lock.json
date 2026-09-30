@@ -547,6 +547,210 @@
       "source": "MiSTer Game Boy",
       "source_path": "rtl/video.v",
       "sha256": "95c16fde7d5ea1105891d7663105d718e5d515319b185273a344e08d5a630528"
+    },
+    {
+      "path": "third_party/genesis/upstream/README.md",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "README.md",
+      "sha256": "1b13e97f60c8b65fc4833f62cd1a2bba6045ca53c9457d6adca54467fe95fd2d"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/audio_cond.sv",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/audio_cond.sv",
+      "sha256": "3299d31c40af4d65c8b82728482c93498fa22292d8d13461372f75d2e0bf5eb9"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/audio_iir_filter.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/audio_iir_filter.v",
+      "sha256": "29ba71a0f7ec9e77087b7f3eb110b791ca88814f9cda7f8f59ba4bbe84714083"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/cartridge.sv",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/cartridge.sv",
+      "sha256": "ae0807baa66ce024159b2fdaf77a22c06a4016f4f78965eb42be78c68d5b748b"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/genesis_lpf.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/genesis_lpf.v",
+      "sha256": "958d16499e7fee982d3b6a286f6cf0bb590e3385159885f743a0092477ea1dd8"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/68k.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/68k.v",
+      "sha256": "8872701655b2f38fbf22b54a205ba20238d40a8f71191edaa1b734aaed77ff32"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/68k_ncode.txt",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/68k_ncode.txt",
+      "sha256": "3e7c516313c2338e47ffc7a92009669058739cbf61155f9c1f508ea9c6c1664e"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/68k_ucode.txt",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/68k_ucode.txt",
+      "sha256": "a3bb249cfaca19716f38c651f34f59c38d2884210f6697975f13601a044b650a"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/LICENSE",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/LICENSE",
+      "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/Progress.md",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/Progress.md",
+      "sha256": "31694f5c76f30ce92b8ef07b97d56282eb6af016d8b7901efc863bfda9bb8980"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/README.md",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/README.md",
+      "sha256": "e8bd99351f8b90e0888c9dad4b4dbc89f4be881813762e4224b78f17eba2957c"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/fc1004.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/fc1004.v",
+      "sha256": "876a616ec4661ac8d08b9df7ecf026ec31b48608a8615b06455471893fda7bb7"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/md_board.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/md_board.v",
+      "sha256": "8f06cccd80ad4f98bb9cc86f1ed0dd868b6f35f11aba03bf5c13d3c4192ee1cf"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/tmss.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/tmss.v",
+      "sha256": "226d493e8c5471eb7b24ef5648192a78c8e7a45db583eafd4867d8a6d34e147a"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/vram.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/vram.v",
+      "sha256": "b87cadaa117850a7d507aac7e4a24fc24b6c79b21bc829741afba041d2bdf088"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/ym3438.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/ym3438.v",
+      "sha256": "0a5048f2590b024d049c31ae945a94f8c23d081552f4ff11d2c1c8be320fc9c1"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/ym3438_ch.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/ym3438_ch.v",
+      "sha256": "b81148a4c491c0ad496e2a7c161c3d6223406d210475459971bf6b820da71819"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/ym3438_detune.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/ym3438_detune.v",
+      "sha256": "67d3dc1ecb1924f32f3ff881a0a73f448beb0c6c524c3fdc3eb036704bc7b90e"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/ym3438_eg.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/ym3438_eg.v",
+      "sha256": "342c72b2288538c926eb64730cf6e20c883f765b68bcb1d32987427782f3285f"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/ym3438_fsm.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/ym3438_fsm.v",
+      "sha256": "a3eac0781113c8db7a4854c894364d67f25d39e45f9c3dd0478e770b2fbe055b"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/ym3438_io.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/ym3438_io.v",
+      "sha256": "7f252563c8ad40fe053eac4efe7daffeae14afc6562b6b9d63f5314e385ff242"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/ym3438_lfo.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/ym3438_lfo.v",
+      "sha256": "30d6e47e802d46ec2fd39d0fdde5b964dbc3451fff45fd81af3f980726551dd1"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/ym3438_op.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/ym3438_op.v",
+      "sha256": "bf312d4657e172154e13615cf23359d3cdafc7da497745bf4738c9d0c50a15ce"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/ym3438_pg.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/ym3438_pg.v",
+      "sha256": "aebdb995b737012f0b531e7b506140cbe96e5d86b54658878d34ff049818bdf9"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/ym3438_prescaler.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/ym3438_prescaler.v",
+      "sha256": "dad8b283dcd70dbd091825003ff83a97474171db04373349323f2f209eaf9df3"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/ym3438_regs.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/ym3438_regs.v",
+      "sha256": "3c2bebfe1fcefa5e10c0eebab08391f9ecba77724d864c591e826987cb2a9293"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/ym6045.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/ym6045.v",
+      "sha256": "2eac9dd9c012e9b8b4a16eb6c5eeeeb7c1217a7d00a97ff014756b556f5b3621"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/ym6046.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/ym6046.v",
+      "sha256": "9bf8888a28bf9e635b6703e7c33762288af3ba627041d104668662b868ede506"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/ym7101.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/ym7101.v",
+      "sha256": "d50cc1b4dc704da0fe39f27af5f744679b031fb6ddf1f32e74249f94a0f62130"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/ym_lib.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/ym_lib.v",
+      "sha256": "bc5a2f6b55aa98cb3a168e2cb8925b1b7e4b3edc2c205f1f06ac40cb2bf95d2e"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/nuked-md/z80.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/nuked-md/z80.v",
+      "sha256": "dfef8d922b4dbb70d94397c3f642429dc4bc4ea801f9c2aec43f2f85269324b2"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/pad_io.sv",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/pad_io.sv",
+      "sha256": "70b77f5a187b1e9054b52544b037b657f339d43030e05172d3c1cfa4397cd096"
+    },
+    {
+      "path": "third_party/genesis/upstream/rtl/video_cond.sv",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "rtl/video_cond.sv",
+      "sha256": "dca35d983ca502ae09927a08783d4c198ff4d85ee3a0fecfad58232f09f2f103"
+    },
+    {
+      "path": "third_party/genesis/upstream/sys/iir_filter.v",
+      "source": "MiSTer Mega Drive (Nuked-MD)",
+      "source_path": "sys/iir_filter.v",
+      "sha256": "570a8095c15af84a60015b5eab105cee6e2d7edde77e20f0ce40c075ab2db8b7"
     }
   ]
 }

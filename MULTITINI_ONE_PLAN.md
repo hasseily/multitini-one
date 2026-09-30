@@ -11,6 +11,10 @@ new branch. Six nominal 60 Hz output modes preserve complete centered machine
 images. 1080p remains the reset default; smaller modes use fixed fit scales.
 See [the parity record](docs/appletini-parity.md) for scope and test limits.
 
+Scope update, 2026-09-30: implement the modern Nuked-MD Genesis / Mega Drive
+core on branch `genesis`, after Appletini parity. See
+[the Genesis integration](docs/GENESIS_PLAN.md) for architecture and test gates.
+
 ## 1. Goal
 
 Use the Appletini ONE card as a stand-alone FPGA computer, outside an Apple II.

@@ -29,6 +29,7 @@ PREAMBLE = r'''
 #include "multitini_c64_hid_input.h"
 #include "multitini_c64_interface.h"
 #include "multitini_gameboy_interface.h"
+#include "multitini_genesis_interface.h"
 #include "multitini_vectrex_interface.h"
 #include "vectrex_content_service.h"
 #include <assert.h>
@@ -252,6 +253,10 @@ static void all_actions(void) {
         action.file_index = 0U;
         supervisor.active.package.core_id = MT_GBC_CORE_ID;
         assert(!menu_action_needs_core_progress(action));
+        supervisor.active.package.core_id = MT_GENESIS_CORE_ID;
+        assert(menu_action_needs_core_progress(action));
+        action.file_index = 1U;
+        assert(menu_action_needs_core_progress(action));
     }
 }
 static void result_and_browser_retention(void) {
@@ -514,6 +519,7 @@ class MenuRuntimeTests(unittest.TestCase):
             str(ROOT / "firmware/common/display.c"), str(ROOT / "firmware/common/menu.c"), str(ROOT / "firmware/common/gamepad.c"), str(ROOT / "firmware/common/ui.c"),
             str(ROOT / "firmware/common/text_reader.c"), str(ROOT / "firmware/common/clock.c"),
             str(ROOT / "firmware/common/content_type.c"),
+            str(ROOT / "firmware/common/genesis_content.c"),
             str(ROOT / "firmware/common/vectrex_overlay.c"),
             str(ROOT / "firmware/common/core_link.c"),
             "-o", str(cls.executable),

@@ -25,10 +25,14 @@ module multitini_display_geometry #(
     always @* begin
         scale_den=1;
         if(MACHINE==3)begin scale_num=mode==0 ? 3 : 1;scale_den=mode==0 ? 2 : 1;end
+        else if(MACHINE==4)scale_num=(mode==0 || mode==5) ? 4 : 3;
         else if(MACHINE==1)scale_num=(mode==1 || mode==2 || mode==4) ? 5 : 6;
         else scale_num=mode==0 ? 4 : (mode==1 || mode==2 || mode==4) ? 2 : 3;
         if(MACHINE==3)begin view_width=mode==0 ? WIDTH*3/2 : WIDTH;view_height=mode==0 ? HEIGHT*3/2 : HEIGHT;end
-        else if(MACHINE==1)begin
+        else if(MACHINE==4)begin
+            view_width=(mode==0 || mode==5) ? WIDTH*4 : WIDTH*3;
+            view_height=(mode==0 || mode==5) ? HEIGHT*4 : HEIGHT*3;
+        end else if(MACHINE==1)begin
             view_width=(mode==1 || mode==2 || mode==4) ? WIDTH*5 : WIDTH*6;
             view_height=(mode==1 || mode==2 || mode==4) ? HEIGHT*5 : HEIGHT*6;
         end else begin

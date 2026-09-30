@@ -17,7 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RESTRICTED_SUFFIXES = {
     ".2mg", ".bin", ".bit", ".crt", ".d64", ".d81", ".elf", ".g64",
-    ".hex", ".img", ".mem", ".mif", ".po", ".prg", ".rbf", ".reu",
+    ".gen", ".hex", ".img", ".mem", ".mif", ".po", ".prg", ".rbf", ".reu", ".smd",
     ".rom", ".tap", ".t64", ".woz",
 }
 SOURCE_SUFFIXES = {".c", ".cpp", ".h", ".hpp", ".py", ".sv", ".tcl", ".v", ".vhd", ".vhdl", ".xdc"}
@@ -210,7 +210,8 @@ def main() -> int:
             path for path in files
             if path.startswith("third_party/appletini/") or
             path.startswith("third_party/c64/upstream/") or
-            path.startswith("third_party/gameboy/upstream/")
+            path.startswith("third_party/gameboy/upstream/") or
+            path.startswith("third_party/genesis/upstream/")
         }
         if tracked_imports != import_paths:
             for path in sorted(tracked_imports - import_paths):

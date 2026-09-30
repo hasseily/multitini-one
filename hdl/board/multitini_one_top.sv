@@ -4,7 +4,8 @@
 module multitini_one_top #(
     parameter logic [31:0] SHELL_BUILD_ID = 32'h00000000,
     parameter bit C64_NTSC_MODE = 1'b0,
-    // 0 = C64 package, 1 = GBC package, 2 = supervisor-only boot shell.
+    parameter bit GENESIS_PAL_MODE = 1'b0,
+    // 0 = C64, 1 = GBC, 2 = supervisor, 3 = Vectrex, 4 = Genesis.
     parameter integer ACTIVE_MACHINE = 2,
     parameter bit ENABLE_GBC_PSRAM = 1'b0
 ) (
@@ -172,6 +173,14 @@ module multitini_one_top #(
     wire hp1_rvalid,hp1_rready,hp1_rlast,hp1_wvalid,hp1_wready,hp1_wlast,hp1_bvalid,hp1_bready;
     wire [63:0] hp1_rdata,hp1_wdata;
     wire [7:0] hp1_wstrb;
+    wire [31:0] hp2_araddr,hp2_awaddr;
+    wire [3:0] hp2_arlen,hp2_awlen;
+    wire [2:0] hp2_arsize,hp2_awsize;
+    wire [1:0] hp2_arburst,hp2_awburst,hp2_rresp,hp2_bresp;
+    wire hp2_arvalid,hp2_arready,hp2_awvalid,hp2_awready;
+    wire hp2_rvalid,hp2_rready,hp2_rlast,hp2_wvalid,hp2_wready,hp2_wlast,hp2_bvalid,hp2_bready;
+    wire [63:0] hp2_rdata,hp2_wdata;
+    wire [7:0] hp2_wstrb;
     wire framebuffer_use;
     wire video_pixel_running;
     wire [15:0] framebuffer_rgb565;
@@ -376,6 +385,14 @@ module multitini_one_top #(
     logic        gbc_memory_rvalid;
     logic        gbc_memory_fault;
 
+    wire video_control_resetn;
+    wire video_clock_aresetn, pixel_clock_locked, pixel_clock_resetn;
+    wire [10:0] pixel_clock_awaddr;
+    wire [31:0] pixel_clock_wdata;
+    wire [1:0] pixel_clock_bresp;
+    wire pixel_clock_awvalid,pixel_clock_awready,pixel_clock_wvalid,pixel_clock_wready;
+    wire pixel_clock_bvalid,pixel_clock_bready;
+
     zynq_ps_bd_wrapper zynq_ps_i (
         .DDR_addr(DDR_Addr), .DDR_ba(DDR_BankAddr),
         .DDR_cas_n(DDR_CAS_n), .DDR_ck_n(DDR_Clk_n), .DDR_ck_p(DDR_Clk),
@@ -449,6 +466,37 @@ module multitini_one_top #(
         .S_AXI_HP1_0_arprot(3'd0),.S_AXI_HP1_0_awprot(3'd0),
         .S_AXI_HP1_0_arqos(4'd0),.S_AXI_HP1_0_awqos(4'd0),
         .S_AXI_HP1_0_rid(),.S_AXI_HP1_0_bid(),
+        .S_AXI_HP2_0_araddr(hp2_araddr),
+        .S_AXI_HP2_0_arlen(hp2_arlen),
+        .S_AXI_HP2_0_arsize(hp2_arsize),
+        .S_AXI_HP2_0_arburst(hp2_arburst),
+        .S_AXI_HP2_0_arvalid(hp2_arvalid),
+        .S_AXI_HP2_0_arready(hp2_arready),
+        .S_AXI_HP2_0_awaddr(hp2_awaddr),
+        .S_AXI_HP2_0_awlen(hp2_awlen),
+        .S_AXI_HP2_0_awsize(hp2_awsize),
+        .S_AXI_HP2_0_awburst(hp2_awburst),
+        .S_AXI_HP2_0_awvalid(hp2_awvalid),
+        .S_AXI_HP2_0_awready(hp2_awready),
+        .S_AXI_HP2_0_rdata(hp2_rdata),
+        .S_AXI_HP2_0_rresp(hp2_rresp),
+        .S_AXI_HP2_0_rlast(hp2_rlast),
+        .S_AXI_HP2_0_rvalid(hp2_rvalid),
+        .S_AXI_HP2_0_rready(hp2_rready),
+        .S_AXI_HP2_0_wdata(hp2_wdata),
+        .S_AXI_HP2_0_wstrb(hp2_wstrb),
+        .S_AXI_HP2_0_wlast(hp2_wlast),
+        .S_AXI_HP2_0_wvalid(hp2_wvalid),
+        .S_AXI_HP2_0_wready(hp2_wready),
+        .S_AXI_HP2_0_bresp(hp2_bresp),
+        .S_AXI_HP2_0_bvalid(hp2_bvalid),
+        .S_AXI_HP2_0_bready(hp2_bready),
+        .S_AXI_HP2_0_arid(6'd0),.S_AXI_HP2_0_awid(6'd0),.S_AXI_HP2_0_wid(6'd0),
+        .S_AXI_HP2_0_arcache(4'd0),.S_AXI_HP2_0_awcache(4'd0),
+        .S_AXI_HP2_0_arlock(2'd0),.S_AXI_HP2_0_awlock(2'd0),
+        .S_AXI_HP2_0_arprot(3'd0),.S_AXI_HP2_0_awprot(3'd0),
+        .S_AXI_HP2_0_arqos(4'd0),.S_AXI_HP2_0_awqos(4'd0),
+        .S_AXI_HP2_0_rid(),.S_AXI_HP2_0_bid(),
         .M_AXI_GP0_0_araddr(m_axi_araddr), .M_AXI_GP0_0_arburst(m_axi_arburst),
         .M_AXI_GP0_0_arcache(m_axi_arcache), .M_AXI_GP0_0_arid(m_axi_arid),
         .M_AXI_GP0_0_arlen(m_axi_arlen), .M_AXI_GP0_0_arlock(m_axi_arlock),
@@ -483,14 +531,9 @@ module multitini_one_top #(
         .IRQ(shell_irq)
     );
 
-    wire video_control_resetn;
-    wire video_clock_aresetn, pixel_clock_locked, pixel_clock_resetn;
-    wire [10:0] pixel_clock_awaddr;
-    wire [31:0] pixel_clock_wdata;
-    wire [1:0] pixel_clock_bresp;
-    wire pixel_clock_awvalid,pixel_clock_awready,pixel_clock_wvalid,pixel_clock_wready;
-    wire pixel_clock_bvalid,pixel_clock_bready;
     wire display_busy,display_error,display_pause,display_hold,display_quiescent,display_commit;
+    wire framebuffer_display_quiescent,genesis_source_quiescent;
+    assign display_quiescent=framebuffer_display_quiescent && genesis_source_quiescent;
     wire [3:0] display_active_mode;
     reg [3:0] display_requested_mode;
     reg display_request,display_bad_write;
@@ -557,8 +600,8 @@ module multitini_one_top #(
     multitini_display_geometry #(.MACHINE(ACTIVE_MACHINE)) display_filter_geometry(
         .mode(display_active_mode),.scale_num(display_filter_scale_num),.scale_den(display_filter_scale_den));
     multitini_display_geometry #(.MACHINE(ACTIVE_MACHINE),
-        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : C64_NTSC_MODE ? 404 : 382),
-        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : C64_NTSC_MODE ? 250 : 270)) display_geometry(
+        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : C64_NTSC_MODE ? 404 : 382),
+        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : C64_NTSC_MODE ? 250 : 270)) display_geometry(
         .mode(display_pixel_mode),.h_active(display_h_active),.h_front(display_h_front),.h_sync(display_h_sync),.h_total(display_h_total),
         .v_active(display_v_active),.v_front(display_v_front),.v_sync(display_v_sync),.v_total(display_v_total),
         .h_positive(display_h_positive),.v_positive(display_v_positive),
@@ -595,7 +638,8 @@ module multitini_one_top #(
     multitini_control_regs #(.SHELL_BUILD_ID(SHELL_BUILD_ID)) control_regs (
         .clk(control_clk), .resetn(control_aresetn),
         .core_id(c64_core_id),
-        .core_variant_index(ACTIVE_MACHINE == 0 && C64_NTSC_MODE ?
+        .core_variant_index((ACTIVE_MACHINE == 0 && C64_NTSC_MODE) ||
+                            (ACTIVE_MACHINE == 4 && GENESIS_PAL_MODE) ?
                             32'd1 : 32'd0),
         .core_ready(c64_ready_control),
         .load_submit_ready(load_submit_ready),
@@ -671,6 +715,14 @@ module multitini_one_top #(
                             MT_UI_LEGACY_VRAM_BANK_BYTES));
         reg_rd_data = display_rd_select ? display_rd_data : framebuffer_rd_select ? framebuffer_rd_data :
                       reg_rd_addr < 16'h1000 ? control_rd_data : 32'd0;
+        // Firmware holds the machine reset before PCAP. Its shared DMA
+        // quiescence read must also wait for the autonomous Genesis source
+        // ring on HP2, including when the effects service was already off.
+        // A running-machine effects suspension keeps the normal status;
+        // output-clock changes separately pause/drain all three HP masters.
+        if(ACTIVE_MACHINE==4 && reg_rd_addr==MT_REG_VIDEO_FRAME_STATUS &&
+           |(shell_control & MT_CONTROL_CORE_RESET_REQUEST) && !genesis_source_quiescent)
+            reg_rd_data=framebuffer_rd_data & ~MT_VIDEO_FRAME_STATUS_QUIESCENT;
     end
 
     assign load_mailbox_source = {load_kind, load_data, load_offset,
@@ -842,6 +894,16 @@ module multitini_one_top #(
     // Writeback bytes remain stable in the drive domain until software reads
     // MEDIA_DATA. The acknowledgement then backpressures the next byte until
     // this one-entry CDC mailbox has completed its round trip.
+    generate if(ACTIVE_MACHINE==4)begin : g_genesis_media_stream
+        multitini_genesis_media_stream stream_i(
+            .source_clk(c64_clk),.source_resetn(c64_aresetn),
+            .source_data(c64_media_write_data),.source_last(c64_media_write_data_last),
+            .source_valid(c64_media_write_data_valid),.source_ready(c64_media_write_data_ready),
+            .source_id(c64_media_request_id),.source_generation(c64_media_request_generation),
+            .control_clk(control_clk),.control_resetn(control_aresetn),
+            .complete(media_complete),.complete_id(media_complete_request_id),.complete_generation(media_complete_generation),
+            .data(media_data_control),.last(media_data_last_control),.valid(media_data_valid_control),.pop(media_data_pop));
+    end else begin : g_legacy_media_stream
     assign {media_data_last_control, media_data_control} =
         media_data_mailbox_destination;
     multitini_async_mailbox #(.WIDTH(9)) media_data_mailbox (
@@ -853,6 +915,8 @@ module multitini_one_top #(
         .dst_data(media_data_mailbox_destination),
         .dst_valid(media_data_valid_control), .dst_ready(media_data_pop)
     );
+    end endgenerate
+
 
     // Status is sparse but the three bits form one state machine. Carry each
     // changed snapshot coherently so software never observes a mixed-domain
@@ -1213,6 +1277,129 @@ module multitini_one_top #(
                 assign psram_ce_n = 1'b1;
                 assign psram_clk  = 1'b0;
             end
+        end else if (ACTIVE_MACHINE == 4) begin : g_genesis_machine
+            assign c64_prg_loaded=0,c64_cart_loaded=gbc_cart_loaded,c64_cart_hardware_type=0,c64_prg_run_busy=0;
+            assign c64_memory_addr=0,c64_memory_write=0,c64_memory_wdata=0,c64_memory_wstrb=0;
+            assign c64_memory_valid=0,c64_memory_ready=0,c64_memory_rdata=0,c64_memory_rvalid=0,c64_memory_fault=0;
+            wire video_mode_240;
+            assign c64_rom_loaded = {2'd0, gbc_cart_loaded};
+            (* DONT_TOUCH = "yes" *) multitini_genesis_adapter #(.PAL_MODE(GENESIS_PAL_MODE)) machine_adapter (
+                .core_clk(c64_clk), .reset(!c64_aresetn),
+                .core_reset_request(c64_core_reset_request),
+                .pause_request(core_menu_pause),
+                .clear_load_error(c64_load_error_clear),
+                .input_code(c64_input_code), .input_value(c64_input_value),
+                .input_valid(c64_input_valid), .input_ready(c64_input_ready),
+                .load_data(c64_load_data), .load_valid(c64_load_valid),
+                .load_ready(c64_load_ready), .load_first(c64_load_first),
+                .load_last(c64_load_last), .load_kind(c64_load_kind),
+                .load_offset(c64_load_offset), .load_total(c64_load_total),
+                .load_epoch(c64_load_epoch),.load_abort(c64_load_abort),.load_abort_epoch(c64_load_abort_epoch),
+                .memory_addr(gbc_memory_addr),
+                .memory_write(gbc_memory_write),
+                .memory_wdata(gbc_memory_wdata),
+                .memory_wstrb(gbc_memory_wstrb),
+                .memory_valid(gbc_memory_valid),
+                .memory_ready(gbc_memory_ready),
+                .memory_rdata(gbc_memory_rdata),
+                .memory_rvalid(gbc_memory_rvalid),
+                .memory_fault(gbc_memory_fault),
+                .media_mount(c64_media_mount),
+                .media_eject(c64_media_eject),
+                .media_complete(c64_media_complete),
+                .media_slot(c64_media_slot), .media_kind(c64_media_kind),
+                .media_read_only(c64_media_read_only),
+                .media_image_size(c64_media_image_size),
+                .media_generation(c64_media_generation),
+                .media_complete_request_id(c64_media_complete_request_id),
+                .media_complete_status(c64_media_complete_status),
+                .media_complete_block_count(c64_media_complete_block_count),
+                .media_complete_generation(c64_media_complete_generation),
+                .media_request_valid(c64_media_request_valid),
+                .media_request_write(c64_media_request_write),
+                .media_request_id(c64_media_request_id),
+                .media_request_lba(c64_media_request_lba),
+                .media_request_block_count(c64_media_request_block_count),
+                .media_request_generation(c64_media_request_generation),
+                .media_write_data(c64_media_write_data),
+                .media_write_data_valid(c64_media_write_data_valid),
+                .media_write_data_last(c64_media_write_data_last),
+                .media_write_data_ready(c64_media_write_data_ready),
+                .media_state_mounted(c64_media_state_mounted),
+                .media_state_dirty(c64_media_state_dirty),
+                .media_state_eject_pending(c64_media_state_eject_pending),
+                .core_id(c64_core_id), .ready(c64_ready),
+                .load_error(c64_load_error), .cart_loaded(gbc_cart_loaded),
+                .cart_size(gbc_cart_size),
+                .video_r(c64_video_r), .video_g(c64_video_g),
+                .video_b(c64_video_b), .video_de(c64_video_de),
+                .video_hsync(c64_video_hsync),
+                .video_vsync(c64_video_vsync),
+                .video_mode_240(video_mode_240),.video_valid(c64_video_valid), .audio_l(c64_audio_l),
+                .audio_r(c64_audio_r), .audio_valid(c64_audio_valid)
+            );
+
+            multitini_genesis_video_bridge video_bridge (
+                .source_clk(c64_clk),.source_resetn(c64_aresetn),.source_ready(c64_ready),
+                .source_r(c64_video_r),.source_g(c64_video_g),.source_b(c64_video_b),
+                .source_de(c64_video_de),.source_vsync(c64_video_vsync),
+                .source_valid(c64_video_valid),.source_mode_240(video_mode_240),
+                .control_clk(control_clk),.control_resetn(control_aresetn),
+                .pixel_clk(video_clk),.pixel_resetn(video_aresetn),.shared_pixel_resetn(video_control_resetn),
+                .diagnostic_request(video_enable),.scan_x(video_scan_x),.scan_y(video_scan_y),
+                .vblank_start(video_vblank_start),
+                .display_view_x(display_view_x),.display_view_y(display_view_y),
+                .display_view_width(display_view_width),.display_view_height(display_view_height),
+                .display_scale_num(display_scale_num),.display_scale_den(display_scale_den),
+                .display_pause(display_pause),.display_quiescent(genesis_source_quiescent),
+                .viewport_x(viewport_x),.viewport_y(viewport_y),
+                .viewport_width(viewport_width),.viewport_height(viewport_height),
+                .machine_active(machine_video_active),.machine_rgb565(machine_video_rgb565),
+                .capture_drops(),.capture_errors(),.read_errors(),.underruns(),
+                .araddr(hp2_araddr),
+                .arlen(hp2_arlen),
+                .arsize(hp2_arsize),
+                .arburst(hp2_arburst),
+                .arvalid(hp2_arvalid),
+                .arready(hp2_arready),
+                .rdata(hp2_rdata),
+                .rresp(hp2_rresp),
+                .rlast(hp2_rlast),
+                .rvalid(hp2_rvalid),
+                .rready(hp2_rready),
+                .awaddr(hp2_awaddr),
+                .awlen(hp2_awlen),
+                .awsize(hp2_awsize),
+                .awburst(hp2_awburst),
+                .awvalid(hp2_awvalid),
+                .awready(hp2_awready),
+                .wdata(hp2_wdata),
+                .wstrb(hp2_wstrb),
+                .wlast(hp2_wlast),
+                .wvalid(hp2_wvalid),
+                .wready(hp2_wready),
+                .bresp(hp2_bresp),
+                .bvalid(hp2_bvalid),
+                .bready(hp2_bready)
+            );
+                multitini_gameboy_psram_path psram_path_i (
+                    .core_clk(c64_clk), .core_resetn(c64_aresetn),
+                    .control_clk(control_clk),
+                    .control_resetn(control_aresetn),
+                    .idelay_ref_clk(idelay_ref_clk),
+                    .idelay_resetn(idelay_aresetn),
+                    .core_memory_addr(gbc_memory_addr),
+                    .core_memory_write(gbc_memory_write),
+                    .core_memory_wdata(gbc_memory_wdata),
+                    .core_memory_wstrb(gbc_memory_wstrb),
+                    .core_memory_valid(gbc_memory_valid),
+                    .core_memory_ready(gbc_memory_ready),
+                    .core_memory_rdata(gbc_memory_rdata),
+                    .core_memory_rvalid(gbc_memory_rvalid),
+                    .memory_fault(gbc_memory_fault),
+                    .psram_a_io(psram_a_io), .psram_b_io(psram_b_io),
+                    .psram_ce_n(psram_ce_n), .psram_clk(psram_clk)
+                );
         end else if (ACTIVE_MACHINE == 3) begin : g_vectrex_machine
             wire [18:0] pixel_address;
             wire [7:0] pixel_intensity;
@@ -1370,6 +1557,13 @@ module multitini_one_top #(
         end
     endgenerate
 
+    generate if(ACTIVE_MACHINE!=4)begin : g_no_genesis_ddr
+        assign genesis_source_quiescent=1'b1;
+        assign hp2_araddr=0,hp2_arlen=0,hp2_arsize=3'd3,hp2_arburst=2'd1,hp2_arvalid=0,hp2_rready=1;
+        assign hp2_awaddr=0,hp2_awlen=0,hp2_awsize=3'd3,hp2_awburst=2'd1,hp2_awvalid=0;
+        assign hp2_wdata=0,hp2_wstrb=0,hp2_wlast=0,hp2_wvalid=0,hp2_bready=1;
+    end endgenerate
+
     cdc_bit_sync video_enable_sync (
         .clk(video_clk), .resetn(video_aresetn),
         .din(|(shell_control &
@@ -1423,16 +1617,16 @@ module multitini_one_top #(
     multitini_video_framebuffer #(
         .DYNAMIC_DISPLAY(1'b1),
         .SHARED_PIXEL_RESET(1'b1),
-        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : C64_NTSC_MODE ? 404 : 382),
-        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : C64_NTSC_MODE ? 250 : 270),
-        .VIEW_X(ACTIVE_MACHINE==1 ? 480 : ACTIVE_MACHINE==3 ? 555 : C64_NTSC_MODE ? 152 : 196),
-        .VIEW_Y(ACTIVE_MACHINE==1 ? 108 : ACTIVE_MACHINE==3 ? 0 : C64_NTSC_MODE ? 40 : 0),
+        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : C64_NTSC_MODE ? 404 : 382),
+        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : C64_NTSC_MODE ? 250 : 270),
+        .VIEW_X(ACTIVE_MACHINE==1 ? 480 : ACTIVE_MACHINE==3 ? 555 : ACTIVE_MACHINE==4 ? 320 : C64_NTSC_MODE ? 152 : 196),
+        .VIEW_Y(ACTIVE_MACHINE==1 ? 108 : ACTIVE_MACHINE==3 ? 0 : ACTIVE_MACHINE==4 ? 60 : C64_NTSC_MODE ? 40 : 0),
         .SCALE_NUM(ACTIVE_MACHINE==1 ? 6 : ACTIVE_MACHINE==3 ? 3 : 4),
         .SCALE_DEN(ACTIVE_MACHINE==3 ? 2 : 1)) video_framebuffer (
         .display_view_x(display_view_x),.display_view_y(display_view_y),
         .display_view_width(display_view_width),.display_view_height(display_view_height),
         .display_scale_num(display_scale_num),.display_scale_den(display_scale_den),
-        .display_pause(display_pause),.display_quiescent(display_quiescent),
+        .display_pause(display_pause),.display_quiescent(framebuffer_display_quiescent),
         .display_filter_scale_num(display_filter_scale_num),.display_filter_scale_den(display_filter_scale_den),
         .clk(control_clk),.resetn(control_aresetn),
         .wr_en(reg_wr_en && framebuffer_wr_select),.wr_addr(reg_wr_addr[11:0]),

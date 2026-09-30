@@ -7,8 +7,8 @@ module tb_display_output;
     reg [3:0] mode=0;
     wire [11:0] ha,hf,hs,ht,va,vf,vs,vt;
     wire hp,vp;
-    wire [3:0] sn[0:2],sd[0:2];
-    wire [11:0] vx[0:2],vy[0:2],vw[0:2],vh[0:2];
+    wire [3:0] sn[0:3],sd[0:3];
+    wire [11:0] vx[0:3],vy[0:3],vw[0:3],vh[0:3];
     multitini_display_geometry #(.MACHINE(0)) c64(.mode(mode),
         .h_active(ha),.h_front(hf),.h_sync(hs),.h_total(ht),
         .v_active(va),.v_front(vf),.v_sync(vs),.v_total(vt),.h_positive(hp),.v_positive(vp),
@@ -17,6 +17,8 @@ module tb_display_output;
         .scale_num(sn[1]),.scale_den(sd[1]),.view_x(vx[1]),.view_y(vy[1]),.view_width(vw[1]),.view_height(vh[1]));
     multitini_display_geometry #(.MACHINE(3),.WIDTH(540),.HEIGHT(720)) vectrex(.mode(mode),
         .scale_num(sn[2]),.scale_den(sd[2]),.view_x(vx[2]),.view_y(vy[2]),.view_width(vw[2]),.view_height(vh[2]));
+    multitini_display_geometry #(.MACHINE(4),.WIDTH(320),.HEIGHT(240)) genesis(.mode(mode),
+        .scale_num(sn[3]),.scale_den(sd[3]),.view_x(vx[3]),.view_y(vy[3]),.view_width(vw[3]),.view_height(vh[3]));
     wire [11:0] x,y;
     wire vblank,de,h,v,opaque;
     wire [15:0] rgb;
@@ -57,10 +59,12 @@ module tb_display_output;
             @(negedge clk);resetn=0;mode=4'(m);
             repeat(32) @(negedge clk);resetn=1;
             if(ha!=expected_w[m] || va!=expected_h[m] || ht!=expected_ht[m] || vt!=expected_vt[m])$fatal(1,"mode geometry");
-            for(integer core=0;core<3;core=core+1)begin
+            for(integer core=0;core<4;core=core+1)begin
                 if(vw[core]==0 || vh[core]==0 || vx[core]+vw[core]>ha || vy[core]+vh[core]>va)$fatal(1,"cropped core");
                 if(2*vx[core]+vw[core]!=ha || 2*vy[core]+vh[core]!=va)$fatal(1,"uncentered core");
             end
+            if(sd[3]!=1 || sn[3]!=((m==0 || m==5) ? 4 : 3) ||
+               vw[3]!=320*sn[3] || vh[3]!=240*sn[3])$fatal(1,"Genesis fixed fit scale");
             wait(ready);@(negedge control_clk);commit=1;
             @(negedge control_clk);commit=0;
             wait(active);do @(negedge clk);while(x!=0 || y!=0);

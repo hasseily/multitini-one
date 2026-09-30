@@ -8,7 +8,9 @@
 #define MT_SETTINGS_SCHEMA_V3 UINT32_C(3)
 #define MT_SETTINGS_SCHEMA_V4 UINT32_C(4)
 #define MT_SETTINGS_SCHEMA_V5 UINT32_C(5)
-#define MT_SETTINGS_SCHEMA UINT32_C(6)
+#define MT_SETTINGS_SCHEMA_V6 UINT32_C(6)
+#define MT_SETTINGS_SCHEMA UINT32_C(7)
+#define MT_SETTINGS_V6_WIRE_SIZE 5038U
 #define MT_SETTINGS_V5_WIRE_SIZE 4696U
 #define MT_SETTINGS_PAD_SIZE 38U
 #define MT_SETTINGS_HEADER_SIZE 24U
@@ -26,7 +28,8 @@ _Static_assert(MT_SETTINGS_EFFECTS_OFFSET + MT_VIDEO_EFFECT_COUNT * 2U ==
                MT_SETTINGS_PROFILE_SIZE, "Video controls require a settings schema update");
 
 #if MT_SETTINGS_HEADER_SIZE + MT_SETTINGS_GLOBAL_SIZE + \
-    MT_SETTINGS_MAX_PROFILES * MT_SETTINGS_PROFILE_SIZE + MT_GAMEPAD_SLOTS * MT_SETTINGS_PAD_SIZE != \
+    MT_SETTINGS_MAX_PROFILES * MT_SETTINGS_PROFILE_SIZE + MT_GAMEPAD_SLOTS * MT_SETTINGS_PAD_SIZE + \
+    MT_SETTINGS_MAX_PROFILES != \
     MT_SETTINGS_WIRE_SIZE
 #error Supervisor settings wire-size constants disagree
 #endif
@@ -294,6 +297,17 @@ bool mt_supervisor_settings_remember_c64_cpu_turbo(
     return true;
 }
 
+bool mt_supervisor_settings_remember_genesis_pads(
+    mt_supervisor_settings_t *settings, const char *core_id, uint8_t three_button_mask)
+{
+    mt_core_settings_profile_t *profile;
+    if (three_button_mask > 3U) return false;
+    profile = find_profile(settings, core_id, true);
+    if (profile == NULL) return false;
+    profile->genesis_three_button_mask = three_button_mask;
+    return true;
+}
+
 static bool borders_valid(uint8_t style, uint8_t color, uint8_t padding)
 {
     return style <= 4U && color <= 15U && padding >= 1U && padding <= 20U;
@@ -366,6 +380,7 @@ static bool settings_valid(const mt_supervisor_settings_t *settings)
             !borders_valid(profile->border_style, profile->border_color,
                             profile->border_padding) ||
             profile->vectrex_beam_gain > 3U || profile->vectrex_overlay_opacity > 3U ||
+            profile->genesis_three_button_mask > 3U ||
             !mt_video_effects_settings_valid(&profile->video_effects) ||
             (profile->joystick_port != 1U && profile->joystick_port != 2U)) {
             return false;
@@ -420,6 +435,7 @@ static bool encode_settings(const mt_supervisor_settings_t *settings)
         output[248U] = profile->vectrex_overlay_enabled ? 1U : 0U;
         output[249U] = profile->vectrex_beam_gain;
         output[250U] = profile->vectrex_overlay_opacity;
+        settings_wire[MT_SETTINGS_V6_WIRE_SIZE + index] = profile->genesis_three_button_mask;
         for (effect = 0U; effect < MT_VIDEO_EFFECT_COUNT; ++effect) {
             const uint16_t value = (uint16_t)mt_video_effects_get(
                 &profile->video_effects, (mt_video_effect_id_t)effect);
@@ -471,11 +487,12 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
     const size_t expected_size = legacy ? MT_SETTINGS_LEGACY_WIRE_SIZE :
         (schema == MT_SETTINGS_SCHEMA_V3 ? MT_SETTINGS_V3_WIRE_SIZE :
          schema == MT_SETTINGS_SCHEMA_V4 ? MT_SETTINGS_V4_WIRE_SIZE :
-         schema == MT_SETTINGS_SCHEMA_V5 ? MT_SETTINGS_V5_WIRE_SIZE : MT_SETTINGS_WIRE_SIZE);
+         schema == MT_SETTINGS_SCHEMA_V5 ? MT_SETTINGS_V5_WIRE_SIZE :
+         schema == MT_SETTINGS_SCHEMA_V6 ? MT_SETTINGS_V6_WIRE_SIZE : MT_SETTINGS_WIRE_SIZE);
     size_t index;
     if (memcmp(settings_wire, settings_magic, sizeof(settings_magic)) != 0 ||
         (!legacy && schema != MT_SETTINGS_SCHEMA_V3 && schema != MT_SETTINGS_SCHEMA_V4 &&
-         schema != MT_SETTINGS_SCHEMA_V5 && schema != MT_SETTINGS_SCHEMA) ||
+         schema != MT_SETTINGS_SCHEMA_V5 && schema != MT_SETTINGS_SCHEMA_V6 && schema != MT_SETTINGS_SCHEMA) ||
         wire_size != expected_size ||
         load_u32_le(settings_wire + 12U) != wire_size ||
         load_u32_le(settings_wire + 20U) != ~crc ||
@@ -491,7 +508,7 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
         }
     }
     mt_supervisor_settings_defaults(&settings_decode_candidate);
-    if (schema == MT_SETTINGS_SCHEMA) {
+    if (schema >= MT_SETTINGS_SCHEMA_V6) {
         settings_decode_candidate.display_mode = settings_wire[25U];
         for (unsigned slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot) {
             const uint8_t *input = settings_wire + MT_SETTINGS_V5_WIRE_SIZE + slot * MT_SETTINGS_PAD_SIZE;
@@ -537,6 +554,8 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
         profile->c64_fast_roms = schema != MT_SETTINGS_SCHEMA_V1 &&
                                  input[242U] != 0U;
         profile->c64_cpu_turbo = input[243U] != 0U;
+        profile->genesis_three_button_mask = schema == MT_SETTINGS_SCHEMA ?
+            settings_wire[MT_SETTINGS_V6_WIRE_SIZE + index] : 0U;
         if (legacy) {
             profile->border_style = MT_SETTINGS_BORDER_STYLE_DEFAULT;
             profile->border_color = MT_SETTINGS_BORDER_COLOR_DEFAULT;
@@ -596,7 +615,8 @@ mt_settings_result_t mt_supervisor_settings_load(
      * exact reads, and decoding verifies the schema/length pair and CRC. */
     if (sd.status == MT_SD_SIZE_MISMATCH &&
         (sd.size == MT_SETTINGS_LEGACY_WIRE_SIZE || sd.size == MT_SETTINGS_V3_WIRE_SIZE ||
-         sd.size == MT_SETTINGS_V4_WIRE_SIZE || sd.size == MT_SETTINGS_V5_WIRE_SIZE)) {
+         sd.size == MT_SETTINGS_V4_WIRE_SIZE || sd.size == MT_SETTINGS_V5_WIRE_SIZE ||
+         sd.size == MT_SETTINGS_V6_WIRE_SIZE)) {
         sd = mt_sd_storage_read_file_optional_exact(
             MT_SETTINGS_PATH, settings_wire, sd.size,
             &found);

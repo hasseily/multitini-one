@@ -30,6 +30,9 @@ add_library(multitini_common STATIC
     firmware/common/gamepad.c
     firmware/common/gameboy_boot.c
     firmware/common/gameboy_hid_input.c
+    firmware/common/genesis_boot.c
+    firmware/common/genesis_content.c
+    firmware/common/genesis_hid_input.c
     firmware/common/vectrex_boot.c
     firmware/common/vectrex_hid_input.c
     firmware/common/vectrex_overlay.c
@@ -331,6 +334,19 @@ add_test(NAME gameboy_content_service COMMAND test_gameboy_content_service)
 add_executable(test_gameboy_hid_input tests/host/test_gameboy_hid_input.c)
 target_link_libraries(test_gameboy_hid_input PRIVATE multitini_common)
 add_test(NAME gameboy_hid_input COMMAND test_gameboy_hid_input)
+
+foreach(component genesis_boot genesis_content genesis_hid_input)
+    add_executable(test_${component} tests/host/test_${component}.c)
+    target_link_libraries(test_${component} PRIVATE multitini_common)
+    add_test(NAME ${component} COMMAND test_${component})
+endforeach()
+add_executable(test_genesis_content_service
+    tests/host/test_genesis_content_service.c
+    firmware/platform/xilinx/genesis_content_service.c)
+target_include_directories(test_genesis_content_service PRIVATE firmware/platform/xilinx)
+target_link_libraries(test_genesis_content_service PRIVATE
+    multitini_common xilinx_persistent_save_host)
+add_test(NAME genesis_content_service COMMAND test_genesis_content_service)
 
 add_executable(test_ak4493 tests/host/test_ak4493.c)
 target_link_libraries(test_ak4493 PRIVATE multitini_common)

@@ -3,6 +3,7 @@
 
 #include "multitini_c64_interface.h"
 #include "multitini_gameboy_interface.h"
+#include "multitini_genesis_interface.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -188,7 +189,7 @@ static void test_browser_filters(void)
     unsigned browser;
     unsigned type;
     for (browser = 0U; browser <= MT_MENU_BROWSER_PROGRAM; ++browser) {
-        for (type = 0U; type <= MT_CONTENT_GBC_CART; ++type) {
+        for (type = 0U; type <= MT_CONTENT_GENESIS_SMD; ++type) {
             const bool c64_expected =
                 (browser == MT_MENU_BROWSER_DRIVE8 &&
                  (type == MT_CONTENT_D64 || type == MT_CONTENT_G64)) ||
@@ -196,12 +197,17 @@ static void test_browser_filters(void)
                 (browser == MT_MENU_BROWSER_PROGRAM && type == MT_CONTENT_PRG);
             const bool gbc_expected = browser == MT_MENU_BROWSER_CARTRIDGE &&
                 (type == MT_CONTENT_GB_CART || type == MT_CONTENT_GBC_CART);
+            const bool genesis_expected = browser == MT_MENU_BROWSER_CARTRIDGE &&
+                (type == MT_CONTENT_GENESIS_CART || type == MT_CONTENT_GENESIS_SMD);
             check(mt_core_frontend_accepts_content(MT_C64_CORE_ID,
                       (mt_menu_browser_t)browser, (mt_content_type_t)type) ==
                   c64_expected, "C64 browser filters match its load services");
             check(mt_core_frontend_accepts_content(MT_GBC_CORE_ID,
                       (mt_menu_browser_t)browser, (mt_content_type_t)type) ==
                   gbc_expected, "GBC browser accepts only GB/GBC cartridges");
+            check(mt_core_frontend_accepts_content(MT_GENESIS_CORE_ID,
+                      (mt_menu_browser_t)browser, (mt_content_type_t)type) ==
+                  genesis_expected, "Genesis browser accepts only raw/SMD cartridges");
             check(!mt_core_frontend_accepts_content(0U,
                       (mt_menu_browser_t)browser, (mt_content_type_t)type),
                   "standby cannot select content");
@@ -220,12 +226,49 @@ static void test_browser_filters(void)
               (mt_menu_browser_t)100), "invalid enums cannot index or shift outside masks");
 }
 
+static void test_genesis_profile(void)
+{
+    mt_core_frontend_t frontend;
+    mt_core_frontend_state_t state = {0};
+    mt_menu_view_t view = {0};
+    state.core_id = MT_GENESIS_CORE_ID;
+    state.abi_minor = 16U;
+    state.services_ready = true;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(view.media_item_count == 2U && view.input_item_count == 4U && view.core_option_count == 2U,
+          "Genesis provides cartridge/save and complete six-button keyboard guide");
+    check(strcmp(view.core_options[0].value, "6 buttons") == 0 &&
+          view.core_options[0].argument == 0U && view.core_options[1].argument == 1U,
+          "Genesis protocols default to six buttons on independent ports");
+    state.genesis_three_button_mask = 2U;
+    check(view.media_items[0].action == MT_MENU_ACTION_BROWSE_CARTRIDGE &&
+          view.media_items[1].action == MT_MENU_ACTION_NONE,
+          "Genesis cartridge chooser and read-only save state");
+    state.cartridge_attached = true;
+    state.cartridge_name = "Original.md";
+    state.save_active = true;
+    state.save_dirty = true;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(view.save_dirty && !view.save_faulted &&
+          view.media_items[0].action == MT_MENU_ACTION_DETACH_CARTRIDGE &&
+          view.media_items[1].value_color == MT_UI_COLOR_WARNING,
+          "Genesis eject remains available while safe save drain is pending");
+    check(strcmp(view.core_options[1].value, "3 buttons") == 0 &&
+          strcmp(view.core_options[0].value, "6 buttons") == 0,
+          "Genesis three-button override applies only to the selected port");
+    state.save_faulted = true;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(view.save_faulted && view.media_items[1].value_color == MT_UI_COLOR_RED,
+          "Genesis save failure takes precedence over pending state");
+}
+
 int main(void)
 {
     test_profile_lifecycle();
     test_c64_capabilities();
     test_gameboy_saves_and_input();
     test_browser_filters();
+    test_genesis_profile();
     puts("Core front-end profile tests passed");
     return 0;
 }

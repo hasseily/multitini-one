@@ -53,6 +53,10 @@ explicit direct-RAM shortcut for eligible BASIC programs.
 
 ## Documentation
 
+- [Genesis / Mega Drive integration](docs/GENESIS_PLAN.md): modern Nuked-MD,
+  cartridge formats, two-player controls, saves, NTSC/PAL builds, and pending
+  vendor/board qualification.
+
 - [Video settings](docs/VIDEO_SETTINGS.md): per-core optional borders,
   muted colors, padding, and the ABI 0.12 update requirements.
 - [Vectrex plan](docs/VECTREX_PLAN.md), [game tests](docs/VECTREX_GAME_TESTS.md),

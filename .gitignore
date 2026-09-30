@@ -62,6 +62,10 @@ dfx_runtime.txt
 # System ROMs and user content. The repository policy check enforces these too.
 *.rom
 *.ROM
+*.gen
+*.GEN
+*.smd
+*.SMD
 *.d64
 *.D64
 *.g64
