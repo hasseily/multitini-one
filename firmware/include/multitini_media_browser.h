@@ -28,4 +28,6 @@ bool mt_media_browser_enter(mt_media_browser_t *browser, const char *child);
 bool mt_media_browser_up(mt_media_browser_t *browser);
 bool mt_media_browser_can_up(const mt_media_browser_t *browser);
 
+bool mt_media_browser_visible_component(const char *name);
+
 #endif

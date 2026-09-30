@@ -26,6 +26,7 @@ add_library(multitini_common STATIC
     firmware/common/core_package.c
     firmware/common/core_link.c
     firmware/common/fatfs_time.c
+    firmware/common/gamepad.c
     firmware/common/gameboy_boot.c
     firmware/common/gameboy_hid_input.c
     firmware/common/vectrex_boot.c
@@ -49,6 +50,43 @@ if(NOT MSVC AND NOT CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
 endif()
 
 enable_testing()
+add_executable(test_gamepad tests/host/test_gamepad.c)
+target_link_libraries(test_gamepad PRIVATE multitini_common)
+add_test(NAME gamepad COMMAND test_gamepad)
+
+# Exercise the actual USB drivers against host-controller fault fixtures.
+# Initialize the pinned submodule before running the complete host suite.
+if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/CherryUSB/core/usbh_core.h")
+    add_library(usb_test_headers INTERFACE)
+    target_include_directories(usb_test_headers INTERFACE
+        firmware/include firmware/platform/xilinx
+        third_party/CherryUSB/common third_party/CherryUSB/core
+        third_party/CherryUSB/class/hub third_party/CherryUSB/class/hid
+        third_party/CherryUSB/class/vendor/xbox third_party/CherryUSB/port/ehci)
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(usb_test_headers INTERFACE -Wall -Wextra -Werror)
+    endif()
+    if(APPLE)
+        target_compile_options(usb_test_headers INTERFACE
+            -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
+            -include "${CMAKE_SOURCE_DIR}/tests/host/usb_macho_sections.h")
+    endif()
+    foreach(driver usb_ps4 usb_ehci_completion usb_xbox_one)
+        add_executable(test_${driver} tests/host/test_${driver}.c)
+        target_link_libraries(test_${driver} PRIVATE usb_test_headers)
+        add_test(NAME ${driver} COMMAND test_${driver})
+    endforeach()
+    add_executable(test_usb_hid_runtime tests/host/test_usb_hid_runtime.c)
+    target_include_directories(test_usb_hid_runtime PRIVATE tests/xilinx_stubs)
+    target_link_libraries(test_usb_hid_runtime PRIVATE usb_test_headers multitini_common)
+    add_test(NAME usb_hid_runtime COMMAND test_usb_hid_runtime)
+    target_sources(test_usb_xbox_one PRIVATE firmware/platform/xilinx/usb_xbox_one.c)
+    add_library(usb_hid_service_compile OBJECT firmware/platform/xilinx/usb_hid_service.c)
+    target_include_directories(usb_hid_service_compile PRIVATE tests/xilinx_stubs)
+    target_link_libraries(usb_hid_service_compile PRIVATE usb_test_headers)
+else()
+    message(FATAL_ERROR "Run git submodule update --init third_party/CherryUSB for USB tests")
+endif()
 foreach(component clock text_reader system_frontend menu_services video_effects video_effects_frontend video_frame)
     add_executable(test_${component} tests/host/test_${component}.c)
     target_link_libraries(test_${component} PRIVATE multitini_common)

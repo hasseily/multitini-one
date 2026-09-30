@@ -4,6 +4,7 @@
 
 #include "multitini_core_package.h"
 #include "multitini_video_effects.h"
+#include "multitini_gamepad.h"
 #include "sd_storage.h"
 
 #include <stdbool.h>
@@ -14,7 +15,7 @@
 #define MT_SETTINGS_JOURNAL_PATH "0:/multitini/settings.bin.mtj"
 #define MT_SETTINGS_MAX_PROFILES 16U
 #define MT_SETTINGS_MEDIA_NAME_MAX 96U
-#define MT_SETTINGS_WIRE_SIZE 4696U
+#define MT_SETTINGS_WIRE_SIZE 5038U
 #define MT_SETTINGS_BORDER_STYLE_DEFAULT 0U
 #define MT_SETTINGS_BORDER_COLOR_DEFAULT 7U
 #define MT_SETTINGS_BORDER_PADDING_DEFAULT 6U
@@ -42,6 +43,8 @@ typedef struct {
 
 typedef struct {
     bool auto_boot;
+    uint8_t display_mode;
+    mt_gamepad_config_t gamepads[MT_GAMEPAD_SLOTS];
     char selected_core_id[MT_CORE_PACKAGE_ID_MAX];
     size_t profile_count;
     mt_core_settings_profile_t profiles[MT_SETTINGS_MAX_PROFILES];

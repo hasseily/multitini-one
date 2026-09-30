@@ -56,6 +56,7 @@ if {![file isfile $project_file]} {
 }
 file mkdir $report_dir
 open_project $project_file
+source [file join $script_dir configure_vivado_run_profile.tcl]
 
 puts "Checking HDL syntax and compile order"
 update_compile_order -fileset sources_1
@@ -68,17 +69,6 @@ if {[info exists ::env(MULTITINI_VIVADO_JOBS)]} {
         error "MULTITINI_VIVADO_JOBS must be a positive integer"
     }
 }
-
-reset_run synth_1
-launch_runs synth_1 -jobs $jobs
-wait_on_run synth_1
-require_complete_run synth_1
-
-reset_run impl_1
-launch_runs impl_1 -to_step write_bitstream -jobs $jobs
-wait_on_run impl_1
-require_complete_run impl_1
-open_run impl_1
 
 set build_generics [get_property GENERIC [get_filesets sources_1]]
 if {[string match "*ACTIVE_MACHINE=2*" $build_generics]} {
@@ -97,6 +87,34 @@ set psram_active [expr {
     [string match "*ACTIVE_MACHINE=3*" $build_generics] ||
     [string match "*ENABLE_GBC_PSRAM=1'b1*" $build_generics]
 }]
+
+# Capture dirty source bytes as well as the commit before launching workers.
+# A second check before export detects edits during the implementation run.
+set python [auto_execok python3]
+if {$python eq ""} {set python [auto_execok python]}
+if {[info exists ::env(MULTITINI_PYTHON)]} {set python [list $::env(MULTITINI_PYTHON)]}
+if {$python eq ""} {error "Python is required to capture exact build inputs"}
+set capture_dir [file join $repo_root build input-captures "[pid]-[clock clicks]"]
+set inputs_file [file join $capture_dir build_inputs.json]
+set capture_command [concat $python [list [file join $script_dir capture_vectrex_build_inputs.py] \
+    --machine $image_kind --output $inputs_file]]
+if {[string match {*C64_NTSC_MODE=1'b1*} $build_generics]} {
+    lappend capture_command --c64-video-standard NTSC
+}
+if {$image_kind eq "GBC" && $psram_active} {lappend capture_command --gbc-psram}
+puts [exec {*}$capture_command]
+
+reset_run synth_1
+launch_runs synth_1 -jobs $jobs
+wait_on_run synth_1
+require_complete_run synth_1
+
+reset_run impl_1
+launch_runs impl_1 -to_step write_bitstream -jobs $jobs
+wait_on_run impl_1
+require_complete_run impl_1
+open_run impl_1
+
 
 # XDC files cannot contain Tcl control flow. Enforce every hierarchical timing
 # query here, against the fully linked and implemented design, so hierarchy
@@ -237,7 +255,12 @@ if {$image_kind eq "VECTREX"} {
         }
     }
 }
+source [file join $script_dir check_video_bus_constraints.tcl]
 report_bus_skew -warn_on_violation -file [file join $report_dir bus_skew.rpt]
+set bus_skew_text [report_bus_skew -return_string]
+if {[regexp -nocase {VIOLATED} $bus_skew_text]} {
+    error "Bus-skew timing failed; see bus_skew.rpt"
+}
 report_drc -file [file join $report_dir drc.rpt]
 report_methodology -file [file join $report_dir methodology.rpt]
 report_route_status -file [file join $report_dir route_status.rpt]
@@ -276,11 +299,14 @@ foreach delay_type {max min} {
     }
     set slack [get_property SLACK $path]
     puts "Worst $delay_type slack: $slack ns"
-    if {$slack < 0.0} {
+    if {![string is double -strict $slack] || ![expr {abs($slack) < Inf}] || $slack < 0.0} {
         error "Negative $delay_type slack: $slack ns"
     }
 }
 
+puts [exec {*}$python [file join $script_dir capture_vectrex_build_inputs.py] --verify --output $inputs_file]
+file copy -force $inputs_file [file join $report_dir build_inputs.json]
+file copy -force [file join $capture_dir build_inputs.sources.tar.gz] [file join $report_dir build_inputs.sources.tar.gz]
 write_checkpoint -force [file join $build_dir multitini_one_impl.dcp]
 write_hw_platform -fixed -include_bit -force -file $xsa_file
 
@@ -302,6 +328,18 @@ puts $manifest "part=[get_property PART [current_project]]"
 puts $manifest "top=[get_property TOP [get_filesets sources_1]]"
 puts $manifest "generic=[get_property GENERIC [get_filesets sources_1]]"
 puts $manifest "image_kind=$image_kind"
+puts $manifest "max_threads=[get_param general.maxThreads]"
+puts $manifest "jobs=$jobs"
+puts $manifest "inputs=build_inputs.json"
+puts $manifest "sources=build_inputs.sources.tar.gz"
+foreach run_name {synth_1 impl_1} {
+    set run [get_runs $run_name]
+    foreach property [lsort [list_property $run]] {
+        if {[string match {STEPS.*} $property] || $property in {STRATEGY AUTO_INCREMENTAL_CHECKPOINT INCREMENTAL_CHECKPOINT}} {
+            puts $manifest "$run_name.$property=[get_property $property $run]"
+        }
+    }
+}
 if {![catch {exec git -C $repo_root rev-parse HEAD} commit]} {
     puts $manifest "commit=[string trim $commit]"
 }

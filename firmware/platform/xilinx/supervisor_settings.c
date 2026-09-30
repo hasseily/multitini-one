@@ -7,7 +7,10 @@
 #define MT_SETTINGS_SCHEMA_V2 UINT32_C(2)
 #define MT_SETTINGS_SCHEMA_V3 UINT32_C(3)
 #define MT_SETTINGS_SCHEMA_V4 UINT32_C(4)
-#define MT_SETTINGS_SCHEMA UINT32_C(5)
+#define MT_SETTINGS_SCHEMA_V5 UINT32_C(5)
+#define MT_SETTINGS_SCHEMA UINT32_C(6)
+#define MT_SETTINGS_V5_WIRE_SIZE 4696U
+#define MT_SETTINGS_PAD_SIZE 38U
 #define MT_SETTINGS_HEADER_SIZE 24U
 #define MT_SETTINGS_GLOBAL_SIZE 32U
 #define MT_SETTINGS_LEGACY_PROFILE_SIZE 244U
@@ -23,7 +26,7 @@ _Static_assert(MT_SETTINGS_EFFECTS_OFFSET + MT_VIDEO_EFFECT_COUNT * 2U ==
                MT_SETTINGS_PROFILE_SIZE, "Video controls require a settings schema update");
 
 #if MT_SETTINGS_HEADER_SIZE + MT_SETTINGS_GLOBAL_SIZE + \
-    MT_SETTINGS_MAX_PROFILES * MT_SETTINGS_PROFILE_SIZE != \
+    MT_SETTINGS_MAX_PROFILES * MT_SETTINGS_PROFILE_SIZE + MT_GAMEPAD_SLOTS * MT_SETTINGS_PAD_SIZE != \
     MT_SETTINGS_WIRE_SIZE
 #error Supervisor settings wire-size constants disagree
 #endif
@@ -189,6 +192,8 @@ void mt_supervisor_settings_defaults(mt_supervisor_settings_t *settings)
 {
     if (settings == NULL) return;
     memset(settings, 0, sizeof(*settings));
+    for (unsigned slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot)
+        mt_gamepad_default_config(&settings->gamepads[slot]);
 }
 
 const mt_core_settings_profile_t *mt_supervisor_settings_find(
@@ -344,6 +349,9 @@ static bool settings_valid(const mt_supervisor_settings_t *settings)
         !valid_id(settings->selected_core_id, MT_CORE_PACKAGE_ID_MAX, true)) {
         return false;
     }
+    if (settings->display_mode >= 6U) return false;
+    for (unsigned slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot)
+        if (!mt_gamepad_config_valid(&settings->gamepads[slot])) return false;
     if (settings->auto_boot && settings->selected_core_id[0] == '\0')
         return false;
     for (index = 0U; index < settings->profile_count; ++index) {
@@ -384,6 +392,7 @@ static bool encode_settings(const mt_supervisor_settings_t *settings)
     store_u32_le(settings_wire + 8U, MT_SETTINGS_SCHEMA);
     store_u32_le(settings_wire + 12U, MT_SETTINGS_WIRE_SIZE);
     settings_wire[24U] = settings->auto_boot ? 1U : 0U;
+    settings_wire[25U] = settings->display_mode;
     memcpy(settings_wire + 28U, settings->selected_core_id,
            strlen(settings->selected_core_id));
     store_u32_le(settings_wire + 52U, (uint32_t)settings->profile_count);
@@ -418,6 +427,19 @@ static bool encode_settings(const mt_supervisor_settings_t *settings)
             output[MT_SETTINGS_EFFECTS_OFFSET + effect * 2U + 1U] = (uint8_t)(value >> 8U);
         }
     }
+    for (unsigned slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot) {
+        uint8_t *output = settings_wire + MT_SETTINGS_V5_WIRE_SIZE + slot * MT_SETTINGS_PAD_SIZE;
+        const mt_gamepad_config_t *config = &settings->gamepads[slot];
+        for (unsigned axis = 0U; axis < MT_GAMEPAD_AXIS_COUNT; ++axis) {
+            const mt_gamepad_axis_config_t *value = &config->axis[axis];
+            output[axis * 5U] = value->source;
+            output[axis * 5U + 1U] = value->invert;
+            output[axis * 5U + 2U] = value->deadzone_percent;
+            output[axis * 5U + 3U] = (uint8_t)value->sensitivity_percent;
+            output[axis * 5U + 4U] = (uint8_t)(value->sensitivity_percent >> 8U);
+        }
+        memcpy(output + 30U, config->button, 8U);
+    }
     crc = crc32_bytes(settings_wire + MT_SETTINGS_HEADER_SIZE,
                       MT_SETTINGS_WIRE_SIZE - MT_SETTINGS_HEADER_SIZE);
     store_u32_le(settings_wire + 16U, crc);
@@ -448,11 +470,12 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
          schema == MT_SETTINGS_SCHEMA_V4 ? MT_SETTINGS_V4_PROFILE_SIZE : MT_SETTINGS_PROFILE_SIZE);
     const size_t expected_size = legacy ? MT_SETTINGS_LEGACY_WIRE_SIZE :
         (schema == MT_SETTINGS_SCHEMA_V3 ? MT_SETTINGS_V3_WIRE_SIZE :
-         schema == MT_SETTINGS_SCHEMA_V4 ? MT_SETTINGS_V4_WIRE_SIZE : MT_SETTINGS_WIRE_SIZE);
+         schema == MT_SETTINGS_SCHEMA_V4 ? MT_SETTINGS_V4_WIRE_SIZE :
+         schema == MT_SETTINGS_SCHEMA_V5 ? MT_SETTINGS_V5_WIRE_SIZE : MT_SETTINGS_WIRE_SIZE);
     size_t index;
     if (memcmp(settings_wire, settings_magic, sizeof(settings_magic)) != 0 ||
         (!legacy && schema != MT_SETTINGS_SCHEMA_V3 && schema != MT_SETTINGS_SCHEMA_V4 &&
-         schema != MT_SETTINGS_SCHEMA) ||
+         schema != MT_SETTINGS_SCHEMA_V5 && schema != MT_SETTINGS_SCHEMA) ||
         wire_size != expected_size ||
         load_u32_le(settings_wire + 12U) != wire_size ||
         load_u32_le(settings_wire + 20U) != ~crc ||
@@ -468,6 +491,22 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
         }
     }
     mt_supervisor_settings_defaults(&settings_decode_candidate);
+    if (schema == MT_SETTINGS_SCHEMA) {
+        settings_decode_candidate.display_mode = settings_wire[25U];
+        for (unsigned slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot) {
+            const uint8_t *input = settings_wire + MT_SETTINGS_V5_WIRE_SIZE + slot * MT_SETTINGS_PAD_SIZE;
+            mt_gamepad_config_t *config = &settings_decode_candidate.gamepads[slot];
+            for (unsigned axis = 0U; axis < MT_GAMEPAD_AXIS_COUNT; ++axis) {
+                mt_gamepad_axis_config_t *value = &config->axis[axis];
+                value->source = input[axis * 5U];
+                value->invert = input[axis * 5U + 1U];
+                value->deadzone_percent = input[axis * 5U + 2U];
+                value->sensitivity_percent = (uint16_t)((uint16_t)input[axis * 5U + 3U] |
+                    ((uint16_t)input[axis * 5U + 4U] << 8U));
+            }
+            memcpy(config->button, input + 30U, 8U);
+        }
+    }
     settings_decode_candidate.auto_boot = settings_wire[24U] != 0U;
     if (!wire_string(settings_decode_candidate.selected_core_id,
                      sizeof(settings_decode_candidate.selected_core_id),
@@ -520,7 +559,7 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
             profile->vectrex_overlay_opacity = input[250U];
         }
         mt_video_effects_defaults(&profile->video_effects);
-        if (schema == MT_SETTINGS_SCHEMA) {
+        if (schema >= MT_SETTINGS_SCHEMA_V5) {
             unsigned effect;
             for (effect = 0U; effect < MT_VIDEO_EFFECT_COUNT; ++effect) {
                 const size_t offset = MT_SETTINGS_EFFECTS_OFFSET + effect * 2U;
@@ -557,7 +596,7 @@ mt_settings_result_t mt_supervisor_settings_load(
      * exact reads, and decoding verifies the schema/length pair and CRC. */
     if (sd.status == MT_SD_SIZE_MISMATCH &&
         (sd.size == MT_SETTINGS_LEGACY_WIRE_SIZE || sd.size == MT_SETTINGS_V3_WIRE_SIZE ||
-         sd.size == MT_SETTINGS_V4_WIRE_SIZE)) {
+         sd.size == MT_SETTINGS_V4_WIRE_SIZE || sd.size == MT_SETTINGS_V5_WIRE_SIZE)) {
         sd = mt_sd_storage_read_file_optional_exact(
             MT_SETTINGS_PATH, settings_wire, sd.size,
             &found);

@@ -140,3 +140,10 @@ bool mt_media_browser_up(mt_media_browser_t *browser)
     else browser->relative[0] = '\0';
     return true;
 }
+
+/* Finder resource forks and other dot entries are not user media. Parent
+ * navigation is an explicit UI row, never an SD directory entry. */
+bool mt_media_browser_visible_component(const char *name)
+{
+    return mt_media_browser_valid_component(name) && name[0] != '.';
+}

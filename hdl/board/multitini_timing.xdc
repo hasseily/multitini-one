@@ -60,9 +60,20 @@ set video_clocks [get_clocks -quiet -include_generated_clocks \
 set machine_clocks [get_clocks -quiet -include_generated_clocks \
     $machine_root_clock]
 set audio_clocks [get_clocks -quiet -include_generated_clocks audio_mclk]
-set_clock_groups -asynchronous \
-    -group $control_clocks -group $video_clocks -group $machine_clocks \
-    -group $audio_clocks
+# Never cut entire asynchronous clock groups here: that would override
+# XPM Gray-pointer maximum delays. XPM owns its handshake/FIFO constraints.
+# For the shell's level/toggle samplers, cut only the first-stage D pins.
+# Later stages retain normal timing. The vector sync_meta instances carry
+# diagnostic counters only, whose existing contract permits torn samples.
+set multitini_cdc_first [get_cells -hierarchical -quiet -regexp \
+    {(^|.*/)(sync_meta_reg(\[[0-9]+\])?|active_(visible|bank|dense)_meta_reg|dst_sync_reg\[0\]|(idle_destination|recovered_source|mailbox_idle_pixel|recovered_control|underrun_sync|live_sync|control_release)_reg\[0\])$}]
+set_false_path -to [get_pins -of_objects $multitini_cdc_first \
+    -filter {REF_PIN_NAME == D}]
+# Asynchronous reset assertion is intentional only at reset synchronizer
+# pins. Synchronous release stages and every ordinary data path stay timed.
+set_false_path -to [get_pins -of_objects \
+    [get_cells -hierarchical -quiet -filter {ASYNC_REG == TRUE}] \
+    -filter {REF_PIN_NAME == CLR || REF_PIN_NAME == PRE}]
 
 # S/PDIF is self-clocking biphase-mark data and has no separate receiver
 # sampling clock against which an FPGA output delay can be specified.

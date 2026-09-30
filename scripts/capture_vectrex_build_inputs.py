@@ -7,6 +7,8 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
+import io
+import tarfile
 from pathlib import Path
 import subprocess
 
@@ -24,8 +26,16 @@ def inputs(machine: str) -> list[Path]:
         ROOT / "scripts/create_project.tcl",
         ROOT / "scripts/build_and_export_xsa.tcl",
         ROOT / "scripts/run_native_tool.py",
+        *[ROOT / "scripts" / name for name in (
+            "configure_vivado_run_profile.tcl", "vivado_run_threads.tcl",
+            "apply_fabric_timing_margin.tcl", "clear_fabric_timing_margin.tcl",
+            "finish_video_timing.tcl", "check_video_bus_constraints.tcl")],
         Path(__file__).resolve(),
     }
+    # Redistributable build snapshots include the rules and source credits.
+    paths.update(path for base in ("licenses", "provenance", "spec")
+                 for path in (ROOT / base).rglob("*") if path.is_file())
+    paths.update((ROOT / "LICENSE", ROOT / "MULTITINI_ONE_PLAN.md"))
     section = "common"
     for line in (ROOT / "hdl/hdl_sources.txt").read_text().splitlines():
         line = line.strip()
@@ -39,6 +49,20 @@ def inputs(machine: str) -> list[Path]:
         if not path.is_relative_to(ROOT) or not path.is_file():
             raise ValueError(f"Missing or external build input: {path}")
     return sorted(paths)
+
+
+def archive_inputs(output: Path, record: dict) -> None:
+    archive = output.with_suffix(".sources.tar.gz")
+    with tarfile.open(archive, "w:gz") as stream:
+        for name, expected in record["files"].items():
+            data = (ROOT / name).read_bytes()
+            if hashlib.sha256(data).hexdigest() != expected:
+                raise ValueError(f"Build input changed while archiving: {name}")
+            entry = tarfile.TarInfo(name)
+            entry.size = len(data)
+            entry.mode = 0o644
+            stream.addfile(entry, io.BytesIO(data))
+    record["archive"] = {"name": archive.name, "sha256": digest(archive)}
 
 
 def main() -> int:
@@ -61,6 +85,10 @@ def main() -> int:
             changed = sorted(path for path in set(current) | set(expected)
                              if current.get(path) != expected.get(path))
             raise ValueError(f"FPGA build inputs changed: {', '.join(changed)}")
+        if "archive" in record:
+            archive = record["archive"]
+            if Path(archive["name"]).name != archive["name"] or digest(output.parent / archive["name"]) != archive["sha256"]:
+                raise ValueError("Source archive changed")
         print(f"Verified {len(current)} unchanged {record['machine']} build inputs")
         return 0
     if not args.machine:
@@ -81,6 +109,7 @@ def main() -> int:
         "note": "Source bytes, not a clean-commit assertion; retain the matching source archive with the image.",
     }
     output.parent.mkdir(parents=True, exist_ok=True)
+    archive_inputs(output, record)
     output.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     print(f"Captured {len(record['files'])} {args.machine} build inputs in {output}")
     return 0

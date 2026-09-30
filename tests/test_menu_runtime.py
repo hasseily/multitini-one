@@ -126,6 +126,8 @@ static void set_supervisor_error(const char *text) {
     (void)text; ++errors; supervisor_status_color = MT_UI_COLOR_RED;
     supervisor_menu_dirty = true;
 }
+void usb_hid_service_set_menu_capture(bool captured) { (void)captured; }
+void usb_hid_service_set_gamepad_preview(bool preview) { (void)preview; }
 void usb_hid_service_set_core_ready(bool ready) {
     core_ready = ready; ++input_changes;
 }
@@ -509,7 +511,7 @@ class MenuRuntimeTests(unittest.TestCase):
             compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wpedantic",
             "-I", str(ROOT / "firmware/include"), str(harness),
             "-I", str(ROOT / "firmware/platform/xilinx"),
-            str(ROOT / "firmware/common/menu.c"), str(ROOT / "firmware/common/ui.c"),
+            str(ROOT / "firmware/common/menu.c"), str(ROOT / "firmware/common/gamepad.c"), str(ROOT / "firmware/common/ui.c"),
             str(ROOT / "firmware/common/text_reader.c"), str(ROOT / "firmware/common/clock.c"),
             str(ROOT / "firmware/common/content_type.c"),
             str(ROOT / "firmware/common/vectrex_overlay.c"),

@@ -323,6 +323,12 @@ static unsigned missing_hub_handles, skip_deinit_hook, fail_deinit_power;
 static unsigned release_calls;
 static int g_c64_input, g_gameboy_input, g_vectrex_input;
 static uint8_t g_slots[8], g_xinput_slots[8];
+#define MT_GAMEPAD_SLOTS 9U
+static int g_gamepads;
+static uint8_t g_vendor_slots[9], g_release_guard[9];
+static void usb_xbox_one_stop(void) {}
+static void mt_gamepad_disconnect(void *input, uint8_t slot)
+{ CHECK(input == &g_gamepads && slot < 9U); }
 #define MT_USB1_BASE USB1_BASE
 static int mt_c64_hid_release_all(void *state)
 { CHECK(state == &g_c64_input); ++release_calls; return 0; }

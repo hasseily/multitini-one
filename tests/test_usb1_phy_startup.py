@@ -93,7 +93,7 @@ def main() -> int:
     executable = BUILD / "usb1_phy_startup.exe"
     subprocess.run([
         sys.executable, str(ROOT / "scripts/run_native_tool.py"), "--",
-        str(compiler), "-std=c11", "-Wall", "-Wextra", "-Werror", "-static",
+        str(compiler), "-std=c11", "-Wall", "-Wextra", "-Werror", *(["-static"] if os.name == "nt" else []),
         "-DCONFIG_USB_DCACHE_ENABLE", "-I", str(BUILD), "-I", str(FRONTEND),
         str(ROOT / "tests/host/test_usb1_phy_startup.c"),
         str(FRONTEND / "cherryusb_zynq_hc.c"), "-o", str(executable),
@@ -108,7 +108,7 @@ def main() -> int:
     subprocess.run([
         sys.executable, str(ROOT / "scripts/run_native_tool.py"), "--",
         str(compiler), "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wpedantic",
-        "-static", "-I", str(BUILD),
+        *(["-static"] if os.name == "nt" else []), "-I", str(BUILD),
         str(ROOT / "tests/host/test_usb1_hub_init.c"), "-o", str(hub_executable),
     ], check=True, cwd=ROOT, timeout=60)
     subprocess.run([

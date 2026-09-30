@@ -3,6 +3,7 @@
 #define MULTITINI_USB_HID_SERVICE_H
 
 #include "multitini_core_link.h"
+#include "multitini_gamepad.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -47,5 +48,12 @@ int usb_hid_service_set_symbolic_keyboard(bool enabled);
 bool usb_hid_service_symbolic_keyboard(void);
 void usb_hid_service_get_status(mt_usb_hid_status_t *status);
 void usb_hid_service_dump_status(void);
+
+void usb_hid_service_set_menu_capture(bool captured);
+void usb_hid_service_set_gamepad_preview(bool preview);
+void usb_hid_service_gamepad_snapshot(uint8_t slot, mt_gamepad_state_t *raw,
+                                      mt_gamepad_state_t *mapped);
+bool usb_hid_service_set_gamepad_config(uint8_t slot, const mt_gamepad_config_t *config);
+void usb_hid_service_get_gamepad_config(uint8_t slot, mt_gamepad_config_t *config);
 
 #endif

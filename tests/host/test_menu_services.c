@@ -235,8 +235,42 @@ static void test_slider_fallbacks(void)
           "below-minimum padding also uses the numeric fallback position");
 }
 
+static void test_gamepad_modal(void)
+{
+    mt_menu_t menu;
+    mt_menu_view_t view = {0};
+    mt_ui_frame_t frame;
+    mt_menu_init(&menu, &view);
+    menu.visible = menu.gamepad_edit = true;
+    for (unsigned slot = 0; slot < MT_GAMEPAD_SLOTS; ++slot)
+        mt_gamepad_default_config(&menu.gamepad_config[slot]);
+    (void)press(&menu, &view, MT_MENU_HID_LEFT);
+    check(menu.gamepad_slot == 8U, "controller slot wraps to ninth slot");
+    (void)press(&menu, &view, MT_MENU_HID_DOWN);
+    (void)press(&menu, &view, MT_MENU_HID_LEFT);
+    check(menu.gamepad_control == 13U, "axis and button selection wraps");
+    (void)press(&menu, &view, MT_MENU_HID_DOWN);
+    (void)press(&menu, &view, MT_MENU_HID_RIGHT);
+    check(menu.gamepad_config[8].button[7] == 8U, "disable a logical button");
+    menu.gamepad_control = 0U;
+    (void)press(&menu, &view, MT_MENU_HID_LEFT);
+    check(menu.gamepad_config[8].axis[0].source == MT_GAMEPAD_AXIS_OFF, "disable an axis");
+    view.gamepad_preview.connected = 1U;
+    view.gamepad_preview.axis_valid_mask = 1U;
+    view.gamepad_preview.axis[0] = -12345;
+    mt_menu_render(&menu, &view, &frame);
+    check(contains(&frame, "Controller setup") && contains(&frame, "-12345") &&
+        contains(&frame, "9  (connected)"), "live controller preview and selected slot");
+    menu.gamepad_field = 7U;
+    check(press(&menu, &view, MT_MENU_HID_ENTER).kind == MT_MENU_ACTION_SET_GAMEPADS,
+        "saving is an explicit runtime action");
+    (void)press(&menu, &view, MT_MENU_HID_ESCAPE);
+    check(!menu.gamepad_edit && menu.visible, "cancel returns to input page");
+}
+
 int main(void)
 {
+    test_gamepad_modal();
     test_document_actions();
     test_reader_modal();
     test_clock_modal();

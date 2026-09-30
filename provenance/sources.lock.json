@@ -32,7 +32,7 @@
     {
       "name": "CherryUSB",
       "url": "https://github.com/hasseily/CherryUSB.git",
-      "commit": "825dc4166ef4b92ced2b15446c668e74f2bc064c",
+      "commit": "06f424d1d23dd271dcc9cc1e19ec47ca07032dd6",
       "license": "Apache-2.0",
       "use": "Pinned USB host core, HID class, and EHCI controller source"
     },
@@ -84,6 +84,13 @@
       "commit": "7a5ff50528cd9c1d13ffb675e7df8506bffaa078",
       "license": "mixed file-local terms; upstream top-level GPL-2.0-or-later declaration applied to unmarked allowlisted machine source",
       "use": "Game Boy and Game Boy Color machine logic plus the MIT SameBoy-derived bootstrap; no game, palette, border, release image, Intel-generated IP, SDRAM controller, or MiSTer platform support source"
+    },
+    {
+      "name": "Appletini One shared platform parity",
+      "url": "https://github.com/hasseily/appletini-one.git",
+      "commit": "be2ea4fee3c5ebc239b8b20aad9738bee89f8ff0",
+      "license": "GPL-3.0-only",
+      "use": "USB controllers and recovery, controller mapping behavior, display modes, timing and build checks, golden self-update. Per-file adapted sources are recorded in licenses/files.csv."
     }
   ]
 }

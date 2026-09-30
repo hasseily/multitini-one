@@ -14,6 +14,9 @@
 #include "usbh_core.h"
 #include "usbh_hid.h"
 #include "usbh_xbox.h"
+#include "usb_gamepad_input.h"
+#include "usb_ps4_report.h"
+#include "usb_xbox_one.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -32,12 +35,11 @@
 
 #define MT_HID_REPORT_BYTES 64U
 #define MT_HID_DESCRIPTOR_BYTES CONFIG_USBHOST_REQUEST_BUFFER_LEN
-#define MT_HID_RETRY_TICKS ((XTime)(COUNTS_PER_SECOND / UINT64_C(20)))
+#define MT_HID_RETRY_TICKS ((XTime)(COUNTS_PER_SECOND / UINT64_C(100)))
 #define MT_INPUT_COMMAND_POLLS UINT32_C(10000)
 #define MT_XINPUT_PACKET_BYTES 64U
 #define MT_XINPUT_DIAGNOSTIC_BYTES 10U
 #define MT_XINPUT_OUTPUT_ATTEMPTS 3U
-#define MT_XINPUT_SLOT_BASE CONFIG_USBHOST_MAX_HID_CLASS
 
 #if (MT_XINPUT_PACKET_BYTES % CONFIG_USB_ALIGN_SIZE) != 0
 #error XInput DMA buffers must span whole cache lines
@@ -59,10 +61,9 @@ typedef struct {
     uint8_t active;
     uint8_t keyboard;
     uint8_t gamepad;
-    uint8_t gamepad_state;
-    uint8_t vectrex_buttons;
-    uint8_t vectrex_hat;
-    int16_t vectrex_x, vectrex_y;
+    uint8_t input_slot;
+    uint8_t ps4;
+    uint8_t dpad;
     uint8_t report_pending;
     uint8_t retry_armed;
 } mt_hid_slot_t;
@@ -78,6 +79,7 @@ typedef struct {
     int last_error;
     int output_last_error;
     uint8_t last_packet[MT_XINPUT_DIAGNOSTIC_BYTES];
+    uint8_t input_slot;
     uint8_t decoded_state;
     uint8_t observed_state;
     uint8_t last_packet_length;
@@ -107,6 +109,11 @@ static uint8_t
     g_xinput_outputs[CONFIG_USBHOST_MAX_XBOX_CLASS]
                     [MT_XINPUT_PACKET_BYTES]
     __attribute__((aligned(CONFIG_USB_ALIGN_SIZE)));
+static mt_gamepad_input_t g_gamepads;
+static uint8_t g_vendor_slots[MT_GAMEPAD_SLOTS];
+static uint8_t g_release_guard[MT_GAMEPAD_SLOTS];
+static bool g_menu_capture;
+static bool g_gamepad_preview;
 static mt_c64_hid_input_t g_c64_input;
 static mt_gameboy_hid_input_t g_gameboy_input;
 static mt_vectrex_hid_input_t g_vectrex_input;
@@ -198,8 +205,7 @@ static mt_xinput_slot_t *slot_for_xinput(struct usbh_xbox *xbox)
 
 static uint8_t xinput_aggregate_slot(const mt_xinput_slot_t *slot)
 {
-    return (uint8_t)(MT_XINPUT_SLOT_BASE +
-                     (uint8_t)(slot - g_xinput_slots));
+    return slot->input_slot;
 }
 
 static void slot_clear(mt_hid_slot_t *slot)
@@ -287,32 +293,6 @@ static uint16_t usage_for_field(const struct usbh_hid_report_item *item,
     return item->attribute.usage_min;
 }
 
-static int axis_direction(int32_t value, int32_t minimum, int32_t maximum)
-{
-    int32_t span;
-    if (maximum <= minimum) return 0;
-    span = maximum - minimum;
-    if (value < minimum + span / 3) return -1;
-    if (value > minimum + (span * 2) / 3) return 1;
-    return 0;
-}
-
-static uint8_t hat_state(int32_t value, int32_t minimum)
-{
-    const int32_t direction = value - minimum;
-    switch (direction) {
-    case 0: return 0x01U;
-    case 1: return 0x09U;
-    case 2: return 0x08U;
-    case 3: return 0x0AU;
-    case 4: return 0x02U;
-    case 5: return 0x06U;
-    case 6: return 0x04U;
-    case 7: return 0x05U;
-    default: return 0U;
-    }
-}
-
 static bool descriptor_has_gamepad(const mt_hid_slot_t *slot)
 {
     uint8_t axes = 0U;
@@ -344,111 +324,143 @@ static bool descriptor_has_gamepad(const mt_hid_slot_t *slot)
     return axes == 3U || hat;
 }
 
-static void process_gamepad_report(mt_hid_slot_t *slot,
-                                   const uint8_t *report, uint32_t length)
+static void deliver_gamepad(uint8_t index)
 {
-    uint8_t next = slot->gamepad_state;
-    uint8_t direction_touched = 0U;
-    uint8_t direction_value = 0U;
-    uint8_t button_touched = 0U;
-    uint8_t button_value = 0U;
+    mt_gamepad_state_t state;
+    mt_gamepad_mapped(&g_gamepads, index, &state);
+    if (!state.connected) return;
+    if (g_menu_capture || g_release_guard[index] != 0U) {
+        state.buttons = 0U;
+        state.hat = 8U;
+        memset(state.axis, 0, sizeof(state.axis));
+    }
+    submit_gamepad_state(index, mt_gamepad_digital(&state));
+    int16_t x = state.axis[MT_GAMEPAD_AXIS_X];
+    const int16_t down = state.axis[MT_GAMEPAD_AXIS_Y];
+    int16_t y = down == INT16_MIN ? INT16_MAX : (int16_t)-down;
+    const uint8_t hat = mt_gamepad_hat_bits(state.hat);
+    if ((hat & 12U) != 0U)
+        x = (hat & 12U) == 12U ? 0 : ((hat & 4U) != 0U ? INT16_MIN : INT16_MAX);
+    if ((hat & 3U) != 0U)
+        y = (hat & 3U) == 3U ? 0 : ((hat & 1U) != 0U ? INT16_MAX : INT16_MIN);
+    (void)mt_vectrex_hid_gamepad_report(&g_vectrex_input, index, state.buttons, x, y);
+}
 
-    for (uint32_t index = 0U;
-         index < slot->report_info.report_item_count; ++index) {
-        const struct usbh_hid_report_item *const item =
-            &slot->report_info.report_items[index];
+static bool pad_active(const mt_gamepad_state_t *state)
+{
+    if (state->buttons != 0U || state->extra_active != 0U || state->hat < 8U) return true;
+    for (unsigned axis = 0U; axis < MT_GAMEPAD_AXIS_COUNT; ++axis) {
+        if ((state->axis_valid_mask & (1U << axis)) == 0U) continue;
+        if (axis == MT_GAMEPAD_AXIS_Z || axis == MT_GAMEPAD_AXIS_RZ) {
+            if (state->axis[axis] > -24576) return true;
+        } else if (state->axis[axis] < -8192 || state->axis[axis] > 8192) return true;
+    }
+    return false;
+}
+
+static void process_shared_report(uint8_t index, const mt_gamepad_report_t *report,
+                                  uint8_t hat, uint8_t extra)
+{
+    mt_gamepad_report(&g_gamepads, index, report, hat, extra);
+    if (!pad_active(&g_gamepads.raw[index])) g_release_guard[index] = 0U;
+    if (g_keyboard_filter != NULL && !g_gamepad_preview) {
+        uint8_t keys[7], count = 0U;
+        const mt_gamepad_state_t *raw = &g_gamepads.raw[index];
+        const uint8_t directions = mt_gamepad_digital(raw) & 15U;
+        if ((directions & 1U) != 0U) keys[count++] = 0x52U;
+        if ((directions & 2U) != 0U) keys[count++] = 0x51U;
+        if ((directions & 4U) != 0U) keys[count++] = 0x50U;
+        if ((directions & 8U) != 0U) keys[count++] = 0x4fU;
+        if ((raw->buttons & 1U) != 0U) keys[count++] = 0x28U;
+        if ((raw->buttons & 2U) != 0U) keys[count++] = 0x29U;
+        if ((raw->buttons & 0x80U) != 0U) keys[count++] = 0x45U;
+        /* Menu edges use physical controls so changing mappings cannot make
+         * the settings page inaccessible. No synthetic keys reach a core. */
+        (void)g_keyboard_filter(g_keyboard_filter_context, index, 0U, keys, count);
+    }
+    deliver_gamepad(index);
+}
+
+int usb_gamepad_input_connect(void)
+{
+    const int slot = mt_gamepad_connect(&g_gamepads, MT_GAMEPAD_SLOTS);
+    if (slot >= 0) g_vendor_slots[slot] = 1U;
+    return slot;
+}
+
+void usb_gamepad_input_disconnect(uint8_t slot)
+{
+    if (slot >= MT_GAMEPAD_SLOTS || g_vendor_slots[slot] == 0U) return;
+    g_vendor_slots[slot] = 0U;
+    g_release_guard[slot] = 0U;
+    disconnect_input_slot(slot);
+    mt_gamepad_disconnect(&g_gamepads, slot);
+    if (g_keyboard_filter != NULL)
+        (void)g_keyboard_filter(g_keyboard_filter_context, slot, 0U, NULL, 0U);
+}
+
+void usb_gamepad_input_report(uint8_t slot, const mt_gamepad_report_t *report,
+                              uint8_t hat, uint8_t extra_active)
+{
+    if (slot >= MT_GAMEPAD_SLOTS || g_vendor_slots[slot] == 0U || report == NULL) return;
+    ++g_reports_total;
+    process_shared_report(slot, report, hat, extra_active);
+}
+
+static void process_gamepad_report(mt_hid_slot_t *slot,
+                                   const uint8_t *data, uint32_t length)
+{
+    mt_gamepad_report_t report = {0};
+    uint8_t hat = UINT8_MAX, extra = 0U;
+    if (slot->ps4 != 0U) {
+        if (usb_ps4_decode(data, length, &report, &hat, &extra) != 0U)
+            process_shared_report(slot->input_slot, &report, hat, extra);
+        return;
+    }
+    for (uint32_t index = 0U; index < slot->report_info.report_item_count; ++index) {
+        const struct usbh_hid_report_item *item = &slot->report_info.report_items[index];
         if (item->report_type != HID_REPORT_INPUT ||
             (item->report_flags & HID_MAINITEM_CONSTANT) != 0U ||
-            !report_id_matches(item, report, length)) {
-            continue;
-        }
-        for (uint32_t field = 0U;
-             field < item->attribute.report_count; ++field) {
-            uint32_t raw = 0U;
-            uint16_t usage;
-            if (!extract_bits(item, report, length, field, &raw)) continue;
-            usage = usage_for_field(item, field);
-
-            /* Preserve four independent face buttons and full analog values
-             * for Vectrex; other cores retain their existing normalized map. */
-            if (item->attribute.usage_page == HID_USAGE_PAGE_BUTTON &&
-                usage >= 1U && usage <= 4U) {
-                const uint8_t bit = (uint8_t)(1U << (usage - 1U));
-                slot->vectrex_buttons = (uint8_t)((slot->vectrex_buttons &
-                    (uint8_t)~bit) | (raw != 0U ? bit : 0U));
-            }
-
-            if (item->attribute.usage_page == HID_USAGE_PAGE_BUTTON &&
-                ((usage >= 1U && usage <= 4U) ||
-                 usage == 9U || usage == 10U)) {
-                const uint8_t mask = usage == 9U ? UINT8_C(0x40) :
-                                     (usage == 10U ? UINT8_C(0x80) :
-                                      (uint8_t)(1U << (usage + 3U)));
-                button_touched |= mask;
-                if (raw != 0U) button_value |= mask;
-            } else if (item->attribute.usage_page ==
-                           HID_USAGE_PAGE_GENERIC_DESKTOP_CONTROLS &&
+            !report_id_matches(item, data, length)) continue;
+        for (uint32_t field = 0U; field < item->attribute.report_count; ++field) {
+            uint32_t raw;
+            if (!extract_bits(item, data, length, field, &raw)) continue;
+            const uint16_t usage = usage_for_field(item, field);
+            if (item->attribute.usage_page == HID_USAGE_PAGE_BUTTON) {
+                /* Conventional generic pads use 9/10 for Select/Start. */
+                const unsigned button = usage == 9U ? 6U : usage == 10U ? 7U : (unsigned)usage - 1U;
+                if (button < 8U) {
+                    report.buttons_valid = 1U;
+                    report.buttons_mask |= (uint8_t)(1U << button);
+                    if (raw != 0U) report.buttons |= (uint8_t)(1U << button);
+                }
+            } else if (item->attribute.usage_page == HID_USAGE_PAGE_GENERIC_DESKTOP_CONTROLS &&
                        (item->report_flags & HID_MAINITEM_VARIABLE) != 0U &&
                        (item->report_flags & HID_MAINITEM_RELATIVE) == 0U) {
-                int32_t minimum;
-                int32_t maximum;
+                int32_t minimum, maximum;
                 const int32_t value = item_value(item, raw);
                 item_bounds(item, &minimum, &maximum);
-                if (usage == HID_DESKTOP_USAGE_X)
-                    slot->vectrex_x = mt_vectrex_axis_normalize(value, minimum, maximum);
-                if (usage == HID_DESKTOP_USAGE_Y) {
-                    const int16_t axis = mt_vectrex_axis_normalize(value, minimum, maximum);
-                    slot->vectrex_y = axis == INT16_MIN ? INT16_MAX : (int16_t)-axis;
-                }
-                if (usage == HID_DESKTOP_USAGE_X ||
-                    usage == HID_DESKTOP_USAGE_RX) {
-                    const int direction = axis_direction(value, minimum,
-                                                         maximum);
-                    direction_touched |= 0x0CU;
-                    if (direction < 0) direction_value |= 0x04U;
-                    else if (direction > 0) direction_value |= 0x08U;
-                } else if (usage == HID_DESKTOP_USAGE_Y ||
-                           usage == HID_DESKTOP_USAGE_RY) {
-                    const int direction = axis_direction(value, minimum,
-                                                         maximum);
-                    direction_touched |= 0x03U;
-                    if (direction < 0) direction_value |= 0x01U;
-                    else if (direction > 0) direction_value |= 0x02U;
+                if (usage >= HID_DESKTOP_USAGE_X && usage <= HID_DESKTOP_USAGE_RZ) {
+                    const unsigned axis = usage - HID_DESKTOP_USAGE_X;
+                    report.axis_valid_mask |= (uint8_t)(1U << axis);
+                    report.axis[axis] = value;
+                    report.logical_min[axis] = minimum;
+                    report.logical_max[axis] = maximum;
                 } else if (usage == HID_DESKTOP_USAGE_HATSWITCH) {
-                    slot->vectrex_hat = hat_state(value, minimum);
-                    direction_touched |= 0x0FU;
-                    direction_value |= hat_state(value, minimum);
-                } else if (usage >= HID_DESKTOP_USAGE_DPAD_UP &&
-                           usage <= HID_DESKTOP_USAGE_DPAD_LEFT) {
-                    static const uint8_t dpad_bits[4] = {
-                        0x01U, 0x02U, 0x08U, 0x04U,
-                    };
-                    const uint8_t mask =
-                        dpad_bits[usage - HID_DESKTOP_USAGE_DPAD_UP];
-                    slot->vectrex_hat = (uint8_t)((slot->vectrex_hat &
-                        (uint8_t)~mask) | (raw != 0U ? mask : 0U));
-                    direction_touched |= mask;
-                    if (raw != 0U) direction_value |= mask;
+                    const int64_t direction = (int64_t)value - minimum;
+                    hat = direction >= 0 && direction < 8 ? (uint8_t)direction : 8U;
+                } else if (usage >= HID_DESKTOP_USAGE_DPAD_UP && usage <= HID_DESKTOP_USAGE_DPAD_LEFT) {
+                    static const uint8_t bits[4] = {1U, 2U, 8U, 4U};
+                    const uint8_t bit = bits[usage - HID_DESKTOP_USAGE_DPAD_UP];
+                    slot->dpad = (uint8_t)((slot->dpad & (uint8_t)~bit) | (raw != 0U ? bit : 0U));
+                    hat = 8U;
+                    for (uint8_t candidate = 0U; candidate < 8U; ++candidate)
+                        if (mt_gamepad_hat_bits(candidate) == slot->dpad) hat = candidate;
                 }
             }
         }
     }
-    next = (uint8_t)((next & (uint8_t)~direction_touched) |
-                     direction_value);
-    next = (uint8_t)((next & (uint8_t)~button_touched) | button_value);
-    slot->gamepad_state = next;
-    submit_gamepad_state((uint8_t)(slot - g_slots), next);
-    {
-        int16_t x = slot->vectrex_x, y = slot->vectrex_y;
-        if ((slot->vectrex_hat & 12U) != 0U)
-            x = (slot->vectrex_hat & 12U) == 12U ? 0 :
-                ((slot->vectrex_hat & 4U) != 0U ? INT16_MIN : INT16_MAX);
-        if ((slot->vectrex_hat & 3U) != 0U)
-            y = (slot->vectrex_hat & 3U) == 3U ? 0 :
-                ((slot->vectrex_hat & 1U) != 0U ? INT16_MAX : INT16_MIN);
-        (void)mt_vectrex_hid_gamepad_report(&g_vectrex_input,
-            (uint8_t)(slot - g_slots), slot->vectrex_buttons, x, y);
-    }
+    process_shared_report(slot->input_slot, &report, hat, extra);
 }
 
 static uint32_t report_length(const mt_hid_slot_t *slot)
@@ -482,13 +494,13 @@ static void report_complete(void *argument, int bytes)
             const struct usb_hid_kbd_report *const keyboard =
                 (const struct usb_hid_kbd_report *)g_reports[index];
             const bool captured = g_keyboard_filter != NULL &&
-                g_keyboard_filter(g_keyboard_filter_context, index,
+                g_keyboard_filter(g_keyboard_filter_context, slot->input_slot,
                                   keyboard->modifier, keyboard->key,
                                   sizeof(keyboard->key));
             if (captured) {
-                submit_keyboard_state(index, 0U, NULL, 0U);
+                submit_keyboard_state(slot->input_slot, 0U, NULL, 0U);
             } else {
-                submit_keyboard_state(index, keyboard->modifier,
+                submit_keyboard_state(slot->input_slot, keyboard->modifier,
                                       keyboard->key, sizeof(keyboard->key));
             }
         } else if (slot->gamepad != 0U) {
@@ -499,6 +511,9 @@ static void report_complete(void *argument, int bytes)
         ++g_transfer_errors;
         slot->last_error = bytes;
         g_last_error = bytes;
+        XTime_GetTime(&slot->retry_started);
+        slot->retry_armed = 1U;
+        return;
     }
     submit_report(slot);
 }
@@ -583,15 +598,32 @@ static void xinput_report_complete(void *argument, int bytes)
             if (state != slot->decoded_state) ++slot->state_changes;
             slot->decoded_state = state;
             slot->observed_state |= state;
-            submit_gamepad_state(xinput_aggregate_slot(slot), state);
-            {
-                uint8_t buttons;
-                int16_t x, y;
-                if (mt_vectrex_xinput_decode(g_xinput_reports[index],
-                    (size_t)bytes, &buttons, &x, &y) == 0)
-                    (void)mt_vectrex_hid_gamepad_report(&g_vectrex_input,
-                        xinput_aggregate_slot(slot), buttons, x, y);
+            const uint8_t *data = g_xinput_reports[index];
+            mt_gamepad_report_t report = {0};
+            report.axis_valid_mask = 0x3fU;
+            report.buttons_valid = 1U;
+            report.buttons = (uint8_t)((data[3] >> 4U) | ((data[3] & 3U) << 4U) |
+                ((data[2] & 0x20U) << 1U) | ((data[2] & 0x10U) << 3U));
+            static const uint8_t offsets[6] = {6U, 8U, 4U, 10U, 12U, 5U};
+            for (unsigned axis = 0U; axis < 6U; ++axis) {
+                const unsigned offset = offsets[axis];
+                if (axis == MT_GAMEPAD_AXIS_Z || axis == MT_GAMEPAD_AXIS_RZ) {
+                    report.axis[axis] = data[offset];
+                    report.logical_max[axis] = 255;
+                } else {
+                    const uint16_t word = (uint16_t)((uint16_t)data[offset] | ((uint16_t)data[offset+1U] << 8U));
+                    int32_t value = word < 0x8000U ? (int32_t)word : (int32_t)word - 65536;
+                    if (axis == MT_GAMEPAD_AXIS_Y || axis == MT_GAMEPAD_AXIS_RY) value = -1 - value;
+                    report.axis[axis] = value;
+                    report.logical_min[axis] = -32768;
+                    report.logical_max[axis] = 32767;
+                }
             }
+            uint8_t hat = 8U;
+            for (uint8_t candidate = 0U; candidate < 8U; ++candidate)
+                if (mt_gamepad_hat_bits(candidate) == (data[2] & 15U)) hat = candidate;
+            process_shared_report(slot->input_slot, &report, hat,
+                (uint8_t)(((data[2] & 0xc0U) | (data[3] & 4U)) != 0U));
         } else {
             ++g_input_errors;
             slot->last_error = decode_result;
@@ -602,6 +634,9 @@ static void xinput_report_complete(void *argument, int bytes)
         ++g_transfer_errors;
         slot->last_error = bytes;
         g_last_error = bytes;
+        XTime_GetTime(&slot->retry_started);
+        slot->retry_armed = 1U;
+        return;
     }
     submit_xinput_report(slot);
 }
@@ -783,9 +818,11 @@ void usbh_xbox_run(struct usbh_xbox *xbox)
     }
     slot = slot_for_xinput(xbox);
     if (slot == NULL) return;
-    aggregate_slot = xinput_aggregate_slot(slot);
-    disconnect_input_slot(aggregate_slot);
+    const int allocated = mt_gamepad_connect(&g_gamepads, CONFIG_USBHOST_MAX_HID_CLASS);
+    if (allocated < 0) return;
+    aggregate_slot = (uint8_t)allocated;
     memset(slot, 0, sizeof(*slot));
+    slot->input_slot = aggregate_slot;
     slot->xbox = xbox;
     slot->active = 1U;
     xil_printf("[usb1] XInput connected slot=%u aggregate=%u\r\n",
@@ -805,6 +842,9 @@ void usbh_xbox_stop(struct usbh_xbox *xbox)
     xil_printf("[usb1] XInput disconnected slot=%u\r\n",
                (unsigned int)xbox->minor);
     disconnect_input_slot(xinput_aggregate_slot(slot));
+    mt_gamepad_disconnect(&g_gamepads, slot->input_slot);
+    if (g_keyboard_filter != NULL)
+        (void)g_keyboard_filter(g_keyboard_filter_context, slot->input_slot, 0U, NULL, 0U);
     memset(slot, 0, sizeof(*slot));
 }
 
@@ -880,8 +920,10 @@ void usbh_hid_run(struct usbh_hid *hid)
     if (hid == NULL || hid->hport == NULL) return;
     slot = slot_for_hid(hid);
     if (slot == NULL) return;
-    disconnect_input_slot(hid->minor);
+    const int allocated = mt_gamepad_connect(&g_gamepads, hid->minor);
+    if (allocated < 0) return;
     slot_clear(slot);
+    slot->input_slot = (uint8_t)allocated;
     descriptor = &hid->hport->config.intf[hid->intf]
                       .altsetting[0].intf_desc;
     slot->hid = hid;
@@ -894,7 +936,10 @@ void usbh_hid_run(struct usbh_hid *hid)
     if (slot->keyboard != 0U) {
         (void)usbh_hid_set_protocol(hid, HID_PROTOCOL_BOOT);
     } else {
-        parse_descriptor(slot);
+        slot->ps4 = usb_ps4_supported(hid->hport->device_desc.idVendor,
+                                      hid->hport->device_desc.idProduct);
+        if (slot->ps4 != 0U) slot->gamepad = 1U;
+        else parse_descriptor(slot);
     }
     xil_printf("[usb1] HID connected slot=%u keyboard=%u gamepad=%u\r\n",
                (unsigned int)hid->minor, (unsigned int)slot->keyboard,
@@ -911,13 +956,22 @@ void usbh_hid_stop(struct usbh_hid *hid)
     if (slot == NULL || slot->hid != hid) return;
     xil_printf("[usb1] HID disconnected slot=%u\r\n",
                (unsigned int)hid->minor);
-    disconnect_input_slot(hid->minor);
+    disconnect_input_slot(slot->input_slot);
+    mt_gamepad_disconnect(&g_gamepads, slot->input_slot);
+    g_release_guard[slot->input_slot] = 0U;
+    if (g_keyboard_filter != NULL)
+        (void)g_keyboard_filter(g_keyboard_filter_context, slot->input_slot, 0U, NULL, 0U);
     hid->user_data = NULL;
     slot_clear(slot);
 }
 
 void usb_hid_service_init(mt_core_link_t *link)
 {
+    mt_gamepad_init(&g_gamepads);
+    memset(g_vendor_slots, 0, sizeof(g_vendor_slots));
+    memset(g_release_guard, 0, sizeof(g_release_guard));
+    g_menu_capture = false;
+    g_gamepad_preview = false;
     memset(g_slots, 0, sizeof(g_slots));
     memset(g_xinput_slots, 0, sizeof(g_xinput_slots));
     g_reports_total = 0U;
@@ -993,6 +1047,7 @@ int usb_hid_service_stop(void)
         }
     }
     if (g_started != 0U) {
+        usb_xbox_one_stop();
         (void)usbh_deinitialize(CHERRYUSB_USB1_BUSID);
         /* Deinit retries power removal and may fail after our first success.
          * Retain its result, and retry while the PHY clock is still live. */
@@ -1008,6 +1063,10 @@ int usb_hid_service_stop(void)
     (void)mt_vectrex_hid_release_all(&g_vectrex_input);
     memset(g_slots, 0, sizeof(g_slots));
     memset(g_xinput_slots, 0, sizeof(g_xinput_slots));
+    for (uint8_t i = 0U; i < MT_GAMEPAD_SLOTS; ++i)
+        mt_gamepad_disconnect(&g_gamepads, i);
+    memset(g_vendor_slots, 0, sizeof(g_vendor_slots));
+    memset(g_release_guard, 0, sizeof(g_release_guard));
     if (power_result != 0) {
         g_power_shutdown_required = 1U;
         g_last_error = power_result;
@@ -1049,6 +1108,7 @@ void usb_hid_service_poll(void)
     if (g_started != 0U) {
         cherryusb_host_poll(CHERRYUSB_USB1_BUSID);
         retry_reports();
+        usb_xbox_one_poll();
     }
     poll_active_input();
 }
@@ -1118,6 +1178,8 @@ void usb_hid_service_get_status(mt_usb_hid_status_t *status)
          ++index) {
         status->gamepads += g_xinput_slots[index].active;
     }
+    for (uint8_t i = 0U; i < MT_GAMEPAD_SLOTS; ++i)
+        status->gamepads += g_vendor_slots[i];
 }
 
 void usb_hid_service_dump_status(void)
@@ -1166,6 +1228,7 @@ void usb_hid_service_dump_status(void)
         }
         xil_printf("\r\n");
     }
+    usb_xbox_one_dump_status();
     xil_printf("usb1 phy cached: setup_rc=%d disable_rc=%d drive_known=%u drive=%u "
                "vbus_known=%u vbus_valid=%u ulpi_err=%d timeouts=%u "
                "id=%04x:%04x func=%02x iface=%02x otg=%02x int=%02x "
@@ -1182,4 +1245,40 @@ void usb_hid_service_dump_status(void)
                (unsigned int)phy.otg_control,
                (unsigned int)phy.interrupt_status,
                (unsigned int)phy.viewport);
+}
+
+void usb_hid_service_set_menu_capture(bool captured)
+{
+    if (g_menu_capture == captured) return;
+    g_menu_capture = captured;
+    for (uint8_t i = 0U; i < MT_GAMEPAD_SLOTS; ++i) {
+        if (!captured) g_release_guard[i] = pad_active(&g_gamepads.raw[i]) ? 1U : 0U;
+        deliver_gamepad(i);
+    }
+}
+
+void usb_hid_service_gamepad_snapshot(uint8_t slot, mt_gamepad_state_t *raw,
+                                      mt_gamepad_state_t *mapped)
+{
+    if (slot >= MT_GAMEPAD_SLOTS) return;
+    if (raw != NULL) *raw = g_gamepads.raw[slot];
+    if (mapped != NULL) mt_gamepad_mapped(&g_gamepads, slot, mapped);
+}
+
+bool usb_hid_service_set_gamepad_config(uint8_t slot, const mt_gamepad_config_t *config)
+{
+    if (slot >= MT_GAMEPAD_SLOTS || !mt_gamepad_config_valid(config)) return false;
+    g_gamepads.config[slot] = *config;
+    deliver_gamepad(slot);
+    return true;
+}
+
+void usb_hid_service_get_gamepad_config(uint8_t slot, mt_gamepad_config_t *config)
+{
+    if (slot < MT_GAMEPAD_SLOTS && config != NULL) *config = g_gamepads.config[slot];
+}
+
+void usb_hid_service_set_gamepad_preview(bool preview)
+{
+    g_gamepad_preview = preview;
 }

@@ -45,7 +45,7 @@ class BlurPackageTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name).resolve()
         self.baseline_files = {name: b"immutable " + name.encode() for name in package.RETAINED}
         self.baseline_files.update({
             "inputs/platform.xsa": xsa(),

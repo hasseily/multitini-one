@@ -110,6 +110,10 @@ static void test_lengths(void)
 
 int main(void)
 {
+    check(!mt_media_browser_visible_component("._Mine Storm.vec") &&
+          !mt_media_browser_visible_component(".hidden") &&
+          !mt_media_browser_visible_component("..") &&
+          mt_media_browser_visible_component("game.v2.vec"), "hide dot entries without hiding ordinary dotted files");
     test_navigation();
     test_rejection();
     test_lengths();

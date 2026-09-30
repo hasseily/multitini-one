@@ -1815,6 +1815,17 @@ static mt_menu_view_t supervisor_menu_view(void)
     view.vectrex_video_supported = supervisor.has_active &&
         selection_supports_vectrex_video(&supervisor.active);
     mt_core_frontend_apply(&supervisor_frontend, &state, &view);
+    if (view.input_item_count < MT_MENU_MAX_ITEMS) {
+        mt_menu_item_t *item = &supervisor_frontend.input_items[view.input_item_count++];
+        memset(item, 0, sizeof(*item));
+        item->label = "Controller setup";
+        item->value = "Mappings and live preview";
+        item->help = "Configure each USB slot's axes and buttons. Use a keyboard to edit while testing the controller.";
+        item->action = MT_MENU_ACTION_EDIT_GAMEPADS;
+        item->enabled = true;
+        item->value_color = MT_UI_COLOR_BLUE;
+    }
+    usb_hid_service_gamepad_snapshot(supervisor_menu.gamepad_slot, &view.gamepad_preview, NULL);
     view.status_text = supervisor_status_text;
     view.status_color = supervisor_status_color;
     if (supervisor_menu.page == MT_MENU_PAGE_EFFECTS &&
@@ -1916,7 +1927,7 @@ static int collect_menu_file(void *context, const char *name, size_t size,
     const bool document = !is_directory && is_text_document(name);
     const bool folders = browser == MT_MENU_BROWSER_DOCUMENTS || (supervisor.has_active &&
         supervisor.active.package.core_id == MT_VECTREX_CORE_ID);
-    if (!mt_media_browser_valid_component(name)) return 0;
+    if (!mt_media_browser_visible_component(name)) return 0;
     accepted = is_directory ? folders :
         document || (supervisor.has_active && browser != MT_MENU_BROWSER_DOCUMENTS &&
             mt_core_frontend_accepts_content(supervisor.active.package.core_id, browser, type));
@@ -2382,6 +2393,7 @@ static bool supervisor_keyboard_filter(void *context, uint8_t slot,
         }
     }
     memcpy(supervisor_menu_keys[slot], next, sizeof(next));
+    usb_hid_service_set_menu_capture(supervisor_menu.visible);
     return was_visible || supervisor_menu.visible;
 }
 
@@ -2658,6 +2670,23 @@ static void handle_menu_action(mt_menu_action_t action)
                 result == MT_TEXT_DOCUMENT_DECODE_FAILED ? "Unsupported document encoding" :
                 result == MT_TEXT_DOCUMENT_CLOSE_FAILED ? "Could not close the document on SD" :
                 "Could not read the document from SD");
+        }
+    } else if (action.kind == MT_MENU_ACTION_EDIT_GAMEPADS) {
+        for (uint8_t slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot)
+            usb_hid_service_get_gamepad_config(slot, &supervisor_menu.gamepad_config[slot]);
+        supervisor_menu.gamepad_edit = true;
+        supervisor_menu.gamepad_field = 0U;
+    } else if (action.kind == MT_MENU_ACTION_SET_GAMEPADS) {
+        settings_before_update = persistent_settings;
+        memcpy(persistent_settings.gamepads, supervisor_menu.gamepad_config, sizeof(persistent_settings.gamepads));
+        if (save_persistent_settings()) {
+            for (uint8_t slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot)
+                (void)usb_hid_service_set_gamepad_config(slot, &persistent_settings.gamepads[slot]);
+            supervisor_menu.gamepad_edit = false;
+            set_supervisor_status("Controller mappings saved");
+        } else {
+            persistent_settings = settings_before_update;
+            set_supervisor_error("Could not save controller mappings; retry Save all slots");
         }
     } else if (action.kind == MT_MENU_ACTION_SET_CLOCK) {
         if (supervisor_menu.clock_edit && set_board_clock(&supervisor_menu.clock)) {
@@ -3226,6 +3255,16 @@ static void service_supervisor_menu(void)
         }
         supervisor_menu_action_active = false;
     }
+    usb_hid_service_set_menu_capture(supervisor_menu.visible);
+    usb_hid_service_set_gamepad_preview(supervisor_menu.gamepad_edit);
+    if (supervisor_menu.gamepad_edit) {
+        static uint64_t preview_updated;
+        const uint64_t now = monotonic_ms(NULL);
+        if (now - preview_updated >= 100U) {
+            preview_updated = now;
+            supervisor_menu_dirty = true;
+        }
+    }
     if (!supervisor_menu_dirty) return;
     view = supervisor_menu_view();
     mt_menu_render(&supervisor_menu, &view, &supervisor_frame);
@@ -3282,6 +3321,9 @@ static void initialize_supervisor_menu(void)
         set_supervisor_warning("Settings invalid; using safe defaults");
     else
         set_supervisor_status("Ready; press F12 to choose a core");
+
+    for (uint8_t slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot)
+        (void)usb_hid_service_set_gamepad_config(slot, &persistent_settings.gamepads[slot]);
 
     if (persistent_settings.auto_boot) {
         if (!configured_auto_boot_selection(&startup_auto_selection)) {

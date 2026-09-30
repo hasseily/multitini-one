@@ -5,6 +5,7 @@
 #include "multitini_supervisor.h"
 #include "multitini_ui.h"
 #include "multitini_clock.h"
+#include "multitini_gamepad.h"
 #include "multitini_text_reader.h"
 
 #include <stdbool.h>
@@ -66,7 +67,9 @@ typedef enum {
     MT_MENU_ACTION_EDIT_CLOCK,
     MT_MENU_ACTION_SET_CLOCK,
     MT_MENU_ACTION_RESTART_USB,
-    MT_MENU_ACTION_SET_VIDEO_EFFECT
+    MT_MENU_ACTION_SET_VIDEO_EFFECT,
+    MT_MENU_ACTION_EDIT_GAMEPADS,
+    MT_MENU_ACTION_SET_GAMEPADS
 } mt_menu_action_kind_t;
 
 typedef enum {
@@ -137,6 +140,7 @@ typedef struct {
     size_t effect_item_count;
     mt_text_reader_t *text_reader;
     const char *text_title;
+    mt_gamepad_state_t gamepad_preview;
     bool clock_available;
     bool clock_valid;
     mt_clock_time_t clock;
@@ -167,6 +171,9 @@ typedef struct {
     size_t selected_variant[MT_MENU_MAX_CORES];
     size_t page_row[MT_MENU_PAGE_COUNT];
     size_t first_row;
+    bool gamepad_edit;
+    uint8_t gamepad_slot, gamepad_control, gamepad_field;
+    mt_gamepad_config_t gamepad_config[MT_GAMEPAD_SLOTS];
     bool clock_edit;
     size_t clock_field;
     mt_clock_time_t clock;

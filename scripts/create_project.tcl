@@ -129,6 +129,7 @@ proc add_manifest_sources {repo_root machine} {
                     "multitini_timing.xdc" "multitini_psram_timing.xdc"
                     "multitini_vectrex_psram_timing.xdc"}} {
                 set_property USED_IN_SYNTHESIS false [get_files $source]
+                set_property PROCESSING_ORDER LATE [get_files $source]
             }
         } else {
             add_files -fileset sources_1 -norecurse $source
@@ -473,11 +474,7 @@ set_property generic \
     "SHELL_BUILD_ID=32'h${git_id} C64_NTSC_MODE=1'b${c64_ntsc_mode} ACTIVE_MACHINE=${active_machine} ENABLE_GBC_PSRAM=1'b${enable_gbc_psram}" \
     [get_filesets sources_1]
 update_compile_order -fileset sources_1
-if {$machine eq "VECTREX"} {
-    # Revisit the sparse residual routed paths after normal placement/routing.
-    set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true [get_runs impl_1]
-    set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
-}
+source [file join $script_dir configure_vivado_run_profile.tcl]
 
 puts "Created $project_dir/$project_name.xpr"
 puts "SHELL_BUILD_ID=0x$git_id"
