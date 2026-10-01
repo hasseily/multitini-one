@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
 """Check stable upstream transitions and the explicit VDP self-clear policy."""
+import argparse
 from collections import deque
 from itertools import product
 from pathlib import Path
@@ -44,6 +45,10 @@ def reference(state, signals):
 
 
 def main():
+    global BUILD
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--build-dir", type=Path, default=BUILD)
+    BUILD = parser.parse_args().build_dir.resolve()
     all_inputs = list(product((0, 1), repeat=6))
     paths = {(0, 0, 0, 0, 0, 0): []}
     queue = deque(paths)

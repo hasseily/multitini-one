@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -55,6 +56,11 @@ def run(command: list[str], name: str) -> None:
 
 
 def main() -> int:
+    global BUILD
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--build-dir", type=Path, default=BUILD,
+                        help="directory for logs, elaboration and input hashes")
+    BUILD = parser.parse_args().build_dir.resolve()
     runtime = Path(os.environ.get("MULTITINI_UCRT_BIN", "C:/msys64/ucrt64/bin"))
     def tool(name):
         return str(runtime / f"{name}.exe") if os.name == "nt" else shutil.which(name)

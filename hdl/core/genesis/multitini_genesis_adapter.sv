@@ -147,7 +147,10 @@ module multitini_genesis_adapter #(
         .memory_wstrb(memory_wstrb),.memory_valid(memory_valid),.memory_ready(memory_ready),
         .memory_rdata(memory_rdata),.memory_rvalid(memory_rvalid),.memory_fault(memory_fault),
         .fault(cache_fault),.misses(),.wait_cycles());
-    wire run_chip=machine_reset || !(rom_stall || pause_request || save_pause);
+    // machine_reset asserts cartridge reset, which suppresses rom_stall.
+    // Compute pause permission before the late ROM-stall gate, without latency.
+    (* keep="true" *) wire chip_run_permitted=machine_reset || !(pause_request || save_pause);
+    wire run_chip=!rom_stall && chip_run_permitted;
     // CE is sampled by the dedicated buffer while its input clock is low.
     // No phase counter, CPU edge, VDP DMA edge, or controller timer advances
     // while the external ROM service has not supplied the requested word.

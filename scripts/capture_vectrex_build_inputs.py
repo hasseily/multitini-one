@@ -43,8 +43,10 @@ def inputs(machine: str) -> list[Path]:
                      if path.is_file())
         paths.update(ROOT / "scripts" / name for name in (
             "generate_genesis_interface.py", "port_genesis_core.py", "audit_genesis_import.py",
-            "test_genesis_vdp_pair.py"))
-        paths.add(ROOT / "hdl/sim/tb_genesis_vdp_pair.sv")
+            "test_genesis_vdp_pair.py", "test_genesis.py", "lint_genesis.py"))
+        paths.update(ROOT / "hdl/sim" / name for name in (
+            "xilinx_primitives.sv", "genesis_primitives.sv", "video_fifo_model.sv"))
+        paths.update((ROOT / "hdl/sim").glob("tb_genesis_*.sv"))
     section = "common"
     for line in (ROOT / "hdl/hdl_sources.txt").read_text().splitlines():
         line = line.strip()

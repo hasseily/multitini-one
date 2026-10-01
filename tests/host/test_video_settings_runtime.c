@@ -66,6 +66,17 @@ mt_vectrex_content_result_t vectrex_content_service_load(const char *name)
     unexpected_service();
 }
 
+const mt_genesis_config_t *genesis_content_service_options(void)
+{
+    unexpected_service();
+}
+
+int genesis_content_service_set_options(const mt_genesis_config_t *options)
+{
+    (void)options;
+    unexpected_service();
+}
+
 void usb_hid_service_set_core_ready(bool ready)
 {
     (void)ready;
@@ -76,6 +87,8 @@ uint32_t Xil_In32(uintptr_t address)
 {
     if (address == MT_SHELL_BASE_ADDRESS + MT_REG_CORE_ID) return test_core_id;
     if (address == MT_SHELL_BASE_ADDRESS + MT_REG_ABI_VERSION) return test_abi;
+    /* This fixture exercises per-core controls without a mode-switch service. */
+    if (address == MT_SHELL_BASE_ADDRESS + MT_REG_DISPLAY_MODES) return 0U;
     assert(!"Unexpected MMIO read");
     return 0U;
 }
@@ -106,7 +119,7 @@ mt_sd_result_t mt_sd_storage_journal_replace(const char *path,
     const mt_sd_result_t result = {test_save_status, 0U, size};
     assert(strcmp(path, MT_SETTINGS_PATH) == 0);
     assert(strcmp(journal_path, MT_SETTINGS_JOURNAL_PATH) == 0);
-    assert(source != NULL && source[8U] == 5U && size == 4696U);
+    assert(source != NULL && source[8U] == 7U && size == 5054U);
     /* The visible hardware state must still have its previous value while
      * the complete settings write is in progress. */
     assert(test_mmio_writes == 0U);

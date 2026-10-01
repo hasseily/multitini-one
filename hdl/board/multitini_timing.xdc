@@ -65,8 +65,10 @@ set audio_clocks [get_clocks -quiet -include_generated_clocks audio_mclk]
 # For the shell's level/toggle samplers, cut only the first-stage D pins.
 # Later stages retain normal timing. The vector sync_meta instances carry
 # diagnostic counters only, whose existing contract permits torn samples.
+# Vivado flattens the mailbox generate block into a g_drain_reset. prefix.
+# Keep that prefix explicit so only the two reviewed recovery samplers match.
 set multitini_cdc_first [get_cells -hierarchical -quiet -regexp \
-    {(^|.*/)(sync_meta_reg(\[[0-9]+\])?|active_(visible|bank|dense)_meta_reg|dst_sync_reg\[0\]|(idle_destination|recovered_source|mailbox_idle_pixel|recovered_control|underrun_sync|live_sync|control_release)_reg\[0\])$}]
+    {(^|.*/)(sync_meta_reg(\[[0-9]+\])?|active_(visible|bank|dense)_meta_reg|dst_sync_reg\[0\]|(g_drain_reset[./])?(idle_destination|recovered_source)_reg\[0\]|(mailbox_idle_pixel|recovered_control|underrun_sync|live_sync|control_release)_reg\[0\])$}]
 set_false_path -to [get_pins -of_objects $multitini_cdc_first \
     -filter {REF_PIN_NAME == D}]
 # Asynchronous reset assertion is intentional only at reset synchronizer

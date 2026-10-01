@@ -62,6 +62,7 @@ iverilog -g2012 -Wall -Wimplicit -i -s multitini_one_top \
 iverilog -g2012 -Wall -Wimplicit -i -s multitini_gameboy_psram_path \
     -o "$sim_build/multitini_gameboy_psram_path.vvp" \
     "$repo_root/hdl/sim/xilinx_primitives.sv" \
+    "$repo_root/third_party/appletini/hdl/cdc_bit_sync.sv" \
     "$repo_root/hdl/common/multitini_async_mailbox.sv" \
     "$repo_root/hdl/common/multitini_memory_cdc.sv" \
     "$repo_root/hdl/common/multitini_psram_line_service.sv" \

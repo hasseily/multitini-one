@@ -211,6 +211,18 @@ After a successful XSA export:
 vitis -s scripts/create_vitis_workspace.py
 ```
 
+For a card with golden boot already installed, omit its recovery application:
+
+```powershell
+$env:MULTITINI_SKIP_GOLDEN = '1'
+vitis -s scripts/create_vitis_workspace.py
+```
+
+This still builds the platform and FSBL needed for `FIRMWARE.BIN`, the CPU1
+video worker, and the main firmware with its shared `firmware/golden/lib`
+sources. Unset `MULTITINI_SKIP_GOLDEN` to restore the default golden build.
+Do not run the separate golden `BOOT.BIN` packaging step for this build.
+
 Confirm the platform uses that exact XSA. For historical build `2026082C`,
 Vitis 2025.2
 built both the FSBL and USB-input application from the fresh XSA. The

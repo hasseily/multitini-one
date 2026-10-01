@@ -5,11 +5,11 @@
 // Source-field repeats/drops absorb source/output rate differences; the shared
 // ordered effects pipeline still consumes the output at its normal cadence.
 module multitini_genesis_video_bridge (
-    input wire source_clk,source_resetn,source_ready,
+    input wire source_clk,source_resetn,source_ready,source_ready_control,
     input wire source_valid,source_de,source_vsync,source_mode_240,
     input wire [7:0] source_r,source_g,source_b,
     input wire control_clk,control_resetn,
-    input wire pixel_clk,pixel_resetn,shared_pixel_resetn,
+    input wire pixel_clk,pixel_resetn,shared_pixel_resetn,shared_pixel_running,
     input wire diagnostic_request,
     input wire [11:0] scan_x,scan_y,
     input wire vblank_start,
@@ -33,14 +33,30 @@ module multitini_genesis_video_bridge (
     output wire wlast,wvalid,input wire wready,
     input wire [1:0] bresp,input wire bvalid,output wire bready
 );
+    // The chip's pixel enable includes its ROM-stall/run decode. Register the
+    // complete native tuple before it fans out to the normalizer line stores.
+    // Vsync and mode are sampled even without pixel_ce: field boundaries are
+    // independent of accepted pixels. Readiness still aborts the sampler now.
+    reg source_valid_q,source_de_q,source_vsync_q,source_mode_240_q;
+    reg [7:0] source_r_q,source_g_q,source_b_q;
+    always @(posedge source_clk)begin
+        if(!source_resetn || !source_ready)begin
+            source_valid_q<=0;source_de_q<=0;source_vsync_q<=0;source_mode_240_q<=0;
+            source_r_q<=0;source_g_q<=0;source_b_q<=0;
+        end else begin
+            source_valid_q<=source_valid;source_de_q<=source_de;
+            source_vsync_q<=source_vsync;source_mode_240_q<=source_mode_240;
+            source_r_q<=source_r;source_g_q<=source_g;source_b_q<=source_b;
+        end
+    end
     wire [11:0] normalized_x,normalized_y;
     wire [15:0] normalized_rgb;
     wire normalized_start;
     wire [31:0] malformed_fields;
     multitini_genesis_video_normalizer normalizer(
         .clk(source_clk),.resetn(source_resetn),.ready(source_ready),
-        .pixel_ce(source_valid),.de(source_de),.vsync(source_vsync),
-        .red(source_r),.green(source_g),.blue(source_b),.mode_240(source_mode_240),
+        .pixel_ce(source_valid_q),.de(source_de_q),.vsync(source_vsync_q),
+        .red(source_r_q),.green(source_g_q),.blue(source_b_q),.mode_240(source_mode_240_q),
         .scan_x(normalized_x),.scan_y(normalized_y),.rgb565(normalized_rgb),
         .frame_start(normalized_start),.dropped_fields(malformed_fields));
     wire [31:0] producer;
@@ -48,13 +64,20 @@ module multitini_genesis_video_bridge (
     wire capture_quiet,reader_quiet,submit_ready,active_valid,pixel_use;
     wire [31:0] active_value;
     wire [15:0] pixel_rgb;
-    wire source_ready_control;
-    cdc_bit_sync ready_control_sync(.clk(control_clk),.resetn(control_resetn),
-        .din(source_ready),.dout(source_ready_control));
-    wire enabled=source_ready_control && !display_pause;
+    // Reuse the shell's registered and synchronized readiness level. A second
+    // independent synchronizer could disagree while control logic reconverges.
+    reg enabled,pause_launch,frame_ready_launch;
+    always @(posedge control_clk)begin
+        if(!control_resetn)begin enabled<=0;pause_launch<=0;frame_ready_launch<=0;end
+        else begin
+            enabled<=source_ready_control && !display_pause;
+            pause_launch<=display_pause;
+            frame_ready_launch<=active_valid && source_ready_control;
+        end
+    end
     wire pause_source;
     cdc_bit_sync pause_source_sync(.clk(source_clk),.resetn(source_resetn),
-        .din(display_pause),.dout(pause_source));
+        .din(pause_launch),.dout(pause_source));
     // A paused/reset machine may never deliver the final source pixel. Only
     // the capture sampler resets here; its mailboxes and accepted AXI bursts
     // stay alive until the control-side drain acknowledges them.
@@ -66,6 +89,8 @@ module multitini_genesis_video_bridge (
         else if(!enabled && capture_quiet && reader_quiet)consumer<=producer;
         else if(active_valid)consumer<=active_value;
     end
+    // Wait until the registered enable has fallen before acknowledging drain;
+    // otherwise a capture can re-arm while the display clock is being stopped.
     assign display_quiescent=!enabled && capture_quiet && reader_quiet;
     multitini_video_capture #(.WIDTH(320),.HEIGHT(240),.VIEW_X(0),.VIEW_Y(0),
         .SCALE_NUM(1),.SCALE_DEN(1),.BASE(32'h23000000),.SHARED_PIXEL_RESET(1'b1),
@@ -82,7 +107,7 @@ module multitini_genesis_video_bridge (
         .bresp(bresp),.bvalid(bvalid),.bready(bready));
     multitini_video_frame_reader #(.DYNAMIC_DISPLAY(1'b1),.WIDTH(320),.HEIGHT(240),
         .VIEW_X(320),.VIEW_Y(60),.SCALE_NUM(4),.SCALE_DEN(1),.BASE(32'h23000000),
-        .SHARED_PIXEL_RESET(1'b1)) reader_i(
+        .SHARED_PIXEL_RESET(1'b1),.SHARED_PIXEL_LIVENESS(1'b1)) reader_i(
         .display_view_x(display_view_x),.display_view_y(display_view_y),
         .display_view_width(display_view_width),.display_view_height(display_view_height),
         .display_scale_num(display_scale_num),.display_scale_den(display_scale_den),
@@ -90,13 +115,13 @@ module multitini_genesis_video_bridge (
         .submit(submit),.submit_value(next_value),.submit_ready(submit_ready),
         .active_value(active_value),.active_valid(active_valid),.busy(),.quiescent(reader_quiet),
         .error_count(read_errors),.underrun_count(underruns),
-        .pixel_clk(pixel_clk),.pixel_resetn(pixel_resetn),.shared_pixel_resetn(shared_pixel_resetn),.shared_pixel_running(1'b0),
+        .pixel_clk(pixel_clk),.pixel_resetn(pixel_resetn),.shared_pixel_resetn(shared_pixel_resetn),.shared_pixel_running(shared_pixel_running),
         .scan_x(scan_x),.scan_y(scan_y),.vblank_start(vblank_start),.pixel_use(pixel_use),.pixel_rgb565(pixel_rgb),
         .araddr(araddr),.arlen(arlen),.arsize(arsize),.arburst(arburst),.arvalid(arvalid),.arready(arready),
         .rdata(rdata),.rresp(rresp),.rlast(rlast),.rvalid(rvalid),.rready(rready));
     wire frame_ready_pixel,diagnostic_pixel;
     cdc_bit_sync frame_ready_sync(.clk(pixel_clk),.resetn(pixel_resetn),
-        .din(active_valid && source_ready_control),.dout(frame_ready_pixel));
+        .din(frame_ready_launch),.dout(frame_ready_pixel));
     cdc_bit_sync diagnostic_sync(.clk(pixel_clk),.resetn(pixel_resetn),
         .din(diagnostic_request),.dout(diagnostic_pixel));
     always @(posedge pixel_clk)begin

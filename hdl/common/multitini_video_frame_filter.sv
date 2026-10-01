@@ -41,6 +41,7 @@ module multitini_video_frame_filter #(
     end
     // synthesis translate_on
     reg [1:0] blur,bloom;
+    reg [8:0] blur_alpha;
     reg [9:0] front_x,front_y;
     reg front_finished;
     reg [23:0] last_input;
@@ -117,7 +118,8 @@ module multitini_video_frame_filter #(
     // reduce to shifts/adds; the latched job mode selects between them.
     // Geometry changes only with the entire engine drained. Keep the same
     // output-pixel blur radius for each fitted scale; all coefficients are
-    // precomputed Q8 constants, selected before the registered blend stage.
+    // precomputed Q8 constants, latched once per job. Keeping the coefficient
+    // decode out of the pixel blend also reduces blur-mode fanout.
     function automatic [8:0] display_alpha(input [1:0] level);
         begin
             if(display_scale_den==2)display_alpha=256;
@@ -137,13 +139,15 @@ module multitini_video_frame_filter #(
         reg signed [17:0] weighted;
         begin
             difference=$signed({1'b0,filtered})-$signed({1'b0,center});
-            if(DYNAMIC_DISPLAY)weighted=difference*$signed({1'b0,display_alpha(blur_mode)});
+            if(DYNAMIC_DISPLAY)weighted=difference*$signed({1'b0,blur_alpha});
             else case(blur_mode)
                 2:weighted=difference*BLUR_ALPHA_MEDIUM;
                 3:weighted=difference*BLUR_ALPHA_STRONG;
                 default:weighted=difference*BLUR_ALPHA_LIGHT;
             endcase
-            weighted=$signed({1'b0,center,8'b0})+weighted+18'sd128;
+            // Center and rounding bias occupy disjoint bits. Packing them
+            // first lets synthesis use one multiply-accumulate DSP per blend.
+            weighted=$signed({2'b00,center,8'h80})+weighted;
             normalized_blur=weighted[15:8];
         end
     endfunction
@@ -176,6 +180,7 @@ module multitini_video_frame_filter #(
         if(!resetn)begin
             busy<=0;done<=0;out_valid<=0;out_last<=0;out_rgb565<=0;
             front_x<=0;front_y<=0;front_finished<=0;blur<=0;bloom<=0;last_input<=0;
+            blur_alpha<=0;
             s0_valid<=0;s1_valid<=0;s2_valid<=0;s3_valid<=0;s4_valid<=0;s5_valid<=0;s6_valid<=0;s7_valid<=0;
             s2_last<=0;s3_last<=0;s4_last<=0;s5_last<=0;s6_last<=0;s7_last<=0;
         end else begin
@@ -183,6 +188,7 @@ module multitini_video_frame_filter #(
             if(out_valid && out_ready && out_last)begin busy<=0;done<=1;end
             if(start && !busy)begin
                 busy<=1;blur<=options[3:2];bloom<=options[5:4];
+                blur_alpha<=display_alpha(options[3:2]);
                 front_x<=0;front_y<=0;front_finished<=0;
                 s0_valid<=0;s1_valid<=0;s2_valid<=0;s3_valid<=0;s4_valid<=0;s5_valid<=0;s6_valid<=0;s7_valid<=0;
                 out_valid<=0;out_last<=0;

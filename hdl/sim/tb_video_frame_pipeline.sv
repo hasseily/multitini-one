@@ -17,7 +17,15 @@ module tb_video_frame_pipeline;
         if(dut.engine_i.filter.SCALE_NUM!=SCALE_NUM || dut.engine_i.filter.SCALE_DEN!=SCALE_DEN)
             $fatal(1,"Frame engine lost the framebuffer display scale");
         for(integer mode=1;mode<=3;mode=mode+1)begin
-            if(dut.engine_i.filter.normalized_blur(8'd0,8'd64,mode[1:0])!==
+            // Dynamic coefficients are decoded from the display wiring now,
+            // then captured only when a job starts. Probe that decoder here;
+            // the per-job check below verifies the captured blend response.
+            if(DYNAMIC_DISPLAY)begin
+                if(dut.engine_i.filter.display_alpha(mode[1:0])!==
+                   ((384*mode*SCALE_DEN+SCALE_NUM/2)/SCALE_NUM > 256 ? 256 :
+                    (384*mode*SCALE_DEN+SCALE_NUM/2)/SCALE_NUM))
+                    $fatal(1,"Frame engine blur coefficient lost its display scale and level");
+            end else if(dut.engine_i.filter.normalized_blur(8'd0,8'd64,mode[1:0])!==
                ((64 * ( (384*mode*SCALE_DEN+SCALE_NUM/2)/SCALE_NUM > 256 ? 256 :
                         (384*mode*SCALE_DEN+SCALE_NUM/2)/SCALE_NUM) + 128)/256))
                 $fatal(1,"Frame engine blur response did not reflect its scale and level");
@@ -29,6 +37,19 @@ module tb_video_frame_pipeline;
     localparam integer STRIDE=128,SLOT_BYTES=STRIDE*HEIGHT,PIXELS=WIDTH*HEIGHT;
     localparam integer H_TOTAL=256,V_TOTAL=96;
     reg clk=0,pixel_clk=0,resetn=0;
+    integer expected_job_alpha;
+    reg [1:0] accepted_blur;
+    always @(posedge clk)if(DYNAMIC_DISPLAY && resetn && dut.engine_i.filter.start &&
+                            !dut.engine_i.filter.busy && dut.engine_i.filter.options[3:2]!=0)begin
+        accepted_blur=dut.engine_i.filter.options[3:2];
+        expected_job_alpha=(384*accepted_blur*SCALE_DEN+SCALE_NUM/2)/SCALE_NUM;
+        if(expected_job_alpha>256)expected_job_alpha=256;
+        #0.001;
+        if(dut.engine_i.filter.blur_alpha!==expected_job_alpha ||
+           dut.engine_i.filter.normalized_blur(8'd0,8'd64,accepted_blur)!==
+           (64*expected_job_alpha+128)/256)
+            $fatal(1,"Frame engine did not capture its job blur coefficient");
+    end
     // Match the production 133 MHz HP and 148.5 MHz pixel clock ratio, with
     // distinct edges. The small synthetic raster keeps ample vertical blank.
     always #3.759 clk=!clk;

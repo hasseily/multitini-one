@@ -175,8 +175,10 @@ assign sram_write = pier_quirk ? m95_rnw : eeprom_quirk ? eeprom_ram_we :
 assign initializing = !initialize_index[16];
 assign runtime_save_addr = initializing ? initialize_index[15:0] : sram_address;
 assign serial_write = (pier_quirk || eeprom_quirk) && sram_write;
+// Parallel SRAM selects special_read, so rom_request and rom_stall are already
+// false. Keep the cartridge ROM/cache decode off this block-RAM write enable.
 assign runtime_save_write = initializing || (sram_write && !reset &&
-                          (serial_write || (!pause_request && !rom_stall)));
+                          (serial_write || !pause_request));
 assign runtime_save_data = initializing ? (sram00_quirk ? 8'h00 : 8'hff) : sram_data;
  // True dual-port RAM: exactly one address per port, including initialization.
  // Host writes take priority explicitly; there is no vendor-dependent

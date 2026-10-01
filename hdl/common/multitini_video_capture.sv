@@ -32,12 +32,9 @@ module multitini_video_capture #(
     output wire wlast,wvalid,input wire wready,
     input wire [1:0] bresp,input wire bvalid,output wire bready
 );
-    wire [11:0] view_x=DYNAMIC_DISPLAY ? display_view_x : VIEW_X;
-    wire [11:0] view_y=DYNAMIC_DISPLAY ? display_view_y : VIEW_Y;
-    wire [11:0] view_width=DYNAMIC_DISPLAY ? display_view_width : WIDTH*SCALE_NUM/SCALE_DEN;
-    wire [11:0] view_height=DYNAMIC_DISPLAY ? display_view_height : HEIGHT*SCALE_NUM/SCALE_DEN;
-    wire [3:0] scale_num=DYNAMIC_DISPLAY ? display_scale_num : SCALE_NUM;
-    wire [3:0] scale_den=DYNAMIC_DISPLAY ? display_scale_den : SCALE_DEN;
+    reg [11:0] view_x,view_y,view_right,view_bottom;
+    reg [13:0] padding_right;
+    reg [3:0] scale_num,scale_den;
     localparam integer STRIDE_PIXELS=((WIDTH+63)/64)*64;
     localparam integer PAD_PIXELS=STRIDE_PIXELS-WIDTH;
     localparam integer FRAME_PIXELS=STRIDE_PIXELS*HEIGHT;
@@ -61,6 +58,29 @@ module multitini_video_capture #(
         if(!mailbox_pixel_run || !pixel_resetn)pixel_release<=0;
         else pixel_release<={pixel_release[1:0],1'b1};
     wire pixel_run=pixel_release[2];
+    generate if(DYNAMIC_DISPLAY)begin : g_dynamic_geometry
+        // Mode changes occur while scanout is held in reset. Snapshot the
+        // complete viewport, including exclusive bounds, before capture runs.
+        // The existing three-cycle pixel_release barrier also settles a
+        // geometry change arriving with reset release; no pixel is delayed.
+        always @(posedge pixel_clk) if(!pixel_run)begin
+            view_x<=display_view_x;
+            view_y<=display_view_y;
+            view_right<=display_view_x+display_view_width;
+            view_bottom<=display_view_y+display_view_height;
+            // The original native comparisons add 12-bit operands; padding
+            // uses an integer constant and therefore must not wrap at 4096.
+            padding_right<={2'b0,display_view_x}+{2'b0,display_view_width}+PAD_PIXELS;
+            scale_num<=display_scale_num;
+            scale_den<=display_scale_den;
+        end
+    end else begin : g_static_geometry
+        assign view_x=12'(VIEW_X),view_y=12'(VIEW_Y);
+        assign view_right=12'(VIEW_X)+12'(VIEW_WIDTH);
+        assign view_bottom=12'(VIEW_Y)+12'(VIEW_HEIGHT);
+        assign padding_right=14'(12'(VIEW_X))+14'(12'(VIEW_WIDTH))+PAD_PIXELS;
+        assign scale_num=4'(SCALE_NUM),scale_den=4'(SCALE_DEN);
+    end endgenerate
     wire enable_pixel;
     cdc_bit_sync running_sync(.clk(clk),.resetn(resetn),.din(pixel_run),.dout(pixel_running));
     cdc_bit_sync enable_sync(.clk(pixel_clk),.resetn(pixel_run),.din(enable),.dout(enable_pixel));
@@ -87,20 +107,20 @@ module multitini_video_capture #(
         if(!pixel_run)begin horizontal_phase<=0;vertical_phase<=0;end
         else begin
             if(scan_x==view_x-1)horizontal_phase<=0;
-            else if(scan_x>=view_x && scan_x<view_x+view_width)
+            else if(scan_x>=view_x && scan_x<view_right)
                 horizontal_phase<=horizontal_phase==scale_num-1 ? 0 : horizontal_phase+1'b1;
             if(scan_x==0)begin
-                if(scan_y<=view_y || scan_y>=view_y+view_height)vertical_phase<=0;
+                if(scan_y<=view_y || scan_y>=view_bottom)vertical_phase<=0;
                 else vertical_phase<=vertical_phase==scale_num-1 ? 0 : vertical_phase+1'b1;
             end
         end
     end
-    wire selected_row=scan_y>=view_y && scan_y<view_y+view_height &&
+    wire selected_row=scan_y>=view_y && scan_y<view_bottom &&
         (scale_den==2 ? vertical_phase!=1 : vertical_phase==0);
-    wire native_sample=scan_x>=view_x && scan_x<view_x+view_width &&
+    wire native_sample=scan_x>=view_x && scan_x<view_right &&
         (scale_den==2 ? horizontal_phase!=1 : horizontal_phase==0);
-    wire padding_sample=PAD_PIXELS!=0 && scan_x>=view_x+view_width &&
-                        scan_x<view_x+view_width+PAD_PIXELS;
+    wire padding_sample=PAD_PIXELS!=0 && scan_x>=view_right &&
+                        scan_x<padding_right;
     wire sample=capturing && selected_row && (native_sample || padding_sample);
     wire [15:0] sampled_pixel=padding_sample?16'd0:rgb565;
     reg [1:0] pack_index;

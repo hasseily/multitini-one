@@ -7,28 +7,36 @@ module vram_ip (
     input wire [31:0] byteena,
     input wire [255:0] data,
     input wire wren,
-    output reg [255:0] q
+    output wire [255:0] q
 );
     (* ram_style = "block" *) reg [255:0] memory [0:255];
+    reg [255:0] read_data=0,write_data=0;
+    reg [31:0] write_mask=0;
     integer i;
     initial begin
-        q = 0;
         for (i = 0; i < 256; i = i + 1) memory[i] = 0;
     end
     integer lane;
     always @(posedge clock) begin
-        q <= memory[address];
+        // Keep an unconditional synchronous RAM read. Register the forwarding
+        // mux separately so partial byte writes do not turn it into LUT RAM.
+        read_data <= memory[address];
+        write_data <= data;
+        write_mask <= byteena & {32{wren}};
         for (lane = 0; lane < 32; lane = lane + 1)
-            if (wren && byteena[lane]) begin
+            if (wren && byteena[lane])
                 memory[address][lane*8 +: 8] <= data[lane*8 +: 8];
-                q[lane*8 +: 8] <= data[lane*8 +: 8];
-            end
     end
+    genvar output_lane;
+    generate for (output_lane=0;output_lane<32;output_lane=output_lane+1) begin: forwarding
+        assign q[output_lane*8 +: 8] = write_mask[output_lane] ?
+            write_data[output_lane*8 +: 8] : read_data[output_lane*8 +: 8];
+    end endgenerate
 endmodule
 
-// Both ports share a clock. Port B is reserved for reset initialization;
-// callers hold the machine in reset while it writes, so collisions cannot
-// occur. Read-first latency is one cycle.
+// One read port and one byte-enabled write port share a clock. Initialization
+// selects the write address/data before the RAM, preserving one physical write
+// port. Reads retain the old value on a same-address write (one-cycle latency).
 module multitini_genesis_ram #(
     parameter integer ADDRESS_WIDTH = 15,
     parameter integer DATA_WIDTH = 16
@@ -44,12 +52,15 @@ module multitini_genesis_ram #(
     input wire [DATA_WIDTH-1:0] initialize_data
 );
     (* ram_style = "block" *) reg [DATA_WIDTH-1:0] memory [0:(1<<ADDRESS_WIDTH)-1];
+    wire [ADDRESS_WIDTH-1:0] write_address = initialize ? initialize_address : address;
+    wire [DATA_WIDTH-1:0] write_data = initialize ? initialize_data : data;
+    wire [DATA_WIDTH/8-1:0] write_mask = initialize ? {DATA_WIDTH/8{1'b1}} :
+        byte_enable & {DATA_WIDTH/8{write_enable}};
     integer lane;
     always @(posedge clk) begin
         q <= memory[address];
-        if (initialize) memory[initialize_address] <= initialize_data;
-        else for (lane = 0; lane < DATA_WIDTH/8; lane = lane + 1)
-            if (write_enable && byte_enable[lane])
-                memory[address][lane*8 +: 8] <= data[lane*8 +: 8];
+        for (lane = 0; lane < DATA_WIDTH/8; lane = lane + 1)
+            if (write_mask[lane])
+                memory[write_address][lane*8 +: 8] <= write_data[lane*8 +: 8];
     end
 endmodule

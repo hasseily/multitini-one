@@ -5,6 +5,7 @@
 from __future__ import annotations
 import argparse
 import difflib
+import hashlib
 from pathlib import Path
 import sys
 
@@ -38,7 +39,77 @@ def generate_audio() -> str:
     text = (ROOT / "third_party/genesis/upstream/rtl/audio_cond.sv").read_text()
     text = text.replace("wire [15:0] psg;", "")
     text = text.replace("wire [15:0] psg_amp", "// Multitini port, 2026-09-30: declare the filter result before its instance.\nwire [15:0] psg;\nwire [15:0] psg_amp")
+    for instance in ("lpf_left", "lpf_right"):
+        before = f"genesis_lpf {instance}"
+        if text.count(before) != 1:
+            raise ValueError(f"Pinned Genesis audio instance changed: {instance}")
+        text = text.replace(before, f"genesis_lpf_late_mux {instance}")
     return "\n".join(line.rstrip() for line in text.splitlines()) + "\n"
+
+
+def generate_lpf() -> str:
+    """Factor mode selection after fixed arithmetic without changing IIR state."""
+    pinned = {
+        "genesis_lpf.v": "958d16499e7fee982d3b6a286f6cf0bb590e3385159885f743a0092477ea1dd8",
+        "audio_iir_filter.v": "29ba71a0f7ec9e77087b7f3eb110b791ca88814f9cda7f8f59ba4bbe84714083",
+    }
+    for name, expected in pinned.items():
+        source = ROOT / "third_party/genesis/upstream/rtl" / name
+        if hashlib.sha256(source.read_bytes()).hexdigest() != expected:
+            raise ValueError(f"Pinned MIT Genesis audio source changed: {name}")
+    original = (ROOT / "third_party/genesis/upstream/rtl/genesis_lpf.v").read_text()
+    notice = original.split("*/", 1)[0] + "*/\n"
+    return "// SPDX-License-Identifier: MIT\n" + notice + """
+
+// Derived from genesis_lpf.v and audio_iir_filter.v at MiSTer Mega Drive commit
+// 083e1b1f4db8ffb32d6e8f83cf822fedc6184a61; reproduced by port_genesis_core.py.
+// Shared state, the 504-clock sample interval, reset, truncation and bypass
+// match the originals. Keep constant arithmetic before the mode selection
+// so a parent-clock mode change does not launch through the DSP cascade.
+module genesis_lpf_late_mux (
+    input wire clk,
+    input wire reset,
+    input wire [1:0] lpf_mode,
+    input wire signed [15:0] in,
+    output wire signed [15:0] out
+);
+    reg signed [15:0] x0,x1,y0;
+    reg [9:0] count;
+    (* keep="true", use_dsp="yes" *) wire signed [33:0] acc_model1 =
+        (18'sd10528*x0 - 18'sd5264*x1) + 18'sd27504*y0;
+    (* keep="true", use_dsp="yes" *) wire signed [33:0] acc_model2 =
+        (18'sd12888*x0 - 18'sd6440*x1) + 18'sd26328*y0;
+    (* keep="true", use_dsp="yes" *) wire signed [33:0] acc_minimal =
+        (18'sd6840*x0 + 18'sd6840*x1) + 18'sd19088*y0;
+    (* keep="true" *) wire signed [33:0] acc_bypass = 18'sd32768*y0;
+    reg signed [33:0] out32;
+    always @* begin
+        case (lpf_mode)
+            2'b00: out32=acc_model1;
+            2'b01: out32=acc_model2;
+            2'b10: out32=acc_minimal;
+            default: out32=acc_bypass;
+        endcase
+    end
+    assign out=(lpf_mode==2'b11) ? in : y0;
+    always @(posedge clk) begin
+        if (reset) begin
+            count<=0;
+            x0<=0;
+            x1<=0;
+            y0<=0;
+        end else begin
+            count<=count+1'd1;
+            if (count==10'd503) begin
+                count<=0;
+                y0<={out32[33],out32[29:15]};
+                x1<=x0;
+                x0<=in;
+            end
+        end
+    end
+endmodule
+"""
 
 
 def generate_iir() -> str:
@@ -94,6 +165,7 @@ def main() -> int:
     failed = False
     for target, generate in ((TARGET, generate_pad),
             (TARGET.with_name("audio_cond.sv"), generate_audio),
+            (TARGET.with_name("genesis_lpf_late_mux.sv"), generate_lpf),
             (TARGET.with_name("iir_filter.sv"), generate_iir),
             (TARGET.with_name("ym3438_io.v"), generate_ym_io),
             (TARGET.with_name("ym7101.v"), generate_vdp)):

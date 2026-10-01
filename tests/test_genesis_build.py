@@ -10,7 +10,9 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -25,6 +27,7 @@ def module(name: str):
 INTERFACE = module("generate_genesis_interface")
 AUDIT = module("audit_genesis_import")
 CAPTURE = module("capture_vectrex_build_inputs")
+PORTER = module("port_genesis_core")
 
 
 class GenesisInterfaceTests(unittest.TestCase):
@@ -77,10 +80,42 @@ class GenesisImportTests(unittest.TestCase):
                          "third_party/genesis/import_manifest.json",
                          "third_party/genesis/upstream/rtl/pad_io.sv",
                          "third_party/genesis/upstream/sys/iir_filter.v",
+                         "third_party/genesis/upstream/rtl/genesis_lpf.v",
+                         "third_party/genesis/upstream/rtl/audio_iir_filter.v",
+                         "hdl/core/genesis/ports/genesis_lpf_late_mux.sv",
+                         "hdl/sim/tb_genesis_audio_lpf.sv",
+                         "scripts/test_genesis.py",
+                         "scripts/lint_genesis.py",
                          "scripts/port_genesis_core.py"):
             self.assertIn(relative, paths)
+        for machine in ("SUPERVISOR", "C64", "GAMEBOY", "VECTREX"):
+            selected = {path.relative_to(ROOT).as_posix() for path in CAPTURE.inputs(machine)}
+            self.assertNotIn("hdl/core/genesis/ports/genesis_lpf_late_mux.sv", selected)
+            self.assertNotIn("hdl/sim/tb_genesis_audio_lpf.sv", selected)
         self.assertNotIn("third_party/genesis/upstream/rtl/nuked-md/LICENSE",
                          {path.relative_to(ROOT).as_posix() for path in CAPTURE.inputs("SUPERVISOR")})
+
+    def test_audio_ports_reproduce_from_pinned_sources(self):
+        self.assertEqual((ROOT / "hdl/core/genesis/ports/genesis_lpf_late_mux.sv").read_text(),
+                         PORTER.generate_lpf())
+        self.assertEqual((ROOT / "hdl/core/genesis/ports/audio_cond.sv").read_text(),
+                         PORTER.generate_audio())
+
+    def test_audio_port_rejects_changed_reference_sources(self):
+        names = ("genesis_lpf.v", "audio_iir_filter.v")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            destination = root / "third_party/genesis/upstream/rtl"
+            destination.mkdir(parents=True)
+            for changed in names:
+                with self.subTest(changed=changed), mock.patch.object(PORTER, "ROOT", root):
+                    for name in names:
+                        original = ROOT / "third_party/genesis/upstream/rtl" / name
+                        (destination / name).write_bytes(original.read_bytes())
+                    with (destination / changed).open("ab") as stream:
+                        stream.write(b"\n// changed reference\n")
+                    with self.assertRaisesRegex(ValueError, "Pinned MIT Genesis audio source changed"):
+                        PORTER.generate_lpf()
 
     def test_rejects_excluded_unknown_duplicate_or_unsafe_sources(self):
         for path in ("rtl/VM2413/opll.vhd", "../outside.v", "/outside.v", "a\\outside.v"):

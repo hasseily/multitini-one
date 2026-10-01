@@ -52,6 +52,18 @@ def main():
     output=run([executable],"output-run")
     if output.count("PASS display ")!=6: raise RuntimeError("missing display mode coverage")
     print("\n".join(line for line in output.splitlines() if line.startswith("PASS ")))
+    text_sources=source_list(["hdl/generated/multitini_regs_pkg.sv",
+        "hdl/sim/xilinx_primitives.sv", "hdl/common/multitini_async_mailbox.sv",
+        "hdl/common/multitini_text_overlay.sv", "hdl/sim/tb_text_overlay.sv"])
+    run([tool("verilator"),"--binary","--timing","--top-module","tb_text_overlay",
+         "-GDYNAMIC_DISPLAY=1","-Wno-fatal","--Mdir",build/"text","--build-jobs","8"]+
+        text_sources,"text-compile")
+    text_executable=build/"text"/("Vtb_text_overlay"+(".exe" if os.name=="nt" else ""))
+    for mode in range(6):
+        output=run([text_executable,f"+MODE={mode}"],f"text-mode-{mode}")
+        marker=f"PASS: mode={mode} dynamic=1; 5 full overlay rasters;"
+        if marker not in output: raise RuntimeError("text glyph/geometry coverage missing")
+        print("\n".join(line for line in output.splitlines() if line.startswith(marker)))
     for machine in ("c64","gameboy","vectrex"):
         top=f"tb_{machine}_video_bridge"
         sources=source_list(["hdl/common/multitini_display_pkg.sv",

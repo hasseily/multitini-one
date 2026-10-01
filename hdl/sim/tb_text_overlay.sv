@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns / 1ps
 
-module tb_text_overlay;
+module tb_text_overlay #(
+    parameter bit DYNAMIC_DISPLAY = 1'b0
+);
     import multitini_regs_pkg::*;
-    localparam int H_ACTIVE = 1920, H_TOTAL = 2200;
-    localparam int V_ACTIVE = 1080, V_TOTAL = 1125;
+    integer H_ACTIVE = 1920, H_TOTAL = 2200;
+    integer V_ACTIVE = 1080, V_TOTAL = 1125;
+    integer display_mode = 0;
     localparam int CELL_COUNT = MT_UI_COLUMNS * MT_UI_ROWS;
     logic control_clk = 0, control_resetn = 0;
     logic vram_wr_en = 0;
@@ -36,7 +39,9 @@ module tb_text_overlay;
         end else scan_x <= scan_x + 12'd1;
     end
 
-    multitini_text_overlay dut (.display_h_active(12'd0),.display_h_total(12'd0),.display_v_active(12'd0),.display_v_total(12'd0),.*);
+    multitini_text_overlay #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY)) dut (
+        .display_h_active(12'(H_ACTIVE)), .display_h_total(12'(H_TOTAL)),
+        .display_v_active(12'(V_ACTIVE)), .display_v_total(12'(V_TOTAL)), .*);
 
     task automatic check_value(input logic condition, input string message);
         if (condition !== 1'b1) $fatal(1, "%s", message);
@@ -66,7 +71,7 @@ module tb_text_overlay;
     // Sample before this edge's pipeline updates, just as the video output
     // stage does. The reference derives every pixel from raster coordinates.
     always @(posedge pixel_clk) begin : pixel_scoreboard
-        integer columns, cell_width, cell_height, scale, origin_x, origin_y;
+        integer columns, rows, cell_width, cell_height, scale, origin_x, origin_y;
         integer index, local_x, local_y, glyph_x, glyph_y;
         logic [15:0] cell_value, color;
         logic [63:0] glyph;
@@ -74,34 +79,48 @@ module tb_text_overlay;
         if (pixel_resetn)
             check_value(dut.read_address < CELL_COUNT, "BRAM read address within all 7680 cells");
         if (verify_pixels) begin
+            columns = expected_dense ? MT_UI_COLUMNS : MT_UI_LEGACY_COLUMNS;
+            rows = expected_dense ? MT_UI_ROWS : MT_UI_LEGACY_ROWS;
+            cell_width = expected_dense ? MT_UI_CELL_WIDTH : MT_UI_LEGACY_CELL_WIDTH;
+            cell_height = expected_dense ? MT_UI_CELL_HEIGHT : MT_UI_LEGACY_CELL_HEIGHT;
+            scale = expected_dense ? MT_UI_FONT_SCALE : MT_UI_LEGACY_FONT_SCALE;
+            origin_x = expected_dense ? MT_UI_GLYPH_X : MT_UI_LEGACY_GLYPH_X;
+            origin_y = expected_dense ? MT_UI_GLYPH_Y : MT_UI_LEGACY_GLYPH_Y;
+            // Independent arithmetic reference for the finite hardware decode.
+            if (DYNAMIC_DISPLAY && H_ACTIVE < 1920) begin
+                cell_width = H_ACTIVE / columns;
+                cell_height = V_ACTIVE / rows;
+                scale = 1;
+                origin_x = (cell_width - 7) / 2;
+                origin_y = (cell_height - 8) / 2;
+            end
             if (scan_x < H_ACTIVE && scan_y < V_ACTIVE) begin
-                columns = expected_dense ? MT_UI_COLUMNS : MT_UI_LEGACY_COLUMNS;
-                cell_width = expected_dense ? MT_UI_CELL_WIDTH : MT_UI_LEGACY_CELL_WIDTH;
-                cell_height = expected_dense ? MT_UI_CELL_HEIGHT : MT_UI_LEGACY_CELL_HEIGHT;
-                scale = expected_dense ? MT_UI_FONT_SCALE : MT_UI_LEGACY_FONT_SCALE;
-                origin_x = expected_dense ? MT_UI_GLYPH_X : MT_UI_LEGACY_GLYPH_X;
-                origin_y = expected_dense ? MT_UI_GLYPH_Y : MT_UI_LEGACY_GLYPH_Y;
-                index = (scan_y / cell_height) * columns + scan_x / cell_width;
-                local_x = scan_x % cell_width;
-                local_y = scan_y % cell_height;
-                cell_value = expected_cells[expected_bank][index];
-                glyph = cell_value[6:0] >= 32 ? expected_font[cell_value[6:0] - 32] : 64'd0;
-                foreground = 0;
-                if (local_x >= origin_x && local_x < origin_x + 7 * scale &&
-                    local_y >= origin_y && local_y < origin_y + 8 * scale) begin
-                    glyph_x = (local_x - origin_x) / scale;
-                    glyph_y = (local_y - origin_y) / scale;
-                    foreground = glyph[glyph_y * 8 + glyph_x];
+                if (scan_x < columns * cell_width && scan_y < rows * cell_height) begin
+                    index = (scan_y / cell_height) * columns + scan_x / cell_width;
+                    local_x = scan_x % cell_width;
+                    local_y = scan_y % cell_height;
+                    cell_value = expected_cells[expected_bank][index];
+                    glyph = cell_value[6:0] >= 32 ? expected_font[cell_value[6:0] - 32] : 64'd0;
+                    foreground = 0;
+                    if (local_x >= origin_x && local_x < origin_x + 7 * scale &&
+                        local_y >= origin_y && local_y < origin_y + 8 * scale) begin
+                        glyph_x = (local_x - origin_x) / scale;
+                        glyph_y = (local_y - origin_y) / scale;
+                        foreground = glyph[glyph_y * 8 + glyph_x];
+                    end
+                    opaque = expected_visible && (foreground || !cell_value[15]);
+                    color = reference_palette(foreground ? cell_value[10:7] : cell_value[14:11]);
+                    if (pixel_opaque !== opaque || pixel_rgb565 !== color)
+                        $fatal(1, "pixel (%0d,%0d), bank=%0d dense=%0d cell=%0d: expected %0d/%04h got %0d/%04h",
+                               scan_x, scan_y, expected_bank, expected_dense, index,
+                               opaque, color, pixel_opaque, pixel_rgb565);
+                    if (foreground) verified_foreground = verified_foreground + 1;
+                    if (!opaque) verified_transparent = verified_transparent + 1;
+                end else begin
+                    check_value(!pixel_opaque, "partial cells outside text extent stay transparent");
+                    verified_transparent = verified_transparent + 1;
                 end
-                opaque = expected_visible && (foreground || !cell_value[15]);
-                color = reference_palette(foreground ? cell_value[10:7] : cell_value[14:11]);
-                if (pixel_opaque !== opaque || pixel_rgb565 !== color)
-                    $fatal(1, "pixel (%0d,%0d), bank=%0d dense=%0d cell=%0d: expected %0d/%04h got %0d/%04h",
-                           scan_x, scan_y, expected_bank, expected_dense, index,
-                           opaque, color, pixel_opaque, pixel_rgb565);
                 verified_active = verified_active + 1;
-                if (foreground) verified_foreground = verified_foreground + 1;
-                if (!opaque) verified_transparent = verified_transparent + 1;
             end else begin
                 check_value(!pixel_opaque, "all horizontal and vertical blanking transparent");
                 verified_blank = verified_blank + 1;
@@ -200,6 +219,19 @@ module tb_text_overlay;
     initial begin : stimulus
         integer bank, index, lane;
         logic [15:0] low_cell, high_cell;
+        if (DYNAMIC_DISPLAY) begin
+            if (!$value$plusargs("MODE=%d", display_mode)) display_mode = 0;
+            // Expected public output dimensions, independent of the RTL package.
+            case (display_mode)
+                0: begin H_ACTIVE=1920; H_TOTAL=2200; V_ACTIVE=1080; V_TOTAL=1125; end
+                1: begin H_ACTIVE=1024; H_TOTAL=1344; V_ACTIVE=768; V_TOTAL=806; end
+                2: begin H_ACTIVE=1200; H_TOTAL=1360; V_ACTIVE=800; V_TOTAL=828; end
+                3: begin H_ACTIVE=1280; H_TOTAL=1688; V_ACTIVE=1024; V_TOTAL=1066; end
+                4: begin H_ACTIVE=1360; H_TOTAL=1792; V_ACTIVE=768; V_TOTAL=795; end
+                5: begin H_ACTIVE=1680; H_TOTAL=1840; V_ACTIVE=1050; V_TOTAL=1080; end
+                default: $fatal(1, "invalid display mode");
+            endcase
+        end
         $readmemh("multitini_font7x8.mem", expected_font);
         check_value(MT_UI_COLUMNS == 128 && MT_UI_ROWS == 60 &&
                     MT_UI_CELL_WIDTH == 15 && MT_UI_CELL_HEIGHT == 18 &&
@@ -252,8 +284,8 @@ module tb_text_overlay;
         check_frame();
         check_value(verified_foreground > 0 && verified_transparent > 0,
                     "glyph strokes and transparent backgrounds both exercised");
-        $display("PASS: %0d full overlay rasters; %0d active and %0d blank pixels",
-                 completed_frames, verified_active, verified_blank);
+        $display("PASS: mode=%0d dynamic=%0d; %0d full overlay rasters; %0d active and %0d blank pixels",
+                 display_mode, DYNAMIC_DISPLAY, completed_frames, verified_active, verified_blank);
         $finish;
     end
 

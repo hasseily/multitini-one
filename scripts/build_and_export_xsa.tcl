@@ -97,6 +97,9 @@ set python [auto_execok python3]
 if {$python eq ""} {set python [auto_execok python]}
 if {[info exists ::env(MULTITINI_PYTHON)]} {set python [list $::env(MULTITINI_PYTHON)]}
 if {$python eq ""} {error "Python is required to capture exact build inputs"}
+# Vivado sets PYTHONHOME/PYTHONPATH for its own Python runtime. An explicitly
+# selected host interpreter must not import that runtime's standard library.
+lappend python -I
 set capture_dir [file join $repo_root build input-captures "[pid]-[clock clicks]"]
 set inputs_file [file join $capture_dir build_inputs.json]
 set capture_command [concat $python [list [file join $script_dir capture_vectrex_build_inputs.py] \
@@ -147,26 +150,63 @@ require_one_object "audio BCLK generated clock" [get_clocks -quiet audio_bclk]
 require_one_object "forwarded audio BCLK" [get_clocks -quiet audio_bclk_out]
 require_one_object "forwarded DVI clock" [get_clocks -quiet dvi_clk_out]
 if {$image_kind eq "GENESIS"} {
-    set chip_gate [get_cells -hierarchical -quiet \
-        -filter {NAME =~ *g_genesis_machine/machine_adapter/chip_clock_i && REF_NAME == BUFGCE}]
+    set chip_gate [get_cells -hierarchical -quiet -regexp \
+        {.*g_genesis_machine[/.]machine_adapter/chip_clock_i$}]
     require_one_object "Genesis glitch-free chip clock buffer" $chip_gate
-    set chip_input_clocks [get_clocks -of_objects [get_pins $chip_gate/I]]
+    set chip_ref [get_property REF_NAME $chip_gate]
+    if {$chip_ref eq "BUFGCE"} {
+        set chip_input_pin [get_pins $chip_gate/I]
+    } elseif {$chip_ref eq "BUFGCTRL"} {
+        # A mapped BUFGCE uses input zero and retains hardware CE qualification.
+        # Reject mux/bypass variants instead of treating every BUFGCTRL as a gate.
+        foreach {pin expected_type} {I1 POWER CE1 GROUND S0 POWER S1 GROUND IGNORE0 GROUND IGNORE1 POWER} {
+            set object [get_pins $chip_gate/$pin]
+            set nets [get_nets -of_objects $object]
+            require_one_object "Genesis gate $pin pin" $object
+            require_one_object "Genesis gate $pin constant net" $nets
+            if {![get_property IS_TIED $object] || [get_property TYPE $nets] ne $expected_type} {
+                error "Genesis mapped clock gate has unsafe $pin control: expected $expected_type"
+            }
+        }
+        if {[get_property XILINX_LEGACY_PRIM $chip_gate] ne "BUFGCE" ||
+            [get_property CE_TYPE_CE0 $chip_gate] ne "SYNC" ||
+            ![get_property PRESELECT_I0 $chip_gate] || [get_property PRESELECT_I1 $chip_gate] ||
+            [get_property INIT_OUT $chip_gate] != 0} {
+            error "Genesis BUFGCTRL does not retain the reviewed BUFGCE behavior"
+        }
+        set chip_input_pin [get_pins $chip_gate/I0]
+    } else {
+        error "Unsupported Genesis clock-gate primitive: $chip_ref"
+    }
+    set chip_input_clocks [get_clocks -of_objects $chip_input_pin]
     set chip_output_clocks [get_clocks -of_objects [get_pins $chip_gate/O]]
     require_one_object "Genesis chip parent clock" $chip_input_clocks
     require_one_object "Genesis chip gated clock" $chip_output_clocks
-    if {[get_property PERIOD $chip_input_clocks] != [get_property PERIOD $chip_output_clocks]} {
-        error "Genesis clock gate unexpectedly changes the chip frequency"
-    }
-    require_one_object "Genesis audio divider source" [get_pins -hierarchical -quiet \
-        -filter {NAME =~ *g_genesis_machine/machine_adapter/machine_i/audio_divider_reg/C}]
-    require_one_object "Genesis audio divider output" [get_pins -hierarchical -quiet \
-        -filter {NAME =~ *g_genesis_machine/machine_adapter/machine_i/audio_divider_reg/Q}]
+    if {$chip_input_clocks ne $chip_output_clocks} {error "Genesis clock gate changes the parent clock"}
+    set audio_source [get_pins -hierarchical -quiet -regexp \
+        {.*g_genesis_machine[/.]machine_adapter/machine_i/audio_divider_reg/C$}]
+    set audio_output [get_pins -hierarchical -quiet -regexp \
+        {.*g_genesis_machine[/.]machine_adapter/machine_i/audio_divider_reg/Q$}]
+    require_one_object "Genesis audio divider source" $audio_source
+    require_one_object "Genesis audio divider output" $audio_output
     set genesis_audio_clock [get_clocks -quiet genesis_audio_clk]
     require_one_object "Genesis related audio clock" $genesis_audio_clock
-    if {abs([get_property PERIOD $genesis_audio_clock] -
-            2.0 * [get_property PERIOD $chip_input_clocks]) > 0.0005} {
-        error "Genesis audio clock must remain exactly half the chip parent frequency"
+    # PERIOD properties are rounded to 1 ps. Verify the exact divider and pins,
+    # then allow at most 1.5 ps for rounding two parent periods and one output.
+    if {[get_clocks -of_objects $audio_source] ne $chip_input_clocks ||
+        [get_clocks -of_objects $audio_output] ne $genesis_audio_clock ||
+        ![get_property IS_GENERATED $genesis_audio_clock] ||
+        ![get_property IS_USER_GENERATED $genesis_audio_clock] ||
+        [get_property IS_INVERTED $genesis_audio_clock] ||
+        [get_property DIVIDE_BY $genesis_audio_clock] ne "2" ||
+        [get_property SOURCE $genesis_audio_clock] ne $audio_source ||
+        [get_property SOURCE_PINS $genesis_audio_clock] ne $audio_output ||
+        [get_property MASTER_CLOCK $genesis_audio_clock] ne $chip_input_clocks ||
+        abs([get_property PERIOD $genesis_audio_clock] - 2.0 * [get_property PERIOD $chip_input_clocks]) > 0.0015} {
+        error "Genesis audio clock must be related to and exactly half the chip parent frequency"
     }
+    puts "GENESIS_CLOCK_GATE_PASS primitive=$chip_ref parent=$chip_input_clocks audio=$genesis_audio_clock period=[get_property PERIOD $genesis_audio_clock]"
+
 }
 set psram_forwarded_clocks [get_clocks -quiet psram_clk_out]
 if {$psram_active} {
@@ -283,6 +323,9 @@ if {$image_kind eq "VECTREX"} {
         }
     }
 }
+# Use the build metadata captured before open_run restores the checkpoint.
+# XDC Tcl variables and non-RTL fileset generics are not checkpoint state.
+set ::multitini_signoff_generics $build_generics
 source [file join $script_dir check_video_bus_constraints.tcl]
 report_bus_skew -warn_on_violation -file [file join $report_dir bus_skew.rpt]
 set bus_skew_text [report_bus_skew -return_string]
@@ -354,7 +397,7 @@ puts $manifest "utc=[clock format [clock seconds] -gmt 1 -format {%Y-%m-%dT%H:%M
 puts $manifest "vivado=[version -short]"
 puts $manifest "part=[get_property PART [current_project]]"
 puts $manifest "top=[get_property TOP [get_filesets sources_1]]"
-puts $manifest "generic=[get_property GENERIC [get_filesets sources_1]]"
+puts $manifest "generic=$build_generics"
 puts $manifest "image_kind=$image_kind"
 puts $manifest "max_threads=[get_param general.maxThreads]"
 puts $manifest "jobs=$jobs"

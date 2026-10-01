@@ -151,7 +151,7 @@ always @(posedge clk) begin
 end
 
 wire [15:0] audio_l, audio_r;
-genesis_lpf lpf_left
+genesis_lpf_late_mux lpf_left
 (
 	.clk(clk),
 	.reset(reset),
@@ -161,7 +161,7 @@ genesis_lpf lpf_left
 	.out(audio_l)
 );
 
-genesis_lpf lpf_right
+genesis_lpf_late_mux lpf_right
 (
 	.clk(clk),
 	.reset(reset),

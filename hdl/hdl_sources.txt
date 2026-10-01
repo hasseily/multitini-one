@@ -3,6 +3,7 @@
 generated/multitini_regs_pkg.sv
 common/multitini_display_pkg.sv
 common/multitini_display_control.sv
+common/multitini_display_reset.sv
 common/multitini_display_geometry.sv
 core/multitini_core_interface.sv
 [c64]
@@ -142,6 +143,7 @@ core/genesis/ports/pad_io.sv
 core/genesis/ports/video_cond.sv
 ../third_party/genesis/upstream/rtl/audio_iir_filter.v
 ../third_party/genesis/upstream/rtl/genesis_lpf.v
+core/genesis/ports/genesis_lpf_late_mux.sv
 core/genesis/ports/iir_filter.sv
 core/genesis/ports/audio_cond.sv
 core/genesis/ports/genesis_ram.sv

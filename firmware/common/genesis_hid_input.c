@@ -35,7 +35,7 @@ static void assign_players(mt_genesis_hid_input_t *input)
             occupied |= (uint8_t)(1U << input->player[slot]);
     for (slot = 0U; slot < MT_GAMEPAD_SLOTS && occupied != 3U; ++slot) {
         if (input->connected[slot] == 0U || input->player[slot] < 2U) continue;
-        input->player[slot] = (occupied & 1U) == 0U ? 0U : 1U;
+        input->player[slot] = (uint8_t)((occupied & 1U) == 0U ? 0U : 1U);
         occupied |= (uint8_t)(1U << input->player[slot]);
     }
 }

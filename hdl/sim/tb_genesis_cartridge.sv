@@ -44,6 +44,29 @@ module tb_genesis_cartridge;
         for(integer b=7;b>=0;b=b-1)begin ee_line(0,value[b]);ee_line(1,value[b]);ee_line(0,value[b]);end
         ee_line(0,1);ee_line(1,1);ee_line(0,1);
     endtask
+    task automatic parallel_write_without_rom(input [23:0] address,
+                                              input [15:0] saved_address,
+                                              input [7:0] value);
+        cart_addr=address[23:1];cart_data_wr={8'd0,value};
+        cart_cs=1;cart_oe=1;cart_lwr=1;rom_data_valid=0;
+        repeat(4)begin
+            tick;
+            if(rom_request || rom_stall || !dut.sram_write || !dut.runtime_save_write)
+                $fatal(1,"parallel save write incorrectly depends on ROM availability");
+        end
+        cart_lwr=0;cart_cs=0;cart_oe=0;rom_data_valid=1;
+        save_addr=saved_address;repeat(4)tick;
+        if(save_q!==value)$fatal(1,"parallel write with ROM unavailable was lost");
+        pause_request=1;cart_data_wr={8'd0,~value};
+        cart_cs=1;cart_oe=1;cart_lwr=1;rom_data_valid=0;
+        repeat(4)begin
+            tick;
+            if(dut.runtime_save_write)$fatal(1,"paused parallel save write was accepted");
+        end
+        cart_lwr=0;cart_cs=0;cart_oe=0;rom_data_valid=1;pause_request=0;
+        repeat(4)tick;
+        if(save_q!==value)$fatal(1,"paused parallel save write changed memory");
+    endtask
     initial begin
         repeat(5)tick;cart_dl=1;tick;
         load_word(0,16'h00ff);load_word(511,16'hffff);
@@ -61,6 +84,7 @@ module tb_genesis_cartridge;
         if(rom_address!==24'h000100 || !rom_request || cart_data!==16'habcd || !cart_data_en)$fatal(1,"ROM mapping");
         rom_data_valid=0;tick;if(!rom_stall)$fatal(1,"ROM miss must stall");
         rom_data_valid=1;cart_oe=0;cart_cs=0;tick;
+        parallel_write_without_rom(24'h200002,16'd1,8'h99);
         cart_write(24'h200000,16'h00cc,0);save_addr=0;repeat(4)tick;
         if(save_q!==8'hcc)$fatal(1,"SRAM write/read");
         pause_request=1;cart_write(24'h200000,16'h00dd,0);repeat(4)tick;
@@ -73,6 +97,9 @@ module tb_genesis_cartridge;
         cart_write(24'ha130f3,16'h0008,1);
         cart_addr=24'h080000>>1;cart_oe=1;cart_cs=1;repeat(4)tick;
         if(rom_address!==24'h400000)$fatal(1,"SSF2 bank mapping %h",rom_address);
+        identified_cart("SF-002     ");
+        if(dut.sf_quirk!==6)$fatal(1,"SF-002 header was not detected");
+        parallel_write_without_rom(24'h3c0010,16'd8,8'he7);
         identified_cart("GM  GM 0000");
         if(!dut.sram00_quirk)$fatal(1,"zero-fill header was not detected");
         for(integer i=0;i<65536;i=i+1)
@@ -90,7 +117,7 @@ module tb_genesis_cartridge;
         pause_request=1;
         repeat(4)tick;
         if(dut.save_memory[16'h12]!==8'h76)$fatal(1,"pause discarded committed EEPROM write");
-        $display("PASS Genesis cartridge save restore, SRAM/reset/pause, SSF2, zero-fill and draining EEPROM writes");
+        $display("PASS Genesis cartridge save restore, SRAM/reset/pause, normal/SF writes without ROM, SSF2, zero-fill and draining EEPROM writes");
         $finish;
     end
 endmodule

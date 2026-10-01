@@ -824,16 +824,19 @@ def main() -> int:
             return 0
 
         build_inputs = capture_build_inputs(xpfm)
-        golden = client.create_app_component(
-            name=GOLDEN_APP_NAME, platform=str(xpfm), domain=DOMAIN_NAME,
-            template="empty_application")
-        golden.import_files(from_loc=str(ROOT), files=["firmware/golden"],
-                            is_skip_copy_sources=True)
-        add_include_directory(GOLDEN_APP_NAME, ROOT / "firmware/golden/lib")
-        configure_amp_application(GOLDEN_APP_NAME, secondary=False)
-        require_success(golden.build(), "golden recovery application build")
-        validate_elf_memory(WORKSPACE / GOLDEN_APP_NAME / "build" / "golden.elf",
-                            0x00100000, CPU1_ENTRY - 0x00100000)
+        if os.environ.get("MULTITINI_SKIP_GOLDEN") == "1":
+            print("Skipping golden recovery application (MULTITINI_SKIP_GOLDEN=1)")
+        else:
+            golden = client.create_app_component(
+                name=GOLDEN_APP_NAME, platform=str(xpfm), domain=DOMAIN_NAME,
+                template="empty_application")
+            golden.import_files(from_loc=str(ROOT), files=["firmware/golden"],
+                                is_skip_copy_sources=True)
+            add_include_directory(GOLDEN_APP_NAME, ROOT / "firmware/golden/lib")
+            configure_amp_application(GOLDEN_APP_NAME, secondary=False)
+            require_success(golden.build(), "golden recovery application build")
+            validate_elf_memory(WORKSPACE / GOLDEN_APP_NAME / "build" / "golden.elf",
+                                0x00100000, CPU1_ENTRY - 0x00100000)
 
         secondary = client.create_app_component(
             name=CPU1_APP_NAME, platform=str(xpfm), domain=CPU1_DOMAIN_NAME,

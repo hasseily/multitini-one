@@ -21,16 +21,38 @@ module multitini_border_overlay #(
     wire [11:0] h_total=DYNAMIC_DISPLAY ? display_h_total : H_TOTAL;
     wire [11:0] v_active=DYNAMIC_DISPLAY ? display_v_active : V_ACTIVE;
     wire [11:0] v_total=DYNAMIC_DISPLAY ? display_v_total : V_TOTAL;
+    // For totals >= 3 this difference fits signed 13 bits. Its sign supplies
+    // the wrap test and its low bits the coordinate, sharing one subtract.
+    // Smaller totals retain the original unsigned h_total-3 underflow guard.
+    wire [12:0] lookahead_offset=({1'b0,scan_x}+13'd3)-{1'b0,h_total};
+    // A 13-bit increment cannot equal v_total=0, preserving the original
+    // unsigned last-line underflow while keeping v_total out of the adder.
+    wire [12:0] incremented_row={1'b0,scan_y}+13'd1;
     logic signed [13:0] left_edge, right_edge, top_edge, bottom_edge;
     logic [11:0] fetch_x, fetch_y;
     logic signed [13:0] dl_q, dr_q, dt_q, db_q;
     logic signed [13:0] distance_qq;
     logic active_q, active_qq;
+    logic [11:0] active_x_q,active_y_q,active_width_q,active_height_q;
     logic corner_qq, dash_qq;
     logic [2:0] style_q, style_qq;
     logic [23:0] color_q, color_qq, shaded;
     logic draw_pixel;
     logic [4:0] padding;
+    wire wrap_fetch=h_total>=12'd3 && !lookahead_offset[12];
+    wire wrap_row=(incremented_row=={1'b0,v_total});
+    wire [11:0] incremented_y=incremented_row[11:0];
+    wire [11:0] next_fetch_y=wrap_row ? 12'd0 : incremented_y;
+    // Resolve row distances before either late wrap selection. Keep the
+    // increment at 12 bits and every distance at signed 14 bits so both
+    // coordinate overflow and edge-distance wrapping retain their meaning.
+    (* keep="true" *) wire signed [13:0] top_now=top_edge-$signed({2'b0,scan_y});
+    (* keep="true" *) wire signed [13:0] top_increment=top_edge-$signed({2'b0,incremented_y});
+    (* keep="true" *) wire signed [13:0] top_next=wrap_row ? top_edge : top_increment;
+    (* keep="true" *) wire signed [13:0] bottom_now=$signed({2'b0,scan_y})-bottom_edge;
+    (* keep="true" *) wire signed [13:0] bottom_increment=$signed({2'b0,incremented_y})-bottom_edge;
+    (* keep="true" *) wire signed [13:0] bottom_zero=-bottom_edge;
+    (* keep="true" *) wire signed [13:0] bottom_next=wrap_row ? bottom_zero : bottom_increment;
 
     function automatic logic [23:0] palette(input logic [3:0] index);
         case (index)
@@ -60,9 +82,9 @@ module multitini_border_overlay #(
         bottom_edge=$signed({2'b0,viewport_y})+$signed({2'b0,viewport_height})+
                     $signed({9'b0,padding});
         fetch_x=scan_x+12'd3; fetch_y=scan_y;
-        if (scan_x>=h_total-3) begin
-            fetch_x=scan_x-(h_total-3);
-            fetch_y=scan_y==v_total-1 ? 12'd0 : scan_y+12'd1;
+        if (wrap_fetch) begin
+            fetch_x=lookahead_offset[11:0];
+            fetch_y=next_fetch_y;
         end
         draw_pixel=0; shaded=color_qq;
         case (style_qq)
@@ -85,18 +107,23 @@ module multitini_border_overlay #(
         if (!resetn) begin
             dl_q<=0; dr_q<=0; dt_q<=0; db_q<=0; distance_qq<=0;
             active_q<=0; active_qq<=0; corner_qq<=0; dash_qq<=0;
+            active_x_q<=0;active_y_q<=0;active_width_q<=0;active_height_q<=0;
             style_q<=0; style_qq<=0; color_q<=0; color_qq<=0;
             pixel_opaque<=0; pixel_rgb565<=0;
         end else begin
             dl_q<=left_edge-$signed({2'b0,fetch_x});
             dr_q<=$signed({2'b0,fetch_x})-right_edge;
-            dt_q<=top_edge-$signed({2'b0,fetch_y});
-            db_q<=$signed({2'b0,fetch_y})-bottom_edge;
-            active_q<=frame_config[0] && viewport_width!=0 && viewport_height!=0 &&
-                      fetch_x<h_active && fetch_y<v_active;
+            dt_q<=wrap_fetch ? top_next : top_now;
+            db_q<=wrap_fetch ? bottom_next : bottom_now;
+            // Keep the complete sample together across the existing first
+            // stage; compare active bounds in stage two, preserving latency.
+            active_q<=frame_config[0] && viewport_width!=0 && viewport_height!=0;
+            active_x_q<=fetch_x;active_y_q<=fetch_y;
+            active_width_q<=h_active;active_height_q<=v_active;
             style_q<=frame_config[3:1]; color_q<=palette(frame_config[7:4]);
             distance_qq<=max2(max2(dl_q,dr_q),max2(dt_q,db_q));
-            active_qq<=active_q; style_qq<=style_q; color_qq<=color_q;
+            active_qq<=active_q && active_x_q<active_width_q && active_y_q<active_height_q;
+            style_qq<=style_q; color_qq<=color_q;
             corner_qq<=((dt_q==0 || db_q==0) && (dl_q>=-23 || dr_q>=-23)) ||
                        ((dl_q==0 || dr_q==0) && (dt_q>=-23 || db_q>=-23));
             // Sixteen-pixel dash period: eight lit and eight clear. Using the

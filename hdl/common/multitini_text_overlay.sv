@@ -181,10 +181,14 @@ module multitini_text_overlay #(
     logic active_visible_q;
     logic active_visible_qq;
     logic [63:0] glyph_q;
-    logic [7:0] glyph_row;
+    logic [2:0] glyph_x_index;
+    logic [2:0] glyph_y_index;
+    logic glyph_in_bounds;
     logic glyph_pixel;
-    logic [3:0] foreground_q;
-    logic [3:0] background_q;
+    logic [2:0] glyph_x_q, glyph_y_q;
+    logic glyph_in_bounds_q;
+    logic [15:0] foreground_rgb_q;
+    logic [15:0] background_rgb_q;
     logic transparent_q;
 
     initial $readmemh("multitini_font7x8.mem", font);
@@ -261,16 +265,77 @@ module multitini_text_overlay #(
 
     assign columns = active_dense ? MT_UI_COLUMNS : MT_UI_LEGACY_COLUMNS;
     wire compact=DYNAMIC_DISPLAY && display_h_active<1920;
-    assign cell_width = compact ? (active_dense ? display_h_active/128 : display_h_active/80) :
-                       active_dense ? MT_UI_CELL_WIDTH : MT_UI_LEGACY_CELL_WIDTH;
-    assign cell_height = compact ? (active_dense ? display_v_active/60 : display_v_active/36) :
-                        active_dense ? MT_UI_CELL_HEIGHT : MT_UI_LEGACY_CELL_HEIGHT;
-    wire [11:0] text_width=compact ? columns*cell_width : H_ACTIVE;
-    wire [11:0] text_height=compact ? (active_dense ? 60 : 36)*cell_height : V_ACTIVE;
+    logic [11:0] text_width, text_height;
+    logic [4:0] compact_glyph_x, compact_glyph_y;
     wire [11:0] h_total=DYNAMIC_DISPLAY ? display_h_total : H_TOTAL;
     wire [11:0] v_total=DYNAMIC_DISPLAY ? display_v_total : V_TOTAL;
-    wire [4:0] compact_glyph_x=(cell_width-7)>>1;
-    wire [4:0] compact_glyph_y=(cell_height-8)>>1;
+
+    // The six supported display modes have fixed cell geometry. Decode the
+    // already selected dimensions instead of dividing and then multiplying
+    // them in the pixel-rate cursor path. Constants equal floor(width/columns)
+    // and floor(height/rows); unused edge pixels stay outside the text plane.
+    // This leaves the BRAM/font/output pipeline and its lookahead unchanged.
+    always_comb begin
+        cell_width = active_dense ? MT_UI_CELL_WIDTH : MT_UI_LEGACY_CELL_WIDTH;
+        cell_height = active_dense ? MT_UI_CELL_HEIGHT : MT_UI_LEGACY_CELL_HEIGHT;
+        text_width = H_ACTIVE;
+        text_height = V_ACTIVE;
+        compact_glyph_x = 0;
+        compact_glyph_y = 0;
+        if (compact) begin
+            case (display_h_active)
+                12'd1024: begin
+                    cell_width = active_dense ? 5'd8 : 5'd12;
+                    text_width = active_dense ? 12'd1024 : 12'd960;
+                    compact_glyph_x = active_dense ? 5'd0 : 5'd2;
+                end
+                12'd1200: begin
+                    cell_width = active_dense ? 5'd9 : 5'd15;
+                    text_width = active_dense ? 12'd1152 : 12'd1200;
+                    compact_glyph_x = active_dense ? 5'd1 : 5'd4;
+                end
+                12'd1280: begin
+                    cell_width = active_dense ? 5'd10 : 5'd16;
+                    text_width = 12'd1280;
+                    compact_glyph_x = active_dense ? 5'd1 : 5'd4;
+                end
+                12'd1360: begin
+                    cell_width = active_dense ? 5'd10 : 5'd17;
+                    text_width = active_dense ? 12'd1280 : 12'd1360;
+                    compact_glyph_x = active_dense ? 5'd1 : 5'd5;
+                end
+                12'd1680: begin
+                    cell_width = active_dense ? 5'd13 : 5'd21;
+                    text_width = active_dense ? 12'd1664 : 12'd1680;
+                    compact_glyph_x = active_dense ? 5'd3 : 5'd7;
+                end
+                default: ;
+            endcase
+            case (display_v_active)
+                12'd768: begin
+                    cell_height = active_dense ? 5'd12 : 5'd21;
+                    text_height = active_dense ? 12'd720 : 12'd756;
+                    compact_glyph_y = active_dense ? 5'd2 : 5'd6;
+                end
+                12'd800: begin
+                    cell_height = active_dense ? 5'd13 : 5'd22;
+                    text_height = active_dense ? 12'd780 : 12'd792;
+                    compact_glyph_y = active_dense ? 5'd2 : 5'd7;
+                end
+                12'd1024: begin
+                    cell_height = active_dense ? 5'd17 : 5'd28;
+                    text_height = active_dense ? 12'd1020 : 12'd1008;
+                    compact_glyph_y = active_dense ? 5'd4 : 5'd10;
+                end
+                12'd1050: begin
+                    cell_height = active_dense ? 5'd17 : 5'd29;
+                    text_height = active_dense ? 12'd1020 : 12'd1044;
+                    compact_glyph_y = active_dense ? 5'd4 : 5'd10;
+                end
+                default: ;
+            endcase
+        end
+    end
 
     // The text BRAM, synchronous font ROM, and registered glyph/color output
     // add three cycles before multitini_video_test samples the overlay.  A
@@ -301,8 +366,11 @@ module multitini_text_overlay #(
             active_visible_q <= 1'b0;
             active_visible_qq <= 1'b0;
             glyph_q <= 64'd0;
-            foreground_q <= 4'd0;
-            background_q <= 4'd0;
+            glyph_x_q <= 3'd0;
+            glyph_y_q <= 3'd0;
+            glyph_in_bounds_q <= 1'b0;
+            foreground_rgb_q <= palette(4'd0);
+            background_rgb_q <= palette(4'd0);
             transparent_q <= 1'b0;
             pixel_opaque <= 1'b0;
             pixel_rgb565 <= 16'd0;
@@ -377,12 +445,17 @@ module multitini_text_overlay #(
                 glyph_q <= font[cell_q[6:0] - 7'd32];
             else
                 glyph_q <= 64'd0;
-            foreground_q <= cell_q[10:7];
-            background_q <= cell_q[14:11];
+            // Decode both colors alongside the font read. The final glyph
+            // stage then selects RGB directly, retaining three-pixel latency.
+            glyph_x_q <= glyph_x_index;
+            glyph_y_q <= glyph_y_index;
+            glyph_in_bounds_q <= glyph_in_bounds;
+            foreground_rgb_q <= palette(cell_q[10:7]);
+            background_rgb_q <= palette(cell_q[14:11]);
             transparent_q <= cell_q[15];
             pixel_opaque <= active_visible_qq && coordinate_active_qq &&
                             (glyph_pixel || !transparent_q);
-            pixel_rgb565 <= palette(glyph_pixel ? foreground_q : background_q);
+            pixel_rgb565 <= glyph_pixel ? foreground_rgb_q : background_rgb_q;
         end
     end
 
@@ -408,36 +481,37 @@ module multitini_text_overlay #(
     endfunction
 
     always_comb begin
-        glyph_row = 8'd0;
-        glyph_pixel = 1'b0;
+        glyph_x_index = 3'd0;
+        glyph_y_index = 3'd0;
+        glyph_in_bounds = 1'b0;
         if (compact) begin
-            if(local_y_qq>=compact_glyph_y && local_y_qq<compact_glyph_y+8)
-                glyph_row=glyph_q[((local_y_qq-compact_glyph_y)*8)+:8];
-            if(local_x_qq>=compact_glyph_x && local_x_qq<compact_glyph_x+7 &&
-               local_y_qq>=compact_glyph_y && local_y_qq<compact_glyph_y+8)
-                glyph_pixel=glyph_row[local_x_qq-compact_glyph_x];
+            if(local_x_q>=compact_glyph_x && local_x_q<compact_glyph_x+7 &&
+               local_y_q>=compact_glyph_y && local_y_q<compact_glyph_y+8) begin
+                glyph_x_index = local_x_q - compact_glyph_x;
+                glyph_y_index = local_y_q - compact_glyph_y;
+                glyph_in_bounds = 1'b1;
+            end
         end else if (active_dense) begin
-            if (local_y_qq >= MT_UI_GLYPH_Y &&
-                local_y_qq < MT_UI_GLYPH_Y + 8 * MT_UI_FONT_SCALE)
-                glyph_row = glyph_q[(((local_y_qq - MT_UI_GLYPH_Y) /
-                                      MT_UI_FONT_SCALE) * 8) +: 8];
-            if (local_x_qq >= MT_UI_GLYPH_X &&
-                local_x_qq < MT_UI_GLYPH_X + 7 * MT_UI_FONT_SCALE &&
-                local_y_qq >= MT_UI_GLYPH_Y &&
-                local_y_qq < MT_UI_GLYPH_Y + 8 * MT_UI_FONT_SCALE)
-                glyph_pixel = glyph_row[(local_x_qq - MT_UI_GLYPH_X) /
-                                        MT_UI_FONT_SCALE];
+            if (local_x_q >= MT_UI_GLYPH_X &&
+                local_x_q < MT_UI_GLYPH_X + 7 * MT_UI_FONT_SCALE &&
+                local_y_q >= MT_UI_GLYPH_Y &&
+                local_y_q < MT_UI_GLYPH_Y + 8 * MT_UI_FONT_SCALE) begin
+                glyph_x_index = (local_x_q - MT_UI_GLYPH_X) / MT_UI_FONT_SCALE;
+                glyph_y_index = (local_y_q - MT_UI_GLYPH_Y) / MT_UI_FONT_SCALE;
+                glyph_in_bounds = 1'b1;
+            end
         end else begin
-            if (local_y_qq >= MT_UI_LEGACY_GLYPH_Y &&
-                local_y_qq < MT_UI_LEGACY_GLYPH_Y + 8 * MT_UI_LEGACY_FONT_SCALE)
-                glyph_row = glyph_q[(((local_y_qq - MT_UI_LEGACY_GLYPH_Y) /
-                                      MT_UI_LEGACY_FONT_SCALE) * 8) +: 8];
-            if (local_x_qq >= MT_UI_LEGACY_GLYPH_X &&
-                local_x_qq < MT_UI_LEGACY_GLYPH_X + 7 * MT_UI_LEGACY_FONT_SCALE &&
-                local_y_qq >= MT_UI_LEGACY_GLYPH_Y &&
-                local_y_qq < MT_UI_LEGACY_GLYPH_Y + 8 * MT_UI_LEGACY_FONT_SCALE)
-                glyph_pixel = glyph_row[(local_x_qq - MT_UI_LEGACY_GLYPH_X) /
-                                        MT_UI_LEGACY_FONT_SCALE];
+            if (local_x_q >= MT_UI_LEGACY_GLYPH_X &&
+                local_x_q < MT_UI_LEGACY_GLYPH_X + 7 * MT_UI_LEGACY_FONT_SCALE &&
+                local_y_q >= MT_UI_LEGACY_GLYPH_Y &&
+                local_y_q < MT_UI_LEGACY_GLYPH_Y + 8 * MT_UI_LEGACY_FONT_SCALE) begin
+                glyph_x_index = (local_x_q - MT_UI_LEGACY_GLYPH_X) / MT_UI_LEGACY_FONT_SCALE;
+                glyph_y_index = (local_y_q - MT_UI_LEGACY_GLYPH_Y) / MT_UI_LEGACY_FONT_SCALE;
+                glyph_in_bounds = 1'b1;
+            end
         end
+        // Share one bit mux across layouts instead of selecting among three
+        // glyph-data muxes after the font BRAM's clock-to-output delay.
+        glyph_pixel = glyph_in_bounds_q && glyph_q[{glyph_y_q, glyph_x_q}];
     end
 endmodule

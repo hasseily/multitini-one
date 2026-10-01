@@ -19,14 +19,18 @@ from lint_genesis import manifest_sources
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build/genesis-tests"
 GUARD = [sys.executable, str(ROOT / "scripts/run_native_tool.py"), "--"]
-TESTS = ("loader", "rom_cache", "save", "media_stream", "pads", "eeprom", "cartridge", "ram", "vdp_pair", "video_normalizer", "video_bridge", "machine", "adapter")
+TESTS = ("loader", "rom_cache", "save", "media_stream", "pads", "eeprom", "cartridge", "ram", "audio_lpf", "vdp_pair", "video_normalizer", "video_bridge", "machine", "adapter")
 
 
 def main() -> int:
+    global BUILD
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--test", choices=TESTS, action="append",
                         help="run a selected test (repeatable; default: all)")
+    parser.add_argument("--build-dir", type=Path, default=BUILD,
+                        help="directory for logs, binaries and input hashes")
     args = parser.parse_args()
+    BUILD = args.build_dir.resolve()
     tests = args.test or TESTS
     BUILD.mkdir(parents=True, exist_ok=True)
     (BUILD / "validation.json").unlink(missing_ok=True)
@@ -67,7 +71,8 @@ def main() -> int:
                 shutil.copyfile(source, directory / source.name)
         top = f"tb_genesis_{name}"
         if name == "vdp_pair":
-            output = run([sys.executable, ROOT / "scripts/test_genesis_vdp_pair.py"], directory, "proof")
+            output = run([sys.executable, ROOT / "scripts/test_genesis_vdp_pair.py",
+                          "--build-dir", directory], directory, "proof")
         elif name in ("machine", "video_bridge", "adapter"):
             run([tool("verilator"), "--binary", "--timing", "--top-module", top,
                  "-Wno-fatal", "--build-jobs", "8", "--Mdir", directory / "obj", *hdl, bench],

@@ -543,12 +543,17 @@ module multitini_one_top #(
     wire [31:0] display_rd_data=reg_rd_addr==16'h01d0 ? {28'd0,display_requested_mode} :
         reg_rd_addr==16'h01d4 ? {21'd0,display_hold,(display_error || display_bad_write),(display_busy || display_request),4'd0,display_active_mode} :
         reg_rd_addr==16'h01d8 ? 32'h0000003f : 0;
-    wire [11:0] display_h_active,display_h_front,display_h_sync,display_h_total;
-    wire [11:0] display_v_active,display_v_front,display_v_sync,display_v_total;
-    wire display_h_positive,display_v_positive;
-    wire [3:0] display_scale_num,display_scale_den;
+    reg [11:0] display_h_active,display_h_front,display_h_sync,display_h_total;
+    reg [11:0] display_v_active,display_v_front,display_v_sync,display_v_total;
+    reg display_h_positive,display_v_positive;
+    reg [3:0] display_scale_num,display_scale_den;
     wire [3:0] display_filter_scale_num,display_filter_scale_den;
-    wire [11:0] display_view_x,display_view_y,display_view_width,display_view_height;
+    reg [11:0] display_view_x,display_view_y,display_view_width,display_view_height;
+    wire [11:0] display_h_active_next,display_h_front_next,display_h_sync_next,display_h_total_next;
+    wire [11:0] display_v_active_next,display_v_front_next,display_v_sync_next,display_v_total_next;
+    wire display_h_positive_next,display_v_positive_next;
+    wire [3:0] display_scale_num_next,display_scale_den_next;
+    wire [11:0] display_view_x_next,display_view_y_next,display_view_width_next,display_view_height_next;
     reg [3:0] display_pixel_mode;
     wire [3:0] display_mode_payload;
     wire display_mode_valid,display_geometry_ready;
@@ -594,7 +599,8 @@ module multitini_one_top #(
         .clock_resetn(pixel_clock_resetn),.clock_awaddr(pixel_clock_awaddr),.clock_awvalid(pixel_clock_awvalid),
         .clock_awready(pixel_clock_awready),.clock_wdata(pixel_clock_wdata),.clock_wvalid(pixel_clock_wvalid),
         .clock_wready(pixel_clock_wready),.clock_bresp(pixel_clock_bresp),.clock_bvalid(pixel_clock_bvalid),.clock_bready(pixel_clock_bready));
-    reset_sync display_reset(.clk(video_clk),.arst_n(video_clock_aresetn && !display_hold),.srst_n(video_aresetn));
+    multitini_display_reset display_reset(.clk(video_clk),.clock_resetn(video_clock_aresetn),
+        .hold_request(display_hold),.resetn(video_aresetn));
     // Filter coefficients stay in the control domain. Native DDR owners
     // have drained before active_mode changes; no coefficient CDC is needed.
     multitini_display_geometry #(.MACHINE(ACTIVE_MACHINE)) display_filter_geometry(
@@ -602,11 +608,24 @@ module multitini_one_top #(
     multitini_display_geometry #(.MACHINE(ACTIVE_MACHINE),
         .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : C64_NTSC_MODE ? 404 : 382),
         .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : C64_NTSC_MODE ? 250 : 270)) display_geometry(
-        .mode(display_pixel_mode),.h_active(display_h_active),.h_front(display_h_front),.h_sync(display_h_sync),.h_total(display_h_total),
-        .v_active(display_v_active),.v_front(display_v_front),.v_sync(display_v_sync),.v_total(display_v_total),
-        .h_positive(display_h_positive),.v_positive(display_v_positive),
-        .scale_num(display_scale_num),.scale_den(display_scale_den),
-        .view_x(display_view_x),.view_y(display_view_y),.view_width(display_view_width),.view_height(display_view_height));
+        .mode(display_pixel_mode),.h_active(display_h_active_next),.h_front(display_h_front_next),.h_sync(display_h_sync_next),.h_total(display_h_total_next),
+        .v_active(display_v_active_next),.v_front(display_v_front_next),.v_sync(display_v_sync_next),.v_total(display_v_total_next),
+        .h_positive(display_h_positive_next),.v_positive(display_v_positive_next),
+        .scale_num(display_scale_num_next),.scale_den(display_scale_den_next),
+        .view_x(display_view_x_next),.view_y(display_view_y_next),.view_width(display_view_width_next),.view_height(display_view_height_next));
+    // Register configuration before the high-fanout scanout datapaths. The
+    // mode mailbox remains live during pixel reset; its acknowledgement and
+    // SETTLE_MODE complete before display_reset releases any pixel consumer.
+    always @(posedge video_clk) begin
+        {display_h_active,display_h_front,display_h_sync,display_h_total,
+         display_v_active,display_v_front,display_v_sync,display_v_total,
+         display_h_positive,display_v_positive,display_scale_num,display_scale_den,
+         display_view_x,display_view_y,display_view_width,display_view_height} <=
+        {display_h_active_next,display_h_front_next,display_h_sync_next,display_h_total_next,
+         display_v_active_next,display_v_front_next,display_v_sync_next,display_v_total_next,
+         display_h_positive_next,display_v_positive_next,display_scale_num_next,display_scale_den_next,
+         display_view_x_next,display_view_y_next,display_view_width_next,display_view_height_next};
+    end
 
     multitini_axi3_regs axi_regs (
         .aclk(control_clk), .aresetn(control_aresetn),
@@ -1341,11 +1360,13 @@ module multitini_one_top #(
 
             multitini_genesis_video_bridge video_bridge (
                 .source_clk(c64_clk),.source_resetn(c64_aresetn),.source_ready(c64_ready),
+                .source_ready_control(c64_ready_control),
                 .source_r(c64_video_r),.source_g(c64_video_g),.source_b(c64_video_b),
                 .source_de(c64_video_de),.source_vsync(c64_video_vsync),
                 .source_valid(c64_video_valid),.source_mode_240(video_mode_240),
                 .control_clk(control_clk),.control_resetn(control_aresetn),
                 .pixel_clk(video_clk),.pixel_resetn(video_aresetn),.shared_pixel_resetn(video_control_resetn),
+                .shared_pixel_running(video_pixel_running),
                 .diagnostic_request(video_enable),.scan_x(video_scan_x),.scan_y(video_scan_y),
                 .vblank_start(video_vblank_start),
                 .display_view_x(display_view_x),.display_view_y(display_view_y),

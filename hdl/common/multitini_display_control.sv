@@ -64,8 +64,14 @@ module multitini_display_control #(
     assign reader_pause = state != IDLE && state != START_VIDEO && state != WAIT_FRAME;
     // Stop new DMA first, then let the old pixel clock drain every owner.
     // Mailbox clocks remain alive through the later pixel reset.
-    assign video_hold = reader_pause && state != QUIESCE && state != RECOVER_DRAIN &&
-                        (state != FAILED || reader_quiescent);
+    // Register the hold request before it crosses into the pixel domain.
+    // The destination samples it synchronously; only clock loss may assert
+    // the pixel reset asynchronously. Draining still precedes this request.
+    always_ff @(posedge clk) begin
+        if (!resetn) video_hold <= 1'b0;
+        else video_hold <= reader_pause && state != QUIESCE && state != RECOVER_DRAIN &&
+                           (state != FAILED || reader_quiescent);
+    end
     assign clock_bready = 1'b1;
     assign clock_resetn = resetn && state != RECOVER_RESET;
 

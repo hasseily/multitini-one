@@ -38,7 +38,6 @@ module multitini_gameboy_psram_path (
     logic service_rvalid;
     logic service_initialized;
     logic memory_fault_control;
-    logic memory_fault_meta;
 
     logic command_valid;
     logic command_ready;
@@ -95,15 +94,10 @@ module multitini_gameboy_psram_path (
 
     // The line service fault is sticky in the control-clock domain. Synchronize
     // that level before either machine adapter consumes it in core_clk.
-    always_ff @(posedge core_clk) begin
-        if (!core_resetn) begin
-            memory_fault_meta <= 1'b0;
-            memory_fault <= 1'b0;
-        end else begin
-            memory_fault_meta <= memory_fault_control;
-            memory_fault <= memory_fault_meta;
-        end
-    end
+    cdc_bit_sync memory_fault_sync (
+        .clk(core_clk), .resetn(core_resetn),
+        .din(memory_fault_control), .dout(memory_fault)
+    );
 
     multitini_psram_driver driver_i (
         .clk(control_clk), .resetn(memory_resetn),

@@ -505,6 +505,25 @@ module multitini_c64_video_bridge #(
     wire [11:0] view_width=DYNAMIC_DISPLAY ? display_view_width : SCALED_WIDTH;
     wire [11:0] view_height=DYNAMIC_DISPLAY ? display_view_height : SCALED_HEIGHT;
     wire [3:0] scale_num=DYNAMIC_DISPLAY ? display_scale_num : OUTPUT_SCALE;
+    // Display changes settle while the pixel domain is held in reset.
+    // Precompute bounds there so visible-pixel gating contains comparisons,
+    // not additions followed by comparisons. Preserve the original 12-bit
+    // output bounds and 32-bit unsigned prefetch arithmetic separately.
+    logic [11:0] view_right, view_bottom;
+    logic [31:0] prefetch_left, prefetch_right;
+    generate if (DYNAMIC_DISPLAY) begin : g_view_bounds
+        always_ff @(posedge pixel_clk) if (!pixel_resetn) begin
+            view_right <= view_x + view_width;
+            view_bottom <= view_y + view_height;
+            prefetch_left <= {20'd0,view_x} - 32'd2;
+            prefetch_right <= {20'd0,view_x} + {20'd0,view_width} - 32'd2;
+        end
+    end else begin : g_fixed_view_bounds
+        assign view_right = view_x + view_width;
+        assign view_bottom = view_y + view_height;
+        assign prefetch_left = {20'd0,view_x} - 32'd2;
+        assign prefetch_right = {20'd0,view_x} + {20'd0,view_width} - 32'd2;
+    end endgenerate
     reg [3:0] vertical_repeat_count;
     // The border overlay consumes the original fixed machine viewport.
     assign viewport_x = view_x;
@@ -517,14 +536,14 @@ module multitini_c64_video_bridge #(
     // the distributed bank mux from palette expansion and the DVI register.
     assign prefetch_active =
         scan_y >= view_y &&
-        scan_y < view_y + view_height &&
-        scan_x >= view_x - 2 &&
-        scan_x < view_x + view_width - 2;
+        scan_y < view_bottom &&
+        scan_x >= prefetch_left &&
+        scan_x < prefetch_right;
     assign output_active =
         scan_y >= view_y &&
-        scan_y < view_y + view_height &&
+        scan_y < view_bottom &&
         scan_x >= view_x &&
-        scan_x < view_x + view_width;
+        scan_x < view_right;
     assign pixel_read_enable = machine_active && display_valid && prefetch_active;
 
     always_comb begin
@@ -556,7 +575,7 @@ module multitini_c64_video_bridge #(
                     vertical_repeat_count <= 0;
                     read_line_base <= '0;
                     read_address   <= '0;
-                end else if (scan_y < view_y + view_height &&
+                end else if (scan_y < view_bottom &&
                              vertical_repeat_count == scale_num-1) begin
                     vertical_repeat_count <= 0;
                     read_line_base <= read_line_base + SOURCE_WIDTH;
