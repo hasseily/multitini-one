@@ -32,10 +32,12 @@ PREAMBLE = r'''
 #include "multitini_genesis_interface.h"
 #include "multitini_vectrex_interface.h"
 #include "vectrex_content_service.h"
+#include "supervisor_settings.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
 #define MT_MENU_HIDE_TIMEOUT_MS UINT64_C(1000)
+#define MT_SUPERVISOR_CORE_ID UINT32_C(0)
 static mt_menu_t supervisor_menu;
 static mt_ui_frame_t supervisor_frame;
 static mt_ui_presenter_t supervisor_presenter;
@@ -52,6 +54,88 @@ static uint32_t core_id, core_status, core_control;
 static unsigned commits, hidden_commits, shown_commits, writes, runtime_polls;
 static unsigned countdown, errors, reads, actions, outcome, keyboard_checks;
 static bool stall, nested_hide, expected_visible;
+static mt_controller_device_t devices[MT_GAMEPAD_SLOTS], controller_edit_devices[MT_GAMEPAD_SLOTS];
+static mt_controller_config_t controller_configs[MT_GAMEPAD_SLOTS];
+static mt_gamepad_state_t raw_controllers[MT_GAMEPAD_SLOTS];
+static uint32_t controller_edit_core;
+static mt_supervisor_settings_t persistent_settings, settings_before_update;
+static unsigned screenshot_requests, output_screenshot_requests, config_applies, settings_writes;
+static bool gamepad_preview, save_sd_fail, stored_settings;
+static bool screenshot_busy, screenshot_finish, screenshot_ui_visible, borders_supported;
+static unsigned screenshot_polls, screenshot_logs;
+static uint32_t screenshot_core_id, display_status, border_config, screenshot_border;
+static uint8_t screenshot_display_mode;
+static const mt_ui_frame_t *screenshot_ui;
+static const char *screenshot_status;
+static char reported_status[192], screenshot_core_name[MT_CORE_PACKAGE_ID_MAX];
+static uint8_t settings_wire[MT_SETTINGS_WIRE_SIZE];
+bool usb_hid_service_controller_device(uint8_t slot, mt_controller_device_t *device) {
+    *device = devices[slot]; return device->connected != 0U;
+}
+bool usb_hid_service_get_controller_config(uint8_t slot, mt_controller_config_t *config) {
+    *config = controller_configs[slot]; return true;
+}
+uint8_t usb_hid_service_controller_player(uint8_t slot) {
+    return devices[slot].connected && slot < 2U ? slot : UINT8_MAX;
+}
+void usb_hid_service_controller_snapshot(uint8_t slot, mt_gamepad_state_t *raw, mt_controls_output_t *output) {
+    if (raw) *raw = raw_controllers[slot];
+    if (output) memset(output, 0, sizeof(*output));
+}
+bool usb_hid_service_validate_controller_configs(const mt_controller_config_t *configs) {
+    uint8_t reserved = 0U;
+    for (unsigned slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot) {
+        if (!devices[slot].connected) continue;
+        if (!mt_controls_config_valid(supervisor.active.package.core_id, &configs[slot])) return false;
+        unsigned assignment = configs[slot].assignment;
+        if (assignment == MT_CONTROLLER_PORT1 || assignment == MT_CONTROLLER_PORT2) {
+            const uint8_t bit = (uint8_t)(1U << (assignment - 1U));
+            if (reserved & bit) return false;
+            reserved |= bit;
+        }
+    }
+    return true;
+}
+bool usb_hid_service_set_controller_configs(const mt_controller_config_t *configs) {
+    assert(usb_hid_service_validate_controller_configs(configs));
+    assert(settings_writes != 0U && !save_sd_fail); /* Apply only after persisted success. */
+    memcpy(controller_configs, configs, sizeof(controller_configs)); ++config_applies; return true;
+}
+mt_sd_result_t mt_sd_storage_journal_recover(const char *path, const char *journal, uint8_t *buffer, size_t capacity) {
+    (void)path; (void)journal; (void)buffer; (void)capacity;
+    mt_sd_result_t result = {0}; return result;
+}
+mt_sd_result_t mt_sd_storage_read_file_optional_exact(const char *path, uint8_t *dst, size_t size, bool *found) {
+    (void)path; assert(size == sizeof(settings_wire)); *found = stored_settings;
+    if (*found) memcpy(dst, settings_wire, size);
+    mt_sd_result_t result = {0}; result.size = *found ? size : 0U; return result;
+}
+mt_sd_result_t mt_sd_storage_journal_replace(const char *path, const char *journal, const uint8_t *src, size_t size) {
+    (void)path; (void)journal; ++settings_writes;
+    mt_sd_result_t result = {0};
+    if (save_sd_fail) result.status = MT_SD_WRITE_FAILED;
+    else { assert(size == sizeof(settings_wire)); memcpy(settings_wire, src, size); stored_settings = true; }
+    return result;
+}
+static bool save_persistent_settings(void) {
+    return mt_supervisor_settings_save(&persistent_settings).status == MT_SETTINGS_OK;
+}
+static bool mt_screenshot_service_request(bool output) {
+    ++screenshot_requests; if (output) ++output_screenshot_requests; screenshot_busy = true; return true;
+}
+static bool mt_screenshot_service_busy(void) { return screenshot_busy; }
+static const char *mt_screenshot_service_status(void) { return screenshot_status; }
+static void mt_screenshot_service_poll(uint32_t id, const char *name, uint8_t mode,
+    uint32_t border, const mt_ui_frame_t *ui, bool visible) {
+    ++screenshot_polls; screenshot_core_id = id; screenshot_display_mode = mode;
+    screenshot_border = border; screenshot_ui = ui; screenshot_ui_visible = visible;
+    (void)snprintf(screenshot_core_name, sizeof(screenshot_core_name), "%s", name);
+    if (screenshot_finish) screenshot_busy = false;
+}
+static bool selection_supports_borders(const mt_core_selection_t *selection) {
+    (void)selection; return borders_supported;
+}
+static int xil_printf(const char *format, ...) { (void)format; ++screenshot_logs; return 0; }
 static const mt_menu_file_t supervisor_menu_files[8] = {
     {"one.d64", 1U, 0U}, {"artwork.OVR", 777600U, 0U},
     {"folder.ovr", 0U, MT_MENU_FILE_DIRECTORY}, {"game.vec", 32768U, 0U},
@@ -73,6 +157,8 @@ static uint32_t shell_read(uint32_t offset) {
     if (offset == MT_REG_CORE_ID) return core_id;
     if (offset == MT_REG_STATUS) return core_status;
     if (offset == MT_REG_CONTROL) return core_control;
+    if (offset == MT_REG_DISPLAY_STATUS) return display_status;
+    if (offset == MT_REG_BORDER_CONFIG) return border_config;
     assert(offset == MT_REG_UI_STATUS); return status_word;
 }
 static uint32_t supervisor_ui_read(void *context, uint32_t offset) {
@@ -94,6 +180,8 @@ static void supervisor_ui_write(void *context, uint32_t offset, uint32_t value) 
 }
 static mt_menu_view_t supervisor_menu_view(void) {
     mt_menu_view_t view = {0};
+    if (supervisor.has_active) view.active_core_id = "test-core";
+    /* CONTROLLER_VIEW_FROM_PRODUCTION */
     view.cores = cores; view.core_count = 2U;
     view.files = supervisor_menu_files; view.file_count = supervisor_menu_file_count;
     view.media_items = media_items; view.media_item_count = 5U;
@@ -120,15 +208,20 @@ static void service_runtime(void) {
     hardware_tick();
 }
 static void set_supervisor_status(const char *text) {
-    (void)text; supervisor_status_color = MT_UI_COLOR_TEXT;
+    (void)snprintf(reported_status, sizeof(reported_status), "%s", text);
+    supervisor_status_color = MT_UI_COLOR_TEXT;
     supervisor_menu_dirty = true;
+}
+static void set_supervisor_warning(const char *text) {
+    (void)snprintf(reported_status, sizeof(reported_status), "%s", text);
+    supervisor_status_color = MT_UI_COLOR_WARNING; supervisor_menu_dirty = true;
 }
 static void set_supervisor_error(const char *text) {
     (void)text; ++errors; supervisor_status_color = MT_UI_COLOR_RED;
     supervisor_menu_dirty = true;
 }
 void usb_hid_service_set_menu_capture(bool captured) { (void)captured; }
-void usb_hid_service_set_gamepad_preview(bool preview) { (void)preview; }
+void usb_hid_service_set_gamepad_preview(bool preview) { gamepad_preview = preview; }
 void usb_hid_service_set_core_ready(bool ready) {
     core_ready = ready; ++input_changes;
 }
@@ -149,6 +242,21 @@ static void reset_fixture(bool visible) {
     memset(&supervisor, 0, sizeof(supervisor));
     memset(supervisor_menu_keys, 0, sizeof(supervisor_menu_keys));
     memset(&pending_menu_action, 0, sizeof(pending_menu_action));
+    memset(devices, 0, sizeof(devices));
+    memset(controller_edit_devices, 0, sizeof(controller_edit_devices));
+    memset(raw_controllers, 0, sizeof(raw_controllers));
+    for (unsigned slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot) {
+        raw_controllers[slot].hat = 8U;
+        mt_controls_default(MT_C64_CORE_ID, NULL, &controller_configs[slot]);
+    }
+    mt_supervisor_settings_defaults(&persistent_settings);
+    screenshot_requests = output_screenshot_requests = config_applies = settings_writes = 0U;
+    gamepad_preview = save_sd_fail = stored_settings = false;
+    screenshot_busy = screenshot_finish = screenshot_ui_visible = borders_supported = false;
+    screenshot_polls = screenshot_logs = 0U; screenshot_core_id = screenshot_border = 0U;
+    display_status = 0x12U; border_config = 0x1234U; screenshot_display_mode = 0U;
+    screenshot_status = NULL; screenshot_ui = NULL;
+    reported_status[0] = screenshot_core_name[0] = '\0';
     mt_ui_presenter_init(&supervisor_presenter);
     supervisor_menu_ready = true; supervisor_menu_dirty = false;
     supervisor_menu_action_active = false;
@@ -470,6 +578,190 @@ static void failed_content_restores_running_input(void) {
         }
     }
 }
+static void screenshot_keyboard_and_controller(void) {
+    const uint8_t printscreen = 0x46U;
+    reset_fixture(false);
+    assert(!supervisor_keyboard_filter(NULL, 0U, 0U, &printscreen, 1U));
+    assert(screenshot_requests == 1U && output_screenshot_requests == 0U);
+    (void)supervisor_keyboard_filter(NULL, 0U, 2U, &printscreen, 1U);
+    assert(screenshot_requests == 1U); /* Changing modifiers does not repeat held key. */
+    (void)supervisor_keyboard_filter(NULL, 0U, 0U, NULL, 0U);
+    (void)supervisor_keyboard_filter(NULL, 0U, 0x20U, &printscreen, 1U);
+    assert(screenshot_requests == 2U && output_screenshot_requests == 1U);
+    supervisor_menu_action_active = true;
+    (void)supervisor_keyboard_filter(NULL, 0U, 0U, NULL, 0U);
+    assert(supervisor_keyboard_filter(NULL, 0U, 2U, &printscreen, 1U));
+    assert(screenshot_requests == 3U && output_screenshot_requests == 2U);
+    assert(pending_menu_action.kind == MT_MENU_ACTION_NONE && !supervisor_menu.visible);
+    supervisor_menu_action_active = false; vectrex_basic_running = true;
+    (void)supervisor_keyboard_filter(NULL, 0U, 0U, NULL, 0U);
+    assert(!supervisor_keyboard_filter(NULL, 0U, 0U, &printscreen, 1U));
+    assert(screenshot_requests == 4U && !vectrex_basic_stop);
+    supervisor_controller_action(NULL, MT_CONTROL_SCREENSHOT);
+    supervisor_controller_action(NULL, MT_CONTROL_SCREENSHOT_OUTPUT);
+    supervisor_controller_action(NULL, MT_CONTROL_A);
+    assert(screenshot_requests == 6U && output_screenshot_requests == 3U && settings_writes == 0U);
+}
+static void screenshot_waits_for_displayed_ui_commit(void) {
+    reset_fixture(true);
+    memcpy(supervisor.active.package.id, "c64", 4U);
+    borders_supported = true;
+    supervisor_menu_dirty = true;
+    service_supervisor_menu(); /* The real presenter submits bank 1 asynchronously. */
+    assert(supervisor_presenter.pending && !supervisor_menu_dirty && countdown != 0U);
+    const unsigned submitted_writes = writes;
+    assert(mt_screenshot_service_request(true));
+    service_screenshots();
+    assert(screenshot_polls == 0U && supervisor_presenter.pending);
+    while (countdown) hardware_tick();
+    /* A READY-low status cannot acknowledge an otherwise matching state. */
+    status_word &= ~MT_UI_STATUS_READY;
+    service_screenshots();
+    assert(screenshot_polls == 0U && supervisor_presenter.pending);
+    status_word |= MT_UI_STATUS_READY;
+    /* Every pending state bit matters, not just the displayed bank. */
+    const uint32_t mismatches[] = {MT_UI_STATUS_BANK, MT_UI_STATUS_VISIBLE, MT_UI_STATUS_DENSE};
+    for (size_t index = 0U; index < sizeof(mismatches) / sizeof(mismatches[0]); ++index) {
+        status_word ^= mismatches[index];
+        service_screenshots();
+        assert(screenshot_polls == 0U && supervisor_presenter.pending);
+        status_word ^= mismatches[index];
+    }
+    assert(!supervisor_menu_dirty);
+    service_screenshots(); /* No edit or presenter call is needed to make progress. */
+    const unsigned bank = (status_word & MT_UI_STATUS_BANK) != 0U ? 1U : 0U;
+    assert(screenshot_polls == 1U && !supervisor_presenter.pending && screenshot_busy);
+    assert(screenshot_ui == &supervisor_presenter.banks[bank] && screenshot_ui_visible);
+    assert(screenshot_core_id == MT_C64_CORE_ID && strcmp(screenshot_core_name, "c64") == 0);
+    assert(screenshot_display_mode == 2U && screenshot_border == border_config);
+    assert(writes == submitted_writes && !supervisor_menu_dirty && screenshot_logs == 0U);
+    screenshot_finish = true; screenshot_status = "Screenshot saved: 0:/screenshots/test.bmp";
+    service_screenshots();
+    assert(!screenshot_busy && screenshot_polls == 2U && screenshot_logs == 1U);
+    assert(supervisor_menu_dirty && supervisor_status_color == MT_UI_COLOR_TEXT);
+    assert(strcmp(reported_status, screenshot_status) == 0);
+    service_screenshots(); assert(screenshot_polls == 2U && screenshot_logs == 1U);
+
+    for (unsigned selected_bank = 0U; selected_bank < 2U; ++selected_bank) {
+        for (unsigned visible = 0U; visible < 2U; ++visible) {
+            reset_fixture(visible == 0U); /* Logical menu state deliberately differs. */
+            supervisor.has_active = false;
+            status_word = MT_UI_STATUS_READY | MT_UI_STATUS_DENSE_LAYOUT | MT_UI_STATUS_DENSE |
+                (selected_bank ? MT_UI_STATUS_BANK : 0U) | (visible ? MT_UI_STATUS_VISIBLE : 0U);
+            supervisor_presenter.bank_valid[selected_bank] = true;
+            (void)mt_screenshot_service_request(true);
+            service_screenshots();
+            assert(screenshot_ui == &supervisor_presenter.banks[selected_bank]);
+            assert(screenshot_ui_visible == (visible != 0U));
+            assert(screenshot_core_id == 0U && strcmp(screenshot_core_name, "supervisor") == 0);
+            assert(screenshot_border == 0U);
+            supervisor_presenter.bank_valid[selected_bank] = false;
+            screenshot_finish = true; screenshot_status = "Screenshot failed: SD full";
+            service_screenshots();
+            assert(!screenshot_ui_visible && !screenshot_busy && screenshot_logs == 1U);
+            assert(supervisor_status_color == MT_UI_COLOR_WARNING && strcmp(reported_status, screenshot_status) == 0);
+        }
+    }
+}
+static void connect_fixture(unsigned slot, uint32_t serial) {
+    mt_controller_device_t *device = &devices[slot];
+    memset(device, 0, sizeof(*device));
+    device->connected = 1U; device->home_button = 10U; device->buttons_present = UINT32_MAX;
+    device->identity.vendor_id = 0x045eU; device->identity.product_id = 0x02eaU;
+    device->identity.descriptor_hash = 101U; device->identity.serial_hash = serial;
+    device->identity.port_path = slot + 1U; device->identity.transport = MT_CONTROLLER_TRANSPORT_XBOXONE;
+    raw_controllers[slot].connected = 1U; raw_controllers[slot].hat = 8U;
+    mt_controls_default(supervisor.active.package.core_id, device, &controller_configs[slot]);
+}
+static void raw_capture_is_immediate_and_held_safe(void) {
+    reset_fixture(true); connect_fixture(0U, 1U); connect_fixture(1U, 2U);
+    const mt_menu_action_t edit = {MT_MENU_ACTION_EDIT_GAMEPADS, 0U, 0U, 0U};
+    controller_edit_action(edit); assert(supervisor_menu.gamepad_edit);
+    supervisor_menu.gamepad_control = MT_CONTROL_A; supervisor_menu.gamepad_capture = true;
+    supervisor_menu.gamepad_capture_started = now_ms;
+    controller_preview_capture(); assert(gamepad_preview);
+    supervisor_controller_report(NULL, 0U, &raw_controllers[0]);
+    assert(supervisor_menu.gamepad_capture_armed);
+    raw_controllers[1].buttons = UINT32_C(1) << 30U;
+    supervisor_controller_report(NULL, 1U, &raw_controllers[1]);
+    assert(supervisor_menu.gamepad_capture); /* Other controllers cannot satisfy capture. */
+    raw_controllers[0].buttons = UINT32_C(1) << 31U;
+    supervisor_controller_report(NULL, 0U, &raw_controllers[0]);
+    assert(!supervisor_menu.gamepad_capture && supervisor_menu.gamepad_config[0].binding[MT_CONTROL_A] == 32U);
+    assert(gamepad_preview && supervisor_menu_dirty); /* Same report must not synthesize Enter. */
+    raw_controllers[0].buttons = 0U;
+    supervisor_controller_report(NULL, 0U, &raw_controllers[0]);
+    assert(!gamepad_preview && settings_writes == 0U && config_applies == 0U);
+    assert(controller_configs[0].binding[MT_CONTROL_A] == 1U); /* Draft stays private until save. */
+    supervisor_menu.gamepad_capture = true; supervisor_menu.gamepad_capture_armed = false;
+    supervisor_menu_action_active = true;
+    supervisor_controller_report(NULL, 0U, &raw_controllers[0]);
+    assert(!supervisor_menu.gamepad_capture_armed);
+}
+static void controller_profiles_and_legacy_migration(void) {
+    reset_fixture(true); connect_fixture(0U, 11U); connect_fixture(1U, 22U);
+    mt_controller_config_t config;
+    persistent_settings.gamepads[0].button[0] = 4U;
+    persistent_settings.legacy_gamepad_pending = 1U;
+    assert(supervisor_controller_config(NULL, MT_SUPERVISOR_CORE_ID, 0U, &devices[0], &config));
+    assert(persistent_settings.controller_profile_count == 0U && persistent_settings.legacy_gamepad_pending == 1U);
+    assert(supervisor_controller_config(NULL, MT_C64_CORE_ID, 0U, &devices[0], &config));
+    assert(config.binding[MT_CONTROL_A] == 5U && persistent_settings.controller_profile_count == 4U);
+    assert(persistent_settings.legacy_gamepad_pending == 0U && settings_writes == 0U);
+    config.binding[MT_CONTROL_A] = 32U;
+    assert(mt_supervisor_settings_remember_controller(&persistent_settings, MT_C64_CORE_ID, &devices[0].identity, &config));
+    mt_controller_device_t moved = devices[0]; moved.identity.port_path = 88U;
+    assert(supervisor_controller_config(NULL, MT_C64_CORE_ID, 7U, &moved, &config));
+    assert(config.binding[MT_CONTROL_A] == 32U);
+    assert(supervisor_controller_config(NULL, MT_GENESIS_CORE_ID, 7U, &moved, &config));
+    assert(config.binding[MT_CONTROL_A] != 32U);
+    assert(supervisor_controller_config(NULL, MT_C64_CORE_ID, 0U, &devices[1], &config));
+    assert(config.binding[MT_CONTROL_A] == 1U); /* Same model, different serial. */
+    assert(!supervisor_controller_config(NULL, MT_C64_CORE_ID, MT_GAMEPAD_SLOTS, &devices[0], &config));
+    assert(save_persistent_settings());
+    mt_supervisor_settings_defaults(&persistent_settings);
+    assert(mt_supervisor_settings_load(&persistent_settings).status == MT_SETTINGS_OK);
+    assert(supervisor_controller_config(NULL, MT_C64_CORE_ID, 3U, &moved, &config));
+    assert(config.binding[MT_CONTROL_A] == 32U);
+}
+static void save_drafts_atomically_and_freeze_identity(void) {
+    const mt_menu_action_t edit = {MT_MENU_ACTION_EDIT_GAMEPADS, 0U, 0U, 0U};
+    const mt_menu_action_t save = {MT_MENU_ACTION_SET_GAMEPADS, 0U, 0U, 0U};
+    reset_fixture(true); connect_fixture(0U, 11U); connect_fixture(1U, 22U);
+    controller_configs[0].assignment = MT_CONTROLLER_PORT1;
+    controller_configs[1].assignment = MT_CONTROLLER_PORT2;
+    controller_edit_action(edit);
+    supervisor_menu.gamepad_config[0].assignment = MT_CONTROLLER_PORT2;
+    supervisor_menu.gamepad_config[1].assignment = MT_CONTROLLER_PORT1;
+    supervisor_menu.gamepad_config[0].binding[MT_CONTROL_A] = 32U;
+    save_sd_fail = true; controller_edit_action(save);
+    assert(errors == 1U && supervisor_menu.gamepad_edit && config_applies == 0U);
+    assert(persistent_settings.controller_profile_count == 0U && mt_menu_gamepad_dirty(&supervisor_menu));
+    assert(controller_configs[0].assignment == MT_CONTROLLER_PORT1);
+    save_sd_fail = false; controller_edit_action(save);
+    assert(config_applies == 1U && !supervisor_menu.gamepad_edit);
+    assert(controller_configs[0].assignment == MT_CONTROLLER_PORT2 && controller_configs[1].assignment == MT_CONTROLLER_PORT1);
+    mt_supervisor_settings_defaults(&persistent_settings);
+    assert(mt_supervisor_settings_load(&persistent_settings).status == MT_SETTINGS_OK);
+    assert(persistent_settings.controller_profile_count == 2U);
+    controller_edit_action(edit);
+    supervisor_menu.gamepad_config[0].binding[MT_CONTROL_A] = 31U;
+    const mt_controller_identity_t edited_identity = devices[0].identity;
+    connect_fixture(0U, 33U);
+    const mt_menu_view_t replaced = supervisor_menu_view();
+    assert(!replaced.gamepad_devices[0].connected && replaced.gamepad_devices[0].identity.serial_hash == 11U);
+    assert(!replaced.gamepad_preview.connected && strstr(supervisor_menu.gamepad_notice, "replaced") != NULL);
+    controller_edit_action(save);
+    assert(config_applies == 2U && controller_configs[0].binding[MT_CONTROL_A] == 1U);
+    const mt_controller_settings_profile_t *old = mt_supervisor_settings_find_controller(&persistent_settings, MT_C64_CORE_ID, &edited_identity);
+    assert(old && old->config.binding[MT_CONTROL_A] == 31U);
+    assert(mt_supervisor_settings_find_controller(&persistent_settings, MT_C64_CORE_ID, &devices[0].identity) == NULL);
+    controller_edit_action(edit);
+    const unsigned saved_before = settings_writes;
+    supervisor.active.package.core_id = MT_GENESIS_CORE_ID;
+    controller_edit_action(save);
+    assert(errors == 2U && settings_writes == saved_before && config_applies == 2U);
+}
 int main(int argc, char **argv) {
     assert(argc == 2);
     if (strcmp(argv[1], "actions") == 0) all_actions();
@@ -481,6 +773,11 @@ int main(int argc, char **argv) {
     else if (strcmp(argv[1], "basic") == 0) basic_keyboard_stop();
     else if (strcmp(argv[1], "overlay") == 0) overlay_upload_stays_paused();
     else if (strcmp(argv[1], "content-input") == 0) failed_content_restores_running_input();
+    else if (strcmp(argv[1], "screenshots") == 0) screenshot_keyboard_and_controller();
+    else if (strcmp(argv[1], "screenshot-presenter") == 0) screenshot_waits_for_displayed_ui_commit();
+    else if (strcmp(argv[1], "raw-capture") == 0) raw_capture_is_immediate_and_held_safe();
+    else if (strcmp(argv[1], "controller-profiles") == 0) controller_profiles_and_legacy_migration();
+    else if (strcmp(argv[1], "controller-save") == 0) save_drafts_atomically_and_freeze_identity();
     else assert(false);
     printf("PASS: menu runtime %s\n", argv[1]);
     return 0;
@@ -500,28 +797,43 @@ class MenuRuntimeTests(unittest.TestCase):
         source = (ROOT / "firmware/platform/xilinx/main.c").read_text()
         signatures = (
             "static bool key_bitmap_get(",
+            "static void controller_preview_capture(void)",
+            "static void supervisor_controller_report(void *context,",
+            "static void supervisor_controller_action(void *context,",
+            "static bool supervisor_controller_config(void *context,",
             "static bool supervisor_keyboard_filter(void *context,",
             "static bool hide_menu_for_core_action(void)\n{",
             "static bool menu_action_needs_core_progress(",
             "static mt_vectrex_content_result_t load_vectrex_content_with_input(",
             "static void service_supervisor_menu(void)\n{",
+            "static void service_screenshots(void)\n{",
         )
+        view_start = source.index("    view.gamepad_core_id = state.core_id;")
+        view_end = source.index("    view.status_text =", view_start)
+        controller_view = source[view_start:view_end].replace(
+            "state.core_id", "supervisor.has_active ? supervisor.active.package.core_id : 0U")
+        action_start = source.index("    } else if (action.kind == MT_MENU_ACTION_EDIT_GAMEPADS)")
+        action_end = source.index("    } else if (action.kind == MT_MENU_ACTION_SET_CLOCK)", action_start)
+        controller_actions = "static void controller_edit_action(mt_menu_action_t action) {\n" + \
+            source[action_start:action_end].replace("    } else if", "    if", 1) + "    }\n}\n"
         harness = directory / "menu_runtime.c"
-        harness.write_text(PREAMBLE + "\n" + "\n\n".join(
+        harness.write_text(PREAMBLE.replace("    /* CONTROLLER_VIEW_FROM_PRODUCTION */", controller_view) + "\n" + "\n\n".join(
             production_function(source, signature) for signature in signatures
-        ) + "\n" + SCENARIOS)
+        ) + "\n" + controller_actions + "\n" + SCENARIOS)
         cls.executable = directory / ("menu_runtime.exe" if os.name == "nt" else "menu_runtime")
         compile_result = subprocess.run([
             sys.executable, str(ROOT / "scripts/run_native_tool.py"), "--",
             compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wpedantic",
             "-I", str(ROOT / "firmware/include"), str(harness),
             "-I", str(ROOT / "firmware/platform/xilinx"),
-            str(ROOT / "firmware/common/display.c"), str(ROOT / "firmware/common/menu.c"), str(ROOT / "firmware/common/gamepad.c"), str(ROOT / "firmware/common/ui.c"),
+            str(ROOT / "firmware/common/display.c"), str(ROOT / "firmware/common/menu.c"), str(ROOT / "firmware/common/gamepad.c"), str(ROOT / "firmware/common/controls.c"), str(ROOT / "firmware/common/ui.c"),
             str(ROOT / "firmware/common/text_reader.c"), str(ROOT / "firmware/common/clock.c"),
             str(ROOT / "firmware/common/content_type.c"),
             str(ROOT / "firmware/common/genesis_content.c"),
             str(ROOT / "firmware/common/vectrex_overlay.c"),
             str(ROOT / "firmware/common/core_link.c"),
+            str(ROOT / "firmware/common/video_effects.c"),
+            str(ROOT / "firmware/platform/xilinx/supervisor_settings.c"),
             "-o", str(cls.executable),
         ], capture_output=True, text=True, timeout=60)
         if compile_result.returncode:
@@ -560,6 +872,21 @@ class MenuRuntimeTests(unittest.TestCase):
 
     def test_failed_load_restores_input_only_for_a_preserved_running_machine(self):
         self.run_scenario("content-input")
+
+    def test_screenshot_keys_and_controller_actions_queue_once(self):
+        self.run_scenario("screenshots")
+
+    def test_screenshot_waits_for_ack_then_uses_displayed_ui_without_menu_edit(self):
+        self.run_scenario("screenshot-presenter")
+
+    def test_raw_capture_handles_quick_presses_before_navigation(self):
+        self.run_scenario("raw-capture")
+
+    def test_controller_profiles_follow_serial_and_keep_cores_independent(self):
+        self.run_scenario("controller-profiles")
+
+    def test_save_failure_assignment_swap_and_replaced_controller(self):
+        self.run_scenario("controller-save")
 
 
 if __name__ == "__main__":

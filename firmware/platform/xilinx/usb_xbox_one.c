@@ -200,8 +200,9 @@ static void xbox_input(xbox_one_t *pad, const uint8_t *data, uint32_t len)
         pad->guide = data[4] & 1U;
     } else if (data[0] == 0x20U && data[3] >= 14U) {
         report->axis_valid_mask = (1U << MT_GAMEPAD_AXIS_COUNT) - 1U;
+        report->trigger_mask = (1U << MT_GAMEPAD_AXIS_Z) | (1U << MT_GAMEPAD_AXIS_RZ);
         report->buttons_valid = 1U;
-        report->buttons = (uint8_t)((data[4] >> 4) |
+        report->buttons = (uint32_t)((data[4] >> 4) |
                                    (data[5] & 0x30U) |
                                    ((data[4] & 0x08U) << 3) |
                                    ((data[4] & 0x04U) << 5));
@@ -220,6 +221,10 @@ static void xbox_input(xbox_one_t *pad, const uint8_t *data, uint32_t len)
             }
         }
         pad->stick_buttons = data[5] & 0xc0U;
+        if (pad->stick_buttons & 0x40U)
+            report->buttons |= UINT32_C(1) << MT_USB_PAD_LEFT_STICK;
+        if (pad->stick_buttons & 0x80U)
+            report->buttons |= UINT32_C(1) << MT_USB_PAD_RIGHT_STICK;
         pad->hat = xbox_hat(data[5]);
         pad->reports++;
         if (pad->reports == 1U) {
@@ -229,8 +234,12 @@ static void xbox_input(xbox_one_t *pad, const uint8_t *data, uint32_t len)
     } else {
         return;
     }
-    usb_gamepad_input_report(pad->slot, report, pad->hat,
-                             (uint8_t)(pad->guide | pad->stick_buttons));
+    /* Guide arrives separately. Preserve it through main reports and preserve
+     * all main controls when a Guide-only packet arrives. */
+    report->buttons &= ~(UINT32_C(1) << MT_USB_PAD_HOME);
+    if (pad->guide) report->buttons |= UINT32_C(1) << MT_USB_PAD_HOME;
+    report->buttons_valid = 1U;
+    usb_gamepad_input_report(pad->slot, report, pad->hat, 0U);
 }
 
 static void xbox_in_complete(void *arg, int nbytes)
@@ -589,6 +598,7 @@ static int xbox_connect(struct usbh_hubport *hport, uint8_t intf)
         return -USB_ERR_NOMEM;
     }
     pad->slot = (uint8_t)slot;
+    usb_gamepad_input_identify(pad->slot, hport, intf, 2U);
     pad->active = 1U;
     pad->input_connected = 1U;
     pad->hport = hport;

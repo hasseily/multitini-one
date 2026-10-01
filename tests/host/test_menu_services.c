@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "multitini_menu.h"
+#include "multitini_gameboy_interface.h"
+#include "multitini_vectrex_interface.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -235,46 +237,216 @@ static void test_slider_fallbacks(void)
           "below-minimum padding also uses the numeric fallback position");
 }
 
+static uint8_t control_row(uint32_t core, unsigned control)
+{
+    unsigned row = 2U;
+    const uint32_t mask = mt_controls_action_mask(core);
+    for (unsigned index = 0U; index < control; ++index)
+        if ((mask & (UINT32_C(1) << index)) != 0U) ++row;
+    return (uint8_t)row;
+}
+
+static void start_capture(mt_menu_t *menu, mt_menu_view_t *view, unsigned control)
+{
+    menu->gamepad_field = control_row(view->gamepad_core_id, control);
+    (void)press(menu, view, MT_MENU_HID_ENTER);
+    check(menu->gamepad_capture, "Enter starts capture for the selected game action");
+}
+
+static void neutral_preview(mt_menu_t *menu, mt_menu_view_t *view)
+{
+    memset(&view->gamepad_preview, 0, sizeof(view->gamepad_preview));
+    view->gamepad_preview.connected = 1U;
+    view->gamepad_preview.hat = 8U;
+    (void)mt_menu_gamepad_update(menu, view);
+}
+
 static void test_gamepad_modal(void)
 {
     mt_menu_t menu;
     mt_menu_view_t view = {0};
+    mt_controller_config_t configs[MT_GAMEPAD_SLOTS];
     mt_ui_frame_t frame;
+    view.active_core_id = "gbc";
+    view.gamepad_core_id = MT_GBC_CORE_ID;
+    view.gamepad_devices[4].connected = view.gamepad_devices[8].connected = 1U;
+    view.gamepad_devices[4].buttons_present = UINT32_MAX;
+    view.gamepad_devices[4].home_button = 10U;
+    (void)snprintf(view.gamepad_devices[4].name, sizeof(view.gamepad_devices[4].name), "Arcade controller");
+    (void)snprintf(view.gamepad_devices[8].name, sizeof(view.gamepad_devices[8].name), "Second controller");
+    for (unsigned index = 0U; index < MT_GAMEPAD_SLOTS; ++index) {
+        mt_controls_default(view.gamepad_core_id, &view.gamepad_devices[index], &configs[index]);
+        configs[index].assignment = MT_CONTROLLER_OFF;
+    }
+    configs[4].assignment = MT_CONTROLLER_PORT1;
     mt_menu_init(&menu, &view);
-    menu.visible = menu.gamepad_edit = true;
-    for (unsigned slot = 0; slot < MT_GAMEPAD_SLOTS; ++slot)
-        mt_gamepad_default_config(&menu.gamepad_config[slot]);
-    (void)press(&menu, &view, MT_MENU_HID_LEFT);
-    check(menu.gamepad_slot == 8U, "controller slot wraps to ninth slot");
-    (void)press(&menu, &view, MT_MENU_HID_DOWN);
-    (void)press(&menu, &view, MT_MENU_HID_LEFT);
-    check(menu.gamepad_control == 13U, "axis and button selection wraps");
-    (void)press(&menu, &view, MT_MENU_HID_DOWN);
+    menu.visible = true; menu.page = MT_MENU_PAGE_INPUT;
+    mt_menu_gamepad_begin(&menu, &view, configs);
+    check(menu.gamepad_slot == 4U, "editor starts with a connected controller, never a keyboard or empty input entry");
     (void)press(&menu, &view, MT_MENU_HID_RIGHT);
-    check(menu.gamepad_config[8].button[7] == 8U, "disable a logical button");
-    menu.gamepad_control = 0U;
-    (void)press(&menu, &view, MT_MENU_HID_LEFT);
-    check(menu.gamepad_config[8].axis[0].source == MT_GAMEPAD_AXIS_OFF, "disable an axis");
-    view.gamepad_preview.connected = 1U;
-    view.gamepad_preview.axis_valid_mask = 1U;
-    view.gamepad_preview.axis[0] = -12345;
-    mt_menu_render(&menu, &view, &frame);
-    check(contains(&frame, "Controller setup") && contains(&frame, "-12345") &&
-        contains(&frame, "9  (connected)"), "live controller preview and selected slot");
-    menu.gamepad_field = 7U;
-    check(press(&menu, &view, MT_MENU_HID_ENTER).kind == MT_MENU_ACTION_SET_GAMEPADS,
-        "saving is an explicit runtime action");
+    check(menu.gamepad_slot == 8U, "controller selection skips disconnected entries");
+    (void)press(&menu, &view, MT_MENU_HID_RIGHT);
+    check(menu.gamepad_slot == 4U, "controller selection wraps only among connected controllers");
+    menu.gamepad_field = 1U;
+    (void)press(&menu, &view, MT_MENU_HID_RIGHT);
+    check(menu.gamepad_config[4].assignment == MT_CONTROLLER_OFF, "Game Boy has no player two choice");
+    menu.gamepad_config[4].assignment = MT_CONTROLLER_PORT1;
+    neutral_preview(&menu, &view);
+    view.gamepad_preview.buttons = UINT32_C(1) << 31U;
+    start_capture(&menu, &view, MT_CONTROL_A);
+    (void)mt_menu_gamepad_update(&menu, &view);
+    check(!menu.gamepad_capture_armed && menu.gamepad_config[4].binding[MT_CONTROL_A] == configs[4].binding[MT_CONTROL_A],
+          "held opening control cannot bind itself before release");
+    neutral_preview(&menu, &view);
+    check(menu.gamepad_capture_armed, "all controls released arms capture");
+    const uint8_t row_before = menu.gamepad_field;
+    (void)press(&menu, &view, MT_MENU_HID_DOWN);
+    check(menu.gamepad_field == row_before, "navigation cannot move the row during capture");
+    view.gamepad_preview.buttons = UINT32_C(1) << 31U;
+    check(mt_menu_gamepad_update(&menu, &view) && !menu.gamepad_capture &&
+          menu.gamepad_config[4].binding[MT_CONTROL_A] == 32U,
+          "button 32 is independently assignable and completes capture");
+    check(menu.gamepad_config[8].binding[MT_CONTROL_A] == configs[8].binding[MT_CONTROL_A],
+          "editing one controller does not edit another");
+    start_capture(&menu, &view, MT_CONTROL_B);
+    neutral_preview(&menu, &view);
+    view.gamepad_preview.buttons = UINT32_C(1) << 31U;
+    (void)mt_menu_gamepad_update(&menu, &view);
+    check(menu.gamepad_conflict && menu.gamepad_config[4].binding[MT_CONTROL_A] == 32U,
+          "duplicate assignment waits for an explicit choice");
+    (void)press(&menu, &view, MT_MENU_HID_ENTER);
+    check(menu.gamepad_config[4].binding[MT_CONTROL_A] == 0U &&
+          menu.gamepad_config[4].binding[MT_CONTROL_B] == 32U,
+          "confirm moves the duplicate control and clears its earlier action");
     (void)press(&menu, &view, MT_MENU_HID_ESCAPE);
-    check(!menu.gamepad_edit && menu.visible, "cancel returns to input page");
+    check(menu.gamepad_edit, "dirty editor requires Save or Discard before leaving");
+    (void)press(&menu, &view, MT_MENU_HID_F12);
+    check(menu.visible && menu.gamepad_edit, "F12 cannot silently discard an edited profile");
+    const unsigned commands = control_row(view.gamepad_core_id, MT_CONTROL_COUNT);
+    menu.gamepad_field = (uint8_t)(commands + 4U);
+    check(press(&menu, &view, MT_MENU_HID_ENTER).kind == MT_MENU_ACTION_SET_GAMEPADS && mt_menu_gamepad_dirty(&menu),
+          "Save dispatches a write but remains dirty until storage acknowledges it");
+    mt_menu_gamepad_saved(&menu);
+    check(!mt_menu_gamepad_dirty(&menu), "successful save acknowledges the new baseline");
+    start_capture(&menu, &view, MT_CONTROL_SCREENSHOT_OUTPUT);
+    neutral_preview(&menu, &view);
+    view.gamepad_preview.buttons = UINT32_C(1) << 30U;
+    (void)mt_menu_gamepad_update(&menu, &view);
+    check(menu.gamepad_config[4].binding[MT_CONTROL_SCREENSHOT_OUTPUT] == 31U,
+          "full-screen screenshot action above bit fifteen remains assignable");
+    menu.gamepad_field = (uint8_t)(commands + 5U);
+    (void)press(&menu, &view, MT_MENU_HID_ENTER);
+    check(menu.gamepad_config[4].binding[MT_CONTROL_SCREENSHOT_OUTPUT] == 0U && !mt_menu_gamepad_dirty(&menu),
+          "Discard restores the saved baseline including optional shortcuts");
+    start_capture(&menu, &view, MT_CONTROL_SCREENSHOT);
+    neutral_preview(&menu, &view);
+    view.gamepad_preview.hat = 0U;
+    (void)mt_menu_gamepad_update(&menu, &view);
+    check(menu.gamepad_conflict && menu.gamepad_config[4].binding[MT_CONTROL_UP] == MT_CONTROL_SOURCE_DPAD_STICK,
+          "capture detects a D-pad source already used by the composite direction default");
+    (void)press(&menu, &view, MT_MENU_HID_ESCAPE);
+    check(!mt_menu_gamepad_dirty(&menu), "cancelling a composite-source conflict leaves both assignments intact");
+    start_capture(&menu, &view, MT_CONTROL_B);
+    (void)press(&menu, &view, MT_MENU_HID_DELETE);
+    check(!menu.gamepad_capture && menu.gamepad_config[4].binding[MT_CONTROL_B] == 0U,
+          "Delete clears the chosen assignment without binding another controller control");
+    menu.gamepad_field = (uint8_t)(commands + 5U);
+    (void)press(&menu, &view, MT_MENU_HID_ENTER);
+    menu.gamepad_field = (uint8_t)(commands + 1U);
+    (void)press(&menu, &view, MT_MENU_HID_ENTER);
+    check(menu.gamepad_test, "test controller opens a dedicated input-only mode");
+    view.gamepad_preview.buttons = UINT32_C(1) << 31U;
+    mt_menu_render(&menu, &view, &frame);
+    check(contains(&frame, "Button 32: HELD") && contains(&frame, "Arcade controller") && !contains(&frame, "Auxiliary"),
+          "tester names each reported button instead of collapsing it into a shared flag");
+    (void)press(&menu, &view, MT_MENU_HID_F12);
+    check(!menu.gamepad_test && menu.gamepad_edit && menu.visible, "F12 safely returns from testing");
+    start_capture(&menu, &view, MT_CONTROL_A);
+    view.gamepad_devices[4].connected = 0U;
+    (void)mt_menu_gamepad_update(&menu, &view);
+    check(!menu.gamepad_capture && menu.gamepad_config[4].binding[MT_CONTROL_B] == 32U,
+          "disconnect cancels capture without moving or losing the saved assignment");
+    view.gamepad_devices[4].connected = 1U;
+    start_capture(&menu, &view, MT_CONTROL_A);
+    view.gamepad_now_ms += 20001U;
+    (void)mt_menu_gamepad_update(&menu, &view);
+    check(!menu.gamepad_capture && !mt_menu_gamepad_dirty(&menu), "capture timeout leaves settings unchanged");
+    menu.gamepad_field = (uint8_t)commands;
+    (void)press(&menu, &view, MT_MENU_HID_ENTER);
+    check(menu.gamepad_wizard && menu.gamepad_control == MT_CONTROL_UP, "Set all begins with the first active-system action");
+    (void)press(&menu, &view, MT_MENU_HID_TAB);
+    check(menu.gamepad_control == MT_CONTROL_DOWN, "Set all can skip a control without rebinding it");
+    (void)press(&menu, &view, MT_MENU_HID_ESCAPE);
+    check(!menu.gamepad_wizard && !menu.gamepad_capture, "Escape exits Set all");
+    mt_menu_render(&menu, &view, &frame);
+    check(contains(&frame, "Controls") && contains(&frame, "Screenshot: full screen") &&
+          contains(&frame, "Save changes") && !contains(&frame, "Logical control"),
+          "controller editor renders plain game actions and explicit save choices");
+    view.gamepad_player[4] = UINT8_MAX;
+    mt_menu_render(&menu, &view, &frame);
+    check(contains(&frame, "Now: Unassigned"), "current unresolved routing remains visible alongside the draft player setting");
+    (void)press(&menu, &view, MT_MENU_HID_ESCAPE);
+    check(!menu.gamepad_edit && menu.visible, "clean editor returns to Controls page");
+}
+
+static void test_gamepad_analog(void)
+{
+    mt_menu_t menu;
+    mt_menu_view_t view = {0};
+    mt_controller_config_t configs[MT_GAMEPAD_SLOTS];
+    view.active_core_id = "vectrex"; view.gamepad_core_id = MT_VECTREX_CORE_ID;
+    view.gamepad_devices[0].connected = 1U;
+    for (unsigned index = 0U; index < MT_GAMEPAD_SLOTS; ++index)
+        mt_controls_default(view.gamepad_core_id, &view.gamepad_devices[index], &configs[index]);
+    mt_menu_init(&menu, &view); menu.visible = true;
+    mt_menu_gamepad_begin(&menu, &view, configs);
+    menu.gamepad_config[1].assignment = MT_CONTROLLER_PORT1;
+    menu.gamepad_field = 1U;
+    (void)press(&menu, &view, MT_MENU_HID_RIGHT);
+    check(menu.gamepad_config[0].assignment == MT_CONTROLLER_PORT1,
+          "a disconnected controller's saved assignment does not prevent explicit reuse of its port");
+    menu.gamepad_config[0].assignment = MT_CONTROLLER_AUTO;
+    view.gamepad_devices[1].connected = 1U;
+    (void)press(&menu, &view, MT_MENU_HID_RIGHT);
+    check(menu.gamepad_config[0].assignment == MT_CONTROLLER_AUTO,
+          "two connected controllers cannot be assigned to the same explicit port");
+    neutral_preview(&menu, &view);
+    start_capture(&menu, &view, MT_CONTROL_AXIS_X);
+    neutral_preview(&menu, &view);
+    view.gamepad_preview.buttons = 1U;
+    (void)mt_menu_gamepad_update(&menu, &view);
+    check(menu.gamepad_capture, "a button press cannot bind an analog action");
+    view.gamepad_preview.axis_valid_mask = 1U << MT_GAMEPAD_AXIS_RX;
+    view.gamepad_preview.axis[MT_GAMEPAD_AXIS_RX] = 24000;
+    (void)mt_menu_gamepad_update(&menu, &view);
+    check(!menu.gamepad_capture && menu.gamepad_config[0].binding[MT_CONTROL_AXIS_X] == MT_CONTROL_SOURCE_AXIS + MT_GAMEPAD_AXIS_RX,
+          "analog capture preserves the whole selected stick axis");
+    menu.gamepad_sticks = true; menu.gamepad_control = MT_GAMEPAD_AXIS_RX; menu.gamepad_field = 2U;
+    (void)press(&menu, &view, MT_MENU_HID_RIGHT);
+    check(menu.gamepad_config[0].axis[MT_GAMEPAD_AXIS_RX].deadzone_percent == 11U &&
+          menu.gamepad_config[0].axis[MT_GAMEPAD_AXIS_X].deadzone_percent == 10U,
+          "dead zone edits tune only the selected controller axis");
+    (void)press(&menu, &view, MT_MENU_HID_ESCAPE);
+    check(!menu.gamepad_sticks && menu.gamepad_edit, "stick editor returns to the unsaved assignment page");
+    menu.gamepad_config[0].axis[MT_GAMEPAD_AXIS_RX].invert = 1U;
+    neutral_preview(&menu, &view);
+    start_capture(&menu, &view, MT_CONTROL_A);
+    neutral_preview(&menu, &view);
+    view.gamepad_preview.axis_valid_mask = 1U << MT_GAMEPAD_AXIS_RX;
+    view.gamepad_preview.axis[MT_GAMEPAD_AXIS_RX] = 24000;
+    (void)mt_menu_gamepad_update(&menu, &view);
+    check(!menu.gamepad_capture && menu.gamepad_config[0].binding[MT_CONTROL_A] == MT_CONTROL_SOURCE_AXIS_NEG + MT_GAMEPAD_AXIS_RX * 2U,
+          "capture accounts for configured inversion so the just-moved direction triggers the assignment");
 }
 
 int main(void)
 {
     test_gamepad_modal();
+    test_gamepad_analog();
     test_document_actions();
     test_reader_modal();
     test_clock_modal();
     test_slider_fallbacks();
-    puts("PASS: document and clock modals, preserved browser focus, and slider consistency");
+    puts("PASS: controller capture, multiple controllers, analog tuning, documents, clock and sliders");
     return 0;
 }

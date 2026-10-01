@@ -90,9 +90,9 @@ static void build_c64(mt_core_frontend_t *frontend,
         "Enter changes between symbolic US keys and C64 key positions.",
         MT_MENU_ACTION_TOGGLE_KEYBOARD_MAP, 0U, true, MT_UI_COLOR_BLUE);
     frontend->input_items[view->input_item_count++] = item(
-        "Gamepad", state->joystick_port == 1U ? "Joystick port 1" :
+        "Keyboard joystick", state->joystick_port == 1U ? "Joystick port 1" :
                                                  "Joystick port 2",
-        "Enter swaps the gamepad between C64 joystick ports 1 and 2.",
+        "Choose the C64 joystick port used by keyboard joystick controls.",
         MT_MENU_ACTION_SWAP_JOYSTICK_PORT, 0U, true, MT_UI_COLOR_BLUE);
     if (state->abi_minor >= 8U) {
         frontend->core_options[view->core_option_count++] = item(
@@ -135,16 +135,16 @@ static void build_gameboy(mt_core_frontend_t *frontend,
     view->save_dirty = saves_supported && state->save_dirty;
     view->save_faulted = saves_supported && state->save_faulted;
     frontend->input_items[view->input_item_count++] = item(
-        "Directions", "Arrow keys", "Keyboard direction controls.",
+        "Keyboard directions", "Arrow keys", "Keyboard direction controls.",
         MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
     frontend->input_items[view->input_item_count++] = item(
-        "Buttons", "Z = A   X = B", "Keyboard action buttons.",
+        "Keyboard buttons", "Z = A   X = B", "Keyboard action buttons.",
         MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
     frontend->input_items[view->input_item_count++] = item(
-        "Start", "Enter", "Keyboard Start button.",
+        "Keyboard Start", "Enter", "Keyboard Start button.",
         MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
     frontend->input_items[view->input_item_count++] = item(
-        "Select", "Right Shift", "Keyboard Select button.",
+        "Keyboard Select", "Right Shift", "Keyboard Select button.",
         MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
 }
 
@@ -163,10 +163,10 @@ static void build_vectrex(mt_core_frontend_t *frontend,
         "Vectrex32 BASIC", "Choose program...", "Run a BAS program; F12 stops it and returns here.",
         MT_MENU_ACTION_BROWSE_PROGRAM, 0U, true, MT_UI_COLOR_BLUE);
     frontend->input_items[view->input_item_count++] = item(
-        "Directions", "Analog stick / arrows", "Two gamepads; keyboard controls player 1.",
+        "Keyboard directions", "Arrow keys", "Keyboard controls player 1. Configure each controller separately.",
         MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
     frontend->input_items[view->input_item_count++] = item(
-        "Buttons 1-4", "Z X C V / A B X Y", "Four independent action buttons per player.",
+        "Keyboard buttons 1-4", "Z X C V", "Four independent action buttons per player.",
         MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
 }
 
@@ -187,16 +187,16 @@ static void build_genesis(mt_core_frontend_t *frontend,
     view->save_dirty = state->save_dirty;
     view->save_faulted = state->save_faulted;
     frontend->input_items[view->input_item_count++] = item(
-        "Directions", "Arrow keys / gamepad", "Two gamepads; keyboard controls player 1.",
+        "Keyboard directions", "Arrow keys", "Keyboard controls player 1. Configure each controller separately.",
         MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
     frontend->input_items[view->input_item_count++] = item(
-        "A / B / C", "Z / X / C", "Gamepad A/B/X map to Genesis A/B/C.",
+        "Keyboard A / B / C", "Z / X / C", "Keyboard action buttons for player 1.",
         MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
     frontend->input_items[view->input_item_count++] = item(
-        "X / Y / Z", "A / S / D", "Gamepad Y/LB/RB map to Genesis X/Y/Z.",
+        "Keyboard X / Y / Z", "A / S / D", "Keyboard action buttons for player 1.",
         MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
     frontend->input_items[view->input_item_count++] = item(
-        "Start / Mode", "Enter / Right Shift", "Gamepad Menu/View map to Start/Mode.",
+        "Keyboard Start / Mode", "Enter / Right Shift", "Keyboard Start and Mode controls for player 1.",
         MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
     for (unsigned player = 0U; player < 2U; ++player) {
         const bool three = (state->genesis_three_button_mask & (1U << player)) != 0U;

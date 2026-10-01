@@ -103,9 +103,9 @@ mt_content_validation_t mt_genesis_content_inspect(
     result.checksum_header = (uint16_t)(((uint16_t)header[0x18eU] << 8U) |
                                        header[0x18fU]);
     for (index = 512U; index < result.rom_size; index += 2U) {
-        const uint16_t word = (uint16_t)((uint16_t)rom_byte(
+        const uint16_t word = (uint16_t)(((unsigned)rom_byte(
             data, index, format, result.byte_swapped) << 8U) |
-            rom_byte(data, index + 1U, format, result.byte_swapped);
+            rom_byte(data, index + 1U, format, result.byte_swapped));
         result.checksum_computed = (uint16_t)(result.checksum_computed + word);
     }
     result.checksum_matches = result.checksum_header == result.checksum_computed;

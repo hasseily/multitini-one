@@ -34,7 +34,8 @@ static void assign_players(mt_genesis_hid_input_t *input)
         if (input->connected[slot] != 0U && input->player[slot] < 2U)
             occupied |= (uint8_t)(1U << input->player[slot]);
     for (slot = 0U; slot < MT_GAMEPAD_SLOTS && occupied != 3U; ++slot) {
-        if (input->connected[slot] == 0U || input->player[slot] < 2U) continue;
+        if (input->connected[slot] == 0U || input->player[slot] < 2U ||
+            input->assignment_explicit[slot] != 0U) continue;
         input->player[slot] = (uint8_t)((occupied & 1U) == 0U ? 0U : 1U);
         occupied |= (uint8_t)(1U << input->player[slot]);
     }
@@ -133,6 +134,16 @@ int mt_genesis_hid_disconnect(mt_genesis_hid_input_t *input, uint8_t slot)
     input->connected[slot] = 0U;
     input->player[slot] = 0xffU;
     return mt_genesis_hid_input_poll(input);
+}
+
+int mt_genesis_hid_assigned_report(mt_genesis_hid_input_t *input, uint8_t slot,
+    uint8_t player, const mt_gamepad_state_t *pad)
+{
+    if (input == NULL || slot >= MT_GAMEPAD_SLOTS ||
+        (player >= 2U && player != UINT8_MAX)) return -1;
+    input->assignment_explicit[slot] = 1U;
+    input->player[slot] = player;
+    return mt_genesis_hid_gamepad_report(input, slot, pad);
 }
 
 int mt_genesis_hid_release_all(mt_genesis_hid_input_t *input)

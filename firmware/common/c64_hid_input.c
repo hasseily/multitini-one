@@ -338,7 +338,7 @@ void mt_c64_hid_input_init(mt_c64_hid_input_t *input,
     if (input == NULL) return;
     memset(input, 0, sizeof(*input));
     input->joystick_port = 2U;
-    input->emitted_joystick_port = 2U;
+    memset(input->player, 2, sizeof(input->player));
     input->keyboard_layout = MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC;
     input->emit = emit;
     input->emit_context = emit_context;
@@ -390,6 +390,15 @@ int mt_c64_hid_disconnect(mt_c64_hid_input_t *input, uint8_t slot)
     return mt_c64_hid_input_poll(input);
 }
 
+int mt_c64_hid_assigned_report(mt_c64_hid_input_t *input, uint8_t slot,
+                               uint8_t player, uint8_t state)
+{
+    if (input == NULL || slot >= MT_C64_HID_SLOT_COUNT ||
+        (player >= 2U && player != UINT8_MAX)) return -1;
+    input->player[slot] = player;
+    return mt_c64_hid_joystick_report(input, slot, state);
+}
+
 int mt_c64_hid_set_joystick_port(mt_c64_hid_input_t *input, uint8_t port)
 {
     if (input == NULL || (port != 1U && port != 2U)) return -1;
@@ -429,14 +438,13 @@ void mt_c64_hid_reassert(mt_c64_hid_input_t *input)
 {
     if (input == NULL) return;
     memset(input->emitted_scans, 0, sizeof(input->emitted_scans));
-    input->emitted_joystick = 0U;
-    input->emitted_joystick_port = input->joystick_port;
+    memset(input->emitted_joystick, 0, sizeof(input->emitted_joystick));
 }
 
 int mt_c64_hid_input_poll(mt_c64_hid_input_t *input)
 {
     uint8_t desired_scans[MT_C64_HID_SCAN_BYTES] = {0};
-    uint8_t desired_joystick = 0U;
+    uint8_t desired_joystick[2] = {0U, 0U};
     uint16_t scan_bit;
     uint8_t slot;
     uint16_t usage;
@@ -491,7 +499,9 @@ int mt_c64_hid_input_poll(mt_c64_hid_input_t *input)
             }
         }
         if (input->joystick_active[slot] != 0U) {
-            desired_joystick |= input->joysticks[slot];
+            const uint8_t player = input->player[slot] == 2U ?
+                (uint8_t)(input->joystick_port - 1U) : input->player[slot];
+            if (player < 2U) desired_joystick[player] |= input->joysticks[slot];
         }
     }
 
@@ -525,38 +535,23 @@ int mt_c64_hid_input_poll(mt_c64_hid_input_t *input)
         }
     }
 
-    if (input->emitted_joystick_port != input->joystick_port) {
-        const uint16_t old_namespace =
-            (uint16_t)(input->emitted_joystick_port == 1U ?
-                       MT_INPUT_JOYSTICK1 : MT_INPUT_JOYSTICK2);
-        uint8_t bit;
-        for (bit = 0U; bit < 7U; ++bit) {
-            if ((input->emitted_joystick & (uint8_t)(1U << bit)) == 0U) {
-                continue;
-            }
-            if (emit_event(input, (uint16_t)((old_namespace << 8U) | bit),
-                           0U) != 0) {
-                return -1;
-            }
-            input->emitted_joystick &= (uint8_t)~(uint8_t)(1U << bit);
-        }
-        input->emitted_joystick_port = input->joystick_port;
-    }
-
+    /* Release both old ports before pressing newly assigned inputs. */
+    for (uint8_t phase = 0U; phase < 2U; ++phase)
+    for (uint8_t player = 0U; player < 2U; ++player)
     for (uint8_t bit = 0U; bit < 7U; ++bit) {
         const uint8_t mask = (uint8_t)(1U << bit);
-        const bool desired = (desired_joystick & mask) != 0U;
-        const bool emitted = (input->emitted_joystick & mask) != 0U;
+        const bool desired = (desired_joystick[player] & mask) != 0U;
+        const bool emitted = (input->emitted_joystick[player] & mask) != 0U;
         const uint16_t joy_namespace =
-            (uint16_t)(input->joystick_port == 1U ?
+            (uint16_t)(player == 0U ?
                        MT_INPUT_JOYSTICK1 : MT_INPUT_JOYSTICK2);
-        if (desired == emitted) continue;
+        if (desired == emitted || desired != (phase != 0U)) continue;
         if (emit_event(input, (uint16_t)((joy_namespace << 8U) | bit),
                        (uint16_t)(desired ? 1U : 0U)) != 0) {
             return -1;
         }
-        if (desired) input->emitted_joystick |= mask;
-        else input->emitted_joystick &= (uint8_t)~mask;
+        if (desired) input->emitted_joystick[player] |= mask;
+        else input->emitted_joystick[player] &= (uint8_t)~mask;
     }
     return 0;
 }

@@ -9,7 +9,9 @@
 #define MT_SETTINGS_SCHEMA_V4 UINT32_C(4)
 #define MT_SETTINGS_SCHEMA_V5 UINT32_C(5)
 #define MT_SETTINGS_SCHEMA_V6 UINT32_C(6)
-#define MT_SETTINGS_SCHEMA UINT32_C(7)
+#define MT_SETTINGS_SCHEMA_V7 UINT32_C(7)
+#define MT_SETTINGS_SCHEMA UINT32_C(8)
+#define MT_SETTINGS_V7_WIRE_SIZE 5054U
 #define MT_SETTINGS_V6_WIRE_SIZE 5038U
 #define MT_SETTINGS_V5_WIRE_SIZE 4696U
 #define MT_SETTINGS_PAD_SIZE 38U
@@ -23,13 +25,23 @@
 #define MT_SETTINGS_V4_WIRE_SIZE 4088U
 #define MT_SETTINGS_PROFILE_SIZE 290U
 #define MT_SETTINGS_EFFECTS_OFFSET 252U
+#define MT_SETTINGS_CONTROLLERS_HEADER_SIZE 8U
+#define MT_SETTINGS_CONTROLLER_SIZE 92U
+#define MT_SETTINGS_CONTROLLER_AXES_OFFSET (24U + MT_CONTROL_COUNT * 2U)
+#define MT_SETTINGS_CONTROLLER_ASSIGNMENT_OFFSET (MT_SETTINGS_CONTROLLER_AXES_OFFSET + MT_GAMEPAD_AXIS_COUNT * 5U)
+#define MT_SETTINGS_LEGACY_PAD_MASK ((1U << MT_GAMEPAD_SLOTS) - 1U)
 
 _Static_assert(MT_SETTINGS_EFFECTS_OFFSET + MT_VIDEO_EFFECT_COUNT * 2U ==
                MT_SETTINGS_PROFILE_SIZE, "Video controls require a settings schema update");
+_Static_assert(MT_CONTROL_COUNT == 17U && MT_GAMEPAD_AXIS_COUNT == 6U,
+               "Controller controls require a settings schema update");
+_Static_assert(MT_SETTINGS_CONTROLLER_ASSIGNMENT_OFFSET + 4U == MT_SETTINGS_CONTROLLER_SIZE,
+               "Controller wire-size constants disagree");
 
 #if MT_SETTINGS_HEADER_SIZE + MT_SETTINGS_GLOBAL_SIZE + \
     MT_SETTINGS_MAX_PROFILES * MT_SETTINGS_PROFILE_SIZE + MT_GAMEPAD_SLOTS * MT_SETTINGS_PAD_SIZE + \
-    MT_SETTINGS_MAX_PROFILES != \
+    MT_SETTINGS_MAX_PROFILES + MT_SETTINGS_CONTROLLERS_HEADER_SIZE + \
+    MT_SETTINGS_MAX_CONTROLLER_PROFILES * MT_SETTINGS_CONTROLLER_SIZE != \
     MT_SETTINGS_WIRE_SIZE
 #error Supervisor settings wire-size constants disagree
 #endif
@@ -59,6 +71,17 @@ static uint32_t load_u32_le(const uint8_t *data)
 {
     return (uint32_t)data[0] | ((uint32_t)data[1] << 8) |
            ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
+}
+
+static uint16_t load_u16_le(const uint8_t *data)
+{
+    return (uint16_t)((uint16_t)data[0] | ((uint16_t)data[1] << 8U));
+}
+
+static void store_u16_le(uint8_t *data, uint16_t value)
+{
+    data[0] = (uint8_t)value;
+    data[1] = (uint8_t)(value >> 8U);
 }
 
 static void store_u32_le(uint8_t *data, uint32_t value)
@@ -355,17 +378,71 @@ bool mt_supervisor_settings_remember_video_effects(
     return true;
 }
 
+const mt_controller_settings_profile_t *mt_supervisor_settings_find_controller(
+    const mt_supervisor_settings_t *settings, uint32_t core_id,
+    const mt_controller_identity_t *identity)
+{
+    if (settings == NULL || identity == NULL || mt_controls_action_mask(core_id) == 0U ||
+        settings->controller_profile_count > MT_SETTINGS_MAX_CONTROLLER_PROFILES)
+        return NULL;
+    for (size_t index = 0U; index < settings->controller_profile_count; ++index) {
+        const mt_controller_settings_profile_t *profile =
+            &settings->controller_profiles[index];
+        if (profile->core_id == core_id &&
+            mt_controls_identity_equal(&profile->identity, identity)) return profile;
+    }
+    return NULL;
+}
+
+bool mt_supervisor_settings_remember_controller(
+    mt_supervisor_settings_t *settings, uint32_t core_id,
+    const mt_controller_identity_t *identity,
+    const mt_controller_config_t *config)
+{
+    const mt_controller_settings_profile_t *found;
+    size_t index;
+    if (settings == NULL || identity == NULL || mt_controls_action_mask(core_id) == 0U ||
+        settings->controller_profile_count > MT_SETTINGS_MAX_CONTROLLER_PROFILES ||
+        identity->transport > MT_CONTROLLER_TRANSPORT_PS4 ||
+        !mt_controls_config_valid(core_id, config)) return false;
+    found = mt_supervisor_settings_find_controller(settings, core_id, identity);
+    index = found == NULL ? settings->controller_profile_count :
+        (size_t)(found - settings->controller_profiles);
+    if (index == MT_SETTINGS_MAX_CONTROLLER_PROFILES) return false;
+    settings->controller_profiles[index].core_id = core_id;
+    settings->controller_profiles[index].identity = *identity;
+    settings->controller_profiles[index].config = *config;
+    if (found == NULL) ++settings->controller_profile_count;
+    return true;
+}
+
 static bool settings_valid(const mt_supervisor_settings_t *settings)
 {
     size_t index;
     if (settings == NULL ||
         settings->profile_count > MT_SETTINGS_MAX_PROFILES ||
+        settings->controller_profile_count > MT_SETTINGS_MAX_CONTROLLER_PROFILES ||
+        (settings->legacy_gamepad_pending & ~MT_SETTINGS_LEGACY_PAD_MASK) != 0U ||
         !valid_id(settings->selected_core_id, MT_CORE_PACKAGE_ID_MAX, true)) {
         return false;
     }
     if (settings->display_mode >= 6U) return false;
     for (unsigned slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot)
         if (!mt_gamepad_config_valid(&settings->gamepads[slot])) return false;
+    for (index = 0U; index < settings->controller_profile_count; ++index) {
+        const mt_controller_settings_profile_t *profile =
+            &settings->controller_profiles[index];
+        if (mt_controls_action_mask(profile->core_id) == 0U ||
+            profile->identity.transport > MT_CONTROLLER_TRANSPORT_PS4 ||
+            !mt_controls_config_valid(profile->core_id, &profile->config)) return false;
+        for (size_t previous = 0U; previous < index; ++previous) {
+            const mt_controller_settings_profile_t *other =
+                &settings->controller_profiles[previous];
+            if (other->core_id == profile->core_id &&
+                mt_controls_identity_equal(&other->identity, &profile->identity))
+                return false;
+        }
+    }
     if (settings->auto_boot && settings->selected_core_id[0] == '\0')
         return false;
     for (index = 0U; index < settings->profile_count; ++index) {
@@ -395,6 +472,63 @@ static bool settings_valid(const mt_supervisor_settings_t *settings)
     return settings->selected_core_id[0] == '\0' ||
            mt_supervisor_settings_find(settings,
                                        settings->selected_core_id) != NULL;
+}
+
+static void encode_controller(uint8_t *output,
+                              const mt_controller_settings_profile_t *profile)
+{
+    const mt_controller_identity_t *identity = &profile->identity;
+    const mt_controller_config_t *config = &profile->config;
+    store_u32_le(output, profile->core_id);
+    store_u16_le(output + 4U, identity->vendor_id);
+    store_u16_le(output + 6U, identity->product_id);
+    store_u32_le(output + 8U, identity->descriptor_hash);
+    store_u32_le(output + 12U, identity->serial_hash);
+    store_u32_le(output + 16U, identity->port_path);
+    output[20U] = identity->transport;
+    output[21U] = identity->interface_id;
+    for (unsigned action = 0U; action < MT_CONTROL_COUNT; ++action)
+        store_u16_le(output + 24U + action * 2U, config->binding[action]);
+    for (unsigned axis = 0U; axis < MT_GAMEPAD_AXIS_COUNT; ++axis) {
+        const mt_gamepad_axis_config_t *value = &config->axis[axis];
+        const size_t offset = MT_SETTINGS_CONTROLLER_AXES_OFFSET + axis * 5U;
+        output[offset] = value->source;
+        output[offset + 1U] = value->invert;
+        output[offset + 2U] = value->deadzone_percent;
+        store_u16_le(output + offset + 3U, value->sensitivity_percent);
+    }
+    output[MT_SETTINGS_CONTROLLER_ASSIGNMENT_OFFSET] = config->assignment;
+}
+
+static bool decode_controller(mt_controller_settings_profile_t *profile,
+                              const uint8_t *input)
+{
+    mt_controller_identity_t *identity = &profile->identity;
+    mt_controller_config_t *config = &profile->config;
+    if (input[22U] != 0U || input[23U] != 0U ||
+        input[MT_SETTINGS_CONTROLLER_ASSIGNMENT_OFFSET + 1U] != 0U ||
+        input[MT_SETTINGS_CONTROLLER_ASSIGNMENT_OFFSET + 2U] != 0U ||
+        input[MT_SETTINGS_CONTROLLER_ASSIGNMENT_OFFSET + 3U] != 0U) return false;
+    profile->core_id = load_u32_le(input);
+    identity->vendor_id = load_u16_le(input + 4U);
+    identity->product_id = load_u16_le(input + 6U);
+    identity->descriptor_hash = load_u32_le(input + 8U);
+    identity->serial_hash = load_u32_le(input + 12U);
+    identity->port_path = load_u32_le(input + 16U);
+    identity->transport = input[20U];
+    identity->interface_id = input[21U];
+    for (unsigned action = 0U; action < MT_CONTROL_COUNT; ++action)
+        config->binding[action] = load_u16_le(input + 24U + action * 2U);
+    for (unsigned axis = 0U; axis < MT_GAMEPAD_AXIS_COUNT; ++axis) {
+        mt_gamepad_axis_config_t *value = &config->axis[axis];
+        const size_t offset = MT_SETTINGS_CONTROLLER_AXES_OFFSET + axis * 5U;
+        value->source = input[offset];
+        value->invert = input[offset + 1U];
+        value->deadzone_percent = input[offset + 2U];
+        value->sensitivity_percent = load_u16_le(input + offset + 3U);
+    }
+    config->assignment = input[MT_SETTINGS_CONTROLLER_ASSIGNMENT_OFFSET];
+    return true;
 }
 
 static bool encode_settings(const mt_supervisor_settings_t *settings)
@@ -456,6 +590,15 @@ static bool encode_settings(const mt_supervisor_settings_t *settings)
         }
         memcpy(output + 30U, config->button, 8U);
     }
+    store_u32_le(settings_wire + MT_SETTINGS_V7_WIRE_SIZE,
+                 (uint32_t)settings->controller_profile_count);
+    store_u16_le(settings_wire + MT_SETTINGS_V7_WIRE_SIZE + 4U,
+                 settings->legacy_gamepad_pending);
+    for (index = 0U; index < settings->controller_profile_count; ++index)
+        encode_controller(settings_wire + MT_SETTINGS_V7_WIRE_SIZE +
+                          MT_SETTINGS_CONTROLLERS_HEADER_SIZE +
+                          index * MT_SETTINGS_CONTROLLER_SIZE,
+                          &settings->controller_profiles[index]);
     crc = crc32_bytes(settings_wire + MT_SETTINGS_HEADER_SIZE,
                       MT_SETTINGS_WIRE_SIZE - MT_SETTINGS_HEADER_SIZE);
     store_u32_le(settings_wire + 16U, crc);
@@ -488,11 +631,13 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
         (schema == MT_SETTINGS_SCHEMA_V3 ? MT_SETTINGS_V3_WIRE_SIZE :
          schema == MT_SETTINGS_SCHEMA_V4 ? MT_SETTINGS_V4_WIRE_SIZE :
          schema == MT_SETTINGS_SCHEMA_V5 ? MT_SETTINGS_V5_WIRE_SIZE :
-         schema == MT_SETTINGS_SCHEMA_V6 ? MT_SETTINGS_V6_WIRE_SIZE : MT_SETTINGS_WIRE_SIZE);
+         schema == MT_SETTINGS_SCHEMA_V6 ? MT_SETTINGS_V6_WIRE_SIZE :
+         schema == MT_SETTINGS_SCHEMA_V7 ? MT_SETTINGS_V7_WIRE_SIZE : MT_SETTINGS_WIRE_SIZE);
     size_t index;
     if (memcmp(settings_wire, settings_magic, sizeof(settings_magic)) != 0 ||
         (!legacy && schema != MT_SETTINGS_SCHEMA_V3 && schema != MT_SETTINGS_SCHEMA_V4 &&
-         schema != MT_SETTINGS_SCHEMA_V5 && schema != MT_SETTINGS_SCHEMA_V6 && schema != MT_SETTINGS_SCHEMA) ||
+         schema != MT_SETTINGS_SCHEMA_V5 && schema != MT_SETTINGS_SCHEMA_V6 &&
+         schema != MT_SETTINGS_SCHEMA_V7 && schema != MT_SETTINGS_SCHEMA) ||
         wire_size != expected_size ||
         load_u32_le(settings_wire + 12U) != wire_size ||
         load_u32_le(settings_wire + 20U) != ~crc ||
@@ -508,6 +653,28 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
         }
     }
     mt_supervisor_settings_defaults(&settings_decode_candidate);
+    if (schema < MT_SETTINGS_SCHEMA) {
+        settings_decode_candidate.legacy_gamepad_pending = MT_SETTINGS_LEGACY_PAD_MASK;
+    } else {
+        const uint32_t count = load_u32_le(settings_wire + MT_SETTINGS_V7_WIRE_SIZE);
+        if (count > MT_SETTINGS_MAX_CONTROLLER_PROFILES ||
+            settings_wire[MT_SETTINGS_V7_WIRE_SIZE + 6U] != 0U ||
+            settings_wire[MT_SETTINGS_V7_WIRE_SIZE + 7U] != 0U) return false;
+        settings_decode_candidate.controller_profile_count = count;
+        settings_decode_candidate.legacy_gamepad_pending =
+            load_u16_le(settings_wire + MT_SETTINGS_V7_WIRE_SIZE + 4U);
+        for (index = 0U; index < MT_SETTINGS_MAX_CONTROLLER_PROFILES; ++index) {
+            const uint8_t *input = settings_wire + MT_SETTINGS_V7_WIRE_SIZE +
+                MT_SETTINGS_CONTROLLERS_HEADER_SIZE + index * MT_SETTINGS_CONTROLLER_SIZE;
+            if (index < count) {
+                if (!decode_controller(&settings_decode_candidate.controller_profiles[index],
+                                       input)) return false;
+            } else {
+                for (size_t byte = 0U; byte < MT_SETTINGS_CONTROLLER_SIZE; ++byte)
+                    if (input[byte] != 0U) return false;
+            }
+        }
+    }
     if (schema >= MT_SETTINGS_SCHEMA_V6) {
         settings_decode_candidate.display_mode = settings_wire[25U];
         for (unsigned slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot) {
@@ -554,7 +721,7 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
         profile->c64_fast_roms = schema != MT_SETTINGS_SCHEMA_V1 &&
                                  input[242U] != 0U;
         profile->c64_cpu_turbo = input[243U] != 0U;
-        profile->genesis_three_button_mask = schema == MT_SETTINGS_SCHEMA ?
+        profile->genesis_three_button_mask = schema >= MT_SETTINGS_SCHEMA_V7 ?
             settings_wire[MT_SETTINGS_V6_WIRE_SIZE + index] : 0U;
         if (legacy) {
             profile->border_style = MT_SETTINGS_BORDER_STYLE_DEFAULT;
@@ -616,7 +783,7 @@ mt_settings_result_t mt_supervisor_settings_load(
     if (sd.status == MT_SD_SIZE_MISMATCH &&
         (sd.size == MT_SETTINGS_LEGACY_WIRE_SIZE || sd.size == MT_SETTINGS_V3_WIRE_SIZE ||
          sd.size == MT_SETTINGS_V4_WIRE_SIZE || sd.size == MT_SETTINGS_V5_WIRE_SIZE ||
-         sd.size == MT_SETTINGS_V6_WIRE_SIZE)) {
+         sd.size == MT_SETTINGS_V6_WIRE_SIZE || sd.size == MT_SETTINGS_V7_WIRE_SIZE)) {
         sd = mt_sd_storage_read_file_optional_exact(
             MT_SETTINGS_PATH, settings_wire, sd.size,
             &found);

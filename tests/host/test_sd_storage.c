@@ -22,6 +22,7 @@ static FRESULT rename_status;
 static FRESULT dir_open_status;
 static FRESULT dir_read_status;
 static FRESULT dir_close_status;
+static FRESULT mkdir_status;
 static unsigned mount_calls;
 static unsigned unmount_calls;
 static unsigned open_calls;
@@ -73,6 +74,12 @@ FRESULT f_mount(FATFS *file_system, const char *path, BYTE option)
     return mount_status;
 }
 
+FRESULT f_mkdir(const char *path)
+{
+    assert(path != NULL && path[0] != '\0');
+    return mkdir_status;
+}
+
 FRESULT f_open(FIL *file, const char *path, BYTE mode)
 {
     assert(file != NULL);
@@ -82,7 +89,9 @@ FRESULT f_open(FIL *file, const char *path, BYTE mode)
     file->kind = path_kind(path);
     file->mode = mode;
     if (open_status != FR_OK) return open_status;
-    if ((mode & FA_CREATE_ALWAYS) != 0U) {
+    if ((mode & FA_CREATE_NEW) != 0U &&
+        ((file->kind == 1U && target_exists) || (file->kind == 2U && journal_exists))) return FR_EXIST;
+    if ((mode & (FA_CREATE_ALWAYS | FA_CREATE_NEW)) != 0U) {
         assert(file->kind != 0U);
         if (file->kind == 1U) {
             target_exists = true;
@@ -273,6 +282,7 @@ static void reset_fake(void)
     dir_open_status = FR_OK;
     dir_read_status = FR_OK;
     dir_close_status = FR_OK;
+    mkdir_status = FR_OK;
     mount_calls = 0U;
     unmount_calls = 0U;
     open_calls = 0U;
@@ -447,7 +457,7 @@ static void test_managed_files(void)
     }
     assert(mt_sd_file_open(JOURNAL_TARGET, "rbb", &file).status == MT_SD_INVALID_ARGUMENT);
     assert(mt_sd_file_open(JOURNAL_TARGET, "r++", &file).status == MT_SD_INVALID_ARGUMENT);
-    assert(mt_sd_file_open(JOURNAL_TARGET, "x", &file).status == MT_SD_INVALID_ARGUMENT);
+    assert(mt_sd_file_open(JOURNAL_TARGET, "q", &file).status == MT_SD_INVALID_ARGUMENT);
     assert(mt_sd_file_open(JOURNAL_TARGET, "", &file).status == MT_SD_INVALID_ARGUMENT);
     assert(mt_sd_file_open(JOURNAL_TARGET, "wb+", &file).status == MT_SD_OK && target_size == 0U);
     value = mt_sd_file_write(file, "abc", 3U);
@@ -498,6 +508,57 @@ static void test_managed_files(void)
     assert(mt_sd_file_open(JOURNAL_TARGET, "rb", &file).status == MT_SD_FILE_LIMIT);
     for (index = 0U; index < 16U; ++index) assert(mt_sd_file_close(files[index]).status == MT_SD_OK);
     assert(mt_sd_storage_unmount().status == MT_SD_OK);
+}
+
+static void test_capture_file_creation(void)
+{
+    mt_sd_file_t *file;
+    reset_fake();
+    assert(mt_sd_storage_ensure_directory("0:/screenshots").status == MT_SD_OK);
+    mkdir_status=FR_EXIST;
+    assert(mt_sd_storage_ensure_directory("0:/screenshots").status == MT_SD_OK);
+    assert(dir_close_calls == 1U && mount_calls == 1U);
+    dir_open_status=FR_DISK_ERR;
+    assert(mt_sd_storage_ensure_directory("0:/screenshots").status == MT_SD_CREATE_DIR_FAILED);
+    dir_open_status=FR_OK; dir_close_status=FR_DISK_ERR;
+    assert(mt_sd_storage_ensure_directory("0:/screenshots").status == MT_SD_DIR_CLOSE_FAILED);
+    mkdir_status=FR_DISK_ERR;
+    assert(mt_sd_storage_ensure_directory("0:/screenshots").status == MT_SD_CREATE_DIR_FAILED);
+    assert(mt_sd_storage_ensure_directory(NULL).status == MT_SD_INVALID_ARGUMENT);
+    reset_fake();
+    const uint8_t saved=target_data[0];
+    assert(mt_sd_file_open(JOURNAL_TARGET,"xb",&file).status == MT_SD_FILE_EXISTS);
+    assert(file == NULL && target_size == 1U && target_data[0] == saved);
+    target_exists=false;
+    assert(mt_sd_file_open(JOURNAL_TARGET,"xb",&file).status == MT_SD_OK);
+    assert(target_exists && target_size == 0U);
+    assert(mt_sd_file_write_buffered(file,"PN",2U).status == MT_SD_OK);
+    assert(mt_sd_file_write_buffered(file,"G",1U).status == MT_SD_OK);
+    assert(sync_calls == 0U && mt_sd_file_tell(file) == 3);
+    assert(mt_sd_file_rename(JOURNAL_TARGET,JOURNAL_PATH).status == MT_SD_FILE_BUSY);
+    assert(mt_sd_storage_unmount().status == MT_SD_FILE_BUSY);
+    assert(mt_sd_file_close(file).status == MT_SD_OK);
+    assert(sync_calls == 1U);
+    rename_status=FR_EXIST;
+    assert(mt_sd_file_rename(JOURNAL_TARGET,JOURNAL_PATH).status == MT_SD_FILE_EXISTS);
+    assert(target_exists && target_size == 3U && memcmp(target_data,"PNG",3U)==0);
+
+    reset_fake();
+    assert(mt_sd_file_write_buffered(NULL,"x",1U).status == MT_SD_INVALID_ARGUMENT);
+    assert(mt_sd_file_open(JOURNAL_TARGET,"rb",&file).status == MT_SD_OK);
+    assert(mt_sd_file_write_buffered(file,"x",1U).status == MT_SD_INVALID_ARGUMENT);
+    assert(mt_sd_file_close(file).status == MT_SD_OK && sync_calls == 0U);
+    assert(mt_sd_file_open(JOURNAL_TARGET,"wb",&file).status == MT_SD_OK);
+    short_write=true;
+    assert(mt_sd_file_write_buffered(file,"PNG",3U).status == MT_SD_WRITE_FAILED);
+    assert(mt_sd_file_tell(file) == 2 && sync_calls == 0U);
+    short_write=false;write_status=FR_DISK_ERR;
+    assert(mt_sd_file_write_buffered(file,"PNG",3U).status == MT_SD_WRITE_FAILED);
+    write_status=FR_OK;seek_status=FR_DISK_ERR;
+    assert(mt_sd_file_write_buffered(file,"PNG",3U).status == MT_SD_SEEK_FAILED);
+    seek_status=FR_OK;sync_status=FR_DISK_ERR;
+    assert(mt_sd_file_close(file).status == MT_SD_SYNC_FAILED);
+    assert(mt_sd_file_tell(file) < 0 && sync_calls == 1U);
 }
 
 static void settings_store_u32(uint8_t *data, uint32_t value)
@@ -551,14 +612,15 @@ static void test_settings_journal_migration(void)
     assert(mt_supervisor_settings_save(&original).status == MT_SETTINGS_OK);
     assert(target_size == MT_SETTINGS_WIRE_SIZE && !journal_exists);
     memcpy(current_wire, target_data, sizeof(current_wire));
-    for (schema = 1U; schema <= 7U; ++schema) {
-        const size_t wire_size = schema == 7U ? MT_SETTINGS_WIRE_SIZE : schema == 6U ? 5038U : schema == 5U ? 4696U :
+    for (schema = 1U; schema <= 8U; ++schema) {
+        const size_t wire_size = schema == 8U ? MT_SETTINGS_WIRE_SIZE : schema == 7U ? 5054U : schema == 6U ? 5038U : schema == 5U ? 4696U :
             (schema == 4U ? 4088U : (schema == 3U ? 4024U : 3960U));
         unsigned fault;
         memcpy(wire, current_wire, sizeof(wire));
         expected = original;
-        if (schema != 7U) {
+        if (schema != 8U) {
             uint32_t crc;
+            expected.legacy_gamepad_pending = (1U << MT_GAMEPAD_SLOTS) - 1U;
             const size_t profile_size = schema >= 5U ? 290U : schema == 4U ? 252U : schema == 3U ? 248U : 244U;
             for (index = 0U; index < MT_SETTINGS_MAX_PROFILES; ++index) {
                 memcpy(wire + 56U + index * profile_size,
@@ -611,7 +673,7 @@ static void test_settings_journal_migration(void)
             assert(memcmp(&loaded, &expected, sizeof(loaded)) == 0);
             /* Saving a migrated file always writes the complete new format. */
             assert(mt_supervisor_settings_save(&loaded).status == MT_SETTINGS_OK);
-            assert(target_size == MT_SETTINGS_WIRE_SIZE && target_data[8U] == 7U);
+            assert(target_size == MT_SETTINGS_WIRE_SIZE && target_data[8U] == 8U);
             assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
             assert(memcmp(&loaded, &expected, sizeof(loaded)) == 0);
         }
@@ -629,6 +691,7 @@ static void test_settings_journal_migration(void)
 
 int main(void)
 {
+    test_capture_file_creation();
     static const uint8_t data[] = {1U, 2U, 3U, 4U, 5U, 6U};
     uint8_t destination[sizeof(data)] = {0U};
     mt_sd_result_t result;

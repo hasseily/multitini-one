@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "multitini_gamepad.h"
+#include "usb_gamepad_input.h"
 
 /* Wired DualShock 4 input report 1. The HID descriptor lists X/Y/Z/Rz
  * together, which CherryUSB reduces to a usage range. Decode the known
@@ -32,6 +33,7 @@ static inline uint8_t usb_ps4_decode(
 
     memset(report, 0, sizeof(*report));
     report->axis_valid_mask = (uint8_t)((1U << MT_GAMEPAD_AXIS_COUNT) - 1U);
+    report->trigger_mask = (1U << MT_GAMEPAD_AXIS_Z) | (1U << MT_GAMEPAD_AXIS_RZ);
     report->buttons_valid = 1U;
     report->axis[MT_GAMEPAD_AXIS_X] = data[1];
     report->axis[MT_GAMEPAD_AXIS_Y] = data[2];
@@ -44,7 +46,7 @@ static inline uint8_t usb_ps4_decode(
     }
 
     /* Shared button order: Cross, Circle, Square, Triangle, L1, R1,
-     * Share, Options. The first three also supply Apple PB0..PB2. */
+     * Share, Options. */
     report->buttons = (uint8_t)(((data[5] >> 5U) & 0x03U) |
                                ((data[5] >> 2U) & 0x04U) |
                                ((data[5] >> 4U) & 0x08U) |
@@ -55,11 +57,14 @@ static inline uint8_t usb_ps4_decode(
         *hat = 8U;
     }
 
-    /* Stick clicks, trigger switches, PS and touchpad click must also
-     * finish their release before menu capture returns control to a game.
-     * Bits 2..7 of byte 7 hold a report counter, not buttons. */
-    *extra_active = (uint8_t)(((data[6] & 0xCCU) != 0U) ||
-                              ((data[7] & 0x03U) != 0U));
+    if (data[6] & 0x40U) report->buttons |= UINT32_C(1) << MT_USB_PAD_LEFT_STICK;
+    if (data[6] & 0x80U) report->buttons |= UINT32_C(1) << MT_USB_PAD_RIGHT_STICK;
+    if (data[7] & 1U) report->buttons |= UINT32_C(1) << MT_USB_PAD_HOME;
+    if (data[6] & 4U) report->buttons |= UINT32_C(1) << MT_USB_PAD_LEFT_TRIGGER;
+    if (data[6] & 8U) report->buttons |= UINT32_C(1) << MT_USB_PAD_RIGHT_TRIGGER;
+    if (data[7] & 2U) report->buttons |= UINT32_C(1) << MT_USB_PAD_TOUCHPAD;
+    /* Bits 2..7 of byte 7 are a report counter, not controls. */
+    *extra_active = 0U;
     return 1U;
 }
 

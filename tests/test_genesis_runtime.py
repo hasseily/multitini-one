@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Run production Genesis reset, switch and controller-setting transactions."""
 from pathlib import Path
+import os
 import shutil
 import subprocess
 import tempfile
@@ -31,6 +32,8 @@ static bool genesis_service_initialized, gameboy_service_initialized;
 static bool c64_services_initialized, c64_core_reset_active;
 static bool hide_allowed, prepare_fail, resume_fail, command_fail, save_fail;
 static bool input_ready, attached;
+static bool screenshot_cancel_allowed;
+static unsigned screenshot_cancels;
 static unsigned prepares, resumes, commands, loads, settings_saves;
 static bool effects_quiet, source_quiet, supervisor_menu_dirty;
 static unsigned drain_polls, source_release_poll, source_status_reads;
@@ -55,6 +58,7 @@ static uint32_t shell_read(uint32_t offset) {
 }
 static bool shell_is_c64(void) {return current_core==MT_C64_CORE_ID;}
 static bool hide_menu_for_core_action(void) {return hide_allowed;}
+static bool mt_screenshot_service_cancel(void) {++screenshot_cancels;return screenshot_cancel_allowed;}
 static int xil_printf(const char *format, ...) {(void)format; return 0;}
 static int c64_d64_service_prepare_reset(void) {assert(0); return -1;}
 static int c64_d64_service_resume_after_reset(void) {assert(0); return -1;}
@@ -122,6 +126,7 @@ static void reset_fixture(void) {
     genesis_service_initialized=true;gameboy_service_initialized=false;c64_services_initialized=false;
     hide_allowed=true;prepare_fail=resume_fail=command_fail=save_fail=false;
     input_ready=true;attached=true;
+    screenshot_cancel_allowed=true;screenshot_cancels=0U;
     prepares=resumes=commands=loads=settings_saves=0U;trace_size=0U;trace[0]=last_error[0]=0;
     memset(&supervisor,0,sizeof(supervisor));supervisor.has_active=true;
     strcpy(supervisor.active.package.id,"genesis");supervisor.active.package.core_id=MT_GENESIS_CORE_ID;
@@ -133,6 +138,8 @@ static void reset_fixture(void) {
     pcap_loads=invalidations=effect_restores=0U;fake_ms=0U;
 }
 int main(void) {
+    reset_fixture();screenshot_cancel_allowed=false;
+    assert(supervisor_quiesce(NULL)==-1 && screenshot_cancels==1U && prepares==0U && input_ready);
     reset_fixture();prepare_fail=true;
     assert(set_core_reset_request(true)==-1 && prepares==1U && commands==0U);
     assert(input_ready && control==0U);
@@ -188,7 +195,7 @@ int main(void) {
 
 class GenesisRuntimeTests(unittest.TestCase):
     def test_production_transactions(self):
-        compiler = shutil.which("clang") or shutil.which("cc")
+        compiler = os.environ.get("CC") or shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
         self.assertIsNotNone(compiler, "host C compiler is required")
         source = (ROOT / "firmware/platform/xilinx/main.c").read_text()
         signatures = [
@@ -202,10 +209,14 @@ class GenesisRuntimeTests(unittest.TestCase):
             c_file = Path(directory) / "runtime.c"
             binary = Path(directory) / "runtime"
             c_file.write_text(FIXTURE + "\n".join(function(source, s) for s in signatures) + CHECKS)
-            subprocess.run([compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
+            compiled = subprocess.run([compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
                 "-Ifirmware/include", "-Ifirmware/platform/xilinx", str(c_file), "-o", str(binary)],
-                cwd=ROOT, check=True, capture_output=True, text=True)
-            subprocess.run([str(binary)], check=True, capture_output=True, text=True)
+                cwd=ROOT, capture_output=True, text=True)
+            self.assertEqual(compiled.returncode, 0,
+                             f"Runtime fixture compilation failed:\n{compiled.stdout}{compiled.stderr}")
+            executed = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(executed.returncode, 0,
+                             f"Runtime fixture failed:\n{executed.stdout}{executed.stderr}")
 
 
 if __name__ == "__main__":

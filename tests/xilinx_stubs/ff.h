@@ -39,11 +39,13 @@ typedef struct {
 #define FA_READ UINT32_C(0x01)
 #define FA_WRITE UINT32_C(0x02)
 #define FA_CREATE_ALWAYS UINT32_C(0x08)
+#define FA_CREATE_NEW UINT32_C(0x04)
 #define FA_OPEN_EXISTING UINT32_C(0x00)
 #define FA_OPEN_ALWAYS UINT32_C(0x10)
 #define AM_DIR UINT32_C(0x10)
 
 FRESULT f_stat(const char *path, FILINFO *info);
+FRESULT f_mkdir(const char *path);
 FRESULT f_mount(FATFS *file_system, const char *path, BYTE option);
 FRESULT f_open(FIL *file, const char *path, BYTE mode);
 FSIZE_t f_size(const FIL *file);

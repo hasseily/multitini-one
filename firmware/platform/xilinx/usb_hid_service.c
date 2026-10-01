@@ -5,6 +5,7 @@
 
 #include "cherryusb_platform.h"
 #include "multitini_c64_hid_input.h"
+#include "multitini_c64_interface.h"
 #include "multitini_c64_xinput.h"
 #include "multitini_gameboy_hid_input.h"
 #include "multitini_gameboy_interface.h"
@@ -19,11 +20,13 @@
 #include "usb_gamepad_input.h"
 #include "usb_ps4_report.h"
 #include "usb_xbox_one.h"
+#include "usb_gamepad_descriptor.h"
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdio.h>
 
 #include "xil_printf.h"
 #include "xparameters.h"
@@ -42,14 +45,16 @@
 #define MT_XINPUT_PACKET_BYTES 64U
 #define MT_XINPUT_DIAGNOSTIC_BYTES 10U
 #define MT_XINPUT_OUTPUT_ATTEMPTS 3U
+#define MT_CONTROLLER_STRING_TIMEOUT_MS 25U
+#define MT_CONTROLLER_STRING_BYTES 256U
 
 #if (MT_XINPUT_PACKET_BYTES % CONFIG_USB_ALIGN_SIZE) != 0
 #error XInput DMA buffers must span whole cache lines
 #endif
 
-#if (CONFIG_USBHOST_MAX_HID_CLASS + CONFIG_USBHOST_MAX_XBOX_CLASS) > \
-    MT_C64_HID_SLOT_COUNT
-#error Multitini input slots do not cover all USB class instances
+#if CONFIG_USBHOST_MAX_HID_CLASS > MT_GAMEPAD_SLOTS || \
+    CONFIG_USBHOST_MAX_XBOX_CLASS > MT_GAMEPAD_SLOTS
+#error USB class instances exceed the shared input allocator
 #endif
 
 typedef struct {
@@ -112,6 +117,19 @@ static uint8_t
                     [MT_XINPUT_PACKET_BYTES]
     __attribute__((aligned(CONFIG_USB_ALIGN_SIZE)));
 static mt_gamepad_input_t g_gamepads;
+static mt_controller_device_t g_devices[MT_GAMEPAD_SLOTS];
+static uint8_t g_controller_string[MT_CONTROLLER_STRING_BYTES]
+    __attribute__((aligned(CONFIG_USB_ALIGN_SIZE)));
+static bool g_controller_string_busy;
+static mt_controller_config_t g_controller_config[MT_GAMEPAD_SLOTS];
+static mt_controls_output_t g_controller_output[MT_GAMEPAD_SLOTS];
+static uint8_t g_controller_player[MT_GAMEPAD_SLOTS];
+static mt_usb_controller_config_fn g_config_loader;
+static void *g_config_loader_context;
+static mt_usb_controller_action_fn g_action_handler;
+static void *g_action_handler_context;
+static mt_usb_controller_report_fn g_report_handler;
+static void *g_report_handler_context;
 static uint8_t g_vendor_slots[MT_GAMEPAD_SLOTS];
 static uint8_t g_release_guard[MT_GAMEPAD_SLOTS];
 static bool g_menu_capture;
@@ -132,6 +150,8 @@ static uint8_t g_emit_deferred;
 static uint32_t g_active_core_id;
 static mt_usb_keyboard_filter_fn g_keyboard_filter;
 static void *g_keyboard_filter_context;
+static void refresh_controller_outputs(bool reload, bool reset_players);
+static void deliver_controllers(void);
 
 static int emit_active_input(void *context, uint16_t code, uint16_t value)
 {
@@ -173,18 +193,198 @@ static void submit_keyboard_state(uint8_t slot, uint8_t modifiers,
                                          keys, key_count);
 }
 
-static void submit_gamepad_state(uint8_t slot, uint8_t state)
-{
-    (void)mt_c64_hid_joystick_report(&g_c64_input, slot, state);
-    (void)mt_gameboy_hid_gamepad_report(&g_gameboy_input, slot, state);
-}
-
 static void disconnect_input_slot(uint8_t slot)
 {
+    memset(&g_devices[slot], 0, sizeof(g_devices[slot]));
+    memset(&g_controller_output[slot], 0, sizeof(g_controller_output[slot]));
+    g_controller_player[slot] = UINT8_MAX;
     (void)mt_c64_hid_disconnect(&g_c64_input, slot);
     (void)mt_gameboy_hid_disconnect(&g_gameboy_input, slot);
     (void)mt_vectrex_hid_disconnect(&g_vectrex_input, slot);
     (void)mt_genesis_hid_disconnect(&g_genesis_input, slot);
+    refresh_controller_outputs(false, false);
+}
+
+static unsigned controller_player_count(void)
+{
+    return g_active_core_id == MT_GBC_CORE_ID ? 1U : 2U;
+}
+
+static void resolve_controller_players(void)
+{
+    uint8_t occupied = 0U, explicit_owner[2] = {UINT8_MAX, UINT8_MAX};
+    const unsigned players = controller_player_count();
+    for (unsigned slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot) {
+        if (!g_devices[slot].connected) continue;
+        const unsigned choice = g_controller_config[slot].assignment;
+        if (choice == MT_CONTROLLER_PORT1 || choice == MT_CONTROLLER_PORT2) {
+            const unsigned player = choice - 1U;
+            if (explicit_owner[player] == UINT8_MAX || g_controller_player[slot] == player)
+                explicit_owner[player] = (uint8_t)slot;
+        }
+    }
+    for (unsigned player = 0U; player < players; ++player)
+        if (explicit_owner[player] != UINT8_MAX) occupied |= (uint8_t)(1U << player);
+    /* A reconnecting saved profile cannot evict the current explicit owner.
+     * At boot the first claimant wins. A conflicting newcomer stays neutral. */
+    for (unsigned slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot) {
+        const unsigned choice = g_controller_config[slot].assignment;
+        if (!g_devices[slot].connected || choice == MT_CONTROLLER_OFF)
+            g_controller_player[slot] = UINT8_MAX;
+        else if (choice == MT_CONTROLLER_PORT1 || choice == MT_CONTROLLER_PORT2) {
+            const unsigned player = choice - 1U;
+            g_controller_player[slot] = player < players && explicit_owner[player] == slot ?
+                (uint8_t)player : UINT8_MAX;
+        } else if (g_controller_player[slot] < players &&
+                   (occupied & (1U << g_controller_player[slot])) == 0U)
+            occupied |= (uint8_t)(1U << g_controller_player[slot]);
+        else g_controller_player[slot] = UINT8_MAX;
+    }
+    for (unsigned slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot) {
+        if (!g_devices[slot].connected || g_controller_config[slot].assignment != MT_CONTROLLER_AUTO ||
+            g_controller_player[slot] != UINT8_MAX) continue;
+        /* C64's default first controller uses its selected joystick port. */
+        for (unsigned candidate = 0U; candidate < players; ++candidate) {
+            unsigned player = candidate;
+            if (g_active_core_id != MT_GBC_CORE_ID && g_active_core_id != MT_GENESIS_CORE_ID &&
+                g_active_core_id != MT_VECTREX_CORE_ID && g_c64_input.joystick_port == 2U)
+                player = 1U - candidate;
+            if ((occupied & (1U << player)) == 0U) {
+                g_controller_player[slot] = (uint8_t)player;
+                occupied |= (uint8_t)(1U << player);
+                break;
+            }
+        }
+    }
+}
+
+static void load_controller_config(uint8_t slot)
+{
+    mt_controls_default(g_active_core_id, &g_devices[slot], &g_controller_config[slot]);
+    if (g_config_loader != NULL) {
+        mt_controller_config_t saved = g_controller_config[slot];
+        if (g_config_loader(g_config_loader_context, g_active_core_id, slot,
+                            &g_devices[slot], &saved) &&
+            mt_controls_config_valid(g_active_core_id, &saved))
+            g_controller_config[slot] = saved;
+    }
+    memset(&g_controller_output[slot], 0, sizeof(g_controller_output[slot]));
+}
+
+static uint32_t identity_hash(uint32_t hash, const void *bytes, size_t length)
+{
+    const uint8_t *data = bytes;
+    for (size_t i = 0U; i < length; ++i) hash = (hash ^ data[i]) * UINT32_C(16777619);
+    return hash;
+}
+
+static size_t controller_string_descriptor(struct usbh_hubport *port,
+                                            uint8_t index, uint16_t language)
+{
+    struct usb_setup_packet *setup = port->setup;
+    struct usbh_urb *control = &port->ep0_urb;
+    if (!port->connected || setup == NULL || control->errorcode == -USB_ERR_BUSY)
+        return 0U;
+    usb_osal_mutex_take(port->mutex);
+    setup->bmRequestType = USB_REQUEST_DIR_IN | USB_REQUEST_STANDARD |
+                           USB_REQUEST_RECIPIENT_DEVICE;
+    setup->bRequest = USB_REQUEST_GET_DESCRIPTOR;
+    setup->wValue = (uint16_t)((USB_DESCRIPTOR_TYPE_STRING << 8U) | index);
+    setup->wIndex = language;
+    setup->wLength = 255U;
+    memset(g_controller_string, 0, sizeof(g_controller_string));
+    /* Optional identity reads get one short attempt. Do not use the generic
+     * control wrapper's one-second timeout and three retries during hotplug. */
+    usbh_control_urb_fill(control, port, setup, g_controller_string, 255U,
+                          MT_CONTROLLER_STRING_TIMEOUT_MS, NULL, NULL);
+    int result = usbh_submit_urb(control);
+    if (result == 0) result = (int)control->actual_length;
+    if (result == -USB_ERR_NOMEM && control->hcpriv == NULL) control->errorcode = 0;
+    control->timeout = 0U;
+    usb_osal_mutex_give(port->mutex);
+    if (result < 2 || g_controller_string[1] != USB_DESCRIPTOR_TYPE_STRING ||
+        g_controller_string[0] < 2U || (g_controller_string[0] & 1U) != 0U ||
+        g_controller_string[0] > result) return 0U;
+    return g_controller_string[0];
+}
+
+static void controller_optional_strings(mt_controller_device_t *device,
+                                        struct usbh_hubport *port)
+{
+    const bool product = device->name[0] == '\0' && port->device_desc.iProduct != 0U;
+    const bool serial = device->identity.serial_hash == 0U && port->device_desc.iSerialNumber != 0U;
+    if ((!product && !serial) || g_controller_string_busy) return;
+    g_controller_string_busy = true;
+    uint16_t language = UINT16_C(0x0409);
+    if (controller_string_descriptor(port, 0U, 0U) >= 4U)
+        language = (uint16_t)((uint16_t)g_controller_string[2] |
+                              ((uint16_t)g_controller_string[3] << 8U));
+    if (product) {
+        const size_t length = controller_string_descriptor(port, port->device_desc.iProduct, language);
+        size_t out = 0U;
+        for (size_t at = 2U; at + 1U < length && out + 1U < sizeof(device->name); at += 2U) {
+            const uint8_t ascii = g_controller_string[at];
+            device->name[out++] = g_controller_string[at + 1U] == 0U && ascii >= 32U && ascii < 127U ?
+                (char)ascii : '?';
+        }
+        device->name[out] = '\0';
+    }
+    if (serial) {
+        const size_t length = controller_string_descriptor(port, port->device_desc.iSerialNumber, language);
+        /* Hash complete UTF-16 content, independently of display truncation. */
+        if (length > 2U) device->identity.serial_hash = identity_hash(
+            UINT32_C(2166136261), g_controller_string + 2U, length - 2U);
+    }
+    g_controller_string_busy = false;
+}
+
+static void identify_controller(uint8_t slot, struct usbh_hubport *port,
+    uint8_t interface_id, uint8_t transport, uint32_t descriptor_hash,
+    uint32_t buttons, uint8_t axes)
+{
+    if (slot >= MT_GAMEPAD_SLOTS || port == NULL) return;
+    mt_controller_device_t *device = &g_devices[slot];
+    memset(device, 0, sizeof(*device));
+    device->connected = 1U;
+    device->home_button = transport == MT_CONTROLLER_TRANSPORT_HID ? UINT8_MAX : MT_USB_PAD_HOME;
+    device->buttons_present = buttons;
+    device->axis_mask = axes;
+    device->identity.vendor_id = port->device_desc.idVendor;
+    device->identity.product_id = port->device_desc.idProduct;
+    device->identity.interface_id = interface_id;
+    device->identity.transport = transport;
+    device->identity.descriptor_hash = descriptor_hash;
+    if (port->iSerialNumber != NULL && port->iSerialNumber[0] != '\0')
+        device->identity.serial_hash = identity_hash(UINT32_C(2166136261), port->iSerialNumber,
+                                                     strlen(port->iSerialNumber));
+    uint32_t path = UINT32_C(2166136261);
+    const struct usbh_hubport *ancestor = port;
+    for (unsigned depth = 0U; ancestor != NULL && depth < 16U; ++depth) {
+        path = identity_hash(path, &ancestor->port, 1U);
+        ancestor = ancestor->parent != NULL ? ancestor->parent->parent : NULL;
+    }
+    device->identity.port_path = path;
+    if (port->iProduct != NULL && port->iProduct[0] != '\0')
+        (void)snprintf(device->name, sizeof(device->name), "%s", port->iProduct);
+    controller_optional_strings(device, port);
+    if (device->name[0] == '\0') {
+        const char *name = transport == MT_CONTROLLER_TRANSPORT_XBOX360 ? "Xbox 360" :
+            transport == MT_CONTROLLER_TRANSPORT_XBOXONE ? "Xbox One" :
+            transport == MT_CONTROLLER_TRANSPORT_PS4 ? "DualShock 4" : "USB controller";
+        (void)snprintf(device->name, sizeof(device->name), "%s %04X:%04X", name,
+            (unsigned)device->identity.vendor_id, (unsigned)device->identity.product_id);
+    }
+    load_controller_config(slot);
+    g_controller_player[slot] = UINT8_MAX;
+    resolve_controller_players();
+}
+
+void usb_gamepad_input_identify(uint8_t slot, struct usbh_hubport *port,
+                                uint8_t interface_id, uint8_t transport)
+{
+    const uint32_t buttons = transport == MT_CONTROLLER_TRANSPORT_PS4 ? UINT32_C(0x3fff) : UINT32_C(0x7ff);
+    identify_controller(slot, port, interface_id, transport,
+                         UINT32_C(0x80000000) | transport, buttons, 0x3fU);
 }
 
 static void poll_active_input(void)
@@ -312,6 +512,9 @@ static bool descriptor_has_gamepad(const mt_hid_slot_t *slot)
          index < slot->report_info.report_item_count; ++index) {
         const struct usbh_hid_report_item *const item =
             &slot->report_info.report_items[index];
+        if (item->report_type == HID_REPORT_INPUT &&
+            item->attribute.usage_page == HID_USAGE_PAGE_BUTTON &&
+            (item->report_flags & HID_MAINITEM_CONSTANT) == 0U) return true;
         if (item->report_type != HID_REPORT_INPUT ||
             item->attribute.usage_page !=
                 HID_USAGE_PAGE_GENERIC_DESKTOP_CONTROLS ||
@@ -336,44 +539,100 @@ static bool descriptor_has_gamepad(const mt_hid_slot_t *slot)
 
 static void deliver_gamepad(uint8_t index)
 {
-    mt_gamepad_state_t state;
-    mt_gamepad_mapped(&g_gamepads, index, &state);
-    if (!state.connected) return;
+    if (!g_devices[index].connected) return;
+    mt_controls_output_t output = g_controller_output[index];
     if (g_menu_capture || g_release_guard[index] != 0U) {
-        state.buttons = 0U;
-        state.hat = 8U;
-        memset(state.axis, 0, sizeof(state.axis));
+        memset(&output, 0, sizeof(output));
     }
-    submit_gamepad_state(index, mt_gamepad_digital(&state));
-    (void)mt_genesis_hid_gamepad_report(&g_genesis_input, index, &state);
-    int16_t x = state.axis[MT_GAMEPAD_AXIS_X];
-    const int16_t down = state.axis[MT_GAMEPAD_AXIS_Y];
-    int16_t y = down == INT16_MIN ? INT16_MAX : (int16_t)-down;
-    const uint8_t hat = mt_gamepad_hat_bits(state.hat);
-    if ((hat & 12U) != 0U)
-        x = (hat & 12U) == 12U ? 0 : ((hat & 4U) != 0U ? INT16_MIN : INT16_MAX);
-    if ((hat & 3U) != 0U)
-        y = (hat & 3U) == 3U ? 0 : ((hat & 1U) != 0U ? INT16_MAX : INT16_MIN);
-    (void)mt_vectrex_hid_gamepad_report(&g_vectrex_input, index, state.buttons, x, y);
+    const uint8_t player = g_controller_player[index];
+    const uint32_t actions = output.actions;
+    const uint8_t directions = (uint8_t)(actions & 15U);
+    if (g_active_core_id == MT_GENESIS_CORE_ID) {
+        mt_gamepad_state_t state = {0};
+        state.connected = 1U;
+        state.hat = 8U;
+        for (uint8_t hat = 0U; hat < 8U; ++hat)
+            if (mt_gamepad_hat_bits(hat) == directions) state.hat = hat;
+        state.buttons = (actions >> MT_CONTROL_A) & 0x3fU;
+        if (actions & (UINT32_C(1) << MT_CONTROL_SELECT)) state.buttons |= 0x40U;
+        if (actions & (UINT32_C(1) << MT_CONTROL_START)) state.buttons |= 0x80U;
+        (void)mt_genesis_hid_assigned_report(&g_genesis_input, index, player, &state);
+    } else if (g_active_core_id == MT_VECTREX_CORE_ID) {
+        int16_t x = output.x;
+        int16_t y = output.y == INT16_MIN ? INT16_MAX : (int16_t)-output.y;
+        if ((directions & 12U) != 0U)
+            x = (directions & 12U) == 12U ? 0 : ((directions & 4U) != 0U ? INT16_MIN : INT16_MAX);
+        if ((directions & 3U) != 0U)
+            y = (directions & 3U) == 3U ? 0 : ((directions & 1U) != 0U ? INT16_MAX : INT16_MIN);
+        (void)mt_vectrex_hid_assigned_report(&g_vectrex_input, index, player,
+            (uint8_t)((actions >> MT_CONTROL_A) & 15U), x, y);
+    } else if (g_active_core_id == MT_GBC_CORE_ID) {
+        uint8_t state = (uint8_t)(directions | (actions & 0x30U));
+        if (actions & (UINT32_C(1) << MT_CONTROL_SELECT)) state |= 0x40U;
+        if (actions & (UINT32_C(1) << MT_CONTROL_START)) state |= 0x80U;
+        (void)mt_gameboy_hid_gamepad_report(&g_gameboy_input, index, player == 0U ? state : 0U);
+    } else {
+        (void)mt_c64_hid_assigned_report(&g_c64_input, index, player,
+            (uint8_t)(directions | (actions & 0x70U)));
+    }
+}
+
+static void deliver_controllers(void)
+{
+    /* Publish complete assignment changes together, without a transient move
+     * or old controller state appearing in another player's output. */
+    const uint8_t deferred = g_emit_deferred;
+    g_emit_deferred = 1U;
+    for (uint8_t slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot) deliver_gamepad(slot);
+    g_emit_deferred = deferred;
+    poll_active_input();
+}
+
+static void refresh_controller_outputs(bool reload, bool reset_players)
+{
+    if (reset_players) memset(g_controller_player, UINT8_MAX, sizeof(g_controller_player));
+    for (uint8_t slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot) {
+        if (!g_devices[slot].connected) continue;
+        if (reload) load_controller_config(slot);
+        mt_controls_evaluate(g_active_core_id, &g_controller_config[slot],
+            &g_gamepads.raw[slot], g_controller_output[slot].actions, &g_controller_output[slot]);
+    }
+    resolve_controller_players();
+    deliver_controllers();
 }
 
 static bool pad_active(const mt_gamepad_state_t *state)
 {
-    if (state->buttons != 0U || state->extra_active != 0U || state->hat < 8U) return true;
-    for (unsigned axis = 0U; axis < MT_GAMEPAD_AXIS_COUNT; ++axis) {
-        if ((state->axis_valid_mask & (1U << axis)) == 0U) continue;
-        if (axis == MT_GAMEPAD_AXIS_Z || axis == MT_GAMEPAD_AXIS_RZ) {
-            if (state->axis[axis] > -24576) return true;
-        } else if (state->axis[axis] < -8192 || state->axis[axis] > 8192) return true;
-    }
-    return false;
+    return !mt_controls_neutral(state);
 }
 
 static void process_shared_report(uint8_t index, const mt_gamepad_report_t *report,
                                   uint8_t hat, uint8_t extra)
 {
     mt_gamepad_report(&g_gamepads, index, report, hat, extra);
+    if (g_report_handler != NULL)
+        g_report_handler(g_report_handler_context, index, &g_gamepads.raw[index]);
+    /* Test/vendor callers may not provide USB identity; expose a generic device. */
+    if (!g_devices[index].connected) {
+        g_devices[index].connected = 1U;
+        g_devices[index].home_button = UINT8_MAX;
+        (void)snprintf(g_devices[index].name, sizeof(g_devices[index].name), "USB controller %u", index + 1U);
+        load_controller_config(index);
+    }
+    g_devices[index].buttons_present |= report->buttons_mask | report->buttons;
+    g_devices[index].axis_mask |= report->axis_valid_mask;
+    const uint32_t previous = g_controller_output[index].actions;
+    mt_controls_evaluate(g_active_core_id, &g_controller_config[index],
+                         &g_gamepads.raw[index], previous, &g_controller_output[index]);
+    resolve_controller_players();
     if (!pad_active(&g_gamepads.raw[index])) g_release_guard[index] = 0U;
+    if (g_action_handler != NULL && !g_gamepad_preview) {
+        const uint32_t edges = g_controller_output[index].actions & ~previous;
+        if (edges & (UINT32_C(1) << MT_CONTROL_SCREENSHOT))
+            g_action_handler(g_action_handler_context, MT_CONTROL_SCREENSHOT);
+        if (edges & (UINT32_C(1) << MT_CONTROL_SCREENSHOT_OUTPUT))
+            g_action_handler(g_action_handler_context, MT_CONTROL_SCREENSHOT_OUTPUT);
+    }
     if (g_keyboard_filter != NULL && !g_gamepad_preview) {
         uint8_t keys[7], count = 0U;
         const mt_gamepad_state_t *raw = &g_gamepads.raw[index];
@@ -382,14 +641,15 @@ static void process_shared_report(uint8_t index, const mt_gamepad_report_t *repo
         if ((directions & 2U) != 0U) keys[count++] = 0x51U;
         if ((directions & 4U) != 0U) keys[count++] = 0x50U;
         if ((directions & 8U) != 0U) keys[count++] = 0x4fU;
-        if ((raw->buttons & 1U) != 0U) keys[count++] = 0x28U;
-        if ((raw->buttons & 2U) != 0U) keys[count++] = 0x29U;
-        if ((raw->buttons & 0x80U) != 0U) keys[count++] = 0x45U;
-        /* Menu edges use physical controls so changing mappings cannot make
-         * the settings page inaccessible. No synthetic keys reach a core. */
+        const bool menu = (g_controller_output[index].actions & (UINT32_C(1) << MT_CONTROL_MENU)) != 0U;
+        if (!menu && (raw->buttons & 1U) != 0U) keys[count++] = 0x28U;
+        if (!menu && (raw->buttons & 2U) != 0U) keys[count++] = 0x29U;
+        if (menu) keys[count++] = 0x45U;
+        /* Only the configured system action opens the menu. F12 from a real
+         * keyboard remains independent. Synthetic navigation never reaches a core. */
         (void)g_keyboard_filter(g_keyboard_filter_context, index, 0U, keys, count);
     }
-    deliver_gamepad(index);
+    deliver_controllers();
 }
 
 int usb_gamepad_input_connect(void)
@@ -438,13 +698,24 @@ static void process_gamepad_report(mt_hid_slot_t *slot,
             if (!extract_bits(item, data, length, field, &raw)) continue;
             const uint16_t usage = usage_for_field(item, field);
             if (item->attribute.usage_page == HID_USAGE_PAGE_BUTTON) {
-                /* Conventional generic pads use 9/10 for Select/Start. */
-                const unsigned button = usage == 9U ? 6U : usage == 10U ? 7U : (unsigned)usage - 1U;
-                if (button < 8U) {
+                if ((item->report_flags & HID_MAINITEM_VARIABLE) == 0U) {
+                    /* Array fields contain usage numbers, not one bit per key. */
                     report.buttons_valid = 1U;
-                    report.buttons_mask |= (uint8_t)(1U << button);
-                    if (raw != 0U) report.buttons |= (uint8_t)(1U << button);
+                    for (unsigned id = item->attribute.usage_min; id <= item->attribute.usage_max && id <= 32U; ++id)
+                        if (id != 0U) report.buttons_mask |= UINT32_C(1) << (id - 1U);
+                    if (raw >= item->attribute.usage_min && raw <= item->attribute.usage_max && raw > 0U && raw <= 32U)
+                        report.buttons |= UINT32_C(1) << (raw - 1U);
+                } else if (usage >= 1U && usage <= 32U) {
+                    report.buttons_valid = 1U;
+                    report.buttons_mask |= UINT32_C(1) << (usage - 1U);
+                    if (raw != 0U) report.buttons |= UINT32_C(1) << (usage - 1U);
                 }
+            } else if (item->attribute.usage_page == 2U && (usage == 0xc4U || usage == 0xc5U)) {
+                const unsigned axis = usage == 0xc4U ? MT_GAMEPAD_AXIS_Z : MT_GAMEPAD_AXIS_RZ;
+                report.axis_valid_mask |= (uint8_t)(1U << axis);
+                report.trigger_mask |= (uint8_t)(1U << axis);
+                report.axis[axis] = item_value(item, raw);
+                item_bounds(item, &report.logical_min[axis], &report.logical_max[axis]);
             } else if (item->attribute.usage_page == HID_USAGE_PAGE_GENERIC_DESKTOP_CONTROLS &&
                        (item->report_flags & HID_MAINITEM_VARIABLE) != 0U &&
                        (item->report_flags & HID_MAINITEM_RELATIVE) == 0U) {
@@ -511,8 +782,12 @@ static void report_complete(void *argument, int bytes)
             if (captured) {
                 submit_keyboard_state(slot->input_slot, 0U, NULL, 0U);
             } else {
+                uint8_t machine_keys[sizeof(keyboard->key)];
+                memcpy(machine_keys, keyboard->key, sizeof(machine_keys));
+                for (size_t key = 0U; key < sizeof(machine_keys); ++key)
+                    if (machine_keys[key] == 0x46U) machine_keys[key] = 0U;
                 submit_keyboard_state(slot->input_slot, keyboard->modifier,
-                                      keyboard->key, sizeof(keyboard->key));
+                                      machine_keys, sizeof(machine_keys));
             }
         } else if (slot->gamepad != 0U) {
             process_gamepad_report(slot, g_reports[index], (uint32_t)bytes);
@@ -612,9 +887,13 @@ static void xinput_report_complete(void *argument, int bytes)
             const uint8_t *data = g_xinput_reports[index];
             mt_gamepad_report_t report = {0};
             report.axis_valid_mask = 0x3fU;
+            report.trigger_mask = (1U << MT_GAMEPAD_AXIS_Z) | (1U << MT_GAMEPAD_AXIS_RZ);
             report.buttons_valid = 1U;
             report.buttons = (uint8_t)((data[3] >> 4U) | ((data[3] & 3U) << 4U) |
                 ((data[2] & 0x20U) << 1U) | ((data[2] & 0x10U) << 3U));
+            if (data[2] & 0x40U) report.buttons |= UINT32_C(1) << MT_USB_PAD_LEFT_STICK;
+            if (data[2] & 0x80U) report.buttons |= UINT32_C(1) << MT_USB_PAD_RIGHT_STICK;
+            if (data[3] & 4U) report.buttons |= UINT32_C(1) << MT_USB_PAD_HOME;
             static const uint8_t offsets[6] = {6U, 8U, 4U, 10U, 12U, 5U};
             for (unsigned axis = 0U; axis < 6U; ++axis) {
                 const unsigned offset = offsets[axis];
@@ -633,8 +912,7 @@ static void xinput_report_complete(void *argument, int bytes)
             uint8_t hat = 8U;
             for (uint8_t candidate = 0U; candidate < 8U; ++candidate)
                 if (mt_gamepad_hat_bits(candidate) == (data[2] & 15U)) hat = candidate;
-            process_shared_report(slot->input_slot, &report, hat,
-                (uint8_t)(((data[2] & 0xc0U) | (data[3] & 4U)) != 0U));
+            process_shared_report(slot->input_slot, &report, hat, 0U);
         } else {
             ++g_input_errors;
             slot->last_error = decode_result;
@@ -836,6 +1114,8 @@ void usbh_xbox_run(struct usbh_xbox *xbox)
     slot->input_slot = aggregate_slot;
     slot->xbox = xbox;
     slot->active = 1U;
+    usb_gamepad_input_identify(aggregate_slot, xbox->hport, xbox->intf,
+                               MT_CONTROLLER_TRANSPORT_XBOX360);
     xil_printf("[usb1] XInput connected slot=%u aggregate=%u\r\n",
                (unsigned int)xbox->minor, (unsigned int)aggregate_slot);
     submit_xinput_report(slot);
@@ -904,7 +1184,7 @@ static void parse_descriptor(mt_hid_slot_t *slot)
         g_last_error = result;
         return;
     }
-    result = usbh_hid_parse_report_descriptor(
+    result = mt_usb_parse_gamepad_descriptor(
         g_descriptors[index], slot->hid->report_size, &slot->report_info);
     if (result < 0) {
         slot->last_error = result;
@@ -912,6 +1192,24 @@ static void parse_descriptor(mt_hid_slot_t *slot)
         return;
     }
     slot->gamepad = descriptor_has_gamepad(slot) ? 1U : 0U;
+    if (slot->gamepad) {
+        uint32_t buttons = 0U;
+        uint8_t axes = 0U;
+        for (uint32_t i = 0U; i < slot->report_info.report_item_count; ++i) {
+            const struct usbh_hid_report_item *item = &slot->report_info.report_items[i];
+            if (item->attribute.usage_page == HID_USAGE_PAGE_BUTTON) {
+                for (unsigned usage = item->attribute.usage_min; usage <= item->attribute.usage_max && usage <= 32U; ++usage)
+                    if (usage > 0U) buttons |= UINT32_C(1) << (usage - 1U);
+            } else if (item->attribute.usage_page == HID_USAGE_PAGE_GENERIC_DESKTOP_CONTROLS &&
+                       item->attribute.usage_min >= HID_DESKTOP_USAGE_X && item->attribute.usage_min <= HID_DESKTOP_USAGE_RZ)
+                axes |= (uint8_t)(1U << (item->attribute.usage_min - HID_DESKTOP_USAGE_X));
+            else if (item->attribute.usage_page == 2U && (item->attribute.usage_min == 0xc4U || item->attribute.usage_min == 0xc5U))
+                axes |= (uint8_t)(1U << (item->attribute.usage_min == 0xc4U ? MT_GAMEPAD_AXIS_Z : MT_GAMEPAD_AXIS_RZ));
+        }
+        identify_controller(slot->input_slot, slot->hid->hport, slot->hid->intf,
+            MT_CONTROLLER_TRANSPORT_HID,
+            identity_hash(UINT32_C(2166136261), g_descriptors[index], slot->hid->report_size), buttons, axes);
+    }
 }
 
 static void host_event(uint8_t busid, uint8_t hub_index, uint8_t hub_port,
@@ -949,7 +1247,10 @@ void usbh_hid_run(struct usbh_hid *hid)
     } else {
         slot->ps4 = usb_ps4_supported(hid->hport->device_desc.idVendor,
                                       hid->hport->device_desc.idProduct);
-        if (slot->ps4 != 0U) slot->gamepad = 1U;
+        if (slot->ps4 != 0U) {
+            slot->gamepad = 1U;
+            usb_gamepad_input_identify(slot->input_slot, hid->hport, hid->intf, MT_CONTROLLER_TRANSPORT_PS4);
+        }
         else parse_descriptor(slot);
     }
     xil_printf("[usb1] HID connected slot=%u keyboard=%u gamepad=%u\r\n",
@@ -979,6 +1280,16 @@ void usbh_hid_stop(struct usbh_hid *hid)
 void usb_hid_service_init(mt_core_link_t *link)
 {
     mt_gamepad_init(&g_gamepads);
+    memset(g_devices, 0, sizeof(g_devices));
+    memset(g_controller_config, 0, sizeof(g_controller_config));
+    memset(g_controller_output, 0, sizeof(g_controller_output));
+    memset(g_controller_player, UINT8_MAX, sizeof(g_controller_player));
+    g_config_loader = NULL;
+    g_config_loader_context = NULL;
+    g_action_handler = NULL;
+    g_action_handler_context = NULL;
+    g_report_handler = NULL;
+    g_report_handler_context = NULL;
     memset(g_vendor_slots, 0, sizeof(g_vendor_slots));
     memset(g_release_guard, 0, sizeof(g_release_guard));
     g_menu_capture = false;
@@ -1093,6 +1404,9 @@ void usb_hid_service_set_active_core(uint32_t core_id)
 {
     g_core_ready = 0U;
     g_active_core_id = core_id;
+    for (uint8_t slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot)
+        g_release_guard[slot] = pad_active(&g_gamepads.raw[slot]) ? 1U : 0U;
+    refresh_controller_outputs(true, true);
     if (g_active_core_id == MT_VECTREX_CORE_ID)
         mt_vectrex_hid_reassert(&g_vectrex_input);
     else if (g_active_core_id == MT_GBC_CORE_ID)
@@ -1152,7 +1466,10 @@ void cherryusb_background_poll(void)
 
 int usb_hid_service_set_joystick_port(uint8_t port)
 {
-    return mt_c64_hid_set_joystick_port(&g_c64_input, port);
+    if (port != 1U && port != 2U) return -1;
+    g_c64_input.joystick_port = port;
+    refresh_controller_outputs(false, true);
+    return 0;
 }
 
 uint8_t usb_hid_service_joystick_port(void)
@@ -1300,4 +1617,94 @@ void usb_hid_service_get_gamepad_config(uint8_t slot, mt_gamepad_config_t *confi
 void usb_hid_service_set_gamepad_preview(bool preview)
 {
     g_gamepad_preview = preview;
+}
+
+void usb_hid_service_set_controller_config_loader(mt_usb_controller_config_fn loader,
+                                                  void *context)
+{
+    g_config_loader = loader;
+    g_config_loader_context = context;
+    refresh_controller_outputs(true, true);
+}
+
+bool usb_hid_service_controller_device(uint8_t slot, mt_controller_device_t *device)
+{
+    if (slot >= MT_GAMEPAD_SLOTS || device == NULL) return false;
+    *device = g_devices[slot];
+    return device->connected != 0U;
+}
+
+bool usb_hid_service_get_controller_config(uint8_t slot, mt_controller_config_t *config)
+{
+    if (slot >= MT_GAMEPAD_SLOTS || config == NULL || !g_devices[slot].connected) return false;
+    *config = g_controller_config[slot];
+    return true;
+}
+
+bool usb_hid_service_set_controller_config(uint8_t slot, const mt_controller_config_t *config)
+{
+    if (slot >= MT_GAMEPAD_SLOTS || !g_devices[slot].connected || config == NULL) return false;
+    mt_controller_config_t configs[MT_GAMEPAD_SLOTS];
+    memcpy(configs, g_controller_config, sizeof(configs));
+    configs[slot] = *config;
+    return usb_hid_service_set_controller_configs(configs);
+}
+
+bool usb_hid_service_validate_controller_configs(const mt_controller_config_t configs[MT_GAMEPAD_SLOTS])
+{
+    uint8_t explicit_ports = 0U;
+    if (configs == NULL) return false;
+    for (uint8_t slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot) {
+        if (!g_devices[slot].connected) continue;
+        const mt_controller_config_t *config = &configs[slot];
+        if (!mt_controls_config_valid(g_active_core_id, config)) return false;
+        if (config->assignment == MT_CONTROLLER_PORT2 && controller_player_count() < 2U) return false;
+        if (config->assignment == MT_CONTROLLER_PORT1 || config->assignment == MT_CONTROLLER_PORT2) {
+            const uint8_t bit = (uint8_t)(1U << (config->assignment - 1U));
+            if (explicit_ports & bit) return false;
+            explicit_ports |= bit;
+        }
+    }
+    return true;
+}
+
+bool usb_hid_service_set_controller_configs(const mt_controller_config_t configs[MT_GAMEPAD_SLOTS])
+{
+    if (!usb_hid_service_validate_controller_configs(configs)) return false;
+    for (uint8_t slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot) {
+        if (!g_devices[slot].connected) continue;
+        if (g_controller_config[slot].assignment != configs[slot].assignment)
+            g_controller_player[slot] = UINT8_MAX;
+        g_controller_config[slot] = configs[slot];
+        g_release_guard[slot] = pad_active(&g_gamepads.raw[slot]) ? 1U : 0U;
+    }
+    refresh_controller_outputs(false, false);
+    return true;
+}
+
+void usb_hid_service_controller_snapshot(uint8_t slot, mt_gamepad_state_t *raw,
+                                         mt_controls_output_t *output)
+{
+    if (slot >= MT_GAMEPAD_SLOTS) return;
+    if (raw != NULL) *raw = g_gamepads.raw[slot];
+    if (output != NULL) *output = g_controller_output[slot];
+}
+
+uint8_t usb_hid_service_controller_player(uint8_t slot)
+{
+    return slot < MT_GAMEPAD_SLOTS ? g_controller_player[slot] : UINT8_MAX;
+}
+
+void usb_hid_service_set_controller_action_handler(mt_usb_controller_action_fn handler,
+                                                    void *context)
+{
+    g_action_handler = handler;
+    g_action_handler_context = context;
+}
+
+void usb_hid_service_set_controller_report_handler(mt_usb_controller_report_fn handler,
+                                                    void *context)
+{
+    g_report_handler = handler;
+    g_report_handler_context = context;
 }

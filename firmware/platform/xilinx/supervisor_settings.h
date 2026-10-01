@@ -5,6 +5,7 @@
 #include "multitini_core_package.h"
 #include "multitini_video_effects.h"
 #include "multitini_gamepad.h"
+#include "multitini_controls.h"
 #include "sd_storage.h"
 
 #include <stdbool.h>
@@ -15,7 +16,8 @@
 #define MT_SETTINGS_JOURNAL_PATH "0:/multitini/settings.bin.mtj"
 #define MT_SETTINGS_MAX_PROFILES 16U
 #define MT_SETTINGS_MEDIA_NAME_MAX 96U
-#define MT_SETTINGS_WIRE_SIZE 5054U
+#define MT_SETTINGS_MAX_CONTROLLER_PROFILES 64U
+#define MT_SETTINGS_WIRE_SIZE 10950U
 #define MT_SETTINGS_BORDER_STYLE_DEFAULT 0U
 #define MT_SETTINGS_BORDER_COLOR_DEFAULT 7U
 #define MT_SETTINGS_BORDER_PADDING_DEFAULT 6U
@@ -43,12 +45,22 @@ typedef struct {
 } mt_core_settings_profile_t;
 
 typedef struct {
+    uint32_t core_id;
+    mt_controller_identity_t identity;
+    mt_controller_config_t config;
+} mt_controller_settings_profile_t;
+
+typedef struct {
     bool auto_boot;
     uint8_t display_mode;
     mt_gamepad_config_t gamepads[MT_GAMEPAD_SLOTS];
     char selected_core_id[MT_CORE_PACKAGE_ID_MAX];
     size_t profile_count;
     mt_core_settings_profile_t profiles[MT_SETTINGS_MAX_PROFILES];
+    /* Old slot maps are consumed once when their controller is identified. */
+    uint16_t legacy_gamepad_pending;
+    size_t controller_profile_count;
+    mt_controller_settings_profile_t controller_profiles[MT_SETTINGS_MAX_CONTROLLER_PROFILES];
 } mt_supervisor_settings_t;
 
 typedef enum {
@@ -99,6 +111,15 @@ bool mt_supervisor_settings_remember_vectrex_video(
 bool mt_supervisor_settings_remember_video_effects(
     mt_supervisor_settings_t *settings, const char *core_id,
     const mt_video_effects_settings_t *effects);
+/* Serial identity follows a controller between ports. Without a serial, the
+ * same physical port is required so identical controllers cannot swap maps. */
+const mt_controller_settings_profile_t *mt_supervisor_settings_find_controller(
+    const mt_supervisor_settings_t *settings, uint32_t core_id,
+    const mt_controller_identity_t *identity);
+bool mt_supervisor_settings_remember_controller(
+    mt_supervisor_settings_t *settings, uint32_t core_id,
+    const mt_controller_identity_t *identity,
+    const mt_controller_config_t *config);
 
 mt_settings_result_t mt_supervisor_settings_load(
     mt_supervisor_settings_t *settings);

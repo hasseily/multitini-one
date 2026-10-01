@@ -36,6 +36,7 @@ def main() -> int:
         "firmware/common/video_effects.c", "firmware/common/video_effects_frontend.c",
         "firmware/common/display.c",
         "firmware/common/gamepad.c",
+        "firmware/common/controls.c",
         "-Wl,--gc-sections", "-lm", "-o", str(binary),
     ]
     for command in (compile_command, [str(binary)]):

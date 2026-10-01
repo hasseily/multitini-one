@@ -11,9 +11,10 @@ enum { MT_GAMEPAD_AXIS_X, MT_GAMEPAD_AXIS_Y, MT_GAMEPAD_AXIS_Z,
        MT_GAMEPAD_AXIS_COUNT };
 #define MT_GAMEPAD_AXIS_OFF MT_GAMEPAD_AXIS_COUNT
 typedef struct {
-    uint8_t axis_valid_mask, buttons_valid, buttons;
+    uint8_t axis_valid_mask, buttons_valid, trigger_mask;
+    uint32_t buttons;
     /* Zero means all buttons, for complete vendor reports. */
-    uint8_t buttons_mask;
+    uint32_t buttons_mask;
     int32_t axis[MT_GAMEPAD_AXIS_COUNT];
     int32_t logical_min[MT_GAMEPAD_AXIS_COUNT];
     int32_t logical_max[MT_GAMEPAD_AXIS_COUNT];
@@ -28,7 +29,8 @@ typedef struct {
     uint8_t button[8];
 } mt_gamepad_config_t;
 typedef struct {
-    uint8_t connected, axis_valid_mask, buttons, hat, extra_active;
+    uint8_t connected, axis_valid_mask, hat, extra_active, trigger_mask;
+    uint32_t buttons;
     int16_t axis[MT_GAMEPAD_AXIS_COUNT];
 } mt_gamepad_state_t;
 typedef struct {

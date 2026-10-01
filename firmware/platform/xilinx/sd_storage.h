@@ -26,7 +26,9 @@ typedef enum {
     MT_SD_SEEK_FAILED,
     MT_SD_RENAME_FAILED,
     MT_SD_FILE_BUSY,
-    MT_SD_FILE_LIMIT
+    MT_SD_FILE_LIMIT,
+    MT_SD_FILE_EXISTS,
+    MT_SD_CREATE_DIR_FAILED
 } mt_sd_status_t;
 
 typedef struct {
@@ -76,17 +78,25 @@ mt_sd_result_t mt_sd_storage_journal_replace(const char *path,
                                              const uint8_t *src,
                                              size_t size);
 mt_sd_result_t mt_sd_storage_unmount(void);
+/* Ensure a directory through the existing mount/owner; an existing ordinary
+ * file at the path is an error. */
+mt_sd_result_t mt_sd_storage_ensure_directory(const char *path);
 
 /* Managed synchronous files share the same FatFs owner. A maximum of 16 may
  * stay open. Unmount refuses open files; callers close them before switching
  * cores. Duplicate access involving a writer, and rename/remove of open files,
  * are rejected. Text and binary modes both preserve bytes on disk.
  * r/w/a with optional b and + follow C stdio creation/access semantics.
+ * x (optionally b) creates a new file and never truncates an existing file.
  * Writes sync before returning; they are not journaled atomic replacements. */
 typedef struct mt_sd_file mt_sd_file_t;
 mt_sd_result_t mt_sd_file_open(const char *path, const char *mode, mt_sd_file_t **file);
 mt_sd_result_t mt_sd_file_read(mt_sd_file_t *file, void *data, size_t capacity);
 mt_sd_result_t mt_sd_file_write(mt_sd_file_t *file, const void *data, size_t size);
+/* Streaming temporary files may defer synchronization until close. Each
+ * write still reports short writes/errors; a successful close is required
+ * before renaming the temporary file to its final name. */
+mt_sd_result_t mt_sd_file_write_buffered(mt_sd_file_t *file, const void *data, size_t size);
 mt_sd_result_t mt_sd_file_seek(mt_sd_file_t *file, int64_t offset, int origin);
 int64_t mt_sd_file_tell(const mt_sd_file_t *file);
 int mt_sd_file_eof(const mt_sd_file_t *file); /* 0/1; -1 invalid handle */

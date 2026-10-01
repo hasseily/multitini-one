@@ -21,10 +21,10 @@ typedef struct {
     uint8_t usages[MT_C64_HID_SLOT_COUNT][MT_C64_HID_USAGE_BYTES];
     uint8_t joysticks[MT_C64_HID_SLOT_COUNT];
     uint8_t joystick_active[MT_C64_HID_SLOT_COUNT];
+    uint8_t player[MT_C64_HID_SLOT_COUNT]; /* 0/1 explicit, 2 legacy, 255 off. */
     uint8_t emitted_scans[MT_C64_HID_SCAN_BYTES];
-    uint8_t emitted_joystick;
+    uint8_t emitted_joystick[2];
     uint8_t joystick_port;
-    uint8_t emitted_joystick_port;
     mt_c64_keyboard_layout_t keyboard_layout;
     mt_c64_hid_emit_fn emit;
     void *emit_context;
@@ -37,6 +37,8 @@ int mt_c64_hid_keyboard_report(mt_c64_hid_input_t *input, uint8_t slot,
                                size_t key_count);
 int mt_c64_hid_joystick_report(mt_c64_hid_input_t *input, uint8_t slot,
                                uint8_t state);
+int mt_c64_hid_assigned_report(mt_c64_hid_input_t *input, uint8_t slot,
+                               uint8_t player, uint8_t state);
 int mt_c64_hid_disconnect(mt_c64_hid_input_t *input, uint8_t slot);
 int mt_c64_hid_set_joystick_port(mt_c64_hid_input_t *input, uint8_t port);
 int mt_c64_hid_set_keyboard_layout(mt_c64_hid_input_t *input,

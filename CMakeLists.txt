@@ -23,6 +23,8 @@ add_library(multitini_common STATIC
     firmware/common/c64_xinput.c
     firmware/common/display.c
     firmware/common/content_type.c
+    firmware/common/controls.c
+    firmware/common/screenshot.c
     firmware/common/core_frontend.c
     firmware/common/core_package.c
     firmware/common/core_link.c
@@ -57,6 +59,19 @@ enable_testing()
 add_executable(test_gamepad tests/host/test_gamepad.c)
 target_link_libraries(test_gamepad PRIVATE multitini_common)
 add_test(NAME gamepad COMMAND test_gamepad)
+
+add_executable(test_controls tests/host/test_controls.c)
+target_link_libraries(test_controls PRIVATE multitini_common)
+add_test(NAME controls COMMAND test_controls)
+
+add_executable(test_screenshot tests/host/test_screenshot.c)
+target_link_libraries(test_screenshot PRIVATE multitini_common)
+add_test(NAME screenshot COMMAND test_screenshot)
+
+add_executable(test_screenshot_service tests/host/test_screenshot_service.c)
+target_include_directories(test_screenshot_service PRIVATE firmware/platform/xilinx)
+target_link_libraries(test_screenshot_service PRIVATE multitini_common)
+add_test(NAME screenshot_service COMMAND test_screenshot_service)
 
 # Exercise the actual USB drivers against host-controller fault fixtures.
 # Initialize the pinned submodule before running the complete host suite.
@@ -106,6 +121,9 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 add_test(NAME text_document COMMAND test_text_document)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME screenshot_png COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/scripts/test_screenshot_png.py
+    --helper $<TARGET_FILE:test_screenshot>)
 add_test(NAME image_manifest COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_SOURCE_DIR}/scripts/test_image_manifest.py)
 add_test(NAME usb1_phy_startup COMMAND ${Python3_EXECUTABLE}

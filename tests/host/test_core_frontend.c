@@ -110,6 +110,7 @@ static void test_c64_capabilities(void)
           strcmp(view.media_items[2].value, "Test.crt") == 0,
           "attached cartridge keeps the detach action");
     check(strcmp(view.input_items[0].value, "US symbolic") == 0 &&
+          strcmp(view.input_items[1].label, "Keyboard joystick") == 0 &&
           strcmp(view.input_items[1].value, "Joystick port 1") == 0 &&
           strcmp(view.core_options[1].value, "Smart 2x") == 0,
           "profile reflects current input and CPU settings");
@@ -173,6 +174,7 @@ static void test_gameboy_saves_and_input(void)
           strstr(view.media_items[1].value, "Unavailable") != NULL,
           "old ABI does not claim persistent save support");
     check(view.input_item_count == 4U &&
+          strcmp(view.input_items[1].label, "Keyboard buttons") == 0 &&
           strcmp(view.input_items[1].value, "Z = A   X = B") == 0 &&
           strcmp(view.input_items[2].value, "Enter") == 0 &&
           strcmp(view.input_items[3].value, "Right Shift") == 0,

@@ -33,6 +33,70 @@ static _Noreturn void unexpected_service(void)
     abort();
 }
 
+/* GCC versions differ in which unreachable branches they discard after
+ * importing main.c. Keep their dependencies linkable, but fail if a video
+ * settings test actually reaches a timer, mode switch, USB or media action. */
+void XTime_GetTime(XTime *value)
+{
+    (void)value;
+    unexpected_service();
+}
+
+void mt_video_effect_service_suspend(void) { unexpected_service(); }
+bool mt_video_effect_service_quiescent(void) { unexpected_service(); }
+void usb_hid_service_poll_deferred(void) { unexpected_service(); }
+
+int usb_hid_service_set_symbolic_keyboard(bool enabled)
+{
+    (void)enabled;
+    unexpected_service();
+}
+
+int usb_hid_service_set_joystick_port(uint8_t port)
+{
+    (void)port;
+    unexpected_service();
+}
+
+void mt_ui_presenter_invalidate(mt_ui_presenter_t *presenter)
+{
+    (void)presenter;
+    unexpected_service();
+}
+
+int c64_d64_service_prepare_reset(void) { unexpected_service(); }
+int c64_d64_service_resume_after_reset(void) { unexpected_service(); }
+
+mt_c64_content_service_result_t c64_content_service_load(const char *name)
+{
+    (void)name;
+    unexpected_service();
+}
+
+const char *c64_content_service_status_name(mt_c64_content_service_status_t status)
+{
+    (void)status;
+    unexpected_service();
+}
+
+mt_content_type_t mt_content_classify(const char *path)
+{
+    (void)path;
+    unexpected_service();
+}
+
+const char *mt_content_validation_name(mt_content_validation_t validation)
+{
+    (void)validation;
+    unexpected_service();
+}
+
+const char *mt_c64_crt_hardware_name(uint16_t hardware_type)
+{
+    (void)hardware_type;
+    unexpected_service();
+}
+
 mt_link_result_t mt_core_link_command(mt_core_link_t *link, uint32_t opcode,
     const uint32_t args[4], uint32_t max_polls, mt_link_progress_fn progress,
     void *progress_context, mt_command_response_t *response)
@@ -119,7 +183,7 @@ mt_sd_result_t mt_sd_storage_journal_replace(const char *path,
     const mt_sd_result_t result = {test_save_status, 0U, size};
     assert(strcmp(path, MT_SETTINGS_PATH) == 0);
     assert(strcmp(journal_path, MT_SETTINGS_JOURNAL_PATH) == 0);
-    assert(source != NULL && source[8U] == 7U && size == 5054U);
+    assert(source != NULL && source[8U] == 8U && size == MT_SETTINGS_WIRE_SIZE);
     /* The visible hardware state must still have its previous value while
      * the complete settings write is in progress. */
     assert(test_mmio_writes == 0U);

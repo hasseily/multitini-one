@@ -11,6 +11,7 @@ typedef struct {
     uint16_t gamepad[MT_GAMEPAD_SLOTS];
     uint8_t connected[MT_GAMEPAD_SLOTS];
     uint8_t player[MT_GAMEPAD_SLOTS]; /* 0/1 or 0xff while unassigned. */
+    uint8_t assignment_explicit[MT_GAMEPAD_SLOTS];
     uint16_t emitted[2];
     uint8_t emitted_valid;
     mt_genesis_hid_emit_fn emit;
@@ -24,6 +25,8 @@ int mt_genesis_hid_keyboard_report(mt_genesis_hid_input_t *, uint8_t slot,
  * The common controller setup applies remapping before this function. */
 int mt_genesis_hid_gamepad_report(mt_genesis_hid_input_t *, uint8_t slot,
     const mt_gamepad_state_t *);
+int mt_genesis_hid_assigned_report(mt_genesis_hid_input_t *, uint8_t slot,
+    uint8_t player, const mt_gamepad_state_t *);
 int mt_genesis_hid_disconnect(mt_genesis_hid_input_t *, uint8_t slot);
 int mt_genesis_hid_release_all(mt_genesis_hid_input_t *);
 void mt_genesis_hid_reassert(mt_genesis_hid_input_t *);

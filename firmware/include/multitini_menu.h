@@ -6,6 +6,7 @@
 #include "multitini_ui.h"
 #include "multitini_clock.h"
 #include "multitini_gamepad.h"
+#include "multitini_controls.h"
 #include "multitini_text_reader.h"
 
 #include <stdbool.h>
@@ -142,6 +143,11 @@ typedef struct {
     mt_text_reader_t *text_reader;
     const char *text_title;
     mt_gamepad_state_t gamepad_preview;
+    uint32_t gamepad_core_id;
+    uint64_t gamepad_now_ms;
+    mt_controller_device_t gamepad_devices[MT_GAMEPAD_SLOTS];
+    /* Current live routing: player/port 0 or 1; UINT8_MAX means unassigned. */
+    uint8_t gamepad_player[MT_GAMEPAD_SLOTS];
     bool clock_available;
     bool clock_valid;
     mt_clock_time_t clock;
@@ -176,7 +182,14 @@ typedef struct {
     size_t first_row;
     bool gamepad_edit;
     uint8_t gamepad_slot, gamepad_control, gamepad_field;
-    mt_gamepad_config_t gamepad_config[MT_GAMEPAD_SLOTS];
+    bool gamepad_capture, gamepad_test, gamepad_sticks, gamepad_wizard;
+    bool gamepad_capture_armed, gamepad_conflict;
+    uint16_t gamepad_pending_source;
+    uint64_t gamepad_capture_started;
+    mt_gamepad_state_t gamepad_previous;
+    mt_controller_config_t gamepad_config[MT_GAMEPAD_SLOTS];
+    mt_controller_config_t gamepad_original[MT_GAMEPAD_SLOTS];
+    char gamepad_notice[160];
     bool clock_edit;
     size_t clock_field;
     mt_clock_time_t clock;
@@ -188,6 +201,7 @@ enum {
     MT_MENU_HID_BACKSPACE = 0x2A,
     MT_MENU_HID_TAB = 0x2B,
     MT_MENU_HID_HOME = 0x4A,
+    MT_MENU_HID_DELETE = 0x4C,
     MT_MENU_HID_PAGE_UP = 0x4B,
     MT_MENU_HID_END = 0x4D,
     MT_MENU_HID_PAGE_DOWN = 0x4E,
@@ -210,5 +224,12 @@ mt_menu_action_t mt_menu_key_with_modifiers(mt_menu_t *menu,
 void mt_menu_render(const mt_menu_t *menu, const mt_menu_view_t *view,
                     mt_ui_frame_t *frame);
 const char *mt_menu_page_name(mt_menu_page_t page);
+/* The runtime supplies only the selected device's raw preview. Drafts remain
+ * private to the menu until SET_GAMEPADS is acknowledged by saved(). */
+void mt_menu_gamepad_begin(mt_menu_t *menu, const mt_menu_view_t *view,
+                           const mt_controller_config_t *configs);
+bool mt_menu_gamepad_update(mt_menu_t *menu, const mt_menu_view_t *view);
+void mt_menu_gamepad_saved(mt_menu_t *menu);
+bool mt_menu_gamepad_dirty(const mt_menu_t *menu);
 
 #endif

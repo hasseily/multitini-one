@@ -26,6 +26,8 @@ int main(void)
     const uint8_t button_mask[] = {0x20, 0x40, 0x10, 0x80, 1, 2, 0x10, 0x20};
     const uint8_t extra_byte[] = {6, 6, 6, 6, 7, 7};
     const uint8_t extra_mask[] = {4, 8, 0x40, 0x80, 1, 2};
+    const uint8_t extra_button[] = {MT_USB_PAD_LEFT_TRIGGER, MT_USB_PAD_RIGHT_TRIGGER,
+        MT_USB_PAD_LEFT_STICK, MT_USB_PAD_RIGHT_STICK, MT_USB_PAD_HOME, MT_USB_PAD_TOUCHPAD};
     const uint8_t axis_byte[] = {1, 2, 8, 3, 4, 9};
 
     CHECK(usb_ps4_supported(0x054c, 0x05c4), "first DS4 revision missing");
@@ -39,6 +41,8 @@ int main(void)
           "complete state not published");
     CHECK(hat == 8 && extra == 0 && report.buttons == 0,
           "neutral controller holds a button or direction");
+    CHECK(report.trigger_mask == ((1U << MT_GAMEPAD_AXIS_Z) | (1U << MT_GAMEPAD_AXIS_RZ)),
+          "trigger rest semantics missing");
     CHECK(report.axis[0] == 128 && report.axis[1] == 128 &&
           report.axis[3] == 128 && report.axis[4] == 128 &&
           report.axis[2] == 0 && report.axis[5] == 0,
@@ -73,9 +77,10 @@ int main(void)
     for (unsigned button = 0; button < 6; ++button) {
         neutral(data);
         data[extra_byte[button]] |= extra_mask[button];
-        CHECK(usb_ps4_decode(data, 64, &report, &hat, &extra) && extra == 1,
-              "held auxiliary button missed by release guard");
-        CHECK(report.buttons == 0, "auxiliary button leaked into Apple buttons");
+        CHECK(usb_ps4_decode(data, 64, &report, &hat, &extra) && extra == 0,
+              "auxiliary report rejected");
+        CHECK(report.buttons == (UINT32_C(1) << extra_button[button]),
+              "auxiliary button lost its independent identity");
     }
     neutral(data);
     data[7] = 0xfc;
@@ -105,6 +110,6 @@ int main(void)
     CHECK(!usb_ps4_decode(data, 64, &report, &hat, NULL), "null extra accepted");
     CHECK(!memcmp(&report, &unchanged, sizeof(report)) && hat == 55 && extra == 66,
           "rejected packet changed held state");
-    puts("PASS wired PS4 reports: six axes, eight buttons, hat, release guard, bounds");
+    puts("PASS wired PS4 reports: six axes, fourteen buttons, hat and bounds");
     return 0;
 }

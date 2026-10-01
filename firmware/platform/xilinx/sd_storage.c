@@ -533,6 +533,8 @@ const char *mt_sd_status_name(mt_sd_status_t status)
     case MT_SD_RENAME_FAILED: return "rename failed";
     case MT_SD_FILE_BUSY: return "file busy";
     case MT_SD_FILE_LIMIT: return "too many open files";
+    case MT_SD_FILE_EXISTS: return "file exists";
+    case MT_SD_CREATE_DIR_FAILED: return "directory creation failed";
     }
     return "unknown";
 }
@@ -563,7 +565,7 @@ mt_sd_result_t mt_sd_file_open(const char *path, const char *mode, mt_sd_file_t 
     FRESULT status;
     if (file != NULL) *file = NULL;
     if (file == NULL || path == NULL || path[0] == '\0' || strlen(path) >= 512U ||
-        mode == NULL || (mode[0] != 'r' && mode[0] != 'w' && mode[0] != 'a'))
+        mode == NULL || (mode[0] != 'r' && mode[0] != 'w' && mode[0] != 'a' && mode[0] != 'x'))
         return result(MT_SD_INVALID_ARGUMENT, FR_INVALID_PARAMETER, 0U);
     for (index = 1U; mode[index] != '\0'; ++index) {
         if (mode[index] == 'b' && !binary) binary = true;
@@ -579,10 +581,11 @@ mt_sd_result_t mt_sd_file_open(const char *path, const char *mode, mt_sd_file_t 
     mounted = mt_sd_storage_mount();
     if (mounted.status != MT_SD_OK) return mounted;
     if (mode[0] == 'w') flags |= FA_CREATE_ALWAYS;
+    if (mode[0] == 'x') flags |= FA_CREATE_NEW;
     if (mode[0] == 'a') flags |= FA_OPEN_ALWAYS;
     memset(&open_files[index], 0, sizeof(open_files[index]));
     status = f_open(&open_files[index].native, path, flags);
-    if (status != FR_OK) return result(MT_SD_OPEN_FAILED, status, 0U);
+    if (status != FR_OK) return result(status == FR_EXIST ? MT_SD_FILE_EXISTS : MT_SD_OPEN_FAILED, status, 0U);
     open_files[index].active = true;
     open_files[index].access = flags & (FA_READ | FA_WRITE);
     open_files[index].append = mode[0] == 'a';
@@ -619,7 +622,8 @@ mt_sd_result_t mt_sd_file_read(mt_sd_file_t *file, void *data, size_t capacity)
     return result(MT_SD_OK, FR_OK, total);
 }
 
-mt_sd_result_t mt_sd_file_write(mt_sd_file_t *file, const void *data, size_t size)
+static mt_sd_result_t managed_write(mt_sd_file_t *file, const void *data, size_t size,
+                                    bool synchronize)
 {
     mt_sd_result_t written;
     FRESULT status;
@@ -648,10 +652,15 @@ mt_sd_result_t mt_sd_file_write(mt_sd_file_t *file, const void *data, size_t siz
     }
     written = write_open_file(&file->native, data, size);
     file->position += written.size;
-    if (written.status != MT_SD_OK) return written;
+    if (written.status != MT_SD_OK || !synchronize) return written;
     status = f_sync(&file->native);
     return status == FR_OK ? written : result(MT_SD_SYNC_FAILED, status, written.size);
 }
+
+mt_sd_result_t mt_sd_file_write(mt_sd_file_t *file, const void *data, size_t size)
+{ return managed_write(file,data,size,true); }
+mt_sd_result_t mt_sd_file_write_buffered(mt_sd_file_t *file, const void *data, size_t size)
+{ return managed_write(file,data,size,false); }
 
 mt_sd_result_t mt_sd_file_seek(mt_sd_file_t *file, int64_t offset, int origin)
 {
@@ -708,5 +717,23 @@ mt_sd_result_t mt_sd_file_rename(const char *old_path, const char *new_path)
     mounted = mt_sd_storage_mount();
     if (mounted.status != MT_SD_OK) return mounted;
     status = f_rename(old_path, new_path);
-    return result(status == FR_OK ? MT_SD_OK : MT_SD_RENAME_FAILED, status, 0U);
+    return result(status == FR_OK ? MT_SD_OK : status == FR_EXIST ? MT_SD_FILE_EXISTS : MT_SD_RENAME_FAILED, status, 0U);
+}
+
+mt_sd_result_t mt_sd_storage_ensure_directory(const char *path)
+{
+    mt_sd_result_t mounted;
+    FRESULT status;
+    DIR directory;
+    if(path == NULL || path[0] == '\0') return result(MT_SD_INVALID_ARGUMENT, FR_INVALID_PARAMETER, 0U);
+    mounted=mt_sd_storage_mount();
+    if(mounted.status != MT_SD_OK) return mounted;
+    status=f_mkdir(path);
+    if(status == FR_EXIST) {
+        status=f_opendir(&directory,path);
+        if(status != FR_OK) return result(MT_SD_CREATE_DIR_FAILED,status,0U);
+        status=f_closedir(&directory);
+        return result(status == FR_OK ? MT_SD_OK : MT_SD_DIR_CLOSE_FAILED,status,0U);
+    }
+    return result(status == FR_OK ? MT_SD_OK : MT_SD_CREATE_DIR_FAILED,status,0U);
 }

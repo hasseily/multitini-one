@@ -188,6 +188,13 @@ int usb_gamepad_input_connect(void)
     return allocated_slot;
 }
 
+void usb_gamepad_input_identify(uint8_t slot, struct usbh_hubport *port,
+                                uint8_t interface_id, uint8_t transport)
+{
+    CHECK(slot == (uint8_t)allocated_slot && port != NULL && interface_id == 0U && transport == 2U,
+          "controller identity not published");
+}
+
 void usb_gamepad_input_disconnect(uint8_t slot)
 {
     CHECK(slot == (uint8_t)allocated_slot, "disconnect released another device slot");
@@ -790,17 +797,18 @@ static void test_input_and_ack(void)
               "axis ranges do not match wire values");
     }
     mt_gamepad_report_t saved = last_report;
+    saved.buttons |= UINT32_C(1) << MT_USB_PAD_HOME;
     receive(guide, sizeof(guide));
     CHECK(pending[0] != NULL && pending_out_length == sizeof(ack) &&
           memcmp(pending_out_copy, ack, sizeof(ack)) == 0,
           "guide ACK bytes or echoed sequence are wrong");
-    CHECK(memcmp(&saved, &last_report, sizeof(saved)) == 0 && last_extra != 0U,
+    CHECK(memcmp(&saved, &last_report, sizeof(saved)) == 0 && last_extra == 0U,
           "guide press lost the main input state");
     /* Incoming input remains live while an ACK owns the output buffer. */
     data[4] = 0x10U;
     data[5] = 0xc0U;
     receive(data, sizeof(data));
-    CHECK(last_report.buttons == 1U && last_hat == 8U && last_extra != 0U,
+    CHECK(last_report.buttons == 0x701U && last_hat == 8U && last_extra == 0U,
           "input stalled behind output or stick-click activity was lost");
     complete(0U, NULL, sizeof(ack));
     tick(0U);
@@ -809,10 +817,10 @@ static void test_input_and_ack(void)
     guide[4] = 0U;
     receive(guide, sizeof(guide));
     CHECK(pending[0] == NULL, "guide message without request bit was ACKed");
-    CHECK(last_extra != 0U, "guide release lost held stick-click state");
+    CHECK(last_report.buttons == 0x301U, "guide release lost held stick-click state");
     data[5] = 0U;
     receive(data, sizeof(data));
-    CHECK(last_extra == 0U, "release did not clear extra button activity");
+    CHECK(last_report.buttons == 1U && last_extra == 0U, "release did not clear stick-click state");
     disconnect_device();
     CHECK(disconnects == 1U, "disconnect did not release shared slot");
     puts("PASS report mapping, guide ACK, and independent IN/OUT");
@@ -1086,7 +1094,8 @@ static void test_output_failure_with_live_input(void)
     void *late_arg = pending[1]->arg;
     for (unsigned i=0; i<8U; ++i) {
         receive(guide, sizeof(guide));
-        CHECK(last_extra == 1U, "Guide-down report did not reach held-input tracking");
+        CHECK((last_report.buttons & (UINT32_C(1) << MT_USB_PAD_HOME)) != 0U,
+              "Guide-down report lost its separate button identity");
         complete(0U, NULL, -USB_ERR_IO);
         tick(10U);
     }

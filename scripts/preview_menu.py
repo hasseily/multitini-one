@@ -40,6 +40,9 @@ SCENARIOS = {
     "gbc-media": "Game Boy Color: saved",
     "gbc-save-failure": "Game Boy Color: save failure",
     "gbc-input": "Game Boy Color controls",
+    "gbc-controls": "Controller assignments for the running core",
+    "gbc-controls-capture": "Press-to-assign with menu navigation paused",
+    "gbc-controls-test": "Independent buttons and axes in the controller tester",
     "browser-long": "144-file browser, scrolled, with long names",
     "catalog-16": "16-core catalog with synthetic preview fixtures",
     "options-16": "16 settings on one page with synthetic preview fixtures",
@@ -49,6 +52,9 @@ SOURCES = [
     "firmware/common/menu.c",
     "firmware/common/ui.c",
     "firmware/common/core_frontend.c",
+    "firmware/common/controls.c",
+    "firmware/common/gamepad.c",
+    "firmware/common/display.c",
     "firmware/common/system_frontend.c",
     "firmware/common/text_reader.c",
     "firmware/common/clock.c",
@@ -117,21 +123,22 @@ def verify_geometry(source: str, geometry: Geometry) -> None:
         "localparam int COLUMNS = MT_UI_COLUMNS;",
         "localparam int ROWS = MT_UI_ROWS;",
         "assign columns = active_dense ? MT_UI_COLUMNS : MT_UI_LEGACY_COLUMNS;",
-        "assign cell_width = active_dense ? MT_UI_CELL_WIDTH : MT_UI_LEGACY_CELL_WIDTH;",
-        "assign cell_height = active_dense ? MT_UI_CELL_HEIGHT : MT_UI_LEGACY_CELL_HEIGHT;",
+        "cell_width = active_dense ? MT_UI_CELL_WIDTH : MT_UI_LEGACY_CELL_WIDTH;",
+        "cell_height = active_dense ? MT_UI_CELL_HEIGHT : MT_UI_LEGACY_CELL_HEIGHT;",
         f"parameter int H_ACTIVE = {geometry.width},",
         f"parameter int V_ACTIVE = {geometry.height},",
         "if (fetch_local_x == cell_width - 1)",
         "if (fetch_local_y == cell_height - 1)",
-        "if (active_dense) begin "
-        "if (local_y_qq >= MT_UI_GLYPH_Y && "
-        "local_y_qq < MT_UI_GLYPH_Y + 8 * MT_UI_FONT_SCALE) "
-        "glyph_row = glyph_q[(((local_y_qq - MT_UI_GLYPH_Y) / MT_UI_FONT_SCALE) * 8) +: 8]; "
-        "if (local_x_qq >= MT_UI_GLYPH_X && "
-        "local_x_qq < MT_UI_GLYPH_X + 7 * MT_UI_FONT_SCALE && "
-        "local_y_qq >= MT_UI_GLYPH_Y && "
-        "local_y_qq < MT_UI_GLYPH_Y + 8 * MT_UI_FONT_SCALE) "
-        "glyph_pixel = glyph_row[(local_x_qq - MT_UI_GLYPH_X) / MT_UI_FONT_SCALE];",
+        # Native 1080p dense layout: smaller output modes use another glyph path.
+        "else if (active_dense) begin "
+        "if (local_x_q >= MT_UI_GLYPH_X && "
+        "local_x_q < MT_UI_GLYPH_X + 7 * MT_UI_FONT_SCALE && "
+        "local_y_q >= MT_UI_GLYPH_Y && "
+        "local_y_q < MT_UI_GLYPH_Y + 8 * MT_UI_FONT_SCALE) begin "
+        "glyph_x_index = (local_x_q - MT_UI_GLYPH_X) / MT_UI_FONT_SCALE; "
+        "glyph_y_index = (local_y_q - MT_UI_GLYPH_Y) / MT_UI_FONT_SCALE; "
+        "glyph_in_bounds = 1'b1;",
+        "glyph_pixel = glyph_in_bounds_q && glyph_q[{glyph_y_q, glyph_x_q}];",
     ]
     if any(re.sub(r"\s+", "", expression) not in compact for expression in required):
         raise ValueError("Overlay geometry changed; update the preview rasterizer")
@@ -174,6 +181,8 @@ def main() -> int:
     provenance = SOURCES + [
         "firmware/include/multitini_menu.h", "firmware/include/multitini_ui.h",
           "firmware/include/multitini_core_frontend.h", "scripts/preview_menu.py",
+          "firmware/include/multitini_controls.h", "firmware/include/multitini_gamepad.h",
+          "firmware/include/multitini_display.h",
           "firmware/include/multitini_video_effects.h", "firmware/include/multitini_video_effects_frontend.h",
         "firmware/include/multitini_regs.h", "hdl/generated/multitini_regs_pkg.sv",
         str(FONT.relative_to(ROOT)), str(OVERLAY.relative_to(ROOT)),

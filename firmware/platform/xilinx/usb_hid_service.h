@@ -4,6 +4,7 @@
 
 #include "multitini_core_link.h"
 #include "multitini_gamepad.h"
+#include "multitini_controls.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -55,5 +56,26 @@ void usb_hid_service_gamepad_snapshot(uint8_t slot, mt_gamepad_state_t *raw,
                                       mt_gamepad_state_t *mapped);
 bool usb_hid_service_set_gamepad_config(uint8_t slot, const mt_gamepad_config_t *config);
 void usb_hid_service_get_gamepad_config(uint8_t slot, mt_gamepad_config_t *config);
+
+typedef bool (*mt_usb_controller_config_fn)(void *context, uint32_t core_id,
+    uint8_t slot, const mt_controller_device_t *device, mt_controller_config_t *config);
+void usb_hid_service_set_controller_config_loader(mt_usb_controller_config_fn loader,
+                                                  void *context);
+bool usb_hid_service_controller_device(uint8_t slot, mt_controller_device_t *device);
+bool usb_hid_service_get_controller_config(uint8_t slot, mt_controller_config_t *config);
+bool usb_hid_service_set_controller_config(uint8_t slot, const mt_controller_config_t *config);
+bool usb_hid_service_validate_controller_configs(const mt_controller_config_t configs[MT_GAMEPAD_SLOTS]);
+bool usb_hid_service_set_controller_configs(const mt_controller_config_t configs[MT_GAMEPAD_SLOTS]);
+void usb_hid_service_controller_snapshot(uint8_t slot, mt_gamepad_state_t *raw,
+                                         mt_controls_output_t *output);
+/* Zero/one are machine ports 1/2; 255 means connected but unassigned. */
+uint8_t usb_hid_service_controller_player(uint8_t slot);
+typedef void (*mt_usb_controller_action_fn)(void *context, unsigned action);
+void usb_hid_service_set_controller_action_handler(mt_usb_controller_action_fn handler,
+                                                    void *context);
+typedef void (*mt_usb_controller_report_fn)(void *context, uint8_t slot,
+                                            const mt_gamepad_state_t *raw);
+void usb_hid_service_set_controller_report_handler(mt_usb_controller_report_fn handler,
+                                                    void *context);
 
 #endif

@@ -8,6 +8,7 @@ void mt_vectrex_hid_input_init(mt_vectrex_hid_input_t *in,
 {
     if (in == NULL) return;
     memset(in, 0, sizeof(*in)); in->emit = emit; in->context = context;
+    memset(in->player, 2, sizeof(in->player));
 }
 
 int16_t mt_vectrex_axis_normalize(int32_t value, int32_t low, int32_t high)
@@ -32,12 +33,13 @@ void mt_vectrex_hid_controls(const mt_vectrex_hid_input_t *in, int controls[2][6
     for (slot = 0U; slot < MT_VECTREX_HID_SLOTS; ++slot) {
         directions |= in->keyboard_directions[slot];
         keyboard |= in->keyboard_buttons[slot];
-        if (in->pad_active[slot] == 0U || player >= 2U) continue;
-        controls[player][0] = in->pad_x[slot];
-        controls[player][1] = in->pad_y[slot];
+        if (in->pad_active[slot] == 0U) continue;
+        const unsigned target = in->player[slot] == 2U ? player++ : in->player[slot];
+        if (target >= 2U) continue;
+        controls[target][0] = in->pad_x[slot];
+        controls[target][1] = in->pad_y[slot];
         for (button = 0U; button < 4U; ++button)
-            controls[player][button + 2U] = (in->pad_buttons[slot] >> button) & 1U;
-        ++player;
+            controls[target][button + 2U] = (int)(((unsigned)in->pad_buttons[slot] >> button) & 1U);
     }
     if ((directions & 12U) != 0U)
         controls[0][0] = (directions & 12U) == 12U ? 0 :
@@ -117,6 +119,15 @@ int mt_vectrex_hid_disconnect(mt_vectrex_hid_input_t *in, uint8_t slot)
     in->keyboard_buttons[slot] = 0U; in->keyboard_directions[slot] = 0U;
     in->pad_active[slot] = 0U;
     return mt_vectrex_hid_input_poll(in);
+}
+
+int mt_vectrex_hid_assigned_report(mt_vectrex_hid_input_t *in, uint8_t slot,
+    uint8_t player, uint8_t buttons, int16_t x, int16_t y)
+{
+    if (in == NULL || slot >= MT_VECTREX_HID_SLOTS ||
+        (player >= 2U && player != UINT8_MAX)) return -1;
+    in->player[slot] = player;
+    return mt_vectrex_hid_gamepad_report(in, slot, buttons, x, y);
 }
 
 void mt_vectrex_hid_reassert(mt_vectrex_hid_input_t *in)

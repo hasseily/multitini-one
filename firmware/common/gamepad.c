@@ -81,13 +81,15 @@ void mt_gamepad_report(mt_gamepad_input_t *input, uint8_t slot,
     mt_gamepad_state_t *state = &input->raw[slot];
     state->connected = 1U;
     if (report->buttons_valid != 0U) {
-        const uint8_t mask = report->buttons_mask == 0U ? UINT8_MAX : report->buttons_mask;
-        state->buttons = (uint8_t)((state->buttons & (uint8_t)~mask) | (report->buttons & mask));
+        const uint32_t mask = report->buttons_mask == 0U ? UINT32_MAX : report->buttons_mask;
+        state->buttons = (state->buttons & ~mask) | (report->buttons & mask);
     }
     for (unsigned i = 0U; i < MT_GAMEPAD_AXIS_COUNT; ++i) {
         if ((report->axis_valid_mask & (1U << i)) == 0U) continue;
         state->axis[i] = normalize(report->axis[i], report->logical_min[i], report->logical_max[i]);
         state->axis_valid_mask |= (uint8_t)(1U << i);
+        state->trigger_mask = (uint8_t)((state->trigger_mask & (uint8_t)~(1U << i)) |
+            (report->trigger_mask & (1U << i)));
     }
     /* 255 means absent in a partial report; 8 means explicitly neutral. */
     if (hat != UINT8_MAX) state->hat = hat < 8U ? hat : 8U;
@@ -143,7 +145,7 @@ uint8_t mt_gamepad_digital(const mt_gamepad_state_t *state)
     if (state->axis[MT_GAMEPAD_AXIS_Y] < -10922) bits |= 1U;
     if (state->axis[MT_GAMEPAD_AXIS_Y] > 10922) bits |= 2U;
     /* Preserve the existing C64/GB four-action encoding. */
-    bits |= (uint8_t)((state->buttons & 15U) << 4U);
-    bits |= state->buttons & 0xc0U;
+    bits = (uint8_t)((unsigned)bits | ((state->buttons & 15U) << 4U));
+    bits = (uint8_t)((unsigned)bits | (state->buttons & 0xc0U));
     return bits;
 }

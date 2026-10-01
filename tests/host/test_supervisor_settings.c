@@ -1,5 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "supervisor_settings.h"
+#include "multitini_c64_interface.h"
+#include "multitini_gameboy_interface.h"
+#include "multitini_genesis_interface.h"
 
 #include <assert.h>
 #include <stdbool.h>
@@ -17,6 +20,7 @@
 #define PROFILE_SIZE 290U
 #define V5_WIRE_SIZE 4696U
 #define V6_WIRE_SIZE 5038U
+#define V7_WIRE_SIZE 5054U
 
 static mt_sd_status_t recover_status;
 static mt_sd_status_t read_status;
@@ -64,7 +68,7 @@ static void convert_stored_to_legacy(uint32_t schema)
     uint8_t current[MT_SETTINGS_WIRE_SIZE];
     const size_t profile_size = schema >= 5U ? PROFILE_SIZE : schema == 4U ? V4_PROFILE_SIZE :
         schema == 3U ? V3_PROFILE_SIZE : LEGACY_PROFILE_SIZE;
-    const size_t wire_size = schema == 6U ? V6_WIRE_SIZE : schema == 5U ? V5_WIRE_SIZE : schema == 4U ? V4_WIRE_SIZE :
+    const size_t wire_size = schema == 7U ? V7_WIRE_SIZE : schema == 6U ? V6_WIRE_SIZE : schema == 5U ? V5_WIRE_SIZE : schema == 4U ? V4_WIRE_SIZE :
         schema == 3U ? V3_WIRE_SIZE : LEGACY_WIRE_SIZE;
     size_t index;
     assert(stored_size == MT_SETTINGS_WIRE_SIZE);
@@ -75,7 +79,7 @@ static void convert_stored_to_legacy(uint32_t schema)
         memcpy(stored_file + 56U + index * profile_size,
                current + 56U + index * PROFILE_SIZE, profile_size);
     }
-    if (schema == 6U) memcpy(stored_file + V5_WIRE_SIZE, current + V5_WIRE_SIZE, V6_WIRE_SIZE - V5_WIRE_SIZE);
+    if (schema >= 6U) memcpy(stored_file + V5_WIRE_SIZE, current + V5_WIRE_SIZE, wire_size - V5_WIRE_SIZE);
     stored_size = wire_size;
     store_u32_le(stored_file + 8U, schema);
     store_u32_le(stored_file + 12U, (uint32_t)wire_size);
@@ -107,7 +111,7 @@ mt_sd_result_t mt_sd_storage_read_file_optional_exact(
     assert(strcmp(path, MT_SETTINGS_PATH) == 0);
     assert(destination != NULL && found != NULL);
     assert(expected_size == MT_SETTINGS_WIRE_SIZE || expected_size == LEGACY_WIRE_SIZE ||
-           expected_size == V3_WIRE_SIZE || expected_size == V4_WIRE_SIZE || expected_size == V5_WIRE_SIZE || expected_size == V6_WIRE_SIZE);
+           expected_size == V3_WIRE_SIZE || expected_size == V4_WIRE_SIZE || expected_size == V5_WIRE_SIZE || expected_size == V6_WIRE_SIZE || expected_size == V7_WIRE_SIZE);
     ++read_calls;
     *found = false;
     if (read_status != MT_SD_OK) return sd_result(read_status, 0U);
@@ -302,7 +306,7 @@ static void test_borders(void)
         assert(mt_supervisor_settings_remember_borders(&settings, "vectrex",
             enabled, style, color, padding));
         assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
-        assert(stored_file[8U] == 7U && stored_size == MT_SETTINGS_WIRE_SIZE);
+        assert(stored_file[8U] == 8U && stored_size == MT_SETTINGS_WIRE_SIZE);
         assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
         profile = mt_supervisor_settings_find(&loaded, "vectrex");
         assert(profile->border_enabled == enabled && profile->border_style == style &&
@@ -364,7 +368,7 @@ static void test_vectrex_video_settings(void)
         const uint8_t opacity = (uint8_t)((value >> 3U) & 3U);
         assert(mt_supervisor_settings_remember_vectrex_video(&settings, "vectrex", enabled, gain, opacity));
         assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
-        assert(stored_file[8U] == 7U && stored_size == MT_SETTINGS_WIRE_SIZE && stored_file[56U + 251U] == 0U);
+        assert(stored_file[8U] == 8U && stored_size == MT_SETTINGS_WIRE_SIZE && stored_file[56U + 251U] == 0U);
         assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
         assert(memcmp(&loaded, &settings, sizeof(settings)) == 0);
         assert(loaded.profiles[1].vectrex_beam_gain == 1U &&
@@ -396,7 +400,7 @@ static void test_legacy_migration(void)
     mt_supervisor_settings_t settings;
     mt_supervisor_settings_t loaded;
     mt_supervisor_settings_t expected;
-    uint8_t legacy_wire[V6_WIRE_SIZE];
+    uint8_t legacy_wire[V7_WIRE_SIZE];
     uint32_t schema;
     size_t index;
     reset_fake();
@@ -424,10 +428,11 @@ static void test_legacy_migration(void)
     assert(mt_supervisor_settings_remember_vectrex_video(&settings, "vectrex", false, 3U, 0U));
     assert(mt_video_effects_set(&settings.profiles[0].video_effects,
                                 MT_VIDEO_EFFECT_HUE, -120));
-    for (schema = 1U; schema <= 6U; ++schema) {
-        const size_t wire_size = schema == 6U ? V6_WIRE_SIZE : schema == 5U ? V5_WIRE_SIZE : schema == 4U ? V4_WIRE_SIZE :
+    for (schema = 1U; schema <= 7U; ++schema) {
+        const size_t wire_size = schema == 7U ? V7_WIRE_SIZE : schema == 6U ? V6_WIRE_SIZE : schema == 5U ? V5_WIRE_SIZE : schema == 4U ? V4_WIRE_SIZE :
             schema == 3U ? V3_WIRE_SIZE : LEGACY_WIRE_SIZE;
         expected = settings;
+        expected.legacy_gamepad_pending = (1U << MT_GAMEPAD_SLOTS) - 1U;
         for (index = 0U; index < expected.profile_count; ++index) {
             if (schema < 5U) mt_video_effects_defaults(&expected.profiles[index].video_effects);
             if (schema < 3U) {
@@ -457,7 +462,7 @@ static void test_legacy_migration(void)
         /* Read-only migration leaves old bytes intact until the user saves. */
         assert(memcmp(stored_file, legacy_wire, wire_size) == 0);
         assert(mt_supervisor_settings_save(&loaded).status == MT_SETTINGS_OK);
-        assert(stored_size == MT_SETTINGS_WIRE_SIZE && stored_file[8U] == 7U);
+        assert(stored_size == MT_SETTINGS_WIRE_SIZE && stored_file[8U] == 8U);
         assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
         assert(memcmp(&loaded, &expected, sizeof(loaded)) == 0);
         memcpy(stored_file, legacy_wire, wire_size);
@@ -481,7 +486,7 @@ static void test_legacy_migration(void)
     assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
     store_u32_le(stored_file + 8U, 2U);
     assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
-    store_u32_le(stored_file + 8U, 8U);
+    store_u32_le(stored_file + 8U, 9U);
     assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
     convert_stored_to_legacy(1U);
     store_u32_le(stored_file + 8U, 3U);
@@ -518,7 +523,7 @@ static void test_video_effects_settings(void)
     }
     assert(mt_supervisor_settings_remember_video_effects(&settings, "c64", &effects));
     assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
-    assert(stored_file[8U] == 7U && stored_size == MT_SETTINGS_WIRE_SIZE);
+    assert(stored_file[8U] == 8U && stored_size == MT_SETTINGS_WIRE_SIZE);
     assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
     assert(memcmp(&settings, &loaded, sizeof(settings)) == 0);
     /* Explicit signed LE encoding, independent of host layout/padding. */
@@ -610,11 +615,155 @@ static void test_genesis_settings(void)
     assert(loaded.profiles[0].genesis_three_button_mask == 0U);
     assert(loaded.display_mode == 4U && loaded.gamepads[8].button[0] == 5U);
     assert(mt_supervisor_settings_save(&loaded).status == MT_SETTINGS_OK);
-    assert(stored_file[8U] == 7U && stored_size == MT_SETTINGS_WIRE_SIZE);
+    assert(stored_file[8U] == 8U && stored_size == MT_SETTINGS_WIRE_SIZE);
+}
+
+static mt_controller_device_t controller_device(uint32_t port, uint32_t serial)
+{
+    mt_controller_device_t device = {0};
+    device.identity.vendor_id = 0x045eU;
+    device.identity.product_id = 0x028eU;
+    device.identity.descriptor_hash = UINT32_C(0x12345678);
+    device.identity.serial_hash = serial;
+    device.identity.port_path = port;
+    device.identity.transport = MT_CONTROLLER_TRANSPORT_XBOX360;
+    device.connected = 1U;
+    device.buttons_present = UINT32_MAX;
+    device.axis_mask = 0x3fU;
+    device.home_button = 10U;
+    return device;
+}
+
+static void test_controller_profiles(void)
+{
+    enum { POOL_OFFSET = V7_WIRE_SIZE + 8U, RECORD_SIZE = 92U };
+    mt_supervisor_settings_t settings, loaded, before, candidate;
+    mt_controller_device_t first = controller_device(1U, 0U);
+    mt_controller_device_t second = controller_device(2U, 0U);
+    mt_controller_device_t serial = controller_device(3U, 1234U);
+    mt_controller_config_t config, other;
+    const mt_controller_settings_profile_t *profile;
+    uint8_t valid_wire[MT_SETTINGS_WIRE_SIZE];
+    static const struct { unsigned offset; uint8_t value; } bad[] = {
+        {V7_WIRE_SIZE, MT_SETTINGS_MAX_CONTROLLER_PROFILES + 1U}, {V7_WIRE_SIZE + 5U, 2U},
+        {V7_WIRE_SIZE + 6U, 1U}, {POOL_OFFSET + 20U, 255U},
+        {POOL_OFFSET + 22U, 1U}, {POOL_OFFSET + 24U, MT_CONTROL_SOURCE_COUNT},
+        {POOL_OFFSET + 88U, 4U}, {POOL_OFFSET + 89U, 1U},
+        {POOL_OFFSET + 4U * RECORD_SIZE, 1U}
+    };
+    reset_fake();
+    mt_supervisor_settings_defaults(&settings);
+    assert(settings.legacy_gamepad_pending == 0U);
+    assert(mt_supervisor_settings_remember_core(&settings, "c64", "pal"));
+    assert(mt_supervisor_settings_remember_drive8(&settings, "c64", "keep.d64"));
+    mt_controls_default(MT_GENESIS_CORE_ID, &first, &config);
+    config.binding[MT_CONTROL_A] = 32U; /* Physical button 32 survives the wire. */
+    config.binding[MT_CONTROL_MENU] = 11U;
+    config.binding[MT_CONTROL_SCREENSHOT] = 19U;
+    config.binding[MT_CONTROL_SCREENSHOT_OUTPUT] = 20U;
+    config.assignment = MT_CONTROLLER_PORT2;
+    config.axis[MT_GAMEPAD_AXIS_RX].invert = 1U;
+    config.axis[MT_GAMEPAD_AXIS_RX].deadzone_percent = 23U;
+    config.axis[MT_GAMEPAD_AXIS_RX].sensitivity_percent = 175U;
+    assert(mt_supervisor_settings_remember_controller(&settings,
+        MT_GENESIS_CORE_ID, &first.identity, &config));
+    assert(settings.controller_profile_count == 1U);
+    assert(mt_supervisor_settings_find_controller(&settings,
+        MT_GENESIS_CORE_ID, &second.identity) == NULL);
+    other = config; other.binding[MT_CONTROL_A] = 7U;
+    other.assignment = MT_CONTROLLER_PORT1;
+    assert(mt_supervisor_settings_remember_controller(&settings,
+        MT_GENESIS_CORE_ID, &second.identity, &other));
+    mt_controls_default(MT_GBC_CORE_ID, &first, &other);
+    other.binding[MT_CONTROL_A] = 22U;
+    assert(mt_supervisor_settings_remember_controller(&settings,
+        MT_GBC_CORE_ID, &first.identity, &other));
+    assert(mt_supervisor_settings_remember_controller(&settings,
+        MT_GENESIS_CORE_ID, &serial.identity, &config));
+    serial.identity.port_path = 99U;
+    profile = mt_supervisor_settings_find_controller(&settings,
+        MT_GENESIS_CORE_ID, &serial.identity);
+    assert(profile != NULL && profile->config.binding[MT_CONTROL_A] == 32U);
+    assert(mt_supervisor_settings_remember_controller(&settings,
+        MT_GENESIS_CORE_ID, &serial.identity, &config));
+    assert(settings.controller_profile_count == 4U);
+    settings.legacy_gamepad_pending = 0x101U;
+    assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
+    memcpy(valid_wire, stored_file, sizeof(valid_wire));
+    assert(stored_file[POOL_OFFSET + 4U] == 0x5eU &&
+           stored_file[POOL_OFFSET + 5U] == 0x04U);
+    assert(stored_file[POOL_OFFSET + 24U + MT_CONTROL_A * 2U] == 32U);
+    assert(stored_file[POOL_OFFSET + 24U + MT_CONTROL_SCREENSHOT_OUTPUT * 2U] == 20U);
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
+    assert(memcmp(&loaded, &settings, sizeof(settings)) == 0);
+    profile = mt_supervisor_settings_find_controller(&loaded,
+        MT_GENESIS_CORE_ID, &second.identity);
+    assert(profile != NULL && profile->config.binding[MT_CONTROL_A] == 7U &&
+           profile->config.assignment == MT_CONTROLLER_PORT1);
+    profile = mt_supervisor_settings_find_controller(&loaded,
+        MT_GBC_CORE_ID, &first.identity);
+    assert(profile != NULL && profile->config.binding[MT_CONTROL_A] == 22U);
+    assert(strcmp(mt_supervisor_settings_find(&loaded, "c64")->drive8_name,
+                  "keep.d64") == 0);
+
+    before = settings;
+    other = config; other.assignment = 4U;
+    assert(!mt_supervisor_settings_remember_controller(&settings,
+        MT_GENESIS_CORE_ID, &first.identity, &other));
+    assert(!mt_supervisor_settings_remember_controller(&settings,
+        0U, &first.identity, &config));
+    assert(!mt_supervisor_settings_remember_controller(&settings,
+        MT_GENESIS_CORE_ID, NULL, &config));
+    assert(memcmp(&settings, &before, sizeof(settings)) == 0);
+    candidate = settings;
+    candidate.controller_profiles[0].config.binding[MT_CONTROL_A] = 15U;
+    write_status = MT_SD_WRITE_FAILED;
+    assert(mt_supervisor_settings_save(&candidate).status == MT_SETTINGS_WRITE_FAILED);
+    assert(memcmp(stored_file, valid_wire, sizeof(valid_wire)) == 0);
+    assert(memcmp(&settings, &before, sizeof(settings)) == 0);
+    write_status = MT_SD_OK;
+
+    for (unsigned index = 0U; index < sizeof(bad) / sizeof(bad[0]); ++index) {
+        memcpy(stored_file, valid_wire, sizeof(valid_wire));
+        stored_file[bad[index].offset] = bad[index].value;
+        update_stored_crc();
+        assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
+        assert(loaded.profile_count == 0U && loaded.controller_profile_count == 0U);
+    }
+    memcpy(stored_file, valid_wire, sizeof(valid_wire));
+    memcpy(stored_file + POOL_OFFSET + RECORD_SIZE,
+           stored_file + POOL_OFFSET, RECORD_SIZE);
+    update_stored_crc();
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
+    candidate = settings;
+    candidate.controller_profiles[1] = candidate.controller_profiles[0];
+    assert(mt_supervisor_settings_save(&candidate).status == MT_SETTINGS_INVALID_ARGUMENT);
+
+    /* The fixed pool rejects overflow without replacing another controller. */
+    mt_supervisor_settings_defaults(&settings);
+    for (unsigned index = 0U; index < MT_SETTINGS_MAX_CONTROLLER_PROFILES; ++index) {
+        first.identity.port_path = index + 1U;
+        assert(mt_supervisor_settings_remember_controller(&settings,
+            MT_GENESIS_CORE_ID, &first.identity, &config));
+    }
+    before = settings;
+    first.identity.port_path = 1000U;
+    assert(!mt_supervisor_settings_remember_controller(&settings,
+        MT_GENESIS_CORE_ID, &first.identity, &config));
+    assert(memcmp(&settings, &before, sizeof(settings)) == 0);
+    first.identity.port_path = 1U;
+    config.assignment = MT_CONTROLLER_OFF;
+    assert(mt_supervisor_settings_remember_controller(&settings,
+        MT_GENESIS_CORE_ID, &first.identity, &config));
+    assert(settings.controller_profile_count == MT_SETTINGS_MAX_CONTROLLER_PROFILES);
+    assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
+    assert(memcmp(&loaded, &settings, sizeof(settings)) == 0);
 }
 
 int main(void)
 {
+    test_controller_profiles();
     test_gamepad_settings();
     test_genesis_settings();
     mt_supervisor_settings_t settings;

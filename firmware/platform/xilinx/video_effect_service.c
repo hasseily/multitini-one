@@ -76,6 +76,16 @@ const char *mt_video_effect_service_status(void)
     return desired.enabled != 0U ? "FPGA effects active; CPU1 ready" : "CPU1 ready; video effects off";
 }
 
+bool mt_video_effect_service_snapshot(mt_video_effects_tables_t *snapshot)
+{
+    if(snapshot == NULL || !compatible || phase != APPLIED ||
+       (bus.read(MT_REG_VIDEO_EFFECT_STATUS) &
+        (MT_VIDEO_EFFECT_STATUS_BUSY | MT_VIDEO_EFFECT_STATUS_VALID)) != MT_VIDEO_EFFECT_STATUS_VALID ||
+       bus.read(MT_REG_VIDEO_EFFECT_SEQUENCE) != sent_sequence) return false;
+    *snapshot=tables;
+    return true;
+}
+
 void mt_video_effect_service_poll(void)
 {
     mt_video_worker_status_t worker;

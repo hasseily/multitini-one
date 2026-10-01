@@ -73,7 +73,7 @@ static void d64_display_name(const uint8_t *raw, char *display)
         const uint8_t byte = raw[index];
         if (byte == 0xa0U) display[index] = ' ';
         else if (byte >= 0xc1U && byte <= 0xdaU)
-            display[index] = (char)('A' + byte - 0xc1U);
+            display[index] = (char)((unsigned)'A' + byte - 0xc1U);
         else if (byte >= 0x20U && byte <= 0x7eU)
             display[index] = (char)byte;
         else

@@ -733,7 +733,7 @@ class BuildInputTests(unittest.TestCase):
         self.assertIsNotNone(endpoint_capacity)
         self.assertGreater(int(endpoint_capacity.group(1)), 4)
         self.assertRegex(
-            config, r"#define\s+CONFIG_USBHOST_MAX_XBOX_CLASS\s+1\b"
+            config, r"#define\s+CONFIG_USBHOST_MAX_XBOX_CLASS\s+4\b"
         )
         self.assertIn(
             '"third_party/CherryUSB/class/vendor/xbox/usbh_xbox.c"',

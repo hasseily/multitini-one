@@ -267,7 +267,7 @@ static mt_content_validation_t inspect_gameboy_cart(
     if (data[0x149U] > 5U) return MT_CONTENT_BAD_STRUCTURE;
 
     for (index = 0x134U; index <= 0x14CU; ++index) {
-        checksum = (uint8_t)(checksum - data[index] - 1U);
+        checksum = (uint8_t)((unsigned)checksum - data[index] - 1U);
     }
     if (checksum != data[0x14DU]) return MT_CONTENT_BAD_STRUCTURE;
 

@@ -126,6 +126,34 @@ int main(int argc, char **argv)
         view.status_text = "CPU1 frame processing and FPGA effects active";
     } else if (strcmp(scenario, "gbc-input") == 0) {
         menu.page = MT_MENU_PAGE_INPUT;
+    } else if (strncmp(scenario, "gbc-controls", 12U) == 0) {
+        mt_controller_config_t controllers[MT_GAMEPAD_SLOTS];
+        view.gamepad_core_id = MT_GBC_CORE_ID;
+        view.gamepad_devices[0].connected = view.gamepad_devices[3].connected = 1U;
+        view.gamepad_devices[0].identity.transport = MT_CONTROLLER_TRANSPORT_XBOXONE;
+        view.gamepad_devices[0].buttons_present = 0x1fffU;
+        view.gamepad_devices[0].home_button = 10U;
+        (void)snprintf(view.gamepad_devices[0].name, sizeof(view.gamepad_devices[0].name), "Example Xbox controller - USB 1");
+        (void)snprintf(view.gamepad_devices[3].name, sizeof(view.gamepad_devices[3].name), "Example second controller - USB 2");
+        for (unsigned controller = 0U; controller < MT_GAMEPAD_SLOTS; ++controller) {
+            mt_controls_default(view.gamepad_core_id, &view.gamepad_devices[controller], &controllers[controller]);
+            controllers[controller].assignment = controller == 0U ? MT_CONTROLLER_PORT1 : MT_CONTROLLER_OFF;
+        }
+        menu.page = MT_MENU_PAGE_INPUT;
+        mt_menu_gamepad_begin(&menu, &view, controllers);
+        menu.gamepad_field = 6U;
+        view.gamepad_preview.connected = 1U;
+        view.gamepad_preview.hat = 8U;
+        view.gamepad_preview.axis_valid_mask = 0x3fU;
+        view.status_text = "Synthetic controller preview; not a board capture.";
+        if (strcmp(scenario, "gbc-controls-capture") == 0) {
+            (void)mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true);
+            (void)mt_menu_gamepad_update(&menu, &view);
+        } else if (strcmp(scenario, "gbc-controls-test") == 0) {
+            menu.gamepad_test = true;
+            view.gamepad_preview.buttons = (1U << 8U) | (1U << 10U);
+            view.gamepad_preview.axis[0] = -12345;
+        }
     } else if (strcmp(scenario, "browser-long") == 0) {
         for (index = 0U; index < sizeof(files) / sizeof(files[0]); ++index) {
             (void)snprintf(files[index].name, sizeof(files[index].name),

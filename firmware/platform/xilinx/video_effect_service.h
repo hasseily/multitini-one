@@ -21,4 +21,7 @@ void mt_video_effect_service_configure(bool supported,
 void mt_video_effect_service_poll(void);
 bool mt_video_effect_service_available(void);
 const char *mt_video_effect_service_status(void);
+/* Copy the actual committed transform only when its FPGA sequence matches.
+ * Capture callers retry later while a new configuration is being committed. */
+bool mt_video_effect_service_snapshot(mt_video_effects_tables_t *tables);
 #endif
