@@ -1,6 +1,9 @@
 # Controllers and screenshots
 
 Firmware CT01 (`43543031`) adds per-core controller profiles and screenshots.
+CT02 (`43543032`) adds shoulder-button menu navigation. Its focused 15-check
+host suite and 26 production runtime transaction tests pass. Video filtering
+is unchanged; see the [resolution study](VIDEO_FILTER_RESOLUTION_STUDY.md).
 It uses the existing supervisor and machine FPGA images. No HDL, clock,
 reset, crossing, register layout, or timing constraint changes are required.
 Host tests cover the input and capture paths; physical controller and SD-card
@@ -23,6 +26,11 @@ The editor shows only the running core's actions.
 - F12 always provides keyboard access to the Multitini menu. Identified
   Home/Guide/PS buttons open it by default. Select/Back and Start/Options remain
   available to the machine. Generic HID pads have no guessed menu shortcut.
+- **LB/L1** selects the previous menu section; **RB/R1** selects the next,
+  just like Shift+Tab and Tab. Generic HID pads use Button 5 and Button 6.
+  Hold both to cancel tab movement. These shortcuts follow the keyboard's
+  behavior inside editors, and are disabled during input capture and testing.
+  They do not change the controller's in-game shoulder assignments.
 
 The shared input layer retains up to 32 separate reported buttons, a D-pad,
 and six axes. Xbox 360, Xbox One, PS4, and generic HID controllers share the

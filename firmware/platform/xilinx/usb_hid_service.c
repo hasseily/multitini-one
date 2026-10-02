@@ -132,6 +132,7 @@ static mt_usb_controller_report_fn g_report_handler;
 static void *g_report_handler_context;
 static uint8_t g_vendor_slots[MT_GAMEPAD_SLOTS];
 static uint8_t g_release_guard[MT_GAMEPAD_SLOTS];
+static uint8_t g_controller_tab[MT_GAMEPAD_SLOTS];
 static bool g_menu_capture;
 static bool g_gamepad_preview;
 static mt_c64_hid_input_t g_c64_input;
@@ -195,6 +196,7 @@ static void submit_keyboard_state(uint8_t slot, uint8_t modifiers,
 
 static void disconnect_input_slot(uint8_t slot)
 {
+    g_controller_tab[slot] = 0U;
     memset(&g_devices[slot], 0, sizeof(g_devices[slot]));
     memset(&g_controller_output[slot], 0, sizeof(g_controller_output[slot]));
     g_controller_player[slot] = UINT8_MAX;
@@ -645,9 +647,23 @@ static void process_shared_report(uint8_t index, const mt_gamepad_report_t *repo
         if (!menu && (raw->buttons & 1U) != 0U) keys[count++] = 0x28U;
         if (!menu && (raw->buttons & 2U) != 0U) keys[count++] = 0x29U;
         if (menu) keys[count++] = 0x45U;
+        /* Physical shoulders navigate the UI independently of the core map.
+         * Generic HID follows the common Button 5/6 convention; both held
+         * cancel. Keep shoulders available to capture and normal gameplay. */
+        const uint32_t shoulders = raw->buttons & UINT32_C(0x30);
+        const uint8_t tab = g_menu_capture && !menu ?
+            (shoulders == 0x10U ? 1U : shoulders == 0x20U ? 2U : 0U) : 0U;
+        if (g_controller_tab[index] != 0U && tab != g_controller_tab[index]) {
+            /* Changing Shift+Tab directly to Tab needs a key-up edge; keep
+             * other held navigation keys unchanged in the intermediate report. */
+            (void)g_keyboard_filter(g_keyboard_filter_context, index, 0U, keys, count);
+        }
+        if (tab != 0U) keys[count++] = 0x2bU;
+        g_controller_tab[index] = tab;
         /* Only the configured system action opens the menu. F12 from a real
          * keyboard remains independent. Synthetic navigation never reaches a core. */
-        (void)g_keyboard_filter(g_keyboard_filter_context, index, 0U, keys, count);
+        (void)g_keyboard_filter(g_keyboard_filter_context, index,
+            tab == 1U ? 0x02U : 0U, keys, count);
     }
     deliver_controllers();
 }
@@ -1292,6 +1308,7 @@ void usb_hid_service_init(mt_core_link_t *link)
     g_report_handler_context = NULL;
     memset(g_vendor_slots, 0, sizeof(g_vendor_slots));
     memset(g_release_guard, 0, sizeof(g_release_guard));
+    memset(g_controller_tab, 0, sizeof(g_controller_tab));
     g_menu_capture = false;
     g_gamepad_preview = false;
     memset(g_slots, 0, sizeof(g_slots));

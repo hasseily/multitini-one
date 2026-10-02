@@ -1471,7 +1471,7 @@ void mt_menu_render(const mt_menu_t *menu, const mt_menu_view_t *view,
         (menu->browser != MT_MENU_BROWSER_NONE ?
          "[Enter] Open  [Up/Down] Select  [PgUp/PgDn] Page  [Home/End] First/Last  [Esc] Back" :
          (menu->page == MT_MENU_PAGE_VIDEO || menu->page == MT_MENU_PAGE_EFFECTS) ?
-         "[Tab/Shift+Tab] Section  [Up/Down] Select  [Left/Right] Adjust  [Enter] Apply/Cycle  [Esc/F12] Close" :
-         "[Tab/Shift+Tab] Section  [Up/Down] Select  [Enter] Apply  [Esc/F12] Close"),
+         "[LB/RB or Shift+Tab/Tab] Section  [Up/Down] Select  [Left/Right] Adjust  [Enter] Apply  [Esc/F12] Close" :
+         "[LB/RB or Shift+Tab/Tab] Section  [Up/Down] Select  [Enter] Apply  [Esc/F12] Close"),
         MT_UI_COLOR_MUTED, MT_UI_COLOR_RAISED);
 }

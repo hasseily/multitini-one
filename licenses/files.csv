@@ -33,6 +33,7 @@ hdl/sim/tb_video_frame_pipeline.sv,Multitini One,,GPL-3.0-only,sim-tested,Origin
 scripts/test_video_frame_pipeline.py,Multitini One,,GPL-3.0-only,sim-tested,Original portable and real-XPM autonomous pipeline runner with source-hash evidence
 firmware/common/text_reader.c,Appletini One and Multitini One,1fd4f371e8f4ef08bc63875550564590609fcfeb,GPL-3.0-only,host-tested,Normalization and visual-line wrapping adapted from ps_sources/frontend/config_menu_text_reader.c; original portable API indexed reader lifecycle and navigation; Vitis passed; board pending
 tools/menu_preview.c,Multitini One,,GPL-3.0-only,host-tested,Original synthetic UI scenarios rendered by production firmware
+tools/video_filter_probe.c,Multitini One,,GPL-3.0-only,host-tested,Original numerical probe of production video filter references
 hdl/common/multitini_font7x8.mem,Appletini One,ba0aca2c4ddf3468804c5ae982f19b4891fc985e,GPL-3.0-only,sim-tested,Derived bit rows from the embedded Appletini fb16 ASCII 7x8 font
 firmware/common/c64_content.c,Multitini One,,GPL-3.0-only,host-tested,Strict PRG and conservative read-only CRT validation plus stream helpers; Vitis and board pending
 firmware/include/multitini_c64_content.h,Multitini One,,GPL-3.0-only,host-tested,Public C64 PRG and CRT content API; Vitis and board pending

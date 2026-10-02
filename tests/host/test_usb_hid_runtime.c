@@ -2,6 +2,7 @@
 /* Execute transport callbacks, routing and menu capture with real adapters. */
 #include <assert.h>
 #include <stdio.h>
+#include "multitini_menu.h"
 #include "../../firmware/platform/xilinx/usb_hid_service.c"
 static XTime fake_now;
 static unsigned submits;
@@ -374,6 +375,101 @@ static void test_keyboard_screenshot(void)
     puts("PASS PrintScreen reaches system handler without losing held game keys");
 }
 
+typedef struct {
+    mt_menu_t menu;
+    mt_menu_view_t view;
+    bool held[MT_GAMEPAD_SLOTS][256];
+    unsigned reports, tab_presses;
+} navigation_fixture_t;
+
+static bool navigate_menu(void *context, uint8_t slot, uint8_t modifiers,
+                          const uint8_t *keys, size_t count)
+{
+    navigation_fixture_t *fixture = context;
+    bool next[256] = {false};
+    assert(slot < MT_GAMEPAD_SLOTS && count <= 7U);
+    ++fixture->reports;
+    for (size_t i = 0U; i < count; ++i) next[keys[i]] = true;
+    for (unsigned usage = 0U; usage < 256U; ++usage) {
+        if (next[usage] == fixture->held[slot][usage]) continue;
+        if (usage == MT_MENU_HID_TAB && next[usage]) ++fixture->tab_presses;
+        (void)mt_menu_key_with_modifiers(&fixture->menu, &fixture->view,
+            (uint8_t)usage, next[usage], modifiers);
+    }
+    memcpy(fixture->held[slot], next, sizeof(next));
+    usb_hid_service_set_menu_capture(fixture->menu.visible);
+    return fixture->menu.visible;
+}
+
+static void test_shoulder_navigation(void)
+{
+    for (uint8_t transport = MT_CONTROLLER_TRANSPORT_HID;
+         transport <= MT_CONTROLLER_TRANSPORT_PS4; ++transport) {
+        navigation_fixture_t fixture = {0};
+        mt_core_link_t link;
+        mt_core_link_init(&link, NULL, input_read, input_write);
+        usb_hid_service_init(&link);
+        usb_hid_service_set_active_core(MT_GENESIS_CORE_ID);
+        usb_hid_service_set_core_ready(true);
+        mt_menu_init(&fixture.menu, &fixture.view);
+        fixture.menu.visible = true;
+        usb_hid_service_set_keyboard_filter(navigate_menu, &fixture);
+        usb_hid_service_set_menu_capture(true);
+        struct usbh_hubport port = {0};
+        port.port = 1U;
+        const uint8_t first = (uint8_t)usb_gamepad_input_connect();
+        usb_gamepad_input_identify(first, &port, 0U, transport);
+        const uint8_t second = (uint8_t)usb_gamepad_input_connect();
+        port.port = 2U;
+        usb_gamepad_input_identify(second, &port, 0U, transport);
+
+        buttons(first, 0x10U); /* LB/L1 wraps backwards. */
+        assert(fixture.menu.page == MT_MENU_PAGE_SYSTEM && fixture.tab_presses == 1U);
+        buttons(first, 0x10U);
+        assert(fixture.menu.page == MT_MENU_PAGE_SYSTEM && fixture.tab_presses == 1U);
+        buttons(first, 0x20U); /* Direct left-to-right change still has a Tab edge. */
+        assert(fixture.menu.page == MT_MENU_PAGE_CORES && fixture.tab_presses == 2U);
+        buttons(first, 0x30U); /* Both held cancel; releasing one restores direction. */
+        assert(fixture.menu.page == MT_MENU_PAGE_CORES && fixture.tab_presses == 2U);
+        buttons(first, 0x10U);
+        assert(fixture.menu.page == MT_MENU_PAGE_SYSTEM && fixture.tab_presses == 3U);
+        buttons(first, 0U);
+        buttons(second, 0x20U);
+        assert(fixture.menu.page == MT_MENU_PAGE_CORES && fixture.tab_presses == 4U);
+        assert(g_genesis_input.gamepad[first] == 0U && g_genesis_input.gamepad[second] == 0U);
+
+        buttons(second, 0U);
+        fixture.menu.page = MT_MENU_PAGE_INPUT;
+        fixture.menu.gamepad_edit = true;
+        fixture.menu.gamepad_capture = true;
+        usb_hid_service_set_gamepad_preview(true);
+        const unsigned before = fixture.reports;
+        buttons(first, 0x20U); buttons(first, 0U);
+        assert(fixture.reports == before && fixture.menu.page == MT_MENU_PAGE_INPUT);
+        assert(fixture.menu.gamepad_capture); /* Shoulders remain assignable, not Tab/Skip. */
+        fixture.menu.gamepad_edit = fixture.menu.gamepad_capture = false;
+        usb_hid_service_set_gamepad_preview(false);
+
+        buttons(first, 0x20U);
+        assert(fixture.menu.page == MT_MENU_PAGE_CORE_CONFIG);
+        usb_gamepad_input_disconnect(first);
+        assert(!fixture.held[first][MT_MENU_HID_TAB] && g_controller_tab[first] == 0U);
+
+        fixture.menu.visible = false;
+        usb_hid_service_set_menu_capture(false);
+        const unsigned tabs = fixture.tab_presses;
+        buttons(second, 0x10U);
+        assert(fixture.tab_presses == tabs && !fixture.menu.visible);
+        assert(g_genesis_input.gamepad[second] == MT_GENESIS_Y);
+        buttons(second, 0x20U);
+        assert(g_genesis_input.gamepad[second] == MT_GENESIS_Z);
+        assert(fixture.tab_presses == tabs);
+        buttons(second, 0U);
+        usb_gamepad_input_disconnect(second);
+    }
+    puts("PASS controller shoulders navigate menu sections without changing capture or gameplay");
+}
+
 int main(void)
 {
     test_transport_slots();
@@ -381,5 +477,6 @@ int main(void)
     test_identity_strings_and_spare();
     test_hid_fields();
     test_keyboard_screenshot();
+    test_shoulder_navigation();
     return 0;
 }

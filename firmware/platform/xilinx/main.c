@@ -60,8 +60,8 @@
 
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
 #define MT_SUPERVISOR_CORE_ID UINT32_C(0)
-/* CT01: Per-core controller profiles and screenshots; display ABI 0.16. */
-#define MT_FIRMWARE_BUILD_ID UINT32_C(0x43543031)
+/* CT02: Controller shoulder tab navigation; display ABI 0.16. */
+#define MT_FIRMWARE_BUILD_ID UINT32_C(0x43543032)
 #define MT_I2C_CLOCK_HZ UINT32_C(100000)
 #define MT_I2C_BUSY_POLLS UINT32_C(1000000)
 #define MT_UART_DRAIN_POLLS UINT32_C(10000000)
