@@ -834,7 +834,7 @@ class MenuRuntimeTests(unittest.TestCase):
             str(ROOT / "firmware/common/core_link.c"),
             str(ROOT / "firmware/common/video_effects.c"),
             str(ROOT / "firmware/platform/xilinx/supervisor_settings.c"),
-            "-o", str(cls.executable),
+            "-lm", "-o", str(cls.executable),
         ], capture_output=True, text=True, timeout=60)
         if compile_result.returncode:
             raise AssertionError(compile_result.stdout + compile_result.stderr)
