@@ -40,10 +40,10 @@ def main():
     oracle = build / ("vectors.exe" if os.name == "nt" else "vectors")
     run([tool("gcc"), "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-Ifirmware/include",
          sources[3], sources[4], "-o", str(oracle)])
-    cases = [(width, height, 68, int(width == 13), num, den)
+    cases = [(width, height, 260, int(width == 13), num, den)
              for num, den in ((3, 2), (4, 1), (6, 1))
              for width, height in ((13, 9), (1, 1), (2, 3))]
-    cases += [(13, 9, 68, 0, 1, 1), (13, 9, 68, 0, 5, 2)]
+    cases += [(13, 9, 260, 0, 1, 1), (13, 9, 260, 0, 5, 2)]
     if not args.small_only:
         cases += [(160, 144, 1, 0, 6, 1), (382, 270, 1, 0, 4, 1), (404, 250, 1, 0, 4, 1),
                   (540, 720, 1, 0, 3, 2), (640, 720, 1, 0, 3, 2)]

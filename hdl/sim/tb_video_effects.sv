@@ -27,7 +27,8 @@ module tb_video_effects;
     reg [31:0] data=0,commit_seq=0;
     wire busy,valid,rejected;
     wire [31:0] active_sequence;
-    reg [15:0] rgb=0;
+    reg [15:0] rgb=0,neighbor_rgb=0;
+    reg [7:0] neighbor_weight=0;
     reg enable=0,de=0,hs=0,vs=0;
     reg [11:0] x=0,y=0;
     wire [15:0] output_rgb;
@@ -41,7 +42,7 @@ module tb_video_effects;
         .effect_busy(busy),.effect_active_valid(valid),.effect_rejected(rejected),
         .effect_active_sequence(active_sequence),.pixel_clk(pixel_clk),.pixel_resetn(pixel_resetn),
         .shared_pixel_resetn(shared_pixel_resetn),.shared_pixel_running(shared_pixel_running),
-        .vblank_start(vblank),.pixel_rgb565(rgb),.pixel_effect_enable(enable),
+        .vblank_start(vblank),.pixel_rgb565(rgb),.pixel_neighbor_rgb565(neighbor_rgb),.pixel_neighbor_weight(neighbor_weight),.pixel_effect_enable(enable),
         .pixel_x(x),.pixel_y(y),.pixel_de(de),.pixel_hsync(hs),.pixel_vsync(vs),
         .output_rgb565(output_rgb),.output_de(output_de),.output_hsync(output_hs),.output_vsync(output_vs)
     );
@@ -49,11 +50,12 @@ module tb_video_effects;
     integer config_value=0,checks=0,queue_count=0;
     reg [18:0] expected_queue[0:8];
     integer row,column,mode,channel,index,k;
-    integer lval,cval,rval,value,scan_phase,selected;
+    integer cval,value,scan_phase,selected,sx,nx,distance,base_weight,mix_weight;
     reg [15:0] current_pixel,expected_pixel;
-    reg [23:0] center_tone,left_tone,right_tone;
+    reg [23:0] center_tone;
+    reg [15:0] mixed_pixel;
     reg [7:0] result_channel[0:2];
-    reg current_enable,left_enable,right_enable;
+    reg current_enable;
 
     task wr(input integer a,input [31:0] d);
         begin
@@ -134,20 +136,18 @@ module tb_video_effects;
             queue_count=0;
             for(row=0;row<12;row=row+1)begin
                 for(column=0;column<66;column=column+1)begin
-                    current_pixel=source(column,row);current_enable=allowed(column);
-                    left_enable=column>0 && allowed(column-1);right_enable=column<65 && allowed(column+1);
-                    center_tone=tone(current_pixel);
-                    left_tone=left_enable?tone(source(column-1,row)):center_tone;
-                    right_tone=right_enable?tone(source(column+1,row)):center_tone;
+                    sx=column*SCALE_DEN/SCALE_NUM;
+                    distance=2*((column*SCALE_DEN)%SCALE_NUM)+SCALE_DEN-SCALE_NUM;
+                    nx=sx+(distance<0 ? -1 : 1);
+                    if(nx<0)nx=0;if(nx>65*SCALE_DEN/SCALE_NUM)nx=65*SCALE_DEN/SCALE_NUM;
+                    base_weight=((distance<0 ? -distance : distance)*128+SCALE_NUM/2)/SCALE_NUM;
+                    current_pixel=source(sx,row);current_enable=allowed(column);
+                    neighbor_rgb=source(nx,row);neighbor_weight=base_weight;
+                    mix_weight=((config_value>>4)&3)!=0 ? base_weight : 0;
+                    mixed_pixel=blend_pixel(current_pixel,neighbor_rgb,mix_weight);
+                    center_tone=tone(mixed_pixel);
                     for(channel=0;channel<3;channel=channel+1)begin
-                        cval=center_tone[channel*8+:8];lval=left_tone[channel*8+:8];rval=right_tone[channel*8+:8];
-                        case((config_value>>4)&3)
-                            1:value=(lval+6*cval+rval+4)>>3;
-                            2:value=(lval+2*cval+rval+2)>>2;
-                            3:value=(6*cval-lval-rval+2)>>>2;
-                            default:value=cval;
-                        endcase
-                        if(value<0)value=0;if(value>255)value=255;
+                        value=center_tone[channel*8+:8];
                         scan_phase=row%SCALE_NUM;
                         if(SCALE_DEN==2 ? scan_phase==1 : scan_phase>=(SCALE_NUM+1)/2)
                             case(config_value&3)
@@ -165,41 +165,45 @@ module tb_video_effects;
                     pixel(current_pixel,current_enable,column,row,column<64,column>=62,row>=10,expected_pixel);
                 end
             end
-            for(column=0;column<8;column=column+1)pixel(0,0,column,99,0,0,0,0);
+            neighbor_weight=0;
+            for(column=0;column<9;column=column+1)pixel(0,0,column,99,0,0,0,0);
         end
     endtask
+    function automatic [15:0] blend_pixel(input [15:0] center,neighbor,input integer weight);
+        integer cr,cg,cb,nr,ng,nb,r,g,b;
+        begin
+            cr=((center>>11)&31)*8+((center>>13)&7);
+            cg=((center>>5)&63)*4+((center>>9)&3);
+            cb=(center&31)*8+((center>>2)&7);
+            nr=((neighbor>>11)&31)*8+((neighbor>>13)&7);
+            ng=((neighbor>>5)&63)*4+((neighbor>>9)&3);
+            nb=(neighbor&31)*8+((neighbor>>2)&7);
+            r=(cr*(256-weight)+nr*weight+128)/256;
+            g=(cg*(256-weight)+ng*weight+128)/256;
+            b=(cb*(256-weight)+nb*weight+128)/256;
+            blend_pixel=((r>>3)<<11)|((g>>2)<<5)|(b>>3);
+        end
+    endfunction
     task check_horizontal_arithmetic;
-        integer center_value,neighbor_sum,left_value,right_value,filter_mode;
-        integer reference_value,arithmetic_checks;
+        integer center_value,neighbor_value,weight,reference_value,arithmetic_checks;
         reg [7:0] actual_value;
+        reg signed [17:0] product;
         begin
             arithmetic_checks=0;
-            // Both kernels depend only on left+right, and all intermediate
-            // values fit their declared widths. These representative splits
-            // cover every possible RGB8 triple without repeating equal sums.
+            // Full signed-difference and rounding range, including every Q8
+            // weight used by the supported integer/fractional scaler phases.
             for(center_value=0;center_value<256;center_value=center_value+1)
-                for(neighbor_sum=0;neighbor_sum<=510;neighbor_sum=neighbor_sum+1)begin
-                    left_value=neighbor_sum>255?255:neighbor_sum;
-                    right_value=neighbor_sum-left_value;
-                    for(filter_mode=0;filter_mode<4;filter_mode=filter_mode+1)begin
-                        case(filter_mode)
-                            1:reference_value=(left_value+6*center_value+right_value+4)>>3;
-                            2:reference_value=(left_value+2*center_value+right_value+2)>>2;
-                            3:reference_value=(6*center_value-left_value-right_value+2)>>>2;
-                            default:reference_value=center_value;
-                        endcase
-                        if(reference_value<0)reference_value=0;
-                        if(reference_value>255)reference_value=255;
-                        actual_value=dut.horizontal_filter(center_value[7:0],left_value[7:0],
-                                                          right_value[7:0],filter_mode[1:0]);
+                for(neighbor_value=0;neighbor_value<256;neighbor_value=neighbor_value+1)
+                    for(weight=0;weight<=128;weight=weight+1)begin
+                        reference_value=(center_value*(256-weight)+neighbor_value*weight+128)/256;
+                        product=(neighbor_value-center_value)*weight;
+                        actual_value=dut.blend_round(center_value[7:0],product);
                         if(actual_value!==reference_value[7:0])
-                            $fatal(1,"Horizontal arithmetic c=%0d l=%0d r=%0d mode=%0d expected=%0d got=%0d",
-                                   center_value,left_value,right_value,filter_mode,reference_value,actual_value);
+                            $fatal(1,"Interpolation arithmetic c=%0d n=%0d w=%0d expected=%0d got=%0d",
+                                   center_value,neighbor_value,weight,reference_value,actual_value);
                         arithmetic_checks=arithmetic_checks+1;
                     end
-                end
-            if(arithmetic_checks!=523264)$fatal(1,"Horizontal arithmetic coverage incomplete");
-            $display("PASS horizontal arithmetic: %0d center/sum/mode cases cover all RGB8 triples",arithmetic_checks);
+            $display("PASS horizontal interpolation arithmetic: %0d RGB8/weight cases",arithmetic_checks);
         end
     endtask
     initial begin
@@ -265,6 +269,7 @@ endmodule
 
 // Feed tables and expected pixels produced by the portable CPU1 C compiler.
 module tb_video_effects_oracle;
+    parameter integer SCALE_NUM=4,SCALE_DEN=1;
     reg control_clk=0,pixel_clk=0,resetn=0,write=0,commit=0,vblank=0;
     always #5 control_clk=~control_clk;
     always #3.367 pixel_clk=~pixel_clk;
@@ -272,20 +277,22 @@ module tb_video_effects_oracle;
     reg [31:0] data=0,commit_seq=0;
     wire busy,valid,rejected;
     wire [31:0] active_seq;
-    reg [15:0] rgb=0;
+    reg [15:0] rgb=0,neighbor_rgb=0;
+    reg [7:0] neighbor_weight=0;
     reg enable=0;
     reg [11:0] x=0,y=0;
     wire [15:0] out_rgb;
-    multitini_video_effects dut(
+    multitini_video_effects #(.DYNAMIC_DISPLAY(1),.SOURCE_SCALE_NUM(SCALE_NUM),.SOURCE_SCALE_DEN(SCALE_DEN)) dut(
+        .display_scale_num(4'(SCALE_NUM)),.display_scale_den(4'(SCALE_DEN)),
         .control_clk(control_clk),.control_resetn(resetn),.effect_write(write),
         .effect_address(address),.effect_data(data),.effect_commit(commit),.effect_commit_sequence(commit_seq),
         .effect_busy(busy),.effect_active_valid(valid),.effect_rejected(rejected),.effect_active_sequence(active_seq),
         .pixel_clk(pixel_clk),.pixel_resetn(resetn),.vblank_start(vblank),
-        .pixel_rgb565(rgb),.pixel_effect_enable(enable),.pixel_x(x),.pixel_y(y),
+        .pixel_rgb565(rgb),.pixel_neighbor_rgb565(neighbor_rgb),.pixel_neighbor_weight(neighbor_weight),.pixel_effect_enable(enable),.pixel_x(x),.pixel_y(y),
         .pixel_de(1'b1),.pixel_hsync(1'b0),.pixel_vsync(1'b0),.output_rgb565(out_rgb),
         .output_de(),.output_hsync(),.output_vsync());
     reg [15:0] expected_queue[0:8];
-    integer fd,result,a,d,p,e,px,py,expected,i,q,count=0,checks=0,scenes=0;
+    integer fd,result,a,d,p,e,px,py,expected,n,w,i,q,count=0,checks=0,scenes=0;
     reg [2047:0] filename;
     reg [15:0] operation;
     reg pixels_pending=0;
@@ -331,8 +338,9 @@ module tb_video_effects_oracle;
                     scenes=scenes+1;count=0;
                 end
                 "P":begin
-                    result=$fscanf(fd,"%h %d %d %d %h",p,e,px,py,expected);
-                    if(result!=5)$fatal(1,"Malformed oracle P");
+                    result=$fscanf(fd,"%h %d %d %d %h %h %d",p,e,px,py,expected,n,w);
+                    neighbor_rgb=n;neighbor_weight=w;
+                    if(result!=7)$fatal(1,"Malformed oracle P");
                     pixel(p,e!=0,px,py,expected);pixels_pending=1;
                 end
                 default:$fatal(1,"Unknown C oracle command %s",operation);
@@ -380,7 +388,7 @@ module tb_video_effects_output;
     multitini_video_test #(.H_ACTIVE(64),.H_FRONT(2),.H_SYNC(2),.H_TOTAL(70),
         .V_ACTIVE(12),.V_FRONT(1),.V_SYNC(1),.V_TOTAL(15)) reference_i(
         .pixel_clk(clk),.resetn(resetn),.enable(1'b1),.machine_enable(1'b1),
-        .machine_rgb565(machine_rgb),.ui_opaque(ui_opaque),.ui_rgb565(16'h5b6a),
+        .machine_rgb565(machine_rgb),.machine_neighbor_rgb565(machine_rgb),.machine_neighbor_weight(8'd0),.ui_opaque(ui_opaque),.ui_rgb565(16'h5b6a),
         .border_opaque(border_opaque),.border_rgb565(16'he234),.scan_x(x),.scan_y(y),
         .vblank_start(),.dvi_red(rgb_direct[15:11]),.dvi_grn(rgb_direct[10:5]),.dvi_blu(rgb_direct[4:0]),
         .dvi_clk(),.dvi_de(de_direct),.dvi_hsync(hs_direct),.dvi_vsync(vs_direct),
@@ -392,7 +400,7 @@ module tb_video_effects_output;
         .H_ACTIVE(64),.H_FRONT(2),.H_SYNC(2),.H_TOTAL(70),
         .V_ACTIVE(12),.V_FRONT(1),.V_SYNC(1),.V_TOTAL(15)) effects_i(
         .pixel_clk(clk),.resetn(resetn),.enable(1'b1),.machine_enable(1'b1),
-        .machine_rgb565(machine_rgb),.ui_opaque(ui_opaque),.ui_rgb565(16'h5b6a),
+        .machine_rgb565(machine_rgb),.machine_neighbor_rgb565(machine_rgb),.machine_neighbor_weight(8'd0),.ui_opaque(ui_opaque),.ui_rgb565(16'h5b6a),
         .border_opaque(border_opaque),.border_rgb565(16'he234),.scan_x(),.scan_y(),
         .vblank_start(),.dvi_red(rgb_effect[15:11]),.dvi_grn(rgb_effect[10:5]),.dvi_blu(rgb_effect[4:0]),
         .dvi_clk(),.dvi_de(de_effect),.dvi_hsync(hs_effect),.dvi_vsync(vs_effect),

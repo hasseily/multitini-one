@@ -27,6 +27,7 @@ def main():
         subprocess.run(guard + [compiler, "-g2012", "-Wall", "-Wimplicit", "-s", "tb_video_frame_reader",
                        "-P", f"tb_video_frame_reader.DYNAMIC_DISPLAY={int(args.dynamic_display)}",
                        "-P", f"tb_video_frame_reader.SHARED_PIXEL_RESET={int(args.dynamic_display)}",
+                       "-P", f"tb_video_frame_reader.WIDTH={67 if args.dynamic_display else 68}",
                        "-P", f"tb_video_frame_reader.SCALE_NUM={numerator}",
                        "-P", f"tb_video_frame_reader.SCALE_DEN={denominator}", "-o", str(output)] +
                        [str(ROOT / path) for path in sources], cwd=build, check=True)

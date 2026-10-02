@@ -74,7 +74,7 @@ static void renderer(void)
     assert(mt_screenshot_dimensions(&scene,&w,&h) && w==960U && h==864U);
     assert(mt_screenshot_render_row(&scene,0U,row) &&
            row[0]==mt_video_effects_reference_rgb565(&tables,0xf800U));
-    settings.scanlines=2U;settings.mask=MT_VIDEO_MASK_SHADOW;settings.softness=MT_VIDEO_FILTER_STRONG;
+    settings.scanlines=2U;settings.mask=MT_VIDEO_MASK_SHADOW;settings.softness=MT_VIDEO_SMOOTH_STRONG;
     assert(mt_video_effects_build(&settings,&tables));
     for(unsigned y=0U;y<scene.height;++y)for(unsigned x=0U;x<scene.width;++x)
         source[y*scene.width+x]=(uint16_t)((x*113U+y*37U)&65535U);
@@ -86,6 +86,27 @@ static void renderer(void)
         assert(mt_screenshot_render_row(&scene,y+108U,row));
         assert(memcmp(cropped_row,row+480U,960U*sizeof(uint16_t))==0);
     }
+    mt_video_effects_defaults(&settings);settings.enabled=1U;settings.softness=MT_VIDEO_SMOOTH_STRONG;
+    scene.width=2U;scene.height=1U;scene.full_output=false;source[0]=0xffffU;source[1]=0U;
+    /* The snapshot already contains the native horizontal prefilter. All
+     * nonzero levels use full interpolation here, without filtering twice. */
+    for(unsigned level=1U;level<=3U;++level) {
+        settings.softness=(uint8_t)level;assert(mt_video_effects_build(&settings,&tables));
+        assert(mt_screenshot_render_row(&scene,0U,row));
+        assert(row[0]==0xffffU && row[3]==0xef5dU && row[5]==0x94b2U && row[6]==0x6b4dU && row[11]==0U);
+    }
+    source[0]=0xc618U;source[1]=0x39e7U;
+    assert(mt_screenshot_render_row(&scene,0U,row) && row[0]==0xc618U && row[11]==0x39e7U);
+    /* A neighboring opaque menu cell does not truncate source interpolation.
+     * At x509 the first source pixel before the menu blends toward white. */
+    scene.width=160U;scene.height=144U;scene.full_output=true;scene.ui_visible=true;
+    memset(source,0,160U*144U*sizeof(uint16_t));source[72U*160U+5U]=0xffffU;
+    for(unsigned i=0U;i<MT_UI_COLUMNS*MT_UI_ROWS;++i)ui.cells[i]=0x8020U;
+    ui.cells[30U*MT_UI_COLUMNS+34U]=(uint16_t)(' '|(15U<<11));
+    assert(mt_screenshot_render_row(&scene,540U,row));
+    assert(row[509U]==0x6b4dU && row[510U]==0xffffU);
+    settings.negative=1U;assert(mt_video_effects_build(&settings,&tables));
+    assert(mt_screenshot_render_row(&scene,540U,row) && row[510U]==0xffffU);
     scene.width=641U;assert(!mt_screenshot_dimensions(&scene,&w,&h));
 }
 int main(int argc,char **argv)

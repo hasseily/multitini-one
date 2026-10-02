@@ -34,11 +34,12 @@ int main(int argc,char **argv)
     FILE *expected=open_output(argv[3],"expected.hex"),*persisted=open_output(argv[3],"history.hex");
     FILE *config=open_output(argv[3],"options.hex");
     if(!input || !output || !history || !base || !scratch || !inputs || !old || !expected || !persisted || !config)return 3;
-    unsigned jobs=exhaustive?68U:1U;
+    unsigned jobs=exhaustive?260U:1U;
     for(unsigned job=0;job<jobs;++job){
-        unsigned bits=exhaustive?(job<64U?job:(60U|(job&3U))):63U;
-        bool reset=job>=64U;
-        mt_video_frame_options_t options={1U,(uint8_t)(bits&3U),(uint8_t)((bits>>2)&3U),(uint8_t)(bits>>4)};
+        unsigned bits=exhaustive?(job<256U?job:(252U|(job&3U))):255U;
+        bool reset=job>=256U;
+        mt_video_frame_options_t options={1U,(uint8_t)(bits&3U),(uint8_t)((bits>>2)&3U),
+            (uint8_t)((bits>>4)&3U),(uint8_t)((bits>>6)&3U)};
         for(uint32_t i=0;i<count;++i){
             /* Black/current impulse plus arbitrary history exposes decay,
              * extinction and all three threshold intervals. */
@@ -57,7 +58,7 @@ int main(int argc,char **argv)
             fprintf(expected,"%04x\n",(unsigned)output[i]);
             fprintf(persisted,"%08" PRIx32 "\n",history[i]);
         }
-        fprintf(config,"%02x\n",bits|(reset?64U:0U));
+        fprintf(config,"%03x\n",bits|(reset?256U:0U));
     }
     if(fclose(inputs) || fclose(old) || fclose(expected) || fclose(persisted) || fclose(config))return 5;
     free(input);free(output);free(history);free(base);free(scratch);

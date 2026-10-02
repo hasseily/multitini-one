@@ -24,7 +24,7 @@ module tb_video_framebuffer;
     wire [7:0] wstrb;
     reg bvalid=0,rvalid=0,rlast=0;
     integer read_remaining=0,reads=0,cycles=0;
-    multitini_video_framebuffer #(.WIDTH(6),.HEIGHT(2),.VIEW_X(2),.VIEW_Y(0),.SCALE_NUM(1),
+    multitini_video_framebuffer #(.WIDTH(6),.HEIGHT(2),.VIEW_X(4),.VIEW_Y(0),.SCALE_NUM(1),
         .SHARED_PIXEL_RESET(SHARED_PIXEL_RESET)) dut(
         .clk(clk),.resetn(resetn),.wr_en(wr_en),.wr_addr(wr_addr),.rd_addr(rd_addr),
         .wr_data(wr_data),.wr_strb(wr_strb),.rd_data(rd_data),
@@ -75,8 +75,8 @@ module tb_video_framebuffer;
         expect_reg(12'h180,0);expect_reg(12'h184,8);expect_reg(12'h188,0);expect_reg(12'h18c,0);
         expect_reg(12'h198,32'h00020006);expect_reg(12'h19c,128);
         expect_reg(12'h1b0,0);expect_reg(12'h1b4,0);expect_reg(12'h1b8,0);
-        write_reg(12'h1b0,63,4'hf);expect_reg(12'h1b0,63);
-        write_reg(12'h1b0,64,4'hf);expect_reg(12'h1b0,63);expect_reg(12'h184,24);
+        write_reg(12'h1b0,255,4'hf);expect_reg(12'h1b0,255);
+        write_reg(12'h1b0,256,4'hf);expect_reg(12'h1b0,255);expect_reg(12'h184,24);
         write_reg(12'h1ac,1,4'hf);expect_reg(12'h184,8);
         write_reg(12'h1b0,0,4'hf);
         write_reg(12'h180,3,4'h1);expect_reg(12'h180,0);expect_reg(12'h184,24);

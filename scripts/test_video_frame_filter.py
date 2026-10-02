@@ -53,17 +53,23 @@ def main():
         output = run([tool("vvp"), str(simulation)], expected_failure=True)
         if "Blur scale parameters must be in the range 1..64" not in output:
             raise RuntimeError("Invalid scale did not fail through the parameter guard")
-    ratios = ((1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (6, 1), (3, 2)) if args.dynamic_display else ((3, 2), (4, 1), (6, 1))
-    cases = [(width, height, 80, 1, num, den)
-             for num, den in ratios
+    references = ((3, 2), (4, 1), (6, 1))
+    outputs = ((1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (6, 1), (3, 2))
+    # Every core reference sees every active display scale. The oracle always
+    # uses the fixed reference; changing output geometry must not alter it.
+    cases = [(width, height, 448, 1, num, den, output_num, output_den)
+             for num, den in references
+             for output_num, output_den in (outputs if args.dynamic_display else ((num, den),))
              for width, height in ((13, 9), (1, 1), (2, 3))]
+    # The small gate also proves the original one-sample-per-clock budget.
+    cases += [(17, 9, 448, 0, num, den, 2, 1) for num, den in references]
     if not args.dynamic_display:
-        cases += [(13, 9, 80, 1, 1, 1), (13, 9, 80, 1, 5, 2)]
+        cases += [(13, 9, 448, 1, 1, 1, 1, 1), (13, 9, 448, 1, 5, 2, 5, 2)]
     if not args.small_only:
-        cases += [(160, 144, 1, 0, 6, 1), (382, 270, 1, 0, 4, 1),
-                  (404, 250, 1, 0, 4, 1), (540, 720, 1, 0, 3, 2)]
-    for width, height, jobs, stalls, num, den in cases:
-        directory = build / f"{width}x{height}-s{num}-{den}"
+        cases += [(160, 144, 1, 0, 6, 1, 5, 1), (382, 270, 1, 0, 4, 1, 2, 1),
+                  (404, 250, 1, 0, 4, 1, 3, 1), (540, 720, 1, 0, 3, 2, 1, 1)]
+    for width, height, jobs, stalls, num, den, output_num, output_den in cases:
+        directory = build / f"{width}x{height}-s{num}-{den}-out{output_num}-{output_den}"
         directory.mkdir(exist_ok=True)
         run([str(oracle), str(width), str(height), str(directory), str(int(jobs > 1)), str(num), str(den)])
         simulation = directory / "filter.vvp"
@@ -71,6 +77,8 @@ def main():
              "-P", f"tb_video_frame_filter.WIDTH={width}", "-P", f"tb_video_frame_filter.HEIGHT={height}",
              "-P", f"tb_video_frame_filter.JOBS={jobs}", "-P", f"tb_video_frame_filter.STALL={stalls}",
              "-P", f"tb_video_frame_filter.SCALE_NUM={num}", "-P", f"tb_video_frame_filter.SCALE_DEN={den}",
+             "-P", f"tb_video_frame_filter.OUTPUT_SCALE_NUM={output_num}",
+             "-P", f"tb_video_frame_filter.OUTPUT_SCALE_DEN={output_den}",
              "-P", f"tb_video_frame_filter.DYNAMIC_DISPLAY={int(args.dynamic_display)}",
              "-o", str(simulation), str(ROOT / sources[0]), str(ROOT / sources[1])])
         output = run([tool("vvp"), str(simulation), "+vectors=" + directory.as_posix()])

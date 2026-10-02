@@ -30,8 +30,8 @@ void mt_video_effects_frontend_apply(mt_video_effects_frontend_t *frontend,
     static const char *const labels[MT_VIDEO_EFFECT_COUNT] = {
         "Enable effects", "Brightness", "Contrast", "Gamma", "Saturation", "Hue",
         "Color temperature", "Red gain", "Green gain", "Blue gain", "Display tint",
-        "Negative", "Posterize", "Scanlines", "Pixel mask", "Horizontal filter",
-        "Persistence", "Blur", "Bloom"
+        "Negative", "Posterize", "Scanlines", "Pixel mask", "Horizontal smoothing",
+        "Persistence", "Vertical smoothing", "Bloom"
     };
     static const char *const help[MT_VIDEO_EFFECT_COUNT] = {
         "Apply saved effects to the game image. Menus and decorative borders keep their original colors.",
@@ -48,15 +48,14 @@ void mt_video_effects_frontend_apply(mt_video_effects_frontend_t *frontend,
         "Reduce the number of levels per channel for a deliberately stepped palette.",
         "Darken alternating source-row bands after scaling, keeping the menu readable.",
         "Simulate aperture grille, staggered shadow mask, or LCD pixel grid at output resolution.",
-        "Soften or sharpen horizontal edges. Filtering stops at image and menu boundaries.",
+        "Smooth neighboring source pixels horizontally, then blend scaled edges. Independent of vertical smoothing; consistent across output resolutions.",
         "Keep a fading phosphor trail behind moving pixels. Off preserves original motion.",
-        "Soften edges with strength adjusted for the game's resolution.",
-        "Add a soft light halo around bright pixels. Independent of blur and persistence."
+        "Blend neighboring source rows vertically. Independent of horizontal smoothing; strength stays consistent across output resolutions.",
+        "Add a soft light halo around bright pixels. Independent of smoothing and persistence."
     };
     static const char *const tints[] = {"Color", "White", "Green", "Amber", "Sepia"};
     static const char *const masks[] = {"Off", "Aperture grille", "Shadow mask", "LCD grid"};
     static const char *const scans[] = {"Off", "Light", "Medium", "Strong"};
-    static const char *const filters[] = {"Off", "Soft", "Strong", "Sharp"};
     mt_video_effects_settings_t defaults;
     size_t i;
     if (frontend == NULL || view == NULL) return;
@@ -91,8 +90,7 @@ void mt_video_effects_frontend_apply(mt_video_effects_frontend_t *frontend,
                 id == MT_VIDEO_EFFECT_PERSISTENCE || id == MT_VIDEO_EFFECT_BLUR ||
                 id == MT_VIDEO_EFFECT_BLOOM) {
                 const char *name = id == MT_VIDEO_EFFECT_TINT ? tints[value] :
-                    id == MT_VIDEO_EFFECT_MASK ? masks[value] :
-                    id == MT_VIDEO_EFFECT_SOFTNESS ? filters[value] : scans[value];
+                    id == MT_VIDEO_EFFECT_MASK ? masks[value] : scans[value];
                 item->control = MT_MENU_CONTROL_VALUE;
                 (void)snprintf(frontend->values[i], sizeof(frontend->values[i]), "%s", name);
             } else if (id == MT_VIDEO_EFFECT_POSTERIZE)

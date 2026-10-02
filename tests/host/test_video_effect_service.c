@@ -159,6 +159,7 @@ static void start_frames(void)
     settings.persistence = 2U;
     settings.blur = 1U;
     settings.bloom = 3U;
+    settings.softness = 3U;
     mt_video_effect_service_configure(true, &settings);
     poll_bounded();
     finish_apply();
@@ -167,6 +168,7 @@ static void start_frames(void)
            (MT_VIDEO_FRAME_CAPTURE_ENABLE | MT_VIDEO_FRAME_DISPLAY_ENABLE |
             MT_VIDEO_FRAME_AUTONOMOUS_ENABLE));
     assert(error_clears == 1U);
+    assert(registers[MT_REG_VIDEO_FRAME_OPTIONS / 4U]==(2U|(1U<<2U)|(3U<<4U)|(3U<<6U)));
 }
 
 static void test_complete_upload(void)
@@ -271,14 +273,14 @@ static void test_live_settings_preserve_frame_schedule(void)
     const unsigned control = registers[MT_REG_VIDEO_FRAME_CONTROL / 4U];
     const unsigned clears = error_clears;
     mt_video_effects_defaults(&settings);
-    settings.enabled = 1U; settings.bloom = 2U;
+    settings.enabled = 1U; settings.bloom = 2U; settings.softness = 2U;
     mt_video_effect_service_configure(true, &settings);
     assert(registers[MT_REG_VIDEO_FRAME_CONTROL / 4U] == control);
     poll_bounded();
     finish_apply();
     poll_bounded();
     assert(registers[MT_REG_VIDEO_FRAME_CONTROL / 4U] == control);
-    assert(registers[MT_REG_VIDEO_FRAME_OPTIONS / 4U] == (2U << 4U));
+    assert(registers[MT_REG_VIDEO_FRAME_OPTIONS / 4U] == ((2U << 4U)|(2U<<6U)));
     assert(error_clears == clears && display_submits == 0U);
     settings.enabled = 0U;
     mt_video_effect_service_configure(true, &settings);
@@ -313,6 +315,23 @@ static void test_frame_transport_errors(void)
         assert(strstr(mt_video_effect_service_status(), "stopped") != NULL);
         if (kind == 3U) assert(strstr(mt_video_effect_service_status(), "deadline") != NULL);
         assert(display_submits == 0U);
+    }
+}
+
+static void test_horizontal_frame_options(void)
+{
+    mt_video_effects_settings_t settings;
+    start_frames();
+    const unsigned control=registers[MT_REG_VIDEO_FRAME_CONTROL/4U],clears=error_clears;
+    for(unsigned level=0U;level<4U;++level) {
+        mt_video_effects_defaults(&settings);
+        settings.enabled=1U;settings.persistence=1U;settings.blur=2U;settings.bloom=3U;
+        settings.softness=(uint8_t)level;
+        mt_video_effect_service_configure(true,&settings);
+        poll_bounded();finish_apply();poll_bounded();
+        assert(registers[MT_REG_VIDEO_FRAME_OPTIONS/4U]==(1U|(2U<<2U)|(3U<<4U)|(level<<6U)));
+        assert(words[12U]==((1U<<MT_VIDEO_EFFECTS_ENABLE_SHIFT)|(level<<MT_VIDEO_EFFECTS_SOFTNESS_SHIFT)));
+        assert(registers[MT_REG_VIDEO_FRAME_CONTROL/4U]==control && error_clears==clears);
     }
 }
 
@@ -388,6 +407,7 @@ int main(void)
     test_autonomous_ownership();
     test_live_settings_preserve_frame_schedule();
     test_frame_transport_errors();
+    test_horizontal_frame_options();
     test_initial_drain_and_error_retry();
     test_frame_fault_precedes_control_update_status();
     puts("Video controls preserve autonomous frame scheduling");

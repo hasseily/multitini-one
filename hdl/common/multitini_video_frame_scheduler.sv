@@ -10,7 +10,7 @@ module multitini_video_frame_scheduler #(
     parameter integer DEADLINE_GRACE_CYCLES = 256
 ) (
     input wire clk, resetn, enable, clear_errors, transport_error,
-    input wire [5:0] options,
+    input wire [7:0] options,
     input wire frame_tick,
     input wire [31:0] capture_producer,
     output reg [31:0] capture_consumer,
@@ -20,7 +20,7 @@ module multitini_video_frame_scheduler #(
     output reg [31:0] display_value,
     output reg engine_start,
     output reg [1:0] engine_input_slot, engine_output_slot,
-    output reg [5:0] engine_options,
+    output reg [7:0] engine_options,
     output reg engine_history_reset,
     input wire engine_busy, engine_done, engine_error,
     output wire busy, quiescent,
@@ -31,7 +31,7 @@ module multitini_video_frame_scheduler #(
                                    $clog2(DEADLINE_GRACE_CYCLES + 1) : 1;
     reg enabled_last, cadence, launch_pending, in_flight, result_ready;
     reg history_valid, publication_pending, deadline_pending;
-    reg [5:0] history_options;
+    reg [7:0] history_options;
     reg [29:0] sequence_counter, launch_sequence, due_sequence, checked_sequence;
     reg [31:0] job_value, pending_value;
     reg [GRACE_BITS-1:0] grace_remaining;

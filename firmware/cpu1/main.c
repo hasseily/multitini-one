@@ -56,7 +56,7 @@ static bool frame_job_valid(const mt_video_frame_job_t *job)
         job->stride == ((job->width + 63U) / 64U) * 128U &&
         job->height * job->stride <= MT_VIDEO_FRAME_SLOT_BYTES &&
         job->options.enabled <= 1U && job->options.persistence <= 3U &&
-        job->options.blur <= 3U && job->options.bloom <= 3U;
+        job->options.blur <= 3U && job->options.bloom <= 3U && job->options.softness <= 3U;
 }
 
 static int execute_frame(const mt_video_frame_job_t *job, void *output, uint32_t *size)

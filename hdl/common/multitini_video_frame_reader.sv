@@ -33,6 +33,8 @@ module multitini_video_frame_reader #(
     input wire vblank_start,
     output wire pixel_use,
     output wire [15:0] pixel_rgb565,
+    output reg [15:0] pixel_neighbor_rgb565,
+    output reg [7:0] pixel_neighbor_weight,
     output reg [31:0] araddr,
     output reg [3:0] arlen,
     output wire [2:0] arsize,
@@ -263,8 +265,9 @@ module multitini_video_frame_reader #(
     reg [2:0] line_valid;
     reg [9:0] line_row [0:2];
     reg [31:0] line_epoch [0:2];
-    reg [63:0] pixel_word;
-    reg [1:0] pixel_select;
+    reg [63:0] cache_word, current_word, previous_word;
+    reg [7:0] current_word_index;
+    reg [15:0] pixel_center;
     reg pixel_cached;
     reg [9:0] source_x, source_y;
     reg [1:0] read_bank, next_bank;
@@ -278,7 +281,45 @@ module multitini_video_frame_reader #(
     wire cache_hit = line_valid[read_bank] && line_row[read_bank] == source_y &&
                      line_epoch[read_bank] == epoch;
     assign pixel_use = enabled_pixel && !frame_failed && visible && pixel_cached;
-    assign pixel_rgb565 = pixel_word[pixel_select*16+:16];
+    assign pixel_rgb565 = pixel_center;
+    // One synchronous BRAM read port supplies a previous/current/next word
+    // window. Prefetching the next packed word costs no additional DDR reads.
+    // The row bank advances at x=0; supported centered viewports have VIEW_X
+    // >=4 so word zero loads at x=VIEW_X-3 after that bank has settled.
+    wire preload = scan_x == view_x-3;
+    wire start_line = scan_x == view_x-2;
+    // synthesis translate_off
+    initial if(!DYNAMIC_DISPLAY && VIEW_X<4)
+        $fatal(1,"DDR reader viewport requires at least four leading pixel clocks");
+    always @(posedge pixel_clk)
+        if(pixel_run && enabled_pixel && scan_x==0 && view_x<4)
+            $fatal(1,"DDR reader viewport requires at least four leading pixel clocks");
+    // synthesis translate_on
+    wire word_advance = source_x[9:2] != current_word_index;
+    wire [63:0] center_word = word_advance ? cache_word : current_word;
+    wire [63:0] left_word = word_advance ? current_word : previous_word;
+    wire [15:0] center_pixel = center_word[source_x[1:0]*16+:16];
+    wire signed [5:0] centered_phase = $signed({1'b0,horizontal_phase,1'b0}) +
+        $signed({2'b0,scale_den}) - $signed({2'b0,scale_num});
+    wire [5:0] phase_distance = centered_phase[5] ? -centered_phase : centered_phase;
+    function automatic [7:0] phase_weight(input [5:0] distance, input [3:0] numerator);
+        // Fixed small divisors synthesize as a tiny phase table, not a wide
+        // variable divider on the pixel clock. Values are nearest Q8 weights.
+        begin
+            case(numerator)
+                2:phase_weight=distance*64;
+                3:case(distance) 1:phase_weight=43;2:phase_weight=85;3:phase_weight=128;default:phase_weight=0;endcase
+                4:phase_weight=distance*32;
+                5:case(distance) 1:phase_weight=26;2:phase_weight=51;3:phase_weight=77;4:phase_weight=102;default:phase_weight=0;endcase
+                6:case(distance) 1:phase_weight=21;2:phase_weight=43;3:phase_weight=64;4:phase_weight=85;5:phase_weight=107;default:phase_weight=0;endcase
+                default:phase_weight=0;
+            endcase
+        end
+    endfunction
+    wire [15:0] left_pixel = source_x == 0 ? center_pixel :
+        (source_x[1:0] == 0 ? left_word[63:48] : center_word[(source_x[1:0]-2'd1)*16+:16]);
+    wire [15:0] right_pixel = source_x == WIDTH-1 ? center_pixel :
+        (source_x[1:0] == 3 ? cache_word[15:0] : center_word[(source_x[1:0]+2'd1)*16+:16]);
     // Replies can outlive a pixel-only reset because accepted AXI reads must
     // drain. Never reuse their epoch when scanout restarts. PS reset alone
     // initializes the epoch; its mailbox recovery discards pre-reset traffic.
@@ -294,14 +335,17 @@ module multitini_video_frame_reader #(
     end
     integer bank;
     always @(posedge pixel_clk) begin
-        if (prefetch && source_x < WIDTH)
-            pixel_word<=cache[read_bank*WORDS + source_x/4];
+        if (preload || start_line || (prefetch && source_x < WIDTH))
+            cache_word<=cache[read_bank*WORDS + (preload ? 0 :
+                start_line ? (WORDS>1 ? 1 : 0) :
+                (source_x[9:2]+1 < WORDS ? source_x[9:2]+1 : source_x[9:2]))];
         if (!pixel_run) begin
             enabled_pixel<=0; frame_failed<=0; value_pixel<=0;
             next_row<=0; current_row<=0; line_valid<=0; row_outstanding<=0;
             outstanding_token<=0;
             request_valid_pixel<=0; request_pixel<=0; underrun_toggle<=0;
-            pixel_select<=0; pixel_cached<=0;
+            pixel_center<=0;pixel_neighbor_rgb565<=0;pixel_neighbor_weight<=0;pixel_cached<=0;
+            current_word<=0;previous_word<=0;current_word_index<=0;
             source_x<=0;source_y<=0;read_bank<=0;next_bank<=0;
             horizontal_phase<=0;vertical_phase<=0;
             for (bank=0;bank<3;bank=bank+1) begin line_row[bank]<=0; line_epoch[bank]<=0; end
@@ -319,15 +363,21 @@ module multitini_video_frame_reader #(
                     read_bank<=read_bank==2 ? 0 : read_bank+1'b1;
                 end else vertical_phase<=vertical_phase+scale_den;
             end
-            if (scan_x==view_x-2) begin
+            if (start_line) begin
                 source_x<=0;horizontal_phase<=0;
+                current_word<=cache_word;previous_word<=cache_word;current_word_index<=0;
             end else if (prefetch) begin
                 if (horizontal_phase+scale_den>=scale_num) begin
                     source_x<=source_x+1'b1;
                     horizontal_phase<=horizontal_phase+scale_den-scale_num;
                 end else horizontal_phase<=horizontal_phase+scale_den;
+                if(word_advance)begin
+                    previous_word<=current_word;current_word<=cache_word;current_word_index<=source_x[9:2];
+                end
             end
-            pixel_select<=source_x[1:0];
+            pixel_center<=center_pixel;
+            pixel_neighbor_rgb565<=centered_phase[5] ? left_pixel : right_pixel;
+            pixel_neighbor_weight<=prefetch && cache_hit ? phase_weight(phase_distance,scale_num) : 0;
             pixel_cached<=prefetch && cache_hit;
             if (prefetch) current_row<=source_y;
             if (enabled_pixel && !frame_failed && prefetch && !cache_hit) begin
@@ -356,7 +406,7 @@ module multitini_video_frame_reader #(
             if (vblank_start) begin
                 next_row<=0; current_row<=0; line_valid<=0;
                 next_bank<=0;
-                frame_failed<=0; pixel_cached<=0;
+                frame_failed<=0; pixel_cached<=0;pixel_neighbor_weight<=0;
                 if (publish_valid_pixel) begin
                     value_pixel<=publish_pixel[31:0];
                     enabled_pixel<=publish_pixel[32];

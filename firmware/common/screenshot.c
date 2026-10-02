@@ -159,14 +159,13 @@ bool mt_screenshot_render_row(const mt_screenshot_scene_t *s,uint32_t y,uint16_t
         if(x>=g.vx && x<g.vx+g.vw && y>=g.vy && y<g.vy+g.vh) {
             const uint32_t xx=x-g.vx,yy=y-g.vy,sy=yy*g.den/g.num;
             const uint16_t *source=s->pixels+sy*s->width;
-            const uint16_t center=source[xx*g.den/g.num];
-            bool start=xx==0U,end=xx+1U==g.vw;
-            uint16_t ignored;
-            if(!start && ui_pixel(s,&g,x-1U,y,&ignored))start=true;
-            if(!end && ui_pixel(s,&g,x+1U,y,&ignored))end=true;
-            const uint16_t left=start ? center:source[(xx-1U)*g.den/g.num];
-            const uint16_t right=end ? center:source[(xx+1U)*g.den/g.num];
-            pixel=mt_video_effects_reference_spatial_rgb565(s->effects,left,center,right,start,end,scanline_dim(&g,yy),xx,yy);
+            const uint32_t sx=xx*g.den/g.num;
+            const uint16_t center=source[sx];
+            const bool first=sx==0U,last=sx+1U==s->width;
+            const uint16_t left=first ? center:source[sx-1U];
+            const uint16_t right=last ? center:source[sx+1U];
+            pixel=mt_video_effects_reference_scaled_rgb565(s->effects,left,center,right,
+                first,last,scanline_dim(&g,yy),xx,yy,g.num,g.den);
         }
         row[output_x]=pixel;
     }

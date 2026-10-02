@@ -63,7 +63,7 @@ bool mt_video_effect_service_available(void)
 const char *mt_video_effect_service_status(void)
 {
     const mt_video_worker_state_t state = mt_video_worker_status().state;
-    if (!compatible) return "Select a core with video effects support (interface 0.15 or later).";
+    if (!compatible) return "Update the core package to use these video effects.";
     /* A stopped frame pipeline takes precedence over a separate control
      * update. Never claim that video remains active after a transport fault. */
     if (mt_video_frame_service_failed()) return mt_video_frame_service_status();
@@ -116,7 +116,7 @@ void mt_video_effect_service_poll(void)
                 MT_VIDEO_EFFECT_STATUS_VALID &&
             bus.read(MT_REG_VIDEO_EFFECT_SEQUENCE) == sent_sequence) {
             const mt_video_frame_options_t options = {
-                desired.enabled, desired.persistence, desired.blur, desired.bloom
+                desired.enabled, desired.persistence, desired.blur, desired.bloom, desired.softness
             };
             mt_video_frame_service_start(epoch, &options);
             phase = APPLIED;

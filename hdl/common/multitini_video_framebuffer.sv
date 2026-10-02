@@ -21,6 +21,8 @@ module multitini_video_framebuffer #(
     input wire pixel_clk,pixel_resetn,shared_pixel_resetn,vblank_start,machine_ready,
     input wire [11:0] scan_x,scan_y,input wire [15:0] machine_rgb565,
     output wire pixel_use,pixel_running,output wire [15:0] pixel_rgb565,
+    output wire [15:0] pixel_neighbor_rgb565,
+    output wire [7:0] pixel_neighbor_weight,
     output wire [31:0] awaddr,output wire [3:0] awlen,
     output wire [2:0] awsize,output wire [1:0] awburst,
     output wire awvalid,input wire awready,
@@ -45,7 +47,7 @@ module multitini_video_framebuffer #(
     input wire fx_rlast,fx_rvalid,output wire fx_rready
 );
     reg [2:0] control;
-    reg [5:0] options;
+    reg [7:0] options;
     reg [31:0] consumer,submit_value;
     reg submit,bad_write,clear_errors,autonomous_owned,capture_enable;
     reg [31:0] capture_error_base,read_error_base,drop_base,underrun_base;
@@ -55,7 +57,7 @@ module multitini_video_framebuffer #(
     wire [31:0] hardware_consumer,hardware_value,processed_frames,deadline_misses;
     wire engine_start,engine_history_reset,engine_busy,engine_done,engine_error;
     wire [1:0] engine_input_slot,engine_output_slot;
-    wire [5:0] engine_options;
+    wire [7:0] engine_options;
     wire [31:0] engine_errors,engine_cycles,engine_max_stall;
     wire paused=DYNAMIC_DISPLAY && display_pause;
     wire automatic_mode=control[2] || autonomous_owned;
@@ -104,7 +106,7 @@ module multitini_video_framebuffer #(
                         bad_write<=0;capture_error_base<=capture_errors;read_error_base<=read_errors;
                         drop_base<=capture_drops;underrun_base<=underruns;clear_errors<=1;
                     end else bad_write<=1;
-                    12'h1b0:if(wr_data[31:6]==0)options<=wr_data[5:0];else bad_write<=1;
+                    12'h1b0:if(wr_data[31:8]==0)options<=wr_data[7:0];else bad_write<=1;
                     default:bad_write<=1;
                 endcase
             end
@@ -124,7 +126,7 @@ module multitini_video_framebuffer #(
             12'h1a0:rd_data=capture_drops-drop_base;
             12'h1a4:rd_data=(capture_errors-capture_error_base)+(read_errors-read_error_base);
             12'h1a8:rd_data=underruns-underrun_base;
-            12'h1b0:rd_data={26'd0,options};
+            12'h1b0:rd_data={24'd0,options};
             12'h1b4:rd_data=processed_frames;
             12'h1b8:rd_data=deadline_misses;
             12'h1bc:rd_data=engine_cycles;
@@ -162,6 +164,7 @@ module multitini_video_framebuffer #(
         .pixel_clk(pixel_clk),.pixel_resetn(pixel_resetn),.shared_pixel_resetn(shared_pixel_resetn),.scan_x(scan_x),.scan_y(scan_y),.vblank_start(vblank_start),
         .shared_pixel_running(pixel_running),
         .pixel_use(pixel_use),.pixel_rgb565(pixel_rgb565),
+        .pixel_neighbor_rgb565(pixel_neighbor_rgb565),.pixel_neighbor_weight(pixel_neighbor_weight),
         .araddr(araddr),.arlen(arlen),.arsize(arsize),.arburst(arburst),.arvalid(arvalid),.arready(arready),
         .rdata(rdata),.rresp(rresp),.rlast(rlast),.rvalid(rvalid),.rready(rready));
 

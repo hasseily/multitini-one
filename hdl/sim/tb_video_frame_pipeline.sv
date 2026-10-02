@@ -9,27 +9,31 @@ module tb_video_frame_pipeline;
     reg display_pause=0,display_pixel_hold=0;
     wire display_quiescent;
     parameter bit SOURCE_PAUSE_TEST=0,EXPECT_SOURCE_FAILURE=0;
-    // The frame-order scoreboard uses solid colors. Separately prove the
-    // real framebuffer->engine->filter wiring changes a nonuniform tap
-    // response at the same small geometry for all three display scales.
+    // Flat-color frame ordering is checked below. Probe an asymmetric tap
+    // separately to prove active output scaling never retunes vertical blur.
+    function automatic integer vertical_alpha(input integer level);
+        integer reference_strong;
+        begin
+            // Production core references are 4:1, 6:1 and 3:2. These small
+            // integration fixtures also exercise other legal reference ratios.
+            reference_strong=(1152*SCALE_DEN+SCALE_NUM/2)/SCALE_NUM;
+            if(reference_strong>256)reference_strong=256;
+            reference_strong=(reference_strong*7+4)/8;
+            case(level)
+                1:vertical_alpha=(reference_strong*4+3)/7;
+                2:vertical_alpha=(reference_strong*11+7)/14;
+                default:vertical_alpha=reference_strong;
+            endcase
+        end
+    endfunction
     initial begin
         #1;
         if(dut.engine_i.filter.SCALE_NUM!=SCALE_NUM || dut.engine_i.filter.SCALE_DEN!=SCALE_DEN)
-            $fatal(1,"Frame engine lost the framebuffer display scale");
-        for(integer mode=1;mode<=3;mode=mode+1)begin
-            // Dynamic coefficients are decoded from the display wiring now,
-            // then captured only when a job starts. Probe that decoder here;
-            // the per-job check below verifies the captured blend response.
-            if(DYNAMIC_DISPLAY)begin
-                if(dut.engine_i.filter.display_alpha(mode[1:0])!==
-                   ((384*mode*SCALE_DEN+SCALE_NUM/2)/SCALE_NUM > 256 ? 256 :
-                    (384*mode*SCALE_DEN+SCALE_NUM/2)/SCALE_NUM))
-                    $fatal(1,"Frame engine blur coefficient lost its display scale and level");
-            end else if(dut.engine_i.filter.normalized_blur(8'd0,8'd64,mode[1:0])!==
-               ((64 * ( (384*mode*SCALE_DEN+SCALE_NUM/2)/SCALE_NUM > 256 ? 256 :
-                        (384*mode*SCALE_DEN+SCALE_NUM/2)/SCALE_NUM) + 128)/256))
-                $fatal(1,"Frame engine blur response did not reflect its scale and level");
-        end
+            $fatal(1,"Frame engine lost the core reference scale");
+        for(integer mode=1;mode<=3;mode=mode+1)
+            if(dut.engine_i.filter.normalized_blur(8'd0,8'd64,mode[1:0])!==
+               (64*vertical_alpha(mode)+128)/256)
+                $fatal(1,"Frame engine changed the fixed vertical blend coefficient");
     end
     localparam integer WIDTH=13,HEIGHT=8,VIEW_X=16,VIEW_Y=2;
     localparam integer OUT_WIDTH=WIDTH*SCALE_NUM/SCALE_DEN;
@@ -37,18 +41,18 @@ module tb_video_frame_pipeline;
     localparam integer STRIDE=128,SLOT_BYTES=STRIDE*HEIGHT,PIXELS=WIDTH*HEIGHT;
     localparam integer H_TOTAL=256,V_TOTAL=96;
     reg clk=0,pixel_clk=0,resetn=0;
-    integer expected_job_alpha;
-    reg [1:0] accepted_blur;
-    always @(posedge clk)if(DYNAMIC_DISPLAY && resetn && dut.engine_i.filter.start &&
-                            !dut.engine_i.filter.busy && dut.engine_i.filter.options[3:2]!=0)begin
-        accepted_blur=dut.engine_i.filter.options[3:2];
-        expected_job_alpha=(384*accepted_blur*SCALE_DEN+SCALE_NUM/2)/SCALE_NUM;
-        if(expected_job_alpha>256)expected_job_alpha=256;
+    reg [7:0] accepted_options;
+    always @(posedge clk)if(resetn && dut.engine_i.filter.start && !dut.engine_i.filter.busy)begin
+        accepted_options=dut.engine_options;
+        if(dut.engine_i.filter.options!==accepted_options)
+            $fatal(1,"Native filter lost horizontal option bits");
         #0.001;
-        if(dut.engine_i.filter.blur_alpha!==expected_job_alpha ||
-           dut.engine_i.filter.normalized_blur(8'd0,8'd64,accepted_blur)!==
-           (64*expected_job_alpha+128)/256)
-            $fatal(1,"Frame engine did not capture its job blur coefficient");
+        if(dut.engine_i.job_options!==accepted_options)
+            $fatal(1,"Frame engine did not capture all eight option bits");
+        if(accepted_options[3:2]!=0 &&
+           dut.engine_i.filter.normalized_blur(8'd0,8'd64,accepted_options[3:2])!==
+           (64*vertical_alpha(accepted_options[3:2])+128)/256)
+            $fatal(1,"Frame job changed the fixed vertical blend coefficient");
     end
     // Match the production 133 MHz HP and 148.5 MHz pixel clock ratio, with
     // distinct edges. The small synthetic raster keeps ample vertical blank.
@@ -220,7 +224,7 @@ module tb_video_frame_pipeline;
     // kernel preserves the color, then bloom adds its documented halo. RGB8
     // persistence is calculated here without looking at engine internals.
     reg [23:0] oracle_history=0;
-    reg [5:0] oracle_options=0;
+    reg [7:0] oracle_options=0;
     reg oracle_valid=0;
     reg [15:0] expected_pixel[0:255];
     integer expected_frame[0:255],jobs=0,last_job_frame=-1,segment_jobs=0;
@@ -373,8 +377,8 @@ module tb_video_frame_pipeline;
             end
             assert_clean();
         end
-        before_options=segment_displayed;write_reg(12'h1b0,6'b01_10_11);
-        wait(segment_displayed>=before_options+3);assert_clean();write_reg(12'h1b0,6'b11_11_11);
+        before_options=segment_displayed;write_reg(12'h1b0,8'b01_01_10_11);
+        wait(segment_displayed>=before_options+3);assert_clean();write_reg(12'h1b0,8'b11_11_11_11);
         wait(segment_displayed>=before_options+6);assert_clean();
         // Stop after a job owns an accepted write. Its B response remains
         // pending across disable; quiescence must retain that ownership.
@@ -405,7 +409,7 @@ module tb_video_frame_pipeline;
         // would visibly contaminate the first restarted output.
         epoch=1;epoch_start_frame=frame_number;oracle_valid=0;segment_jobs=0;
         display_started=0;segment_displayed=0;latency=-1;
-        write_reg(12'h1b0,6'b11_11_11);
+        write_reg(12'h1b0,8'b11_11_11_11);
         if(DYNAMIC_DISPLAY)begin display_pixel_hold=0;display_pause=0;end
         else write_reg(12'h180,7);
         check_running=1;

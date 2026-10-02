@@ -39,7 +39,8 @@ void mt_video_frame_service_start(uint32_t next_epoch, const mt_video_frame_opti
     (void)next_epoch;
     if (next == NULL || bus.read == NULL || bus.write == NULL || bus.milliseconds == NULL) return;
     packed_options = next->enabled != 0U ? (uint32_t)next->persistence |
-        ((uint32_t)next->blur << 2U) | ((uint32_t)next->bloom << 4U) : 0U;
+        ((uint32_t)next->blur << 2U) | ((uint32_t)next->bloom << 4U) |
+        ((uint32_t)next->softness << 6U) : 0U;
     if (running && state == ACTIVE) {
         /* Hardware takes the next configuration at a frame boundary. Keep
          * capture, history, and presentation running through UI changes. */

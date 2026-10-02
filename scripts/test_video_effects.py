@@ -18,9 +18,13 @@ def main():
     guard = [sys.executable, str(ROOT / "scripts/run_native_tool.py"), "--"]
     sources = ["hdl/sim/xilinx_primitives.sv", "hdl/common/multitini_async_mailbox.sv",
                "hdl/common/multitini_video_effects.sv", "hdl/sim/tb_video_effects.sv"]
-    for numerator, denominator in ((4, 1), (6, 1), (3, 2)):
-        output = build / f"effects-{numerator}-{denominator}.vvp"
+    cases = [(4, 1, 0), (6, 1, 0), (3, 2, 0)] + [
+        (n, d, 1) for n, d in ((1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (6, 1), (3, 2))]
+    for numerator, denominator, dynamic in cases:
+        output = build / f"effects-{numerator}-{denominator}-dynamic{dynamic}.vvp"
         subprocess.run(guard + [compiler, "-g2012", "-Wall", "-Wimplicit", "-s", "tb_video_effects",
+                       "-P", f"tb_video_effects.DYNAMIC_DISPLAY={dynamic}",
+                       "-P", f"tb_video_effects.SHARED_PIXEL_RESET={dynamic}",
                        "-P", f"tb_video_effects.SCALE_NUM={numerator}",
                        "-P", f"tb_video_effects.SCALE_DEN={denominator}", "-o", str(output)] +
                        [str(ROOT / path) for path in sources], cwd=build, check=True)
@@ -39,13 +43,17 @@ def main():
                    str(ROOT / "firmware/common/video_effects.c"),
                    str(ROOT / "tests/host/test_video_effects.c"), "-lm", "-o", str(emitter)],
                    cwd=build, check=True)
-    vectors = build / "c-vectors.txt"
-    with vectors.open("w", encoding="ascii") as stream:
-        subprocess.run(guard + [str(emitter), "--vectors"], cwd=build, stdout=stream, check=True)
-    output = build / "effects-oracle.vvp"
-    subprocess.run(guard + [compiler, "-g2012", "-s", "tb_video_effects_oracle", "-o", str(output)] +
-                   [str(ROOT / path) for path in sources], cwd=build, check=True)
-    subprocess.run(guard + [simulator, str(output), "+vectors=" + str(vectors)], cwd=build, check=True)
+    for numerator, denominator in ((1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (6, 1), (3, 2)):
+        vectors = build / f"c-vectors-{numerator}-{denominator}.txt"
+        with vectors.open("w", encoding="ascii") as stream:
+            subprocess.run(guard + [str(emitter), "--vectors", str(numerator), str(denominator)],
+                           cwd=build, stdout=stream, check=True)
+        output = build / f"effects-oracle-{numerator}-{denominator}.vvp"
+        subprocess.run(guard + [compiler, "-g2012", "-s", "tb_video_effects_oracle",
+                       "-P", f"tb_video_effects_oracle.SCALE_NUM={numerator}",
+                       "-P", f"tb_video_effects_oracle.SCALE_DEN={denominator}", "-o", str(output)] +
+                       [str(ROOT / path) for path in sources], cwd=build, check=True)
+        subprocess.run(guard + [simulator, str(output), "+vectors=" + str(vectors)], cwd=build, check=True)
     return 0
 
 

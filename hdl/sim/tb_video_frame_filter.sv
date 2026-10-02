@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns/1ps
 module tb_video_frame_filter;
-    parameter integer WIDTH=13,HEIGHT=9,JOBS=80,STALL=1;
+    parameter integer WIDTH=13,HEIGHT=9,JOBS=448,STALL=1;
     parameter integer SCALE_NUM=3,SCALE_DEN=2;
+    parameter integer OUTPUT_SCALE_NUM=SCALE_NUM,OUTPUT_SCALE_DEN=SCALE_DEN;
     parameter bit DYNAMIC_DISPLAY=1'b0;
     localparam integer PIXELS=WIDTH*HEIGHT;
     reg clk=0,resetn=0,start=0,in_valid=0,out_ready=0;
     always #3.75 clk=!clk;
-    reg [5:0] options=0;
+    reg [7:0] options=0;
     reg [3:0] display_scale_num=4'(SCALE_NUM),display_scale_den=4'(SCALE_DEN);
     reg [23:0] in_rgb=0;
     wire in_ready,out_valid,busy,done;
@@ -16,7 +17,7 @@ module tb_video_frame_filter;
         .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN),.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY)) dut(.*);
     reg [23:0] inputs[0:JOBS*PIXELS-1];
     reg [15:0] expected[0:JOBS*PIXELS-1];
-    reg [5:0] configurations[0:JOBS-1];
+    reg [7:0] configurations[0:JOBS-1];
     string directory;
     integer job=0,sent=0,received=0,cycles=0,start_cycle=0,total=0,job_cycles=0;
     reg running=0,in_accepted=0,previous_stalled=0;
@@ -64,7 +65,7 @@ module tb_video_frame_filter;
     task begin_job;
         begin
             @(negedge clk);sent=0;received=0;options=configurations[job];start=1;
-            display_scale_num=4'(SCALE_NUM);display_scale_den=4'(SCALE_DEN);
+            display_scale_num=4'(OUTPUT_SCALE_NUM);display_scale_den=4'(OUTPUT_SCALE_DEN);
             start_cycle=cycles;in_valid=0;out_ready=0;running=0;
             @(negedge clk);start=0;running=1;
         end

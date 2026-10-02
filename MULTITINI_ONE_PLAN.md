@@ -613,6 +613,14 @@ On hardware:
 
 ### Decisions recorded after the baseline plan
 
+- 2026-10-02: The owner requested independent horizontal smoothing before and
+  during scaling and vertical-only smoothing, with stable per-core strengths
+  across output modes. After the software preview, increase all horizontal
+  levels and bring vertical Light/Medium closer to Strong by using the same
+  five-row footprint. Existing presets need no migration. Preserve core
+  timing, nominal 60 Hz output, and the ordered frame
+  pipeline. ABI 0.17 identifies the revised effect semantics; see
+  [axis smoothing](docs/VIDEO_AXIS_SMOOTHING.md). Board acceptance remains pending.
 - 2026-09-30: The owner requested all remaining applicable Appletini imports,
   including the optional follow-ups, committed on a new branch. This includes
   controller mapping and transports, timing/build hardening, six display modes,

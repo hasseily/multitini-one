@@ -298,6 +298,33 @@ static uint16_t pack_rgb565(const uint8_t color[3])
                       ((uint16_t)color[2] >> 3));
 }
 
+uint8_t mt_video_horizontal_weight(uint32_t phase, uint32_t scale_num,
+                                    uint32_t scale_den, uint8_t level)
+{
+    if(scale_num==0U || scale_num>64U || scale_den==0U || scale_den>64U ||
+       phase>=scale_num || level==MT_VIDEO_SMOOTH_OFF || level>MT_VIDEO_SMOOTH_STRONG) return 0U;
+    const int delta=(int)(2U*phase+scale_den)-(int)scale_num;
+    const unsigned distance=(unsigned)(delta<0 ? -delta:delta);
+    unsigned base=(distance*128U+scale_num/2U)/scale_num;
+    if(base>128U)base=128U;
+    return (uint8_t)base;
+}
+
+uint16_t mt_video_horizontal_rgb565(uint16_t center, uint16_t neighbor,uint8_t weight)
+{
+    if(weight==0U || center==neighbor)return center;
+    const unsigned w=weight>128U ? 128U:weight;
+    const unsigned a[3]={((unsigned)center>>11)*8U+((unsigned)center>>13),
+        (((unsigned)center>>5)&63U)*4U+(((unsigned)center>>9)&3U),
+        ((unsigned)center&31U)*8U+(((unsigned)center&31U)>>2)};
+    const unsigned b[3]={((unsigned)neighbor>>11)*8U+((unsigned)neighbor>>13),
+        (((unsigned)neighbor>>5)&63U)*4U+(((unsigned)neighbor>>9)&3U),
+        ((unsigned)neighbor&31U)*8U+(((unsigned)neighbor&31U)>>2)};
+    uint8_t color[3];
+    for(unsigned c=0U;c<3U;++c)color[c]=(uint8_t)((a[c]*(256U-w)+b[c]*w+128U)>>8);
+    return pack_rgb565(color);
+}
+
 uint16_t mt_video_effects_reference_rgb565(const mt_video_effects_tables_t *t,
                                         uint16_t pixel)
 {
@@ -313,28 +340,17 @@ uint16_t mt_video_effects_reference_spatial_rgb565(
     uint16_t right, bool line_start, bool line_end, bool scanline_dim,
     uint32_t x, uint32_t y)
 {
-    uint8_t color[3], previous[3], next[3];
-    unsigned filter, scanlines, mask, selected;
+    uint8_t color[3];
+    unsigned scanlines, mask, selected;
+    (void)left; (void)right; (void)line_start; (void)line_end;
     if (t == NULL || (t->spatial & (1U << MT_VIDEO_EFFECTS_ENABLE_SHIFT)) == 0U)
         return center;
     color_rgb888(t, center, color);
-    color_rgb888(t, line_start ? center : left, previous);
-    color_rgb888(t, line_end ? center : right, next);
-    filter = (t->spatial >> MT_VIDEO_EFFECTS_SOFTNESS_SHIFT) & 3U;
     scanlines = (t->spatial >> MT_VIDEO_EFFECTS_SCANLINES_SHIFT) & 3U;
     mask = (t->spatial >> MT_VIDEO_EFFECTS_MASK_SHIFT) & 3U;
     selected = (x % 3U + (mask == MT_VIDEO_MASK_SHADOW ? y & 1U : 0U)) % 3U;
     for (unsigned c = 0; c < 3U; ++c) {
         unsigned value = color[c];
-        if (filter == MT_VIDEO_FILTER_SOFT) {
-            value = ((unsigned)previous[c] + 6U * value + next[c] + 4U) >> 3;
-        } else if (filter == MT_VIDEO_FILTER_STRONG) {
-            value = ((unsigned)previous[c] + 2U * value + next[c] + 2U) >> 2;
-        } else if (filter == MT_VIDEO_FILTER_SHARP) {
-            const int sharpened = (int)value * 6 - previous[c] - next[c] + 2;
-            value = sharpened <= 0 ? 0U : (unsigned)sharpened >> 2;
-            if (value > 255U) value = 255U;
-        }
         if (scanline_dim) value = (value * (4U - scanlines)) >> 2;
         if (((mask == MT_VIDEO_MASK_APERTURE || mask == MT_VIDEO_MASK_SHADOW) &&
              c != selected) ||
@@ -343,6 +359,23 @@ uint16_t mt_video_effects_reference_spatial_rgb565(
         color[c] = (uint8_t)value;
     }
     return pack_rgb565(color);
+}
+
+uint16_t mt_video_effects_reference_scaled_rgb565(
+    const mt_video_effects_tables_t *t,uint16_t left,uint16_t center,uint16_t right,
+    bool first,bool last,bool scanline_dim,uint32_t x,uint32_t y,
+    uint32_t scale_num,uint32_t scale_den)
+{
+    if(t==NULL || (t->spatial&(1U<<MT_VIDEO_EFFECTS_ENABLE_SHIFT))==0U)return center;
+    if(scale_num!=0U && scale_num<=64U && scale_den!=0U && scale_den<=64U) {
+        const uint32_t phase=(uint32_t)(((uint64_t)x*scale_den)%scale_num);
+        const int delta=(int)(2U*phase+scale_den)-(int)scale_num;
+        const uint16_t neighbor=delta<0 ? (first ? center:left):(last ? center:right);
+        const uint8_t level=(uint8_t)((t->spatial>>MT_VIDEO_EFFECTS_SOFTNESS_SHIFT)&3U);
+        center=mt_video_horizontal_rgb565(center,neighbor,
+            mt_video_horizontal_weight(phase,scale_num,scale_den,level));
+    }
+    return mt_video_effects_reference_spatial_rgb565(t,center,center,center,true,true,scanline_dim,x,y);
 }
 
 int mt_video_effects_worker_execute(const void *input, uint32_t input_size,

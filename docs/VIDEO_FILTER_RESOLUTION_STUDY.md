@@ -2,6 +2,10 @@
 
 Date: 2026-10-01. This study changes no filter behavior or FPGA source.
 
+Historical baseline through CT02. AX01 replaces these controls with
+[independent axis smoothing](VIDEO_AXIS_SMOOTHING.md). Reproduce the original
+measurements at commit `dd4e978`; current reference code implements AX01.
+
 The same saved Blur or Horizontal Blend setting changes the treatment of game
 pixels when the output resolution changes. The two controls use different
 spatial units. The source and numerical evidence below explain the difference;

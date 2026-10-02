@@ -243,7 +243,7 @@ int main(void) {
     mt_video_worker_mailbox_t box = {0};
     mt_video_effects_settings_t settings;
     mt_video_frame_job_t old_job = {MT_VIDEO_FRAME_JOB_MAGIC, MT_VIDEO_FRAME_JOB_ABI,
-        1, 10, 1000, 1, 2, 3, 2, 128, {1, 2, 1, 3}};
+        1, 10, 1000, 1, 2, 3, 2, 128, {1, 2, 1, 3, 0}};
     uint8_t old_output[MT_VIDEO_WORKER_PAYLOAD_BYTES];
     mt_video_effects_defaults(&settings);
     box.magic = MT_VIDEO_WORKER_MAGIC;
@@ -428,7 +428,7 @@ static void run(mt_video_frame_job_t *job, bool reset, uint32_t steps) {
 }
 int main(void) {
     mt_video_frame_job_t job = {MT_VIDEO_FRAME_JOB_MAGIC, MT_VIDEO_FRAME_JOB_ABI,
-        1, 10, 1000, 1, 2, 3, 2, 128, {1, 2, 1, 3}};
+        1, 10, 1000, 1, 2, 3, 2, 128, {1, 2, 1, 3, 2}};
     mt_video_frame_job_t bad;
     mt_video_frame_result_t result;
     mt_video_worker_mailbox_t unused = {0};
@@ -448,10 +448,11 @@ int main(void) {
     job.timestamp_ms = 1040; run(&job, false, 1);
     job.epoch++; run(&job, true, 1);
     job.options.blur++; run(&job, true, 1);
+    job.options.softness++; run(&job, true, 1);
     job.timestamp_ms = 100000; run(&job, false, 64);
     job.epoch++; job.timestamp_ms = UINT32_MAX - 4U; run(&job, true, 1);
     job.timestamp_ms = 10; run(&job, false, 0);
-    for (unsigned which = 0; which < 10; ++which) {
+    for (unsigned which = 0; which < 11; ++which) {
         const unsigned old_calls = calls;
         bad = job; size = sizeof(result);
         switch (which) {
@@ -465,6 +466,7 @@ int main(void) {
         case 7: bad.stride--; break;
         case 8: bad.options.persistence = 4; break;
         case 9: size = sizeof(result) - 1; break;
+        case 10: bad.options.softness = 4; break;
         }
         assert(mt_video_worker_execute(&bad, sizeof(bad), &result, &size) != 0);
         assert(calls == old_calls);

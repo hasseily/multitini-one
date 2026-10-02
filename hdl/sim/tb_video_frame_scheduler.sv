@@ -6,13 +6,13 @@ module tb_video_frame_scheduler #(parameter integer GRACE=16);
     reg clk=0;
     always #5 clk=~clk;
     reg resetn=0, enable=0, clear_errors=0, transport_error=0;
-    reg [5:0] options=0;
+    reg [7:0] options=0;
     reg frame_tick=0;
     reg [31:0] capture_producer=0;
     wire [31:0] capture_consumer, display_value, processed_frames, deadline_misses;
     wire display_submit, engine_start, engine_history_reset, busy, quiescent, sticky_error;
     wire [1:0] engine_input_slot, engine_output_slot;
-    wire [5:0] engine_options;
+    wire [7:0] engine_options;
     reg engine_busy=0, engine_done=0, engine_error=0;
     reg reader_active_valid=0;
     reg [31:0] reader_active_value=0;
@@ -136,19 +136,19 @@ module tb_video_frame_scheduler #(parameter integer GRACE=16);
         repeat(3) begin tick(); cycles(PERIOD-1); end
         if(starts || sticky_error) $fatal(1,"empty startup armed cadence");
         capture();
-        for(n=0;n<64;n=n+1) begin
-            options=n[5:0]; engine_latency=12+(n%5)*17;
+        for(n=0;n<256;n=n+1) begin
+            options=n[7:0]; engine_latency=12+(n%5)*17;
             reader_delay=n%9;
             finish_frame(); no_fault();
             if(starts!=n+1 || completions!=n+1 || submissions!=n+1 || activations!=n)
                 $fatal(1,"scenario1 cadence n=%0d start=%0d complete=%0d submit=%0d active=%0d",n,starts,completions,submissions,activations);
         end
-        if(history_resets!=64 || capture_consumer!=64) $fatal(1,"option/history ownership mismatch");
+        if(history_resets!=256 || capture_consumer!=256) $fatal(1,"option/history ownership mismatch");
         // Unchanged options retain history; near-vblank completion still has
         // enough publication crossing time, and the ACK can drain over vblank.
         scenario=2; engine_latency=PERIOD-15; reader_delay=GRACE-4;
         finish_frame(); no_fault(); finish_frame(); no_fault();
-        if(history_resets!=64) $fatal(1,"unchanged settings reset history");
+        if(history_resets!=256) $fatal(1,"unchanged settings reset history");
 
         // Disable while DDR is owned: consumer does not advance early, the
         // completed result is discarded, and quiescence waits for reader drain.
@@ -232,10 +232,10 @@ module tb_video_frame_scheduler #(parameter integer GRACE=16);
         // A live settings write never changes an accepted job. The following
         // job takes the new settings and resets history exactly once.
         scenario=13; restart(); capture(); tick(); cycles(5);
-        options=6'h3f;
+        options=8'hff;
         if(engine_options!=0) $fatal(1,"options changed inside accepted job");
         cycles(PERIOD-6); capture(); tick(); cycles(35);
-        if(engine_options!=6'h3f || history_resets!=2) $fatal(1,"next job did not reset for live options");
+        if(engine_options!=8'hff || history_resets!=2) $fatal(1,"next job did not reset for live options");
         cycles(PERIOD-36); capture(); tick(); cycles(35); no_fault();
         if(history_resets!=2) $fatal(1,"unchanged options repeatedly reset history");
 
@@ -245,7 +245,7 @@ module tb_video_frame_scheduler #(parameter integer GRACE=16);
         repeat(3) begin tick(); cycles(PERIOD-1); no_fault(); end
         if(starts!=3 || capture_consumer!=3 || activations!=2)
             $fatal(1,"queued captures were skipped or processed in a burst");
-        $display("PASS ordered video scheduler: 14 scenarios, 64 options, fixed cadence, ownership/drain, deadline grace %0d, faults, wrap",GRACE);
+        $display("PASS ordered video scheduler: 14 scenarios, 256 options, fixed cadence, ownership/drain, deadline grace %0d, faults, wrap",GRACE);
         $finish;
     end
     initial begin #2000000; $fatal(1,"scheduler regression timed out"); end

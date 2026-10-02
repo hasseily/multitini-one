@@ -6,8 +6,9 @@
 #include <stdint.h>
 
 /* CPU1 prepares color tables when settings change; the FPGA applies them
- * at pixel rate. Persistence, blur and bloom use a native-frame DDR service
- * before display scaling, with their settings saved in this shared set. */
+ * at pixel rate. Persistence, vertical smoothing and bloom use a native-frame
+ * DDR service. Horizontal smoothing prefilters native rows, then interpolates
+ * the processed source samples while scaling. */
 enum {
     MT_VIDEO_TINT_COLOR = 0,
     MT_VIDEO_TINT_WHITE,
@@ -49,10 +50,10 @@ typedef enum {
 } mt_video_effect_id_t;
 
 enum {
-    MT_VIDEO_FILTER_OFF = 0,
-    MT_VIDEO_FILTER_SOFT,
-    MT_VIDEO_FILTER_STRONG,
-    MT_VIDEO_FILTER_SHARP
+    MT_VIDEO_SMOOTH_OFF = 0,
+    MT_VIDEO_SMOOTH_LIGHT,
+    MT_VIDEO_SMOOTH_MEDIUM,
+    MT_VIDEO_SMOOTH_STRONG
 };
 
 typedef struct {
@@ -70,10 +71,10 @@ typedef struct {
     uint8_t posterize;        /* 0 (off), or 2..8 bits per channel */
     uint8_t scanlines;        /* 0 (off)..3 (strong) */
     uint8_t mask;             /* MT_VIDEO_MASK_* */
-    uint8_t softness;         /* MT_VIDEO_FILTER_*; horizontal only */
+    uint8_t softness;         /* MT_VIDEO_SMOOTH_*; native horizontal prefilter + interpolation */
     uint8_t enabled;          /* master switch; 0 or 1 */
     uint8_t persistence;      /* frame processing: 0 (off)..3 (strong) */
-    uint8_t blur;             /* frame processing: 0 (off)..3 (strong) */
+    uint8_t blur;             /* MT_VIDEO_SMOOTH_*; vertical source-row smoothing */
     uint8_t bloom;            /* frame processing: 0 (off)..3 (strong) */
     uint8_t reserved;         /* must be zero */
     uint8_t reserved2;        /* explicit alignment byte; must be zero */
@@ -87,7 +88,8 @@ typedef struct {
  *
  * Matrix combines hue, saturation, tint, temperature and channel gains.
  * LUT combines contrast, brightness, gamma, posterization and negative.
- * Spatial controls operate downstream; they never alter these tables.
+ * Horizontal interpolation precedes this color pipeline. Scanlines and pixel
+ * masks operate downstream; none of these controls alter matrix/LUT tables.
  */
 typedef struct {
     int16_t matrix[3][3];
@@ -123,18 +125,37 @@ bool mt_video_effects_write(const mt_video_effects_tables_t *tables,
 uint32_t mt_video_effects_word(const mt_video_effects_tables_t *tables,
                              uint16_t address);
 
-/* Portable color-only oracle, including the master bypass. Spatial effects
- * need neighboring pixels/output coordinates and are tested in the HDL. */
+/* Horizontal interpolation starts at source=floor(x*den/num), with
+ * phase=(x*den)%num, D=2*phase+den-num. D<0 selects the preceding source
+ * pixel, otherwise the following one; edges repeat the nearest source pixel.
+ * Base Q8 weight is round(abs(D)*128/num), clamped to 128. Every nonzero level
+ * uses this full weight; level strength comes from the preceding native
+ * horizontal prefilter. Invalid scales/phases/levels return zero.
+ * Scales use num and den in 1..64; phase must be less than num. */
+uint8_t mt_video_horizontal_weight(uint32_t phase, uint32_t scale_num,
+                                    uint32_t scale_den, uint8_t level);
+/* Expand RGB565, mix with Q8 rounding, then truncate back to RGB565. Values
+ * over 128 are clamped; zero weight preserves every source bit exactly. */
+uint16_t mt_video_horizontal_rgb565(uint16_t center, uint16_t neighbor,
+                                    uint8_t weight);
+/* Portable color-only oracle, including the master bypass. */
 uint16_t mt_video_effects_reference_rgb565(const mt_video_effects_tables_t *tables,
                                         uint16_t pixel);
-/* Complete streaming oracle. Neighbors are raw RGB565; endpoints repeat the
- * center. Coordinates are relative to the machine viewport. scanline_dim is
- * true for the lower half of a replicated source scanline, as chosen by the
- * core's existing scaling metadata. Filtering never samples the menu. */
+/* Post-scaler color/scanline/mask oracle. The retained neighbor/boundary
+ * arguments are unused: output-pixel filtering has been removed. */
 uint16_t mt_video_effects_reference_spatial_rgb565(
     const mt_video_effects_tables_t *tables, uint16_t left, uint16_t center,
     uint16_t right, bool line_start, bool line_end, bool scanline_dim,
     uint32_t x, uint32_t y);
+/* Complete scaler+color oracle. Neighbors are adjacent processed SOURCE pixels
+ * after native horizontal/vertical filtering;
+ * first/last describe the source row boundaries. Interpolation happens before
+ * the matrix/LUT and composition, independent of visible UI boundaries.
+ * Coordinates are relative to the displayed machine viewport. */
+uint16_t mt_video_effects_reference_scaled_rgb565(
+    const mt_video_effects_tables_t *tables, uint16_t left, uint16_t center,
+    uint16_t right, bool first, bool last, bool scanline_dim,
+    uint32_t x, uint32_t y, uint32_t scale_num, uint32_t scale_den);
 
 /* Shared CPU1 service dispatcher. Initial *output_size is buffer capacity. */
 int mt_video_effects_worker_execute(const void *input, uint32_t input_size,

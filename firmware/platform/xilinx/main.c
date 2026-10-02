@@ -60,8 +60,8 @@
 
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
 #define MT_SUPERVISOR_CORE_ID UINT32_C(0)
-/* CT02: Controller shoulder tab navigation; display ABI 0.16. */
-#define MT_FIRMWARE_BUILD_ID UINT32_C(0x43543032)
+/* AX01: Independent horizontal interpolation and vertical smoothing; ABI 0.17. */
+#define MT_FIRMWARE_BUILD_ID UINT32_C(0x41583031)
 #define MT_I2C_CLOCK_HZ UINT32_C(100000)
 #define MT_I2C_BUSY_POLLS UINT32_C(1000000)
 #define MT_UART_DRAIN_POLLS UINT32_C(10000000)
@@ -1575,11 +1575,11 @@ static bool selection_supports_effects(const mt_core_selection_t *selection)
     uint32_t version;
     if (selection == NULL || selection->package.core_id == MT_SUPERVISOR_CORE_ID ||
         selection->package.abi_major != MT_ABI_MAJOR ||
-        selection->package.abi_minor < MT_VIDEO_EFFECT_MIN_ABI_MINOR ||
+        selection->package.abi_minor < MT_VIDEO_AXIS_MIN_ABI_MINOR ||
         shell_read(MT_REG_CORE_ID) != selection->package.core_id) return false;
     version = shell_read(MT_REG_ABI_VERSION);
     return (uint16_t)(version >> 16U) == MT_ABI_MAJOR &&
-           (uint16_t)version >= MT_VIDEO_EFFECT_MIN_ABI_MINOR;
+           (uint16_t)version >= MT_VIDEO_AXIS_MIN_ABI_MINOR;
 }
 
 static void configure_selection_effects(const mt_core_selection_t *selection)

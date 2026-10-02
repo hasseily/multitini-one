@@ -2,9 +2,10 @@
 `timescale 1ns / 1ps
 module tb_video_frame_reader;
     parameter integer SCALE_NUM=4, SCALE_DEN=1;
+    parameter integer WIDTH=68;
     parameter bit SHARED_PIXEL_RESET=0;
     parameter bit DYNAMIC_DISPLAY=0;
-    localparam integer WIDTH=68, HEIGHT=9, VIEW_X=12, VIEW_Y=2;
+    localparam integer HEIGHT=9, VIEW_X=12, VIEW_Y=2;
     localparam integer OUT_WIDTH=WIDTH*SCALE_NUM/SCALE_DEN;
     localparam integer OUT_HEIGHT=HEIGHT*SCALE_NUM/SCALE_DEN;
     localparam integer STRIDE=((WIDTH+63)/64)*128;
@@ -34,6 +35,8 @@ module tb_video_frame_reader;
     reg [11:0] scan_x=0,scan_y=100;
     reg vblank_start=0;
     wire [15:0] pixel_rgb565;
+    wire [15:0] pixel_neighbor_rgb565;
+    wire [7:0] pixel_neighbor_weight;
     wire [31:0] araddr;
     wire [3:0] arlen;
     wire [2:0] arsize;
@@ -97,7 +100,7 @@ module tb_video_frame_reader;
     integer checked=0;
     reg queue_midframe=0;
     task scan_frame(input integer slot,input integer want_processed);
-        integer x,y,sx,sy;
+        integer x,y,sx,sy,distance,neighbor,weight;
         reg [15:0] expected;
         begin
             for(y=0;y<VIEW_Y+OUT_HEIGHT+2;y=y+1) begin
@@ -121,6 +124,13 @@ module tb_video_frame_reader;
                             expected=memory_pixel(32'h22400000+(slot<<20)+sy*STRIDE+sx*2);
                             if(pixel_rgb565!==expected)
                                 $fatal(1,"wrong pixel x%0d y%0d got%h expected%h",x,y,pixel_rgb565,expected);
+                            distance=2*(((x-VIEW_X)*SCALE_DEN)%SCALE_NUM)+SCALE_DEN-SCALE_NUM;
+                            neighbor=sx+(distance<0 ? -1 : 1);
+                            if(neighbor<0)neighbor=0;if(neighbor>=WIDTH)neighbor=WIDTH-1;
+                            weight=((distance<0 ? -distance : distance)*128+SCALE_NUM/2)/SCALE_NUM;
+                            expected=memory_pixel(32'h22400000+(slot<<20)+sy*STRIDE+neighbor*2);
+                            if(pixel_neighbor_rgb565!==expected || pixel_neighbor_weight!==weight[7:0])
+                                $fatal(1,"wrong neighbor x%0d y%0d got%h/%0d expected%h/%0d",x,y,pixel_neighbor_rgb565,pixel_neighbor_weight,expected,weight);
                             checked=checked+1;
                         end
                     end else if(pixel_use) $fatal(1,"processed pixel outside viewport");

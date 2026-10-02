@@ -247,15 +247,18 @@ bool mt_video_frame_process_scaled(const uint16_t *input, uint16_t *output,
     if (input == NULL || output == NULL || history == NULL || base == NULL || scratch == NULL ||
         options == NULL || width == 0U || height == 0U || width > 640U || height > 720U ||
         scale_num == 0U || scale_num > 64U || scale_den == 0U || scale_den > 64U ||
-        options->enabled > 1U || options->persistence > 3U || options->blur > 3U || options->bloom > 3U)
+        options->enabled > 1U || options->persistence > 3U || options->blur > 3U ||
+        options->bloom > 3U || options->softness > 3U)
         return false;
     const uint32_t pixels = width * height;
-    /* Separate visible levels after RGB565 quantization, while preserving
-     * the legacy 3:2 response and reducing Light on enlarged source pixels.
-     * Blend each axis after the legacy floor operation. The bounded scale
-     * operands keep this rounded Q8 coefficient in uint32_t. */
-    unsigned alpha = (384U * options->blur * scale_den + scale_num / 2U) / scale_num;
+    /* The scale is the core's fixed 1080p reference, not the active output
+     * mode. All vertical levels share one five-tap kernel and equally spaced
+     * weights below Strong. Floor the kernel, then round its center blend. */
+    unsigned alpha = (1152U * scale_den + scale_num / 2U) / scale_num;
     if (alpha > 256U) alpha = 256U;
+    alpha = (alpha * 7U + 4U) / 8U;
+    if (options->blur == 1U) alpha = (alpha * 4U + 3U) / 7U;
+    if (options->blur == 2U) alpha = (alpha * 11U + 7U) / 14U;
     if (decay_steps > 64U) decay_steps = 64U;
     /* The maximum channel follows the same integer recurrence as the RGB
      * components. Exhausting all 256 maxima gives these exact extinction
@@ -287,11 +290,12 @@ bool mt_video_frame_process_scaled(const uint16_t *input, uint16_t *output,
             current = brighter(current, decay_pixel(history[i], options->persistence, decay_steps));
         history[i] = base[i] = current;
     }
-    if (options->blur != 0U) {
-        horizontal(base, scratch, width, height, options->blur == 3U, alpha);
-        if (options->blur == 1U) memcpy(base, scratch, (size_t)pixels*sizeof(*base));
-        else vertical(scratch, base, NULL, NULL, width, height, options->blur == 3U, 0U, alpha);
-    }
+    if (options->softness != 0U)
+        horizontal(history, options->blur != 0U ? scratch : base, width, height,
+                   false, 64U * options->softness);
+    if (options->blur != 0U)
+        vertical(options->softness != 0U ? scratch : history, base, NULL, NULL,
+                 width, height, true, 0U, alpha);
     if (options->bloom != 0U) {
         horizontal(history, scratch, width, height, options->bloom == 3U, 256U);
         vertical(scratch, NULL, output, base, width, height, options->bloom == 3U, options->bloom, 256U);

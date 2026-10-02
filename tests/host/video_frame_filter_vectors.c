@@ -42,12 +42,13 @@ int main(int argc,char **argv)
     FILE *inputs=open_output(argv[3],"input.hex"),*expected=open_output(argv[3],"expected.hex");
     FILE *settings=open_output(argv[3],"options.hex");
     if(!input || !output || !history || !base || !scratch || !persisted || !inputs || !expected || !settings)return 3;
-    unsigned jobs=exhaustive ? 80U : 1U;
+    unsigned jobs=exhaustive ? 448U : 1U;
     for(unsigned job=0;job<jobs;++job){
-        unsigned pattern=exhaustive ? job/16U : 0U;
+        unsigned pattern=exhaustive ? job/64U : 0U;
+        unsigned softness=exhaustive ? (job/16U)%4U : 3U;
         unsigned blur=exhaustive ? (job/4U)%4U : 3U;
         unsigned bloom=exhaustive ? job%4U : 3U;
-        mt_video_frame_options_t options={1U,0U,(uint8_t)blur,(uint8_t)bloom};
+        mt_video_frame_options_t options={1U,0U,(uint8_t)blur,(uint8_t)bloom,(uint8_t)softness};
         for(uint32_t i=0;i<count;++i){
             uint32_t x=i%width,y=i/width;
             uint16_t pixel=(uint16_t)next_random();
@@ -55,6 +56,10 @@ int main(int argc,char **argv)
             if(pattern==2)pixel=(x==0 || y==0) ? UINT16_C(0xf81f) :
                 (x==width-1U || y==height-1U) ? UINT16_C(0x07e0) : (uint16_t)(i*337U);
             if(pattern==3)pixel=UINT16_C(0xffff);
+            /* The two stripe axes separately expose accidental horizontal
+             * smoothing and confirm vertical response at every level. */
+            if(pattern==5)pixel=(x&1U)!=0U ? UINT16_C(0xffff) : 0U;
+            if(pattern==6)pixel=(y&1U)!=0U ? UINT16_C(0xffff) : 0U;
             input[i]=pixel;
             persisted[i]=rgb888(pixel);
             history[i]=0U;
@@ -72,7 +77,7 @@ int main(int argc,char **argv)
                                           scale_num,scale_den,&options,0U,pattern!=4))return 4;
         for(uint32_t i=0;i<count;++i)fprintf(expected,"%04x\n",(unsigned)output[i]);
         /* Filter must ignore the persistence bits owned by its DMA caller. */
-        fprintf(settings,"%02x\n",(bloom<<4)|(blur<<2)|(job&3U));
+        fprintf(settings,"%02x\n",(softness<<6)|(bloom<<4)|(blur<<2)|(job&3U));
     }
     if(fclose(inputs) || fclose(expected) || fclose(settings))return 5;
     free(input);free(output);free(history);free(base);free(scratch);free(persisted);

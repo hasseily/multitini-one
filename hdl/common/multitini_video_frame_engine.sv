@@ -24,7 +24,7 @@ module multitini_video_frame_engine #(
     input wire [3:0] display_scale_num,display_scale_den,
     input wire clk,resetn,clear_errors,start,
     input wire [1:0] input_slot,output_slot,
-    input wire [5:0] options,
+    input wire [7:0] options,
     input wire history_reset,
     output reg busy,done,error,
     output reg [31:0] error_count,cycles,max_stall,
@@ -62,7 +62,7 @@ module multitini_video_frame_engine #(
     end
 
     wire begin_job=start && !busy;
-    reg [5:0] job_options;
+    reg [7:0] job_options;
     reg use_history;
     reg [2:0] read_state;
     reg [2:0] write_state;

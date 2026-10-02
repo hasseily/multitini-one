@@ -88,7 +88,7 @@ static void reset_test(void)
 {
     const mt_screenshot_service_ops_t ops={read_register,milliseconds,progress};
     assert(!test_file.open);memset(registers,0,sizeof(registers));
-    registers[MT_REG_ABI_VERSION/4U]=MT_VIDEO_FRAME_MIN_ABI_MINOR;
+    registers[MT_REG_ABI_VERSION/4U]=MT_VIDEO_AXIS_MIN_ABI_MINOR;
     registers[MT_REG_CORE_ID/4U]=MT_GBC_CORE_ID;
     registers[MT_REG_VIDEO_FRAME_CONTROL/4U]=MT_VIDEO_FRAME_CAPTURE_ENABLE;
     registers[MT_REG_VIDEO_FRAME_STATUS/4U]=MT_VIDEO_FRAME_STATUS_DISPLAY_ACTIVE;
@@ -143,6 +143,8 @@ static void snapshot_ownership(void)
     reset_test();registers[MT_REG_VIDEO_FRAME_GEOMETRY/4U]=0U;
     assert(mt_screenshot_service_request(false));finish();assert(copies==0U && open_calls==0U);
     reset_test();registers[MT_REG_ABI_VERSION/4U]=1U;
+    assert(mt_screenshot_service_request(false));finish();assert(copies==0U && open_calls==0U);
+    reset_test();registers[MT_REG_ABI_VERSION/4U]=16U;
     assert(mt_screenshot_service_request(false));finish();assert(copies==0U && open_calls==0U);
     reset_test();registers[MT_REG_VIDEO_FRAME_STATUS/4U]=0U;
     assert(mt_screenshot_service_request(false));now_ms+=1000U;finish();assert(copies==0U && open_calls==0U);

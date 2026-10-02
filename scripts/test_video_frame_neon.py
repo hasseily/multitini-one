@@ -57,7 +57,7 @@ def build_arm():
     wrapper.write_text('''#include <stdint.h>
 #include <stddef.h>
 #include "multitini_video_frame.h"
-uint32_t params[7];
+uint32_t params[8];
 uint16_t pixels[460800] __attribute__((aligned(32)));
 uint16_t output[2][460800] __attribute__((aligned(32)));
 uint32_t history[2][460800] __attribute__((aligned(32)));
@@ -80,7 +80,7 @@ DECLARE(mt_video_frame_process_scaled_neon);
 DECLARE(mt_video_frame_process_scaled_scalar);
 #define RUN(name,index) void run_##name(void){ \\
     mt_video_frame_options_t options={(uint8_t)params[2],(uint8_t)(params[2]>>8), \\
-        (uint8_t)(params[2]>>16),(uint8_t)(params[2]>>24)}; \\
+        (uint8_t)(params[2]>>16),(uint8_t)(params[2]>>24),(uint8_t)params[7]}; \\
     success=mt_video_frame_process_scaled_##name(pixels,output[index],history[index],base[index], \\
         scratch[index],params[0],params[1],params[5],params[6],&options,params[3],params[4]!=0);}
 RUN(neon,0)
@@ -153,8 +153,14 @@ def main():
     cases += [(w, h, (1, 3, 3, 3), 1, False, num, den)
               for w, h, num, den in ((160, 144, 6, 1), (240, 160, 6, 1),
                                       (382, 270, 4, 1), (404, 250, 4, 1))]
+    cases = [(*case, 0) for case in cases]
+    # Cross every native horizontal level with every vertical/bloom level.
+    # Width 17 exercises vector bodies, clamped edges and scalar tails.
+    cases += [(17, 9, (1, 3, blur, bloom), 1, False, num, den, softness)
+              for num, den in ((3, 2), (4, 1), (6, 1))
+              for softness in (1, 2, 3) for blur in range(4) for bloom in range(4)]
     count = 0
-    for width, height, options, steps, reset, scale_num, scale_den in cases:
+    for width, height, options, steps, reset, scale_num, scale_den, softness in cases:
         size = width * height
         pixels = list(range(65536)) if size == 65536 else [rng.randrange(65536) for _ in range(size)]
         prior = [rng.randrange(1 << 24) for _ in range(size)]
@@ -169,8 +175,8 @@ def main():
                 if size < MAX_PIXELS:
                     cpu.mem_write(symbols[name] + (index * MAX_PIXELS + size) * item, b"\xa5" * item * 8)
         packed_options = sum(value << (8 * index) for index, value in enumerate(options))
-        cpu.mem_write(symbols["params"], struct.pack("<7I", width, height, packed_options,
-                                                    steps, reset, scale_num, scale_den))
+        cpu.mem_write(symbols["params"], struct.pack("<8I", width, height, packed_options,
+                                                    steps, reset, scale_num, scale_den, softness))
         for variant in ("neon", "scalar"):
             cpu.reg_write(UC_ARM_REG_SP, 0x1F00000)
             cpu.reg_write(UC_ARM_REG_LR, stop)

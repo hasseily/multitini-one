@@ -18,8 +18,8 @@ static void process(uint32_t width, uint32_t height, mt_video_frame_options_t op
 
 static void identity(void)
 {
-    const mt_video_frame_options_t enabled = {1U,0U,0U,0U};
-    const mt_video_frame_options_t disabled = {0U,3U,3U,3U};
+    const mt_video_frame_options_t enabled = {1U,0U,0U,0U,0U};
+    const mt_video_frame_options_t disabled = {0U,3U,3U,3U,0U};
     for (unsigned i=0U;i<TEST_PIXELS;++i) input[i]=(uint16_t)i;
     process(256U,256U,enabled,1U,true);
     assert(memcmp(input,output,TEST_PIXELS*sizeof(*input))==0);
@@ -31,7 +31,7 @@ static void uniform_and_edges(void)
 {
     for (uint8_t blur=0U;blur<=3U;++blur) {
         for (uint8_t bloom=0U;bloom<=3U;++bloom) {
-            const mt_video_frame_options_t options={1U,0U,blur,bloom};
+            const mt_video_frame_options_t options={1U,0U,blur,bloom,0U};
             for (unsigned i=0U;i<35U;++i) input[i]=0x4208U;
             process(7U,5U,options,1U,true);
             for(unsigned i=0U;i<35U;++i) assert(output[i]==output[0]);
@@ -50,7 +50,7 @@ static void uniform_and_edges(void)
 
 static void persistence(void)
 {
-    const mt_video_frame_options_t strong={1U,3U,0U,0U};
+    const mt_video_frame_options_t strong={1U,3U,0U,0U,0U};
     input[0]=0xffffU;
     process(1U,1U,strong,1U,true);
     assert(history[0]==0x00ffffffU);
@@ -76,22 +76,22 @@ static void blur_and_bloom(void)
 {
     const unsigned center=4U*9U+4U;
     memset(input,0,81U*sizeof(*input)); input[center]=0xf800U;
-    process(9U,9U,(mt_video_frame_options_t){1U,0U,1U,0U},1U,true);
-    assert(output[center]==0x7800U);
-    assert(output[center-1U]==0x3800U && output[center+1U]==0x3800U);
-    assert(output[center-9U]==0U && output[center+9U]==0U);
-    process(9U,9U,(mt_video_frame_options_t){1U,0U,2U,0U},1U,true);
-    assert(output[center]==0x3800U && output[center-9U]==0x1800U);
+    process(9U,9U,(mt_video_frame_options_t){1U,0U,1U,0U,0U},1U,true);
+    assert(output[center]==0x9800U);
+    assert(output[center-9U]==0x2000U && output[center+9U]==0x2000U);
+    assert(output[center-1U]==0U && output[center+1U]==0U);
+    process(9U,9U,(mt_video_frame_options_t){1U,0U,2U,0U,0U},1U,true);
+    assert(output[center]==0x7800U && output[center-9U]==0x2800U);
     input[center]=0xffffU;
-    process(9U,9U,(mt_video_frame_options_t){1U,0U,0U,3U},1U,true);
+    process(9U,9U,(mt_video_frame_options_t){1U,0U,0U,3U,0U},1U,true);
     assert(output[center]==0xffffU && output[center-9U]!=0U);
     assert(output[center-27U]==0U);
     input[center]=0xf800U;
-    process(9U,9U,(mt_video_frame_options_t){1U,0U,0U,3U},1U,true);
+    process(9U,9U,(mt_video_frame_options_t){1U,0U,0U,3U,0U},1U,true);
     for (unsigned i=0U;i<81U;++i) assert((output[i]&0x07ffU)==0U);
     assert(history[center]==255U && history[center-1U]==0U);
     memset(input,0,81U*sizeof(*input));
-    process(9U,9U,(mt_video_frame_options_t){1U,3U,3U,3U},1U,false);
+    process(9U,9U,(mt_video_frame_options_t){1U,3U,3U,3U,0U},1U,false);
     assert(history[center]==95U && history[center-1U]==0U);
 }
 
@@ -140,7 +140,7 @@ static void persistence_extinction(void)
             history[maximum]=maximum | ((maximum/2U)<<8) | ((maximum/3U)<<16);
         }
         assert(longest==bounds[strength]);
-        const mt_video_frame_options_t options={1U,(uint8_t)(strength+1U),0U,0U};
+        const mt_video_frame_options_t options={1U,(uint8_t)(strength+1U),0U,0U,0U};
         process(256U,1U,options,bounds[strength],false);
         assert(memcmp(input,output,256U*sizeof(*input))==0);
         /* 127 lies below the bright-decay knee and survives longer than
@@ -171,9 +171,11 @@ static void persistence_extinction(void)
 
 static void invalid(void)
 {
-    const mt_video_frame_options_t bad={1U,4U,0U,0U};
+    const mt_video_frame_options_t bad={1U,4U,0U,0U,0U};
     assert(!mt_video_frame_process(input,output,history,base,scratch,1U,1U,&bad,1U,true));
-    const mt_video_frame_options_t good={1U,0U,0U,0U};
+    const mt_video_frame_options_t bad_horizontal={1U,0U,0U,0U,4U};
+    assert(!mt_video_frame_process(input,output,history,base,scratch,1U,1U,&bad_horizontal,1U,true));
+    const mt_video_frame_options_t good={1U,0U,0U,0U,0U};
     assert(!mt_video_frame_process(input,output,history,base,scratch,0U,1U,&good,1U,true));
     assert(!mt_video_frame_process(input,output,history,base,scratch,641U,1U,&good,1U,true));
     assert(!mt_video_frame_process(input,output,history,base,scratch,1U,721U,&good,1U,true));
@@ -199,7 +201,7 @@ static const geometry_t geometries[]={
 static void scaled(const geometry_t *g, uint8_t persistence_mode, uint8_t blur,
                    uint8_t bloom, bool reset)
 {
-    const mt_video_frame_options_t options={1U,persistence_mode,blur,bloom};
+    const mt_video_frame_options_t options={1U,persistence_mode,blur,bloom,0U};
     assert(mt_video_frame_process_scaled(input,output,history,base,scratch,
         g->width,g->height,g->num,g->den,&options,0U,reset));
 }
@@ -220,25 +222,65 @@ static void scaled_identity(void)
     }
 }
 
-/* A frozen pre-normalization result, not a second copy of the new blend.
- * Recorded from video_frame.c SHA256 94ad73aac094e669e57f309bbc8c594a571a325d80005350915e2174e904a053.
- * Covers all 64 option combinations, non-vector-aligned rows, edges and history. */
-static void legacy_baseline(void)
+/* This independent reference starts with the agreed per-core Q8 values,
+ * not the implementation's scale formula. Arbitrary RGB888 history exposes
+ * floor/round behavior below RGB565 precision, with both edge clamps. */
+static void vertical_reference(void)
 {
-    uint32_t hash=UINT32_C(2166136261);
-    for(unsigned mode=0U;mode<64U;++mode) {
-        for(unsigned i=0U;i<153U;++i) {
-            input[i]=(uint16_t)(i*733U+mode*977U);
-            history[i]=(i*UINT32_C(7919)+mode*UINT32_C(104729))&UINT32_C(0xffffff);
-        }
-        const mt_video_frame_options_t options={1U,(uint8_t)(mode&3U),(uint8_t)((mode>>2U)&3U),(uint8_t)(mode>>4U)};
-        process(17U,9U,options,mode%3U,mode%5U==0U);
-        for(unsigned i=0U;i<153U;++i) {
-            hash=(hash^output[i])*UINT32_C(16777619);
-            hash=(hash^history[i])*UINT32_C(16777619);
+    const unsigned ratios[][2]={{3U,2U},{6U,4U},{4U,1U},{6U,1U}};
+    const unsigned coefficients[][3]={{128U,176U,224U},{128U,176U,224U},
+                                     {128U,176U,224U},{96U,132U,168U}};
+    const unsigned widths[]={1U,2U,7U,17U}, heights[]={1U,2U,3U,9U};
+    for(unsigned ratio=0;ratio<4U;++ratio)for(unsigned geometry=0;geometry<4U;++geometry) {
+        const unsigned width=widths[geometry],height=heights[geometry];
+        for(uint8_t horizontal_level=0U;horizontal_level<=3U;++horizontal_level)
+        for(uint8_t level=0U;level<=3U;++level) {
+            uint32_t horizontal_expected[153];
+            for(unsigned i=0U;i<width*height;++i) {
+                input[i]=0U;
+                history[i]=(i*UINT32_C(7919)+level*UINT32_C(104729))&UINT32_C(0xffffff);
+            }
+            const mt_video_frame_options_t options={1U,1U,level,0U,horizontal_level};
+            assert(mt_video_frame_process_scaled(input,output,history,base,scratch,width,height,
+                ratios[ratio][0],ratios[ratio][1],&options,0U,false));
+            for(unsigned y=0;y<height;++y)for(unsigned x=0;x<width;++x) {
+                uint32_t expected=0;
+                for(unsigned shift=0;shift<24U;shift+=8U) {
+                    const unsigned center=(history[y*width+x]>>shift)&255U;
+                    const unsigned left=(history[y*width+(x==0U ? 0U : x-1U)]>>shift)&255U;
+                    const unsigned right=(history[y*width+(x+1U==width ? x : x+1U)]>>shift)&255U;
+                    const unsigned filtered=(left+2U*center+right)/4U;
+                    const unsigned alpha=64U*horizontal_level;
+                    expected|=(((256U-alpha)*center+alpha*filtered+128U)/256U)<<shift;
+                }
+                horizontal_expected[y*width+x]=expected;
+            }
+            for(unsigned y=0;y<height;++y)for(unsigned x=0;x<width;++x) {
+                uint32_t expected=0;
+                for(unsigned channel=0;channel<3U;++channel) {
+                    const unsigned shift=channel*8U;
+                    const unsigned center=(horizontal_expected[y*width+x]>>shift)&255U;
+                    const int radius=2;
+                    unsigned sum=0;
+                    for(int tap=-radius;tap<=radius;++tap) {
+                        const int candidate=(int)y+tap;
+                        const unsigned row=candidate<0 ? 0U :
+                            (unsigned)candidate>=height ? height-1U : (unsigned)candidate;
+                        const unsigned weight=tap==-radius || tap==radius ? 1U : 2U;
+                        sum+=weight*((horizontal_expected[row*width+x]>>shift)&255U);
+                    }
+                    const unsigned filtered=sum/8U;
+                    const unsigned alpha=level==0U ? 0U : coefficients[ratio][level-1U];
+                    const unsigned value=((256U-alpha)*center+alpha*filtered+128U)/256U;
+                    expected|=value<<shift;
+                }
+                assert(base[y*width+x]==expected);
+                const uint16_t packed=(uint16_t)(((expected&0xf8U)<<8)|
+                    ((expected&0xfc00U)>>5)|((expected&0xf80000U)>>19));
+                assert(output[y*width+x]==packed);
+            }
         }
     }
-    assert(hash==UINT32_C(0xd180bb5d));
 }
 
 static void unaffected_bloom_and_history(void)
@@ -246,7 +288,7 @@ static void unaffected_bloom_and_history(void)
     uint16_t original[153];uint32_t prior[153], original_history[153];
     const uint32_t scales[][2]={{3U,2U},{6U,4U},{4U,1U},{6U,1U},{1U,64U},{64U,1U}};
     for(unsigned mode=0U;mode<16U;++mode) {
-        const mt_video_frame_options_t options={1U,(uint8_t)(mode&3U),0U,(uint8_t)(mode>>2U)};
+        const mt_video_frame_options_t options={1U,(uint8_t)(mode&3U),0U,(uint8_t)(mode>>2U),0U};
         for(unsigned i=0U;i<153U;++i) {
             input[i]=(uint16_t)(i*733U+mode*977U);
             prior[i]=history[i]=(i*UINT32_C(7919)+mode*UINT32_C(104729))&UINT32_C(0xffffff);
@@ -280,10 +322,10 @@ static void quantized_level_visibility(void)
 {
     const unsigned shifts[3]={11U,5U,0U}, maxima[3]={31U,63U,31U};
     const geometry_t cases[]={{17U,9U,6U,1U},{17U,9U,4U,1U}};
-    /* Light keeps fine details, Medium visibly softens them, and Strong may
-     * disperse an isolated dot. Keep the handheld Light peak above 85%. */
-    const unsigned minimum_peak_percent[2][3]={{85U,50U,15U},{76U,30U,3U}};
-    const unsigned maximum_peak_percent[2][3]={{90U,62U,25U},{85U,45U,10U}};
+    /* Shared radius makes level steps gradual, with distinct stored-code
+     * peaks. Strong's accepted amplitude remains the tuning anchor. */
+    const unsigned minimum_peak_percent[2][3]={{68U,57U,48U},{58U,44U,32U}};
+    const unsigned maximum_peak_percent[2][3]={{74U,65U,55U},{66U,52U,39U}};
     for(unsigned scale=0U;scale<2U;++scale) {
         const geometry_t *const g=&cases[scale];
         const unsigned center=4U*17U+8U;
@@ -298,27 +340,26 @@ static void quantized_level_visibility(void)
                 const unsigned peak=channel_code(output[center],channel);
                 assert(peak*100U>=maximum*minimum_peak_percent[scale][blur-1U]);
                 assert(peak*100U<=maximum*maximum_peak_percent[scale][blur-1U]);
-                assert(peak<prior_peak && (prior_peak-peak)*100U>=maximum*10U);
+                assert(peak<prior_peak && (prior_peak-peak)*100U>=maximum*7U);
                 prior_peak=peak;
                 assert(output[center-1U]==output[center+1U]);
                 assert(output[center-g->width]==output[center+g->width]);
-                assert(channel_code(output[center-1U],channel)>=maximum/20U);
-                if(blur==1U)assert(output[center-g->width]==0U);
-                else assert(output[center-g->width]!=0U);
+                assert(output[center-1U]==0U && output[center+1U]==0U);
+                assert(output[center-g->width]!=0U);
                 for(unsigned i=0U;i<153U;++i)assert((output[i]&~full)==0U);
                 /* Even one-pixel stripes retain useful contrast on Light.
                  * Every subsequent mode must reduce it by visible RGB codes. */
                 for(unsigned y=0U;y<g->height;++y)for(unsigned x=0U;x<g->width;++x)
-                    input[y*g->width+x]=(x&1U)!=0U ? full : 0U;
+                    input[y*g->width+x]=(y&1U)!=0U ? full : 0U;
                 scaled(g,0U,blur,0U,true);
-                const unsigned high=channel_code(output[center+1U],channel);
+                const unsigned high=channel_code(output[center+g->width],channel);
                 const unsigned low=channel_code(output[center],channel);
                 assert(high>=low);
                 const unsigned contrast=high-low;
                 assert(contrast<prior_contrast && (prior_contrast-contrast)*100U>=maximum*10U);
                 prior_contrast=contrast;
                 if(blur==1U) {
-                    const unsigned detail_floor=scale==0U ? 70U : 55U;
+                    const unsigned detail_floor=scale==0U ? 55U : 45U;
                     assert(contrast*100U>=maximum*detail_floor);
                     assert(contrast*100U<=maximum*80U);
                 }
@@ -327,20 +368,19 @@ static void quantized_level_visibility(void)
                  * monotone, and preserve the flat regions beyond its radius. */
                 const unsigned dark=maximum/4U, light=maximum*3U/4U;
                 for(unsigned y=0U;y<g->height;++y)for(unsigned x=0U;x<g->width;++x)
-                    input[y*g->width+x]=(uint16_t)((x<8U ? dark : light)<<shift);
+                    input[y*g->width+x]=(uint16_t)((y<4U ? dark : light)<<shift);
                 scaled(g,0U,blur,0U,true);
-                const unsigned shoulder=channel_code(output[center-1U],channel);
+                const unsigned shoulder=channel_code(output[center-g->width],channel);
                 const unsigned top=channel_code(output[center],channel);
                 assert(shoulder>dark && top<light);
                 const unsigned edge_change=(shoulder-dark)+(light-top);
                 assert(edge_change>prior_edge_change);
                 prior_edge_change=edge_change;
-                for(unsigned y=0U;y<g->height;++y) {
-                    const unsigned row=y*g->width;
-                    assert(channel_code(output[row+4U],channel)==dark);
-                    assert(channel_code(output[row+11U],channel)==light);
-                    for(unsigned x=1U;x<g->width;++x)
-                        assert(channel_code(output[row+x],channel)>=channel_code(output[row+x-1U],channel));
+                for(unsigned x=0U;x<g->width;++x) {
+                    assert(channel_code(output[g->width+x],channel)==dark);
+                    assert(channel_code(output[7U*g->width+x],channel)==light);
+                    for(unsigned y=1U;y<g->height;++y)
+                        assert(channel_code(output[y*g->width+x],channel)>=channel_code(output[(y-1U)*g->width+x],channel));
                 }
                 printf("RGB565 scale%u channel%u blur%u: peak %u/%u, stripe contrast %u/%u, midtone edge change %u codes\n",
                     g->num,channel,(unsigned)blur,peak,maximum,contrast,maximum,edge_change);
@@ -349,12 +389,54 @@ static void quantized_level_visibility(void)
     }
 }
 
+static void horizontal_axis_isolation(void)
+{
+    for(unsigned kind=0U;kind<sizeof(geometries)/sizeof(geometries[0]);++kind) {
+        geometry_t g={17U,9U,geometries[kind].num,geometries[kind].den};
+        for(unsigned y=0;y<g.height;++y)for(unsigned x=0;x<g.width;++x)
+            input[y*g.width+x]=(uint16_t)(x*733U);
+        for(uint8_t level=1U;level<=3U;++level) {
+            scaled(&g,0U,level,0U,true);
+            assert(memcmp(input,output,153U*sizeof(*input))==0);
+        }
+        for(unsigned y=0;y<g.height;++y)for(unsigned x=0;x<g.width;++x)
+            input[y*g.width+x]=(uint16_t)(y*733U);
+        for(uint8_t level=1U;level<=3U;++level) {
+            const mt_video_frame_options_t options={1U,0U,0U,0U,level};
+            assert(mt_video_frame_process_scaled(input,output,history,base,scratch,
+                g.width,g.height,g.num,g.den,&options,0U,true));
+            assert(memcmp(input,output,153U*sizeof(*input))==0);
+        }
+    }
+}
+
+static void vectrex_level_visibility(void)
+{
+    const geometry_t g={17U,9U,3U,2U};
+    const unsigned center=4U*g.width+8U;
+    const unsigned shifts[]={11U,5U,0U},maxima[]={31U,63U,31U};
+    for(unsigned channel=0;channel<3U;++channel) {
+        unsigned prior=maxima[channel];
+        for(uint8_t level=1U;level<=3U;++level) {
+            memset(input,0,153U*sizeof(*input));
+            input[center]=(uint16_t)(maxima[channel]<<shifts[channel]);
+            scaled(&g,0U,level,0U,true);
+            const unsigned peak=channel_code(output[center],channel);
+            assert(peak<prior && (prior-peak)*100U>=maxima[channel]*7U);
+            prior=peak;
+            /* The shared radius keeps every level's footprint consistent. */
+            assert(output[center-2U*g.width]!=0U);
+            assert(output[center-1U]==0U && output[center+1U]==0U);
+        }
+    }
+}
+
 int main(void)
 {
     identity(); uniform_and_edges(); persistence(); persistence_extinction();
     blur_and_bloom(); invalid();
-    legacy_baseline();scaled_identity();unaffected_bloom_and_history();
-    quantized_level_visibility();
+    vertical_reference();scaled_identity();unaffected_bloom_and_history();
+    quantized_level_visibility();horizontal_axis_isolation();vectrex_level_visibility();
     puts("CPU1 video frame effects passed");
     return 0;
 }

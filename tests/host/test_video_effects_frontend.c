@@ -34,12 +34,25 @@ static void test_descriptors(void)
           "neutral named choices are clear");
     settings.brightness = -100;
     settings.hue = 180;
-    settings.softness = MT_VIDEO_FILTER_SHARP;
+    settings.softness = MT_VIDEO_SMOOTH_STRONG;
     mt_video_effects_frontend_apply(&frontend, &settings, true, NULL, &view);
     check(frontend.items[MT_VIDEO_EFFECT_BRIGHTNESS].control_value == 0U &&
           frontend.items[MT_VIDEO_EFFECT_HUE].control_value == 360U &&
-          strcmp(frontend.values[MT_VIDEO_EFFECT_SOFTNESS], "Sharp") == 0,
+          strcmp(frontend.values[MT_VIDEO_EFFECT_SOFTNESS], "Strong") == 0,
           "signed sliders and horizontal mode render correctly");
+    check(strcmp(frontend.items[MT_VIDEO_EFFECT_SOFTNESS].label,"Horizontal smoothing")==0 &&
+          strcmp(frontend.items[MT_VIDEO_EFFECT_BLUR].label,"Vertical smoothing")==0 &&
+          strstr(frontend.items[MT_VIDEO_EFFECT_SOFTNESS].help,"Independent")!=NULL &&
+          strstr(frontend.items[MT_VIDEO_EFFECT_BLUR].help,"output resolutions")!=NULL,
+          "axis controls explain their independence and resolution consistency");
+    static const char *const levels[]={"Off","Light","Medium","Strong"};
+    for(unsigned level=0U;level<4U;++level) {
+        settings.softness=settings.blur=(uint8_t)level;
+        mt_video_effects_frontend_apply(&frontend,&settings,true,NULL,&view);
+        check(strcmp(frontend.values[MT_VIDEO_EFFECT_SOFTNESS],levels[level])==0 &&
+              strcmp(frontend.values[MT_VIDEO_EFFECT_BLUR],levels[level])==0,
+              "both axes use the same four ordered smoothing levels");
+    }
     mt_video_effects_frontend_apply(&frontend, &settings, false, "CPU1 unavailable", &view);
     for (size_t i = 0; i < MT_VIDEO_EFFECT_COUNT; ++i)
         check(!frontend.items[i].enabled &&

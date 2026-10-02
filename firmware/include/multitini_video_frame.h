@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #define MT_VIDEO_FRAME_JOB_MAGIC UINT32_C(0x4D544646)
-#define MT_VIDEO_FRAME_JOB_ABI 1U
+#define MT_VIDEO_FRAME_JOB_ABI 2U
 #define MT_VIDEO_FRAME_CAPTURE_BASE UINT32_C(0x22000000)
 #define MT_VIDEO_FRAME_OUTPUT_BASE UINT32_C(0x22400000)
 #define MT_VIDEO_FRAME_HISTORY_BASE UINT32_C(0x22800000)
@@ -20,8 +20,9 @@
 typedef struct {
     uint8_t enabled;
     uint8_t persistence;
-    uint8_t blur;
+    uint8_t blur; /* Vertical smoothing: Off, Light, Medium, Strong. */
     uint8_t bloom;
+    uint8_t softness; /* Native horizontal prefilter: Off, Light, Medium, Strong. */
 } mt_video_frame_options_t;
 
 /* Source and output are slot indices, never addresses. CPU0 reserves both
@@ -57,8 +58,8 @@ typedef struct {
  * output are RGB565; history/base/scratch are packed 0x00BBGGRR RGB888.
  * History survives calls; base/scratch are disposable. Decay steps count
  * elapsed 60Hz periods, clamped to 0..64. Reset on epoch, geometry, or option
- * changes. No device access is permitted. The compatibility entrypoint uses
- * the original Vectrex display scale of 3/2 and preserves its exact output. */
+ * changes. No device access is permitted. The convenience entrypoint uses
+ * the Vectrex 1080p reference scale of 3/2. */
 bool mt_video_frame_process(const uint16_t *input, uint16_t *output,
                             uint32_t *history, uint32_t *base, uint32_t *scratch,
                             uint32_t width, uint32_t height,
@@ -66,12 +67,16 @@ bool mt_video_frame_process(const uint16_t *input, uint16_t *output,
                             uint32_t decay_steps,
                             bool reset_history);
 
-/* Display scale is explicit, independent of source dimensions. Both operands
- * must be in 1..64. Each blur axis blends its old floored kernel with the
- * center using Q8 alpha=min(256,round(384*blur_level/scale)). This preserves
- * the 3/2 baseline and gives enlarged pixels distinct quantized levels.
- * Light filters horizontally; Medium and Strong filter both axes.
- * Bloom and persistence are unchanged. */
+/* The explicit scale is the core's fixed 1080p reference, independent of
+ * source dimensions and the currently selected output mode. Both operands
+ * must be in 1..64. Vertical smoothing uses [1,2,2,2,1]/8 at every level,
+ * with clamped edges. Blend its floored kernel with its center using rounded
+ * Q8 coefficients: 128/176/224 at reference scales 4 and 3/2, or 96/132/168
+ * at scale 6. For other ratios Strong is round(7/8 * min(256,round(1152/scale))),
+ * Light is round(4/7 * Strong), and Medium is round(11/14 * Strong).
+ * Horizontal prefiltering runs first with [1,2,1]/4 and Q8 strengths 64/128/192.
+ * Its kernel is floored before rounding the center blend. Bloom always uses
+ * original persisted pixels and adds its unchanged halo to the smoothed base. */
 bool mt_video_frame_process_scaled(const uint16_t *input, uint16_t *output,
                             uint32_t *history, uint32_t *base, uint32_t *scratch,
                             uint32_t width, uint32_t height,

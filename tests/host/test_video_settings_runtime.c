@@ -423,6 +423,13 @@ static void test_effect_handlers(void)
 {
     test_reset(MT_GBC_CORE_ID, "gbc");
     assert(selection_supports_effects(&supervisor.active));
+    /* Older cores interpret the same fields as output filtering and 2-D blur. */
+    test_abi = 16U;
+    assert(!selection_supports_effects(&supervisor.active));
+    test_abi = MT_ABI_VERSION;
+    supervisor.active.package.abi_minor = 16U;
+    assert(!selection_supports_effects(&supervisor.active));
+    supervisor.active.package.abi_minor = MT_ABI_MINOR;
     change_active_video_effect(MT_VIDEO_EFFECT_ENABLED, 2U);
     assert(test_effect_calls == 1U && test_save_calls == 1U && test_effects.enabled == 1U);
     assert(test_mmio_writes == 0U); /* Applying is asynchronous. */

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns/1ps
 module tb_video_frame_engine;
-    parameter integer WIDTH=13,HEIGHT=9,JOBS=68,FAULT_TESTS=1;
+    parameter integer WIDTH=13,HEIGHT=9,JOBS=260,FAULT_TESTS=1;
     parameter integer SCALE_NUM=3,SCALE_DEN=2;
     localparam integer STRIDE=((WIDTH+63)/64)*128,PIXELS=WIDTH*HEIGHT;
     localparam integer FRAME_WORDS=((WIDTH+3)/4)*HEIGHT,HISTORY_WORDS=(PIXELS+1)/2;
@@ -9,7 +9,7 @@ module tb_video_frame_engine;
     always #3.75 clk=!clk;
     reg [1:0] input_slot=0,output_slot=0;
     reg [1:0] owned_input_slot=0,owned_output_slot=0;
-    reg [5:0] options=0;
+    reg [7:0] options=0;
     wire busy,done,error;
     wire [31:0] error_count,cycles,max_stall;
     wire [31:0] araddr,awaddr;
@@ -29,7 +29,7 @@ module tb_video_frame_engine;
     reg [31:0] old[0:JOBS*PIXELS-1],expected_history[0:JOBS*PIXELS-1];
     reg [31:0] history[0:PIXELS-1];
     reg [15:0] output_memory[0:PIXELS-1];
-    reg [6:0] configurations[0:JOBS-1];
+    reg [8:0] configurations[0:JOBS-1];
     string directory;
     integer job=0,ticks=0,total=0,read_beats_total=0,write_beats_total=0;
     integer source_reads=0,history_reads=0,history_writes=0,output_writes=0,write_responses=0;
@@ -167,7 +167,7 @@ module tb_video_frame_engine;
             @(negedge clk);
             source_reads=0;history_reads=0;history_writes=0;output_writes=0;write_responses=0;
             for(i=0;i<PIXELS;i=i+1)begin history[i]=old[job*PIXELS+i];output_memory[i]=16'hdead;end
-            input_slot=job%4;output_slot=3-job%4;options=configurations[job][5:0];history_reset=configurations[job][6];
+            input_slot=job%4;output_slot=3-job%4;options=configurations[job][7:0];history_reset=configurations[job][8];
             owned_input_slot=input_slot;owned_output_slot=output_slot;
             start=1;@(negedge clk);start=0;
             // Ownership and controls must have been sampled once at START.
@@ -181,7 +181,7 @@ module tb_video_frame_engine;
             if(busy || error!==expect_error)$fatal(1,"Completion state error=%b expected%0d",error,expect_error);
             if(history_writes!=PIXELS || output_writes!=PIXELS)$fatal(1,"Write count mismatch %0d %0d",history_writes,output_writes);
             if(fault<5 && source_reads!=FRAME_WORDS)$fatal(1,"Source read count mismatch");
-            if(fault<5 && history_reads!=((configurations[job][6] || configurations[job][1:0]==0)?0:HISTORY_WORDS))$fatal(1,"History read count mismatch");
+            if(fault<5 && history_reads!=((configurations[job][8] || configurations[job][1:0]==0)?0:HISTORY_WORDS))$fatal(1,"History read count mismatch");
             if(cycles>=2216666)$fatal(1,"60 Hz deadline missed under declared stalls: %0d cycles",cycles);
             total=total+PIXELS;
             repeat(4)@(negedge clk);
@@ -199,7 +199,7 @@ module tb_video_frame_engine;
         $display("PASS frame engine oracle/deadline: %0dx%0d jobs=%0d pixels=%0d cycles=%0d max_stall=%0d bound=2216666",
             WIDTH,HEIGHT,JOBS,total,cycles,max_stall);
         if(FAULT_TESTS)begin
-            job=63;compare_values=0;
+            job=255;compare_values=0;
             for(f=1;f<=6;f=f+1)begin
                 fault=f;fault_injected=0;launch();finish_job(1);
                 if(!fault_injected || error_count==0)$fatal(1,"Fault was not observed");

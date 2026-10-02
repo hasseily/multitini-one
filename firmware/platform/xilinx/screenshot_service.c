@@ -93,8 +93,8 @@ bool mt_screenshot_service_cancel(void)
 static bool snapshot(uint32_t core_id,uint8_t mode,uint32_t border,const mt_ui_frame_t *ui,bool visible)
 {
     const uint32_t abi=bus.read(MT_REG_ABI_VERSION);
-    if((abi>>16)!=0U || (abi&0xffffU)<MT_VIDEO_FRAME_MIN_ABI_MINOR ||
-       bus.read(MT_REG_CORE_ID)!=core_id) { fail("this core has no capture interface");return false; }
+    if((abi>>16)!=MT_ABI_MAJOR || (abi&0xffffU)<MT_VIDEO_AXIS_MIN_ABI_MINOR ||
+       bus.read(MT_REG_CORE_ID)!=core_id) { fail("update the core package to capture this video");return false; }
     const uint32_t status=bus.read(MT_REG_VIDEO_FRAME_STATUS);
     if((status&MT_VIDEO_FRAME_STATUS_ERROR)!=0U) { fail("video transport error");return false; }
     if((bus.read(MT_REG_VIDEO_FRAME_CONTROL)&MT_VIDEO_FRAME_CAPTURE_ENABLE)==0U)return false;

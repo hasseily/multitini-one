@@ -1,15 +1,18 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* Execute the production RGB565 references without device access. Output is
- * CSV: point_peak_green is measured before output filtering; stripe contrast
- * and point_sigma_output_px include output scaling and horizontal filtering. */
+ * AX01 CSV: point_peak_green is measured before interpolation; stripe contrast
+ * and point_sigma_output_px include output scaling and horizontal smoothing.
+ * Optional arguments select the fixed per-core reference ratio (default 4/1).
+ * The historical CT02 probe is available at commit dd4e978. */
 #include "multitini_video_frame.h"
 #include "multitini_video_effects.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <stdlib.h>
 
 enum { W=64, H=16, N=W*H, MAX_W=W*6 };
-static uint16_t input[N], output[N], scaled[MAX_W], filtered[MAX_W];
+static uint16_t input[N], output[N], filtered[MAX_W];
 static uint32_t history[N], base[N], scratch[N];
 static unsigned green(uint16_t pixel) { return (pixel>>5)&63U; }
 static double variance(const uint16_t *row, unsigned n) {
@@ -29,26 +32,38 @@ static bool scale_and_filter(unsigned num,unsigned den,unsigned filter) {
     mt_video_effects_tables_t tables;
     mt_video_effects_defaults(&settings);settings.enabled=1;settings.softness=(uint8_t)filter;
     if(!mt_video_effects_build(&settings,&tables)) return false;
-    for(unsigned x=0;x<length;++x)scaled[x]=output[(H/2)*W+x*den/num];
-    for(unsigned x=0;x<length;++x)filtered[x]=mt_video_effects_reference_spatial_rgb565(
-        &tables,scaled[x==0 ? 0:x-1],scaled[x],scaled[x+1==length ? x:x+1],
-        x==0,x+1==length,false,x,H/2);
+    const uint16_t *row=output+(H/2)*W;
+    for(unsigned x=0;x<length;++x) {
+        const unsigned sx=x*den/num;
+        filtered[x]=mt_video_effects_reference_scaled_rgb565(&tables,
+            row[sx==0 ? sx:sx-1],row[sx],row[sx+1==W ? sx:sx+1],
+            sx==0,sx+1==W,false,x,H/2,num,den);
+    }
     return true;
 }
-int main(void) {
+int main(int argc,char **argv) {
+    unsigned reference_num=4U,reference_den=1U;
+    if(argc!=1 && argc!=3) return 2;
+    if(argc==3) {
+        char *end_num,*end_den;
+        const unsigned long n=strtoul(argv[1],&end_num,10),d=strtoul(argv[2],&end_den,10);
+        if(*argv[1]=='\0' || *argv[2]=='\0' || *end_num!='\0' || *end_den!='\0' ||
+           n<1U || n>64U || d<1U || d>64U)return 2;
+        reference_num=(unsigned)n;reference_den=(unsigned)d;
+    }
     const unsigned scales[][2]={{1,1},{3,2},{2,1},{3,1},{4,1},{5,1},{6,1}};
-    puts("scale_num,scale_den,blur,filter,point_peak_green,stripe_contrast_green,stripe_contrast_percent,point_sigma_output_px");
+    puts("scale_num,scale_den,vertical_smoothing,horizontal_smoothing,point_peak_green,stripe_contrast_green,stripe_contrast_percent,point_sigma_output_px");
     for(unsigned s=0;s<sizeof(scales)/sizeof(scales[0]);++s) {
         const unsigned num=scales[s][0],den=scales[s][1];
         for(unsigned blur=0;blur<4;++blur)for(unsigned filter=0;filter<4;++filter) {
-            const mt_video_frame_options_t opt={1,0,(uint8_t)blur,0};
+            const mt_video_frame_options_t opt={1,0,(uint8_t)blur,0,(uint8_t)filter};
             memset(input,0,sizeof(input));input[(H/2)*W+W/2]=0x07e0;
-            if(!mt_video_frame_process_scaled(input,output,history,base,scratch,W,H,num,den,&opt,0,true)) return 1;
+            if(!mt_video_frame_process_scaled(input,output,history,base,scratch,W,H,reference_num,reference_den,&opt,0,true)) return 1;
             const unsigned peak=green(output[(H/2)*W+W/2]);
             if(!scale_and_filter(num,den,filter)) return 1;
             const double var=variance(filtered,W*num/den);
             for(unsigned y=0;y<H;++y)for(unsigned x=0;x<W;++x)input[y*W+x]=(x&1) ? 0x07e0:0;
-            if(!mt_video_frame_process_scaled(input,output,history,base,scratch,W,H,num,den,&opt,0,true)) return 1;
+            if(!mt_video_frame_process_scaled(input,output,history,base,scratch,W,H,reference_num,reference_den,&opt,0,true)) return 1;
             if(!scale_and_filter(num,den,filter)) return 1;
             double high=0,low=0;unsigned hc=0,lc=0;
             for(unsigned x=(W/4)*num/den;x<(3*W/4)*num/den;++x) {

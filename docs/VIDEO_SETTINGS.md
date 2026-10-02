@@ -48,8 +48,10 @@ complete machine image, without cropping:
 | 4 | 1360×768 | 85.5 MHz | 2× | 5× | 1× |
 | 5 | 1680×1050 | 119 MHz | 3× | 6× | 1× |
 
-All modes are about 60 Hz. Blur strength and scanline spacing follow the actual
-scale. The native DDR images retain their original dimensions and addresses.
+All modes are about 60 Hz. Scanline spacing follows the actual scale. AX01
+keeps vertical smoothing strength fixed per core across modes and uses
+horizontal interpolation during scaling. The native DDR images retain their
+original dimensions and addresses.
 All 128×60 menu cells remain visible; smaller outputs use the existing 7×8 font
 at 1×, centered in each cell. Border padding remains measured in output pixels.
 
@@ -73,17 +75,17 @@ The shared register ABI is:
 The control clock stays fixed. A private AXI master drains capture, scanout,
 and filtering before reprogramming the pixel MMCM. The geometry crosses as one
 acknowledged mailbox while scanout is held in reset. Mailbox clocks and reset
-ownership remain live while the pixel datapath resets. Filter coefficients
-change in the control domain only after native DDR jobs drain.
+ownership remain live while the pixel datapath resets. AX01 vertical filter
+coefficients remain fixed; horizontal interpolation follows the new geometry.
 
 Clock failure attempts the default dividers once, preserving an error flag.
 Repeated failure waits for a new explicit request. A drain timeout keeps the
 old pixel clock running until outstanding owners finish; it never resets a
 live owner to make the transaction appear complete.
 
-New core packages use ABI 0.16 and firmware build `PRY1`. Historical VID4/VID5
-release scripts retain their original ABI and build IDs. Package newly built
-cores with `scripts/make_core_package.py`, whose default now matches ABI 0.16.
+AX01 core packages use ABI 0.17. Historical release scripts retain their
+original ABI and build IDs. Package newly built cores with
+`scripts/make_core_package.py`, whose default now matches ABI 0.17.
 
 ## Implementation contract
 
@@ -107,19 +109,17 @@ beam gain ranges from 1x to 4x with saturation. Defaults are On, 50 percent,
 and 2x. These controls preserve the same game window and border placement.
 See [Vectrex overlays](VECTREX_OVERLAYS.md) for the file format and settings.
 
-ABI 0.15 adds a separate **Effects** page after Video. It provides per-core
-color adjustments, scanlines, masks, horizontal filtering, persistence, blur,
-and bloom. Left/Right adjusts the selected control; effects default off.
-Persistence, blur, and bloom run in the FPGA at native resolution. Its ordered
-frame pipeline follows the 60 Hz output cadence; CPU1 prepares color settings.
-Blur strength follows the source-to-output scale. The VID5 C64/GBC core
-update strengthens the levels after VID4 proved too faint on the board.
-Light preserves small handheld details; Medium and Strong progressively
-soften them. Vectrex retains its existing blur levels. Saved
-Off/Light/Medium/Strong choices require no migration. The update uses the
-installed VID4 firmware and retains the register-read fix.
-See [CPU1 and FPGA video effects](CPU1_VIDEO_EFFECTS.md) for the
-processing order, buffering, and validation limits.
+The **Effects** page provides per-core color adjustments, scanlines, masks,
+horizontal smoothing, persistence, vertical smoothing, and bloom. Left/Right
+adjusts the selected control; effects default off. AX01 separates the two
+smoothing axes and requires ABI 0.17 core packages. Persistence, horizontal
+and vertical smoothing, and bloom run in the FPGA at native resolution.
+Horizontal smoothing also enables centered interpolation during enlargement.
+Its ordered frame
+pipeline follows the 60 Hz output cadence; CPU1 prepares color settings.
+See [axis smoothing](VIDEO_AXIS_SMOOTHING.md) for the current processing order
+and [CPU1 and FPGA video effects](CPU1_VIDEO_EFFECTS.md) for historical
+implementation and acceptance records.
 
 ## Acceptance
 

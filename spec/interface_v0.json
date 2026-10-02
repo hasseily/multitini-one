@@ -2,7 +2,7 @@
   "schema_version": 1,
   "abi": {
     "major": 0,
-    "minor": 16
+    "minor": 17
   },
   "magic": "0x4D543031",
   "shell_id": "0x4D544F4E",
@@ -530,6 +530,7 @@
     "VECTREX_OVERLAY_STATUS_LOADED": "0x00000001",
     "VECTREX_OVERLAY_STATUS_ERROR": "0x00000002",
     "VIDEO_EFFECT_MIN_ABI_MINOR": 15,
+    "VIDEO_AXIS_MIN_ABI_MINOR": 17,
     "VIDEO_EFFECT_STATUS_BUSY": "0x00000001",
     "VIDEO_EFFECT_STATUS_VALID": "0x00000002",
     "VIDEO_EFFECT_STATUS_REJECTED": "0x00000004",

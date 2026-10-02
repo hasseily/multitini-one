@@ -25,6 +25,8 @@ module multitini_video_effects #(
     output reg [31:0] effect_active_sequence,
     input wire pixel_clk, pixel_resetn, shared_pixel_resetn, shared_pixel_running, vblank_start,
     input wire [15:0] pixel_rgb565,
+    input wire [15:0] pixel_neighbor_rgb565,
+    input wire [7:0] pixel_neighbor_weight,
     input wire pixel_effect_enable,
     input wire [11:0] pixel_x, pixel_y,
     input wire pixel_de, pixel_hsync, pixel_vsync,
@@ -176,30 +178,44 @@ module multitini_video_effects #(
     // Register the fully composed pixel before the DSPs. Native BRAM scanout,
     // DDR cache selection, borders and text all end at this common boundary.
     // Every pixel and its timing/viewport metadata therefore gains one cycle.
-    reg [15:0] sample_rgb565;
+    reg [15:0] sample_rgb565, sample_neighbor_rgb565;
+    reg [7:0] sample_weight;
     reg sample_enable,sample_de,sample_hsync,sample_vsync;
     reg [11:0] sample_x,sample_y;
     always @(posedge pixel_clk)begin
         if(!pixel_run)begin
-            sample_rgb565<=0;sample_enable<=0;sample_de<=0;sample_hsync<=0;sample_vsync<=0;
+            sample_rgb565<=0;sample_neighbor_rgb565<=0;sample_weight<=0;
+            sample_enable<=0;sample_de<=0;sample_hsync<=0;sample_vsync<=0;
             sample_x<=0;sample_y<=0;
         end else begin
             sample_rgb565<=pixel_rgb565;sample_enable<=pixel_effect_enable;
+            sample_neighbor_rgb565<=pixel_neighbor_rgb565;
+            if(!pixel_effect_enable || !active_valid_pixel || !spatial[6])sample_weight<=0;
+            // Strength is applied once by the native horizontal prefilter.
+            // Every enabled level uses full, bounded centered interpolation.
+            else sample_weight<=spatial[5:4]!=0 ? pixel_neighbor_weight : 8'd0;
             sample_de<=pixel_de;sample_hsync<=pixel_hsync;sample_vsync<=pixel_vsync;
             sample_x<=pixel_x;sample_y<=pixel_y;
         end
     end
-    wire [7:0] input_red = {sample_rgb565[15:11],sample_rgb565[15:13]};
-    wire [7:0] input_green = {sample_rgb565[10:5],sample_rgb565[10:9]};
-    wire [7:0] input_blue = {sample_rgb565[4:0],sample_rgb565[4:2]};
+    wire [7:0] center_channels[0:2],neighbor_channels[0:2];
+    assign center_channels[0]={sample_rgb565[15:11],sample_rgb565[15:13]};
+    assign center_channels[1]={sample_rgb565[10:5],sample_rgb565[10:9]};
+    assign center_channels[2]={sample_rgb565[4:0],sample_rgb565[4:2]};
+    assign neighbor_channels[0]={sample_neighbor_rgb565[15:11],sample_neighbor_rgb565[15:13]};
+    assign neighbor_channels[1]={sample_neighbor_rgb565[10:5],sample_neighbor_rgb565[10:9]};
+    assign neighbor_channels[2]={sample_neighbor_rgb565[4:0],sample_neighbor_rgb565[4:2]};
+    (* use_dsp="yes" *) reg signed [17:0] blend_products[0:2];
+    reg [7:0] blend_centers[0:2],blended[0:2];
+    // Quantize the interpolated RGB8 result to RGB565 before color processing,
+    // matching native frame storage and the software screenshot reference.
+    wire [7:0] input_red = {blended[0][7:3],blended[0][7:5]};
+    wire [7:0] input_green = {blended[1][7:2],blended[1][7:6]};
+    wire [7:0] input_blue = {blended[2][7:3],blended[2][7:5]};
     (* use_dsp = "yes" *) reg signed [24:0] products [0:8];
     reg signed [26:0] sums [0:2];
     reg [7:0] indices [0:2];
     reg [7:0] tone_ram [0:2], tone [0:2];
-    reg [7:0] horizontal [0:2];
-    reg [7:0] previous [0:2], left_neighbor [0:2];
-    reg left_valid;
-    reg right_valid;
     reg [15:0] bypass [0:6];
     reg [6:0] enables, de_pipe, hs_pipe, vs_pipe;
     reg [11:0] x_pipe [0:6], y_pipe [0:6];
@@ -230,33 +246,11 @@ module multitini_video_effects #(
             else clamp_sum = rounded[7:0];
         end
     endfunction
-    function automatic [7:0] horizontal_filter(input [7:0] center, left, right,
-        input [1:0] mode);
-        reg [8:0] neighbors;
-        reg [9:0] rounded_neighbors;
-        reg [10:0] weighted_center, soft_numerator;
-        reg [9:0] strong_numerator;
-        reg signed [11:0] sharp;
+    function automatic [7:0] blend_round(input [7:0] center, input signed [17:0] product);
+        reg signed [17:0] sum;
         begin
-            neighbors = {1'b0,left} + {1'b0,right};
-            rounded_neighbors = {1'b0,neighbors} + 10'd2;
-            // Balance the center and neighbor paths. Explicit widths avoid
-            // wide signed intermediates and a shared saturation comparator.
-            // 6*center+2 uses two shifted terms and one bounded adder.
-            weighted_center = {1'b0,center,2'b10} + {2'b0,center,1'b0};
-            soft_numerator = weighted_center + {1'b0,rounded_neighbors};
-            strong_numerator = {1'b0,center,1'b0} + rounded_neighbors;
-            sharp = $signed({1'b0,weighted_center}) - $signed({3'b0,neighbors});
-            case (mode)
-                // Soft/Strong maxima are 2044/1022, so their rounded
-                // eight-bit results need no clipping. Sharp is -508..1532;
-                // its sign and overflow bits implement clipping after /4.
-                2'd1: horizontal_filter = soft_numerator[10:3];
-                2'd2: horizontal_filter = strong_numerator[9:2];
-                2'd3: horizontal_filter = sharp[11] ? 8'd0 :
-                                         sharp[10] ? 8'd255 : sharp[9:2];
-                default: horizontal_filter = center;
-            endcase
+            sum=$signed({2'b0,center,8'b0})+product+18'sd128;
+            blend_round=sum[15:8];
         end
     endfunction
     function automatic [7:0] spatial_channel(input [7:0] value, input integer channel,
@@ -284,9 +278,9 @@ module multitini_video_effects #(
             spatial_channel = shaded;
         end
     endfunction
-    wire [7:0] final_red = spatial_channel(horizontal[0],0,x_phase[6],y_phase[6],y_pipe[6][0],scanline_pipe[6],config_pipe[6]);
-    wire [7:0] final_green = spatial_channel(horizontal[1],1,x_phase[6],y_phase[6],y_pipe[6][0],scanline_pipe[6],config_pipe[6]);
-    wire [7:0] final_blue = spatial_channel(horizontal[2],2,x_phase[6],y_phase[6],y_pipe[6][0],scanline_pipe[6],config_pipe[6]);
+    wire [7:0] final_red = spatial_channel(tone[0],0,x_phase[6],y_phase[6],y_pipe[6][0],scanline_pipe[6],config_pipe[6]);
+    wire [7:0] final_green = spatial_channel(tone[1],1,x_phase[6],y_phase[6],y_pipe[6][0],scanline_pipe[6],config_pipe[6]);
+    wire [7:0] final_blue = spatial_channel(tone[2],2,x_phase[6],y_phase[6],y_pipe[6][0],scanline_pipe[6],config_pipe[6]);
     // RAM read registers intentionally have no reset for BRAM inference.
     always @(posedge pixel_clk) begin
         tone_ram[0] <= red_lut[{active_bank_pixel,indices[0]}];
@@ -296,7 +290,7 @@ module multitini_video_effects #(
     always @(posedge pixel_clk) begin
         if (!pixel_run) begin
             enables <= 0; de_pipe <= 0; hs_pipe <= 0; vs_pipe <= 0;
-            right_valid <= 0; left_valid <= 0; scanline_pipe <= 0;
+            scanline_pipe <= 0;
             output_rgb565 <= 0; output_de <= 0; output_hsync <= 0; output_vsync <= 0;
             x_mod_lo<=0;x_mod_hi<=0;y_mod_lo<=0;y_mod_hi<=0;
             x_mod_sum<=0;y_mod_sum<=0;
@@ -307,7 +301,7 @@ module multitini_video_effects #(
             for (pi=0;pi<9;pi=pi+1) products[pi]<=0;
             for (pi=0;pi<3;pi=pi+1) begin
                 sums[pi]<=0; indices[pi]<=0; tone[pi]<=0;
-                horizontal[pi]<=0; previous[pi]<=0; left_neighbor[pi]<=0;
+                blend_products[pi]<=0;blend_centers[pi]<=0;blended[pi]<=0;
             end
         end else begin
             enables <= {enables[5:0],sample_enable && active_valid_pixel && spatial[6]};
@@ -352,21 +346,15 @@ module multitini_video_effects #(
                             {{2{products[pi*3+1][24]}},products[pi*3+1]} +
                             {{2{products[pi*3+2][24]}},products[pi*3+2]};
                 indices[pi] <= clamp_sum(sums[pi]);
-                // Isolate BRAM clock-to-output delay from the weighted
-                // neighbor arithmetic. All bypass/coordinate/sync metadata
-                // has the same added stage: nine pixel clocks in total.
+                // Two pre-color stages replace the old post-color neighbor
+                // stages. Throughput and the nine-clock timing stay unchanged.
+                blend_products[pi] <= sample_weight==0 ? 18'sd0 :
+                    ($signed({1'b0,neighbor_channels[pi]})-$signed({1'b0,center_channels[pi]})) *
+                    $signed({1'b0,sample_weight});
+                blend_centers[pi] <= center_channels[pi];
+                blended[pi] <= blend_round(blend_centers[pi],blend_products[pi]);
                 tone[pi] <= tone_ram[pi];
-                horizontal[pi] <= horizontal_filter(previous[pi],
-                    left_valid ? left_neighbor[pi] : previous[pi],
-                    right_valid ? tone[pi] : previous[pi],config_pipe[5][5:4]);
-                left_neighbor[pi] <= previous[pi];
-                previous[pi] <= tone[pi];
             end
-            left_valid <= right_valid;
-            // Decide adjacency before the filter stage. Its arithmetic then
-            // starts at this flop instead of a 12-bit increment/comparison.
-            right_valid <= enables[3] && enables[4] && y_pipe[3] == y_pipe[4] &&
-                           x_pipe[3] == x_pipe[4] + 1'b1;
             output_rgb565 <= enables[6] ? {final_red[7:3],final_green[7:2],final_blue[7:3]} : bypass[6];
             output_de <= de_pipe[6]; output_hsync <= hs_pipe[6]; output_vsync <= vs_pipe[6];
         end

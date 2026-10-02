@@ -182,6 +182,8 @@ module multitini_one_top #(
     wire [63:0] hp2_rdata,hp2_wdata;
     wire [7:0] hp2_wstrb;
     wire framebuffer_use;
+    wire [15:0] framebuffer_neighbor_rgb565;
+    wire [7:0] framebuffer_neighbor_weight;
     wire video_pixel_running;
     wire [15:0] framebuffer_rgb565;
     wire [31:0] framebuffer_rd_data;
@@ -1655,6 +1657,7 @@ module multitini_one_top #(
         .pixel_clk(video_clk),.pixel_resetn(video_aresetn),.shared_pixel_resetn(video_control_resetn),.vblank_start(video_vblank_start),
         .machine_ready(machine_video_active),.scan_x(video_scan_x),.scan_y(video_scan_y),
         .machine_rgb565(machine_video_rgb565),.pixel_use(framebuffer_use),.pixel_rgb565(framebuffer_rgb565),
+        .pixel_neighbor_rgb565(framebuffer_neighbor_rgb565),.pixel_neighbor_weight(framebuffer_neighbor_weight),
         .pixel_running(video_pixel_running),
         .araddr(hp0_araddr),
         .arlen(hp0_arlen),
@@ -1726,6 +1729,8 @@ module multitini_one_top #(
         .pixel_clk(video_clk), .resetn(video_aresetn), .enable(video_enable),
         .machine_enable(machine_video_active),
         .machine_rgb565(framebuffer_use ? framebuffer_rgb565 : machine_video_rgb565),
+        .machine_neighbor_rgb565(framebuffer_neighbor_rgb565),
+        .machine_neighbor_weight(framebuffer_use ? framebuffer_neighbor_weight : 8'd0),
         .border_opaque(border_pixel_opaque), .border_rgb565(border_pixel_rgb565),
         .ui_opaque(ui_pixel_opaque), .ui_rgb565(ui_pixel_rgb565),
         .scan_x(video_scan_x), .scan_y(video_scan_y),
