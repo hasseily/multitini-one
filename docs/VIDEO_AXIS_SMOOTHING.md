@@ -85,5 +85,19 @@ The test bundle must contain matching firmware, all machine core variants,
 and exact build sources and settings. Hardware testing must check the visual
 levels plus zero new capture drops, display underruns, and deadline misses.
 
-Build and test results will be recorded with the delivered package. No board
-acceptance has been recorded for AX01.
+The revised levels passed 61 host tests and 158 Python checks. The native
+filter matches the C reference for all horizontal/vertical/Bloom combinations,
+edge geometries, and all seven active output scales. Reader, effects, and
+complete pipeline checks pass with portable models and Vivado's actual XPM
+models, including both reset arrangements and source-pause recovery.
+
+With all effects at Strong and the test's bounded DDR stalls, the full frame
+engine takes 710,169 clocks for 540x720 and 843,733 clocks for 640x720. At
+133 MHz these are about 5.3 and 6.3 ms, below the 16.7 ms frame budget. This
+is simulation evidence, not a measured board frame rate.
+
+The rebuilt GBC image uses 16,461 LUTs and 21 DSPs, compared with 16,087 LUTs
+and 33 DSPs in the retained 2026-09-30 image. Its block RAM remains 88 RAMB36
+and 12 RAMB18 tiles. Exact per-image timing reports, source captures, and
+firmware audits accompany the test bundle. No board acceptance has been
+recorded for AX01.
