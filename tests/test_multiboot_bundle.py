@@ -305,6 +305,25 @@ class BundleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "platform FSBL differs"):
             bundle.verify_golden_build(self.workspace, self.multi)
 
+    def test_generated_assembly_has_exact_bytes_without_c_optimization_flags(self):
+        stub = self.app / "build-records/frontend-core1_blob.S"
+        stub.write_text('.section .rodata.core1_blob,"a"\n.incbin "core1_blob.bin"\n')
+        path = str(self.workspace / "frontend/src/core1_blob.S")
+        report = bundle.load(self.app / "ARM_BUILD.json")
+        report["compiled_sources"]["frontend"].append({"path": path, **bundle.p.describe(stub)})
+        bundle.p.write_json(self.app / "ARM_BUILD.json", report)
+        commands_path = self.app / "build-records/frontend-compile_commands.json"
+        commands = bundle.load(commands_path)
+        commands.append({"file": path, "command": "gcc -c core1_blob.S"})
+        bundle.p.write_json(commands_path, commands)
+        seal(self.app, {"firmware_version": "F1.3.0-dev"})
+        bundle.verify_component(self.app, "appletini")
+        commands[0]["command"] = "gcc -O0 -mfpu=neon"
+        bundle.p.write_json(commands_path, commands)
+        seal(self.app, {"firmware_version": "F1.3.0-dev"})
+        with self.assertRaisesRegex(ValueError, "optimization differs"):
+            bundle.verify_component(self.app, "appletini")
+
     def test_complete_bundle_directory_and_zip_use_archived_inputs(self):
         out = self.build / "dual-bundle"
         calls = []

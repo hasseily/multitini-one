@@ -125,8 +125,9 @@ def verify_appletini_build(directory, sources):
             path = str(command["file"]).replace("\\", "/")
             p.require(path in by_path, "Unrecorded Appletini compiler input: " + path)
             text = command.get("command", " ".join(command.get("arguments", [])))
-            p.require("-O2" in text and "-O0" not in text and
-                      (app != "frontend" or "-mfpu=neon" in text), "Appletini compiler optimization differs")
+            assembly = Path(path).suffix.lower() in {".s", ".asm"}
+            p.require(assembly or ("-O2" in text and "-O0" not in text and
+                      (app != "frontend" or "-mfpu=neon" in text)), "Appletini compiler optimization differs")
             actual.add(path)
         p.require(actual == set(by_path), "Appletini actual compiler source membership differs")
     cpu1 = report["cpu1"]
