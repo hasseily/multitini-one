@@ -66,6 +66,30 @@ class FirmwareReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "membership/integrity"):
             release.verify_source_archive(self.root)
 
+    def test_cpu_only_baseline_uses_verified_retained_hardware_archive(self):
+        def snapshot(directory, files):
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "source-manifest.json").write_text(json.dumps(
+                {name: release.p.digest(data) for name, data in files.items()}))
+            with zipfile.ZipFile(directory / "source.zip", "w") as archive:
+                for name, data in files.items():
+                    archive.writestr(name, data)
+        snapshot(self.root, {"firmware/main.c": b"CPU source", "spec/interface_v0.json": b"ABI"})
+        hardware = self.root / "evidence/phos5"
+        snapshot(hardware, {"hdl/core.sv": b"exact FPGA source", "spec/interface_v0.json": b"ABI"})
+        expected = {"hdl/core.sv": release.p.digest(b"exact FPGA source"),
+                    "spec/interface_v0.json": release.p.digest(b"ABI")}
+        self.assertEqual(release.baseline_hardware_sources(self.root), expected)
+        with zipfile.ZipFile(hardware / "source.zip", "w") as archive:
+            archive.writestr("hdl/core.sv", b"changed FPGA source")
+            archive.writestr("spec/interface_v0.json", b"ABI")
+        with self.assertRaisesRegex(ValueError, "Source archive differs"):
+            release.baseline_hardware_sources(self.root)
+        # Later named bundles contain their complete hardware snapshot at root.
+        snapshot(self.root, {"hdl/core.sv": b"current FPGA source"})
+        self.assertEqual(release.baseline_hardware_sources(self.root),
+                         {"hdl/core.sv": release.p.digest(b"current FPGA source")})
+
     def test_retained_members_preserve_hardware_cores_and_exact_baseline_source(self):
         names = ["inputs/fsbl.elf", "inputs/supervisor.bit", "inputs/platform.xsa",
                  "inputs/used-vitis-platform.zip", "inputs/diagnostic.elf",

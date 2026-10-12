@@ -76,10 +76,10 @@ The script refuses an existing application workspace and never runs Vivado.
 
 ```powershell
 ./scripts/build_firmware_release.ps1 -Baseline build/firmware-efx1 `
-  -Workspace build/vitis-M0.1.0 `
+  -Workspace build/vitis-M0.1.0-final `
   -Platform build/phos5/vitis/multitini_platform/export/multitini_platform/multitini_platform.xpfm
 
-python scripts/package_firmware_release.py --baseline build/firmware-efx1 --workspace build/vitis-M0.1.0 --version M0.1.0 --build-id 4D000100 --output build/firmware-M0.1.0
+python scripts/package_firmware_release.py --baseline build/firmware-efx1 --workspace build/vitis-M0.1.0-final --version M0.1.0 --build-id 4D000100 --output build/firmware-M0.1.0
 ```
 
 Repeat the packaging command with `--check-only` to audit an existing package.

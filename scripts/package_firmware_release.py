@@ -70,6 +70,15 @@ def verify_source_archive(directory):
     return source
 
 
+def baseline_hardware_sources(directory):
+    """CPU-only EFX1 snapshots retain their exact PHO5 HDL archive separately."""
+    source = verify_source_archive(directory)
+    if not any(name.startswith("hdl/") for name in source):
+        source = verify_source_archive(directory / "evidence/phos5")
+    p.require(any(name.startswith("hdl/") for name in source), "Baseline lacks an exact HDL source snapshot")
+    return source
+
+
 def retained_members(manifest):
     retained = {}
     for name in manifest["files"]:
@@ -196,7 +205,7 @@ def complete_check(out, baseline, old, cpu, args, compare_zip=True):
     p.verify_sources(source)
     p.require(all(source.get(n) == d for n, d in cpu["record"]["files"].items()),
               "Source snapshot differs from CPU build capture")
-    verify_hardware_source(verify_source_archive(baseline), source)
+    verify_hardware_source(baseline_hardware_sources(baseline), source)
     audit = audit_payload(out, cpu, args.version, args.build_id, manifest["hardware_firmware_id"], args.vitis)
     p.require(audit == json.loads((out / "evidence/payload-audit.json").read_text()),
               "Firmware payload audit differs")
@@ -237,7 +246,10 @@ def main():
     p.ABI = old["abi"]
     major, minor = map(int, p.ABI.split("."))
     p.require(major == 0, "Unsupported baseline ABI major")
-    old_source = verify_source_archive(baseline)
+    old_source = baseline_hardware_sources(baseline)
+    baseline_source = json.loads((baseline / "source-manifest.json").read_text())
+    hardware_archive = ("evidence/baseline/source.zip" if any(name.startswith("hdl/") for name in baseline_source)
+                        else "evidence/baseline/phos5/source.zip")
     cpu = verify_cpu(workspace, baseline, args.version, args.build_id, minor)
     if args.check_only:
         print(json.dumps(complete_check(out, baseline, old, cpu, args), indent=2))
@@ -291,7 +303,7 @@ def main():
         "The CPU1 executable payload and exported Vitis platform are unchanged.\n"
         "A comparison rebuild qualifies the selected original CPU1 ELF; its GNU build-ID may differ.\n"
         "source.zip records the new ARM software and packaging source.\n"
-        "evidence/baseline/source.zip and retained evidence preserve exact prior FPGA build inputs.\n"
+        f"{hardware_archive} and retained evidence preserve exact prior FPGA build inputs.\n"
         "Manifest, checksums and independent Bootgen/ELF/core audits record selected inputs.\n"
         "Vitis/Bootgen 2025.2. No user ROMs/media are supplied; board validation is pending.\n",
         encoding="utf-8")
@@ -306,6 +318,7 @@ def main():
         "dirty_source_snapshot": bool(p.git("status", "--porcelain").strip()), "source_files": len(source),
         "provenance": {"baseline_name": baseline.name, "baseline_manifest_sha256": p.sha(baseline / "manifest.json"),
                        "cpu_source_archive": "source.zip", "baseline_source_archive": "evidence/baseline/source.zip",
+                       "baseline_hardware_source_archive": hardware_archive,
                        "cores_rebuilt": False, "supervisor_rebuilt": False, "cpu1_payload_changed": False,
                        "board_validation": False, "retained_files": retained}, "files": inventory(out)})
     checksums = inventory(out)
