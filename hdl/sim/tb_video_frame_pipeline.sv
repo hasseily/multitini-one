@@ -6,40 +6,33 @@
 module tb_video_frame_pipeline;
     parameter integer SCALE_NUM=4,SCALE_DEN=1;
     parameter bit DYNAMIC_DISPLAY=0;
+    parameter bit MANUAL_CROP_TEST=0;
     reg display_pause=0,display_pixel_hold=0;
     wire display_quiescent;
     parameter bit SOURCE_PAUSE_TEST=0,EXPECT_SOURCE_FAILURE=0;
-    // Flat-color frame ordering is checked below. Probe an asymmetric tap
-    // separately to prove active output scaling never retunes vertical blur.
-    function automatic integer vertical_alpha(input integer level);
-        integer reference_strong;
-        begin
-            // Production core references are 4:1, 6:1 and 3:2. These small
-            // integration fixtures also exercise other legal reference ratios.
-            reference_strong=(1152*SCALE_DEN+SCALE_NUM/2)/SCALE_NUM;
-            if(reference_strong>256)reference_strong=256;
-            reference_strong=(reference_strong*7+4)/8;
-            case(level)
-                1:vertical_alpha=(reference_strong*4+3)/7;
-                2:vertical_alpha=(reference_strong*11+7)/14;
-                default:vertical_alpha=reference_strong;
-            endcase
-        end
-    endfunction
+    // PHO2 sums normalized Blur taps before rounding, without scale retuning.
     initial begin
         #1;
-        if(dut.engine_i.filter.SCALE_NUM!=SCALE_NUM || dut.engine_i.filter.SCALE_DEN!=SCALE_DEN)
-            $fatal(1,"Frame engine lost the core reference scale");
-        for(integer mode=1;mode<=3;mode=mode+1)
-            if(dut.engine_i.filter.normalized_blur(8'd0,8'd64,mode[1:0])!==
-               (64*vertical_alpha(mode)+128)/256)
-                $fatal(1,"Frame engine changed the fixed vertical blend coefficient");
+        if(dut.engine_i.filter.blur_vertical_tent(8'd7,8'd11,8'd19)!==8'd12)
+            $fatal(1,"Blur vertical tent did not round the normalized sum");
     end
     localparam integer WIDTH=13,HEIGHT=8,VIEW_X=16,VIEW_Y=2;
     localparam integer OUT_WIDTH=WIDTH*SCALE_NUM/SCALE_DEN;
     localparam integer OUT_HEIGHT=HEIGHT*SCALE_NUM/SCALE_DEN;
     localparam integer STRIDE=128,SLOT_BYTES=STRIDE*HEIGHT,PIXELS=WIDTH*HEIGHT;
     localparam integer H_TOTAL=256,V_TOTAL=96;
+    localparam integer READER_NUM=MANUAL_CROP_TEST ? 3:SCALE_NUM;
+    localparam integer READER_DEN=MANUAL_CROP_TEST ? 1:SCALE_DEN;
+    localparam integer READER_X=MANUAL_CROP_TEST ? -4:VIEW_X;
+    localparam integer READER_Y=MANUAL_CROP_TEST ? -5:VIEW_Y;
+    localparam integer READER_WIDTH=WIDTH*READER_NUM/READER_DEN;
+    localparam integer READER_HEIGHT=HEIGHT*READER_NUM/READER_DEN;
+    localparam integer DISPLAY_X0=READER_X<0 ? 0:READER_X;
+    localparam integer DISPLAY_Y0=READER_Y<0 ? 0:READER_Y;
+    localparam integer DISPLAY_X1=READER_X+READER_WIDTH;
+    localparam integer DISPLAY_Y1=READER_Y+READER_HEIGHT;
+    localparam integer DISPLAY_PIXELS=(DISPLAY_X1-DISPLAY_X0)*(DISPLAY_Y1-DISPLAY_Y0);
+    localparam integer BLANK_Y=MANUAL_CROP_TEST && DISPLAY_Y1>VIEW_Y+OUT_HEIGHT ? DISPLAY_Y1:VIEW_Y+OUT_HEIGHT;
     reg clk=0,pixel_clk=0,resetn=0;
     reg [7:0] accepted_options;
     always @(posedge clk)if(resetn && dut.engine_i.filter.start && !dut.engine_i.filter.busy)begin
@@ -49,10 +42,6 @@ module tb_video_frame_pipeline;
         #0.001;
         if(dut.engine_i.job_options!==accepted_options)
             $fatal(1,"Frame engine did not capture all eight option bits");
-        if(accepted_options[3:2]!=0 &&
-           dut.engine_i.filter.normalized_blur(8'd0,8'd64,accepted_options[3:2])!==
-           (64*vertical_alpha(accepted_options[3:2])+128)/256)
-            $fatal(1,"Frame job changed the fixed vertical blend coefficient");
     end
     // Match the production 133 MHz HP and 148.5 MHz pixel clock ratio, with
     // distinct edges. The small synthetic raster keeps ample vertical blank.
@@ -72,8 +61,18 @@ module tb_video_frame_pipeline;
     reg machine_ready=1;
     reg [15:0] expected_source_word[0:255];
     wire [4:0] level=epoch==0 ? 8+frame_number : 1+frame_number-epoch_start_frame;
-    wire [15:0] machine_rgb565={level,level,1'b0,level};
-    wire vblank_start=scan_x==0 && scan_y==VIEW_Y+OUT_HEIGHT;
+    wire [15:0] machine_base_rgb565={level,level,1'b0,level};
+    function automatic [15:0] manual_source(input [15:0] base,input integer x,y);
+        integer r,g,b;
+        begin
+            r=(base[15:11]+x*3+y*5)&31;g=(base[10:5]+x*5+y*7)&63;b=(base[4:0]+x*7+y*3)&31;
+            manual_source=base==0 ? 16'd0:{r[4:0],g[5:0],b[4:0]};
+        end
+    endfunction
+    wire [15:0] machine_rgb565=MANUAL_CROP_TEST ?
+        manual_source(machine_base_rgb565,((scan_x-VIEW_X)*SCALE_DEN)/SCALE_NUM,
+            ((scan_y-VIEW_Y)*SCALE_DEN)/SCALE_NUM):machine_base_rgb565;
+    wire vblank_start=scan_x==0 && scan_y==BLANK_Y;
     wire pixel_use;
     wire [15:0] pixel_rgb565;
     wire [31:0] awaddr[0:1],araddr[0:1];
@@ -89,9 +88,18 @@ module tb_video_frame_pipeline;
         .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN),.SHARED_PIXEL_RESET(1)) dut(
         .display_filter_scale_num(4'(SCALE_NUM)),.display_filter_scale_den(4'(SCALE_DEN)),
         .display_pause(display_pause),.display_quiescent(display_quiescent),
-        .display_view_x(12'(VIEW_X)),.display_view_y(12'(VIEW_Y)),
-        .display_view_width(12'(OUT_WIDTH)),.display_view_height(12'(OUT_HEIGHT)),
-        .display_scale_num(4'(SCALE_NUM)),.display_scale_den(4'(SCALE_DEN)),
+        .display_view_x(12'(READER_X)),.display_view_y(12'(READER_Y)),
+        .display_view_width(12'(READER_WIDTH)),.display_view_height(12'(READER_HEIGHT)),
+        .display_scale_num(4'(READER_NUM)),.display_scale_den(4'(READER_DEN)),
+        .capture_display_view_x(12'(VIEW_X)),.capture_display_view_y(12'(VIEW_Y)),
+        .capture_display_view_width(12'(OUT_WIDTH)),.capture_display_view_height(12'(OUT_HEIGHT)),
+        .capture_display_scale_num(4'(SCALE_NUM)),.capture_display_scale_den(4'(SCALE_DEN)),
+        .display_h_active(12'(H_TOTAL)),.display_v_active(12'(V_TOTAL)),
+        .display_h_total(12'(H_TOTAL)),.display_v_total(12'(V_TOTAL)),
+        .display_source_x0(10'(READER_X<0 ? -READER_X*READER_DEN/READER_NUM:0)),
+        .display_source_y0(10'(READER_Y<0 ? -READER_Y*READER_DEN/READER_NUM:0)),
+        .display_phase_x0(4'(READER_X<0 ? -READER_X*READER_DEN%READER_NUM:0)),
+        .display_phase_y0(4'(READER_Y<0 ? -READER_Y*READER_DEN%READER_NUM:0)),
         .clk(clk),.resetn(resetn),.wr_en(wr_en),.wr_addr(wr_addr),.rd_addr(rd_addr),
         .wr_data(wr_data),.wr_strb(4'hf),.rd_data(rd_data),
         .pixel_clk(pixel_clk),.pixel_resetn(shared_pixel_resetn && !display_pixel_hold),.shared_pixel_resetn(shared_pixel_resetn),
@@ -118,7 +126,7 @@ module tb_video_frame_pipeline;
     always @(posedge pixel_clk)begin
         #1;
         if(shared_pixel_resetn && scan_x==0 && scan_y==0)
-            expected_source_word[frame_number]=machine_ready ? machine_rgb565 : 16'b0;
+            expected_source_word[frame_number]=machine_ready ? machine_base_rgb565 : 16'b0;
     end
 
     reg [7:0] memory[0:8*SLOT_BYTES+PIXELS*4-1];
@@ -230,6 +238,84 @@ module tb_video_frame_pipeline;
     integer expected_frame[0:255],jobs=0,last_job_frame=-1,segment_jobs=0;
     integer seq,source_frame,k,maximum,coefficient,rr,gg,bb,pr,pg,pb,halo_shift;
     reg [15:0] current_word;
+    reg [23:0] manual_history[0:PIXELS-1],manual_hblur[0:PIXELS-1],manual_hglow[0:PIXELS-1];
+    reg [15:0] expected_native[0:255][0:PIXELS-1];
+    integer manual_last_sequence=0;
+    function automatic [23:0] manual_expand(input [15:0] word);
+        begin manual_expand={{word[4:0],word[4:2]},{word[10:5],word[10:9]},{word[15:11],word[15:13]}};end
+    endfunction
+    function automatic integer clamp_x(input integer x);
+        begin clamp_x=x<0 ? 0:x>=WIDTH ? WIDTH-1:x;end
+    endfunction
+    function automatic integer clamp_y(input integer y);
+        begin clamp_y=y<0 ? 0:y>=HEIGHT ? HEIGHT-1:y;end
+    endfunction
+    task manual_oracle(input integer job_sequence,frame,input [7:0] effect_options,input bit history_reset);
+        integer x,y,i,ch,tap,weight,radius,denominator,total,filtered,raw,halo;
+        integer prior_r,prior_g,prior_b,source_r,source_g,source_b,peak,factor;
+        reg [23:0] source,final_rgb;
+        begin
+            for(y=0;y<HEIGHT;y=y+1)for(x=0;x<WIDTH;x=x+1)begin
+                i=y*WIDTH+x;source=manual_expand(manual_source(expected_source_word[frame],x,y));
+                source_r=source[7:0];source_g=source[15:8];source_b=source[23:16];
+                prior_r=history_reset ? 0:manual_history[i][7:0];
+                prior_g=history_reset ? 0:manual_history[i][15:8];
+                prior_b=history_reset ? 0:manual_history[i][23:16];
+                peak=prior_r>prior_g ? prior_r:prior_g;if(prior_b>peak)peak=prior_b;
+                case(effect_options[1:0])
+                    1:factor=peak>=128 ? 14:peak>=32 ? 40:58;
+                    2:factor=peak>=128 ? 18:peak>=32 ? 48:60;
+                    3:factor=peak>=128 ? 24:peak>=32 ? 56:61;
+                    default:factor=0;
+                endcase
+                prior_r=prior_r*factor/64;prior_g=prior_g*factor/64;prior_b=prior_b*factor/64;
+                if(prior_r<4 && prior_g<4 && prior_b<4)begin prior_r=0;prior_g=0;prior_b=0;end
+                if(prior_r>source_r)source_r=prior_r;if(prior_g>source_g)source_g=prior_g;if(prior_b>source_b)source_b=prior_b;
+                manual_history[i]={source_b[7:0],source_g[7:0],source_r[7:0]};
+            end
+            for(y=0;y<HEIGHT;y=y+1)for(x=0;x<WIDTH;x=x+1)begin
+                i=y*WIDTH+x;manual_hblur[i]=0;manual_hglow[i]=0;
+                for(ch=0;ch<3;ch=ch+1)begin
+                    radius=effect_options[3:2]==3 ? 2:1;denominator=radius==2 ? 8:4;total=0;
+                    for(tap=-radius;tap<=radius;tap=tap+1)begin
+                        weight=radius==1 ? (tap==0 ? 2:1):(tap==-2 || tap==2 ? 1:2);
+                        total=total+weight*manual_history[y*WIDTH+clamp_x(x+tap)][ch*8+:8];
+                    end
+                    filtered=effect_options[3:2]==0 ? manual_history[i][ch*8+:8]:(total+denominator/2)/denominator;
+                    manual_hblur[i][ch*8+:8]=filtered;
+                    total=manual_history[y*WIDTH+clamp_x(x-1)][ch*8+:8]+2*manual_history[i][ch*8+:8]+manual_history[y*WIDTH+clamp_x(x+1)][ch*8+:8];
+                    manual_hglow[i][ch*8+:8]=total/4;
+                end
+            end
+            for(y=0;y<HEIGHT;y=y+1)for(x=0;x<WIDTH;x=x+1)begin
+                i=y*WIDTH+x;final_rgb=0;
+                for(ch=0;ch<3;ch=ch+1)begin
+                    filtered=manual_hblur[i][ch*8+:8];
+                    if(effect_options[3:2]>=2)filtered=(manual_hblur[clamp_y(y-1)*WIDTH+x][ch*8+:8]+2*manual_hblur[i][ch*8+:8]+manual_hblur[clamp_y(y+1)*WIDTH+x][ch*8+:8]+2)/4;
+                    raw=manual_history[i][ch*8+:8];denominator=effect_options[3:2]==1 ? 8:effect_options[3:2]==2 ? 4:2;
+                    if(effect_options[3:2]!=0)filtered=((denominator-1)*raw+filtered+denominator/2)/denominator;
+                    halo=(manual_hglow[clamp_y(y-1)*WIDTH+x][ch*8+:8]+2*manual_hglow[i][ch*8+:8]+manual_hglow[clamp_y(y+1)*WIDTH+x][ch*8+:8])/4;
+                    if(effect_options[5:4]!=0)filtered=filtered+(halo>>(4-effect_options[5:4]));
+                    if(filtered>255)filtered=255;final_rgb[ch*8+:8]=filtered;
+                end
+                expected_native[job_sequence][i]={final_rgb[7:3],final_rgb[15:10],final_rgb[23:19]};
+            end
+            manual_last_sequence=job_sequence;
+        end
+    endtask
+    integer native_check,output_index,history_index;
+    always @(posedge clk)if(resetn && MANUAL_CROP_TEST && dut.engine_done)begin
+        // Hidden rows/columns remain complete native outputs and persisted
+        // history in DDR, even though scanout starts at a cropped sample.
+        for(native_check=0;native_check<PIXELS;native_check=native_check+1)begin
+            output_index=(4+dut.engine_output_slot)*SLOT_BYTES+(native_check/WIDTH)*STRIDE+(native_check%WIDTH)*2;
+            history_index=8*SLOT_BYTES+native_check*4;
+            if({memory[output_index+1],memory[output_index]}!==expected_native[manual_last_sequence][native_check])
+                $fatal(1,"Full native output differs under crop at pixel%0d",native_check);
+            if({memory[history_index+2],memory[history_index+1],memory[history_index]}!==manual_history[native_check])
+                $fatal(1,"Hidden native history differs under crop at pixel%0d",native_check);
+        end
+    end
     always @(posedge clk)if(resetn && dut.engine_start)begin
         seq=dut.scheduler_i.job_value[31:2];source_frame=capture_frame[dut.engine_input_slot];
         if(segment_jobs!=0 && source_frame!=last_job_frame+1)$fatal(1,"Capture order skipped: %0d after %0d",source_frame,last_job_frame);
@@ -237,12 +323,15 @@ module tb_video_frame_pipeline;
         for(k=0;k<PIXELS;k=k+1)history_read_seen[k]=0;
         idx=dut.engine_input_slot*SLOT_BYTES;
         current_word={memory[idx+1],memory[idx]};
-        if(current_word!==expected_source_word[source_frame])
+        if(current_word!==(MANUAL_CROP_TEST ? manual_source(expected_source_word[source_frame],0,0):expected_source_word[source_frame]))
             $fatal(1,"Native capture did not match ready/black source frame%0d got%h expected%h",source_frame,current_word,expected_source_word[source_frame]);
         for(k=0;k<PIXELS;k=k+1)begin
             idx=dut.engine_input_slot*SLOT_BYTES+(k/WIDTH)*STRIDE+(k%WIDTH)*2;
-            if({memory[idx+1],memory[idx]}!==current_word)$fatal(1,"Capture frame contains torn pixels");
+            if({memory[idx+1],memory[idx]}!==(MANUAL_CROP_TEST ? manual_source(expected_source_word[source_frame],k%WIDTH,k/WIDTH):current_word))
+                $fatal(1,"Capture frame contains torn or cropped native pixels");
         end
+        if(MANUAL_CROP_TEST)manual_oracle(seq,source_frame,dut.engine_options,dut.engine_history_reset);
+        else begin
         rr={current_word[15:11],current_word[15:13]};gg={current_word[10:5],current_word[10:9]};bb={current_word[4:0],current_word[4:2]};
         pr=oracle_history[7:0];pg=oracle_history[15:8];pb=oracle_history[23:16];
         maximum=pr>pg?pr:pg;if(pb>maximum)maximum=pb;
@@ -257,11 +346,15 @@ module tb_video_frame_pipeline;
         if(pr<4 && pg<4 && pb<4)begin pr=0;pg=0;pb=0;end
         if(pr>rr)rr=pr;if(pg>gg)gg=pg;if(pb>bb)bb=pb;
         oracle_history={bb[7:0],gg[7:0],rr[7:0]};
+        // Every normalized Blur kernel and its blend preserve a flat field
+        // exactly. Glow is independently generated from oracle_history.
         if(dut.engine_options[5:4]!=0)begin
-            halo_shift=4-dut.engine_options[5:4];rr=rr+(rr>>halo_shift);gg=gg+(gg>>halo_shift);bb=bb+(bb>>halo_shift);
+            halo_shift=4-dut.engine_options[5:4];rr=rr+(oracle_history[7:0]>>halo_shift);gg=gg+(oracle_history[15:8]>>halo_shift);bb=bb+(oracle_history[23:16]>>halo_shift);
         end
         if(rr>255)rr=255;if(gg>255)gg=255;if(bb>255)bb=255;
         expected_pixel[seq]={rr[7:3],gg[7:2],bb[7:3]};expected_frame[seq]=source_frame;
+        end
+        expected_frame[seq]=source_frame;
         oracle_valid=1;oracle_options=dut.engine_options;last_job_frame=source_frame;
         jobs=jobs+1;segment_jobs=segment_jobs+1;
     end
@@ -269,10 +362,12 @@ module tb_video_frame_pipeline;
     integer displayed=0,segment_displayed=0,checked_pixels=0,last_display_frame=-1,last_sequence=0,latency=-1;
     integer pipeline_latency=-1;
     integer frame_sequence=0,frame_pixels=0;
+    integer expected_native_index;
+    reg [15:0] displayed_expected_pixel;
     always @(posedge pixel_clk)begin
         #1;
         if(shared_pixel_resetn && check_running)begin
-            if(scan_x==VIEW_X && scan_y==VIEW_Y)begin
+            if(scan_x==DISPLAY_X0 && scan_y==DISPLAY_Y0)begin
                 if(pixel_use)begin
                     frame_sequence=dut.active_value[31:2];
                     if(display_started && (frame_sequence!=last_sequence+1 || expected_frame[frame_sequence]!=last_display_frame+1))
@@ -287,14 +382,16 @@ module tb_video_frame_pipeline;
                     frame_pixels=0;displayed=displayed+1;segment_displayed=segment_displayed+1;
                 end else if(display_started)$fatal(1,"Processed output missing for a display tick");
             end
-            if(display_started && scan_x>=VIEW_X && scan_x<VIEW_X+OUT_WIDTH && scan_y>=VIEW_Y && scan_y<VIEW_Y+OUT_HEIGHT)begin
-                if(!pixel_use || pixel_rgb565!==expected_pixel[frame_sequence])
-                    $fatal(1,"Processed frame pixel mismatch frame%0d xy%0d,%0d seq%0d got%h expected%h use%0d",frame_number,scan_x,scan_y,frame_sequence,pixel_rgb565,expected_pixel[frame_sequence],pixel_use);
+            if(display_started && scan_x>=DISPLAY_X0 && scan_x<DISPLAY_X1 && scan_y>=DISPLAY_Y0 && scan_y<DISPLAY_Y1)begin
+                expected_native_index=((scan_y-READER_Y)*READER_DEN/READER_NUM)*WIDTH+((scan_x-READER_X)*READER_DEN/READER_NUM);
+                displayed_expected_pixel=MANUAL_CROP_TEST ? expected_native[frame_sequence][expected_native_index]:expected_pixel[frame_sequence];
+                if(!pixel_use || pixel_rgb565!==displayed_expected_pixel)
+                    $fatal(1,"Processed frame pixel mismatch frame%0d xy%0d,%0d seq%0d got%h expected%h use%0d",frame_number,scan_x,scan_y,frame_sequence,pixel_rgb565,displayed_expected_pixel,pixel_use);
                 frame_pixels=frame_pixels+1;checked_pixels=checked_pixels+1;
-                if(scan_x==VIEW_X+OUT_WIDTH-1 && scan_y==VIEW_Y+OUT_HEIGHT-1 && frame_pixels!=OUT_WIDTH*OUT_HEIGHT)
+                if(scan_x==DISPLAY_X1-1 && scan_y==DISPLAY_Y1-1 && frame_pixels!=DISPLAY_PIXELS)
                     $fatal(1,"Incomplete displayed frame");
             end
-            if(pixel_use && !(scan_x>=VIEW_X && scan_x<VIEW_X+OUT_WIDTH && scan_y>=VIEW_Y && scan_y<VIEW_Y+OUT_HEIGHT))
+            if(pixel_use && !(scan_x>=DISPLAY_X0 && scan_x<DISPLAY_X1 && scan_y>=DISPLAY_Y0 && scan_y<DISPLAY_Y1))
                 $fatal(1,"Processed pixel escaped viewport");
         end
     end
@@ -413,9 +510,11 @@ module tb_video_frame_pipeline;
         if(DYNAMIC_DISPLAY)begin display_pixel_hold=0;display_pause=0;end
         else write_reg(12'h180,7);
         check_running=1;
-        wait(segment_displayed>=6);wait(frame_pixels==OUT_WIDTH*OUT_HEIGHT);#1;assert_clean();
+        wait(segment_displayed>=6);wait(frame_pixels==DISPLAY_PIXELS);#1;assert_clean();
         $display("PASS autonomous frame pipeline: scale%0d/%0d jobs%0d displayed%0d pixels%0d latency%0d paused-source%0d; ordered/live options/drain/restart/history",
             SCALE_NUM,SCALE_DEN,jobs,displayed,checked_pixels,latency,source_pause_frames);
+        if(MANUAL_CROP_TEST)$display("PASS manual crop pipeline: Auto capture%0d/%0d full native%0dx%0d, reader3/1 origin-4,-5 source1,1 phase1,2; all hidden output/history and first/last visible pixels",
+            SCALE_NUM,SCALE_DEN,WIDTH,HEIGHT);
         $finish;
     end
     initial begin #15000000;$fatal(1,"Autonomous pipeline timeout frame%0d jobs%0d displays%0d",frame_number,jobs,displayed);end

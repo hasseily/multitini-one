@@ -1,0 +1,25 @@
+{
+  "source_repository": "https://github.com/hasseily/appletini-one",
+  "commit": "886ea50e7c5a98c28c7e37b5eff7548a8ea416ce",
+  "license": "GPL-3.0-only",
+  "source_sha256": {
+    "ps_sources/frontend/compositor.c": "899e3fd67a51147e6af4e2dfe802b3f03ad2e15eef340a589fd8c6b6bbf59e6e",
+    "ps_sources/frontend/video_mono.h": "44fa26319bb45cba5cf980b7fd155c765dd79b7b70007e54de3936d8d6f4aefe",
+    "LICENSE": "230184f60bae2feaf244f10a8bac053c8ff33a183bcc365b4d8b876d2b7f4809"
+  },
+  "ports": {
+    "firmware/common/video_frame.c": "compositor.c Blur footprints with PHO2 normalized rounding and 1/8,1/4,1/2 mix; fixed-radius Glow unchanged",
+    "hdl/common/multitini_video_frame_filter.sv": "Hardware translation of PHO2 calibrated Blur and unchanged Appletini Glow",
+    "firmware/common/video_effects.c": "video_mono.h spot weights applied per RGB channel",
+    "hdl/common/multitini_video_effects.sv": "Hardware translation of Dot bleed, two cached neighboring source samples",
+    "tests/host/appletini_phosphor_reference.h": "Exact source functions for an independent host oracle"
+  },
+  "adaptations": [
+    "Apply Dot bleed to RGB channels of all standalone machine images; Apple mono-mode metadata is absent.",
+    "Retain native RGB565 frame storage. Dot bleed expands these stored samples before quantized shaping.",
+    "At 2x use Appletini left/right halves exactly; larger/fractional scales select the half at the output sample center.",
+    "At 1x average the two quantized RGB565 halves as Appletini effect_store_row.",
+    "Preserve Multitini color/LUT, scanlines and masks after spatial processing, and its ordered FPGA DDR scheduler.",
+    "PHO2: normalize and round Blur taps once per pass, then blend the complete result with persisted RGB888 at 1/8, 1/4, or 1/2. Preserve flat fills; other effects unchanged."
+  ]
+}

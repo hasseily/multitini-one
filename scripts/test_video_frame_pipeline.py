@@ -18,14 +18,19 @@ def main():
     parser.add_argument("--xpm", action="store_true", help="Use Vivado's real XPM models")
     parser.add_argument("--scale", choices=("1", "2", "3", "4", "5", "6", "3:2"), action="append")
     parser.add_argument("--dynamic-display", action="store_true", help="Runtime scaling and hardware pause/drain/reset/restart")
+    parser.add_argument("--manual-crop", action="store_true", help="Keep Auto capture and independently crop a 3x native reader at origin -4,-5")
     parser.add_argument("--source-pause", action="store_true", help="Hold source readiness low for four complete frames")
     parser.add_argument("--expect-source-failure", action="store_true", help="Record the pre-fix readiness fault through recovery")
     args = parser.parse_args()
+    if args.manual_crop and not args.dynamic_display:
+        parser.error("--manual-crop requires --dynamic-display")
     if args.expect_source_failure:
         args.source_pause = True
     build = ROOT / "build/video-frame-pipeline-tests"
     if args.dynamic_display:
         build /= "dynamic-display"
+    if args.manual_crop:
+        build /= "manual-crop"
     if args.source_pause:
         build /= "source-pause-before-fix" if args.expect_source_failure else "source-pause"
     build /= "xpm" if args.xpm else "portable"
@@ -67,7 +72,7 @@ def main():
             wrappers = build / "wrappers.sv"
             wrappers.write_text("\n".join(
                 f"module pipeline_{n}_{d}; tb_video_frame_pipeline #(.SCALE_NUM({n}),.SCALE_DEN({d}),"
-                f".DYNAMIC_DISPLAY({int(args.dynamic_display)}),.SOURCE_PAUSE_TEST({int(args.source_pause)}),.EXPECT_SOURCE_FAILURE({int(args.expect_source_failure)})) test(); endmodule"
+                f".DYNAMIC_DISPLAY({int(args.dynamic_display)}),.MANUAL_CROP_TEST({int(args.manual_crop)}),.SOURCE_PAUSE_TEST({int(args.source_pause)}),.EXPECT_SOURCE_FAILURE({int(args.expect_source_failure)})) test(); endmodule"
                 for n, d in ((1,1),(2,1),(3,1),(4,1),(5,1),(6,1),(3,2))) + "\n", encoding="ascii")
             run([tool("xvlog"), "--sv"] + [ROOT / path for path in sources] +
                 [wrappers, vivado / "data/verilog/src/glbl.v"], "design-compile")
@@ -86,6 +91,7 @@ def main():
                 run([tool("iverilog"), "-g2012", "-Wall", "-Wimplicit", "-s", "tb_video_frame_pipeline",
                      "-P", f"tb_video_frame_pipeline.SCALE_NUM={n}", "-P", f"tb_video_frame_pipeline.SCALE_DEN={d}",
                      "-P", f"tb_video_frame_pipeline.DYNAMIC_DISPLAY={int(args.dynamic_display)}",
+                     "-P", f"tb_video_frame_pipeline.MANUAL_CROP_TEST={int(args.manual_crop)}",
                      "-P", f"tb_video_frame_pipeline.SOURCE_PAUSE_TEST={int(args.source_pause)}",
                      "-P", f"tb_video_frame_pipeline.EXPECT_SOURCE_FAILURE={int(args.expect_source_failure)}",
                      "-o", simulation] + [ROOT / path for path in sources], name + "-compile")
@@ -93,12 +99,15 @@ def main():
             marker = "PASS source-unready failure reproduced:" if args.expect_source_failure else "PASS autonomous frame pipeline:"
             if marker not in output or re.search(r"\b(?:Fatal|FATAL|ERROR|Error|FAIL)\b", output):
                 raise RuntimeError("Missing success marker for " + name)
+            if args.manual_crop and "PASS manual crop pipeline:" not in output:
+                raise RuntimeError("Missing full native capture/cropped reader success marker for " + name)
             print("\n".join(line for line in output.splitlines() if line.startswith("PASS ")), flush=True)
         success = True
     finally:
         after = hashes()
         (build / "validation.json").write_text(json.dumps({"passed": success and before == after,
             "dynamic_display": args.dynamic_display, "source_pause": args.source_pause, "expected_source_failure": args.expect_source_failure,
+            "manual_crop": args.manual_crop,
             "source_sha256": before, "source_sha256_after": after, "vendor_sha256": vendor_hashes,
             "logs": logs}, indent=2) + "\n", encoding="utf-8")
     if before != after:

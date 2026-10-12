@@ -1,6 +1,8 @@
 `timescale 1ns / 1ps
 // Apply one mode as a transaction: drain HP0/HP1, blank/reset scanout, change
-// the MMCM, wait for relock, then commit geometry. Native DDR frame dimensions never change.
+// the MMCM only when the mode changes, then commit geometry. Size-only changes
+// hold pixel reset while preserving the running clock and its LOCKED signal.
+// Native DDR frame dimensions never change.
 // Clocking Wizard owns the device-specific DRP calculations (PG065).
 module multitini_display_control #(
     parameter integer TIMEOUT_CYCLES = 66666666
@@ -9,11 +11,13 @@ module multitini_display_control #(
     input  logic resetn,
     input  logic request,
     input  logic [3:0] requested_mode,
+    input  logic [2:0] requested_multiplier,
     input  logic reader_quiescent,
     input  logic frame_latched,
     input  logic geometry_ready,
     input  logic clock_locked,
     output logic [3:0] active_mode,
+    output logic [2:0] active_multiplier,
     output logic commit,
     output logic busy,
     output logic error,
@@ -34,10 +38,11 @@ module multitini_display_control #(
     typedef enum logic [3:0] {
         IDLE, QUIESCE, WRITE_SEND, WRITE_RESP, WAIT_UNLOCK,
         WAIT_LOCK, COMMIT_FRAME, START_VIDEO, WAIT_FRAME, FAILED, SETTLE_MODE,
-        RECOVER_DRAIN, RECOVER_RESET, RECOVER_LOCK
+        RECOVER_DRAIN, RECOVER_RESET, RECOVER_LOCK, HOLD_GEOMETRY
     } state_t;
     state_t state;
     logic [3:0] pending_mode;
+    logic [2:0] pending_multiplier;
     logic [4:0] write_index;
     logic [26:0] timeout_count;
     logic [4:0] settle_count;
@@ -79,7 +84,9 @@ module multitini_display_control #(
         if (!resetn) begin
             state <= IDLE;
             active_mode <= VIDEO_DEFAULT_MODE;
+            active_multiplier <= 0;
             pending_mode <= VIDEO_DEFAULT_MODE;
+            pending_multiplier <= 0;
             commit <= 0;
             error <= 0;
             fallback <= 0;
@@ -99,10 +106,11 @@ module multitini_display_control #(
 
             case (state)
                 IDLE, FAILED: if (request) begin
-                    if (requested_mode >= VIDEO_MODE_COUNT) begin
+                    if (requested_mode >= VIDEO_MODE_COUNT || requested_multiplier > 4) begin
                         error <= 1;
                     end else begin
                         pending_mode <= requested_mode;
+                        pending_multiplier <= requested_multiplier;
                         fallback <= 0;
                         error <= 0;
                         timeout_count <= 0;
@@ -113,8 +121,20 @@ module multitini_display_control #(
                     end
                 end
                 QUIESCE: if (reader_quiescent && clock_locked) begin
-                    write_index <= 0;
-                    state <= WRITE_SEND;
+                    if (pending_mode == active_mode) begin
+                        settle_count <= 0;
+                        state <= HOLD_GEOMETRY;
+                    end else begin
+                        write_index <= 0;
+                        state <= WRITE_SEND;
+                    end
+                end
+                HOLD_GEOMETRY: begin
+                    // Let the registered hold request cross into the pixel
+                    // domain before its always-on mailbox accepts geometry.
+                    // This covers the slowest supported pixel clock too.
+                    settle_count <= settle_count + 1'b1;
+                    if (&settle_count) state <= COMMIT_FRAME;
                 end
                 WRITE_SEND: begin
                     clock_awaddr <= 11'h200 + {4'b0, write_index, 2'b0};
@@ -131,6 +151,7 @@ module multitini_display_control #(
                         end else begin
                             fallback <= 1;
                             pending_mode <= VIDEO_DEFAULT_MODE;
+                            pending_multiplier <= 0;
                             timeout_count <= 0;
                             state <= RECOVER_DRAIN;
                         end
@@ -150,6 +171,7 @@ module multitini_display_control #(
                     // The mode bus is held constant while the destination
                     // remains reset. No independent-bit CDC for geometry.
                     active_mode <= pending_mode;
+                    active_multiplier <= pending_multiplier;
                     commit <= 1;
                     settle_count <= 0;
                     state <= SETTLE_MODE;
@@ -192,6 +214,7 @@ module multitini_display_control #(
                 if (!fallback) begin
                     fallback <= 1;
                     pending_mode <= VIDEO_DEFAULT_MODE;
+                    pending_multiplier <= 0;
                     state <= RECOVER_DRAIN;
                 end else begin
                     state <= FAILED;

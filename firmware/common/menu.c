@@ -111,7 +111,7 @@ static size_t row_count(const mt_menu_t *menu, const mt_menu_view_t *view)
     case MT_MENU_PAGE_CORES:
         return core_count(view);
     case MT_MENU_PAGE_VIDEO:
-        return video_setting_start(view) + 5U + (vectrex_video_visible(view) ? 3U : 0U);
+        return video_setting_start(view) + 6U + (vectrex_video_visible(view) ? 3U : 0U);
     case MT_MENU_PAGE_SYSTEM:
         if (view == NULL || view->system_items == NULL) return 3U;
         (void)page_items(menu->page, view, &count);
@@ -278,6 +278,14 @@ static mt_menu_action_t change_video(const mt_menu_t *menu,
 {
     const size_t start = video_setting_start(view);
     mt_menu_action_t action = no_action();
+    if(menu->row == start+5U+(vectrex_video_visible(view) ? 3U : 0U)) {
+        if(has_core(view) && view->video_multiplier_supported) {
+            const unsigned current=view->video_multiplier<=MT_DISPLAY_SCALE_MAX ? view->video_multiplier:0U;
+            action.kind=MT_MENU_ACTION_SET_VIDEO_MULTIPLIER;
+            action.file_index=(current+(key==MT_MENU_HID_LEFT ? 4U:1U))%5U;
+        }
+        return action;
+    }
     if(menu->row == start+4U+(vectrex_video_visible(view) ? 3U : 0U)) {
         if(view != NULL && view->display_supported) {
             action.kind=MT_MENU_ACTION_SET_DISPLAY_MODE;
@@ -872,12 +880,22 @@ static mt_menu_item_t builtin_item(const mt_menu_t *menu,
     item.enabled = has_core(view);
     item.value_color = MT_UI_COLOR_MUTED;
     if(menu->page==MT_MENU_PAGE_VIDEO &&
+       index==video_setting_start(view)+5U+(vectrex_video_visible(view) ? 3U : 0U)) {
+        item.label="Video size";
+        item.value=mt_display_scale_name(view != NULL ? view->video_multiplier:0U);
+        item.enabled=has_core(view) && view->video_multiplier_supported;
+        item.help=item.enabled ?
+            "Left/Right selects 1x, 2x, 3x, 4x or Auto. Auto keeps the current fit. Larger images clip at screen edges. Saved for this core." :
+            "Load an updated core package to enable video size changes.";
+        return item;
+    }
+    if(menu->page==MT_MENU_PAGE_VIDEO &&
        index==video_setting_start(view)+4U+(vectrex_video_visible(view) ? 3U : 0U)) {
         item.label="Display resolution";
         item.value=mt_display_mode_name(view != NULL ? view->display_mode : 0U);
         item.enabled=view != NULL && view->display_supported;
         item.help=item.enabled ?
-            "Left/Right changes resolution at about 60 Hz. The complete image fits the screen. Serial :display 0 restores 1080p." :
+            "Left/Right changes resolution at about 60 Hz and keeps Video size. Auto fits the complete image. Serial :display 0 restores 1080p." :
             "Update the core package to enable display resolution changes.";
         return item;
     }

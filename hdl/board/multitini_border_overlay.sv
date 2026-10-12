@@ -6,6 +6,7 @@
 // UI, or DVI timing. Signed edge distances clip safely at every screen edge.
 module multitini_border_overlay #(
     parameter bit DYNAMIC_DISPLAY=1'b0,
+    parameter bit SIGNED_VIEWPORT=1'b0,
     parameter integer H_ACTIVE=1920, H_TOTAL=2200,
     parameter integer V_ACTIVE=1080, V_TOTAL=1125
 ) (
@@ -39,6 +40,12 @@ module multitini_border_overlay #(
     logic [23:0] color_q, color_qq, shaded;
     logic draw_pixel;
     logic [4:0] padding;
+    // Runtime zoom keeps the full centered image bounds, including negative
+    // origins. Legacy callers retain their original unsigned 12-bit contract.
+    wire signed [13:0] origin_x=SIGNED_VIEWPORT ?
+        $signed({{2{viewport_x[11]}},viewport_x}) : $signed({2'b0,viewport_x});
+    wire signed [13:0] origin_y=SIGNED_VIEWPORT ?
+        $signed({{2{viewport_y[11]}},viewport_y}) : $signed({2'b0,viewport_y});
     wire wrap_fetch=h_total>=12'd3 && !lookahead_offset[12];
     wire wrap_row=(incremented_row=={1'b0,v_total});
     wire [11:0] incremented_y=incremented_row[11:0];
@@ -75,11 +82,11 @@ module multitini_border_overlay #(
         if (padding==0) padding=1;
         else if (padding>20) padding=20;
         // Exactly 'padding' untouched pixels separate the image and line.
-        left_edge=$signed({2'b0,viewport_x})-$signed({9'b0,padding})-14'sd1;
-        right_edge=$signed({2'b0,viewport_x})+$signed({2'b0,viewport_width})+
+        left_edge=origin_x-$signed({9'b0,padding})-14'sd1;
+        right_edge=origin_x+$signed({2'b0,viewport_width})+
                    $signed({9'b0,padding});
-        top_edge=$signed({2'b0,viewport_y})-$signed({9'b0,padding})-14'sd1;
-        bottom_edge=$signed({2'b0,viewport_y})+$signed({2'b0,viewport_height})+
+        top_edge=origin_y-$signed({9'b0,padding})-14'sd1;
+        bottom_edge=origin_y+$signed({2'b0,viewport_height})+
                     $signed({9'b0,padding});
         fetch_x=scan_x+12'd3; fetch_y=scan_y;
         if (wrap_fetch) begin

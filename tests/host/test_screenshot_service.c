@@ -39,6 +39,7 @@ static void copy_pixels(void *destination,uint32_t address,size_t size)
     if(race==3U)++registers[MT_REG_VIDEO_EFFECT_SEQUENCE/4U];
     if(race==4U)registers[MT_REG_VIDEO_FRAME_CONTROL/4U]=0U;
     if(race==5U)registers[MT_REG_VIDEO_FRAME_STATUS/4U]&=~MT_VIDEO_FRAME_STATUS_DISPLAY_ACTIVE;
+    if(race==6U && (copies&1U)!=0U)registers[MT_REG_DISPLAY_STATUS/4U]^=16U;
 }
 bool mt_video_effect_service_snapshot(mt_video_effects_tables_t *out)
 { memset(out,0,sizeof(*out));return effects_ready; }
@@ -88,7 +89,7 @@ static void reset_test(void)
 {
     const mt_screenshot_service_ops_t ops={read_register,milliseconds,progress};
     assert(!test_file.open);memset(registers,0,sizeof(registers));
-    registers[MT_REG_ABI_VERSION/4U]=MT_VIDEO_AXIS_MIN_ABI_MINOR;
+    registers[MT_REG_ABI_VERSION/4U]=MT_VIDEO_PHOSPHOR_MIN_ABI_MINOR;
     registers[MT_REG_CORE_ID/4U]=MT_GBC_CORE_ID;
     registers[MT_REG_VIDEO_FRAME_CONTROL/4U]=MT_VIDEO_FRAME_CAPTURE_ENABLE;
     registers[MT_REG_VIDEO_FRAME_STATUS/4U]=MT_VIDEO_FRAME_STATUS_DISPLAY_ACTIVE;
@@ -148,6 +149,17 @@ static void snapshot_ownership(void)
     assert(mt_screenshot_service_request(false));finish();assert(copies==0U && open_calls==0U);
     reset_test();registers[MT_REG_VIDEO_FRAME_STATUS/4U]=0U;
     assert(mt_screenshot_service_request(false));now_ms+=1000U;finish();assert(copies==0U && open_calls==0U);
+    reset_test();registers[MT_REG_ABI_VERSION/4U]=21U;registers[MT_REG_DISPLAY_STATUS/4U]=32U;
+    assert(mt_screenshot_service_request(false));finish();
+    assert(scene.video_multiplier==2U && progress_calls==4U);
+    assert(written[19U]==8U && written[23U]==4U); /* PNG 8 x 4 integer size. */
+    reset_test();registers[MT_REG_ABI_VERSION/4U]=21U;race=6U;
+    assert(mt_screenshot_service_request(false));finish();assert(open_calls==0U);
+    const uint32_t bad_display[]={MT_DISPLAY_BUSY,MT_DISPLAY_ERROR,MT_DISPLAY_HELD,1U};
+    for(unsigned i=0U;i<sizeof(bad_display)/sizeof(bad_display[0]);++i) {
+        reset_test();registers[MT_REG_ABI_VERSION/4U]=21U;registers[MT_REG_DISPLAY_STATUS/4U]=bad_display[i];
+        assert(mt_screenshot_service_request(false));finish();assert(open_calls==0U && copies==0U);
+    }
 }
 static void failure_and_cancel(void)
 {

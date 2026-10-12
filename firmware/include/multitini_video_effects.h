@@ -6,9 +6,9 @@
 #include <stdint.h>
 
 /* CPU1 prepares color tables when settings change; the FPGA applies them
- * at pixel rate. Persistence, vertical smoothing and bloom use a native-frame
- * DDR service. Horizontal smoothing prefilters native rows, then interpolates
- * the processed source samples while scaling. */
+ * at pixel rate. Persistence, Appletini blur and glow use a native-frame
+ * DDR service. Dot bleed shapes two horizontal samples from the cached native row during
+ * enlargement, without another frame transfer. */
 enum {
     MT_VIDEO_TINT_COLOR = 0,
     MT_VIDEO_TINT_WHITE,
@@ -71,10 +71,10 @@ typedef struct {
     uint8_t posterize;        /* 0 (off), or 2..8 bits per channel */
     uint8_t scanlines;        /* 0 (off)..3 (strong) */
     uint8_t mask;             /* MT_VIDEO_MASK_* */
-    uint8_t softness;         /* MT_VIDEO_SMOOTH_*; native horizontal prefilter + interpolation */
+    uint8_t softness;         /* Appletini Dot bleed: Off, Light, Medium, Strong */
     uint8_t enabled;          /* master switch; 0 or 1 */
     uint8_t persistence;      /* frame processing: 0 (off)..3 (strong) */
-    uint8_t blur;             /* MT_VIDEO_SMOOTH_*; vertical source-row smoothing */
+    uint8_t blur;             /* Appletini Blur: Off, Light, Medium, Strong */
     uint8_t bloom;            /* frame processing: 0 (off)..3 (strong) */
     uint8_t reserved;         /* must be zero */
     uint8_t reserved2;        /* explicit alignment byte; must be zero */
@@ -138,6 +138,10 @@ uint8_t mt_video_horizontal_weight(uint32_t phase, uint32_t scale_num,
  * over 128 are clamped; zero weight preserves every source bit exactly. */
 uint16_t mt_video_horizontal_rgb565(uint16_t center, uint16_t neighbor,
                                     uint8_t weight);
+/* Appletini Dot bleed samples: near is the neighbor toward this half-dot,
+ * far is the opposite neighbor. Average both RGB565 halves at 1:1. */
+uint16_t mt_video_dot_bleed_rgb565(uint16_t center,uint16_t near,uint16_t far,
+                                  uint8_t level,bool average);
 /* Portable color-only oracle, including the master bypass. */
 uint16_t mt_video_effects_reference_rgb565(const mt_video_effects_tables_t *tables,
                                         uint16_t pixel);

@@ -2,6 +2,7 @@
 `timescale 1ns / 1ps
 
 module tb_border_arithmetic;
+    parameter bit SIGNED_VIEWPORT=0;
     reg pixel_clk=0;
     always #5 pixel_clk=~pixel_clk;
     reg resetn=0;
@@ -12,7 +13,11 @@ module tb_border_arithmetic;
     reg [11:0] viewport_x=0,viewport_y=0,viewport_width=0,viewport_height=0;
     wire pixel_opaque;
     wire [15:0] pixel_rgb565;
-    multitini_border_overlay #(.DYNAMIC_DISPLAY(1)) dut(.*);
+    multitini_border_overlay #(.DYNAMIC_DISPLAY(1),.SIGNED_VIEWPORT(SIGNED_VIEWPORT)) dut(.*);
+
+    function automatic integer origin(input [11:0] value);
+        origin=SIGNED_VIEWPORT && value[11] ? integer'(value)-4096 : integer'(value);
+    endfunction
 
     // Integer reference deliberately uses unbounded coordinate arithmetic,
     // explicit unsigned-underflow guards, and explicit signed-14 wrapping.
@@ -47,10 +52,10 @@ module tb_border_arithmetic;
             pad=frame_config[12:8];
             if(pad<1) pad=1;
             if(pad>20) pad=20;
-            left_edge=signed14(integer'(viewport_x)-pad-1);
-            right_edge=signed14(integer'(viewport_x)+integer'(viewport_width)+pad);
-            top_edge=signed14(integer'(viewport_y)-pad-1);
-            bottom_edge=signed14(integer'(viewport_y)+integer'(viewport_height)+pad);
+            left_edge=signed14(origin(viewport_x)-pad-1);
+            right_edge=signed14(origin(viewport_x)+integer'(viewport_width)+pad);
+            top_edge=signed14(origin(viewport_y)-pad-1);
+            bottom_edge=signed14(origin(viewport_y)+integer'(viewport_height)+pad);
             if(right_edge<0 || bottom_edge<0) wrapped_edges=wrapped_edges+1;
             expected_dl=signed14(left_edge-expected_x);
             expected_dr=signed14(expected_x-right_edge);

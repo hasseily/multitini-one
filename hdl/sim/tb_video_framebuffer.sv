@@ -26,6 +26,12 @@ module tb_video_framebuffer;
     integer read_remaining=0,reads=0,cycles=0;
     multitini_video_framebuffer #(.WIDTH(6),.HEIGHT(2),.VIEW_X(4),.VIEW_Y(0),.SCALE_NUM(1),
         .SHARED_PIXEL_RESET(SHARED_PIXEL_RESET)) dut(
+        .display_view_x(12'd4),.display_view_y(12'd0),.display_view_width(12'd6),.display_view_height(12'd2),
+        .display_scale_num(4'd1),.display_scale_den(4'd1),.display_filter_scale_num(4'd1),.display_filter_scale_den(4'd1),
+        .capture_display_view_x(12'd4),.capture_display_view_y(12'd0),.capture_display_view_width(12'd6),.capture_display_view_height(12'd2),
+        .capture_display_scale_num(4'd1),.capture_display_scale_den(4'd1),
+        .display_h_active(12'd128),.display_v_active(12'd8),.display_h_total(12'd128),.display_v_total(12'd8),
+        .display_source_x0(10'd0),.display_source_y0(10'd0),.display_phase_x0(4'd0),.display_phase_y0(4'd0),.display_pause(1'b0),
         .clk(clk),.resetn(resetn),.wr_en(wr_en),.wr_addr(wr_addr),.rd_addr(rd_addr),
         .wr_data(wr_data),.wr_strb(wr_strb),.rd_data(rd_data),
         .pixel_clk(pixel_clk),.pixel_resetn(resetn),.vblank_start(x==0 && y==2),

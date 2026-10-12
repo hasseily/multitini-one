@@ -6,6 +6,7 @@
 // bridge has latched machine_enable at vblank; otherwise diagnostics remain on.
 module multitini_video_test #(
     parameter bit DYNAMIC_DISPLAY=1'b0,
+    parameter bit SIGNED_VIEWPORT=1'b0,
     parameter int H_ACTIVE = 1920,
     parameter int H_FRONT  = 88,
     parameter int H_SYNC   = 44,
@@ -39,6 +40,8 @@ module multitini_video_test #(
     input wire [11:0] viewport_x, viewport_y, viewport_width, viewport_height,
     input  logic [15:0] machine_rgb565,
     input wire [15:0] machine_neighbor_rgb565,
+    input wire [15:0] machine_opposite_rgb565,
+    input wire machine_dot_valid,
     input wire [7:0] machine_neighbor_weight,
     input  logic        border_opaque,
     input  logic [15:0] border_rgb565,
@@ -76,9 +79,32 @@ module multitini_video_test #(
     logic active;
     logic use_machine;
     logic unused_enable;
-    wire compact=DYNAMIC_DISPLAY && display_h_active<1920;
-    wire [11:0] brand_x=compact ? {x[10:0],1'b0} : x;
-    wire [11:0] brand_y=compact ? {y[10:0],1'b0} : y;
+    wire [11:0] h_active=DYNAMIC_DISPLAY ? display_h_active : H_ACTIVE;
+    wire [11:0] v_active=DYNAMIC_DISPLAY ? display_v_active : V_ACTIVE;
+    // Mode-derived origins settle in the pixel domain while reset
+    // remains asserted. There is no reset on these registers, so geometry can
+    // continue to propagate while all pixel consumers are held at frame start.
+    logic compact;
+    wire compact_next = DYNAMIC_DISPLAY && h_active < 12'd1920;
+    logic [11:0] canvas_origin_x, canvas_origin_y;
+    logic [11:0] main_origin_x, main_origin_y;
+    logic [11:0] one_origin_x, one_origin_y;
+    logic [11:0] hint_origin_x, hint_origin_y;
+    always_ff @(posedge pixel_clk) begin
+        compact <= compact_next;
+        canvas_origin_x <= compact_next ? h_active - 12'd962 : 12'd0;
+        canvas_origin_y <= compact_next ? v_active - 12'd540 : 12'd0;
+        main_origin_x <= compact_next ? h_active - 12'd554 : 12'd384;
+        main_origin_y <= compact_next ? v_active - 12'd150 : 12'd408;
+        one_origin_x <= compact_next ? h_active - 12'd86 : 12'd864;
+        one_origin_y <= compact_next ? v_active + 12'd10 : 12'd568;
+        hint_origin_x <= compact_next ? h_active - 12'd284 : 12'd672;
+        hint_origin_y <= compact_next ? v_active + 12'd122 : 12'd680;
+    end
+    wire [11:0] render_x = compact ? {x[10:0], 1'b0} : x;
+    wire [11:0] render_y = compact ? {y[10:0], 1'b0} : y;
+    wire [11:0] brand_x = render_x - canvas_origin_x;
+    wire [11:0] brand_y = render_y - canvas_origin_y;
     logic [11:0] main_dx;
     logic [11:0] main_dy;
     logic [11:0] one_dx;
@@ -94,59 +120,71 @@ module multitini_video_test #(
     logic [2:0] one_row;
     logic [2:0] hint_column;
     logic [2:0] hint_row;
-    logic [34:0] main_glyph;
-    logic [34:0] one_glyph;
-    logic [34:0] hint_glyph;
+    logic [63:0] main_glyph;
+    logic [63:0] one_glyph;
+    logic [63:0] hint_glyph;
     logic main_pixel;
     logic one_pixel;
     logic hint_pixel;
 
-    function automatic logic [34:0] standby_glyph(input logic [6:0] character);
+    function automatic logic [34:0] standby_glyph_5x7(input logic [6:0] character);
         case (character)
-            7'h31: standby_glyph = {5'b00100, 5'b01100, 5'b00100,
+            7'h31: standby_glyph_5x7 = {5'b00100, 5'b01100, 5'b00100,
                                     5'b00100, 5'b00100, 5'b00100,
                                     5'b01110};
-            7'h32: standby_glyph = {5'b01110, 5'b10001, 5'b00001,
+            7'h32: standby_glyph_5x7 = {5'b01110, 5'b10001, 5'b00001,
                                     5'b00010, 5'b00100, 5'b01000,
                                     5'b11111};
-            7'h45: standby_glyph = {5'b11111, 5'b10000, 5'b10000,
+            7'h45: standby_glyph_5x7 = {5'b11111, 5'b10000, 5'b10000,
                                     5'b11110, 5'b10000, 5'b10000,
                                     5'b11111};
-            7'h46: standby_glyph = {5'b11111, 5'b10000, 5'b10000,
+            7'h46: standby_glyph_5x7 = {5'b11111, 5'b10000, 5'b10000,
                                     5'b11110, 5'b10000, 5'b10000,
                                     5'b10000};
-            7'h49: standby_glyph = {5'b11111, 5'b00100, 5'b00100,
+            7'h49: standby_glyph_5x7 = {5'b11111, 5'b00100, 5'b00100,
                                     5'b00100, 5'b00100, 5'b00100,
                                     5'b11111};
-            7'h4C: standby_glyph = {5'b10000, 5'b10000, 5'b10000,
+            7'h4C: standby_glyph_5x7 = {5'b10000, 5'b10000, 5'b10000,
                                     5'b10000, 5'b10000, 5'b10000,
                                     5'b11111};
-            7'h4D: standby_glyph = {5'b10001, 5'b11011, 5'b10101,
+            7'h4D: standby_glyph_5x7 = {5'b10001, 5'b11011, 5'b10101,
                                     5'b10101, 5'b10001, 5'b10001,
                                     5'b10001};
-            7'h4E: standby_glyph = {5'b10001, 5'b11001, 5'b10101,
+            7'h4E: standby_glyph_5x7 = {5'b10001, 5'b11001, 5'b10101,
                                     5'b10011, 5'b10001, 5'b10001,
                                     5'b10001};
-            7'h4F: standby_glyph = {5'b01110, 5'b10001, 5'b10001,
+            7'h4F: standby_glyph_5x7 = {5'b01110, 5'b10001, 5'b10001,
                                     5'b10001, 5'b10001, 5'b10001,
                                     5'b01110};
-            7'h50: standby_glyph = {5'b11110, 5'b10001, 5'b10001,
+            7'h50: standby_glyph_5x7 = {5'b11110, 5'b10001, 5'b10001,
                                     5'b11110, 5'b10000, 5'b10000,
                                     5'b10000};
-            7'h52: standby_glyph = {5'b11110, 5'b10001, 5'b10001,
+            7'h52: standby_glyph_5x7 = {5'b11110, 5'b10001, 5'b10001,
                                     5'b11110, 5'b10100, 5'b10010,
                                     5'b10001};
-            7'h53: standby_glyph = {5'b01111, 5'b10000, 5'b10000,
+            7'h53: standby_glyph_5x7 = {5'b01111, 5'b10000, 5'b10000,
                                     5'b01110, 5'b00001, 5'b00001,
                                     5'b11110};
-            7'h54: standby_glyph = {5'b11111, 5'b00100, 5'b00100,
+            7'h54: standby_glyph_5x7 = {5'b11111, 5'b00100, 5'b00100,
                                     5'b00100, 5'b00100, 5'b00100,
                                     5'b00100};
-            7'h55: standby_glyph = {5'b10001, 5'b10001, 5'b10001,
+            7'h55: standby_glyph_5x7 = {5'b10001, 5'b10001, 5'b10001,
                                     5'b10001, 5'b10001, 5'b10001,
                                     5'b01110};
-            default: standby_glyph = 35'd0;
+            default: standby_glyph_5x7 = 35'd0;
         endcase
+    endfunction
+
+    // Pad each original row to eight columns at elaboration time. The runtime
+    // glyph address is just {row,column}, avoiding a multiplier and subtractor
+    // on the 148.5 MHz standby color path. The original 5x7 pixels are unchanged.
+    function automatic logic [63:0] standby_glyph(input logic [6:0] character);
+        logic [34:0] glyph;
+        glyph = standby_glyph_5x7(character);
+        standby_glyph = 64'd0;
+        for (int row_index = 0; row_index < 7; row_index++)
+            for (int column_index = 0; column_index < 5; column_index++)
+                standby_glyph[row_index*8+column_index] = glyph[34-row_index*5-column_index];
     endfunction
 
     function automatic logic [6:0] main_character(input logic [3:0] index);
@@ -194,11 +232,9 @@ module multitini_video_test #(
         endcase
     endfunction
 
-    wire [11:0] h_active=DYNAMIC_DISPLAY ? display_h_active : H_ACTIVE;
     wire [11:0] h_front=DYNAMIC_DISPLAY ? display_h_front : H_FRONT;
     wire [11:0] h_sync=DYNAMIC_DISPLAY ? display_h_sync : H_SYNC;
     wire [11:0] h_total=DYNAMIC_DISPLAY ? display_h_total : H_TOTAL;
-    wire [11:0] v_active=DYNAMIC_DISPLAY ? display_v_active : V_ACTIVE;
     wire [11:0] v_front=DYNAMIC_DISPLAY ? display_v_front : V_FRONT;
     wire [11:0] v_sync=DYNAMIC_DISPLAY ? display_v_sync : V_SYNC;
     wire [11:0] v_total=DYNAMIC_DISPLAY ? display_v_total : V_TOTAL;
@@ -227,12 +263,12 @@ module multitini_video_test #(
         // diagnostic request must not override it here or DVI can change source
         // in the middle of an active scan.
         use_machine = machine_enable;
-        main_dx = brand_x - MAIN_X0;
-        main_dy = brand_y - MAIN_Y0;
-        one_dx = brand_x - ONE_X0;
-        one_dy = brand_y - ONE_Y0;
-        hint_dx = brand_x - HINT_X0;
-        hint_dy = brand_y - HINT_Y0;
+        main_dx = render_x - main_origin_x;
+        main_dy = render_y - main_origin_y;
+        one_dx = render_x - one_origin_x;
+        one_dy = render_y - one_origin_y;
+        hint_dx = render_x - hint_origin_x;
+        hint_dy = render_y - hint_origin_y;
         main_index = main_dx[10:7];
         main_column = main_dx[6:4];
         main_row = main_dy[6:4];
@@ -245,18 +281,18 @@ module multitini_video_test #(
         main_glyph = standby_glyph(main_character(main_index));
         one_glyph = standby_glyph(one_character(one_index));
         hint_glyph = standby_glyph(hint_character(hint_index));
-        main_pixel = brand_x >= MAIN_X0 && brand_x < MAIN_X0 + MAIN_WIDTH &&
-                     brand_y >= MAIN_Y0 && brand_y < MAIN_Y0 + MAIN_HEIGHT &&
+        main_pixel = main_dx < 12'(MAIN_WIDTH) &&
+                     main_dy < 12'(MAIN_HEIGHT) &&
                      main_column < 5 &&
-                     main_glyph[34 - (main_row * 5 + main_column)];
-        one_pixel = brand_x >= ONE_X0 && brand_x < ONE_X0 + ONE_WIDTH &&
-                    brand_y >= ONE_Y0 && brand_y < ONE_Y0 + ONE_HEIGHT &&
+                     main_glyph[{main_row, main_column}];
+        one_pixel = one_dx < 12'(ONE_WIDTH) &&
+                    one_dy < 12'(ONE_HEIGHT) &&
                     one_column < 5 &&
-                    one_glyph[34 - (one_row * 5 + one_column)];
-        hint_pixel = brand_x >= HINT_X0 && brand_x < HINT_X0 + HINT_WIDTH &&
-                     brand_y >= HINT_Y0 && brand_y < HINT_Y0 + HINT_HEIGHT &&
+                    one_glyph[{one_row, one_column}];
+        hint_pixel = hint_dx < 12'(HINT_WIDTH) &&
+                     hint_dy < 12'(HINT_HEIGHT) &&
                      hint_column < 5 &&
-                     hint_glyph[34 - (hint_row * 5 + hint_column)];
+                     hint_glyph[{hint_row, hint_column}];
 
         // Branded standby instead of failure-like color bars. Power-of-two
         // cell sizes keep this path shallow enough for the 148.5 MHz output.
@@ -297,9 +333,21 @@ module multitini_video_test #(
     generate if (ENABLE_EFFECTS) begin : g_effects
         wire [15:0] processed_rgb;
         wire processed_de, processed_hsync, processed_vsync;
-        wire in_viewport = scan_x >= viewport_x && scan_y >= viewport_y &&
+        wire signed [13:0] relative_x=$signed({2'b0,scan_x})-
+            $signed({{2{viewport_x[11]}},viewport_x});
+        wire signed [13:0] relative_y=$signed({2'b0,scan_y})-
+            $signed({{2{viewport_y[11]}},viewport_y});
+        wire in_unsigned_viewport = scan_x >= viewport_x && scan_y >= viewport_y &&
             {1'b0,scan_x} < {1'b0,viewport_x}+{1'b0,viewport_width} &&
             {1'b0,scan_y} < {1'b0,viewport_y}+{1'b0,viewport_height};
+        wire in_viewport = SIGNED_VIEWPORT ?
+            relative_x>=0 && relative_y>=0 &&
+            relative_x<$signed({2'b0,viewport_width}) &&
+            relative_y<$signed({2'b0,viewport_height}) : in_unsigned_viewport;
+        // Inside the full image these offsets are nonnegative and below 4096.
+        // Cropping therefore retains the original scanline, mask and dot phase.
+        wire [11:0] effect_x=SIGNED_VIEWPORT ? relative_x[11:0] : scan_x-viewport_x;
+        wire [11:0] effect_y=SIGNED_VIEWPORT ? relative_y[11:0] : scan_y-viewport_y;
         multitini_video_effects #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.SOURCE_SCALE_NUM(SOURCE_SCALE_NUM),
             .SOURCE_SCALE_DEN(SOURCE_SCALE_DEN),.SHARED_PIXEL_RESET(SHARED_PIXEL_RESET),
             .SHARED_PIXEL_LIVENESS(SHARED_PIXEL_LIVENESS)) effects_i (
@@ -312,9 +360,10 @@ module multitini_video_test #(
             .pixel_clk(pixel_clk),.pixel_resetn(resetn),.shared_pixel_resetn(shared_pixel_resetn),
             .shared_pixel_running(shared_pixel_running),.vblank_start(vblank_start),
             .pixel_rgb565(selected_rgb565),
-            .pixel_neighbor_rgb565(machine_neighbor_rgb565),.pixel_neighbor_weight(machine_neighbor_weight),
+            .pixel_neighbor_rgb565(machine_neighbor_rgb565),
+            .pixel_opposite_rgb565(machine_opposite_rgb565),.pixel_dot_valid(machine_dot_valid),.pixel_neighbor_weight(machine_neighbor_weight),
             .pixel_effect_enable(active && use_machine && !ui_opaque && !border_opaque && in_viewport),
-            .pixel_x(scan_x-viewport_x),.pixel_y(scan_y-viewport_y),
+            .pixel_x(effect_x),.pixel_y(effect_y),
             .pixel_de(active),
             .pixel_hsync((x >= h_active+h_front && x < h_active+h_front+h_sync) ^ !h_positive),
             .pixel_vsync((y >= v_active+v_front && y < v_active+v_front+v_sync) ^ !v_positive),

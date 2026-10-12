@@ -182,7 +182,7 @@ module multitini_one_top #(
     wire [63:0] hp2_rdata,hp2_wdata;
     wire [7:0] hp2_wstrb;
     wire framebuffer_use;
-    wire [15:0] framebuffer_neighbor_rgb565;
+    wire [15:0] framebuffer_neighbor_rgb565,framebuffer_opposite_rgb565;
     wire [7:0] framebuffer_neighbor_weight;
     wire video_pixel_running;
     wire [15:0] framebuffer_rgb565;
@@ -538,12 +538,14 @@ module multitini_one_top #(
     assign display_quiescent=framebuffer_display_quiescent && genesis_source_quiescent;
     wire [3:0] display_active_mode;
     reg [3:0] display_requested_mode;
+    wire [2:0] display_active_multiplier;
+    reg [2:0] display_requested_multiplier;
     reg display_request,display_bad_write;
     wire display_locked,display_frame_tick;
     wire display_wr_select=reg_wr_addr>=16'h01d0 && reg_wr_addr<16'h01dc;
     wire display_rd_select=reg_rd_addr>=16'h01d0 && reg_rd_addr<16'h01dc;
-    wire [31:0] display_rd_data=reg_rd_addr==16'h01d0 ? {28'd0,display_requested_mode} :
-        reg_rd_addr==16'h01d4 ? {21'd0,display_hold,(display_error || display_bad_write),(display_busy || display_request),4'd0,display_active_mode} :
+    wire [31:0] display_rd_data=reg_rd_addr==16'h01d0 ? {25'd0,display_requested_multiplier,display_requested_mode} :
+        reg_rd_addr==16'h01d4 ? {21'd0,display_hold,(display_error || display_bad_write),(display_busy || display_request),1'b0,display_active_multiplier,display_active_mode} :
         reg_rd_addr==16'h01d8 ? 32'h0000003f : 0;
     reg [11:0] display_h_active,display_h_front,display_h_sync,display_h_total;
     reg [11:0] display_v_active,display_v_front,display_v_sync,display_v_total;
@@ -551,25 +553,36 @@ module multitini_one_top #(
     reg [3:0] display_scale_num,display_scale_den;
     wire [3:0] display_filter_scale_num,display_filter_scale_den;
     reg [11:0] display_view_x,display_view_y,display_view_width,display_view_height;
+    reg [11:0] capture_display_view_x,capture_display_view_y,capture_display_view_width,capture_display_view_height;
+    reg [3:0] capture_display_scale_num,capture_display_scale_den;
+    wire [11:0] capture_display_view_x_next,capture_display_view_y_next,capture_display_view_width_next,capture_display_view_height_next;
+    wire [3:0] capture_display_scale_num_next,capture_display_scale_den_next;
+    reg [9:0] display_source_x0,display_source_y0;
+    reg [3:0] display_phase_x0,display_phase_y0;
+    wire [9:0] display_source_x0_next,display_source_y0_next;
+    wire [3:0] display_phase_x0_next,display_phase_y0_next;
     wire [11:0] display_h_active_next,display_h_front_next,display_h_sync_next,display_h_total_next;
     wire [11:0] display_v_active_next,display_v_front_next,display_v_sync_next,display_v_total_next;
     wire display_h_positive_next,display_v_positive_next;
     wire [3:0] display_scale_num_next,display_scale_den_next;
     wire [11:0] display_view_x_next,display_view_y_next,display_view_width_next,display_view_height_next;
     reg [3:0] display_pixel_mode;
-    wire [3:0] display_mode_payload;
+    reg [2:0] display_pixel_multiplier;
+    wire [6:0] display_mode_payload;
     wire display_mode_valid,display_geometry_ready;
     reg display_geometry_pending,display_geometry_seen;
 
     always @(posedge control_clk)begin
         if(!control_aresetn)begin
-            display_request<=0;display_requested_mode<=0;display_bad_write<=0;
+            display_request<=0;display_requested_mode<=0;display_requested_multiplier<=0;display_bad_write<=0;
             display_geometry_pending<=0;display_geometry_seen<=0;
         end else begin
             display_request<=0;
             if(reg_wr_en && display_wr_select)begin
-                if(reg_wr_addr==16'h01d0 && reg_wr_strb==4'hf && reg_wr_data<6 && !display_busy && !display_request)begin
-                    display_requested_mode<=reg_wr_data[3:0];display_request<=1;display_bad_write<=0;
+                if(reg_wr_addr==16'h01d0 && reg_wr_strb==4'hf && reg_wr_data[31:7]==0 &&
+                    reg_wr_data[3:0]<6 && reg_wr_data[6:4]<=4 && !display_busy && !display_request)begin
+                    display_requested_mode<=reg_wr_data[3:0];display_requested_multiplier<=reg_wr_data[6:4];
+                    display_request<=1;display_bad_write<=0;
                 end else display_bad_write<=1;
             end
             if(display_commit)begin display_geometry_pending<=1;display_geometry_seen<=0;end
@@ -579,14 +592,14 @@ module multitini_one_top #(
             end
         end
     end
-    multitini_async_mailbox #(.WIDTH(4),.DRAIN_ON_RESET(1'b1)) display_geometry_mailbox(
-        .src_clk(control_clk),.src_resetn(control_aresetn),.src_data(display_active_mode),
+    multitini_async_mailbox #(.WIDTH(7),.DRAIN_ON_RESET(1'b1)) display_geometry_mailbox(
+        .src_clk(control_clk),.src_resetn(control_aresetn),.src_data({display_active_multiplier,display_active_mode}),
         .src_valid(display_commit),.src_ready(display_geometry_ready),
         .dst_clk(video_clk),.dst_resetn(video_control_resetn),.dst_data(display_mode_payload),
         .dst_valid(display_mode_valid),.dst_ready(1'b1));
     always @(posedge video_clk)begin
-        if(!video_control_resetn)display_pixel_mode<=0;
-        else if(display_mode_valid)display_pixel_mode<=display_mode_payload;
+        if(!video_control_resetn)begin display_pixel_mode<=0;display_pixel_multiplier<=0;end
+        else if(display_mode_valid){display_pixel_multiplier,display_pixel_mode}<=display_mode_payload;
     end
     cdc_bit_sync display_lock_sync(.clk(control_clk),.resetn(control_aresetn),
         .din(pixel_clock_locked),.dout(display_locked));
@@ -594,9 +607,9 @@ module multitini_one_top #(
         .src_pulse(video_vblank_start),.dst_clk(control_clk),.dst_resetn(control_aresetn),.dst_pulse(display_frame_tick));
     multitini_display_control display_control(
         .clk(control_clk),.resetn(control_aresetn),.request(display_request),
-        .requested_mode(display_requested_mode),.reader_quiescent(display_quiescent),
+        .requested_mode(display_requested_mode),.requested_multiplier(display_requested_multiplier),.reader_quiescent(display_quiescent),
         .frame_latched(display_frame_tick),.geometry_ready(display_geometry_ready && !display_geometry_pending),
-        .clock_locked(display_locked),.active_mode(display_active_mode),.commit(display_commit),
+        .clock_locked(display_locked),.active_mode(display_active_mode),.active_multiplier(display_active_multiplier),.commit(display_commit),
         .busy(display_busy),.error(display_error),.reader_pause(display_pause),.video_hold(display_hold),
         .clock_resetn(pixel_clock_resetn),.clock_awaddr(pixel_clock_awaddr),.clock_awvalid(pixel_clock_awvalid),
         .clock_awready(pixel_clock_awready),.clock_wdata(pixel_clock_wdata),.clock_wvalid(pixel_clock_wvalid),
@@ -606,19 +619,36 @@ module multitini_one_top #(
     // Filter coefficients stay in the control domain. Native DDR owners
     // have drained before active_mode changes; no coefficient CDC is needed.
     multitini_display_geometry #(.MACHINE(ACTIVE_MACHINE)) display_filter_geometry(
-        .mode(display_active_mode),.scale_num(display_filter_scale_num),.scale_den(display_filter_scale_den));
+        .mode(display_active_mode),.multiplier(3'd0),.scale_num(display_filter_scale_num),.scale_den(display_filter_scale_den));
+    // Capture always observes the complete original Auto raster. The reader
+    // independently scales/crops the completed native image at scanout.
     multitini_display_geometry #(.MACHINE(ACTIVE_MACHINE),
         .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : C64_NTSC_MODE ? 404 : 382),
+        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : C64_NTSC_MODE ? 250 : 270)) capture_geometry(
+        .mode(display_pixel_mode),.multiplier(3'd0),
+        .scale_num(capture_display_scale_num_next),.scale_den(capture_display_scale_den_next),
+        .view_x(capture_display_view_x_next),.view_y(capture_display_view_y_next),
+        .view_width(capture_display_view_width_next),.view_height(capture_display_view_height_next));
+    multitini_display_geometry #(.ENABLE_MULTIPLIER(1'b1),.MACHINE(ACTIVE_MACHINE),
+        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : C64_NTSC_MODE ? 404 : 382),
         .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : C64_NTSC_MODE ? 250 : 270)) display_geometry(
-        .mode(display_pixel_mode),.h_active(display_h_active_next),.h_front(display_h_front_next),.h_sync(display_h_sync_next),.h_total(display_h_total_next),
+        .mode(display_pixel_mode),.multiplier(display_pixel_multiplier),.h_active(display_h_active_next),.h_front(display_h_front_next),.h_sync(display_h_sync_next),.h_total(display_h_total_next),
         .v_active(display_v_active_next),.v_front(display_v_front_next),.v_sync(display_v_sync_next),.v_total(display_v_total_next),
         .h_positive(display_h_positive_next),.v_positive(display_v_positive_next),
         .scale_num(display_scale_num_next),.scale_den(display_scale_den_next),
-        .view_x(display_view_x_next),.view_y(display_view_y_next),.view_width(display_view_width_next),.view_height(display_view_height_next));
+        .view_x(display_view_x_next),.view_y(display_view_y_next),.view_width(display_view_width_next),.view_height(display_view_height_next),
+        .source_x0(display_source_x0_next),.source_y0(display_source_y0_next),
+        .phase_x0(display_phase_x0_next),.phase_y0(display_phase_y0_next));
     // Register configuration before the high-fanout scanout datapaths. The
     // mode mailbox remains live during pixel reset; its acknowledgement and
     // SETTLE_MODE complete before display_reset releases any pixel consumer.
     always @(posedge video_clk) begin
+        {capture_display_view_x,capture_display_view_y,capture_display_view_width,capture_display_view_height,
+            capture_display_scale_num,capture_display_scale_den}<=
+        {capture_display_view_x_next,capture_display_view_y_next,capture_display_view_width_next,capture_display_view_height_next,
+            capture_display_scale_num_next,capture_display_scale_den_next};
+        {display_source_x0,display_source_y0,display_phase_x0,display_phase_y0}<=
+        {display_source_x0_next,display_source_y0_next,display_phase_x0_next,display_phase_y0_next};
         {display_h_active,display_h_front,display_h_sync,display_h_total,
          display_v_active,display_v_front,display_v_sync,display_v_total,
          display_h_positive,display_v_positive,display_scale_num,display_scale_den,
@@ -1154,9 +1184,9 @@ module multitini_one_top #(
             multitini_c64_video_bridge #(
                 .DYNAMIC_DISPLAY(1'b1),.NTSC_MODE(C64_NTSC_MODE)
             ) video_bridge (
-        .display_view_x(display_view_x),.display_view_y(display_view_y),
-        .display_view_width(display_view_width),.display_view_height(display_view_height),
-        .display_scale_num(display_scale_num),.display_scale_den(display_scale_den),
+        .display_view_x(capture_display_view_x),.display_view_y(capture_display_view_y),
+        .display_view_width(capture_display_view_width),.display_view_height(capture_display_view_height),
+        .display_scale_num(capture_display_scale_num),.display_scale_den(capture_display_scale_den),
 
                 .source_clk(c64_clk), .source_resetn(c64_aresetn),
                 .source_ready(c64_ready),
@@ -1249,9 +1279,9 @@ module multitini_one_top #(
             );
 
             multitini_gameboy_video_bridge #(.DYNAMIC_DISPLAY(1'b1)) video_bridge (
-        .display_view_x(display_view_x),.display_view_y(display_view_y),
-        .display_view_width(display_view_width),.display_view_height(display_view_height),
-        .display_scale_num(display_scale_num),.display_scale_den(display_scale_den),
+        .display_view_x(capture_display_view_x),.display_view_y(capture_display_view_y),
+        .display_view_width(capture_display_view_width),.display_view_height(capture_display_view_height),
+        .display_scale_num(capture_display_scale_num),.display_scale_den(capture_display_scale_den),
 
                 .source_clk(c64_clk), .source_resetn(c64_aresetn),
                 .source_ready(c64_ready),
@@ -1371,10 +1401,12 @@ module multitini_one_top #(
                 .shared_pixel_running(video_pixel_running),
                 .diagnostic_request(video_enable),.scan_x(video_scan_x),.scan_y(video_scan_y),
                 .vblank_start(video_vblank_start),
-                .display_view_x(display_view_x),.display_view_y(display_view_y),
-                .display_view_width(display_view_width),.display_view_height(display_view_height),
-                .display_scale_num(display_scale_num),.display_scale_den(display_scale_den),
+                .display_view_x(capture_display_view_x),.display_view_y(capture_display_view_y),
+                .display_view_width(capture_display_view_width),.display_view_height(capture_display_view_height),
+                .display_scale_num(capture_display_scale_num),.display_scale_den(capture_display_scale_den),
                 .display_pause(display_pause),.display_quiescent(genesis_source_quiescent),
+                .display_h_active(display_h_active),.display_v_active(display_v_active),
+                .display_h_total(display_h_total),.display_v_total(display_v_total),
                 .viewport_x(viewport_x),.viewport_y(viewport_y),
                 .viewport_width(viewport_width),.viewport_height(viewport_height),
                 .machine_active(machine_video_active),.machine_rgb565(machine_video_rgb565),
@@ -1457,9 +1489,9 @@ module multitini_one_top #(
                 .debug_beam_intensity(),.debug_beam_blank()
             );
             multitini_vectrex_video_bridge #(.DYNAMIC_DISPLAY(1'b1)) video_bridge (
-        .display_view_x(display_view_x),.display_view_y(display_view_y),
-        .display_view_width(display_view_width),.display_view_height(display_view_height),
-        .display_scale_num(display_scale_num),.display_scale_den(display_scale_den),
+        .display_view_x(capture_display_view_x),.display_view_y(capture_display_view_y),
+        .display_view_width(capture_display_view_width),.display_view_height(capture_display_view_height),
+        .display_scale_num(capture_display_scale_num),.display_scale_den(capture_display_scale_den),
 
                 .pixel_clk(video_clk),.pixel_resetn(video_aresetn),.source_ready(c64_ready),
                 .scan_x(video_scan_x),.scan_y(video_scan_y),.vblank_start(video_vblank_start),
@@ -1619,14 +1651,14 @@ module multitini_one_top #(
         .vblank_start(video_vblank_start), .frame_config(frame_border_config),
         .control_pixel_running(video_running_control)
     );
-    multitini_border_overlay #(.DYNAMIC_DISPLAY(1'b1)) border_overlay (
+    multitini_border_overlay #(.DYNAMIC_DISPLAY(1'b1),.SIGNED_VIEWPORT(1'b1)) border_overlay (
         .display_h_active(display_h_active),.display_h_total(display_h_total),
         .display_v_active(display_v_active),.display_v_total(display_v_total),
         .pixel_clk(video_clk), .resetn(video_aresetn),
         .scan_x(video_scan_x), .scan_y(video_scan_y),
         .frame_config(frame_border_config),
-        .viewport_x(viewport_x), .viewport_y(viewport_y),
-        .viewport_width(viewport_width), .viewport_height(viewport_height),
+        .viewport_x(display_view_x), .viewport_y(display_view_y),
+        .viewport_width(display_view_width), .viewport_height(display_view_height),
         .pixel_opaque(border_pixel_opaque), .pixel_rgb565(border_pixel_rgb565)
     );
     // One PS-reset crossing serves every native-video mailbox in this domain.
@@ -1649,6 +1681,13 @@ module multitini_one_top #(
         .display_view_x(display_view_x),.display_view_y(display_view_y),
         .display_view_width(display_view_width),.display_view_height(display_view_height),
         .display_scale_num(display_scale_num),.display_scale_den(display_scale_den),
+        .capture_display_view_x(capture_display_view_x),.capture_display_view_y(capture_display_view_y),
+        .capture_display_view_width(capture_display_view_width),.capture_display_view_height(capture_display_view_height),
+        .capture_display_scale_num(capture_display_scale_num),.capture_display_scale_den(capture_display_scale_den),
+        .display_h_active(display_h_active),.display_v_active(display_v_active),
+        .display_h_total(display_h_total),.display_v_total(display_v_total),
+        .display_source_x0(display_source_x0),.display_source_y0(display_source_y0),
+        .display_phase_x0(display_phase_x0),.display_phase_y0(display_phase_y0),
         .display_pause(display_pause),.display_quiescent(framebuffer_display_quiescent),
         .display_filter_scale_num(display_filter_scale_num),.display_filter_scale_den(display_filter_scale_den),
         .clk(control_clk),.resetn(control_aresetn),
@@ -1657,7 +1696,7 @@ module multitini_one_top #(
         .pixel_clk(video_clk),.pixel_resetn(video_aresetn),.shared_pixel_resetn(video_control_resetn),.vblank_start(video_vblank_start),
         .machine_ready(machine_video_active),.scan_x(video_scan_x),.scan_y(video_scan_y),
         .machine_rgb565(machine_video_rgb565),.pixel_use(framebuffer_use),.pixel_rgb565(framebuffer_rgb565),
-        .pixel_neighbor_rgb565(framebuffer_neighbor_rgb565),.pixel_neighbor_weight(framebuffer_neighbor_weight),
+        .pixel_neighbor_rgb565(framebuffer_neighbor_rgb565),.pixel_opposite_rgb565(framebuffer_opposite_rgb565),.pixel_neighbor_weight(framebuffer_neighbor_weight),
         .pixel_running(video_pixel_running),
         .araddr(hp0_araddr),
         .arlen(hp0_arlen),
@@ -1711,7 +1750,7 @@ module multitini_one_top #(
         .fx_bready(hp1_bready)
     );
 
-    multitini_video_test #(.DYNAMIC_DISPLAY(1'b1),.ENABLE_EFFECTS(1'b1),.SHARED_PIXEL_RESET(1'b1),.SHARED_PIXEL_LIVENESS(1'b1),
+    multitini_video_test #(.DYNAMIC_DISPLAY(1'b1),.SIGNED_VIEWPORT(1'b1),.ENABLE_EFFECTS(1'b1),.SHARED_PIXEL_RESET(1'b1),.SHARED_PIXEL_LIVENESS(1'b1),
         .SOURCE_SCALE_NUM(ACTIVE_MACHINE == 1 ? 6 : ACTIVE_MACHINE == 3 ? 3 : 4),
         .SOURCE_SCALE_DEN(ACTIVE_MACHINE == 3 ? 2 : 1)) video_test (
         .display_h_active(display_h_active),.display_h_front(display_h_front),.display_h_sync(display_h_sync),.display_h_total(display_h_total),
@@ -1724,12 +1763,13 @@ module multitini_one_top #(
         .effect_commit(effect_commit),.effect_commit_sequence(effect_commit_sequence),
         .effect_busy(effect_busy),.effect_active_valid(effect_active_valid),
         .effect_rejected(effect_rejected),.effect_active_sequence(effect_active_sequence),
-        .viewport_x(viewport_x),.viewport_y(viewport_y),
-        .viewport_width(viewport_width),.viewport_height(viewport_height),
+        .viewport_x(display_view_x),.viewport_y(display_view_y),
+        .viewport_width(display_view_width),.viewport_height(display_view_height),
         .pixel_clk(video_clk), .resetn(video_aresetn), .enable(video_enable),
         .machine_enable(machine_video_active),
-        .machine_rgb565(framebuffer_use ? framebuffer_rgb565 : machine_video_rgb565),
+        .machine_rgb565(framebuffer_use ? framebuffer_rgb565 : display_pixel_multiplier==0 ? machine_video_rgb565 : 16'd0),
         .machine_neighbor_rgb565(framebuffer_neighbor_rgb565),
+        .machine_opposite_rgb565(framebuffer_opposite_rgb565),.machine_dot_valid(framebuffer_use),
         .machine_neighbor_weight(framebuffer_use ? framebuffer_neighbor_weight : 8'd0),
         .border_opaque(border_pixel_opaque), .border_rgb565(border_pixel_rgb565),
         .ui_opaque(ui_pixel_opaque), .ui_rgb565(ui_pixel_rgb565),

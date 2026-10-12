@@ -20,13 +20,14 @@ static mt_link_result_t reset_core(mt_core_link_t *link, bool reset,
                                 progress, context, &response);
 }
 
-mt_link_result_t mt_genesis_stage(mt_core_link_t *link,
+mt_link_result_t mt_genesis_stage_traced(mt_core_link_t *link,
     const mt_genesis_boot_images_t *images, uint32_t polls,
-    mt_link_progress_fn progress, void *context)
+    mt_link_progress_fn progress, void *context, mt_genesis_transfer_phase_t *phase)
 {
     mt_genesis_content_info_t info;
     mt_link_result_t result;
     uint8_t config[MT_SIZE_GENESIS_CONFIG] = {0};
+    if(phase!=NULL)*phase=MT_GENESIS_TRANSFER_NONE;
     if (images == NULL || polls == 0U || !mt_genesis_config_valid(&images->config, false) ||
         mt_genesis_content_inspect(images->cartridge.data, images->cartridge.size,
             MT_GENESIS_FORMAT_RAW, &info) != MT_CONTENT_VALID || info.byte_swapped ||
@@ -38,18 +39,30 @@ mt_link_result_t mt_genesis_stage(mt_core_link_t *link,
     config[5] = images->config.six_button_mask;
     config[6] = images->config.fm_chip;
     config[7] = images->config.lowpass;
+    if(phase!=NULL)*phase=MT_GENESIS_TRANSFER_RESET;
     result = reset_core(link, true, polls, progress, context);
     if (result != MT_LINK_OK) return result;
+    if(phase!=NULL)*phase=MT_GENESIS_TRANSFER_CONFIG;
     result = mt_core_link_stream(link, MT_LOAD_GENESIS_CONFIG, config, sizeof(config),
                                 polls, progress, context);
     if (result != MT_LINK_OK) return result;
+    if(phase!=NULL)*phase=MT_GENESIS_TRANSFER_CARTRIDGE;
     result = mt_core_link_stream(link, MT_LOAD_GENESIS_CART, images->cartridge.data,
                                 images->cartridge.size, polls, progress, context);
     if (result != MT_LINK_OK) return result;
-    if (images->save.data != NULL)
+    if (images->save.data != NULL) {
+        if(phase!=NULL)*phase=MT_GENESIS_TRANSFER_SAVE;
         result = mt_core_link_stream(link, MT_LOAD_GENESIS_SAVE, images->save.data,
                                     images->save.size, polls, progress, context);
+    }
     return result;
+}
+
+mt_link_result_t mt_genesis_stage(mt_core_link_t *link,
+    const mt_genesis_boot_images_t *images, uint32_t polls,
+    mt_link_progress_fn progress, void *context)
+{
+    return mt_genesis_stage_traced(link,images,polls,progress,context,NULL);
 }
 
 mt_link_result_t mt_genesis_release(mt_core_link_t *link, uint32_t polls,

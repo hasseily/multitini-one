@@ -5,6 +5,7 @@ from pathlib import Path
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -21,7 +22,15 @@ def main():
     logs = []
     tracked = {}
     def run(command, name, cwd=build):
-        result = subprocess.run(guard + list(map(str, command)), cwd=cwd,
+        native = list(map(str, command))
+        if os.name == "nt" and Path(native[0]).name == "verilator.exe" and not Path(native[0]).is_file():
+            # MSYS supplies Verilator as a Perl launcher, not a native .exe.
+            def posix(value):
+                value = str(value).replace("\\", "/")
+                return "/" + value[0].lower() + value[2:] if len(value)>2 and value[1]==":" else value
+            shell = "cd " + shlex.quote(posix(cwd)) + " && export PATH=/ucrt64/bin:/usr/bin:$PATH; exec verilator "
+            native = ["C:/msys64/usr/bin/bash.exe", "-lc", shell + shlex.join([posix(a) for a in native[1:]])]
+        result = subprocess.run(guard + native, cwd=cwd,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, timeout=180)
         (build / (name + ".log")).write_text(result.stdout)

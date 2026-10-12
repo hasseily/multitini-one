@@ -75,13 +75,19 @@ bool mt_screenshot_png_end(mt_screenshot_png_t *png)
     png->write=NULL; return true;
 }
 
-typedef struct { uint32_t w,h,num,den,vw,vh,vx,vy; } geometry_t;
+typedef struct { uint32_t w,h,num,den,vw,vh,cw,ch,cx,cy; int32_t vx,vy; } geometry_t;
+static int32_t centered_origin(uint32_t screen,uint32_t image)
+{
+    return image<=screen ? (int32_t)((screen-image)/2U) :
+        -(int32_t)((image-screen+1U)/2U);
+}
 static bool geometry(const mt_screenshot_scene_t *s,geometry_t *g)
 {
     static const uint16_t widths[6]={1920U,1024U,1200U,1280U,1360U,1680U};
     static const uint16_t heights[6]={1080U,768U,800U,1024U,768U,1050U};
     if(s==NULL || s->pixels==NULL || s->width==0U || s->height==0U ||
-       s->width>MT_VIDEO_FRAME_MAX_WIDTH || s->height>MT_VIDEO_FRAME_MAX_HEIGHT || s->display_mode>=6U) return false;
+       s->width>MT_VIDEO_FRAME_MAX_WIDTH || s->height>MT_VIDEO_FRAME_MAX_HEIGHT ||
+       s->display_mode>=6U || s->video_multiplier>4U) return false;
     const uint8_t m=s->display_mode;
     g->w=widths[m]; g->h=heights[m]; g->num=g->den=1U;
     if(s->core_id==MT_VECTREX_CORE_ID) { g->num=m==0U ? 3U:1U; g->den=m==0U ? 2U:1U; }
@@ -89,15 +95,19 @@ static bool geometry(const mt_screenshot_scene_t *s,geometry_t *g)
     else if(s->core_id==MT_GBC_CORE_ID) g->num=m==1U || m==2U || m==4U ? 5U:6U;
     else if(s->core_id==MT_C64_CORE_ID) g->num=m==0U ? 4U : m==1U || m==2U || m==4U ? 2U:3U;
     else return false;
+    if(s->video_multiplier!=0U) { g->num=s->video_multiplier;g->den=1U; }
     g->vw=s->width*g->num/g->den; g->vh=s->height*g->num/g->den;
-    if(g->vw>g->w || g->vh>g->h) return false;
-    g->vx=(g->w-g->vw)/2U; g->vy=(g->h-g->vh)/2U; return true;
+    if(s->video_multiplier==0U && (g->vw>g->w || g->vh>g->h)) return false;
+    g->vx=centered_origin(g->w,g->vw);g->vy=centered_origin(g->h,g->vh);
+    g->cw=g->vw<g->w ? g->vw:g->w;g->ch=g->vh<g->h ? g->vh:g->h;
+    g->cx=g->vx>0 ? (uint32_t)g->vx:0U;g->cy=g->vy>0 ? (uint32_t)g->vy:0U;
+    return true;
 }
 bool mt_screenshot_dimensions(const mt_screenshot_scene_t *s,uint32_t *w,uint32_t *h)
 {
     geometry_t g;
     if(w==NULL || h==NULL || !geometry(s,&g)) return false;
-    *w=s->full_output ? g.w:g.vw;*h=s->full_output ? g.h:g.vh;return true;
+    *w=s->full_output ? g.w:g.cw;*h=s->full_output ? g.h:g.ch;return true;
 }
 static bool ui_pixel(const mt_screenshot_scene_t *s,const geometry_t *g,uint32_t x,uint32_t y,uint16_t *pixel)
 {
@@ -107,11 +117,13 @@ static bool ui_pixel(const mt_screenshot_scene_t *s,const geometry_t *g,uint32_t
     const unsigned cw=g->w/MT_UI_COLUMNS,ch=g->h/MT_UI_ROWS,scale=g->w==1920U ? MT_UI_FONT_SCALE:1U;
     const unsigned gx=g->w==1920U ? MT_UI_GLYPH_X:(cw-7U)/2U;
     const unsigned gy=g->w==1920U ? MT_UI_GLYPH_Y:(ch-8U)/2U;
-    if(x>=cw*MT_UI_COLUMNS || y>=ch*MT_UI_ROWS) return false;
-    const uint16_t cell=s->ui->cells[(y/ch)*MT_UI_COLUMNS+x/cw];
+    const bool inside_grid=x<cw*MT_UI_COLUMNS && y<ch*MT_UI_ROWS;
+    const unsigned column=x/cw<MT_UI_COLUMNS ? x/cw:MT_UI_COLUMNS-1U;
+    const unsigned row=y/ch<MT_UI_ROWS ? y/ch:MT_UI_ROWS-1U;
+    const uint16_t cell=s->ui->cells[row*MT_UI_COLUMNS+column];
     const unsigned lx=x%cw,ly=y%ch,c=cell&127U;
     bool ink=false;
-    if(c>=32U && lx>=gx && lx<gx+7U*scale && ly>=gy && ly<gy+8U*scale)
+    if(inside_grid && c>=32U && lx>=gx && lx<gx+7U*scale && ly>=gy && ly<gy+8U*scale)
         ink=((mt_screenshot_font[c-32U] >> (((ly-gy)/scale)*8U+(lx-gx)/scale)) & 1U)!=0U;
     if(!ink && (cell&0x8000U)!=0U) return false;
     *pixel=palette[((unsigned)cell>>(ink ? 7U:11U))&15U]; return true;
@@ -123,8 +135,8 @@ static bool border_pixel(const mt_screenshot_scene_t *s,const geometry_t *g,uint
         0x575c65U,0x758ec2U,0x86ab83U,0x7cacb0U,0xba8181U,0xae87b3U,0xbbb184U,0xc7c8caU};
     if((s->border_config&1U)==0U) return false;
     int pad=(int)((s->border_config>>8)&31U); if(pad<1)pad=1;if(pad>20)pad=20;
-    const int dl=(int)g->vx-pad-1-(int)x,dr=(int)x-(int)(g->vx+g->vw)-pad;
-    const int dt=(int)g->vy-pad-1-(int)y,db=(int)y-(int)(g->vy+g->vh)-pad;
+    const int dl=g->vx-pad-1-(int)x,dr=(int)x-(g->vx+(int)g->vw)-pad;
+    const int dt=g->vy-pad-1-(int)y,db=(int)y-(g->vy+(int)g->vh)-pad;
     const int distance=maximum(maximum(dl,dr),maximum(dt,db));
     const unsigned style=(s->border_config>>1)&7U;
     bool draw=distance==0;
@@ -147,17 +159,18 @@ static bool scanline_dim(const geometry_t *g,uint32_t y)
 bool mt_screenshot_render_row(const mt_screenshot_scene_t *s,uint32_t y,uint16_t *row)
 {
     geometry_t g;
-    if(row==NULL || !geometry(s,&g) || y>=(s->full_output ? g.h:g.vh))return false;
-    const uint32_t output_width=s->full_output ? g.w:g.vw;
-    if(!s->full_output)y+=g.vy;
+    if(row==NULL || !geometry(s,&g) || y>=(s->full_output ? g.h:g.ch))return false;
+    const uint32_t output_width=s->full_output ? g.w:g.cw;
+    if(!s->full_output)y+=g.cy;
     for(uint32_t output_x=0U;output_x<output_width;++output_x) {
-        const uint32_t x=s->full_output ? output_x:output_x+g.vx;
+        const uint32_t x=s->full_output ? output_x:output_x+g.cx;
         uint16_t pixel=0U;
         if(s->full_output && (ui_pixel(s,&g,x,y,&pixel) || border_pixel(s,&g,x,y,&pixel))) {
             row[output_x]=pixel;continue;
         }
-        if(x>=g.vx && x<g.vx+g.vw && y>=g.vy && y<g.vy+g.vh) {
-            const uint32_t xx=x-g.vx,yy=y-g.vy,sy=yy*g.den/g.num;
+        if((int32_t)x>=g.vx && (int32_t)x<g.vx+(int32_t)g.vw &&
+           (int32_t)y>=g.vy && (int32_t)y<g.vy+(int32_t)g.vh) {
+            const uint32_t xx=(uint32_t)((int32_t)x-g.vx),yy=(uint32_t)((int32_t)y-g.vy),sy=yy*g.den/g.num;
             const uint16_t *source=s->pixels+sy*s->width;
             const uint32_t sx=xx*g.den/g.num;
             const uint16_t center=source[sx];

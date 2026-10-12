@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns/1ps
 
-// Native-frame spatial filter. The caller supplies already persisted RGB888
-// pixels in 0xBBGGRR order; persistence is deliberately outside this feedback-
-// free filter. Four raw line RAMs serve both independent three/five-tap paths.
-// Vertical smoothing uses the core's fixed 1080p reference strength. Bloom
-// retains its original taps. Both branches share the window and four line RAMs.
-// A flowing job takes (WIDTH+2)*(HEIGHT+2) samples plus nine pipeline clocks.
+// Calibrated Appletini ONE Blur/Glow port; source is recorded in provenance.
+// Caller supplies post-persistence RGB888 in BBGGRR order. Four raw line RAMs
+// supply H3/H5 blur and a fixed H3/V3 glow. No spatial result enters history.
+// Dot bleed runs in the cached scanout scaler. Clocks and nine-clock latency
+// are unchanged: (WIDTH+2)*(HEIGHT+2) samples plus nine pipeline clocks.
 module multitini_video_frame_filter #(
     parameter bit DYNAMIC_DISPLAY=1'b0,
     parameter integer WIDTH=540, HEIGHT=720,
@@ -24,23 +23,15 @@ module multitini_video_frame_filter #(
     output reg [15:0] out_rgb565,
     output reg busy,done
 );
-    // Scale parameters name the fixed 1080p reference, never the active mode.
-    // Dynamic display inputs remain for interface compatibility and are unused.
-    // A safe denominator lets simulation report bad parameters explicitly
-    // instead of first evaluating an elaboration-time division by zero.
-    localparam integer ALPHA_DEN=SCALE_NUM>=1 && SCALE_NUM<=64 ? SCALE_NUM : 1;
-    localparam integer STRONG_ROUNDED=(1152*SCALE_DEN+ALPHA_DEN/2)/ALPHA_DEN;
-    localparam integer STRONG_CAPPED=STRONG_ROUNDED>256 ? 256 : STRONG_ROUNDED;
-    localparam integer BLUR_ALPHA_STRONG=(STRONG_CAPPED*7+4)/8;
-    localparam integer BLUR_ALPHA_LIGHT=(BLUR_ALPHA_STRONG*4+3)/7;
-    localparam integer BLUR_ALPHA_MEDIUM=(BLUR_ALPHA_STRONG*11+7)/14;
+    // PHO2: normalized Blur blended at 1/8, 1/4 and 1/2; fixed Glow unchanged.
+    // Legacy display/scale ports remain for the shared engine interface.
     // synthesis translate_off
     initial begin
         if(SCALE_NUM<1 || SCALE_NUM>64 || SCALE_DEN<1 || SCALE_DEN>64)
             $fatal(1,"Blur scale parameters must be in the range 1..64");
     end
     // synthesis translate_on
-    reg [1:0] blur,bloom,softness;
+    reg [1:0] blur,bloom;
     reg [9:0] front_x,front_y;
     reg front_finished;
     reg [23:0] last_input;
@@ -82,21 +73,21 @@ module multitini_video_frame_filter #(
     reg [23:0] column[0:4];
     reg [23:0] window[0:4][0:4];
     reg s2_valid,s2_last;
-    reg [8:0] h_outer[0:4][0:2],h_near[0:4][0:2];
-    reg [7:0] h_center[0:4][0:2];
+    reg [8:0] h_near[0:4][0:2];
+    reg [7:0] h_center[0:4][0:2],h_blur[0:4][0:2];
     reg s3_valid,s3_last;
-    reg [7:0] h3[0:4][0:2],h5[0:4][0:2],raw3[0:2],center3[0:4][0:2];
+    reg [7:0] h3[0:4][0:2],raw3[0:2],center3[0:4][0:2];
     reg s4_valid,s4_last;
-    reg [7:0] bloom_h3[0:2][0:2],bloom_h5[0:4][0:2],center4[0:4][0:2],raw4[0:2];
+    reg [7:0] bloom_h3[0:2][0:2],center4[0:4][0:2],raw4[0:2];
     reg s5_valid,s5_last;
-    reg [8:0] v3_near[0:2],v5_outer[0:2],v5_near[0:2];
+    reg [8:0] v3_near[0:2];
     reg [8:0] blur_v_outer[0:2],blur_v_near[0:2];
-    reg [7:0] v3_center[0:2],v5_center[0:2],blur_v_center[0:2],raw5[0:2];
+    reg [7:0] v3_center[0:2],blur_v_center[0:2],raw5[0:2];
     reg s6_valid,s6_last;
-    reg [7:0] vertical3[0:2],vertical5[0:2],blur_vertical[0:2],blur_center6[0:2];
+    reg [7:0] vertical3[0:2],blur_vertical[0:2],blur_center6[0:2];
     reg [7:0] raw6[0:2];
     reg s7_valid,s7_last;
-    reg [7:0] bloom3[0:2],bloom5[0:2],normalized_vertical[0:2],raw7[0:2];
+    reg [7:0] bloom3[0:2],normalized_vertical[0:2],raw7[0:2];
     reg out_last;
 
     function automatic [7:0] three_tap(input [8:0] near_sum,input [7:0] center);
@@ -110,75 +101,61 @@ module multitini_video_frame_filter #(
             five_tap=sum[10:3];
         end
     endfunction
-    // Floor the vertical kernel, then round the center/filter blend. Fixed Q8
-    // coefficients are C64/Genesis/Vectrex 128/176/224 and GBC 96/132/168.
-    // All levels share the five-tap kernel for evenly spaced visual steps.
-    // Active output geometry cannot alter source-pixel smoothing.
-    function automatic [7:0] normalized_blur(input [7:0] center,filtered,
-                                            input [1:0] blur_mode);
-        reg signed [8:0] difference;
-        reg signed [17:0] weighted;
+    function automatic [7:0] rounded_three_tap(input [8:0] near_sum,input [7:0] center);
+        reg [9:0] sum;
+        begin sum={1'b0,near_sum}+{1'b0,center,1'b0}+10'd2;rounded_three_tap=sum[9:2];end
+    endfunction
+    function automatic [7:0] blur_horizontal_five(input [7:0] a,b,c,d,e);
+        reg [10:0] sum;
         begin
-            difference=$signed({1'b0,filtered})-$signed({1'b0,center});
-            case(blur_mode)
-                2:weighted=difference*BLUR_ALPHA_MEDIUM;
-                3:weighted=difference*BLUR_ALPHA_STRONG;
-                default:weighted=difference*BLUR_ALPHA_LIGHT;
-            endcase
-            // Center and rounding bias occupy disjoint bits. Packing them
-            // first lets synthesis use one multiply-accumulate DSP per blend.
-            weighted=$signed({2'b00,center,8'h80})+weighted;
-            normalized_blur=weighted[15:8];
+            sum={3'b0,a}+{2'b0,b,1'b0}+{2'b0,c,1'b0}+{2'b0,d,1'b0}+{3'b0,e}+11'd4;
+            blur_horizontal_five=sum[10:3];
         end
     endfunction
-    function automatic [7:0] horizontal_blend(input [7:0] center,filtered,
-                                             input [1:0] level);
-        reg signed [8:0] difference;
-        reg signed [17:0] weighted;
+    function automatic [7:0] blur_vertical_tent(input [7:0] up,mid,dn);
+        begin blur_vertical_tent=rounded_three_tap({1'b0,up}+{1'b0,dn},mid);end
+    endfunction
+    function automatic [7:0] weaken_blur(input [7:0] raw,filtered,input [1:0] mode);
+        reg [10:0] sum;
         begin
-            difference=$signed({1'b0,filtered})-$signed({1'b0,center});
-            case(level)
-                1:weighted=difference*64;
-                2:weighted=difference*128;
-                3:weighted=difference*192;
-                default:weighted=0;
+            case(mode)
+                0:weaken_blur=raw;
+                1:begin sum={raw,3'b0}-{3'b0,raw}+{3'b0,filtered}+11'd4;weaken_blur=sum[10:3];end
+                2:begin sum={1'b0,raw,2'b0}-{3'b0,raw}+{3'b0,filtered}+11'd2;weaken_blur=sum[9:2];end
+                3:begin sum={3'b0,raw}+{3'b0,filtered}+11'd1;weaken_blur=sum[8:1];end
             endcase
-            weighted=$signed({2'b00,center,8'h80})+weighted;
-            horizontal_blend=weighted[15:8];
         end
     endfunction
-    function automatic [7:0] result_channel(input [7:0] raw,vertical,v3,v5,
-                                           input [1:0] blur_mode,bloom_mode);
-        reg [7:0] base,halo;
+    function automatic [7:0] result_channel(input [7:0] base,v3,input [1:0] bloom_mode);
+        reg [7:0] halo;
         reg [8:0] sum;
         begin
-            base=blur_mode==0 ? raw : vertical;
             case(bloom_mode)
                 0:halo=0;
                 1:halo=v3>>3;
                 2:halo=v3>>2;
-                default:halo=v5>>1;
+                default:halo=v3>>1;
             endcase
             sum={1'b0,base}+{1'b0,halo};
             result_channel=sum[8] ? 8'hff : sum[7:0];
         end
     endfunction
-    wire [7:0] result_r=result_channel(raw7[0],normalized_vertical[0],bloom3[0],bloom5[0],blur,bloom);
-    wire [7:0] result_g=result_channel(raw7[1],normalized_vertical[1],bloom3[1],bloom5[1],blur,bloom);
-    wire [7:0] result_b=result_channel(raw7[2],normalized_vertical[2],bloom3[2],bloom5[2],blur,bloom);
+    wire [7:0] result_r=result_channel(normalized_vertical[0],bloom3[0],bloom);
+    wire [7:0] result_g=result_channel(normalized_vertical[1],bloom3[1],bloom);
+    wire [7:0] result_b=result_channel(normalized_vertical[2],bloom3[2],bloom);
     integer row,col,channel;
-    reg [7:0] a,b,c,d,e;
+    reg [7:0] b,c,d;
     always @(posedge clk)begin
         if(!resetn)begin
             busy<=0;done<=0;out_valid<=0;out_last<=0;out_rgb565<=0;
-            front_x<=0;front_y<=0;front_finished<=0;blur<=0;bloom<=0;softness<=0;last_input<=0;
+            front_x<=0;front_y<=0;front_finished<=0;blur<=0;bloom<=0;last_input<=0;
             s0_valid<=0;s1_valid<=0;s2_valid<=0;s3_valid<=0;s4_valid<=0;s5_valid<=0;s6_valid<=0;s7_valid<=0;
             s2_last<=0;s3_last<=0;s4_last<=0;s5_last<=0;s6_last<=0;s7_last<=0;
         end else begin
             done<=0;
             if(out_valid && out_ready && out_last)begin busy<=0;done<=1;end
             if(start && !busy)begin
-                busy<=1;blur<=options[3:2];bloom<=options[5:4];softness<=options[7:6];
+                busy<=1;blur<=options[3:2];bloom<=options[5:4];
                 front_x<=0;front_y<=0;front_finished<=0;
                 s0_valid<=0;s1_valid<=0;s2_valid<=0;s3_valid<=0;s4_valid<=0;s5_valid<=0;s6_valid<=0;s7_valid<=0;
                 out_valid<=0;out_last<=0;
@@ -218,14 +195,16 @@ module multitini_video_frame_filter #(
                             window[row][col]<=s1_x==0 ? column[row] : window[row][col+1];
                         window[row][4]<=column[row];
                         for(channel=0;channel<3;channel=channel+1)begin
-                            a=s1_x==0 ? column[row][channel*8+:8] : window[row][1][channel*8+:8];
                             b=s1_x==0 ? column[row][channel*8+:8] : window[row][2][channel*8+:8];
                             c=s1_x==0 ? column[row][channel*8+:8] : window[row][3][channel*8+:8];
                             d=s1_x==0 ? column[row][channel*8+:8] : window[row][4][channel*8+:8];
-                            e=column[row][channel*8+:8];
-                            h_outer[row][channel]<={1'b0,a}+{1'b0,e};
                             h_near[row][channel]<={1'b0,b}+{1'b0,d};
                             h_center[row][channel]<=c;
+                            if(blur==0 || WIDTH<4)h_blur[row][channel]<=c;
+                            else if(blur==3)h_blur[row][channel]<=
+                                blur_horizontal_five(window[row][1][channel*8+:8],b,c,d,
+                                    column[row][channel*8+:8]);
+                            else h_blur[row][channel]<=blur_vertical_tent(b,c,d);
                         end
                     end
                 end
@@ -235,9 +214,8 @@ module multitini_video_frame_filter #(
                     for(channel=0;channel<3;channel=channel+1)begin
                         raw3[channel]<=h_center[2][channel];
                         for(row=0;row<5;row=row+1)begin
-                            h5[row][channel]<=five_tap(h_outer[row][channel],h_near[row][channel],h_center[row][channel]);
                             h3[row][channel]<=three_tap(h_near[row][channel],h_center[row][channel]);
-                            center3[row][channel]<=h_center[row][channel];
+                            center3[row][channel]<=h_blur[row][channel];
                         end
                     end
                 end
@@ -245,20 +223,16 @@ module multitini_video_frame_filter #(
                 s4_valid<=s3_valid;s4_last<=s3_last;
                 if(s3_valid)for(channel=0;channel<3;channel=channel+1)begin
                     for(row=0;row<5;row=row+1)begin
-                        bloom_h5[row][channel]<=h5[row][channel];
-                        center4[row][channel]<=horizontal_blend(center3[row][channel],h3[row][channel],softness);
+                        center4[row][channel]<=center3[row][channel];
                     end
                     for(row=0;row<3;row=row+1)bloom_h3[row][channel]<=h3[row+1][channel];
-                    raw4[channel]<=horizontal_blend(raw3[channel],h3[2][channel],softness);
+                    raw4[channel]<=raw3[channel];
                 end
 
                 s5_valid<=s4_valid;s5_last<=s4_last;
                 if(s4_valid)for(channel=0;channel<3;channel=channel+1)begin
                     v3_near[channel]<={1'b0,bloom_h3[0][channel]}+{1'b0,bloom_h3[2][channel]};
                     v3_center[channel]<=bloom_h3[1][channel];
-                    v5_outer[channel]<={1'b0,bloom_h5[0][channel]}+{1'b0,bloom_h5[4][channel]};
-                    v5_near[channel]<={1'b0,bloom_h5[1][channel]}+{1'b0,bloom_h5[3][channel]};
-                    v5_center[channel]<=bloom_h5[2][channel];
                     blur_v_outer[channel]<={1'b0,center4[0][channel]}+{1'b0,center4[4][channel]};
                     blur_v_near[channel]<={1'b0,center4[1][channel]}+{1'b0,center4[3][channel]};
                     blur_v_center[channel]<=center4[2][channel];
@@ -267,15 +241,15 @@ module multitini_video_frame_filter #(
                 s6_valid<=s5_valid;s6_last<=s5_last;
                 if(s5_valid)for(channel=0;channel<3;channel=channel+1)begin
                     vertical3[channel]<=three_tap(v3_near[channel],v3_center[channel]);
-                    vertical5[channel]<=five_tap(v5_outer[channel],v5_near[channel],v5_center[channel]);
-                    blur_vertical[channel]<=five_tap(blur_v_outer[channel],blur_v_near[channel],blur_v_center[channel]);
+                    blur_vertical[channel]<=rounded_three_tap(blur_v_near[channel],blur_v_center[channel]);
                     blur_center6[channel]<=blur_v_center[channel];
                     raw6[channel]<=raw5[channel];
                 end
                 s7_valid<=s6_valid;s7_last<=s6_last;
                 if(s6_valid)for(channel=0;channel<3;channel=channel+1)begin
-                    bloom3[channel]<=vertical3[channel];bloom5[channel]<=vertical5[channel];
-                    normalized_vertical[channel]<=normalized_blur(blur_center6[channel],blur_vertical[channel],blur);
+                    bloom3[channel]<=vertical3[channel];
+                    normalized_vertical[channel]<=weaken_blur(raw6[channel],
+                        blur<2 ? blur_center6[channel] : blur_vertical[channel],blur);
                     raw7[channel]<=raw6[channel];
                 end
                 out_valid<=s7_valid;out_last<=s7_last;

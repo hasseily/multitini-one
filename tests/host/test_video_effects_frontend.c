@@ -40,10 +40,10 @@ static void test_descriptors(void)
           frontend.items[MT_VIDEO_EFFECT_HUE].control_value == 360U &&
           strcmp(frontend.values[MT_VIDEO_EFFECT_SOFTNESS], "Strong") == 0,
           "signed sliders and horizontal mode render correctly");
-    check(strcmp(frontend.items[MT_VIDEO_EFFECT_SOFTNESS].label,"Horizontal smoothing")==0 &&
-          strcmp(frontend.items[MT_VIDEO_EFFECT_BLUR].label,"Vertical smoothing")==0 &&
-          strstr(frontend.items[MT_VIDEO_EFFECT_SOFTNESS].help,"Independent")!=NULL &&
-          strstr(frontend.items[MT_VIDEO_EFFECT_BLUR].help,"output resolutions")!=NULL,
+    check(strcmp(frontend.items[MT_VIDEO_EFFECT_SOFTNESS].label,"Dot bleed")==0 &&
+          strcmp(frontend.items[MT_VIDEO_EFFECT_BLUR].label,"Blur")==0 &&
+          strstr(frontend.items[MT_VIDEO_EFFECT_SOFTNESS].help,"Appletini")!=NULL &&
+          strstr(frontend.items[MT_VIDEO_EFFECT_BLUR].help,"Strong widens")!=NULL,
           "axis controls explain their independence and resolution consistency");
     static const char *const levels[]={"Off","Light","Medium","Strong"};
     for(unsigned level=0U;level<4U;++level) {

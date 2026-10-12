@@ -5,6 +5,8 @@ module tb_display_control;
     always #5 clk = ~clk;
     logic resetn = 0, request = 0, geometry_ready=1;
     logic [3:0] requested_mode = 4;
+    logic [2:0] requested_multiplier=0;
+    wire [2:0] active_multiplier;
     logic quiescent = 0, frame_latched = 0, locked = 1;
     wire [3:0] active_mode;
     wire commit, busy, error, pause_reader, hold_video, clock_resetn;
@@ -15,9 +17,9 @@ module tb_display_control;
     logic [1:0] bresp = 0;
     multitini_display_control #(.TIMEOUT_CYCLES(512)) dut (
         .clk(clk), .resetn(resetn), .request(request),
-        .requested_mode(requested_mode), .geometry_ready(geometry_ready),
+        .requested_mode(requested_mode), .requested_multiplier(requested_multiplier), .geometry_ready(geometry_ready),
         .reader_quiescent(quiescent), .frame_latched(frame_latched),
-        .clock_locked(locked), .active_mode(active_mode),
+        .clock_locked(locked), .active_mode(active_mode), .active_multiplier(active_multiplier),
         .commit(commit), .busy(busy),
         .error(error), .reader_pause(pause_reader), .video_hold(hold_video),
         .clock_resetn(clock_resetn), .clock_awaddr(awaddr), .clock_awvalid(awvalid),
@@ -29,6 +31,7 @@ module tb_display_control;
     int reset_events = 0;
     logic aw_seen = 0, w_seen = 0, stall_clock = 0, stall_aw = 0;
     logic inject_bresp_error = 0;
+    logic keep_reload_locked = 0;
     logic [10:0] saved_addr;
     logic [31:0] saved_data;
     logic [31:0] staged_feedback, staged_output;
@@ -74,8 +77,13 @@ module tb_display_control;
                 if (saved_addr == 11'h208) staged_output <= saved_data;
                 if (saved_addr == 11'h25c) begin
                     if (saved_data != 3) $fatal(1, "clock LOAD value");
-                    locked <= 0;
-                    lock_timer <= 12;
+                    // Reloading identical dividers need not unlock hardware.
+                    // Targeted size-only transactions use this stable-LOCKED
+                    // model; mode-change/fault tests retain their relock model.
+                    if (!keep_reload_locked) begin
+                        locked <= 0;
+                        lock_timer <= 12;
+                    end
                     running_feedback <= staged_feedback;
                     running_output <= staged_output;
                 end
@@ -101,12 +109,45 @@ module tb_display_control;
         @(negedge clk); frame_latched = 0;
         wait (!busy);
     endtask
+    task automatic geometry_only_change(input logic [2:0] size);
+        integer before_writes, before_resets, waited, held;
+        logic [3:0] before_mode;
+        logic [31:0] before_feedback, before_output;
+        before_writes=writes;before_resets=reset_events;before_mode=active_mode;
+        before_feedback=running_feedback;before_output=running_output;
+        keep_reload_locked=1;
+        requested_multiplier=size;quiescent=0;
+        start_mode(before_mode);
+        repeat(12) @(negedge clk);
+        if (!busy || !pause_reader || hold_video || awvalid || wvalid)
+            $fatal(1,"geometry-only change did not drain before hold");
+        quiescent=1;waited=0;held=0;
+        while(!commit && waited<300)begin
+            @(negedge clk);waited++;if(hold_video)held++;
+            if(!locked || !clock_resetn)$fatal(1,"geometry-only change disturbed LOCKED/reset");
+        end
+        if(!commit)$fatal(1,"stable-LOCKED multiplier change stalled: writes=%0d locked=%0d",writes-before_writes,locked);
+        if(writes!=before_writes || awvalid || wvalid || reset_events!=before_resets ||
+           active_mode!=before_mode || active_multiplier!=size || !hold_video || held<32)
+            $fatal(1,"geometry-only change must hold/reset and commit without clock AXI writes");
+        @(negedge clk);geometry_ready=0;
+        repeat(40) @(negedge clk);
+        if(!hold_video || !busy)$fatal(1,"geometry-only change released before mailbox acknowledgement");
+        geometry_ready=1;finish_frame();
+        if(error || writes!=before_writes || running_feedback!=before_feedback || running_output!=before_output)
+            $fatal(1,"geometry-only change altered the pixel clock");
+        keep_reload_locked=0;
+        $display("PASS stable-LOCKED size %0d: drain/hold/commit/settle/frame, zero clock writes",size);
+    endtask
     int failure_writes, failure_resets;
     initial begin
         repeat (4) @(negedge clk);
         resetn = 1;
         wait (locked);
+        geometry_only_change(2);
+        geometry_only_change(0);
         for (int m = 0; m < VIDEO_MODE_COUNT; m++) begin
+            requested_multiplier=3'(m%5);
             quiescent = 0;
             start_mode(4'(m));
             repeat (12) @(negedge clk);
@@ -114,15 +155,21 @@ module tb_display_control;
                 $fatal(1, "must drain before touching clock");
             quiescent = 1;
             wait (commit);
-            if (active_mode != m || !locked)
+            if (active_mode != m || active_multiplier != m%5 || !locked)
                 $fatal(1, "mode/frame commit requires relock");
             @(negedge clk); geometry_ready=0;
             repeat(40) @(negedge clk);
             if(!hold_video) $fatal(1,"released before geometry acknowledgement");
             geometry_ready=1;
             finish_frame();
-            if (error || writes != (m + 1) * 24) $fatal(1, "mode apply failed");
+            if (error || writes != m * 24) $fatal(1, "mode apply failed");
         end
+        requested_multiplier=5;
+        start_mode(0);
+        repeat(4) @(negedge clk);
+        if(busy || !error || active_multiplier!=0 || active_mode!=VIDEO_MODE_COUNT-1)
+            $fatal(1,"invalid multiplier changed scanout");
+        requested_multiplier=0;
         start_mode(15);
         repeat (4) @(negedge clk);
         if (busy || !error || active_mode != VIDEO_MODE_COUNT - 1)
@@ -132,7 +179,7 @@ module tb_display_control;
         wait (!clock_resetn);
         stall_clock = 0;
         wait (commit);
-        if (active_mode != VIDEO_DEFAULT_MODE || !error)
+        if (active_mode != VIDEO_DEFAULT_MODE || active_multiplier!=0 || !error)
             $fatal(1, "timeout did not recover default clock");
         finish_frame();
         // Fail after the low pixel clock is already running. Reset alone

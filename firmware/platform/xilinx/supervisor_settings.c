@@ -10,7 +10,8 @@
 #define MT_SETTINGS_SCHEMA_V5 UINT32_C(5)
 #define MT_SETTINGS_SCHEMA_V6 UINT32_C(6)
 #define MT_SETTINGS_SCHEMA_V7 UINT32_C(7)
-#define MT_SETTINGS_SCHEMA UINT32_C(8)
+#define MT_SETTINGS_SCHEMA_V8 UINT32_C(8)
+#define MT_SETTINGS_SCHEMA UINT32_C(9)
 #define MT_SETTINGS_V7_WIRE_SIZE 5054U
 #define MT_SETTINGS_V6_WIRE_SIZE 5038U
 #define MT_SETTINGS_V5_WIRE_SIZE 4696U
@@ -378,6 +379,16 @@ bool mt_supervisor_settings_remember_video_effects(
     return true;
 }
 
+bool mt_supervisor_settings_remember_video_multiplier(
+    mt_supervisor_settings_t *settings, const char *core_id, uint8_t multiplier)
+{
+    if (multiplier > 4U) return false;
+    mt_core_settings_profile_t *const profile = find_profile(settings, core_id, true);
+    if (profile == NULL) return false;
+    profile->video_multiplier = multiplier;
+    return true;
+}
+
 const mt_controller_settings_profile_t *mt_supervisor_settings_find_controller(
     const mt_supervisor_settings_t *settings, uint32_t core_id,
     const mt_controller_identity_t *identity)
@@ -457,7 +468,7 @@ static bool settings_valid(const mt_supervisor_settings_t *settings)
             !borders_valid(profile->border_style, profile->border_color,
                             profile->border_padding) ||
             profile->vectrex_beam_gain > 3U || profile->vectrex_overlay_opacity > 3U ||
-            profile->genesis_three_button_mask > 3U ||
+            profile->genesis_three_button_mask > 3U || profile->video_multiplier > 4U ||
             !mt_video_effects_settings_valid(&profile->video_effects) ||
             (profile->joystick_port != 1U && profile->joystick_port != 2U)) {
             return false;
@@ -569,6 +580,7 @@ static bool encode_settings(const mt_supervisor_settings_t *settings)
         output[248U] = profile->vectrex_overlay_enabled ? 1U : 0U;
         output[249U] = profile->vectrex_beam_gain;
         output[250U] = profile->vectrex_overlay_opacity;
+        output[251U] = profile->video_multiplier;
         settings_wire[MT_SETTINGS_V6_WIRE_SIZE + index] = profile->genesis_three_button_mask;
         for (effect = 0U; effect < MT_VIDEO_EFFECT_COUNT; ++effect) {
             const uint16_t value = (uint16_t)mt_video_effects_get(
@@ -637,7 +649,8 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
     if (memcmp(settings_wire, settings_magic, sizeof(settings_magic)) != 0 ||
         (!legacy && schema != MT_SETTINGS_SCHEMA_V3 && schema != MT_SETTINGS_SCHEMA_V4 &&
          schema != MT_SETTINGS_SCHEMA_V5 && schema != MT_SETTINGS_SCHEMA_V6 &&
-         schema != MT_SETTINGS_SCHEMA_V7 && schema != MT_SETTINGS_SCHEMA) ||
+         schema != MT_SETTINGS_SCHEMA_V7 && schema != MT_SETTINGS_SCHEMA_V8 &&
+         schema != MT_SETTINGS_SCHEMA) ||
         wire_size != expected_size ||
         load_u32_le(settings_wire + 12U) != wire_size ||
         load_u32_le(settings_wire + 20U) != ~crc ||
@@ -648,12 +661,14 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
     }
     if (schema >= MT_SETTINGS_SCHEMA_V4) {
         for (index = 0U; index < MT_SETTINGS_MAX_PROFILES; ++index) {
-            if (settings_wire[MT_SETTINGS_HEADER_SIZE + MT_SETTINGS_GLOBAL_SIZE +
-                              index * profile_size + 251U] != 0U) return false;
+            const uint8_t multiplier = settings_wire[MT_SETTINGS_HEADER_SIZE + MT_SETTINGS_GLOBAL_SIZE +
+                                                     index * profile_size + 251U];
+            if (schema < MT_SETTINGS_SCHEMA ? multiplier != 0U :
+                (multiplier > 4U || (index >= profile_count && multiplier != 0U))) return false;
         }
     }
     mt_supervisor_settings_defaults(&settings_decode_candidate);
-    if (schema < MT_SETTINGS_SCHEMA) {
+    if (schema < MT_SETTINGS_SCHEMA_V8) {
         settings_decode_candidate.legacy_gamepad_pending = MT_SETTINGS_LEGACY_PAD_MASK;
     } else {
         const uint32_t count = load_u32_le(settings_wire + MT_SETTINGS_V7_WIRE_SIZE);
@@ -739,10 +754,11 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
             profile->vectrex_beam_gain = MT_SETTINGS_VECTREX_BEAM_GAIN_DEFAULT;
             profile->vectrex_overlay_opacity = MT_SETTINGS_VECTREX_OVERLAY_OPACITY_DEFAULT;
         } else {
-            if (input[248U] > 1U || input[251U] != 0U) return false;
+            if (input[248U] > 1U) return false;
             profile->vectrex_overlay_enabled = input[248U] != 0U;
             profile->vectrex_beam_gain = input[249U];
             profile->vectrex_overlay_opacity = input[250U];
+            profile->video_multiplier = schema >= MT_SETTINGS_SCHEMA ? input[251U] : 0U;
         }
         mt_video_effects_defaults(&profile->video_effects);
         if (schema >= MT_SETTINGS_SCHEMA_V5) {

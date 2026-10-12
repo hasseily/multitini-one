@@ -27,7 +27,7 @@ module tb_video_effects;
     reg [31:0] data=0,commit_seq=0;
     wire busy,valid,rejected;
     wire [31:0] active_sequence;
-    reg [15:0] rgb=0,neighbor_rgb=0;
+    reg [15:0] rgb=0,neighbor_rgb=0,opposite_rgb=0;
     reg [7:0] neighbor_weight=0;
     reg enable=0,de=0,hs=0,vs=0;
     reg [11:0] x=0,y=0;
@@ -42,7 +42,7 @@ module tb_video_effects;
         .effect_busy(busy),.effect_active_valid(valid),.effect_rejected(rejected),
         .effect_active_sequence(active_sequence),.pixel_clk(pixel_clk),.pixel_resetn(pixel_resetn),
         .shared_pixel_resetn(shared_pixel_resetn),.shared_pixel_running(shared_pixel_running),
-        .vblank_start(vblank),.pixel_rgb565(rgb),.pixel_neighbor_rgb565(neighbor_rgb),.pixel_neighbor_weight(neighbor_weight),.pixel_effect_enable(enable),
+        .vblank_start(vblank),.pixel_rgb565(rgb),.pixel_neighbor_rgb565(neighbor_rgb),.pixel_opposite_rgb565(opposite_rgb),.pixel_dot_valid(1'b1),.pixel_neighbor_weight(neighbor_weight),.pixel_effect_enable(enable),
         .pixel_x(x),.pixel_y(y),.pixel_de(de),.pixel_hsync(hs),.pixel_vsync(vs),
         .output_rgb565(output_rgb),.output_de(output_de),.output_hsync(output_hs),.output_vsync(output_vs)
     );
@@ -143,8 +143,11 @@ module tb_video_effects;
                     base_weight=((distance<0 ? -distance : distance)*128+SCALE_NUM/2)/SCALE_NUM;
                     current_pixel=source(sx,row);current_enable=allowed(column);
                     neighbor_rgb=source(nx,row);neighbor_weight=base_weight;
+                    nx=sx+(distance<0 ? 1:-1);
+                    if(nx<0)nx=0;if(nx>65*SCALE_DEN/SCALE_NUM)nx=65*SCALE_DEN/SCALE_NUM;
+                    opposite_rgb=source(nx,row);
                     mix_weight=((config_value>>4)&3)!=0 ? base_weight : 0;
-                    mixed_pixel=blend_pixel(current_pixel,neighbor_rgb,mix_weight);
+                    mixed_pixel=dot_pixel(current_pixel,neighbor_rgb,opposite_rgb,(config_value>>4)&3,SCALE_NUM==SCALE_DEN);
                     center_tone=tone(mixed_pixel);
                     for(channel=0;channel<3;channel=channel+1)begin
                         value=center_tone[channel*8+:8];
@@ -169,19 +172,25 @@ module tb_video_effects;
             for(column=0;column<9;column=column+1)pixel(0,0,column,99,0,0,0,0);
         end
     endtask
-    function automatic [15:0] blend_pixel(input [15:0] center,neighbor,input integer weight);
-        integer cr,cg,cb,nr,ng,nb,r,g,b;
+    function automatic [15:0] dot_pixel(input [15:0] center,near,far,input integer mode,input avg);
+        integer ch,shift,bits,mask,a,b,c,m,n,f,v,w;
+        reg [15:0] result;
         begin
-            cr=((center>>11)&31)*8+((center>>13)&7);
-            cg=((center>>5)&63)*4+((center>>9)&3);
-            cb=(center&31)*8+((center>>2)&7);
-            nr=((neighbor>>11)&31)*8+((neighbor>>13)&7);
-            ng=((neighbor>>5)&63)*4+((neighbor>>9)&3);
-            nb=(neighbor&31)*8+((neighbor>>2)&7);
-            r=(cr*(256-weight)+nr*weight+128)/256;
-            g=(cg*(256-weight)+ng*weight+128)/256;
-            b=(cb*(256-weight)+nb*weight+128)/256;
-            blend_pixel=((r>>3)<<11)|((g>>2)<<5)|(b>>3);
+            result=center;
+            if(mode!=0)begin
+                result=0;
+                case(mode)1:begin m=24;n=8;f=0;end 2:begin m=20;n=12;f=0;end default:begin m=17;n=14;f=1;end endcase
+                for(ch=0;ch<3;ch=ch+1)begin
+                    shift=ch==0 ? 11:ch==1 ? 5:0;bits=ch==1 ? 6:5;mask=(1<<bits)-1;
+                    a=(center>>shift)&mask;b=(near>>shift)&mask;c=(far>>shift)&mask;
+                    a=(a<<(8-bits))|(a>>(2*bits-8));b=(b<<(8-bits))|(b>>(2*bits-8));c=(c<<(8-bits))|(c>>(2*bits-8));
+                    v=((m*a+n*b+f*c+16)>>5)>>(8-bits);
+                    w=((m*a+n*c+f*b+16)>>5)>>(8-bits);
+                    if(avg)v=(v+w)>>1;
+                    result=result|(v<<shift);
+                end
+            end
+            dot_pixel=result;
         end
     endfunction
     task check_horizontal_arithmetic;
@@ -277,7 +286,7 @@ module tb_video_effects_oracle;
     reg [31:0] data=0,commit_seq=0;
     wire busy,valid,rejected;
     wire [31:0] active_seq;
-    reg [15:0] rgb=0,neighbor_rgb=0;
+    reg [15:0] rgb=0,neighbor_rgb=0,opposite_rgb=0;
     reg [7:0] neighbor_weight=0;
     reg enable=0;
     reg [11:0] x=0,y=0;
@@ -288,11 +297,11 @@ module tb_video_effects_oracle;
         .effect_address(address),.effect_data(data),.effect_commit(commit),.effect_commit_sequence(commit_seq),
         .effect_busy(busy),.effect_active_valid(valid),.effect_rejected(rejected),.effect_active_sequence(active_seq),
         .pixel_clk(pixel_clk),.pixel_resetn(resetn),.vblank_start(vblank),
-        .pixel_rgb565(rgb),.pixel_neighbor_rgb565(neighbor_rgb),.pixel_neighbor_weight(neighbor_weight),.pixel_effect_enable(enable),.pixel_x(x),.pixel_y(y),
+        .pixel_rgb565(rgb),.pixel_neighbor_rgb565(neighbor_rgb),.pixel_opposite_rgb565(opposite_rgb),.pixel_dot_valid(1'b1),.pixel_neighbor_weight(neighbor_weight),.pixel_effect_enable(enable),.pixel_x(x),.pixel_y(y),
         .pixel_de(1'b1),.pixel_hsync(1'b0),.pixel_vsync(1'b0),.output_rgb565(out_rgb),
         .output_de(),.output_hsync(),.output_vsync());
     reg [15:0] expected_queue[0:8];
-    integer fd,result,a,d,p,e,px,py,expected,n,w,i,q,count=0,checks=0,scenes=0;
+    integer fd,result,a,d,p,e,px,py,expected,n,w,o,i,q,count=0,checks=0,scenes=0;
     reg [2047:0] filename;
     reg [15:0] operation;
     reg pixels_pending=0;
@@ -338,9 +347,9 @@ module tb_video_effects_oracle;
                     scenes=scenes+1;count=0;
                 end
                 "P":begin
-                    result=$fscanf(fd,"%h %d %d %d %h %h %d",p,e,px,py,expected,n,w);
-                    neighbor_rgb=n;neighbor_weight=w;
-                    if(result!=7)$fatal(1,"Malformed oracle P");
+                    result=$fscanf(fd,"%h %d %d %d %h %h %d %h",p,e,px,py,expected,n,w,o);
+                    neighbor_rgb=n;neighbor_weight=w;opposite_rgb=o;
+                    if(result!=8)$fatal(1,"Malformed oracle P");
                     pixel(p,e!=0,px,py,expected);pixels_pending=1;
                 end
                 default:$fatal(1,"Unknown C oracle command %s",operation);

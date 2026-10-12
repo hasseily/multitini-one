@@ -288,6 +288,18 @@ static void test_live_settings_preserve_frame_schedule(void)
     assert(registers[MT_REG_VIDEO_FRAME_OPTIONS / 4U] == 0U);
     assert(registers[MT_REG_VIDEO_FRAME_CONTROL / 4U] == control);
     assert(error_clears == clears); /* Effects off retains fixed latency. */
+    /* The identity frame pipeline still runs with the master switch off.
+     * Its 60 Hz status must not obscure why saved blur/scanlines do nothing. */
+    registers[MT_REG_VIDEO_FRAME_STATUS / 4U] |= MT_VIDEO_FRAME_STATUS_DISPLAY_ACTIVE;
+    poll_bounded();
+    assert(strcmp(mt_video_effect_service_status(),
+        "Effects off; enable effects to apply saved controls.") == 0);
+
+    settings.enabled = 1U;
+    mt_video_effect_service_configure(true, &settings);
+    poll_bounded(); finish_apply(); poll_bounded();
+    assert(strstr(mt_video_effect_service_status(), "60 Hz") != NULL);
+    assert(error_clears == clears);
 
     mt_video_effect_service_suspend();
     assert(registers[MT_REG_VIDEO_FRAME_CONTROL / 4U] == 0U);

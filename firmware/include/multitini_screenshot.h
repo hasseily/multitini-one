@@ -24,10 +24,11 @@ bool mt_screenshot_png_end(mt_screenshot_png_t *png);
 typedef struct {
     /* Packed processed-frame snapshot, width * height. Temporal effects are
      * already present; the renderer applies display scaling and spatial/color
-     * effects. Cropped video uses viewport output dimensions and excludes UI. */
+     * effects. Cropped video uses the visible viewport rectangle and excludes UI. */
     const uint16_t *pixels;
     uint32_t width, height, core_id, border_config;
     uint8_t display_mode;
+    uint8_t video_multiplier; /* 0 = Auto; 1..4 = centered integer scale, clipped. */
     bool full_output, ui_visible; /* Full output also includes letterbox/UI/borders. */
     const mt_ui_frame_t *ui;
     const mt_video_effects_tables_t *effects;

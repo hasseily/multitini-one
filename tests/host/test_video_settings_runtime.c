@@ -19,6 +19,9 @@ static mt_sd_status_t test_save_status;
 static unsigned test_effect_calls;
 static bool test_effect_available;
 static mt_video_effects_settings_t test_effects;
+static bool test_display_enabled,test_display_fail,test_display_timeout;
+static uint32_t test_display_status,test_display_last_request,test_clock_ms;
+static unsigned test_display_writes,test_display_invalidations;
 
 bool mt_video_effect_service_available(void) { return test_effect_available; }
 void mt_video_effect_service_configure(bool supported, const mt_video_effects_settings_t *settings)
@@ -38,13 +41,17 @@ static _Noreturn void unexpected_service(void)
  * settings test actually reaches a timer, mode switch, USB or media action. */
 void XTime_GetTime(XTime *value)
 {
-    (void)value;
+    if(test_display_enabled) {
+        test_clock_ms+=100U;
+        *value=(XTime)((uint64_t)test_clock_ms*COUNTS_PER_SECOND/1000U);
+        return;
+    }
     unexpected_service();
 }
 
-void mt_video_effect_service_suspend(void) { unexpected_service(); }
-bool mt_video_effect_service_quiescent(void) { unexpected_service(); }
-void usb_hid_service_poll_deferred(void) { unexpected_service(); }
+void mt_video_effect_service_suspend(void) { if(!test_display_enabled)unexpected_service(); }
+bool mt_video_effect_service_quiescent(void) { if(!test_display_enabled)unexpected_service();return true; }
+void usb_hid_service_poll_deferred(void) { if(!test_display_enabled)unexpected_service(); }
 
 int usb_hid_service_set_symbolic_keyboard(bool enabled)
 {
@@ -61,7 +68,8 @@ int usb_hid_service_set_joystick_port(uint8_t port)
 void mt_ui_presenter_invalidate(mt_ui_presenter_t *presenter)
 {
     (void)presenter;
-    unexpected_service();
+    if(!test_display_enabled)unexpected_service();
+    ++test_display_invalidations;
 }
 
 int c64_d64_service_prepare_reset(void) { unexpected_service(); }
@@ -152,7 +160,8 @@ uint32_t Xil_In32(uintptr_t address)
     if (address == MT_SHELL_BASE_ADDRESS + MT_REG_CORE_ID) return test_core_id;
     if (address == MT_SHELL_BASE_ADDRESS + MT_REG_ABI_VERSION) return test_abi;
     /* This fixture exercises per-core controls without a mode-switch service. */
-    if (address == MT_SHELL_BASE_ADDRESS + MT_REG_DISPLAY_MODES) return 0U;
+    if (address == MT_SHELL_BASE_ADDRESS + MT_REG_DISPLAY_MODES) return test_display_enabled ? 63U:0U;
+    if (address == MT_SHELL_BASE_ADDRESS + MT_REG_DISPLAY_STATUS && test_display_enabled) return test_display_status;
     assert(!"Unexpected MMIO read");
     return 0U;
 }
@@ -162,6 +171,12 @@ void Xil_Out32(uintptr_t address, uint32_t value)
     ++test_mmio_writes;
     if (address == MT_SHELL_BASE_ADDRESS + MT_REG_BORDER_CONFIG) test_border = value;
     else if (address == MT_SHELL_BASE_ADDRESS + MT_REG_VECTREX_VIDEO_CONFIG) test_vectrex_video = value;
+    else if(address==MT_SHELL_BASE_ADDRESS+MT_REG_DISPLAY_REQUEST && test_display_enabled) {
+        assert((value&15U)<MT_DISPLAY_MODE_COUNT && (value>>4U)<=4U);
+        if((test_abi&0xffffU)<21U)assert((value&MT_DISPLAY_SCALE_MASK)==0U);
+        ++test_display_writes;test_display_last_request=value;
+        test_display_status=test_display_timeout ? MT_DISPLAY_BUSY : test_display_fail ? MT_DISPLAY_ERROR:value;
+    }
     else assert(!"Unexpected MMIO write");
 }
 
@@ -183,10 +198,11 @@ mt_sd_result_t mt_sd_storage_journal_replace(const char *path,
     const mt_sd_result_t result = {test_save_status, 0U, size};
     assert(strcmp(path, MT_SETTINGS_PATH) == 0);
     assert(strcmp(journal_path, MT_SETTINGS_JOURNAL_PATH) == 0);
-    assert(source != NULL && source[8U] == 8U && size == MT_SETTINGS_WIRE_SIZE);
+    assert(source != NULL && source[8U] == 9U && size == MT_SETTINGS_WIRE_SIZE);
     /* The visible hardware state must still have its previous value while
      * the complete settings write is in progress. */
-    assert(test_mmio_writes == 0U);
+    if(test_display_enabled)assert((test_display_status&(MT_DISPLAY_BUSY|MT_DISPLAY_ERROR))==0U && test_display_writes>0U);
+    else assert(test_mmio_writes == 0U);
     ++test_save_calls;
     return result;
 }
@@ -207,6 +223,9 @@ static void test_reset(uint32_t core_id, const char *id)
     test_mmio_writes = test_save_calls = 0U;
     test_save_status = MT_SD_OK;
     test_effect_calls = 0U;
+    test_display_enabled=test_display_fail=test_display_timeout=false;
+    test_display_status=test_display_last_request=test_clock_ms=0U;
+    test_display_writes=test_display_invalidations=0U;
     test_effect_available = true;
     mt_video_effects_defaults(&test_effects);
     settings_faulted = false;
@@ -449,6 +468,58 @@ static void test_effect_handlers(void)
     assert(test_effect_calls == 2U);
 }
 
+static void test_multiplier_runtime(void)
+{
+    test_reset(MT_GBC_CORE_ID,"gbc");
+    test_display_enabled=true;test_display_status=3U;
+    assert(selection_supports_video_multiplier(&supervisor.active));
+    change_active_video_multiplier(4U);
+    assert(test_display_writes==1U && test_save_calls==1U && test_display_status==67U);
+    assert(test_display_invalidations==1U && supervisor_status_color!=MT_UI_COLOR_RED);
+    const mt_core_settings_profile_t *profile=mt_supervisor_settings_find(&persistent_settings,"gbc");
+    assert(profile!=NULL && profile->video_multiplier==4U);
+    const mt_supervisor_settings_t before=persistent_settings;
+    test_save_status=MT_SD_WRITE_FAILED;
+    change_active_video_multiplier(2U);
+    assert(test_display_writes==3U && test_display_status==67U && test_save_calls==2U);
+    assert(memcmp(&persistent_settings,&before,sizeof(before))==0);
+    test_save_status=MT_SD_OK;test_display_fail=true;
+    change_active_video_multiplier(1U);
+    assert(test_save_calls==2U && memcmp(&persistent_settings,&before,sizeof(before))==0);
+    test_display_fail=false;test_display_status=67U;test_display_timeout=true;
+    change_active_video_multiplier(1U);
+    assert(test_save_calls==2U && memcmp(&persistent_settings,&before,sizeof(before))==0 && test_clock_ms<4000U);
+    test_display_timeout=false;test_display_status=67U;
+    const unsigned writes_before=test_display_writes;
+    change_active_video_multiplier(5U);
+    assert(test_display_writes==writes_before && test_save_calls==2U);
+    test_abi=20U;change_active_video_multiplier(2U);
+    assert(test_display_writes==writes_before && test_save_calls==2U);
+    assert(persistent_settings.profiles[0].video_multiplier==4U);
+    test_abi=MT_ABI_VERSION;supervisor.active.package.abi_minor=20U;
+    change_active_video_multiplier(2U);assert(test_display_writes==writes_before);
+    supervisor.active.package.abi_minor=MT_ABI_MINOR;
+    test_display_status=0U;persistent_settings.display_mode=2U;
+    test_core_id=MT_VECTREX_CORE_ID;supervisor.active.package.core_id=MT_VECTREX_CORE_ID;
+    strcpy(supervisor.active.package.id,"vectrex");
+    assert(mt_supervisor_settings_remember_variant(&persistent_settings,"vectrex","default"));
+    assert(mt_supervisor_settings_remember_video_multiplier(&persistent_settings,"vectrex",4U));
+    assert(restore_selection_settings(&supervisor.active));
+    assert(test_display_status==66U && test_display_last_request==66U);
+    mt_core_selection_t new_core=supervisor.active;
+    strcpy(new_core.package.id,"vectrex-new");
+    assert(restore_selection_settings(&new_core) && test_display_status==2U);
+    assert(restore_selection_settings(&supervisor.active) && test_display_status==66U);
+    /* A different core without a saved size receives Auto at its own restore. */
+    test_core_id=MT_GENESIS_CORE_ID;supervisor.active.package.core_id=MT_GENESIS_CORE_ID;
+    strcpy(supervisor.active.package.id,"genesis");
+    /* Genesis has media/pad restore dependencies; exercise only its geometry
+     * selection here, while the complete Vectrex restore above uses production code. */
+    profile=mt_supervisor_settings_find(&persistent_settings,"genesis");
+    assert(profile==NULL && apply_video_multiplier(profile!=NULL ? profile->video_multiplier:0U));
+    assert(test_display_status==2U);
+}
+
 int main(void)
 {
     test_guards();
@@ -457,6 +528,7 @@ int main(void)
     test_vectrex_video_guards_and_saves();
     test_vectrex_video_restore();
     test_effect_handlers();
+    test_multiplier_runtime();
     puts("PASS: board border/Vectrex video guards, save ordering, rollback and restore selection");
     return 0;
 }

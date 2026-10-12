@@ -29,12 +29,15 @@ def main():
                          "hdl/board/multitini_one_top.sv", "hdl/hdl_sources.txt"]
     before = {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in tracked}
     guard = [sys.executable, str(ROOT / "scripts/run_native_tool.py"), "--"] if os.name == "nt" else []
-    image = build / "settling.vvp"
-    commands = [
-        ("compile", [args.iverilog, "-g2012", "-s", "tb_display_mode_settling", "-o", str(image)]
-         + [str(ROOT / p) for p in sources]),
-        ("run", [args.vvp, str(image)]),
-    ]
+    commands = []
+    for name, machine, width, height in (("c64", 0, 382, 270), ("gbc", 1, 160, 144),
+                                        ("vectrex", 3, 540, 720), ("genesis", 4, 320, 240)):
+        image = build / (name + ".vvp")
+        command = [args.iverilog, "-g2012", "-s", "tb_display_mode_settling"]
+        for key, value in (("MACHINE", machine), ("WIDTH", width), ("HEIGHT", height)):
+            command += ["-P", f"tb_display_mode_settling.{key}={value}"]
+        commands += [(name + "-compile", command + ["-o", str(image)] + [str(ROOT / p) for p in sources]),
+                     (name + "-run", [args.vvp, str(image)])]
     logs = []
     for name, command in commands:
         result = subprocess.run(guard + command, cwd=build, stdout=subprocess.PIPE,
@@ -44,8 +47,8 @@ def main():
         if result.returncode:
             print(result.stdout)
             raise RuntimeError(name + " failed")
-        if name == "run":
-            if "PASS display mode settling: 6 modes," not in result.stdout:
+        if name.endswith("-run"):
+            if "PASS display mode settling: 6 modes, 5 multipliers, 30 atomic transactions," not in result.stdout:
                 raise RuntimeError("display settling coverage marker missing")
             print(result.stdout.strip())
     after = {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in tracked}

@@ -72,8 +72,9 @@ const char *mt_video_effect_service_status(void)
     if (state == MT_VIDEO_WORKER_STARTING) return "CPU1 is starting.";
     if (phase == FAULT) return "Video update failed. The previous complete configuration remains active.";
     if (phase != APPLIED) return "Applying effects at the next complete display frame.";
+    if (desired.enabled == 0U) return "Effects off; enable effects to apply saved controls.";
     if (mt_video_frame_service_status() != NULL) return mt_video_frame_service_status();
-    return desired.enabled != 0U ? "FPGA effects active; CPU1 ready" : "CPU1 ready; video effects off";
+    return "FPGA effects active; CPU1 ready";
 }
 
 bool mt_video_effect_service_snapshot(mt_video_effects_tables_t *snapshot)

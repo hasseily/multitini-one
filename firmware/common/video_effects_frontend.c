@@ -30,8 +30,8 @@ void mt_video_effects_frontend_apply(mt_video_effects_frontend_t *frontend,
     static const char *const labels[MT_VIDEO_EFFECT_COUNT] = {
         "Enable effects", "Brightness", "Contrast", "Gamma", "Saturation", "Hue",
         "Color temperature", "Red gain", "Green gain", "Blue gain", "Display tint",
-        "Negative", "Posterize", "Scanlines", "Pixel mask", "Horizontal smoothing",
-        "Persistence", "Vertical smoothing", "Bloom"
+        "Negative", "Posterize", "Scanlines", "Pixel mask", "Dot bleed",
+        "Persistence", "Blur", "Glow"
     };
     static const char *const help[MT_VIDEO_EFFECT_COUNT] = {
         "Apply saved effects to the game image. Menus and decorative borders keep their original colors.",
@@ -48,10 +48,10 @@ void mt_video_effects_frontend_apply(mt_video_effects_frontend_t *frontend,
         "Reduce the number of levels per channel for a deliberately stepped palette.",
         "Darken alternating source-row bands after scaling, keeping the menu readable.",
         "Simulate aperture grille, staggered shadow mask, or LCD pixel grid at output resolution.",
-        "Smooth neighboring source pixels horizontally, then blend scaled edges. Independent of vertical smoothing; consistent across output resolutions.",
+        "Spread dots sideways with Appletini spot weights. Light keeps dots sharp; Medium brightens gap edges; Strong adds a faint gap-center contribution.",
         "Keep a fading phosphor trail behind moving pixels. Off preserves original motion.",
-        "Blend neighboring source rows vertically. Independent of horizontal smoothing; strength stays consistent across output resolutions.",
-        "Add a soft light halo around bright pixels. Independent of smoothing and persistence."
+        "Gentle phosphor blur: Light adds slight horizontal softening; Medium adds vertical softening; Strong widens the horizontal spot.",
+        "Add a soft light halo around bright pixels. Independent of Blur and persistence."
     };
     static const char *const tints[] = {"Color", "White", "Green", "Amber", "Sepia"};
     static const char *const masks[] = {"Off", "Aperture grille", "Shadow mask", "LCD grid"};

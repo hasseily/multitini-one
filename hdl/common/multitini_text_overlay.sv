@@ -178,6 +178,7 @@ module multitini_text_overlay #(
     logic [CELL_ADDRESS_WIDTH-1:0] read_address;
     logic coordinate_active_q;
     logic coordinate_active_qq;
+    logic coordinate_glyph_q;
     logic active_visible_q;
     logic active_visible_qq;
     logic [63:0] glyph_q;
@@ -267,13 +268,17 @@ module multitini_text_overlay #(
     wire compact=DYNAMIC_DISPLAY && display_h_active<1920;
     logic [11:0] text_width, text_height;
     logic [4:0] compact_glyph_x, compact_glyph_y;
+    wire [11:0] h_active=DYNAMIC_DISPLAY ? display_h_active : H_ACTIVE;
+    wire [11:0] v_active=DYNAMIC_DISPLAY ? display_v_active : V_ACTIVE;
     wire [11:0] h_total=DYNAMIC_DISPLAY ? display_h_total : H_TOTAL;
     wire [11:0] v_total=DYNAMIC_DISPLAY ? display_v_total : V_TOTAL;
 
     // The six supported display modes have fixed cell geometry. Decode the
     // already selected dimensions instead of dividing and then multiplying
     // them in the pixel-rate cursor path. Constants equal floor(width/columns)
-    // and floor(height/rows); unused edge pixels stay outside the text plane.
+    // and floor(height/rows). Remainder strips inherit the nearest edge cell's
+    // background and transparency, with no glyphs, so an opaque menu covers
+    // the complete display without changing its grid or stretching the font.
     // This leaves the BRAM/font/output pipeline and its lookahead unchanged.
     always_comb begin
         cell_width = active_dense ? MT_UI_CELL_WIDTH : MT_UI_LEGACY_CELL_WIDTH;
@@ -363,6 +368,7 @@ module multitini_text_overlay #(
             local_y_qq <= 5'd0;
             coordinate_active_q <= 1'b0;
             coordinate_active_qq <= 1'b0;
+            coordinate_glyph_q <= 1'b0;
             active_visible_q <= 1'b0;
             active_visible_qq <= 1'b0;
             glyph_q <= 64'd0;
@@ -411,6 +417,12 @@ module multitini_text_overlay #(
                             fetch_local_y <= fetch_local_y + 5'd1;
                             fetch_address <= fetch_row_base;
                         end
+                    end else if (fetch_y < v_active - 1) begin
+                        // Retain the final text row through the bottom strip.
+                        // Its cell backgrounds still vary by column.
+                        fetch_local_y <= 5'd0;
+                        fetch_address <= fetch_row_base;
+                        fetch_active <= 1'b1;
                     end else begin
                         fetch_local_y <= 5'd0;
                         fetch_row_base <= '0;
@@ -420,7 +432,7 @@ module multitini_text_overlay #(
                 end
             end else begin
                 fetch_x <= fetch_x + 12'd1;
-                if (fetch_y < text_height && fetch_x < text_width - 1) begin
+                if (fetch_y < v_active && fetch_x < text_width - 1) begin
                     fetch_active <= 1'b1;
                     if (fetch_local_x == cell_width - 1) begin
                         fetch_local_x <= 5'd0;
@@ -428,6 +440,11 @@ module multitini_text_overlay #(
                     end else begin
                         fetch_local_x <= fetch_local_x + 5'd1;
                     end
+                end else if (fetch_y < v_active && fetch_x < h_active - 1) begin
+                    // Retain the final cell in the right strip. The glyph
+                    // coordinate flag suppresses repeats outside the grid.
+                    fetch_local_x <= 5'd0;
+                    fetch_active <= 1'b1;
                 end else begin
                     fetch_local_x <= 5'd0;
                     fetch_active <= 1'b0;
@@ -436,6 +453,7 @@ module multitini_text_overlay #(
             local_x_q <= fetch_local_x;
             local_y_q <= fetch_local_y;
             coordinate_active_q <= fetch_active;
+            coordinate_glyph_q <= fetch_x < text_width && fetch_y < text_height;
             active_visible_q <= active_visible;
             local_x_qq <= local_x_q;
             local_y_qq <= local_y_q;
@@ -510,6 +528,7 @@ module multitini_text_overlay #(
                 glyph_in_bounds = 1'b1;
             end
         end
+        if (!coordinate_glyph_q) glyph_in_bounds = 1'b0;
         // Share one bit mux across layouts instead of selecting among three
         // glyph-data muxes after the font BRAM's clock-to-output delay.
         glyph_pixel = glyph_in_bounds_q && glyph_q[{glyph_y_q, glyph_x_q}];

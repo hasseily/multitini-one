@@ -5,10 +5,21 @@ module tb_video_frame_reader;
     parameter integer WIDTH=68;
     parameter bit SHARED_PIXEL_RESET=0;
     parameter bit DYNAMIC_DISPLAY=0;
-    localparam integer HEIGHT=9, VIEW_X=12, VIEW_Y=2;
+    parameter integer HEIGHT=9,VIEW_X=12,VIEW_Y=2;
+    parameter integer H_ACTIVE=VIEW_X+WIDTH*SCALE_NUM/SCALE_DEN+1;
+    parameter integer V_ACTIVE=VIEW_Y+HEIGHT*SCALE_NUM/SCALE_DEN;
+    localparam integer H_TOTAL=H_ACTIVE+29,V_TOTAL=128;
     localparam integer OUT_WIDTH=WIDTH*SCALE_NUM/SCALE_DEN;
     localparam integer OUT_HEIGHT=HEIGHT*SCALE_NUM/SCALE_DEN;
     localparam integer STRIDE=((WIDTH+63)/64)*128;
+    localparam integer SOURCE_X0=(VIEW_X<0 ? -VIEW_X*SCALE_DEN/SCALE_NUM : 0);
+    localparam integer SOURCE_Y0=(VIEW_Y<0 ? -VIEW_Y*SCALE_DEN/SCALE_NUM : 0);
+    localparam integer PHASE_X0=(VIEW_X<0 ? -VIEW_X*SCALE_DEN%SCALE_NUM : 0);
+    localparam integer PHASE_Y0=(VIEW_Y<0 ? -VIEW_Y*SCALE_DEN%SCALE_NUM : 0);
+    localparam integer VISIBLE_X0=VIEW_X<0 ? 0:VIEW_X;
+    localparam integer VISIBLE_Y0=VIEW_Y<0 ? 0:VIEW_Y;
+    localparam integer VISIBLE_X1=VIEW_X+OUT_WIDTH<H_ACTIVE ? VIEW_X+OUT_WIDTH:H_ACTIVE;
+    localparam integer VISIBLE_Y1=VIEW_Y+OUT_HEIGHT<V_ACTIVE ? VIEW_Y+OUT_HEIGHT:V_ACTIVE;
     reg clk=0,pixel_clk=0;
     always #5 clk=!clk;
     always #3.5 pixel_clk=!pixel_clk;
@@ -35,7 +46,7 @@ module tb_video_frame_reader;
     reg [11:0] scan_x=0,scan_y=100;
     reg vblank_start=0;
     wire [15:0] pixel_rgb565;
-    wire [15:0] pixel_neighbor_rgb565;
+    wire [15:0] pixel_neighbor_rgb565,pixel_opposite_rgb565;
     wire [7:0] pixel_neighbor_weight;
     wire [31:0] araddr;
     wire [3:0] arlen;
@@ -43,6 +54,7 @@ module tb_video_frame_reader;
     wire [1:0] arburst;
     wire arvalid,rready;
     reg stall=0,inject_error=0;
+    reg geometry_glitch=0;
     reg transaction=0;
     reg [31:0] read_base;
     integer cycle=0,beat=0,length=0,delay_count=0,reads=0;
@@ -64,7 +76,14 @@ module tb_video_frame_reader;
                        memory_pixel(address_now+2),memory_pixel(address_now)};
     multitini_video_frame_reader #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.WIDTH(WIDTH),.HEIGHT(HEIGHT),
         .VIEW_X(VIEW_X),.VIEW_Y(VIEW_Y),.SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN),
-        .SHARED_PIXEL_RESET(SHARED_PIXEL_RESET),.SHARED_PIXEL_LIVENESS(SHARED_PIXEL_RESET)) dut(.display_view_x(12'(VIEW_X)),.display_view_y(12'(VIEW_Y)),.display_view_width(12'(OUT_WIDTH)),.display_view_height(12'(OUT_HEIGHT)),.display_scale_num(4'(SCALE_NUM)),.display_scale_den(4'(SCALE_DEN)),.*);
+        .H_ACTIVE(H_ACTIVE),.V_ACTIVE(V_ACTIVE),.H_TOTAL(H_TOTAL),.V_TOTAL(V_TOTAL),
+        .SHARED_PIXEL_RESET(SHARED_PIXEL_RESET),.SHARED_PIXEL_LIVENESS(SHARED_PIXEL_RESET)) dut(
+        .display_view_x(12'(VIEW_X+(geometry_glitch ? 3:0))),.display_view_y(12'(VIEW_Y+(geometry_glitch ? 2:0))),
+        .display_view_width(12'(OUT_WIDTH)),.display_view_height(12'(OUT_HEIGHT)),
+        .display_scale_num(4'(SCALE_NUM)),.display_scale_den(4'(SCALE_DEN)),
+        .display_h_active(12'(H_ACTIVE)),.display_v_active(12'(V_ACTIVE)),.display_h_total(12'(H_TOTAL)),.display_v_total(12'(V_TOTAL)),
+        .display_source_x0(10'(SOURCE_X0+(geometry_glitch ? 1:0))),.display_source_y0(10'(SOURCE_Y0+(geometry_glitch ? 1:0))),
+        .display_phase_x0(4'(PHASE_X0)),.display_phase_y0(4'(PHASE_Y0)),.*);
     always @(posedge clk) begin
         cycle<=cycle+1;
         if (arvalid && arready) begin
@@ -103,18 +122,23 @@ module tb_video_frame_reader;
         integer x,y,sx,sy,distance,neighbor,weight;
         reg [15:0] expected;
         begin
-            for(y=0;y<VIEW_Y+OUT_HEIGHT+2;y=y+1) begin
-                for(x=0;x<VIEW_X+OUT_WIDTH+30;x=x+1) begin
+            // Real raster blanking supplies lookahead clocks even when the
+            // first visible sample is x=0,y=0. Never inject hidden leading
+            // pixels in the active raster to make that sample pass.
+            for(x=H_TOTAL-8;x<H_TOTAL;x=x+1)begin
+                @(negedge pixel_clk);scan_x=x;scan_y=V_TOTAL-1;
+            end
+            for(y=0;y<V_ACTIVE+2;y=y+1) begin
+                for(x=0;x<H_TOTAL;x=x+1) begin
                     @(negedge pixel_clk);scan_x=x;scan_y=y;#1;
-                    if(queue_midframe && x==0 && y==VIEW_Y+OUT_HEIGHT/2) begin
+                    if(queue_midframe && x==0 && y==VISIBLE_Y0+(VISIBLE_Y1-VISIBLE_Y0)/2) begin
                         fork begin
                             @(negedge clk);submit_value=9;submit=1;
                             @(negedge clk);submit=0;
                         end join_none
                         queue_midframe=0;
                     end
-                    if(x>=VIEW_X && x<VIEW_X+OUT_WIDTH &&
-                       y>=VIEW_Y && y<VIEW_Y+OUT_HEIGHT) begin
+                    if(x>=VISIBLE_X0 && x<VISIBLE_X1 && y>=VISIBLE_Y0 && y<VISIBLE_Y1) begin
                         if(pixel_use!==want_processed[0])
                             $fatal(1,"pixel use x%0d y%0d wanted%0d got%0d nextrow%0d current%0d valid%0h",
                                 x,y,want_processed,pixel_use,dut.next_row,dut.current_row,dut.line_valid);
@@ -131,6 +155,11 @@ module tb_video_frame_reader;
                             expected=memory_pixel(32'h22400000+(slot<<20)+sy*STRIDE+neighbor*2);
                             if(pixel_neighbor_rgb565!==expected || pixel_neighbor_weight!==weight[7:0])
                                 $fatal(1,"wrong neighbor x%0d y%0d got%h/%0d expected%h/%0d",x,y,pixel_neighbor_rgb565,pixel_neighbor_weight,expected,weight);
+                            neighbor=sx+(distance<0 ? 1 : -1);
+                            if(neighbor<0)neighbor=0;if(neighbor>=WIDTH)neighbor=WIDTH-1;
+                            expected=memory_pixel(32'h22400000+(slot<<20)+sy*STRIDE+neighbor*2);
+                            if(pixel_opposite_rgb565!==expected)
+                                $fatal(1,"wrong opposite neighbor x%0d y%0d got%h expected%h",x,y,pixel_opposite_rgb565,expected);
                             checked=checked+1;
                         end
                     end else if(pixel_use) $fatal(1,"processed pixel outside viewport");
@@ -141,7 +170,21 @@ module tb_video_frame_reader;
     integer before_reads;
     reg [31:0] before_reset_epoch;
     initial begin
-        repeat(12) @(posedge clk);resetn=1;pixel_resetn=1;
+        geometry_glitch=DYNAMIC_DISPLAY;
+        repeat(12) @(posedge clk);resetn=1;
+        if(DYNAMIC_DISPLAY)begin
+            // The caller holds pixels while new geometry settles. Exercise
+            // an actual changed source seed, then restore the desired mode
+            // for eight held clocks before the normal release guard starts.
+            repeat(8)@(negedge pixel_clk);
+            if(dut.source_x0!==10'(SOURCE_X0+1) || dut.source_y0!==10'(SOURCE_Y0+1))
+                $fatal(1,"Held geometry snapshot did not capture changed source seeds");
+            geometry_glitch=0;repeat(8)@(negedge pixel_clk);
+            if(dut.source_x0!==10'(SOURCE_X0) || dut.source_y0!==10'(SOURCE_Y0) ||
+                dut.phase_x0!==4'(PHASE_X0) || dut.phase_y0!==4'(PHASE_Y0))
+                $fatal(1,"Held geometry snapshot did not settle before pixel release");
+        end
+        pixel_resetn=1;
         repeat(12) @(posedge clk);
         if(!quiescent) $fatal(1,"reset did not start quiescent");
         enable=1;
@@ -180,7 +223,9 @@ module tb_video_frame_reader;
         wait(active_valid && active_value==9);
         scan_frame(1,1);
         // No publication: the same immutable slot must repeat cleanly.
-        blank;scan_frame(1,1);
+        // Uncommitted metadata changes must not alter running scanout. The
+        // reader only snapshots geometry during its held reset interval.
+        geometry_glitch=1;blank;scan_frame(1,1);geometry_glitch=0;
         // An AXI error never validates even the partial row written to RAM.
         inject_error=1;blank;scan_frame(1,0);
         if(error_count==0 || underrun_count==0) $fatal(1,"fault diagnostics missing");
@@ -211,7 +256,8 @@ module tb_video_frame_reader;
         repeat(100) @(posedge clk);
         if(reads!=before_reads) $fatal(1,"pixel reset did not stop new reads");
         pixel_resetn=1;enable=1;publish(32'h10);blank;scan_frame(0,1);
-        $display("PASS video frame reader: scale %0d/%0d, %0d pixels, publication/error/drain passed",SCALE_NUM,SCALE_DEN,checked);
+        $display("PASS video frame reader: scale %0d/%0d origin%0d,%0d active%0dx%0d source%0d,%0d phase%0d,%0d, %0d pixels, publication/error/drain passed",
+            SCALE_NUM,SCALE_DEN,VIEW_X,VIEW_Y,H_ACTIVE,V_ACTIVE,SOURCE_X0,SOURCE_Y0,PHASE_X0,PHASE_Y0,checked);
         $finish;
     end
     initial begin #10000000;$fatal(1,"timeout");end

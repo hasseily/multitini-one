@@ -3,6 +3,7 @@
 
 module tb_border_overlay;
     parameter bit DYNAMIC_DISPLAY=0;
+    parameter bit SIGNED_VIEWPORT=0;
     localparam integer HA=DYNAMIC_DISPLAY ? 1024 : 1920;
     localparam integer VA=DYNAMIC_DISPLAY ? 768 : 1080;
     localparam integer HT=DYNAMIC_DISPLAY ? 1344 : 2200;
@@ -15,7 +16,7 @@ module tb_border_overlay;
     wire opaque;
     wire [15:0] rgb;
     integer checks=0, lit=0;
-    multitini_border_overlay #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY)) dut(
+    multitini_border_overlay #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.SIGNED_VIEWPORT(SIGNED_VIEWPORT)) dut(
         .display_h_active(12'(HA)),.display_h_total(12'(HT)),
         .display_v_active(12'(VA)),.display_v_total(12'(VT)),
         .pixel_clk(clk),.resetn(resetn),.scan_x(scan_x),.scan_y(scan_y),
@@ -37,6 +38,9 @@ module tb_border_overlay;
         perimeter=((x==l || x==r) && y>=t && y<=b) ||
                   ((y==t || y==b) && x>=l && x<=r);
     endfunction
+    function automatic integer origin(input [11:0] value);
+        origin=SIGNED_VIEWPORT && value[11] ? integer'(value)-4096 : integer'(value);
+    endfunction
     // Reference builds explicit rectangles, independently of the DUT's
     // signed-distance pipeline. Return opaque + RGB565.
     function automatic [16:0] expected(input integer x,y);
@@ -47,7 +51,8 @@ module tb_border_overlay;
             pad=config_word[12:8];
             if(pad<1) pad=1;
             if(pad>20) pad=20;
-            l=vx-pad-1; r=vx+vw+pad; t=vy-pad-1; b=vy+vh+pad;
+            l=origin(vx)-pad-1;r=origin(vx)+vw+pad;
+            t=origin(vy)-pad-1;b=origin(vy)+vh+pad;
             style=config_word[3:1]; shade=-1;
             if(style==1) begin
                 if(perimeter(x,y,l,t,r,b) || perimeter(x,y,l-3,t-3,r+3,b+3)) shade=0;
@@ -88,7 +93,7 @@ module tb_border_overlay;
         end
     endtask
 
-    integer geometry,style,palette_index,padding_index,pad,d,s,x,y,fd;
+    integer geometry,style,palette_index,padding_index,pad,d,s,x,y,fd,ox,oy;
     reg [16:0] wanted;
     reg [23:0] out_rgb;
     string capture;
@@ -96,7 +101,7 @@ module tb_border_overlay;
         repeat(5) @(posedge clk);
         @(negedge clk); resetn=1;
         // Full-sized games, scaled windows, and a viewport touching all edges.
-        for(geometry=0;geometry<6;geometry=geometry+1) begin
+        for(geometry=0;geometry<(SIGNED_VIEWPORT ? 9:6);geometry=geometry+1) begin
             case(geometry)
             0:begin vx=555;vy=0;vw=810;vh=VA;end
             1:begin vx=196;vy=0;vw=1528;vh=VA;end
@@ -104,7 +109,11 @@ module tb_border_overlay;
             3:begin vx=480;vy=108;vw=960;vh=864;end
             4:begin vx=825;vy=360;vw=270;vh=360;end
             5:begin vx=0;vy=0;vw=HA;vh=VA;end
+            6:begin vx=-120;vy=-90;vw=HA+240;vh=VA+180;end
+            7:begin vx=-120;vy=(VA-360)/2;vw=HA+240;vh=360;end
+            8:begin vx=(HA-540)/2;vy=-180;vw=540;vh=VA+360;end
             endcase
+            ox=origin(vx);oy=origin(vy);
             for(style=0;style<5;style=style+1)
             for(palette_index=0;palette_index<16;palette_index=palette_index+1)
             for(padding_index=0;padding_index<3;padding_index=padding_index+1) begin
@@ -112,20 +121,26 @@ module tb_border_overlay;
                 config_word=1|(style<<1)|(palette_index<<4)|(pad<<8);
                 for(d=-4;d<=4;d=d+1) begin
                     // Edges, gaps, style thickness and each clipped endpoint.
-                    check_pixel(vx-pad-1+d,0);
-                    check_pixel(vx-pad-1+d,(VA-1));
-                    check_pixel(vx+vw+pad+d,540);
-                    check_pixel(960,vy-pad-1+d);
-                    check_pixel(960,vy+vh+pad+d);
+                    check_pixel(ox-pad-1+d,0);
+                    check_pixel(ox-pad-1+d,(VA-1));
+                    check_pixel(ox+vw+pad+d,VA/2);
+                    check_pixel(HA/2,oy-pad-1+d);
+                    check_pixel(HA/2,oy+vh+pad+d);
                     for(s=0;s<5;s=s+1) begin
-                        check_pixel(vx-pad-1+d,vy-pad-1+s*8);
-                        check_pixel(vx-pad-1+s*8,vy-pad-1+d);
-                        check_pixel(vx+vw+pad+d,vy+vh+pad-s*8);
-                        check_pixel(vx+vw+pad-s*8,vy+vh+pad+d);
+                        check_pixel(ox-pad-1+d,oy-pad-1+s*8);
+                        check_pixel(ox-pad-1+s*8,oy-pad-1+d);
+                        check_pixel(ox+vw+pad+d,oy+vh+pad-s*8);
+                        check_pixel(ox+vw+pad-s*8,oy+vh+pad+d);
                     end
                 end
-                check_pixel(vx,vy); check_pixel(vx+vw-1,vy+vh-1);
-                check_pixel(HA,540); check_pixel(960,VA);
+                check_pixel(ox,oy);check_pixel(ox+vw-1,oy+vh-1);
+                check_pixel(HA,VA/2);check_pixel(HA/2,VA);
+                if(SIGNED_VIEWPORT)begin
+                    // Screen-edge samples must never invent a border at the
+                    // clipped edge instead of the full image's off-screen edge.
+                    check_pixel(0,VA/2);check_pixel(HA-1,VA/2);
+                    check_pixel(HA/2,0);check_pixel(HA/2,VA-1);
+                end
             end
         end
         // Disabled and empty-window guards.

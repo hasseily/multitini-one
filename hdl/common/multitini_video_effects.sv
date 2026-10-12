@@ -26,8 +26,13 @@ module multitini_video_effects #(
     input wire pixel_clk, pixel_resetn, shared_pixel_resetn, shared_pixel_running, vblank_start,
     input wire [15:0] pixel_rgb565,
     input wire [15:0] pixel_neighbor_rgb565,
+    input wire [15:0] pixel_opposite_rgb565,
+    input wire pixel_dot_valid,
     input wire [7:0] pixel_neighbor_weight,
     input wire pixel_effect_enable,
+    // Full-image relative coordinates, including the clipped prefix. The
+    // caller gates pixels outside that image; output-screen coordinates would
+    // incorrectly restart scanline/mask phase at a clipped screen edge.
     input wire [11:0] pixel_x, pixel_y,
     input wire pixel_de, pixel_hsync, pixel_vsync,
     output reg [15:0] output_rgb565,
@@ -178,35 +183,62 @@ module multitini_video_effects #(
     // Register the fully composed pixel before the DSPs. Native BRAM scanout,
     // DDR cache selection, borders and text all end at this common boundary.
     // Every pixel and its timing/viewport metadata therefore gains one cycle.
-    reg [15:0] sample_rgb565, sample_neighbor_rgb565;
-    reg [7:0] sample_weight;
+    reg [15:0] sample_rgb565, sample_neighbor_rgb565,sample_opposite_rgb565;
+    reg [1:0] sample_dot_level;
+    reg sample_average,blend_average;
     reg sample_enable,sample_de,sample_hsync,sample_vsync;
     reg [11:0] sample_x,sample_y;
     always @(posedge pixel_clk)begin
         if(!pixel_run)begin
-            sample_rgb565<=0;sample_neighbor_rgb565<=0;sample_weight<=0;
+            sample_rgb565<=0;sample_neighbor_rgb565<=0;sample_opposite_rgb565<=0;sample_dot_level<=0;sample_average<=0;
             sample_enable<=0;sample_de<=0;sample_hsync<=0;sample_vsync<=0;
             sample_x<=0;sample_y<=0;
         end else begin
             sample_rgb565<=pixel_rgb565;sample_enable<=pixel_effect_enable;
             sample_neighbor_rgb565<=pixel_neighbor_rgb565;
-            if(!pixel_effect_enable || !active_valid_pixel || !spatial[6])sample_weight<=0;
-            // Strength is applied once by the native horizontal prefilter.
-            // Every enabled level uses full, bounded centered interpolation.
-            else sample_weight<=spatial[5:4]!=0 ? pixel_neighbor_weight : 8'd0;
+            sample_opposite_rgb565<=pixel_opposite_rgb565;
+            sample_dot_level<=pixel_effect_enable && pixel_dot_valid && active_valid_pixel && spatial[6] ? spatial[5:4] : 2'd0;
+            sample_average<=DYNAMIC_DISPLAY ? display_scale_num==display_scale_den : SOURCE_SCALE_NUM==SOURCE_SCALE_DEN;
             sample_de<=pixel_de;sample_hsync<=pixel_hsync;sample_vsync<=pixel_vsync;
             sample_x<=pixel_x;sample_y<=pixel_y;
         end
     end
-    wire [7:0] center_channels[0:2],neighbor_channels[0:2];
+    wire [7:0] center_channels[0:2],neighbor_channels[0:2],opposite_channels[0:2];
     assign center_channels[0]={sample_rgb565[15:11],sample_rgb565[15:13]};
     assign center_channels[1]={sample_rgb565[10:5],sample_rgb565[10:9]};
     assign center_channels[2]={sample_rgb565[4:0],sample_rgb565[4:2]};
     assign neighbor_channels[0]={sample_neighbor_rgb565[15:11],sample_neighbor_rgb565[15:13]};
     assign neighbor_channels[1]={sample_neighbor_rgb565[10:5],sample_neighbor_rgb565[10:9]};
     assign neighbor_channels[2]={sample_neighbor_rgb565[4:0],sample_neighbor_rgb565[4:2]};
-    (* use_dsp="yes" *) reg signed [17:0] blend_products[0:2];
-    reg [7:0] blend_centers[0:2],blended[0:2];
+    assign opposite_channels[0]={sample_opposite_rgb565[15:11],sample_opposite_rgb565[15:13]};
+    assign opposite_channels[1]={sample_opposite_rgb565[10:5],sample_opposite_rgb565[10:9]};
+    assign opposite_channels[2]={sample_opposite_rgb565[4:0],sample_opposite_rgb565[4:2]};
+    reg [12:0] dot_near[0:2],dot_far[0:2];
+    reg [7:0] blended[0:2];
+    // These fixed spot weights use adders/shifts, without pixel-rate DSPs.
+    function automatic [12:0] dot_sum(input [7:0] center,near,far,input [1:0] level);
+        begin
+            case(level)
+                1:dot_sum=24*center+8*near+16;
+                2:dot_sum=20*center+12*near+16;
+                3:dot_sum=17*center+14*near+far+16;
+                default:dot_sum=32*center;
+            endcase
+        end
+    endfunction
+    // Average quantized half-dot samples at 1:1, as Appletini effect_store_row.
+    function automatic [7:0] dot_pack(input [12:0] near,far,input avg,input integer channel);
+        reg [6:0] code;
+        begin
+            if(channel==1)begin
+                code=avg ? ({1'b0,near[12:7]}+{1'b0,far[12:7]})>>1 : {1'b0,near[12:7]};
+                dot_pack={code[5:0],code[5:4]};
+            end else begin
+                code=avg ? ({2'b0,near[12:8]}+{2'b0,far[12:8]})>>1 : {2'b0,near[12:8]};
+                dot_pack={code[4:0],code[4:2]};
+            end
+        end
+    endfunction
     // Quantize the interpolated RGB8 result to RGB565 before color processing,
     // matching native frame storage and the software screenshot reference.
     wire [7:0] input_red = {blended[0][7:3],blended[0][7:5]};
@@ -290,7 +322,7 @@ module multitini_video_effects #(
     always @(posedge pixel_clk) begin
         if (!pixel_run) begin
             enables <= 0; de_pipe <= 0; hs_pipe <= 0; vs_pipe <= 0;
-            scanline_pipe <= 0;
+            scanline_pipe <= 0;blend_average<=0;
             output_rgb565 <= 0; output_de <= 0; output_hsync <= 0; output_vsync <= 0;
             x_mod_lo<=0;x_mod_hi<=0;y_mod_lo<=0;y_mod_hi<=0;
             x_mod_sum<=0;y_mod_sum<=0;
@@ -301,7 +333,7 @@ module multitini_video_effects #(
             for (pi=0;pi<9;pi=pi+1) products[pi]<=0;
             for (pi=0;pi<3;pi=pi+1) begin
                 sums[pi]<=0; indices[pi]<=0; tone[pi]<=0;
-                blend_products[pi]<=0;blend_centers[pi]<=0;blended[pi]<=0;
+                dot_near[pi]<=0;dot_far[pi]<=0;blended[pi]<=0;
             end
         end else begin
             enables <= {enables[5:0],sample_enable && active_valid_pixel && spatial[6]};
@@ -338,6 +370,7 @@ module multitini_video_effects #(
                 config_pipe[pi]<=config_pipe[pi-1];
                 if(pi>=3)begin x_phase[pi]<=x_phase[pi-1]; y_phase[pi]<=y_phase[pi-1];end
             end
+            blend_average<=sample_average;
             for (pi=0;pi<3;pi=pi+1) begin
                 products[pi*3] <= matrix[pi*3] * $signed({1'b0,input_red});
                 products[pi*3+1] <= matrix[pi*3+1] * $signed({1'b0,input_green});
@@ -348,11 +381,9 @@ module multitini_video_effects #(
                 indices[pi] <= clamp_sum(sums[pi]);
                 // Two pre-color stages replace the old post-color neighbor
                 // stages. Throughput and the nine-clock timing stay unchanged.
-                blend_products[pi] <= sample_weight==0 ? 18'sd0 :
-                    ($signed({1'b0,neighbor_channels[pi]})-$signed({1'b0,center_channels[pi]})) *
-                    $signed({1'b0,sample_weight});
-                blend_centers[pi] <= center_channels[pi];
-                blended[pi] <= blend_round(blend_centers[pi],blend_products[pi]);
+                dot_near[pi]<=dot_sum(center_channels[pi],neighbor_channels[pi],opposite_channels[pi],sample_dot_level);
+                dot_far[pi]<=dot_sum(center_channels[pi],opposite_channels[pi],neighbor_channels[pi],sample_dot_level);
+                blended[pi]<=dot_pack(dot_near[pi],dot_far[pi],blend_average,pi);
                 tone[pi] <= tone_ram[pi];
             end
             output_rgb565 <= enables[6] ? {final_red[7:3],final_green[7:2],final_blue[7:3]} : bypass[6];

@@ -306,7 +306,7 @@ static void test_borders(void)
         assert(mt_supervisor_settings_remember_borders(&settings, "vectrex",
             enabled, style, color, padding));
         assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
-        assert(stored_file[8U] == 8U && stored_size == MT_SETTINGS_WIRE_SIZE);
+        assert(stored_file[8U] == 9U && stored_size == MT_SETTINGS_WIRE_SIZE);
         assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
         profile = mt_supervisor_settings_find(&loaded, "vectrex");
         assert(profile->border_enabled == enabled && profile->border_style == style &&
@@ -343,7 +343,7 @@ static void test_borders(void)
 
 static void test_vectrex_video_settings(void)
 {
-    static const uint8_t bad_wire[][2] = {{0U, 2U}, {1U, 4U}, {2U, 4U}, {3U, 1U}};
+    static const uint8_t bad_wire[][2] = {{0U, 2U}, {1U, 4U}, {2U, 4U}, {3U, 5U}};
     mt_supervisor_settings_t settings;
     mt_supervisor_settings_t loaded;
     mt_supervisor_settings_t before;
@@ -368,7 +368,7 @@ static void test_vectrex_video_settings(void)
         const uint8_t opacity = (uint8_t)((value >> 3U) & 3U);
         assert(mt_supervisor_settings_remember_vectrex_video(&settings, "vectrex", enabled, gain, opacity));
         assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
-        assert(stored_file[8U] == 8U && stored_size == MT_SETTINGS_WIRE_SIZE && stored_file[56U + 251U] == 0U);
+        assert(stored_file[8U] == 9U && stored_size == MT_SETTINGS_WIRE_SIZE && stored_file[56U + 251U] == 0U);
         assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
         assert(memcmp(&loaded, &settings, sizeof(settings)) == 0);
         assert(loaded.profiles[1].vectrex_beam_gain == 1U &&
@@ -462,7 +462,7 @@ static void test_legacy_migration(void)
         /* Read-only migration leaves old bytes intact until the user saves. */
         assert(memcmp(stored_file, legacy_wire, wire_size) == 0);
         assert(mt_supervisor_settings_save(&loaded).status == MT_SETTINGS_OK);
-        assert(stored_size == MT_SETTINGS_WIRE_SIZE && stored_file[8U] == 8U);
+        assert(stored_size == MT_SETTINGS_WIRE_SIZE && stored_file[8U] == 9U);
         assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
         assert(memcmp(&loaded, &expected, sizeof(loaded)) == 0);
         memcpy(stored_file, legacy_wire, wire_size);
@@ -486,7 +486,7 @@ static void test_legacy_migration(void)
     assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
     store_u32_le(stored_file + 8U, 2U);
     assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
-    store_u32_le(stored_file + 8U, 9U);
+    store_u32_le(stored_file + 8U, 10U);
     assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
     convert_stored_to_legacy(1U);
     store_u32_le(stored_file + 8U, 3U);
@@ -523,7 +523,7 @@ static void test_video_effects_settings(void)
     }
     assert(mt_supervisor_settings_remember_video_effects(&settings, "c64", &effects));
     assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
-    assert(stored_file[8U] == 8U && stored_size == MT_SETTINGS_WIRE_SIZE);
+    assert(stored_file[8U] == 9U && stored_size == MT_SETTINGS_WIRE_SIZE);
     assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
     assert(memcmp(&settings, &loaded, sizeof(settings)) == 0);
     /* Explicit signed LE encoding, independent of host layout/padding. */
@@ -555,6 +555,45 @@ static void test_video_effects_settings(void)
     stored_file[56U + 15U * V4_PROFILE_SIZE + 251U] = 1U;
     update_stored_crc();
     assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
+}
+
+static void test_video_multiplier(void)
+{
+    mt_supervisor_settings_t settings,loaded,before;
+    reset_fake();mt_supervisor_settings_defaults(&settings);
+    assert(mt_supervisor_settings_remember_core(&settings,"c64","pal"));
+    assert(mt_supervisor_settings_remember_variant(&settings,"gbc","color"));
+    assert(settings.profiles[0].video_multiplier==0U && settings.profiles[1].video_multiplier==0U);
+    for(uint8_t multiplier=0U;multiplier<=4U;++multiplier) {
+        assert(mt_supervisor_settings_remember_video_multiplier(&settings,"c64",multiplier));
+        assert(mt_supervisor_settings_remember_video_multiplier(&settings,"gbc",(uint8_t)(4U-multiplier)));
+        assert(mt_supervisor_settings_save(&settings).status==MT_SETTINGS_OK);
+        assert(stored_file[8U]==9U && stored_file[56U+251U]==multiplier);
+        assert(mt_supervisor_settings_load(&loaded).status==MT_SETTINGS_OK);
+        assert(memcmp(&loaded,&settings,sizeof(settings))==0);
+    }
+    before=settings;
+    assert(!mt_supervisor_settings_remember_video_multiplier(&settings,"c64",5U));
+    assert(!mt_supervisor_settings_remember_video_multiplier(NULL,"c64",1U));
+    assert(!mt_supervisor_settings_remember_video_multiplier(&settings,NULL,1U));
+    assert(memcmp(&settings,&before,sizeof(settings))==0);
+    settings.profiles[0].video_multiplier=5U;
+    assert(mt_supervisor_settings_save(&settings).status==MT_SETTINGS_INVALID_ARGUMENT);
+    settings=before;
+    /* Schema 8 uses the identical file size; preserve controller records and
+     * all other preferences, and interpret its reserved profile byte as Auto. */
+    settings.legacy_gamepad_pending=5U;
+    assert(mt_supervisor_settings_save(&settings).status==MT_SETTINGS_OK);
+    for(unsigned index=0U;index<MT_SETTINGS_MAX_PROFILES;++index)stored_file[56U+index*PROFILE_SIZE+251U]=0U;
+    store_u32_le(stored_file+8U,8U);update_stored_crc();
+    assert(mt_supervisor_settings_load(&loaded).status==MT_SETTINGS_OK);
+    settings.profiles[0].video_multiplier=settings.profiles[1].video_multiplier=0U;
+    assert(memcmp(&loaded,&settings,sizeof(settings))==0 && loaded.legacy_gamepad_pending==5U);
+    stored_file[56U+251U]=1U;update_stored_crc();
+    assert(mt_supervisor_settings_load(&loaded).status==MT_SETTINGS_CORRUPT);
+    assert(mt_supervisor_settings_save(&settings).status==MT_SETTINGS_OK);
+    stored_file[56U+251U]=5U;update_stored_crc();
+    assert(mt_supervisor_settings_load(&loaded).status==MT_SETTINGS_CORRUPT);
 }
 
 static void test_gamepad_settings(void)
@@ -615,7 +654,7 @@ static void test_genesis_settings(void)
     assert(loaded.profiles[0].genesis_three_button_mask == 0U);
     assert(loaded.display_mode == 4U && loaded.gamepads[8].button[0] == 5U);
     assert(mt_supervisor_settings_save(&loaded).status == MT_SETTINGS_OK);
-    assert(stored_file[8U] == 8U && stored_size == MT_SETTINGS_WIRE_SIZE);
+    assert(stored_file[8U] == 9U && stored_size == MT_SETTINGS_WIRE_SIZE);
 }
 
 static mt_controller_device_t controller_device(uint32_t port, uint32_t serial)
@@ -705,6 +744,11 @@ static void test_controller_profiles(void)
     assert(profile != NULL && profile->config.binding[MT_CONTROL_A] == 22U);
     assert(strcmp(mt_supervisor_settings_find(&loaded, "c64")->drive8_name,
                   "keep.d64") == 0);
+    /* Schema 8 retains every identified-controller map when promoted to 9. */
+    store_u32_le(stored_file+8U,8U);
+    assert(mt_supervisor_settings_load(&loaded).status==MT_SETTINGS_OK);
+    assert(memcmp(&loaded,&settings,sizeof(settings))==0);
+    store_u32_le(stored_file+8U,9U);
 
     before = settings;
     other = config; other.assignment = 4U;
@@ -837,6 +881,14 @@ int main(void)
     for (byte_index = 0U; byte_index < stored_size; ++byte_index) {
         stored_file[byte_index] ^= 1U;
         result = mt_supervisor_settings_load(&loaded);
+        /* Schemas 8 and 9 have identical lengths and defaults. Changing only
+         * 9 to 8 is a valid legacy file when every multiplier is Auto. */
+        if (byte_index == 8U) {
+            assert(result.status == MT_SETTINGS_OK);
+            assert(memcmp(&loaded, &settings, sizeof(settings)) == 0);
+            stored_file[byte_index] ^= 1U;
+            continue;
+        }
         assert(result.status == MT_SETTINGS_CORRUPT);
         assert(!loaded.auto_boot && loaded.profile_count == 0U);
         stored_file[byte_index] ^= 1U;
@@ -891,5 +943,6 @@ int main(void)
     test_vectrex_video_settings();
     test_legacy_migration();
     test_video_effects_settings();
+    test_video_multiplier();
     return 0;
 }

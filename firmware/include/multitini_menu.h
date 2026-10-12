@@ -71,7 +71,8 @@ typedef enum {
     MT_MENU_ACTION_SET_VIDEO_EFFECT,
     MT_MENU_ACTION_EDIT_GAMEPADS,
     MT_MENU_ACTION_SET_GAMEPADS,
-    MT_MENU_ACTION_SET_DISPLAY_MODE
+    MT_MENU_ACTION_SET_DISPLAY_MODE,
+    MT_MENU_ACTION_SET_VIDEO_MULTIPLIER
 } mt_menu_action_kind_t;
 
 typedef enum {
@@ -155,6 +156,8 @@ typedef struct {
     bool save_faulted;
     bool display_supported;
     uint8_t display_mode;
+    bool video_multiplier_supported;
+    uint8_t video_multiplier;
     bool video_test_enabled;
     bool settings_auto_boot;
     bool settings_faulted;

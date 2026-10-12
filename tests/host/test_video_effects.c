@@ -224,65 +224,34 @@ static void test_spatial(void)
           "LCD grid attenuates each third row or column");
 }
 
-static void test_horizontal_smoothing(void)
+static void test_dot_bleed(void)
 {
-    static const unsigned numerators[]={1U,2U,3U,4U,5U,6U,3U};
-    static const unsigned denominators[]={1U,1U,1U,1U,1U,1U,2U};
-    static const unsigned weights[7][6]={{0U},{64U,64U},{85U,0U,85U},
-        {96U,32U,32U,96U},{102U,51U,0U,51U,102U},{107U,64U,21U,21U,64U,107U},
-        {43U,43U,128U}};
-    mt_video_effects_settings_t s;
-    mt_video_effects_tables_t t;
-    mt_video_effects_defaults(&s);s.enabled=1U;
-    for(unsigned scale=0U;scale<7U;++scale) {
-        const unsigned num=numerators[scale],den=denominators[scale];
-        for(unsigned phase=0U;phase<num;++phase)for(unsigned mode=0U;mode<4U;++mode) {
-            const unsigned expected=mode==0U ? 0U:weights[scale][phase];
-            check(mt_video_horizontal_weight(phase,num,den,(uint8_t)mode)==expected,
-                "all scale phases have the agreed quantized interpolation weights");
-        }
-        for(unsigned mode=0U;mode<4U;++mode) {
-            s.softness=(uint8_t)mode;check(mt_video_effects_build(&s,&t),"smoothing tables build");
-            for(unsigned x=0U;x<num*3U;++x)
-                check(mt_video_effects_reference_scaled_rgb565(&t,0U,0xFFFFU,0U,true,true,false,x,0U,num,den)==0xFFFFU,
-                    "single source pixel replicates both interpolation edges");
-            /* A source ramp remains monotonic at every supported output scale. */
-            const uint16_t ramp[]={0U,0x4208U,0x8410U,0xc618U,0xffffU};
-            uint16_t previous=0U;
-            for(unsigned x=0U;x<5U*num/den;++x) {
-                const unsigned index=x*den/num;
-                const uint16_t pixel=mt_video_effects_reference_scaled_rgb565(&t,
-                    index==0U ? ramp[0]:ramp[index-1U],ramp[index],
-                    index==4U ? ramp[4]:ramp[index+1U],index==0U,index==4U,false,x,0U,num,den);
-                check(pixel>=previous,"horizontal smoothing never overshoots a rising source ramp");
-                if(mode==0U || num==den)check(pixel==ramp[index],"Off and one-to-one scale preserve exact source pixels");
-                previous=pixel;
-            }
+    const unsigned main[3]={24U,20U,17U},near[3]={8U,12U,14U},far[3]={0U,0U,1U};
+    for(unsigned mode=1U;mode<=3U;++mode) {
+        const unsigned left=(main[mode-1U]*0U+near[mode-1U]*255U+16U)/32U;
+        check(mt_video_dot_bleed_rgb565(0U,0xffffU,0U,(uint8_t)mode,false)==rgb565(left,left,left),
+            "Appletini dot gap-edge weights survive RGB565 quantization");
+        const unsigned right=(far[mode-1U]*255U+16U)/32U;
+        check(mt_video_dot_bleed_rgb565(0U,0U,0xffffU,(uint8_t)mode,false)==rgb565(right,right,right),
+            "only Strong lights the far half of a two-dot gap");
+        for(unsigned pixel=0;pixel<=UINT16_MAX;++pixel) {
+            const uint16_t p=(uint16_t)pixel;
+            check(mt_video_dot_bleed_rgb565(p,p,p,(uint8_t)mode,false)==p,
+                "solid fill brightness remains exact at every Dot bleed level");
+            const uint16_t l=mt_video_dot_bleed_rgb565(p,0U,0xffffU,(uint8_t)mode,false);
+            const uint16_t r=mt_video_dot_bleed_rgb565(p,0xffffU,0U,(uint8_t)mode,false);
+            const uint16_t avg=(uint16_t)((l&r)+(((l^r)&0xf7deU)>>1));
+            check(mt_video_dot_bleed_rgb565(p,0U,0xffffU,(uint8_t)mode,true)==avg,
+                "1:1 uses Appletini average of the two stored RGB565 halves");
+            check(mt_video_dot_bleed_rgb565(p,0U,0xffffU,0U,false)==p,"Dot bleed Off preserves every bit");
         }
     }
-    for(unsigned pixel=0U;pixel<=UINT16_MAX;++pixel) {
-        const uint16_t p=(uint16_t)pixel;
-        check(mt_video_horizontal_rgb565(p,(uint16_t)~p,0U)==p,"Off preserves every RGB565 bit");
-        check(mt_video_horizontal_rgb565(p,p,128U)==p,"strongest interpolation preserves every constant color");
-    }
-    check(mt_video_horizontal_rgb565(0U,0xffffU,128U)==rgb565(128U,128U,128U),"monochrome half blend rounds correctly");
-    check(mt_video_horizontal_rgb565(0xf800U,0x001fU,64U)==rgb565(191U,0U,64U),"RGB primaries mix independent expanded channels");
-    check(mt_video_horizontal_weight(0U,0U,1U,3U)==0U &&
-          mt_video_horizontal_weight(0U,65U,1U,3U)==0U &&
-          mt_video_horizontal_weight(3U,3U,1U,3U)==0U &&
-          mt_video_horizontal_weight(0U,3U,0U,3U)==0U &&
-          mt_video_horizontal_weight(0U,3U,1U,4U)==0U,"invalid interpolation inputs bypass safely");
-    s.gamma=200U;s.softness=MT_VIDEO_SMOOTH_STRONG;
-    check(mt_video_effects_build(&s,&t),"nonidentity gamma with interpolation builds");
-    const uint16_t mixed=mt_video_horizontal_rgb565(0U,0xffffU,64U);
-    const uint16_t expected=mt_video_effects_reference_rgb565(&t,mixed);
-    check(mt_video_effects_reference_scaled_rgb565(&t,0xffffU,0U,0U,false,false,false,0U,0U,2U,1U)==expected,
-        "raw interpolation precedes nonlinear gamma");
-    check(expected!=mt_video_horizontal_rgb565(mt_video_effects_reference_rgb565(&t,0U),
-        mt_video_effects_reference_rgb565(&t,0xffffU),64U),"gamma-before-interpolation produces a different result and is excluded");
-    s.enabled=0U;check(mt_video_effects_build(&s,&t),"disabled smoothing tables build");
-    check(mt_video_effects_reference_scaled_rgb565(&t,0xffffU,0x1234U,0xffffU,false,false,true,0U,0U,2U,1U)==0x1234U,
-        "master bypass disables interpolation and color processing");
+    mt_video_effects_settings_t s;mt_video_effects_tables_t t;
+    mt_video_effects_defaults(&s);s.enabled=1U;s.softness=3U;s.gamma=200U;
+    check(mt_video_effects_build(&s,&t),"Dot bleed before gamma builds");
+    const uint16_t mixed=mt_video_dot_bleed_rgb565(0U,0xffffU,0U,3U,false);
+    check(mt_video_effects_reference_scaled_rgb565(&t,0xffffU,0U,0U,false,false,false,0U,0U,2U,1U)==
+        mt_video_effects_reference_rgb565(&t,mixed),"spot shaping precedes color transform");
 }
 
 static void test_transport(void)
@@ -434,6 +403,7 @@ static void emit_vectors(unsigned scale_num,unsigned scale_den)
                 const uint16_t left=first ? center:pixels[index-1U];
                 const uint16_t right=last ? center:pixels[index+1U];
                 const uint16_t neighbor=2U*phase+scale_den<scale_num ? left:right;
+                const uint16_t opposite=2U*phase+scale_den<scale_num ? right:left;
                 const uint8_t base_weight=mt_video_horizontal_weight(phase,scale_num,scale_den,MT_VIDEO_SMOOTH_STRONG);
                 uint16_t expected=center;
                 if (enabled[x]) {
@@ -442,9 +412,9 @@ static void emit_vectors(unsigned scale_num,unsigned scale_den)
                         scale_den==2U ? y%3U==1U:y%scale_num>=(scale_num+1U)/2U,
                         x,y,scale_num,scale_den);
                 }
-                printf("P %04x %u %u %u %04x %04x %u\n", (unsigned)center,
+                printf("P %04x %u %u %u %04x %04x %u %04x\n", (unsigned)center,
                        enabled[x] ? 1U : 0U, x, y, (unsigned)expected,
-                       (unsigned)neighbor,(unsigned)base_weight);
+                       (unsigned)neighbor,(unsigned)base_weight,(unsigned)opposite);
             }
         }
     }
@@ -470,7 +440,7 @@ int main(int argc, char **argv)
     test_tone();
     test_color();
     test_spatial();
-    test_horizontal_smoothing();
+    test_dot_bleed();
     test_transport();
     test_extreme_combinations();
     puts("video effects: color, spatial, CPU1 transport and boundary checks passed");

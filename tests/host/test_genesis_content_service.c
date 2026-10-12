@@ -6,6 +6,7 @@
 
 #include <assert.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 typedef struct {
@@ -31,6 +32,14 @@ typedef struct {
     size_t media_data_size;
     size_t media_data_offset;
     int raise_load_error_on_end;
+    bool stream_open,reset_asserted,config_committed,cart_committed;
+    uint32_t burst_word;
+    unsigned burst_count,burst_index,burst_writes,cart_write_polls,save_wait_polls;
+    uint8_t stalled_kind;
+    uint32_t stalled_offset;
+    unsigned abort_commands;
+    unsigned commands,snapshot_reads,media_reads;
+    bool reject_assertion,reject_release,reject_mount,never_ready;
 } shell_t;
 
 static char requested_path[256];
@@ -51,10 +60,43 @@ static size_t register_index(uint32_t offset)
     return (size_t)(offset / (uint32_t)sizeof(uint32_t));
 }
 
+static void transport_step(shell_t *shell)
+{
+    if(shell->cart_write_polls!=0U && --shell->cart_write_polls==0U)
+        shell->cart_committed=true;
+    if(shell->burst_count!=0U) {
+        if(shell->active_kind==shell->stalled_kind && shell->active_offset>=shell->stalled_offset)return;
+        if(shell->active_kind==MT_LOAD_GENESIS_SAVE && !shell->cart_committed) {
+            ++shell->save_wait_polls;
+            return;
+        }
+        assert(shell->reset_asserted && shell->active_offset<shell->active_size);
+        if(shell->active_kind==MT_LOAD_GENESIS_SAVE)
+            shell->loaded_save[shell->active_offset]=(uint8_t)(shell->burst_word>>(shell->burst_index*8U));
+        ++shell->active_offset;++shell->burst_index;
+        if(shell->burst_index==shell->burst_count) { shell->burst_count=0U;shell->burst_index=0U; }
+        if(shell->active_offset==shell->active_size && shell->active_kind==MT_LOAD_GENESIS_CONFIG)
+            shell->config_committed=true;
+        if(shell->active_offset==shell->active_size && shell->active_kind==MT_LOAD_GENESIS_CART)
+            shell->cart_write_polls=32U; /* Final accepted byte precedes physical PSRAM completion. */
+    }
+    if(!shell->reset_asserted && shell->config_committed && shell->cart_committed && !shell->never_ready)
+        shell->registers[register_index(MT_REG_STATUS)]|=MT_STATUS_CORE_READY;
+}
+
 static uint32_t read32(void *context, uint32_t offset)
 {
     shell_t *const shell = context;
+    if(offset==MT_REG_ERROR)++shell->snapshot_reads;
+    if(offset==MT_REG_STREAM_STATUS) {
+        transport_step(shell);
+        if(!shell->stream_open)return 0U;
+        return shell->active_offset==shell->active_size && shell->burst_count==0U ?
+            MT_STREAM_STATUS_DRAINED : shell->burst_count==0U ? MT_STREAM_STATUS_READY:0U;
+    }
+    if(offset==MT_REG_STATUS)transport_step(shell);
     if (offset == MT_REG_MEDIA_DATA) {
+        ++shell->media_reads;
         uint32_t value;
         bool last;
         if (shell->media_data_offset >= shell->media_data_size) return 0U;
@@ -81,6 +123,14 @@ static void write32(void *context, uint32_t offset, uint32_t value)
         return;
     }
     shell->registers[register_index(offset)] = value;
+    if(offset==MT_REG_STREAM_DATA_BURST) {
+        assert(shell->stream_open && shell->reset_asserted && shell->burst_count==0U);
+        const uint32_t remaining=shell->active_size-shell->active_offset;
+        assert(remaining!=0U);
+        shell->burst_word=value;shell->burst_index=0U;
+        shell->burst_count=remaining>=4U ? 4U:(unsigned)remaining;
+        ++shell->burst_writes;
+    }
 }
 
 static void respond(void *context)
@@ -98,20 +148,29 @@ static void respond(void *context)
         shell->registers[register_index(MT_REG_COMMAND_ARG2)];
     const uint32_t arg3 =
         shell->registers[register_index(MT_REG_COMMAND_ARG3)];
+    uint32_t response_status=MT_RESPONSE_OK;
     if (sequence == shell->sequence) return;
     shell->sequence = sequence;
+    ++shell->commands;
     if (opcode == MT_COMMAND_STREAM_BEGIN) {
         shell->active_kind = (uint8_t)arg0;
         shell->active_size = arg1;
         shell->active_offset = 0U;
+        shell->stream_open=true;shell->burst_count=0U;
+        if(shell->active_kind==MT_LOAD_GENESIS_CONFIG) {
+            shell->config_committed=false;shell->cart_committed=false;
+        }
     } else if (opcode == MT_COMMAND_STREAM_DATA) {
         if (shell->active_kind == MT_LOAD_GENESIS_SAVE) {
             assert(shell->active_offset < sizeof(shell->loaded_save));
             shell->loaded_save[shell->active_offset] = (uint8_t)arg0;
         }
         ++shell->active_offset;
+        if(shell->active_offset==shell->active_size && shell->active_kind==MT_LOAD_GENESIS_CONFIG)shell->config_committed=true;
+        if(shell->active_offset==shell->active_size && shell->active_kind==MT_LOAD_GENESIS_CART)shell->cart_committed=true;
     } else if (opcode == MT_COMMAND_STREAM_END) {
         assert(shell->active_offset == shell->active_size);
+        assert(shell->burst_count==0U);shell->stream_open=false;
         assert(shell->completed_streams < 4U);
         shell->completed_kinds[shell->completed_streams] = shell->active_kind;
         shell->completed_sizes[shell->completed_streams] = shell->active_size;
@@ -121,19 +180,28 @@ static void respond(void *context)
                 MT_STATUS_CORE_LOAD_ERROR;
     } else if (opcode == MT_COMMAND_CORE_RESET) {
         ++shell->reset_commands;
-        if (arg0 == 0U)
+        if((arg0!=0U && shell->reject_assertion) || (arg0==0U && shell->reject_release))
+            response_status=MT_RESPONSE_IO_ERROR;
+        else {
+        shell->reset_asserted=arg0!=0U;
+        shell->registers[register_index(MT_REG_CONTROL)]=shell->reset_asserted ? MT_CONTROL_CORE_RESET_REQUEST:0U;
+        if (arg0 == 0U && shell->cart_committed && !shell->never_ready)
             shell->registers[register_index(MT_REG_STATUS)] |=
                 MT_STATUS_CORE_READY;
         else
             shell->registers[register_index(MT_REG_STATUS)] &=
                 ~MT_STATUS_CORE_READY;
+        }
     } else if (opcode == MT_COMMAND_MEDIA_MOUNT) {
         ++shell->mount_commands;
+        if(shell->reject_mount)response_status=MT_RESPONSE_IO_ERROR;
+        else {
         shell->mount_flags = arg0;
         shell->mount_size = arg1;
         shell->mount_generation = arg2;
         shell->registers[register_index(MT_REG_MEDIA_STATE)] =
             MT_MEDIA_STATE_MOUNTED;
+        }
     } else if (opcode == MT_COMMAND_MEDIA_EJECT) {
         ++shell->eject_commands;
         if ((shell->registers[register_index(MT_REG_MEDIA_STATE)] &
@@ -164,8 +232,10 @@ static void respond(void *context)
         }
     } else {
         assert(opcode == MT_COMMAND_STREAM_ABORT);
+        shell->stream_open=false;shell->burst_count=0U;
+        ++shell->abort_commands;shell->config_committed=false;shell->cart_committed=false;
     }
-    shell->registers[register_index(MT_REG_RESPONSE_STATUS)] = MT_RESPONSE_OK;
+    shell->registers[register_index(MT_REG_RESPONSE_STATUS)] = response_status;
     shell->registers[register_index(MT_REG_RESPONSE_SEQ)] = sequence;
 }
 
@@ -277,12 +347,16 @@ int main(void)
     mt_core_link_t link;
     mt_genesis_content_service_result_t result;
     size_t index;
+    shell.registers[register_index(MT_REG_ABI_VERSION)]=MT_ABI_VERSION;
+    shell.registers[register_index(MT_REG_SHELL_BUILD_ID)]=UINT32_C(0x50484F34);
+    shell.registers[register_index(MT_REG_CORE_ID)]=MT_GENESIS_CORE_ID;
 
     mt_core_link_init(&link, &shell, read32, write32);
     genesis_content_service_init(&link, "0:/multitini/cores/genesis/media", true, false,
                                  respond, &shell);
     result = genesis_content_service_load("demo.md");
     assert(result.status == MT_GENESIS_CONTENT_SERVICE_OK);
+    assert(result.phase==MT_GENESIS_TRANSFER_READY && !result.snapshot_valid);
     assert(strcmp(requested_path,
                   "0:/multitini/cores/genesis/media/demo.md") == 0);
     assert(strcmp(requested_save_path,
@@ -295,6 +369,8 @@ int main(void)
     assert(shell.completed_kinds[2] == MT_LOAD_GENESIS_SAVE);
     assert(shell.completed_sizes[2] == MT_SIZE_GENESIS_SAVE);
     assert(shell.reset_commands == 2U);
+    assert(shell.burst_writes==(MT_SIZE_GENESIS_CONFIG+MT_SIZE_GENESIS_CART_MIN+MT_SIZE_GENESIS_SAVE)/4U);
+    assert(shell.save_wait_polls>0U && shell.cart_committed);
     assert(shell.mount_commands == 1U);
     assert((shell.mount_flags & MT_MEDIA_KIND_MASK) ==
            ((uint32_t)MT_LOAD_GENESIS_SAVE << MT_MEDIA_KIND_SHIFT));
@@ -411,11 +487,79 @@ int main(void)
     result = genesis_content_service_load("fault.md");
     assert(result.status == MT_GENESIS_CONTENT_SERVICE_TRANSFER_FAILED);
     assert(result.link == MT_LINK_REMOTE_ERROR);
+    assert(result.phase==MT_GENESIS_TRANSFER_READY && result.snapshot_valid &&
+           (result.snapshot.status&MT_STATUS_CORE_LOAD_ERROR)!=0U);
     assert(!genesis_content_service_cartridge_attached());
     shell.raise_load_error_on_end = 0;
 
+    /* The actual ABI 21 transport must report a bounded backpressure timeout,
+     * abort the partial stream, leave reset asserted and permit a full retry. */
+    const uint8_t stalled_kinds[]={MT_LOAD_GENESIS_CONFIG,MT_LOAD_GENESIS_CART,MT_LOAD_GENESIS_SAVE};
+    const mt_genesis_transfer_phase_t stalled_phases[]={MT_GENESIS_TRANSFER_CONFIG,MT_GENESIS_TRANSFER_CARTRIDGE,MT_GENESIS_TRANSFER_SAVE};
+    for(unsigned fault=0U;fault<sizeof(stalled_kinds)/sizeof(stalled_kinds[0]);++fault) {
+        const unsigned aborts_before=shell.abort_commands,resets_before=shell.reset_commands;
+        const unsigned commands_before=shell.commands,snapshots_before=shell.snapshot_reads,reads_before=shell.media_reads;
+        const bool had_save=genesis_content_service_save_active();
+        shell.completed_streams=0U;shell.stalled_kind=stalled_kinds[fault];shell.stalled_offset=8U;
+        result=genesis_content_service_load("stalled.md");
+        assert(result.status==MT_GENESIS_CONTENT_SERVICE_TRANSFER_FAILED && result.link==MT_LINK_TIMEOUT);
+        assert(result.phase==stalled_phases[fault] && result.snapshot_valid);
+        assert(result.snapshot.command_opcode==MT_COMMAND_STREAM_ABORT && result.snapshot.response_status==MT_RESPONSE_OK);
+        assert(result.snapshot.control==MT_CONTROL_CORE_RESET_REQUEST && result.snapshot.stream_status==0U);
+        assert(result.snapshot.abi==MT_ABI_VERSION && result.snapshot.core_id==MT_GENESIS_CORE_ID &&
+               result.snapshot.build_id==UINT32_C(0x50484F34));
+        assert(shell.snapshot_reads==snapshots_before+1U && shell.media_reads==reads_before);
+        assert(shell.commands==commands_before+3U+fault*2U+(had_save ? 1U:0U));
+        assert(shell.reset_asserted && shell.reset_commands==resets_before+1U);
+        assert(shell.abort_commands==aborts_before+1U && !shell.stream_open);
+        assert(shell.completed_streams==fault);
+        assert(!genesis_content_service_cartridge_attached() && !genesis_content_service_save_active());
+        shell.stalled_kind=0U;shell.completed_streams=0U;
+        result=genesis_content_service_load("retry.md");
+        assert(result.status==MT_GENESIS_CONTENT_SERVICE_OK && !shell.reset_asserted);
+        assert(result.phase==MT_GENESIS_TRANSFER_READY && !result.snapshot_valid);
+        assert(shell.completed_streams==3U && genesis_content_service_cartridge_attached());
+    }
+
+    /* A rejected reset release and a non-ready machine are distinct from the
+     * payload phases. Snapshot command/response reflects existing save cleanup. */
+    for(unsigned fault=0U;fault<3U;++fault) {
+        shell.completed_streams=0U;shell.reject_assertion=fault==0U;
+        shell.reject_release=fault==1U;shell.never_ready=fault==2U;
+        const unsigned snapshots_before=shell.snapshot_reads,reads_before=shell.media_reads;
+        const unsigned commands_before=shell.commands;
+        const bool had_save=genesis_content_service_save_active();
+        result=genesis_content_service_load("startup-fault.md");
+        assert(result.status==MT_GENESIS_CONTENT_SERVICE_TRANSFER_FAILED && result.snapshot_valid);
+        assert(result.phase==(fault==0U ? MT_GENESIS_TRANSFER_RESET :
+                            fault==1U ? MT_GENESIS_TRANSFER_RELEASE:MT_GENESIS_TRANSFER_READY));
+        assert(result.link==(fault==2U ? MT_LINK_TIMEOUT:MT_LINK_REMOTE_ERROR));
+        assert(shell.snapshot_reads==snapshots_before+1U && shell.media_reads==reads_before);
+        assert(shell.commands==commands_before+(fault==0U ? 1U:10U)+(had_save ? 1U:0U));
+        assert((result.snapshot.status&MT_STATUS_CORE_READY)==0U || fault==0U);
+        if(fault!=0U)assert(result.snapshot.command_opcode==MT_COMMAND_MEDIA_EJECT && result.snapshot.response_status==MT_RESPONSE_OK);
+        shell.reject_assertion=shell.reject_release=shell.never_ready=false;
+        shell.completed_streams=0U;result=genesis_content_service_load("startup-retry.md");
+        assert(result.status==MT_GENESIS_CONTENT_SERVICE_OK && !result.snapshot_valid);
+    }
+    shell.completed_streams=0U;shell.reject_mount=true;
+    const unsigned reset_before_mount=shell.reset_commands;
+    result=genesis_content_service_load("mount-fault.md");
+    assert(result.status==MT_GENESIS_CONTENT_SERVICE_SAVE_MOUNT_FAILED && result.link==MT_LINK_REMOTE_ERROR);
+    assert(result.phase==MT_GENESIS_TRANSFER_MOUNT && result.snapshot_valid);
+    assert(result.snapshot.command_opcode==MT_COMMAND_MEDIA_MOUNT && result.snapshot.response_status==MT_RESPONSE_IO_ERROR);
+    assert(shell.reset_asserted && shell.reset_commands==reset_before_mount+1U);
+    shell.reject_mount=false;shell.completed_streams=0U;
+    result=genesis_content_service_load("mount-retry.md");
+    assert(result.status==MT_GENESIS_CONTENT_SERVICE_OK && !result.snapshot_valid);
+
     result = genesis_content_service_load("../escape.gen");
     assert(result.status == MT_GENESIS_CONTENT_SERVICE_INVALID_ARGUMENT);
+    assert(result.phase==MT_GENESIS_TRANSFER_NONE && !result.snapshot_valid);
+    assert(strcmp(genesis_content_service_phase_name(MT_GENESIS_TRANSFER_CONFIG),"configuration")==0);
+    assert(strcmp(genesis_content_service_phase_name(MT_GENESIS_TRANSFER_READY),"core ready")==0);
+    assert(strcmp(genesis_content_service_phase_name((mt_genesis_transfer_phase_t)99),"unknown")==0);
+    puts("PASS Genesis service ABI 21 bursts, delayed final cartridge write, save backpressure, timeout/abort and retry");
     fail_read = 1;
     result = genesis_content_service_load("missing.gen");
     assert(result.status == MT_GENESIS_CONTENT_SERVICE_READ_FAILED);

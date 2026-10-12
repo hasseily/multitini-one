@@ -3,6 +3,7 @@
 #include "sd_storage.h"
 #include "video_effect_service.h"
 #include "multitini_video_frame.h"
+#include "multitini_display.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -93,8 +94,12 @@ bool mt_screenshot_service_cancel(void)
 static bool snapshot(uint32_t core_id,uint8_t mode,uint32_t border,const mt_ui_frame_t *ui,bool visible)
 {
     const uint32_t abi=bus.read(MT_REG_ABI_VERSION);
-    if((abi>>16)!=MT_ABI_MAJOR || (abi&0xffffU)<MT_VIDEO_AXIS_MIN_ABI_MINOR ||
+    if((abi>>16)!=MT_ABI_MAJOR || (abi&0xffffU)<MT_VIDEO_PHOSPHOR_MIN_ABI_MINOR ||
        bus.read(MT_REG_CORE_ID)!=core_id) { fail("update the core package to capture this video");return false; }
+    const bool has_multiplier=(abi&0xffffU)>=MT_DISPLAY_SCALE_MIN_ABI_MINOR;
+    const uint32_t display=has_multiplier ? bus.read(MT_REG_DISPLAY_STATUS):mode;
+    if(has_multiplier && ((display&(MT_DISPLAY_BUSY|MT_DISPLAY_ERROR|MT_DISPLAY_HELD))!=0U ||
+                          (display&15U)!=mode)) return false;
     const uint32_t status=bus.read(MT_REG_VIDEO_FRAME_STATUS);
     if((status&MT_VIDEO_FRAME_STATUS_ERROR)!=0U) { fail("video transport error");return false; }
     if((bus.read(MT_REG_VIDEO_FRAME_CONTROL)&MT_VIDEO_FRAME_CAPTURE_ENABLE)==0U)return false;
@@ -121,12 +126,14 @@ static bool snapshot(uint32_t core_id,uint8_t mode,uint32_t border,const mt_ui_f
        bus.read(MT_REG_VIDEO_FRAME_STRIDE)!=stride || bus.read(MT_REG_CORE_ID)!=core_id ||
        (bus.read(MT_REG_VIDEO_FRAME_STATUS)&MT_VIDEO_FRAME_STATUS_ERROR)!=0U ||
        (bus.read(MT_REG_VIDEO_FRAME_CONTROL)&MT_VIDEO_FRAME_CAPTURE_ENABLE)==0U)return false;
+    if(has_multiplier && bus.read(MT_REG_DISPLAY_STATUS)!=display)return false;
     if((bus.read(MT_REG_VIDEO_FRAME_STATUS)&MT_VIDEO_FRAME_STATUS_DISPLAY_ACTIVE)==0U ||
        bus.read(MT_REG_VIDEO_EFFECT_SEQUENCE)!=effect_sequence ||
        (bus.read(MT_REG_VIDEO_EFFECT_STATUS)&(MT_VIDEO_EFFECT_STATUS_BUSY|MT_VIDEO_EFFECT_STATUS_VALID))!=
            MT_VIDEO_EFFECT_STATUS_VALID)return false;
     memset(&scene,0,sizeof(scene));scene.pixels=captured_pixels;scene.width=width;scene.height=height;
     scene.core_id=core_id;scene.display_mode=mode;scene.border_config=border;scene.full_output=full;
+    scene.video_multiplier=has_multiplier ? (uint8_t)((display&MT_DISPLAY_SCALE_MASK)>>MT_DISPLAY_SCALE_SHIFT):0U;
     scene.ui_visible=full && visible && ui!=NULL;
     if(scene.ui_visible) { captured_ui=*ui;scene.ui=&captured_ui; }
     scene.effects=&captured_effects;

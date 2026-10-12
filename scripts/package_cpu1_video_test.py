@@ -198,7 +198,7 @@ def verify_hardware_source_archive(directory, files):
                     "FPGA build configuration changed after source capture: " + name)
 
 
-def verify_hardware(directory, machine, *, ntsc=False, build_id=None):
+def verify_hardware(directory, machine, *, ntsc=False, build_id=None, genesis_pal=False):
     expected_build_id = BUILD_ID if build_id is None else build_id
     require(re.fullmatch(r"[0-9A-Fa-f]{8}", expected_build_id) is not None, "Invalid expected FPGA build ID")
     record = json.loads((directory / "source-inputs.json").read_text())
@@ -208,6 +208,8 @@ def verify_hardware(directory, machine, *, ntsc=False, build_id=None):
         require(configuration["c64_video_standard"] == ("NTSC" if ntsc else "PAL"), "Wrong C64 video standard")
     if machine == "GBC":
         require(configuration["gbc_psram"] is True, "GBC package requires PSRAM=1")
+    if machine == "GENESIS":
+        require(configuration["genesis_pal"] is genesis_pal, "Wrong Genesis clock variant")
     verify_sources(record["files"])
     verify_hardware_source_archive(directory, record["files"])
     require(set(record["files"]) == {p.relative_to(ROOT).as_posix() for p in hardware_inputs.inputs(machine)},
@@ -220,10 +222,12 @@ def verify_hardware(directory, machine, *, ntsc=False, build_id=None):
             manifest.get("top") == "multitini_one_top", "Wrong FPGA build manifest")
     generics = manifest["generic"]
     require(re.search(r"SHELL_BUILD_ID=32'h" + expected_build_id + r"\b", generics, re.I), "Wrong FPGA build ID")
-    active = {"C64": 0, "GBC": 1, "SUPERVISOR": 2, "VECTREX": 3}[machine]
+    active = {"C64": 0, "GBC": 1, "SUPERVISOR": 2, "VECTREX": 3, "GENESIS": 4}[machine]
     require(re.search(rf"\bACTIVE_MACHINE={active}\b", generics), "Wrong FPGA active machine")
     require(f"C64_NTSC_MODE=1'b{int(ntsc)}" in generics, "Wrong FPGA PAL/NTSC generic")
-    psram = machine in {"C64", "VECTREX"} or configuration["gbc_psram"]
+    if machine == "GENESIS":
+        require(f"GENESIS_PAL_MODE=1'b{int(genesis_pal)}" in generics, "Wrong Genesis PAL generic")
+    psram = machine in {"C64", "VECTREX", "GENESIS"} or configuration["gbc_psram"]
     require(f"ENABLE_GBC_PSRAM=1'b{int(configuration['gbc_psram'])}" in generics, "Wrong GBC PSRAM generic")
     xsa = directory / "multitini_one.xsa"
     log = (directory / "build.log").read_text(errors="replace").replace("\\", "/")
@@ -270,7 +274,8 @@ def verify_cpu1_control_program(files, commands):
                 "CPU1 production build enables a reference/test dispatcher")
 
 
-def verify_cpu_images(workspace):
+def verify_cpu_images(workspace, *, build_id=None, abi_minor=15):
+    expected_build_id = BUILD_ID if build_id is None else build_id
     manifest = json.loads((workspace / "cpu1_manifest.json").read_text())
     paths = {"cpu0_elf": workspace / "diagnostic/build/diagnostic.elf",
              "cpu1_elf": workspace / "video_worker/build/video_worker.elf",
@@ -288,12 +293,12 @@ def verify_cpu_images(workspace):
                     for s in segments), "CPU ELF overlaps reserved DDR")
     record = manifest["build_inputs"]
     verify_sources(record["files"])
-    require(re.search(r"MT_FIRMWARE_BUILD_ID\s+UINT32_C\(0x" + BUILD_ID + r"\)",
-                      (ROOT / "firmware/platform/xilinx/main.c").read_text(), re.I), "Firmware source is not VID4")
+    require(re.search(r"MT_FIRMWARE_BUILD_ID\s+UINT32_C\(0x" + expected_build_id + r"\)",
+                      (ROOT / "firmware/platform/xilinx/main.c").read_text(), re.I), "Firmware source build ID mismatch")
     require("#define MT_ABI_MAJOR 0U" in (ROOT / "firmware/include/multitini_regs.h").read_text() and
-            "#define MT_ABI_MINOR 15U" in (ROOT / "firmware/include/multitini_regs.h").read_text() and
-            "MT_ABI_MINOR = 16'd15" in (ROOT / "hdl/generated/multitini_regs_pkg.sv").read_text(),
-            "Firmware/HDL ABI is not 0.15")
+            f"#define MT_ABI_MINOR {abi_minor}U" in (ROOT / "firmware/include/multitini_regs.h").read_text() and
+            f"MT_ABI_MINOR = 16'd{abi_minor}" in (ROOT / "hdl/generated/multitini_regs_pkg.sv").read_text(),
+            "Firmware/HDL ABI mismatch")
     # A fresh application workspace may explicitly reuse the audited HP0+HP1 AMP
     # export; the build fingerprint records that exact platform directory.
     platform = Path(record["platform_path"]).resolve()

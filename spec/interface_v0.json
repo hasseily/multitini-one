@@ -2,7 +2,7 @@
   "schema_version": 1,
   "abi": {
     "major": 0,
-    "minor": 17
+    "minor": 21
   },
   "magic": "0x4D543031",
   "shell_id": "0x4D544F4E",
@@ -397,12 +397,14 @@
     },
     {
       "name": "DISPLAY_REQUEST",
+      "description": "Mode in bits 3:0; ABI 0.21 multiplier in bits 6:4 (0 Auto, 1..4 native scale). Full-word transaction; reserved bits zero.",
       "offset": "0x1D0",
       "access": "rw",
       "reset": "0x00000000"
     },
     {
       "name": "DISPLAY_STATUS",
+      "description": "Active mode bits 3:0, multiplier bits 6:4; busy/error/held bits 8/9/10. Geometry commits atomically.",
       "offset": "0x1D4",
       "access": "ro",
       "reset": "0x00000000"
@@ -531,6 +533,7 @@
     "VECTREX_OVERLAY_STATUS_ERROR": "0x00000002",
     "VIDEO_EFFECT_MIN_ABI_MINOR": 15,
     "VIDEO_AXIS_MIN_ABI_MINOR": 17,
+    "VIDEO_PHOSPHOR_MIN_ABI_MINOR": 20,
     "VIDEO_EFFECT_STATUS_BUSY": "0x00000001",
     "VIDEO_EFFECT_STATUS_VALID": "0x00000002",
     "VIDEO_EFFECT_STATUS_REJECTED": "0x00000004",

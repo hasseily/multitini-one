@@ -88,6 +88,24 @@ static mt_genesis_content_service_result_t service_result(
     return result;
 }
 
+static void failure_snapshot(mt_genesis_content_service_result_t *result)
+{
+    if(content_link==NULL || content_link->read32==NULL)return;
+    result->snapshot=(mt_genesis_transfer_snapshot_t){
+        content_link->read32(content_link->context,MT_REG_STATUS),
+        content_link->read32(content_link->context,MT_REG_ERROR),
+        content_link->read32(content_link->context,MT_REG_CONTROL),
+        content_link->read32(content_link->context,MT_REG_STREAM_STATUS),
+        content_link->read32(content_link->context,MT_REG_COMMAND_OPCODE),
+        content_link->read32(content_link->context,MT_REG_RESPONSE_STATUS),
+        content_link->read32(content_link->context,MT_REG_CORE_VARIANT_INDEX),
+        content_link->read32(content_link->context,MT_REG_SHELL_BUILD_ID),
+        content_link->read32(content_link->context,MT_REG_ABI_VERSION),
+        content_link->read32(content_link->context,MT_REG_CORE_ID)
+    };
+    result->snapshot_valid=true;
+}
+
 static bool valid_root(const char *root)
 {
     const size_t length = root == NULL ? 0U : strlen(root);
@@ -569,14 +587,15 @@ mt_genesis_content_service_result_t genesis_content_service_load(
     images.save.data = candidate_save_size != 0U ? save_buffer : NULL;
     images.save.size = candidate_save_size;
     clear_core_load_error();
-    result.link = mt_genesis_stage(
+    result.link = mt_genesis_stage_traced(
         content_link, &images, MT_GENESIS_CONTENT_POLLS,
-        content_progress, content_progress_context);
+        content_progress, content_progress_context,&result.phase);
     if (result.link != MT_LINK_OK) {
         forget_cartridge();
         close_save();
         mt_persistent_save_close(&candidate_save);
         result.status = MT_GENESIS_CONTENT_SERVICE_TRANSFER_FAILED;
+        failure_snapshot(&result);
         return result;
     }
 
@@ -587,21 +606,28 @@ mt_genesis_content_service_result_t genesis_content_service_load(
     active_save_size = candidate_save_size;
     save_active = candidate_save_size != 0U;
     if (save_active) {
+        result.phase=MT_GENESIS_TRANSFER_MOUNT;
         result.link = mount_save_media(active_save_size);
         if (result.link != MT_LINK_OK) {
             close_save();
             result.status = MT_GENESIS_CONTENT_SERVICE_SAVE_MOUNT_FAILED;
+            failure_snapshot(&result);
             return result;
         }
     }
+    result.phase=MT_GENESIS_TRANSFER_RELEASE;
     result.link = mt_genesis_release(
         content_link, MT_GENESIS_CONTENT_POLLS,
         content_progress, content_progress_context);
-    if (result.link == MT_LINK_OK) result.link = wait_for_core_result();
+    if (result.link == MT_LINK_OK) {
+        result.phase=MT_GENESIS_TRANSFER_READY;
+        result.link = wait_for_core_result();
+    }
     if (result.link != MT_LINK_OK) {
         if (save_active && genesis_content_service_prepare_reset() == 0)
             close_save();
         result.status = MT_GENESIS_CONTENT_SERVICE_TRANSFER_FAILED;
+        failure_snapshot(&result);
         return result;
     }
 
@@ -629,10 +655,12 @@ mt_genesis_content_service_result_t genesis_content_service_detach(void)
         result.save = last_save_result;
         return result;
     }
+    result.phase=MT_GENESIS_TRANSFER_RESET;
     result.link = set_core_reset(true);
     if (result.link != MT_LINK_OK) {
         (void)genesis_content_service_resume_after_reset();
         result.status = MT_GENESIS_CONTENT_SERVICE_TRANSFER_FAILED;
+        failure_snapshot(&result);
         return result;
     }
     forget_cartridge();
@@ -694,4 +722,19 @@ const char *genesis_content_service_status_name(
     case MT_GENESIS_CONTENT_SERVICE_FLUSH_FAILED: return "save flush failed";
     }
     return "unknown Genesis content service status";
+}
+
+const char *genesis_content_service_phase_name(mt_genesis_transfer_phase_t phase)
+{
+    switch(phase) {
+    case MT_GENESIS_TRANSFER_NONE:return "none";
+    case MT_GENESIS_TRANSFER_RESET:return "reset assertion";
+    case MT_GENESIS_TRANSFER_CONFIG:return "configuration";
+    case MT_GENESIS_TRANSFER_CARTRIDGE:return "cartridge";
+    case MT_GENESIS_TRANSFER_SAVE:return "save data";
+    case MT_GENESIS_TRANSFER_MOUNT:return "save mount";
+    case MT_GENESIS_TRANSFER_RELEASE:return "reset release";
+    case MT_GENESIS_TRANSFER_READY:return "core ready";
+    }
+    return "unknown";
 }

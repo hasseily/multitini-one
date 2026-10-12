@@ -20,9 +20,9 @@
 typedef struct {
     uint8_t enabled;
     uint8_t persistence;
-    uint8_t blur; /* Vertical smoothing: Off, Light, Medium, Strong. */
+    uint8_t blur; /* Calibrated Blur: H3 at 1/8, H3/V3 at 1/4, H5/V3 at 1/2. */
     uint8_t bloom;
-    uint8_t softness; /* Native horizontal prefilter: Off, Light, Medium, Strong. */
+    uint8_t softness; /* Dot bleed level; applied during scanout, not native filtering. */
 } mt_video_frame_options_t;
 
 /* Source and output are slot indices, never addresses. CPU0 reserves both
@@ -67,16 +67,12 @@ bool mt_video_frame_process(const uint16_t *input, uint16_t *output,
                             uint32_t decay_steps,
                             bool reset_history);
 
-/* The explicit scale is the core's fixed 1080p reference, independent of
- * source dimensions and the currently selected output mode. Both operands
- * must be in 1..64. Vertical smoothing uses [1,2,2,2,1]/8 at every level,
- * with clamped edges. Blend its floored kernel with its center using rounded
- * Q8 coefficients: 128/176/224 at reference scales 4 and 3/2, or 96/132/168
- * at scale 6. For other ratios Strong is round(7/8 * min(256,round(1152/scale))),
- * Light is round(4/7 * Strong), and Medium is round(11/14 * Strong).
- * Horizontal prefiltering runs first with [1,2,1]/4 and Q8 strengths 64/128/192.
- * Its kernel is floored before rounding the center blend. Bloom always uses
- * original persisted pixels and adds its unchanged halo to the smoothed base. */
+/* Appletini ONE 886ea50e native-pixel Blur/Glow, independent of scale.
+ * PHO2 rounds normalized Blur kernels once per pass, then blends their result
+ * with the original persisted pixel at 1/8, 1/4 or 1/2. Flat colors are exact.
+ * Glow floors each [1,2,1]/4 pass once and adds 1/8, 1/4, or 1/2 of the
+ * fixed halo with saturation. Dot bleed runs after RGB565 frame storage.
+ * Scale operands remain validated in 1..64 for caller compatibility. */
 bool mt_video_frame_process_scaled(const uint16_t *input, uint16_t *output,
                             uint32_t *history, uint32_t *base, uint32_t *scratch,
                             uint32_t width, uint32_t height,

@@ -17,6 +17,23 @@ core on branch `genesis`, after Appletini parity. See
 
 ## 1. Goal
 
+Runtime follow-up, 2026-10-12: investigate the owner's PHO4 Genesis transfer,
+effects and Video size failures. The continuously locked clock regression
+establishes a Video size controller stall; fix geometry-only changes without
+clock reprogramming. Preserve old bundles and distinguish that tested fix
+from the unresolved Genesis/effects observations. See
+[the investigation](docs/PHOSPHOR_PHOS4_DIAGNOSIS.md).
+
+Display correction, 2026-10-12: center the visible compact three-line splash
+block, including its F12 prompt. Measure ink against outgoing DVI DE and
+compensate the standby color register's extra pixel of latency. Use padded
+font rows to avoid runtime glyph-index arithmetic. Register mode-derived
+canvas and glyph origins in the pixel domain during the existing reset hold,
+without changing the color pipeline. PHO5 rebuilds all six FPGA
+images for these corrections and the geometry-only Video size transaction. Keep DIA4 as a
+separate diagnostic step with retained PHO4 hardware. See
+[the PHO5 scope](docs/PHOSPHOR_PHOS5.md).
+
 Use the Appletini ONE card as a stand-alone FPGA computer, outside an Apple II.
 Assume the board's 5 V jumper fix is present. Build one common system that can
 load machine cores, start with the GPL MiSTer C64 core, and then use the same
@@ -613,6 +630,48 @@ On hardware:
 
 ### Decisions recorded after the baseline plan
 
+- 2026-10-12: The owner reported an off-center standby in non-1080p modes and
+  uncovered config-menu strips, including 48 bottom rows at 1024x768. PHO4
+  centers the existing artwork per output, retains the text grid and glyph
+  sizes, and extends nearest edge-cell backgrounds/transparency through the
+  remainder strips. Full-screen screenshots follow the same policy. Keep
+  clocks, resets, commits and data latency unchanged. Rebuild matching firmware
+  and all six FPGA images as `-phos4`, build ID 0x50484F34, ABI 0.21. New splash
+  designs are proposals only until the owner selects a direction.
+- 2026-10-12: The owner reported PHO1 Blur too strong even at Light and asked
+  to weaken every level, then approved a per-core Video size control with
+  1x, 2x, 3x, 4x and Auto. PHO3 / ABI 0.21 adds this to the PHO2 calibration.
+  Auto retains every current core/mode viewport. Manual sizes multiply native
+  pixels; signed floor centering clips excess at the display edges. Capture
+  and direct bridges retain complete Auto rasters; only native DDR scanout
+  uses manual geometry, with black on startup/miss. A seven-bit mailbox commits
+  mode and size together after the normal drain/hold/relock transaction.
+  Native frame sizes, HDMI timings, Blur/Glow/Dot bleed and controller maps
+  remain independent of the new size. Saved schema 9 uses a reserved profile
+  byte; older profiles migrate to Auto. Rebuild supervisor and all five machine
+  variants with build ID 0x50484F33 and suffix -phos3. Timing, scanout stalls,
+  clipped first/last pixels and complete hidden native capture are release
+  gates. Keep PHO1 artifacts and unfinished PHO2 build evidence intact.
+- 2026-10-12: The owner reported PHO1 Blur too strong even at Light and asked
+  to weaken every level. PHO2 / ABI 0.20 retains the Appletini H3, H3/V3 and
+  H5/V3 footprints, with normalized rounded kernels blended at 1/8, 1/4 and
+  1/2 against the original persisted pixel. Keep flat RGB565 colors exact,
+  Glow/Dot bleed/persistence unchanged, and all pipeline clocks and frame
+  transfers fixed. Rebuild matching firmware and all six images as `-phos2`.
+  Preserve the PHO1 delivery and keep board acceptance separate.
+
+- 2026-10-11: The owner replaced independent axis smoothing with Appletini
+  Blur, Dot bleed and Glow, pinned to F1.2.5 commit 886ea50e. PHO1 / ABI 0.19
+  supersedes GL01 and AX01 effect semantics. Build a firmware with suffix
+  `-phos1`, supervisor, C64 PAL, PSRAM GBC, Vectrex, and Genesis NTSC/PAL.
+  Measure resource/timing/frame-processing cost and retain exact source and
+  build inputs. Board performance remains a separate measurement.
+
+- 2026-10-11: The owner requested fixed-radius glow after comparing Appletini
+  F1.2.5 with Multitini's independent smoothing. GL01 / ABI 0.18 uses the same
+  3x3 native-pixel Bloom halo at Light, Medium, and Strong; strength changes
+  added light only. Keep both smoothing axes independent. Record software,
+  FPGA simulation, routed-build, and board evidence separately.
 - 2026-10-02: The owner requested independent horizontal smoothing before and
   during scaling and vertical-only smoothing, with stable per-core strengths
   across output modes. After the software preview, increase all horizontal

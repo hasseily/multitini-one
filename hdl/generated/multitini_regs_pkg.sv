@@ -3,7 +3,7 @@
 `timescale 1ns / 1ps
 package multitini_regs_pkg;
     localparam logic [15:0] MT_ABI_MAJOR = 16'd0;
-    localparam logic [15:0] MT_ABI_MINOR = 16'd17;
+    localparam logic [15:0] MT_ABI_MINOR = 16'd21;
     localparam logic [31:0] MT_ABI_VERSION = {MT_ABI_MAJOR, MT_ABI_MINOR};
     localparam logic [31:0] MT_MAGIC = 32'h4D543031;
     localparam logic [31:0] MT_SHELL_ID = 32'h4D544F4E;
@@ -182,6 +182,7 @@ package multitini_regs_pkg;
     localparam logic [31:0] MT_VECTREX_OVERLAY_STATUS_ERROR = 32'h00000002;
     localparam logic [31:0] MT_VIDEO_EFFECT_MIN_ABI_MINOR = 32'h0000000F;
     localparam logic [31:0] MT_VIDEO_AXIS_MIN_ABI_MINOR = 32'h00000011;
+    localparam logic [31:0] MT_VIDEO_PHOSPHOR_MIN_ABI_MINOR = 32'h00000014;
     localparam logic [31:0] MT_VIDEO_EFFECT_STATUS_BUSY = 32'h00000001;
     localparam logic [31:0] MT_VIDEO_EFFECT_STATUS_VALID = 32'h00000002;
     localparam logic [31:0] MT_VIDEO_EFFECT_STATUS_REJECTED = 32'h00000004;

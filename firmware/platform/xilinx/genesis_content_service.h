@@ -24,6 +24,11 @@ typedef enum {
 } mt_genesis_content_service_status_t;
 
 typedef struct {
+    uint32_t status,error,control,stream_status;
+    uint32_t command_opcode,response_status,core_variant,build_id,abi,core_id;
+} mt_genesis_transfer_snapshot_t;
+
+typedef struct {
     mt_genesis_content_service_status_t status;
     mt_sd_result_t sd;
     mt_content_validation_t validation;
@@ -34,6 +39,11 @@ typedef struct {
     size_t save_size;
     bool save_active;
     bool save_existed;
+    mt_genesis_transfer_phase_t phase;
+    bool snapshot_valid;
+    /* One live, nondestructive snapshot after failure. Stream abort or save
+     * cleanup may already have replaced the command/response registers. */
+    mt_genesis_transfer_snapshot_t snapshot;
 } mt_genesis_content_service_result_t;
 
 void genesis_content_service_init(mt_core_link_t *link,
@@ -64,5 +74,6 @@ bool genesis_content_service_save_faulted(void);
 const char *genesis_content_service_save_path(void);
 const char *genesis_content_service_status_name(
     mt_genesis_content_service_status_t status);
+const char *genesis_content_service_phase_name(mt_genesis_transfer_phase_t phase);
 
 #endif

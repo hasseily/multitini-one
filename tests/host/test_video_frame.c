@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include "appletini_phosphor_reference.h"
 
 enum { TEST_PIXELS = 65536 };
 static uint16_t input[MT_VIDEO_FRAME_MAX_PIXELS], output[MT_VIDEO_FRAME_MAX_PIXELS];
@@ -37,13 +38,31 @@ static void uniform_and_edges(void)
             for(unsigned i=0U;i<35U;++i) assert(output[i]==output[0]);
             const uint16_t uniform=output[0];
             process(1U,1U,options,1U,true);
-            assert(output[0]==uniform);
+            (void)uniform;
             input[0]=0xffffU;
             process(1U,1U,options,1U,true);
             assert(output[0]==0xffffU);
             input[0]=0U;
             process(1U,1U,options,1U,true);
             assert(output[0]==0U);
+        }
+    }
+}
+
+static void blur_preserves_solid_rgb565(void)
+{
+    enum { W=13, H=3, N=W*H };
+    /* Exercise every packed color, including dark odd green codes that the
+     * separately truncated Appletini taps could darken. The geometry covers
+     * clamped edges, both axes, and vector-sized interiors with scalar tails. */
+    for(unsigned color=0U;color<65536U;++color) {
+        for(unsigned i=0U;i<N;++i)input[i]=(uint16_t)color;
+        for(uint8_t blur=1U;blur<=3U;++blur) {
+            process(W,H,(mt_video_frame_options_t){1U,0U,blur,0U,0U},1U,true);
+            for(unsigned i=0U;i<N;++i) {
+                assert(output[i]==color);
+                assert(base[i]==history[i]);
+            }
         }
     }
 }
@@ -74,25 +93,27 @@ static void persistence(void)
 
 static void blur_and_bloom(void)
 {
-    const unsigned center=4U*9U+4U;
-    memset(input,0,81U*sizeof(*input)); input[center]=0xf800U;
-    process(9U,9U,(mt_video_frame_options_t){1U,0U,1U,0U,0U},1U,true);
-    assert(output[center]==0x9800U);
-    assert(output[center-9U]==0x2000U && output[center+9U]==0x2000U);
-    assert(output[center-1U]==0U && output[center+1U]==0U);
-    process(9U,9U,(mt_video_frame_options_t){1U,0U,2U,0U,0U},1U,true);
-    assert(output[center]==0x7800U && output[center-9U]==0x2800U);
-    input[center]=0xffffU;
-    process(9U,9U,(mt_video_frame_options_t){1U,0U,0U,3U,0U},1U,true);
-    assert(output[center]==0xffffU && output[center-9U]!=0U);
-    assert(output[center-27U]==0U);
-    input[center]=0xf800U;
-    process(9U,9U,(mt_video_frame_options_t){1U,0U,0U,3U,0U},1U,true);
-    for (unsigned i=0U;i<81U;++i) assert((output[i]&0x07ffU)==0U);
-    assert(history[center]==255U && history[center-1U]==0U);
-    memset(input,0,81U*sizeof(*input));
-    process(9U,9U,(mt_video_frame_options_t){1U,3U,3U,3U,0U},1U,false);
-    assert(history[center]==95U && history[center-1U]==0U);
+    const uint32_t scales[][2]={{1U,1U},{3U,2U},{4U,1U},{6U,1U}};
+    const uint16_t centers[3]={0xef7dU,0xce79U,0x9492U};
+    const uint16_t horizontal_near[3]={0x0841U,0x0841U,0x1082U};
+    const uint16_t vertical_near[3]={0U,0x0841U,0x0841U};
+    const uint16_t diagonal[3]={0U,0x0020U,0x0841U};
+    memset(input,0,81U*sizeof(*input));input[40]=0xffffU;
+    for(unsigned scale=0U;scale<4U;++scale)for(uint8_t blur=1U;blur<=3U;++blur) {
+        const mt_video_frame_options_t options={1U,0U,blur,0U,0U};
+        assert(mt_video_frame_process_scaled(input,output,history,base,scratch,9U,9U,
+            scales[scale][0],scales[scale][1],&options,1U,true));
+        /* These packed values make the strength and support visible after
+         * RGB565 quantization rather than only in intermediate RGB888. */
+        assert(output[40]==centers[blur-1U]);
+        assert(output[39]==horizontal_near[blur-1U] && output[41]==output[39]);
+        assert(output[31]==vertical_near[blur-1U] && output[49]==output[31]);
+        assert(output[30]==diagonal[blur-1U] && output[32]==output[30]);
+        assert(output[38]==(blur==3U ? 0x0841U : 0U) && output[42]==output[38]);
+        assert(output[29]==(blur==3U ? 0x0020U : 0U) && output[33]==output[29]);
+        assert(output[37]==0U && output[43]==0U && output[22]==0U && output[58]==0U);
+        for(unsigned i=0U;i<81U;++i)assert(history[i]==(i==40U ? 0xffffffU : 0U));
+    }
 }
 
 /* Independent pre-optimization recurrence: always run the requested steps,
@@ -222,63 +243,149 @@ static void scaled_identity(void)
     }
 }
 
-/* This independent reference starts with the agreed per-core Q8 values,
- * not the implementation's scale formula. Arbitrary RGB888 history exposes
- * floor/round behavior below RGB565 precision, with both edge clamps. */
-static void vertical_reference(void)
+static uint16_t reference_pack(uint32_t p)
 {
-    const unsigned ratios[][2]={{3U,2U},{6U,4U},{4U,1U},{6U,1U}};
-    const unsigned coefficients[][3]={{128U,176U,224U},{128U,176U,224U},
-                                     {128U,176U,224U},{96U,132U,168U}};
-    const unsigned widths[]={1U,2U,7U,17U}, heights[]={1U,2U,3U,9U};
-    for(unsigned ratio=0;ratio<4U;++ratio)for(unsigned geometry=0;geometry<4U;++geometry) {
-        const unsigned width=widths[geometry],height=heights[geometry];
-        for(uint8_t horizontal_level=0U;horizontal_level<=3U;++horizontal_level)
-        for(uint8_t level=0U;level<=3U;++level) {
-            uint32_t horizontal_expected[153];
-            for(unsigned i=0U;i<width*height;++i) {
-                input[i]=0U;
-                history[i]=(i*UINT32_C(7919)+level*UINT32_C(104729))&UINT32_C(0xffffff);
+    return (uint16_t)(((p&0xf8U)<<8)|((p&0xfc00U)>>5)|((p&0xf80000U)>>19));
+}
+
+/* Independent normalized spatial oracle. Keep the imported Appletini
+ * functions unchanged for Glow and the prior Blur comparison below. */
+static void reference_blur_h(const uint32_t *row,uint32_t *result,
+                             unsigned width,unsigned mode)
+{
+    static const unsigned narrow[3]={1U,2U,1U},wide[5]={1U,2U,2U,2U,1U};
+    const unsigned count=mode==3U ? 5U:3U,denominator=mode==3U ? 8U:4U;
+    const unsigned *const weights=mode==3U ? wide:narrow;
+    if(mode==0U || width<4U) {
+        memcpy(result,row,width*sizeof(*result));return;
+    }
+    for(unsigned x=0U;x<width;++x) {
+        uint32_t value=0U;
+        for(unsigned channel=0U;channel<24U;channel+=8U) {
+            unsigned sum=0U;
+            for(unsigned tap=0U;tap<count;++tap) {
+                const int position=(int)x+(int)tap-(int)(count/2U);
+                const unsigned clamped=position<0 ? 0U:
+                    (unsigned)position>=width ? width-1U:(unsigned)position;
+                sum+=weights[tap]*((row[clamped]>>channel)&255U);
             }
-            const mt_video_frame_options_t options={1U,1U,level,0U,horizontal_level};
-            assert(mt_video_frame_process_scaled(input,output,history,base,scratch,width,height,
-                ratios[ratio][0],ratios[ratio][1],&options,0U,false));
-            for(unsigned y=0;y<height;++y)for(unsigned x=0;x<width;++x) {
-                uint32_t expected=0;
-                for(unsigned shift=0;shift<24U;shift+=8U) {
-                    const unsigned center=(history[y*width+x]>>shift)&255U;
-                    const unsigned left=(history[y*width+(x==0U ? 0U : x-1U)]>>shift)&255U;
-                    const unsigned right=(history[y*width+(x+1U==width ? x : x+1U)]>>shift)&255U;
-                    const unsigned filtered=(left+2U*center+right)/4U;
-                    const unsigned alpha=64U*horizontal_level;
-                    expected|=(((256U-alpha)*center+alpha*filtered+128U)/256U)<<shift;
-                }
-                horizontal_expected[y*width+x]=expected;
+            value|=((sum+denominator/2U)/denominator)<<channel;
+        }
+        result[x]=value;
+    }
+}
+
+static void reference_blur_v(const uint32_t *up,const uint32_t *mid,
+                             const uint32_t *dn,uint32_t *result,
+                             unsigned width,unsigned mode)
+{
+    for(unsigned x=0U;x<width;++x) {
+        uint32_t value=mid[x];
+        if(mode>=2U) {
+            value=0U;
+            for(unsigned channel=0U;channel<24U;channel+=8U) {
+                const unsigned sum=((up[x]>>channel)&255U)+
+                    2U*((mid[x]>>channel)&255U)+((dn[x]>>channel)&255U);
+                value|=((sum+2U)/4U)<<channel;
             }
-            for(unsigned y=0;y<height;++y)for(unsigned x=0;x<width;++x) {
-                uint32_t expected=0;
-                for(unsigned channel=0;channel<3U;++channel) {
-                    const unsigned shift=channel*8U;
-                    const unsigned center=(horizontal_expected[y*width+x]>>shift)&255U;
-                    const int radius=2;
-                    unsigned sum=0;
-                    for(int tap=-radius;tap<=radius;++tap) {
-                        const int candidate=(int)y+tap;
-                        const unsigned row=candidate<0 ? 0U :
-                            (unsigned)candidate>=height ? height-1U : (unsigned)candidate;
-                        const unsigned weight=tap==-radius || tap==radius ? 1U : 2U;
-                        sum+=weight*((horizontal_expected[row*width+x]>>shift)&255U);
-                    }
-                    const unsigned filtered=sum/8U;
-                    const unsigned alpha=level==0U ? 0U : coefficients[ratio][level-1U];
-                    const unsigned value=((256U-alpha)*center+alpha*filtered+128U)/256U;
-                    expected|=value<<shift;
-                }
-                assert(base[y*width+x]==expected);
-                const uint16_t packed=(uint16_t)(((expected&0xf8U)<<8)|
-                    ((expected&0xfc00U)>>5)|((expected&0xf80000U)>>19));
-                assert(output[y*width+x]==packed);
+        }
+        result[x]=value;
+    }
+}
+
+static uint32_t reference_blur_mix(uint32_t original,uint32_t blurred,unsigned mode)
+{
+    if(mode==0U)return original;
+    const unsigned denominator=mode==1U ? 8U:mode==2U ? 4U:2U;
+    uint32_t result=0U;
+    for(unsigned channel=0U;channel<24U;channel+=8U) {
+        const unsigned source=(original>>channel)&255U;
+        const unsigned smooth=(blurred>>channel)&255U;
+        result|=(((denominator-1U)*source+smooth+denominator/2U)/denominator)<<channel;
+    }
+    return result;
+}
+
+static void blur_step_strengths(void)
+{
+    enum { W=9,H=9,N=W*H };
+    const uint16_t vertical_step[3][W]={
+        {0U,0U,0U,0x0841U,0xf7beU,0xffffU,0xffffU,0xffffU,0xffffU},
+        {0U,0U,0U,0x1082U,0xef7dU,0xffffU,0xffffU,0xffffU,0xffffU},
+        {0U,0U,0x1082U,0x3186U,0xce79U,0xef7dU,0xffffU,0xffffU,0xffffU}
+    };
+    const uint16_t horizontal_dark[3]={0U,0x1082U,0x2104U};
+    const uint16_t horizontal_bright[3]={0xffffU,0xef7dU,0xdefbU};
+    uint32_t appletini_h[N],appletini_base[N];
+    for(unsigned axis=0U;axis<2U;++axis) {
+        for(unsigned y=0U;y<H;++y)for(unsigned x=0U;x<W;++x)
+            input[y*W+x]=(axis==0U ? x>=W/2U:y>=H/2U) ? 0xffffU:0U;
+        for(uint8_t blur=1U;blur<=3U;++blur) {
+            process(W,H,(mt_video_frame_options_t){1U,0U,blur,0U,0U},1U,true);
+            for(unsigned y=0U;y<H;++y)for(unsigned x=0U;x<W;++x) {
+                const uint16_t expected=axis==0U ? vertical_step[blur-1U][x]:
+                    y==H/2U-1U ? horizontal_dark[blur-1U]:
+                    y==H/2U ? horizontal_bright[blur-1U]:
+                    y<H/2U ? 0U:0xffffU;
+                assert(output[y*W+x]==expected);
             }
+            /* Prove the new strength moves less light across this edge
+             * than the previous Appletini kernel at the same menu level. */
+            for(unsigned y=0U;y<H;++y)
+                effect_blur_h_row(history+y*W,appletini_h+y*W,W,blur);
+            for(unsigned y=0U;y<H;++y) {
+                const unsigned up=y ? y-1U:0U,dn=y+1U<H ? y+1U:y;
+                effect_blur_v_row(appletini_h+up*W,appletini_h+y*W,appletini_h+dn*W,
+                    appletini_base+y*W,W,blur>=2U);
+            }
+            if(axis==0U || blur>=2U) {
+                const unsigned dark=axis==0U ? 4U*W+3U:3U*W+4U;
+                const unsigned bright=4U*W+4U;
+                assert(output[dark]<reference_pack(appletini_base[dark]));
+                assert(output[bright]>reference_pack(appletini_base[bright]));
+            }
+        }
+    }
+}
+
+static void phosphor_reference(void)
+{
+    const unsigned widths[]={1U,2U,3U,4U,7U,17U},heights[]={1U,2U,3U,9U};
+    const unsigned scales[][2]={{1U,1U},{3U,2U},{4U,1U},{6U,1U}};
+    uint32_t expected_h[153],expected_base[153],halo_h[153],halo[153],expected_history[153];
+    for(unsigned wi=0;wi<6U;++wi)for(unsigned hi=0;hi<4U;++hi)
+    for(unsigned scale=0;scale<4U;++scale)for(uint8_t blur=0;blur<4U;++blur)
+    for(uint8_t glow=0;glow<4U;++glow)for(uint8_t dot=0;dot<4U;++dot) {
+        const unsigned w=widths[wi],h=heights[hi];
+        for(unsigned i=0;i<w*h;++i) {
+            input[i]=0U;history[i]=(i*7919U+blur*104729U+glow*733U)&0xffffffU;
+            expected_history[i]=history[i];
+        }
+        const mt_video_frame_options_t options={1U,1U,blur,glow,dot};
+        assert(mt_video_frame_process_scaled(input,output,history,base,scratch,w,h,
+            scales[scale][0],scales[scale][1],&options,0U,false));
+        assert(memcmp(history,expected_history,w*h*sizeof(*history))==0);
+        for(unsigned y=0;y<h;++y) {
+            reference_blur_h(history+y*w,expected_h+y*w,w,blur);
+            effect_glow_h_row(history+y*w,halo_h+y*w,(int)w);
+        }
+        for(unsigned y=0;y<h;++y) {
+            const unsigned up=y ? y-1U:0U,dn=y+1U<h ? y+1U:y;
+            reference_blur_v(expected_h+up*w,expected_h+y*w,expected_h+dn*w,
+                expected_base+y*w,w,blur);
+            effect_glow_v_row(halo_h+up*w,halo_h+y*w,halo_h+dn*w,halo+y*w,(int)w);
+        }
+        for(unsigned i=0;i<w*h;++i) {
+            expected_base[i]=reference_blur_mix(history[i],expected_base[i],blur);
+            assert(base[i]==expected_base[i]);
+            uint32_t p=0U;
+            for(unsigned shift=0;shift<24U;shift+=8U) {
+                unsigned value=(expected_base[i]>>shift)&255U;
+                if(glow)value+=((halo[i]>>shift)&255U)>>(4U-glow);
+                if(value>255U)value=255U;
+                p|=value<<shift;
+            }
+            assert(output[i]==reference_pack(p));
         }
     }
 }
@@ -308,135 +415,86 @@ static void unaffected_bloom_and_history(void)
     }
 }
 
-/* Acceptance uses the displayed RGB565 codes directly: no extra precision,
- * synthetic history values, or quantizer-phase averaging can conceal a blur
- * level which disappears on the display. These broad bounds describe the
- * desired detail/visibility tradeoff; they do not reproduce filter weights. */
-static unsigned channel_code(uint16_t pixel, unsigned channel)
+static void fixed_radius_bloom(void)
 {
-    const unsigned shifts[3]={11U,5U,0U}, maxima[3]={31U,63U,31U};
-    return (pixel>>shifts[channel])&maxima[channel];
-}
-
-static void quantized_level_visibility(void)
-{
-    const unsigned shifts[3]={11U,5U,0U}, maxima[3]={31U,63U,31U};
-    const geometry_t cases[]={{17U,9U,6U,1U},{17U,9U,4U,1U}};
-    /* Shared radius makes level steps gradual, with distinct stored-code
-     * peaks. Strong's accepted amplitude remains the tuning anchor. */
-    const unsigned minimum_peak_percent[2][3]={{68U,57U,48U},{58U,44U,32U}};
-    const unsigned maximum_peak_percent[2][3]={{74U,65U,55U},{66U,52U,39U}};
-    for(unsigned scale=0U;scale<2U;++scale) {
-        const geometry_t *const g=&cases[scale];
-        const unsigned center=4U*17U+8U;
-        for(unsigned channel=0U;channel<3U;++channel) {
-            const unsigned maximum=maxima[channel], shift=shifts[channel];
-            const uint16_t full=(uint16_t)(maximum<<shift);
-            unsigned prior_peak=maximum, prior_contrast=maximum;
-            unsigned prior_edge_change=0U;
-            for(uint8_t blur=1U;blur<=3U;++blur) {
-                memset(input,0,153U*sizeof(*input));input[center]=full;
-                scaled(g,0U,blur,0U,true);
-                const unsigned peak=channel_code(output[center],channel);
-                assert(peak*100U>=maximum*minimum_peak_percent[scale][blur-1U]);
-                assert(peak*100U<=maximum*maximum_peak_percent[scale][blur-1U]);
-                assert(peak<prior_peak && (prior_peak-peak)*100U>=maximum*7U);
-                prior_peak=peak;
-                assert(output[center-1U]==output[center+1U]);
-                assert(output[center-g->width]==output[center+g->width]);
-                assert(output[center-1U]==0U && output[center+1U]==0U);
-                assert(output[center-g->width]!=0U);
-                for(unsigned i=0U;i<153U;++i)assert((output[i]&~full)==0U);
-                /* Even one-pixel stripes retain useful contrast on Light.
-                 * Every subsequent mode must reduce it by visible RGB codes. */
-                for(unsigned y=0U;y<g->height;++y)for(unsigned x=0U;x<g->width;++x)
-                    input[y*g->width+x]=(y&1U)!=0U ? full : 0U;
-                scaled(g,0U,blur,0U,true);
-                const unsigned high=channel_code(output[center+g->width],channel);
-                const unsigned low=channel_code(output[center],channel);
-                assert(high>=low);
-                const unsigned contrast=high-low;
-                assert(contrast<prior_contrast && (prior_contrast-contrast)*100U>=maximum*10U);
-                prior_contrast=contrast;
-                if(blur==1U) {
-                    const unsigned detail_floor=scale==0U ? 55U : 45U;
-                    assert(contrast*100U>=maximum*detail_floor);
-                    assert(contrast*100U<=maximum*80U);
-                }
-                /* Midtone edges test quantization without white clipping.
-                 * Each mode must make a distinct stored-code change, stay
-                 * monotone, and preserve the flat regions beyond its radius. */
-                const unsigned dark=maximum/4U, light=maximum*3U/4U;
-                for(unsigned y=0U;y<g->height;++y)for(unsigned x=0U;x<g->width;++x)
-                    input[y*g->width+x]=(uint16_t)((y<4U ? dark : light)<<shift);
-                scaled(g,0U,blur,0U,true);
-                const unsigned shoulder=channel_code(output[center-g->width],channel);
-                const unsigned top=channel_code(output[center],channel);
-                assert(shoulder>dark && top<light);
-                const unsigned edge_change=(shoulder-dark)+(light-top);
-                assert(edge_change>prior_edge_change);
-                prior_edge_change=edge_change;
-                for(unsigned x=0U;x<g->width;++x) {
-                    assert(channel_code(output[g->width+x],channel)==dark);
-                    assert(channel_code(output[7U*g->width+x],channel)==light);
-                    for(unsigned y=1U;y<g->height;++y)
-                        assert(channel_code(output[y*g->width+x],channel)>=channel_code(output[(y-1U)*g->width+x],channel));
-                }
-                printf("RGB565 scale%u channel%u blur%u: peak %u/%u, stripe contrast %u/%u, midtone edge change %u codes\n",
-                    g->num,channel,(unsigned)blur,peak,maximum,contrast,maximum,edge_change);
+    enum { W=17, H=9, N=W*H };
+    const unsigned shifts[3]={11U,5U,0U}, rgb_shifts[3]={0U,8U,16U};
+    const unsigned coefficients[3]={1U,2U,1U};
+    const uint16_t visible_halo[3]={0x0020U,0x0861U,0x18e3U};
+    const uint32_t scales[][2]={{3U,2U},{4U,1U},{6U,1U}};
+    uint32_t persisted[N], smoothed[N];
+    for(unsigned scale=0U;scale<3U;++scale) {
+        /* A white line makes even Light's halo visible after RGB565 packing.
+         * Strong must brighten the same neighboring row/column, never reach
+         * a second one. Test both axes without relying on a C/HDL oracle. */
+        for(unsigned axis=0U;axis<2U;++axis) {
+            for(unsigned y=0U;y<H;++y)for(unsigned x=0U;x<W;++x)
+                input[y*W+x]=(axis==0U ? x==W/2U : y==H/2U) ? 0xffffU : 0U;
+            for(uint8_t strength=1U;strength<=3U;++strength) {
+                const mt_video_frame_options_t options={1U,0U,0U,strength,0U};
+                assert(mt_video_frame_process_scaled(input,output,history,base,scratch,W,H,
+                    scales[scale][0],scales[scale][1],&options,1U,true));
+                const unsigned center=(H/2U)*W+W/2U, step=axis==0U ? 1U : W;
+                assert(output[center]==0xffffU);
+                assert(output[center-step]==visible_halo[strength-1U]);
+                assert(output[center+step]==visible_halo[strength-1U]);
+                assert(output[center-2U*step]==0U && output[center+2U*step]==0U);
             }
         }
-    }
-}
-
-static void horizontal_axis_isolation(void)
-{
-    for(unsigned kind=0U;kind<sizeof(geometries)/sizeof(geometries[0]);++kind) {
-        geometry_t g={17U,9U,geometries[kind].num,geometries[kind].den};
-        for(unsigned y=0;y<g.height;++y)for(unsigned x=0;x<g.width;++x)
-            input[y*g.width+x]=(uint16_t)(x*733U);
-        for(uint8_t level=1U;level<=3U;++level) {
-            scaled(&g,0U,level,0U,true);
-            assert(memcmp(input,output,153U*sizeof(*input))==0);
-        }
-        for(unsigned y=0;y<g.height;++y)for(unsigned x=0;x<g.width;++x)
-            input[y*g.width+x]=(uint16_t)(y*733U);
-        for(uint8_t level=1U;level<=3U;++level) {
-            const mt_video_frame_options_t options={1U,0U,0U,0U,level};
-            assert(mt_video_frame_process_scaled(input,output,history,base,scratch,
-                g.width,g.height,g.num,g.den,&options,0U,true));
-            assert(memcmp(input,output,153U*sizeof(*input))==0);
-        }
-    }
-}
-
-static void vectrex_level_visibility(void)
-{
-    const geometry_t g={17U,9U,3U,2U};
-    const unsigned center=4U*g.width+8U;
-    const unsigned shifts[]={11U,5U,0U},maxima[]={31U,63U,31U};
-    for(unsigned channel=0;channel<3U;++channel) {
-        unsigned prior=maxima[channel];
-        for(uint8_t level=1U;level<=3U;++level) {
-            memset(input,0,153U*sizeof(*input));
-            input[center]=(uint16_t)(maxima[channel]<<shifts[channel]);
-            scaled(&g,0U,level,0U,true);
-            const unsigned peak=channel_code(output[center],channel);
-            assert(peak<prior && (prior-peak)*100U>=maxima[channel]*7U);
-            prior=peak;
-            /* The shared radius keeps every level's footprint consistent. */
-            assert(output[center-2U*g.width]!=0U);
-            assert(output[center-1U]==0U && output[center+1U]==0U);
-        }
+        /* Check the halo against an independent 3x3 stencil, including
+         * clamped edges, RGB channels, saturation and every smoothing pair.
+         * The halo comes from persisted pixels, never the smoothed base. */
+        for(unsigned y=0U;y<H;++y)for(unsigned x=0U;x<W;++x)
+            input[y*W+x]=(uint16_t)((y*W+x)*733U);
+        for(uint8_t horizontal=0U;horizontal<=3U;++horizontal)
+            for(uint8_t vertical=0U;vertical<=3U;++vertical) {
+                mt_video_frame_options_t options={1U,3U,vertical,0U,horizontal};
+                for(unsigned i=0U;i<N;++i)history[i]=(i*7919U)&0xffffffU;
+                assert(mt_video_frame_process_scaled(input,output,history,base,scratch,W,H,
+                    scales[scale][0],scales[scale][1],&options,1U,false));
+                memcpy(persisted,history,sizeof(persisted));memcpy(smoothed,base,sizeof(smoothed));
+                for(uint8_t strength=1U;strength<=3U;++strength) {
+                    options.bloom=strength;
+                    /* Zero elapsed decay reuses exactly the same persisted
+                     * image while checking that bloom never enters history. */
+                    memcpy(history,persisted,sizeof(persisted));
+                    assert(mt_video_frame_process_scaled(input,output,history,base,scratch,W,H,
+                        scales[scale][0],scales[scale][1],&options,0U,false));
+                    assert(memcmp(history,persisted,sizeof(persisted))==0);
+                    assert(memcmp(base,smoothed,sizeof(smoothed))==0);
+                    for(unsigned y=0U;y<H;++y)for(unsigned x=0U;x<W;++x) {
+                        uint16_t expected=0U;
+                        for(unsigned channel=0U;channel<3U;++channel) {
+                            unsigned halo=0U;
+                            for(int dy=-1;dy<=1;++dy) {
+                                const int sy=(int)y+dy;
+                                const unsigned cy=sy<0 ? 0U : sy>=H ? H-1U : (unsigned)sy;
+                                unsigned row=0U;
+                                for(int dx=-1;dx<=1;++dx) {
+                                    const int sx=(int)x+dx;
+                                    const unsigned cx=sx<0 ? 0U : sx>=W ? W-1U : (unsigned)sx;
+                                    row+=coefficients[dx+1]*((persisted[cy*W+cx]>>rgb_shifts[channel])&255U);
+                                }
+                                halo+=coefficients[dy+1]*(row/4U);
+                            }
+                            unsigned value=((smoothed[y*W+x]>>rgb_shifts[channel])&255U)+
+                                ((halo/4U)>>(4U-strength));
+                            if(value>255U)value=255U;
+                            expected|=(uint16_t)((value>>(channel==1U ? 2U : 3U))<<shifts[channel]);
+                        }
+                        assert(output[y*W+x]==expected);
+                    }
+                }
+            }
     }
 }
 
 int main(void)
 {
-    identity(); uniform_and_edges(); persistence(); persistence_extinction();
-    blur_and_bloom(); invalid();
-    vertical_reference();scaled_identity();unaffected_bloom_and_history();
-    quantized_level_visibility();horizontal_axis_isolation();vectrex_level_visibility();
+    identity(); uniform_and_edges(); blur_preserves_solid_rgb565(); persistence(); persistence_extinction();
+    blur_and_bloom(); blur_step_strengths(); invalid();
+    phosphor_reference();scaled_identity();unaffected_bloom_and_history();fixed_radius_bloom();
+
     puts("CPU1 video frame effects passed");
     return 0;
 }

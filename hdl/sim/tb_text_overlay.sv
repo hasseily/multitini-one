@@ -25,6 +25,8 @@ module tb_text_overlay #(
     bit verify_pixels = 0, expected_bank = 0, expected_dense = 0, expected_visible = 0;
     integer verified_active = 0, verified_blank = 0;
     integer verified_foreground = 0, verified_transparent = 0, completed_frames = 0;
+    integer verified_tail = 0, verified_tail_opaque = 0, verified_tail_transparent = 0;
+    integer verified_tail_column = 0, verified_tail_row = 0, verified_tail_corner = 0;
 
     always #5 control_clk = !control_clk;
     always #3 pixel_clk = !pixel_clk;
@@ -72,10 +74,10 @@ module tb_text_overlay #(
     // stage does. The reference derives every pixel from raster coordinates.
     always @(posedge pixel_clk) begin : pixel_scoreboard
         integer columns, rows, cell_width, cell_height, scale, origin_x, origin_y;
-        integer index, local_x, local_y, glyph_x, glyph_y;
+        integer index, column, row, local_x, local_y, glyph_x, glyph_y;
         logic [15:0] cell_value, color;
         logic [63:0] glyph;
-        logic foreground, opaque;
+        logic foreground, opaque, tail_column, tail_row;
         if (pixel_resetn)
             check_value(dut.read_address < CELL_COUNT, "BRAM read address within all 7680 cells");
         if (verify_pixels) begin
@@ -95,14 +97,23 @@ module tb_text_overlay #(
                 origin_y = (cell_height - 8) / 2;
             end
             if (scan_x < H_ACTIVE && scan_y < V_ACTIVE) begin
-                if (scan_x < columns * cell_width && scan_y < rows * cell_height) begin
-                    index = (scan_y / cell_height) * columns + scan_x / cell_width;
+                    // The floor-sized grid retains its geometry. Physical
+                    // remainder strips inherit the nearest edge cell's
+                    // background/transparency, without repeating its glyph.
+                    column = scan_x / cell_width;
+                    row = scan_y / cell_height;
+                    tail_column = column >= columns;
+                    tail_row = row >= rows;
+                    if (tail_column) column = columns - 1;
+                    if (tail_row) row = rows - 1;
+                    index = row * columns + column;
                     local_x = scan_x % cell_width;
                     local_y = scan_y % cell_height;
                     cell_value = expected_cells[expected_bank][index];
                     glyph = cell_value[6:0] >= 32 ? expected_font[cell_value[6:0] - 32] : 64'd0;
                     foreground = 0;
-                    if (local_x >= origin_x && local_x < origin_x + 7 * scale &&
+                    if (!tail_column && !tail_row &&
+                        local_x >= origin_x && local_x < origin_x + 7 * scale &&
                         local_y >= origin_y && local_y < origin_y + 8 * scale) begin
                         glyph_x = (local_x - origin_x) / scale;
                         glyph_y = (local_y - origin_y) / scale;
@@ -116,10 +127,14 @@ module tb_text_overlay #(
                                opaque, color, pixel_opaque, pixel_rgb565);
                     if (foreground) verified_foreground = verified_foreground + 1;
                     if (!opaque) verified_transparent = verified_transparent + 1;
-                end else begin
-                    check_value(!pixel_opaque, "partial cells outside text extent stay transparent");
-                    verified_transparent = verified_transparent + 1;
-                end
+                    if (tail_column || tail_row) begin
+                        verified_tail = verified_tail + 1;
+                        if (opaque) verified_tail_opaque = verified_tail_opaque + 1;
+                        else verified_tail_transparent = verified_tail_transparent + 1;
+                        if (tail_column && tail_row) verified_tail_corner = verified_tail_corner + 1;
+                        else if (tail_column) verified_tail_column = verified_tail_column + 1;
+                        else verified_tail_row = verified_tail_row + 1;
+                    end
                 verified_active = verified_active + 1;
             end else begin
                 check_value(!pixel_opaque, "all horizontal and vertical blanking transparent");
@@ -284,6 +299,17 @@ module tb_text_overlay #(
         check_frame();
         check_value(verified_foreground > 0 && verified_transparent > 0,
                     "glyph strokes and transparent backgrounds both exercised");
+        if (DYNAMIC_DISPLAY && display_mode != 0) begin
+            check_value(verified_tail > 0 && verified_tail_opaque > 0 && verified_tail_transparent > 0,
+                        "remainder background includes opaque and transparent edge cells");
+            check_value(verified_tail_row > 0, "bottom remainder strip checked");
+            if (display_mode == 1 || display_mode == 2 || display_mode == 4 || display_mode == 5)
+                check_value(verified_tail_column > 0 && verified_tail_corner > 0,
+                            "right remainder strip and bottom-right corner checked");
+        end
+        $display("PASS: remainder background mode=%0d tail=%0d opaque=%0d transparent=%0d right=%0d bottom=%0d corner=%0d",
+                 display_mode, verified_tail, verified_tail_opaque, verified_tail_transparent,
+                 verified_tail_column, verified_tail_row, verified_tail_corner);
         $display("PASS: mode=%0d dynamic=%0d; %0d full overlay rasters; %0d active and %0d blank pixels",
                  display_mode, DYNAMIC_DISPLAY, completed_frames, verified_active, verified_blank);
         $finish;

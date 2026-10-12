@@ -67,6 +67,7 @@ module tb_genesis_video_bridge;
         .diagnostic_request(1'b0),.scan_x(scan_x),.scan_y(scan_y),.vblank_start(scan_x==0 && scan_y==250),
         .display_view_x(12'd32),.display_view_y(12'd8),.display_view_width(12'd320),.display_view_height(12'd240),
         .display_scale_num(4'd1),.display_scale_den(4'd1),.display_pause(display_pause),.display_quiescent(display_quiescent),
+        .display_h_active(12'd384),.display_v_active(12'd256),.display_h_total(12'd400),.display_v_total(12'd270),
         .machine_active(machine_active),.machine_rgb565(machine_rgb565),.viewport_x(),.viewport_y(),.viewport_width(),.viewport_height(),
         .capture_drops(capture_drops),.capture_errors(capture_errors),.read_errors(read_errors),.underruns(underruns),
         .araddr(araddr),.arlen(arlen),.arsize(arsize),.arburst(arburst),.arvalid(arvalid),.arready(arready),

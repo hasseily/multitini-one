@@ -41,6 +41,7 @@ typedef struct {
     bool vectrex_overlay_enabled;
     uint8_t vectrex_beam_gain;
     uint8_t vectrex_overlay_opacity;
+    uint8_t video_multiplier; /* 0 = Auto, 1..4 = native-pixel integer size. */
     mt_video_effects_settings_t video_effects;
 } mt_core_settings_profile_t;
 
@@ -111,6 +112,8 @@ bool mt_supervisor_settings_remember_vectrex_video(
 bool mt_supervisor_settings_remember_video_effects(
     mt_supervisor_settings_t *settings, const char *core_id,
     const mt_video_effects_settings_t *effects);
+bool mt_supervisor_settings_remember_video_multiplier(
+    mt_supervisor_settings_t *settings, const char *core_id, uint8_t multiplier);
 /* Serial identity follows a controller between ports. Without a serial, the
  * same physical port is required so identical controllers cannot swap maps. */
 const mt_controller_settings_profile_t *mt_supervisor_settings_find_controller(

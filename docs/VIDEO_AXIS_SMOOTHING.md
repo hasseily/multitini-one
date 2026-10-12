@@ -1,5 +1,8 @@
 # Independent video smoothing
 
+Historical AX01/GL01 record. PHO1 supersedes these controls and kernels with
+[Appletini Blur, Dot bleed and Glow](PHOSPHOR_PHOS1.md).
+
 AX01 changes the Effects page to two independent controls:
 
 - **Horizontal smoothing** blends native source columns before centered
@@ -52,7 +55,13 @@ All vertical levels use `[1,2,2,2,1]/8`. Mix the floored kernel result with
 the center row using the listed weight. Sharing the footprint avoids a large
 Medium-to-Strong jump in blur width. Vertical smoothing consumes the horizontal
 result, so both axes compose independently. Persistence precedes both axes;
-Bloom retains its original kernel and adds its halo to their combined result.
+Bloom adds a fixed-radius halo to their combined result. Its separable
+`[1,2,1]/4` filter covers three native columns and three native rows at every
+strength. Each pass floors once in RGB888. Light, Medium, and Strong add
+1/8, 1/4, and 1/2 of the same halo, saturating each channel before RGB565
+packing. The halo comes from the persisted image before either smoothing
+axis, so smoothing changes the base without changing the halo kernel.
+The radius is one native pixel; enlargement magnifies it with the picture.
 These are deliberate new levels, not a match for the previous two-dimensional
 blur.
 
@@ -60,6 +69,10 @@ blur.
 
 ABI 0.17 identifies the new meaning of the existing effect fields. The
 register addresses, saved settings wire size, and effect count remain unchanged.
+GL01 / ABI 0.18 makes Bloom's radius fixed. ABI 0.17 cores retain the previous
+five-tap Strong halo; load newly built ABI 0.18 cores to use the improvement.
+Light and Medium keep their existing pixels. Existing settings need no
+migration. Firmware GL01 also updates the portable/NEON frame reference.
 `VIDEO_FRAME_OPTIONS` uses bits 7:6 for horizontal smoothing, alongside
 persistence at 1:0, vertical smoothing at 3:2, and Bloom at 5:4; bits 31:8
 remain reserved.
@@ -101,3 +114,48 @@ and 33 DSPs in the retained 2026-09-30 image. Its block RAM remains 88 RAMB36
 and 12 RAMB18 tiles. Exact per-image timing reports, source captures, and
 firmware audits accompany the test bundle. No board acceptance has been
 recorded for AX01.
+
+## GL01 fixed-radius bloom
+
+The 2026-10-11 change removes the wider Strong halo branch from the native
+FPGA filter. The software reference uses the same three-tap kernel at all
+strengths. Four line RAMs, the nine-clock pipeline, clocks, resets, crossings,
+frame ownership, and DDR transfers keep their existing contracts.
+
+Directed acceptance checks use RGB565-visible white lines on both axes:
+Light/Medium/Strong brighten the same adjacent row or column, leave the second
+neighbor black, and produce distinct stored pixel values. An independent
+3x3 stencil checks all smoothing pairs, per-core reference scales, clamped
+edges, saturation, and unchanged persistence history. The C/HDL oracle and
+autonomous pipeline checks pass locally. Full core bitstreams and board
+acceptance remain separate gates.
+
+GL01 passed 66 native-filter cases (29,568 C/HDL jobs), 16 complete frame-engine
+cases (2,865 jobs, including full-size frames and AXI fault injection), and
+portable/XPM autonomous pipelines at all seven output scales. The Cortex-A9
+NEON/scalar comparison passed 724 cases. ABI and package checks passed 13
+tests. The source-generated RGB565 preview confirms identical Light/Medium
+pixels and the revised Strong footprint.
+
+The host suite passed all 61 tests after restoring CherryUSB to the repository's
+pinned `06f424d1d23dd271dcc9cc1e19ec47ca07032dd6`. The initial checkout at
+`825dc4166ef4b92ced2b15446c668e74f2bc064c` lacked the EHCI active-retry fix and
+failed `usb_ehci_completion`. The unchanged regression now passes all 23
+completion cases, including active retries and error classification.
+
+Vivado 2025.2 routed the isolated frame engine at a 7.500 ns clock period:
+
+| Native frame / reference scale | Setup slack | Hold slack | LUTs | Registers | RAMB36 / RAMB18 | DSPs |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 540x720 / 3:2 | +0.526 ns | +0.082 ns | 2,626 | 2,255 | 4 / 0 | 3 |
+| 382x270 / 4:1 | +0.718 ns | +0.078 ns | 2,645 | 2,274 | 0 / 4 | 3 |
+| 160x144 / 6:1 | +0.106 ns | +0.076 ns | 2,648 | 2,254 | 0 / 4 | 3 |
+| 640x720 / 4:1 | +0.359 ns | +0.087 ns | 2,629 | 2,258 | 4 / 0 | 3 |
+
+All four runs have zero failing setup, hold, and pulse-width endpoints;
+pulse-width slack is +2.620 ns. These numbers cover the engine/filter block.
+The isolated runs omit PS7, board I/O and complete machine integration, and
+retain the corresponding DRC warnings plus DSP pipelining advisories. They
+do not establish full-core timing, CDC or board performance. Local reports,
+source hashes and the preview are under `build/gl01-validation`,
+`build/gl01-ooc` and `build/gl01-preview`.

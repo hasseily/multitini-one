@@ -60,8 +60,8 @@
 
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
 #define MT_SUPERVISOR_CORE_ID UINT32_C(0)
-/* AX01: Independent horizontal interpolation and vertical smoothing; ABI 0.17. */
-#define MT_FIRMWARE_BUILD_ID UINT32_C(0x41583031)
+/* PHO5: geometry-only size commits, compact ink centering and diagnostics. */
+#define MT_FIRMWARE_BUILD_ID UINT32_C(0x50484F35)
 #define MT_I2C_CLOCK_HZ UINT32_C(100000)
 #define MT_I2C_BUSY_POLLS UINT32_C(1000000)
 #define MT_UART_DRAIN_POLLS UINT32_C(10000000)
@@ -1575,11 +1575,11 @@ static bool selection_supports_effects(const mt_core_selection_t *selection)
     uint32_t version;
     if (selection == NULL || selection->package.core_id == MT_SUPERVISOR_CORE_ID ||
         selection->package.abi_major != MT_ABI_MAJOR ||
-        selection->package.abi_minor < MT_VIDEO_AXIS_MIN_ABI_MINOR ||
+        selection->package.abi_minor < MT_VIDEO_PHOSPHOR_MIN_ABI_MINOR ||
         shell_read(MT_REG_CORE_ID) != selection->package.core_id) return false;
     version = shell_read(MT_REG_ABI_VERSION);
     return (uint16_t)(version >> 16U) == MT_ABI_MAJOR &&
-           (uint16_t)version >= MT_VIDEO_AXIS_MIN_ABI_MINOR;
+           (uint16_t)version >= MT_VIDEO_PHOSPHOR_MIN_ABI_MINOR;
 }
 
 static void configure_selection_effects(const mt_core_selection_t *selection)
@@ -1597,25 +1597,48 @@ static const mt_display_ops_t display_bus = {
     shell_read, video_effect_write, video_effect_milliseconds
 };
 
-static bool apply_display_mode(uint8_t mode)
+static bool selection_supports_video_multiplier(const mt_core_selection_t *selection)
 {
-    if (!mt_display_supported(&display_bus)) return mode == 0U;
+    return selection != NULL && selection->package.core_id != MT_SUPERVISOR_CORE_ID &&
+        selection->package.abi_major == MT_ABI_MAJOR &&
+        selection->package.abi_minor >= MT_DISPLAY_SCALE_MIN_ABI_MINOR &&
+        shell_read(MT_REG_CORE_ID) == selection->package.core_id &&
+        mt_display_scale_supported(&display_bus);
+}
+
+static bool apply_display_geometry(uint8_t value, bool multiplier)
+{
+    if (multiplier ? !mt_display_scale_supported(&display_bus) : !mt_display_supported(&display_bus))
+        return value == 0U;
     const uint32_t status = shell_read(MT_REG_DISPLAY_STATUS);
-    if (status == mode) return true;
+    const uint32_t mask = multiplier ? MT_DISPLAY_SCALE_MASK : UINT32_C(15);
+    const uint32_t requested = multiplier ? (uint32_t)value << MT_DISPLAY_SCALE_SHIFT : value;
+    if ((status & (MT_DISPLAY_BUSY | MT_DISPLAY_ERROR | MT_DISPLAY_HELD)) == 0U &&
+        (status & mask) == requested) return true;
     mt_video_effect_service_suspend();
     const uint64_t started = monotonic_ms(NULL);
     while (!mt_video_effect_service_quiescent()) {
         usb_hid_service_poll_deferred();
         if (monotonic_ms(NULL) - started >= 1000U) return false;
     }
-    const mt_display_result_t result = mt_display_apply(&display_bus, mode);
-    /* Pixel reset discards overlay commits and effect tables. Rebuild from
-     * the complete settings snapshot after the acknowledged geometry change. */
+    const mt_display_result_t result = multiplier ? mt_display_apply_scale(&display_bus, value) :
+                                                   mt_display_apply(&display_bus, value);
+    /* Geometry commits reset the pixel overlay and effect tables. */
     mt_ui_presenter_invalidate(&supervisor_presenter);
     supervisor_menu_dirty = true;
-    xil_printf("[display] mode=%u result=%u status=%08x\r\n",
-               (unsigned)mode, (unsigned)result, shell_read(MT_REG_DISPLAY_STATUS));
+    xil_printf("[display] %s=%u result=%u status=%08x\r\n", multiplier ? "size" : "mode",
+               (unsigned)value, (unsigned)result, shell_read(MT_REG_DISPLAY_STATUS));
     return result == MT_DISPLAY_OK;
+}
+
+static bool apply_display_mode(uint8_t mode)
+{
+    return apply_display_geometry(mode, false);
+}
+
+static bool apply_video_multiplier(uint8_t multiplier)
+{
+    return apply_display_geometry(multiplier, true);
 }
 
 static void change_display_mode(size_t mode)
@@ -1637,6 +1660,29 @@ static void change_display_mode(size_t mode)
     configure_selection_effects(supervisor.has_active ? &supervisor.active : NULL);
     set_supervisor_outcome(ok, "Display resolution saved",
                           "Display change failed; see serial diagnostics");
+}
+
+static void change_active_video_multiplier(size_t multiplier)
+{
+    if (multiplier > MT_DISPLAY_SCALE_MAX || !supervisor.has_active ||
+        !selection_supports_video_multiplier(&supervisor.active)) {
+        set_supervisor_warning("Update the core package for video size");
+        return;
+    }
+    const uint8_t previous = (uint8_t)((shell_read(MT_REG_DISPLAY_STATUS) &
+        MT_DISPLAY_SCALE_MASK) >> MT_DISPLAY_SCALE_SHIFT);
+    settings_before_update = persistent_settings;
+    bool ok = apply_video_multiplier((uint8_t)multiplier);
+    if (ok && (!ensure_active_settings_profile() ||
+        !mt_supervisor_settings_remember_video_multiplier(&persistent_settings,
+            supervisor.active.package.id, (uint8_t)multiplier) || !save_persistent_settings())) {
+        persistent_settings = settings_before_update;
+        if (!apply_video_multiplier(previous))
+            xil_printf("[display] video size rollback failed\r\n");
+        ok = false;
+    }
+    configure_selection_effects(&supervisor.active);
+    set_supervisor_outcome(ok, "Video size saved", "Video size change failed; see serial diagnostics");
 }
 
 static void change_active_video_effect(size_t field, size_t direction)
@@ -1837,6 +1883,11 @@ static bool restore_selection_settings(
                                           selection->package.id);
     if (mt_display_supported(&display_bus) && !apply_display_mode(persistent_settings.display_mode)) {
         xil_printf("[display] saved resolution failed; using hardware fallback\r\n");
+        ok = false;
+    }
+    if (selection_supports_video_multiplier(selection) &&
+        !apply_video_multiplier(profile != NULL ? profile->video_multiplier : 0U)) {
+        xil_printf("[display] saved video size failed; using hardware fallback\r\n");
         ok = false;
     }
     configure_selection_effects(selection);
@@ -2074,6 +2125,10 @@ static mt_menu_view_t supervisor_menu_view(void)
     view.display_supported = mt_display_supported(&display_bus);
     view.display_mode = view.display_supported ?
         (uint8_t)(shell_read(MT_REG_DISPLAY_STATUS) & 15U) : 0U;
+    view.video_multiplier_supported = supervisor.has_active &&
+        selection_supports_video_multiplier(&supervisor.active);
+    view.video_multiplier = view.video_multiplier_supported ?
+        (uint8_t)((shell_read(MT_REG_DISPLAY_STATUS) & MT_DISPLAY_SCALE_MASK) >> MT_DISPLAY_SCALE_SHIFT) : 0U;
     view.video_test_enabled =
         (shell_read(MT_REG_CONTROL) & MT_CONTROL_VIDEO_TEST_ENABLE) != 0U;
     view.settings_auto_boot = persistent_settings.auto_boot &&
@@ -2816,17 +2871,38 @@ static mt_genesis_content_service_result_t load_genesis_content_with_input(const
     usb_hid_service_set_core_ready(
         (shell_read(MT_REG_STATUS) & MT_STATUS_CORE_READY) != 0U &&
         (shell_read(MT_REG_CONTROL) & MT_CONTROL_CORE_RESET_REQUEST) == 0U);
+    if (result.snapshot_valid) {
+        const mt_genesis_transfer_snapshot_t *const snapshot = &result.snapshot;
+        xil_printf("[MD] failure phase=%s link=%s live status=%08x error=%08x control=%08x stream=%08x\r\n",
+            genesis_content_service_phase_name(result.phase), mt_link_result_name(result.link),
+            (unsigned int)snapshot->status, (unsigned int)snapshot->error,
+            (unsigned int)snapshot->control, (unsigned int)snapshot->stream_status);
+        xil_printf("[MD] live opcode=%08x response=%08x core=%08x abi=%08x variant=%u build=%08x\r\n",
+            (unsigned int)snapshot->command_opcode, (unsigned int)snapshot->response_status,
+            (unsigned int)snapshot->core_id, (unsigned int)snapshot->abi,
+            (unsigned int)snapshot->core_variant, (unsigned int)snapshot->build_id);
+    }
     return result;
 }
 
 static void handle_genesis_content_load(const char *name)
 {
     const mt_genesis_content_service_result_t result = load_genesis_content_with_input(name);
-    xil_printf("[MD] load %s: %s validation=%s link=%s save=%u\r\n",
+    xil_printf("[MD] load %s: %s validation=%s phase=%s link=%s save=%u\r\n",
         name, genesis_content_service_status_name(result.status),
-        mt_content_validation_name(result.validation), mt_link_result_name(result.link),
+        mt_content_validation_name(result.validation),
+        genesis_content_service_phase_name(result.phase), mt_link_result_name(result.link),
         (unsigned int)result.save_size);
     if (result.status != MT_GENESIS_CONTENT_SERVICE_OK) {
+        if (result.phase != MT_GENESIS_TRANSFER_NONE &&
+            (result.status == MT_GENESIS_CONTENT_SERVICE_TRANSFER_FAILED ||
+             result.status == MT_GENESIS_CONTENT_SERVICE_SAVE_MOUNT_FAILED)) {
+            char failure[sizeof(supervisor_status_text)];
+            (void)snprintf(failure, sizeof(failure), "%s: %s",
+                genesis_content_service_phase_name(result.phase), mt_link_result_name(result.link));
+            set_supervisor_error(failure);
+            return;
+        }
         set_supervisor_error(result.validation == MT_CONTENT_UNSUPPORTED_VERSION ?
             "Cartridge requires unsupported hardware" :
             genesis_content_service_status_name(result.status));
@@ -3501,6 +3577,8 @@ static void handle_menu_action(mt_menu_action_t action)
         change_active_vectrex_video(action.file_index);
     } else if (action.kind == MT_MENU_ACTION_SET_DISPLAY_MODE) {
         change_display_mode(action.file_index);
+    } else if (action.kind == MT_MENU_ACTION_SET_VIDEO_MULTIPLIER) {
+        change_active_video_multiplier(action.file_index);
     } else if (action.kind == MT_MENU_ACTION_SET_VIDEO_EFFECT) {
         change_active_video_effect(action.file_index, action.variant_index);
     } else if (action.kind == MT_MENU_ACTION_TOGGLE_VIDEO_SOURCE) {
@@ -3800,6 +3878,12 @@ static void initialize_supervisor_menu(void)
 
     if (mt_display_supported(&display_bus) && !apply_display_mode(persistent_settings.display_mode))
         set_supervisor_warning("Saved display resolution failed; using fallback");
+    if (mt_display_scale_supported(&display_bus)) {
+        const mt_core_settings_profile_t *const profile = supervisor.has_active ?
+            mt_supervisor_settings_find(&persistent_settings, supervisor.active.package.id) : NULL;
+        if (!apply_video_multiplier(profile != NULL ? profile->video_multiplier : 0U))
+            set_supervisor_warning("Saved video size failed; using fallback");
+    }
 
     if (persistent_settings.auto_boot) {
         if (!configured_auto_boot_selection(&startup_auto_selection)) {
@@ -3961,7 +4045,9 @@ static void print_read_only_diagnostics(const char *stage)
 {
     static const uint32_t offsets[] = {
         MT_REG_MAGIC, MT_REG_ABI_VERSION, MT_REG_SHELL_ID,
-        MT_REG_SHELL_BUILD_ID, MT_REG_CORE_ID, MT_REG_CONTROL, MT_REG_UI_STATUS
+        MT_REG_SHELL_BUILD_ID, MT_REG_CORE_ID, MT_REG_CONTROL, MT_REG_UI_STATUS,
+        MT_REG_STATUS, MT_REG_ERROR, MT_REG_COMMAND_OPCODE,
+        MT_REG_RESPONSE_STATUS, MT_REG_COUNT_BAD_WRITE, MT_REG_COUNT_BAD_READ
     };
     mt_video_worker_status_t worker;
     unsigned int i;
@@ -3976,6 +4062,42 @@ static void print_read_only_diagnostics(const char *stage)
         const uint32_t value = Xil_In32(MT_SHELL_BASE_ADDRESS + offsets[i]);
         xil_printf("shell read +%08x=%08x\r\n",
                    (unsigned int)offsets[i], (unsigned int)value);
+    }
+    const uint32_t abi = shell_read(MT_REG_ABI_VERSION);
+    if (shell_read(MT_REG_MAGIC) == MT_MAGIC && (abi >> 16U) == MT_ABI_MAJOR) {
+        if ((abi & UINT32_C(0xffff)) >= 8U)
+            xil_printf("stream status=%08x variant=%u\r\n",
+                (unsigned int)shell_read(MT_REG_STREAM_STATUS),
+                (unsigned int)shell_read(MT_REG_CORE_VARIANT_INDEX));
+        if ((abi & UINT32_C(0xffff)) >= MT_VIDEO_PHOSPHOR_MIN_ABI_MINOR) {
+            /* Status/counter reads have no register side effects. In
+             * particular, never read MEDIA_DATA here: that pops save bytes. */
+            xil_printf("video effect status=%08x sequence=%08x frame control=%08x options=%08x status=%08x\r\n",
+                (unsigned int)shell_read(MT_REG_VIDEO_EFFECT_STATUS),
+                (unsigned int)shell_read(MT_REG_VIDEO_EFFECT_SEQUENCE),
+                (unsigned int)shell_read(MT_REG_VIDEO_FRAME_CONTROL),
+                (unsigned int)shell_read(MT_REG_VIDEO_FRAME_OPTIONS),
+                (unsigned int)shell_read(MT_REG_VIDEO_FRAME_STATUS));
+            xil_printf("video geometry=%08x stride=%u captured=%u consumed=%u active=%08x processed=%u\r\n",
+                (unsigned int)shell_read(MT_REG_VIDEO_FRAME_GEOMETRY),
+                (unsigned int)shell_read(MT_REG_VIDEO_FRAME_STRIDE),
+                (unsigned int)shell_read(MT_REG_VIDEO_FRAME_CAPTURE_PRODUCER),
+                (unsigned int)shell_read(MT_REG_VIDEO_FRAME_CAPTURE_CONSUMER),
+                (unsigned int)shell_read(MT_REG_VIDEO_FRAME_DISPLAY_ACTIVE),
+                (unsigned int)shell_read(MT_REG_VIDEO_FRAME_PROCESSED));
+            xil_printf("video drops=%u underruns=%u axi=%u deadlines=%u engine_errors=%u cycles=%u stall=%u\r\n",
+                (unsigned int)shell_read(MT_REG_VIDEO_FRAME_CAPTURE_DROPS),
+                (unsigned int)shell_read(MT_REG_VIDEO_FRAME_DISPLAY_UNDERRUNS),
+                (unsigned int)shell_read(MT_REG_VIDEO_FRAME_AXI_ERRORS),
+                (unsigned int)shell_read(MT_REG_VIDEO_FRAME_DEADLINES),
+                (unsigned int)shell_read(MT_REG_VIDEO_FRAME_ENGINE_ERRORS),
+                (unsigned int)shell_read(MT_REG_VIDEO_FRAME_ENGINE_CYCLES),
+                (unsigned int)shell_read(MT_REG_VIDEO_FRAME_ENGINE_MAX_STALL));
+        }
+        if ((abi & UINT32_C(0xffff)) >= MT_DISPLAY_MIN_ABI_MINOR)
+            xil_printf("display status=%08x modes=%08x\r\n",
+                (unsigned int)shell_read(MT_REG_DISPLAY_STATUS),
+                (unsigned int)shell_read(MT_REG_DISPLAY_MODES));
     }
     worker = mt_video_worker_status();
     xil_printf("CPU1 state=%u seq=%08x epoch=%08x bytes=%u result=%d\r\n",

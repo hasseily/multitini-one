@@ -325,6 +325,33 @@ uint16_t mt_video_horizontal_rgb565(uint16_t center, uint16_t neighbor,uint8_t w
     return pack_rgb565(color);
 }
 
+/* Appletini video_mono.h spot weights, applied per RGB channel here.
+ * At 1:1, average the two quantized RGB565 samples exactly as its compositor. */
+uint16_t mt_video_dot_bleed_rgb565(uint16_t center,uint16_t near,uint16_t far,
+                                  uint8_t level,bool average)
+{
+    if (level==0U || level>3U) return center;
+    const unsigned shifts[3]={11U,5U,0U},bits[3]={5U,6U,5U};
+    const unsigned main_weights[3]={24U,20U,17U};
+    const unsigned near_weights[3]={8U,12U,14U},far_weights[3]={0U,0U,1U};
+    uint16_t out=0U;
+    for (unsigned ch=0U;ch<3U;++ch) {
+        const unsigned mask=(1U<<bits[ch])-1U;
+        const unsigned a=(center>>shifts[ch])&mask,b=(near>>shifts[ch])&mask,c=(far>>shifts[ch])&mask;
+        const unsigned av=(a<<(8U-bits[ch]))|(a>>(2U*bits[ch]-8U));
+        const unsigned bv=(b<<(8U-bits[ch]))|(b>>(2U*bits[ch]-8U));
+        const unsigned cv=(c<<(8U-bits[ch]))|(c>>(2U*bits[ch]-8U));
+        const unsigned m=main_weights[level-1U],n=near_weights[level-1U],f=far_weights[level-1U];
+        unsigned value=((m*av+n*bv+f*cv+16U)>>5)>>(8U-bits[ch]);
+        if (average) {
+            const unsigned other=((m*av+n*cv+f*bv+16U)>>5)>>(8U-bits[ch]);
+            value=(value+other)>>1;
+        }
+        out|=(uint16_t)(value<<shifts[ch]);
+    }
+    return out;
+}
+
 uint16_t mt_video_effects_reference_rgb565(const mt_video_effects_tables_t *t,
                                         uint16_t pixel)
 {
@@ -372,8 +399,8 @@ uint16_t mt_video_effects_reference_scaled_rgb565(
         const int delta=(int)(2U*phase+scale_den)-(int)scale_num;
         const uint16_t neighbor=delta<0 ? (first ? center:left):(last ? center:right);
         const uint8_t level=(uint8_t)((t->spatial>>MT_VIDEO_EFFECTS_SOFTNESS_SHIFT)&3U);
-        center=mt_video_horizontal_rgb565(center,neighbor,
-            mt_video_horizontal_weight(phase,scale_num,scale_den,level));
+        const uint16_t opposite=delta<0 ? (last ? center:right):(first ? center:left);
+        center=mt_video_dot_bleed_rgb565(center,neighbor,opposite,level,scale_num==scale_den);
     }
     return mt_video_effects_reference_spatial_rgb565(t,center,center,center,true,true,scanline_dim,x,y);
 }
