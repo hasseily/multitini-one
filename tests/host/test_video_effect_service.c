@@ -236,7 +236,9 @@ static void test_failures_and_unsupported(void)
         mt_video_effect_service_configure(true, &settings);
         poll_bounded();
         if (kind == 0U) worker.state = MT_VIDEO_WORKER_FAILED;
-        if (kind == 1U) milliseconds = 3000U;
+        /* CPU1 accepted the job but never completes it while polled. */
+        if (kind == 1U)
+            for (unsigned i = 0U; i < 60U; ++i) { milliseconds += 50U; poll_bounded(); }
         if (kind >= 2U) {
             finish_settings();
             reject_collect = kind == 2U;
@@ -244,6 +246,104 @@ static void test_failures_and_unsupported(void)
         }
         poll_bounded();
         assert(!mt_video_effect_service_available() && data_writes == 0U && commits == 0U);
+    }
+}
+
+static void test_blocked_restore_before_first_poll(void)
+{
+    mt_video_effects_settings_t settings;
+    reset_service();
+    mt_video_effects_defaults(&settings);
+    settings.enabled = 1U;
+    settings.scanlines = 3U;
+    settings.blur = 2U;
+    mt_video_effect_service_configure(true, &settings);
+    /* Core activation configures effects, then restores saved media
+     * synchronously. CPU1 and the commit have not had a chance to run. */
+    milliseconds += 5000U;
+    poll_bounded();
+    assert(submissions == 1U && mt_video_effect_service_available());
+    finish_apply();
+    assert(commits == 1U && mt_video_effect_service_available());
+    poll_bounded();
+    assert(registers[MT_REG_VIDEO_FRAME_CONTROL / 4U] ==
+           (MT_VIDEO_FRAME_CAPTURE_ENABLE | MT_VIDEO_FRAME_DISPLAY_ENABLE |
+            MT_VIDEO_FRAME_AUTONOMOUS_ENABLE));
+    assert(registers[MT_REG_VIDEO_FRAME_OPTIONS / 4U] == (2U << 2U));
+    assert(strstr(mt_video_effect_service_status(), "failed") == NULL);
+}
+
+static void test_blocked_main_loop_during_upload(void)
+{
+    mt_video_effects_settings_t settings;
+    reset_service();
+    mt_video_effects_defaults(&settings);
+    settings.enabled = 1U;
+    settings.scanlines = 2U;
+    mt_video_effect_service_configure(true, &settings);
+    poll_bounded();
+    finish_settings();
+    poll_bounded();
+    poll_bounded();
+    assert(data_writes != 0U && commits == 0U);
+    /* A later blocking transfer stalls polling between upload batches. */
+    milliseconds += 10000U;
+    for (unsigned i = 0U; i < 100U && commits == 0U; ++i) poll_bounded();
+    assert(data_writes == MT_VIDEO_EFFECTS_WRITE_COUNT && commits == 1U);
+    milliseconds += 10000U;
+    acknowledge_commit();
+    poll_bounded();
+    assert(mt_video_effect_service_available());
+    assert(strstr(mt_video_effect_service_status(), "failed") == NULL);
+}
+
+static void test_slow_poll_cadence_applies(void)
+{
+    static const uint32_t cadences[] = {82U, 100U, 250U, 1000U};
+    mt_video_effects_settings_t settings;
+    for (unsigned c = 0U; c < sizeof(cadences) / sizeof(cadences[0]); ++c) {
+        reset_service();
+        mt_video_effects_defaults(&settings);
+        settings.enabled = 1U;
+        settings.scanlines = 3U;
+        mt_video_effect_service_configure(true, &settings);
+        /* CPU1 and the FPGA respond at once; only the main loop is slow. */
+        for (unsigned i = 0U; i < 100U && registers[MT_REG_VIDEO_FRAME_CONTROL / 4U] == 0U; ++i) {
+            milliseconds += cadences[c];
+            poll_bounded();
+            if (worker.state == MT_VIDEO_WORKER_BUSY) finish_settings();
+            if (commits != 0U && registers[MT_REG_VIDEO_EFFECT_SEQUENCE / 4U] == 0U)
+                acknowledge_commit();
+        }
+        assert(commits == 1U && mt_video_effect_service_available());
+        assert(registers[MT_REG_VIDEO_FRAME_CONTROL / 4U] != 0U);
+        assert(strstr(mt_video_effect_service_status(), "failed") == NULL);
+    }
+}
+
+static void test_polled_deadline_still_detects_stalls(void)
+{
+    mt_video_effects_settings_t settings;
+    for (unsigned stage = 0U; stage < 2U; ++stage) {
+        reset_service();
+        mt_video_effects_defaults(&settings);
+        settings.enabled = 1U;
+        mt_video_effect_service_configure(true, &settings);
+        poll_bounded();
+        /* Stage 0: CPU1 never completes. Stage 1: the FPGA never acknowledges. */
+        if (stage == 1U) {
+            finish_settings();
+            for (unsigned i = 0U; i < 100U && commits == 0U; ++i) poll_bounded();
+            assert(commits == 1U);
+        }
+        const uint32_t waiting_since = milliseconds;
+        while (mt_video_effect_service_available() && milliseconds - waiting_since < 4000U) {
+            milliseconds += 50U;
+            poll_bounded();
+        }
+        assert(!mt_video_effect_service_available());
+        assert(milliseconds - waiting_since >= 2900U && milliseconds - waiting_since <= 3100U);
+        assert(strstr(mt_video_effect_service_status(), "update failed") != NULL);
     }
 }
 
@@ -416,6 +516,10 @@ int main(void)
     test_complete_upload();
     test_suspend_and_reconfigure();
     test_failures_and_unsupported();
+    test_blocked_restore_before_first_poll();
+    test_blocked_main_loop_during_upload();
+    test_slow_poll_cadence_applies();
+    test_polled_deadline_still_detects_stalls();
     test_autonomous_ownership();
     test_live_settings_preserve_frame_schedule();
     test_frame_transport_errors();

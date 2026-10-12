@@ -6,10 +6,14 @@
 #include <string.h>
 
 enum { WAIT_COMPUTE, UPLOAD, WAIT_COMMIT, APPLIED, FAULT };
+/* The apply deadline counts polled time without progress. Core activation
+ * restores saved media synchronously after configure; one long gap between
+ * polls says nothing about CPU1 or the FPGA commit. */
+enum { APPLY_DEADLINE_MS = 3000U, MAX_POLL_STEP_MS = 100U };
 static mt_video_effect_service_ops_t bus;
 static mt_video_effects_settings_t desired;
 static mt_video_effects_tables_t tables;
-static uint32_t epoch, submitted_epoch, sequence, sent_sequence, cursor, started;
+static uint32_t epoch, submitted_epoch, sequence, sent_sequence, cursor, waited, last_poll;
 static unsigned phase;
 static bool compatible;
 
@@ -50,7 +54,8 @@ void mt_video_effect_service_configure(bool supported,
     if (settings != NULL && mt_video_effects_settings_valid(settings)) desired = *settings;
     else mt_video_effects_defaults(&desired);
     compatible = supported && bus.read != NULL && bus.write != NULL && bus.milliseconds != NULL;
-    started = compatible ? bus.milliseconds() : 0U;
+    waited = 0U;
+    last_poll = compatible ? bus.milliseconds() : 0U;
 }
 
 bool mt_video_effect_service_available(void)
@@ -90,23 +95,28 @@ bool mt_video_effect_service_snapshot(mt_video_effects_tables_t *snapshot)
 void mt_video_effect_service_poll(void)
 {
     mt_video_worker_status_t worker;
-    uint32_t status;
+    uint32_t status, now, step;
     if (!compatible) return;
     mt_video_frame_service_poll();
     if (phase == FAULT || phase == APPLIED) return;
+    now = bus.milliseconds();
+    step = now - last_poll;
+    last_poll = now;
+    waited += step < MAX_POLL_STEP_MS ? step : MAX_POLL_STEP_MS;
     worker = mt_video_worker_status();
     if (worker.state == MT_VIDEO_WORKER_FAILED || worker.state == MT_VIDEO_WORKER_STOPPED ||
-        bus.milliseconds() - started >= 3000U) { phase = FAULT; return; }
+        waited >= APPLY_DEADLINE_MS) { phase = FAULT; return; }
     if (phase == WAIT_COMPUTE) {
         if (submitted_epoch == epoch && worker.state == MT_VIDEO_WORKER_COMPLETE) {
             uint32_t size = 0U;
             if (!mt_video_worker_collect(epoch, &tables, (uint32_t)sizeof(tables), &size) ||
                 size != sizeof(tables)) { phase = FAULT; return; }
-            phase = UPLOAD; cursor = 0U;
+            phase = UPLOAD; cursor = 0U; waited = 0U;
         } else if (submitted_epoch != epoch &&
                    (worker.state == MT_VIDEO_WORKER_IDLE || worker.state == MT_VIDEO_WORKER_COMPLETE)) {
-            if (mt_video_worker_submit(epoch, &desired, (uint32_t)sizeof(desired)))
-                submitted_epoch = epoch;
+            if (mt_video_worker_submit(epoch, &desired, (uint32_t)sizeof(desired))) {
+                submitted_epoch = epoch; waited = 0U;
+            }
         }
         return;
     }
@@ -125,6 +135,9 @@ void mt_video_effect_service_poll(void)
         return;
     }
     if ((status & MT_VIDEO_EFFECT_STATUS_BUSY) != 0U) return;
+    /* Each batch is progress. A healthy upload needs about 37 polls, so the
+     * deadline must not depend on the main-loop cadence. */
+    waited = 0U;
     /* Cap MMIO work so USB, disk and save polling retain their service time. */
     for (unsigned count = 0U; count < 8U && cursor < MT_VIDEO_EFFECTS_WRITE_COUNT; ++count) {
         uint16_t address;

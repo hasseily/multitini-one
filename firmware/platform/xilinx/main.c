@@ -60,8 +60,8 @@
 
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
 #define MT_SUPERVISOR_CORE_ID UINT32_C(0)
-/* PHO5: geometry-only size commits, compact ink centering and diagnostics. */
-#define MT_FIRMWARE_BUILD_ID UINT32_C(0x50484F35)
+/* EFX1: PHO5 plus an effects apply deadline that ignores blocked polling. */
+#define MT_FIRMWARE_BUILD_ID UINT32_C(0x45465831)
 #define MT_I2C_CLOCK_HZ UINT32_C(100000)
 #define MT_I2C_BUSY_POLLS UINT32_C(1000000)
 #define MT_UART_DRAIN_POLLS UINT32_C(10000000)
