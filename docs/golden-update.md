@@ -1,5 +1,9 @@
 # Golden recovery images
 
+On branch `multiboot`, use [the dual firmware layout and migration guide](MULTIBOOT.md).
+Golden B2.0.0 validates both firmware slots and retains the primary/trial recovery
+procedure. The single-slot layout below records the original port.
+
 This ports Appletini ONE `be2ea4fee3c5ebc239b8b20aad9738bee89f8ff0`.
 The serial protocol, manifest magic, recovery marker and flash metadata remain
 compatible. Build labels identify the Multitini application. Board testing is

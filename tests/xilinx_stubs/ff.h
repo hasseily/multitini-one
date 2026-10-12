@@ -12,6 +12,7 @@ typedef enum {
     FR_OK = 0,
     FR_DISK_ERR = 1,
     FR_NO_FILE = 4,
+    FR_NO_PATH = 5,
     FR_EXIST = 8,
     FR_INVALID_PARAMETER = 19
 } FRESULT;

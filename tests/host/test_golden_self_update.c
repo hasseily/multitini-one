@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "golden_self_update.h"
+#include "multiboot.h"
 #include "qspi_nor.h"
 #include "crc32.h"
 #include "ff.h"
@@ -61,7 +62,18 @@ static void make_image(uint8_t *p, unsigned role, uint8_t pattern) {
     /* Marker straddles the engine's 4096-byte read boundary. */
     memcpy(p+4090, GOLDEN_SELF_UPDATE_RECOVERY_MARKER,
            sizeof(GOLDEN_SELF_UPDATE_RECOVERY_MARKER)-1);
+    if (role == 1) {
+        memcpy(p + 4300, MB_GOLDEN_MARKER, sizeof(MB_GOLDEN_MARKER)-1);
+    }
     manifest(p, role);
+    if (role == 2) {
+        uint8_t *m = p + PAYLOAD;
+        memcpy(p + 4200, MB_APPLETINI_MARKER, sizeof(MB_APPLETINI_MARKER)-1);
+        put32(m+8, 2);
+        put32(m+16, MB_PRODUCT_APPLETINI | MB_FLAG_MULTIBOOT | MB_FLAG_RECOVERY);
+        put32(m+24, crc(p, PAYLOAD));
+        put32(m+28, crc(m, 28));
+    }
 }
 static void clear_flash(int repairing) {
     memset(flash, 0xff, sizeof flash);
@@ -175,6 +187,13 @@ static void faults(int repairing) {
 int main(void) {
     make_image(target,1,0xa5); make_image(old_image,1,0x55);
     make_image(fallback,2,0x5a);
+    clear_flash(0);
+    memset(target+4300,0,sizeof(MB_GOLDEN_MARKER)-1); manifest(target,1);
+    assert(run(0)!=0 && mutations==0);
+    make_image(target,1,0x73);
+    memset(old_image+4300,0,sizeof(MB_GOLDEN_MARKER)-1); manifest(old_image,1);
+    clear_flash(0); assert(run(0)==0 && result.verified);
+    make_image(old_image,1,0x15);
     faults(0); faults(1);
     for (unsigned kind=0; kind<7; ++kind) {
         clear_flash(0);

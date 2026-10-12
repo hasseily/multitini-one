@@ -288,7 +288,7 @@ static bool progress_expected(mt_menu_action_kind_t kind) {
     case MT_MENU_ACTION_DIRECT_DISK_PROGRAM: case MT_MENU_ACTION_EJECT_DRIVE8:
     case MT_MENU_ACTION_LOAD_CONTENT: case MT_MENU_ACTION_DETACH_CARTRIDGE:
     case MT_MENU_ACTION_TOGGLE_CORE_OPTION: case MT_MENU_ACTION_RESET_CORE:
-    case MT_MENU_ACTION_REBOOT_GOLDEN: return true;
+    case MT_MENU_ACTION_REBOOT_GOLDEN: case MT_MENU_ACTION_SWITCH_FIRMWARE: return true;
     default: return false;
     }
 }
@@ -350,7 +350,7 @@ static void dispatch(mt_menu_action_kind_t kind) {
 }
 static void all_actions(void) {
     unsigned kind;
-    for (kind = MT_MENU_ACTION_NONE; kind <= MT_MENU_ACTION_BROWSE_OVERLAY; ++kind) {
+    for (kind = MT_MENU_ACTION_NONE; kind <= MT_MENU_ACTION_SWITCH_FIRMWARE; ++kind) {
         mt_menu_action_t action = {(mt_menu_action_kind_t)kind, 0U, 0U, 0U};
         reset_fixture(true);
         assert(menu_action_needs_core_progress(action) == progress_expected(action.kind));

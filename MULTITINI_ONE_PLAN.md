@@ -17,6 +17,13 @@ core on branch `genesis`, after Appletini parity. See
 
 ## 1. Goal
 
+Scope update, 2026-10-13: branch `multiboot` adds shared Golden B2.0.0,
+Appletini and Multitini firmware slots, a saved power-on choice and explicit
+menu switching in both products. Every boot verifies the selected image in
+flash and falls back to another verified image if it is absent or invalid.
+Retain the selected FPGA/core images. See [multiboot](docs/MULTIBOOT.md) for
+the layout, migration, update failure handling and board test limits.
+
 Firmware release, 2026-10-12: name Multitini firmware releases with an `M`
 prefix, starting at `M0.1.0`. Add a shared controller menu gesture: hold
 Select and Start together for 500 ms. Preserve ordinary solo game presses,

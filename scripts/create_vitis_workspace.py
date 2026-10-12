@@ -781,7 +781,7 @@ def select_retained_cpu1(build_inputs: dict) -> None:
     print("Selected exact retained CPU1 ELF after qualification: " + qualification["comparison"])
 
 
-def verify_build_inputs(record: dict) -> dict:
+def verify_build_inputs(record: dict, apps=None) -> dict:
     """Reject sources changed during a build; audit actual compiler inputs."""
     for name, expected in record["files"].items():
         if hashlib.sha256((ROOT / name).read_bytes()).hexdigest() != expected:
@@ -793,7 +793,7 @@ def verify_build_inputs(record: dict) -> dict:
     if hashlib.sha256(Path(record["xsa"]["path"]).read_bytes()).hexdigest() != record["xsa"]["sha256"]:
         raise RuntimeError("Selected hardware XSA changed during application build")
     compiled = {}
-    for app in (APP_NAME, CPU1_APP_NAME):
+    for app in (apps if apps is not None else (APP_NAME, CPU1_APP_NAME)):
         commands = WORKSPACE / app / "build" / "compile_commands.json"
         entries = json.loads(commands.read_text(encoding="utf-8"))
         if not entries:
@@ -881,6 +881,9 @@ def main() -> int:
             require_success(golden.build(), "golden recovery application build")
             validate_elf_memory(WORKSPACE / GOLDEN_APP_NAME / "build" / "golden.elf",
                                 0x00100000, CPU1_ENTRY - 0x00100000)
+            (WORKSPACE / "golden_build_inputs.json").write_text(
+                json.dumps(verify_build_inputs(build_inputs, (GOLDEN_APP_NAME,)), indent=2) + "\n",
+                encoding="utf-8")
 
         secondary = client.create_app_component(
             name=CPU1_APP_NAME, platform=str(xpfm), domain=CPU1_DOMAIN_NAME,

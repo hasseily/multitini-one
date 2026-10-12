@@ -219,7 +219,7 @@ int main(void) {
     def test_boot_diagnostics_precede_worker_and_shell_access(self):
         source = (ROOT / "firmware/platform/xilinx/main.c").read_text()
         main = source.split("int main(void)", 1)[1]
-        banner = main.index("Multitini One diagnostic firmware")
+        banner = main.index("Multitini One firmware ")
         status = main.index('print_read_only_diagnostics("before CPU1 release");')
         worker = main.index("mt_video_worker_start()")
         after = main.index('print_read_only_diagnostics("after CPU1 release");')
@@ -254,8 +254,8 @@ int main(void) {
         if not compiler:
             self.skipTest("host C compiler unavailable")
         functions = []
-        for name in ("print_boot_ps_status", "print_read_only_diagnostics"):
-            match = re.search(r"^static void " + name + r"\([^;]*?\)\n\{.*?^}\n",
+        for name in ("shell_read", "print_boot_ps_status", "print_read_only_diagnostics"):
+            match = re.search(r"^static (?:void|uint32_t) " + name + r"\([^;]*?\)\n\{.*?^}\n",
                               source, re.MULTILINE | re.DOTALL)
             self.assertIsNotNone(match, name)
             functions.append(match.group())
@@ -269,8 +269,9 @@ int main(void) {
 #include "xparameters.h"
 #include "xdevcfg_hw.h"
 #include "multitini_regs.h"
+#include "multitini_display.h"
 #include "video_worker.h"
-static unsigned ps_reads, shell_reads, magic_reads, worker_reads;
+static unsigned ps_reads, shell_reads, magic_reads, worker_reads, scenario;
 static void xil_printf(const char *format, ...) { (void)format; }
 mt_video_worker_status_t mt_video_worker_status(void) {
     ++worker_reads; return (mt_video_worker_status_t){0};
@@ -282,15 +283,31 @@ static uint32_t Xil_In32(uintptr_t address) {
         0xF8007014U, 0xF800700CU, 0xF8000170U, 0xF8000190U,
         0xF8000108U, 0xF8000100U, 0xF8000104U
     };
-    static const uint32_t pl[] = {0x40000000U, 0x40000004U, 0x40000008U,
-        0x4000000CU, 0x40000010U, 0x4000001CU, 0x400000B0U};
+    /* Explicit read-only allowlist: MEDIA_DATA is deliberately excluded. */
+    static const uint32_t pl[] = {
+        MT_REG_MAGIC, MT_REG_ABI_VERSION, MT_REG_SHELL_ID,
+        MT_REG_SHELL_BUILD_ID, MT_REG_CORE_ID, MT_REG_CONTROL, MT_REG_UI_STATUS,
+        MT_REG_STATUS, MT_REG_ERROR, MT_REG_COMMAND_OPCODE,
+        MT_REG_RESPONSE_STATUS, MT_REG_COUNT_BAD_WRITE, MT_REG_COUNT_BAD_READ,
+        MT_REG_STREAM_STATUS, MT_REG_CORE_VARIANT_INDEX,
+        MT_REG_VIDEO_EFFECT_STATUS, MT_REG_VIDEO_EFFECT_SEQUENCE,
+        MT_REG_VIDEO_FRAME_CONTROL, MT_REG_VIDEO_FRAME_OPTIONS, MT_REG_VIDEO_FRAME_STATUS,
+        MT_REG_VIDEO_FRAME_GEOMETRY, MT_REG_VIDEO_FRAME_STRIDE,
+        MT_REG_VIDEO_FRAME_CAPTURE_PRODUCER, MT_REG_VIDEO_FRAME_CAPTURE_CONSUMER,
+        MT_REG_VIDEO_FRAME_DISPLAY_ACTIVE, MT_REG_VIDEO_FRAME_PROCESSED,
+        MT_REG_VIDEO_FRAME_CAPTURE_DROPS, MT_REG_VIDEO_FRAME_DISPLAY_UNDERRUNS,
+        MT_REG_VIDEO_FRAME_AXI_ERRORS, MT_REG_VIDEO_FRAME_DEADLINES,
+        MT_REG_VIDEO_FRAME_ENGINE_ERRORS, MT_REG_VIDEO_FRAME_ENGINE_CYCLES,
+        MT_REG_VIDEO_FRAME_ENGINE_MAX_STALL, MT_REG_DISPLAY_STATUS, MT_REG_DISPLAY_MODES
+    };
     for (unsigned i = 0; i < sizeof ps / sizeof ps[0]; ++i) {
         if (address == ps[i]) { assert(!shell_reads); ++ps_reads; return 0; }
     }
     for (unsigned i = 0; i < sizeof pl / sizeof pl[0]; ++i) {
-        if (address == pl[i]) {
+        if (address == MT_SHELL_BASE_ADDRESS + pl[i]) {
             assert(ps_reads == 11U); ++shell_reads;
-            if (i == 0U) { ++magic_reads; return 0x4D5C383DU; }
+            if (pl[i] == MT_REG_MAGIC) { ++magic_reads; return scenario ? MT_MAGIC : 0xDEADBEEFU; }
+            if (pl[i] == MT_REG_ABI_VERSION) return scenario == 2 ? MT_ABI_VERSION : 0U;
             return 0;
         }
     }
@@ -298,10 +315,16 @@ static uint32_t Xil_In32(uintptr_t address) {
 }
 ''' + "\n".join(functions) + r'''
 int main(void) {
-    for (unsigned i = 0; i < 2U; ++i) {
+    for (scenario = 0; scenario < 3U; ++scenario) {
         ps_reads = shell_reads = magic_reads = worker_reads = 0;
-        print_read_only_diagnostics(i ? "command" : "before CPU1 release");
-        assert(ps_reads == 11U && shell_reads == 11U && magic_reads == 5U && worker_reads == 1U);
+        print_read_only_diagnostics(scenario ? "command" : "before CPU1 release");
+        unsigned expected = 19U;
+        if (scenario == 2) {
+            if (MT_ABI_MINOR >= 8U) expected += 2U;
+            if (MT_ABI_MINOR >= MT_VIDEO_PHOSPHOR_MIN_ABI_MINOR) expected += 18U;
+            if (MT_ABI_MINOR >= MT_DISPLAY_MIN_ABI_MINOR) expected += 2U;
+        }
+        assert(ps_reads == 11U && shell_reads == expected && magic_reads == 6U && worker_reads == 1U);
     }
     return 0;
 }

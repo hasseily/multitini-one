@@ -136,10 +136,10 @@ static void test_generic_items_and_focus(void)
           "disabled items cannot dispatch");
     items[1].enabled = true;
     (void)press(&menu, &view, MT_MENU_HID_END);
-    check(menu.row == 15U && menu.first_row == 0U,
+    check(menu.row == MT_MENU_MAX_ITEMS - 1U && menu.first_row == 0U,
           "dense form fits every supported option without scrolling");
     mt_menu_render(&menu, &view, &frame);
-    check(contains(&frame, "16 / 16") && contains(&frame, "Help supplied"),
+    check(contains(&frame, "18 / 18") && contains(&frame, "Help supplied"),
           "long option list shows position and item help");
     (void)press(&menu, &view, MT_MENU_HID_PAGE_UP);
     check(menu.row == 0U && menu.first_row == 0U,

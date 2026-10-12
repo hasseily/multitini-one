@@ -2,7 +2,8 @@
 param(
     [Parameter(Mandatory=$true)][string]$Baseline,
     [Parameter(Mandatory=$true)][string]$Workspace,
-    [Parameter(Mandatory=$true)][string]$Platform
+    [Parameter(Mandatory=$true)][string]$Platform,
+    [switch]$IncludeGolden
 )
 
 # Build fresh ARM applications on an explicitly selected retained platform.
@@ -25,7 +26,9 @@ $env:MULTITINI_VITIS_WORKSPACE = $workspacePath
 $env:MULTITINI_XSA = $xsaPath
 $env:MULTITINI_PLATFORM_XPFM = $platformPath
 $env:MULTITINI_CPU1_BASELINE = $baselinePath
-$env:MULTITINI_SKIP_GOLDEN = '1'
+if ($IncludeGolden) {
+    if (Test-Path Env:MULTITINI_SKIP_GOLDEN) { Remove-Item Env:MULTITINI_SKIP_GOLDEN }
+} else { $env:MULTITINI_SKIP_GOLDEN = '1' }
 $env:MULTITINI_VITIS_APP = 'diagnostic'
 if (Test-Path Env:MULTITINI_PLATFORM_ONLY) { Remove-Item Env:MULTITINI_PLATFORM_ONLY }
 $env:XILINX_VITIS = 'C:/Xilinx/2025.2/Vitis'

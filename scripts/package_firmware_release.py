@@ -128,8 +128,9 @@ def audit_payload(out, cpu, version, build_id, hardware_id, vitis):
     p.require(firmware.read_bytes() == (out / "sd/FIRMWARE.BIN").read_bytes(),
               "Updater firmware copy differs")
     update = image_manifest.verify_image(firmware, expected_role=image_manifest.ROLE_FIRMWARE,
-                                         expected_recovery=True)
-    p.require(firmware.stat().st_size <= 0x00DF0000, "Firmware exceeds updater slot")
+                                         expected_recovery=True,
+                                         expected_product="multitini")
+    p.require(firmware.stat().st_size <= 0x007E0000, "Firmware exceeds Multitini slot")
     for name, filename in CPU_INPUTS.items():
         p.require(p.sha(cpu["paths"][name]) == p.sha(out / "inputs" / filename),
                   "Packaged CPU input differs: " + filename)
@@ -296,7 +297,10 @@ def main():
         "Release both buttons before using the gesture again. F12 remains available.\n"
         "In menus: D-pad navigates, A confirms, B goes back/closes, L/R changes tabs.\n\n"
         f"FIRMWARE-{args.version}.BIN and sd/FIRMWARE.BIN are identical.\n"
-        "Copy sd/FIRMWARE.BIN to the SD root and use the existing golden updater.\n"
+        "Requires the new multiboot Golden B2.0.0. Install BOOT.BIN first via :selfupdate.\n"
+        "Then copy sd/FIRMWARE.BIN to the SD root and use the multiboot golden updater.\n"
+        "This tagged image installs at 0x800000 and preserves the Appletini slot.\n"
+        "System: Startup firmware saves the power-on choice; Switch to Appletini is one-shot.\n"
         "Installed baseline cores can remain; all included core files are retained byte for byte.\n"
         "Preserve user media and settings. No FPGA rebuild or hardware write was performed.\n"
         f"Supervisor and machine FPGA build {hardware_id} are unchanged.\n"

@@ -19,6 +19,8 @@ typedef struct {
     const char *catalog_status;
     size_t catalog_count, catalog_rejected;
     bool dac_ready, audio_muted;
+    bool multiboot_ready, appletini_present, multitini_present;
+    uint32_t startup_product;
 } mt_system_snapshot_t;
 
 typedef struct {

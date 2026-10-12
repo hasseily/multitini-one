@@ -209,7 +209,7 @@ def main() -> int:
             boot_script,
             "golden build does not enforce its one-megabyte slot")
     require('image_manifest.py" append' in firmware_script and
-            "--role firmware --recovery-capable --max-size 0x00DF0000" in
+            "--role firmware --recovery-capable --product multitini --max-size 0x007E0000" in
             firmware_script,
             "firmware build does not enforce its slot or append its recovery manifest")
     require('-o "%TMP_RAW%"' in boot_script and
