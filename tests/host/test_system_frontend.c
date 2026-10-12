@@ -158,6 +158,10 @@ static void test_snapshot_values(void)
     snapshot.dac_ready = true;
     mt_system_frontend_apply(&frontend, &snapshot, &view);
     expect_value(&view, "Firmware build", "20260918");
+    snapshot.firmware_version = "M0.1.0";
+    snapshot.firmware_build = UINT32_C(0x4D000100);
+    mt_system_frontend_apply(&frontend, &snapshot, &view);
+    expect_value(&view, "Firmware build", "M0.1.0 (4D000100)");
     expect_value(&view, "FPGA build", "DEADBEEF");
     expect_value(&view, "Interface", "1.19");
     expect_value(&view, "Uptime", "1 d  01:01:01");

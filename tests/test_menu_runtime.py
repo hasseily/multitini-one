@@ -57,6 +57,7 @@ static bool stall, nested_hide, expected_visible;
 static mt_controller_device_t devices[MT_GAMEPAD_SLOTS], controller_edit_devices[MT_GAMEPAD_SLOTS];
 static mt_controller_config_t controller_configs[MT_GAMEPAD_SLOTS];
 static mt_gamepad_state_t raw_controllers[MT_GAMEPAD_SLOTS];
+static bool controller_menu_chords[MT_GAMEPAD_SLOTS];
 static uint32_t controller_edit_core;
 static mt_supervisor_settings_t persistent_settings, settings_before_update;
 static unsigned screenshot_requests, output_screenshot_requests, config_applies, settings_writes;
@@ -81,6 +82,9 @@ uint8_t usb_hid_service_controller_player(uint8_t slot) {
 void usb_hid_service_controller_snapshot(uint8_t slot, mt_gamepad_state_t *raw, mt_controls_output_t *output) {
     if (raw) *raw = raw_controllers[slot];
     if (output) memset(output, 0, sizeof(*output));
+}
+bool usb_hid_service_controller_menu_chord(uint8_t slot) {
+    return controller_menu_chords[slot];
 }
 bool usb_hid_service_validate_controller_configs(const mt_controller_config_t *configs) {
     uint8_t reserved = 0U;
@@ -245,6 +249,7 @@ static void reset_fixture(bool visible) {
     memset(devices, 0, sizeof(devices));
     memset(controller_edit_devices, 0, sizeof(controller_edit_devices));
     memset(raw_controllers, 0, sizeof(raw_controllers));
+    memset(controller_menu_chords, 0, sizeof(controller_menu_chords));
     for (unsigned slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot) {
         raw_controllers[slot].hat = 8U;
         mt_controls_default(MT_C64_CORE_ID, NULL, &controller_configs[slot]);
@@ -698,6 +703,61 @@ static void raw_capture_is_immediate_and_held_safe(void) {
     supervisor_controller_report(NULL, 0U, &raw_controllers[0]);
     assert(!supervisor_menu.gamepad_capture_armed);
 }
+static void stick_settings_accept_controller_navigation(void) {
+    reset_fixture(true); connect_fixture(0U, 1U);
+    const mt_menu_action_t edit = {MT_MENU_ACTION_EDIT_GAMEPADS, 0U, 0U, 0U};
+    controller_edit_action(edit);
+    supervisor_menu.gamepad_sticks = true;
+    supervisor_menu.gamepad_control = MT_GAMEPAD_AXIS_RX;
+    supervisor_menu.gamepad_field = 2U;
+    controller_preview_capture();
+    assert(!gamepad_preview); /* Tuning must leave controller navigation enabled. */
+
+    raw_controllers[0].hat = 2U;
+    supervisor_controller_report(NULL, 0U, &raw_controllers[0]);
+    assert(!gamepad_preview && supervisor_menu.gamepad_sticks);
+    const uint8_t right[] = {MT_MENU_HID_RIGHT};
+    assert(supervisor_keyboard_filter(NULL, 0U, 0U, right, sizeof(right)));
+    assert(supervisor_menu.gamepad_config[0].axis[MT_GAMEPAD_AXIS_RX].deadzone_percent == 11U);
+    assert(supervisor_menu.gamepad_config[0].axis[MT_GAMEPAD_AXIS_X].deadzone_percent == 10U);
+    assert(controller_configs[0].axis[MT_GAMEPAD_AXIS_RX].deadzone_percent == 10U);
+    assert(settings_writes == 0U && config_applies == 0U);
+
+    raw_controllers[0].hat = 8U;
+    supervisor_controller_report(NULL, 0U, &raw_controllers[0]);
+    (void)supervisor_keyboard_filter(NULL, 0U, 0U, NULL, 0U);
+    const uint8_t back[] = {MT_MENU_HID_ESCAPE};
+    assert(supervisor_keyboard_filter(NULL, 0U, 0U, back, sizeof(back)));
+    assert(!supervisor_menu.gamepad_sticks && supervisor_menu.gamepad_edit && supervisor_menu.visible);
+    assert(!gamepad_preview && settings_writes == 0U && config_applies == 0U);
+}
+static void menu_chord_does_not_assign_controller_controls(void) {
+    reset_fixture(true); connect_fixture(0U, 1U);
+    const mt_menu_action_t edit = {MT_MENU_ACTION_EDIT_GAMEPADS, 0U, 0U, 0U};
+    controller_edit_action(edit);
+    supervisor_menu.gamepad_control = MT_CONTROL_A;
+    supervisor_menu.gamepad_capture = supervisor_menu.gamepad_capture_armed = true;
+    supervisor_menu.gamepad_previous = raw_controllers[0];
+    const mt_controller_config_t before = supervisor_menu.gamepad_config[0];
+    raw_controllers[0].buttons = 0xc0U;
+    controller_menu_chords[0] = true;
+
+    supervisor_controller_report(NULL, 0U, &raw_controllers[0]);
+    assert(supervisor_menu.gamepad_capture && !supervisor_menu.gamepad_conflict);
+    assert(memcmp(&before, &supervisor_menu.gamepad_config[0], sizeof(before)) == 0);
+    service_supervisor_menu(); /* Periodic snapshots must reserve the pair too. */
+    assert(supervisor_menu.gamepad_capture && !supervisor_menu.gamepad_conflict);
+    assert(memcmp(&before, &supervisor_menu.gamepad_config[0], sizeof(before)) == 0);
+    assert(settings_writes == 0U && config_applies == 0U);
+
+    controller_menu_chords[0] = false;
+    raw_controllers[0].buttons = 0U;
+    supervisor_controller_report(NULL, 0U, &raw_controllers[0]);
+    raw_controllers[0].buttons = UINT32_C(1) << 31U;
+    supervisor_controller_report(NULL, 0U, &raw_controllers[0]);
+    assert(!supervisor_menu.gamepad_capture &&
+        supervisor_menu.gamepad_config[0].binding[MT_CONTROL_A] == 32U);
+}
 static void controller_profiles_and_legacy_migration(void) {
     reset_fixture(true); connect_fixture(0U, 11U); connect_fixture(1U, 22U);
     mt_controller_config_t config;
@@ -776,6 +836,8 @@ int main(int argc, char **argv) {
     else if (strcmp(argv[1], "screenshots") == 0) screenshot_keyboard_and_controller();
     else if (strcmp(argv[1], "screenshot-presenter") == 0) screenshot_waits_for_displayed_ui_commit();
     else if (strcmp(argv[1], "raw-capture") == 0) raw_capture_is_immediate_and_held_safe();
+    else if (strcmp(argv[1], "stick-navigation") == 0) stick_settings_accept_controller_navigation();
+    else if (strcmp(argv[1], "capture-chord") == 0) menu_chord_does_not_assign_controller_controls();
     else if (strcmp(argv[1], "controller-profiles") == 0) controller_profiles_and_legacy_migration();
     else if (strcmp(argv[1], "controller-save") == 0) save_drafts_atomically_and_freeze_identity();
     else assert(false);
@@ -881,6 +943,12 @@ class MenuRuntimeTests(unittest.TestCase):
 
     def test_raw_capture_handles_quick_presses_before_navigation(self):
         self.run_scenario("raw-capture")
+
+    def test_stick_settings_allow_controller_navigation_without_applying_draft(self):
+        self.run_scenario("stick-navigation")
+
+    def test_menu_chord_is_reserved_during_immediate_and_periodic_capture(self):
+        self.run_scenario("capture-chord")
 
     def test_controller_profiles_follow_serial_and_keep_cores_independent(self):
         self.run_scenario("controller-profiles")

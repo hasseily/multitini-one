@@ -274,7 +274,27 @@ def verify_cpu1_control_program(files, commands):
                 "CPU1 production build enables a reference/test dispatcher")
 
 
-def verify_cpu_images(workspace, *, build_id=None, abi_minor=15):
+def compare_cpu1_build_id(selected_elf, selected_binary, rebuilt_elf, rebuilt_binary):
+    """Allow only GNU build-ID metadata to differ; keep the selected image exact."""
+    selected, rebuilt = Path(selected_binary).read_bytes(), Path(rebuilt_binary).read_bytes()
+    require(len(selected) == len(rebuilt), "CPU1 rebuilt payload size changed")
+    old_text, new_text = elf_section(Path(selected_elf), ".text"), elf_section(Path(rebuilt_elf), ".text")
+    require(len(old_text) == len(new_text) and selected[:len(old_text)] == old_text and
+            rebuilt[:len(new_text)] == new_text, "CPU1 ELF/text/raw layout differs")
+    if selected == rebuilt:
+        return {"comparison": "byte-identical", "different_bytes": 0}
+    note = struct.pack("<III", 4, 20, 3) + b"GNU\0"
+    require(len(old_text) >= 36 and old_text[-36:-20] == new_text[-36:-20] == note,
+            "CPU1 difference lacks a terminal GNU build-ID note")
+    start, end = len(old_text) - 20, len(old_text)
+    require(selected[:start] == rebuilt[:start] and selected[end:] == rebuilt[end:],
+            "CPU1 executable bytes changed outside the GNU build-ID descriptor")
+    return {"comparison": "GNU-build-id-only", "descriptor_offset": start, "descriptor_bytes": 20,
+            "different_bytes": sum(a != b for a, b in zip(selected, rebuilt)),
+            "selected_build_id": selected[start:end].hex(), "rebuilt_build_id": rebuilt[start:end].hex()}
+
+
+def verify_cpu_images(workspace, *, build_id=None, abi_minor=15, identity_source=None):
     expected_build_id = BUILD_ID if build_id is None else build_id
     manifest = json.loads((workspace / "cpu1_manifest.json").read_text())
     paths = {"cpu0_elf": workspace / "diagnostic/build/diagnostic.elf",
@@ -293,8 +313,28 @@ def verify_cpu_images(workspace, *, build_id=None, abi_minor=15):
                     for s in segments), "CPU ELF overlaps reserved DDR")
     record = manifest["build_inputs"]
     verify_sources(record["files"])
+    if "retained_cpu1" in record:
+        retained = record["retained_cpu1"]
+        baseline = Path(retained["baseline_path"])
+        require(sha(baseline / "manifest.json") == retained["baseline_manifest_sha256"] and
+                describe(baseline / "inputs/video_worker.elf") == describe(paths["cpu1_elf"]) and
+                describe(baseline / "inputs/video_core1_blob.bin") == describe(paths["cpu1_binary"]),
+                "Retained CPU1 selection differs from its baseline")
+        rebuilt = {}
+        for name in ("rebuilt_elf", "rebuilt_binary"):
+            rebuilt[name] = Path(retained[name]["path"])
+            require(rebuilt[name].resolve().is_relative_to(workspace.resolve()) and
+                    describe(rebuilt[name]) == {k: retained[name][k] for k in ("bytes", "sha256")},
+                    "Retained CPU1 rebuild evidence changed")
+        require(compare_cpu1_build_id(paths["cpu1_elf"], paths["cpu1_binary"],
+                                     rebuilt["rebuilt_elf"], rebuilt["rebuilt_binary"]) == retained["qualification"],
+                "Retained CPU1 rebuild qualification differs")
+    identity = identity_source or ROOT / "firmware/platform/xilinx/main.c"
+    if identity_source is None and not re.search(
+            r"^\s*#\s*define\s+MT_FIRMWARE_BUILD_ID\b", Path(identity).read_text(), re.M):
+        identity = ROOT / "firmware/include/multitini_version.h"
     require(re.search(r"MT_FIRMWARE_BUILD_ID\s+UINT32_C\(0x" + expected_build_id + r"\)",
-                      (ROOT / "firmware/platform/xilinx/main.c").read_text(), re.I), "Firmware source build ID mismatch")
+                      Path(identity).read_text(), re.I), "Firmware source build ID mismatch")
     require("#define MT_ABI_MAJOR 0U" in (ROOT / "firmware/include/multitini_regs.h").read_text() and
             f"#define MT_ABI_MINOR {abi_minor}U" in (ROOT / "firmware/include/multitini_regs.h").read_text() and
             f"MT_ABI_MINOR = 16'd{abi_minor}" in (ROOT / "hdl/generated/multitini_regs_pkg.sv").read_text(),

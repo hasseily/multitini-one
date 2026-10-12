@@ -5,7 +5,13 @@ It runs the GPL MiSTer C64 core and a Game Boy Color adapter through a shared
 supervisor, menu, input, audio, storage, and core-loading system. It does not
 use an Apple II host.
 
-The C64 and GBC functional baselines are accepted. The current package combines
+The latest named firmware is [M0.1.0](docs/FIRMWARE_M0.1.0.md). It adds a
+controller menu shortcut: hold Select and Start together for 500 ms. The ARM
+firmware uses the exact supervisor and core images from `build/firmware-efx1`;
+there is no FPGA rebuild. The release package is `build/firmware-M0.1.0.zip`.
+Physical controller acceptance remains pending.
+
+The C64 and GBC functional baselines are accepted. The retained older package combines
 ARM firmware **20260917**, supervisor and C64 PAL/NTSC FPGA images **20260915**
 (ABI 0.10), and the unchanged PSRAM-enabled GBC image **20260913** (ABI 0.9).
 These build IDs intentionally differ. See

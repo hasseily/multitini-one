@@ -1295,7 +1295,7 @@ static void render_gamepad(const mt_menu_t *menu, const mt_menu_view_t *view,
             (void)snprintf(text, sizeof(text), "Mapped stick: X %d  Y %d", (int)mapped.x, (int)mapped.y);
             field(frame, ITEM_X, start + 13U, ITEM_W, text, MT_UI_COLOR_BLUE, MT_UI_COLOR_PANEL);
         }
-        help_text(frame, "Press any controller control to test it. Game and menu actions are paused. Keyboard Enter or Escape returns; F12 always returns to the menu.");
+        help_text(frame, "Press any controller control to test it. Game and navigation actions are paused. F12 or hold Select+Start for 0.5s to return; keyboard Enter/Escape also returns.");
         return;
     }
     if (menu->gamepad_sticks) {
@@ -1348,10 +1348,10 @@ static void render_gamepad(const mt_menu_t *menu, const mt_menu_view_t *view,
     if (menu->gamepad_capture) {
         (void)snprintf(text, sizeof(text), "%s%s", menu->gamepad_wizard ? "Set all - assign: " : "Assign: ", mt_controls_action_name(view->gamepad_core_id, menu->gamepad_control));
         field(frame, ITEM_X, prompt_y, ITEM_W, text, MT_UI_COLOR_WARNING, MT_UI_COLOR_PANEL);
-    } else field(frame, ITEM_X, prompt_y, ITEM_W, "F12 always opens the menu. Select and Start are available for game actions.", MT_UI_COLOR_MUTED, MT_UI_COLOR_PANEL);
+    } else field(frame, ITEM_X, prompt_y, ITEM_W, "F12 or hold Select+Start for 0.5s opens the menu. Solo presses remain game actions.", MT_UI_COLOR_MUTED, MT_UI_COLOR_PANEL);
     field(frame, ITEM_X, prompt_y + 2U, ITEM_W, menu->gamepad_notice, MT_UI_COLOR_TEXT, MT_UI_COLOR_PANEL);
     help_text(frame, menu->gamepad_conflict ? menu->gamepad_notice : menu->gamepad_capture ?
-        "Controller navigation is paused while assigning. Keyboard Esc cancels; Delete clears; Tab skips a step in Set all. F12 returns to the menu." :
+        "Navigation pauses while assigning. Esc cancels; Delete clears; Tab skips in Set all. F12 or hold Select+Start for 0.5s returns to the menu." :
         "Up/Down chooses an action. Enter changes it. Delete clears it. Left/Right chooses the controller or player. Save changes or Discard changes before leaving.");
 }
 
@@ -1489,7 +1489,7 @@ void mt_menu_render(const mt_menu_t *menu, const mt_menu_view_t *view,
         (menu->browser != MT_MENU_BROWSER_NONE ?
          "[Enter] Open  [Up/Down] Select  [PgUp/PgDn] Page  [Home/End] First/Last  [Esc] Back" :
          (menu->page == MT_MENU_PAGE_VIDEO || menu->page == MT_MENU_PAGE_EFFECTS) ?
-         "[LB/RB or Shift+Tab/Tab] Section  [Up/Down] Select  [Left/Right] Adjust  [Enter] Apply  [Esc/F12] Close" :
-         "[LB/RB or Shift+Tab/Tab] Section  [Up/Down] Select  [Enter] Apply  [Esc/F12] Close"),
+         "[L/R] Tab  [D-pad] Select/Adjust  [A/Enter] Apply  [B/Esc] Back  [F12/hold Select+Start] Close" :
+         "[L/R or Shift+Tab/Tab] Tab  [D-pad] Select  [A/Enter] Apply  [B/Esc] Back  [F12/hold Select+Start] Close"),
         MT_UI_COLOR_MUTED, MT_UI_COLOR_RAISED);
 }

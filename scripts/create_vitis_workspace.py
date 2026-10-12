@@ -23,6 +23,7 @@ WORKSPACE = Path(os.environ.get(
 XSA = Path(os.environ.get(
     "MULTITINI_XSA", ROOT / "build" / "vivado" / "multitini_one.xsa"))
 REUSE_XPFM = os.environ.get("MULTITINI_PLATFORM_XPFM")
+CPU1_BASELINE = os.environ.get("MULTITINI_CPU1_BASELINE")
 PLATFORM_NAME = "multitini_platform"
 DOMAIN_NAME = "standalone_ps7_cortexa9_0"
 APP_NAME = os.environ.get("MULTITINI_VITIS_APP", "diagnostic")
@@ -719,6 +720,9 @@ def capture_build_inputs(xpfm: Path) -> dict:
     """Freeze rebuildable application inputs before either CPU is compiled."""
     suffixes = {".c", ".h", ".cpp", ".hpp", ".S", ".s", ".ld", ".cmake", ".inc", ".i", ".txt"}
     paths = {Path(__file__).resolve()}
+    if CPU1_BASELINE:
+        paths.update(ROOT / "scripts" / name for name in
+                     ("package_cpu1_video_test.py", "package_firmware_release.py"))
     for directory in ("firmware", "third_party/CherryUSB", "third_party/gsbasic"):
         paths.update(path.resolve() for path in (ROOT / directory).rglob("*")
                      if path.is_file() and path.suffix in suffixes and
@@ -735,6 +739,46 @@ def capture_build_inputs(xpfm: Path) -> dict:
             "platform_files": platform_files,
             "xsa": {"path": str(XSA.resolve()),
                     "sha256": hashlib.sha256(XSA.read_bytes()).hexdigest()}}
+
+
+def select_retained_cpu1(build_inputs: dict) -> None:
+    """Select an exact baseline ELF only after qualifying a normal CPU1 rebuild."""
+    if not CPU1_BASELINE:
+        return
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import package_firmware_release as release
+    package = release.p
+    baseline = Path(CPU1_BASELINE).resolve()
+    release.verify_directory(baseline)
+    release.verify_source_archive(baseline)
+    original = json.loads((baseline / "evidence/vitis/cpu1_manifest.json").read_text())
+    previous = original["build_inputs"]
+    package.require(build_inputs["platform_files"] == previous["platform_files"],
+                    "Retained CPU1 platform differs from fresh application export")
+    for name, digest in previous["compiled"][CPU1_APP_NAME]["files"].items():
+        package.require(build_inputs["files"].get(name) == digest, "Retained CPU1 source changed: " + name)
+    selected_elf = baseline / "inputs/video_worker.elf"
+    selected_binary = baseline / "inputs/video_core1_blob.bin"
+    validate_elf_memory(selected_elf, CPU1_ENTRY, CPU1_PRIVATE_BYTES)
+    directory = WORKSPACE / CPU1_APP_NAME / "build"
+    elf = directory / f"{CPU1_APP_NAME}.elf"
+    rebuilt_elf, rebuilt_binary = directory / "rebuilt_video_worker.elf", directory / "rebuilt_video_worker.bin"
+    package.require(not rebuilt_elf.exists() and not rebuilt_binary.exists(), "CPU1 rebuild evidence already exists")
+    package.copy(elf, rebuilt_elf)
+    subprocess.run([str(arm_objcopy()), "-O", "binary", str(rebuilt_elf), str(rebuilt_binary)], check=True)
+    selected_check = directory / "verified_selected_video_worker.bin"
+    subprocess.run([str(arm_objcopy()), "-O", "binary", str(selected_elf), str(selected_check)], check=True)
+    package.require(selected_check.read_bytes() == selected_binary.read_bytes(), "Retained CPU1 ELF/raw mismatch")
+    qualification = package.compare_cpu1_build_id(selected_elf, selected_binary, rebuilt_elf, rebuilt_binary)
+    package.copy(selected_elf, elf)
+    build_inputs["retained_cpu1"] = {
+        "baseline_path": str(baseline), "baseline_manifest_sha256": package.sha(baseline / "manifest.json"),
+        "selected_elf": package.describe(selected_elf), "selected_binary": package.describe(selected_binary),
+        "rebuilt_elf": {"path": str(rebuilt_elf), **package.describe(rebuilt_elf)},
+        "rebuilt_binary": {"path": str(rebuilt_binary), **package.describe(rebuilt_binary)},
+        "qualification": qualification,
+    }
+    print("Selected exact retained CPU1 ELF after qualification: " + qualification["comparison"])
 
 
 def verify_build_inputs(record: dict) -> dict:
@@ -847,6 +891,7 @@ def main() -> int:
         add_include_directory(CPU1_APP_NAME, ROOT / "firmware" / "include")
         configure_amp_application(CPU1_APP_NAME, secondary=True)
         require_success(secondary.build(), "CPU1 video worker build")
+        select_retained_cpu1(build_inputs)
 
         application = client.create_app_component(
             name=APP_NAME,

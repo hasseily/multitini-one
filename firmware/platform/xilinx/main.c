@@ -28,6 +28,7 @@
 #include "multitini_tmp102.h"
 #include "multitini_ui.h"
 #include "multitini_xmodem.h"
+#include "multitini_version.h"
 #include "../../golden/lib/golden_self_update.h"
 #include "pl_loader.h"
 #include "sd_storage.h"
@@ -60,8 +61,6 @@
 
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
 #define MT_SUPERVISOR_CORE_ID UINT32_C(0)
-/* EFX1: PHO5 plus an effects apply deadline that ignores blocked polling. */
-#define MT_FIRMWARE_BUILD_ID UINT32_C(0x45465831)
 #define MT_I2C_CLOCK_HZ UINT32_C(100000)
 #define MT_I2C_BUSY_POLLS UINT32_C(1000000)
 #define MT_UART_DRAIN_POLLS UINT32_C(10000000)
@@ -2168,6 +2167,7 @@ static mt_menu_view_t supervisor_menu_view(void)
         mt_system_snapshot_t snapshot = {0};
         usb_hid_service_get_status(&usb);
         snapshot.firmware_build = MT_FIRMWARE_BUILD_ID;
+        snapshot.firmware_version = MT_FIRMWARE_VERSION;
         snapshot.shell_build = shell_read(MT_REG_SHELL_BUILD_ID);
         snapshot.abi = shell_read(MT_REG_ABI_VERSION);
         snapshot.uptime_seconds = monotonic_ms(NULL) / 1000U;
@@ -2664,7 +2664,7 @@ static void controller_preview_capture(void)
 {
     static bool captured;
     bool requested = supervisor_menu.gamepad_edit &&
-        (supervisor_menu.gamepad_capture || supervisor_menu.gamepad_test || supervisor_menu.gamepad_sticks);
+        (supervisor_menu.gamepad_capture || supervisor_menu.gamepad_test);
     if (captured && !requested) {
         mt_gamepad_state_t raw;
         usb_hid_service_controller_snapshot(supervisor_menu.gamepad_slot, &raw, NULL);
@@ -2679,7 +2679,7 @@ static void supervisor_controller_report(void *context, uint8_t slot, const mt_g
     (void)context;
     (void)raw;
     if (!supervisor_menu_ready || supervisor_menu_action_active || !supervisor_menu.gamepad_edit ||
-        slot != supervisor_menu.gamepad_slot) return;
+        slot != supervisor_menu.gamepad_slot || usb_hid_service_controller_menu_chord(slot)) return;
     const mt_menu_view_t view = supervisor_menu_view();
     if (mt_menu_gamepad_update(&supervisor_menu, &view)) supervisor_menu_dirty = true;
     controller_preview_capture();
@@ -3814,7 +3814,8 @@ static void service_supervisor_menu(void)
             supervisor_menu_dirty = true;
         }
         view = supervisor_menu_view();
-        if (mt_menu_gamepad_update(&supervisor_menu, &view)) supervisor_menu_dirty = true;
+        if (!usb_hid_service_controller_menu_chord(supervisor_menu.gamepad_slot) &&
+            mt_menu_gamepad_update(&supervisor_menu, &view)) supervisor_menu_dirty = true;
         controller_preview_capture();
     }
     if (!supervisor_menu_dirty) return;
@@ -4123,7 +4124,7 @@ int main(void)
     uint32_t ui_status;
 
     init_platform();
-    xil_printf("\r\nMultitini One diagnostic firmware build=%08x\r\n",
+    xil_printf("\r\nMultitini One firmware " MT_FIRMWARE_VERSION " build=%08x\r\n",
                (unsigned int)MT_FIRMWARE_BUILD_ID);
     Xil_SetTlbAttributes(MT_SHELL_BASE_ADDRESS, DEVICE_MEMORY);
     mt_core_link_init_mmio(&shell_link,

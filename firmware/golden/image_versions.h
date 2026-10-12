@@ -1,6 +1,8 @@
 #ifndef APPLETINI_IMAGE_VERSIONS_H
 #define APPLETINI_IMAGE_VERSIONS_H
 
+#include "../include/multitini_version.h"
+
 /*
  * Manually bump these when generating a new boot image or firmware image.
  * They are displayed by boot_updater (UART) and text_ui_test (UART + Home UI).
@@ -8,8 +10,8 @@
 #define APPLETINI_BOOT_IMAGE_VERSION_SHORT      "MT-B1"
 #define APPLETINI_BOOT_IMAGE_VERSION_FULL       "Multitini Boot MT-B1"
 
-#define APPLETINI_FIRMWARE_IMAGE_VERSION_SHORT  "MT-parity"
-#define APPLETINI_FIRMWARE_IMAGE_VERSION_FULL   "Multitini Firmware MT-parity"
+#define APPLETINI_FIRMWARE_IMAGE_VERSION_SHORT  MT_FIRMWARE_VERSION
+#define APPLETINI_FIRMWARE_IMAGE_VERSION_FULL   "Multitini Firmware " MT_FIRMWARE_VERSION
 
 /* Current updater/flash layout configuration shown in firmware UI. */
 #define APPLETINI_FLASH_LAYOUT_LABEL            "QSPI 16MB single-slot"

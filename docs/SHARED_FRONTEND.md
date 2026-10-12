@@ -1,5 +1,9 @@
 # Shared front end
 
+[M0.1.0](FIRMWARE_M0.1.0.md) adds a shared 500 ms Select+Start menu gesture and
+named Multitini firmware versions. This ARM-only release uses the exact EFX1
+supervisor and machine FPGA images; no core rebuild is required.
+
 Firmware `20260920` keeps the menu open across disk, cartridge,
 core, and other configuration changes. It uses the compact text and automatic
 menu pause FPGA images from `20260919`; all components use ABI 0.11. On

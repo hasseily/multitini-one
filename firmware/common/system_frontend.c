@@ -19,7 +19,7 @@ void mt_system_frontend_apply(mt_system_frontend_t *frontend,
         "Starts this core at power-on. Off keeps the standby screen until you choose a core.",
         "Browse /multitini for TXT instructions. Reading never changes mounted media.",
         "Edit the board's battery-backed clock. Changes apply only when you select Save time.",
-        "Build identifier of the ARM firmware currently running.",
+        "Release name and build identifier of the ARM firmware currently running.",
         "Build identifier read from the currently loaded FPGA image.",
         "The active shell interface version. Different core images may have different versions.",
         "Elapsed time since the board started. Core switches do not reset this counter.",
@@ -52,7 +52,9 @@ void mt_system_frontend_apply(mt_system_frontend_t *frontend,
             (unsigned)snapshot->clock.day, (unsigned)snapshot->clock.hour,
             (unsigned)snapshot->clock.minute, (unsigned)snapshot->clock.second);
     else VALUE(3, "%s", snapshot->clock_available ? "Clock needs setting" : "Clock unavailable");
-    VALUE(4, "%08lX", (unsigned long)snapshot->firmware_build);
+    if (snapshot->firmware_version != NULL && snapshot->firmware_version[0] != '\0')
+        VALUE(4, "%s (%08lX)", snapshot->firmware_version, (unsigned long)snapshot->firmware_build);
+    else VALUE(4, "%08lX", (unsigned long)snapshot->firmware_build);
     VALUE(5, "%08lX", (unsigned long)snapshot->shell_build);
     VALUE(6, "%lu.%lu", (unsigned long)(snapshot->abi >> 16U),
         (unsigned long)(snapshot->abi & UINT32_C(0xFFFF)));

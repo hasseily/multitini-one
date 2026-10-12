@@ -41,6 +41,7 @@
 #define MT_HID_REPORT_BYTES 64U
 #define MT_HID_DESCRIPTOR_BYTES CONFIG_USBHOST_REQUEST_BUFFER_LEN
 #define MT_HID_RETRY_TICKS ((XTime)(COUNTS_PER_SECOND / UINT64_C(100)))
+#define MT_MENU_CHORD_TICKS ((XTime)(COUNTS_PER_SECOND / UINT64_C(2)))
 #define MT_INPUT_COMMAND_POLLS UINT32_C(10000)
 #define MT_XINPUT_PACKET_BYTES 64U
 #define MT_XINPUT_DIAGNOSTIC_BYTES 10U
@@ -133,6 +134,14 @@ static void *g_report_handler_context;
 static uint8_t g_vendor_slots[MT_GAMEPAD_SLOTS];
 static uint8_t g_release_guard[MT_GAMEPAD_SLOTS];
 static uint8_t g_controller_tab[MT_GAMEPAD_SLOTS];
+enum { MT_MENU_CHORD_IDLE, MT_MENU_CHORD_HOLDING, MT_MENU_CHORD_BLOCKED };
+typedef struct {
+    XTime started;
+    uint32_t buttons;
+    uint8_t state;
+} mt_menu_chord_t;
+static mt_menu_chord_t g_menu_chord[MT_GAMEPAD_SLOTS];
+static uint8_t g_menu_navigation_guard[MT_GAMEPAD_SLOTS];
 static bool g_menu_capture;
 static bool g_gamepad_preview;
 static mt_c64_hid_input_t g_c64_input;
@@ -197,6 +206,8 @@ static void submit_keyboard_state(uint8_t slot, uint8_t modifiers,
 static void disconnect_input_slot(uint8_t slot)
 {
     g_controller_tab[slot] = 0U;
+    memset(&g_menu_chord[slot], 0, sizeof(g_menu_chord[slot]));
+    g_menu_navigation_guard[slot] = 0U;
     memset(&g_devices[slot], 0, sizeof(g_devices[slot]));
     memset(&g_controller_output[slot], 0, sizeof(g_controller_output[slot]));
     g_controller_player[slot] = UINT8_MAX;
@@ -543,7 +554,8 @@ static void deliver_gamepad(uint8_t index)
 {
     if (!g_devices[index].connected) return;
     mt_controls_output_t output = g_controller_output[index];
-    if (g_menu_capture || g_release_guard[index] != 0U) {
+    if (g_menu_capture || g_release_guard[index] != 0U ||
+        g_menu_chord[index].state != MT_MENU_CHORD_IDLE) {
         memset(&output, 0, sizeof(output));
     }
     const uint8_t player = g_controller_player[index];
@@ -608,12 +620,98 @@ static bool pad_active(const mt_gamepad_state_t *state)
     return !mt_controls_neutral(state);
 }
 
+static uint32_t menu_chord_buttons(uint8_t index)
+{
+    if (g_devices[index].identity.transport != MT_CONTROLLER_TRANSPORT_HID)
+        return UINT32_C(0xc0); /* Normalized Select and Start. */
+    /* Generic HID preserves button usages. Ten-button pads use 9/10;
+     * eight-button SNES pads use 7/8 after their four face and two shoulders. */
+    const uint32_t present = g_devices[index].buttons_present;
+    if ((present & ~UINT32_C(0xff)) == 0U &&
+        (present & UINT32_C(0xc0)) == UINT32_C(0xc0)) return UINT32_C(0xc0);
+    return UINT32_C(0x300);
+}
+
+static void reset_menu_chord(uint8_t index)
+{
+    mt_menu_chord_t *chord = &g_menu_chord[index];
+    memset(chord, 0, sizeof(*chord));
+    chord->buttons = menu_chord_buttons(index);
+    /* A held opener cannot cross a core/configuration transition. */
+    if ((g_gamepads.raw[index].buttons & chord->buttons) != 0U)
+        chord->state = MT_MENU_CHORD_BLOCKED;
+}
+
+static void update_menu_chord(uint8_t index)
+{
+    mt_menu_chord_t *chord = &g_menu_chord[index];
+    if (chord->state == MT_MENU_CHORD_IDLE) chord->buttons = menu_chord_buttons(index);
+    const uint32_t held = g_gamepads.raw[index].buttons & chord->buttons;
+    if (held == 0U) {
+        chord->state = MT_MENU_CHORD_IDLE;
+    } else if (chord->state == MT_MENU_CHORD_HOLDING && held != chord->buttons) {
+        chord->state = MT_MENU_CHORD_BLOCKED;
+    } else if (chord->state == MT_MENU_CHORD_IDLE && held == chord->buttons) {
+        XTime_GetTime(&chord->started);
+        chord->state = MT_MENU_CHORD_HOLDING;
+    }
+}
+
+static void poll_menu_chords(void)
+{
+    XTime now;
+    XTime_GetTime(&now);
+    for (uint8_t index = 0U; index < MT_GAMEPAD_SLOTS; ++index) {
+        mt_menu_chord_t *chord = &g_menu_chord[index];
+        if (chord->state != MT_MENU_CHORD_HOLDING ||
+            (XTime)(now - chord->started) < MT_MENU_CHORD_TICKS) continue;
+        chord->state = MT_MENU_CHORD_BLOCKED;
+        if (g_keyboard_filter == NULL) continue;
+        /* A pulse, containing only F12, also escapes controller capture/test.
+         * Keep it separate from Enter/Escape, directions and Tab. */
+        g_controller_tab[index] = 0U;
+        g_menu_navigation_guard[index] = pad_active(&g_gamepads.raw[index]) ? 1U : 0U;
+        const uint8_t key = 0x45U;
+        (void)g_keyboard_filter(g_keyboard_filter_context, index, 0U, &key, 1U);
+        (void)g_keyboard_filter(g_keyboard_filter_context, index, 0U, NULL, 0U);
+    }
+}
+
+static void controller_navigation(uint8_t index)
+{
+    if (g_keyboard_filter == NULL || g_gamepad_preview) return;
+    uint8_t keys[7], count = 0U;
+    const mt_gamepad_state_t *raw = &g_gamepads.raw[index];
+    const bool chord = g_menu_chord[index].state != MT_MENU_CHORD_IDLE;
+    const bool menu = !chord &&
+        (g_controller_output[index].actions & (UINT32_C(1) << MT_CONTROL_MENU)) != 0U;
+    const bool navigation = !chord && !menu && g_menu_navigation_guard[index] == 0U;
+    const uint8_t directions = navigation ? mt_gamepad_digital(raw) & 15U : 0U;
+    if ((directions & 1U) != 0U) keys[count++] = 0x52U;
+    if ((directions & 2U) != 0U) keys[count++] = 0x51U;
+    if ((directions & 4U) != 0U) keys[count++] = 0x50U;
+    if ((directions & 8U) != 0U) keys[count++] = 0x4fU;
+    if (navigation && (raw->buttons & 1U) != 0U) keys[count++] = 0x28U;
+    if (navigation && (raw->buttons & 2U) != 0U) keys[count++] = 0x29U;
+    if (menu) keys[count++] = 0x45U;
+    /* Physical shoulders navigate the UI independently of the core map.
+     * Generic HID follows Button 5/6; both held cancel. */
+    const uint32_t shoulders = raw->buttons & UINT32_C(0x30);
+    const uint8_t tab = g_menu_capture && navigation ?
+        (shoulders == 0x10U ? 1U : shoulders == 0x20U ? 2U : 0U) : 0U;
+    if (g_controller_tab[index] != 0U && tab != g_controller_tab[index])
+        (void)g_keyboard_filter(g_keyboard_filter_context, index, 0U, keys, count);
+    if (tab != 0U) keys[count++] = 0x2bU;
+    g_controller_tab[index] = tab;
+    /* Synthetic navigation never reaches a core. */
+    (void)g_keyboard_filter(g_keyboard_filter_context, index,
+        tab == 1U ? 0x02U : 0U, keys, count);
+}
+
 static void process_shared_report(uint8_t index, const mt_gamepad_report_t *report,
                                   uint8_t hat, uint8_t extra)
 {
     mt_gamepad_report(&g_gamepads, index, report, hat, extra);
-    if (g_report_handler != NULL)
-        g_report_handler(g_report_handler_context, index, &g_gamepads.raw[index]);
     /* Test/vendor callers may not provide USB identity; expose a generic device. */
     if (!g_devices[index].connected) {
         g_devices[index].connected = 1U;
@@ -623,48 +721,30 @@ static void process_shared_report(uint8_t index, const mt_gamepad_report_t *repo
     }
     g_devices[index].buttons_present |= report->buttons_mask | report->buttons;
     g_devices[index].axis_mask |= report->axis_valid_mask;
+    update_menu_chord(index);
+    /* A simultaneous escape pair is reserved during assignment/test capture;
+     * keep the raw snapshot intact without assigning its first member. */
+    if (g_report_handler != NULL &&
+        !(g_gamepad_preview && g_menu_chord[index].state != MT_MENU_CHORD_IDLE))
+        g_report_handler(g_report_handler_context, index, &g_gamepads.raw[index]);
     const uint32_t previous = g_controller_output[index].actions;
     mt_controls_evaluate(g_active_core_id, &g_controller_config[index],
                          &g_gamepads.raw[index], previous, &g_controller_output[index]);
     resolve_controller_players();
-    if (!pad_active(&g_gamepads.raw[index])) g_release_guard[index] = 0U;
-    if (g_action_handler != NULL && !g_gamepad_preview) {
+    if (!pad_active(&g_gamepads.raw[index])) {
+        g_release_guard[index] = 0U;
+        g_menu_navigation_guard[index] = 0U;
+    }
+    poll_menu_chords();
+    if (g_action_handler != NULL && !g_gamepad_preview &&
+        g_menu_chord[index].state == MT_MENU_CHORD_IDLE) {
         const uint32_t edges = g_controller_output[index].actions & ~previous;
         if (edges & (UINT32_C(1) << MT_CONTROL_SCREENSHOT))
             g_action_handler(g_action_handler_context, MT_CONTROL_SCREENSHOT);
         if (edges & (UINT32_C(1) << MT_CONTROL_SCREENSHOT_OUTPUT))
             g_action_handler(g_action_handler_context, MT_CONTROL_SCREENSHOT_OUTPUT);
     }
-    if (g_keyboard_filter != NULL && !g_gamepad_preview) {
-        uint8_t keys[7], count = 0U;
-        const mt_gamepad_state_t *raw = &g_gamepads.raw[index];
-        const uint8_t directions = mt_gamepad_digital(raw) & 15U;
-        if ((directions & 1U) != 0U) keys[count++] = 0x52U;
-        if ((directions & 2U) != 0U) keys[count++] = 0x51U;
-        if ((directions & 4U) != 0U) keys[count++] = 0x50U;
-        if ((directions & 8U) != 0U) keys[count++] = 0x4fU;
-        const bool menu = (g_controller_output[index].actions & (UINT32_C(1) << MT_CONTROL_MENU)) != 0U;
-        if (!menu && (raw->buttons & 1U) != 0U) keys[count++] = 0x28U;
-        if (!menu && (raw->buttons & 2U) != 0U) keys[count++] = 0x29U;
-        if (menu) keys[count++] = 0x45U;
-        /* Physical shoulders navigate the UI independently of the core map.
-         * Generic HID follows the common Button 5/6 convention; both held
-         * cancel. Keep shoulders available to capture and normal gameplay. */
-        const uint32_t shoulders = raw->buttons & UINT32_C(0x30);
-        const uint8_t tab = g_menu_capture && !menu ?
-            (shoulders == 0x10U ? 1U : shoulders == 0x20U ? 2U : 0U) : 0U;
-        if (g_controller_tab[index] != 0U && tab != g_controller_tab[index]) {
-            /* Changing Shift+Tab directly to Tab needs a key-up edge; keep
-             * other held navigation keys unchanged in the intermediate report. */
-            (void)g_keyboard_filter(g_keyboard_filter_context, index, 0U, keys, count);
-        }
-        if (tab != 0U) keys[count++] = 0x2bU;
-        g_controller_tab[index] = tab;
-        /* Only the configured system action opens the menu. F12 from a real
-         * keyboard remains independent. Synthetic navigation never reaches a core. */
-        (void)g_keyboard_filter(g_keyboard_filter_context, index,
-            tab == 1U ? 0x02U : 0U, keys, count);
-    }
+    controller_navigation(index);
     deliver_controllers();
 }
 
@@ -1309,6 +1389,8 @@ void usb_hid_service_init(mt_core_link_t *link)
     memset(g_vendor_slots, 0, sizeof(g_vendor_slots));
     memset(g_release_guard, 0, sizeof(g_release_guard));
     memset(g_controller_tab, 0, sizeof(g_controller_tab));
+    memset(g_menu_chord, 0, sizeof(g_menu_chord));
+    memset(g_menu_navigation_guard, 0, sizeof(g_menu_navigation_guard));
     g_menu_capture = false;
     g_gamepad_preview = false;
     memset(g_slots, 0, sizeof(g_slots));
@@ -1421,8 +1503,10 @@ void usb_hid_service_set_active_core(uint32_t core_id)
 {
     g_core_ready = 0U;
     g_active_core_id = core_id;
-    for (uint8_t slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot)
+    for (uint8_t slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot) {
         g_release_guard[slot] = pad_active(&g_gamepads.raw[slot]) ? 1U : 0U;
+        reset_menu_chord(slot);
+    }
     refresh_controller_outputs(true, true);
     if (g_active_core_id == MT_VECTREX_CORE_ID)
         mt_vectrex_hid_reassert(&g_vectrex_input);
@@ -1460,6 +1544,7 @@ void usb_hid_service_poll(void)
         retry_reports();
         usb_xbox_one_poll();
     }
+    poll_menu_chords();
     poll_active_input();
 }
 
@@ -1605,6 +1690,7 @@ void usb_hid_service_set_menu_capture(bool captured)
     if (g_menu_capture == captured) return;
     g_menu_capture = captured;
     for (uint8_t i = 0U; i < MT_GAMEPAD_SLOTS; ++i) {
+        g_menu_navigation_guard[i] = captured && pad_active(&g_gamepads.raw[i]) ? 1U : 0U;
         if (!captured) g_release_guard[i] = pad_active(&g_gamepads.raw[i]) ? 1U : 0U;
         deliver_gamepad(i);
     }
@@ -1694,6 +1780,7 @@ bool usb_hid_service_set_controller_configs(const mt_controller_config_t configs
             g_controller_player[slot] = UINT8_MAX;
         g_controller_config[slot] = configs[slot];
         g_release_guard[slot] = pad_active(&g_gamepads.raw[slot]) ? 1U : 0U;
+        reset_menu_chord(slot);
     }
     refresh_controller_outputs(false, false);
     return true;
@@ -1705,6 +1792,11 @@ void usb_hid_service_controller_snapshot(uint8_t slot, mt_gamepad_state_t *raw,
     if (slot >= MT_GAMEPAD_SLOTS) return;
     if (raw != NULL) *raw = g_gamepads.raw[slot];
     if (output != NULL) *output = g_controller_output[slot];
+}
+
+bool usb_hid_service_controller_menu_chord(uint8_t slot)
+{
+    return slot < MT_GAMEPAD_SLOTS && g_menu_chord[slot].state != MT_MENU_CHORD_IDLE;
 }
 
 uint8_t usb_hid_service_controller_player(uint8_t slot)

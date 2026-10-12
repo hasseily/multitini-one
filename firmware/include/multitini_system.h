@@ -6,6 +6,7 @@
 
 typedef struct {
     uint32_t firmware_build, shell_build, abi;
+    const char *firmware_version;
     uint64_t uptime_seconds;
     bool temperature_valid;
     int32_t temperature_micro_c;

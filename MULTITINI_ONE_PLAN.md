@@ -17,6 +17,13 @@ core on branch `genesis`, after Appletini parity. See
 
 ## 1. Goal
 
+Firmware release, 2026-10-12: name Multitini firmware releases with an `M`
+prefix, starting at `M0.1.0`. Add a shared controller menu gesture: hold
+Select and Start together for 500 ms. Preserve ordinary solo game presses,
+F12, dedicated Menu/Home buttons and the existing explicit menu-exit rule.
+Build ARM firmware only and retain the exact supervisor and machine images
+from `build/firmware-efx1`. See [M0.1.0](docs/FIRMWARE_M0.1.0.md).
+
 Runtime follow-up, 2026-10-12: investigate the owner's PHO4 Genesis transfer,
 effects and Video size failures. The continuously locked clock regression
 establishes a Video size controller stall; fix geometry-only changes without

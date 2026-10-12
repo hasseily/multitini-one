@@ -1,5 +1,11 @@
 # Controllers and screenshots
 
+[M0.1.0](FIRMWARE_M0.1.0.md) adds controller access without a dedicated Menu
+button: hold Select and Start together for 500 ms. Release both before another
+toggle. The gesture works across all cores and also returns from assignment
+and test screens. D-pad, A/B and L/R navigate the normal configuration menu;
+stick settings can now be adjusted with the controller.
+
 Firmware CT01 (`43543031`) adds per-core controller profiles and screenshots.
 CT02 (`43543032`) adds shoulder-button menu navigation. Its focused 15-check
 host suite and 26 production runtime transaction tests pass. Video filtering
@@ -25,7 +31,8 @@ The editor shows only the running core's actions.
   the saved configuration. Defaults affect the selected controller and core.
 - F12 always provides keyboard access to the Multitini menu. Identified
   Home/Guide/PS buttons open it by default. Select/Back and Start/Options remain
-  available to the machine. Generic HID pads have no guessed menu shortcut.
+  available to the machine when pressed separately. Holding Select and Start
+  together for 500 ms is the shared menu shortcut, including generic HID pads.
 - **LB/L1** selects the previous menu section; **RB/R1** selects the next,
   just like Shift+Tab and Tab. Generic HID pads use Button 5 and Button 6.
   Hold both to cancel tab movement. These shortcuts follow the keyboard's

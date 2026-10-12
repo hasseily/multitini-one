@@ -194,8 +194,9 @@ static void test_controller_routing(void)
     assert(g_c64_input.emitted_joystick[1] == 0x10U);
     assert(g_c64_input.emitted_joystick[0] == 0x20U);
     assert(g_controller_player[first] == 1U && g_controller_player[second] == 0U);
-    buttons(first, 0xc0U); /* Select and Start are ordinary game controls. */
+    buttons(first, 0xc0U); /* A brief pair does not open the menu. */
     assert(menu_down == 0U);
+    buttons(first, 0U);
     buttons(first, UINT32_C(1) << MT_USB_PAD_HOME);
     assert(menu_down == 1U && g_c64_input.emitted_joystick[1] == 0U);
     buttons(first, 0U);
@@ -379,7 +380,7 @@ typedef struct {
     mt_menu_t menu;
     mt_menu_view_t view;
     bool held[MT_GAMEPAD_SLOTS][256];
-    unsigned reports, tab_presses;
+    unsigned reports, tab_presses, menu_presses;
 } navigation_fixture_t;
 
 static bool navigate_menu(void *context, uint8_t slot, uint8_t modifiers,
@@ -389,16 +390,184 @@ static bool navigate_menu(void *context, uint8_t slot, uint8_t modifiers,
     bool next[256] = {false};
     assert(slot < MT_GAMEPAD_SLOTS && count <= 7U);
     ++fixture->reports;
-    for (size_t i = 0U; i < count; ++i) next[keys[i]] = true;
+    for (size_t i = 0U; i < count; ++i) {
+        next[keys[i]] = true;
+        if (keys[i] == MT_MENU_HID_F12) assert(count == 1U && modifiers == 0U);
+    }
     for (unsigned usage = 0U; usage < 256U; ++usage) {
         if (next[usage] == fixture->held[slot][usage]) continue;
         if (usage == MT_MENU_HID_TAB && next[usage]) ++fixture->tab_presses;
+        if (usage == MT_MENU_HID_F12 && next[usage]) ++fixture->menu_presses;
         (void)mt_menu_key_with_modifiers(&fixture->menu, &fixture->view,
             (uint8_t)usage, next[usage], modifiers);
     }
     memcpy(fixture->held[slot], next, sizeof(next));
     usb_hid_service_set_menu_capture(fixture->menu.visible);
     return fixture->menu.visible;
+}
+
+static uint8_t chord_controller(uint8_t transport, uint32_t present, uint8_t port_number)
+{
+    struct usbh_hubport port = {0};
+    port.port = port_number;
+    const uint8_t slot = (uint8_t)usb_gamepad_input_connect();
+    identify_controller(slot, &port, 0U, transport, 1U, present, 0U);
+    return slot;
+}
+
+static void assert_controller_neutral(uint32_t core, uint8_t slot)
+{
+    if (core == MT_C64_CORE_ID) assert(g_c64_input.joysticks[slot] == 0U);
+    else if (core == MT_GBC_CORE_ID) assert(g_gameboy_input.gamepads[slot] == 0U);
+    else if (core == MT_GENESIS_CORE_ID) assert(g_genesis_input.gamepad[slot] == 0U);
+    else if (core == MT_VECTREX_CORE_ID)
+        assert(g_vectrex_input.pad_buttons[slot] == 0U &&
+            g_vectrex_input.pad_x[slot] == 0 && g_vectrex_input.pad_y[slot] == 0);
+}
+
+static void test_menu_chord(void)
+{
+    static const uint32_t cores[] = {0U, MT_C64_CORE_ID, MT_GBC_CORE_ID,
+        MT_GENESIS_CORE_ID, MT_VECTREX_CORE_ID};
+    for (unsigned machine = 0U; machine < sizeof(cores) / sizeof(cores[0]); ++machine) {
+        for (unsigned layout = 0U; layout < 5U; ++layout) {
+            const uint8_t transport = layout < 2U ? MT_CONTROLLER_TRANSPORT_HID :
+                (uint8_t)(layout - 1U);
+            const uint32_t pair = layout == 1U ? 0x300U : 0xc0U;
+            const uint32_t select = layout == 1U ? 0x100U : 0x40U;
+            navigation_fixture_t fixture = {0};
+            mt_core_link_t link;
+            mt_core_link_init(&link, NULL, input_read, input_write);
+            usb_hid_service_init(&link);
+            usb_hid_service_set_active_core(cores[machine]);
+            usb_hid_service_set_core_ready(true);
+            mt_menu_init(&fixture.menu, &fixture.view);
+            usb_hid_service_set_keyboard_filter(navigate_menu, &fixture);
+            const uint8_t slot = chord_controller(transport,
+                layout == 0U ? 0xffU : 0x3ffU, 1U);
+            /* Physical detection must survive game remapping, even on cores
+             * that do not have native Select/Start actions. */
+            if (cores[machine] != 0U) {
+                mt_controller_config_t config = g_controller_config[slot];
+                config.binding[MT_CONTROL_A] = MT_CONTROL_SOURCE_BUTTON +
+                    (layout == 1U ? 8U : 6U);
+                assert(usb_hid_service_set_controller_config(slot, &config));
+            }
+            buttons(slot, 0U);
+            buttons(slot, select);
+            assert(g_menu_chord[slot].state == MT_MENU_CHORD_IDLE);
+            if (cores[machine] == MT_C64_CORE_ID) assert(g_c64_input.joysticks[slot] == 0x10U);
+            else if (cores[machine] == MT_GBC_CORE_ID) assert((g_gameboy_input.gamepads[slot] & 0x10U) != 0U);
+            else if (cores[machine] == MT_GENESIS_CORE_ID) assert((g_genesis_input.gamepad[slot] & MT_GENESIS_A) != 0U);
+            else if (cores[machine] == MT_VECTREX_CORE_ID) assert(g_vectrex_input.pad_buttons[slot] == 1U);
+            fake_now += MT_MENU_CHORD_TICKS * 2U;
+            usb_hid_service_poll();
+            assert(fixture.menu_presses == 0U); /* Solo Select has no long-press action. */
+            buttons(slot, 0U);
+            const XTime started = fake_now;
+            buttons(slot, pair | 0x11U); /* Enter and L must not accompany F12. */
+            assert_controller_neutral(cores[machine], slot);
+            fake_now = started + MT_MENU_CHORD_TICKS - 1U;
+            usb_hid_service_poll();
+            assert(!fixture.menu.visible && fixture.menu_presses == 0U);
+            ++fake_now;
+            const unsigned before = routed_events;
+            usb_hid_service_poll_deferred(); /* No new HID report is required. */
+            assert(routed_events == before);
+            assert(fixture.menu.visible && fixture.menu_presses == 1U);
+            assert(!fixture.held[slot][MT_MENU_HID_F12] && fixture.tab_presses == 0U);
+            fake_now += MT_MENU_CHORD_TICKS * 4U;
+            usb_hid_service_poll();
+            buttons(slot, select | 0x11U);
+            buttons(slot, pair | 0x11U);
+            usb_hid_service_poll();
+            assert(fixture.menu_presses == 1U); /* Both must be released to rearm. */
+            buttons(slot, 0x11U);
+            assert(fixture.tab_presses == 0U); /* Other held opener controls need neutral. */
+            buttons(slot, 0U);
+            buttons(slot, 0x20U);
+            assert(fixture.tab_presses == 1U && fixture.menu.page == MT_MENU_PAGE_MEDIA);
+            buttons(slot, 0U);
+            buttons(slot, pair);
+            fake_now += MT_MENU_CHORD_TICKS;
+            usb_hid_service_poll();
+            assert(!fixture.menu.visible && fixture.menu_presses == 2U);
+            buttons(slot, select);
+            assert_controller_neutral(cores[machine], slot);
+            buttons(slot, 0U);
+            buttons(slot, select);
+            assert(g_menu_chord[slot].state == MT_MENU_CHORD_IDLE &&
+                g_release_guard[slot] == 0U);
+            usb_gamepad_input_disconnect(slot);
+        }
+    }
+    puts("PASS 500 ms menu chord across supervisor/all cores and eight/ten-button HID/vendor pads");
+}
+
+static void test_menu_chord_guards(void)
+{
+    navigation_fixture_t fixture = {0};
+    usb_hid_service_init(NULL);
+    usb_hid_service_set_active_core(MT_GBC_CORE_ID);
+    mt_menu_init(&fixture.menu, &fixture.view);
+    usb_hid_service_set_keyboard_filter(navigate_menu, &fixture);
+    usb_hid_service_set_controller_report_handler(observe_raw, NULL);
+    uint8_t first = chord_controller(MT_CONTROLLER_TRANSPORT_XBOXONE, 0x7ffU, 1U);
+    const uint8_t second = chord_controller(MT_CONTROLLER_TRANSPORT_XBOXONE, 0x7ffU, 2U);
+    buttons(first, 0x40U); buttons(second, 0x80U);
+    fake_now += MT_MENU_CHORD_TICKS;
+    usb_hid_service_poll();
+    assert(fixture.menu_presses == 0U); /* Separate controllers cannot form a chord. */
+    buttons(first, 0xc0U);
+    fake_now += MT_MENU_CHORD_TICKS - 1U;
+    buttons(first, 0x40U); /* A broken hold is consumed until both release. */
+    fake_now += MT_MENU_CHORD_TICKS;
+    usb_hid_service_poll();
+    assert(fixture.menu_presses == 0U);
+    buttons(first, 0U); buttons(first, 0xc0U);
+    usb_hid_service_set_active_core(MT_C64_CORE_ID);
+    fake_now += MT_MENU_CHORD_TICKS;
+    usb_hid_service_poll();
+    assert(fixture.menu_presses == 0U); /* A core transition cancels an old hold. */
+    buttons(first, 0U); buttons(first, 0xc0U);
+    usb_gamepad_input_disconnect(first);
+    fake_now += MT_MENU_CHORD_TICKS;
+    usb_hid_service_poll();
+    assert(fixture.menu_presses == 0U);
+    first = chord_controller(MT_CONTROLLER_TRANSPORT_XBOXONE, 0x7ffU, 1U);
+    buttons(first, 0U); buttons(first, 0xc0U);
+    fake_now += MT_MENU_CHORD_TICKS;
+    usb_hid_service_poll();
+    assert(fixture.menu_presses == 1U && fixture.menu.visible);
+    buttons(first, 0U); buttons(second, 0U);
+
+    /* F12 escapes assignment, test and stick editing despite preview capture. */
+    for (unsigned mode = 0U; mode < 3U; ++mode) {
+        fixture.menu.page = MT_MENU_PAGE_INPUT;
+        fixture.menu.gamepad_edit = true;
+        fixture.menu.gamepad_capture = mode == 0U;
+        fixture.menu.gamepad_test = mode == 1U;
+        fixture.menu.gamepad_sticks = mode == 2U;
+        usb_hid_service_set_gamepad_preview(true);
+        const unsigned reports = fixture.reports, presses = fixture.menu_presses;
+        const unsigned raw_reports = raw_events;
+        buttons(first, 0xc0U);
+        assert(fixture.reports == reports);
+        assert(raw_events == raw_reports && usb_hid_service_controller_menu_chord(first));
+        mt_gamepad_state_t raw;
+        usb_hid_service_controller_snapshot(first, &raw, NULL);
+        assert(raw.buttons == 0xc0U); /* Diagnostics retain the actual held pair. */
+        fake_now += MT_MENU_CHORD_TICKS;
+        usb_hid_service_poll();
+        assert(fixture.menu_presses == presses + 1U && fixture.menu.visible);
+        assert(!fixture.menu.gamepad_capture && !fixture.menu.gamepad_test &&
+            !fixture.menu.gamepad_sticks && fixture.menu.gamepad_edit);
+        assert(!fixture.held[first][MT_MENU_HID_F12]);
+        buttons(first, 0U);
+        assert(!usb_hid_service_controller_menu_chord(first));
+        usb_hid_service_set_gamepad_preview(false);
+    }
+    puts("PASS menu chord cancellation, disconnect/core guards, independent slots and preview escape");
 }
 
 static void test_shoulder_navigation(void)
@@ -477,6 +646,8 @@ int main(void)
     test_identity_strings_and_spare();
     test_hid_fields();
     test_keyboard_screenshot();
+    test_menu_chord();
+    test_menu_chord_guards();
     test_shoulder_navigation();
     return 0;
 }

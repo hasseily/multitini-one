@@ -1,5 +1,13 @@
 # Current handoff
 
+The latest named firmware is [M0.1.0](FIRMWARE_M0.1.0.md), an ARM-only
+controller-menu release built over `build/firmware-efx1`. Its package is
+`build/firmware-M0.1.0/` with `FIRMWARE-M0.1.0.BIN`, an identical
+`sd/FIRMWARE.BIN`, retained machine packages, source and audit evidence.
+Supervisor and machine images remain PHO5 (`0x50484F35`, ABI 0.21).
+Physical validation of this new release remains pending. The older
+`build/current` aliases documented below are retained historical selections.
+
 The owner accepts the C64 and GBC functional baselines. GBC baseline work is
 complete following the 2026-09-14 confirmation that the current implementation
 and saves were tested and work. Promotion preserves the tested artifacts.

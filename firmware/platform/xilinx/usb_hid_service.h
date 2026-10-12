@@ -68,6 +68,8 @@ bool usb_hid_service_validate_controller_configs(const mt_controller_config_t co
 bool usb_hid_service_set_controller_configs(const mt_controller_config_t configs[MT_GAMEPAD_SLOTS]);
 void usb_hid_service_controller_snapshot(uint8_t slot, mt_gamepad_state_t *raw,
                                          mt_controls_output_t *output);
+/* Suppress report and polling based assignment while the escape pair is held. */
+bool usb_hid_service_controller_menu_chord(uint8_t slot);
 /* Zero/one are machine ports 1/2; 255 means connected but unassigned. */
 uint8_t usb_hid_service_controller_player(uint8_t slot);
 typedef void (*mt_usb_controller_action_fn)(void *context, unsigned action);
