@@ -2,11 +2,16 @@
 /* Exercise production FatFs-to-multiboot installation against live NOR bytes. */
 #include <assert.h>
 #include <stdio.h>
+#include <setjmp.h>
 #include <string.h>
 #include "ff.h"
 #include "multiboot_platform.h"
 #include "updater.h"
 #include "crc32.h"
+#include "uart.h"
+#include "xiltimer.h"
+#include "golden_self_update.h"
+#include "serial_boot.h"
 
 #define PAYLOAD 8192U
 #define IMAGE_SIZE (PAYLOAD + MB_MANIFEST_SIZE)
@@ -28,6 +33,7 @@ typedef struct {
 static fake_file_t files[FILE_COUNT];
 static uint8_t nor[MB_FLASH_SIZE];
 static uint32_t mutations, mutation_attempts, mount_count;
+static uint32_t payload_reads[2];
 static FRESULT mount_result;
 static int flash_available, active_file;
 enum { EV_OPEN, EV_CLOSE, EV_UNLINK, EV_RENAME, EV_FLASH_FAILURE };
@@ -99,6 +105,10 @@ static void make_image(unsigned index, uint32_t product, int legacy, uint8_t rev
 static int flash_read(void *context, uint32_t off, void *dst, uint32_t len)
 {
     (void)context; assert(off <= MB_FLASH_SIZE && len <= MB_FLASH_SIZE - off);
+    if (len==4096U) {
+        if (off==MB_APPLETINI_OFFSET || off==MB_APPLETINI_OFFSET+4096U) ++payload_reads[0];
+        if (off==MB_MULTITINI_OFFSET || off==MB_MULTITINI_OFFSET+4096U) ++payload_reads[1];
+    }
     memcpy(dst, nor + off, len); return 0;
 }
 static int mutation_fails(void)
@@ -202,6 +212,7 @@ static void reset_fixture(void)
 {
     memset(nor, 0xff, sizeof(nor)); memset(files, 0, sizeof(files));
     mutations = mutation_attempts = mount_count = event_count = 0;
+    memset(payload_reads,0,sizeof payload_reads);
     mount_result = FR_OK; flash_available = 1; active_file = -1;
     for (unsigned i = 0; i < FILE_COUNT; ++i) files[i].missing_result = FR_NO_FILE;
 }
@@ -274,7 +285,6 @@ static void test_missing_and_bad_files(void)
         files[i].ok_exists = 1; files[i].ok_crc = 0x1234U + i;
         files[i].missing_result = i == 1 ? FR_NO_PATH : FR_NO_FILE;
     }
-    assert(!updater_has_verified_firmware());
     assert(updater_select_firmware(&boot) != 0 && boot == 0xdeadbeef);
     assert(updater_run(&r) == 0); assert_batch(0, 0, 0, 0, &r);
     assert(mutations == 0 && mutation_attempts == 0);
@@ -320,7 +330,8 @@ static void test_source_errors(void)
     reset_fixture(); mount_result = FR_DISK_ERR; make_image(0, MB_PRODUCT_APPLETINI, 0, 0x52);
     assert(updater_run(&r) != 0 && !r.found_file && !r.verified && event_count == 0 && mutation_attempts == 0);
     reset_fixture(); make_image(0, MB_PRODUCT_APPLETINI, 0, 0x53); flash_available = 0;
-    assert(updater_run(&r) != 0); assert_batch(1, 0, 1, 0, &r); assert(!updater_has_verified_firmware());
+    assert(updater_run(&r) != 0); assert_batch(1, 0, 1, 0, &r);
+    { uint32_t boot=UINT32_MAX; assert(updater_select_firmware(&boot)!=0); }
     assert(files[0].exists && mutation_attempts == 0);
 }
 static void test_acknowledgement_errors(void)
@@ -387,10 +398,81 @@ static void test_verified_fallback(void)
     assert(mb_metadata_load(&flash, &metadata) == MB_OK && metadata.request_product == MB_PRODUCT_NONE);
     assert(metadata.default_product == MB_PRODUCT_MULTITINI);
 }
+/* Execute the actual Golden main and selector in NOR. A reset or monitor
+ * handoff ends the fixture instead of resetting a computer. */
+static jmp_buf golden_handoff;
+static unsigned serial_windows,monitor_entries,error_blinks;
+static uint32_t handed_offset;
+static serial_boot_action_t first_action;
+void uart_init_both(uint32_t baud) { assert(baud==921600U); }
+void uart_puthex(uint32_t base,uint32_t value) { (void)base;(void)value; }
+void uart_putdec(uint32_t base,uint32_t value) { (void)base;(void)value; }
+void golden_led_init(void) {}
+void golden_led_off(void) {}
+void golden_led_error_code(int code) { assert(code!=0);++error_blinks; }
+void XTime_GetTime(XTime *value) { static XTime ticks; ticks+=100000U;*value=ticks; }
+uint32_t boot_control_current_qspi_image_offset(void) { return MB_GOLDEN_OFFSET; }
+int boot_control_select_qspi_image_offset(uint32_t offset) { assert(offset==MB_GOLDEN_OFFSET);return 0; }
+void boot_control_soft_reset(void) { assert(!"unexpected direct reset"); }
+void boot_control_boot_qspi_image_offset(uint32_t offset) { handed_offset=offset;longjmp(golden_handoff,1); }
+serial_boot_action_t serial_boot_menu(const flash_layout_t *layout,uint32_t seconds)
+{
+    assert(layout);
+    if(seconds) { assert(seconds==1U);++serial_windows;return first_action; }
+    ++monitor_entries;longjmp(golden_handoff,2);
+}
+uint32_t serial_boot_staged_boot_offset(void) { assert(!"unexpected trial action");return 0; }
+int golden_self_update_repair_primary(uint32_t offset,uint32_t uart,uint32_t mirror,golden_self_update_result_t *out)
+{ (void)offset;(void)uart;(void)mirror;(void)out;assert(!"unexpected repair");return 1; }
+int golden_self_update_complete_sd(uint32_t offset,const golden_self_update_result_t *repair,uint32_t uart,uint32_t mirror)
+{ assert(offset==0 && repair==NULL);(void)uart;(void)mirror;return GOLDEN_SELF_UPDATE_SD_UNCHANGED; }
+int mb_platform_read_report(char *text,uint32_t capacity) { assert(capacity);text[0]=0;return MB_OK; }
+#define main golden_production_main
+#include "../../firmware/golden/bootloader/main.c"
+#undef main
+static void run_golden(unsigned booted)
+{
+    serial_windows=monitor_entries=error_blinks=0;handed_offset=UINT32_MAX;
+    memset(payload_reads,0,sizeof payload_reads);
+    if(!setjmp(golden_handoff)) { (void)golden_production_main();assert(!"Golden unexpectedly returned"); }
+    assert(serial_windows==1U && monitor_entries==!booted);
+}
+static void test_golden_single_selection(void)
+{
+    updater_result_t r;mb_metadata_t metadata;
+    reset_fixture();make_image(0,MB_PRODUCT_APPLETINI,0,0x45);make_image(1,MB_PRODUCT_MULTITINI,0,0x46);
+    assert(updater_run(&r)==0);
+    /* Build the fixture's capability-bearing Golden to permit a request. */
+    memcpy(nor,files[0].data,IMAGE_SIZE);
+    memcpy(nor+4300,MB_GOLDEN_MARKER,sizeof(MB_GOLDEN_MARKER)-1U);
+    put32(nor+PAYLOAD+8,1);put32(nor+PAYLOAD+12,1);put32(nor+PAYLOAD+16,1);
+    put32(nor+PAYLOAD+24,crc(nor,PAYLOAD));put32(nor+PAYLOAD+28,crc(nor+PAYLOAD,28));
+    assert(mb_set_request(&flash,MB_PRODUCT_MULTITINI)==MB_OK);
+    first_action=SERIAL_BOOT_ACTION_CONTINUE;run_golden(1);
+    assert(handed_offset==MB_MULTITINI_OFFSET && payload_reads[0]==0 && payload_reads[1]==2 && !error_blinks);
+    assert(mb_metadata_load(&flash,&metadata)==MB_OK && metadata.request_product==0 && metadata.default_product==MB_PRODUCT_APPLETINI);
+    assert(mb_set_request(&flash,MB_PRODUCT_MULTITINI)==MB_OK);
+    nor[MB_MULTITINI_OFFSET+800]^=1;
+    run_golden(1);
+    assert(handed_offset==MB_APPLETINI_OFFSET && payload_reads[0]==2 && payload_reads[1]==2 && !error_blinks);
+    /* Serial 'boot' still verifies once; it cannot use a prior selection. */
+    first_action=SERIAL_BOOT_ACTION_BOOT_FIRMWARE;run_golden(1);
+    assert(handed_offset==MB_APPLETINI_OFFSET && payload_reads[0]==2 && payload_reads[1]==0);
+    reset_fixture();first_action=SERIAL_BOOT_ACTION_CONTINUE;run_golden(0);
+    assert(handed_offset==UINT32_MAX && !error_blinks);
+    reset_fixture();make_image(0,MB_PRODUCT_MULTITINI,0,0x51);files[0].data[800]^=1;
+    run_golden(0);assert(error_blinks==1 && handed_offset==UINT32_MAX);
+    reset_fixture();make_image(1,MB_PRODUCT_APPLETINI,0,0x52);
+    memcpy(nor+MB_APPLETINI_OFFSET,files[1].data,IMAGE_SIZE);files[1].exists=0;
+    make_image(0,MB_PRODUCT_MULTITINI,0,0x53);files[0].data[800]^=1;
+    run_golden(1);
+    assert(handed_offset==MB_APPLETINI_OFFSET && payload_reads[0]==2 && !error_blinks);
+    puts("PASS: production Golden selects once, consumes request after live CRC, verifies serial boot, preserves one-second window and dead-end error blink");
+}
 int main(void)
 {
     test_presence_subsets(); test_missing_and_bad_files(); test_source_errors();
-    test_acknowledgement_errors(); test_flash_failure_continues(); test_verified_fallback();
+    test_acknowledgement_errors(); test_flash_failure_continues(); test_verified_fallback();test_golden_single_selection();
     puts("PASS: all filename subsets, intrinsic product routing, sequential duplicate installs, isolated errors/retries, closed .OK renames, verified fallback");
     return 0;
 }

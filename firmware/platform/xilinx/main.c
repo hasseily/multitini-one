@@ -1364,8 +1364,10 @@ static void switch_to_appletini(void)
     if (supervisor_menu.visible)
         show_handoff_progress("Checking Appletini firmware; please wait");
     flash = mb_platform_flash();
-    if (flash == NULL || mb_slot_verify(flash, MB_PRODUCT_APPLETINI, NULL) != MB_OK ||
-        mb_platform_golden_offset(&golden_offset) != MB_OK) goto restore;
+    /* Presence is advisory. The request validates Golden after draining
+     * owners; Golden checks target integrity and fallback after reset. */
+    if (flash == NULL || mb_slot_probe(flash, MB_PRODUCT_APPLETINI, NULL) != MB_OK)
+        goto restore;
     if (!mt_screenshot_service_cancel()) {
         error = "Switch cancelled; screenshot is busy";
         goto restore;
@@ -1406,9 +1408,17 @@ static void switch_to_appletini(void)
     }
     storage_unmounted = true;
     request_attempted = true;
-    if (mb_platform_request(MB_PRODUCT_APPLETINI) != MB_OK) {
+    started = monotonic_ms(NULL);
+    if (mb_platform_prepare_request(MB_PRODUCT_APPLETINI, &golden_offset) != MB_OK) {
         error = "Switch cancelled; boot request could not be saved";
         goto restore;
+    }
+    xil_printf("switch: Golden validation and request ms=%u\r\n",
+               (unsigned)(monotonic_ms(NULL)-started));
+    {
+        char read_report[192];
+        if (mb_platform_read_report(read_report,sizeof read_report)==MB_OK)
+            xil_printf("%s",read_report);
     }
     xil_printf("switching to Appletini through golden at 0x%08x\r\n", golden_offset);
     if (!wait_uart0_transmit_idle()) {

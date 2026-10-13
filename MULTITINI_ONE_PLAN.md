@@ -65,6 +65,15 @@ only a closed source whose complete bytes match live verified primary Golden,
 after trial repair, with primary-boot retry. Filesystem failures do not undo
 verified flash or block boot. Retain M0.2.2, F1.3.0-dev5 and all hardware inputs.
 
+Switch performance follow-up, 2026-10-13: M0.2.3, F1.3.0-dev6 and B2.0.5 remove
+duplicate full scans within switch preparation and Golden selection. The owner
+chooses target payload validation after reset in Golden, with fallback; the
+running firmware verifies Golden and probes the target before saving its request.
+Keep full validation when first adopting metadata. Use a constant CRC
+table and 4 KiB flash reads, with qualified quad I/O and conservative fallback.
+Keep Golden's one-second serial recovery window. Retain every selected FPGA,
+core, FSBL and CPU1 input. Native validation and ARM builds precede board timing.
+
 Firmware release, 2026-10-12: name Multitini firmware releases with an `M`
 prefix, starting at `M0.1.0`. Add a shared controller menu gesture: hold
 Select and Start together for 500 ms. Preserve ordinary solo game presses,

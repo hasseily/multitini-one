@@ -16,6 +16,7 @@ static uint8_t app[IMAGE_SIZE],multi[IMAGE_SIZE],legacy[IMAGE_SIZE],golden[IMAGE
 static uint8_t large[MB_APPLETINI_CAPACITY+256U+MB_MANIFEST_SIZE];
 static uint32_t mutations,cut_at,fail_at,reads,fail_read,read_bytes;
 static uint32_t fail_read_address=UINT32_MAX;
+static uint32_t payload_reads[4];
 static jmp_buf power_cut;
 static mb_flash_t device;
 
@@ -72,6 +73,11 @@ static int nor_read(void *ctx,uint32_t a,void *p,uint32_t n)
 {
     (void)ctx; assert(a<=MB_FLASH_SIZE && n<=MB_FLASH_SIZE-a);
     read_bytes+=n;
+    if (n==4096U) {
+        const uint32_t bases[4]={MB_GOLDEN_OFFSET,MB_GOLDEN_TRIAL_OFFSET,MB_APPLETINI_OFFSET,MB_MULTITINI_OFFSET};
+        for (unsigned i=0;i<4U;++i)
+            if (a==bases[i] || a==bases[i]+4096U) ++payload_reads[i];
+    }
     if(++reads==fail_read || (fail_read_address>=a && fail_read_address-a<n)) return 1;
     memcpy(p,flash+a,n); return 0;
 }
@@ -111,6 +117,7 @@ static void reset(void)
     memset(flash,0xff,sizeof flash);
     memcpy(flash,golden,IMAGE_SIZE); memcpy(flash+MB_GOLDEN_TRIAL_OFFSET,golden,IMAGE_SIZE);
     mutations=cut_at=fail_at=reads=fail_read=read_bytes=0;
+    memset(payload_reads,0,sizeof payload_reads);
     fail_read_address=UINT32_MAX;
 }
 static void old_metadata(void)
@@ -284,7 +291,8 @@ static void advisory_probes(void)
     assert(mb_slot_verify(&device,MB_PRODUCT_APPLETINI,NULL)!=MB_OK);
     expect(MB_PRODUCT_APPLETINI,MB_PRODUCT_MULTITINI,0);
     assert(mb_set_default(&device,MB_PRODUCT_APPLETINI)!=MB_OK);
-    assert(mb_set_request(&device,MB_PRODUCT_APPLETINI)!=MB_OK);
+    assert(mb_set_request(&device,MB_PRODUCT_APPLETINI)==MB_OK);
+    expect(0,MB_PRODUCT_MULTITINI,0);
     reset(); install(app); install(multi);
     assert(mb_update_begin(&device,MB_PRODUCT_APPLETINI)==MB_OK);
     assert(mb_slot_probe(&device,MB_PRODUCT_APPLETINI,&image)==MB_E_UNAVAILABLE);
@@ -398,6 +406,77 @@ static void choice_faults(void)
         expect(0,m.default_product,0);
     }
     printf("multiboot persistent default: %u transactional metadata power cuts\n",count);
+}
+static void prepared_requests(void)
+{
+    uint32_t offset,count,read_count,stop,before;
+    mb_metadata_t m;
+    mb_selection_t selection;
+    reset(); install(app); install(multi);
+    memset(payload_reads,0,sizeof payload_reads);
+    assert(mb_prepare_request(&device,MB_PRODUCT_MULTITINI,&offset)==MB_OK && offset==0);
+    assert(payload_reads[0]==2 && payload_reads[1]==0 && payload_reads[2]==0 && payload_reads[3]==0);
+    assert(mb_metadata_load(&device,&m)==MB_OK && m.default_product==MB_PRODUCT_APPLETINI && m.request_product==MB_PRODUCT_MULTITINI);
+    /* An idempotent request still checks live Golden and bounded eligibility;
+     * it skips target payload reads and unnecessary metadata writes. */
+    before=mutations; memset(payload_reads,0,sizeof payload_reads);
+    assert(mb_prepare_request(&device,MB_PRODUCT_MULTITINI,&offset)==MB_OK && mutations==before);
+    assert(payload_reads[0]==2 && payload_reads[3]==0);
+    flash[MB_MULTITINI_OFFSET+2000]^=1;
+    offset=0;
+    assert(mb_prepare_request(&device,MB_PRODUCT_MULTITINI,&offset)==MB_OK && offset==0 && mutations==before);
+    /* Damage before OR after a request must be rejected by Golden's full
+     * live check. Advisory presence is never boot authorization. */
+    assert(mb_select(&device,0,&selection)==MB_OK && selection.product==MB_PRODUCT_APPLETINI);
+    assert(mb_clear_request(&device)==MB_OK); before=mutations;
+    assert(mb_prepare_request(&device,MB_PRODUCT_MULTITINI,&offset)==MB_OK && mutations>before);
+    expect(0,MB_PRODUCT_APPLETINI,0);
+    assert(mb_set_default(&device,MB_PRODUCT_MULTITINI)==MB_E_CRC);
+    reset(); install(app); install(multi); flash[2000]^=1;
+    memset(payload_reads,0,sizeof payload_reads);
+    assert(mb_prepare_request(&device,MB_PRODUCT_APPLETINI,&offset)==MB_OK && offset==MB_GOLDEN_TRIAL_OFFSET);
+    assert(payload_reads[2]==0 && payload_reads[3]==0);
+    flash[MB_GOLDEN_TRIAL_OFFSET+2000]^=1; before=mutations; offset=0;
+    assert(mb_prepare_request(&device,MB_PRODUCT_APPLETINI,&offset)==MB_E_UNAVAILABLE && offset==UINT32_MAX && mutations==before);
+    reset(); memcpy(flash+MB_APPLETINI_OFFSET,app,IMAGE_SIZE); old_metadata();
+    memcpy(flash+MB_MULTITINI_OFFSET,multi,IMAGE_SIZE); memset(payload_reads,0,sizeof payload_reads);
+    assert(mb_prepare_request(&device,MB_PRODUCT_MULTITINI,&offset)==MB_OK);
+    /* First migration fully establishes both records and retains the
+     * pre-existing peer's startup preference; later requests are bounded. */
+    assert(payload_reads[0]==2 && payload_reads[2]==2 && payload_reads[3]==2);
+    assert(mb_metadata_load(&device,&m)==MB_OK && m.default_product==MB_PRODUCT_APPLETINI);
+    reset(); before=mutations; offset=0;
+    assert(mb_prepare_request(&device,MB_PRODUCT_MULTITINI,&offset)!=MB_OK && offset==UINT32_MAX && mutations==before);
+    memcpy(flash+MB_MULTITINI_OFFSET,app,IMAGE_SIZE);
+    assert(mb_prepare_request(&device,MB_PRODUCT_MULTITINI,&offset)!=MB_OK && offset==UINT32_MAX && mutations==before);
+    assert(mb_prepare_request(&device,0,&offset)==MB_E_ARGUMENT && offset==UINT32_MAX);
+    assert(mb_prepare_request(&device,MB_PRODUCT_APPLETINI,NULL)==MB_E_ARGUMENT);
+    reset(); install(app); install(multi); memcpy(snapshot,flash,sizeof flash); mutations=reads=0;
+    assert(mb_prepare_request(&device,MB_PRODUCT_MULTITINI,&offset)==MB_OK);
+    count=mutations; read_count=reads;
+    for(stop=1;stop<=count;++stop) {
+        memcpy(flash,snapshot,sizeof flash); mutations=reads=0; cut_at=stop;
+        if(!setjmp(power_cut)) { (void)mb_prepare_request(&device,MB_PRODUCT_MULTITINI,&offset); assert(!"missing request cut"); }
+        cut_at=0; assert(mb_metadata_load(&device,&m)==MB_OK);
+        assert(m.default_product==MB_PRODUCT_APPLETINI && (m.request_product==0 || m.request_product==MB_PRODUCT_MULTITINI));
+        expect(0,m.request_product ? MB_PRODUCT_MULTITINI:MB_PRODUCT_APPLETINI,0);
+        assert(!memcmp(flash,snapshot,MB_METADATA_A_OFFSET));
+    }
+    for(stop=1;stop<=count;++stop) {
+        memcpy(flash,snapshot,sizeof flash); mutations=reads=0; fail_at=stop; offset=0;
+        assert(mb_prepare_request(&device,MB_PRODUCT_MULTITINI,&offset)!=MB_OK && offset==UINT32_MAX);
+        fail_at=0; assert(!memcmp(flash,snapshot,MB_METADATA_A_OFFSET));
+    }
+    for(stop=1;stop<=read_count;++stop) {
+        int rc;
+        memcpy(flash,snapshot,sizeof flash); mutations=reads=0; fail_read=stop; offset=0;
+        rc=mb_prepare_request(&device,MB_PRODUCT_MULTITINI,&offset); fail_read=0;
+        assert((rc==MB_OK && (offset==0 || offset==MB_GOLDEN_TRIAL_OFFSET)) || (rc!=MB_OK && offset==UINT32_MAX));
+        assert(!memcmp(flash,snapshot,MB_METADATA_A_OFFSET));
+        assert(mb_metadata_load(&device,&m)==MB_OK && m.default_product==MB_PRODUCT_APPLETINI);
+        assert(mb_clear_request(&device)==MB_OK); expect(0,MB_PRODUCT_APPLETINI,0);
+    }
+    printf("multiboot prepared request: no target payload scan, full Golden/adoption checks, %u cuts/%u writes/%u reads and cross-reset corruption fallback\n",count,count,read_count);
 }
 static void make_versioned_golden(uint8_t *p,const char *version,int raw)
 {
@@ -532,6 +611,6 @@ int main(int argc,char **argv)
     make_image(legacy,PAYLOAD,0,2,0); make_image(golden,PAYLOAD,0,1,1);
     selectors(); migrations(); adopted_defaults(); advisory_probes();
     faults(MB_PRODUCT_APPLETINI,0); faults(MB_PRODUCT_MULTITINI,0);
-    faults(MB_PRODUCT_MULTITINI,1); adoption_faults(); choice_faults(); golden_versions();
+    faults(MB_PRODUCT_MULTITINI,1); adoption_faults(); choice_faults(); prepared_requests(); golden_versions();
     puts("PASS: multiboot live validation and power-failure invariants"); return 0;
 }

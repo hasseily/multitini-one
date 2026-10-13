@@ -5,7 +5,8 @@ import argparse
 
 ROOT = Path(__file__).resolve().parents[1]
 SHARED_LIB = ("multiboot.c", "multiboot.h", "multiboot_platform.c",
-              "multiboot_platform.h", "golden_self_update.c")
+              "multiboot_platform.h", "golden_self_update.c", "golden_self_update.h",
+              "crc32.c", "crc32.h", "qspi_nor.c", "qspi_nor.h")
 SHARED_BOOT = ("boot_control.c", "boot_control.h", "main.c", "updater.c", "updater.h", "updater_layout.c",
                "updater_layout.h", "serial_boot.c")
 

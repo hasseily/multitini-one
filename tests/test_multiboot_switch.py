@@ -70,12 +70,9 @@ static uint32_t shell_read(uint32_t address) {
     return fault==8 ? 0U : MT_VIDEO_FRAME_STATUS_QUIESCENT;
 }
 const mb_flash_t *mb_platform_flash(void) { return fault==1 ? NULL : &flash; }
-int mb_slot_verify(const mb_flash_t *f, uint32_t product, mb_image_t *out) {
+int mb_slot_probe(const mb_flash_t *f, uint32_t product, mb_image_t *out) {
     assert(f==&flash && product==MB_PRODUCT_APPLETINI && out==NULL);
     return fault==2 ? MB_E_UNAVAILABLE : MB_OK;
-}
-int mb_platform_golden_offset(uint32_t *offset) {
-    *offset=MB_GOLDEN_TRIAL_OFFSET; return fault==3 ? MB_E_UNAVAILABLE : MB_OK;
 }
 static bool mt_screenshot_service_cancel(void) { return fault!=4; }
 static int set_core_reset_request(bool asserted) {
@@ -103,11 +100,14 @@ static bool mt_video_worker_hold_for_reset(void) {
     assert((golden_mode || request) && boot_register==MB_GOLDEN_TRIAL_OFFSET/0x8000U && !usb_started && !mounted);
     worker_held=true; return fault!=11;
 }
-int mb_platform_request(uint32_t product) {
+int mb_platform_prepare_request(uint32_t product, uint32_t *offset) {
     assert(product==MB_PRODUCT_APPLETINI && core_paused && (!worker_held || golden_update_worker_held) && !usb_started && !mounted);
+    *offset=MB_GOLDEN_TRIAL_OFFSET;
+    if(fault==3) return MB_E_UNAVAILABLE;
     ++requests; request=true; return fault==12 ? MB_E_PROGRAM : MB_OK;
 }
 static int xil_printf(const char *fmt, ...) { (void)fmt; return 0; }
+int mb_platform_read_report(char *text,uint32_t size) { assert(size);text[0]=0;return MB_OK; }
 static bool wait_uart0_transmit_idle(void) { ++uart_waits; return fault!=13; }
 int mb_platform_clear_request(void) {
     ++request_clears;
@@ -235,12 +235,12 @@ int main(int argc, char **argv) {
         assert(!reset_issued && !request && !core_paused && input_ready && usb_started && mounted);
         assert(!video_suspended && !worker_held && boot_register==0x123U);
         assert(status_refreshes==1 && strstr(error_message,"Switch cancelled")!=NULL);
-        assert(request_clears==(fault>=11 ? 1U : 0U));
+        assert(request_clears==(fault>=11 || fault==3 ? 1U : 0U));
         assert(register_writes==(fault==14 ? 2U : 0U));
-        assert(usb_restarts==(fault>=9 ? 1U : 0U));
-        assert(remounts==(fault>=11 ? 1U : 0U));
-        assert(resume_calls==(fault>=6 ? 1U : 0U));
-        assert(effects_configured==(fault>=6 ? 1U : 0U));
+        assert(usb_restarts==(fault>=9 || fault==3 ? 1U : 0U));
+        assert(remounts==(fault>=11 || fault==3 ? 1U : 0U));
+        assert(resume_calls==(fault>=6 || fault==3 ? 1U : 0U));
+        assert(effects_configured==(fault>=6 || fault==3 ? 1U : 0U));
     }
     /* A failed restore retains core reset, blocks input and skips effects. */
     fault=13;

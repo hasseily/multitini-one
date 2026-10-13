@@ -137,6 +137,9 @@ add_test(NAME multiboot_bundle COMMAND ${Python3_EXECUTABLE}
 add_test(NAME multiboot_status_cache COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_SOURCE_DIR}/tests/test_multiboot_status_cache.py)
 set_tests_properties(multiboot_status_cache PROPERTIES ENVIRONMENT "CC=${CMAKE_C_COMPILER}")
+add_test(NAME qspi_performance COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/test_qspi_performance.py)
+set_tests_properties(qspi_performance PROPERTIES ENVIRONMENT "CC=${CMAKE_C_COMPILER}")
 set_tests_properties(usb1_phy_startup PROPERTIES ENVIRONMENT "CC=${CMAKE_C_COMPILER}")
 add_subdirectory(firmware/vectrex32)
 add_library(xilinx_vectrex_services_compile OBJECT
@@ -450,6 +453,17 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     endif()
 endif()
 add_test(NAME multiboot_updater COMMAND test_multiboot_updater)
+add_executable(test_crc32 tests/host/test_crc32.c firmware/golden/lib/crc32.c)
+target_include_directories(test_crc32 PRIVATE firmware/golden/lib)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(test_crc32 PRIVATE -Wall -Wextra -Werror)
+    if(MULTITINI_SANITIZE)
+        target_compile_options(test_crc32 PRIVATE
+            -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all)
+        target_link_options(test_crc32 PRIVATE -fsanitize=address,undefined)
+    endif()
+endif()
+add_test(NAME crc32 COMMAND test_crc32)
 add_library(multiboot_host OBJECT firmware/golden/lib/multiboot.c)
 target_include_directories(multiboot_host PRIVATE firmware/golden/lib)
 add_executable(test_multiboot tests/host/test_multiboot.c

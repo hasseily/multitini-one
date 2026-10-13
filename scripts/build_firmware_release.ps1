@@ -38,4 +38,19 @@ New-Item -ItemType Directory -Path $env:TEMP -Force | Out-Null
 $logPath = "$workspacePath.log"
 python scripts/run_native_tool.py -- C:/Xilinx/2025.2/Vitis/bin/vitis.bat -s scripts/create_vitis_workspace.py *> $logPath
 if ($LASTEXITCODE -ne 0) { throw "ARM firmware build failed; see $logPath" }
+# Vitis can return zero after a Python/component creation failure. Require the
+# sealed records and linked outputs before reporting a completed ARM build.
+foreach ($requiredOutput in @('cpu1_manifest.json',
+                             'diagnostic/build/diagnostic.elf', 'video_worker/build/video_worker.elf')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $workspacePath $requiredOutput) -PathType Leaf)) {
+        throw "ARM firmware build incomplete ($requiredOutput); see $logPath"
+    }
+}
+if ($IncludeGolden) {
+    foreach ($requiredOutput in @('golden_build_inputs.json', 'golden/build/golden.elf')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $workspacePath $requiredOutput) -PathType Leaf)) {
+            throw "Golden ARM build incomplete ($requiredOutput); see $logPath"
+        }
+    }
+}
 Write-Output "PASS fresh ARM applications; retained FPGA inputs: $baselinePath"
