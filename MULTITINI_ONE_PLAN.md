@@ -50,6 +50,15 @@ the update from the initial physical boot menu only; disable it after handoff.
 Standalone ONE//e remains eligible. Retain M0.2.1, B2.0.2 and all FPGA/core inputs.
 The replacement menu-driven update still needs the owner's board test.
 
+Multiboot handoff correction, 2026-10-13: the owner reports B2.0.2 and M0.2.1
+installation followed by unexpected M startup, slow System entry and SD unmount
+failure. B2.0.3 preserves the verified existing tagged startup choice on first
+metadata adoption. M0.2.2 fixes FatFs detach option 0 and holds CPU1 only after
+fallible handoff checks. M and F1.3.0-dev5 use bounded advisory menu probes and
+a once-verified Golden cache; actual boot actions still validate full live images.
+Retain all selected FPGA/core, FSBL and CPU1 inputs. Runtime switching needs a
+replacement board test; existing saved M startup choice requires one explicit edit.
+
 Firmware release, 2026-10-12: name Multitini firmware releases with an `M`
 prefix, starting at `M0.1.0`. Add a shared controller menu gesture: hold
 Select and Start together for 500 ms. Preserve ordinary solo game presses,

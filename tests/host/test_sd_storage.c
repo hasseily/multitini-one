@@ -34,6 +34,7 @@ static unsigned sync_calls;
 static unsigned close_calls;
 static unsigned unlink_calls;
 static unsigned dir_close_calls;
+static bool backend_registered;
 static FSIZE_t fake_file_size;
 static const uint8_t *fake_file_data;
 static bool short_read;
@@ -65,12 +66,18 @@ static unsigned path_kind(const char *path)
 FRESULT f_mount(FATFS *file_system, const char *path, BYTE option)
 {
     assert(strcmp(path, "0:/") == 0);
-    assert(option == 1U);
     if (file_system == NULL) {
         ++unmount_calls;
+        if (unmount_status != FR_OK) return unmount_status;
+        /* Match vendor FatFs: unregister first, then opt=1 attempts to mount
+         * the now-missing object and returns FR_NOT_ENABLED (12). */
+        backend_registered = false;
+        if (option != 0U) return (FRESULT)12;
         return unmount_status;
     }
+    assert(option == 1U);
     ++mount_calls;
+    backend_registered = mount_status == FR_OK;
     return mount_status;
 }
 
@@ -84,6 +91,7 @@ FRESULT f_open(FIL *file, const char *path, BYTE mode)
 {
     assert(file != NULL);
     assert(path != NULL);
+    assert(backend_registered);
     ++open_calls;
     file->placeholder = 0U;
     file->kind = path_kind(path);
@@ -307,6 +315,51 @@ static void reset_fake(void)
     target_size = 1U;
     journal_size = 0U;
     dir_entry_count = 0U;
+}
+
+static void test_unmount_lifecycle(void)
+{
+    mt_sd_file_t *file = NULL;
+    uint8_t byte;
+    unsigned before;
+    reset_fake();
+    assert(mt_sd_storage_mount().status == MT_SD_OK && backend_registered);
+    /* The actual FatFs option1-with-NULL operation detaches but reports
+     * FR_NOT_ENABLED. The wrapper must use option0 and keep state coherent. */
+    assert(mt_sd_storage_unmount().status == MT_SD_OK && !backend_registered);
+    assert(mt_sd_storage_mount().status == MT_SD_OK && backend_registered);
+    assert(mount_calls == 2U && unmount_calls == 1U);
+    assert(mt_sd_file_open(JOURNAL_TARGET, "rb", &file).status == MT_SD_OK);
+    before = unmount_calls;
+    assert(mt_sd_storage_unmount().status == MT_SD_FILE_BUSY);
+    assert(unmount_calls == before && backend_registered);
+    assert(mt_sd_file_read(file, &byte, 1U).status == MT_SD_OK && byte == 0xa5U);
+    close_status = FR_DISK_ERR;
+    assert(mt_sd_file_close(file).status == MT_SD_CLOSE_FAILED);
+    assert(mt_sd_storage_unmount().status == MT_SD_FILE_BUSY && unmount_calls == before);
+    close_status = FR_OK;
+    assert(mt_sd_file_close(file).status == MT_SD_OK);
+    assert(mt_sd_storage_unmount().status == MT_SD_OK && !backend_registered);
+    assert(mt_sd_storage_mount().status == MT_SD_OK);
+    assert(mt_sd_file_open(JOURNAL_TARGET, "r+b", &file).status == MT_SD_OK);
+    assert(mt_sd_file_write_buffered(file, "Z", 1U).status == MT_SD_OK);
+    before = unmount_calls;
+    assert(mt_sd_storage_unmount().status == MT_SD_FILE_BUSY && unmount_calls == before);
+    sync_status = FR_DISK_ERR; close_status = FR_DISK_ERR;
+    assert(mt_sd_file_close(file).status == MT_SD_SYNC_FAILED);
+    assert(mt_sd_storage_unmount().status == MT_SD_FILE_BUSY && unmount_calls == before);
+    sync_status = close_status = FR_OK;
+    assert(mt_sd_file_close(file).status == MT_SD_OK);
+    assert(target_size == 1U && target_data[0] == 'Z');
+    assert(mt_sd_storage_unmount().status == MT_SD_OK && !backend_registered);
+    assert(mt_sd_storage_mount().status == MT_SD_OK);
+    assert(mt_sd_file_open(JOURNAL_TARGET, "rb", &file).status == MT_SD_OK);
+    assert(mt_sd_file_read(file, &byte, 1U).status == MT_SD_OK && byte == 'Z');
+    assert(mt_sd_file_close(file).status == MT_SD_OK);
+    unmount_status = FR_DISK_ERR;
+    assert(mt_sd_storage_unmount().status == MT_SD_UNMOUNT_FAILED && backend_registered);
+    unmount_status = FR_OK;
+    assert(mt_sd_storage_unmount().status == MT_SD_OK && !backend_registered);
 }
 
 typedef struct {
@@ -692,6 +745,7 @@ static void test_settings_journal_migration(void)
 
 int main(void)
 {
+    test_unmount_lifecycle();
     test_capture_file_creation();
     static const uint8_t data[] = {1U, 2U, 3U, 4U, 5U, 6U};
     uint8_t destination[sizeof(data)] = {0U};

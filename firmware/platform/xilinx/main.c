@@ -193,17 +193,16 @@ static void set_supervisor_outcome(bool succeeded, const char *success,
 static bool hide_menu_for_core_action(void);
 static void service_screenshots(void);
 static void configure_selection_effects(const mt_core_selection_t *selection);
-static void show_golden_update_progress(void);
+static void show_handoff_progress(const char *message);
 
 static void refresh_multiboot_status(void)
 {
-    const mb_flash_t *flash;
-    (void)mb_platform_status(MB_PRODUCT_MULTITINI, &multiboot_status);
+    /* Entry refresh is advisory and bounded. Cold Golden verification is
+     * warmed after the initial screen below; every boot action revalidates. */
+    (void)mb_platform_status_ui(MB_PRODUCT_MULTITINI, &multiboot_status);
     installed_golden_version[0] = '\0';
-    flash = mb_platform_flash();
-    if (flash != NULL)
-        (void)mb_golden_installed_version(flash, installed_golden_version,
-            (uint32_t)sizeof(installed_golden_version), NULL);
+    (void)mb_platform_golden_version_cached(installed_golden_version,
+        (uint32_t)sizeof(installed_golden_version));
     supervisor_menu_dirty = true;
 }
 
@@ -1346,12 +1345,13 @@ static void reboot_to_golden(bool recovery_only)
     reboot_to_qspi(GOLDEN_SELF_UPDATE_PRIMARY_OFFSET, recovery_only);
 }
 
-/* One-shot handoff through a verified golden image. The persistent startup
- * choice stays unchanged. Every failure before reset resumes this runtime. */
+/* Handoff through a verified Golden image. Before attempting CPU1 reset,
+ * failures resume this runtime; after an attempted hold they stay safely
+ * stopped rather than warm restarting CPU1 through a stale reset vector. */
 static void switch_to_appletini(void)
 {
     uint32_t golden_offset;
-    const mb_flash_t *flash = mb_platform_flash();
+    const mb_flash_t *flash;
     const uint32_t previous_boot = Xil_In32(MT_DEVCFG_MULTIBOOT);
     const bool previously_reset = (shell_read(MT_REG_CONTROL) & MT_CONTROL_CORE_RESET_REQUEST) != 0U;
     const bool genesis_source = shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID;
@@ -1361,6 +1361,9 @@ static void switch_to_appletini(void)
     uint64_t started;
     const char *error = "Switch cancelled; firmware unavailable";
 
+    if (supervisor_menu.visible)
+        show_handoff_progress("Checking Appletini firmware; please wait");
+    flash = mb_platform_flash();
     if (flash == NULL || mb_slot_verify(flash, MB_PRODUCT_APPLETINI, NULL) != MB_OK ||
         mb_platform_golden_offset(&golden_offset) != MB_OK) goto restore;
     if (!mt_screenshot_service_cancel()) {
@@ -1390,15 +1393,18 @@ static void switch_to_appletini(void)
         error = "Switch cancelled; USB shutdown failed";
         goto restore;
     }
-    if (mt_sd_storage_unmount().status != MT_SD_OK) {
-        error = "Switch cancelled; SD is busy or unmount failed";
-        goto restore;
+    {
+        const mt_sd_result_t storage = mt_sd_storage_unmount();
+        if (storage.status != MT_SD_OK) {
+            xil_printf("switch SD unmount failed: %s backend=%u\r\n",
+                       mt_sd_status_name(storage.status), storage.backend_status);
+            error = storage.status == MT_SD_FILE_BUSY ?
+                "Switch cancelled; an SD file is still open" :
+                "Switch cancelled; SD unmount failed";
+            goto restore;
+        }
     }
     storage_unmounted = true;
-    if (!mt_video_worker_hold_for_reset()) {
-        error = "Switch cancelled; CPU1 could not stop safely";
-        goto restore;
-    }
     request_attempted = true;
     if (mb_platform_request(MB_PRODUCT_APPLETINI) != MB_OK) {
         error = "Switch cancelled; boot request could not be saved";
@@ -1415,6 +1421,13 @@ static void switch_to_appletini(void)
     if ((Xil_In32(MT_DEVCFG_MULTIBOOT) & MT_DEVCFG_MULTIBOOT_MASK) !=
         golden_offset / UINT32_C(0x8000)) {
         error = "Switch cancelled; boot register verification failed";
+        goto restore;
+    }
+    /* Complete all fallible metadata/SD/register work while the drained
+     * worker can still resume safely. Only hold CPU1 at the final reset. */
+    golden_update_worker_held = true;
+    if (!mt_video_worker_hold_for_reset()) {
+        error = "Switch cancelled; CPU1 could not stop safely";
         goto restore;
     }
     Xil_Out32(MT_SLCR_UNLOCK, MT_SLCR_UNLOCK_KEY);
@@ -1435,7 +1448,8 @@ restore:
         error = "Switch cancelled; SD could not remount";
         restore_safe = false;
     }
-    if (worker_stopped && !mt_video_worker_resume()) {
+    if (golden_update_worker_held) restore_safe = false;
+    else if (worker_stopped && !mt_video_worker_resume()) {
         error = "Switch cancelled; CPU1 could not resume";
         restore_safe = false;
     }
@@ -1497,7 +1511,8 @@ static void self_update_golden(bool recovery_only)
                 goto restore;
             }
         }
-        if (menu_was_visible) show_golden_update_progress();
+        if (menu_was_visible)
+            show_handoff_progress("Updating Golden Boot; keep the card powered");
         stopped_usb = true;
         if (usb_hid_service_stop() != 0) {
             error = "Golden update cancelled; USB shutdown failed";
@@ -1507,6 +1522,8 @@ static void self_update_golden(bool recovery_only)
     storage = mt_sd_storage_unmount();
     if (storage.status == MT_SD_OK) storage = mt_sd_storage_mount();
     if (storage.status != MT_SD_OK) {
+        xil_printf("golden update SD handoff failed: %s backend=%u\r\n",
+                   mt_sd_status_name(storage.status), storage.backend_status);
         error = "Golden update cancelled; SD unavailable or busy";
         goto restore;
     }
@@ -1518,15 +1535,6 @@ static void self_update_golden(bool recovery_only)
         if (mt_sd_storage_unmount().status != MT_SD_OK) {
             error = "Golden staged; SD unmount failed. Retry update";
             goto restore;
-        }
-        if (!recovery_only) {
-            /* Hold only at the final handoff. A failed flash validation can
-             * safely resume the drained worker without resetting CPU1. */
-            golden_update_worker_held = true;
-            if (!mt_video_worker_hold_for_reset()) {
-                error = "Golden staged; CPU1 could not stop safely";
-                goto restore;
-            }
         }
         xil_printf("rebooting to verified Golden trial at 0x%08x\r\n", result.boot_offset);
         if (!wait_uart0_transmit_idle()) {
@@ -1542,6 +1550,15 @@ static void self_update_golden(bool recovery_only)
             result.boot_offset / UINT32_C(0x8000)) {
             error = "Golden staged; boot register failed. Retry update";
             goto restore;
+        }
+        if (!recovery_only) {
+            /* Complete SD/UART/register checks before attempting CPU1 reset.
+             * Earlier failures resume the drained worker without reset. */
+            golden_update_worker_held = true;
+            if (!mt_video_worker_hold_for_reset()) {
+                error = "Golden staged; CPU1 could not stop safely";
+                goto restore;
+            }
         }
         Xil_Out32(MT_SLCR_UNLOCK, MT_SLCR_UNLOCK_KEY);
         DATA_SYNC;
@@ -2430,12 +2447,12 @@ static mt_menu_view_t supervisor_menu_view(void)
     return view;
 }
 
-static void show_golden_update_progress(void)
+static void show_handoff_progress(const char *message)
 {
     const mt_ui_bus_t bus = {NULL, supervisor_ui_read, supervisor_ui_write};
     const uint64_t started = monotonic_ms(NULL);
     mt_menu_view_t view;
-    set_supervisor_status("Updating Golden Boot; keep the card powered");
+    set_supervisor_status(message);
     view = supervisor_menu_view();
     mt_menu_render(&supervisor_menu, &view, &supervisor_frame);
     do {
@@ -3357,7 +3374,8 @@ static void document_read_progress(void *context)
 static void handle_menu_action(mt_menu_action_t action)
 {
     if (golden_update_worker_held && action.kind != MT_MENU_ACTION_UPDATE_GOLDEN &&
-        action.kind != MT_MENU_ACTION_REBOOT_GOLDEN) {
+        action.kind != MT_MENU_ACTION_REBOOT_GOLDEN &&
+        action.kind != MT_MENU_ACTION_SWITCH_FIRMWARE) {
         set_supervisor_error("CPU1 held; retry Golden update or reboot");
         return;
     }
@@ -4043,6 +4061,8 @@ static void handle_menu_action(mt_menu_action_t action)
     } else if (action.kind == MT_MENU_ACTION_UPDATE_GOLDEN) {
         self_update_golden(false);
     } else if (action.kind == MT_MENU_ACTION_SET_BOOT_DEFAULT) {
+        if (supervisor_menu.visible)
+            show_handoff_progress("Checking startup firmware; please wait");
         const int status = mb_platform_set_default((uint32_t)action.file_index);
         refresh_multiboot_status();
         set_supervisor_outcome(status == MB_OK, "Startup firmware saved",
@@ -4220,8 +4240,8 @@ static void service_system_page(void)
         return;
     }
     now = monotonic_ms(NULL);
-    /* Full flash validation happens once on entry, then only on an action.
-     * Temperature refreshes must not repeatedly scan several MiB of QSPI. */
+    /* Cached Golden identity and bounded slot probes refresh on entry.
+     * Whole-image validation belongs to the explicit boot actions. */
     if (last_system_refresh_ms == 0U) refresh_multiboot_status();
     if (last_system_refresh_ms != 0U && now - last_system_refresh_ms < 1000U) return;
     last_system_refresh_ms = now;
@@ -4468,6 +4488,9 @@ int main(void)
     c64_services_initialized = true;
     initialize_supervisor_menu();
     service_supervisor_menu();
+    /* The first screen is now available. Warm the verified Golden cache
+     * here so entering System later performs only bounded status reads. */
+    refresh_multiboot_status();
     print_help();
 
     for (;;) {

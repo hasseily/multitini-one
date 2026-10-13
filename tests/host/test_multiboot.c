@@ -14,7 +14,7 @@
 static uint8_t flash[MB_FLASH_SIZE],snapshot[MB_FLASH_SIZE];
 static uint8_t app[IMAGE_SIZE],multi[IMAGE_SIZE],legacy[IMAGE_SIZE],golden[IMAGE_SIZE];
 static uint8_t large[MB_APPLETINI_CAPACITY+256U+MB_MANIFEST_SIZE];
-static uint32_t mutations,cut_at,fail_at,reads,fail_read;
+static uint32_t mutations,cut_at,fail_at,reads,fail_read,read_bytes;
 static uint32_t fail_read_address=UINT32_MAX;
 static jmp_buf power_cut;
 static mb_flash_t device;
@@ -71,6 +71,7 @@ static void mutation(void)
 static int nor_read(void *ctx,uint32_t a,void *p,uint32_t n)
 {
     (void)ctx; assert(a<=MB_FLASH_SIZE && n<=MB_FLASH_SIZE-a);
+    read_bytes+=n;
     if(++reads==fail_read || (fail_read_address>=a && fail_read_address-a<n)) return 1;
     memcpy(p,flash+a,n); return 0;
 }
@@ -109,7 +110,7 @@ static void reset(void)
 {
     memset(flash,0xff,sizeof flash);
     memcpy(flash,golden,IMAGE_SIZE); memcpy(flash+MB_GOLDEN_TRIAL_OFFSET,golden,IMAGE_SIZE);
-    mutations=cut_at=fail_at=reads=fail_read=0;
+    mutations=cut_at=fail_at=reads=fail_read=read_bytes=0;
     fail_read_address=UINT32_MAX;
 }
 static void old_metadata(void)
@@ -223,6 +224,96 @@ static void migrations(void)
     install(app); expect(0,MB_PRODUCT_APPLETINI,0);
     printf("multiboot legacy: live v1 verification, unknown product retention and >6 MiB overlap refusal covered\n");
 }
+static void adopted_defaults(void)
+{
+    mb_metadata_t m;
+    /* Old Golden installed tagged Appletini, retaining its v4 metadata.
+     * Installing the peer under new Golden must preserve Appletini startup. */
+    reset(); memcpy(flash+MB_APPLETINI_OFFSET,app,IMAGE_SIZE); old_metadata();
+    expect(0,MB_PRODUCT_APPLETINI,0); install(multi);
+    assert(mb_metadata_load(&device,&m)==MB_OK);
+    assert(m.default_product==MB_PRODUCT_APPLETINI && !m.request_product);
+    expect(0,MB_PRODUCT_APPLETINI,0);
+    /* Preserve the verified fallback in the opposite migration direction. */
+    reset(); memcpy(flash+MB_MULTITINI_OFFSET,multi,IMAGE_SIZE); install(app);
+    assert(mb_metadata_load(&device,&m)==MB_OK && m.default_product==MB_PRODUCT_MULTITINI);
+    expect(0,MB_PRODUCT_MULTITINI,0);
+    /* With both images but no owner choice, retain normal Appletini-first
+     * selection even if the first batch update replaces Multitini. */
+    reset(); memcpy(flash+MB_APPLETINI_OFFSET,app,IMAGE_SIZE);
+    memcpy(flash+MB_MULTITINI_OFFSET,multi,IMAGE_SIZE); install(multi);
+    assert(mb_metadata_load(&device,&m)==MB_OK && m.default_product==MB_PRODUCT_APPLETINI);
+    expect(0,MB_PRODUCT_APPLETINI,0);
+    /* A corrupt pre-existing Appletini cannot become the adopted default. */
+    reset(); memcpy(flash+MB_APPLETINI_OFFSET,app,IMAGE_SIZE);
+    flash[MB_APPLETINI_OFFSET+2000]^=1; install(multi);
+    assert(mb_metadata_load(&device,&m)==MB_OK && m.default_product==MB_PRODUCT_MULTITINI);
+    expect(0,MB_PRODUCT_MULTITINI,0);
+    /* Empty flash still chooses the first successful installation. A saved
+     * default and a separate one-shot choice survive all later installs. */
+    reset(); install(multi); install(app);
+    assert(mb_set_request(&device,MB_PRODUCT_APPLETINI)==MB_OK); install(multi);
+    assert(mb_metadata_load(&device,&m)==MB_OK);
+    assert(m.default_product==MB_PRODUCT_MULTITINI && m.request_product==MB_PRODUCT_APPLETINI);
+    expect(0,MB_PRODUCT_APPLETINI,0);
+    assert(mb_clear_request(&device)==MB_OK); expect(0,MB_PRODUCT_MULTITINI,0);
+    printf("multiboot adoption: existing verified startup/default/one-shot choices survive peer installation\n");
+}
+static void advisory_probes(void)
+{
+    mb_image_t image; mb_metadata_t metadata;
+    uint32_t bytes,before;
+    reset(); install(app); install(multi); read_bytes=reads=0;
+    before=mutations;
+    assert(mb_slot_probe(&device,MB_PRODUCT_APPLETINI,&image)==MB_OK);
+    assert(image.product==MB_PRODUCT_APPLETINI && image.version==2 &&
+           image.image_size==IMAGE_SIZE && image.payload_size==PAYLOAD && !image.image_crc32);
+    bytes=read_bytes; assert(bytes<2048U && mutations==before);
+    read_bytes=0;
+    /* Larger images require the same bounded header/footer reads. */
+    make_image(large,MB_APPLETINI_CAPACITY+256U,MB_PRODUCT_MULTITINI,2,0);
+    reset(); memcpy(flash+MB_MULTITINI_OFFSET,large,sizeof large);
+    read_bytes=0;
+    assert(mb_slot_probe(&device,MB_PRODUCT_MULTITINI,NULL)==MB_OK);
+    assert(read_bytes==bytes);
+    /* Presence is advisory: unchanged headers/footer cannot prove code
+     * integrity, so a damaged body may appear present but must never boot. */
+    reset(); install(app); install(multi);
+    flash[MB_APPLETINI_OFFSET+2000]^=1;
+    assert(mb_slot_probe(&device,MB_PRODUCT_APPLETINI,NULL)==MB_OK);
+    assert(mb_slot_verify(&device,MB_PRODUCT_APPLETINI,NULL)!=MB_OK);
+    expect(MB_PRODUCT_APPLETINI,MB_PRODUCT_MULTITINI,0);
+    assert(mb_set_default(&device,MB_PRODUCT_APPLETINI)!=MB_OK);
+    assert(mb_set_request(&device,MB_PRODUCT_APPLETINI)!=MB_OK);
+    reset(); install(app); install(multi);
+    assert(mb_update_begin(&device,MB_PRODUCT_APPLETINI)==MB_OK);
+    assert(mb_slot_probe(&device,MB_PRODUCT_APPLETINI,&image)==MB_E_UNAVAILABLE);
+    assert(!image.product && !image.image_size);
+    /* No valid multiboot metadata: probe only explicit v2 tagged identities. */
+    reset(); memcpy(flash+MB_APPLETINI_OFFSET,legacy,IMAGE_SIZE); old_metadata();
+    assert(mb_slot_probe(&device,MB_PRODUCT_APPLETINI,NULL)!=MB_OK);
+    reset(); memcpy(flash+MB_APPLETINI_OFFSET,multi,IMAGE_SIZE);
+    assert(mb_slot_probe(&device,MB_PRODUCT_APPLETINI,NULL)!=MB_OK);
+    reset(); memcpy(flash+MB_APPLETINI_OFFSET,app,IMAGE_SIZE); old_metadata();
+    assert(mb_slot_probe(&device,MB_PRODUCT_APPLETINI,NULL)==MB_OK);
+    flash[MB_APPLETINI_OFFSET+PAYLOAD+28]^=1;
+    assert(mb_slot_probe(&device,MB_PRODUCT_APPLETINI,NULL)==MB_E_MANIFEST);
+    reset(); install(app); install(multi);
+    /* A changed, correctly checksummed footer must agree with committed
+     * payload identity, even though this probe does not read that payload. */
+    flash[MB_APPLETINI_OFFSET+2000]^=1;
+    footer(flash+MB_APPLETINI_OFFSET,PAYLOAD,2,2,MB_FLAG_RECOVERY|MB_FLAG_MULTIBOOT|MB_PRODUCT_APPLETINI);
+    assert(mb_slot_probe(&device,MB_PRODUCT_APPLETINI,NULL)==MB_E_VERIFY);
+    assert(mb_metadata_load(&device,&metadata)==MB_OK);
+    fail_read_address=MB_METADATA_A_OFFSET;
+    assert(mb_slot_probe(&device,MB_PRODUCT_MULTITINI,NULL)==MB_E_READ);
+    fail_read_address=MB_MULTITINI_OFFSET+PAYLOAD;
+    assert(mb_slot_probe(&device,MB_PRODUCT_MULTITINI,NULL)==MB_E_READ);
+    fail_read_address=UINT32_MAX;
+    assert(mb_slot_probe(&device,0,NULL)==MB_E_ARGUMENT);
+    reset(); assert(mb_slot_probe(&device,MB_PRODUCT_APPLETINI,NULL)!=MB_OK);
+    printf("multiboot advisory probes: %u bounded read bytes, metadata invalidation and live full-verification refusal covered\n",bytes);
+}
 static void invariants(uint32_t product,int old)
 {
     uint32_t base=mb_product_offset(product),cap=mb_product_capacity(product);
@@ -236,6 +327,36 @@ static void invariants(uint32_t product,int old)
     else if(old) assert(s.product==0 && s.legacy==1 && s.boot_offset==MB_APPLETINI_OFFSET);
     else assert(s.product==(product==MB_PRODUCT_APPLETINI ? MB_PRODUCT_MULTITINI : MB_PRODUCT_APPLETINI));
     (void)cap;
+}
+static void adoption_faults(void)
+{
+    mb_reader_t r=reader(multi,IMAGE_SIZE);
+    mb_image_t image;
+    uint32_t count,read_count,stop;
+    reset(); memcpy(flash+MB_APPLETINI_OFFSET,app,IMAGE_SIZE); old_metadata();
+    memcpy(snapshot,flash,sizeof flash); mutations=reads=0;
+    assert(mb_install(&device,&r,&image)==MB_OK); count=mutations; read_count=reads;
+    for(stop=1;stop<=count;++stop) {
+        memcpy(flash,snapshot,sizeof flash); mutations=reads=0; cut_at=stop;
+        if(!setjmp(power_cut)) { (void)mb_install(&device,&r,&image); assert(!"missing adoption cut"); }
+        cut_at=0;
+        assert(!memcmp(flash+MB_APPLETINI_OFFSET,app,IMAGE_SIZE));
+        expect(0,MB_PRODUCT_APPLETINI,0);
+        assert(mb_install(&device,&r,&image)==MB_OK); expect(0,MB_PRODUCT_APPLETINI,0);
+    }
+    for(stop=1;stop<=count;++stop) {
+        memcpy(flash,snapshot,sizeof flash); mutations=reads=0; fail_at=stop;
+        assert(mb_install(&device,&r,&image)!=MB_OK); fail_at=0;
+        assert(!memcmp(flash+MB_APPLETINI_OFFSET,app,IMAGE_SIZE));
+        expect(0,MB_PRODUCT_APPLETINI,0);
+    }
+    for(stop=1;stop<=read_count;++stop) {
+        memcpy(flash,snapshot,sizeof flash); mutations=reads=0; fail_read=stop;
+        (void)mb_install(&device,&r,&image); fail_read=0;
+        assert(!memcmp(flash+MB_APPLETINI_OFFSET,app,IMAGE_SIZE));
+        expect(0,MB_PRODUCT_APPLETINI,0);
+    }
+    printf("multiboot tagged adoption: Appletini startup retained through %u power cuts, %u write failures, %u read failures\n",count,count,read_count);
 }
 static void faults(uint32_t product,int old)
 {
@@ -409,7 +530,8 @@ int main(int argc,char **argv)
     make_image(app,PAYLOAD,MB_PRODUCT_APPLETINI,2,0);
     make_image(multi,PAYLOAD,MB_PRODUCT_MULTITINI,2,0);
     make_image(legacy,PAYLOAD,0,2,0); make_image(golden,PAYLOAD,0,1,1);
-    selectors(); migrations(); faults(MB_PRODUCT_APPLETINI,0); faults(MB_PRODUCT_MULTITINI,0);
-    faults(MB_PRODUCT_MULTITINI,1); choice_faults(); golden_versions();
+    selectors(); migrations(); adopted_defaults(); advisory_probes();
+    faults(MB_PRODUCT_APPLETINI,0); faults(MB_PRODUCT_MULTITINI,0);
+    faults(MB_PRODUCT_MULTITINI,1); adoption_faults(); choice_faults(); golden_versions();
     puts("PASS: multiboot live validation and power-failure invariants"); return 0;
 }

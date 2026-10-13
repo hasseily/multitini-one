@@ -502,7 +502,10 @@ mt_sd_result_t mt_sd_storage_unmount(void)
         if (open_files[index].active) return result(MT_SD_FILE_BUSY, FR_OK, 0U);
     if (!sd_mounted) return result(MT_SD_OK, FR_OK, 0U);
 
-    backend_status = f_mount(NULL, MT_SD_VOLUME, 1U);
+    /* A NULL filesystem unregisters the volume. opt=1 then tries to mount
+     * that missing object and returns FR_NOT_ENABLED after detaching it.
+     * opt=0 is the FatFs unmount operation and performs no media I/O. */
+    backend_status = f_mount(NULL, MT_SD_VOLUME, 0U);
     if (backend_status != FR_OK) {
         return result(MT_SD_UNMOUNT_FAILED, backend_status, 0U);
     }

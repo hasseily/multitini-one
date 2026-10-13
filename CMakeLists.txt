@@ -134,6 +134,9 @@ add_test(NAME multiboot_switch COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_SOURCE_DIR}/tests/test_multiboot_switch.py)
 add_test(NAME multiboot_bundle COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_SOURCE_DIR}/tests/test_multiboot_bundle.py)
+add_test(NAME multiboot_status_cache COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/test_multiboot_status_cache.py)
+set_tests_properties(multiboot_status_cache PROPERTIES ENVIRONMENT "CC=${CMAKE_C_COMPILER}")
 set_tests_properties(usb1_phy_startup PROPERTIES ENVIRONMENT "CC=${CMAKE_C_COMPILER}")
 add_subdirectory(firmware/vectrex32)
 add_library(xilinx_vectrex_services_compile OBJECT
