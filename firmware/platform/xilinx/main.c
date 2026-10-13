@@ -145,6 +145,10 @@ static bool board_temperature_valid;
 static int32_t board_temperature_micro_c;
 static uint64_t last_system_refresh_ms;
 static mb_platform_status_t multiboot_status;
+static char installed_golden_version[32];
+static bool golden_update_present;
+/* Sticky until the PS restarts. Never recycle a reset CPU1's DDR in place. */
+static bool golden_update_worker_held;
 static mt_core_catalog_sd_t core_catalog;
 static mt_supervisor_t supervisor;
 static mt_menu_t supervisor_menu;
@@ -189,11 +193,26 @@ static void set_supervisor_outcome(bool succeeded, const char *success,
 static bool hide_menu_for_core_action(void);
 static void service_screenshots(void);
 static void configure_selection_effects(const mt_core_selection_t *selection);
+static void show_golden_update_progress(void);
 
 static void refresh_multiboot_status(void)
 {
+    const mb_flash_t *flash;
     (void)mb_platform_status(MB_PRODUCT_MULTITINI, &multiboot_status);
+    installed_golden_version[0] = '\0';
+    flash = mb_platform_flash();
+    if (flash != NULL)
+        (void)mb_golden_installed_version(flash, installed_golden_version,
+            (uint32_t)sizeof(installed_golden_version), NULL);
     supervisor_menu_dirty = true;
+}
+
+static void refresh_golden_update_file(void)
+{
+    mt_sd_file_t *file = NULL;
+    golden_update_present = mt_sd_file_open("0:/BOOT.BIN", "rb", &file).status == MT_SD_OK;
+    if (file != NULL && mt_sd_file_close(file).status != MT_SD_OK)
+        golden_update_present = false;
 }
 static int run_vectrex_basic(void *, const char *, const char *, const char *);
 static mt_genesis_content_service_result_t load_genesis_content_with_input(const char *name);
@@ -1275,7 +1294,7 @@ static void reboot_to_qspi(uint32_t offset, bool recovery_only)
     if (!wait_uart0_transmit_idle()) {
         xil_printf("UART did not drain; reboot cancelled\r\n");
         if (!recovery_only) {
-            (void)set_core_reset_request(false);
+            if (!golden_update_worker_held) (void)set_core_reset_request(false);
             set_supervisor_error("Reboot cancelled; UART did not drain");
         }
         return;
@@ -1287,7 +1306,7 @@ static void reboot_to_qspi(uint32_t offset, bool recovery_only)
         offset / UINT32_C(0x8000)) {
         xil_printf("multiboot readback failed; reboot cancelled\r\n");
         if (!recovery_only) {
-            (void)set_core_reset_request(false);
+            if (!golden_update_worker_held) (void)set_core_reset_request(false);
             set_supervisor_error("Reboot cancelled; multiboot readback failed");
         }
         return;
@@ -1298,7 +1317,7 @@ static void reboot_to_qspi(uint32_t offset, bool recovery_only)
         if (usb_stop_result != 0) {
             xil_printf("USB1 VBUS shutdown failed (%d); reboot cancelled\r\n",
                        usb_stop_result);
-            (void)set_core_reset_request(false);
+            if (!golden_update_worker_held) (void)set_core_reset_request(false);
             set_supervisor_error("Reboot cancelled; USB shutdown failed");
             return;
         }
@@ -1437,46 +1456,132 @@ restore:
     set_supervisor_error(error);
 }
 
-/* Explicit command only. FatFs is borrowed after all runtime owners have
- * closed their files. The recovery console can use this with no PL or USB. */
+/* Explicit confirmed menu action or serial command only. FatFs is borrowed
+ * after runtime media and rendering owners stop. Golden availability is not
+ * a prerequisite: this is also the migration path from Golden 1.x. */
 static void self_update_golden(bool recovery_only)
 {
-    golden_self_update_result_t result;
+    golden_self_update_result_t result = {0};
     mt_sd_result_t storage;
-    bool stopped_usb = false;
+    const uint32_t previous_boot = Xil_In32(MT_DEVCFG_MULTIBOOT);
+    const bool previously_reset = !recovery_only &&
+        (shell_read(MT_REG_CONTROL) & MT_CONTROL_CORE_RESET_REQUEST) != 0U;
+    const bool menu_was_visible = !recovery_only && supervisor_menu.visible;
+    const bool genesis_source = !recovery_only && shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID;
+    bool core_stopped = false, worker_stopped = false;
+    bool stopped_usb = false, restore_safe = true, boot_changed = false;
+    const char *error = "Golden update cancelled";
+    char update_error[96];
+    uint64_t started;
     if (!recovery_only) {
-        if (set_core_reset_request(true) != 0) {
-            set_supervisor_error("Golden update cancelled; media flush failed");
-            return;
+        if (!mt_screenshot_service_cancel()) {
+            error = "Golden update cancelled; screenshot is busy";
+            goto restore;
         }
+        mt_text_reader_close(&document_reader);
+        if (set_core_reset_request(true) != 0) {
+            error = "Golden update cancelled; media flush failed";
+            goto restore;
+        }
+        core_stopped = true;
+        usb_hid_service_set_core_ready(false);
+        mt_video_effect_service_suspend();
+        worker_stopped = true;
+        started = monotonic_ms(NULL);
+        while (!mt_video_effect_service_quiescent() || !mt_video_worker_quiesce() ||
+               (genesis_source && (shell_read(MT_REG_VIDEO_FRAME_STATUS) &
+                                  MT_VIDEO_FRAME_STATUS_QUIESCENT) == 0U)) {
+            usb_hid_service_poll_deferred();
+            if (monotonic_ms(NULL) - started >= 1000U) {
+                error = "Golden update cancelled; video transport is busy";
+                goto restore;
+            }
+        }
+        if (menu_was_visible) show_golden_update_progress();
         stopped_usb = true;
         if (usb_hid_service_stop() != 0) {
-            xil_printf("golden update cancelled; USB shutdown failed\r\n");
+            error = "Golden update cancelled; USB shutdown failed";
             goto restore;
         }
     }
     storage = mt_sd_storage_unmount();
     if (storage.status == MT_SD_OK) storage = mt_sd_storage_mount();
     if (storage.status != MT_SD_OK) {
-        xil_printf("golden update cancelled; SD unavailable or busy: %s\r\n",
-                   mt_sd_status_name(storage.status));
+        error = "Golden update cancelled; SD unavailable or busy";
         goto restore;
     }
+    if (!recovery_only) set_supervisor_status("Updating Golden Boot; keep the card powered");
     if (golden_self_update_run("0:/BOOT.BIN", XPAR_XUARTPS_0_BASEADDR,
                                XPAR_XUARTPS_0_BASEADDR, &result) == 0 &&
         result.updated && result.verified && result.reset_required &&
         result.boot_offset == GOLDEN_SELF_UPDATE_TRIAL_OFFSET) {
-        (void)mt_sd_storage_unmount();
-        reboot_to_qspi(result.boot_offset, recovery_only);
+        if (mt_sd_storage_unmount().status != MT_SD_OK) {
+            error = "Golden staged; SD unmount failed. Retry update";
+            goto restore;
+        }
+        if (!recovery_only) {
+            /* Hold only at the final handoff. A failed flash validation can
+             * safely resume the drained worker without resetting CPU1. */
+            golden_update_worker_held = true;
+            if (!mt_video_worker_hold_for_reset()) {
+                error = "Golden staged; CPU1 could not stop safely";
+                goto restore;
+            }
+        }
+        xil_printf("rebooting to verified Golden trial at 0x%08x\r\n", result.boot_offset);
+        if (!wait_uart0_transmit_idle()) {
+            error = "Golden staged; UART did not drain. Retry update";
+            goto restore;
+        }
+        /* Do not modify the persistent startup choice or one-shot product
+         * request. The replacement Golden completes its normal repair. */
+        boot_changed = true;
+        Xil_Out32(MT_DEVCFG_MULTIBOOT, result.boot_offset / UINT32_C(0x8000));
+        DATA_SYNC;
+        if ((Xil_In32(MT_DEVCFG_MULTIBOOT) & MT_DEVCFG_MULTIBOOT_MASK) !=
+            result.boot_offset / UINT32_C(0x8000)) {
+            error = "Golden staged; boot register failed. Retry update";
+            goto restore;
+        }
+        Xil_Out32(MT_SLCR_UNLOCK, MT_SLCR_UNLOCK_KEY);
+        DATA_SYNC;
+        Xil_Out32(MT_PS_RESET_CONTROL, MT_PS_SOFTWARE_RESET);
+        DATA_SYNC;
+        Xil_Out32(MT_SLCR_LOCK, MT_SLCR_LOCK_KEY);
+        for (;;) {
+#if defined(__arm__) || defined(__aarch64__)
+            __asm__ volatile("wfi");
+#endif
+        }
     } else {
         xil_printf("golden update failed (%d): %s\r\n",
                    result.error_code, result.error_msg);
+        (void)snprintf(update_error, sizeof(update_error), "Golden update failed: %.73s",
+                       result.error_msg[0] != '\0' ? result.error_msg : "verification failed");
+        error = update_error;
     }
 restore:
+    if (boot_changed) {
+        Xil_Out32(MT_DEVCFG_MULTIBOOT, previous_boot);
+        DATA_SYNC;
+    }
+    xil_printf("%s\r\n", error);
     if (!recovery_only) {
-        if (stopped_usb) (void)usb_hid_service_start();
-        (void)set_core_reset_request(false);
-        set_supervisor_error("Golden update did not reboot; see serial diagnostics");
+        if (mt_sd_storage_mount().status != MT_SD_OK) restore_safe = false;
+        /* Never attempt an AMP warm restart after a reset write. Its reset
+         * vector may reenter an FSBL. Keep the core stopped and allow retry. */
+        if (golden_update_worker_held) restore_safe = false;
+        else if (worker_stopped && !mt_video_worker_resume()) restore_safe = false;
+        if (stopped_usb && usb_hid_service_start() != 0) restore_safe = false;
+        if (core_stopped && restore_safe && !previously_reset &&
+            set_core_reset_request(false) != 0) restore_safe = false;
+        usb_hid_service_set_core_ready(restore_safe && !previously_reset && supervisor.has_active);
+        if (worker_stopped && restore_safe)
+            configure_selection_effects(supervisor.has_active ? &supervisor.active : NULL);
+        supervisor_menu.visible = menu_was_visible;
+        refresh_multiboot_status();
+        refresh_golden_update_file();
+        set_supervisor_error(error);
     }
 }
 
@@ -1497,6 +1602,10 @@ static void handle_extended_command(bool recovery_only)
         reboot_to_golden(recovery_only);
     } else if (strcmp(extended, "selfupdate") == 0) {
         self_update_golden(recovery_only);
+    } else if (golden_update_worker_held && strcmp(extended, "diag") != 0) {
+        xil_printf("CPU1 is safely held; retry :selfupdate or :reboot\r\n");
+        if (!recovery_only)
+            set_supervisor_error("CPU1 held; retry Golden update or reboot");
     } else if (!recovery_only && strncmp(extended, "display ", 8U) == 0 &&
                extended[8]>='0' && extended[8]<='5' && extended[9]=='\0') {
         change_display_mode((size_t)(extended[8]-'0'));
@@ -2287,6 +2396,8 @@ static mt_menu_view_t supervisor_menu_view(void)
         usb_hid_service_get_status(&usb);
         snapshot.firmware_build = MT_FIRMWARE_BUILD_ID;
         snapshot.firmware_version = MT_FIRMWARE_VERSION;
+        snapshot.golden_version = installed_golden_version;
+        snapshot.golden_update_present = golden_update_present;
         snapshot.shell_build = shell_read(MT_REG_SHELL_BUILD_ID);
         snapshot.abi = shell_read(MT_REG_ABI_VERSION);
         snapshot.uptime_seconds = monotonic_ms(NULL) / 1000U;
@@ -2317,6 +2428,26 @@ static mt_menu_view_t supervisor_menu_view(void)
         view.text_title = document_title;
     }
     return view;
+}
+
+static void show_golden_update_progress(void)
+{
+    const mt_ui_bus_t bus = {NULL, supervisor_ui_read, supervisor_ui_write};
+    const uint64_t started = monotonic_ms(NULL);
+    mt_menu_view_t view;
+    set_supervisor_status("Updating Golden Boot; keep the card powered");
+    view = supervisor_menu_view();
+    mt_menu_render(&supervisor_menu, &view, &supervisor_frame);
+    do {
+        const mt_ui_present_result_t presented = mt_ui_present_cached(
+            &supervisor_presenter, &bus, &supervisor_frame, true);
+        if (presented == MT_UI_PRESENT_OK && !supervisor_presenter.pending) break;
+        if (presented != MT_UI_PRESENT_OK && presented != MT_UI_PRESENT_BUSY) break;
+        /* This function runs inside the deferred menu action. Keep ordinary
+         * USB polling alive without dispatching nested UI or storage work. */
+        usb_hid_service_poll_deferred();
+        usleep(1000U);
+    } while (monotonic_ms(NULL) - started < MT_MENU_HIDE_TIMEOUT_MS);
 }
 
 static bool is_text_document(const char *name)
@@ -3225,6 +3356,11 @@ static void document_read_progress(void *context)
 
 static void handle_menu_action(mt_menu_action_t action)
 {
+    if (golden_update_worker_held && action.kind != MT_MENU_ACTION_UPDATE_GOLDEN &&
+        action.kind != MT_MENU_ACTION_REBOOT_GOLDEN) {
+        set_supervisor_error("CPU1 held; retry Golden update or reboot");
+        return;
+    }
     if (action.kind == MT_MENU_ACTION_SWITCH_CORE) {
         mt_core_selection_t selection;
         mt_supervisor_result_t result;
@@ -3904,6 +4040,8 @@ static void handle_menu_action(mt_menu_action_t action)
         }
     } else if (action.kind == MT_MENU_ACTION_REBOOT_GOLDEN) {
         reboot_to_golden(false);
+    } else if (action.kind == MT_MENU_ACTION_UPDATE_GOLDEN) {
+        self_update_golden(false);
     } else if (action.kind == MT_MENU_ACTION_SET_BOOT_DEFAULT) {
         const int status = mb_platform_set_default((uint32_t)action.file_index);
         refresh_multiboot_status();
@@ -4087,6 +4225,7 @@ static void service_system_page(void)
     if (last_system_refresh_ms == 0U) refresh_multiboot_status();
     if (last_system_refresh_ms != 0U && now - last_system_refresh_ms < 1000U) return;
     last_system_refresh_ms = now;
+    refresh_golden_update_file();
     board_temperature_valid = i2c_ready &&
         board_i2c_read(&i2c_instance, MT_TMP102_I2C_ADDRESS,
                        MT_TMP102_TEMPERATURE_REGISTER, raw, 2) == 0 &&
@@ -4340,6 +4479,12 @@ int main(void)
         service_screenshots();
         if (uart0_try_read_byte(&byte) == 0) continue;
         input = (char)byte;
+        if (golden_update_worker_held && input != ':' && input != 'h' &&
+            input != 'o' && input != 's' && input != 'u' &&
+            input != '\r' && input != '\n') {
+            xil_printf("CPU1 is safely held; retry :selfupdate or :reboot\r\n");
+            continue;
+        }
         const uint32_t control = shell_read(MT_REG_CONTROL);
         /* UART media/reset commands share the menu's temporary hide path.
          * Capture keyboard releases throughout the command and restore the

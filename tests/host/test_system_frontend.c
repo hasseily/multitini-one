@@ -83,7 +83,7 @@ static void test_actions_and_standby(void)
     view.status_text = "Status owned by runtime";
     view.content_root = "/core/content";
     mt_system_frontend_apply(&frontend, &snapshot, &view);
-    check(view.system_items == frontend.items && view.system_item_count == 18U,
+    check(view.system_items == frontend.items && view.system_item_count == 19U,
           "System descriptors fill the shared view");
     check(!item(&view, "Restart active core")->enabled &&
           !item(&view, "Autoboot current core")->enabled,
@@ -312,6 +312,63 @@ static void test_multiboot_availability(void)
     }
 }
 
+static void test_golden_update_confirmation(void)
+{
+    mt_system_frontend_t frontend;
+    mt_system_snapshot_t snapshot = {0};
+    mt_menu_view_t view = {0};
+    mt_ui_frame_t frame;
+    mt_menu_t menu;
+    mt_system_frontend_apply(&frontend, &snapshot, &view);
+    expect_value(&view, "Golden Boot", "Unknown");
+    check(view.system_item_count == 19U,
+          "absent BOOT.BIN does not display an update action");
+    snapshot.golden_version = "B1.2.0";
+    snapshot.golden_update_present = true;
+    mt_system_frontend_apply(&frontend, &snapshot, &view);
+    expect_value(&view, "Golden Boot", "B1.2.0");
+    check(view.system_item_count == 20U && !snapshot.multiboot_ready &&
+          item(&view, "Update Golden Boot...")->enabled,
+          "an SD BOOT.BIN enables update even with Golden 1.x");
+    menu = focus_item(&view, "Update Golden Boot...");
+    check(mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true).kind == MT_MENU_ACTION_NONE &&
+          menu.golden_update_confirm && !menu.golden_update_accept,
+          "update opens a Cancel-default modal without dispatching");
+    mt_menu_render(&menu, &view, &frame);
+    check(frame_contains(&frame, "Update Golden Boot from BOOT.BIN and restart?") &&
+          frame_contains(&frame, "Cancel") && frame_contains(&frame, "Update and restart"),
+          "the modal explains the source file and restart");
+    check(mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true).kind == MT_MENU_ACTION_NONE &&
+          !menu.golden_update_confirm && menu.visible,
+          "default Enter cancels and leaves the System menu open");
+    for (unsigned index = 0U; index < 3U; ++index) {
+        static const uint8_t cancel[] = {MT_MENU_HID_ESCAPE, MT_MENU_HID_BACKSPACE, MT_MENU_HID_F12};
+        (void)mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true);
+        (void)mt_menu_key(&menu, &view, MT_MENU_HID_RIGHT, true);
+        check(mt_menu_key(&menu, &view, cancel[index], true).kind == MT_MENU_ACTION_NONE &&
+              !menu.golden_update_confirm && !menu.golden_update_accept && menu.visible,
+              "every modal cancel path prevents update and keeps the menu open");
+    }
+    (void)mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true);
+    (void)mt_menu_key(&menu, &view, MT_MENU_HID_TAB, true);
+    check(menu.page == MT_MENU_PAGE_SYSTEM && menu.golden_update_confirm && menu.golden_update_accept,
+          "modal Tab changes the choice without leaving the System page");
+    check(mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, false).kind == MT_MENU_ACTION_NONE &&
+          menu.golden_update_confirm,
+          "key release cannot confirm an update");
+    check(mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true).kind == MT_MENU_ACTION_UPDATE_GOLDEN &&
+          !menu.golden_update_confirm && !menu.golden_update_accept,
+          "only the explicit Update choice dispatches the deferred action");
+    (void)mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true);
+    (void)mt_menu_key(&menu, &view, MT_MENU_HID_RIGHT, true);
+    snapshot.golden_update_present = false;
+    snapshot.golden_version = "";
+    mt_system_frontend_apply(&frontend, &snapshot, &view);
+    check(mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true).kind == MT_MENU_ACTION_NONE,
+          "disappearing BOOT.BIN invalidates a pending confirmation");
+    expect_value(&view, "Golden Boot", "Unknown");
+}
+
 int main(void)
 {
     test_actions_and_standby();
@@ -319,6 +376,7 @@ int main(void)
     test_temperatures_and_save_warnings();
     test_rendered_system_page();
     test_multiboot_availability();
+    test_golden_update_confirmation();
     puts("PASS: System descriptors, standby actions, clock, temperature, USB, saves and rendered controls");
     return 0;
 }

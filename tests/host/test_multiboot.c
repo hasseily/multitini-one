@@ -278,6 +278,111 @@ static void choice_faults(void)
     }
     printf("multiboot persistent default: %u transactional metadata power cuts\n",count);
 }
+static void make_versioned_golden(uint8_t *p,const char *version,int raw)
+{
+    char banner[120];
+    make_image(p,PAYLOAD,0,1,1);
+    /* FSBL followed by the loaded Golden executable. */
+    put32(p+0x34,512); put32(p+0x38,0); put32(p+0x3c,0); put32(p+0x40,512);
+    checksum(p+0x20,10); put32(p+0xa4,2);
+    memset(p+0x100,0,192);
+    put32(p+0x104,128); put32(p+0x108,128); put32(p+0x114,128);
+    put32(p+0x118,0x10); checksum(p+0x100,15);
+    put32(p+0x144,(PAYLOAD-1024)/4); put32(p+0x148,(PAYLOAD-1024)/4);
+    put32(p+0x14c,0x100000); put32(p+0x150,0x100000); put32(p+0x154,256);
+    put32(p+0x158,0x10); checksum(p+0x140,15); put32(p+0x1bc,0xffffffff);
+    memcpy(p+1536,"[GOLDEN] boot_updater start @921600\r\n",sizeof("[GOLDEN] boot_updater start @921600\r\n"));
+    snprintf(banner,sizeof banner,"[GOLDEN] Boot image version: Boot %s\r\n",version);
+    /* Deliberately cross a streaming read boundary. */
+    memcpy(p+5110,banner,strlen(banner)+1U);
+    if(raw) memset(p+PAYLOAD,0xff,MB_MANIFEST_SIZE);
+    else footer(p,PAYLOAD,1,1,MB_FLAG_RECOVERY);
+}
+static void golden_versions(void)
+{
+    char version[64]; uint32_t offset,before;
+    reset(); make_versioned_golden(flash,"B1.2.0",0);
+    make_versioned_golden(flash+MB_GOLDEN_TRIAL_OFFSET,"B2.0.1",0);
+    before=mutations;
+    assert(mb_golden_installed_version(&device,version,sizeof version,&offset)==MB_OK);
+    assert(!strcmp(version,"B1.2.0") && offset==0 && mutations==before);
+    /* FSBL and unused flash literals must never affect loaded identity. */
+    memcpy(flash+600,"[GOLDEN] Boot image version: Boot B9.9.9\r\n",sizeof("[GOLDEN] Boot image version: Boot B9.9.9\r\n"));
+    memcpy(flash+PAYLOAD+96,"[GOLDEN] Boot image version: Boot B8.8.8\r\n",sizeof("[GOLDEN] Boot image version: Boot B8.8.8\r\n"));
+    footer(flash,PAYLOAD,1,1,MB_FLAG_RECOVERY);
+    assert(mb_golden_installed_version(&device,version,sizeof version,&offset)==MB_OK);
+    assert(!strcmp(version,"B1.2.0") && offset==0);
+    /* Corrupt primary CRC permits verified trial fallback. */
+    flash[2000]^=1;
+    assert(mb_golden_installed_version(&device,version,sizeof version,&offset)==MB_OK);
+    assert(!strcmp(version,"B2.0.1") && offset==MB_GOLDEN_TRIAL_OFFSET);
+    make_versioned_golden(flash,"B1.2.0",0);
+    fail_read_address=PAYLOAD;
+    assert(mb_golden_installed_version(&device,version,sizeof version,&offset)==MB_OK);
+    assert(!strcmp(version,"B2.0.1") && offset==MB_GOLDEN_TRIAL_OFFSET);
+    fail_read_address=UINT32_MAX;
+    /* An intact primary with unknown/conflicting identity is Unknown, not
+     * the different trial version. */
+    flash[5110]='?'; footer(flash,PAYLOAD,1,1,MB_FLAG_RECOVERY);
+    strcpy(version,"old"); offset=0;
+    assert(mb_golden_installed_version(&device,version,sizeof version,&offset)!=MB_OK);
+    assert(!version[0] && offset==UINT32_MAX);
+    make_versioned_golden(flash,"B1.2.0",0);
+    memcpy(flash+2500,"[GOLDEN] Boot image version: Boot B7.7.7\r\n",sizeof("[GOLDEN] Boot image version: Boot B7.7.7\r\n"));
+    footer(flash,PAYLOAD,1,1,MB_FLAG_RECOVERY);
+    assert(mb_golden_installed_version(&device,version,sizeof version,&offset)!=MB_OK);
+    assert(!version[0] && offset==UINT32_MAX);
+    /* Unloaded partition padding is covered by CRC, but not version scan. */
+    make_versioned_golden(flash,"B1.2.0",0);
+    put32(flash+0x144,(PAYLOAD-2048)/4); checksum(flash+0x140,15);
+    memcpy(flash+PAYLOAD-900,"[GOLDEN] Boot image version: Boot B6.6.6\r\n",sizeof("[GOLDEN] Boot image version: Boot B6.6.6\r\n"));
+    footer(flash,PAYLOAD,1,1,MB_FLAG_RECOVERY);
+    assert(mb_golden_installed_version(&device,version,sizeof version,&offset)==MB_OK);
+    assert(!strcmp(version,"B1.2.0") && offset==0);
+    /* Historical raw B1.1 has header/loaded identity checks, no invented CRC. */
+    make_versioned_golden(flash,"B1.1.0",1);
+    assert(mb_golden_installed_version(&device,version,sizeof version,&offset)==MB_OK);
+    assert(!strcmp(version,"B1.1.0") && offset==0);
+    /* Neither absent/corrupt manifests nor B2 raw images use that exception. */
+    make_versioned_golden(flash,"B2.0.1",1);
+    memset(flash+MB_GOLDEN_TRIAL_OFFSET,0xff,MB_GOLDEN_SIZE);
+    assert(mb_golden_installed_version(&device,version,sizeof version,&offset)!=MB_OK);
+    make_versioned_golden(flash,"B1.2.0",0); flash[PAYLOAD]^=1;
+    assert(mb_golden_installed_version(&device,version,sizeof version,&offset)!=MB_OK);
+    make_versioned_golden(flash,"B2.0.1",0);
+    memset(flash+1024,0xa5,sizeof(MB_GOLDEN_MARKER)-1);
+    footer(flash,PAYLOAD,1,1,MB_FLAG_RECOVERY);
+    assert(mb_golden_installed_version(&device,version,sizeof version,&offset)!=MB_OK);
+    memset(flash,0xff,MB_APPLETINI_OFFSET);
+    assert(mb_golden_installed_version(&device,version,sizeof version,&offset)!=MB_OK);
+    assert(!version[0] && offset==UINT32_MAX && mutations==before);
+    make_versioned_golden(flash,"B1.2.0",0);
+    assert(mb_golden_installed_version(&device,version,3,&offset)==MB_E_ARGUMENT);
+    assert(!version[0] && offset==UINT32_MAX);
+    printf("Golden version: primary/trial, CRC/read errors, raw B1.1, loaded-only identity and Unknown cases covered\n");
+}
+static int check_golden_files(int argc,char **argv)
+{
+    int i;
+    if(argc<4 || (argc&1)) return 1;
+    for(i=2;i<argc;i+=2) {
+        FILE *f=fopen(argv[i],"rb"); long n; char version[64]; uint32_t offset;
+        if(!f || fseek(f,0,SEEK_END) || (n=ftell(f))<=0 || (unsigned long)n>MB_GOLDEN_SIZE || fseek(f,0,SEEK_SET)) {
+            fprintf(stderr,"Cannot read Golden: %s\n",argv[i]); if(f) fclose(f); return 1;
+        }
+        memset(flash,0xff,sizeof flash);
+        if(fread(flash,1,(size_t)n,f)!=(size_t)n) { fclose(f); return 1; }
+        fclose(f);
+        assert(mb_golden_installed_version(&device,version,sizeof version,&offset)==MB_OK);
+        assert(!strcmp(version,argv[i+1]) && offset==0);
+        memcpy(flash+MB_GOLDEN_TRIAL_OFFSET,flash,(size_t)n);
+        flash[2000]^=1;
+        assert(mb_golden_installed_version(&device,version,sizeof version,&offset)==MB_OK);
+        assert(!strcmp(version,argv[i+1]) && offset==MB_GOLDEN_TRIAL_OFFSET);
+        printf("Verified installed Golden %s: %s, full CRC and trial fallback\n",argv[i],version);
+    }
+    return 0;
+}
 static int check_files(int argc,char **argv)
 {
     int i;
@@ -298,13 +403,13 @@ static int check_files(int argc,char **argv)
 }
 int main(int argc,char **argv)
 {
-    if(argc>1) return check_files(argc,argv);
     device.context=NULL; device.read=nor_read; device.erase=nor_erase;
     device.program=nor_program; device.capacity=MB_FLASH_SIZE;
+    if(argc>1) return !strcmp(argv[1],"--golden") ? check_golden_files(argc,argv) : check_files(argc,argv);
     make_image(app,PAYLOAD,MB_PRODUCT_APPLETINI,2,0);
     make_image(multi,PAYLOAD,MB_PRODUCT_MULTITINI,2,0);
     make_image(legacy,PAYLOAD,0,2,0); make_image(golden,PAYLOAD,0,1,1);
     selectors(); migrations(); faults(MB_PRODUCT_APPLETINI,0); faults(MB_PRODUCT_MULTITINI,0);
-    faults(MB_PRODUCT_MULTITINI,1); choice_faults();
+    faults(MB_PRODUCT_MULTITINI,1); choice_faults(); golden_versions();
     puts("PASS: multiboot live validation and power-failure invariants"); return 0;
 }

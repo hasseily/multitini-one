@@ -636,6 +636,27 @@ mt_menu_action_t mt_menu_key_with_modifiers(mt_menu_t *menu,
     size_t count;
     if (menu == NULL || !pressed) return action;
     normalize(menu, view);
+    if (menu->golden_update_confirm) {
+        if (hid_usage == MT_MENU_HID_ESCAPE || hid_usage == MT_MENU_HID_BACKSPACE ||
+            hid_usage == MT_MENU_HID_F12) {
+            menu->golden_update_confirm = false;
+            menu->golden_update_accept = false;
+        } else if (hid_usage == MT_MENU_HID_LEFT || hid_usage == MT_MENU_HID_RIGHT ||
+                   hid_usage == MT_MENU_HID_UP || hid_usage == MT_MENU_HID_DOWN ||
+                   hid_usage == MT_MENU_HID_TAB) {
+            menu->golden_update_accept = !menu->golden_update_accept;
+        } else if (hid_usage == MT_MENU_HID_ENTER) {
+            if (menu->golden_update_accept) {
+                /* Recheck the descriptor: the SD file may disappear while
+                 * the confirmation is open. Runtime validates it again. */
+                action = activate(menu, view);
+                if (action.kind != MT_MENU_ACTION_UPDATE_GOLDEN) action = no_action();
+            }
+            menu->golden_update_confirm = false;
+            menu->golden_update_accept = false;
+        }
+        return action;
+    }
     if (hid_usage == MT_MENU_HID_F12) {
         if (menu->gamepad_edit && (menu->gamepad_capture || menu->gamepad_test || menu->gamepad_sticks)) {
             menu->gamepad_capture = menu->gamepad_test = menu->gamepad_sticks = false;
@@ -782,7 +803,11 @@ mt_menu_action_t mt_menu_key_with_modifiers(mt_menu_t *menu,
         break;
     case MT_MENU_HID_ENTER:
         action = activate(menu, view);
-        if (action.kind == MT_MENU_ACTION_EDIT_CLOCK && view != NULL && view->clock_available) {
+        if (action.kind == MT_MENU_ACTION_UPDATE_GOLDEN) {
+            menu->golden_update_confirm = true;
+            menu->golden_update_accept = false;
+            action = no_action();
+        } else if (action.kind == MT_MENU_ACTION_EDIT_CLOCK && view != NULL && view->clock_available) {
             const mt_clock_time_t initial = {2026U, 1U, 1U, 0U, 0U, 0U};
             menu->clock = view->clock_valid && view->clock.year >= 2000U ? view->clock : initial;
             menu->clock_field = 0U;
@@ -1492,4 +1517,22 @@ void mt_menu_render(const mt_menu_t *menu, const mt_menu_view_t *view,
          "[L/R] Tab  [D-pad] Select/Adjust  [A/Enter] Apply  [B/Esc] Back  [F12/hold Select+Start] Close" :
          "[L/R or Shift+Tab/Tab] Tab  [D-pad] Select  [A/Enter] Apply  [B/Esc] Back  [F12/hold Select+Start] Close"),
         MT_UI_COLOR_MUTED, MT_UI_COLOR_RAISED);
+    if (menu->golden_update_confirm) {
+        const size_t x = (MT_UI_COLUMNS - 72U) / 2U;
+        const size_t y = (MT_UI_ROWS - 9U) / 2U;
+        mt_ui_fill(frame, x, y, 72U, 9U, MT_UI_COLOR_RAISED);
+        field(frame, x + 3U, y + 1U, 66U, "Update Golden Boot?",
+              MT_UI_COLOR_TEXT, MT_UI_COLOR_RAISED);
+        field(frame, x + 3U, y + 3U, 66U, "Update Golden Boot from BOOT.BIN and restart?",
+              MT_UI_COLOR_TEXT, MT_UI_COLOR_RAISED);
+        field(frame, x + 3U, y + 4U, 66U, "Keep the card powered until the restart completes.",
+              MT_UI_COLOR_MUTED, MT_UI_COLOR_RAISED);
+        field(frame, x + 17U, y + 6U, 16U, "Cancel",
+              MT_UI_COLOR_TEXT, menu->golden_update_accept ? MT_UI_COLOR_RAISED : MT_UI_COLOR_ACTIVE);
+        field(frame, x + 37U, y + 6U, 20U, "Update and restart",
+              MT_UI_COLOR_TEXT, menu->golden_update_accept ? MT_UI_COLOR_ACTIVE : MT_UI_COLOR_RAISED);
+        field(frame, 3U, FOOTER_Y, MT_UI_COLUMNS - 6U,
+              "[Left/Right or D-pad] Choose  [A/Enter] Confirm  [B/Esc] Cancel",
+              MT_UI_COLOR_MUTED, MT_UI_COLOR_RAISED);
+    }
 }

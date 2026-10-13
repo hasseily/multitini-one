@@ -646,6 +646,15 @@ def configure_amp_application(component: str, secondary: bool) -> None:
         rf"\g<1>0x{origin:x}\g<2>0x{length:x}", text)
     if count != 1:
         raise RuntimeError(f"Could not bound DDR region: {lscript}")
+    if component == GOLDEN_APP_NAME:
+        # Installation holds two 4 KiB buffers while nested image validation
+        # uses another. The template's 8 KiB stack cannot hold this chain.
+        for symbol, value in (("_STACK_SIZE", "0x10000"), ("_HEAP_SIZE", "0x10000")):
+            text, count = re.subn(
+                rf"(?m)^{symbol} = DEFINED\({symbol}\) \? {symbol} : [^;]+;",
+                f"{symbol} = DEFINED({symbol}) ? {symbol} : {value};", text)
+            if count != 1:
+                raise RuntimeError(f"Could not configure Golden {symbol}: {lscript}")
     if secondary:
         for symbol, value in (("_STACK_SIZE", "0x40000"), ("_HEAP_SIZE", "0x10000")):
             text, count = re.subn(
@@ -685,6 +694,22 @@ def validate_elf_memory(path: Path, base: int, length: int) -> None:
             raise RuntimeError(f"ARM LOAD segment exceeds reserved memory: {path}")
     if loads == 0:
         raise RuntimeError(f"ARM ELF has no loadable segments: {path}")
+
+
+def validate_golden_stack(path: Path) -> dict:
+    """Reject the old template stack using the linked ELF's actual symbols."""
+    nm = arm_objcopy().with_name("arm-none-eabi-nm.exe")
+    values = {}
+    for line in subprocess.check_output([str(nm), str(path)], text=True).splitlines():
+        fields = line.split()
+        if len(fields) == 3 and fields[2] in ("_STACK_SIZE", "_stack", "_stack_end"):
+            values[fields[2]] = int(fields[0], 16)
+    if set(values) != {"_STACK_SIZE", "_stack", "_stack_end"}:
+        raise RuntimeError(f"Golden ELF is missing stack symbols: {path}")
+    actual = values["_stack"] - values["_stack_end"]
+    if actual != values["_STACK_SIZE"] or actual < 0x10000:
+        raise RuntimeError(f"Golden requires at least a 64 KiB stack: {values}")
+    return {"symbols": values, "stack_bytes": actual, "minimum_stack_bytes": 0x10000}
 
 
 def arm_objcopy() -> Path:
@@ -881,8 +906,11 @@ def main() -> int:
             require_success(golden.build(), "golden recovery application build")
             validate_elf_memory(WORKSPACE / GOLDEN_APP_NAME / "build" / "golden.elf",
                                 0x00100000, CPU1_ENTRY - 0x00100000)
+            golden_inputs = verify_build_inputs(build_inputs, (GOLDEN_APP_NAME,))
+            golden_inputs["golden_memory"] = validate_golden_stack(
+                WORKSPACE / GOLDEN_APP_NAME / "build" / "golden.elf")
             (WORKSPACE / "golden_build_inputs.json").write_text(
-                json.dumps(verify_build_inputs(build_inputs, (GOLDEN_APP_NAME,)), indent=2) + "\n",
+                json.dumps(golden_inputs, indent=2) + "\n",
                 encoding="utf-8")
 
         secondary = client.create_app_component(

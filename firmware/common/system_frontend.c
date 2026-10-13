@@ -13,7 +13,8 @@ void mt_system_frontend_apply(mt_system_frontend_t *frontend,
         "Restart active core", "Autoboot current core", "Read documents", "Date and time",
         "Firmware build", "FPGA build", "Interface", "Uptime", "Board temperature",
         "USB devices", "USB errors", "SD core catalog", "Saved data", "Audio output",
-        "Restart USB", "Golden updater", "Startup firmware", "Switch to Appletini"
+        "Restart USB", "Golden updater", "Startup firmware", "Switch to Appletini",
+        "Golden Boot", "Update Golden Boot..."
     };
     static const char *const help[] = {
         "Commits pending media changes before restarting the active core.",
@@ -33,7 +34,9 @@ void mt_system_frontend_apply(mt_system_frontend_t *frontend,
         "Stops and restarts the USB host to rediscover attached devices. Held inputs are released.",
         "Saves pending media changes, then returns to the board's recovery updater.",
         "Choose the firmware used at power-on. A missing or damaged choice falls back to the other verified image.",
-        "Saves pending media changes and restarts into Appletini. Requires a verified Appletini image and multiboot updater."
+        "Saves pending media changes and restarts into Appletini. Requires a verified Appletini image and multiboot updater.",
+        "Version read from a verified Golden image installed in flash. Unknown means its version could not be verified.",
+        "Validates BOOT.BIN on the SD card, stages Golden Boot, then restarts to complete the update."
     };
     size_t i;
     const bool active = view != NULL && view->active_core_id != NULL && view->active_core_id[0] != '\0';
@@ -87,6 +90,9 @@ void mt_system_frontend_apply(mt_system_frontend_t *frontend,
         snapshot->startup_product == MB_PRODUCT_APPLETINI ? "Appletini" : "Multitini");
     VALUE(17, "%s", !snapshot->multiboot_ready ? "Update golden first" :
         snapshot->appletini_present ? "Restart into Appletini" : "Not installed or invalid");
+    VALUE(18, "%s", snapshot->golden_version != NULL && snapshot->golden_version[0] != '\0' ?
+        snapshot->golden_version : "Unknown");
+    VALUE(19, "BOOT.BIN on SD card");
 #undef VALUE
     frontend->items[0].action = MT_MENU_ACTION_RESET_CORE;
     frontend->items[0].enabled = active;
@@ -110,11 +116,14 @@ void mt_system_frontend_apply(mt_system_frontend_t *frontend,
     frontend->items[17].action = MT_MENU_ACTION_SWITCH_FIRMWARE;
     frontend->items[17].argument = MB_PRODUCT_APPLETINI;
     frontend->items[17].enabled = snapshot->multiboot_ready && snapshot->appletini_present;
+    frontend->items[19].action = MT_MENU_ACTION_UPDATE_GOLDEN;
+    frontend->items[19].enabled = snapshot->golden_update_present;
     if (view->save_faulted || view->settings_faulted || view->save_dirty)
         frontend->items[12].value_color = MT_UI_COLOR_WARNING;
     if (snapshot->usb_last_error != 0) frontend->items[10].value_color = MT_UI_COLOR_WARNING;
     view->system_items = frontend->items;
-    view->system_item_count = sizeof(labels) / sizeof(labels[0]);
+    view->system_item_count = sizeof(labels) / sizeof(labels[0]) -
+        (snapshot->golden_update_present ? 0U : 1U);
     view->clock_available = snapshot->clock_available;
     view->clock_valid = snapshot->clock_valid;
     view->clock = snapshot->clock;

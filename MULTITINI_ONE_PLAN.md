@@ -35,6 +35,13 @@ the established CPU1 cold wake and reserves an independently checked 64 KiB ARM
 stack. Retain the exact selected FPGA, FSBL and CPU1 inputs. The firmware-first
 migration remains the target; replacement board validation is pending.
 
+About update follow-up, 2026-10-13: the owner confirms F1.3.0-dev2 boots with
+Golden 1.x. F1.3.0-dev3 reports the installed Golden version and adds an explicit
+About-tab Golden update action when BOOT.BIN exists. M0.2.1 adds the matching
+System action. Both use Cancel-default confirmation and the existing trial
+staging/repair process. B2.0.2 reserves a checked 64 KiB Golden stack. Retain all
+selected FPGA/core images. Actual menu-driven Golden update remains untested.
+
 Firmware release, 2026-10-12: name Multitini firmware releases with an `M`
 prefix, starting at `M0.1.0`. Add a shared controller menu gesture: hold
 Select and Start together for 500 ms. Preserve ordinary solo game presses,

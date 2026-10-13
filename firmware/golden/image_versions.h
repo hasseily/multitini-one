@@ -7,8 +7,8 @@
  * Manually bump these when generating a new boot image or firmware image.
  * They are displayed by boot_updater (UART) and text_ui_test (UART + Home UI).
  */
-#define APPLETINI_BOOT_IMAGE_VERSION_SHORT      "B2.0.1"
-#define APPLETINI_BOOT_IMAGE_VERSION_FULL       "Multiboot B2.0.1"
+#define APPLETINI_BOOT_IMAGE_VERSION_SHORT      "B2.0.2"
+#define APPLETINI_BOOT_IMAGE_VERSION_FULL       "Multiboot B2.0.2"
 
 #define APPLETINI_FIRMWARE_IMAGE_VERSION_SHORT  MT_FIRMWARE_VERSION
 #define APPLETINI_FIRMWARE_IMAGE_VERSION_FULL   "Multitini Firmware " MT_FIRMWARE_VERSION
