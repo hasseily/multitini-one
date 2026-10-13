@@ -42,6 +42,14 @@ System action. Both use Cancel-default confirmation and the existing trial
 staging/repair process. B2.0.2 reserves a checked 64 KiB Golden stack. Retain all
 selected FPGA/core images. Actual menu-driven Golden update remains untested.
 
+Golden menu correction, 2026-10-13: the owner confirms F1.3.0-dev3 reads installed
+B1.2.0 but its update times out on the obsolete DMA-hold interface. F1.3.0-dev4
+uses the retained FPGA's existing Apple RESET control with checked readback and
+physical status, and reserves the real PS-DMA port before flash access. Permit
+the update from the initial physical boot menu only; disable it after handoff.
+Standalone ONE//e remains eligible. Retain M0.2.1, B2.0.2 and all FPGA/core inputs.
+The replacement menu-driven update still needs the owner's board test.
+
 Firmware release, 2026-10-12: name Multitini firmware releases with an `M`
 prefix, starting at `M0.1.0`. Add a shared controller menu gesture: hold
 Select and Start together for 500 ms. Preserve ordinary solo game presses,
