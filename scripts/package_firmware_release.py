@@ -297,7 +297,7 @@ def main():
         "Release both buttons before using the gesture again. F12 remains available.\n"
         "In menus: D-pad navigates, A confirms, B goes back/closes, L/R changes tabs.\n\n"
         f"FIRMWARE-{args.version}.BIN and sd/FIRMWARE.BIN are identical.\n"
-        "Requires the new multiboot Golden B2.0.0. Install BOOT.BIN first via :selfupdate.\n"
+        "Requires multiboot Golden; B2.0.1 adds named multi-file updates. Install BOOT.BIN first via :selfupdate.\n"
         "Then copy sd/FIRMWARE.BIN to the SD root and use the multiboot golden updater.\n"
         "This tagged image installs at 0x800000 and preserves the Appletini slot.\n"
         "System: Startup firmware saves the power-on choice; Switch to Appletini is one-shot.\n"

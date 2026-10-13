@@ -257,6 +257,36 @@ class BundleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Source archive differs"):
             bundle.verify_component(self.multi, "multitini")
 
+    def test_sd_root_aliases_require_exact_selected_bytes_and_valid_product_contents(self):
+        out = self.build / "sd-aliases"
+        firmwares = {"multitini": self.multi / "FIRMWARE-M0.2.0.BIN",
+                     "appletini": self.app / "FIRMWARE.BIN"}
+        # Check-only remains usable for previously delivered bundles.
+        bundle.verify_sd_root_firmware(out, firmwares)
+        with self.assertRaisesRegex(ValueError, "Missing SD-root"):
+            bundle.verify_sd_root_firmware(out, firmwares, required=True)
+        for product, name in bundle.SD_ROOT_FIRMWARE.items():
+            bundle.p.copy(firmwares[product], out / name)
+        bundle.verify_sd_root_firmware(out, firmwares, required=True)
+
+        alias = out / bundle.SD_ROOT_FIRMWARE["multitini"]
+        selected = alias.read_bytes()
+        alias.write_bytes(selected[:-33] + bytes([selected[-33] ^ 1]) + selected[-32:])
+        with self.assertRaises(ValueError):
+            bundle.verify_sd_root_firmware(out, firmwares)
+        # A valid, separately generated image for the same product still is not
+        # the component selected for this bundle.
+        alias.write_bytes(append(selected[:-32] + b"another source build", 2, "multitini"))
+        with self.assertRaisesRegex(ValueError, "differs from selected component"):
+            bundle.verify_sd_root_firmware(out, firmwares)
+        alias.write_bytes(firmwares["appletini"].read_bytes())
+        with self.assertRaises(ValueError):
+            bundle.verify_sd_root_firmware(out, firmwares)
+        alias.write_bytes(selected)
+        (out / bundle.SD_ROOT_FIRMWARE["appletini"]).unlink()
+        with self.assertRaisesRegex(ValueError, "Missing SD-root"):
+            bundle.verify_sd_root_firmware(out, firmwares)
+
     def test_source_platform_and_compiler_inputs_must_remain_exact(self):
         bundle.verify_golden_build(self.workspace, self.multi)
         source = self.root / "firmware/golden/bootloader/main.c"
@@ -342,11 +372,38 @@ class BundleTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertFalse(result["flash_performed"])
         self.assertFalse((out / "FLASH.BIN").exists())
+        self.assertEqual((out / bundle.SD_ROOT_FIRMWARE["appletini"]).read_bytes(),
+                         (out / "appletini/FIRMWARE.BIN").read_bytes())
+        self.assertEqual((out / bundle.SD_ROOT_FIRMWARE["multitini"]).read_bytes(),
+                         (out / "multitini/sd/FIRMWARE.BIN").read_bytes())
+        self.assertEqual(bundle.load(out / "manifest.json")["install_files"], bundle.SD_ROOT_FIRMWARE)
         self.assertEqual(bundle.verify_directory(out, compare_zip=True)["status"], "PASS")
         self.assertEqual(bundle.verify_zip(Path(str(out) + ".zip"))["status"], "PASS")
         # A delivered ZIP stays checkable without the original selected sources.
         (self.root / "firmware/golden/bootloader/main.c").unlink()
         self.assertEqual(bundle.verify_zip(Path(str(out) + ".zip"))["status"], "PASS")
+        alias = out / bundle.SD_ROOT_FIRMWARE["multitini"]
+        selected = alias.read_bytes()
+        alias.write_bytes(append(selected[:-32] + b"different selected source", 2, "multitini"))
+        # Refresh only outer checksums: content provenance must still fail.
+        seal(out, {name: value for name, value in bundle.load(out / "manifest.json").items()
+                   if name != "files"})
+        with self.assertRaisesRegex(ValueError, "differs from selected component"):
+            bundle.verify_directory(out)
+        alias.write_bytes(selected)
+        seal(out, {name: value for name, value in bundle.load(out / "manifest.json").items()
+                   if name != "files"})
+        for name in bundle.SD_ROOT_FIRMWARE.values():
+            (out / name).unlink()
+        seal(out, {name: value for name, value in bundle.load(out / "manifest.json").items()
+                   if name != "files"})
+        with self.assertRaisesRegex(ValueError, "Missing SD-root"):
+            bundle.verify_directory(out)
+        for product, source in (("appletini", "appletini/FIRMWARE.BIN"),
+                                ("multitini", "multitini/sd/FIRMWARE.BIN")):
+            bundle.p.copy(out / source, out / bundle.SD_ROOT_FIRMWARE[product])
+        seal(out, {name: value for name, value in bundle.load(out / "manifest.json").items()
+                   if name != "files"})
         (out / "golden/inputs/golden.elf").write_bytes(b"changed")
         with self.assertRaisesRegex(ValueError, "Package input changed"):
             bundle.verify_directory(out)

@@ -24,6 +24,11 @@ flash and falls back to another verified image if it is absent or invalid.
 Retain the selected FPGA/core images. See [multiboot](docs/MULTIBOOT.md) for
 the layout, migration, update failure handling and board test limits.
 
+Golden follow-up, 2026-10-13: B2.0.1 checks FIRMWARE.BIN,
+FIRMWARE-APPLETINI.BIN and FIRMWARE-MULTITINI.BIN in one sequential pass.
+The verified image contents choose the destination regardless of filename.
+Successful closed updates replace .BIN with .OK; rejected files stay for retry.
+
 Firmware release, 2026-10-12: name Multitini firmware releases with an `M`
 prefix, starting at `M0.1.0`. Add a shared controller menu gesture: hold
 Select and Start together for 500 ms. Preserve ordinary solo game presses,

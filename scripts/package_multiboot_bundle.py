@@ -25,6 +25,10 @@ import package_firmware_release as release
 ROOT = p.ROOT
 SCHEMA = "multiboot-dual-firmware-bundle-v1"
 GOLDEN_MARKER = b"APPLETINI-MULTIBOOT-GOLDEN-V1"
+SD_ROOT_FIRMWARE = {
+    "appletini": "sd-root/FIRMWARE-APPLETINI.BIN",
+    "multitini": "sd-root/FIRMWARE-MULTITINI.BIN",
+}
 LAYOUT = {
     "flash_bytes": 0x1000000,
     "golden_primary": {"offset": 0, "capacity": 0x100000},
@@ -353,14 +357,30 @@ def verify_component(directory, product):
     return manifest, source, firmware
 
 
+def verify_sd_root_firmware(directory, firmwares, required=False):
+    # Previous bundles did not include this convenience directory. If present,
+    # both aliases must independently validate and match the selected inputs.
+    if not required and not (directory / "sd-root").exists():
+        return
+    for product, name in SD_ROOT_FIRMWARE.items():
+        alias = directory / name
+        p.require(alias.is_file(), "Missing SD-root firmware alias: " + name)
+        image_manifest.verify_image(alias, expected_role=image_manifest.ROLE_FIRMWARE,
+                                    expected_recovery=True, expected_product=product)
+        p.require(alias.read_bytes() == firmwares[product].read_bytes(),
+                  "SD-root firmware alias differs from selected component: " + product)
+
+
 def verify_directory(directory, compare_zip=False):
     manifest = release.verify_directory(directory)
     p.require(manifest.get("schema") == SCHEMA and manifest["layout"] == LAYOUT,
               "Unsupported multiboot bundle or flash layout")
     p.require(manifest["flash_performed"] is False and manifest["combined_raw_flash_image"] is False and
               manifest["board_validation"] is False, "Bundle overstates hardware validation")
+    firmwares = {}
     for product in ("multitini", "appletini"):
         component, _, firmware = verify_component(directory / product, product)
+        firmwares[product] = firmware
         record = manifest["components"][product]
         p.require(record["package_manifest_sha256"] == p.sha(directory / product / "manifest.json") and
                   record["firmware"] == firmware.relative_to(directory).as_posix() and
@@ -368,6 +388,10 @@ def verify_directory(directory, compare_zip=False):
                                                           expected_product=product)),
                   "Bundle component identity differs: " + product)
         p.require(record["firmware_version"] == component["firmware_version"], "Component version differs")
+    install_files = manifest.get("install_files")
+    if install_files is not None:
+        p.require(install_files == SD_ROOT_FIRMWARE, "Bundle install-file mapping differs")
+    verify_sd_root_firmware(directory, firmwares, required=install_files is not None)
     golden = directory / "golden"
     record = load(golden / "build-records/build_inputs.json")
     selected = load(golden / "build-records/selected-inputs.json")
@@ -443,6 +467,9 @@ def create_bundle(multitini, workspace, appletini, out, vitis):
     out.mkdir(parents=True)
     for product, directory in (("multitini", multitini), ("appletini", appletini)):
         shutil.copytree(directory, out / product)
+        p.copy(out / components[product]["firmware"], out / SD_ROOT_FIRMWARE[product])
+    verify_sd_root_firmware(out, {product: out / component["firmware"]
+                                for product, component in components.items()}, required=True)
     golden = out / "golden"
     p.copy(multitini / "inputs/fsbl.elf", golden / "inputs/fsbl.elf")
     p.copy(elf, golden / "inputs/golden.elf")
@@ -474,10 +501,14 @@ def create_bundle(multitini, workspace, appletini, out, vitis):
         "1. Preserve user SD media and settings. Install golden/BOOT.BIN FIRST: copy it as\n"
         "   BOOT.BIN on the SD root and invoke the running firmware's :selfupdate command.\n"
         "   Use the golden serial selfupdate/selfrx recovery path if required.\n"
-        "2. After the new golden updater is installed, copy one product's FIRMWARE.BIN\n"
-        "   to the SD root and let golden install it. Appletini belongs at 0x200000;\n"
-        "   Multitini belongs at 0x800000. Install the other product in a separate pass.\n"
-        "   multitini/sd/FIRMWARE.BIN and appletini/FIRMWARE.BIN are the update inputs.\n"
+        "2. After Golden B2.0.1 is installed, copy both files from sd-root/ to the SD\n"
+        "   root and enter Golden once. It installs them serially, using each file's\n"
+        "   contents to choose the product slot, and renames successful updates .OK.\n"
+        "   The aliases are exact copies of the component firmware images.\n"
+        "   FIRMWARE.BIN also remains supported. Scan order: FIRMWARE.BIN,\n"
+        "   FIRMWARE-APPLETINI.BIN, FIRMWARE-MULTITINI.BIN. Incorrect filenames cannot\n"
+        "   change the destination. A failed file stays .BIN; scanning continues.\n"
+        "   If several valid files target one product, the last successful update wins.\n"
         "3. Keep Multitini core packages on SD. Both config menus expose Startup firmware\n"
         "   and an explicit switch to the other installed firmware. Startup selection is\n"
         "   persistent; an immediate switch is a one-shot request.\n\n"
@@ -500,6 +531,7 @@ def create_bundle(multitini, workspace, appletini, out, vitis):
     p.write_json(out / "manifest.json", {
         "schema": SCHEMA, "created_utc": datetime.now(timezone.utc).isoformat(), "layout": LAYOUT,
         "classification": "Board acceptance pending", "components": components,
+        "install_files": SD_ROOT_FIRMWARE,
         "flash_performed": False, "combined_raw_flash_image": False, "board_validation": False,
         "files": release.inventory(out),
     })
