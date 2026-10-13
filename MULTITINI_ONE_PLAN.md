@@ -81,6 +81,15 @@ without accepting read failures or writing metadata. Keep actual Golden version
 display independent of this diagnostic. Retain M0.2.3, B2.0.5 and all hardware
 inputs exactly. Only Appletini needs rebuilding; board HUD confirmation is pending.
 
+Power help and screenshot follow-up, 2026-10-13: the owner clarifies that
+Multitini inside an Apple //e uses host 5V without the standalone jumper. The
+jumper supplies 5V only outside the Apple for ONE//e or Multitini. F1.3.0-dev8
+corrects Boot help and captures the full output with its completed-slot FPGA
+mask and geometry, preserving existing software effects and raw A2 captures.
+Use larger bounded PNG batches while retaining close/remount and cleanup safety.
+Retain M0.2.3, B2.0.5, FPGA/core, FSBL and CPU1 inputs. Native and retained-RTL
+checks precede board screenshot timing and display comparison.
+
 Firmware release, 2026-10-12: name Multitini firmware releases with an `M`
 prefix, starting at `M0.1.0`. Add a shared controller menu gesture: hold
 Select and Start together for 500 ms. Preserve ordinary solo game presses,
@@ -106,7 +115,8 @@ separate diagnostic step with retained PHO4 hardware. See
 [the PHO5 scope](docs/PHOSPHOR_PHOS5.md).
 
 Use the Appletini ONE card as a stand-alone FPGA computer, outside an Apple II.
-Assume the board's 5 V jumper fix is present. Build one common system that can
+Use the board's 5 V jumper for power outside the Apple. Multitini installed in
+an Apple //e gets 5 V from the host without that jumper. Build one system that can
 load machine cores, start with the GPL MiSTer C64 core, and then use the same
 work for other cores whose licenses allow sale with the hardware.
 
@@ -133,7 +143,8 @@ more machine cores. Do not let those delay the first working C64.
 
 - The card runs without an Apple II and must boot, take input, show video, and
   play sound on its own.
-- The 5 V supply issue has been fixed with the intended jumper.
+- The intended jumper supplies 5 V for standalone use outside the Apple.
+  Installed in an Apple //e, Multitini uses host 5 V without that jumper.
 - The Apple II bus has no role in the first Multitini image. Hold all Apple bus
   outputs in safe idle states. Do not depend on Apple clocks or reset.
 - The hardware will be sold. Core source and all Multitini firmware source will
