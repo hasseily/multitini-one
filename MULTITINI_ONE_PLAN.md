@@ -90,6 +90,15 @@ Use larger bounded PNG batches while retaining close/remount and cleanup safety.
 Retain M0.2.3, B2.0.5, FPGA/core, FSBL and CPU1 inputs. Native and retained-RTL
 checks precede board screenshot timing and display comparison.
 
+Saved vTW startup follow-up, 2026-10-13: F1.3.0-dev9 holds the physical //e
+identification return through a firmware C8 patch, starts vTW before the first
+prompt/menu, then applies its saved speed at handoff without another reset.
+Keep initial ROM menu timing at 1 MHz and restore Disk II after CORE_RUN echoes.
+ONE//e must release the native hold and publish menu PAUSE before its first run.
+The reported bezel-only readings showed ONE//e disabled. Retain all FPGA/core,
+FSBL, CPU1, M0.2.3 and B2.0.5 inputs. Require native ROM/runtime fault checks and
+the owner's first-boot/menu-exit test before claiming board behavior.
+
 Firmware release, 2026-10-12: name Multitini firmware releases with an `M`
 prefix, starting at `M0.1.0`. Add a shared controller menu gesture: hold
 Select and Start together for 500 ms. Preserve ordinary solo game presses,
