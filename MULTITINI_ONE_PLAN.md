@@ -29,6 +29,12 @@ FIRMWARE-APPLETINI.BIN and FIRMWARE-MULTITINI.BIN in one sequential pass.
 The verified image contents choose the destination regardless of filename.
 Successful closed updates replace .BIN with .OK; rejected files stay for retry.
 
+Appletini startup follow-up, 2026-10-13: the owner reports F1.3.0-dev stopping
+after the SMARTPORT handoff on an Apple //e with Golden 1.x. F1.3.0-dev2 restores
+the established CPU1 cold wake and reserves an independently checked 64 KiB ARM
+stack. Retain the exact selected FPGA, FSBL and CPU1 inputs. The firmware-first
+migration remains the target; replacement board validation is pending.
+
 Firmware release, 2026-10-12: name Multitini firmware releases with an `M`
 prefix, starting at `M0.1.0`. Add a shared controller menu gesture: hold
 Select and Start together for 500 ms. Preserve ordinary solo game presses,
