@@ -74,6 +74,13 @@ table and 4 KiB flash reads, with qualified quad I/O and conservative fallback.
 Keep Golden's one-second serial recovery window. Retain every selected FPGA,
 core, FSBL and CPU1 input. Native validation and ARM builds precede board timing.
 
+Metadata diagnostic follow-up, 2026-10-13: the owner reports faster switching,
+but Appletini warns that boot metadata is invalid. F1.3.0-dev7 recognizes
+the two CRC-protected multiboot records and the original FF0000 legacy record,
+without accepting read failures or writing metadata. Keep actual Golden version
+display independent of this diagnostic. Retain M0.2.3, B2.0.5 and all hardware
+inputs exactly. Only Appletini needs rebuilding; board HUD confirmation is pending.
+
 Firmware release, 2026-10-12: name Multitini firmware releases with an `M`
 prefix, starting at `M0.1.0`. Add a shared controller menu gesture: hold
 Select and Start together for 500 ms. Preserve ordinary solo game presses,
