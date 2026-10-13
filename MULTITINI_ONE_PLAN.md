@@ -99,6 +99,14 @@ The reported bezel-only readings showed ONE//e disabled. Retain all FPGA/core,
 FSBL, CPU1, M0.2.3 and B2.0.5 inputs. Require native ROM/runtime fault checks and
 the owner's first-boot/menu-exit test before claiming board behavior.
 
+Slowdown preset follow-up, 2026-10-14: add 32, 64 and 128 cycles to Appletini's
+menu in F1.3.0-dev10, retaining its 512-cycle default and qualified FPGA inputs.
+The owner isolates a TURBO Speed Race penalty to enabled Disk II slot 6.
+Idle classic-cycle replay in the retained HDL gates CPU progress; the existing
+Disable DiskII Acceleration setting provides a normal 1 MHz disk-path workaround.
+An accelerated idle-path optimization is separate FPGA work. Retain M0.2.3 and
+B2.0.5 exactly and keep the slowdown preset update in ARM firmware.
+
 Firmware release, 2026-10-12: name Multitini firmware releases with an `M`
 prefix, starting at `M0.1.0`. Add a shared controller menu gesture: hold
 Select and Start together for 500 ms. Preserve ordinary solo game presses,
