@@ -14,6 +14,8 @@ typedef enum {
     FR_NO_FILE = 4,
     FR_NO_PATH = 5,
     FR_EXIST = 8,
+    FR_DENIED = 7,
+    FR_WRITE_PROTECTED = 10,
     FR_INVALID_PARAMETER = 19
 } FRESULT;
 
@@ -44,6 +46,7 @@ typedef struct {
 #define FA_OPEN_EXISTING UINT32_C(0x00)
 #define FA_OPEN_ALWAYS UINT32_C(0x10)
 #define AM_DIR UINT32_C(0x10)
+#define AM_RDO UINT32_C(0x01)
 
 FRESULT f_stat(const char *path, FILINFO *info);
 FRESULT f_mkdir(const char *path);

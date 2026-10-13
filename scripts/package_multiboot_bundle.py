@@ -504,6 +504,7 @@ def create_bundle(multitini, workspace, appletini, out, vitis):
         "From the initial boot menu, use About > Update Golden Boot... and choose Update and reboot.\n"
         "On a physical Apple II this action is disabled after boot handoff. ONE//e remains eligible.\n"
         "The new Golden repairs primary and automatically installs Multitini.\n"
+        "After verified primary repair, matching BOOT.BIN is renamed BOOT.OK.\n"
         "This menu-driven migration still needs board validation.\n\n"
         "Existing serial migration remains available:\n"
         "1. Preserve user SD media and settings. Install golden/BOOT.BIN FIRST: copy it as\n"
