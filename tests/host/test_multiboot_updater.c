@@ -102,6 +102,30 @@ static void make_image(unsigned index, uint32_t product, int legacy, uint8_t rev
     put32(m + 20, PAYLOAD); put32(m + 24, crc(p, PAYLOAD)); put32(m + 28, crc(m, 28));
     f->size = IMAGE_SIZE; f->exists = 1;
 }
+static void refooter(unsigned index,uint32_t version,uint32_t flags)
+{
+    uint8_t *p=files[index].data,*m=p+PAYLOAD;
+    put32(m+8,version); put32(m+16,flags);
+    put32(m+24,crc(p,PAYLOAD)); put32(m+28,crc(m,28));
+}
+static void make_old_app(unsigned index,const char *version,uint8_t revision)
+{
+    uint8_t *p; char banner[96]; unsigned i;
+    make_image(index,MB_PRODUCT_APPLETINI,1,revision); p=files[index].data;
+    put32(p+0x34,512); put32(p+0x38,0); put32(p+0x3c,0); put32(p+0x40,512);
+    checksum(p+0x20,10); put32(p+0xa4,3); memset(p+0x100,0,256);
+    for(i=0;i<3U;++i) {
+        uint8_t *h=p+0x100+64U*i;
+        uint32_t start=512U+512U*i,total=i==2U ? PAYLOAD-start : 512U;
+        put32(h+4,total/4U); put32(h+8,total/4U);
+        put32(h+12,i==2U ? 0x100000U : 0U); put32(h+16,i==2U ? 0x100000U : 0U);
+        put32(h+20,start/4U); put32(h+24,i==1U ? 0x20U : 0x10U); checksum(h,15);
+    }
+    put32(p+0x1fc,UINT32_MAX);
+    memcpy(p+2048,"\r\nAppletini control UART\r\n",sizeof("\r\nAppletini control UART\r\n"));
+    p[5600]=0; snprintf(banner,sizeof banner,"Firmware image: Firmware %s\r\n",version);
+    memcpy(p+5601,banner,strlen(banner)+1U); refooter(index,1,MB_FLAG_RECOVERY);
+}
 static int flash_read(void *context, uint32_t off, void *dst, uint32_t len)
 {
     (void)context; assert(off <= MB_FLASH_SIZE && len <= MB_FLASH_SIZE - off);
@@ -203,7 +227,15 @@ FRESULT f_rename(const char *from, const char *to)
     if (source->rename_result != FR_OK) return source->rename_result;
     if (source->ok_exists) return FR_EXIST;
     /* Only a fully verified live image may be acknowledged. */
+    mb_image_t image;
+    /* Routing follows full source validation even when the original v1
+     * footer has no product bits. An acknowledgement never retags it. */
     uint32_t product = get32(source->data + PAYLOAD + 16) & MB_PRODUCT_MASK;
+    if(!product) {
+        assert(get32(source->data+PAYLOAD+8)==1U);
+        assert(mb_slot_verify(&flash,MB_PRODUCT_APPLETINI,&image)==MB_OK && image.version==1U);
+        product=MB_PRODUCT_APPLETINI;
+    }
     assert(mb_slot_verify(&flash, product, NULL) == MB_OK);
     assert(!memcmp(nor + mb_product_offset(product), source->data, IMAGE_SIZE));
     source->exists = 0; source->ok_exists = 1; source->ok_crc = crc(source->data, IMAGE_SIZE); return FR_OK;
@@ -309,6 +341,74 @@ static void test_missing_and_bad_files(void)
     put32(files[1].data + PAYLOAD + 28, crc(files[1].data + PAYLOAD, 28));
     assert(updater_run(&r) != 0); assert_batch(1, 0, 1, 0, &r); assert(mutation_attempts == 0);
     assert(files[1].exists && !files[1].ok_exists);
+}
+static int source_read(void *context,uint32_t off,void *dst,uint32_t len)
+{
+    memcpy(dst,(const uint8_t *)context+off,len); return 0;
+}
+static void install_peer(unsigned index)
+{
+    mb_reader_t reader={files[index].data,source_read,IMAGE_SIZE}; mb_image_t image;
+    assert(mb_install(&flash,&reader,&image)==MB_OK && image.product==MB_PRODUCT_MULTITINI);
+    files[index].exists=0;
+}
+static void test_legacy_restoration(void)
+{
+    updater_result_t r; mb_metadata_t metadata; uint8_t saved_peer[IMAGE_SIZE]; uint32_t boot;
+    for(unsigned index=0;index<FILE_COUNT;++index) {
+        unsigned peer=(index+1U)%FILE_COUNT;
+        reset_fixture(); make_image(peer,MB_PRODUCT_MULTITINI,0,0x81); install_peer(peer);
+        memcpy(saved_peer,nor+MB_MULTITINI_OFFSET,IMAGE_SIZE);
+        make_old_app(index,"F1.1.0",(uint8_t)(0x82U+index));
+        assert(updater_run(&r)==0); assert_batch(1,1,0,1,&r);
+        assert_slot(index,MB_PRODUCT_APPLETINI); assert_done(index);
+        assert(!memcmp(saved_peer,nor+MB_MULTITINI_OFFSET,IMAGE_SIZE));
+        assert(get32(nor+MB_APPLETINI_OFFSET+PAYLOAD+8)==1U);
+        assert(get32(nor+MB_APPLETINI_OFFSET+PAYLOAD+16)==MB_FLAG_RECOVERY);
+        assert(r.file_crc32==crc(files[index].data,IMAGE_SIZE) && r.flash_crc32==r.file_crc32);
+        assert(mb_metadata_load(&flash,&metadata)==MB_OK);
+        assert(metadata.default_product==MB_PRODUCT_MULTITINI && metadata.request_product==MB_PRODUCT_APPLETINI);
+        assert(metadata.slots[0].product==MB_PRODUCT_NONE &&
+               metadata.slots[0].flags==(MB_FLAG_SLOT_VALID|MB_FLAG_SLOT_LEGACY));
+        assert(updater_select_firmware(&boot)==0 && boot==MB_APPLETINI_OFFSET);
+        assert(mb_metadata_load(&flash,&metadata)==MB_OK && !metadata.request_product);
+        assert(metadata.default_product==MB_PRODUCT_MULTITINI);
+        assert(updater_select_firmware(&boot)==0 && boot==MB_MULTITINI_OFFSET);
+    }
+    /* Below-floor and unidentified v1 candidates remain retryable while a
+     * later valid candidate is still installed and acknowledged. */
+    reset_fixture(); make_old_app(0,"F1.0.9-turbo2",0x86);
+    make_image(1,MB_PRODUCT_APPLETINI,1,0x87); make_image(2,MB_PRODUCT_MULTITINI,0,0x88);
+    assert(updater_run(&r)!=0); assert_batch(3,1,2,1,&r);
+    assert(files[0].exists && !files[0].ok_exists && !files[0].writes);
+    assert(files[1].exists && !files[1].ok_exists && !files[1].writes);
+    assert_slot(2,MB_PRODUCT_MULTITINI); assert_done(2);
+    for(unsigned fault=0;fault<4U;++fault) {
+        reset_fixture(); make_old_app(0,"F1.2.5-d3",0x89);
+        if(fault==0U) files[0].data[800]^=1U;
+        if(fault==1U) {
+            memcpy(files[0].data+600,files[0].data+5600,64);
+            memset(files[0].data+5600,0x89,64); refooter(0,1,MB_FLAG_RECOVERY);
+        }
+        if(fault==2U) refooter(0,2,MB_FLAG_RECOVERY|MB_FLAG_MULTIBOOT|MB_PRODUCT_APPLETINI);
+        if(fault==3U) refooter(0,1,MB_FLAG_RECOVERY|MB_PRODUCT_APPLETINI);
+        assert(updater_run(&r)!=0); assert_batch(1,0,1,0,&r);
+        assert(!mutation_attempts && files[0].exists && !files[0].ok_exists && !files[0].writes);
+    }
+    /* Close/rename failures retain the original archive for a safe retry. */
+    for(unsigned fault=0;fault<3U;++fault) {
+        reset_fixture(); make_old_app(2,"F1.1.1",0x90);
+        files[2].ok_exists=1; files[2].ok_crc=0x12345678U;
+        if(fault==0U) files[2].close_result=FR_DISK_ERR;
+        if(fault==1U) files[2].unlink_result=FR_DISK_ERR;
+        if(fault==2U) files[2].rename_result=FR_DISK_ERR;
+        assert(updater_run(&r)!=0); assert_batch(1,1,1,0,&r); assert_slot(2,MB_PRODUCT_APPLETINI);
+        assert(files[2].exists);
+        files[2].close_result=files[2].unlink_result=files[2].rename_result=FR_OK;
+        event_count=mount_count=0; files[2].reads=files[2].seeks=0;
+        assert(updater_run(&r)==0); assert_batch(1,1,0,1,&r); assert_done(2);
+    }
+    puts("PASS: original v1 F archives route under every filename, preserve Multitini/default, boot once, acknowledge exact bytes and reject spoofed/below-floor identities");
 }
 static void test_source_errors(void)
 {
@@ -471,7 +571,7 @@ static void test_golden_single_selection(void)
 }
 int main(void)
 {
-    test_presence_subsets(); test_missing_and_bad_files(); test_source_errors();
+    test_presence_subsets(); test_missing_and_bad_files(); test_legacy_restoration(); test_source_errors();
     test_acknowledgement_errors(); test_flash_failure_continues(); test_verified_fallback();test_golden_single_selection();
     puts("PASS: all filename subsets, intrinsic product routing, sequential duplicate installs, isolated errors/retries, closed .OK renames, verified fallback");
     return 0;

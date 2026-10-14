@@ -13,6 +13,7 @@
 #define IMAGE_SIZE (PAYLOAD+MB_MANIFEST_SIZE)
 static uint8_t flash[MB_FLASH_SIZE],snapshot[MB_FLASH_SIZE];
 static uint8_t app[IMAGE_SIZE],multi[IMAGE_SIZE],legacy[IMAGE_SIZE],golden[IMAGE_SIZE];
+static uint8_t old_app[IMAGE_SIZE];
 static uint8_t large[MB_APPLETINI_CAPACITY+256U+MB_MANIFEST_SIZE];
 static uint32_t mutations,cut_at,fail_at,reads,fail_read,read_bytes;
 static uint32_t fail_read_address=UINT32_MAX;
@@ -64,6 +65,30 @@ static void make_image(uint8_t *p,uint32_t size,uint32_t product,uint32_t role,i
     if(role==1 && capable) memcpy(p+1024,MB_GOLDEN_MARKER,sizeof(MB_GOLDEN_MARKER)-1);
     footer(p,size,product ? 2U : 1U,role,
            MB_FLAG_RECOVERY|(product ? product|MB_FLAG_MULTIBOOT : 0U));
+}
+/* An archived F has FSBL, PL and its ARM frontend at 0x00100000.
+ * Keep v1 footer bytes original: restoring must not manufacture v2 capability. */
+static void make_old_app(uint8_t *p,uint32_t size,const char *version)
+{
+    char banner[96]; unsigned i;
+    make_image(p,size,0,2,0);
+    put32(p+0x34,512); put32(p+0x38,0); put32(p+0x3c,0); put32(p+0x40,512);
+    checksum(p+0x20,10); put32(p+0xa4,3);
+    memset(p+0x100,0,256);
+    for(i=0;i<3;++i) {
+        uint8_t *h=p+0x100+64U*i;
+        uint32_t start=512U+512U*i,total=i==2U ? size-start : 512U;
+        put32(h+4,total/4U); put32(h+8,total/4U);
+        put32(h+12,i==2U ? 0x100000U : 0U); put32(h+16,i==2U ? 0x100000U : 0U);
+        put32(h+20,start/4U); put32(h+24,i==1U ? 0x20U : 0x10U); checksum(h,15);
+    }
+    put32(p+0x1fc,UINT32_MAX);
+    memcpy(p+2048,"\r\nAppletini control UART\r\n",sizeof("\r\nAppletini control UART\r\n"));
+    p[5600]=0;
+    snprintf(banner,sizeof banner,"Firmware image: Firmware %s\r\n",version);
+    /* The version crosses the loaded-ARM scanner's streaming boundary. */
+    memcpy(p+5601,banner,strlen(banner)+1U);
+    footer(p,size,1,2,MB_FLAG_RECOVERY);
 }
 static void mutation(void)
 {
@@ -265,6 +290,161 @@ static void adopted_defaults(void)
     expect(0,MB_PRODUCT_APPLETINI,0);
     assert(mb_clear_request(&device)==MB_OK); expect(0,MB_PRODUCT_MULTITINI,0);
     printf("multiboot adoption: existing verified startup/default/one-shot choices survive peer installation\n");
+}
+static void restored_metadata(void)
+{
+    mb_metadata_t m; mb_image_t image;
+    assert(mb_metadata_load(&device,&m)==MB_OK);
+    assert(m.default_product==MB_PRODUCT_MULTITINI && m.request_product==MB_PRODUCT_APPLETINI);
+    assert(m.slots[0].product==MB_PRODUCT_NONE);
+    assert(m.slots[0].flags==(MB_FLAG_SLOT_VALID|MB_FLAG_SLOT_LEGACY));
+    assert(m.slots[0].image_size==IMAGE_SIZE && m.slots[0].image_crc32==crc(old_app,IMAGE_SIZE));
+    assert(mb_slot_verify(&device,MB_PRODUCT_APPLETINI,&image)==MB_OK);
+    assert(image.product==MB_PRODUCT_APPLETINI && image.version==1U);
+    expect(0,MB_PRODUCT_APPLETINI,1);
+}
+static void restorations(void)
+{
+    static const char *const supported[]={"F1.1.0","F1.1.1","F1.2.5","F1.2.5-d3","F1.2.6-d1"};
+    static const char *const rejected[]={"F1.0.9","F1.0.9-turbo1","F1.0.9-turbo2","F1.1","F1.x.0","M1.1.0"};
+    mb_image_t image; mb_metadata_t m; mb_reader_t r; uint32_t before,offset;
+    unsigned i;
+    for(i=0;i<sizeof supported/sizeof supported[0];++i) {
+        make_old_app(old_app,PAYLOAD,supported[i]); r=reader(old_app,IMAGE_SIZE);
+        assert(mb_image_validate(&r,0,1,&image)==MB_OK && image.product==MB_PRODUCT_NONE);
+        assert(mb_firmware_validate(&r,&image)==MB_OK && image.product==MB_PRODUCT_APPLETINI && image.version==1U);
+        reset(); install(app); install(multi); assert(mb_set_default(&device,MB_PRODUCT_MULTITINI)==MB_OK);
+        memcpy(snapshot,flash,sizeof flash);
+        assert(mb_install(&device,&r,&image)==MB_OK);
+        assert(image.product==MB_PRODUCT_APPLETINI && image.version==1U);
+        assert(!memcmp(flash+MB_APPLETINI_OFFSET,old_app,IMAGE_SIZE));
+        assert(!memcmp(flash,snapshot,MB_APPLETINI_OFFSET));
+        assert(!memcmp(flash+MB_MULTITINI_OFFSET,snapshot+MB_MULTITINI_OFFSET,MB_MULTITINI_CAPACITY));
+        restored_metadata(); before=mutations;
+        assert(mb_slot_probe(&device,MB_PRODUCT_APPLETINI,&image)==MB_OK);
+        assert(image.product==MB_PRODUCT_APPLETINI && image.version==1U && image.image_crc32==crc(old_app,IMAGE_SIZE));
+        assert(mutations==before);
+        assert(mb_clear_request(&device)==MB_OK); expect(0,MB_PRODUCT_MULTITINI,0);
+        expect(MB_PRODUCT_APPLETINI,MB_PRODUCT_APPLETINI,1);
+        assert(mb_prepare_request(&device,MB_PRODUCT_APPLETINI,&offset)==MB_OK && offset==0);
+        expect(0,MB_PRODUCT_APPLETINI,1);
+        assert(mb_clear_request(&device)==MB_OK);
+        assert(mb_set_default(&device,MB_PRODUCT_APPLETINI)==MB_OK); expect(0,MB_PRODUCT_APPLETINI,1);
+    }
+    /* The original v4 migration record can identify F intrinsically too. */
+    make_old_app(old_app,PAYLOAD,"F1.1.0"); reset();
+    memcpy(flash+MB_APPLETINI_OFFSET,old_app,IMAGE_SIZE); old_metadata();
+    memcpy(flash+MB_MULTITINI_OFFSET,multi,IMAGE_SIZE);
+    expect(0,MB_PRODUCT_APPLETINI,1);
+    assert(mb_slot_verify(&device,MB_PRODUCT_APPLETINI,&image)==MB_OK && image.product==MB_PRODUCT_APPLETINI);
+    assert(mb_slot_probe(&device,MB_PRODUCT_APPLETINI,NULL)==MB_OK);
+    install(multi); expect(0,MB_PRODUCT_APPLETINI,1);
+    assert(mb_metadata_load(&device,&m)==MB_OK && m.default_product==MB_PRODUCT_APPLETINI);
+    for(i=0;i<sizeof rejected/sizeof rejected[0];++i) {
+        make_old_app(old_app,PAYLOAD,rejected[i]); r=reader(old_app,IMAGE_SIZE);
+        reset(); install(app); install(multi); memcpy(snapshot,flash,sizeof flash); before=mutations;
+        assert(mb_firmware_validate(&r,&image)!=MB_OK);
+        assert(mb_install(&device,&r,&image)!=MB_OK);
+        assert(mutations==before && !memcmp(flash,snapshot,sizeof flash));
+    }
+    /* A correctly CRC'd footer is no authority for missing, misplaced or
+     * conflicting linked identity. Refusal must precede every flash write. */
+    for(i=0;i<15U;++i) {
+        make_old_app(old_app,PAYLOAD,"F1.1.0"); r=reader(old_app,IMAGE_SIZE);
+        if(i==0U) memset(old_app+2048,0xa5,sizeof("\r\nAppletini control UART\r\n"));
+        if(i==1U) {
+            memcpy(old_app+600,old_app+2048,sizeof("\r\nAppletini control UART\r\n"));
+            memset(old_app+2048,0xa5,sizeof("\r\nAppletini control UART\r\n"));
+        }
+        if(i==2U) {
+            memcpy(old_app+1100,old_app+5600,64); memset(old_app+5600,0xa5,64);
+        }
+        if(i==3U) {
+            memcpy(old_app+2500,"\0Firmware image: Firmware F1.2.5\r\n",sizeof("\0Firmware image: Firmware F1.2.5\r\n"));
+        }
+        if(i==4U) { put32(old_app+0x18c,0x200000); put32(old_app+0x190,0x200000); checksum(old_app+0x180,15); }
+        if(i==5U) memset(old_app+4090,0xa5,sizeof(MB_RECOVERY_MARKER)-1U);
+        if(i==6U) {
+            memcpy(old_app+2600,MB_MULTITINI_MARKER,sizeof(MB_MULTITINI_MARKER)-1U);
+        }
+        if(i==7U) {
+            memcpy(old_app+2600,"Multitini One firmware M0.1.0 build=%08x",sizeof("Multitini One firmware M0.1.0 build=%08x"));
+            memset(old_app+2048,0xa5,sizeof("\r\nAppletini control UART\r\n"));
+            memset(old_app+5600,0xa5,64);
+        }
+        if(i==8U) make_image(old_app,PAYLOAD,0,2,0);
+        if(i==12U) {
+            /* Footer CRC covers stored partition padding, but identity must
+             * lie inside the declared loaded data, including its terminator. */
+            put32(old_app+0x184,4096U/4U); checksum(old_app+0x180,15);
+        }
+        if(i==13U) {
+            memcpy(old_app+600,old_app+4090,sizeof(MB_RECOVERY_MARKER)-1U);
+            memset(old_app+4090,0xa5,sizeof(MB_RECOVERY_MARKER)-1U);
+        }
+        if(i==14U) old_app[5600]='x';
+        footer(old_app,PAYLOAD,1,i==9U ? 1U : 2U,MB_FLAG_RECOVERY);
+        if(i==10U) { memset(old_app+PAYLOAD,0xff,MB_MANIFEST_SIZE); r.size=PAYLOAD; }
+        if(i==11U) old_app[3500]^=1U;
+        reset(); install(app); install(multi); memcpy(snapshot,flash,sizeof flash); before=mutations;
+        assert(mb_install(&device,&r,&image)!=MB_OK);
+        assert(mutations==before && !memcmp(flash,snapshot,sizeof flash));
+    }
+    make_old_app(large,MB_APPLETINI_CAPACITY+256U,"F1.1.0"); r=reader(large,sizeof large);
+    reset(); install(app); install(multi); memcpy(snapshot,flash,sizeof flash); before=mutations;
+    assert(mb_install(&device,&r,&image)!=MB_OK);
+    assert(mutations==before && !memcmp(flash,snapshot,sizeof flash));
+    make_old_app(old_app,PAYLOAD,"F1.1.0"); r=reader(old_app,IMAGE_SIZE);
+    footer(old_app,PAYLOAD,2,2,MB_FLAG_RECOVERY|MB_FLAG_MULTIBOOT|MB_PRODUCT_APPLETINI);
+    assert(mb_install(&device,&r,&image)!=MB_OK && mutations==before);
+    assert(!memcmp(flash,snapshot,sizeof flash));
+    /* Stale committed CRCs cannot authorize a replacement banner/footer. */
+    make_old_app(old_app,PAYLOAD,"F1.1.0"); assert(mb_install(&device,&r,&image)==MB_OK);
+    flash[MB_APPLETINI_OFFSET+3500]^=1U;
+    footer(flash+MB_APPLETINI_OFFSET,PAYLOAD,1,2,MB_FLAG_RECOVERY);
+    assert(mb_slot_verify(&device,MB_PRODUCT_APPLETINI,NULL)!=MB_OK);
+    assert(mb_slot_probe(&device,MB_PRODUCT_APPLETINI,NULL)!=MB_OK);
+    expect(0,MB_PRODUCT_MULTITINI,0);
+    puts("multiboot F restoration: v1 F1.1.0 floor, original bytes, legacy records, choice/defaults, loaded identity, refusals and stale CRC covered");
+}
+static void restoration_faults(void)
+{
+    mb_image_t image; mb_selection_t selected; mb_metadata_t m;
+    uint32_t count,read_count,stop;
+    make_old_app(old_app,PAYLOAD,"F1.1.0"); mb_reader_t r=reader(old_app,IMAGE_SIZE);
+    reset(); install(app); install(multi); assert(mb_set_default(&device,MB_PRODUCT_MULTITINI)==MB_OK);
+    memcpy(snapshot,flash,sizeof flash); mutations=reads=0;
+    assert(mb_install(&device,&r,&image)==MB_OK); count=mutations; read_count=reads;
+    for(stop=1;stop<=count;++stop) {
+        memcpy(flash,snapshot,sizeof flash); mutations=reads=0; cut_at=stop;
+        if(!setjmp(power_cut)) { (void)mb_install(&device,&r,&image); assert(!"missing restoration cut"); }
+        cut_at=0;
+        assert(!memcmp(flash,snapshot,MB_APPLETINI_OFFSET));
+        assert(!memcmp(flash+MB_MULTITINI_OFFSET,snapshot+MB_MULTITINI_OFFSET,MB_MULTITINI_CAPACITY));
+        assert(mb_slot_verify(&device,MB_PRODUCT_MULTITINI,NULL)==MB_OK);
+        assert(mb_select(&device,0,&selected)==MB_OK);
+        assert(selected.product==MB_PRODUCT_MULTITINI ||
+               (selected.product==MB_PRODUCT_APPLETINI && selected.legacy && !memcmp(flash+MB_APPLETINI_OFFSET,old_app,IMAGE_SIZE)));
+        assert(mb_metadata_load(&device,&m)==MB_OK && m.default_product==MB_PRODUCT_MULTITINI);
+        assert(mb_install(&device,&r,&image)==MB_OK); restored_metadata();
+    }
+    for(stop=1;stop<=count;++stop) {
+        memcpy(flash,snapshot,sizeof flash); mutations=reads=0; fail_at=stop;
+        assert(mb_install(&device,&r,&image)!=MB_OK); fail_at=0;
+        assert(!memcmp(flash,snapshot,MB_APPLETINI_OFFSET));
+        assert(!memcmp(flash+MB_MULTITINI_OFFSET,snapshot+MB_MULTITINI_OFFSET,MB_MULTITINI_CAPACITY));
+        assert(mb_slot_verify(&device,MB_PRODUCT_MULTITINI,NULL)==MB_OK);
+        assert(mb_install(&device,&r,&image)==MB_OK); restored_metadata();
+    }
+    for(stop=1;stop<=read_count;++stop) {
+        memcpy(flash,snapshot,sizeof flash); mutations=reads=0; fail_read=stop;
+        (void)mb_install(&device,&r,&image); fail_read=0;
+        assert(!memcmp(flash,snapshot,MB_APPLETINI_OFFSET));
+        assert(!memcmp(flash+MB_MULTITINI_OFFSET,snapshot+MB_MULTITINI_OFFSET,MB_MULTITINI_CAPACITY));
+        assert(mb_slot_verify(&device,MB_PRODUCT_MULTITINI,NULL)==MB_OK);
+        assert(mb_install(&device,&r,&image)==MB_OK); restored_metadata();
+    }
+    printf("multiboot F restoration faults: Multitini/default preserved and restore retry passed at %u cuts, %u writes and %u reads\n",count,count,read_count);
 }
 static void advisory_probes(void)
 {
@@ -601,15 +781,75 @@ static int check_files(int argc,char **argv)
     }
     return 0;
 }
+static int restore_files(int argc,char **argv,int rejected)
+{
+    int i;
+    if(argc<3) return 1;
+    make_image(app,PAYLOAD,MB_PRODUCT_APPLETINI,2,0);
+    make_image(multi,PAYLOAD,MB_PRODUCT_MULTITINI,2,0);
+    make_image(golden,PAYLOAD,0,1,1);
+    for(i=2;i<argc;++i) {
+        FILE *f=fopen(argv[i],"rb"); long n; uint8_t *p;
+        mb_reader_t r; mb_image_t image; mb_metadata_t m; uint32_t image_crc,before;
+        if(!f || fseek(f,0,SEEK_END) || (n=ftell(f))<=0 ||
+           (unsigned long)n>0xdf0000UL || fseek(f,0,SEEK_SET)) {
+            fprintf(stderr,"Cannot read restoration firmware: %s\n",argv[i]);
+            if(f) fclose(f);
+            return 1;
+        }
+        p=malloc((size_t)n); assert(p);
+        if(fread(p,1,(size_t)n,f)!=(size_t)n) { fclose(f); free(p); return 1; }
+        fclose(f); r=reader(p,(uint32_t)n); image_crc=crc(p,(uint32_t)n);
+        reset(); install(app); install(multi); assert(mb_set_default(&device,MB_PRODUCT_MULTITINI)==MB_OK);
+        memcpy(snapshot,flash,sizeof flash); before=mutations;
+        if(rejected) {
+            assert(mb_firmware_validate(&r,&image)!=MB_OK);
+            assert(mb_install(&device,&r,&image)!=MB_OK);
+            assert(mutations==before && !memcmp(flash,snapshot,sizeof flash));
+            printf("PASS: restoration refused before writes: %s, original CRC32 %08x\n",argv[i],image_crc);
+            free(p); continue;
+        }
+        assert(mb_image_validate(&r,0,1,&image)==MB_OK && image.version==1U && !image.product);
+        assert(mb_firmware_validate(&r,&image)==MB_OK && image.product==MB_PRODUCT_APPLETINI && image.version==1U);
+        assert(mb_install(&device,&r,&image)==MB_OK && image.image_crc32==image_crc);
+        assert(!memcmp(flash+MB_APPLETINI_OFFSET,p,(size_t)n));
+        assert(crc(flash+MB_APPLETINI_OFFSET,(uint32_t)n)==image_crc);
+        assert(!memcmp(flash,snapshot,MB_APPLETINI_OFFSET));
+        assert(!memcmp(flash+MB_MULTITINI_OFFSET,snapshot+MB_MULTITINI_OFFSET,MB_MULTITINI_CAPACITY));
+        assert(mb_metadata_load(&device,&m)==MB_OK);
+        assert(m.default_product==MB_PRODUCT_MULTITINI && m.request_product==MB_PRODUCT_APPLETINI);
+        assert(m.slots[0].product==MB_PRODUCT_NONE &&
+               m.slots[0].flags==(MB_FLAG_SLOT_VALID|MB_FLAG_SLOT_LEGACY));
+        assert(m.slots[0].image_size==(uint32_t)n && m.slots[0].image_crc32==image_crc);
+        assert(mb_slot_verify(&device,MB_PRODUCT_APPLETINI,&image)==MB_OK && image.version==1U && image.product==MB_PRODUCT_APPLETINI);
+        assert(mb_slot_probe(&device,MB_PRODUCT_APPLETINI,NULL)==MB_OK);
+        expect(0,MB_PRODUCT_APPLETINI,1);
+        assert(mb_clear_request(&device)==MB_OK); expect(0,MB_PRODUCT_MULTITINI,0);
+        expect(MB_PRODUCT_APPLETINI,MB_PRODUCT_APPLETINI,1);
+        /* Golden verifies the restored image after reset and must use intact M
+         * when flash changes after an earlier successful source validation. */
+        flash[MB_APPLETINI_OFFSET+0x1000U]^=1U;
+        assert(mb_slot_verify(&device,MB_PRODUCT_APPLETINI,NULL)!=MB_OK);
+        expect(MB_PRODUCT_APPLETINI,MB_PRODUCT_MULTITINI,0);
+        printf("PASS: restored original v1 %s, bytes %lu, CRC32 %08x; exact bytes, legacy record, one-shot A, saved M and corruption fallback\n",
+               argv[i],(unsigned long)n,image_crc);
+        free(p);
+    }
+    return 0;
+}
 int main(int argc,char **argv)
 {
     device.context=NULL; device.read=nor_read; device.erase=nor_erase;
     device.program=nor_program; device.capacity=MB_FLASH_SIZE;
-    if(argc>1) return !strcmp(argv[1],"--golden") ? check_golden_files(argc,argv) : check_files(argc,argv);
+    if(argc>1) {
+        if(!strcmp(argv[1],"--restore")) return restore_files(argc,argv,0);
+        if(!strcmp(argv[1],"--reject-restore")) return restore_files(argc,argv,1);
+        return !strcmp(argv[1],"--golden") ? check_golden_files(argc,argv) : check_files(argc,argv);
+    }
     make_image(app,PAYLOAD,MB_PRODUCT_APPLETINI,2,0);
     make_image(multi,PAYLOAD,MB_PRODUCT_MULTITINI,2,0);
     make_image(legacy,PAYLOAD,0,2,0); make_image(golden,PAYLOAD,0,1,1);
-    selectors(); migrations(); adopted_defaults(); advisory_probes();
+    selectors(); migrations(); adopted_defaults(); advisory_probes(); restorations(); restoration_faults();
     faults(MB_PRODUCT_APPLETINI,0); faults(MB_PRODUCT_MULTITINI,0);
     faults(MB_PRODUCT_MULTITINI,1); adoption_faults(); choice_faults(); prepared_requests(); golden_versions();
     puts("PASS: multiboot live validation and power-failure invariants"); return 0;

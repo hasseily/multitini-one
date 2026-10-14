@@ -12,6 +12,8 @@ MARKERS = (
     b"MULTITINI-MULTIBOOT-V1",
     b"APPLETINI-MULTIBOOT-GOLDEN-V1",
     b"APPLETINI-GOLDEN-RECOVERY-V1",
+    b"Firmware image: Firmware F",
+    b"\r\nAppletini control UART\r\n",
 )
 
 

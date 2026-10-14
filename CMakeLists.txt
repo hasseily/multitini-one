@@ -132,6 +132,9 @@ add_test(NAME multiboot_manifest COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_SOURCE_DIR}/tests/test_multiboot_manifest.py)
 add_test(NAME multiboot_switch COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_SOURCE_DIR}/tests/test_multiboot_switch.py)
+add_test(NAME golden_serial_selection COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/test_golden_serial_selection.py)
+set_tests_properties(golden_serial_selection PROPERTIES ENVIRONMENT "CC=${CMAKE_C_COMPILER}")
 add_test(NAME multiboot_bundle COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_SOURCE_DIR}/tests/test_multiboot_bundle.py)
 add_test(NAME multiboot_status_cache COMMAND ${Python3_EXECUTABLE}

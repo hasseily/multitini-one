@@ -1,6 +1,6 @@
 # Appletini and Multitini multiboot
 
-Branch `multiboot` in each repository adds shared Golden B2.0.5 and two firmware
+Branch `multiboot` in each repository adds shared Golden B2.0.6 and two firmware
 slots. Multitini firmware is M0.2.3; Appletini firmware is F1.3.0-dev10. These are
 development builds. Board validation is pending. No FPGA image changes are
 required: the packages retain their selected supervisor, machine and Appletini
@@ -75,12 +75,60 @@ successful update in scan order wins. `BOOT.BIN` still requires the explicit
 `:selfupdate` procedure above. A failed file is not retried during that pass;
 leave it in place and enter Golden again after resolving the failure.
 
-An old version 1 firmware file remains usable as a boot fallback. The new
-updater refuses to install it because it lacks an unambiguous product identity.
+An old generic version 1 firmware file remains usable as a boot fallback.
+B2.0.6 also restores original Appletini F1.1.0 and later packages when their
+loaded frontend identifies Appletini and its supported F version. Other generic
+v1 images remain ineligible for installation. Retain the original manifest,
+CRC and linked recovery marker; filename or footer changes cannot supply an
+Appletini identity.
 The first Multitini-slot update refuses a legacy image that extends beyond the
 new 6 MiB Appletini boundary. Current selected legacy packages fit within that
 boundary. A multiboot firmware refuses a Golden downgrade without the new
 capability marker.
+
+## Restore an older Appletini F
+
+Install B2.0.6 through the current firmware's **Update Golden Boot...** action
+or `:selfupdate` before placing an old F on SD. Golden itself is the only new
+image; the selected F1.3.0-dev10 and M0.2.3 packages are retained.
+
+Put the chosen original F package in SD root as `FIRMWARE.BIN` or
+`FIRMWARE-APPLETINI.BIN`, then reboot through Golden. Golden checks the complete
+Bootgen image, v1 recovery manifest and payload CRC before any write. It also
+checks the Appletini UART and `Firmware image: Firmware F...` version inside
+the loaded frontend, excluding FSBL, FPGA data, padding and footer. F1.1.0 is
+the minimum embedded version, including supported release suffixes. The whole
+image must fit the 6 MiB Appletini slot.
+
+Successful restoration preserves every original image byte, acknowledges the
+closed source as `.OK`, and boots that F through a one-shot request. The saved
+startup choice remains unchanged. Multitini, both Golden copies and user SD
+data remain intact. The existing dual-record transaction and withheld BootROM
+identifier prevent an interrupted write from authorizing an incomplete image.
+Retry the same file after failure; Golden can fall back to verified Multitini
+or remain in its serial recovery monitor.
+
+Keep only the intended Appletini update file on SD. Candidate names are checked
+in the order above; the last successful Appletini installation wins.
+
+The 15 locally archived `../appletini-one/firmwares/*.BIN` images all have recovery markers.
+All 13 files with embedded F versions at least F1.1.0 pass the restoration audit.
+The two TURBO files identify themselves as F1.0.9 and are below this minimum.
+Archives without the recovery manifest or marker are refused.
+
+Older F lacks the multiboot menus. M0.2.3 can retain the legacy record but its
+existing menu probe cannot select original v1 F. In Golden's one-second UART
+window, enter `?` to stay in the monitor, then use `boot appletini` or
+`boot multitini` to choose a verified installed image without running SD
+updates. These commands create one-shot requests and preserve the saved choice.
+Plain `boot` retains normal selection. Legacy Appletini may report its older
+updater metadata diagnostic as unavailable; this does not block startup.
+
+Host tests cover archived bytes, intrinsic version limits, wrong-product and
+misplaced identities, corruption, both slot choices, source acknowledgement,
+and interrupted erase/program/read operations with retry. Golden ARM build and
+package audits do not establish physical-board restoration. No B1 downgrade is
+part of this update.
 
 The historical B1.1.0 and B1.2.0 SD installers copy `FIRMWARE.BIN` verbatim to
 `0x200000`; they do not parse its trailing manifest. A tagged Appletini image

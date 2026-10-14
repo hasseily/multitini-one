@@ -24,6 +24,17 @@ flash and falls back to another verified image if it is absent or invalid.
 Retain the selected FPGA/core images. See [multiboot](docs/MULTIBOOT.md) for
 the layout, migration, update failure handling and board test limits.
 
+Appletini restoration follow-up, 2026-10-14: Golden B2.0.6 accepts original
+recovery-capable manifest-v1 Appletini packages from F1.1.0 onward. Identify the
+version and Appletini UART in the loaded frontend; keep Bootgen bounds, full
+CRC and recovery-marker checks. Restore the original bytes only in the 6 MiB
+Appletini slot, preserving Multitini and the saved startup choice. Commit a
+one-shot Appletini request so the restored F runs immediately. Preserve the
+backward-readable legacy metadata representation. Add Golden UART
+`boot appletini` and `boot multitini` for older menus. Retain F1.3.0-dev10,
+M0.2.3, FSBL, FPGA/core and CPU1 inputs. Native archive and interrupted-write
+tests precede the Golden-only ARM build; board restoration remains untested.
+
 Golden follow-up, 2026-10-13: B2.0.1 checks FIRMWARE.BIN,
 FIRMWARE-APPLETINI.BIN and FIRMWARE-MULTITINI.BIN in one sequential pass.
 The verified image contents choose the destination regardless of filename.
