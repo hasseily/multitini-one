@@ -128,6 +128,21 @@ add_test(NAME image_manifest COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_SOURCE_DIR}/scripts/test_image_manifest.py)
 add_test(NAME usb1_phy_startup COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_SOURCE_DIR}/tests/test_usb1_phy_startup.py)
+add_test(NAME multiboot_manifest COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/test_multiboot_manifest.py)
+add_test(NAME multiboot_switch COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/test_multiboot_switch.py)
+add_test(NAME golden_serial_selection COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/test_golden_serial_selection.py)
+set_tests_properties(golden_serial_selection PROPERTIES ENVIRONMENT "CC=${CMAKE_C_COMPILER}")
+add_test(NAME multiboot_bundle COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/test_multiboot_bundle.py)
+add_test(NAME multiboot_status_cache COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/test_multiboot_status_cache.py)
+set_tests_properties(multiboot_status_cache PROPERTIES ENVIRONMENT "CC=${CMAKE_C_COMPILER}")
+add_test(NAME qspi_performance COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/test_qspi_performance.py)
+set_tests_properties(qspi_performance PROPERTIES ENVIRONMENT "CC=${CMAKE_C_COMPILER}")
 set_tests_properties(usb1_phy_startup PROPERTIES ENVIRONMENT "CC=${CMAKE_C_COMPILER}")
 add_subdirectory(firmware/vectrex32)
 add_library(xilinx_vectrex_services_compile OBJECT
@@ -414,7 +429,8 @@ add_library(golden_compile OBJECT ${GOLDEN_BOOT_SOURCES}
     firmware/golden/lib/qspi_nor.c firmware/golden/lib/uart.c)
 target_include_directories(golden_compile PRIVATE tests/xilinx_stubs)
 add_executable(test_golden_self_update tests/host/test_golden_self_update.c
-    firmware/golden/lib/golden_self_update.c firmware/golden/lib/crc32.c)
+    firmware/golden/lib/golden_self_update.c firmware/golden/lib/crc32.c
+    firmware/golden/lib/multiboot.c)
 target_include_directories(test_golden_self_update PRIVATE
     tests/xilinx_stubs firmware/golden/lib)
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
@@ -426,6 +442,65 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     endif()
 endif()
 add_test(NAME golden_self_update COMMAND test_golden_self_update)
+add_executable(test_multiboot_updater tests/host/test_multiboot_updater.c
+    firmware/golden/bootloader/updater.c firmware/golden/bootloader/updater_layout.c
+    firmware/golden/lib/multiboot.c firmware/golden/lib/crc32.c)
+target_include_directories(test_multiboot_updater PRIVATE tests/xilinx_stubs
+    firmware/golden/lib firmware/golden/bootloader)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(test_multiboot_updater PRIVATE -Wall -Wextra -Werror)
+    if(MULTITINI_SANITIZE)
+        target_compile_options(test_multiboot_updater PRIVATE
+            -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all)
+        target_link_options(test_multiboot_updater PRIVATE -fsanitize=address,undefined)
+    endif()
+endif()
+add_test(NAME multiboot_updater COMMAND test_multiboot_updater)
+add_executable(test_crc32 tests/host/test_crc32.c firmware/golden/lib/crc32.c)
+target_include_directories(test_crc32 PRIVATE firmware/golden/lib)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(test_crc32 PRIVATE -Wall -Wextra -Werror)
+    if(MULTITINI_SANITIZE)
+        target_compile_options(test_crc32 PRIVATE
+            -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all)
+        target_link_options(test_crc32 PRIVATE -fsanitize=address,undefined)
+    endif()
+endif()
+add_test(NAME crc32 COMMAND test_crc32)
+add_library(multiboot_host OBJECT firmware/golden/lib/multiboot.c)
+target_include_directories(multiboot_host PRIVATE firmware/golden/lib)
+add_executable(test_multiboot tests/host/test_multiboot.c
+    $<TARGET_OBJECTS:multiboot_host> firmware/golden/lib/crc32.c)
+target_include_directories(test_multiboot PRIVATE firmware/golden/lib)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_multiboot PRIVATE -Wall -Wextra -Werror)
+    target_compile_options(multiboot_host PRIVATE -Wall -Wextra -Werror)
+    if(MULTITINI_SANITIZE)
+        target_compile_options(test_multiboot PRIVATE
+            -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all)
+        target_compile_options(multiboot_host PRIVATE
+            -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all)
+        target_link_options(test_multiboot PRIVATE -fsanitize=address,undefined)
+    endif()
+endif()
+add_test(NAME multiboot COMMAND test_multiboot)
+add_test(NAME multiboot_marker_identity COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/scripts/test_multiboot_marker_identity.py
+    $<TARGET_OBJECTS:multiboot_host>)
+add_executable(test_video_worker_reset tests/host/test_video_worker_reset.c)
+target_include_directories(test_video_worker_reset PRIVATE firmware/include
+    firmware/platform/xilinx tests/fixtures/video_worker_reset tests/xilinx_stubs)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(test_video_worker_reset PRIVATE -Wall -Wextra -Werror)
+    if(MULTITINI_SANITIZE)
+        target_compile_options(test_video_worker_reset PRIVATE
+            -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all)
+        target_link_options(test_video_worker_reset PRIVATE -fsanitize=address,undefined)
+    endif()
+endif()
+add_test(NAME video_worker_reset COMMAND test_video_worker_reset)
+add_test(NAME video_worker_handoff_order COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/scripts/test_video_worker_handoff_order.py)
 add_executable(test_display tests/host/test_display.c)
 target_link_libraries(test_display PRIVATE multitini_common)
 add_test(NAME display COMMAND test_display)

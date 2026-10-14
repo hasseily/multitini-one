@@ -35,6 +35,10 @@ bool mt_video_worker_collect(uint32_t epoch, void *output, uint32_t capacity,
  * have completed. Poll this before recycling frame pools across PL reload.
  * CPU1 can stay running: its only device-independent activity is this mailbox. */
 bool mt_video_worker_quiesce(void);
+/* Once quiescent, hold CPU1 in reset with its clock stopped before switching
+ * firmware. Returns false while a job is active or control readback fails.
+ * A later start/resume republishes the worker and releases the held CPU. */
+bool mt_video_worker_hold_for_reset(void);
 bool mt_video_worker_resume(void);
 
 #endif

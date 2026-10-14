@@ -142,7 +142,7 @@ for %%I in ("%TMP_RAW%") do if %%~zI LEQ 0 (
     goto :fail_with_rc
 )
 
-python "%~dp0image_manifest.py" append "%TMP_RAW%" "%TMP_OUT%" --role firmware --recovery-capable --max-size 0x00DF0000
+python "%~dp0image_manifest.py" append "%TMP_RAW%" "%TMP_OUT%" --role firmware --recovery-capable --product multitini --max-size 0x007E0000
 if errorlevel 1 goto :fail
 
 del /q "%TMP_RAW%" >nul 2>nul

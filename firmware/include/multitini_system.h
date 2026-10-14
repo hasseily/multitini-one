@@ -7,6 +7,8 @@
 typedef struct {
     uint32_t firmware_build, shell_build, abi;
     const char *firmware_version;
+    const char *golden_version;
+    bool golden_update_present;
     uint64_t uptime_seconds;
     bool temperature_valid;
     int32_t temperature_micro_c;
@@ -19,6 +21,8 @@ typedef struct {
     const char *catalog_status;
     size_t catalog_count, catalog_rejected;
     bool dac_ready, audio_muted;
+    bool multiboot_ready, appletini_present, multitini_present;
+    uint32_t startup_product;
 } mt_system_snapshot_t;
 
 typedef struct {

@@ -17,6 +17,107 @@ core on branch `genesis`, after Appletini parity. See
 
 ## 1. Goal
 
+Scope update, 2026-10-13: branch `multiboot` adds shared Golden B2.0.0,
+Appletini and Multitini firmware slots, a saved power-on choice and explicit
+menu switching in both products. Every boot verifies the selected image in
+flash and falls back to another verified image if it is absent or invalid.
+Retain the selected FPGA/core images. See [multiboot](docs/MULTIBOOT.md) for
+the layout, migration, update failure handling and board test limits.
+
+Appletini restoration follow-up, 2026-10-14: Golden B2.0.6 accepts original
+recovery-capable manifest-v1 Appletini packages from F1.1.0 onward. Identify the
+version and Appletini UART in the loaded frontend; keep Bootgen bounds, full
+CRC and recovery-marker checks. Restore the original bytes only in the 6 MiB
+Appletini slot, preserving Multitini and the saved startup choice. Commit a
+one-shot Appletini request so the restored F runs immediately. Preserve the
+backward-readable legacy metadata representation. Add Golden UART
+`boot appletini` and `boot multitini` for older menus. Retain F1.3.0-dev10,
+M0.2.3, FSBL, FPGA/core and CPU1 inputs. Native archive and interrupted-write
+tests precede the Golden-only ARM build; board restoration remains untested.
+
+Golden follow-up, 2026-10-13: B2.0.1 checks FIRMWARE.BIN,
+FIRMWARE-APPLETINI.BIN and FIRMWARE-MULTITINI.BIN in one sequential pass.
+The verified image contents choose the destination regardless of filename.
+Successful closed updates replace .BIN with .OK; rejected files stay for retry.
+
+Appletini startup follow-up, 2026-10-13: the owner reports F1.3.0-dev stopping
+after the SMARTPORT handoff on an Apple //e with Golden 1.x. F1.3.0-dev2 restores
+the established CPU1 cold wake and reserves an independently checked 64 KiB ARM
+stack. Retain the exact selected FPGA, FSBL and CPU1 inputs. The firmware-first
+migration remains the target; replacement board validation is pending.
+
+About update follow-up, 2026-10-13: the owner confirms F1.3.0-dev2 boots with
+Golden 1.x. F1.3.0-dev3 reports the installed Golden version and adds an explicit
+About-tab Golden update action when BOOT.BIN exists. M0.2.1 adds the matching
+System action. Both use Cancel-default confirmation and the existing trial
+staging/repair process. B2.0.2 reserves a checked 64 KiB Golden stack. Retain all
+selected FPGA/core images. Actual menu-driven Golden update remains untested.
+
+Golden menu correction, 2026-10-13: the owner confirms F1.3.0-dev3 reads installed
+B1.2.0 but its update times out on the obsolete DMA-hold interface. F1.3.0-dev4
+uses the retained FPGA's existing Apple RESET control with checked readback and
+physical status, and reserves the real PS-DMA port before flash access. Permit
+the update from the initial physical boot menu only; disable it after handoff.
+Standalone ONE//e remains eligible. Retain M0.2.1, B2.0.2 and all FPGA/core inputs.
+The replacement menu-driven update still needs the owner's board test.
+
+Multiboot handoff correction, 2026-10-13: the owner reports B2.0.2 and M0.2.1
+installation followed by unexpected M startup, slow System entry and SD unmount
+failure. B2.0.3 preserves the verified existing tagged startup choice on first
+metadata adoption. M0.2.2 fixes FatFs detach option 0 and holds CPU1 only after
+fallible handoff checks. M and F1.3.0-dev5 use bounded advisory menu probes and
+a once-verified Golden cache; actual boot actions still validate full live images.
+Retain all selected FPGA/core, FSBL and CPU1 inputs. Runtime switching needs a
+replacement board test; existing saved M startup choice requires one explicit edit.
+
+Golden completion follow-up, 2026-10-13: the owner confirms the previous bundle
+works and requests `BOOT.BIN` acknowledgement as `BOOT.OK`. B2.0.4 acknowledges
+only a closed source whose complete bytes match live verified primary Golden,
+after trial repair, with primary-boot retry. Filesystem failures do not undo
+verified flash or block boot. Retain M0.2.2, F1.3.0-dev5 and all hardware inputs.
+
+Switch performance follow-up, 2026-10-13: M0.2.3, F1.3.0-dev6 and B2.0.5 remove
+duplicate full scans within switch preparation and Golden selection. The owner
+chooses target payload validation after reset in Golden, with fallback; the
+running firmware verifies Golden and probes the target before saving its request.
+Keep full validation when first adopting metadata. Use a constant CRC
+table and 4 KiB flash reads, with qualified quad I/O and conservative fallback.
+Keep Golden's one-second serial recovery window. Retain every selected FPGA,
+core, FSBL and CPU1 input. Native validation and ARM builds precede board timing.
+
+Metadata diagnostic follow-up, 2026-10-13: the owner reports faster switching,
+but Appletini warns that boot metadata is invalid. F1.3.0-dev7 recognizes
+the two CRC-protected multiboot records and the original FF0000 legacy record,
+without accepting read failures or writing metadata. Keep actual Golden version
+display independent of this diagnostic. Retain M0.2.3, B2.0.5 and all hardware
+inputs exactly. Only Appletini needs rebuilding; board HUD confirmation is pending.
+
+Power help and screenshot follow-up, 2026-10-13: the owner clarifies that
+Multitini inside an Apple //e uses host 5V without the standalone jumper. The
+jumper supplies 5V only outside the Apple for ONE//e or Multitini. F1.3.0-dev8
+corrects Boot help and captures the full output with its completed-slot FPGA
+mask and geometry, preserving existing software effects and raw A2 captures.
+Use larger bounded PNG batches while retaining close/remount and cleanup safety.
+Retain M0.2.3, B2.0.5, FPGA/core, FSBL and CPU1 inputs. Native and retained-RTL
+checks precede board screenshot timing and display comparison.
+
+Saved vTW startup follow-up, 2026-10-13: F1.3.0-dev9 holds the physical //e
+identification return through a firmware C8 patch, starts vTW before the first
+prompt/menu, then applies its saved speed at handoff without another reset.
+Keep initial ROM menu timing at 1 MHz and restore Disk II after CORE_RUN echoes.
+ONE//e must release the native hold and publish menu PAUSE before its first run.
+The reported bezel-only readings showed ONE//e disabled. Retain all FPGA/core,
+FSBL, CPU1, M0.2.3 and B2.0.5 inputs. Require native ROM/runtime fault checks and
+the owner's first-boot/menu-exit test before claiming board behavior.
+
+Slowdown preset follow-up, 2026-10-14: add 32, 64 and 128 cycles to Appletini's
+menu in F1.3.0-dev10, retaining its 512-cycle default and qualified FPGA inputs.
+The owner isolates a TURBO Speed Race penalty to enabled Disk II slot 6.
+Idle classic-cycle replay in the retained HDL gates CPU progress; the existing
+Disable DiskII Acceleration setting provides a normal 1 MHz disk-path workaround.
+An accelerated idle-path optimization is separate FPGA work. Retain M0.2.3 and
+B2.0.5 exactly and keep the slowdown preset update in ARM firmware.
+
 Firmware release, 2026-10-12: name Multitini firmware releases with an `M`
 prefix, starting at `M0.1.0`. Add a shared controller menu gesture: hold
 Select and Start together for 500 ms. Preserve ordinary solo game presses,
@@ -42,7 +143,8 @@ separate diagnostic step with retained PHO4 hardware. See
 [the PHO5 scope](docs/PHOSPHOR_PHOS5.md).
 
 Use the Appletini ONE card as a stand-alone FPGA computer, outside an Apple II.
-Assume the board's 5 V jumper fix is present. Build one common system that can
+Use the board's 5 V jumper for power outside the Apple. Multitini installed in
+an Apple //e gets 5 V from the host without that jumper. Build one system that can
 load machine cores, start with the GPL MiSTer C64 core, and then use the same
 work for other cores whose licenses allow sale with the hardware.
 
@@ -69,7 +171,8 @@ more machine cores. Do not let those delay the first working C64.
 
 - The card runs without an Apple II and must boot, take input, show video, and
   play sound on its own.
-- The 5 V supply issue has been fixed with the intended jumper.
+- The intended jumper supplies 5 V for standalone use outside the Apple.
+  Installed in an Apple //e, Multitini uses host 5 V without that jumper.
 - The Apple II bus has no role in the first Multitini image. Hold all Apple bus
   outputs in safe idle states. Do not depend on Apple clocks or reset.
 - The hardware will be sold. Core source and all Multitini firmware source will

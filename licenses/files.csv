@@ -438,3 +438,7 @@ hdl/sim/tb_video_effects_control.sv,Multitini One,,GPL-3.0-only,sim-tested,Origi
 scripts/test_video_effects_control.py,Multitini One,,GPL-3.0-only,sim-tested,Original firmware-table generation and real-register effect pipeline integration harness
 hdl/sim/tb_physical_splash.sv,Multitini One,,GPL-3.0-only,sim-tested,Original independent DE-derived standby pixel and visible ink oracle with the production effects path
 scripts/test_physical_splash.py,Multitini One,,GPL-3.0-only,sim-tested,Original physical raster simulation and archived renderer regression harness with selected source hashes
+firmware/golden/lib/multiboot.c,Appletini One and Multitini One,,GPL-3.0-only,host-tested,Shared live image validation and transactional dual firmware selection; board validation pending
+firmware/golden/lib/multiboot.h,Appletini One and Multitini One,,GPL-3.0-only,host-tested,Shared live image validation and transactional dual firmware selection; board validation pending
+firmware/golden/lib/multiboot_platform.c,Appletini One and Multitini One,,GPL-3.0-only,host-tested,Shared live image validation and transactional dual firmware selection; board validation pending
+firmware/golden/lib/multiboot_platform.h,Appletini One and Multitini One,,GPL-3.0-only,host-tested,Shared live image validation and transactional dual firmware selection; board validation pending

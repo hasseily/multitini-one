@@ -16,7 +16,7 @@
 #define MT_MENU_MAX_CORES 16U
 #define MT_MENU_FILE_NAME_MAX 96U
 #define MT_MENU_MAX_CORE_OPTIONS 8U
-#define MT_MENU_MAX_ITEMS 16U
+#define MT_MENU_MAX_ITEMS 20U
 #define MT_MENU_MAX_EFFECT_ITEMS 32U
 /* Reserved cookie flags; ordinary file and D64 cookies retain their values. */
 #define MT_MENU_FILE_DIRECTORY UINT32_C(0x80000000)
@@ -72,7 +72,10 @@ typedef enum {
     MT_MENU_ACTION_EDIT_GAMEPADS,
     MT_MENU_ACTION_SET_GAMEPADS,
     MT_MENU_ACTION_SET_DISPLAY_MODE,
-    MT_MENU_ACTION_SET_VIDEO_MULTIPLIER
+    MT_MENU_ACTION_SET_VIDEO_MULTIPLIER,
+    MT_MENU_ACTION_SET_BOOT_DEFAULT,
+    MT_MENU_ACTION_SWITCH_FIRMWARE,
+    MT_MENU_ACTION_UPDATE_GOLDEN
 } mt_menu_action_kind_t;
 
 typedef enum {
@@ -196,6 +199,8 @@ typedef struct {
     bool clock_edit;
     size_t clock_field;
     mt_clock_time_t clock;
+    bool golden_update_confirm;
+    bool golden_update_accept;
 } mt_menu_t;
 
 enum {
