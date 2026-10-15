@@ -1,17 +1,18 @@
 # Apple IIgs hardware test
 
-Install the complete `build/firmware-core-gs3/sd/` contents, preserving existing
+Install the complete `build/firmware-core-gs-m052/sd/` contents, preserving existing
 media and settings. Update Multitini with its included `FIRMWARE.BIN` using
 Golden B2. The matching supervisor and FSBL enable the new HP3 source video
 port. Load the new IIgs core only after installing the matching firmware.
 This package does not itself flash or test the board.
 
-The M0.4.0 follow-up changes IIgs CPU clocking and the SHR pixel fetch. Its
-new image passes routed timing with `+0.040 ns` setup, `+0.049 ns` hold and
-`+1.250 ns` pulse-width margin. The package includes its exact source capture,
-physical-repair and constraint-replay receipts, and final reports. Use the
-included `SHA256SUMS.txt` to identify the installed files. Complete stock-speed
-and accelerated board checks before recording physical acceptance.
+M0.5.2 corrects RTC control writes at `$C034` and fetches the native interrupt
+dispatch ROM bytes at `$C071–$C07F` before committing those I/O cycles. Both
+faults occur at stock speed. It also adds the raw floppy formats below.
+The IWM corrections preserve fractional-timer carry and byte-latch expiry.
+The package includes exact source captures, implementation receipts and final
+reports. Use its `SHA256SUMS.txt` to identify the installed files. Complete
+stock-speed and accelerated board checks before recording physical acceptance.
 
 ## User ROMs
 
@@ -59,9 +60,15 @@ cold reset. Command/OpenApple uses Alt; Option/SolidApple uses the Windows key.
    several nested media folders, return to their parent with Back, and mount
    two images with the same basename in different folders. Confirm remembered
    full relative paths and recovery journals survive restart.
-2. Mount matching WOZ2 media in the 3.5-inch and 5.25-inch drive. Check seeks,
-   side selection, write protection and writes. Eject before removing power.
-   Preserve journal files if an interrupted write requires recovery.
+2. Mount an 800 KiB PO and an 800 KiB ProDOS 2MG in the 3.5-inch drive; mount
+   a 140 KiB DOS-order DSK in the 5.25-inch drive. Also test native matching
+   WOZ2 media in both drives. For a standalone floppy boot, eject the HDDs and
+   the other floppy, mount the boot image and cold-reset. Let drive
+   initialization finish. Check boot, seeks, side selection, write
+   protection and write/read-back. Compare sector payloads after eject and
+   re-mount; check 2MG headers and trailing bytes remain intact. Eject before
+   removing power. Preserve `.gsraw` sidecars and other journal files if an
+   interrupted write requires recovery. NIB is not supported.
 3. Check the ROM control panel, save PRAM, power cycle and verify restoration
    separately with ROM1 and ROM3. The first unsaved PRAM starts invalid so
    the user's ROM installs defaults.

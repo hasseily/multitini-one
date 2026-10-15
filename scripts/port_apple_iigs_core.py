@@ -91,8 +91,11 @@ assign cpu_local_read = IO && !we && zip_unlocked && (addr_bef[7:3]==5'b01011);
 assign cpu_local_data = zip_rdata;
 // External slot registers/ROMs are native peripherals even when an MMU ROM
 // enable overlaps their address. Shadow RAM writes still update main memory.
+// Native IRQ dispatch at C071-C07F returns mapped system ROM through din.
+// Its IO cycle still needs a memory lookup before the native commit.
+wire cpu_irq_dispatch_read = IO && !we && addr_bef[15:0]>=16'hc071 && addr_bef[15:0]<=16'hc07f;
 assign cpu_memory_cycle = cpu_valid && (fastram_ce || (rom_ce && !we)) &&
-    (hdd_dma || (!IO && !EXTERNAL_IO && !(|device_select) && !(|io_select) && !slot_ce));
+    (hdd_dma || ((!IO || cpu_irq_dispatch_read) && !EXTERNAL_IO && !(|device_select) && !(|io_select) && !slot_ce));
 // Use the current MMU classification, not CLK14's delayed slowMem register:
 // shadow writes, slot/IO and slow-RAM accesses always take the native bridge.
 assign cpu_fast_cycle = !hdd_dma && (!valid || cpu_local_read ||
@@ -147,7 +150,8 @@ assign cpu_fast_cycle = !hdd_dma && (!valid || cpu_local_read ||
       addr_bef[7:0]==8'h26 || addr_bef[7:0]==8'h27 || addr_bef[7:0]==8'h70);
   wire adb_strobe_mux = EXTERNAL_CPU ? ((adb_read || adb_write_now) && bus_phi2)
       : ((adb_read | adb_strobe) & ~mem_stall);
-  wire native_prtc_sel = IO && (addr_bef[7:1]==7'h19);
+  // The RTC data/control pair crosses a two-byte decode boundary.
+  wire native_prtc_sel = IO && (addr_bef[7:0]==8'h33 || addr_bef[7:0]==8'h34);
   wire native_scc_sel = IO && (addr_bef[7:2]==6'h0E);
   wire native_snd_sel = IO && (addr_bef[7:2]==6'h0F);
   wire [7:0] snd_read_peek;""")
@@ -506,6 +510,29 @@ def add_cpu_peek_zipgs(text: str) -> str:
     return text[:a]+new+text[b:]
 
 
+def generate_flux_drive() -> str:
+    text = upstream("rtl/flux_drive.v")
+    text = replace(text, "module flux_drive (\n", NOTICE + "module flux_drive (\n")
+    # Fractions remain below 1000; their sum with a step needs eleven bits.
+    text = replace(text, "task automatic load_bit_timers;\n        reg [9:0] tmp;",
+                   "task automatic load_bit_timers;\n        reg [10:0] tmp;")
+    return normalize(text)
+
+
+def generate_iwm_flux() -> str:
+    text = upstream("rtl/iwm_flux.v")
+    text = replace(text, "module iwm_flux (\n", NOTICE + "module iwm_flux (\n")
+    for task in ("load_full_window", "load_half_window"):
+        text = replace(text, "task automatic " + task + ";\n        reg [9:0] tmp;",
+                       "task automatic " + task + ";\n        reg [10:0] tmp;")
+    # Debug logging must not enable the functional unread-byte countdown.
+    text = replace(text, "flux_edge_log_count <= flux_edge_log_count + 1'd1;\n            end\n\n            // Latch mode hold counter",
+                   "flux_edge_log_count <= flux_edge_log_count + 1'd1;\n            end\n`endif\n\n            // Latch mode hold counter")
+    text = replace(text, "\n            end\n`endif\n\n            // Latch flux edges that arrive in EDGE_1",
+                   "\n            end\n\n            // Latch flux edges that arrive in EDGE_1")
+    return normalize(text)
+
+
 def outputs() -> dict[str, str]:
     return {"iigs.sv": generate_iigs(), "vgc.sv": generate_vgc(), "adb.sv": generate_adb(),
             "hdd.sv": generate_hdd(), "prtc.sv": generate_prtc(), "bram.sv": generate_bram(),
@@ -513,7 +540,8 @@ def outputs() -> dict[str, str]:
             "woz_floppy_controller.sv": generate_woz(), "iir_filter.sv": generate_iir(),
             "es5503.sv": generate_es5503(), "rxuart.sv": generate_uart("rxuart"), "txuart.sv": generate_uart("txuart"),
             "P65C816.sv": generate_cpu(), "mcode.sv": generate_mcode(),
-            "zipgs_regs.sv": generate_zipgs(), "sound.sv": generate_sound(), "soundglu.sv": generate_soundglu()}
+            "zipgs_regs.sv": generate_zipgs(), "sound.sv": generate_sound(), "soundglu.sv": generate_soundglu(),
+            "flux_drive.sv": generate_flux_drive(), "iwm_flux.sv": generate_iwm_flux()}
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)

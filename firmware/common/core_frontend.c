@@ -223,7 +223,9 @@ static void build_iigs(mt_core_frontend_t *frontend,
     for(unsigned d=0U;d<MT_IIGS_DRIVE_COUNT;++d) {
         const char *name=state->iigs_drive_name[d];
         frontend->media_items[view->media_item_count++]=item(labels[d],name!=NULL ? name:"Choose disk...",
-            name!=NULL ? "Flush writes and eject this disk.":d<2U ? "Mount HDV, ProDOS-order PO or ProDOS 2MG (up to 32 MiB).":"Mount a WOZ2 image of this drive's disk type.",
+            name!=NULL ? "Flush writes and eject this disk.":d<2U ? "Mount HDV, ProDOS-order PO or ProDOS 2MG (up to 32 MiB).":
+                d==2U ? "Mount an 800 KiB PO or 2MG, or a 3.5-inch WOZ2.":
+                "Mount a 140 KiB DOS-order DSK, or a 5.25-inch WOZ2.",
             name!=NULL ? MT_MENU_ACTION_EJECT_IIGS_DRIVE:MT_MENU_ACTION_BROWSE_IIGS_DRIVE,d,true,name!=NULL ? MT_UI_COLOR_SUCCESS:MT_UI_COLOR_BLUE);
     }
     frontend->media_items[view->media_item_count++]=item("System ROMs",state->iigs_ready ? "Loaded":"Load / retry...",
@@ -292,7 +294,7 @@ static const core_profile_t profiles[] = {
     {
         MT_IIGS_CORE_ID, "Apple IIgs",
         "USB keyboard, mouse and analog gamepad; F12 opens the menu.",
-        {0U, CONTENT_MASK(MT_CONTENT_IIGS_HDD)|CONTENT_MASK(MT_CONTENT_IIGS_WOZ),0U,0U,0U},
+        {0U, CONTENT_MASK(MT_CONTENT_IIGS_HDD)|CONTENT_MASK(MT_CONTENT_IIGS_WOZ)|CONTENT_MASK(MT_CONTENT_IIGS_FLOPPY),0U,0U,0U},
         false, build_iigs
     }
 };
@@ -360,8 +362,11 @@ bool mt_core_frontend_browser_folders(uint32_t core_id, mt_menu_browser_t browse
 bool mt_core_frontend_accepts_drive_content(uint32_t core_id, mt_menu_browser_t browser,
                                            unsigned drive, mt_content_type_t type)
 {
-    if(core_id==MT_IIGS_CORE_ID && browser==MT_MENU_BROWSER_DRIVE8)
-        return drive<MT_IIGS_DRIVE_COUNT && (drive<2U ?
-            type==MT_CONTENT_IIGS_HDD:type==MT_CONTENT_IIGS_WOZ);
+    if(core_id==MT_IIGS_CORE_ID && browser==MT_MENU_BROWSER_DRIVE8) {
+        if(drive>=MT_IIGS_DRIVE_COUNT) return false;
+        if(drive<2U) return type==MT_CONTENT_IIGS_HDD;
+        return type==MT_CONTENT_IIGS_WOZ ||
+            (drive==2U ? type==MT_CONTENT_IIGS_HDD:type==MT_CONTENT_IIGS_FLOPPY);
+    }
     return mt_core_frontend_accepts_content(core_id,browser,type);
 }

@@ -19,14 +19,16 @@ static const struct { const char *name; size_t size; uint8_t kind; } rom_files[R
 static unsigned rom_reads[32],rom_streams[32],rom_read_count,rom_stream_count;
 static int failed_rom;
 static mt_sd_status_t rom_failure_status;
-typedef struct { char path[256]; uint8_t data[4096]; size_t size; bool present; } test_file_t;
+typedef struct { char path[256]; uint8_t data[819456]; size_t size; bool present; } test_file_t;
 struct mt_sd_file { test_file_t *file; size_t position; bool open; };
 static test_file_t files[FILES]; static struct mt_sd_file handles[FILES];
 static uint32_t regs[1024], generations[5], mount_sizes[5];
 static uint8_t stream_kind, stream_data[512]; static unsigned stream_index,reverse_index;
+static const uint8_t *reverse_data;
 static uint8_t config_stream[MT_IIGS_CONFIG_BYTES];
 static uint32_t completions,completion_status; static bool fail_disk_write,fail_journal,deny_writes,early_last;
 static unsigned journal_writes,disk_writes,events; static bool journal_durable;
+static unsigned raw_snapshots;
 static uint8_t dirty_drives;
 static bool pram_eject_write,eject_pending_test;
 static unsigned pram_load_packets,warm_reset_packets,pram_load_complete_event,warm_reset_event,recovery_calls;
@@ -50,6 +52,7 @@ mt_sd_result_t mt_sd_storage_journal_replace(const char *p,const char *j,const u
     test_file_t *f=file_find(p,true); assert(f!=NULL && n<=sizeof(f->data));
     memcpy(f->data,b,n); f->size=n;
     if(strstr(p,".gsj")!=NULL) { ++journal_writes; journal_durable=true; ++events; }
+    if(strstr(p,".gsraw")!=NULL) { ++raw_snapshots; ++events; }
     return result(MT_SD_OK,n);
 }
 mt_sd_result_t mt_sd_storage_read_file_optional_exact(const char *p,uint8_t *b,size_t n,bool *found)
@@ -107,7 +110,7 @@ static uint32_t read_reg(void *c,uint32_t o)
     if(o==MT_REG_MEDIA_DATA) {
         if(reverse_index>=512U)return 0U;
         const unsigned i=reverse_index++;
-        return MT_MEDIA_DATA_VALID|((uint32_t)(uint8_t)(i+0x31U)<<MT_MEDIA_DATA_BYTE_SHIFT)|
+        return MT_MEDIA_DATA_VALID|((uint32_t)(reverse_data==NULL ? (uint8_t)(i+0x31U):reverse_data[i])<<MT_MEDIA_DATA_BYTE_SHIFT)|
             ((i==511U || (early_last && i==10U)) ? MT_MEDIA_DATA_LAST:0U);
     }
     return regs[o/4U];
@@ -189,6 +192,7 @@ static void reset(void)
     failed_rom=-1;rom_failure_status=MT_SD_OPEN_FAILED;rom_read_count=rom_stream_count=0U;
     pram_load_packets=warm_reset_packets=pram_load_complete_event=warm_reset_event=recovery_calls=0U;
     journal_writes=disk_writes=events=completions=0U; journal_durable=false;dirty_drives=0U;
+    raw_snapshots=0U;reverse_data=NULL;
     regs[MT_REG_ABI_VERSION/4U]=MT_ABI_VERSION;
     regs[MT_REG_STREAM_STATUS/4U]=MT_STREAM_STATUS_READY|MT_STREAM_STATUS_DRAINED;
     regs[MT_REG_STATUS/4U]=MT_STATUS_CORE_READY;
@@ -319,8 +323,161 @@ static void test_nested_media_paths(void)
         assert(iigs_content_service_name(0U)==NULL);
     }
 }
+static uint8_t raw_source[MT_IIGS_FLOPPY_RAW_TRACK_BYTES],raw_changed[MT_IIGS_FLOPPY_RAW_TRACK_BYTES];
+static uint8_t encoded[MT_IIGS_FLOPPY_TRACK_BYTES];
+static test_file_t *raw_disk(const char *name,uint8_t format,unsigned offset)
+{
+    test_file_t *f=disk(name);
+    const unsigned size=format==MT_IIGS_RAW_DOS525 ? 143360U:819200U;
+    f->size=size+offset+(offset==0U ? 0U:24U);
+    for(unsigned i=0U;i<f->size;++i)f->data[i]=(uint8_t)(i*31U+(i>>9U)*17U);
+    if(offset!=0U) {
+        memset(f->data,0,64U);memcpy(f->data,"2IMG",4U);f->data[8]=64U;f->data[10]=1U;
+        store32(f->data+12U,1U);store32(f->data+20U,size/512U);
+        store32(f->data+24U,offset);store32(f->data+28U,size);
+    }
+    return f;
+}
+static void raw_prepare(test_file_t *f,uint8_t format,unsigned track,unsigned offset)
+{
+    mt_iigs_floppy_track_t t;assert(mt_iigs_floppy_track(format,track,&t));
+    memcpy(raw_source,f->data+offset+t.raw_offset,t.raw_bytes);
+    memcpy(raw_changed,raw_source,t.raw_bytes);
+    for(unsigned i=0U;i<t.raw_bytes;++i)raw_changed[i]^=(uint8_t)(i*13U+0x61U);
+    assert(mt_iigs_floppy_encode(format,track,raw_changed,encoded));
+}
+static void raw_send(unsigned slot,const mt_iigs_floppy_track_t *t,unsigned block)
+{
+    reverse_data=encoded+block*512U;request(slot,t->first_block+block,true);iigs_content_service_poll();
+}
+static void simulate_power_cut(void)
+{
+    memset(handles,0,sizeof(handles));memset(regs,0,sizeof(regs));
+    regs[MT_REG_ABI_VERSION/4U]=MT_ABI_VERSION;
+    regs[MT_REG_STREAM_STATUS/4U]=MT_STREAM_STATUS_READY|MT_STREAM_STATUS_DRAINED;
+    regs[MT_REG_STATUS/4U]=MT_STATUS_CORE_READY;
+    fail_disk_write=fail_journal=false;
+    iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
+}
+static void test_raw_floppy_transport(void)
+{
+    const uint8_t formats[]={MT_IIGS_RAW_DOS525,MT_IIGS_RAW_PRODOS35,MT_IIGS_RAW_PRODOS35};
+    const char *const names[]={"Games/DOS.dsk","Games/Sony.po","Games/Sony.2mg"};
+    for(unsigned test=0U;test<3U;++test) {
+        const unsigned slot=test==0U ? 3U:2U,offset=test==2U ? 128U:0U;
+        const uint8_t format=formats[test];
+        reset();test_file_t *f=raw_disk(names[test],format,offset);
+        if(test==2U)store32(f->data+28U,0U); /* Preserve the WOOF header variant. */
+        uint8_t container[128],tail[24];
+        if(offset!=0U) { memcpy(container,f->data,offset);memcpy(tail,f->data+f->size-24U,24U); }
+        assert(iigs_content_service_mount(slot,names[test])==0);
+        assert(mount_sizes[slot]==mt_iigs_floppy_woz_size(format));
+        request(slot,0U,false);iigs_content_service_poll();
+        assert(completion_status==MT_RESPONSE_OK && memcmp(stream_data,"WOZ2",4U)==0);
+        assert(stream_data[21]==(slot==2U ? 2U:1U));
+        const unsigned track=test==0U ? 17U:137U;
+        mt_iigs_floppy_track_t t;assert(mt_iigs_floppy_track(format,track,&t));
+        raw_prepare(f,format,track,offset);
+        uint8_t original_bits[MT_IIGS_FLOPPY_TRACK_BYTES];
+        assert(mt_iigs_floppy_encode(format,track,raw_source,original_bits));
+        for(unsigned block=0U;block<t.block_count;++block) {
+            request(slot,t.first_block+block,false);iigs_content_service_poll();
+            assert(completion_status==MT_RESPONSE_OK && memcmp(stream_data,original_bits+block*512U,512U)==0);
+        }
+        for(unsigned block=0U;block<t.block_count;++block) {
+            raw_send(slot,&t,block);assert(completion_status==MT_RESPONSE_OK);
+            assert(raw_snapshots==block+1U);
+            if(block+1U<t.block_count)assert(disk_writes==0U && memcmp(f->data+offset+t.raw_offset,raw_source,t.raw_bytes)==0);
+        }
+        assert(disk_writes==t.raw_bytes/512U && memcmp(f->data+offset+t.raw_offset,raw_changed,t.raw_bytes)==0);
+        char sidecar[256];(void)snprintf(sidecar,sizeof(sidecar),TEST_MEDIA_ROOT "/%s.gsraw",names[test]);
+        assert(file_find(sidecar,false)==NULL);
+        if(offset!=0U)assert(memcmp(container,f->data,offset)==0 && memcmp(tail,f->data+f->size-24U,24U)==0);
+        assert(iigs_content_service_eject(slot)==0);
+        assert(iigs_content_service_mount(slot,names[test])==0);
+        request(slot,t.first_block,false);iigs_content_service_poll();
+        assert(completion_status==MT_RESPONSE_OK && memcmp(stream_data,encoded,512U)==0);
+    }
+}
+static void test_raw_floppy_recovery(void)
+{
+    reset();test_file_t *live=raw_disk("live.2mg",MT_IIGS_RAW_PRODOS35,64U);
+    assert(iigs_content_service_mount(2U,"live.2mg")==0);
+    mt_iigs_floppy_track_t live_track;assert(mt_iigs_floppy_track(MT_IIGS_RAW_PRODOS35,0U,&live_track));
+    raw_prepare(live,MT_IIGS_RAW_PRODOS35,0U,64U);
+    for(unsigned i=0U;i<live_track.block_count;++i) {
+        if(i+1U==live_track.block_count)fail_disk_write=true;
+        raw_send(2U,&live_track,i);
+    }
+    assert(completion_status==MT_RESPONSE_IO_ERROR && reverse_index==512U);
+    fail_disk_write=false;
+    /* Raw commit reused the sector scratch buffer. Retry must restore the
+     * original final bitstream block rather than replay that scratch data. */
+    assert(iigs_content_service_retry()==0 && completion_status==MT_RESPONSE_OK && reverse_index==512U);
+    assert(memcmp(live->data+64U,raw_changed,live_track.raw_bytes)==0);
+
+    reset();test_file_t *f=raw_disk("retry.po",MT_IIGS_RAW_PRODOS35,0U);
+    assert(iigs_content_service_mount(2U,"retry.po")==0);
+    mt_iigs_floppy_track_t t;assert(mt_iigs_floppy_track(MT_IIGS_RAW_PRODOS35,0U,&t));
+    raw_prepare(f,MT_IIGS_RAW_PRODOS35,0U,0U);
+    fail_journal=true;raw_send(2U,&t,0U);
+    assert(completion_status==MT_RESPONSE_IO_ERROR && disk_writes==0U && raw_snapshots==0U);
+    fail_journal=false;assert(iigs_content_service_retry()==0 && completion_status==MT_RESPONSE_OK && reverse_index==512U);
+    for(unsigned i=1U;i<t.block_count;++i) {
+        if(i+1U==t.block_count)fail_disk_write=true;
+        raw_send(2U,&t,i);
+    }
+    assert(completion_status==MT_RESPONSE_IO_ERROR);
+    assert(file_find(TEST_MEDIA_ROOT "/retry.po.gsraw",false)!=NULL && file_find(TEST_MEDIA_ROOT "/retry.po.gsj",false)!=NULL);
+    /* Both the partially written raw sector and remaining track sectors are
+     * replayed after RAM state and the old transport FIFO disappear. */
+    simulate_power_cut();assert(iigs_content_service_mount(2U,"retry.po")==0);
+    assert(memcmp(f->data,raw_changed,t.raw_bytes)==0);
+    assert(file_find(TEST_MEDIA_ROOT "/retry.po.gsraw",false)==NULL && file_find(TEST_MEDIA_ROOT "/retry.po.gsj",false)==NULL);
+
+    reset();f=raw_disk("short.dsk",MT_IIGS_RAW_DOS525,0U);
+    assert(iigs_content_service_mount(3U,"short.dsk")==0);
+    assert(mt_iigs_floppy_track(MT_IIGS_RAW_DOS525,0U,&t));raw_prepare(f,MT_IIGS_RAW_DOS525,0U,0U);
+    raw_send(3U,&t,0U);assert(completion_status==MT_RESPONSE_OK);
+    simulate_power_cut();assert(iigs_content_service_mount(3U,"short.dsk")!=0);
+    assert(strstr(iigs_content_service_error(),"cannot decode")!=NULL);
+    assert(memcmp(f->data,raw_source,t.raw_bytes)==0 && file_find(TEST_MEDIA_ROOT "/short.dsk.gsraw",false)!=NULL);
+    for(unsigned h=0U;h<FILES;++h)assert(!handles[h].open);
+
+    /* A complete changed sector can be recovered even if power interrupts
+     * transfer of unchanged final padding blocks. */
+    reset();f=raw_disk("partial.po",MT_IIGS_RAW_PRODOS35,0U);
+    assert(iigs_content_service_mount(2U,"partial.po")==0);
+    assert(mt_iigs_floppy_track(MT_IIGS_RAW_PRODOS35,0U,&t));raw_prepare(f,MT_IIGS_RAW_PRODOS35,0U,0U);
+    memcpy(raw_changed+512U,raw_source+512U,t.raw_bytes-512U);
+    assert(mt_iigs_floppy_encode(MT_IIGS_RAW_PRODOS35,0U,raw_changed,encoded));
+    for(unsigned i=0U;i<t.block_count-1U;++i)raw_send(2U,&t,i);
+    simulate_power_cut();assert(iigs_content_service_mount(2U,"partial.po")==0);
+    assert(memcmp(f->data,raw_changed,t.raw_bytes)==0);
+}
+static void test_raw_floppy_protection(void)
+{
+    reset();test_file_t *f=raw_disk("locked.2mg",MT_IIGS_RAW_PRODOS35,64U);
+    store32(f->data+16U,UINT32_C(0x80000000));
+    assert(iigs_content_service_mount(2U,"locked.2mg")==0);
+    request(2U,0U,false);iigs_content_service_poll();assert(stream_data[22]==1U);
+    request(2U,3U,true);iigs_content_service_poll();
+    assert(completion_status==MT_RESPONSE_IO_ERROR && reverse_index==0U && disk_writes==0U && raw_snapshots==0U);
+    static const char *const suffixes[]={".gsraw",".gsraw.mtj"};
+    for(unsigned i=0U;i<2U;++i) {
+        reset();(void)raw_disk("readonly.po",MT_IIGS_RAW_PRODOS35,0U);deny_writes=true;
+        char path[256];(void)snprintf(path,sizeof(path),TEST_MEDIA_ROOT "/readonly.po%s",suffixes[i]);
+        test_file_t *s=file_find(path,true);assert(s!=NULL);s->size=10304U;memset(s->data,0xa5,s->size);
+        assert(iigs_content_service_mount(2U,"readonly.po")!=0);
+        assert(strstr(iigs_content_service_error(),"requires writable journal recovery")!=NULL);
+        assert(disk_writes==0U && file_find(path,false)==s && s->data[0]==0xa5U);
+    }
+}
 int main(void)
 {
+    test_raw_floppy_transport();
+    test_raw_floppy_recovery();
+    test_raw_floppy_protection();
     test_speed_capability();
     test_rom_paths();
     test_nested_media_paths();

@@ -1,0 +1,40 @@
+{
+  "source": "https://github.com/fadden/CiderPress2",
+  "commit": "7a055a200e31f752f3a92bb9fe6ae6f67cd55534",
+  "license": "Apache-2.0",
+  "upstream_files": [
+    {
+      "size": 59908,
+      "sha256": "ab1ef00980331788d41dc63ad1cb0e279649e5af22ce342c73f344096ed3db3d",
+      "source_path": "DiskArc/SectorCodec.cs"
+    },
+    {
+      "size": 11357,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "source_path": "LICENSE"
+    },
+    {
+      "size": 274,
+      "sha256": "05e0d16a85f99976c316e594c255e872feaf3b122c3ac5dd5a8ec0adbe9cad5d",
+      "source_path": "NOTICE"
+    }
+  ],
+  "scope_exclusions": "Only the two standalone sector codec functions are adapted. CiderPress2 UI, fonts, compression and other bundled dependency code is not imported. Its bundle-only THIRD_PARTY_NOTICES does not describe dependencies of these functions. The root NOTICE is retained verbatim in licenses/third_party/CiderPress2/NOTICE.",
+  "imports": [
+    {
+      "path": "firmware/common/iigs_content.c",
+      "source_path": "DiskArc/SectorCodec.cs",
+      "source_sha256": "ab1ef00980331788d41dc63ad1cb0e279649e5af22ce342c73f344096ed3db3d",
+      "sha256": "fd6f3ec4a3e1231ab3fc40096a662f65768dc70949065ba2ff068b0ad6e78955",
+      "source_functions": [
+        "EncodeSector62_524",
+        "DecodeSector62_524"
+      ],
+      "local_functions": [
+        "encode524",
+        "decode524"
+      ],
+      "transform": "Translate 524-byte Sony GCR encoder/decoder from C# to bounded C byte arrays; retain copyright and Apache-2.0 notice. Multitini track framing, 256-byte codec, virtual WOZ metadata, inspector, storage and journals are original GPL-3.0-only code."
+    }
+  ]
+}

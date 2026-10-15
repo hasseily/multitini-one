@@ -31,5 +31,11 @@ verbatim:
 | `third_party/LGPL-3.0.txt` | `https://www.gnu.org/licenses/lgpl-3.0.txt` | `e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118` |
 | `third_party/CERN-OHL-S-2.0.txt` | `https://ohwr.org/cern_ohl_s_v2.txt` | `253ad3f89603e728abfa60c36fbcaf8225cf55c1eab12725f19fb3d74d647f3a` |
 | `third_party/Apache-2.0.txt` | pinned CherryUSB `LICENSE` | `1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6` |
+| `third_party/CiderPress2/LICENSE` | CiderPress2 `LICENSE` at `7a055a200e31f752f3a92bb9fe6ae6f67cd55534` | `c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4` |
+| `third_party/CiderPress2/NOTICE` | CiderPress2 `NOTICE` at `7a055a200e31f752f3a92bb9fe6ae6f67cd55534` | `05e0d16a85f99976c316e594c255e872feaf3b122c3ac5dd5a8ec0adbe9cad5d` |
+
+The CiderPress2 import contains two standalone sector codec functions. Its UI,
+font, compression, and other bundled dependency code is not imported; those
+bundle-only third-party notices do not add codec dependencies.
 
 This is an engineering record, not legal advice.

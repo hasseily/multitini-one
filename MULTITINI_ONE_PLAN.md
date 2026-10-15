@@ -2,6 +2,20 @@
 
 Status: planning baseline, written 2026-08-29
 
+IIgs follow-up, 2026-10-15: reproduce the owner's ROM3 copyright-screen stop
+at stock speed with the actual ROM and System 6.0.1 hard disk. Correct the
+external CPU's RTC register decoding and fetch the ROM-backed interrupt vectors
+at C071-C07F through DDR while retaining native I/O timing. Qualify cold boot
+before rebuilding IIgs. Correct fractional IWM timer carry and the byte-latch
+expiry counter accidentally guarded by debug logging, using reproducible ports
+of the exact pinned source. Add 800 KiB ProDOS PO/2MG in the 3.5-inch drive and
+140 KiB DOS-order DSK in the 5.25-inch drive through bounded, writable GCR
+track conversion. Preserve container headers, write protection and recoverable
+writes. Test private media
+without modifying the originals or including game bytes in source or delivery.
+Release matching ARM/IIgs as M0.5.2, retain the seven qualified other images,
+and preserve M0.5.1 NES and About behavior. Board acceptance remains separate.
+
 Scope update, 2026-10-15: branch `core-nes` ports the pinned MiSTer NES machine
 through the common shell and firmware. Preserve the complete NTSC 256x240
 raster, native CPU/PPU/APU timing, two controllers and durable battery saves.

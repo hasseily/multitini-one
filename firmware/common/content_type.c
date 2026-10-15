@@ -72,6 +72,7 @@ mt_content_type_t mt_content_classify(const char *path)
     if (extension_is(extension, "hdv") || extension_is(extension, "po") ||
         extension_is(extension, "2mg")) return MT_CONTENT_IIGS_HDD;
     if (extension_is(extension, "woz")) return MT_CONTENT_IIGS_WOZ;
+    if (extension_is(extension, "dsk")) return MT_CONTENT_IIGS_FLOPPY;
     return MT_CONTENT_UNKNOWN;
 }
 
@@ -97,7 +98,8 @@ bool mt_content_supported_first_release(mt_content_type_t type)
            type == MT_CONTENT_GBC_CART || type == MT_CONTENT_NES_CART || type == MT_CONTENT_VECTREX_CART ||
            type == MT_CONTENT_VECTREX_BASIC || type == MT_CONTENT_VECTREX_OVERLAY ||
            type == MT_CONTENT_GENESIS_CART || type == MT_CONTENT_GENESIS_SMD ||
-           type == MT_CONTENT_IIGS_HDD || type == MT_CONTENT_IIGS_WOZ;
+           type == MT_CONTENT_IIGS_HDD || type == MT_CONTENT_IIGS_WOZ ||
+           type == MT_CONTENT_IIGS_FLOPPY;
 }
 
 bool mt_content_may_write_first_release(mt_content_type_t type)
@@ -125,6 +127,7 @@ const char *mt_content_type_name(mt_content_type_t type)
     case MT_CONTENT_GENESIS_SMD: return "Genesis / Mega Drive SMD cartridge";
     case MT_CONTENT_IIGS_HDD: return "Apple IIgs block disk";
     case MT_CONTENT_IIGS_WOZ: return "Apple IIgs WOZ floppy";
+    case MT_CONTENT_IIGS_FLOPPY: return "Apple IIgs sector floppy";
     case MT_CONTENT_UNKNOWN: return "unknown";
     }
     return "unknown";
@@ -361,6 +364,7 @@ mt_content_validation_t mt_content_inspect(mt_content_type_t type,
     case MT_CONTENT_TAP_FUTURE:
     case MT_CONTENT_IIGS_HDD:
     case MT_CONTENT_IIGS_WOZ:
+    case MT_CONTENT_IIGS_FLOPPY:
     case MT_CONTENT_D81_FUTURE:
     case MT_CONTENT_UNKNOWN:
         status = MT_CONTENT_UNSUPPORTED_VERSION;

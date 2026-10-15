@@ -5,6 +5,18 @@ It runs C64, Game Boy Color, Vectrex, Genesis / Mega Drive and Apple IIgs
 machines through a shared supervisor, menu, input, audio, storage and
 core-loading system. It does not use an Apple II host.
 
+M0.5.2 fixes two IIgs startup faults: lost RTC control writes at stock speed,
+and stale interrupt-vector ROM bytes after the first System 6 disk reads.
+It also adds writable 800 KiB PO/2MG floppies in the 3.5-inch drive and
+140 KiB DOS-order DSK files in the 5.25-inch drive. Both drives retain WOZ2.
+The IWM fixes fractional bit-cell carry and byte-latch expiry in production.
+The hardware-test bundle is `build/firmware-core-gs-m052.zip`; install its
+matching firmware and IIgs image together. The other seven FPGA images keep
+their qualified identities, including the M0.5.1 NES fixes. See the
+[IIgs checks](docs/APPLE_IIGS_HARDWARE_TEST.md) for the physical test procedure.
+The [M0.5.2 build record](docs/APPLE_IIGS_M052_BUILD.md) describes the reproduced
+failures, media conversion and qualification limits.
+
 Branch `core-nes` adds a pinned MiSTer NES port with standard NTSC cartridge
 loading, two controllers, battery saves and complete 256x240 video through
 the shared display services. See [NES integration](docs/NES_PLAN.md) for the
@@ -18,7 +30,7 @@ Physical NES support remains subject to board testing.
 M0.5.1 also adds an About tab after System. It contains the existing rows from
 Firmware build through Audio output, in their original order, with live values.
 
-Branch `core-gs` builds the M0.4.0 hardware-test package at
+The earlier `core-gs` M0.4.0 hardware-test package is preserved at
 `build/firmware-core-gs3.zip`. It adds accelerated IIgs execution, the SHR
 left-edge correction, nested media folders and USB SD-card export. The new
 IIgs FPGA image passes routed timing: setup `+0.040 ns`, hold `+0.049 ns`

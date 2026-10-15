@@ -46,6 +46,11 @@ int main(void)
     assert(mt_content_classify("future.d81") == MT_CONTENT_D81_FUTURE);
     assert(mt_content_classify("classic.GB") == MT_CONTENT_GB_CART);
     assert(mt_content_classify("color.gbc") == MT_CONTENT_GBC_CART);
+    assert(mt_content_classify("nested/Arkanoid/Game.PO") == MT_CONTENT_IIGS_HDD);
+    assert(mt_content_classify("nested/System.2mg") == MT_CONTENT_IIGS_HDD);
+    assert(mt_content_classify("nested/Disk.DsK") == MT_CONTENT_IIGS_FLOPPY);
+    assert(mt_content_classify("nested/Disk.nib") == MT_CONTENT_UNKNOWN);
+    assert(mt_content_supported_first_release(MT_CONTENT_IIGS_FLOPPY));
     assert(mt_content_supported_first_release(MT_CONTENT_D64));
     assert(!mt_content_supported_first_release(MT_CONTENT_TAP_FUTURE));
     assert(mt_content_may_write_first_release(MT_CONTENT_D64));

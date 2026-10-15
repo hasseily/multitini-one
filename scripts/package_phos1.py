@@ -20,7 +20,8 @@ from build_phos1 import MATRIX, BUILD_ID
 ROOT = package.ROOT
 ABI_MINOR = 19
 GS_GUIDES = ("APPLE_IIGS_HARDWARE_TEST.md", "APPLE_IIGS_CPU_VALIDATION.md",
-             "APPLE_IIGS_PLAN.md", "CORE_ARTIFACT_REUSE.md", "USB_SD_MOUNT.md")
+             "APPLE_IIGS_PLAN.md", "APPLE_IIGS_M052_BUILD.md",
+             "CORE_ARTIFACT_REUSE.md", "USB_SD_MOUNT.md")
 
 
 def verify_source_tar(directory, record):
@@ -120,9 +121,12 @@ def prepare_iigs_content(out, hdd_bootstrap):
     media.mkdir(parents=True, exist_ok=True)
     (media / "README.txt").write_text(
         "Apple IIgs media and persistent state\n\n"
-        "Place your HDD images (.hdv, .po or ProDOS .2mg) and WOZ2 floppy images here.\n"
+        "Hard disks accept .hdv, .po or ProDOS .2mg.\n"
+        "The 3.5-inch drive accepts 800 KiB .po/.2mg and matching WOZ2 images.\n"
+        "The 5.25-inch drive accepts 140 KiB DOS-order .dsk and matching WOZ2 images.\n"
         "The firmware saves pram.bin, gs-settings.bin and recovery journals here.\n"
-        "Keep recovery journals with their media and eject disks before removing power.\n"
+        "Keep recovery journals and raw-floppy .gsraw sidecars with their media.\n"
+        "Eject disks before removing power.\n"
         "System, character and ADB ROMs belong in the sibling ../roms/ folder,\n"
         "alongside the included licensed hdd.rom bootstrap.\n"
         "Private packaging stages validated owner-supplied Apple ROMs in that folder.\n"

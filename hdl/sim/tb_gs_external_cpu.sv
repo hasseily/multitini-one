@@ -31,7 +31,7 @@ module tb_gs_external_cpu;
         .joystick_0(32'b0),.joystick_1(32'b0),.joystick_l_analog_0(16'b0),.joystick_l_analog_1(16'b0));
     longint ticks=0,measured_ticks=0,loop_start=0,advances=0;
     integer period=1,pace=0,commits=0,returns=0,local_reads=0,fast_stores=0;
-    integer text_writes=0,doc_writes=0,scc_writes=0,prtc_writes=0,slow_writes=0;
+    integer text_writes=0,doc_writes=0,scc_writes=0,prtc_writes=0,prtc_control_writes=0,slow_writes=0;
     reg measuring=0,measured=0,prev_toggle=0;
     // Drive before the primary edge, with native commits prepared a full
     // primary period before their child-clock edge. Return is consumed later.
@@ -80,6 +80,7 @@ module tb_gs_external_cpu;
                         16'hc03e,16'hc03f:doc_writes=doc_writes+1;
                         16'hc038:scc_writes=scc_writes+1;
                         16'hc033:prtc_writes=prtc_writes+1;
+                        16'hc034:prtc_control_writes=prtc_control_writes+1;
                     endcase
                 end
                 if(we && dut.slowram_ce)slow_writes=slow_writes+1;
@@ -112,6 +113,14 @@ module tb_gs_external_cpu;
         lda8('h34);sta('hC03E);lda8('h12);sta('hC03F);
         lda('hC03E);store_result('h11);lda('hC03F);store_result('h12);
         lda8('h5A);sta('hC033);lda('hC033);store_result('h13);
+        // Execute a real RTC protocol transaction; an echo from C033 alone
+        // cannot detect a missing C034 control-register select.
+        lda8('h40);sta('hC033);lda8('h80);sta('hC034); // Select PRAM byte 0.
+        lda8('h5A);sta('hC033);lda8('h80);sta('hC034); // Commit its data.
+        lda8('hC0);sta('hC033);lda8('h80);sta('hC034);
+        lda8('hC0);sta('hC034);lda('hC033);store_result('h17);
+        // C032 belongs to the IRQ controller and must not alias RTC control.
+        lda8(3);sta('hC034);lda8('h1C);sta('hC032);lda('hC034);store_result('h18);
         lda8(12);sta('hC038);lda8('hA6);sta('hC038);lda8(12);sta('hC038);lda('hC038);store_result('h14);
         lda8('h5A);emit('h8F);emit(0);emit(4);emit('hE0); // native slow RAM
         emit('hAF);emit(0);emit(4);emit('hE0);store_result('h15);
@@ -127,19 +136,20 @@ module tb_gs_external_cpu;
     initial begin
         for(integer speed=5;speed<=6;speed=speed+1)begin
             reset=1;host_speed=speed[2:0];period=speed==5 ? 2 : 1;
-            commits=0;returns=0;local_reads=0;fast_stores=0;text_writes=0;doc_writes=0;scc_writes=0;prtc_writes=0;slow_writes=0;
+            commits=0;returns=0;local_reads=0;fast_stores=0;text_writes=0;doc_writes=0;scc_writes=0;prtc_writes=0;prtc_control_writes=0;slow_writes=0;
             measuring=0;measured=0;make_program();repeat(40)@(negedge primary);reset=0;
             begin integer timeout=0;while(!dut.cpu.STPExec && timeout<1000000)begin @(negedge primary);timeout++;end end
             if(!dut.cpu.STPExec || !measured)$fatal(1,"external CPU timeout PC=%x",dut.cpu.PC);
             repeat(8)@(negedge primary);
             if(ram['h10]!==8'hF3 || ram['h11]!==8'h34 || ram['h12]!==8'h12 || ram['h13]!==8'h5A ||
                ram['h14]!==8'hA6 || ram['h15]!==8'h5A || (ram['h16]&8'h50)!==8'h40 ||
+               ram['h17]!==8'h5A || ram['h18]!==8'h03 || dut.prtc.pram[0]!==8'h5A ||
                {ram['h21],ram['h20]}!==16'h2234 || dut.cpu.X!==0 || dut.cpu.Y!==16'h1000)
-                $fatal(1,"native peripheral/CPU outcome failed text=%x doc=%x%x prtc=%x scc=%x slow=%x zip=%x sum=%x%x",
-                    ram['h10],ram['h12],ram['h11],ram['h13],ram['h14],ram['h15],ram['h16],ram['h21],ram['h20]);
-            if(commits!=returns || text_writes!=1 || doc_writes!=2 || scc_writes!=3 || prtc_writes!=1 || slow_writes!=1 || local_reads!=1)
-                $fatal(1,"native completion accounting failed commits=%0d returns=%0d text=%0d doc=%0d scc=%0d prtc=%0d slow=%0d local=%0d",
-                    commits,returns,text_writes,doc_writes,scc_writes,prtc_writes,slow_writes,local_reads);
+                $fatal(1,"native peripheral/CPU outcome failed text=%x doc=%x%x prtc=%x pram=%x readback=%x rtc_control=%x scc=%x slow=%x zip=%x sum=%x%x",
+                    ram['h10],ram['h12],ram['h11],ram['h13],dut.prtc.pram[0],ram['h17],ram['h18],ram['h14],ram['h15],ram['h16],ram['h21],ram['h20]);
+            if(commits!=returns || text_writes!=1 || doc_writes!=2 || scc_writes!=3 || prtc_writes!=4 || prtc_control_writes!=5 || slow_writes!=1 || local_reads!=1)
+                $fatal(1,"native completion accounting failed commits=%0d returns=%0d text=%0d doc=%0d scc=%0d prtc=%0d rtc_control=%0d slow=%0d local=%0d",
+                    commits,returns,text_writes,doc_writes,scc_writes,prtc_writes,prtc_control_writes,slow_writes,local_reads);
             // Software 100% intentionally selects installed max6 even when host
             // starts5. This API fixture independently paces CE at both rates.
             if(dut.zip_speed_code!=6 || cpu_speed!=6 || advances!=34559 || measured_ticks!=advances*period)

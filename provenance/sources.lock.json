@@ -2,6 +2,13 @@
   "schema_version": 1,
   "sources": [
     {
+      "name": "CiderPress2 floppy sector codec",
+      "url": "https://github.com/fadden/CiderPress2.git",
+      "commit": "7a055a200e31f752f3a92bb9fe6ae6f67cd55534",
+      "license": "Apache-2.0",
+      "use": "C adaptation of DiskArc/SectorCodec.cs EncodeSector62_524 and DecodeSector62_524 for the Apple IIgs raw floppy transport. Original copyright retained; exact source hashes and changed functions in provenance/iigs_floppy_codec.import.json; license in licenses/third_party/CiderPress2/LICENSE. No disk images or ROM content."
+    },
+    {
       "name": "MiSTer NES",
       "url": "https://github.com/MiSTer-devel/NES_MiSTer.git",
       "commit": "49a0a662e244469ca77b2155746a066df704ffae",

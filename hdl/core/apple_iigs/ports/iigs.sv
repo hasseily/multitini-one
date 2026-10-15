@@ -2428,7 +2428,8 @@ wire ready_out;
       addr_bef[7:0]==8'h26 || addr_bef[7:0]==8'h27 || addr_bef[7:0]==8'h70);
   wire adb_strobe_mux = EXTERNAL_CPU ? ((adb_read || adb_write_now) && bus_phi2)
       : ((adb_read | adb_strobe) & ~mem_stall);
-  wire native_prtc_sel = IO && (addr_bef[7:1]==7'h19);
+  // The RTC data/control pair crosses a two-byte decode boundary.
+  wire native_prtc_sel = IO && (addr_bef[7:0]==8'h33 || addr_bef[7:0]==8'h34);
   wire native_scc_sel = IO && (addr_bef[7:2]==6'h0E);
   wire native_snd_sel = IO && (addr_bef[7:2]==6'h0F);
   wire [7:0] snd_read_peek;
@@ -3165,8 +3166,11 @@ assign cpu_local_read = EXTERNAL_CPU ? (cpu_peek_io && cpu_we_n && zip_unlocked 
 assign cpu_local_data = EXTERNAL_CPU ? zip_peek_data : zip_rdata;
 // External slot registers/ROMs are native peripherals even when an MMU ROM
 // enable overlaps their address. Shadow RAM writes still update main memory.
+// Native IRQ dispatch at C071-C07F returns mapped system ROM through din.
+// Its IO cycle still needs a memory lookup before the native commit.
+wire cpu_irq_dispatch_read = IO && !we && addr_bef[15:0]>=16'hc071 && addr_bef[15:0]<=16'hc07f;
 assign cpu_memory_cycle = cpu_valid && (fastram_ce || (rom_ce && !we)) &&
-    (hdd_dma || (!IO && !EXTERNAL_IO && !(|device_select) && !(|io_select) && !slot_ce));
+    (hdd_dma || ((!IO || cpu_irq_dispatch_read) && !EXTERNAL_IO && !(|device_select) && !(|io_select) && !slot_ce));
 // Use the current MMU classification, not CLK14's delayed slowMem register:
 // shadow writes, slot/IO and slow-RAM accesses always take the native bridge.
 assign cpu_fast_cycle = !hdd_dma && (!valid || cpu_local_read ||

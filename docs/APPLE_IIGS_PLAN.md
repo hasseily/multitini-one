@@ -7,6 +7,20 @@ Upstream is `MiSTer-devel/Apple-IIgs_MiSTer` at
 files and explicit per-file licenses. Original machine code remains separate
 from reproducible Multitini ports. Apple ROM bytes are runtime user inputs.
 
+M0.5.2 corrects the external CPU RTC selection: `$C033` is data and `$C034`
+is control. The former adjacent-pair decode selected `$C032/$C033`, so RTC
+commands written to `$C034` were lost even at stock speed. The executed-CPU
+regression now writes and reads PRAM through both registers and verifies
+that `$C032` cannot change RTC control. The 65816 and microcode remain unchanged.
+The ROM-backed interrupt dispatch bytes at `$C071–$C07F` also need DDR reads,
+although they lie in the I/O address range. The external CPU must fetch those
+bytes before the native commit, preserving the existing I/O timing. Treating
+all I/O as local data supplied stale vector bytes on the first System 6 IRQ.
+The native IWM ports also retain fractional-timer carry and run the byte-latch
+expiry counter independently of debug logging.
+See the [M0.5.2 record](APPLE_IIGS_M052_BUILD.md) for the current update;
+the M0.4.0 build and timing details below remain its historical baseline.
+
 ## Architecture
 
 The fifth machine uses the same full-PL loader, menu, USB input, audio DAC,
@@ -103,10 +117,15 @@ The stored relative image path, including folders and filename, is limited to
 95 characters by the existing settings format. Longer selections report an
 explicit error rather than truncating a path or mounting another file.
 
-Two HDDs accept raw HDV/PO and ProDOS-ordered 2MG payloads. Native 3.5-inch and
-5.25-inch drives use WOZ2. Unsupported raw floppy formats and incompatible
-containers fail explicitly. The imported WOZ controller retains both 3.5-inch
-side buffers, track writes, flux data and quarter-track mapping.
+Two HDDs accept raw HDV/PO and ProDOS-ordered 2MG payloads. The 3.5-inch drive
+also accepts exactly 800 KiB PO and ProDOS 2MG payloads; the 5.25-inch drive
+accepts exactly 140 KiB DOS-order DSK files. Both drives retain native WOZ2.
+The firmware presents sector images as generated WOZ2 GCR tracks, preserving
+2MG headers, trailing container bytes and write protection. A `.gsraw` sidecar
+retains changed tracks through interrupted writes; keep it beside its image.
+NIB and nonrepresentable custom tracks require a native WOZ2 image. The
+imported WOZ controller retains both 3.5-inch side buffers, track writes,
+flux data and quarter-track mapping.
 
 The firmware serves bounded sector requests with independent per-drive mount
 generations. Writes use a synced journal before changing the target image and

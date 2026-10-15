@@ -4,6 +4,7 @@
 #include "multitini_c64_interface.h"
 #include "multitini_gameboy_interface.h"
 #include "multitini_genesis_interface.h"
+#include "multitini_iigs_interface.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -191,7 +192,7 @@ static void test_browser_filters(void)
     unsigned browser;
     unsigned type;
     for (browser = 0U; browser <= MT_MENU_BROWSER_PROGRAM; ++browser) {
-        for (type = 0U; type <= MT_CONTENT_GENESIS_SMD; ++type) {
+        for (type = 0U; type <= MT_CONTENT_IIGS_FLOPPY; ++type) {
             const bool c64_expected =
                 (browser == MT_MENU_BROWSER_DRIVE8 &&
                  (type == MT_CONTENT_D64 || type == MT_CONTENT_G64)) ||
@@ -264,6 +265,32 @@ static void test_genesis_profile(void)
           "Genesis save failure takes precedence over pending state");
 }
 
+static void test_iigs_drive_formats(void)
+{
+    mt_core_frontend_t frontend;
+    mt_core_frontend_state_t state = {0};
+    mt_menu_view_t view = {0};
+    state.core_id = MT_IIGS_CORE_ID;
+    state.services_ready = true;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(strstr(view.media_items[2].help, "800 KiB PO or 2MG") != NULL &&
+          strstr(view.media_items[3].help, "140 KiB DOS-order DSK") != NULL,
+          "floppy chooser explains accepted sector sizes and ordering");
+    for(unsigned drive=0U;drive<=MT_IIGS_DRIVE_COUNT;++drive) {
+        for(unsigned type=0U;type<=MT_CONTENT_IIGS_FLOPPY;++type) {
+            const bool expected=drive<MT_IIGS_DRIVE_COUNT &&
+                (drive<2U ? type==MT_CONTENT_IIGS_HDD:
+                 type==MT_CONTENT_IIGS_WOZ ||
+                 (drive==2U ? type==MT_CONTENT_IIGS_HDD:type==MT_CONTENT_IIGS_FLOPPY));
+            check(mt_core_frontend_accepts_drive_content(MT_IIGS_CORE_ID,
+                MT_MENU_BROWSER_DRIVE8,drive,(mt_content_type_t)type)==expected,
+                "IIgs drive filters permit its formats and reject other machines");
+        }
+    }
+    check(mt_core_frontend_browser_folders(MT_IIGS_CORE_ID,MT_MENU_BROWSER_DRIVE8),
+          "all IIgs drive choosers retain folder navigation");
+}
+
 int main(void)
 {
     test_profile_lifecycle();
@@ -271,6 +298,7 @@ int main(void)
     test_gameboy_saves_and_input();
     test_browser_filters();
     test_genesis_profile();
+    test_iigs_drive_formats();
     puts("Core front-end profile tests passed");
     return 0;
 }

@@ -56,6 +56,10 @@ def inputs(machine: str) -> list[Path]:
             "test_apple_iigs_slowram.py",
             "test_apple_iigs_logical_cache.py",
             "test_apple_iigs_cpu_peek.py",
+            "test_apple_iigs_boot.py",
+            "test_apple_iigs_irq_dispatch.py",
+            "test_apple_iigs_iwm.py",
+            "test_apple_iigs_ports.py",
             "test_apple_iigs_native_clock.py",
             "check_apple_iigs_phase_constraints.tcl"))
         paths.add(ROOT / "hdl/sim/apple_iigs_bufgce.sv")

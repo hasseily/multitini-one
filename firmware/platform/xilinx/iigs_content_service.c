@@ -8,6 +8,7 @@
 #define GS_NAME (MT_IIGS_MEDIA_NAME_MAX+1U)
 #define GS_JOURNAL_BYTES (32U+MT_IIGS_SECTOR_BYTES)
 #define GS_SETTINGS_BYTES (24U+MT_IIGS_DRIVE_COUNT*GS_NAME)
+#define GS_RAW_JOURNAL_BYTES (64U+MT_IIGS_FLOPPY_TRACK_BYTES)
 typedef struct {
     mt_sd_file_t *file;
     mt_iigs_media_info_t info;
@@ -15,7 +16,12 @@ typedef struct {
     uint32_t generation;
     bool mounted;
     bool woz_crc_disabled;
+    int cached_track;
+    uint32_t raw_received;
+    bool raw_pending;
+    uint32_t wire_size;
     char name[GS_NAME], path[GS_PATH], journal[GS_PATH], recovery[GS_PATH];
+    char raw_journal[GS_PATH], raw_recovery[GS_PATH];
 } gs_drive_t;
 static mt_core_link_t *link;
 static mt_link_progress_fn progress;
@@ -24,6 +30,9 @@ static gs_drive_t drives[MT_IIGS_DRIVE_COUNT];
 static char root[128], rom_root[128], error[128];
 static uint8_t rom_buffer[MT_SIZE_IIGS_ROM3], pram[1024], sector[512];
 static uint8_t journal_wire[GS_JOURNAL_BYTES], settings_wire[GS_SETTINGS_BYTES];
+static uint8_t raw_tracks[2][MT_IIGS_FLOPPY_TRACK_BYTES];
+static uint8_t raw_wire[GS_RAW_JOURNAL_BYTES],raw_decoded[MT_IIGS_FLOPPY_RAW_TRACK_BYTES];
+static uint8_t raw_header[MT_IIGS_FLOPPY_HEADER_BYTES],staged_sector[512];
 static char remembered[MT_IIGS_DRIVE_COUNT][GS_NAME];
 static mt_iigs_config_t config;
 static uint32_t speed_mask;
@@ -162,6 +171,103 @@ static int disable_woz_crc(gs_drive_t *d)
     }
     memcpy(sector,request_data,sizeof(request_data)); return result;
 }
+static uint8_t *raw_track_buffer(const gs_drive_t *d)
+{ return raw_tracks[d==&drives[2] ? 0U:1U]; }
+/* The FPGA saves a complete track in ascending 512-byte blocks. Every block
+ * acknowledgement owns a synced snapshot of the whole bitstream. Keep it
+ * until every decoded raw sector has also been journaled and synced. */
+static int raw_commit(gs_drive_t *d)
+{
+    mt_iigs_floppy_track_t t;
+    if(d->cached_track<0 || !mt_iigs_floppy_track(d->info.raw_format,(unsigned)d->cached_track,&t) ||
+        !mt_iigs_floppy_decode(d->info.raw_format,(unsigned)d->cached_track,raw_track_buffer(d),raw_decoded))
+        return fail("Raw floppy track cannot decode; .gsraw retained");
+    for(unsigned i=0U;i<t.raw_bytes;i+=512U) {
+        const uint64_t offset=d->info.offset+t.raw_offset+i;
+        mt_sd_result_t r=mt_sd_file_seek(d->file,(int64_t)offset,SEEK_SET);
+        if(r.status==MT_SD_OK)r=mt_sd_file_read(d->file,sector,sizeof(sector));
+        if(r.status!=MT_SD_OK)return sd_fail(r);
+        if(r.size!=sizeof(sector))return fail("Raw floppy read was short");
+        if(memcmp(sector,raw_decoded+i,512U)!=0) {
+            memcpy(sector,raw_decoded+i,512U);
+            if(write_sector(d,offset,512U)!=0)return -1;
+        }
+        tick();
+    }
+    const mt_sd_result_t r=mt_sd_file_remove(d->raw_journal);
+    if(r.status!=MT_SD_OK)return sd_fail(r);
+    d->raw_pending=false; d->raw_received=0U; return 0;
+}
+static int raw_recover(gs_drive_t *d)
+{
+    bool found=false;
+    mt_sd_result_t r=mt_sd_storage_journal_recover(d->raw_journal,d->raw_recovery,raw_wire,sizeof(raw_wire));
+    if(r.status==MT_SD_OK)r=mt_sd_storage_read_file_optional_exact(d->raw_journal,raw_wire,sizeof(raw_wire),&found);
+    if(r.status!=MT_SD_OK)return sd_fail(r);
+    if(!found)return 0;
+    const uint32_t checksum=le32(raw_wire+44U); store32(raw_wire+44U,0U);
+    mt_iigs_floppy_track_t t;
+    const uint64_t file_size=(uint64_t)le32(raw_wire+8U)|((uint64_t)le32(raw_wire+12U)<<32U);
+    const uint64_t offset=(uint64_t)le32(raw_wire+16U)|((uint64_t)le32(raw_wire+20U)<<32U);
+    const uint64_t size=(uint64_t)le32(raw_wire+24U)|((uint64_t)le32(raw_wire+28U)<<32U);
+    if(memcmp(raw_wire,"MTGSRAW1",8U)!=0 || crc32(raw_wire,sizeof(raw_wire))!=checksum ||
+        file_size!=d->file_size || offset!=d->info.offset || size!=d->info.size ||
+        raw_wire[32]!=d->info.raw_format || !mt_iigs_floppy_track(d->info.raw_format,raw_wire[33],&t) ||
+        t.bit_count!=le32(raw_wire+36U) || (le32(raw_wire+40U)&~((UINT32_C(1)<<t.block_count)-1U))!=0U)
+        return fail("Raw floppy journal invalid; retained for recovery");
+    d->cached_track=raw_wire[33]; d->raw_pending=true; d->raw_received=le32(raw_wire+40U);
+    memcpy(raw_track_buffer(d),raw_wire+64U,MT_IIGS_FLOPPY_TRACK_BYTES);
+    /* A power cut can interrupt the FPGA's track transfer. Replay only a
+     * fully decodable snapshot; an incomplete field must never zero a sector. */
+    return raw_commit(d);
+}
+static int raw_select_track(gs_drive_t *d,unsigned track)
+{
+    if(d->cached_track==(int)track)return 0;
+    if(d->raw_pending)return fail("Raw floppy track flush incomplete; .gsraw retained");
+    mt_iigs_floppy_track_t t;
+    if(!mt_iigs_floppy_track(d->info.raw_format,track,&t))return fail("Invalid raw floppy track");
+    mt_sd_result_t r=mt_sd_file_seek(d->file,(int64_t)(d->info.offset+t.raw_offset),SEEK_SET);
+    if(r.status==MT_SD_OK)r=mt_sd_file_read(d->file,raw_decoded,t.raw_bytes);
+    if(r.status!=MT_SD_OK)return sd_fail(r);
+    if(r.size!=t.raw_bytes)return fail("Raw floppy read was short");
+    if(!mt_iigs_floppy_encode(d->info.raw_format,track,raw_decoded,raw_track_buffer(d)))
+        return fail("Raw floppy track encode failed");
+    d->cached_track=(int)track; return 0;
+}
+static int raw_sector(gs_drive_t *d,uint32_t lba,bool writing)
+{
+    if(lba<3U) {
+        if(writing)return fail("Raw floppy metadata is fixed");
+        if(!mt_iigs_floppy_header(d->info.raw_format,d->info.writable,raw_header))return fail("Invalid raw floppy format");
+        memcpy(sector,raw_header+lba*512U,512U); return 0;
+    }
+    const unsigned slots=d->info.raw_format==MT_IIGS_RAW_DOS525 ? 13U:20U;
+    const unsigned track=(lba-3U)/slots,block=(lba-3U)%slots;
+    mt_iigs_floppy_track_t t;
+    if(!mt_iigs_floppy_track(d->info.raw_format,track,&t))return fail("Invalid raw floppy track");
+    if(block>=t.block_count) {
+        if(writing)return fail("Raw floppy padding is read-only");
+        memset(sector,0,sizeof(sector)); return 0;
+    }
+    if(raw_select_track(d,track)!=0)return -1;
+    if(!writing) { memcpy(sector,raw_track_buffer(d)+block*512U,512U); return 0; }
+    memcpy(raw_track_buffer(d)+block*512U,sector,512U);
+    d->raw_received|=UINT32_C(1)<<block;
+    memset(raw_wire,0,sizeof(raw_wire)); memcpy(raw_wire,"MTGSRAW1",8U);
+    store32(raw_wire+8U,(uint32_t)d->file_size); store32(raw_wire+12U,(uint32_t)(d->file_size>>32U));
+    store32(raw_wire+16U,(uint32_t)d->info.offset); store32(raw_wire+20U,(uint32_t)(d->info.offset>>32U));
+    store32(raw_wire+24U,(uint32_t)d->info.size); store32(raw_wire+28U,(uint32_t)(d->info.size>>32U));
+    raw_wire[32]=d->info.raw_format; raw_wire[33]=(uint8_t)track;
+    store32(raw_wire+36U,t.bit_count); store32(raw_wire+40U,d->raw_received);
+    memcpy(raw_wire+64U,raw_track_buffer(d),MT_IIGS_FLOPPY_TRACK_BYTES);
+    store32(raw_wire+44U,crc32(raw_wire,sizeof(raw_wire)));
+    const mt_sd_result_t r=mt_sd_storage_journal_replace(d->raw_journal,d->raw_recovery,raw_wire,sizeof(raw_wire));
+    if(r.status!=MT_SD_OK)return sd_fail(r);
+    d->raw_pending=true;
+    if(d->raw_received==((UINT32_C(1)<<t.block_count)-1U))return raw_commit(d);
+    return 0;
+}
 static int pram_save(void)
 {
     char target[GS_PATH], journal[GS_PATH];
@@ -224,23 +330,31 @@ void iigs_content_service_poll(void)
     const uint64_t offset=(uint64_t)lba*512U;
     size_t count=512U;
     if(status==MT_RESPONSE_OK && d!=NULL) {
-        if(offset>=d->info.size || (writing && !d->info.writable))status=MT_RESPONSE_IO_ERROR;
-        else if(d->info.size-offset<512U)count=(size_t)(d->info.size-offset);
+        if(offset>=d->wire_size || (writing && !d->info.writable))status=MT_RESPONSE_IO_ERROR;
+        else if(d->wire_size-offset<512U)count=(size_t)(d->wire_size-offset);
     }
     if(status==MT_RESPONSE_OK && !writing) {
         memset(sector,0,sizeof(sector));
         if(d==NULL)memcpy(sector,pram+offset,512U);
-        else {
+        else if(d->info.raw_format!=MT_IIGS_RAW_NONE) {
+            if(raw_sector(d,lba,false)!=0)status=MT_RESPONSE_IO_ERROR;
+        } else {
             mt_sd_result_t r=mt_sd_file_seek(d->file,(int64_t)(d->info.offset+offset),SEEK_SET);
             if(r.status==MT_SD_OK)r=mt_sd_file_read(d->file,sector,count);
             if(r.status!=MT_SD_OK || r.size!=count) { (void)sd_fail(r); status=MT_RESPONSE_IO_ERROR; }
         }
     }
     const bool staged=writing && staged_write && staged_id==id && staged_generation==gen;
+    if(staged)memcpy(sector,staged_sector,sizeof(sector));
     if(status==MT_RESPONSE_OK && !staged && transfer(writing)!=0)status=MT_RESPONSE_IO_ERROR;
-    if(status==MT_RESPONSE_OK && writing) { staged_write=true; staged_id=id; staged_generation=gen; }
+    if(status==MT_RESPONSE_OK && writing && !staged) {
+        staged_write=true; staged_id=id; staged_generation=gen; memcpy(staged_sector,sector,sizeof(sector));
+    }
     if(status==MT_RESPONSE_OK && writing) {
         if(d==NULL) { memcpy(pram+offset,sector,512U); if(pram_save()!=0)status=MT_RESPONSE_IO_ERROR; }
+        else if(d->info.raw_format!=MT_IIGS_RAW_NONE) {
+            if(raw_sector(d,lba,true)!=0)status=MT_RESPONSE_IO_ERROR;
+        }
         else if(disable_woz_crc(d)!=0)status=MT_RESPONSE_IO_ERROR;
         else {
             if(d->info.kind==MT_IIGS_MEDIA_WOZ && lba==0U)memset(sector+8U,0,4U);
@@ -284,6 +398,10 @@ static int mount_internal(unsigned drive,const char *name,bool remember)
     const size_t path_length=strlen(d->path);
     memcpy(d->journal,d->path,path_length); memcpy(d->journal+path_length,".gsj",5U);
     memcpy(d->recovery,d->journal,path_length+4U); memcpy(d->recovery+path_length+4U,".mtj",5U);
+    if(path_length+11U>GS_PATH)return fail("Disk recovery path too long");
+    memcpy(d->raw_journal,d->path,path_length); memcpy(d->raw_journal+path_length,".gsraw",7U);
+    memcpy(d->raw_recovery,d->raw_journal,path_length+6U); memcpy(d->raw_recovery+path_length+6U,".mtj",5U);
+    d->cached_track=-1; d->raw_pending=false; d->raw_received=0U;
     mt_sd_result_t r=mt_sd_file_open(d->path,"r+b",&d->file);
     bool ro=false;
     if(r.status!=MT_SD_OK) { ro=true; r=mt_sd_file_open(d->path,"rb",&d->file); }
@@ -297,18 +415,28 @@ static int mount_internal(unsigned drive,const char *name,bool remember)
     const mt_content_validation_t v=mt_iigs_media_inspect(drive,name,sector,r.size,d->file_size,&d->info);
     if(v!=MT_CONTENT_VALID) { (void)fail(mt_content_validation_name(v)); goto close_failed; }
     if(ro)d->info.writable=false;
-    if(!ro && apply_journal(d)!=0)goto close_failed;
+    if(!ro && (d->info.raw_format==MT_IIGS_RAW_NONE || d->info.writable) && apply_journal(d)!=0)goto close_failed;
     d->woz_crc_disabled=d->info.kind!=MT_IIGS_MEDIA_WOZ || le32(sector+8U)==0U;
-    if(ro) {
+    if(ro || (d->info.raw_format!=MT_IIGS_RAW_NONE && !d->info.writable)) {
         const char *const journals[2]={d->journal,d->recovery};
         for(unsigned i=0U;i<2U;++i) {
             bool journal_found=false;
             r=mt_sd_storage_read_file_optional_exact(journals[i],journal_wire,sizeof(journal_wire),&journal_found);
             if(r.status!=MT_SD_OK || journal_found) { (void)fail("Disk requires writable journal recovery"); goto close_failed; }
         }
+        if(d->info.raw_format!=MT_IIGS_RAW_NONE) {
+            const char *const raw_journals[2]={d->raw_journal,d->raw_recovery};
+            for(unsigned i=0U;i<2U;++i) {
+                bool journal_found=false;
+                r=mt_sd_storage_read_file_optional_exact(raw_journals[i],raw_wire,sizeof(raw_wire),&journal_found);
+                if(r.status!=MT_SD_OK || journal_found) { (void)fail("Raw floppy requires writable journal recovery"); goto close_failed; }
+            }
+        }
     }
+    if(d->info.raw_format!=MT_IIGS_RAW_NONE && d->info.writable && raw_recover(d)!=0)goto close_failed;
+    d->wire_size=d->info.raw_format==MT_IIGS_RAW_NONE ? (uint32_t)d->info.size:mt_iigs_floppy_woz_size(d->info.raw_format);
     d->generation=generation();
-    if(mount_wire(drive,d->info.kind,(uint32_t)d->info.size,d->generation,!d->info.writable)!=0)goto close_failed;
+    if(mount_wire(drive,d->info.kind,d->wire_size,d->generation,!d->info.writable)!=0)goto close_failed;
     d->mounted=true; (void)snprintf(d->name,sizeof(d->name),"%s",name);
     if(remember) { (void)snprintf(remembered[drive],GS_NAME,"%s",name); return settings_save(); }
     return 0;
@@ -329,6 +457,7 @@ static int eject_internal(unsigned drive,bool forget)
         const mt_link_result_t r=command(MT_COMMAND_MEDIA_EJECT,drive,generation(),0U,0U);
         if(r!=MT_LINK_OK)return fail(mt_link_result_name(r));
         if(drain()!=0)return -1;
+        if(d->raw_pending)return fail("Raw floppy track flush incomplete; .gsraw retained");
         mt_sd_result_t sd=mt_sd_file_close(d->file); if(sd.status!=MT_SD_OK)return sd_fail(sd);
         d->file=NULL; d->mounted=false; d->name[0]='\0';
     }
