@@ -49,6 +49,13 @@ mt_link_result_t mt_core_link_stream(mt_core_link_t *link, uint8_t kind,
                                      uint32_t max_polls,
                                      mt_link_progress_fn progress,
                                      void *progress_context);
+/* Replace the first prefix_size bytes on the wire while retaining every later
+ * byte from data. Both source buffers remain unchanged. Uses the same bounded
+ * FIFO, completion and abort behavior as an ordinary stream. */
+mt_link_result_t mt_core_link_stream_with_prefix(
+    mt_core_link_t *link, uint8_t kind, const uint8_t *data, size_t size,
+    const uint8_t *prefix, size_t prefix_size, uint32_t max_polls,
+    mt_link_progress_fn progress, void *progress_context);
 /* The optional continuation predicate bounds a stream by an external deadline
  * instead of assuming that a raw MMIO poll count represents elapsed time. A
  * false result aborts an open stream and returns MT_LINK_TIMEOUT. */

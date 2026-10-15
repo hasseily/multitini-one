@@ -26,8 +26,9 @@ mt_link_result_t mt_nes_stage_traced(mt_core_link_t *link,
     result = set_reset(link, true, polls, progress, context);
     if (result != MT_LINK_OK) return result;
     if (phase != NULL) *phase = MT_NES_TRANSFER_CARTRIDGE;
-    result = mt_core_link_stream(link, MT_LOAD_NES_CART, images->cartridge.data,
-                                 images->cartridge.size, polls, progress, context);
+    result = mt_core_link_stream_with_prefix(link, MT_LOAD_NES_CART,
+        images->cartridge.data, images->cartridge.size, info.canonical_header,
+        sizeof(info.canonical_header), polls, progress, context);
     if (result != MT_LINK_OK) return result;
     if (images->save.data != NULL) {
         if (phase != NULL) *phase = MT_NES_TRANSFER_SAVE;

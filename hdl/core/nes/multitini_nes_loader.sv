@@ -107,6 +107,9 @@ module multitini_nes_loader(
                                 mapper_flags[13:11]<=size_flag(next_header[47:40]);
                                 mapper_flags[14]<=next_header[48];
                                 mapper_flags[15]<=next_header[47:40]==0;
+                                // Canonical iNES byte10 bit5 preserves the
+                                // NES2 mapper2/submapper2 AND bus conflicts.
+                                mapper_flags[24:21]<=next_header[85]?4'd2:4'd0;
                                 mapper_flags[25]<=next_header[49];
                                 mapper_flags[29:26]<=next_header[49]?4'd0:4'd7;
                                 mapper_flags[34:31]<=next_header[49]?4'd7:4'd0;

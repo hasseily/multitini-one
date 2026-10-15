@@ -3585,8 +3585,7 @@ static void handle_nes_content_load(const char *name)
             set_supervisor_error(failure);
             return;
         }
-        set_supervisor_error(result.validation == MT_CONTENT_UNSUPPORTED_VERSION ?
-            "Cartridge requires unsupported hardware" :
+        set_supervisor_error(result.rejection_reason != NULL ? result.rejection_reason :
             nes_content_service_status_name(result.status));
         return;
     }
@@ -4698,7 +4697,7 @@ static void service_system_page(void)
     uint64_t now;
     uint8_t raw[2];
     if (!supervisor_menu_ready || !supervisor_menu.visible ||
-        supervisor_menu.page != MT_MENU_PAGE_SYSTEM ||
+        (supervisor_menu.page != MT_MENU_PAGE_SYSTEM && supervisor_menu.page != MT_MENU_PAGE_ABOUT) ||
         supervisor_menu.browser != MT_MENU_BROWSER_NONE || supervisor_menu.clock_edit) {
         last_system_refresh_ms = 0U;
         return;

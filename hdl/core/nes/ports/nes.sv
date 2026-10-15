@@ -418,7 +418,7 @@ assign use_fake_h =  freeze_clocks && faux_pixel_cnt < 6;
 
 
 
-assign skip_ppu_cycle =  (cpu_tick_count == 4) && (ppu_tick == 0);
+assign skip_ppu_cycle =  (sys_type == 2'b01) && (cpu_tick_count == 4) && (ppu_tick == 0);
 
 
 
@@ -461,7 +461,8 @@ always @(posedge clk) if (ce_master) begin
 	end
 
 	// Add one extra PPU tick every 5 cpu cycles for PAL.
-	if (cpu_ce && (sys_type == 2'b01))
+	if (reset_nes) cpu_tick_count <= 0;
+	else if (cpu_ce && (sys_type == 2'b01))
 		cpu_tick_count <= cpu_tick_count[2] ? 3'd0 : cpu_tick_count + 1'b1;
 
 	// SDRAM Clock

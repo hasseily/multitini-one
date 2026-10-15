@@ -23,6 +23,9 @@ the CPU, PPU, APU and selected mapper algorithms. Its changes are:
 - Add a common master clock enable to every machine sequential block and
   qualify the native T65 enable. All machine state stays in one service clock
   domain; memory pressure never creates a fabric clock.
+- Reset the PAL phase counter explicitly and qualify PAL tick suppression by
+  system type, so the fixed NTSC wrapper retains exactly twelve master ticks
+  per CPU cycle from a deterministic cold start.
 - Replace the internal mapper tri-state bus with separately driven outputs
   and an explicit mux for mappers 0, 1, 2, 3, 4, 7, 9, 10, 11, 66 and 71.
 - Make declarations, parameter widths, optional inputs and procedural output
@@ -30,19 +33,25 @@ the CPU, PPU, APU and selected mapper algorithms. Its changes are:
   to `always @*`.
 - Clear pending PPU `$2007` transport on reset and suppress memory requests
   during internal reset, so the stalled memory boundary starts deterministically.
+- Honor mapper 2 AND bus conflicts when the canonical header selects that
+  board variant. The existing ROM-read and CPU-data AND path handles the write
+  after any cache miss has completed.
 - Remove MiSTer save-state/rewind transport and the unrouted analog RCA output
   stage. The original state-register defaults still implement unit reset.
 
-`multitini_nes_adapter` implements complete strict iNES1 NTSC cartridge loads,
+`multitini_nes_adapter` implements complete canonical iNES NTSC cartridge loads,
 shared controller input, RGB video, mono APU sound on both channels, local
 native RAM, PSRAM cartridge ROM caching, and generation-checked battery saves.
-The 85.909088 MHz service clock supplies a 21.477272 MHz master tick. A bounded
+The 42.954544 MHz service clock supplies a 21.477272 MHz master tick. A bounded
 tick scheduler repays ROM stalls with coherent machine enables; pause and save
 barriers stop time without accruing catch-up work. Eight byte lanes provide
 the local 8 KiB save RAM's native-byte and snapshot-word views.
-The loader rejects unsupported formats, board variants and image sizes before
-starting the cartridge. NES 2.0, FDS, NSF, Vs., PAL/Dendy, trainers, four-screen
-boards, save states and special peripherals are outside this initial port.
+Firmware translates supported NES 2.0 NTSC/multiregion headers into that
+canonical format without altering cartridge payloads. Mapper 2 submapper 2
+retains its AND bus conflicts through iNES byte 10 bit 5. The HDL loader accepts
+that flag only for mapper 2; its other header, mapper and size checks remain.
+Raw NES 2.0 transport, FDS, NSF, Vs., PAL/Dendy, trainers, four-screen boards,
+save states and special peripherals are outside this port.
 
 No games, system ROMs, FDS BIOS, fonts, logos, palette files, MiSTer platform
 code or prebuilt FPGA images are imported. The fixed 64-entry RGB palette is

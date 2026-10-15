@@ -105,7 +105,25 @@ module tb_nes_loader;
         repeat(4)@(negedge clk);
         if(!error || active || cart_loaded || writes!=before_writes)
             $fatal(1,"unsupported NES2 header accepted");
-        $display("PASS NES loader: exact cartridge bytes, delayed commit, held-reset admission, battery restore, epoch abort/stale quarantine, invalid header rejection");
+        // Firmware's canonical iNES bus-conflict token is only valid for
+        // mapper2. Preserve subtype2 for the retained mapper implementation.
+        load_epoch=0;writes=0;header[6]=8'h20;header[10]=8'h20;
+        for(integer n=0;n<16400;n=n+1)
+            byte_at(n,n<16?header[n]:pattern(n-16),16400);
+        wait(cart_loaded);@(negedge clk);
+        if(error || mapper_flags[7:0]!=2 || mapper_flags[24:21]!=2)
+            $fatal(1,"canonical mapper2 AND bus-conflict subtype lost");
+        load_epoch=1;before_writes=writes;header[6]=0;
+        for(integer n=0;n<16;n=n+1)byte_at(n,header[n],16400);
+        repeat(4)@(negedge clk);
+        if(!error || active || cart_loaded || writes!=before_writes)
+            $fatal(1,"bus-conflict token accepted for unsupported mapper");
+        load_epoch=0;header[6]=8'h20;header[10]=8'h21;
+        for(integer n=0;n<16;n=n+1)byte_at(n,header[n],16400);
+        repeat(4)@(negedge clk);
+        if(!error || active || cart_loaded || writes!=before_writes)
+            $fatal(1,"reserved byte10 bits accepted");
+        $display("PASS NES loader: exact cartridge bytes, delayed commit, held-reset admission, battery restore, epoch abort/stale quarantine, canonical mapper2 AND subtype, invalid header rejection");
         $finish;
     end
     initial begin #20000000;$fatal(1,"NES loader timeout");end

@@ -8,11 +8,15 @@ core-loading system. It does not use an Apple II host.
 Branch `core-nes` adds a pinned MiSTer NES port with standard NTSC cartridge
 loading, two controllers, battery saves and complete 256x240 video through
 the shared display services. See [NES integration](docs/NES_PLAN.md) for the
-source pin, accepted formats, build steps and validation limits. The M0.5.0
-candidate is `build/firmware-core-nes.zip`; its NES image passes routed setup
-`+0.219 ns`, hold `+0.048 ns` and pulse width `+0.265 ns`. See
+source pin, accepted formats, build steps and validation limits. M0.5.1 fixes
+loading supported NES 2.0 cartridges and preserves mapper 2 AND bus conflicts.
+The update is `build/firmware-core-nes-m051.zip`; install its firmware and NES
+core together. See
 [build evidence](docs/NES_BUILD.md) and [hardware checks](docs/NES_HARDWARE_TEST.md).
 Physical NES support remains subject to board testing.
+
+M0.5.1 also adds an About tab after System. It contains the existing rows from
+Firmware build through Audio output, in their original order, with live values.
 
 Branch `core-gs` builds the M0.4.0 hardware-test package at
 `build/firmware-core-gs3.zip`. It adds accelerated IIgs execution, the SHR

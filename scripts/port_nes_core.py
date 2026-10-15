@@ -192,6 +192,13 @@ assign sleep_savestate=0;
     # New visible pixel CE is the original PPU edge, before any scaler.
     text=text.replace('output [15:0] sample,','output pixel_ce,\n\toutput [15:0] sample,',1)
     text=text.replace('assign apu_ce = cpu_ce;', 'assign apu_ce = cpu_ce;\nassign pixel_ce=ppu_ce;')
+    # The fixed NTSC wrapper never changes sys_type after power-up. Upstream
+    # only initializes this PAL divider counter on a type transition or pause;
+    # an unknown counter can otherwise suppress four NTSC master ticks.
+    text=text.replace('wire skip_ppu_cycle = (cpu_tick_count == 4) && (ppu_tick == 0);',
+        "wire skip_ppu_cycle = (sys_type == 2'b01) && (cpu_tick_count == 4) && (ppu_tick == 0);")
+    text=text.replace("if (cpu_ce && (sys_type == 2'b01))\n\t\tcpu_tick_count",
+        "if (reset_nes) cpu_tick_count <= 0;\n\telse if (cpu_ce && (sys_type == 2'b01))\n\t\tcpu_tick_count")
     text=text.replace('.enable (cpu_ce)', '.enable (cpu_ce & ce_master)')
     text=text.replace('.mode   (0)', ".mode   (2'd0)").replace('.BCD_en (0)', ".BCD_en (1'b0)")
     text=text.replace('wire [15:0] cpu_addr;',
@@ -220,6 +227,15 @@ def outputs():
          'MMC2.sv':selected_mapper(SOURCE/'mappers/MMC2.sv',['MMC2','MMC4']),
          'MMC3.sv':selected_mapper(SOURCE/'mappers/MMC3.sv',['MMC3']),
          'generic.sv':selected_mapper(SOURCE/'mappers/generic.sv',['Mapper28','Mapper66','Mapper71'])}
+    # UxROM NES2 submapper2 specifies AND bus conflicts. The shared NES bus
+    # already fetches the old ROM byte and stalls coherently before that write.
+    # Preserve the subtype supplied by the canonical header instead of treating
+    # it as the default no-conflict mapper2 implementation.
+    original='assign prg_conflict = prg_ain[15] && (mapper == 3) && (submapper != 1);'
+    if out['generic.sv'].count(original)!=1:
+        raise ValueError('pinned Mapper28 bus-conflict expression changed')
+    out['generic.sv']=out['generic.sv'].replace(original,
+        'assign prg_conflict = prg_ain[15] && (((mapper == 3) && (submapper != 1)) || ((mapper == 2) && (submapper == 2)));')
     cheat=out['cheatcodes.sv']
     params=re.search(r'parameter ADDR_WIDTH.*?parameter MAX_CODES[^;]*;',cheat,re.S)[0]
     cheat=cheat.replace(params,'').replace('module CODES(',

@@ -10,6 +10,24 @@ their original build identities and source archives. Directed simulations,
 license checks and a strict routed NES build precede a board-test package.
 See [the NES integration](docs/NES_PLAN.md). Board acceptance is separate.
 
+Cartridge follow-up, 2026-10-15: the owner's five NES cartridges all use
+NES 2.0 headers and are rejected before FPGA transfer. Parse the supported
+NES 2.0 memory, timing and mapper fields, then stream a canonical header while
+preserving every PRG/CHR byte and the original file. Preserve Contra's mapper 2
+submapper 2 AND bus conflicts through the existing ROM-read/stall path. Rebuild
+NES and ARM as M0.5.1; retain the seven other qualified FPGA images. Test the
+exact private files locally, keep game bytes out of source and delivery, and
+separate parser/stream/CPU evidence from unperformed board gameplay.
+
+NES clock follow-up, 2026-10-15: explicitly reset the imported CPU tick counter
+and qualify PPU cycle skipping for PAL only. Verify native NTSC CPU enables
+every 12 master ticks, including stack, DMA and NMI/RTI execution. Allow private
+cartridge cold initialization to finish before checking rendered frames.
+
+Menu follow-up, 2026-10-15: add About after System in the main firmware. Move
+every row from Firmware build through Audio output inclusive to About, keeping
+their order, values, help and live refresh. Preserve the other System entries.
+
 Follow-up, 2026-10-15: M0.4.0 adds primary-clock 65816 execution with selectable
 28.64/57.27 MHz fast-cycle targets, a coherent small read cache ahead of the
 32 KiB DDR cache, and an advertised per-image speed capability. Slow RAM,

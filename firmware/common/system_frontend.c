@@ -125,9 +125,16 @@ void mt_system_frontend_apply(mt_system_frontend_t *frontend,
     if (view->save_faulted || view->settings_faulted || view->save_dirty)
         frontend->items[12].value_color = MT_UI_COLOR_WARNING;
     if (snapshot->usb_last_error != 0) frontend->items[10].value_color = MT_UI_COLOR_WARNING;
+    /* Move Firmware build through Audio output intact. Their value pointers
+     * keep the existing formatting and refresh behavior in the shared cache. */
+    memcpy(frontend->about_items, frontend->items + 4U, sizeof(frontend->about_items));
+    memmove(frontend->items + 4U, frontend->items + 14U,
+        (sizeof(labels) / sizeof(labels[0]) - 14U) * sizeof(frontend->items[0]));
     view->system_items = frontend->items;
-    view->system_item_count = sizeof(labels) / sizeof(labels[0]) -
+    view->system_item_count = sizeof(labels) / sizeof(labels[0]) - MT_MENU_MAX_ABOUT_ITEMS -
         (snapshot->golden_update_present ? 0U : 1U);
+    view->about_items = frontend->about_items;
+    view->about_item_count = MT_MENU_MAX_ABOUT_ITEMS;
     view->clock_available = snapshot->clock_available;
     view->clock_valid = snapshot->clock_valid;
     view->clock = snapshot->clock;

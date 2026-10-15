@@ -1,12 +1,14 @@
 # Current handoff
 
-Branch `core-nes` adds the NES integration and M0.5.0 candidate firmware. Its
+The NES integration includes the M0.5.1 cartridge-header correction. Its
 machine and firmware validation are recorded in [NES build evidence](NES_BUILD.md).
 See [NES integration](NES_PLAN.md) for scope and [board checks](NES_HARDWARE_TEST.md)
 for installation and physical acceptance.
-The package is `build/firmware-core-nes.zip`, with an unpacked SD tree under
-`build/firmware-core-nes/sd/`. The NES image passes routed setup `+0.219 ns`,
-hold `+0.048 ns` and pulse width `+0.265 ns`.
+The package is `build/firmware-core-nes-m051.zip`, with an unpacked SD tree under
+`build/firmware-core-nes-m051/sd/`. Install both the firmware and NES core to
+load the owner's NES 2.0 mapper 2 submapper 2 cartridge with AND bus conflicts.
+The main firmware also moves the ten System rows from Firmware build through
+Audio output into a new About tab, preserving their labels, order and live values.
 The existing core images retain their original identities. NES board tests
 remain separate from source, simulation and build evidence.
 

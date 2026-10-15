@@ -1,18 +1,23 @@
 # NES hardware test
 
-Install the complete `build/firmware-core-nes/sd/` contents, preserving existing
+Install the complete `build/firmware-core-nes-m051/sd/` contents, preserving existing
 media and settings. Update Multitini through Golden with the included
 `FIRMWARE.BIN`, then select **Nintendo Entertainment System** in Cores.
 Use the package's `SHA256SUMS.txt` to identify the installed files.
+Install the firmware and updated NES core together. The new mapper 2 conflict
+flag is rejected by the older M0.5.0 NES image.
 This branch has no recorded NES board acceptance.
 
 ## Cartridges and controls
 
 Put user-owned `.nes` files in `multitini/cores/nes/media/`. No NES BIOS is
 needed. The package includes no NES cartridges or Nintendo firmware.
-The initial port accepts standard NTSC iNES 1 cartridges with mapper IDs
+The port accepts standard NTSC iNES 1 and supported NES 2.0 cartridges with mapper IDs
 0, 1, 2, 3, 4, 7, 9, 10, 11, 66 and 71, subject to the parser's size limits.
 See [NES integration](NES_PLAN.md) for exclusions and architecture.
+Dual-region NES 2.0 cartridges use NTSC timing. Standard submapper 0 and mapper
+2 submappers 1/2 are supported within the documented ROM/RAM limits. Source
+cartridge files are never rewritten.
 
 Two standard controllers use the shared controller setup and player
 assignments. Keyboard player 1 uses arrows, Z for A, X for B, Enter for Start

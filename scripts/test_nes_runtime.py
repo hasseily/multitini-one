@@ -35,6 +35,7 @@ def main() -> int:
         ROOT / "firmware/platform/xilinx/nes_content_service.h",
         ROOT / "firmware/platform/xilinx/persistent_save.c",
         ROOT / "tests/host/test_nes_runtime.c", ROOT / "tests/host/test_nes_content_service.c",
+        ROOT / "tests/host/test_core_link.c",
         ROOT / "tests/host/test_usb_hid_runtime.c", Path(__file__).resolve()]
     def hashes():
         return {p.relative_to(ROOT).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in tracked}
@@ -51,9 +52,9 @@ def main() -> int:
         f"-DCMAKE_C_COMPILER={tool('gcc')}",f"-DCMAKE_CXX_COMPILER={tool('g++')}",
         f"-DCMAKE_MAKE_PROGRAM={tool('ninja')}","-DCMAKE_BUILD_TYPE=Debug"])
     run("compile",[tool("cmake"),"--build",build,"--parallel","6","--target",
-        "test_nes_runtime","test_nes_content_service","test_usb_hid_runtime",
+        "test_nes_runtime","test_nes_content_service","test_usb_hid_runtime","test_core_link",
         "xilinx_main_compile","usb_hid_service_compile"])
-    output=run("test",[tool("ctest"),"--test-dir",build,"--output-on-failure","-R","^(nes_runtime|nes_content_service|usb_hid_runtime)$"])
+    output=run("test",[tool("ctest"),"--test-dir",build,"--output-on-failure","-R","^(nes_runtime|nes_content_service|usb_hid_runtime|core_link)$"])
     print(output.strip())
     if hashes() != before: raise RuntimeError("Runtime test inputs changed while tests ran")
     (build / "validation.json").write_text(json.dumps({"checks":checks,"source_sha256":before,

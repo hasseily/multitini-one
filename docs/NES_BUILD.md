@@ -1,5 +1,141 @@
 # NES build and validation
 
+M0.5.1 corrects NES 2.0 cartridge loading, mapper 2 submapper 2 AND bus
+conflicts and deterministic NTSC CPU timing. It also adds the About tab.
+The package is `build/firmware-core-nes-m051.zip`; install its
+firmware and NES core together. Its current validation is recorded separately
+under `build/core-nes-m051/`. The owner's five files are local test inputs;
+game payloads are excluded from source and delivery. See [NES integration](NES_PLAN.md)
+for the bounded header contract and [board instructions](NES_HARDWARE_TEST.md).
+
+## M0.5.1 cartridge correction
+
+The owner's Contra (USA), Zelda (USA Rev 1), Super Mario Bros. (World),
+Super Mario Bros. 2 (USA Rev 1) and Super Mario Bros. 3 (USA Rev 1) all contain
+NES 2.0 headers. The previous parser returned unsupported-version before
+resetting or streaming the core. Their mapper IDs are 2, 1, 0, 4 and 4.
+Contra additionally specifies submapper 2, meaning ROM/CPU AND bus conflicts.
+
+The corrected parser validates the supported NES 2.0 fields and produces a
+canonical 16-byte transport header. The shared stream engine overlays that
+prefix on the wire. It retains the caller's original buffer and every PRG/CHR
+byte. The source file is never rewritten. Unsupported RAM, timing, input and
+board variants now produce specific error messages.
+
+`build/core-nes-m051/private-file-tests/validation.json` records the exact
+private file hashes and original/canonical headers. The native probe reproduced
+the old rejection against commit `e7e4234`, then passed each complete original
+file through the production parser and boot code in both command and burst
+transport modes. It checked byte-for-byte payload and input preservation,
+unchanged SD files, and acceptance of the emitted header by the production
+HDL validator. Reproduce it without modifying media:
+
+```text
+python scripts/test_nes_files.py --media <media-directory> --baseline-ref e7e4234
+```
+
+The new NES FPGA carries canonical mapper 2 byte-10 bit-5 through to the
+mapper subtype. Its existing ROM-read path provides the old byte before a
+conflicting bank write. The real T65 regression proves that CPU write 3 against
+ROM byte 1 selects bank 1 with AND conflicts and bank 3 without conflicts.
+An 82-service-clock cold read held CPU and PPU state, and exactly one mapper
+write committed after the reply.
+
+The imported PAL tick counter had no deterministic reset in the fixed NTSC
+configuration. The derived port now resets that counter and qualifies PPU
+cycle skipping for PAL only. The real CPU fixture checks exactly 12 native
+master ticks between CPU enables and 24 service clocks when unstalled. Its
+generated cartridge exercises JSR/RTS, OAM DMA resume and repeated NMI/RTI,
+including stack-pointer restoration. No additional clock or timing exception
+is introduced.
+
+The optional private-cartridge smoke test runs the production parser and boot
+stream, then the original T65/PPU/APU with delayed PSRAM replies. Use 60 frames
+to allow cold initialization before checking the picture:
+
+```text
+python scripts/test_nes_cartridge_smoke.py --directory <media-directory> --frames 60 --build-dir build/core-nes-m051/private-smoke60
+```
+
+It requires complete 256x240 rasters, continued CPU execution, at least three
+nonuniform frames and no unknown visible pixels after the first three frames.
+It has no controller input or physical peripherals. All derived cartridge
+copies and final images stay under ignored `build/` directories.
+The legacy `cpu_fetches` metric counts T65 `Instrnew` instruction-completion
+events; it does not identify opcode addresses or instruction traces.
+
+The final exact-file run passed for all five cartridges at
+`build/core-nes-m051/private-smoke60/validation.json`. Each completed 60 full
+rasters with 80-service-clock ROM replies, no load/timing fault, no unknown
+visible pixels after startup and zero final timing debt. Nonuniform frame
+counts were Contra 17, Zelda 21, Mario 1 28, Mario 2 54 and Mario 3 50.
+Visual inspection found complete recognizable Mario 1, Zelda and Mario 2 title
+screens, Contra's scrolling opening logo/menu edge, and Mario 3's opening red
+curtain and checkerboard stage. These are initialization and opening-screen
+checks, without controller gameplay, save reload or physical audio evidence.
+`private-smoke60/independent-verification.json` checks all 25 machine/harness
+and 12 production parser/boot source hashes, exact private file hashes and
+unchanged canonical payloads independently. Private frame images and cartridge
+copies are excluded from delivery.
+
+The complete loader, memory, save, audio and machine suite passed at
+`build/core-nes-m051/release-clockfixed/validation.json`, with all 28 source hashes
+matching the final inputs. Existing stress retained zero drift over 5,717,856
+service clocks, peak debt 2,148 and twelve blanking recoveries. The current
+mapper suite passed all eleven IDs and 85 mapped-address assertions at
+`build/core-nes-m051/mapper-current-tests/validation.json`.
+
+The ARM firmware compiled and linked CPU0 and CPU1 as M0.5.1, build
+`0x4D000501`, ABI 0.22. The focused runtime report and full native suite are
+under `build/core-nes-m051/runtime-tests/`: four focused checks and all 86
+CTest cases passed. The Python suite passed 263 tests, with two environment
+skips; its final log is `build/core-nes-m051/python-regressions-clockfixed.log`.
+The runner uses the UCRT GCC compiler and a checkout-local temporary directory.
+Exact ARM
+binary, FSBL and platform hashes for the selected About-enabled build are in
+`build/core-nes-m051/arm-about-audit.json`.
+
+The main firmware adds About after System. It moves exactly these existing
+rows, preserving order, help, values and colors: Firmware build, FPGA build,
+Interface, Uptime, Board temperature, USB devices, USB errors, SD core catalog,
+Saved data and Audio output. All remaining System rows retain their relative
+order. Live status and temperature continue to refresh while About is visible.
+Native menu/system/USB navigation checks and the menu-runtime Python checks
+cover the move and refresh behavior. Production software previews of both pages
+and the current source hashes are recorded under
+`build/core-nes-m051/about-tests/`; preview status values are synthetic fixtures.
+
+These results verify the reported rejection and the corrected transport and
+mapper behavior. They do not establish physical gameplay, saves or audio for
+the five private cartridges. The M0.5.1 firmware and NES image must be installed
+together; the other seven FPGA images retain their original identities.
+
+## M0.5.1 routed build
+
+The selected NES image is under `build/core-nes-m051/hardware/nes/`. Its normal
+strict synthesis, implementation and export gates passed. Final setup, hold
+and pulse-width slack are +0.246 ns, +0.040 ns and +0.265 ns, with zero failing
+endpoints. All 43,130 nets routed. The bus-skew minimum slack is +5.400 ns;
+the eight critical CDC entries are the eight reviewed external PSRAM waivers.
+No new timing exception was added for the counter correction.
+
+The image uses 30,218 LUTs, 19,593 flip-flops, 13 RAMB36, 7 RAMB18 and 12 DSPs.
+Cartridge SRAM inference remains 1,536 RAM primitives for 98,304 bits and zero
+storage flip-flops. Clock ratio and the 5,083-register-pin census passed.
+`build/core-nes-m051/fpga-audit.json` records the complete artifact identities.
+The selected bitstream SHA-256 is
+`82e4d46845d87be6be96168e49a6caebb85462bf166127bae90de5725f1858fc`.
+
+The clock correction reran full top synthesis and implementation using the
+eight unchanged completed IP netlists from the initial M0.5.1 build. The reuse
+contract checked all 180 IP input, setting, log and checkpoint files before
+and after the build. The normal export script and strict gates ran unchanged.
+All 130 captured source inputs match current bytes. The final artifact includes
+`reports/ip-reuse-receipt.json`; the 302 superseded initial files remain in
+`build/core-nes-m051/superseded-initial/` with a verified hash inventory.
+
+## M0.5.0 build record
+
 The `core-nes` candidate uses firmware M0.5.0, build ID `0x4D000500`, ABI 0.22.
 The NES FPGA identifies machine 6 and core `0x4e455320`. The upstream pin and
 supported cartridge formats are in [NES integration](NES_PLAN.md).
@@ -10,7 +146,7 @@ The local delivery is `build/firmware-core-nes.zip`, with an unpacked copy at
 `sd/FIRMWARE.BIN`, eight selected FPGA images, source archives, notices,
 checksums and validation reports. NES cartridges are supplied by the user.
 
-## Firmware and retained images
+### Firmware and retained images
 
 Vitis 2025.2 compiled and linked CPU0 firmware and the embedded CPU1 video
 worker. `build/core-nes/arm-audit.json` records the actual ELF and CPU1 blob
@@ -24,7 +160,7 @@ images retain build ID `0x4D000300`, ABI 0.21. Apple IIgs retains build ID
 source archives were audited individually. See
 `build/core-nes/retained-image-audit.json`. Only NES requires a new FPGA image.
 
-## Host and video checks
+### Host and video checks
 
 The complete native suite passed 86 CTest tests. The Python suite ran 262
 tests successfully, with two environment-dependent skips. The NES runtime
@@ -44,7 +180,7 @@ drain, stopped display clocks and AXI failure recovery. Shared geometry passed
 deterministic portability patches and GPL-3.0-only/BSD-3-Clause notices.
 The source and tests contain no NES game, BIOS or logo assets.
 
-## Machine simulation
+### Machine simulation
 
 `build/nes-2x-release-tests/validation.json` records the final loader,
 memory, save, audio and real-machine simulations, with hashes matching the delivered
@@ -79,7 +215,7 @@ one percent. It also checks DC-step decay, full signed excursions, equal
 stereo channels, output cadence, between-sample state holds, pause and reset.
 This verifies the digital filter separately from the unperformed DAC test.
 
-## FPGA clock selection
+### FPGA clock selection
 
 NES uses a 42.954544 MHz service clock with native 21.477272 MHz master ticks
 every two service clocks. Delayed work can advance on successive service
@@ -92,7 +228,7 @@ CPU/PPU combinational paths: the worst path required 15.187 ns against an
 were retained under `build/core-nes/hardware-final2/`. The service rate was
 reduced while preserving native timing; no multicycle exception was added.
 
-## Routed FPGA result
+### Routed FPGA result
 
 The selected NES image is `build/core-nes/hardware-final4/nes/`. Final routed
 setup slack is `+0.219 ns`, hold slack `+0.048 ns` and pulse-width slack
@@ -126,7 +262,7 @@ that the bitstream and routed checkpoint stayed byte-identical and that the
 XSA contains that exact bitstream. No RTL, constraints or routed design were
 changed during this export recovery.
 
-## Tool settings
+### Tool settings
 
 The FPGA build uses Vivado 2025.2, serial IP jobs and explicit forward-slash
 `TEMP`/`TMP` paths. The NES synthesis hook sets `synth.maxThreads` to 1 while

@@ -31,6 +31,7 @@ typedef struct {
     mt_nes_content_service_status_t status;
     mt_sd_result_t sd;
     mt_content_validation_t validation;
+    const char *rejection_reason;
     mt_content_info_t info;
     mt_nes_content_info_t cartridge;
     mt_link_result_t link;

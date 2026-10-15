@@ -27,23 +27,44 @@ module tb_nes_machine;
         .media_complete_generation(32'd0),.media_write_data_ready(1'b1),.*
     );
     always #11.64 core_clk=!core_clk;
-    reg [7:0] prg[0:16383],chr[0:8191],header[0:15];
+    reg [7:0] prg[0:65535],chr[0:8191],header[0:15];
     integer pending=0,service_cycles=0,master_ticks=0,stalled=0,rom_reads=0,peak_debt=0;
     reg [23:0] pending_addr;
     reg [63:0] pending_data;
     reg pending_write;
     reg [7:0] pending_strobe;
-    integer i,j,pc=0;
+    integer i,j,pc=0,variant,conflict_store_checks=0,conflict_wait_cycles=0;
+    integer last_cpu_master=-1,last_cpu_service=-1,cpu_clock_checks=0;
+    reg cpu_interval_steady=0;
     task emit(input [7:0] b);begin prg[pc]=b;pc=pc+1;end endtask
     task lda(input [7:0] b);begin emit(8'ha9);emit(b);end endtask
     task sta(input [15:0] a);begin emit(8'h8d);emit(a[7:0]);emit(a[15:8]);end endtask
     always @(posedge core_clk)begin
         service_cycles<=service_cycles+1;memory_rvalid<=0;
         if(!dut.machine_reset)begin
+            if(dut.memory_stall||dut.tick_debt!=0||pause_request||dut.save_pause)
+                cpu_interval_steady<=0;
             if(dut.tick_debt>peak_debt)peak_debt<=dut.tick_debt;
             if(dut.machine_ce)master_ticks<=master_ticks+1;
+            if(dut.machine_ce&&dut.machine.cpu_ce)begin
+                if(last_cpu_master>=0&&master_ticks-last_cpu_master!=12)
+                    $fatal(1,"NTSC CPU enable is not exactly12 native master ticks apart");
+                if(last_cpu_service>=0&&cpu_interval_steady&&service_cycles-last_cpu_service!=24)
+                    $fatal(1,"unstalled NTSC CPU enables are not24 service clocks apart");
+                last_cpu_master<=master_ticks;last_cpu_service<=service_cycles;
+                cpu_interval_steady<=!dut.memory_stall&&dut.tick_debt==0&&!pause_request&&!dut.save_pause;
+                cpu_clock_checks<=cpu_clock_checks+1;
+            end
             if(dut.master_phase==0&&!dut.machine_ce&&!pause_request)stalled<=stalled+1;
-        end
+            if(dut.machine.prg_write&&dut.machine.prg_conflict)begin
+                if(dut.memory_stall)conflict_wait_cycles<=conflict_wait_cycles+1;
+                if(dut.machine_ce&&dut.machine.cart_ce)begin
+                    if(dut.machine.prg_din!==8'h01||dut.cpu_rdata!==8'h01||dut.machine.dbus!==8'h03)
+                        $fatal(1,"mapper2 write did not AND CPU3 with old ROM1");
+                    conflict_store_checks<=conflict_store_checks+1;
+                end
+            end
+        end else begin last_cpu_master<=-1;last_cpu_service<=-1;cpu_interval_steady<=0;end
         if(memory_valid&&memory_ready)begin
             if(pending!=0)$fatal(1,"overlapping memory request");
             pending<=core_reset_request?2:80;
@@ -54,7 +75,7 @@ module tb_nes_machine;
             pending<=pending-1;
             if(pending==1)begin
                 for(j=0;j<8;j=j+1)begin
-                    if(pending_addr<16384)begin
+                    if(pending_addr<65536)begin
                         if(pending_write&&pending_strobe[j])prg[pending_addr+j]<=pending_data[j*8+:8];
                         memory_rdata[j*8+:8]<=prg[pending_addr+j];
                     end else if(pending_addr>=24'h200000&&pending_addr<24'h202000)begin
@@ -64,6 +85,18 @@ module tb_nes_machine;
                 end
                 memory_rvalid<=1;
             end
+        end
+    end
+    // A conflict read may miss its ROM cache while the CPU is writing. Every
+    // held service edge must preserve both CPU bus and PPU timing state.
+    reg [42:0] held_stall_state;
+    always @(posedge core_clk)begin
+        if(!dut.machine_reset&&dut.memory_stall)begin
+            held_stall_state={dut.cpu_addr,dut.cycle,dut.scanline};
+            if(dut.machine_ce)$fatal(1,"machine CE advanced through a ROM miss");
+            #1;
+            if({dut.cpu_addr,dut.cycle,dut.scanline}!==held_stall_state)
+                $fatal(1,"CPU/PPU state advanced while ROM data was pending");
         end
     end
     task stream_byte(input integer offset,input [7:0] value);
@@ -108,6 +141,10 @@ module tb_nes_machine;
         for(i=0;i<8192;i=i+1)chr[i]=i[3]?8'h00:8'hff;
         emit(8'h78);emit(8'hd8); // SEI; CLD
         emit(8'ha2);emit(8'hff);emit(8'h9a); // LDX#$ff; TXS
+        emit(8'h20);emit(0);emit(8'hff); // JSR$ff00; subroutine returns with stack intact
+        emit(8'hba);emit(8'h86);emit(11); // TSX;STX$0b (expected$ff)
+        lda(2);sta(16'h4014); // OAM DMA pauses and resumes the real CPU
+        lda(8'ha6);sta(16'h000a);
         lda(8'h5a);sta(16'h0002); // prove real CPU reset-vector execution
         lda(0);sta(16'h2000);sta(16'h2001);
         // Wait two PPU vblanks, as a real cold NES must.
@@ -121,7 +158,7 @@ module tb_nes_machine;
         emit(8'ha0);emit(4);emit(8'ha2);emit(0); // LDY4;LDX0
         i=pc;emit(8'h8a);sta(16'h2007);emit(8'he8);emit(8'hd0);emit((i-(pc+1))&255);
         emit(8'h88);emit(8'hd0);emit((i-(pc+1))&255);
-        lda(0);sta(16'h2005);sta(16'h2005);lda(8'h0a);sta(16'h2001);
+        lda(0);sta(16'h2005);sta(16'h2005);lda(8'h80);sta(16'h2000);lda(8'h0a);sta(16'h2001);
         // Strobe both controllers, consume all eight bits into CPU RAM.
         lda(1);sta(16'h4016);
         emit(8'had);emit(8'h16);emit(8'h40);sta(16'h0030);
@@ -134,8 +171,12 @@ module tb_nes_machine;
         emit(8'had);emit(8'h17);emit(8'h40);emit(8'h95);emit(8'h20);
         emit(8'he8);emit(8'he0);emit(8'h08);emit(8'hd0);emit((i-(pc+1))&255);
         lda(8'ha5);sta(16'h0003);
-        i=pc;emit(8'h4c);emit(i&255);emit(8'hc0+(i>>8)); // stable JMP forever
-        prg[16378]=0;prg[16379]=8'hc0;prg[16380]=0;prg[16381]=8'hc0;prg[16382]=0;prg[16383]=8'hc0;
+        i=pc;emit(8'he6);emit(8);emit(8'h4c);emit(i&255);emit(8'hc0+(i>>8)); // continuing main loop
+        pc=16'h3f00;lda(8'h3c);sta(16'h0006);emit(8'h60); // JSR/RTS proof
+        pc=16'h3f10;emit(8'h48);emit(8'h8a);emit(8'h48);emit(8'h98);emit(8'h48);
+        emit(8'hba);emit(8'h86);emit(9); // handler SP after3interrupt+3software pushes is$f9
+        emit(8'he6);emit(7);emit(8'h68);emit(8'ha8);emit(8'h68);emit(8'haa);emit(8'h68);emit(8'h40);
+        prg[16378]=8'h10;prg[16379]=8'hff;prg[16380]=0;prg[16381]=8'hc0;prg[16382]=8'h10;prg[16383]=8'hff;
         repeat(5)@(negedge core_clk);reset=0;
         for(i=0;i<24592;i=i+1)
             stream_byte(i,i<16?header[i]:i<16400?prg[i-16]:chr[i-16400]);
@@ -147,6 +188,8 @@ module tb_nes_machine;
         input_code=16'h5001;input_value=16'h006a;@(negedge core_clk);input_valid=0;
         core_reset_request=0;
         wait(dut.memory_service.cpu_ram[2]===8'h5a);
+        if(dut.memory_service.cpu_ram[6]!==8'h3c||dut.memory_service.cpu_ram[11]!==8'hff||
+            dut.memory_service.cpu_ram[10]!==8'ha6)$fatal(1,"JSR/RTS stack or OAM DMA resume failed");
         wait(frames>=1);@(negedge core_clk);pause_request=1;
         repeat(20)@(negedge core_clk);
         held_cycle=dut.cycle;held_scanline=dut.scanline;held_cpu_addr=dut.cpu_addr;
@@ -173,6 +216,9 @@ module tb_nes_machine;
         if(accounted!=0)$fatal(1,"native tick/debt/phase invariant %0d",accounted);
         if(drift>budget/1000||drift<-(budget/1000)||peak_debt>=4096||dut.timing_fault||blank_recoveries<8)
             $fatal(1,"native cadence debt=%0d peak=%0d drift=%0d budget=%0d recovered=%0d",dut.tick_debt,peak_debt,drift,budget,blank_recoveries);
+        if(cpu_clock_checks<1000||dut.machine.cpu_tick_count!==3'd0||
+            dut.memory_service.cpu_ram[7]<8||dut.memory_service.cpu_ram[9]!==8'hf9)
+            $fatal(1,"NTSC divider or NMI stack/return regression");
         monitor_frames=0;core_reset_request=1;@(negedge core_clk);if(ready)$fatal(1,"reset did not drop ready for capture drain");
         media_generation=2;media_eject=1;@(negedge core_clk);media_eject=0;
         wait(!media_state_mounted);@(negedge core_clk);
@@ -196,7 +242,31 @@ module tb_nes_machine;
         do @(negedge core_clk);while(!audio_valid);
         if(audio_l<=0||audio_l!==audio_r)$fatal(1,"positive APU peak wrapped in signed24-bit conversion");
         release dut.raw_sample;
-        $display("PASS NES machine: real T65 boot, PPU256x240/color, two8-bit pads and strobe, pause, signed audio peaks, battery-to-nonbattery switch,80cyclePSRAM,8fullpatternframes; drift=%0d/%0dservices misses=%0d peakdebt=%0d vblankrecoveries=%0d",drift,budget,rom_reads,peak_debt,blank_recoveries);$finish;
+        // A real CPU bank write distinguishes AND-conflict UxROM from the
+        // no-conflict variant. Code runs in fixed bank3. At$8000, bank0 has1;
+        // writing3 selects bank1 with conflicts and bank3 without conflicts.
+        for(i=0;i<65536;i=i+1)prg[i]=8'hea;
+        prg[0]=1;prg[16384]=8'h22;prg[32768]=8'h44;pc=49152;
+        emit(8'h78);emit(8'hd8);lda(3);sta(16'h8000);
+        emit(8'had);emit(0);emit(8'h80);sta(16'h0004);
+        lda(8'ha5);sta(16'h0005);
+        i=pc-49152;emit(8'h4c);emit(i&255);emit(8'hc0+(i>>8));
+        prg[65530]=0;prg[65531]=8'hc0;prg[65532]=0;prg[65533]=8'hc0;prg[65534]=0;prg[65535]=8'hc0;
+        for(i=0;i<16;i=i+1)header[i]=0;
+        header[0]="N";header[1]="E";header[2]="S";header[3]=26;header[4]=4;header[6]=8'h20;
+        load_total=65552;
+        for(variant=0;variant<2;variant=variant+1)begin
+            core_reset_request=1;repeat(3)@(negedge core_clk);
+            load_epoch=~load_epoch;header[10]=variant?8'h20:8'h00;
+            for(i=0;i<65552;i=i+1)stream_byte(i,i<16?header[i]:prg[i-16]);
+            wait(cart_loaded);@(negedge core_clk);core_reset_request=0;
+            wait(dut.memory_service.cpu_ram[5]===8'ha5);@(negedge core_clk);
+            if(load_error||dut.memory_service.cpu_ram[4]!== (variant?8'h22:8'h78))
+                $fatal(1,"real CPU mapper2 variant%0d selected wrong bank: %h",variant,dut.memory_service.cpu_ram[4]);
+        end
+        if(conflict_store_checks!=1||conflict_wait_cycles<80)
+            $fatal(1,"AND write/cache-miss coverage missing stores=%0d waits=%0d",conflict_store_checks,conflict_wait_cycles);
+        $display("PASS NES machine: real T65 boot,12master CPU cadence,JSR/RTS,NMI/RTI stack,DMA resume,PPU256x240/color,two8-bit pads and strobe,pause,signed audio peaks,battery-to-nonbattery switch,mapper2 AND/no-conflict bank writes,80cyclePSRAM,8fullpatternframes; drift=%0d/%0dservices misses=%0d peakdebt=%0d vblankrecoveries=%0d conflictwait=%0d",drift,budget,rom_reads,peak_debt,blank_recoveries,conflict_wait_cycles);$finish;
     end
     initial begin #300000000;$fatal(1,"real machine timeout PCaddr=%h CPUmem=%h raster=%d,%d err=%b loaded=%b",dut.cpu_addr,dut.cpu_rdata,dut.cycle,dut.scanline,load_error,cart_loaded);end
 endmodule

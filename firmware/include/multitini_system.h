@@ -27,6 +27,7 @@ typedef struct {
 
 typedef struct {
     mt_menu_item_t items[MT_MENU_MAX_SYSTEM_ITEMS];
+    mt_menu_item_t about_items[MT_MENU_MAX_ABOUT_ITEMS];
     char values[MT_MENU_MAX_SYSTEM_ITEMS][96];
 } mt_system_frontend_t;
 

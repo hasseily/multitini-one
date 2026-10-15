@@ -515,6 +515,7 @@ mt_nes_content_service_result_t nes_content_service_load(
     result.validation = mt_nes_content_inspect(content_buffer, rom_size, &info);
     if (result.validation != MT_CONTENT_VALID) {
         result.status = MT_NES_CONTENT_SERVICE_REJECTED;
+        result.rejection_reason = info.rejection_reason;
         return result;
     }
     result.cartridge = info;

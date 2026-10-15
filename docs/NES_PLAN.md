@@ -10,7 +10,9 @@ User cartridges and Nintendo system/game images are excluded from source.
 
 NES uses core ID `0x4e455320` and machine selection 6. Its requested service
 clock is 42.954544 MHz, with native 21.477272 MHz master enables every two
-service clocks in the absence of stalls. The machine
+service clocks in the absence of stalls. NTSC CPU and PPU enables occur every
+12 and 4 master ticks respectively. M0.5.1 explicitly resets the imported CPU
+tick counter and permits PPU cycle skipping only in PAL mode. The machine
 retains the upstream CPU, PPU, APU and selected cartridge mapper logic.
 Cartridge storage uses the existing 64-bit PSRAM service. Local machine RAM
 retains its synchronous timing; external cartridge reads hold the complete
@@ -51,10 +53,29 @@ execution. Battery saves live beside the cartridge as `<name>.nes.sav` and use
 the shared durable journal, sync and recovery process.
 
 The first port targets standard NTSC cartridges and two ordinary controllers.
-It accepts iNES 1 cartridges for mapper IDs 0, 1, 2, 3, 4, 7, 9, 10, 11, 66
-and 71, with power-of-two PRG/CHR sizes and mapper-specific size checks.
-Cartridge SRAM is limited to 8 KiB. NES 2.0 headers, trainers, four-screen
-mirroring, PAL and unsupported mapper IDs are rejected explicitly.
+It accepts iNES 1 and supported NES 2.0 cartridges for mapper IDs 0, 1, 2, 3,
+4, 7, 9, 10, 11, 66 and 71, with power-of-two PRG/CHR sizes and mapper-specific
+size checks. Cartridge SRAM is limited to 8 KiB.
+
+M0.5.1 adds bounded NES 2.0 parsing. It accepts standard NES/Famicom console
+type, linear ROM sizes within the existing limits, submapper 0, and mapper 2
+submappers 1 and 2. PRG RAM may be absent or one 8 KiB volatile bank; battery
+cartridges require one 8 KiB nonvolatile bank. CHR RAM must be 8 KiB when no
+CHR ROM is present; mixed CHR ROM/RAM and nonvolatile CHR RAM are unsupported.
+NTSC and dual-region headers run with NTSC timing. Input metadata may be
+unspecified or ordinary controllers. Other submappers, extended size fields,
+trainers, four-screen mirroring, PAL-only/Dendy timing and miscellaneous ROMs
+are rejected explicitly.
+
+Firmware validates the complete file before resetting the machine. It overlays
+only the 16-byte streamed header; PRG/CHR payload and the source file remain
+unchanged. The canonical transport is iNES 1, with byte 10 bit 5 reserved for
+mapper 2 AND bus conflicts. That flag requires the M0.5.1 NES FPGA image; older
+images reject it. The loader passes it to the mapper's submapper field, and
+the existing ROM-read and coherent-stall path supplies the byte used in the
+AND operation. Unsupported canonical bits remain errors. See the
+[NES 2.0 format](https://www.nesdev.org/wiki/NES_2.0) and
+[submapper definitions](https://www.nesdev.org/wiki/NES_2.0_submappers).
 Famicom Disk System, VS/PlayChoice, light guns, expansion peripherals and
 save states are outside this port. No compatibility claim extends beyond the
 implemented cartridge formats and mapper set.
@@ -88,7 +109,14 @@ with the imported PPU/APU and mappers. Its original generated test cartridge
 checks reset-vector execution, both serial controllers, the complete raster,
 pause, and frame cadence with changing tile data and delayed PSRAM replies.
 The native firmware checks are `scripts/test_nes_runtime.py`; the broader
-validation includes the existing 86 CTest and 257 Python checks.
+validation includes the existing 86 CTest and Python checks. Header fixtures
+cover the five reported cartridge layouts without game payloads. Stream tests
+check exact header substitution, untouched payload/input bytes, both protocol
+paths and failed-transfer cleanup. The real CPU fixture checks mapper 2 AND
+conflicts with delayed ROM replies, deterministic NTSC CPU cadence, JSR/RTS,
+OAM DMA resume and repeated NMI/RTI with stack-pointer checks. Optional local
+cartridge smoke tests allow 60 frames for cold initialization and require
+complete nonuniform rasters; they keep private payloads in ignored build files.
 
 Build and simulation results do not establish physical support. Board tests
 must cover cold boot, loading, two controllers, audio, native edge pixels,

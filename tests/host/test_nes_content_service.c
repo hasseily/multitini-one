@@ -29,6 +29,7 @@ typedef struct {
     uint32_t completion_blocks;
     uint8_t media_data[MT_SIZE_NES_SAVE];
     uint8_t loaded_save[MT_SIZE_NES_SAVE];
+    uint8_t loaded_header[16];
     size_t media_data_size;
     size_t media_data_offset;
     int raise_load_error_on_end;
@@ -73,6 +74,8 @@ static void transport_step(shell_t *shell)
         assert(shell->reset_asserted && shell->active_offset<shell->active_size);
         if(shell->active_kind==MT_LOAD_NES_SAVE)
             shell->loaded_save[shell->active_offset]=(uint8_t)(shell->burst_word>>(shell->burst_index*8U));
+        if(shell->active_kind==MT_LOAD_NES_CART && shell->active_offset<16U)
+            shell->loaded_header[shell->active_offset]=(uint8_t)(shell->burst_word>>(shell->burst_index*8U));
         ++shell->active_offset;++shell->burst_index;
         if(shell->burst_index==shell->burst_count) { shell->burst_count=0U;shell->burst_index=0U; }
         if(shell->active_offset==shell->active_size && shell->active_kind==MT_LOAD_NES_CART)
@@ -241,7 +244,10 @@ static void finish_header(uint8_t *cart, size_t size)
     memcpy(cart, "NES\032", 4U);
     cart[4] = 2U;
     cart[6] = 0x10U | (cartridge_battery ? 2U : 0U);
-
+    cart[7] = 8U;
+    cart[10] = cartridge_battery ? 0x70U : 7U;
+    cart[11] = 7U;
+    cart[15] = 1U;
 }
 
 mt_sd_result_t mt_sd_storage_read_file_max(const char *path, uint8_t *dst,
@@ -259,6 +265,7 @@ mt_sd_result_t mt_sd_storage_read_file_max(const char *path, uint8_t *dst,
     assert(capacity >= sizeof(cart));
     finish_header(cart, sizeof(cart));
     if (strstr(path, "bad") != NULL) cart[0] ^= 1U;
+    if (strstr(path, "unsupported") != NULL) cart[8] = 0x10U;
     memcpy(dst, cart, sizeof(cart));
     result.size = sizeof(cart);
     return result;
@@ -355,6 +362,8 @@ int main(void)
     assert(shell.completed_streams==2U && shell.completed_kinds[0]==MT_LOAD_NES_CART &&
         shell.completed_kinds[1]==MT_LOAD_NES_SAVE && !shell.reset_asserted);
     assert(shell.mount_size==MT_SIZE_NES_SAVE && shell.save_wait_polls>0U);
+    assert(shell.loaded_header[7]==0U);
+    for(size_t i=8U;i<16U;++i)assert(shell.loaded_header[i]==0U);
     for(size_t i=0U;i<MT_SIZE_NES_SAVE;++i)assert(shell.loaded_save[i]==0U);
     const uint32_t generation=shell.mount_generation;
 
@@ -391,6 +400,9 @@ int main(void)
     const unsigned resets=shell.reset_commands;
     assert(nes_content_service_load("../demo.nes").status==MT_NES_CONTENT_SERVICE_INVALID_ARGUMENT);
     assert(nes_content_service_load("bad.nes").status==MT_NES_CONTENT_SERVICE_REJECTED);
+    result=nes_content_service_load("unsupported.nes");
+    assert(result.status==MT_NES_CONTENT_SERVICE_REJECTED &&
+        strcmp(result.rejection_reason,"NES cartridge board variant is unsupported")==0);
     fail_read=1;
     assert(nes_content_service_load("new.nes").status==MT_NES_CONTENT_SERVICE_READ_FAILED);
     fail_read=0;

@@ -18,6 +18,7 @@
 #define MT_MENU_MAX_CORE_OPTIONS 12U
 #define MT_MENU_MAX_ITEMS 20U
 #define MT_MENU_MAX_SYSTEM_ITEMS 21U
+#define MT_MENU_MAX_ABOUT_ITEMS 10U
 #define MT_MENU_MAX_EFFECT_ITEMS 32U
 /* Reserved cookie flags; ordinary file and D64 cookies retain their values. */
 #define MT_MENU_FILE_DIRECTORY UINT32_C(0x80000000)
@@ -36,6 +37,7 @@ typedef enum {
     MT_MENU_PAGE_INPUT,
     MT_MENU_PAGE_CORE_CONFIG,
     MT_MENU_PAGE_SYSTEM,
+    MT_MENU_PAGE_ABOUT,
     MT_MENU_PAGE_COUNT
 } mt_menu_page_t;
 
@@ -148,6 +150,8 @@ typedef struct {
     size_t input_item_count;
     const mt_menu_item_t *system_items;
     size_t system_item_count;
+    const mt_menu_item_t *about_items;
+    size_t about_item_count;
     const mt_menu_item_t *effect_items;
     size_t effect_item_count;
     mt_text_reader_t *text_reader;

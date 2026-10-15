@@ -209,8 +209,9 @@ mt_link_result_t mt_core_link_input_event(mt_core_link_t *link,
                               progress, progress_context);
 }
 
-mt_link_result_t mt_core_link_stream_until(
+static mt_link_result_t stream_until_prefix(
     mt_core_link_t *link, uint8_t kind, const uint8_t *data, size_t size,
+    const uint8_t *prefix, size_t prefix_size,
     uint32_t max_polls, mt_link_progress_fn progress, void *progress_context,
     mt_link_continue_fn continue_wait, void *continue_context)
 {
@@ -220,7 +221,8 @@ mt_link_result_t mt_core_link_stream_until(
     size_t offset;
     uint32_t abi_version;
 
-    if (!link_valid(link) || data == NULL || size == 0U || max_polls == 0U) {
+    if (!link_valid(link) || data == NULL || size == 0U || max_polls == 0U ||
+        prefix_size > size || (prefix_size != 0U && prefix == NULL)) {
         return MT_LINK_BAD_ARGUMENT;
     }
 #if SIZE_MAX > UINT32_MAX
@@ -252,7 +254,8 @@ mt_link_result_t mt_core_link_stream_until(
             const size_t count = remaining < MT_STREAM_BURST_BYTES ?
                 remaining : MT_STREAM_BURST_BYTES;
             for (lane = 0U; lane < count; ++lane)
-                word |= (uint32_t)data[offset + lane] << (lane * 8U);
+                word |= (uint32_t)(offset + lane < prefix_size ?
+                    prefix[offset + lane] : data[offset + lane]) << (lane * 8U);
             for (poll = 0U; poll < max_polls; ++poll) {
                 if ((link->read32(link->context, MT_REG_STREAM_STATUS) &
                      MT_STREAM_STATUS_READY) != 0U) {
@@ -304,7 +307,7 @@ mt_link_result_t mt_core_link_stream_until(
 
     args[1] = 0U;
     for (offset = 0U; offset < size; ++offset) {
-        args[0] = data[offset];
+        args[0] = offset < prefix_size ? prefix[offset] : data[offset];
         result = command_retry_busy_until(
             link, MT_COMMAND_STREAM_DATA, args, max_polls,
             progress, progress_context, continue_wait, continue_context);
@@ -324,6 +327,24 @@ mt_link_result_t mt_core_link_stream_until(
             link, max_polls, progress, progress_context);
     }
     return result;
+}
+
+mt_link_result_t mt_core_link_stream_until(
+    mt_core_link_t *link, uint8_t kind, const uint8_t *data, size_t size,
+    uint32_t max_polls, mt_link_progress_fn progress, void *progress_context,
+    mt_link_continue_fn continue_wait, void *continue_context)
+{
+    return stream_until_prefix(link, kind, data, size, NULL, 0U, max_polls,
+        progress, progress_context, continue_wait, continue_context);
+}
+
+mt_link_result_t mt_core_link_stream_with_prefix(
+    mt_core_link_t *link, uint8_t kind, const uint8_t *data, size_t size,
+    const uint8_t *prefix, size_t prefix_size, uint32_t max_polls,
+    mt_link_progress_fn progress, void *progress_context)
+{
+    return stream_until_prefix(link, kind, data, size, prefix, prefix_size,
+        max_polls, progress, progress_context, NULL, NULL);
 }
 
 mt_link_result_t mt_core_link_stream(mt_core_link_t *link, uint8_t kind,

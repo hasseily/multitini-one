@@ -184,7 +184,7 @@ int main(int argc, char **argv)
         view.status_text = "Preview fixtures: settings are illustrative only.";
         menu.page = MT_MENU_PAGE_CORE_CONFIG;
         (void)mt_menu_key(&menu, &view, MT_MENU_HID_END, true);
-    } else if (strcmp(scenario, "system") == 0 || strcmp(scenario, "clock") == 0) {
+    } else if (strcmp(scenario, "system") == 0 || strcmp(scenario, "about") == 0 || strcmp(scenario, "clock") == 0) {
         view.settings_auto_boot = false;
         snapshot.firmware_build = UINT32_C(0x55494631);
         snapshot.shell_build = UINT32_C(0x56454333);
@@ -198,8 +198,8 @@ int main(int argc, char **argv)
         snapshot.keyboards = 1U; snapshot.gamepads = 2U;
         snapshot.catalog_status = "ok"; snapshot.catalog_count = 3U;
         mt_system_frontend_apply(&system_frontend, &snapshot, &view);
-        menu.page = MT_MENU_PAGE_SYSTEM;
-        menu.row = 3U;
+        menu.page = strcmp(scenario, "about") == 0 ? MT_MENU_PAGE_ABOUT : MT_MENU_PAGE_SYSTEM;
+        menu.row = strcmp(scenario, "about") == 0 ? 0U : 3U;
         if (strcmp(scenario, "clock") == 0)
             (void)mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true);
     } else if (strcmp(scenario, "text-reader") == 0) {

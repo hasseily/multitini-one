@@ -9,8 +9,8 @@ import os
 import sys
 import build_phos1
 
-build_phos1.BUILD_ID = "4D000500"
-build_phos1.DEFAULT_OUTPUT = build_phos1.ROOT / "build/core-nes/hardware"
+build_phos1.BUILD_ID = "4D000501"
+build_phos1.DEFAULT_OUTPUT = build_phos1.ROOT / "build/core-nes-m051/hardware"
 build_phos1.MATRIX["apple-iigs"] = ("APPLE_IIGS", False, False)
 build_phos1.MATRIX["nes"] = ("NES", False, False)
 # A parallel Windows IP startup failed in Vivado's Tcl-app setup. Start IP

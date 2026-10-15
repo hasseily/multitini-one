@@ -79,6 +79,10 @@ static const mt_menu_item_t *page_items(mt_menu_page_t page,
         items = view->system_items;
         *count = view->system_item_count;
         break;
+    case MT_MENU_PAGE_ABOUT:
+        items = view->about_items;
+        *count = view->about_item_count;
+        break;
     case MT_MENU_PAGE_EFFECTS:
         items = view->effect_items;
         *count = view->effect_item_count;
@@ -88,6 +92,7 @@ static const mt_menu_item_t *page_items(mt_menu_page_t page,
     }
     if (items == NULL) *count = 0U;
     const size_t limit = page == MT_MENU_PAGE_EFFECTS ? MT_MENU_MAX_EFFECT_ITEMS :
+        page == MT_MENU_PAGE_ABOUT ? MT_MENU_MAX_ABOUT_ITEMS :
         page == MT_MENU_PAGE_SYSTEM ? MT_MENU_MAX_SYSTEM_ITEMS : MT_MENU_MAX_ITEMS;
     if (*count > limit) *count = limit;
     return items;
@@ -834,7 +839,7 @@ mt_menu_action_t mt_menu_key(mt_menu_t *menu, const mt_menu_view_t *view,
 const char *mt_menu_page_name(mt_menu_page_t page)
 {
     static const char *const names[] = {
-        "Cores", "Media", "Video", "Effects", "Controls", "Options", "System"
+        "Cores", "Media", "Video", "Effects", "Controls", "Options", "System", "About"
     };
     return (unsigned)page < (unsigned)MT_MENU_PAGE_COUNT ? names[page] : "Cores";
 }
@@ -848,7 +853,8 @@ static const char *page_caption(mt_menu_page_t page)
         "Color and display effects. Saved separately for each core.",
         "Controls for the active system.",
         "Settings supplied by the active core.",
-        "Board status, clock, documents and recovery."
+        "Board status, clock, documents and recovery.",
+        "Firmware, FPGA and live board status."
     };
     return (unsigned)page < (unsigned)MT_MENU_PAGE_COUNT ? captions[page] : "";
 }

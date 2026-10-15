@@ -28,7 +28,8 @@ package multitini_nes_defs_pkg;
             endcase
             nes_header_ok=h[31:0]==32'h1a53454e && p!=0 && (p&(p-1'b1))==0 &&
                 (c==0 || (c&(c-1'b1))==0) && h[51:50]==0 && h[59:56]==0 &&
-                h[71:64]<=1 && h[127:72]==0 && bounds &&
+                h[71:64]<=1 && h[79:72]==0 && h[127:88]==0 &&
+                (h[87:80]==0 || (m==2 && h[87:80]==8'h20)) && bounds &&
                 total==32'd16+{10'd0,p,14'd0}+{11'd0,c,13'd0};
         end
     endfunction

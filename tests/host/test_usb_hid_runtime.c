@@ -593,15 +593,15 @@ static void test_shoulder_navigation(void)
         usb_gamepad_input_identify(second, &port, 0U, transport);
 
         buttons(first, 0x10U); /* LB/L1 wraps backwards. */
-        assert(fixture.menu.page == MT_MENU_PAGE_SYSTEM && fixture.tab_presses == 1U);
+        assert(fixture.menu.page == MT_MENU_PAGE_ABOUT && fixture.tab_presses == 1U);
         buttons(first, 0x10U);
-        assert(fixture.menu.page == MT_MENU_PAGE_SYSTEM && fixture.tab_presses == 1U);
+        assert(fixture.menu.page == MT_MENU_PAGE_ABOUT && fixture.tab_presses == 1U);
         buttons(first, 0x20U); /* Direct left-to-right change still has a Tab edge. */
         assert(fixture.menu.page == MT_MENU_PAGE_CORES && fixture.tab_presses == 2U);
         buttons(first, 0x30U); /* Both held cancel; releasing one restores direction. */
         assert(fixture.menu.page == MT_MENU_PAGE_CORES && fixture.tab_presses == 2U);
         buttons(first, 0x10U);
-        assert(fixture.menu.page == MT_MENU_PAGE_SYSTEM && fixture.tab_presses == 3U);
+        assert(fixture.menu.page == MT_MENU_PAGE_ABOUT && fixture.tab_presses == 3U);
         buttons(first, 0U);
         buttons(second, 0x20U);
         assert(fixture.menu.page == MT_MENU_PAGE_CORES && fixture.tab_presses == 4U);

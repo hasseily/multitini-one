@@ -215,7 +215,7 @@ assign prg_aout_tmp =  {1'b0, a53prg, prg_ain[13:0]};
 assign prg_ram =  {9'b11_1100_000, prg_ain[12:0]}; // assuming (flags[] == 7) => 8K
 assign prg_aout = prg_is_ram ? prg_ram : prg_aout_tmp;
 assign prg_allow = prg_ain[15] && !prg_write || prg_is_ram;
-assign prg_conflict = prg_ain[15] && (mapper == 3) && (submapper != 1);
+assign prg_conflict = prg_ain[15] && (((mapper == 3) && (submapper != 1)) || ((mapper == 2) && (submapper == 2)));
 assign chr_allow = flags[15];
 assign chr_aout = {7'b10_0000_0, a53chr, chr_ain[12:0]};
 assign submapper =  flags[24:21];

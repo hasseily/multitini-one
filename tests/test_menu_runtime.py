@@ -33,6 +33,7 @@ PREAMBLE = r'''
 #include "multitini_iigs_interface.h"
 #include "multitini_nes_interface.h"
 #include "multitini_vectrex_interface.h"
+#include "multitini_tmp102.h"
 #include "vectrex_content_service.h"
 #include "supervisor_settings.h"
 #include <assert.h>
@@ -52,6 +53,18 @@ static bool usb_sd_modal, usb_sd_stop_requested;
 static uint8_t supervisor_menu_keys[MT_C64_HID_SLOT_COUNT][MT_C64_HID_USAGE_BYTES];
 static mt_ui_color_t supervisor_status_color;
 static uint64_t now_ms;
+static uint64_t last_system_refresh_ms;
+static bool i2c_ready, board_temperature_valid;
+static int32_t board_temperature_micro_c;
+static int i2c_instance;
+static unsigned board_refreshes, temperature_reads, update_file_refreshes;
+static void refresh_multiboot_status(void) { ++board_refreshes; }
+static void refresh_golden_update_file(void) { ++update_file_refreshes; }
+static int board_i2c_read(int *instance, uint8_t address, uint8_t reg, uint8_t *raw, int count) {
+    assert(instance == &i2c_instance && address == MT_TMP102_I2C_ADDRESS &&
+        reg == MT_TMP102_TEMPERATURE_REGISTER && count == 2);
+    raw[0] = 0x19U; raw[1] = 0x80U; ++temperature_reads; return 0;
+}
 static uint32_t status_word, committed_status;
 static uint32_t core_id, core_status, core_control;
 static unsigned commits, hidden_commits, shown_commits, writes, runtime_polls;
@@ -828,6 +841,31 @@ static void save_drafts_atomically_and_freeze_identity(void) {
     controller_edit_action(save);
     assert(errors == 2U && settings_writes == saved_before && config_applies == 2U);
 }
+static void about_refreshes_live_status(void) {
+    reset_fixture(true);
+    i2c_ready = true;board_temperature_valid = false;last_system_refresh_ms = 0U;
+    board_refreshes = temperature_reads = update_file_refreshes = 0U;
+    supervisor_menu.page = MT_MENU_PAGE_ABOUT;now_ms = 1000U;
+    service_system_page();
+    assert(board_temperature_valid && board_temperature_micro_c == 25500000 &&
+        temperature_reads == 1U && board_refreshes == 1U && update_file_refreshes == 1U && supervisor_menu_dirty);
+    supervisor_menu_dirty = false;now_ms = 1999U;
+    service_system_page();assert(temperature_reads == 1U && !supervisor_menu_dirty);
+    now_ms = 2000U;service_system_page();
+    assert(temperature_reads == 2U && update_file_refreshes == 2U && supervisor_menu_dirty);
+    supervisor_menu.page = MT_MENU_PAGE_SYSTEM;now_ms = 3000U;service_system_page();
+    assert(temperature_reads == 3U);
+    supervisor_menu.page = MT_MENU_PAGE_MEDIA;service_system_page();
+    assert(temperature_reads == 3U && last_system_refresh_ms == 0U);
+    supervisor_menu.page = MT_MENU_PAGE_ABOUT;supervisor_menu.visible = false;
+    service_system_page();assert(temperature_reads == 3U);
+    supervisor_menu.visible = true;supervisor_menu.browser = MT_MENU_BROWSER_DOCUMENTS;
+    service_system_page();assert(temperature_reads == 3U);
+    supervisor_menu.browser = MT_MENU_BROWSER_NONE;supervisor_menu.clock_edit = true;
+    service_system_page();assert(temperature_reads == 3U);
+    supervisor_menu.clock_edit = false;service_system_page();
+    assert(temperature_reads == 4U && board_refreshes == 2U);
+}
 int main(int argc, char **argv) {
     assert(argc == 2);
     if (strcmp(argv[1], "actions") == 0) all_actions();
@@ -846,6 +884,7 @@ int main(int argc, char **argv) {
     else if (strcmp(argv[1], "capture-chord") == 0) menu_chord_does_not_assign_controller_controls();
     else if (strcmp(argv[1], "controller-profiles") == 0) controller_profiles_and_legacy_migration();
     else if (strcmp(argv[1], "controller-save") == 0) save_drafts_atomically_and_freeze_identity();
+    else if (strcmp(argv[1], "about-refresh") == 0) about_refreshes_live_status();
     else assert(false);
     printf("PASS: menu runtime %s\n", argv[1]);
     return 0;
@@ -875,6 +914,7 @@ class MenuRuntimeTests(unittest.TestCase):
             "static mt_vectrex_content_result_t load_vectrex_content_with_input(",
             "static void service_supervisor_menu(void)\n{",
             "static void service_screenshots(void)\n{",
+            "static void service_system_page(void)\n{",
         )
         view_start = source.index("    view.gamepad_core_id = state.core_id;")
         view_end = source.index("    view.status_text =", view_start)
@@ -896,6 +936,7 @@ class MenuRuntimeTests(unittest.TestCase):
             "-I", str(ROOT / "firmware/platform/xilinx"),
             str(ROOT / "firmware/common/display.c"), str(ROOT / "firmware/common/menu.c"), str(ROOT / "firmware/common/gamepad.c"), str(ROOT / "firmware/common/controls.c"), str(ROOT / "firmware/common/ui.c"),
             str(ROOT / "firmware/common/text_reader.c"), str(ROOT / "firmware/common/clock.c"),
+            str(ROOT / "firmware/common/tmp102.c"),
             str(ROOT / "firmware/common/content_type.c"),
             str(ROOT / "firmware/common/genesis_content.c"),
             str(ROOT / "firmware/common/nes_content.c"),
@@ -962,6 +1003,9 @@ class MenuRuntimeTests(unittest.TestCase):
 
     def test_save_failure_assignment_swap_and_replaced_controller(self):
         self.run_scenario("controller-save")
+
+    def test_about_retains_live_one_second_status_refresh(self):
+        self.run_scenario("about-refresh")
 
 
 if __name__ == "__main__":

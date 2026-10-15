@@ -29,6 +29,7 @@ SCENARIOS = {
     "c64-effects-frame": "CPU1 persistence, blur and bloom",
     "gbc-effects-legacy": "Effects unavailable on an older core image",
     "system": "System page (sample readings)",
+    "about": "About page (sample readings)",
     "clock": "Board clock editor",
     "text-reader": "Read-only text document",
     "standby": "Standby and core library",

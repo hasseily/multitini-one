@@ -178,6 +178,31 @@ int main(void)
     assert(shell.burst_writes == 1U);
     assert(shell.observed_commands == 2U);
 
+    /* Prefix overlays can cross a burst lane boundary. Neither source buffer
+     * changes, and the command-only compatibility path sends identical bytes. */
+    const uint8_t original[7]={1U,2U,3U,4U,5U,6U,7U};
+    const uint8_t prefix[3]={11U,12U,13U};
+    const uint8_t expected[7]={11U,12U,13U,4U,5U,6U,7U};
+    for(unsigned burst=0U;burst<2U;++burst) {
+        shell.stream_data_size=0U;
+        shell.registers[MT_REG_ABI_VERSION/4U]=(MT_ABI_MAJOR<<16U)|(burst ? MT_ABI_MINOR:7U);
+        assert(mt_core_link_stream_with_prefix(&link,8U,original,sizeof(original),
+            prefix,sizeof(prefix),8U,respond_to_stream,&shell)==MT_LINK_OK);
+        assert(shell.stream_data_size==sizeof(original) &&
+            memcmp(shell.stream_data,expected,sizeof(expected))==0);
+        assert(original[0]==1U && original[6]==7U && prefix[0]==11U);
+    }
+    assert(mt_core_link_stream_with_prefix(&link,8U,original,sizeof(original),
+        NULL,1U,8U,respond_to_stream,&shell)==MT_LINK_BAD_ARGUMENT);
+    assert(mt_core_link_stream_with_prefix(&link,8U,original,sizeof(original),
+        prefix,sizeof(original)+1U,8U,respond_to_stream,&shell)==MT_LINK_BAD_ARGUMENT);
+    shell.registers[MT_REG_ABI_VERSION/4U]=MT_ABI_VERSION;
+    shell.stream_data_size=0U;shell.stream_blocked=1;
+    assert(mt_core_link_stream_with_prefix(&link,8U,original,sizeof(original),
+        prefix,sizeof(prefix),2U,respond_to_stream,&shell)==MT_LINK_TIMEOUT);
+    assert(shell.stream_open==0 && shell.abort_commands==1U);
+    shell.stream_blocked=0;
+
     shell.stream_data_size = 0U;
     shell.observed_commands = 0U;
     shell.stream_blocked = 1;
@@ -186,7 +211,7 @@ int main(void)
                &link, 9U, stream_data, sizeof(stream_data), 8U,
                respond_to_stream, &shell, continue_twice, &remaining) ==
            MT_LINK_TIMEOUT);
-    assert(shell.abort_commands == 1U);
+    assert(shell.abort_commands == 2U);
     assert(shell.stream_open == 0);
     shell.stream_blocked = 0;
 
