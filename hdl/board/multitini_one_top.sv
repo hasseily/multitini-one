@@ -6,7 +6,7 @@ module multitini_one_top #(
     parameter logic [31:0] SHELL_BUILD_ID = 32'h00000000,
     parameter bit C64_NTSC_MODE = 1'b0,
     parameter bit GENESIS_PAL_MODE = 1'b0,
-    // 0 = C64, 1 = GBC, 2 = supervisor, 3 = Vectrex, 4 = Genesis, 5 = Apple IIgs.
+    // 0 = C64, 1 = GBC, 2 = supervisor, 3 = Vectrex, 4 = Genesis, 5 = Apple IIgs, 6 = NES.
     parameter integer ACTIVE_MACHINE = 2,
     parameter bit ENABLE_GBC_PSRAM = 1'b0
 ) (
@@ -664,15 +664,15 @@ module multitini_one_top #(
     // Capture always observes the complete original Auto raster. The reader
     // independently scales/crops the completed native image at scanout.
     multitini_display_geometry #(.MACHINE(ACTIVE_MACHINE),
-        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==5 ? 640 : C64_NTSC_MODE ? 404 : 382),
-        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==5 ? 400 : C64_NTSC_MODE ? 250 : 270)) capture_geometry(
+        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==5 ? 640 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382),
+        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==5 ? 400 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270)) capture_geometry(
         .mode(display_pixel_mode),.multiplier(3'd0),
         .scale_num(capture_display_scale_num_next),.scale_den(capture_display_scale_den_next),
         .view_x(capture_display_view_x_next),.view_y(capture_display_view_y_next),
         .view_width(capture_display_view_width_next),.view_height(capture_display_view_height_next));
     multitini_display_geometry #(.ENABLE_MULTIPLIER(1'b1),.MACHINE(ACTIVE_MACHINE),
-        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==5 ? 640 : C64_NTSC_MODE ? 404 : 382),
-        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==5 ? 400 : C64_NTSC_MODE ? 250 : 270)) display_geometry(
+        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==5 ? 640 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382),
+        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==5 ? 400 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270)) display_geometry(
         .mode(display_pixel_mode),.multiplier(display_pixel_multiplier),.h_active(display_h_active_next),.h_front(display_h_front_next),.h_sync(display_h_sync_next),.h_total(display_h_total_next),
         .v_active(display_v_active_next),.v_front(display_v_front_next),.v_sync(display_v_sync_next),.v_total(display_v_total_next),
         .h_positive(display_h_positive_next),.v_positive(display_v_positive_next),
@@ -813,7 +813,7 @@ module multitini_one_top #(
         // including when the effects service was already off.
         // A running-machine effects suspension keeps the normal status;
         // output-clock changes separately pause/drain the video HP masters.
-        if((ACTIVE_MACHINE==4 || ACTIVE_MACHINE==5) && reg_rd_addr==MT_REG_VIDEO_FRAME_STATUS &&
+        if((ACTIVE_MACHINE==4 || ACTIVE_MACHINE==5 || ACTIVE_MACHINE==6) && reg_rd_addr==MT_REG_VIDEO_FRAME_STATUS &&
            |(shell_control & MT_CONTROL_CORE_RESET_REQUEST) && (!genesis_source_quiescent || !gs_memory_quiescent))
             reg_rd_data=framebuffer_rd_data & ~MT_VIDEO_FRAME_STATUS_QUIESCENT;
     end
@@ -987,7 +987,7 @@ module multitini_one_top #(
     // Writeback bytes remain stable in the drive domain until software reads
     // MEDIA_DATA. The acknowledgement then backpressures the next byte until
     // this one-entry CDC mailbox has completed its round trip.
-    generate if(ACTIVE_MACHINE==4)begin : g_genesis_media_stream
+    generate if(ACTIVE_MACHINE==4 || ACTIVE_MACHINE==6)begin : g_genesis_media_stream
         multitini_genesis_media_stream stream_i(
             .source_clk(c64_clk),.source_resetn(c64_aresetn),
             .source_data(c64_media_write_data),.source_last(c64_media_write_data_last),
@@ -1497,6 +1497,133 @@ module multitini_one_top #(
                     .psram_a_io(psram_a_io), .psram_b_io(psram_b_io),
                     .psram_ce_n(psram_ce_n), .psram_clk(psram_clk)
                 );
+        end else if (ACTIVE_MACHINE == 6) begin : g_nes_machine
+            assign c64_prg_loaded=0,c64_cart_loaded=gbc_cart_loaded,c64_cart_hardware_type=0,c64_prg_run_busy=0;
+            assign c64_memory_addr=0,c64_memory_write=0,c64_memory_wdata=0,c64_memory_wstrb=0;
+            assign c64_memory_valid=0,c64_memory_ready=0,c64_memory_rdata=0,c64_memory_rvalid=0,c64_memory_fault=0;
+            wire [7:0] nes_video_x,nes_video_y;
+            assign c64_rom_loaded = {2'd0, gbc_cart_loaded};
+            (* DONT_TOUCH = "yes" *) multitini_nes_adapter machine_adapter (
+                .core_clk(c64_clk), .reset(!c64_aresetn),
+                .core_reset_request(c64_core_reset_request),
+                .pause_request(core_menu_pause),
+                .clear_load_error(c64_load_error_clear),
+                .input_code(c64_input_code), .input_value(c64_input_value),
+                .input_valid(c64_input_valid), .input_ready(c64_input_ready),
+                .load_data(c64_load_data), .load_valid(c64_load_valid),
+                .load_ready(c64_load_ready), .load_first(c64_load_first),
+                .load_last(c64_load_last), .load_kind(c64_load_kind),
+                .load_offset(c64_load_offset), .load_total(c64_load_total),
+                .load_epoch(c64_load_epoch),.load_abort(c64_load_abort),.load_abort_epoch(c64_load_abort_epoch),
+                .memory_addr(gbc_memory_addr),
+                .memory_write(gbc_memory_write),
+                .memory_wdata(gbc_memory_wdata),
+                .memory_wstrb(gbc_memory_wstrb),
+                .memory_valid(gbc_memory_valid),
+                .memory_ready(gbc_memory_ready),
+                .memory_rdata(gbc_memory_rdata),
+                .memory_rvalid(gbc_memory_rvalid),
+                .memory_fault(gbc_memory_fault),
+                .media_mount(c64_media_mount),
+                .media_eject(c64_media_eject),
+                .media_complete(c64_media_complete),
+                .media_slot(c64_media_slot), .media_kind(c64_media_kind),
+                .media_read_only(c64_media_read_only),
+                .media_image_size(c64_media_image_size),
+                .media_generation(c64_media_generation),
+                .media_complete_request_id(c64_media_complete_request_id),
+                .media_complete_status(c64_media_complete_status),
+                .media_complete_block_count(c64_media_complete_block_count),
+                .media_complete_generation(c64_media_complete_generation),
+                .media_request_valid(c64_media_request_valid),
+                .media_request_write(c64_media_request_write),
+                .media_request_id(c64_media_request_id),
+                .media_request_lba(c64_media_request_lba),
+                .media_request_block_count(c64_media_request_block_count),
+                .media_request_generation(c64_media_request_generation),
+                .media_write_data(c64_media_write_data),
+                .media_write_data_valid(c64_media_write_data_valid),
+                .media_write_data_last(c64_media_write_data_last),
+                .media_write_data_ready(c64_media_write_data_ready),
+                .media_state_mounted(c64_media_state_mounted),
+                .media_state_dirty(c64_media_state_dirty),
+                .media_state_eject_pending(c64_media_state_eject_pending),
+                .core_id(c64_core_id), .ready(c64_ready),
+                .load_error(c64_load_error), .cart_loaded(gbc_cart_loaded),
+                .cart_size(gbc_cart_size),
+                .video_r(c64_video_r), .video_g(c64_video_g),
+                .video_b(c64_video_b), .video_de(c64_video_de),
+                .video_hsync(c64_video_hsync),
+                .video_vsync(c64_video_vsync),
+                .video_x(nes_video_x),.video_y(nes_video_y),.video_valid(c64_video_valid), .audio_l(c64_audio_l),
+                .audio_r(c64_audio_r), .audio_valid(c64_audio_valid)
+            );
+
+            multitini_nes_video_bridge video_bridge (
+                .source_clk(c64_clk),.source_resetn(c64_aresetn),.source_ready(c64_ready),
+                .source_ready_control(c64_ready_control),
+                .source_r(c64_video_r),.source_g(c64_video_g),.source_b(c64_video_b),
+                .source_x(nes_video_x),.source_y(nes_video_y),
+                .source_valid(c64_video_valid && c64_video_de),
+                .control_clk(control_clk),.control_resetn(control_aresetn),
+                .pixel_clk(video_clk),.pixel_resetn(video_aresetn),.shared_pixel_resetn(video_control_resetn),
+                .shared_pixel_running(video_pixel_running),
+                .diagnostic_request(video_enable),.scan_x(video_scan_x),.scan_y(video_scan_y),
+                .vblank_start(video_vblank_start),
+                .display_view_x(capture_display_view_x),.display_view_y(capture_display_view_y),
+                .display_view_width(capture_display_view_width),.display_view_height(capture_display_view_height),
+                .display_scale_num(capture_display_scale_num),.display_scale_den(capture_display_scale_den),
+                .display_pause(display_pause),.display_quiescent(genesis_source_quiescent),
+                .display_h_active(display_h_active),.display_v_active(display_v_active),
+                .display_h_total(display_h_total),.display_v_total(display_v_total),
+                .viewport_x(viewport_x),.viewport_y(viewport_y),
+                .viewport_width(viewport_width),.viewport_height(viewport_height),
+                .machine_active(machine_video_active),.machine_rgb565(machine_video_rgb565),
+                .capture_drops(),.capture_errors(),.read_errors(),.underruns(),
+                .araddr(hp2_araddr),
+                .arlen(hp2_arlen),
+                .arsize(hp2_arsize),
+                .arburst(hp2_arburst),
+                .arvalid(hp2_arvalid),
+                .arready(hp2_arready),
+                .rdata(hp2_rdata),
+                .rresp(hp2_rresp),
+                .rlast(hp2_rlast),
+                .rvalid(hp2_rvalid),
+                .rready(hp2_rready),
+                .awaddr(hp2_awaddr),
+                .awlen(hp2_awlen),
+                .awsize(hp2_awsize),
+                .awburst(hp2_awburst),
+                .awvalid(hp2_awvalid),
+                .awready(hp2_awready),
+                .wdata(hp2_wdata),
+                .wstrb(hp2_wstrb),
+                .wlast(hp2_wlast),
+                .wvalid(hp2_wvalid),
+                .wready(hp2_wready),
+                .bresp(hp2_bresp),
+                .bvalid(hp2_bvalid),
+                .bready(hp2_bready)
+            );
+                multitini_gameboy_psram_path psram_path_i (
+                    .core_clk(c64_clk), .core_resetn(c64_aresetn),
+                    .control_clk(control_clk),
+                    .control_resetn(control_aresetn),
+                    .idelay_ref_clk(idelay_ref_clk),
+                    .idelay_resetn(idelay_aresetn),
+                    .core_memory_addr(gbc_memory_addr),
+                    .core_memory_write(gbc_memory_write),
+                    .core_memory_wdata(gbc_memory_wdata),
+                    .core_memory_wstrb(gbc_memory_wstrb),
+                    .core_memory_valid(gbc_memory_valid),
+                    .core_memory_ready(gbc_memory_ready),
+                    .core_memory_rdata(gbc_memory_rdata),
+                    .core_memory_rvalid(gbc_memory_rvalid),
+                    .memory_fault(gbc_memory_fault),
+                    .psram_a_io(psram_a_io), .psram_b_io(psram_b_io),
+                    .psram_ce_n(psram_ce_n), .psram_clk(psram_clk)
+                );
         end else if (ACTIVE_MACHINE == 5) begin : g_apple_iigs_machine
             wire gs_rom_loaded;
             wire [9:0] gs_video_x;
@@ -1782,7 +1909,7 @@ module multitini_one_top #(
         end
     endgenerate
 
-    generate if(ACTIVE_MACHINE!=4 && ACTIVE_MACHINE!=5)begin : g_no_machine_ddr
+    generate if(ACTIVE_MACHINE!=4 && ACTIVE_MACHINE!=5 && ACTIVE_MACHINE!=6)begin : g_no_machine_ddr
         assign genesis_source_quiescent=1'b1;
         assign hp2_araddr=0,hp2_arlen=0,hp2_arsize=3'd3,hp2_arburst=2'd1,hp2_arvalid=0,hp2_rready=1;
         assign hp2_awaddr=0,hp2_awlen=0,hp2_awsize=3'd3,hp2_awburst=2'd1,hp2_awvalid=0;
@@ -1849,10 +1976,10 @@ module multitini_one_top #(
     multitini_video_framebuffer #(
         .DYNAMIC_DISPLAY(1'b1),
         .SHARED_PIXEL_RESET(1'b1),
-        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==5 ? 640 : C64_NTSC_MODE ? 404 : 382),
-        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==5 ? 400 : C64_NTSC_MODE ? 250 : 270),
-        .VIEW_X(ACTIVE_MACHINE==1 ? 480 : ACTIVE_MACHINE==3 ? 555 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==5 ? 320 : C64_NTSC_MODE ? 152 : 196),
-        .VIEW_Y(ACTIVE_MACHINE==1 ? 108 : ACTIVE_MACHINE==3 ? 0 : ACTIVE_MACHINE==4 ? 60 : ACTIVE_MACHINE==5 ? 140 : C64_NTSC_MODE ? 40 : 0),
+        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==5 ? 640 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382),
+        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==5 ? 400 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270),
+        .VIEW_X(ACTIVE_MACHINE==1 ? 480 : ACTIVE_MACHINE==3 ? 555 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==5 ? 320 : ACTIVE_MACHINE==6 ? 448 : C64_NTSC_MODE ? 152 : 196),
+        .VIEW_Y(ACTIVE_MACHINE==1 ? 108 : ACTIVE_MACHINE==3 ? 0 : ACTIVE_MACHINE==4 ? 60 : ACTIVE_MACHINE==5 ? 140 : ACTIVE_MACHINE==6 ? 60 : C64_NTSC_MODE ? 40 : 0),
         .SCALE_NUM(ACTIVE_MACHINE==1 ? 6 : ACTIVE_MACHINE==3 ? 3 : ACTIVE_MACHINE==5 ? 2 : 4),
         .SCALE_DEN(ACTIVE_MACHINE==3 ? 2 : 1)) video_framebuffer (
         .display_view_x(display_view_x),.display_view_y(display_view_y),

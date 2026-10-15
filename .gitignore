@@ -55,6 +55,10 @@ dfx_runtime.txt
 !hdl/common/multitini_font7x8.mem
 
 # System ROMs and user content. The repository policy check enforces these too.
+*.nes
+*.NES
+*.fds
+*.FDS
 *.rom
 *.ROM
 *.gen

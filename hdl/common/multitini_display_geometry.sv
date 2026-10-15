@@ -39,7 +39,7 @@ module multitini_display_geometry #(
             denominator=1;
             if(MACHINE==3)begin numerator=id==0 ? 3 : 1;denominator=id==0 ? 2 : 1;end
             else if(MACHINE==5)numerator=(id==0 || id==3 || id==5) ? 2 : 1;
-            else if(MACHINE==4)numerator=(id==0 || id==5) ? 4 : 3;
+            else if(MACHINE==4 || MACHINE==6)numerator=(id==0 || id==5) ? 4 : 3;
             else if(MACHINE==1)numerator=(id==1 || id==2 || id==4) ? 5 : 6;
             else numerator=id==0 ? 4 : (id==1 || id==2 || id==4) ? 2 : 3;
             if(MACHINE==3)begin width=id==0 ? WIDTH*3/2 : WIDTH;height=id==0 ? HEIGHT*3/2 : HEIGHT;end
@@ -47,7 +47,7 @@ module multitini_display_geometry #(
                 width=(id==0 || id==3 || id==5) ? WIDTH*2 : WIDTH;
                 height=(id==0 || id==3 || id==5) ? HEIGHT*2 : HEIGHT;
             end
-            else if(MACHINE==4)begin
+            else if(MACHINE==4 || MACHINE==6)begin
                 width=(id==0 || id==5) ? WIDTH*4 : WIDTH*3;
                 height=(id==0 || id==5) ? HEIGHT*4 : HEIGHT*3;
             end else if(MACHINE==1)begin

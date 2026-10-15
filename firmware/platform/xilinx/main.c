@@ -4,6 +4,7 @@
 #include "core_catalog_sd.h"
 #include "gameboy_content_service.h"
 #include "genesis_content_service.h"
+#include "nes_content_service.h"
 #include "iigs_content_service.h"
 #include "vectrex_content_service.h"
 #include "vectrex32_service.h"
@@ -20,6 +21,7 @@
 #include "multitini_fatfs_time.h"
 #include "multitini_gameboy_interface.h"
 #include "multitini_genesis_interface.h"
+#include "multitini_nes_interface.h"
 #include "multitini_vectrex_interface.h"
 #include "multitini_menu.h"
 #include "multitini_media_browser.h"
@@ -103,6 +105,9 @@ static bool c64_drive_ready;
 static bool c64_core_reset_active;
 static bool c64_services_initialized;
 static bool genesis_service_initialized;
+static bool nes_service_initialized;
+static bool nes_save_dirty_displayed;
+static bool nes_save_fault_displayed;
 static bool iigs_service_initialized;
 static bool iigs_fault_displayed;
 static unsigned iigs_browser_drive;
@@ -226,6 +231,9 @@ static int run_vectrex_basic(void *, const char *, const char *, const char *);
 static mt_genesis_content_service_result_t load_genesis_content_with_input(const char *name);
 static void handle_genesis_content_load(const char *name);
 static void handle_genesis_cart_detach(void);
+static mt_nes_content_service_result_t load_nes_content_with_input(const char *name);
+static void handle_nes_content_load(const char *name);
+static void handle_nes_cart_detach(void);
 static void change_genesis_controller(size_t player);
 
 static void set_c64_cpu_turbo(bool enabled)
@@ -466,6 +474,19 @@ static void service_runtime(void)
             faulted != genesis_save_fault_displayed) {
             genesis_save_dirty_displayed = dirty;
             genesis_save_fault_displayed = faulted;
+            supervisor_menu_dirty = true;
+        }
+    }
+    if (shell_read(MT_REG_CORE_ID) == MT_NES_CORE_ID && nes_service_initialized) {
+        bool dirty;
+        bool faulted;
+        nes_content_service_poll();
+        dirty = nes_content_service_save_dirty();
+        faulted = nes_content_service_save_faulted();
+        if (dirty != nes_save_dirty_displayed ||
+            faulted != nes_save_fault_displayed) {
+            nes_save_dirty_displayed = dirty;
+            nes_save_fault_displayed = faulted;
             supervisor_menu_dirty = true;
         }
     }
@@ -714,6 +735,18 @@ static int set_core_reset_request(bool asserted)
         xil_printf("[MD] reset release refused; save RAM remount failed\r\n");
         return -1;
     }
+    if (asserted && !currently_asserted && shell_read(MT_REG_CORE_ID) == MT_NES_CORE_ID &&
+        nes_service_initialized &&
+        nes_content_service_prepare_reset() != 0) {
+        xil_printf("[NES] reset refused; save RAM could not be committed\r\n");
+        return -1;
+    }
+    if (!asserted && currently_asserted && shell_read(MT_REG_CORE_ID) == MT_NES_CORE_ID &&
+        nes_service_initialized &&
+        nes_content_service_resume_after_reset() != 0) {
+        xil_printf("[NES] reset release refused; save RAM remount failed\r\n");
+        return -1;
+    }
     if(asserted && !currently_asserted && shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID &&
         iigs_service_initialized && iigs_content_service_prepare_reset()!=0)return -1;
     if(!asserted && currently_asserted && shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID &&
@@ -723,6 +756,7 @@ static int set_core_reset_request(bool asserted)
      * reset. Invalidate the cached Vectrex delivery state explicitly. */
     if (result == 0 && asserted && (shell_read(MT_REG_CORE_ID) == MT_VECTREX_CORE_ID ||
                                   shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID ||
+                                  shell_read(MT_REG_CORE_ID) == MT_NES_CORE_ID ||
                                   shell_read(MT_REG_CORE_ID) == MT_IIGS_CORE_ID))
         usb_hid_service_set_core_ready(false);
     if (result != 0 && asserted && !currently_asserted &&
@@ -737,6 +771,9 @@ static int set_core_reset_request(bool asserted)
     } else if (result != 0 && asserted && !currently_asserted &&
                shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID && genesis_service_initialized) {
         (void)genesis_content_service_resume_after_reset();
+    } else if (result != 0 && asserted && !currently_asserted &&
+               shell_read(MT_REG_CORE_ID) == MT_NES_CORE_ID && nes_service_initialized) {
+        (void)nes_content_service_resume_after_reset();
     } else if (result == 0 && asserted && !currently_asserted &&
                c64_active && c64_services_initialized) {
         /* Record the transition synchronously. Some reset users perform the
@@ -1175,6 +1212,7 @@ static void print_help(void)
     xil_printf(":mount FILE.d64|FILE.g64, :eject, :dir, :disk, ");
     xil_printf(":diskretry, :saveretry\r\n");
     xil_printf("Genesis: :load FILE.md|FILE.gen|FILE.bin|FILE.smd, :cartoff\r\n");
+    xil_printf("NES: :load FILE.nes, :cartoff, :saveretry\r\n");
     xil_printf("recovery: :c64rx 20480 0xCRC32, :reboot to golden\r\n");
 }
 
@@ -1386,6 +1424,7 @@ static void switch_to_appletini(void)
     const uint32_t previous_boot = Xil_In32(MT_DEVCFG_MULTIBOOT);
     const bool previously_reset = (shell_read(MT_REG_CONTROL) & MT_CONTROL_CORE_RESET_REQUEST) != 0U;
     const bool genesis_source = shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID ||
+        shell_read(MT_REG_CORE_ID) == MT_NES_CORE_ID ||
         shell_read(MT_REG_CORE_ID) == MT_IIGS_CORE_ID;
     bool core_stopped = false, worker_stopped = false, usb_stopped = false;
     bool storage_unmounted = false, request_attempted = false, boot_changed = false;
@@ -1524,6 +1563,7 @@ static void self_update_golden(bool recovery_only)
         (shell_read(MT_REG_CONTROL) & MT_CONTROL_CORE_RESET_REQUEST) != 0U;
     const bool menu_was_visible = !recovery_only && supervisor_menu.visible;
     const bool genesis_source = !recovery_only && (shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID ||
+        shell_read(MT_REG_CORE_ID) == MT_NES_CORE_ID ||
         shell_read(MT_REG_CORE_ID) == MT_IIGS_CORE_ID);
     bool core_stopped = false, worker_stopped = false;
     bool stopped_usb = false, restore_safe = true, boot_changed = false;
@@ -1715,7 +1755,9 @@ static void handle_extended_command(bool recovery_only)
         c64_d64_service_dump_status();
     } else if (!recovery_only && strcmp(extended, "saveretry") == 0) {
         if (!hide_menu_for_core_action()) return;
-        const int status = shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID ?
+        const int status = shell_read(MT_REG_CORE_ID) == MT_NES_CORE_ID ?
+            nes_content_service_retry_save() :
+            shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID ?
             genesis_content_service_retry_save() :
             (shell_read(MT_REG_CORE_ID) == MT_GBC_CORE_ID ? gameboy_content_service_retry_save() : -1);
         set_supervisor_outcome(status == 0, "Save retry accepted", "Save retry unavailable or failed");
@@ -1744,7 +1786,9 @@ static void handle_extended_command(bool recovery_only)
         if (c64_d64_service_eject() == 0)
             (void)remember_active_drive8(NULL);
     } else if (!recovery_only && strcmp(extended, "cartoff") == 0) {
-        if (shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID) {
+        if (shell_read(MT_REG_CORE_ID) == MT_NES_CORE_ID) {
+            if (hide_menu_for_core_action()) handle_nes_cart_detach();
+        } else if (shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID) {
             if (hide_menu_for_core_action()) handle_genesis_cart_detach();
         } else handle_c64_cart_detach();
     } else if (!recovery_only && strncmp(extended, "load", 4U) == 0 &&
@@ -1759,7 +1803,9 @@ static void handle_extended_command(bool recovery_only)
         *argument_end = '\0';
         if (*argument == '\0')
             xil_printf("usage: :load FILE.prg|FILE.crt\r\n");
-        else if (shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID) {
+        else if (shell_read(MT_REG_CORE_ID) == MT_NES_CORE_ID) {
+            if (hide_menu_for_core_action()) handle_nes_content_load(argument);
+        } else if (shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID) {
             if (hide_menu_for_core_action()) handle_genesis_content_load(argument);
         } else
             handle_c64_content_load(argument);
@@ -2316,6 +2362,28 @@ static bool restore_selection_settings(
         set_video_test(true);
         return ok;
     }
+    if (selection->package.core_id == MT_NES_CORE_ID) {
+        if (profile != NULL && profile->cartridge_name[0] != '\0') {
+            const mt_nes_content_service_result_t content =
+                load_nes_content_with_input(profile->cartridge_name);
+            if (content.status == MT_NES_CONTENT_SERVICE_OK) {
+                usb_hid_service_set_core_ready(true);
+                if (dac_ready) set_audio(false, false);
+                set_video_test(false);
+                xil_printf("[settings] NES cartridge restored: %s\r\n",
+                           profile->cartridge_name);
+                return true;
+            }
+            xil_printf("[settings] NES cartridge restore failed: %s (%s)\r\n",
+                       profile->cartridge_name,
+                       nes_content_service_status_name(content.status));
+            ok = false;
+        }
+        usb_hid_service_set_core_ready(false);
+        if (dac_ready) set_audio(true, false);
+        set_video_test(true);
+        return ok;
+    }
     if (selection->package.core_id == MT_VECTREX_CORE_ID && profile != NULL &&
         profile->cartridge_name[0] != '\0') {
         const mt_vectrex_content_result_t content =
@@ -2383,6 +2451,17 @@ static mt_menu_view_t supervisor_menu_view(void)
         state.save_faulted = genesis_content_service_save_faulted();
 
         state.genesis_three_button_mask = (uint8_t)(3U ^ genesis_content_service_options()->six_button_mask);
+    } else if (supervisor.has_active &&
+               supervisor.active.package.core_id == MT_NES_CORE_ID &&
+               nes_service_initialized) {
+        state.services_ready = true;
+        state.cartridge_attached =
+            nes_content_service_cartridge_attached();
+        state.cartridge_name = nes_content_service_cartridge_name();
+        state.save_active = nes_content_service_save_active();
+        state.save_dirty = nes_content_service_save_dirty();
+        state.save_faulted = nes_content_service_save_faulted();
+
     } else if(supervisor.has_active && supervisor.active.package.core_id==MT_IIGS_CORE_ID &&
         iigs_service_initialized) {
         state.services_ready=true;
@@ -2766,6 +2845,7 @@ static int supervisor_load(void *context,
     mt_pl_load_result_t load;
     uint64_t drain_started;
     const bool genesis_source = shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID ||
+        shell_read(MT_REG_CORE_ID) == MT_NES_CORE_ID ||
         shell_read(MT_REG_CORE_ID) == MT_IIGS_CORE_ID;
     mt_video_effect_service_suspend();
     drain_started = monotonic_ms(NULL);
@@ -2987,6 +3067,18 @@ static int supervisor_activate(void *context,
         last_settings_restore_ok = restore_selection_settings(selection);
         return 0;
     }
+    if (selection->package.core_id == MT_NES_CORE_ID) {
+        nes_content_service_init(
+            &shell_link, selection->package.content_root,
+            true, genesis_transfer_progress, NULL);
+        nes_service_initialized = true;
+        nes_save_dirty_displayed = false;
+        nes_save_fault_displayed = false;
+        c64_core_reset_active = true;
+        usb_hid_service_set_core_ready(false);
+        last_settings_restore_ok = restore_selection_settings(selection);
+        return 0;
+    }
     if (selection->package.core_id != MT_C64_CORE_ID) {
         xil_printf("[supervisor] no activation service for core=%08x\r\n",
                    (unsigned int)selection->package.core_id);
@@ -3023,6 +3115,9 @@ static int supervisor_enter_standby(void)
     gameboy_service_initialized = false;
     iigs_service_initialized = false;
     genesis_service_initialized = false;
+    nes_service_initialized = false;
+    nes_save_dirty_displayed = false;
+    nes_save_fault_displayed = false;
     genesis_save_dirty_displayed = false;
     genesis_save_fault_displayed = false;
     vectrex_service_initialized = false;
@@ -3088,7 +3183,7 @@ static void supervisor_controller_action(void *context, unsigned action)
 static bool supervisor_controller_config(void *context, uint32_t core_id, uint8_t slot,
     const mt_controller_device_t *device, mt_controller_config_t *config)
 {
-    static const uint32_t cores[] = {MT_C64_CORE_ID, MT_GBC_CORE_ID, MT_GENESIS_CORE_ID, MT_VECTREX_CORE_ID, MT_IIGS_CORE_ID};
+    static const uint32_t cores[] = {MT_C64_CORE_ID, MT_GBC_CORE_ID, MT_GENESIS_CORE_ID, MT_VECTREX_CORE_ID, MT_IIGS_CORE_ID, MT_NES_CORE_ID};
     (void)context;
     if (slot >= MT_GAMEPAD_SLOTS || device == NULL || config == NULL) return false;
     const mt_controller_settings_profile_t *saved = mt_supervisor_settings_find_controller(
@@ -3130,7 +3225,7 @@ static int usb_sd_quiesce(void *context)
     if(supervisor_quiesce(NULL)!=0)return -1;
     usb_sd_core_stopped=true;
     mt_video_effect_service_suspend();
-    const bool source=shell_read(MT_REG_CORE_ID)==MT_GENESIS_CORE_ID || shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID;
+    const bool source=shell_read(MT_REG_CORE_ID)==MT_GENESIS_CORE_ID || shell_read(MT_REG_CORE_ID)==MT_NES_CORE_ID || shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID;
     const uint64_t started=monotonic_ms(NULL);
     while(!mt_video_effect_service_quiescent() || !mt_video_worker_quiesce() ||
         (source && (shell_read(MT_REG_VIDEO_FRAME_STATUS)&MT_VIDEO_FRAME_STATUS_QUIESCENT)==0U)) {
@@ -3441,6 +3536,73 @@ static void handle_genesis_cart_detach(void)
     const mt_genesis_content_service_result_t result = genesis_content_service_detach();
     if (result.status != MT_GENESIS_CONTENT_SERVICE_OK) {
         set_supervisor_error(genesis_content_service_status_name(result.status));
+        return;
+    }
+    usb_hid_service_set_core_ready(false);
+    if (dac_ready) set_audio(true, false);
+    set_video_test(true);
+    set_supervisor_outcome(remember_active_cartridge(NULL),
+        "Cartridge unloaded", "Cartridge unloaded; settings write failed");
+}
+
+static mt_nes_content_service_result_t load_nes_content_with_input(const char *name)
+{
+    mt_nes_content_service_result_t result;
+    usb_hid_service_set_core_ready(false);
+    result = nes_content_service_load(name);
+    usb_hid_service_set_core_ready(
+        (shell_read(MT_REG_STATUS) & MT_STATUS_CORE_READY) != 0U &&
+        (shell_read(MT_REG_CONTROL) & MT_CONTROL_CORE_RESET_REQUEST) == 0U);
+    if (result.snapshot_valid) {
+        const mt_nes_transfer_snapshot_t *const snapshot = &result.snapshot;
+        xil_printf("[NES] failure phase=%s link=%s live status=%08x error=%08x control=%08x stream=%08x\r\n",
+            nes_content_service_phase_name(result.phase), mt_link_result_name(result.link),
+            (unsigned int)snapshot->status, (unsigned int)snapshot->error,
+            (unsigned int)snapshot->control, (unsigned int)snapshot->stream_status);
+        xil_printf("[NES] live opcode=%08x response=%08x core=%08x abi=%08x variant=%u build=%08x\r\n",
+            (unsigned int)snapshot->command_opcode, (unsigned int)snapshot->response_status,
+            (unsigned int)snapshot->core_id, (unsigned int)snapshot->abi,
+            (unsigned int)snapshot->core_variant, (unsigned int)snapshot->build_id);
+    }
+    return result;
+}
+
+static void handle_nes_content_load(const char *name)
+{
+    const mt_nes_content_service_result_t result = load_nes_content_with_input(name);
+    xil_printf("[NES] load %s: %s validation=%s phase=%s link=%s save=%u\r\n",
+        name, nes_content_service_status_name(result.status),
+        mt_content_validation_name(result.validation),
+        nes_content_service_phase_name(result.phase), mt_link_result_name(result.link),
+        (unsigned int)result.save_size);
+    if (result.status != MT_NES_CONTENT_SERVICE_OK) {
+        if (result.phase != MT_NES_TRANSFER_NONE &&
+            (result.status == MT_NES_CONTENT_SERVICE_TRANSFER_FAILED ||
+             result.status == MT_NES_CONTENT_SERVICE_SAVE_MOUNT_FAILED)) {
+            char failure[sizeof(supervisor_status_text)];
+            (void)snprintf(failure, sizeof(failure), "%s: %s",
+                nes_content_service_phase_name(result.phase), mt_link_result_name(result.link));
+            set_supervisor_error(failure);
+            return;
+        }
+        set_supervisor_error(result.validation == MT_CONTENT_UNSUPPORTED_VERSION ?
+            "Cartridge requires unsupported hardware" :
+            nes_content_service_status_name(result.status));
+        return;
+    }
+    mt_menu_close_browser(&supervisor_menu);
+    if (dac_ready) set_audio(false, false);
+    set_video_test(false);
+    set_supervisor_outcome(remember_active_cartridge(name),
+        result.save_existed ? "NES loaded; save restored" : "NES cartridge loaded",
+        "Cartridge loaded; settings write failed");
+}
+
+static void handle_nes_cart_detach(void)
+{
+    const mt_nes_content_service_result_t result = nes_content_service_detach();
+    if (result.status != MT_NES_CONTENT_SERVICE_OK) {
+        set_supervisor_error(nes_content_service_status_name(result.status));
         return;
     }
     usb_hid_service_set_core_ready(false);
@@ -3990,6 +4152,8 @@ static void handle_menu_action(mt_menu_action_t action)
                     basic && vectrex32_service_error()[0] != '\0' ?
                     vectrex32_service_error() : "Vectrex load failed; check BIOS and file");
             }
+        } else if (shell_read(MT_REG_CORE_ID) == MT_NES_CORE_ID) {
+            handle_nes_content_load(supervisor_menu_files[action.file_index].name);
         } else if (shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID) {
             handle_genesis_content_load(supervisor_menu_files[action.file_index].name);
         } else if (shell_read(MT_REG_CORE_ID) == MT_GBC_CORE_ID) {
@@ -4085,6 +4249,8 @@ static void handle_menu_action(mt_menu_action_t action)
                 set_supervisor_outcome(remember_active_cartridge(NULL),
                     "Vectrex cartridge unloaded", "Cart unloaded; settings write failed");
             } else set_supervisor_error("Vectrex cartridge unload failed");
+        } else if (shell_read(MT_REG_CORE_ID) == MT_NES_CORE_ID) {
+            handle_nes_cart_detach();
         } else if (shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID) {
             handle_genesis_cart_detach();
         } else if (shell_read(MT_REG_CORE_ID) == MT_GBC_CORE_ID) {

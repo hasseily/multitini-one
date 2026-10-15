@@ -87,8 +87,16 @@ switch -- $machine {
         set c64_video_standard "N/A"
         set active_machine 5
     }
+    NES {
+        # Two service cycles per NTSC 21.477272 MHz master tick. Bounded
+        # catch-up enables recover PSRAM stalls without overclocking the
+        # original CPU/PPU combinational paths or relaxing timing checks.
+        set c64_clock_mhz 42.954544
+        set c64_video_standard "N/A"
+        set active_machine 6
+    }
     default {
-        error "MULTITINI_MACHINE must be SUPERVISOR, C64, GBC, VECTREX, GENESIS, or APPLE_IIGS"
+        error "MULTITINI_MACHINE must be SUPERVISOR, C64, GBC, VECTREX, GENESIS, APPLE_IIGS, or NES"
     }
 }
 
@@ -125,7 +133,7 @@ proc add_manifest_sources {repo_root machine} {
         }
         if {[regexp {^\[([A-Za-z0-9_]+)\]$} $relative -> section]} {
             set active_section [string toupper $section]
-            if {$active_section ni {COMMON C64 GBC VECTREX GENESIS APPLE_IIGS}} {
+            if {$active_section ni {COMMON C64 GBC VECTREX GENESIS APPLE_IIGS NES}} {
                 error "Unknown source-manifest section: $relative"
             }
             continue

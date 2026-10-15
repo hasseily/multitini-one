@@ -5,6 +5,7 @@
 #include "multitini_vectrex_interface.h"
 #include "multitini_vectrex_overlay.h"
 #include "multitini_genesis_content.h"
+#include "multitini_nes_content.h"
 #include "multitini_iigs_interface.h"
 
 #include <stddef.h>
@@ -60,6 +61,7 @@ mt_content_type_t mt_content_classify(const char *path)
     if (extension_is(extension, "tap")) return MT_CONTENT_TAP_FUTURE;
     if (extension_is(extension, "d81")) return MT_CONTENT_D81_FUTURE;
     if (extension_is(extension, "gb")) return MT_CONTENT_GB_CART;
+    if (extension_is(extension, "nes")) return MT_CONTENT_NES_CART;
     if (extension_is(extension, "gbc")) return MT_CONTENT_GBC_CART;
     if (extension_is(extension, "vec")) return MT_CONTENT_VECTREX_CART;
     if (extension_is(extension, "bas")) return MT_CONTENT_VECTREX_BASIC;
@@ -92,7 +94,7 @@ bool mt_content_supported_first_release(mt_content_type_t type)
     return type == MT_CONTENT_SYSTEM_ROM || type == MT_CONTENT_PRG ||
            type == MT_CONTENT_D64 || type == MT_CONTENT_G64 ||
            type == MT_CONTENT_CRT || type == MT_CONTENT_GB_CART ||
-           type == MT_CONTENT_GBC_CART || type == MT_CONTENT_VECTREX_CART ||
+           type == MT_CONTENT_GBC_CART || type == MT_CONTENT_NES_CART || type == MT_CONTENT_VECTREX_CART ||
            type == MT_CONTENT_VECTREX_BASIC || type == MT_CONTENT_VECTREX_OVERLAY ||
            type == MT_CONTENT_GENESIS_CART || type == MT_CONTENT_GENESIS_SMD ||
            type == MT_CONTENT_IIGS_HDD || type == MT_CONTENT_IIGS_WOZ;
@@ -114,6 +116,7 @@ const char *mt_content_type_name(mt_content_type_t type)
     case MT_CONTENT_TAP_FUTURE: return "TAP (future)";
     case MT_CONTENT_D81_FUTURE: return "D81 (future)";
     case MT_CONTENT_GB_CART: return "Game Boy cartridge";
+    case MT_CONTENT_NES_CART: return "Nintendo Entertainment System cartridge";
     case MT_CONTENT_GBC_CART: return "Game Boy Color cartridge";
     case MT_CONTENT_VECTREX_CART: return "Vectrex cartridge";
     case MT_CONTENT_VECTREX_BASIC: return "Vectrex32 BASIC";
@@ -334,6 +337,15 @@ mt_content_validation_t mt_content_inspect(mt_content_type_t type,
         status = size == 0U ? MT_CONTENT_TOO_SMALL :
             (mt_vectrex_overlay_valid_size(size) ? MT_CONTENT_VALID : MT_CONTENT_WRONG_SIZE);
         break;
+    case MT_CONTENT_NES_CART: {
+        mt_nes_content_info_t nes;
+        status = mt_nes_content_inspect(data, size, &nes);
+        if (status == MT_CONTENT_VALID) {
+            result.payload_offset = 16U; result.payload_size = size - 16U;
+            result.hardware_type = nes.mapper; result.writable = nes.battery;
+        }
+        break;
+    }
     case MT_CONTENT_GENESIS_CART:
     case MT_CONTENT_GENESIS_SMD: {
         mt_genesis_content_info_t genesis;

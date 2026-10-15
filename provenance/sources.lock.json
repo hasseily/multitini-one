@@ -2,6 +2,13 @@
   "schema_version": 1,
   "sources": [
     {
+      "name": "MiSTer NES",
+      "url": "https://github.com/MiSTer-devel/NES_MiSTer.git",
+      "commit": "49a0a662e244469ca77b2155746a066df704ffae",
+      "license": "GPL-3.0-only with BSD-3-Clause T65 processor files",
+      "use": "Selected NES CPU, PPU, APU and cartridge mapper source; licensed RGB palette constants from rtl/video.sv. Root NES.sv is retained as reference only; no MiSTer platform implementation is built. No Nintendo ROMs, games, external palette assets or binary media"
+    },
+    {
       "name": "Appletini One board support",
       "url": "https://github.com/hasseily/appletini-one.git",
       "commit": "052fe8aa43c483c193fcbc10ecba4225272c213d",

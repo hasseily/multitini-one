@@ -1,6 +1,16 @@
 # Current handoff
 
-The latest named firmware is [M0.1.0](FIRMWARE_M0.1.0.md), an ARM-only
+Branch `core-nes` adds the NES integration and M0.5.0 candidate firmware. Its
+machine and firmware validation are recorded in [NES build evidence](NES_BUILD.md).
+See [NES integration](NES_PLAN.md) for scope and [board checks](NES_HARDWARE_TEST.md)
+for installation and physical acceptance.
+The package is `build/firmware-core-nes.zip`, with an unpacked SD tree under
+`build/firmware-core-nes/sd/`. The NES image passes routed setup `+0.219 ns`,
+hold `+0.048 ns` and pulse width `+0.265 ns`.
+The existing core images retain their original identities. NES board tests
+remain separate from source, simulation and build evidence.
+
+The earlier [M0.1.0](FIRMWARE_M0.1.0.md) is an ARM-only
 controller-menu release built over `build/firmware-efx1`. Its package is
 `build/firmware-M0.1.0/` with `FIRMWARE-M0.1.0.BIN`, an identical
 `sd/FIRMWARE.BIN`, retained machine packages, source and audit evidence.

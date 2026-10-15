@@ -37,6 +37,9 @@ add_library(multitini_common STATIC
     firmware/common/genesis_hid_input.c
     firmware/common/iigs_content.c
     firmware/common/iigs_hid_input.c
+    firmware/common/nes_boot.c
+    firmware/common/nes_content.c
+    firmware/common/nes_hid_input.c
     firmware/common/vectrex_boot.c
     firmware/common/vectrex_hid_input.c
     firmware/common/vectrex_overlay.c
@@ -434,6 +437,17 @@ target_include_directories(test_genesis_content_service PRIVATE firmware/platfor
 target_link_libraries(test_genesis_content_service PRIVATE
     multitini_common xilinx_persistent_save_host)
 add_test(NAME genesis_content_service COMMAND test_genesis_content_service)
+
+add_executable(test_nes_runtime tests/host/test_nes_runtime.c)
+target_link_libraries(test_nes_runtime PRIVATE multitini_common)
+add_test(NAME nes_runtime COMMAND test_nes_runtime)
+add_executable(test_nes_content_service
+    tests/host/test_nes_content_service.c
+    firmware/platform/xilinx/nes_content_service.c)
+target_include_directories(test_nes_content_service PRIVATE firmware/platform/xilinx)
+target_link_libraries(test_nes_content_service PRIVATE
+    multitini_common xilinx_persistent_save_host)
+add_test(NAME nes_content_service COMMAND test_nes_content_service)
 
 add_executable(test_ak4493 tests/host/test_ak4493.c)
 target_link_libraries(test_ak4493 PRIVATE multitini_common)

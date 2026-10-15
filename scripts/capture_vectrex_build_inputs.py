@@ -60,6 +60,16 @@ def inputs(machine: str) -> list[Path]:
             "check_apple_iigs_phase_constraints.tcl"))
         paths.add(ROOT / "hdl/sim/apple_iigs_bufgce.sv")
         paths.update((ROOT / "hdl/sim").glob("tb_apple_iigs_*.sv"))
+    if machine == "NES":
+        paths.update(path for path in (ROOT / "third_party/nes").rglob("*")
+                     if path.is_file())
+        paths.update(ROOT / "scripts" / name for name in (
+            "port_nes_core.py", "audit_nes_import.py", "test_nes.py",
+            "test_nes_video.py", "build_core_nes.py", "build_phos1.py", "package_core_nes.py"))
+        paths.update(ROOT / name for name in (
+            "hdl/sim/xilinx_primitives.sv", "hdl/sim/video_fifo_model.sv",
+            "docs/NES_PLAN.md"))
+        paths.update((ROOT / "hdl/sim").glob("tb_nes_*.sv"))
     section = "common"
     for line in (ROOT / "hdl/hdl_sources.txt").read_text().splitlines():
         line = line.strip()
@@ -91,7 +101,7 @@ def archive_inputs(output: Path, record: dict) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--machine", choices=("C64", "GBC", "VECTREX", "GENESIS", "APPLE_IIGS", "SUPERVISOR"))
+    parser.add_argument("--machine", choices=("C64", "GBC", "VECTREX", "GENESIS", "APPLE_IIGS", "NES", "SUPERVISOR"))
     parser.add_argument("--c64-video-standard", choices=("PAL", "NTSC"), default="PAL")
     parser.add_argument("--gbc-psram", action="store_true")
     parser.add_argument("--genesis-pal", action="store_true")

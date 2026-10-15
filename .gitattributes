@@ -25,6 +25,7 @@ third_party/apple-iigs/upstream/** -text -whitespace
 third_party/c64/upstream/** -text -whitespace
 third_party/gameboy/upstream/** -text -whitespace
 third_party/genesis/upstream/** -text -whitespace
+third_party/nes/upstream/** -text -whitespace
 third_party/gsbasic/** -text -whitespace
 third_party/vectrex/** -text -whitespace
 third_party/vectrex32/** -text -whitespace

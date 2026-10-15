@@ -1,4 +1,5 @@
 path,origin,commit,license,status,notes
+hdl/core/nes/multitini_nes_adapter.sv,MiSTer NES and Multitini One,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Original shared-shell adapter with licensed RGB palette constants from pinned rtl/video.sv; original upstream source retained and import-locked
 README.md,Multitini One,,GPL-3.0-only,reviewed,Original project documentation
 MULTITINI_ONE_PLAN.md,Multitini One,,GPL-3.0-only,reviewed,Original product plan
 docs/**,Multitini One,,GPL-3.0-only,reviewed,Original documentation except quoted facts
@@ -523,3 +524,32 @@ firmware/platform/xilinx/usb0_personality.h,Appletini One USB0 SD,7b972bfda43265
 hdl/core/apple_iigs/ports/zipgs_regs.sv,MiSTer Apple IIgs and Multitini One,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-3.0,source-reviewed,Reproduced by scripts/port_apple_iigs_core.py; pinned repository GPL grant; native peripheral state and wall-clock timing retained
 hdl/core/apple_iigs/ports/sound.sv,MiSTer Apple IIgs and Multitini One,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-3.0,source-reviewed,Reproduced by scripts/port_apple_iigs_core.py; pinned repository GPL grant; native peripheral state and wall-clock timing retained
 hdl/core/apple_iigs/ports/soundglu.sv,MiSTer Apple IIgs and Multitini One,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-3.0,source-reviewed,Reproduced by scripts/port_apple_iigs_core.py; pinned repository GPL grant; native peripheral state and wall-clock timing retained
+third_party/nes/upstream/COPYING,MiSTer NES,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Pinned original; exact source bytes retained in third_party/nes/import.json
+third_party/nes/upstream/README.md,MiSTer NES,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Pinned original; exact source bytes retained in third_party/nes/import.json
+third_party/nes/upstream/NES.sv,MiSTer NES,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Pinned original; exact source bytes retained in third_party/nes/import.json
+third_party/nes/upstream/files.qip,MiSTer NES,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Pinned original; exact source bytes retained in third_party/nes/import.json
+third_party/nes/upstream/rtl/nes.v,MiSTer NES,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Pinned original; exact source bytes retained in third_party/nes/import.json
+third_party/nes/upstream/rtl/ppu.sv,MiSTer NES,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Pinned original; exact source bytes retained in third_party/nes/import.json
+third_party/nes/upstream/rtl/apu.sv,MiSTer NES,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Pinned original; exact source bytes retained in third_party/nes/import.json
+third_party/nes/upstream/rtl/cart.sv,MiSTer NES,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Pinned original; exact source bytes retained in third_party/nes/import.json
+third_party/nes/upstream/rtl/video.sv,MiSTer NES,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Pinned original; exact source bytes retained in third_party/nes/import.json
+third_party/nes/upstream/rtl/cheatcodes.sv,MiSTer NES,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Pinned original; exact source bytes retained in third_party/nes/import.json
+third_party/nes/upstream/rtl/regs_savestates.sv,MiSTer NES,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Pinned original; exact source bytes retained in third_party/nes/import.json
+third_party/nes/upstream/rtl/bus_savestates.vhd,MiSTer NES,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Pinned original; exact source bytes retained in third_party/nes/import.json
+third_party/nes/upstream/rtl/mappers/MMC1.sv,MiSTer NES,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Pinned original; exact source bytes retained in third_party/nes/import.json
+third_party/nes/upstream/rtl/mappers/MMC2.sv,MiSTer NES,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Pinned original; exact source bytes retained in third_party/nes/import.json
+third_party/nes/upstream/rtl/mappers/MMC3.sv,MiSTer NES,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Pinned original; exact source bytes retained in third_party/nes/import.json
+third_party/nes/upstream/rtl/mappers/generic.sv,MiSTer NES,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Pinned original; exact source bytes retained in third_party/nes/import.json
+third_party/nes/upstream/rtl/t65/T65.vhd,MiSTer NES,49a0a662e244469ca77b2155746a066df704ffae,BSD-3-Clause,source-reviewed,Pinned original; exact source bytes retained in third_party/nes/import.json
+third_party/nes/upstream/rtl/t65/T65_ALU.vhd,MiSTer NES,49a0a662e244469ca77b2155746a066df704ffae,BSD-3-Clause,source-reviewed,Pinned original; exact source bytes retained in third_party/nes/import.json
+third_party/nes/upstream/rtl/t65/T65_MCode.vhd,MiSTer NES,49a0a662e244469ca77b2155746a066df704ffae,BSD-3-Clause,source-reviewed,Pinned original; exact source bytes retained in third_party/nes/import.json
+third_party/nes/upstream/rtl/t65/T65_Pack.vhd,MiSTer NES,49a0a662e244469ca77b2155746a066df704ffae,BSD-3-Clause,source-reviewed,Pinned original; exact source bytes retained in third_party/nes/import.json
+hdl/core/nes/ports/apu.sv,MiSTer NES and Multitini One,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Deterministic compatibility port; reproduced by scripts/port_nes_core.py
+hdl/core/nes/ports/cart.sv,MiSTer NES and Multitini One,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Deterministic compatibility port; reproduced by scripts/port_nes_core.py
+hdl/core/nes/ports/cheatcodes.sv,MiSTer NES and Multitini One,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Deterministic compatibility port; reproduced by scripts/port_nes_core.py
+hdl/core/nes/ports/generic.sv,MiSTer NES and Multitini One,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Deterministic compatibility port; reproduced by scripts/port_nes_core.py
+hdl/core/nes/ports/MMC1.sv,MiSTer NES and Multitini One,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Deterministic compatibility port; reproduced by scripts/port_nes_core.py
+hdl/core/nes/ports/MMC2.sv,MiSTer NES and Multitini One,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Deterministic compatibility port; reproduced by scripts/port_nes_core.py
+hdl/core/nes/ports/MMC3.sv,MiSTer NES and Multitini One,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Deterministic compatibility port; reproduced by scripts/port_nes_core.py
+hdl/core/nes/ports/nes.sv,MiSTer NES and Multitini One,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Deterministic compatibility port; reproduced by scripts/port_nes_core.py
+hdl/core/nes/ports/ppu.sv,MiSTer NES and Multitini One,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Deterministic compatibility port; reproduced by scripts/port_nes_core.py

@@ -3,6 +3,7 @@
 #include "multitini_c64_interface.h"
 #include "multitini_gameboy_interface.h"
 #include "multitini_genesis_interface.h"
+#include "multitini_nes_interface.h"
 #include "multitini_vectrex_interface.h"
 #include "multitini_iigs_interface.h"
 #include <stdio.h>
@@ -15,6 +16,7 @@ uint32_t mt_controls_action_mask(uint32_t core)
     const uint32_t directions = 15U, menu = BIT(MT_CONTROL_MENU) | BIT(MT_CONTROL_SCREENSHOT) | BIT(MT_CONTROL_SCREENSHOT_OUTPUT);
     switch (core) {
     case MT_C64_CORE_ID: return directions | BIT(MT_CONTROL_A) | BIT(MT_CONTROL_B) | BIT(MT_CONTROL_C) | menu;
+    case MT_NES_CORE_ID:
     case MT_GBC_CORE_ID: return directions | BIT(MT_CONTROL_A) | BIT(MT_CONTROL_B) | BIT(MT_CONTROL_START) | BIT(MT_CONTROL_SELECT) | menu;
     case MT_GENESIS_CORE_ID: return UINT16_C(0x0fff) | menu;
     case MT_VECTREX_CORE_ID: return UINT16_C(0x00ff) | BIT(MT_CONTROL_AXIS_X) | BIT(MT_CONTROL_AXIS_Y) | menu;

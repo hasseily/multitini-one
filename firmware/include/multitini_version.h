@@ -6,7 +6,7 @@
 
 /* Multitini releases use M<major>.<minor>.<patch>.
  * The numeric identity packs 'M', major, minor and patch into four bytes. */
-#define MT_FIRMWARE_VERSION "M0.4.0"
-#define MT_FIRMWARE_BUILD_ID UINT32_C(0x4D000400)
+#define MT_FIRMWARE_VERSION "M0.5.0"
+#define MT_FIRMWARE_BUILD_ID UINT32_C(0x4D000500)
 
 #endif

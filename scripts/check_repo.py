@@ -17,7 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RESTRICTED_SUFFIXES = {
     ".2mg", ".bin", ".bit", ".crt", ".d64", ".d81", ".elf", ".g64",
-    ".gen", ".hex", ".img", ".mem", ".mif", ".po", ".prg", ".rbf", ".reu", ".smd",
+    ".fds", ".gen", ".hex", ".img", ".mem", ".mif", ".nes", ".po", ".prg", ".rbf", ".reu", ".smd",
     ".rom", ".tap", ".t64", ".woz",
 }
 SOURCE_SUFFIXES = {".c", ".cpp", ".h", ".hpp", ".py", ".sv", ".tcl", ".v", ".vhd", ".vhdl", ".xdc"}
@@ -201,7 +201,8 @@ def main() -> int:
             path.startswith("third_party/c64/upstream/") or
             path.startswith("third_party/gameboy/upstream/") or
             path.startswith("third_party/genesis/upstream/") or
-            path.startswith("third_party/apple-iigs/upstream/")
+            path.startswith("third_party/apple-iigs/upstream/") or
+            path.startswith("third_party/nes/upstream/")
         }
         if tracked_imports != import_paths:
             for path in sorted(tracked_imports - import_paths):

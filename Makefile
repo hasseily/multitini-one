@@ -1,9 +1,9 @@
-.PHONY: check generate check-generated repo-check host-build host-test host-sanitize hdl-test hdl-display-test hdl-xsim-test c64-lint gameboy-lint genesis-lint genesis-test clean
+.PHONY: check generate check-generated repo-check host-build host-test host-sanitize hdl-test hdl-display-test hdl-xsim-test c64-lint gameboy-lint genesis-lint genesis-test nes-test nes-mapper-test nes-machine-test nes-video-test nes-runtime-test clean
 
 PYTHON ?= python3
 HOST_BUILD_DIR ?= build-host
 
-check: check-generated repo-check host-test host-sanitize hdl-test hdl-display-test c64-lint gameboy-lint genesis-lint genesis-test
+check: check-generated repo-check host-test host-sanitize hdl-test hdl-display-test c64-lint gameboy-lint genesis-lint genesis-test nes-test nes-mapper-test nes-video-test nes-runtime-test
 
 generate:
 	$(PYTHON) scripts/generate_registers.py
@@ -13,6 +13,7 @@ generate:
 	$(PYTHON) scripts/generate_gameboy_bootrom.py
 	$(PYTHON) scripts/port_gameboy_core.py
 	$(PYTHON) scripts/port_genesis_core.py
+	$(PYTHON) scripts/port_nes_core.py
 
 check-generated:
 	$(PYTHON) scripts/generate_registers.py --check
@@ -22,12 +23,14 @@ check-generated:
 	$(PYTHON) scripts/generate_gameboy_bootrom.py --check
 	$(PYTHON) scripts/port_gameboy_core.py --check
 	$(PYTHON) scripts/port_genesis_core.py --check
+	$(PYTHON) scripts/port_nes_core.py --check
 
 repo-check:
 	$(PYTHON) scripts/check_repo.py
 	$(PYTHON) scripts/audit_c64_import.py
 	$(PYTHON) scripts/audit_gameboy_import.py
 	$(PYTHON) scripts/audit_genesis_import.py
+	$(PYTHON) scripts/audit_nes_import.py
 	$(PYTHON) -m unittest discover -s tests -p 'test_*.py'
 
 host-build:
@@ -65,6 +68,21 @@ genesis-lint:
 
 genesis-test:
 	$(PYTHON) scripts/test_genesis.py
+
+nes-test:
+	$(PYTHON) scripts/test_nes.py --test loader --test memory --test save --test audio
+
+nes-mapper-test:
+	$(PYTHON) tests/rtl/run_nes_mappers.py
+
+nes-machine-test:
+	$(PYTHON) scripts/test_nes.py --test machine
+
+nes-video-test:
+	$(PYTHON) scripts/test_nes_video.py
+
+nes-runtime-test:
+	$(PYTHON) scripts/test_nes_runtime.py
 
 clean:
 	cmake -E remove_directory $(HOST_BUILD_DIR)

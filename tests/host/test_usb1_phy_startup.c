@@ -321,7 +321,7 @@ static unsigned init_calls, deinit_calls;
 static int init_result;
 static unsigned missing_hub_handles, skip_deinit_hook, fail_deinit_power;
 static unsigned release_calls;
-static int g_c64_input, g_gameboy_input, g_vectrex_input, g_genesis_input, g_iigs_input;
+static int g_c64_input, g_gameboy_input, g_vectrex_input, g_genesis_input, g_iigs_input, g_nes_input;
 static uint8_t g_slots[8], g_xinput_slots[8];
 #define MT_GAMEPAD_SLOTS 9U
 static int g_gamepads;
@@ -338,6 +338,8 @@ static int mt_vectrex_hid_release_all(void *state)
 { CHECK(state == &g_vectrex_input); ++release_calls; return 0; }
 static int mt_genesis_hid_release_all(void *state)
 { CHECK(state == &g_genesis_input); ++release_calls; return 0; }
+static int mt_nes_hid_release_all(void *state)
+{ CHECK(state == &g_nes_input); ++release_calls; return 0; }
 static int mt_iigs_hid_release_all(void *state)
 { CHECK(state == &g_iigs_input); ++release_calls; return 0; }
 static void disconnect_input_slot(uint8_t slot) { CHECK(slot < MT_GAMEPAD_SLOTS); }
@@ -445,7 +447,7 @@ static void test_repeated_rescan(void)
         CHECK(g_started == 0U && g_power_shutdown_required == 0U);
         CHECK((phy[0x0A] & PHY_DRIVE) == 0U);
     }
-    CHECK(init_calls == 5U && deinit_calls == 5U && release_calls == 25U);
+    CHECK(init_calls == 5U && deinit_calls == 5U && release_calls == 30U);
     puts("PASS USB1 repeated rescans wake the PHY and release all machine inputs");
 }
 
@@ -456,7 +458,7 @@ static void test_teardown_failure(void)
     skip_deinit_hook = 1U;
     CHECK(usb_hid_service_stop() == 0);
     CHECK((phy[0x0A] & PHY_DRIVE) == 0U);
-    CHECK(release_calls == 5U && g_power_shutdown_required == 0U);
+    CHECK(release_calls == 6U && g_power_shutdown_required == 0U);
     puts("PASS USB1 power removed and inputs released when EHCI skips teardown hook");
 
     reset_hid_model();
@@ -464,7 +466,7 @@ static void test_teardown_failure(void)
     fail_deinit_power = 1U;
     CHECK(usb_hid_service_stop() == -1002);
     CHECK(g_power_shutdown_required == 1U && g_last_error == -1002);
-    CHECK(release_calls == 5U);
+    CHECK(release_calls == 6U);
     CHECK(usb_hid_service_start() == -1002 && init_calls == 1U);
     transfer_timeout = fail_deinit_power = 0U;
     CHECK(usb_hid_service_start() == 0 && init_calls == 2U);

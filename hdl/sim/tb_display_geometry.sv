@@ -49,7 +49,7 @@ module display_geometry_case #(
             case(MACHINE)
                 1:numerator=(m==1 || m==2 || m==4) ? 5 : 6;
                 3:begin numerator=m==0 ? 3 : 1;denominator=m==0 ? 2 : 1;end
-                4:numerator=(m==0 || m==5) ? 4 : 3;
+                4,6:numerator=(m==0 || m==5) ? 4 : 3;
                 5:numerator=(m==0 || m==3 || m==5) ? 2 : 1;
                 default:numerator=m==0 ? 4 : (m==1 || m==2 || m==4) ? 2 : 3;
             endcase
@@ -95,7 +95,7 @@ module display_geometry_case #(
 endmodule
 
 module tb_display_geometry;
-    localparam integer MACHINES=6, DIMENSIONS=14;
+    localparam integer MACHINES=7, DIMENSIONS=15;
     wire [MACHINES*DIMENSIONS-1:0] done;
     for(genvar machine=0;machine<MACHINES;machine=machine+1)begin:machines
         for(genvar pair=0;pair<DIMENSIONS;pair=pair+1)begin:dimensions
@@ -104,18 +104,18 @@ module tb_display_geometry;
             localparam integer W=pair==0 ? 382 : pair==1 ? 404 : pair==2 ? 160 :
                 pair==3 ? 540 : pair==4 ? 320 : pair==5 ? 0 : pair==6 ? 1 :
                 pair==7 ? 541 : pair==8 ? 1919 : pair==9 ? 1365 :
-                pair==10 ? 4095 : pair==11 ? 4096 : pair==12 ? 8191 : 640;
+                pair==10 ? 4095 : pair==11 ? 4096 : pair==12 ? 8191 : pair==13 ? 640 : 256;
             localparam integer H=pair==0 ? 270 : pair==1 ? 250 : pair==2 ? 144 :
                 pair==3 ? 720 : pair==4 ? 240 : pair==5 ? 0 : pair==6 ? 1 :
                 pair==7 ? 721 : pair==8 ? 1079 : pair==9 ? 2731 :
-                pair==10 ? 4095 : pair==11 ? 4097 : pair==12 ? 8193 : 400;
+                pair==10 ? 4095 : pair==11 ? 4097 : pair==12 ? 8193 : pair==13 ? 400 : 240;
             display_geometry_case #(.MACHINE(machine),.WIDTH(W),.HEIGHT(H)) check_case(
                 .done(done[machine*DIMENSIONS+pair]));
         end
     end
     initial begin
         wait(&done);
-        $display("PASS display geometry: %0d cases; 16 mode IDs, 6 machines, 14 dimension pairs",MACHINES*DIMENSIONS*16);
+        $display("PASS display geometry: %0d cases; 16 mode IDs, 7 machines, 15 dimension pairs",MACHINES*DIMENSIONS*16);
         $finish;
     end
     initial begin #100;$fatal(1,"display geometry timeout");end

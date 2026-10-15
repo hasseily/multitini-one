@@ -20,7 +20,8 @@ class DisplayRuntimeTests(unittest.TestCase):
             self.skipTest("host C compiler unavailable")
         source = (ROOT / "firmware/platform/xilinx/main.c").read_text()
         functions = []
-        for signature in ("static bool apply_display_mode(uint8_t mode)",
+        for signature in ("static bool apply_display_geometry(uint8_t value, bool multiplier)",
+                          "static bool apply_display_mode(uint8_t mode)",
                           "static void change_display_mode(size_t mode)"):
             start = source.index(signature + "\n{")
             functions.append(source[start:source.index("\n}", start) + 2])

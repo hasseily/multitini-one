@@ -35,6 +35,43 @@ proc require_one_object {description objects} {
     }
 }
 
+proc require_nes_save_ram {stage} {
+    set storage [get_cells -hierarchical -quiet -filter \
+        {NAME =~ *g_nes_machine*machine_adapter*memory_service*save_lanes*lane_ram* && REF_NAME =~ RAM*}]
+    set registers [get_cells -hierarchical -quiet -filter \
+        {NAME =~ *g_nes_machine*machine_adapter*memory_service*lane_ram* && REF_NAME =~ FD*}]
+    # Vivado exposes RAM64M macro cells and their four RAMD64E atoms at once.
+    # Count the physical atoms when expanded, so capacity is not doubled.
+    set atoms [filter $storage {REF_NAME =~ RAMD* || REF_NAME =~ RAMS*}]
+    if {[llength $atoms] != 0} {
+        set storage [concat $atoms [filter $storage {REF_NAME =~ RAMB*}]]
+    }
+    set storage_bits 0
+    foreach cell $storage {
+        set reference [get_property REF_NAME $cell]
+        switch -- $reference {
+            RAM32M -
+            RAM64M {incr storage_bits 256}
+            RAMD32 -
+            RAMS32 {incr storage_bits 32}
+            RAMD64E -
+            RAMS64E {incr storage_bits 64}
+            RAMB18E1 {incr storage_bits 18432}
+            RAMB36E1 {incr storage_bits 36864}
+            default {
+                if {![regexp {^RAM([0-9]+)X([0-9]+)} $reference -> depth width]} {
+                    error "Unreviewed NES battery RAM primitive: $reference"
+                }
+                incr storage_bits [expr {$depth * $width}]
+            }
+        }
+    }
+    if {$storage_bits < 65536 || [llength $registers] != 0} {
+        error "NES battery SRAM must retain at least 8 KiB of RAM and zero flip-flop storage: RAM_bits=$storage_bits FF=[llength $registers]"
+    }
+    puts "NES_SAVE_RAM_PASS stage=$stage memory_primitives=[llength $storage] storage_bits=$storage_bits storage_flipflops=[llength $registers]"
+}
+
 proc require_iigs_phase_fanin {description pins marker} {
     if {[llength $pins] == 0} {error "IIgs phase gate has no $description pins"}
     foreach pin $pins {
@@ -94,6 +131,8 @@ if {[string match "*ACTIVE_MACHINE=2*" $build_generics]} {
     set image_kind "GENESIS"
 } elseif {[string match "*ACTIVE_MACHINE=5*" $build_generics]} {
     set image_kind "APPLE_IIGS"
+} elseif {[string match "*ACTIVE_MACHINE=6*" $build_generics]} {
+    set image_kind "NES"
 } else {
     error "Build generic has no recognized ACTIVE_MACHINE value: $build_generics"
 }
@@ -101,6 +140,7 @@ set psram_active [expr {
     [string match "*ACTIVE_MACHINE=0*" $build_generics] ||
     [string match "*ACTIVE_MACHINE=3*" $build_generics] ||
     [string match "*ACTIVE_MACHINE=4*" $build_generics] ||
+    [string match "*ACTIVE_MACHINE=6*" $build_generics] ||
     [string match "*ENABLE_GBC_PSRAM=1'b1*" $build_generics]
 }]
 
@@ -130,6 +170,11 @@ reset_run synth_1
 launch_runs synth_1 -jobs $jobs
 wait_on_run synth_1
 require_complete_run synth_1
+if {$image_kind eq "NES"} {
+    open_run synth_1
+    require_nes_save_ram synthesis
+    close_design
+}
 
 reset_run impl_1
 launch_runs impl_1 -to_step write_bitstream -jobs $jobs
@@ -162,6 +207,44 @@ foreach {description pattern} {
 require_one_object "audio BCLK generated clock" [get_clocks -quiet audio_bclk]
 require_one_object "forwarded audio BCLK" [get_clocks -quiet audio_bclk_out]
 require_one_object "forwarded DVI clock" [get_clocks -quiet dvi_clk_out]
+if {$image_kind eq "NES"} {
+    require_nes_save_ram implementation
+    set nes_clock [get_clocks -quiet -filter {NAME =~ *clk_out1*zynq_ps_bd_clk_wiz_c64*}]
+    require_one_object "NES service clock" $nes_clock
+    set nes_period [get_property PERIOD $nes_clock]
+    set nes_mmcm [get_cells -hierarchical -quiet -filter \
+        {REF_NAME == MMCME2_ADV && NAME =~ *clk_wiz_c64*}]
+    require_one_object "NES service MMCM" $nes_mmcm
+    foreach {property expected} {CLKFBOUT_MULT_F 31.5 DIVCLK_DIVIDE 5 CLKOUT0_DIVIDE_F 22} {
+        if {abs([get_property $property $nes_mmcm] - $expected) > 0.000001} {
+            error "NES MMCM $property differs from the reviewed value $expected"
+        }
+    }
+    set nes_parent [get_clocks -quiet -of_objects [get_pins $nes_mmcm/CLKIN1]]
+    require_one_object "NES MMCM parent clock" $nes_parent
+    set nes_parent_period [get_property PERIOD $nes_parent]
+    if {$nes_parent ne "clk_fpga_2" || abs($nes_parent_period - 1000.0 / 150.0) > 0.001} {
+        error "NES MMCM requires the reviewed 150 MHz PS clock: $nes_parent $nes_parent_period ns"
+    }
+    # PS7 and generated clocks use picosecond precision. Bound that rounding
+    # independently from the exact physical MMCM ratio; never relax timing.
+    set nes_ratio [expr {5.0 * 22.0 / 31.5}]
+    set nes_derived_period [expr {$nes_parent_period * $nes_ratio}]
+    set nes_nominal_tolerance [expr {0.001 * (1.0 + $nes_ratio)}]
+    if {abs($nes_period - $nes_derived_period) > 0.001 ||
+        abs($nes_period - 1000.0 / 42.954544) > $nes_nominal_tolerance} {
+        error "NES service clock differs from its reviewed MMCM ratio: $nes_period ns"
+    }
+    puts "NES_CLOCK_RATIO_PASS parent=$nes_parent parent_period=$nes_parent_period M=31.5 D=5 O=22 derived_period=$nes_derived_period actual_period=$nes_period"
+    set nes_register_pins [get_pins -hierarchical -quiet \
+        -filter {NAME =~ *g_nes_machine*machine_adapter*/C}]
+    if {[llength $nes_register_pins] == 0} {error "NES adapter has no clocked registers"}
+    set nes_register_clocks [get_clocks -quiet -of_objects $nes_register_pins]
+    if {$nes_register_clocks ne $nes_clock} {
+        error "NES machine state must retain its single root clock and clock-enable stalls: $nes_register_clocks"
+    }
+    puts "NES_CLOCK_PASS root=$nes_clock period=$nes_period registers=[llength $nes_register_pins]"
+}
 if {$image_kind eq "APPLE_IIGS"} {
     foreach {name divide} {clk28 2} {
         set divider_source [get_pins -hierarchical -quiet -regexp \

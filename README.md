@@ -5,6 +5,15 @@ It runs C64, Game Boy Color, Vectrex, Genesis / Mega Drive and Apple IIgs
 machines through a shared supervisor, menu, input, audio, storage and
 core-loading system. It does not use an Apple II host.
 
+Branch `core-nes` adds a pinned MiSTer NES port with standard NTSC cartridge
+loading, two controllers, battery saves and complete 256x240 video through
+the shared display services. See [NES integration](docs/NES_PLAN.md) for the
+source pin, accepted formats, build steps and validation limits. The M0.5.0
+candidate is `build/firmware-core-nes.zip`; its NES image passes routed setup
+`+0.219 ns`, hold `+0.048 ns` and pulse width `+0.265 ns`. See
+[build evidence](docs/NES_BUILD.md) and [hardware checks](docs/NES_HARDWARE_TEST.md).
+Physical NES support remains subject to board testing.
+
 Branch `core-gs` builds the M0.4.0 hardware-test package at
 `build/firmware-core-gs3.zip`. It adds accelerated IIgs execution, the SHR
 left-edge correction, nested media folders and USB SD-card export. The new
@@ -75,6 +84,9 @@ explicit direct-RAM shortcut for eligible BASIC programs.
 
 ## Documentation
 
+- [NES integration](docs/NES_PLAN.md), [build evidence](docs/NES_BUILD.md) and
+  [hardware checks](docs/NES_HARDWARE_TEST.md): cartridge formats, controls,
+  saves, shared video, reproducible imports and selective builds.
 - [Apple IIgs integration](docs/APPLE_IIGS_PLAN.md),
   [CPU validation](docs/APPLE_IIGS_CPU_VALIDATION.md) and
   [hardware checks](docs/APPLE_IIGS_HARDWARE_TEST.md): pinned source, runtime

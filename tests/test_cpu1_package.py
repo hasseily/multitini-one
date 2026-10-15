@@ -96,7 +96,7 @@ class PackageTests(unittest.TestCase):
         (self.root / "source-inputs.json").write_text(json.dumps({
             "machine": "GBC", "configuration": {"gbc_psram": False}, "files": {}}))
         with patch.object(package, "verify_sources") as sources:
-            with self.assertRaisesRegex(ValueError, "GBC package requires PSRAM=1"):
+            with self.assertRaisesRegex(ValueError, "Wrong GBC PSRAM selection"):
                 package.verify_hardware(self.root, "GBC")
             sources.assert_not_called()
 

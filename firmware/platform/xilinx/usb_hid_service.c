@@ -13,6 +13,8 @@
 #include "multitini_vectrex_interface.h"
 #include "multitini_genesis_hid_input.h"
 #include "multitini_genesis_interface.h"
+#include "multitini_nes_interface.h"
+#include "multitini_nes_hid_input.h"
 #include "multitini_iigs_hid_input.h"
 #include "usb_config.h"
 #include "usbh_core.h"
@@ -150,6 +152,7 @@ static mt_c64_hid_input_t g_c64_input;
 static mt_gameboy_hid_input_t g_gameboy_input;
 static mt_vectrex_hid_input_t g_vectrex_input;
 static mt_genesis_hid_input_t g_genesis_input;
+static mt_nes_hid_input_t g_nes_input;
 static mt_iigs_hid_input_t g_iigs_input;
 static uint32_t g_reports_total;
 static uint32_t g_submit_errors;
@@ -179,6 +182,8 @@ static int emit_active_input(void *context, uint16_t code, uint16_t value)
     } else if(input_namespace == MT_INPUT_IIGS_MOUSE || input_namespace == MT_INPUT_IIGS_JOYSTICK)return -1;
     if ((g_active_core_id == MT_VECTREX_CORE_ID) !=
         (input_namespace == MT_INPUT_VECTREX)) return -1;
+    if ((g_active_core_id == MT_NES_CORE_ID) !=
+        (input_namespace == MT_INPUT_NES_GAMEPAD)) return -1;
     if ((g_active_core_id == MT_GENESIS_CORE_ID) !=
         (input_namespace == MT_INPUT_GENESIS_GAMEPAD)) return -1;
     if ((g_active_core_id == MT_GBC_CORE_ID &&
@@ -212,6 +217,7 @@ static void submit_keyboard_state(uint8_t slot, uint8_t modifiers,
                                          keys, key_count);
     (void)mt_genesis_hid_keyboard_report(&g_genesis_input, slot, modifiers,
                                          keys, key_count);
+    (void)mt_nes_hid_keyboard_report(&g_nes_input, slot, modifiers, keys, key_count);
 }
 
 static void disconnect_input_slot(uint8_t slot)
@@ -226,6 +232,7 @@ static void disconnect_input_slot(uint8_t slot)
     (void)mt_gameboy_hid_disconnect(&g_gameboy_input, slot);
     (void)mt_vectrex_hid_disconnect(&g_vectrex_input, slot);
     (void)mt_genesis_hid_disconnect(&g_genesis_input, slot);
+    (void)mt_nes_hid_disconnect(&g_nes_input, slot);
     (void)mt_iigs_hid_disconnect(&g_iigs_input,slot);
     refresh_controller_outputs(false, false);
 }
@@ -271,7 +278,7 @@ static void resolve_controller_players(void)
         /* C64's default first controller uses its selected joystick port. */
         for (unsigned candidate = 0U; candidate < players; ++candidate) {
             unsigned player = candidate;
-            if (g_active_core_id != MT_IIGS_CORE_ID && g_active_core_id != MT_GBC_CORE_ID && g_active_core_id != MT_GENESIS_CORE_ID &&
+            if (g_active_core_id != MT_IIGS_CORE_ID && g_active_core_id != MT_GBC_CORE_ID && g_active_core_id != MT_GENESIS_CORE_ID && g_active_core_id != MT_NES_CORE_ID &&
                 g_active_core_id != MT_VECTREX_CORE_ID && g_c64_input.joystick_port == 2U)
                 player = 1U - candidate;
             if ((occupied & (1U << player)) == 0U) {
@@ -422,6 +429,8 @@ static void poll_active_input(void)
         (void)mt_gameboy_hid_input_poll(&g_gameboy_input);
     else if (g_active_core_id == MT_GENESIS_CORE_ID)
         (void)mt_genesis_hid_input_poll(&g_genesis_input);
+    else if (g_active_core_id == MT_NES_CORE_ID)
+        (void)mt_nes_hid_input_poll(&g_nes_input);
     else
         (void)mt_c64_hid_input_poll(&g_c64_input);
 }
@@ -578,7 +587,7 @@ static void deliver_gamepad(uint8_t index)
     if (g_active_core_id == MT_IIGS_CORE_ID) {
         (void)mt_iigs_hid_assigned_report(&g_iigs_input,index,player,
             (uint8_t)((actions>>MT_CONTROL_A)&7U),output.x,output.y,directions);
-    } else if (g_active_core_id == MT_GENESIS_CORE_ID) {
+    } else if (g_active_core_id == MT_GENESIS_CORE_ID || g_active_core_id == MT_NES_CORE_ID) {
         mt_gamepad_state_t state = {0};
         state.connected = 1U;
         state.hat = 8U;
@@ -587,7 +596,9 @@ static void deliver_gamepad(uint8_t index)
         state.buttons = (actions >> MT_CONTROL_A) & 0x3fU;
         if (actions & (UINT32_C(1) << MT_CONTROL_SELECT)) state.buttons |= 0x40U;
         if (actions & (UINT32_C(1) << MT_CONTROL_START)) state.buttons |= 0x80U;
-        (void)mt_genesis_hid_assigned_report(&g_genesis_input, index, player, &state);
+        if (g_active_core_id == MT_NES_CORE_ID)
+            (void)mt_nes_hid_assigned_report(&g_nes_input, index, player, &state);
+        else (void)mt_genesis_hid_assigned_report(&g_genesis_input, index, player, &state);
     } else if (g_active_core_id == MT_VECTREX_CORE_ID) {
         int16_t x = output.x;
         int16_t y = output.y == INT16_MIN ? INT16_MAX : (int16_t)-output.y;
@@ -1435,6 +1446,7 @@ void usb_hid_service_init(mt_core_link_t *link)
     mt_gameboy_hid_input_init(&g_gameboy_input, emit_active_input, link);
     mt_vectrex_hid_input_init(&g_vectrex_input, emit_active_input, link);
     mt_genesis_hid_input_init(&g_genesis_input, emit_active_input, link);
+    mt_nes_hid_input_init(&g_nes_input, emit_active_input, link);
     mt_iigs_hid_init(&g_iigs_input,emit_active_input,link);
 }
 
@@ -1509,6 +1521,7 @@ int usb_hid_service_stop(void)
     (void)mt_gameboy_hid_release_all(&g_gameboy_input);
     (void)mt_vectrex_hid_release_all(&g_vectrex_input);
     (void)mt_genesis_hid_release_all(&g_genesis_input);
+    (void)mt_nes_hid_release_all(&g_nes_input);
     (void)mt_iigs_hid_release_all(&g_iigs_input);
     memset(g_slots, 0, sizeof(g_slots));
     memset(g_xinput_slots, 0, sizeof(g_xinput_slots));
@@ -1542,6 +1555,8 @@ void usb_hid_service_set_active_core(uint32_t core_id)
         mt_gameboy_hid_reassert(&g_gameboy_input);
     else if (g_active_core_id == MT_GENESIS_CORE_ID)
         mt_genesis_hid_reassert(&g_genesis_input);
+    else if (g_active_core_id == MT_NES_CORE_ID)
+        mt_nes_hid_reassert(&g_nes_input);
     else
         mt_c64_hid_reassert(&g_c64_input);
 }
@@ -1559,6 +1574,8 @@ void usb_hid_service_set_core_ready(bool ready)
             mt_gameboy_hid_reassert(&g_gameboy_input);
         else if (g_active_core_id == MT_GENESIS_CORE_ID)
             mt_genesis_hid_reassert(&g_genesis_input);
+        else if (g_active_core_id == MT_NES_CORE_ID)
+            mt_nes_hid_reassert(&g_nes_input);
         else
             mt_c64_hid_reassert(&g_c64_input);
         poll_active_input();

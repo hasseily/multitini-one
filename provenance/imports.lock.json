@@ -1045,6 +1045,126 @@
       "source": "MiSTer Apple IIgs",
       "source_path": "sys/iir_filter.v",
       "sha256": "570a8095c15af84a60015b5eab105cee6e2d7edde77e20f0ce40c075ab2db8b7"
+    },
+    {
+      "path": "third_party/nes/upstream/COPYING",
+      "source": "MiSTer NES",
+      "source_path": "COPYING",
+      "sha256": "b3d1eae7f524fc9ddd48562a4652efd2bcd848e38b03f05e388bcce943e73df2"
+    },
+    {
+      "path": "third_party/nes/upstream/README.md",
+      "source": "MiSTer NES",
+      "source_path": "README.md",
+      "sha256": "590b2c334f7ba7e55ca1fd564ebc0767e669b149259f1a2a3a0ed2b0fd13c436"
+    },
+    {
+      "path": "third_party/nes/upstream/NES.sv",
+      "source": "MiSTer NES",
+      "source_path": "NES.sv",
+      "sha256": "9420b57ee30725b16c9e20331c1696928ce83e65f067a4ed6fbab0dde7b175d6"
+    },
+    {
+      "path": "third_party/nes/upstream/files.qip",
+      "source": "MiSTer NES",
+      "source_path": "files.qip",
+      "sha256": "f3db205cde8da0cec604d013797a3afff5f9baf0630134f644679841330926e3"
+    },
+    {
+      "path": "third_party/nes/upstream/rtl/nes.v",
+      "source": "MiSTer NES",
+      "source_path": "rtl/nes.v",
+      "sha256": "7856ea1bf109af8d8dc4abbecc6224216971b68a53630dc816830f68235ef906"
+    },
+    {
+      "path": "third_party/nes/upstream/rtl/ppu.sv",
+      "source": "MiSTer NES",
+      "source_path": "rtl/ppu.sv",
+      "sha256": "623c18149345910f04515d583ede22d2030047a723e0e629ceb45bbb6bec707a"
+    },
+    {
+      "path": "third_party/nes/upstream/rtl/apu.sv",
+      "source": "MiSTer NES",
+      "source_path": "rtl/apu.sv",
+      "sha256": "a08a8f0d7a13cfcce2b7045d230342330cb3dc35bc485d37b4a40c632ac69838"
+    },
+    {
+      "path": "third_party/nes/upstream/rtl/cart.sv",
+      "source": "MiSTer NES",
+      "source_path": "rtl/cart.sv",
+      "sha256": "ad2d93939f7cd81ba5c0832e0ce22ed8c4229005931caa3a585e383be2dac699"
+    },
+    {
+      "path": "third_party/nes/upstream/rtl/video.sv",
+      "source": "MiSTer NES",
+      "source_path": "rtl/video.sv",
+      "sha256": "f8553e021b901e085239ab123285125003db0e788325ab3828cfde5f83d53d3b"
+    },
+    {
+      "path": "third_party/nes/upstream/rtl/cheatcodes.sv",
+      "source": "MiSTer NES",
+      "source_path": "rtl/cheatcodes.sv",
+      "sha256": "44c7012986807dfa9c6f69d668e8c3ade13ab81a5e9cc054757cccecf0ae356e"
+    },
+    {
+      "path": "third_party/nes/upstream/rtl/regs_savestates.sv",
+      "source": "MiSTer NES",
+      "source_path": "rtl/regs_savestates.sv",
+      "sha256": "6e243af0b87a604fb30d43502eed65ef5924a105d7ce254f424317debf787e9a"
+    },
+    {
+      "path": "third_party/nes/upstream/rtl/bus_savestates.vhd",
+      "source": "MiSTer NES",
+      "source_path": "rtl/bus_savestates.vhd",
+      "sha256": "86b3df3bb42b2a3cd91df10b2cda97819f01004953fd8ca5569346704bc11a14"
+    },
+    {
+      "path": "third_party/nes/upstream/rtl/mappers/MMC1.sv",
+      "source": "MiSTer NES",
+      "source_path": "rtl/mappers/MMC1.sv",
+      "sha256": "a3f165f4cb5bac9f3fa23abb01b6f0edd3bfe97b8ac74496aeabb29d0cb7f4c2"
+    },
+    {
+      "path": "third_party/nes/upstream/rtl/mappers/MMC2.sv",
+      "source": "MiSTer NES",
+      "source_path": "rtl/mappers/MMC2.sv",
+      "sha256": "1e8a2e1482a24268e49457c95b5f6fee45e71b669a5af18d6dcc3e888bd88af0"
+    },
+    {
+      "path": "third_party/nes/upstream/rtl/mappers/MMC3.sv",
+      "source": "MiSTer NES",
+      "source_path": "rtl/mappers/MMC3.sv",
+      "sha256": "a85f0324d941c7cf0bf3022b2b94a63e82ba989f882156090585d0d7cac04165"
+    },
+    {
+      "path": "third_party/nes/upstream/rtl/mappers/generic.sv",
+      "source": "MiSTer NES",
+      "source_path": "rtl/mappers/generic.sv",
+      "sha256": "1feb2a16e406e591572af998c4f17172a4b0119742c547795c23bc1ee40e56b5"
+    },
+    {
+      "path": "third_party/nes/upstream/rtl/t65/T65.vhd",
+      "source": "MiSTer NES",
+      "source_path": "rtl/t65/T65.vhd",
+      "sha256": "52395e881ade8e7d99717d5082cdb5131a0711aaa2dea1fcf042014f6758d01b"
+    },
+    {
+      "path": "third_party/nes/upstream/rtl/t65/T65_ALU.vhd",
+      "source": "MiSTer NES",
+      "source_path": "rtl/t65/T65_ALU.vhd",
+      "sha256": "78981177465d777e54bc0fed6e71542503ef7ee1cf6ff2965bd980417000acf7"
+    },
+    {
+      "path": "third_party/nes/upstream/rtl/t65/T65_MCode.vhd",
+      "source": "MiSTer NES",
+      "source_path": "rtl/t65/T65_MCode.vhd",
+      "sha256": "315a59bc556fd9a69eae109ff84059b8d8db0ee29c74ebca55e8aa553345d4d1"
+    },
+    {
+      "path": "third_party/nes/upstream/rtl/t65/T65_Pack.vhd",
+      "source": "MiSTer NES",
+      "source_path": "rtl/t65/T65_Pack.vhd",
+      "sha256": "986f55ef2f35bfa54588bc936ee6a7499178b57d43bff8e66273d029e8009bf0"
     }
   ]
 }

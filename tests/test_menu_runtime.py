@@ -30,6 +30,8 @@ PREAMBLE = r'''
 #include "multitini_c64_interface.h"
 #include "multitini_gameboy_interface.h"
 #include "multitini_genesis_interface.h"
+#include "multitini_iigs_interface.h"
+#include "multitini_nes_interface.h"
 #include "multitini_vectrex_interface.h"
 #include "vectrex_content_service.h"
 #include "supervisor_settings.h"
@@ -46,6 +48,7 @@ static mt_menu_action_t pending_menu_action;
 static bool supervisor_menu_ready, supervisor_menu_dirty;
 static bool supervisor_menu_action_active;
 static bool vectrex_basic_running, vectrex_basic_stop;
+static bool usb_sd_modal, usb_sd_stop_requested;
 static uint8_t supervisor_menu_keys[MT_C64_HID_SLOT_COUNT][MT_C64_HID_USAGE_BYTES];
 static mt_ui_color_t supervisor_status_color;
 static uint64_t now_ms;
@@ -278,6 +281,7 @@ static void reset_fixture(bool visible) {
     now_ms = commits = hidden_commits = shown_commits = writes = 0U;
     runtime_polls = countdown = errors = reads = actions = keyboard_checks = 0U;
     stall = nested_hide = false; outcome = SUCCESS;
+    usb_sd_modal = usb_sd_stop_requested = false;
     status_word = MT_UI_STATUS_READY | MT_UI_STATUS_DENSE_LAYOUT | MT_UI_STATUS_DENSE;
     if (visible) status_word |= MT_UI_STATUS_VISIBLE;
 }
@@ -766,7 +770,9 @@ static void controller_profiles_and_legacy_migration(void) {
     assert(supervisor_controller_config(NULL, MT_SUPERVISOR_CORE_ID, 0U, &devices[0], &config));
     assert(persistent_settings.controller_profile_count == 0U && persistent_settings.legacy_gamepad_pending == 1U);
     assert(supervisor_controller_config(NULL, MT_C64_CORE_ID, 0U, &devices[0], &config));
-    assert(config.binding[MT_CONTROL_A] == 5U && persistent_settings.controller_profile_count == 4U);
+    assert(config.binding[MT_CONTROL_A] == 5U && persistent_settings.controller_profile_count == 6U);
+    assert(mt_supervisor_settings_find_controller(&persistent_settings, MT_IIGS_CORE_ID, &devices[0].identity) != NULL);
+    assert(mt_supervisor_settings_find_controller(&persistent_settings, MT_NES_CORE_ID, &devices[0].identity) != NULL);
     assert(persistent_settings.legacy_gamepad_pending == 0U && settings_writes == 0U);
     config.binding[MT_CONTROL_A] = 32U;
     assert(mt_supervisor_settings_remember_controller(&persistent_settings, MT_C64_CORE_ID, &devices[0].identity, &config));
@@ -892,6 +898,7 @@ class MenuRuntimeTests(unittest.TestCase):
             str(ROOT / "firmware/common/text_reader.c"), str(ROOT / "firmware/common/clock.c"),
             str(ROOT / "firmware/common/content_type.c"),
             str(ROOT / "firmware/common/genesis_content.c"),
+            str(ROOT / "firmware/common/nes_content.c"),
             str(ROOT / "firmware/common/vectrex_overlay.c"),
             str(ROOT / "firmware/common/core_link.c"),
             str(ROOT / "firmware/common/video_effects.c"),

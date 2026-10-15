@@ -23,7 +23,8 @@ typedef enum {
     MT_CONTENT_GENESIS_CART,
     MT_CONTENT_GENESIS_SMD,
     MT_CONTENT_IIGS_HDD,
-    MT_CONTENT_IIGS_WOZ
+    MT_CONTENT_IIGS_WOZ,
+    MT_CONTENT_NES_CART
 } mt_content_type_t;
 
 typedef enum {

@@ -673,6 +673,37 @@ static void test_iigs_input_transport(void)
     puts("PASS Apple IIgs USB boot mouse capture/disconnect and one-player gamepad routing");
 }
 
+static void test_nes_input_transport(void)
+{
+    mt_core_link_t link;
+    mt_core_link_init(&link,NULL,input_read,input_write);
+    usb_hid_service_init(&link);
+    usb_hid_service_set_active_core(MT_NES_CORE_ID);
+    usb_hid_service_set_core_ready(true);
+    struct usbh_hubport port={0};port.port=1U;
+    const uint8_t first=(uint8_t)usb_gamepad_input_connect();
+    usb_gamepad_input_identify(first,&port,0U,MT_CONTROLLER_TRANSPORT_XBOXONE);
+    port.port=2U;
+    const uint8_t second=(uint8_t)usb_gamepad_input_connect();
+    usb_gamepad_input_identify(second,&port,0U,MT_CONTROLLER_TRANSPORT_XBOXONE);
+    assert(g_controller_player[first]==0U && g_controller_player[second]==1U);
+    buttons(first,1U);buttons(second,2U);
+    assert(g_nes_input.emitted[0]==(1U<<MT_NES_BUTTON_A));
+    assert(g_nes_input.emitted[1]==(1U<<MT_NES_BUTTON_B));
+    assert(routed_code==0x5001U && routed_value==(1U<<MT_NES_BUTTON_B));
+    usb_hid_service_set_menu_capture(true);
+    assert(g_nes_input.emitted[0]==0U && g_nes_input.emitted[1]==0U);
+    buttons(first,0U);buttons(second,0U);
+    usb_hid_service_set_menu_capture(false);
+    const uint8_t keys[]={0x1dU,0x28U};
+    submit_keyboard_state(3U,0x20U,keys,sizeof(keys));
+    assert(g_nes_input.emitted[0]==((1U<<MT_NES_BUTTON_A)|(1U<<MT_NES_BUTTON_SELECT)|(1U<<MT_NES_BUTTON_START)));
+    submit_keyboard_state(3U,0U,NULL,0U);
+    usb_gamepad_input_disconnect(first);usb_gamepad_input_disconnect(second);
+    assert(g_nes_input.emitted[0]==0U && g_nes_input.emitted[1]==0U);
+    puts("PASS NES two-player USB routing, keyboard fallback and menu capture release");
+}
+
 int main(void)
 {
     test_transport_slots();
@@ -684,5 +715,6 @@ int main(void)
     test_menu_chord_guards();
     test_shoulder_navigation();
     test_iigs_input_transport();
+    test_nes_input_transport();
     return 0;
 }

@@ -121,6 +121,7 @@ typedef struct { int status; unsigned backend_status; } mt_sd_result_t;
 static int runtime_calls, reset_calls, usb_calls, sd_calls, ui_calls;
 static int reset_failure, usb_failure, drain_failure, readback_failure;
 static int writes, barriers;
+static bool golden_update_worker_held;
 static uint32_t expected_multiboot;
 static jmp_buf reset_jump;
 static const char *input;
@@ -168,6 +169,7 @@ static void clear(void) {
     runtime_calls = reset_calls = usb_calls = sd_calls = ui_calls = 0;
     reset_failure = usb_failure = drain_failure = readback_failure = 0;
     writes = barriers = 0; expected_multiboot = 0; input_position = polls = 0;
+    golden_update_worker_held = false;
 }
 static void expect_no_services(void) {
     assert(!runtime_calls && !reset_calls && !usb_calls && !sd_calls && !ui_calls);

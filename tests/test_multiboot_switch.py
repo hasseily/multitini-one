@@ -32,6 +32,7 @@ PREAMBLE = r'''
 #define MT_CONTROL_CORE_RESET_REQUEST 1U
 #define MT_GENESIS_CORE_ID 9U
 #define MT_IIGS_CORE_ID 10U
+#define MT_NES_CORE_ID 11U
 #define MT_VIDEO_FRAME_STATUS_QUIESCENT 1U
 #define DATA_SYNC ((void)0)
 static struct { bool has_active; int active; } supervisor;

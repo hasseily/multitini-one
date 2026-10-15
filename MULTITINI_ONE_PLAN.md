@@ -2,6 +2,14 @@
 
 Status: planning baseline, written 2026-08-29
 
+Scope update, 2026-10-15: branch `core-nes` ports the pinned MiSTer NES machine
+through the common shell and firmware. Preserve the complete NTSC 256x240
+raster, native CPU/PPU/APU timing, two controllers and durable battery saves.
+Cartridges remain user inputs. Reuse compatible existing core images with
+their original build identities and source archives. Directed simulations,
+license checks and a strict routed NES build precede a board-test package.
+See [the NES integration](docs/NES_PLAN.md). Board acceptance is separate.
+
 Follow-up, 2026-10-15: M0.4.0 adds primary-clock 65816 execution with selectable
 28.64/57.27 MHz fast-cycle targets, a coherent small read cache ahead of the
 32 KiB DDR cache, and an advertised per-image speed capability. Slow RAM,

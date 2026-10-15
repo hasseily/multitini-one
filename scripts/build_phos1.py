@@ -120,12 +120,15 @@ def main(argv=None):
         folder = output / name
         folder.mkdir(parents=True, exist_ok=False)
         (folder / "temp").mkdir()
-        environment = dict(os.environ, TEMP=str(folder / "temp"), TMP=str(folder / "temp"))
+        environment = dict(os.environ, TEMP=(folder / "temp").as_posix(), TMP=(folder / "temp").as_posix())
         # Remove inherited variant selections; every build names all applicable settings.
         for key in ("MULTITINI_GENESIS_PAL", "MULTITINI_ENABLE_GBC_PSRAM", "MULTITINI_C64_VIDEO_STANDARD"):
             environment.pop(key, None)
         settings = {"MULTITINI_VIVADO_DIR": folder.as_posix(), "MULTITINI_MACHINE": machine,
-                    "MULTITINI_BUILD_ID": args.build_id}
+                    "MULTITINI_BUILD_ID": args.build_id,
+                    "TEMP": environment["TEMP"], "TMP": environment["TMP"]}
+        if "MULTITINI_VIVADO_JOBS" in environment:
+            settings["MULTITINI_VIVADO_JOBS"] = environment["MULTITINI_VIVADO_JOBS"]
         if machine == "C64": settings["MULTITINI_C64_VIDEO_STANDARD"] = "PAL"
         if machine == "GBC": settings["MULTITINI_ENABLE_GBC_PSRAM"] = str(int(psram))
         if machine == "GENESIS": settings["MULTITINI_GENESIS_PAL"] = str(int(pal))

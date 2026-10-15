@@ -43,6 +43,7 @@ static struct {
 } guarded;
 #define supervisor_menu_files guarded.files
 static size_t supervisor_menu_file_count;
+static unsigned iigs_browser_drive;
 '''
 
 
@@ -260,6 +261,7 @@ class DocumentBrowserRuntimeTests(unittest.TestCase):
             str(harness), str(ROOT / "firmware/common/core_frontend.c"),
             str(ROOT / "firmware/common/content_type.c"),
             str(ROOT / "firmware/common/genesis_content.c"),
+            str(ROOT / "firmware/common/nes_content.c"),
             str(ROOT / "firmware/common/media_browser.c"),
             str(ROOT / "firmware/common/core_link.c"),
             str(ROOT / "firmware/common/vectrex_overlay.c"), "-o", str(cls.executable),

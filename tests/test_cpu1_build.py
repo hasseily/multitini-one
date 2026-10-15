@@ -291,7 +291,10 @@ int main(void) {
             "#include <stdint.h>\ntypedef intptr_t INTPTR; typedef uint32_t u32;\n"
             "static inline void Xil_DCacheFlushRange(INTPTR p, u32 n) {(void)p;(void)n;}\n")
         (self.root / "xil_io.h").write_text(
-            "static inline void Xil_Out32(unsigned p,unsigned n){(void)p;(void)n;}\n")
+            "static unsigned test_cpu1_control;\n"
+            "static inline unsigned Xil_In32(unsigned p){(void)p;return test_cpu1_control;}\n"
+            "static inline void Xil_Out32(unsigned p,unsigned n){"
+            "if(p==0xF8000244U)test_cpu1_control=n;}\n")
         (self.root / "xil_mmu.h").write_text(
             "#define NORM_NONCACHE 1U\n#define STRONG_ORDERED 2U\n"
             "static inline void Xil_SetTlbAttributes(unsigned p,unsigned n){(void)p;(void)n;}\n")

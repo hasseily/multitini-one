@@ -84,6 +84,8 @@ def verify_image_set(args, cpu):
         core_artifacts.require_runtime_abi(build["identity"], 0, args.abi_minor)
         if machine == "APPLE_IIGS":
             package.require(build["identity"]["abi_minor"] >= 21, "IIgs transport requires ABI 0.21")
+        if machine == "NES":
+            package.require(build["identity"]["abi_minor"] >= 22, "NES package requires ABI 0.22")
         build["platform_contract"] = core_artifacts.platform_contract(build["ps7_init_sha256"], cpu["ps7_init_sha256"])
         if name in pinned:
             match_pinned_artifact(pinned[name], build["identity"], name)
@@ -127,6 +129,17 @@ def prepare_iigs_content(out, hdd_bootstrap):
         "No games or operating-system disk images are supplied.\n", encoding="utf-8")
 
 
+def prepare_nes_content(out):
+    """Preserve the NES media directory in an extracted ROM-free package."""
+    media = out / "sd/multitini/cores/nes/media"
+    media.mkdir(parents=True, exist_ok=True)
+    (media / "README.txt").write_text(
+        "Nintendo Entertainment System cartridges\n\n"
+        "Place your iNES (.nes) cartridges here. No system BIOS is required.\n"
+        "Only the cartridge formats and mappers listed in docs/NES_PLAN.md are supported.\n"
+        "No games or Nintendo firmware are supplied.\n", encoding="utf-8")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hardware", type=Path, required=True)
@@ -140,6 +153,7 @@ def main():
     parser.add_argument("--evidence", action="append", type=Path, default=[])
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--include-apple-iigs", action="store_true", help="Include the GS source/machine and runtime HDD boot ROM")
+    parser.add_argument("--include-nes", action="store_true", help="Include the NES machine and empty cartridge directory")
     parser.add_argument("--reuse-image", action="append", default=[], metavar="NAME=DIR",
                         help="Reuse an explicitly selected audited FPGA build with its original identity and sources")
     parser.add_argument("--selection-manifest", type=Path,
@@ -151,6 +165,8 @@ def main():
     args = parser.parse_args()
     if args.include_apple_iigs:
         MATRIX['apple-iigs']=('APPLE_IIGS',False,False)
+    if args.include_nes:
+        MATRIX['nes']=('NES',False,False)
     if not re.fullmatch(r"[0-9A-Fa-f]{8}", args.build_id):
         parser.error("--build-id must contain exactly eight hexadecimal digits")
     if not 0 <= args.abi_minor <= 65535:
@@ -169,7 +185,7 @@ def main():
     identity = bytes.fromhex(args.build_id).decode("ascii", errors="replace")
     if not re.fullmatch(r"[A-Z0-9]+", identity):
         identity = "0x" + args.build_id
-    if args.include_apple_iigs:
+    if args.include_apple_iigs or args.include_nes:
         version = re.search(r'^#define MT_FIRMWARE_VERSION\s+"([^"]+)"',
                             (ROOT / "firmware/include/multitini_version.h").read_text(), re.M)
         package.require(version is not None, "Missing firmware release version")
@@ -252,6 +268,18 @@ def main():
                         "IIgs HDD bootstrap/source provenance differs")
         prepare_iigs_content(out, asset)
         package.copy(asset.parent/'provenance.json',out/'evidence/apple-iigs/hdd-rom-provenance.json')
+    if args.include_nes:
+        core_specs += (("nes", "Nintendo Entertainment System", "0x4E455320", [("ntsc", "NTSC", "nes")]),)
+        prepare_nes_content(out)
+        nes_guides = ("NES_PLAN.md", "NES_HARDWARE_TEST.md")
+        if (ROOT / "docs/NES_BUILD.md").is_file():
+            nes_guides += ("NES_BUILD.md",)
+        for name in nes_guides:
+            target = out / "docs" / name
+            package.copy(ROOT / "docs" / name, target)
+            delivery_guides["docs/" + name] = package.describe(target)
+        package.copy(ROOT / "third_party/nes/upstream/COPYING", out / "licenses/nes/COPYING")
+        package.copy(ROOT / "third_party/nes/T65-NOTICE.txt", out / "licenses/nes/T65-NOTICE.txt")
     private_core_roms.stage(out, roms)
     package.write_json(out / "evidence/private-rom-provenance.json", roms.provenance)
     cores = {}
@@ -301,6 +329,8 @@ def main():
         f"{firmware_name} is identical to sd/FIRMWARE.BIN, the updater's required filename.\n"
         "Use the existing golden updater, then reload cores. No flash was performed here.\n"
         "Selected cores: C64 PAL, PSRAM GBC, Vectrex, Genesis NTSC/PAL.\n"
+        + ("NES adds iNES cartridge loading through the shared PSRAM service.\n"
+           "No NES BIOS or cartridges are included; see docs/NES_PLAN.md.\n" if args.include_nes else "") +
         "This is a private local delivery with validated user-supplied boot ROMs in sd/*/roms.\n"
         + ("Apple IIgs includes selectable stock/accelerated CPU, HDD/WOZ media and PRAM.\n"
            "Apple system/character/ADB ROMs are included privately; see docs/APPLE_IIGS_HARDWARE_TEST.md.\n"

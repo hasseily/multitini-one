@@ -232,12 +232,12 @@ def verify_hardware(directory, machine, *, ntsc=False, build_id=None, genesis_pa
             manifest.get("top") == "multitini_one_top", "Wrong FPGA build manifest")
     generics = manifest["generic"]
     require(re.search(r"SHELL_BUILD_ID=32'h" + expected_build_id + r"\b", generics, re.I), "Wrong FPGA build ID")
-    active = {"C64": 0, "GBC": 1, "SUPERVISOR": 2, "VECTREX": 3, "GENESIS": 4, "APPLE_IIGS": 5}[machine]
+    active = {"C64": 0, "GBC": 1, "SUPERVISOR": 2, "VECTREX": 3, "GENESIS": 4, "APPLE_IIGS": 5, "NES": 6}[machine]
     require(re.search(rf"\bACTIVE_MACHINE={active}\b", generics), "Wrong FPGA active machine")
     require(f"C64_NTSC_MODE=1'b{int(ntsc)}" in generics, "Wrong FPGA PAL/NTSC generic")
     if machine == "GENESIS":
         require(f"GENESIS_PAL_MODE=1'b{int(genesis_pal)}" in generics, "Wrong Genesis PAL generic")
-    psram = machine in {"C64", "VECTREX", "GENESIS"} or configuration["gbc_psram"]
+    psram = machine in {"C64", "VECTREX", "GENESIS", "NES"} or configuration["gbc_psram"]
     require(f"ENABLE_GBC_PSRAM=1'b{int(configuration['gbc_psram'])}" in generics, "Wrong GBC PSRAM generic")
     xsa = directory / "multitini_one.xsa"
     with zipfile.ZipFile(xsa) as archive:

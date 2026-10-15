@@ -41,7 +41,7 @@ def main():
             print(result.stdout)
             raise RuntimeError(name + " failed")
         if name == "run":
-            if "PASS display geometry: 1344 cases;" not in result.stdout:
+            if "PASS display geometry: 1680 cases;" not in result.stdout:
                 raise RuntimeError("geometry coverage marker missing")
             print(result.stdout.strip())
     after = {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in tracked}

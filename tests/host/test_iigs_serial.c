@@ -8,6 +8,7 @@
 #include "c64_d64_service.h"
 #include "c64_content_service.h"
 #include "genesis_content_service.h"
+#include "multitini_nes_interface.h"
 #include "gameboy_content_service.h"
 #include "iigs_content_service.h"
 #include "multitini_gameboy_interface.h"
@@ -35,6 +36,9 @@ static void set_supervisor_outcome(bool success,const char *yes,const char *no)
 { (void)success;(void)yes;(void)no;++forbidden; }
 static bool hide_menu_for_core_action(void) { return hidden; }
 static void handle_c64_rx_command(const char *text) { (void)text;++forbidden; }
+static void handle_nes_cart_detach(void) { ++forbidden; }
+static void handle_nes_content_load(const char *text) { (void)text;++forbidden; }
+int nes_content_service_retry_save(void) { ++forbidden;return 0; }
 static void handle_genesis_cart_detach(void) { ++forbidden; }
 static void handle_c64_cart_detach(void) { ++forbidden; }
 static void handle_genesis_content_load(const char *text) { (void)text;++forbidden; }

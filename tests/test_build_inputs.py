@@ -15,7 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 class BuildInputTests(unittest.TestCase):
     def test_hdl_manifest_is_unique_and_complete(self):
         entries = []
-        sections = {"common": [], "c64": [], "gbc": [], "vectrex": [], "genesis": []}
+        sections = {name: [] for name in
+                    ("common", "c64", "gbc", "vectrex", "genesis", "apple_iigs", "nes")}
         languages = {}
         active_section = "common"
         manifest = ROOT / "hdl" / "hdl_sources.txt"
@@ -124,7 +125,9 @@ class BuildInputTests(unittest.TestCase):
                 self.assertIn(entry, sections["c64"])
             if entry.startswith(("core/gameboy/", "../third_party/gameboy/")):
                 self.assertIn(entry, sections["gbc"])
-            if entry.startswith(("core/genesis/", "../third_party/genesis/")):
+            if entry == "core/genesis/multitini_genesis_media_stream.sv":
+                self.assertIn(entry, sections["common"])
+            elif entry.startswith(("core/genesis/", "../third_party/genesis/")):
                 self.assertIn(entry, sections["genesis"])
         for entry in ("core/genesis/multitini_genesis_adapter.sv",
                       "core/genesis/multitini_genesis_machine.sv",
@@ -359,7 +362,7 @@ class BuildInputTests(unittest.TestCase):
             'set machine "SUPERVISOR"',
             "set active_machine 2",
             "MULTITINI_C64_VIDEO_STANDARD must be PAL or NTSC",
-            "MULTITINI_MACHINE must be SUPERVISOR, C64, GBC, VECTREX, or GENESIS",
+            "MULTITINI_MACHINE must be SUPERVISOR, C64, GBC, VECTREX, GENESIS, APPLE_IIGS, or NES",
             "MULTITINI_GENESIS_PAL must be 0 or 1",
             "GENESIS_PAL_MODE=1'b${genesis_pal_mode}",
             "CONFIG.PCW_USE_S_AXI_HP2 {1}",

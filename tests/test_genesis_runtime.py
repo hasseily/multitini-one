@@ -22,6 +22,8 @@ FIXTURE = r'''
 #include "multitini_c64_interface.h"
 #include "multitini_gameboy_interface.h"
 #include "multitini_vectrex_interface.h"
+#include "multitini_nes_interface.h"
+#include "multitini_iigs_interface.h"
 #include "multitini_ui.h"
 #include "pl_loader.h"
 #include <assert.h>
@@ -29,6 +31,7 @@ FIXTURE = r'''
 #include <string.h>
 static uint32_t current_core, control, status;
 static bool genesis_service_initialized, gameboy_service_initialized;
+static bool nes_service_initialized, iigs_service_initialized;
 static bool c64_services_initialized, c64_core_reset_active;
 static bool hide_allowed, prepare_fail, resume_fail, command_fail, save_fail;
 static bool input_ready, attached;
@@ -65,6 +68,10 @@ static int c64_d64_service_resume_after_reset(void) {assert(0); return -1;}
 static void c64_d64_service_notify_core_reset(void) {assert(0);}
 static int gameboy_content_service_prepare_reset(void) {assert(0); return -1;}
 static int gameboy_content_service_resume_after_reset(void) {assert(0); return -1;}
+static int nes_content_service_prepare_reset(void) {assert(0); return -1;}
+static int nes_content_service_resume_after_reset(void) {assert(0); return -1;}
+static int iigs_content_service_prepare_reset(void) {assert(0); return -1;}
+static int iigs_content_service_resume_after_reset(void) {assert(0); return -1;}
 int genesis_content_service_prepare_reset(void) {++prepares; mark('P'); return prepare_fail ? -1:0;}
 int genesis_content_service_resume_after_reset(void) {++resumes; mark('R'); return resume_fail ? -1:0;}
 static int command(uint32_t op,uint32_t arg0,uint32_t arg1) {
@@ -79,6 +86,8 @@ static void set_audio(bool muted,bool tone) {assert(muted);(void)tone;mark('M');
 const mt_genesis_config_t *genesis_content_service_options(void) {return &options;}
 int genesis_content_service_set_options(const mt_genesis_config_t *value) {options=*value;return 0;}
 const char *genesis_content_service_cartridge_name(void) {return attached ? "Original.md":NULL;}
+const char *genesis_content_service_phase_name(mt_genesis_transfer_phase_t phase) {(void)phase;return "test";}
+const char *mt_link_result_name(mt_link_result_t result) {(void)result;return "test";}
 bool genesis_content_service_cartridge_attached(void) {return attached;}
 mt_genesis_content_service_result_t genesis_content_service_load(const char *name) {
     mt_genesis_content_service_result_t result={0};

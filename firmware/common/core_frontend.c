@@ -5,6 +5,7 @@
 #include "multitini_gameboy_interface.h"
 #include "multitini_vectrex_interface.h"
 #include "multitini_genesis_interface.h"
+#include "multitini_nes_interface.h"
 #include "multitini_iigs_interface.h"
 #include "multitini_regs.h"
 
@@ -129,7 +130,8 @@ static void build_gameboy(mt_core_frontend_t *frontend,
         (state->save_faulted ? MT_UI_COLOR_RED :
         (state->save_dirty ? MT_UI_COLOR_WARNING :
         (state->save_active ? MT_UI_COLOR_SUCCESS : MT_UI_COLOR_MUTED)));
-    cartridge_item(frontend, state, view, "Load a GB or GBC cartridge image.");
+    cartridge_item(frontend, state, view, state->core_id == MT_NES_CORE_ID ?
+        "Load a supported NTSC iNES cartridge image." : "Load a GB or GBC cartridge image.");
     frontend->media_items[view->media_item_count++] = item(
         "Battery save", save_value,
         "Battery RAM saves automatically to SD; status updates here.",
@@ -252,6 +254,12 @@ static void build_iigs(mt_core_frontend_t *frontend,
 }
 
 static const core_profile_t profiles[] = {
+    {
+        MT_NES_CORE_ID, "Nintendo Entertainment System",
+        "Two USB gamepads or keyboard; F12 opens the menu.",
+        {0U, 0U, 0U, CONTENT_MASK(MT_CONTENT_NES_CART), 0U},
+        false, build_gameboy
+    },
     {
         MT_C64_CORE_ID, "Commodore 64",
         "USB keyboard and gamepad; input choices are saved per core.",
