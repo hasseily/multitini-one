@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "iigs_content_service.h"
 #include "sd_storage.h"
+#include "multitini_iigs_hid_input.h"
 #include <stdio.h>
 #include <string.h>
 #define GS_POLLS UINT32_C(100000)
@@ -35,6 +36,7 @@ static uint8_t raw_wire[GS_RAW_JOURNAL_BYTES],raw_decoded[MT_IIGS_FLOPPY_RAW_TRA
 static uint8_t raw_header[MT_IIGS_FLOPPY_HEADER_BYTES],staged_sector[512];
 static char remembered[MT_IIGS_DRIVE_COUNT][GS_NAME];
 static mt_iigs_config_t config;
+static uint16_t mouse_sensitivity;
 static uint32_t speed_mask;
 static uint32_t next_generation, pram_generation, seen_id, seen_generation;
 static uint32_t completion_id, completion_status, completion_blocks, completion_generation;
@@ -92,6 +94,8 @@ static int settings_save(void)
     memcpy(settings_wire,"MTGSSET1",8U);
     mt_iigs_config_t saved=config; saved.timestamp=0U; saved.pulses&=1U;
     mt_iigs_config_encode(&saved,settings_wire+8U);
+    /* ARM-only setting in a formerly zero byte. Legacy zero means 100%. */
+    settings_wire[17]=(uint8_t)(mouse_sensitivity/25U);
     for(unsigned i=0U;i<MT_IIGS_DRIVE_COUNT;++i)
         memcpy(settings_wire+24U+i*GS_NAME,remembered[i],GS_NAME);
     /* Reserved config bytes12..15 carry the enclosing record checksum. */
@@ -110,8 +114,10 @@ static void settings_load(void)
     if(!found)return;
     uint32_t saved_crc=le32(settings_wire+20U); store32(settings_wire+20U,0U);
     mt_iigs_config_t candidate={settings_wire[8],settings_wire[9],settings_wire[10],settings_wire[11],0U,settings_wire[16]};
+    const uint16_t candidate_mouse=settings_wire[17]==0U ? 100U:(uint16_t)((uint16_t)settings_wire[17]*25U);
     if(memcmp(settings_wire,"MTGSSET1",8U)!=0 || crc32(settings_wire,sizeof(settings_wire))!=saved_crc ||
-        !mt_iigs_config_valid(&candidate) || candidate.card==1U || (candidate.pulses&~1U)!=0U) {
+        !mt_iigs_config_valid(&candidate) || candidate.card==1U || (candidate.pulses&~1U)!=0U ||
+        !mt_iigs_mouse_sensitivity_valid(candidate_mouse)) {
         (void)fail("Apple IIgs settings checksum or values invalid"); return;
     }
     for(unsigned i=0U;i<MT_IIGS_DRIVE_COUNT;++i) {
@@ -121,6 +127,7 @@ static void settings_load(void)
         }
     }
     config=candidate;
+    mouse_sensitivity=candidate_mouse;
     for(unsigned i=0U;i<MT_IIGS_DRIVE_COUNT;++i)memcpy(remembered[i],settings_wire+24U+i*GS_NAME,GS_NAME);
 }
 /* One durable write-ahead sector record per image. This avoids duplicating
@@ -514,7 +521,10 @@ void iigs_content_service_init(mt_core_link_t *l,const char *content_root,mt_lin
     root[0]='\0'; rom_root[0]='\0'; error[0]='\0'; ready=false; faulted=false; seen=false;
     completion_pending=false; pram_mounted=false; pram_exists=false; reset_pending=false; next_generation=1U;
     staged_write=false;
-    config=(mt_iigs_config_t){1U,0U,0U,0U,0U,0U};
+    /* ZipGS SW1/3 powers up with AppleTalk/IRQ delay disabled. A valid saved
+     * configuration below replaces this default, including an explicit On. */
+    config=(mt_iigs_config_t){1U,0U,0U,UINT8_C(0x10),0U,0U};
+    mouse_sensitivity=100U;
     speed_mask=MT_IIGS_ACCEL_LEGACY_SPEED_MASK;
     if(link!=NULL && link->read32!=NULL) {
         const uint32_t abi=link->read32(link->context,MT_REG_ABI_VERSION);
@@ -606,6 +616,15 @@ int iigs_content_service_configure(const mt_iigs_config_t *candidate)
     return 0;
 }
 const mt_iigs_config_t *iigs_content_service_config(void) { return &config; }
+uint16_t iigs_content_service_mouse_sensitivity(void) { return mouse_sensitivity; }
+int iigs_content_service_set_mouse_sensitivity(uint16_t percent)
+{
+    if(!mt_iigs_mouse_sensitivity_valid(percent))return fail("Unsupported Apple IIgs mouse sensitivity");
+    const uint16_t previous=mouse_sensitivity;
+    mouse_sensitivity=percent;
+    if(settings_save()!=0) { mouse_sensitivity=previous; return -1; }
+    return 0;
+}
 uint32_t iigs_content_service_speed_mask(void) { return speed_mask; }
 void iigs_content_service_set_timestamp(uint32_t timestamp) { config.timestamp=timestamp; }
 const char *iigs_content_service_name(unsigned d) { return d<MT_IIGS_DRIVE_COUNT && drives[d].mounted ? drives[d].name:NULL; }

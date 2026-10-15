@@ -51,6 +51,7 @@ void usb_hid_service_get_status(mt_usb_hid_status_t *status);
 void usb_hid_service_dump_status(void);
 
 void usb_hid_service_set_menu_capture(bool captured);
+bool usb_hid_service_set_iigs_mouse_sensitivity(uint16_t percent);
 void usb_hid_service_set_gamepad_preview(bool preview);
 void usb_hid_service_gamepad_snapshot(uint8_t slot, mt_gamepad_state_t *raw,
                                       mt_gamepad_state_t *mapped);

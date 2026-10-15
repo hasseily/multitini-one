@@ -4,6 +4,7 @@
 void mt_iigs_hid_init(mt_iigs_hid_input_t *in,mt_c64_hid_emit_fn emit,void *context)
 {
     memset(in,0,sizeof(*in)); in->emit=emit; in->context=context;
+    in->mouse_scale_quarters=4U;
     mt_c64_hid_input_init(&in->keyboard,emit,context);
     in->keyboard.keyboard_layout=MT_C64_KEYBOARD_LAYOUT_PS2_PC;
     in->emitted_buttons=UINT16_MAX; in->emitted_xy=0U;
@@ -24,10 +25,48 @@ int mt_iigs_hid_assigned_report(mt_iigs_hid_input_t *in,uint8_t slot,uint8_t pla
     in->xy[slot]=(uint16_t)(ax|((uint16_t)ay<<8U));
     return mt_iigs_hid_poll(in);
 }
+static const uint16_t mouse_steps[]={25U,50U,75U,100U,150U,200U,300U,400U};
+bool mt_iigs_mouse_sensitivity_valid(uint16_t percent)
+{
+    for(size_t i=0U;i<sizeof(mouse_steps)/sizeof(mouse_steps[0]);++i)
+        if(percent==mouse_steps[i])return true;
+    return false;
+}
+uint16_t mt_iigs_mouse_next_sensitivity(uint16_t percent)
+{
+    for(size_t i=0U;i<sizeof(mouse_steps)/sizeof(mouse_steps[0]);++i)
+        if(percent==mouse_steps[i])return mouse_steps[(i+1U)%(sizeof(mouse_steps)/sizeof(mouse_steps[0]))];
+    return 100U;
+}
+bool mt_iigs_hid_set_mouse_sensitivity(mt_iigs_hid_input_t *in,uint16_t percent)
+{
+    if(in==NULL || !mt_iigs_mouse_sensitivity_valid(percent))return false;
+    const uint8_t scale=(uint8_t)(percent/25U);
+    if(in->mouse_scale_quarters!=scale) {
+        in->mouse_scale_quarters=scale;
+        in->mouse_fraction_x=0; in->mouse_fraction_y=0;
+    }
+    return true;
+}
+void mt_iigs_hid_clear_mouse_motion(mt_iigs_hid_input_t *in)
+{
+    if(in==NULL)return;
+    in->mouse_x=0; in->mouse_y=0;
+    in->mouse_fraction_x=0; in->mouse_fraction_y=0;
+}
+static int32_t mouse_scaled(int32_t delta,uint8_t quarters,int8_t *fraction)
+{
+    const int32_t total=delta*(int32_t)quarters+(int32_t)*fraction;
+    /* C division truncates toward zero, retaining the signed remainder. */
+    *fraction=(int8_t)(total%4);
+    return total/4;
+}
 void mt_iigs_hid_mouse_report(mt_iigs_hid_input_t *in,int16_t x,int16_t y,uint8_t buttons)
 {
     if(in==NULL)return;
-    in->mouse_x+=x; in->mouse_y-=y; /* USB down-positive to PS/2 up-positive */
+    in->mouse_x+=mouse_scaled(x,in->mouse_scale_quarters,&in->mouse_fraction_x);
+    /* Promote before negation so INT16_MIN remains well-defined. */
+    in->mouse_y+=mouse_scaled(-(int32_t)y,in->mouse_scale_quarters,&in->mouse_fraction_y);
     if(in->mouse_x>32767)in->mouse_x=32767;
     if(in->mouse_x< -32767)in->mouse_x= -32767;
     if(in->mouse_y>32767)in->mouse_y=32767;
@@ -45,7 +84,7 @@ int mt_iigs_hid_disconnect(mt_iigs_hid_input_t *in,uint8_t slot)
 int mt_iigs_hid_release_all(mt_iigs_hid_input_t *in)
 {
     memset(in->active,0,sizeof(in->active)); in->mouse_buttons=0U;
-    in->mouse_x=0; in->mouse_y=0; (void)mt_c64_hid_release_all(&in->keyboard);
+    mt_iigs_hid_clear_mouse_motion(in); (void)mt_c64_hid_release_all(&in->keyboard);
     return mt_iigs_hid_poll(in);
 }
 int mt_iigs_hid_poll(mt_iigs_hid_input_t *in)

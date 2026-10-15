@@ -2,6 +2,21 @@
 
 Status: planning baseline, written 2026-08-29
 
+Acceleration follow-up, 2026-10-15: the owner reports unchanged System 6 boot
+and Finder redraw after changing speed in the Multitini menu. Measure the
+real ROM/OS workload and paused menu speed changes. Correct false paddle
+slowdowns from ROM-backed IRQ dispatch and allow reads of fast shadow RAM
+to use the accelerated path, while retaining native shadow writes and direct
+Mega II memory timing. An empty floppy drive's motor latch must not hold an
+HDD-only session at stock speed; retain native holds for mounted floppy
+activity and actual IWM accesses. Use the documented ZipGS default with AppleTalk/IRQ
+delay off; preserve explicitly saved settings. Add an immediately applied,
+saved IIgs mouse sensitivity setting in firmware, preserving the existing FPGA
+input protocol and older saved settings. Regressions must distinguish
+requested speed, actual CPU progress and compatibility holdoffs. Rebuild only
+affected firmware and IIgs images, retain the other seven qualified images,
+and deliver a private ROM-inclusive M0.5.3 package for board acceptance.
+
 IIgs follow-up, 2026-10-15: reproduce the owner's ROM3 copyright-screen stop
 at stock speed with the actual ROM and System 6.0.1 hard disk. Correct the
 external CPU's RTC register decoding and fetch the ROM-backed interrupt vectors

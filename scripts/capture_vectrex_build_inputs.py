@@ -59,6 +59,8 @@ def inputs(machine: str) -> list[Path]:
             "test_apple_iigs_boot.py",
             "test_apple_iigs_irq_dispatch.py",
             "test_apple_iigs_iwm.py",
+            "test_apple_iigs_accel_gates.py",
+            "test_apple_iigs_paused_settings.py",
             "test_apple_iigs_ports.py",
             "test_apple_iigs_native_clock.py",
             "check_apple_iigs_phase_constraints.tcl"))

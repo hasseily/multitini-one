@@ -432,8 +432,19 @@ Firmware/FPGA builds and synthetic machine tests do not prove ROM boot, ADB
 feel, sound, live video, removable-media reliability or acceleration on the
 physical card. Those remain hardware acceptance checks in the release test plan.
 
-Current source-bound functional records are indexed in
+The historical M0.4.0 source-bound functional records are indexed in
 `build/core-gs3/cpu-integration-primary-peek-summary.json`. All 13 selected
-records match their current source inputs, and all 174 inputs in the fresh
-FPGA capture were checked unchanged. Routed signoff is recorded separately in
-the selected image's final reports and repair/export receipts.
+records matched that build's source inputs, and its 174 captured inputs were
+checked unchanged. M0.5.3 records current integration checks in
+`build/core-gs-m053/cpu-hdl-acceleration-final-regressions.json` and paused live
+configuration checks in `build/core-gs-m053/paused-settings-final/validation.json`.
+It retains the ISA qualification by verifying all nine CPU leaf hashes.
+
+M0.5.3 also tests the actual shadow-read and shadow-write paths. A warm read
+loop improves 22.0483x at maximum speed, while a native shadow-store loop
+improves 2.00558x. Both use the production CPU and memory adapter. These
+workload-specific measurements are not a Finder redraw benchmark. Fresh
+firmware defaults IRQ delay to Off; synthetic peak tests may explicitly enable
+different compatibility settings to exercise their gates. See the
+[M0.5.3 record](APPLE_IIGS_M053_BUILD.md) for reproduction and evidence scope.
+Routed signoff is separate in the selected image's reports and export receipts.

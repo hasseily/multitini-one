@@ -21,6 +21,7 @@
 #include "multitini_fatfs_time.h"
 #include "multitini_gameboy_interface.h"
 #include "multitini_genesis_interface.h"
+#include "multitini_iigs_hid_input.h"
 #include "multitini_nes_interface.h"
 #include "multitini_vectrex_interface.h"
 #include "multitini_menu.h"
@@ -2468,6 +2469,7 @@ static mt_menu_view_t supervisor_menu_view(void)
         state.iigs_ready=iigs_content_service_ready();
         state.iigs_config=*iigs_content_service_config();
         state.iigs_speed_mask=iigs_content_service_speed_mask();
+        state.iigs_mouse_sensitivity=iigs_content_service_mouse_sensitivity();
         state.save_faulted=iigs_content_service_faulted();
         for(unsigned d=0U;d<MT_IIGS_DRIVE_COUNT;++d)state.iigs_drive_name[d]=iigs_content_service_name(d);
     } else if (supervisor.has_active &&
@@ -3004,6 +3006,7 @@ static int iigs_boot_with_input(void)
     usb_hid_service_set_core_ready(false);
     const int result=iigs_content_service_boot();
     const bool loaded=result==0;
+    (void)usb_hid_service_set_iigs_mouse_sensitivity(iigs_content_service_mouse_sensitivity());
     usb_hid_service_set_core_ready(loaded);
     if(dac_ready)set_audio(!loaded,false);
     set_video_test(!loaded);
@@ -4332,12 +4335,22 @@ static void handle_menu_action(mt_menu_action_t action)
             set_supervisor_status("Gamepad port changed");
     } else if (action.kind == MT_MENU_ACTION_TOGGLE_CORE_OPTION) {
         if(supervisor.has_active && supervisor.active.package.core_id==MT_IIGS_CORE_ID) {
+            if(action.file_index==9U) {
+                const uint16_t next=mt_iigs_mouse_next_sensitivity(iigs_content_service_mouse_sensitivity());
+                if(iigs_content_service_set_mouse_sensitivity(next)!=0)
+                    set_supervisor_error(iigs_content_service_error());
+                else {
+                    (void)usb_hid_service_set_iigs_mouse_sensitivity(next);
+                    set_supervisor_status("Apple IIgs mouse sensitivity saved");
+                }
+                return;
+            }
             mt_iigs_config_t changed=*iigs_content_service_config();
             if(action.file_index==0U)changed.speed=mt_iigs_next_speed(changed.speed,iigs_content_service_speed_mask());
             else if(action.file_index==1U)changed.rom3^=1U;
             else if(action.file_index==2U)changed.card=changed.card==0U ? 2U:0U;
             else if(action.file_index==3U)changed.pulses^=1U;
-            else if(action.file_index<11U)changed.flags^=(uint8_t)(1U<<(action.file_index-4U));
+            else if(action.file_index<9U)changed.flags^=(uint8_t)(1U<<(action.file_index-4U));
             else return;
             usb_hid_service_set_core_ready(false);
             if(iigs_content_service_configure(&changed)!=0)set_supervisor_error(iigs_content_service_error());

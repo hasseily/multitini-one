@@ -64,6 +64,8 @@ def main() -> int:
     parser.add_argument("--max-primary-ticks",type=int,default=120000000)
     parser.add_argument("--min-reads",type=int,default=2)
     parser.add_argument("--speed",type=int,choices=range(7),default=0)
+    parser.add_argument("--compatibility-flags",type=lambda value:int(value,0),default=0x10,
+                        help="runtime config byte3: 0x10=fresh IRQ-off default; 0x17=all delays off; 0=legacy defaults")
     parser.add_argument("--trace-start",type=int,default=0)
     parser.add_argument("--trace-end",type=int,default=0)
     parser.add_argument("--require-irq-dispatch",action="store_true",help="also require execution of the native E1:0010 interrupt handler")
@@ -75,6 +77,8 @@ def main() -> int:
         raise ValueError("validation already exists; select a fresh --build-dir")
     if args.max_primary_ticks<1 or args.min_reads<1 or args.trace_start<0 or args.trace_end<0:
         raise ValueError("tick/read budgets must be positive; trace positions must be nonnegative")
+    if not 0<=args.compatibility_flags<=0x1f:
+        raise ValueError("compatibility flags must fit the five supported runtime bits")
     build.mkdir(parents=True,exist_ok=True)
     fixtures=build/"private"
     fixtures.mkdir(exist_ok=True)
@@ -148,7 +152,8 @@ def main() -> int:
     executable=obj/("V"+top+(".exe" if os.name=="nt" else ""))
     record={"schema_version":1,"status":"RUNNING","files":before,"private_inputs":{"roms":roms,"media":media},
             "git_head":subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip(),
-            "configuration":{"rom":3,"speed":args.speed,"pram":"fresh defaults","read_only_disk":True,
+            "configuration":{"rom":3,"speed":args.speed,"compatibility_flags":args.compatibility_flags,
+                             "pram":"fresh defaults","read_only_disk":True,
                              "max_primary_ticks":args.max_primary_ticks,"minimum_disk_reads":args.min_reads,
                              "require_native_irq_dispatch":args.require_irq_dispatch},
             "limits":["Bounded RTC and actual disk-bootstrap progress; no GS/OS desktop or game compatibility assertion.",
@@ -168,6 +173,7 @@ def main() -> int:
             run([tool("make"),"-C",obj,"-f","V"+top+".mk","-j8"],"compile")
         text=run([executable,"+FIXTURES="+fixtures.as_posix(),"+DISK="+(fixtures/"disk.bin").as_posix(),
                   "+TICKS="+str(args.max_primary_ticks),"+SPEED="+str(args.speed),"+MIN_READS="+str(args.min_reads),
+                  "+COMPAT_FLAGS="+str(args.compatibility_flags),
                   "+REQUIRE_IRQ="+str(int(args.require_irq_dispatch)),
                   "+FLOPPY="+str(int(args.floppy_woz is not None)),"+BOOT_OPCODE="+str(expected_boot_opcode),
                   "+TRACE_START="+str(args.trace_start),"+TRACE_END="+str(args.trace_end)],"simulate")

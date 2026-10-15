@@ -658,13 +658,27 @@ static void test_iigs_input_transport(void)
     g_reports[0][0]=1U;g_reports[0][1]=4U;g_reports[0][2]=(uint8_t)-5;
     report_complete(&g_slots[0],3);usb_hid_service_poll();
     assert(routed_code==0x4001U && (routed_value&255U)==5U && g_iigs_input.mouse_emitted_buttons==1U);
+    assert(usb_hid_service_set_iigs_mouse_sensitivity(50U));
+    g_reports[0][0]=1U;g_reports[0][1]=4U;g_reports[0][2]=(uint8_t)-6;g_reports[0][3]=127U;
+    report_complete(&g_slots[0],4);usb_hid_service_poll();
+    assert(((g_iigs_input.mouse_packet>>8U)&255U)==2U && (routed_value&255U)==3U);
+    assert(g_iigs_input.mouse_emitted_buttons==1U); /* Wheel byte and buttons are unchanged. */
+    assert(!usb_hid_service_set_iigs_mouse_sensitivity(125U) && g_iigs_input.mouse_scale_quarters==2U);
+    assert(usb_hid_service_set_iigs_mouse_sensitivity(25U));
+    g_reports[0][0]=1U;g_reports[0][1]=1U;g_reports[0][2]=1U;
+    report_complete(&g_slots[0],3);usb_hid_service_poll();
+    assert(g_iigs_input.mouse_fraction_x==1 && g_iigs_input.mouse_fraction_y== -1);
     usb_hid_service_set_menu_capture(true);usb_hid_service_poll();
     assert(g_iigs_input.mouse_emitted_buttons==0U);
+    assert(g_iigs_input.mouse_fraction_x==0 && g_iigs_input.mouse_fraction_y==0);
+    report_complete(&g_slots[0],3);usb_hid_service_poll();
+    assert(g_iigs_input.mouse_x==0 && g_iigs_input.mouse_y==0 && g_iigs_input.mouse_fraction_x==0);
     usb_hid_service_set_menu_capture(false);
     g_reports[0][0]=1U;g_reports[0][1]=4U;g_reports[0][2]=(uint8_t)-5;
     report_complete(&g_slots[0],3);usb_hid_service_poll();
     assert(g_iigs_input.mouse_emitted_buttons==1U);
     usbh_hid_stop(&hid);assert(g_iigs_input.mouse_emitted_buttons==0U);
+    assert(g_iigs_input.mouse_fraction_x==0 && g_iigs_input.mouse_fraction_y==0);
     const uint8_t pad=(uint8_t)usb_gamepad_input_connect();
     port.port=1U;usb_gamepad_input_identify(pad,&port,0U,MT_CONTROLLER_TRANSPORT_XBOXONE);
     assert(g_controller_player[pad]==0U);

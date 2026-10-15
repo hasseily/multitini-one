@@ -298,6 +298,34 @@ static void test_speed_capability(void)
     iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
     assert(iigs_content_service_speed_mask()==1U && iigs_content_service_config()->speed==0U);
 }
+static void test_irq_default_and_saved_choices(void)
+{
+    reset();
+    assert(iigs_content_service_config()->flags==UINT8_C(0x10));
+    regs[MT_REG_IIGS_ACCEL_CAPS/4U]=MT_IIGS_ACCEL_CAPS_VALID|MT_IIGS_ACCEL_SPEED_MASK;
+    iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
+    assert(iigs_content_service_boot()==0 && config_stream[3]==UINT8_C(0x10));
+    /* A pre-existing explicit On survives initialization byte-for-byte, even
+     * when unrelated compatibility choices differ from the fresh default. */
+    mt_iigs_config_t c=*iigs_content_service_config();c.speed=6U;c.flags=UINT8_C(0x05);
+    assert(iigs_content_service_configure(&c)==0);
+    assert(config_stream[1]==6U && config_stream[3]==UINT8_C(0x05));
+    test_file_t *saved=file_find(TEST_MEDIA_ROOT "/gs-settings.bin",false);
+    assert(saved!=NULL && saved->data[11]==UINT8_C(0x05));
+    iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
+    assert(iigs_content_service_config()->flags==UINT8_C(0x05) && iigs_content_service_config()->speed==6U);
+    assert(saved->data[11]==UINT8_C(0x05));
+    /* Explicit Off is equally persistent; no existing file is migrated. */
+    c=*iigs_content_service_config();c.flags=UINT8_C(0x15);
+    assert(iigs_content_service_configure(&c)==0);
+    iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
+    assert(iigs_content_service_config()->flags==UINT8_C(0x15) && iigs_content_service_config()->speed==6U);
+    assert(saved->data[11]==UINT8_C(0x15));
+    fail_journal=true;c=*iigs_content_service_config();c.flags=UINT8_C(0x05);
+    assert(iigs_content_service_configure(&c)!=0);
+    assert(iigs_content_service_config()->flags==UINT8_C(0x15) && config_stream[3]==UINT8_C(0x15));
+    assert(saved->data[11]==UINT8_C(0x15));
+}
 static void test_nested_media_paths(void)
 {
     static const char *const first="Operating Systems/GS OS/System.hdv";
@@ -322,6 +350,51 @@ static void test_nested_media_paths(void)
         reset();assert(iigs_content_service_mount(0U,invalid[i])!=0);
         assert(iigs_content_service_name(0U)==NULL);
     }
+}
+static void settings_checksum(test_file_t *file)
+{
+    store32(file->data+20U,0U);uint32_t crc=UINT32_MAX;
+    for(size_t i=0U;i<file->size;++i) {
+        crc^=file->data[i];
+        for(unsigned bit=0U;bit<8U;++bit)crc=(crc>>1U)^((0U-(crc&1U))&UINT32_C(0xedb88320));
+    }
+    store32(file->data+20U,~crc);
+}
+static void test_mouse_settings(void)
+{
+    reset();assert(iigs_content_service_mouse_sensitivity()==100U);
+    (void)disk("Games/boot.hdv");assert(iigs_content_service_mount(0U,"Games/boot.hdv")==0);
+    mt_iigs_config_t chosen=*iigs_content_service_config();chosen.flags=5U;chosen.speed=4U;
+    assert(iigs_content_service_configure(&chosen)==0);
+    test_file_t *saved=file_find(TEST_MEDIA_ROOT "/gs-settings.bin",false);
+    assert(saved!=NULL && saved->data[17]==4U);
+    const size_t legacy_size=saved->size;
+    /* The original record's unused byte is zero; all existing choices and
+     * remembered media must load without a file migration or size change. */
+    saved->data[17]=0U;settings_checksum(saved);
+    iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
+    assert(iigs_content_service_mouse_sensitivity()==100U && saved->data[17]==0U);
+    assert(iigs_content_service_config()->flags==5U && iigs_content_service_config()->speed==4U);
+    const uint16_t steps[]={25U,50U,75U,100U,150U,200U,300U,400U};
+    const unsigned before=rom_stream_count;
+    for(unsigned i=0U;i<8U;++i) {
+        assert(iigs_content_service_set_mouse_sensitivity(steps[i])==0);
+        assert(saved->size==legacy_size && saved->data[17]==steps[i]/25U);
+        assert(memcmp(saved->data+24U,"Games/boot.hdv",14U)==0);
+        iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
+        assert(iigs_content_service_mouse_sensitivity()==steps[i]);
+        assert(iigs_content_service_config()->flags==5U && iigs_content_service_config()->speed==4U);
+    }
+    assert(rom_stream_count==before); /* ARM-only option sends no FPGA config. */
+    assert(iigs_content_service_set_mouse_sensitivity(0U)!=0 && iigs_content_service_mouse_sensitivity()==400U);
+    assert(iigs_content_service_set_mouse_sensitivity(125U)!=0 && saved->data[17]==16U);
+    fail_journal=true;
+    assert(iigs_content_service_set_mouse_sensitivity(25U)!=0 && iigs_content_service_mouse_sensitivity()==400U);
+    assert(saved->data[17]==16U && saved->size==legacy_size);fail_journal=false;
+    saved->data[17]=5U;settings_checksum(saved); /* Valid CRC, unsupported value. */
+    iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
+    assert(iigs_content_service_faulted() && iigs_content_service_mouse_sensitivity()==100U);
+    assert(strstr(iigs_content_service_error(),"settings checksum or values invalid")!=NULL);
 }
 static uint8_t raw_source[MT_IIGS_FLOPPY_RAW_TRACK_BYTES],raw_changed[MT_IIGS_FLOPPY_RAW_TRACK_BYTES];
 static uint8_t encoded[MT_IIGS_FLOPPY_TRACK_BYTES];
@@ -479,6 +552,8 @@ int main(void)
     test_raw_floppy_recovery();
     test_raw_floppy_protection();
     test_speed_capability();
+    test_irq_default_and_saved_choices();
+    test_mouse_settings();
     test_rom_paths();
     test_nested_media_paths();
     reset();test_file_t *f=disk("test.2mg");memset(f->data,0,64U);memcpy(f->data,"2IMG",4U);f->data[8]=64U;f->data[10]=1U;

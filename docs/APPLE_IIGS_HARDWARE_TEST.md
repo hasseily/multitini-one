@@ -1,12 +1,18 @@
 # Apple IIgs hardware test
 
-Install the complete `build/firmware-core-gs-m052/sd/` contents, preserving existing
+Install the complete `build/firmware-core-gs-m053/sd/` contents, preserving existing
 media and settings. Update Multitini with its included `FIRMWARE.BIN` using
 Golden B2. The matching supervisor and FSBL enable the new HP3 source video
 port. Load the new IIgs core only after installing the matching firmware.
 This package does not itself flash or test the board.
 
-M0.5.2 corrects RTC control writes at `$C034` and fetches the native interrupt
+M0.5.3 corrects three accelerator slowdowns: an empty floppy drive's motor
+latch, IRQ dispatch ROM reads counted as paddle accesses, and fast shadow-RAM
+reads classified as slow. Mounted floppy timing and shadow writes stay native.
+Fresh settings default IRQ delay to Off. Existing saved choices are preserved;
+set IRQ delay to Off in Core options for the accelerated performance checks.
+
+The retained M0.5.2 fixes correct RTC control writes at `$C034` and fetch the native interrupt
 dispatch ROM bytes at `$C071–$C07F` before committing those I/O cycles. Both
 faults occur at stock speed. It also adds the raw floppy formats below.
 The IWM corrections preserve fractional-timer carry and byte-latch expiry.
@@ -73,6 +79,10 @@ cold reset. Command/OpenApple uses Alt; Option/SolidApple uses the Windows key.
    separately with ROM1 and ROM3. The first unsaved PRAM starts invalid so
    the user's ROM installs defaults.
 4. Exercise keyboard, relative mouse motion/buttons and a mapped gamepad.
+   In IIgs Core options, change Mouse sensitivity through 25%, 50%, 75%, 100%,
+   150%, 200%, 300% and 400%. Check immediate movement changes, fine motion at
+   25%, button dragging and persistence after restarting. The default is 100%.
+   This setting affects the IIgs pointer; the shared menu cursor is unchanged.
    Verify release after menu entry, USB removal and core switching.
 5. Check text, HGR/DHR and 320/640 SHR palettes, DOC audio and speaker audio.
    Check the entire left and right edge of SHR graphics, with a blue border
@@ -85,6 +95,13 @@ cold reset. Command/OpenApple uses Alt; Option/SolidApple uses the Windows key.
    gameplay. The menu's Accelerator card option selects ZipGS software controls
    or host-only control. ZipGS 100% selects the installed maximum. Effective
    throughput depends on memory misses, writes, interrupts and I/O.
+   The Multitini CPU acceleration menu needs no GS/OS driver. Optional ZipGS
+   control software provides an additional interface inside GS/OS, as described
+   in the [original manual](https://www.whatisthe2gs.apple2.org.za/files/ZipGSX/Manual/ZIPGSX_Manual.pdf).
+   Compare Stock and maximum during an HDD-only session with both floppies
+   ejected, including Finder window opening/redraw and a CPU-heavy workload.
+   Record all delay settings. The selected MHz describes eligible CPU cycles;
+   screen writes through native memory do not scale by the same factor.
 7. Switch between IIgs and each existing core, then Appletini/Multitini via
    Golden. Confirm pending disk writes finish before the switch.
 8. Use the System USB SD mount action. Confirm dirty media finishes before

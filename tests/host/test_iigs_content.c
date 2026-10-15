@@ -101,8 +101,22 @@ int main(void)
     mt_core_frontend_t frontend; mt_menu_view_t view={0};
     mt_core_frontend_state_t state={0}; state.core_id=MT_IIGS_CORE_ID; state.services_ready=true; state.iigs_config.speed=4U;
     mt_core_frontend_apply(&frontend,&state,&view);
-    assert(view.media_item_count==8U && view.core_option_count==9U);
+    assert(view.media_item_count==8U && view.core_option_count==10U);
+    assert(strcmp(view.core_options[9].label,"Mouse sensitivity")==0 && strcmp(view.core_options[9].value,"100%")==0);
+    assert(view.core_options[9].argument==9U && view.core_options[9].action==MT_MENU_ACTION_TOGGLE_CORE_OPTION);
+    state.iigs_mouse_sensitivity=25U;mt_core_frontend_apply(&frontend,&state,&view);
+    assert(strcmp(view.core_options[9].value,"25%")==0);
+    state.iigs_mouse_sensitivity=400U;mt_core_frontend_apply(&frontend,&state,&view);
+    assert(strcmp(view.core_options[9].value,"400%")==0);
     assert(strstr(view.core_options[0].value,"14.3")!=NULL);
+    assert(strcmp(view.core_options[8].label,"IRQ delay")==0 && strcmp(view.core_options[8].value,"On")==0);
+    assert(strstr(view.core_options[8].help,"AppleTalk")!=NULL &&
+        strstr(view.core_options[8].help,"interrupts are disabled")!=NULL);
+    state.iigs_config.flags=UINT8_C(0x10);
+    mt_core_frontend_apply(&frontend,&state,&view);
+    assert(strcmp(view.core_options[8].value,"Off")==0);
+    assert(strcmp(view.core_options[4].value,"On")==0 && strcmp(view.core_options[5].value,"On")==0 &&
+        strcmp(view.core_options[6].value,"On")==0 && strcmp(view.core_options[7].value,"Off")==0);
     state.iigs_speed_mask=MT_IIGS_ACCEL_SPEED_MASK;state.iigs_config.speed=5U;
     mt_core_frontend_apply(&frontend,&state,&view);assert(strcmp(view.core_options[0].value,"28.6 MHz")==0);
     state.iigs_config.speed=6U;mt_core_frontend_apply(&frontend,&state,&view);assert(strcmp(view.core_options[0].value,"57.3 MHz")==0);

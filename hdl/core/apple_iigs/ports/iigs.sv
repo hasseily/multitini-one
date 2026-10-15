@@ -3024,7 +3024,7 @@ end
 // iwm_holdoff). Without this the boot beep is ~8x too high and paddles peg when
 // accelerated. Unconditional: it only affects fast_thresh while accelerating.
 wire acc_spkr  = bus_phi2 && IO && (addr_bef[7:0] == 8'h30);   // $C030 speaker toggle
-wire acc_ptrig = bus_phi2 && IO && (addr_bef[7:4] == 4'h7);    // $C070-$C07F paddle trigger
+wire acc_ptrig = bus_phi2 && IO && (addr_bef[11:0] == 12'h070); // IIgs paddle trigger only
 wire acc_pdl   = bus_phi2 && IO && (addr_bef[7:2] == 6'h19);   // $C064-$C067 paddle read
 wire acc_ctr   = bus_phi2 && IO && (addr_bef[7:1] == 7'h17);   // $C02E/$C02F video counter
 reg [15:0] beep_holdoff;
@@ -3094,7 +3094,8 @@ wire irq_slowdown = cpu_i_flag &&
 wire cps_gate = twgs_present ? 1'b1 : (CYAREG[7] || !zip_cps_follow_en);
 wire [3:0] fast_thresh = (accel_capable && eff_accel_en && eff_speed_code != 3'd0
                           && iwm_holdoff == 15'd0
-                          && !floppy_motor_on && !floppy35_motor_on
+                          && !(floppy_motor_on && (|DISK_READY[1:0]))
+                          && !(floppy35_motor_on && (|DISK_READY[3:2]))
                           && !io_slow_holdoff
                           && !irq_slowdown
                           && !(twgs_present && (bank_bef == 8'hBC
@@ -3172,10 +3173,11 @@ wire cpu_irq_dispatch_read = IO && !we && addr_bef[15:0]>=16'hc071 && addr_bef[1
 assign cpu_memory_cycle = cpu_valid && (fastram_ce || (rom_ce && !we)) &&
     (hdd_dma || ((!IO || cpu_irq_dispatch_read) && !EXTERNAL_IO && !(|device_select) && !(|io_select) && !slot_ce));
 // Use the current MMU classification, not CLK14's delayed slowMem register:
-// shadow writes, slot/IO and slow-RAM accesses always take the native bridge.
+// Shadow reads select fast RAM even when the mirror enable is also asserted.
+// Shadow writes, slot/IO and direct slow-RAM accesses use the native bridge.
 assign cpu_fast_cycle = !hdd_dma && (!valid || cpu_local_read ||
     (!IO && !EXTERNAL_IO && !(|device_select) && !(|io_select) &&
-     !slot_ce && !slowram_ce && (fastram_ce || rom_ce)));
+     !slot_ce && (!slowram_ce || (!we && fastram_ce)) && (fastram_ce || rom_ce)));
 
 assign cpu_valid = cpu_vpa | cpu_vda | hdd_dma;
 assign video_x = H;

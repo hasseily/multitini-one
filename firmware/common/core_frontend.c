@@ -250,8 +250,17 @@ static void build_iigs(mt_core_frontend_t *frontend,
         const bool bit=(state->iigs_config.flags&(1U<<i))!=0U;
         const bool enabled=i==3U ? bit:!bit;
         frontend->core_options[view->core_option_count++]=item(options[i],enabled ? "On":"Off",
-            "Apply this upstream acceleration compatibility setting.",MT_MENU_ACTION_TOGGLE_CORE_OPTION,4U+i,true,MT_UI_COLOR_BLUE);
+            i==4U ? "AppleTalk compatibility: slows the CPU while interrupts are disabled. Leave Off unless needed.":
+                "Apply this upstream acceleration compatibility setting.",MT_MENU_ACTION_TOGGLE_CORE_OPTION,4U+i,true,MT_UI_COLOR_BLUE);
     }
+    static const uint16_t mouse_steps[]={25U,50U,75U,100U,150U,200U,300U,400U};
+    static const char *const mouse_values[]={"25%","50%","75%","100%","150%","200%","300%","400%"};
+    const char *mouse_value="100%";
+    for(size_t i=0U;i<sizeof(mouse_steps)/sizeof(mouse_steps[0]);++i)
+        if(state->iigs_mouse_sensitivity==mouse_steps[i])mouse_value=mouse_values[i];
+    frontend->core_options[view->core_option_count++]=item("Mouse sensitivity",mouse_value,
+        "Adjust USB mouse movement immediately; 100% is normal. Saved for Apple IIgs.",
+        MT_MENU_ACTION_TOGGLE_CORE_OPTION,9U,true,MT_UI_COLOR_BLUE);
     view->save_faulted=state->save_faulted;
 }
 

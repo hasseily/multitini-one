@@ -5,15 +5,20 @@ It runs C64, Game Boy Color, Vectrex, Genesis / Mega Drive and Apple IIgs
 machines through a shared supervisor, menu, input, audio, storage and
 core-loading system. It does not use an Apple II host.
 
-M0.5.2 fixes two IIgs startup faults: lost RTC control writes at stock speed,
+M0.5.3 corrects IIgs acceleration holdoffs from empty floppy drives, interrupt
+dispatch reads and shadow-RAM reads. It adds saved mouse sensitivity from 25%
+to 400% in the IIgs core options. Fresh settings use IRQ delay Off; existing
+saved choices remain intact. The hardware-test bundle is
+`build/firmware-core-gs-m053.zip`; install its matching firmware and IIgs image
+together. The other seven FPGA images retain their qualified identities.
+See the [M0.5.3 record](docs/APPLE_IIGS_M053_BUILD.md) and
+[IIgs hardware checks](docs/APPLE_IIGS_HARDWARE_TEST.md).
+
+The retained M0.5.2 fixes correct lost RTC control writes at stock speed,
 and stale interrupt-vector ROM bytes after the first System 6 disk reads.
 It also adds writable 800 KiB PO/2MG floppies in the 3.5-inch drive and
 140 KiB DOS-order DSK files in the 5.25-inch drive. Both drives retain WOZ2.
 The IWM fixes fractional bit-cell carry and byte-latch expiry in production.
-The hardware-test bundle is `build/firmware-core-gs-m052.zip`; install its
-matching firmware and IIgs image together. The other seven FPGA images keep
-their qualified identities, including the M0.5.1 NES fixes. See the
-[IIgs checks](docs/APPLE_IIGS_HARDWARE_TEST.md) for the physical test procedure.
 The [M0.5.2 build record](docs/APPLE_IIGS_M052_BUILD.md) describes the reproduced
 failures, media conversion and qualification limits.
 

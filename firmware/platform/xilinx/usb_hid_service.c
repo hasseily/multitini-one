@@ -1397,8 +1397,10 @@ void usbh_hid_stop(struct usbh_hid *hid)
     if (slot == NULL || slot->hid != hid) return;
     xil_printf("[usb1] HID disconnected slot=%u\r\n",
                (unsigned int)hid->minor);
-    if(slot->mouse && g_active_core_id==MT_IIGS_CORE_ID)
+    if(slot->mouse && g_active_core_id==MT_IIGS_CORE_ID) {
+        mt_iigs_hid_clear_mouse_motion(&g_iigs_input);
         mt_iigs_hid_mouse_report(&g_iigs_input,0,0,0U);
+    }
     disconnect_input_slot(slot->input_slot);
     mt_gamepad_disconnect(&g_gamepads, slot->input_slot);
     g_release_guard[slot->input_slot] = 0U;
@@ -1732,12 +1734,15 @@ void usb_hid_service_dump_status(void)
                (unsigned int)phy.viewport);
 }
 
+bool usb_hid_service_set_iigs_mouse_sensitivity(uint16_t percent)
+{ return mt_iigs_hid_set_mouse_sensitivity(&g_iigs_input,percent); }
+
 void usb_hid_service_set_menu_capture(bool captured)
 {
     if (g_menu_capture == captured) return;
     g_menu_capture = captured;
     if(captured && g_active_core_id==MT_IIGS_CORE_ID) {
-        g_iigs_input.mouse_x=0; g_iigs_input.mouse_y=0;
+        mt_iigs_hid_clear_mouse_motion(&g_iigs_input);
         mt_iigs_hid_mouse_report(&g_iigs_input,0,0,0U);
     }
     for (uint8_t i = 0U; i < MT_GAMEPAD_SLOTS; ++i) {

@@ -7,6 +7,14 @@ Upstream is `MiSTer-devel/Apple-IIgs_MiSTer` at
 files and explicit per-file licenses. Original machine code remains separate
 from reproducible Multitini ports. Apple ROM bytes are runtime user inputs.
 
+M0.5.3 fixes three acceleration holdoffs: only actual `$C070` paddle accesses
+trigger the paddle delay, fast shadow-RAM reads use the fast path, and floppy
+motor holds require mounted media of the matching drive family. Native shadow
+writes and actual IWM access delays retain their timing. New firmware settings
+default IRQ delay to Off and preserve saved compatibility choices. IIgs mouse
+sensitivity is saved and applied in firmware without changing the FPGA input
+protocol. See the [M0.5.3 record](APPLE_IIGS_M053_BUILD.md) for current evidence.
+
 M0.5.2 corrects the external CPU RTC selection: `$C033` is data and `$C034`
 is control. The former adjacent-pair decode selected `$C032/$C033`, so RTC
 commands written to `$C034` were lost even at stock speed. The executed-CPU
@@ -18,7 +26,7 @@ bytes before the native commit, preserving the existing I/O timing. Treating
 all I/O as local data supplied stale vector bytes on the first System 6 IRQ.
 The native IWM ports also retain fractional-timer carry and run the byte-latch
 expiry counter independently of debug logging.
-See the [M0.5.2 record](APPLE_IIGS_M052_BUILD.md) for the current update;
+See the [M0.5.2 record](APPLE_IIGS_M052_BUILD.md) for the startup/media update;
 the M0.4.0 build and timing details below remain its historical baseline.
 
 ## Architecture

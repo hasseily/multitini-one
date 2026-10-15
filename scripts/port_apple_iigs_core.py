@@ -97,11 +97,22 @@ wire cpu_irq_dispatch_read = IO && !we && addr_bef[15:0]>=16'hc071 && addr_bef[1
 assign cpu_memory_cycle = cpu_valid && (fastram_ce || (rom_ce && !we)) &&
     (hdd_dma || ((!IO || cpu_irq_dispatch_read) && !EXTERNAL_IO && !(|device_select) && !(|io_select) && !slot_ce));
 // Use the current MMU classification, not CLK14's delayed slowMem register:
-// shadow writes, slot/IO and slow-RAM accesses always take the native bridge.
+// Shadow reads select fast RAM even when the mirror enable is also asserted.
+// Shadow writes, slot/IO and direct slow-RAM accesses use the native bridge.
 assign cpu_fast_cycle = !hdd_dma && (!valid || cpu_local_read ||
     (!IO && !EXTERNAL_IO && !(|device_select) && !(|io_select) &&
-     !slot_ce && !slowram_ce && (fastram_ce || rom_ce)));
+     !slot_ce && (!slowram_ce || (!we && fastram_ce)) && (fastram_ce || rom_ce)));
 """)
+    # IIgs paddle reset is C070 only; C071-C07F are IRQ dispatch ROM.
+    # Match the native read/write decode, including its full 12-bit selector.
+    text=replace(text,"wire acc_ptrig = bus_phi2 && IO && (addr_bef[7:4] == 4'h7);    // $C070-$C07F paddle trigger",
+                 "wire acc_ptrig = bus_phi2 && IO && (addr_bef[11:0] == 12'h070); // IIgs paddle trigger only")
+    # Raw IWM motor state can remain on after probing an empty drive. Keep it
+    # intact for status and dirty flushing, but hold the accelerator only when
+    # that drive family actually contains media. IWM access delay is separate.
+    text=replace(text,"                          && !floppy_motor_on && !floppy35_motor_on",
+                 "                          && !(floppy_motor_on && (|DISK_READY[1:0]))\n"
+                 "                          && !(floppy35_motor_on && (|DISK_READY[3:2]))")
     text=replace(text,"              .CLK(CLK_14M),", "              .CLK(EXTERNAL_CPU ? CPU_CLK : CLK_14M),")
     text=replace(text,"              .CE(bus_phi2),", "              .CE(EXTERNAL_CPU ? CPU_CE : bus_phi2),")
     text=replace(text,"              .RDY_IN(~hdd_dma & ~mem_stall),", "              .RDY_IN(~hdd_dma & (EXTERNAL_CPU | ~mem_stall)),")
