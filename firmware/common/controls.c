@@ -4,6 +4,7 @@
 #include "multitini_gameboy_interface.h"
 #include "multitini_genesis_interface.h"
 #include "multitini_vectrex_interface.h"
+#include "multitini_iigs_interface.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -17,6 +18,7 @@ uint32_t mt_controls_action_mask(uint32_t core)
     case MT_GBC_CORE_ID: return directions | BIT(MT_CONTROL_A) | BIT(MT_CONTROL_B) | BIT(MT_CONTROL_START) | BIT(MT_CONTROL_SELECT) | menu;
     case MT_GENESIS_CORE_ID: return UINT16_C(0x0fff) | menu;
     case MT_VECTREX_CORE_ID: return UINT16_C(0x00ff) | BIT(MT_CONTROL_AXIS_X) | BIT(MT_CONTROL_AXIS_Y) | menu;
+    case MT_IIGS_CORE_ID: return UINT16_C(0x007f) | BIT(MT_CONTROL_AXIS_X) | BIT(MT_CONTROL_AXIS_Y) | menu;
     default: return core == 0U ? menu : 0U;
     }
 }
@@ -97,7 +99,7 @@ void mt_controls_default(uint32_t core, const mt_controller_device_t *device,
     const uint32_t actions = mt_controls_action_mask(core);
     for (unsigned i = 0U; i < 4U; ++i)
         if ((actions & BIT(i)) != 0U)
-            config->binding[i] = (uint16_t)((core == MT_VECTREX_CORE_ID ? MT_CONTROL_SOURCE_HAT : MT_CONTROL_SOURCE_DPAD_STICK) + i);
+            config->binding[i] = (uint16_t)(((core == MT_VECTREX_CORE_ID || core == MT_IIGS_CORE_ID) ? MT_CONTROL_SOURCE_HAT : MT_CONTROL_SOURCE_DPAD_STICK) + i);
     for (unsigned i = MT_CONTROL_A; i <= MT_CONTROL_Z; ++i)
         if ((actions & BIT(i)) != 0U) config->binding[i] = default_button(device, i - MT_CONTROL_A);
     const bool generic = device == NULL || device->identity.transport == MT_CONTROLLER_TRANSPORT_HID;
@@ -116,7 +118,7 @@ void mt_controls_default(uint32_t core, const mt_controller_device_t *device,
 bool mt_controls_config_valid(uint32_t core, const mt_controller_config_t *config)
 {
     if (config == NULL || config->assignment > MT_CONTROLLER_OFF || mt_controls_action_mask(core) == 0U ||
-        (core == MT_GBC_CORE_ID && config->assignment == MT_CONTROLLER_PORT2)) return false;
+        ((core == MT_GBC_CORE_ID || core == MT_IIGS_CORE_ID) && config->assignment == MT_CONTROLLER_PORT2)) return false;
     const uint32_t actions = mt_controls_action_mask(core);
     for (unsigned i = 0U; i < MT_CONTROL_COUNT; ++i) {
         const unsigned source = config->binding[i];

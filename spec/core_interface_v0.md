@@ -36,6 +36,29 @@ The legacy 80x36 overlay retains its previous execution behavior. Older firmware
 does not request dense mode and cannot hide its menu before blocking native
 loads. New firmware always requests dense mode and requires ABI 0.11 packages.
 
+## IIgs installed acceleration capability
+
+ABI 0.22 adds read-only `IIGS_ACCEL_CAPS` at `0x0CC`. Bit 31 marks a valid
+IIgs capability; bits 6:0 advertise supported CPU speed codes. Other bits are
+zero. Other machine images return zero. Never read this register on older
+ABIs; those IIgs images support the legacy mask `0x1F`.
+
+| Code | Fast-cycle target |
+| --- | --- |
+| 0 | Stock motherboard timing |
+| 1 | 3.579546 MHz |
+| 2 | 4.772727 MHz |
+| 3 | 7.159091 MHz |
+| 4 | 14.318182 MHz |
+| 5 | 28.636364 MHz |
+| 6 | 57.272728 MHz |
+
+These are eligible cached CPU cycle rates; native peripheral access, cache
+misses, acknowledged writes and compatibility delays reduce application
+throughput. Firmware offers only advertised codes and clamps persisted faster
+settings when an older image is selected. ZipGS software percentages use the
+installed maximum, with its wall-clock timer retained on the native clock.
+
 ## Video and audio
 
 The Vectrex shell extension in ABI 0.13 provides `VECTREX_VIDEO_CONFIG`

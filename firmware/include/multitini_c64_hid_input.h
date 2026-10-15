@@ -15,6 +15,7 @@ typedef int (*mt_c64_hid_emit_fn)(void *context, uint16_t code,
 typedef enum {
     MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC = 0,
     MT_C64_KEYBOARD_LAYOUT_POSITIONAL = 1,
+    MT_C64_KEYBOARD_LAYOUT_PS2_PC = 2, /* Native PC keys for other PS/2 cores. */
 } mt_c64_keyboard_layout_t;
 
 typedef struct {

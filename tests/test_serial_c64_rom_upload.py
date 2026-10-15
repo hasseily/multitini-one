@@ -20,14 +20,14 @@ def patterned(size: int, seed: int) -> bytes:
 
 
 class SerialC64RomUploadTests(unittest.TestCase):
-    def test_bundled_roms_are_the_command_line_defaults(self):
+    def test_private_roms_are_the_command_line_defaults(self):
         args = UPLOAD.parse_args([])
 
-        self.assertEqual(args.basic, ROOT / "third_party/c64/ROMs/basic.901226-01.bin")
-        self.assertEqual(args.kernal, ROOT / "third_party/c64/ROMs/kernal.901227-03.bin")
+        self.assertEqual(args.basic, UPLOAD.default_rom_source() / "c64/roms/basic.bin")
+        self.assertEqual(args.kernal, UPLOAD.default_rom_source() / "c64/roms/kernal.bin")
         self.assertEqual(
             args.character,
-            ROOT / "third_party/c64/ROMs/characters.901225-01.bin",
+            UPLOAD.default_rom_source() / "c64/roms/characters.bin",
         )
         self.assertEqual(args.baud, 921600)
 

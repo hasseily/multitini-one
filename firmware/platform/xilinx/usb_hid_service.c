@@ -13,6 +13,7 @@
 #include "multitini_vectrex_interface.h"
 #include "multitini_genesis_hid_input.h"
 #include "multitini_genesis_interface.h"
+#include "multitini_iigs_hid_input.h"
 #include "usb_config.h"
 #include "usbh_core.h"
 #include "usbh_hid.h"
@@ -68,6 +69,7 @@ typedef struct {
     int last_error;
     uint8_t active;
     uint8_t keyboard;
+    uint8_t mouse;
     uint8_t gamepad;
     uint8_t input_slot;
     uint8_t ps4;
@@ -148,6 +150,7 @@ static mt_c64_hid_input_t g_c64_input;
 static mt_gameboy_hid_input_t g_gameboy_input;
 static mt_vectrex_hid_input_t g_vectrex_input;
 static mt_genesis_hid_input_t g_genesis_input;
+static mt_iigs_hid_input_t g_iigs_input;
 static uint32_t g_reports_total;
 static uint32_t g_submit_errors;
 static uint32_t g_transfer_errors;
@@ -170,6 +173,10 @@ static int emit_active_input(void *context, uint16_t code, uint16_t value)
     const uint8_t input_namespace = (uint8_t)(code >> 8U);
 
     if (link == NULL || g_core_ready == 0U || g_emit_deferred != 0U) return -1;
+    if (g_active_core_id == MT_IIGS_CORE_ID) {
+        if(input_namespace != MT_INPUT_PS2_SET2 && input_namespace != MT_INPUT_IIGS_MOUSE &&
+            input_namespace != MT_INPUT_IIGS_JOYSTICK)return -1;
+    } else if(input_namespace == MT_INPUT_IIGS_MOUSE || input_namespace == MT_INPUT_IIGS_JOYSTICK)return -1;
     if ((g_active_core_id == MT_VECTREX_CORE_ID) !=
         (input_namespace == MT_INPUT_VECTREX)) return -1;
     if ((g_active_core_id == MT_GENESIS_CORE_ID) !=
@@ -193,6 +200,10 @@ static int emit_active_input(void *context, uint16_t code, uint16_t value)
 static void submit_keyboard_state(uint8_t slot, uint8_t modifiers,
                                   const uint8_t *keys, size_t key_count)
 {
+    if(g_active_core_id == MT_IIGS_CORE_ID) {
+        (void)mt_iigs_hid_keyboard_report(&g_iigs_input,slot,modifiers,keys,key_count);
+        return;
+    }
     (void)mt_c64_hid_keyboard_report(&g_c64_input, slot, modifiers,
                                      keys, key_count);
     (void)mt_gameboy_hid_keyboard_report(&g_gameboy_input, slot, modifiers,
@@ -215,12 +226,13 @@ static void disconnect_input_slot(uint8_t slot)
     (void)mt_gameboy_hid_disconnect(&g_gameboy_input, slot);
     (void)mt_vectrex_hid_disconnect(&g_vectrex_input, slot);
     (void)mt_genesis_hid_disconnect(&g_genesis_input, slot);
+    (void)mt_iigs_hid_disconnect(&g_iigs_input,slot);
     refresh_controller_outputs(false, false);
 }
 
 static unsigned controller_player_count(void)
 {
-    return g_active_core_id == MT_GBC_CORE_ID ? 1U : 2U;
+    return g_active_core_id == MT_GBC_CORE_ID || g_active_core_id == MT_IIGS_CORE_ID ? 1U : 2U;
 }
 
 static void resolve_controller_players(void)
@@ -259,7 +271,7 @@ static void resolve_controller_players(void)
         /* C64's default first controller uses its selected joystick port. */
         for (unsigned candidate = 0U; candidate < players; ++candidate) {
             unsigned player = candidate;
-            if (g_active_core_id != MT_GBC_CORE_ID && g_active_core_id != MT_GENESIS_CORE_ID &&
+            if (g_active_core_id != MT_IIGS_CORE_ID && g_active_core_id != MT_GBC_CORE_ID && g_active_core_id != MT_GENESIS_CORE_ID &&
                 g_active_core_id != MT_VECTREX_CORE_ID && g_c64_input.joystick_port == 2U)
                 player = 1U - candidate;
             if ((occupied & (1U << player)) == 0U) {
@@ -402,7 +414,9 @@ void usb_gamepad_input_identify(uint8_t slot, struct usbh_hubport *port,
 
 static void poll_active_input(void)
 {
-    if (g_active_core_id == MT_VECTREX_CORE_ID)
+    if (g_active_core_id == MT_IIGS_CORE_ID)
+        (void)mt_iigs_hid_poll(&g_iigs_input);
+    else if (g_active_core_id == MT_VECTREX_CORE_ID)
         (void)mt_vectrex_hid_input_poll(&g_vectrex_input);
     else if (g_active_core_id == MT_GBC_CORE_ID)
         (void)mt_gameboy_hid_input_poll(&g_gameboy_input);
@@ -561,7 +575,10 @@ static void deliver_gamepad(uint8_t index)
     const uint8_t player = g_controller_player[index];
     const uint32_t actions = output.actions;
     const uint8_t directions = (uint8_t)(actions & 15U);
-    if (g_active_core_id == MT_GENESIS_CORE_ID) {
+    if (g_active_core_id == MT_IIGS_CORE_ID) {
+        (void)mt_iigs_hid_assigned_report(&g_iigs_input,index,player,
+            (uint8_t)((actions>>MT_CONTROL_A)&7U),output.x,output.y,directions);
+    } else if (g_active_core_id == MT_GENESIS_CORE_ID) {
         mt_gamepad_state_t state = {0};
         state.connected = 1U;
         state.hat = 8U;
@@ -885,6 +902,9 @@ static void report_complete(void *argument, int bytes)
                 submit_keyboard_state(slot->input_slot, keyboard->modifier,
                                       machine_keys, sizeof(machine_keys));
             }
+        } else if (slot->mouse != 0U && bytes >= 3 && g_active_core_id == MT_IIGS_CORE_ID) {
+            mt_iigs_hid_mouse_report(&g_iigs_input,g_menu_capture ? 0:(int8_t)g_reports[index][1],
+                g_menu_capture ? 0:(int8_t)g_reports[index][2],g_menu_capture ? 0U:g_reports[index][0]);
         } else if (slot->gamepad != 0U) {
             process_gamepad_report(slot, g_reports[index], (uint32_t)bytes);
         }
@@ -1336,9 +1356,11 @@ void usbh_hid_run(struct usbh_hid *hid)
     slot->keyboard =
         (uint8_t)(hid->protocol == HID_PROTOCOL_KEYBOARD &&
                   descriptor->bInterfaceSubClass == HID_SUBCLASS_BOOTIF);
+    slot->mouse = (uint8_t)(hid->protocol == HID_PROTOCOL_MOUSE &&
+        descriptor->bInterfaceSubClass == HID_SUBCLASS_BOOTIF);
     hid->user_data = slot;
     (void)usbh_hid_set_idle(hid, 0U, 0U);
-    if (slot->keyboard != 0U) {
+    if (slot->keyboard != 0U || slot->mouse != 0U) {
         (void)usbh_hid_set_protocol(hid, HID_PROTOCOL_BOOT);
     } else {
         slot->ps4 = usb_ps4_supported(hid->hport->device_desc.idVendor,
@@ -1364,6 +1386,8 @@ void usbh_hid_stop(struct usbh_hid *hid)
     if (slot == NULL || slot->hid != hid) return;
     xil_printf("[usb1] HID disconnected slot=%u\r\n",
                (unsigned int)hid->minor);
+    if(slot->mouse && g_active_core_id==MT_IIGS_CORE_ID)
+        mt_iigs_hid_mouse_report(&g_iigs_input,0,0,0U);
     disconnect_input_slot(slot->input_slot);
     mt_gamepad_disconnect(&g_gamepads, slot->input_slot);
     g_release_guard[slot->input_slot] = 0U;
@@ -1411,6 +1435,7 @@ void usb_hid_service_init(mt_core_link_t *link)
     mt_gameboy_hid_input_init(&g_gameboy_input, emit_active_input, link);
     mt_vectrex_hid_input_init(&g_vectrex_input, emit_active_input, link);
     mt_genesis_hid_input_init(&g_genesis_input, emit_active_input, link);
+    mt_iigs_hid_init(&g_iigs_input,emit_active_input,link);
 }
 
 void usb_hid_service_set_keyboard_filter(mt_usb_keyboard_filter_fn filter,
@@ -1484,6 +1509,7 @@ int usb_hid_service_stop(void)
     (void)mt_gameboy_hid_release_all(&g_gameboy_input);
     (void)mt_vectrex_hid_release_all(&g_vectrex_input);
     (void)mt_genesis_hid_release_all(&g_genesis_input);
+    (void)mt_iigs_hid_release_all(&g_iigs_input);
     memset(g_slots, 0, sizeof(g_slots));
     memset(g_xinput_slots, 0, sizeof(g_xinput_slots));
     for (uint8_t i = 0U; i < MT_GAMEPAD_SLOTS; ++i) {
@@ -1508,7 +1534,9 @@ void usb_hid_service_set_active_core(uint32_t core_id)
         reset_menu_chord(slot);
     }
     refresh_controller_outputs(true, true);
-    if (g_active_core_id == MT_VECTREX_CORE_ID)
+    if (g_active_core_id == MT_IIGS_CORE_ID)
+        mt_iigs_hid_reassert(&g_iigs_input);
+    else if (g_active_core_id == MT_VECTREX_CORE_ID)
         mt_vectrex_hid_reassert(&g_vectrex_input);
     else if (g_active_core_id == MT_GBC_CORE_ID)
         mt_gameboy_hid_reassert(&g_gameboy_input);
@@ -1523,7 +1551,9 @@ void usb_hid_service_set_core_ready(bool ready)
     const uint8_t next = ready ? 1U : 0U;
     if (next != 0U && g_core_ready == 0U) {
         g_core_ready = 1U;
-        if (g_active_core_id == MT_VECTREX_CORE_ID)
+        if (g_active_core_id == MT_IIGS_CORE_ID)
+            mt_iigs_hid_reassert(&g_iigs_input);
+        else if (g_active_core_id == MT_VECTREX_CORE_ID)
             mt_vectrex_hid_reassert(&g_vectrex_input);
         else if (g_active_core_id == MT_GBC_CORE_ID)
             mt_gameboy_hid_reassert(&g_gameboy_input);
@@ -1689,6 +1719,10 @@ void usb_hid_service_set_menu_capture(bool captured)
 {
     if (g_menu_capture == captured) return;
     g_menu_capture = captured;
+    if(captured && g_active_core_id==MT_IIGS_CORE_ID) {
+        g_iigs_input.mouse_x=0; g_iigs_input.mouse_y=0;
+        mt_iigs_hid_mouse_report(&g_iigs_input,0,0,0U);
+    }
     for (uint8_t i = 0U; i < MT_GAMEPAD_SLOTS; ++i) {
         g_menu_navigation_guard[i] = captured && pad_active(&g_gamepads.raw[i]) ? 1U : 0U;
         if (!captured) g_release_guard[i] = pad_active(&g_gamepads.raw[i]) ? 1U : 0U;

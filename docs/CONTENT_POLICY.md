@@ -1,51 +1,23 @@
-# Content Policy
+# Content policy
 
-Status: project distribution rule for every machine core.
+System ROMs supplied by the user are external-only inputs. Do not add their
+bytes to Git or source archives. Private local delivery packages may copy the
+validated files into `sd/multitini/cores/<core>/roms/` from an explicit private
+ROM collection. Record every input and output hash and any conversion. No games
+or operating-system disks are included by the boot-ROM collection step.
 
-Multitini may pin and distribute a system bootstrap, firmware image, ROM, or
-test cartridge when it is widely and easily available from an ordinary stable
-public download. Record its source, checksum, and applicable notice in the same
-way as any other build input.
+The earlier owner-directed C64 inclusion decision is retired as of 2026-10-15.
+Historical hashes, credits and hardware acceptance remain in
+`provenance/c64_roms.json`, `provenance/current_release.json` and
+`licenses/files.csv`; those records do not grant a new redistribution license.
+The original C64 ROM bytes and fast derivatives are no longer source inputs.
 
-Do not import content whose practical source is a warez site, private dump
-exchange, access-control bypass, or similarly illicit archive. Content found
-only through those channels remains user-supplied. Apply the same source test
-whether the artifact is system firmware, a commercial title, homebrew, or test
-content.
+The pinned MIT SameBoy bootstrap, its deterministic memory representation, and
+the licensed overlay font remain redistributable source-built assets. The IIgs
+HDD bootstrap is built from its GPL source. Keep their exact licenses and
+provenance. These open assets are distinct from user-supplied system ROMs.
 
-Apply this rule consistently to C64, Game Boy Color, and every future core. An
-open core license does not by itself identify the origin of a separate ROM or
-game image; the repository record for each included artifact must do that.
-
-On 2026-08-29, the repository owner explicitly directed that the three C64
-system ROM files in `third_party/c64/ROMs/` be tracked and distributed with the
-project. The owner supplied these copies and stated that equivalent files are
-widely mirrored in ordinary public GitHub repositories. This is an explicit
-project distribution decision, not a finding that the ROMs are open source or
-a claim about underlying legal rights. No explicit license or redistribution
-notice was supplied or identified. Exact identities and checksums are recorded
-in `provenance/c64_roms.json` and `licenses/files.csv`.
-
-Current result:
-
-- The GBC adapter includes the pinned, MIT-licensed SameBoy-derived open
-  bootstrap and its deterministic `readmemh` representation.
-- No commercial Game Boy or Game Boy Color cartridge image is included.
-- The C64 adapter loads the tracked BASIC 901226-01, KERNAL 901227-03, and
-  character 901225-01 ROMs at run time. The serial uploader uses these exact
-  repository copies by default and still accepts explicit replacement paths.
-- No 1541 ROM or C64 game, disk, cartridge, or tape image is tracked in Git.
-  The owner's current-package promotion includes the tested local stock 1541
-  ROM and fast pair in the generated runtime bundle. Exact inputs and the
-  inclusion decision are recorded in `provenance/current_release.json`.
-  This does not change their `NOASSERTION` rights status or add game images.
-- The optional C64 fast profile requires a matching KERNAL and 1541 ROM pair
-  under `roms/fast`. The repository builds one in `c64fast/bin` by patching
-  the owner-supplied stock ROMs; the patched images carry the same
-  `NOASSERTION` rights status as their stock inputs (`licenses/files.csv`,
-  `c64fast/bin/PROVENANCE.json`) while the patch sources are GPL-3.0-only.
-  Other pairs are neither included, downloaded, nor licensed by Multitini
-  merely because the firmware can load them.
-  JiffyDOS is a compatible commercial example; a user license is not permission
-  to redistribute its ROM images in a repository, core package, or firmware
-  bundle.
+ROM preparation, fast-ROM patching and simulator tools read the private
+`MULTITINI_ROM_SOURCE` collection (or explicit file arguments). Generated
+private outputs stay under `build/`. `scripts/check_repo.py` rejects source
+ROM binaries; there is no C64 ROM inclusion exception.

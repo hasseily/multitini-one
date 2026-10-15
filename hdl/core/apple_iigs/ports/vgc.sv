@@ -1,0 +1,1190 @@
+//============================================================================
+//  VGC -- Video Graphics Controller (Apple II modes + Super Hi-Res)
+//
+//  Copyright (c) Pierre Cornier
+//  Copyright (c) Steven A. Wilson
+//  Copyright (c) Alan Steremberg
+//
+//  This program is free software; you can redistribute it and/or modify it
+//  under the terms of the GNU General Public License as published by the Free
+//  Software Foundation; either version 3 of the License, or (at your option)
+//  any later version.
+//
+//  This program is distributed in the hope that it will be useful, but WITHOUT
+//  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+//  FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+//  more details.
+//
+//  You should have received a copy of the GNU General Public License along
+//  with this program. If not, see <https://www.gnu.org/licenses/>.
+//============================================================================
+
+/* verilator lint_off TIMESCALEMOD */
+// Multitini port, 2026-10-14: reproduced by scripts/port_apple_iigs_core.py.
+module vgc (
+input load_rom_clk,
+input load_rom_we,
+input [11:0] load_rom_addr,
+input [7:0] load_rom_data,
+input CLK_28M,
+input CLK_14M,
+input clk_vid,
+input ce_pix,
+input[9:0] H,
+input[8:0] V,
+output reg scanline_irq,
+
+output vbl_irq,
+output reg [7:0] R,
+output reg [7:0] G,
+output reg [7:0] B,
+output [22:0] video_addr,
+input [7:0] video_data,
+input [7:0] TEXTCOLOR, // 7:4 text color 3:0 background
+input [3:0] BORDERCOLOR,
+input HIRES_MODE,
+input AN3,
+input STORE80,
+input ALTCHARSET,
+input EIGHTYCOL,
+input PAGE2,
+input TEXTG,
+input MIXG,
+input SHRG,
+input DHRG_MONO,
+// SHR pixel byte on the real Mega II fetch schedule (floating-bus view;
+// see the shr_line buffer below)
+output [7:0] shr_bus_byte
+);
+
+// Counter values for the border boundaries
+
+// NB: Top border range is non-monotonic due to the legacy counter reset.
+// It spans counts 499 to 511, then 250 to 255.
+// See comments in video_timing.v for more information.
+localparam HTOTAL = 10'd911;      // count 911, 912 total pixel clocks
+localparam V_SCAN_PRE = 9'd255;   // Line before buffer scan
+localparam V_SCAN = 9'd256;       // Buffer line 0
+localparam BBE = V_SCAN + 9'd192; // bottom border (IIe)
+localparam BB = V_SCAN + 9'd200;  // bottom border (SHRG)
+localparam BT = 9'd499;           // top border start
+
+// Horizontal layout, derived from the Mega II horizontal counter (TN.IIGS.039).
+// Active video = chars $58..$7F (40 columns). The Apple II active region is the
+// Mega II active area itself (40 chars * 14 px = 560 px); SHRG widens it by 40 px
+// each side (to 640 px), borrowing from the border. Single anchor: HACTIVE = the
+// pixel where char $58 (active video) begins -- matches video_timing.v HACTIVE_PIX.
+localparam HACTIVE = 10'd84;          // active display start (char $58)
+localparam BLE = HACTIVE;             // IIe active start  (= 84)
+localparam BRE = BLE + 10'd560;       // IIe active end    (= 644)
+localparam BL  = BLE - 10'd40;        // SHRG active start (= 44)
+localparam BR  = BL + 10'd640;        // SHRG active end   (= 684)
+
+assign video_addr = SHRG ? video_addr_shrg : video_addr_ii;
+// NEWVIDEO[6] controls CPU memory mapping for Double Hi-Res, but per the IIgs Hardware Reference,
+// when NEWVIDEO[7]=1 (SHR mode), bit 6 is overridden and VGC always uses linear addressing.
+// The video buffer is $E1/2000-$9CFF with SCBs at $9D00 and palettes at $9E00.
+
+/* SHRG */
+reg [22:0] video_addr_shrg_1;
+reg [22:0] video_addr_shrg;
+reg [3:0] r_shrg[16];
+reg [3:0] g_shrg[16];
+reg [3:0] b_shrg[16];
+
+// --- SHR floating-bus schedule (FLOATBUS modes A/B, spots #5/#7/#8) --------
+// The real VGC fetches the 160 pixel bytes during the 40 active Mega II
+// chars (4 per 1MHz slot, H 84..644) and the NEXT line's SCB + 32 palette
+// bytes in LATE HBL (palette visible at capture col 16 ~H872, SCB at col 17
+// ~H886). Our display pipeline fetches on its own earlier schedule; to keep
+// the display byte-identical, pixel bytes are captured into a line buffer
+// during the display walk and replayed for the bus on the real schedule,
+// and the SCB/palette get an ADDITIONAL bus-visible address walk in late
+// HBL -- the display still latches from its existing HTOTAL-4/H<32 pass, so
+// scanline-IRQ timing and palette latching are unchanged.
+reg [7:0] shr_line [0:159];
+reg [7:0] shr_wr_idx;
+reg [22:0] shr_pal_base;   // late-HBL palette base ($9E00 + SCB[3:0]*32)
+reg [2:0]  shr_pal_slot;   // palette slot 0..7 (4 bytes each)
+reg [5:0] shr_rd_char;   // active Mega II char 0..39
+reg [3:0] shr_rd_sub;    // pixel within char 0..13
+always @(posedge clk_vid) if (ce_pix) begin
+    if (H == BLE-1) begin
+        shr_rd_char <= 6'd0;
+        shr_rd_sub  <= 4'd0;
+    end else if (shr_rd_sub == 4'd13) begin
+        shr_rd_sub  <= 4'd0;
+        shr_rd_char <= shr_rd_char + 6'd1;
+    end else
+        shr_rd_sub <= shr_rd_sub + 4'd1;
+end
+// The VGC completes the slot's 4 fetches early in the slot, so the byte on
+// the bus at the CPU sample point is the LAST of the group (4k+3) -- verified
+// against FLOATBUS spot #5 (expected $0F = byte 3 of its row, not byte 0).
+assign shr_bus_byte = shr_line[{shr_rd_char, 2'b11}];
+// ---------------------------------------------------------------------------
+
+
+// debug with a fixed palette
+/*
+initial begin
+r_shrg[0]=0;
+g_shrg[0]=0;
+b_shrg[0]=0;
+r_shrg[1]=4'hd;
+g_shrg[1]=4'h0;
+b_shrg[1]=4'h3;
+r_shrg[2]=4'h0;
+g_shrg[2]=4'h0;
+b_shrg[2]=4'h9;
+r_shrg[3]=4'hd;
+g_shrg[3]=4'h0;
+b_shrg[3]=4'hd;
+r_shrg[4]=4'h0;
+g_shrg[4]=4'h7;
+b_shrg[4]=4'h0;
+r_shrg[5]=0;
+g_shrg[5]=0;
+b_shrg[5]=0;
+r_shrg[6]=4'hd;
+g_shrg[6]=4'h0;
+b_shrg[6]=4'h3;
+r_shrg[7]=4'h0;
+g_shrg[7]=4'h0;
+b_shrg[7]=4'h9;
+r_shrg[8]=4'hd;
+g_shrg[8]=4'h0;
+b_shrg[8]=4'hd;
+r_shrg[9]=4'hf;
+g_shrg[9]=4'hf;
+b_shrg[9]=4'hf;
+r_shrg[10]=4'h5;
+g_shrg[10]=4'h5;
+b_shrg[10]=4'h5;
+r_shrg[11]=0;
+g_shrg[11]=0;
+b_shrg[11]=0;
+r_shrg[12]=4'hd;
+g_shrg[12]=4'h0;
+b_shrg[12]=4'h3;
+r_shrg[13]=4'h0;
+g_shrg[13]=4'h0;
+b_shrg[13]=4'h9;
+r_shrg[14]=4'hd;
+g_shrg[14]=4'h0;
+b_shrg[14]=4'hd;
+r_shrg[15]=4'h7;
+g_shrg[15]=4'h7;
+b_shrg[15]=4'h0;
+end
+*/
+
+reg [3:0] shrg_r_pix;
+reg [3:0] shrg_g_pix;
+reg [3:0] shrg_b_pix;
+
+// First pixel combinational computation - bypasses pipeline latency for H=32
+// At H=32, video_data has first pixel byte, compute color combinationally
+wire [3:0] first_pix_idx_320 = video_data[7:4];  // 320 mode: high nibble is first pixel
+wire [3:0] first_pix_idx_640 = {2'b10, video_data[7:6]};  // 640 mode: bits 7:6, palette colors 8-11
+wire [3:0] first_pix_r = scb[7] ? r_shrg[first_pix_idx_640] : r_shrg[first_pix_idx_320];
+wire [3:0] first_pix_g = scb[7] ? g_shrg[first_pix_idx_640] : g_shrg[first_pix_idx_320];
+wire [3:0] first_pix_b = scb[7] ? b_shrg[first_pix_idx_640] : b_shrg[first_pix_idx_320];
+
+// Latched border color - sampled at start of each scanline for consistent raster effects
+reg [3:0] bordercolor_latched;
+// one cycle before the end of the left border, pull down the scp
+reg [7:0] scb;
+reg [1:0] h_counter;
+reg [3:0] last_pixel;
+reg [3:0] pal_counter;
+always @(posedge clk_vid) if(ce_pix)
+begin
+//$display("video_data = %x video_addr = %x video_addr_shrg %x video_addr_ii %x  H %x V %x NEWVIDEO[6] %x NEWVIDEO[7]",video_data,video_addr,video_addr_shrg,video_addr_ii,H,V,NEWVIDEO[6],NEWVIDEO[7]);
+	// Latch border color at start of each scanline for consistent raster effects
+	// This ensures games that cycle BORDERCOLOR mid-scanline get straight horizontal lines
+	if (H == 0)
+		bordercolor_latched <= BORDERCOLOR;
+	// Pre-fetch SCB during HBLANK for next scanline's display
+	if (H==(HTOTAL-4)) begin
+		video_addr_shrg <= 23'h19D00+{14'b0,  (V[7:0]+1'b1)};
+	end
+	else if (H==(HTOTAL-2)) begin
+		scb <= video_data;
+		// Check for scanline interrupt: SCB bit 6, SHR mode enabled, valid scanline range
+		// V >= 15 allows SCB[0] interrupt to fire at V=15 (just before scanline 0 displays at V=16)
+`ifdef VGC_DEBUG
+		if (V >= (BT-1) && V < 'd206 && V[4:0] == 5'd0)  // Debug every 32nd line in valid range
+			$display("VGC_SCANIRQ_CHECK: V=%d H=%03x SCB=%02x SCB[6]=%d NEWVIDEO[7]=%d -> fire=%d",
+			         V, H, video_data, video_data[6], SHRG, (video_data[6] && SHRG));
+`endif
+		if (video_data[6] && SHRG && V >= V_SCAN_PRE && V < BB)
+			scanline_irq<=1;
+		// Setup palette base address from SCB palette selector (bits 3:0)
+		// Each palette is 32 bytes at $9E00 + (palette * 32)
+		video_addr_shrg_1 <= 23'h19E00 + {14'b0, video_data[3:0], 5'b00000};
+		video_addr_shrg <= 23'h19E00 + {14'b0, video_data[3:0], 5'b00000};
+	end else if (H==HTOTAL) begin
+		pal_counter<=0;
+		scanline_irq<=0;
+		video_addr_shrg <= video_addr_shrg + 1'b1;
+		video_addr_shrg_1 <= video_addr_shrg_1 + 1'b1;
+	end else if (H < 32) begin // 32 = 2 bytes * 16 palette entries, not a border width
+		// Read palette data - due to address pre-increment at H=0x390, first read is at ODD address
+		// Palette format: odd addresses have G[7:4],B[3:0]; even addresses have 0,R[3:0]
+		if (video_addr_shrg[0]) begin
+			b_shrg[pal_counter]<=video_data[3:0];
+			g_shrg[pal_counter]<=video_data[7:4];
+		end else begin
+			r_shrg[pal_counter]<=video_data[3:0];
+			pal_counter<=pal_counter+1'd1;
+		end
+		video_addr_shrg <= video_addr_shrg + 1'b1;
+		video_addr_shrg_1 <= video_addr_shrg_1 + 1'b1;
+	end else if (H==(BL-2)) begin
+	   // Setup pixel data address: $2000 + (scanline * 160 bytes/line)
+	   video_addr_shrg_1 <= 23'h12000 + ({15'd0, V[7:0]} * 23'd160);
+	   video_addr_shrg <= 23'h12000 + ({15'd0, V[7:0]} * 23'd160);
+	   h_counter<=0;
+	   shr_wr_idx<=0;
+	end else if (H < BR) begin
+		h_counter<=h_counter+1'b1;
+		// Only advance address for first 159 advances (byte 0->159), skip the 160th
+		// With 1-cycle display shift, advance #159 happens at H=667, so skip advance at H>=668
+		if (h_counter==2'd2 && H < (BR-4)) begin
+			video_addr_shrg <= video_addr_shrg + 1'b1;
+			video_addr_shrg_1 <= video_addr_shrg_1 + 1'b1;
+		end
+		// Capture each pixel byte for the floating-bus replay (h_counter=='b01:
+		// video_data holds byte shr_wr_idx, one tick after the address settled)
+		if (h_counter==2'b01 && shr_wr_idx < 8'd160) begin
+			shr_line[shr_wr_idx] <= video_data;
+			shr_wr_idx <= shr_wr_idx + 8'd1;
+		end
+		if (scb[7]) begin
+			case(h_counter)
+				'b00:
+				begin
+					shrg_r_pix <= r_shrg[ {2'b10,video_data[7:6]}];
+					shrg_g_pix <= g_shrg[ {2'b10,video_data[7:6]}];
+					shrg_b_pix <= b_shrg[ {2'b10,video_data[7:6]}];
+				end
+				'b01:
+				begin
+					shrg_r_pix <= r_shrg[ {2'b11,video_data[5:4]}];
+					shrg_g_pix <= g_shrg[ {2'b11,video_data[5:4]}];
+					shrg_b_pix <= b_shrg[ {2'b11,video_data[5:4]}];
+				end
+				'b10:
+				begin
+					shrg_r_pix <= r_shrg[ {2'b00,video_data[3:2]}];
+					shrg_g_pix <= g_shrg[ {2'b00,video_data[3:2]}];
+					shrg_b_pix <= b_shrg[ {2'b00,video_data[3:2]}];
+				end
+				'b11:
+				begin
+					shrg_r_pix <= r_shrg[ {2'b01,video_data[1:0]}];
+					shrg_g_pix <= g_shrg[ {2'b01,video_data[1:0]}];
+					shrg_b_pix <= b_shrg[ {2'b01,video_data[1:0]}];
+				end
+			endcase
+		end else begin
+			case(h_counter)
+				'b00:
+				begin
+					if (video_data[7:4]==4'b0 && scb[5]) begin
+					//$display("scb[5] %x use last_pixel %x",scb[5],last_pixel);
+						shrg_r_pix <= r_shrg[ last_pixel ];
+						shrg_g_pix <= g_shrg[ last_pixel ];
+						shrg_b_pix <= b_shrg[ last_pixel ];
+					end else begin
+					    //$display("scb[5] %x  set last_pixel %x",scb[5],video_data[7:4]);
+						last_pixel<=video_data[7:4];
+						shrg_r_pix <= r_shrg[  video_data[7:4]];
+						shrg_g_pix <= g_shrg[  video_data[7:4]];
+						shrg_b_pix <= b_shrg[  video_data[7:4]];
+					end
+				end
+				'b10:
+				begin
+					if (video_data[3:0]==4'b0 && scb[5]) begin
+						shrg_r_pix <= r_shrg[ last_pixel ];
+						shrg_g_pix <= g_shrg[ last_pixel ];
+						shrg_b_pix <= b_shrg[ last_pixel ];
+					end else begin
+						last_pixel<=video_data[3:0];
+						shrg_r_pix <= r_shrg[  video_data[3:0]];
+						shrg_g_pix <= g_shrg[  video_data[3:0]];
+						shrg_b_pix <= b_shrg[  video_data[3:0]];
+					end
+				end
+			endcase
+		end
+
+	end else if (H == 10'd750) begin
+		// --- bus-visible late-HBL prefetch (real VGC bus schedule; the
+		// display keeps latching from the existing HTOTAL-4 / H<32 pass).
+		// Everything on this bus shows the LAST byte of its fetch group
+		// (like the pixel slots' byte 4k+3): the palette moves 4 bytes per
+		// 1MHz slot (samples at capture cols 9-16 = bytes 3,7,...,31), and
+		// the SCB is fetched as an even/odd pair for the CURRENT row, the
+		// odd byte visible at col 17 ($9D00 + (nextrow|1)). Palette select
+		// keys off the NEXT row's SCB -- these fetches prepare the row about
+		// to be displayed (capture cells for row r read at the end of line
+		// r-1). Verified against FLOATBUS expct7/expct8 with the test's own
+		// SCB table. ---
+		video_addr_shrg <= 23'h19D00 + {14'b0, (V[7:0]+8'd1)};      // SCB(next row)
+	end else if (H == 10'd752) begin
+		shr_pal_base <= 23'h19E00 + {14'b0, video_data[3:0], 5'b00000};
+		shr_pal_slot <= 3'd0;
+	end else if (H == 10'd758 || H == 10'd772 || H == 10'd786 || H == 10'd800
+	          || H == 10'd814 || H == 10'd828 || H == 10'd842 || H == 10'd856) begin
+		video_addr_shrg <= shr_pal_base + {18'b0, shr_pal_slot, 2'b11};  // byte 4m+3
+		shr_pal_slot <= shr_pal_slot + 3'd1;
+	end else if (H == 10'd870) begin
+		// SCB even/odd pair for the NEXT row; the odd byte is what the CPU
+		// samples at capture col 17
+		video_addr_shrg <= 23'h19D00 + {14'b0, (V[7:0]+8'd1) | 8'd1};
+	end
+
+	// Seed fill-mode history with the same first byte used by the RGB bypass.
+	// The prefetch tick still sees the old palette byte; it is not a pixel.
+	if (SHRG && !scb[7] && H == BL) last_pixel <= video_data[7:4];
+
+	// Clear SHRG pixel registers during left border to ensure clean start
+	// Also clear at right border for completeness
+	if (SHRG && (H < BL || H >= BR)) begin
+		shrg_r_pix <= 4'b0;
+		shrg_g_pix <= 4'b0;
+		shrg_b_pix <= 4'b0;
+	end
+
+end
+
+
+
+
+
+/* APPLE IIe */
+
+// Flash counter for blinking text (~2Hz, toggles every ~0.25 seconds)
+reg [22:0] flash_cnt;
+always @(posedge clk_vid) if (ce_pix) flash_cnt <= flash_cnt + 1'b1;
+wire flash_state = flash_cnt[21];
+
+// Apple IIgs color palette (16 colors) - matches KEGS g_lores_colors
+reg [11:0] palette_rgb_r[0:15] = '{
+    12'h000, // 0   Black
+    12'hd03, // 1   Deep Red
+    12'h009, // 2   Dark Blue
+    12'hd0d, // 3   Purple
+    12'h070, // 4   Dark Green
+    12'h555, // 5   Dark Gray
+    12'h22f, // 6   Medium Blue
+    12'h6af, // 7   Light Blue
+    12'h852, // 8   Brown
+    12'hf60, // 9   Orange
+    12'haaa, // 10  Light Gray
+    12'hf98, // 11  Pink
+    12'h0d0, // 12  Light Green
+    12'hff0, // 13  Yellow
+    12'h0f9, // 14  Aquamarine
+    12'hfff  // 15  White
+};
+
+// Color lookup functions using IIgs palette
+// Use latched border color for consistent horizontal lines during raster effects
+wire [11:0] BORGB = palette_rgb_r[bordercolor_latched];
+wire [11:0] TRGB = palette_rgb_r[TEXTCOLOR[7:4]];
+wire [11:0] BRGB = palette_rgb_r[TEXTCOLOR[3:0]];
+// Authentic Apple II NTSC Color Artifacting Algorithm
+// Based on apple2hack reference implementation
+// Uses 6-pixel shift register and color basis vectors
+
+// Apple II color basis vectors (RGB values from reference)
+reg [7:0] basis_r[0:3];
+reg [7:0] basis_g[0:3];
+reg [7:0] basis_b[0:3];
+
+// Initialize color basis vectors for Apple II NTSC colors
+initial begin
+    basis_r[0] = 8'h88; basis_g[0] = 8'h22; basis_b[0] = 8'h2C; // Color 0
+    basis_r[1] = 8'h38; basis_g[1] = 8'h24; basis_b[1] = 8'hA0; // Color 1
+    basis_r[2] = 8'h07; basis_g[2] = 8'h67; basis_b[2] = 8'h2C; // Color 2
+    basis_r[3] = 8'h38; basis_g[3] = 8'h52; basis_b[3] = 8'h07; // Color 3
+end
+
+// 6-pixel shift register for authentic Apple II color detection
+reg [5:0] apple2_shift_reg;
+
+// Horizontal pixel counter for authentic Apple II color phase (modulo 4)
+// Use H counter with offset to maintain proper phase relationship
+reg [10:0] pixel_counter;
+// Color phase for NTSC artifact colors - needs to be aligned with actual Apple II timing
+// The base phase comes from H position with an offset for correct alignment.
+// Bit 7 of the hires byte (stored in graphics_color[0]) shifts the phase by 1,
+// selecting between violet/green (bit7=0) and blue/orange (bit7=1) palettes.
+wire [1:0] color_phase_base = (H[1:0] + 2'b11) & 2'b11; // Offset by 3 for base alignment
+wire [1:0] color_phase = (color_phase_base + {1'b0, graphics_color[0]}) & 2'b11;
+
+// Authentic Apple II tint consistency check
+wire consistent_tint = (apple2_shift_reg[0] == apple2_shift_reg[4]) &
+                       (apple2_shift_reg[5] == apple2_shift_reg[1]);
+
+// --- Double hi-res 16-color decode (AppleColor RGB card behavior) ----------
+// Ported from gssquared displaypp (VideoScanGenerator_RGB + HiresColorTable):
+// an 11-bit sliding window over the 560-bit DHR pixel stream (oldest bit at
+// [10], matching the reference's shiftreg<<1) indexes a 2048x16 LUT that
+// yields four 4-bit colors per 4 pixels consumed (MSB nibble = leftmost).
+// A group lookup latches every 4th pixel; the decoded image therefore trails
+// the bit stream by 6 pixels and the dhires-color display window is shifted
+// to match. NEWVIDEO[5] (DHRG_MONO) = 1 keeps the raw 1bpp mono rendering.
+reg [15:0] dhr_lut [0:2047];
+`include "dhr_lut.vh"
+
+// GSHGR 16-color palette (4 bits/channel), index 0 = white .. 15 = black
+function automatic [11:0] dhr_pal(input [3:0] c);
+    case (c)
+        4'h0: dhr_pal = 12'hFFF; // white
+        4'h1: dhr_pal = 12'hFF0; // yellow
+        4'h2: dhr_pal = 12'hF60; // orange
+        4'h3: dhr_pal = 12'hD03; // deep red
+        4'h4: dhr_pal = 12'hF98; // pink
+        4'h5: dhr_pal = 12'hD2D; // purple
+        4'h6: dhr_pal = 12'h009; // dark blue
+        4'h7: dhr_pal = 12'h6AF; // light blue
+        4'h8: dhr_pal = 12'h1D0; // green
+        4'h9: dhr_pal = 12'h072; // dark green
+        4'hA: dhr_pal = 12'h850; // brown
+        4'hB: dhr_pal = 12'h4F9; // aquamarine
+        4'hC: dhr_pal = 12'hAAA; // light gray
+        4'hD: dhr_pal = 12'h22F; // medium blue
+        4'hE: dhr_pal = 12'h555; // dark gray
+        4'hF: dhr_pal = 12'h000; // black
+    endcase
+endfunction
+
+// Group latch phase: the reference preloads 3-phase_offset bits (DHR
+// phase_offset=1 -> 2), making lookups land on stream index 4k+5 -- but our
+// graphics_pixel is registered (one tick behind graphics_pix_shift[0]), so
+// the matching H phase is one later, wrapping to H[1:0] == 0. Verified
+// against the real Prince of Persia title screen (phase sweep: 1,2,3 all
+// produce rotated hues; 0 matches orange dome / dark blue tapestry / red
+// borders exactly).
+localparam [1:0] DHR_PHASE = 2'b00;
+
+reg [10:0] dhr_win;
+reg [15:0] dhr_hold;
+reg [1:0]  dhr_nib;
+always @(posedge clk_vid) if (ce_pix) begin
+    if (H < BLE || H >= BRE + 10'd8) begin
+        dhr_win  <= 11'd0;
+        dhr_nib  <= 2'd0;
+    end else begin
+        dhr_win <= {dhr_win[9:0], graphics_pixel};
+        if (H[1:0] == DHR_PHASE && H >= BLE + 10'd5) begin
+            dhr_hold <= dhr_lut[{dhr_win[9:0], graphics_pixel}];
+            dhr_nib  <= 2'd0;
+        end else
+            dhr_nib  <= dhr_nib + 2'd1;
+    end
+end
+wire [3:0]  dhr_color = (dhr_nib == 2'd0) ? dhr_hold[15:12] :
+                        (dhr_nib == 2'd1) ? dhr_hold[11:8]  :
+                        (dhr_nib == 2'd2) ? dhr_hold[7:4]   : dhr_hold[3:0];
+wire [11:0] dhr_rgb   = dhr_pal(dhr_color);
+
+// Graphics active window. Dhires: with the head-start (init emits bits 0/1
+// at BLE-2/BLE-1, pre-shifted preload from bit 2), stream bit j displays at
+// H = BLE-1+j -- window [BLE-1, BRE-2] = the full 560px. The color decode
+// consumes the same corrected stream with its 6px LUT latency next to it.
+// Other GFX modes trail by 5px (apple2_shift_reg).
+wire [9:0] gfx_lb = dhires_mode ? (DHRG_MONO ? BLE-10'd1 : BLE + 10'd4) : (BLE + 10'd5);
+wire [9:0] gfx_rb = dhires_mode ? (DHRG_MONO ? BRE-10'd2 : BRE + 10'd3) : (BRE + 10'd4);
+// ---------------------------------------------------------------------------
+
+// Apple II color generation logic
+reg [7:0] apple2_r, apple2_g, apple2_b;
+always @(*) begin
+    if (hires_mode) begin
+        // Start with black background
+        apple2_r = 8'h00;
+        apple2_g = 8'h00;
+        apple2_b = 8'h00;
+
+        // Use NTSC color artifacting for ALL hires modes (including DHIRES)
+        // The dhires_mode monochrome rendering was breaking games like 8bit-Slicks
+        // that run in standard HIRES but with EIGHTYCOL left set by menu software.
+        // True DHIRES color (16-color) mode would need different handling.
+        if (dhires_mode) begin
+            if (DHRG_MONO) begin
+                // Mono double-hi-res (NEWVIDEO[5] set, e.g. A2Desktop): render raw
+                // 1bpp pixels from the registered graphics_pixel. That stream is
+                // byte-exact but one pixel LATE, with a stale garbage bit landing in
+                // the first displayed column (verified against GSSquared: our pixels
+                // were ground truth >> 1). The display window below starts at BLE+1
+                // to skip the garbage column and show the full 560 real pixels; the
+                // whole image sits 1px right of nominal, which beats the comb tap
+                // (its reload bypass skews mid-byte cadence) and the apple2_shift_reg
+                // artifact window (6-deep fill transient mangled the cursor).
+                // Programs that run hires+80col but with AN3=1 (e.g. 8bit-Slicks)
+                // have dhires_mode=0 and keep artifacting.
+                apple2_r = graphics_pixel ? 8'hff : 8'h00;
+                apple2_g = graphics_pixel ? 8'hff : 8'h00;
+                apple2_b = graphics_pixel ? 8'hff : 8'h00;
+            end else begin
+                // Color double-hi-res: AppleColor RGB 16-color decode (see the
+                // dhr_lut pipeline above). 6px decode latency; the dhires-color
+                // border window below is shifted to match.
+                apple2_r = {dhr_rgb[11:8], dhr_rgb[11:8]};
+                apple2_g = {dhr_rgb[7:4],  dhr_rgb[7:4]};
+                apple2_b = {dhr_rgb[3:0],  dhr_rgb[3:0]};
+            end
+        end
+        else if (consistent_tint) begin
+            // Regular hires with consistent tint: display color using basis vectors
+            // Add contributions from 4 adjacent pixels
+            if (apple2_shift_reg[3]) begin
+                apple2_r = apple2_r + basis_r[(color_phase + 1) & 2'b11];
+                apple2_g = apple2_g + basis_g[(color_phase + 1) & 2'b11];
+                apple2_b = apple2_b + basis_b[(color_phase + 1) & 2'b11];
+            end
+            if (apple2_shift_reg[4]) begin
+                apple2_r = apple2_r + basis_r[(color_phase + 2) & 2'b11];
+                apple2_g = apple2_g + basis_g[(color_phase + 2) & 2'b11];
+                apple2_b = apple2_b + basis_b[(color_phase + 2) & 2'b11];
+            end
+            if (apple2_shift_reg[1]) begin
+                apple2_r = apple2_r + basis_r[(color_phase + 3) & 2'b11];
+                apple2_g = apple2_g + basis_g[(color_phase + 3) & 2'b11];
+                apple2_b = apple2_b + basis_b[(color_phase + 3) & 2'b11];
+            end
+            if (apple2_shift_reg[2]) begin
+                apple2_r = apple2_r + basis_r[color_phase];
+                apple2_g = apple2_g + basis_g[color_phase];
+                apple2_b = apple2_b + basis_b[color_phase];
+            end
+        end else begin
+            // Tint is changing: display only black, gray, or white
+            case (apple2_shift_reg[3:2])
+                2'b11: begin apple2_r = 8'hFF; apple2_g = 8'hFF; apple2_b = 8'hFF; end // White
+                2'b01, 2'b10: begin apple2_r = 8'h80; apple2_g = 8'h80; apple2_b = 8'h80; end // Gray
+                default: begin apple2_r = 8'h00; apple2_g = 8'h00; apple2_b = 8'h00; end // Black
+            endcase
+        end
+    end else begin
+        // Not hi-res mode: use existing lores logic
+        apple2_r = 8'h00;
+        apple2_g = 8'h00;
+        apple2_b = 8'h00;
+    end
+end
+
+// Graphics RGB calculation - different for lores vs hires
+wire [11:0] graphics_rgb = lores_mode ? palette_rgb_r[graphics_color] :
+                                       {apple2_r[7:4], apple2_g[7:4], apple2_b[7:4]};
+
+// ce(ce_pix): gate the char-ROM read to the pixel-clock enable so it samples
+// chrom_addr once per pipeline step, aligned with the ce_pix-gated text logic.
+// With ce(1'b1) the ROM reads every clk_vid (2x ce_pix); on silicon the extra
+// intermediate read latches a transitional address, so consecutive 80-col
+// characters load the SAME glyph (aux char doubled, main dropped) -- garbled
+// text on FPGA that the sim can't reproduce (SignalTap-confirmed 2026-07-06).
+apple_iigs_runtime_rom #(.AW(12)) charrom(
+  .load_clk(load_rom_clk),
+  .load_we(load_rom_we),
+  .load_addr(load_rom_addr),
+  .load_data(load_rom_data),
+  .clock(clk_vid),
+  .address(chrom_addr),
+  .q(chrom_data_out),
+  .ce(ce_pix)
+);
+
+wire [7:0] chrom_data_out;
+// KEGS font data: 1 = foreground pixel, 0 = background pixel
+// No inversion needed for KEGS-based chr.mem
+wire [7:0] chrom_data_inv = chrom_data_out;
+wire [11:0] chram_addr;
+wire [11:0] chrom_addr;
+
+// Text mode shift register for FPGA-compatible timing
+// The character ROM has 1-cycle latency, so we need to pre-fetch and buffer
+// Load the ROM data into a shift register, then shift out pixels
+reg [6:0] text_shift_reg;
+
+//
+// 40 and 80 column video modes
+//
+//wire [2:0] chpos_y = V[2:0];
+reg [5:0] chram_x;
+// Anticipated column index for the dhires video address, 2 cycles ahead of chram_x
+// (see aux_bank_early). chram_x increments at xpos==4 (a16==0), one cycle too late for
+// the next column's aux-byte reload; chram_x_early increments at the aux_bank_early
+// column boundary so the address (column + bank) is settled before each reload.
+reg [5:0] chram_x_early;
+//wire [12:0] chram_y = BASEADDR;
+
+
+//  in EIGHTCOL mode we need each pixel, in 40 we pixel double
+// Apple II character ROM: 7 pixels wide (bits 0-6), bit 7 unused for text
+// In 80-column mode: xpos 0-6 maps directly to character bits 0-6
+// In 40-column mode: xpos 0-13 maps to character bits 0-6 (pixel doubled)
+// Text pixel output from shift register (FPGA-compatible with sync ROM)
+wire textpixel = text_shift_reg[0];
+
+    // Regular Hires - Apple II hi-res: 7 pixels per byte (bits 0-6), bit 7 is color/palette
+    // Emit 7 pixel bits LSB-first and replicate the last pixel into the pad bit.
+    // This prevents a black seam if an extra shift occurs before the next reload.
+    function automatic bit [7:0] expandHires40([7:0] vd);
+        reg [7:0] vs;
+        vs = {vd[6], vd[6:0]};  // replicate last pixel instead of zero padding
+        return vs;
+    endfunction
+
+    // Double Hires
+    function automatic bit [6:0] expandHires80([7:0] vd);
+        reg [6:0] vs;
+        vs = vd[6:0];
+        return vs;
+    endfunction
+
+    // Regular Text
+    function automatic bit [6:0] expandText40([7:0] vd);
+        reg [6:0] vs;
+        vs = vd[6:0];
+        return vs;
+    endfunction
+
+    // Regular Lores
+    function automatic bit [6:0] expandLores40([7:0] vd, bit seg);
+        reg [6:0] vs;
+        case (seg)
+            1'b0: vs = {
+                vd[3],vd[2],vd[1],vd[0],
+                vd[3],vd[2],vd[1]
+            };
+            1'b1: vs = {
+                vd[7],vd[6],vd[5],vd[4],
+                vd[7],vd[6],vd[5]
+            };
+        endcase
+        return vs;
+    endfunction
+
+
+        // Double Lores
+    function automatic bit [6:0] expandLores80([7:0] vd, bit seg);
+        reg [6:0] vs;
+        case (seg)
+            1'b0: vs = {
+                vd[3],vd[2],vd[1],vd[0],
+                vd[3],vd[2],vd[1]
+            };
+            1'b1: vs = {
+                vd[7],vd[6],vd[5],vd[4],
+                vd[7],vd[6],vd[5]
+            };
+        endcase
+        return vs;
+    endfunction
+
+    // Memory address generation, per Sather
+    function automatic bit [15:0] lineaddr([9:0] y);
+        reg [15:0] a;
+        a[2:0] = 3'b0;
+        a[6:3] = ({ 1'b1, y[6], 1'b1, 1'b1}) +
+                 ({ y[7], 1'b1, y[7], 1'b1}) +
+                 ({ 3'b000,           y[6]});
+        a[9:7] = y[5:3];
+        a[14:10] = (HIRES_MODE & GR) == 1'b0 ?
+            {2'b00, 1'b0, PAGE2 &  ~STORE80, ~(PAGE2 &  ~STORE80)} :
+            {PAGE2 &  ~STORE80, ~(PAGE2 &  ~STORE80), y[2:0]};
+        a[15] = 1'b0;
+        return a;
+    endfunction
+
+    localparam [2:0] TEXT40_LINE = 0;
+    localparam [2:0] TEXT80_LINE = 1;
+    localparam [2:0] LORES40_LINE = 4;
+    localparam [2:0] LORES80_LINE = 5;
+    localparam [2:0] HIRES40_LINE = 6;
+    localparam [2:0] HIRES80_LINE = 7;
+
+
+        // Line type detection for Apple II video modes
+// AN3 controls whether EIGHTYCOL selects double-width modes:
+// - AN3=1: Standard Apple II modes (40-column), EIGHTYCOL ignored for graphics
+// - AN3=0: IIgs double modes (80-column) when EIGHTYCOL=1
+// For text modes, EIGHTYCOL always controls 40/80 column selection
+wire [2:0] line_type_w = (!GR & !EIGHTYCOL) ? TEXT40_LINE :
+        (!GR & EIGHTYCOL) ? TEXT80_LINE :
+        (GR & !HIRES_MODE & (AN3 | !EIGHTYCOL)) ? LORES40_LINE :  // Standard Apple II lores (AN3=1 OR EIGHTYCOL=0)
+        (GR & !HIRES_MODE & !AN3 & EIGHTYCOL) ? LORES80_LINE :    // IIgs double lores (AN3=0 AND EIGHTYCOL=1)
+        (GR & HIRES_MODE & (AN3 | !EIGHTYCOL)) ? HIRES40_LINE :   // Standard Apple II hires (AN3=1 OR EIGHTYCOL=0)
+        (GR & HIRES_MODE & !AN3 & EIGHTYCOL) ? HIRES80_LINE :     // IIgs double hires (AN3=0 AND EIGHTYCOL=1)
+        TEXT40_LINE;
+
+// True when THIS line uses 80-column (1:1, no pixel-doubling) pixel timing:
+// text80, lores80, and dhires. Standard hi-res/lores with EIGHTYCOL set but
+// AN3=1 is a 40-column line and must NOT use the 80-column pixel cadence --
+// the pixel pipeline keys off this, not the raw EIGHTYCOL bit, so that
+// HIRES40+EIGHTYCOL=1 (e.g. the diagnostic keyboard test, 8bit-Slicks) keeps
+// correct pixel doubling and hi-res color artifacting.
+wire line_is_80 = (line_type_w == TEXT80_LINE) | (line_type_w == LORES80_LINE) |
+                  (line_type_w == HIRES80_LINE);
+
+//
+// Apple II Graphics Mode Support - Pixel Buffer System
+//
+
+// Pixel buffer system (inspired by apple_video.sv but adapted for vgc.v memory timing)
+reg [7:0] graphics_pix_shift;    // Shifts out one pixel per clock
+reg [3:0] graphics_color;        // Current pixel color
+reg graphics_pixel;              // Current pixel value
+reg buffer_needs_reload;         // Flag to reload buffer when chram_x increments
+
+// Color artifacting for hires mode (simplified version of apple2hack logic)
+
+// Current mode detection using existing line_type_w
+wire lores_mode = (line_type_w == LORES40_LINE) | (line_type_w == LORES80_LINE);
+wire hires_mode = (line_type_w == HIRES40_LINE) | (line_type_w == HIRES80_LINE);
+wire graphics_mode = lores_mode | hires_mode;
+
+// Current graphics pixel output (combinational for immediate display, no pipeline delay)
+// During buffer reload, output the first pixel of the new byte directly
+// For lores mode, bit 0 of expanded data is the high nibble bit 0 (upper half) or low nibble bit 0 (lower half)
+// For hires mode, bit 0 of video_data is first pixel (LSB-first)
+// Note: expandLores40 returns {nibble[3],nibble[2],nibble[1],nibble[0],nibble[3],nibble[2],nibble[1]}
+// so bit 0 is nibble[1], but we just need any valid pixel - use nibble bit directly
+
+//
+// Text Mode chars are 7 bits wide, not 8
+//
+
+// LDPS_N equivalent for memory loading control (inspired by Apple IIe timing)
+// This signal controls when to load new character/graphics data
+wire ldps_load;
+//wire text80_mode = (!GR & EIGHTYCOL);
+// ldps_load triggers buffer reload. For 40-col mode, we need 2+ cycles between
+// chram_x increment and reload for memory latency:
+// - xpos=10: ldps_load triggers buffer_needs_reload
+// - xpos=11: chram_x increments (address changes, registered)
+// - xpos=12: video_addr_ii updates (combinational from new chram_x)
+// - xpos=13: video_data valid (after memory latency)
+// - xpos=0 (next char): reload from valid video_data
+// So ldps_load at xpos=10 gives us reload at xpos=11, which is still too early.
+// We need reload to happen AFTER video_data is valid at xpos=13.
+// Solution: change ldps_load to xpos=12 so reload happens at xpos=13 when data is ready.
+assign ldps_load = (SHRG) ?
+                   // SHRG mode timing
+                   ((H >= (BL-4) && H < BL) || (H >= BL && ((EIGHTYCOL && (xpos == 3)) || (!EIGHTYCOL && (xpos == 12))))) :
+                   // Apple II mode timing (line_is_80: text80/lores80/dhires use the
+                   // 80-col cadence; HIRES40+EIGHTYCOL=1 stays on the 40-col cadence)
+                   ((H >= (BLE-4) && H < BLE) || (H >= BLE && ((line_is_80 && (xpos == 3)) || (!line_is_80 && (xpos == 12)))));
+
+reg [3:0] xpos;
+reg [16:0] aux;
+// Double-hi-res anticipated aux/main bank select for the video address. video_data
+// has a 1-cycle BRAM latency and the per-byte reload reads it ~1 cycle after the
+// aux[16] bank toggle (xpos==4), so the reload latches the stale aux byte into the
+// main slot -> the byte (mouse cursor / first character) displays twice. aux_bank_early
+// toggles 2 cycles sooner (xpos==2) and drives the dhires address only, so the main
+// byte is addressed early enough to settle before its reload. aux[16] still drives the
+// chram_x increment cadence unchanged.
+reg aux_bank_early;
+always @(posedge clk_vid)
+begin
+   if (ce_pix)
+   begin
+	if ((SHRG && H<BL) || (!SHRG && H<BLE))
+	begin
+		// Early character loading during border period
+		// Different timing for SHRG vs Apple II modes
+		if (SHRG) begin
+			// SHRG mode: start loading at H=28
+			if (H == 26) begin
+				if (EIGHTYCOL) begin
+					chram_x <= 0;
+					aux[16] <= 1'b1;
+				end else begin
+					chram_x <= 0;
+					aux <= 0;
+				end
+			end else if (H == BL-4) begin
+				buffer_needs_reload <= 1'b1;
+			end else if (H == BL-2) begin
+				buffer_needs_reload <= 1'b1;
+			end
+		end else begin
+			// Apple II modes: start loading at H=68
+			// Pre-fetch timing: chram_x=0 at H=68, reload at H=71, data ready at H=72
+			if (H == BLE-4) begin
+				if (line_is_80) begin
+					chram_x <= 0;
+					chram_x_early <= 0;
+					aux[16] <= 1'b1;
+					aux_bank_early <= 1'b1;
+				end else begin
+					chram_x <= 0;
+					chram_x_early <= 0;
+					aux <= 0;
+					aux_bank_early <= 1'b0;
+				end
+			end else if (H == (BLE-1)) begin
+				// Pre-load the shift register at H=71 so first pixel is ready at H=72
+				// This is the ONLY place where we load during the init block
+				if (hires_mode) begin
+					// Double hi-res: pre-shifted by 2 -- bits 0 and 1 of the first
+					// aux byte are emitted directly through graphics_pixel below
+					// (the registered pixel path otherwise starts 2px late and the
+					// first mid-line reload clips the byte to 5 of its 7 pixels:
+					// the A2Desktop "doubled cursor" / broken left edge).
+					graphics_pix_shift <= dhires_mode
+						? {video_data[6], video_data[6], video_data[6], video_data[6:2]}
+						: expandHires40(video_data);
+					graphics_color <= {3'b0, video_data[7]};
+				end else if (lores_mode) begin
+					graphics_pix_shift <= {expandLores40(video_data, window_y_w[2]), 1'b0};
+					graphics_color <= window_y_w[2] ? video_data[7:4] : video_data[3:0];
+				end
+			end
+		end
+
+		xpos<=0;
+		// Only clear graphics shift register early in the line (before pre-load)
+		if (H < 71) begin
+			graphics_pix_shift <= 8'b0;
+			graphics_color <= 4'b0;
+		end
+		apple2_shift_reg <= 6'b0;
+		graphics_pixel <= 1'b0;
+		pixel_counter <= 11'b0;
+		// Double hi-res head start (after the unconditional clear above so it
+		// wins): emit the first aux byte's bits 0/1 directly; the shift-register
+		// path takes over at bit 2 via the pre-shifted preload. video_data holds
+		// aux byte 0 from H=BLE-2 (address set at BLE-4, one BRAM cycle).
+		if (dhires_mode && H == (BLE-2)) graphics_pixel <= video_data[0];
+		if (dhires_mode && H == (BLE-1)) graphics_pixel <= video_data[1];
+		text_shift_reg <= 7'b0;
+	end
+	else
+	begin
+		// Graphics pixel buffer system - coordinate with memory timing
+		// Debug start and end of line to check horizontal alignment
+`ifdef VGC_DEBUG
+		if (((H >= 70 && H <= 90) || (H >= 620 && H <= 640)) && V == 100 && hires_mode)
+			$display("HPIX: H=%d xpos=%d chram_x=%d reload=%b shift=%b pixel=%b video_data=%h",
+			         H, xpos, chram_x, buffer_needs_reload, graphics_pix_shift, graphics_pix_shift[0], video_data);
+`endif
+		if (graphics_mode && GR) begin
+			// Reload buffer when chram_x changes (new memory data available)
+			// Only reload if chram_x is within valid range (0-39 for 40-col, 0-59 for 80-col)
+			if (buffer_needs_reload) begin
+				// Only load valid data if chram_x is within valid range (0-59 for 40-col, 0-79 for 80-col)
+				if ((line_is_80 && chram_x < 60) || (!line_is_80 && chram_x < 40)) begin
+					if (lores_mode) begin
+						// Lores: expand nibbles based on line position
+						graphics_pix_shift <= {expandLores40(video_data, window_y_w[2]), 1'b0};
+						graphics_color <= window_y_w[2] ? video_data[7:4] : video_data[3:0];
+`ifdef VGC_DEBUG
+						if (H >= BL && H <= 100 && V == BT)
+							$display("  LORES RELOAD: H=%d video_data=%h expanded=%b color=%h", H, video_data, {expandLores40(video_data, window_y_w[2]), 1'b0}, window_y_w[2] ? video_data[7:4] : video_data[3:0]);
+`endif
+					end else if (hires_mode) begin
+						// Hires: expand pixel bits (0-6), store color bit (7) separately
+						// Always store bit 7 for color phase - even in "DHIRES" mode since
+						// games like 8bit-Slicks run with EIGHTYCOL set but still need color
+						graphics_pix_shift <= expandHires40(video_data);
+						graphics_color <= {3'b0, video_data[7]};  // Store color/palette bit
+					end
+				end
+				// Always clear reload flag, even if we skipped loading due to out-of-bounds
+				buffer_needs_reload <= 1'b0;
+			end else begin
+				// Shift pixels out: every clock in 80-col, every 2 clocks in 40-col (pixel doubling)
+				// In 40-col mode: shift on odd xpos (1,3,5,7,9,11,13) so each pixel displays twice
+                if (line_is_80 || xpos[0] == 1'b1) begin
+                    // Shift with last-pixel fill to avoid introducing black seams
+                    graphics_pix_shift <= {graphics_pix_shift[0], graphics_pix_shift[7:1]};
+`ifdef VGC_DEBUG
+                    if (H >= BL && H <= 100 && V == BT)
+                        $display("  PIXEL SHIFT: H=%d xpos=%d shift_before=%b shift_after=%b pixel_out=%b", H, xpos, graphics_pix_shift, {graphics_pix_shift[0], graphics_pix_shift[7:1]}, graphics_pix_shift[0]);
+`endif
+                end else begin
+					// Hold pixel for doubling in 40-column mode
+`ifdef VGC_DEBUG
+					if (H >= BL && H <= 100 && V == BT)
+						$display("  PIXEL HOLD: H=%d xpos=%d shift=%b pixel_out=%b", H, xpos, graphics_pix_shift, graphics_pix_shift[0]);
+`endif
+				end
+			end
+			graphics_pixel <= graphics_pix_shift[0];
+
+			// Update Apple II 6-pixel shift register for color artifacting
+			apple2_shift_reg <= {graphics_pixel, apple2_shift_reg[5:1]};
+
+			// Increment pixel counter for color phase (during active video)
+			// Mode-dependent boundaries: SHRG uses full width, Apple II modes are centered
+			if (SHRG) begin
+				// SHRG mode: use full 640-pixel width (within 704 visible area)
+				if (H >= BL && H < BR && V >= V_SCAN && V < BB)
+					pixel_counter <= pixel_counter + 1'b1;
+				else if (H < BL)
+					pixel_counter <= 11'b0; // Reset at start of each line
+			end else begin
+				// Apple II modes: 192 lines starting at V=16 (scanline 0 to 191)
+				if (H >= BLE && H < BRE && V >= V_SCAN && V < BBE)
+					pixel_counter <= pixel_counter + 1'b1;
+				else if (H < BLE)
+					pixel_counter <= 11'b0; // Reset at start of each line
+			end
+		end
+
+		xpos<=xpos+1'b1;
+
+		// Text mode shift register management (FPGA-compatible sync ROM timing)
+		// ROM has 1-cycle latency, so we pre-fetch and buffer in shift register
+		if (!GR) begin
+			if (EIGHTYCOL) begin
+				// 80-column text mode: 7 pixels per character (xpos 0-6)
+				// Timing: xpos=4: set address, xpos=5: video_data ready, xpos=6: ROM ready
+				// At xpos=0: load shift register with pre-fetched ROM data
+				if (xpos == 'd0) begin
+					// Load shift register with ROM data (ready from pre-fetch)
+					text_shift_reg <= chrom_data_inv[6:0];
+					// Latch video_data for this character's ROM addressing
+				end else begin
+					// Shift out pixels LSB first (shift right, read bit 0)
+					text_shift_reg <= {1'b0, text_shift_reg[6:1]};
+				end
+			end else begin
+				// 40-column text mode: 14 pixels per character (xpos 0-13), pixel doubled
+				// Each pixel displays twice (even xpos shows pixel, odd xpos shifts to next)
+				if (xpos == 'd0) begin
+					// Load shift register with ROM data
+					text_shift_reg <= chrom_data_inv[6:0];
+				end else if (xpos[0] == 1'b0 && xpos != 'd0) begin
+					// Shift on EVEN xpos (2,4,6,8,10,12) for pixel doubling
+					// This way: xpos 0-1 show bit0, xpos 2-3 show bit1, etc.
+					text_shift_reg <= {1'b0, text_shift_reg[6:1]};
+				end
+				// Odd xpos (1,3,5,7,9,11,13): hold for pixel doubling
+			end
+		end
+
+		if (line_is_80) begin
+		  if (xpos=='d2) begin
+		    // Anticipated bank toggle for the dhires video address (see aux_bank_early
+		    // declaration): 2 cycles ahead of aux[16] so the next byte settles in time.
+		    aux_bank_early <= ~aux_bank_early;
+		    // Advance the anticipated column at the main->aux boundary (abe==0 about to
+		    // flip to 1), 2 cycles before chram_x, so the next column's aux byte is
+		    // addressed in time for its reload.
+		    if (aux_bank_early == 1'b0)
+		      chram_x_early <= chram_x_early + 1'b1;
+		  end
+		  if (xpos=='d4) begin
+		    // Pre-fetch: advance memory 1 cycle earlier for sync ROM timing
+		    // This gives memory 1 cycle to respond, then ROM 1 cycle
+		    aux[16]<=~aux[16];                    // Toggle between main/aux every character
+		    if (aux[16]==1'b0)                    // Only increment memory address every 2 characters
+		      chram_x<=chram_x+1'b1;              // (each memory location holds 2 characters)
+		  end
+		  if (xpos=='d6) begin
+			xpos<=0;
+                  end
+        end else if (xpos=='d11 && !line_is_80) begin
+            // Pre-fetch for 40-column mode: increment address 2 cycles early
+            // xpos=11: address changes, xpos=12: video_data ready, xpos=13: ROM ready
+            // This gives memory + ROM time to respond before xpos=0
+            chram_x<=chram_x+1'b1;
+        end else if (xpos=='d13) begin
+            // 40-column mode: wrap xpos at end of character (no chram_x inc here)
+            xpos<=0;
+        end
+
+		// Clear shift registers at right border to prevent stray pixels
+		// Text mode right border starts at H=632, Graphics at H=637
+		if (!SHRG && !GR && H >= BRE) begin
+			text_shift_reg <= 7'b0;
+		end
+		if (!SHRG && GR && H > (BRE+4)) begin
+			graphics_pix_shift <= 8'b0;
+			apple2_shift_reg <= 6'b0;
+			graphics_pixel <= 1'b0;
+			graphics_color <= 4'b0;  // Clear color to prevent stale palette lookups
+		end
+
+		// Use LDPS equivalent for buffer reload timing - but only trigger on edges
+		if (ldps_load && !buffer_needs_reload) begin
+			buffer_needs_reload <= 1'b1;
+		end
+	end
+     end
+//$display("xpos[2:0] %x xpos[3:1] %x xpos %x",xpos[2:0],xpos[3:1],xpos);
+//$display("chram_x[6:1] %x chram_x %x chrom_data_out %x chrom_addr %x",chram_x[6:1],chram_x,chrom_data_out,chrom_addr);
+
+// VBL starts at V=208 (scanline 192), per TN.IIGS.040
+
+
+
+
+// Mode-dependent border generation (704-pixel visible area, H=0-703)
+// Apple II TEXT modes: |Left Border(72px)|Active Display(560px)|Right Border(72px)| = 704 total
+//   Text has minimal pipeline latency, uses original timing
+// Apple II GFX modes:  |Left Border(77px)|Active Display(560px)|Right Border(67px)| = 704 total
+//   Graphics has 5-pixel pipeline latency (apple2_shift_reg), shift border right
+// SHRG modes:          |Left Border(32px)|Active Display(640px)|Right Border(32px)| = 704 total
+// Border generation:
+// Apple II TEXT: active display H=72-631 (560 pixels), V=16-207 (192 lines)
+// Apple II GFX:  active display H=77-636 (560 pixels), V=16-207 (192 lines)
+// SHRG modes:    active display H=32-671 (640 pixels), V=16-215 (200 lines)
+if ((!SHRG && GR && ((H < gfx_lb || H > gfx_rb) || (V < V_SCAN || V >= BBE))) ||
+    (!SHRG && !GR && ((H < BLE || H >= BRE) || (V < V_SCAN || V >= BBE))) ||
+    (SHRG && ((H < BL || H >= BR || V < V_SCAN || V >= BB))))  // SHR: all 640 pixels, after the earlier synchronous-RAM prefetch
+begin
+R <= {BORGB[11:8],BORGB[11:8]};
+G <= {BORGB[7:4],BORGB[7:4]};
+B <= {BORGB[3:0],BORGB[3:0]};
+end
+else
+begin
+    if (SHRG) begin
+        // SHRG mode - use combinational first_pix to bypass pipeline latency
+        // At H=33, video_data has first pixel byte (addr set H=31, mem latency)
+        // In 320 mode, pixel 0 spans H=33-34. In 640 mode, pixel 0 is at H=33.
+        // Also at H=34, shrg_r_pix has stale data (computed H=32 from wrong video_data)
+        // So bypass H=33-34 for 320 mode, H=33 for 640 mode
+        if (H == BL || (H == (BL+1) && !scb[7])) begin
+            R <= {first_pix_r, first_pix_r};
+            G <= {first_pix_g, first_pix_g};
+            B <= {first_pix_b, first_pix_b};
+        end else begin
+            R <= {shrg_r_pix,shrg_r_pix};
+            G <= {shrg_g_pix,shrg_g_pix};
+            B <= {shrg_b_pix,shrg_b_pix};
+        end
+    end else if (GR) begin
+        // Graphics mode (lores/hires)
+        R <= {graphics_rgb[11:8],graphics_rgb[11:8]};
+        G <= {graphics_rgb[7:4],graphics_rgb[7:4]};
+        B <= {graphics_rgb[3:0],graphics_rgb[3:0]};
+    end else begin
+        // Text mode
+        R <= textpixel ? {TRGB[11:8],TRGB[11:8]} : {BRGB[11:8],BRGB[11:8]};
+        G <= textpixel ? {TRGB[7:4],TRGB[7:4]} : {BRGB[7:4],BRGB[7:4]};
+        B <= textpixel ? {TRGB[3:0],TRGB[3:0]} : {BRGB[3:0],BRGB[3:0]};
+    end
+end
+end
+
+
+//assign a = chrom_data_out[chpos_x[2:0]];
+// Window coordinates derived from H and V
+// Apple II modes: Active display H=72-632 (560 pixels for 40 chars × 14 pixels)
+// SHRG modes: Active display H=32-672 (640 pixels)
+wire [9:0] window_y_w = (V >= V_SCAN) ? {2'b0, V[7:0]} : 10'b0;  // Apple II display starts at V=16 (scanline 0)
+
+// Apple II coordinate mapping: Now properly centered, window_y_w is 0-191 (192 lines)
+// No clamping needed since we're properly centered within the 200-line area
+wire [7:0] apple_ii_y_clamped = window_y_w[7:0];
+
+// GR signal calculation for mixed mode support
+// Mixed mode should switch to text at y=160 in Apple II coordinates (192-line system)
+wire mixed_mode_active = (apple_ii_y_clamped >= 160) & MIXG;
+wire GR = ~(TEXTG | mixed_mode_active);
+
+// Apple II address generation using lineaddr() function with clamped coordinates
+wire [15:0] lineaddr_result = lineaddr({2'b0, apple_ii_y_clamped});
+wire [22:0] video_addr_ii_base = {7'b0, lineaddr_result} + {17'b0, (dhires_mode ? chram_x_early : chram_x)};
+
+// 80-column modes (text80 and double hi-res) need aux memory bank switching
+wire text80_mode = (!GR & EIGHTYCOL);
+wire dhires_mode = (GR & HIRES_MODE & EIGHTYCOL & !AN3);  // Double Hi-Res mode
+wire use_aux_bank = (text80_mode | dhires_mode) & (dhires_mode ? aux_bank_early : aux[16]);
+// text80 floating-bus fetch: the real Mega II shows the pair's MAIN byte to
+// the CPU ("col80 is a nop" for the FLOATBUS capture), but our schedule has
+// the aux byte on video_data at the CPU sample tick (xpos 0 of the aux
+// half). The text path consumes video_data ONLY at xpos 6 (char ROM lookup;
+// the ROM registers it that tick and xpos 0 loads from chrom_data_out), so
+// overriding the ADDRESS at xpos 6 is invisible to the display -- the main
+// byte lands on video_data at xpos 0, right on the sample tick, and
+// persists through xpos 4 (covering the 2px sample-phase shift the NTSC
+// stretch introduces). aux[16] is already high at the preceding slot's
+// xpos 6 and chram_x already points at the current pair. Text80 only:
+// dhires consumes video_data continuously and must not be disturbed.
+wire fb_main_slot = text80_mode & aux[16] & (xpos == 4'd6);
+wire [22:0] video_addr_ii = fb_main_slot ? video_addr_ii_base :
+                            use_aux_bank ? video_addr_ii_base + 23'h10000 :
+                                           video_addr_ii_base;
+
+// Character Y position within 8-pixel character cell (using clamped coordinates)
+wire [2:0] chpos_y = apple_ii_y_clamped[2:0];
+
+// Character ROM address calculation with proper attribute handling (a2fpga-style)
+// The Apple II character set uses bits 6-7 for display attributes:
+//   $00-$3F (bit 7=0, bit 6=0): Inverse characters
+//   $40-$7F (bit 7=0, bit 6=1): Flash (primary) or MouseText (alternate charset)
+//   $80-$FF (bit 7=1): Normal characters
+// ROM address format (12 bits total):
+//   bit 11: always 0
+//   bit 10: normal char OR (flash char AND flash_state AND primary charset)
+//   bit 9:  flash/mousetext bit AND (ALTCHARSET OR normal char)
+//   bits 8:3: character code lower 6 bits (video_data[5:0])
+//   bits 2:0: row within character (chpos_y)
+wire chrom_bit10 = video_data[7] | (video_data[6] & flash_state & ~ALTCHARSET);
+wire chrom_bit9 = video_data[6] & (ALTCHARSET | video_data[7]);
+assign chrom_addr = {1'b0, chrom_bit10, chrom_bit9, video_data[5:0], chpos_y};
+
+// Debug: trace MouseText character rendering
+// Uncomment to see what's happening with specific characters
+// `define DEBUG_MOUSETEXT 1
+`ifdef DEBUG_MOUSETEXT
+always @(posedge clk_vid) if (ce_pix) begin
+    // Trace any MouseText character (0x40-0x5F range with ALTCHARSET)
+    if (H >= BLE && H <= 200 && V >= 80 && V <= 88 && !GR && text80_mode &&
+        ALTCHARSET && video_data >= 8'h40 && video_data < 8'h60 && xpos == 0) begin
+        $display("MT: H=%d V=%d chpos_y=%d vdata=%h addr=%h data=%h bits=%b%b%b%b%b%b%b",
+                 H, V, chpos_y, video_data, chrom_addr, chrom_data_out,
+                 chrom_data_out[6], chrom_data_out[5], chrom_data_out[4],
+                 chrom_data_out[3], chrom_data_out[2], chrom_data_out[1], chrom_data_out[0]);
+    end
+end
+`endif
+
+always @(posedge clk_vid) if (ce_pix)
+begin
+
+    // Debug disabled
+    // if (H >= 72 && H <= 130 && V == 56 && !GR && text80_mode) begin
+    //     $display("  80COL: H=%d V=%d video_data=%h aux=%b chram_x=%d xpos=%d addr=%h use_aux=%b",
+    //              H, V, video_data, aux[16], chram_x, xpos, video_addr_ii, use_aux_bank);
+    // end
+//	$display("V %x oldV %x chram_y %x base_y %x offset %x video_addr %x video_data %x video_data %x %c %x \n",V[8:3],oldV,chram_y,base_y,offset,video_addr,video_data,video_data[6:0],video_data[6:0],chrom_data_out);
+end
+
+
+
+`ifdef VGC_DEBUG
+/*
+    reg [8:0] V_d;
+    always @(posedge clk_vid) if(ce_pix) begin
+        V_d <= V;
+        if (V != V_d) begin
+            $display("VGC_DEBUG @ %0t: V counter changed to %d", $time, V);
+        end
+    end
+*/
+`endif
+
+
+// VBL Pulse Generation
+// Generate a single-cycle pulse at the start of the vertical blanking interval
+// to avoid IRQ storms.
+wire v_blank = (V >= BBE); // V=208 is scanline 192 (V-16), where VBL begins per TN.IIGS.040
+reg v_blank_d;
+always @(posedge clk_vid) if(ce_pix) v_blank_d <= v_blank;
+assign vbl_irq = v_blank & ~v_blank_d;
+
+endmodule

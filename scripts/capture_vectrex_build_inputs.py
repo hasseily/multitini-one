@@ -47,6 +47,19 @@ def inputs(machine: str) -> list[Path]:
         paths.update(ROOT / "hdl/sim" / name for name in (
             "xilinx_primitives.sv", "genesis_primitives.sv", "video_fifo_model.sv"))
         paths.update((ROOT / "hdl/sim").glob("tb_genesis_*.sv"))
+    if machine == "APPLE_IIGS":
+        paths.update(path for path in (ROOT / "third_party/apple-iigs").rglob("*")
+                     if path.is_file())
+        paths.update(ROOT / "scripts" / name for name in (
+            "port_apple_iigs_core.py", "audit_apple_iigs_import.py", "test_apple_iigs_video.py",
+            "test_apple_iigs_shr_edges.py",
+            "test_apple_iigs_slowram.py",
+            "test_apple_iigs_logical_cache.py",
+            "test_apple_iigs_cpu_peek.py",
+            "test_apple_iigs_native_clock.py",
+            "check_apple_iigs_phase_constraints.tcl"))
+        paths.add(ROOT / "hdl/sim/apple_iigs_bufgce.sv")
+        paths.update((ROOT / "hdl/sim").glob("tb_apple_iigs_*.sv"))
     section = "common"
     for line in (ROOT / "hdl/hdl_sources.txt").read_text().splitlines():
         line = line.strip()
@@ -78,7 +91,7 @@ def archive_inputs(output: Path, record: dict) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--machine", choices=("C64", "GBC", "VECTREX", "GENESIS", "SUPERVISOR"))
+    parser.add_argument("--machine", choices=("C64", "GBC", "VECTREX", "GENESIS", "APPLE_IIGS", "SUPERVISOR"))
     parser.add_argument("--c64-video-standard", choices=("PAL", "NTSC"), default="PAL")
     parser.add_argument("--gbc-psram", action="store_true")
     parser.add_argument("--genesis-pal", action="store_true")

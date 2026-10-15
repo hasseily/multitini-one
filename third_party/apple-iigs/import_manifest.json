@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "source": {
+    "name": "MiSTer Apple IIgs",
+    "url": "https://github.com/MiSTer-devel/Apple-IIgs_MiSTer.git",
+    "commit": "9adbba8622f378253765b7d438b6cbcc4d03fc57"
+  },
+  "destination": "third_party/apple-iigs/upstream",
+  "resolved_groups": [
+    {
+      "license": "License-text",
+      "basis": "Exact upstream GPL version 3 license text and distribution notice.",
+      "paths": [
+        "LICENSE",
+        "rtl/65C816/LICENSE"
+      ]
+    },
+    {
+      "license": "GPL-3.0",
+      "basis": "Repository GPL version 3 LICENSE covers otherwise unmarked subsidiary machine logic and documentation; imported without changes. The DHR table is the source-licensed GSSquared decoder table, not system ROM content.",
+      "paths": [
+        "README.md",
+        "files.qip",
+        "rtl/65C816/65C816.qip",
+        "rtl/65C816/README.md",
+        "rtl/bram.sv",
+        "rtl/clock_divider.v",
+        "rtl/dhr_lut.vh",
+        "rtl/dpram.sv",
+        "rtl/dpram_bram.vhd",
+        "rtl/paddle_timer.v",
+        "rtl/prtc.v",
+        "rtl/rom.v",
+        "rtl/scc_iigs_wrapper.v",
+        "rtl/smartport_dev.v",
+        "rtl/sound.v",
+        "rtl/soundglu.v",
+        "rtl/syncram.v",
+        "rtl/twgs_card.sv",
+        "rtl/twgs_nvram.sv",
+        "rtl/twgs_regs.sv",
+        "rtl/twgs_rom.sv",
+        "rtl/video_timing.v",
+        "rtl/zipgs_regs.sv"
+      ]
+    },
+    {
+      "license": "GPL-3.0-or-later",
+      "basis": "Explicit file-local GNU GPL version 3 or later grant; upstream notices retained.",
+      "paths": [
+        "rtl/65C816/ALU.sv",
+        "rtl/65C816/AddSubBCD.sv",
+        "rtl/65C816/AddrGen.sv",
+        "rtl/65C816/BCDAdder.v",
+        "rtl/65C816/P65C816.sv",
+        "rtl/65C816/P65C816_pkg.sv",
+        "rtl/65C816/adder4.v",
+        "rtl/65C816/bit_adder.v",
+        "rtl/65C816/mcode.sv",
+        "rtl/adb.v",
+        "rtl/es5503.v",
+        "rtl/flux_drive.v",
+        "rtl/hdd.v",
+        "rtl/iigs.sv",
+        "rtl/iwm_flux.v",
+        "rtl/iwm_woz.v",
+        "rtl/mmu.sv",
+        "rtl/scc8530.v",
+        "rtl/uart/rxuart.v",
+        "rtl/uart/txuart.v",
+        "rtl/vgc.v",
+        "rtl/woz_floppy_controller.sv"
+      ]
+    },
+    {
+      "license": "GPL-2.0-or-later",
+      "basis": "Explicit file-local GNU GPL version 2 or later grant, with author attribution preserved.",
+      "paths": [
+        "rtl/roms/hdd.a65",
+        "sys/iir_filter.v"
+      ]
+    }
+  ],
+  "unresolved": [],
+  "excluded_globs": [
+    "releases/**",
+    "roms/**",
+    "rtl/roms/*.hex",
+    "sys/**/*.rbf",
+    "rtl/pll/**",
+    "**/*.bin",
+    "**/*.rom",
+    "**/*.hex",
+    "**/*.mem",
+    "**/*.mif",
+    "**/*.rbf",
+    "**/*.bit",
+    "**/*.png",
+    "**/*.jpg",
+    "**/*.woz",
+    "**/*.hdv"
+  ],
+  "notes": [
+    "No Apple system, character, ADB, PRAM-default, or TransWarp ROM bytes are imported.",
+    "rtl/roms/hdd.a65 is GPL AppleWin controller firmware source. Build its 256-byte runtime ROM with ACME; do not copy upstream generated hex.",
+    "Intel BRAM wrapper is retained only as the latency/read-during-write reference; the active Multitini source is inferred RAM.",
+    "65C816 implementation microcode and the DHR decoder table are HDL source, distinct from Apple system firmware.",
+    "Platform PLL, SDRAM, MiSTer emu/hps_io and binaries are replaced by Multitini adapters; TWGS is absent in the initial port."
+  ]
+}

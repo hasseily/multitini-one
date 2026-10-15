@@ -743,6 +743,58 @@ static void test_settings_journal_migration(void)
     }
 }
 
+static int reject_export_in_callback(void *context,const char *name,size_t size,bool directory)
+{
+    (void)context;(void)name;(void)size;(void)directory;
+    assert(mt_sd_storage_external_acquire().status==MT_SD_FILE_BUSY);
+    assert(!mt_sd_storage_external_active() && backend_registered);
+    return 0;
+}
+static void reject_export_in_progress(void *context)
+{
+    (void)context;
+    assert(mt_sd_storage_external_acquire().status==MT_SD_FILE_BUSY);
+    assert(!mt_sd_storage_external_active() && backend_registered);
+}
+static void test_external_storage_lease(void)
+{
+    reset_fake();mt_sd_file_t *file=NULL;
+    assert(mt_sd_file_open("0:/open.bin","rb",&file).status==MT_SD_OK);
+    assert(mt_sd_storage_external_acquire().status==MT_SD_FILE_BUSY && !mt_sd_storage_external_active());
+    assert(mt_sd_file_close(file).status==MT_SD_OK);
+    unmount_status=FR_DISK_ERR;
+    assert(mt_sd_storage_external_acquire().status==MT_SD_UNMOUNT_FAILED && backend_registered);
+    assert(!mt_sd_storage_external_active());unmount_status=FR_OK;
+    assert(mt_sd_storage_external_acquire().status==MT_SD_OK && !backend_registered);
+    assert(mt_sd_storage_external_active());
+    assert(mt_sd_storage_external_acquire().status==MT_SD_EXTERNAL_ACCESS);
+    const unsigned opened=open_calls, mounted=mount_calls;
+    uint8_t data[32]={0};bool found=false;
+    assert(mt_sd_storage_mount().status==MT_SD_EXTERNAL_ACCESS);
+    assert(mt_sd_storage_read_file_exact("0:/data",data,sizeof(data)).status==MT_SD_EXTERNAL_ACCESS);
+    assert(mt_sd_storage_read_file_optional_max("0:/data",data,sizeof(data),&found).status==MT_SD_EXTERNAL_ACCESS);
+    assert(mt_sd_storage_journal_replace(JOURNAL_TARGET,JOURNAL_PATH,data,sizeof(data)).status==MT_SD_EXTERNAL_ACCESS);
+    assert(mt_sd_storage_journal_recover(JOURNAL_TARGET,JOURNAL_PATH,data,sizeof(data)).status==MT_SD_EXTERNAL_ACCESS);
+    assert(mt_sd_file_open("0:/data","wb",&file).status==MT_SD_EXTERNAL_ACCESS && file==NULL);
+    assert(mt_sd_file_remove("0:/data").status==MT_SD_EXTERNAL_ACCESS);
+    assert(mt_sd_file_rename("0:/data","0:/new").status==MT_SD_EXTERNAL_ACCESS);
+    assert(mt_sd_storage_ensure_directory("0:/directory").status==MT_SD_EXTERNAL_ACCESS);
+    assert(mt_sd_storage_list("0:/",reject_export_in_callback,NULL).status==MT_SD_EXTERNAL_ACCESS);
+    assert(open_calls==opened && mount_calls==mounted && !backend_registered);
+    mount_status=FR_DISK_ERR;
+    assert(mt_sd_storage_external_release().status==MT_SD_MOUNT_FAILED && mt_sd_storage_external_active());
+    assert(mt_sd_storage_mount().status==MT_SD_EXTERNAL_ACCESS);
+    mount_status=FR_OK;
+    assert(mt_sd_storage_external_release().status==MT_SD_OK && !mt_sd_storage_external_active() && backend_registered);
+    assert(mt_sd_storage_external_release().status==MT_SD_INVALID_ARGUMENT);
+    dir_entry_count=1U;dir_names[0]="item";dir_sizes[0]=1U;dir_attributes[0]=0U;
+    assert(mt_sd_storage_list("0:/",reject_export_in_callback,NULL).status==MT_SD_OK);
+    uint8_t source[1]={0x55U};fake_file_data=source;fake_file_size=1U;bool truncated=false;
+    assert(mt_sd_storage_read_file_prefix("0:/prefix",data,sizeof(data),&truncated,
+        reject_export_in_progress,NULL).status==MT_SD_OK);
+    assert(data[0]==0x55U && !truncated && !mt_sd_storage_external_active());
+}
+
 int main(void)
 {
     test_unmount_lifecycle();
@@ -972,5 +1024,6 @@ int main(void)
     test_prefix_reads();
     test_managed_files();
     test_settings_journal_migration();
+    test_external_storage_lease();
     return 0;
 }

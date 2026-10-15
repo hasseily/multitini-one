@@ -5,6 +5,8 @@
 #include "multitini_gameboy_interface.h"
 #include "multitini_vectrex_interface.h"
 #include "multitini_genesis_interface.h"
+#include "multitini_iigs_interface.h"
+#include "multitini_regs.h"
 
 #include <string.h>
 
@@ -208,6 +210,47 @@ static void build_genesis(mt_core_frontend_t *frontend,
     }
 }
 
+static void build_iigs(mt_core_frontend_t *frontend,
+    const mt_core_frontend_state_t *state, mt_menu_view_t *view)
+{
+    static const char *const labels[] = {"Hard disk 1", "Hard disk 2", "3.5-inch floppy", "5.25-inch floppy"};
+    static const char *const speeds[] = {"2.8 MHz (stock)","3.6 MHz","4.8 MHz","7.2 MHz","14.3 MHz","28.6 MHz","57.3 MHz"};
+    const uint32_t speed_mask=state->iigs_speed_mask!=0U ? state->iigs_speed_mask:MT_IIGS_ACCEL_LEGACY_SPEED_MASK;
+    const bool speed_valid=state->iigs_config.speed<MT_IIGS_SPEED_COUNT &&
+        (speed_mask&(UINT32_C(1)<<state->iigs_config.speed))!=0U;
+    for(unsigned d=0U;d<MT_IIGS_DRIVE_COUNT;++d) {
+        const char *name=state->iigs_drive_name[d];
+        frontend->media_items[view->media_item_count++]=item(labels[d],name!=NULL ? name:"Choose disk...",
+            name!=NULL ? "Flush writes and eject this disk.":d<2U ? "Mount HDV, ProDOS-order PO or ProDOS 2MG (up to 32 MiB).":"Mount a WOZ2 image of this drive's disk type.",
+            name!=NULL ? MT_MENU_ACTION_EJECT_IIGS_DRIVE:MT_MENU_ACTION_BROWSE_IIGS_DRIVE,d,true,name!=NULL ? MT_UI_COLOR_SUCCESS:MT_UI_COLOR_BLUE);
+    }
+    frontend->media_items[view->media_item_count++]=item("System ROMs",state->iigs_ready ? "Loaded":"Load / retry...",
+        "Load user-supplied system, character and ADB ROMs from the roms folder.",MT_MENU_ACTION_IIGS_RELOAD,0U,true,state->iigs_ready ? MT_UI_COLOR_SUCCESS:MT_UI_COLOR_WARNING);
+    frontend->media_items[view->media_item_count++]=item("Save PRAM","Save now","Save the current control-panel settings safely to SD.",MT_MENU_ACTION_IIGS_PRAM,0U,state->iigs_ready,MT_UI_COLOR_BLUE);
+    frontend->media_items[view->media_item_count++]=item("Load PRAM","Restore saved","Restore saved control-panel settings and warm-reset the machine.",MT_MENU_ACTION_IIGS_PRAM,1U,state->iigs_ready,MT_UI_COLOR_BLUE);
+    frontend->media_items[view->media_item_count++]=item("Retry media",state->save_faulted ? "I/O error; retry":"No errors",
+        "Retry a failed SD read or durable disk write without losing its sector.",MT_MENU_ACTION_IIGS_PRAM,2U,state->save_faulted,MT_UI_COLOR_BLUE);
+    frontend->input_items[view->input_item_count++]=item("Keyboard","USB keyboard","F12 opens this menu; Ctrl+F11 resets; Windows keys are Apple keys.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
+    frontend->input_items[view->input_item_count++]=item("Mouse","USB boot mouse","Mouse movement and buttons reach the Apple IIgs ADB controller.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
+    frontend->input_items[view->input_item_count++]=item("Joystick","USB analog gamepad","Stick and three fire buttons; configure bindings in Controllers.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
+    frontend->core_options[view->core_option_count++]=item("CPU acceleration",speed_valid ? speeds[state->iigs_config.speed]:"Unavailable",
+        "Choose a 65816 speed. Peripheral timing and compatibility delays stay active.",MT_MENU_ACTION_TOGGLE_CORE_OPTION,0U,true,MT_UI_COLOR_BLUE);
+    frontend->core_options[view->core_option_count++]=item("ROM version",state->iigs_config.rom3 ? "ROM 3":"ROM 1",
+        "Changing ROM restarts the machine after saving and ejecting media.",MT_MENU_ACTION_TOGGLE_CORE_OPTION,1U,true,MT_UI_COLOR_BLUE);
+    frontend->core_options[view->core_option_count++]=item("Accelerator card",state->iigs_config.card==0U ? "ZipGS":"None",
+        "ZipGS registers allow software to select acceleration. None uses the menu speed.",MT_MENU_ACTION_TOGGLE_CORE_OPTION,2U,true,MT_UI_COLOR_BLUE);
+    frontend->core_options[view->core_option_count++]=item("Force self test",(state->iigs_config.pulses&1U)!=0U ? "On":"Off",
+        "Run Apple's self test on reset.",MT_MENU_ACTION_TOGGLE_CORE_OPTION,3U,true,MT_UI_COLOR_BLUE);
+    static const char *const options[]={"Speaker delay","Joystick delay","Counter delay","Sync to 1 MHz","IRQ delay"};
+    for(unsigned i=0U;i<5U;++i) {
+        const bool bit=(state->iigs_config.flags&(1U<<i))!=0U;
+        const bool enabled=i==3U ? bit:!bit;
+        frontend->core_options[view->core_option_count++]=item(options[i],enabled ? "On":"Off",
+            "Apply this upstream acceleration compatibility setting.",MT_MENU_ACTION_TOGGLE_CORE_OPTION,4U+i,true,MT_UI_COLOR_BLUE);
+    }
+    view->save_faulted=state->save_faulted;
+}
+
 static const core_profile_t profiles[] = {
     {
         MT_C64_CORE_ID, "Commodore 64",
@@ -237,6 +280,12 @@ static const core_profile_t profiles[] = {
         {0U, 0U, 0U, CONTENT_MASK(MT_CONTENT_GENESIS_CART) |
                          CONTENT_MASK(MT_CONTENT_GENESIS_SMD), 0U},
         false, build_genesis
+    },
+    {
+        MT_IIGS_CORE_ID, "Apple IIgs",
+        "USB keyboard, mouse and analog gamepad; F12 opens the menu.",
+        {0U, CONTENT_MASK(MT_CONTENT_IIGS_HDD)|CONTENT_MASK(MT_CONTENT_IIGS_WOZ),0U,0U,0U},
+        false, build_iigs
     }
 };
 
@@ -291,4 +340,20 @@ bool mt_core_frontend_accepts_content(uint32_t core_id,
     if (profile == NULL || (unsigned)browser > MT_MENU_BROWSER_OVERLAY ||
         (unsigned)type >= 32U) return false;
     return (profile->browser_types[browser] & CONTENT_MASK(type)) != 0U;
+}
+
+bool mt_core_frontend_browser_folders(uint32_t core_id, mt_menu_browser_t browser)
+{
+    return browser==MT_MENU_BROWSER_DOCUMENTS ||
+        ((core_id==MT_VECTREX_CORE_ID || core_id==MT_IIGS_CORE_ID) &&
+         mt_core_frontend_browser_supported(core_id,browser));
+}
+
+bool mt_core_frontend_accepts_drive_content(uint32_t core_id, mt_menu_browser_t browser,
+                                           unsigned drive, mt_content_type_t type)
+{
+    if(core_id==MT_IIGS_CORE_ID && browser==MT_MENU_BROWSER_DRIVE8)
+        return drive<MT_IIGS_DRIVE_COUNT && (drive<2U ?
+            type==MT_CONTENT_IIGS_HDD:type==MT_CONTENT_IIGS_WOZ);
+    return mt_core_frontend_accepts_content(core_id,browser,type);
 }

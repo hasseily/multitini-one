@@ -130,6 +130,21 @@ static bool positional_mapping(uint8_t usage, mt_key_mapping_t *mapping)
     return true;
 }
 
+static bool pc_mapping(uint8_t usage, mt_key_mapping_t *mapping)
+{
+    if (usage == 0x53U || usage == 0x32U || usage == 0x64U) {
+        mapping_clear(mapping);
+        mapping_add(mapping, usage == 0x53U ? 0x77U:0x5dU,0U);
+        return true;
+    }
+    if (usage == 0xe3U || usage == 0xe7U) {
+        mapping_clear(mapping);
+        mapping_add(mapping, usage == 0xe3U ? 0x1fU:0x27U, 1U);
+        return true;
+    }
+    return positional_mapping(usage,mapping);
+}
+
 static bool symbolic_mapping(uint8_t usage, bool shifted,
                              bool allow_transform,
                              mt_key_mapping_t *mapping)
@@ -301,7 +316,8 @@ static uint8_t slot_mapped_nonmodifier_count(
         mapped = layout == MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC
                      ? symbolic_mapping((uint8_t)usage,
                                         slot_shifted(usages), false, &mapping)
-                     : positional_mapping((uint8_t)usage, &mapping);
+                     : layout == MT_C64_KEYBOARD_LAYOUT_PS2_PC ?
+                         pc_mapping((uint8_t)usage,&mapping):positional_mapping((uint8_t)usage, &mapping);
         if (mapped) {
             ++count;
             if (count > 1U) return count;
@@ -411,7 +427,8 @@ int mt_c64_hid_set_keyboard_layout(mt_c64_hid_input_t *input,
 {
     if (input == NULL ||
         (layout != MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC &&
-         layout != MT_C64_KEYBOARD_LAYOUT_POSITIONAL)) {
+         layout != MT_C64_KEYBOARD_LAYOUT_POSITIONAL &&
+         layout != MT_C64_KEYBOARD_LAYOUT_PS2_PC)) {
         return -1;
     }
     input->keyboard_layout = layout;
@@ -484,7 +501,8 @@ int mt_c64_hid_input_poll(mt_c64_hid_input_t *input)
                              MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC
                          ? symbolic_mapping((uint8_t)usage, shifted,
                                             allow_transform, &mapping)
-                         : positional_mapping((uint8_t)usage, &mapping);
+                         : input->keyboard_layout == MT_C64_KEYBOARD_LAYOUT_PS2_PC ?
+                             pc_mapping((uint8_t)usage,&mapping):positional_mapping((uint8_t)usage, &mapping);
             if (!mapped) continue;
             if (input->keyboard_layout ==
                 MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC) {

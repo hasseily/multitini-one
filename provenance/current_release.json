@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "release_id": "20260917",
-  "status": "current; C64 and GBC functional baselines accepted",
+  "status": "historical accepted C64/GBC baseline; current releases use explicit firmware/core selection",
   "accepted_on": "2026-09-14",
   "builds": {
     "firmware": "20260917",
@@ -31,7 +31,7 @@
     "qualification": "The owner attributed remaining LOAD ERROR failures to the old corrupted Player image. The cause of that corruption was not established. This acceptance does not imply exhaustive disk or game compatibility."
   },
   "roms": {
-    "decision": "Owner requested promotion of the tested firmware and ROM set to current. Generated firmware and fast ROM binaries stay outside the source commit.",
+    "decision": "Current policy: ROM bytes are external-only user inputs, copied only into private generated delivery SD ROM folders; historical acceptance and hashes remain unchanged.",
     "notices": [
       "provenance/c64_roms.json",
       "c64fast/bin/PROVENANCE.json",
@@ -85,45 +85,57 @@
     },
     {
       "role": "basic",
-      "source": "third_party/c64/ROMs/basic.901226-01.bin",
+      "source": "external-user-roms/c64/roms/basic.bin",
       "destination": "multitini/cores/c64/roms/basic.bin",
       "size": 8192,
-      "sha256": "89878cea0a268734696de11c4bae593eaaa506465d2029d619c0e0cbccdfa62d"
+      "sha256": "89878cea0a268734696de11c4bae593eaaa506465d2029d619c0e0cbccdfa62d",
+      "historical_source": "third_party/c64/ROMs/basic.901226-01.bin",
+      "rom_source_relative": "c64/roms/basic.bin"
     },
     {
       "role": "kernal",
-      "source": "third_party/c64/ROMs/kernal.901227-03.bin",
+      "source": "external-user-roms/c64/roms/kernal.bin",
       "destination": "multitini/cores/c64/roms/kernal.bin",
       "size": 8192,
-      "sha256": "83c60d47047d7beab8e5b7bf6f67f80daa088b7a6a27de0d7e016f6484042721"
+      "sha256": "83c60d47047d7beab8e5b7bf6f67f80daa088b7a6a27de0d7e016f6484042721",
+      "historical_source": "third_party/c64/ROMs/kernal.901227-03.bin",
+      "rom_source_relative": "c64/roms/kernal.bin"
     },
     {
       "role": "characters",
-      "source": "third_party/c64/ROMs/characters.901225-01.bin",
+      "source": "external-user-roms/c64/roms/characters.bin",
       "destination": "multitini/cores/c64/roms/characters.bin",
       "size": 4096,
-      "sha256": "fd0d53b8480e86163ac98998976c72cc58d5dd8eb824ed7b829774e74213b420"
+      "sha256": "fd0d53b8480e86163ac98998976c72cc58d5dd8eb824ed7b829774e74213b420",
+      "historical_source": "third_party/c64/ROMs/characters.901225-01.bin",
+      "rom_source_relative": "c64/roms/characters.bin"
     },
     {
       "role": "1541",
-      "source": "third_party/c64/ROMs/1541-II.251968-03.bin",
+      "source": "external-user-roms/c64/roms/1541.bin",
       "destination": "multitini/cores/c64/roms/1541.bin",
       "size": 16384,
-      "sha256": "326c289c38753323d7e8167897447cf61ef35189d82eb8d75210ece949adda7c"
+      "sha256": "326c289c38753323d7e8167897447cf61ef35189d82eb8d75210ece949adda7c",
+      "historical_source": "third_party/c64/ROMs/1541-II.251968-03.bin",
+      "rom_source_relative": "c64/roms/1541.bin"
     },
     {
       "role": "fast_kernal",
-      "source": "c64fast/bin/kernal.bin",
+      "source": "external-user-roms/c64/roms/fast/kernal.bin",
       "destination": "multitini/cores/c64/roms/fast/kernal.bin",
       "size": 8192,
-      "sha256": "812276b172e63ad5d83753ee22c87fcdad96a4ccd3048c66f64143e4d01e85ee"
+      "sha256": "812276b172e63ad5d83753ee22c87fcdad96a4ccd3048c66f64143e4d01e85ee",
+      "historical_source": "c64fast/bin/kernal.bin",
+      "rom_source_relative": "c64/roms/fast/kernal.bin"
     },
     {
       "role": "fast_1541",
-      "source": "c64fast/bin/1541.bin",
+      "source": "external-user-roms/c64/roms/fast/1541.bin",
       "destination": "multitini/cores/c64/roms/fast/1541.bin",
       "size": 16384,
-      "sha256": "41d7ab7ab30d896c49cb09c5aa7d7dac4b0ceaa6cc181c22fec04442162e6d6e"
+      "sha256": "41d7ab7ab30d896c49cb09c5aa7d7dac4b0ceaa6cc181c22fec04442162e6d6e",
+      "historical_source": "c64fast/bin/1541.bin",
+      "rom_source_relative": "c64/roms/fast/1541.bin"
     }
   ],
   "notices": [

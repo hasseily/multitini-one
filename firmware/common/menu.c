@@ -87,7 +87,8 @@ static const mt_menu_item_t *page_items(mt_menu_page_t page,
         break;
     }
     if (items == NULL) *count = 0U;
-    const size_t limit = page == MT_MENU_PAGE_EFFECTS ? MT_MENU_MAX_EFFECT_ITEMS : MT_MENU_MAX_ITEMS;
+    const size_t limit = page == MT_MENU_PAGE_EFFECTS ? MT_MENU_MAX_EFFECT_ITEMS :
+        page == MT_MENU_PAGE_SYSTEM ? MT_MENU_MAX_SYSTEM_ITEMS : MT_MENU_MAX_ITEMS;
     if (*count > limit) *count = limit;
     return items;
 }

@@ -24,7 +24,9 @@ module multitini_memory_cdc (
     output logic         memory_request_valid,
     input  logic         memory_request_ready,
     input  logic [63:0]  memory_response_rdata,
-    input  logic         memory_response_valid
+    input  logic         memory_response_valid,
+    output wire          core_busy,
+    output wire          memory_busy
 );
     localparam integer REQUEST_WIDTH = 97;
 
@@ -38,6 +40,9 @@ module multitini_memory_cdc (
     logic response_source_valid;
     logic response_source_ready;
     logic memory_outstanding;
+
+    assign core_busy=core_outstanding || core_request_valid;
+    assign memory_busy=memory_outstanding || memory_request_valid || response_source_valid;
 
     assign request_source = {core_request_addr, core_request_write,
                              core_request_wdata, core_request_wstrb};

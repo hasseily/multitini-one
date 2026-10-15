@@ -46,6 +46,10 @@ def main():
     if not build.is_relative_to((ROOT / "build").resolve()):
         parser.error("--build-dir must stay inside this checkout's ignored build directory")
     build.mkdir(parents=True, exist_ok=True)
+    temporary=build/'temp'
+    temporary.mkdir(exist_ok=True)
+    os.environ['TEMP']=str(temporary)
+    os.environ['TMP']=str(temporary)
     vs = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Microsoft Visual Studio"
     clang = args.clang or newest(vs.glob("*/*/VC/Tools/Llvm/x64/bin/clang.exe"))
     clang = clang.resolve()

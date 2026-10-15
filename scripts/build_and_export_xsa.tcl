@@ -35,6 +35,17 @@ proc require_one_object {description objects} {
     }
 }
 
+proc require_iigs_phase_fanin {description pins marker} {
+    if {[llength $pins] == 0} {error "IIgs phase gate has no $description pins"}
+    foreach pin $pins {
+        set cone [all_fanin -quiet -flat -to $pin]
+        set nets [get_nets -quiet -of_objects $cone]
+        if {[lsearch -exact $nets $marker] < 0} {
+            error "IIgs $description lost its reviewed phase qualification: $pin ($marker)"
+        }
+    }
+}
+
 proc require_packed_iob_registers {description pattern expected_count {site_pattern "OLOGIC_*"}} {
     set registers [get_cells -hierarchical -quiet -regexp $pattern]
     set count [llength $registers]
@@ -81,6 +92,8 @@ if {[string match "*ACTIVE_MACHINE=2*" $build_generics]} {
     set image_kind "VECTREX"
 } elseif {[string match "*ACTIVE_MACHINE=4*" $build_generics]} {
     set image_kind "GENESIS"
+} elseif {[string match "*ACTIVE_MACHINE=5*" $build_generics]} {
+    set image_kind "APPLE_IIGS"
 } else {
     error "Build generic has no recognized ACTIVE_MACHINE value: $build_generics"
 }
@@ -149,6 +162,127 @@ foreach {description pattern} {
 require_one_object "audio BCLK generated clock" [get_clocks -quiet audio_bclk]
 require_one_object "forwarded audio BCLK" [get_clocks -quiet audio_bclk_out]
 require_one_object "forwarded DVI clock" [get_clocks -quiet dvi_clk_out]
+if {$image_kind eq "APPLE_IIGS"} {
+    foreach {name divide} {clk28 2} {
+        set divider_source [get_pins -hierarchical -quiet -regexp \
+            [format {.*g_apple_iigs_machine[/.]machine_adapter/%s_divider_reg/C$} $name]]
+        set divider_output [get_pins -hierarchical -quiet -regexp \
+            [format {.*g_apple_iigs_machine[/.]machine_adapter/%s_divider_reg/Q$} $name]]
+        require_one_object "IIgs $name divider source" $divider_source
+        require_one_object "IIgs $name divider output" $divider_output
+        set clock [get_clocks -quiet "apple_iigs_${name}"]
+        require_one_object "IIgs related $name clock" $clock
+        set master [get_clocks -of_objects $divider_source]
+        require_one_object "IIgs $name divider parent" $master
+        if {![get_property IS_GENERATED $clock] ||
+            ![get_property IS_USER_GENERATED $clock] ||
+            [get_property IS_INVERTED $clock] ||
+            [get_property DIVIDE_BY $clock] ne "$divide" ||
+            [get_property SOURCE $clock] ne $divider_source ||
+            [get_property MASTER_CLOCK $clock] ne $master ||
+            abs([get_property PERIOD $clock] - $divide * [get_property PERIOD $master]) > 0.003} {
+            error "IIgs $name clock must retain the reviewed /$divide divider"
+        }
+        set buffer [get_cells -hierarchical -quiet -regexp \
+            [format {.*g_apple_iigs_machine[/.]machine_adapter/%s_buffer_i$} $name]]
+        require_one_object "IIgs $name clock buffer" $buffer
+        if {[get_property REF_NAME $buffer] ne "BUFG"} {
+            error "IIgs $name divider must use a dedicated BUFG clock buffer"
+        }
+        puts "APPLE_IIGS_CLOCK_PASS name=$name parent=$master period=[get_property PERIOD $clock]"
+    }
+# Ignored strict candidate: source/gate/waveform identity, no timing exceptions.
+set iigs_gate [get_cells -hierarchical -quiet -regexp \
+    {.*g_apple_iigs_machine[/.]machine_adapter/clk14_buffer_i$}]
+require_one_object "IIgs native SYNC gate" $iigs_gate
+set iigs_gate_ref [get_property REF_NAME $iigs_gate]
+if {$iigs_gate_ref eq "BUFGCE"} {
+    set iigs_gate_input [get_pins $iigs_gate/I]
+    set iigs_gate_ce [get_pins $iigs_gate/CE]
+    if {[get_property CE_TYPE $iigs_gate] ne "SYNC" ||
+        [get_property IS_I_INVERTED $iigs_gate] != 0 ||
+        [get_property IS_CE_INVERTED $iigs_gate] != 0} {
+        error "IIgs BUFGCE must retain non-inverted SYNC behavior"
+    }
+} elseif {$iigs_gate_ref eq "BUFGCTRL"} {
+    foreach {pin expected_type} {I1 POWER CE1 GROUND S0 POWER S1 GROUND IGNORE0 GROUND IGNORE1 POWER} {
+        set object [get_pins $iigs_gate/$pin]
+        set nets [get_nets -of_objects $object]
+        require_one_object "IIgs gate $pin pin" $object
+        require_one_object "IIgs gate $pin constant net" $nets
+        if {![get_property IS_TIED $object] || [get_property TYPE $nets] ne $expected_type} {
+            error "IIgs mapped clock gate has unsafe $pin control: expected $expected_type"
+        }
+    }
+    if {[get_property XILINX_LEGACY_PRIM $iigs_gate] ne "BUFGCE" ||
+        [get_property CE_TYPE_CE0 $iigs_gate] ne "SYNC" ||
+        ![get_property PRESELECT_I0 $iigs_gate] || [get_property PRESELECT_I1 $iigs_gate] ||
+        [get_property INIT_OUT $iigs_gate] != 0} {
+        error "IIgs BUFGCTRL does not retain the reviewed BUFGCE behavior"
+    }
+    set iigs_gate_input [get_pins $iigs_gate/I0]
+    set iigs_gate_ce [get_pins $iigs_gate/CE0]
+} else {error "Unsupported IIgs native clock gate: $iigs_gate_ref"}
+set iigs_gate_output [get_pins $iigs_gate/O]
+require_one_object "IIgs native gate input" $iigs_gate_input
+require_one_object "IIgs native gate enable" $iigs_gate_ce
+require_one_object "IIgs native gate output" $iigs_gate_output
+if {[get_property IS_INVERTED $iigs_gate_input] != 0 || [get_property IS_INVERTED $iigs_gate_ce] != 0} {
+    error "IIgs native gate input/CE polarity changed"
+}
+set iigs_gate_parent [get_clocks -quiet -of_objects $iigs_gate_input]
+require_one_object "IIgs native gate parent" $iigs_gate_parent
+set iigs_native_clock [get_clocks -quiet apple_iigs_clk14]
+require_one_object "IIgs native pulse clock" $iigs_native_clock
+set iigs_primary_period [get_property PERIOD $iigs_gate_parent]
+set iigs_native_waveform [get_property WAVEFORM $iigs_native_clock]
+if {![get_property IS_GENERATED $iigs_native_clock] ||
+    ![get_property IS_USER_GENERATED $iigs_native_clock] ||
+    [get_property IS_INVERTED $iigs_native_clock] ||
+    [get_property SOURCE $iigs_native_clock] ne $iigs_gate_input ||
+    [get_property SOURCE_PINS $iigs_native_clock] ne $iigs_gate_output ||
+    [get_property MASTER_CLOCK $iigs_native_clock] ne $iigs_gate_parent ||
+    [get_property EDGES $iigs_native_clock] ne "1 2 9" ||
+    abs([get_property PERIOD $iigs_native_clock]-4.0*$iigs_primary_period)>0.003 ||
+    [llength $iigs_native_waveform]!=2 ||
+    abs([lindex $iigs_native_waveform 0])>0.001 ||
+    abs([lindex $iigs_native_waveform 1]-0.5*$iigs_primary_period)>0.003} {
+    error "IIgs native clock must retain exact source I0/I, destination O and edges {1 2 9}"
+}
+puts "APPLE_IIGS_NATIVE_GATE_IDENTITY_PASS primitive=$iigs_gate_ref source=$iigs_gate_input output=$iigs_gate_output edges=[get_property EDGES $iigs_native_clock] waveform=$iigs_native_waveform"
+
+    set primary [get_clocks -quiet -filter {NAME =~ *clk_out1*zynq_ps_bd_clk_wiz_c64*}]
+    require_one_object "IIgs primary clock for accelerated CPU" $primary
+    set cpu_registers [get_cells -hierarchical -quiet -regexp \
+        {.*g_apple_iigs_machine[/.]machine_adapter/machine_i/cpu/(A|X|Y|D|SP|T|PBR|DBR|P|PC|IR|STATE)_reg(\[[0-9]+\])?(_rep[^/]*)?$}]
+    if {[llength $cpu_registers] < 120} {error "IIgs accelerated CPU register census changed"}
+    foreach cell $cpu_registers {
+        set pin [get_pins -quiet -of_objects $cell -filter {REF_PIN_NAME == C}]
+        require_one_object "IIgs architectural CPU clock pin" $pin
+        set clock [get_clocks -quiet -of_objects $pin]
+        if {[llength $clock] != 1 || $clock ne $primary} {
+            error "IIgs CPU architectural state is not on the primary clock: $cell ($clock)"
+        }
+    }
+    set cpu_endpoints [get_pins -quiet -of_objects $cpu_registers -filter {REF_PIN_NAME == D}]
+    set cpu_path [get_timing_paths -quiet -from $primary -to $cpu_endpoints -delay_type max -max_paths 1]
+    require_one_object "IIgs single-cycle CPU path" $cpu_path
+    if {abs([get_property REQUIREMENT $cpu_path]-[get_property PERIOD $primary])>0.004} {
+        error "IIgs accelerated CPU must retain ordinary single-cycle primary timing"
+    }
+    set data_ram [get_cells -hierarchical -quiet -regexp \
+        {.*g_apple_iigs_machine[/.]machine_adapter/cache_i/data_reg_[0-9]+$}]
+    if {[llength $data_ram] < 1 || [llength $data_ram] > 8} {
+        error "IIgs 32 KiB cache data RAM census changed: [llength $data_ram]"
+    }
+    foreach cell $data_ram {
+        if {[get_property REF_NAME $cell] ni {RAMB36E1 RAMB18E1}} {
+            error "IIgs cache data is no longer block RAM: $cell"
+        }
+    }
+    puts "APPLE_IIGS_ACCEL_CLOCK_PASS cpu_registers=[llength $cpu_registers] data_ram=[llength $data_ram] period=[get_property PERIOD $primary]"
+    source [file join $script_dir check_apple_iigs_phase_constraints.tcl]
+}
 if {$image_kind eq "GENESIS"} {
     set chip_gate [get_cells -hierarchical -quiet -regexp \
         {.*g_genesis_machine[/.]machine_adapter/chip_clock_i$}]

@@ -80,8 +80,15 @@ switch -- $machine {
         set c64_video_standard "N/A"
         set active_machine 4
     }
+    APPLE_IIGS {
+        # IIgs VGC master, with phase-related /2 and /4 clocks in the adapter.
+        # CPU RAM uses HP2 and complete source rasters use HP3.
+        set c64_clock_mhz 57.272728
+        set c64_video_standard "N/A"
+        set active_machine 5
+    }
     default {
-        error "MULTITINI_MACHINE must be SUPERVISOR, C64, GBC, VECTREX, or GENESIS"
+        error "MULTITINI_MACHINE must be SUPERVISOR, C64, GBC, VECTREX, GENESIS, or APPLE_IIGS"
     }
 }
 
@@ -118,7 +125,7 @@ proc add_manifest_sources {repo_root machine} {
         }
         if {[regexp {^\[([A-Za-z0-9_]+)\]$} $relative -> section]} {
             set active_section [string toupper $section]
-            if {$active_section ni {COMMON C64 GBC VECTREX GENESIS}} {
+            if {$active_section ni {COMMON C64 GBC VECTREX GENESIS APPLE_IIGS}} {
                 error "Unknown source-manifest section: $relative"
             }
             continue
@@ -145,7 +152,7 @@ proc add_manifest_sources {repo_root machine} {
             if {[file tail $source] in {
                     "multitini_timing.xdc" "multitini_psram_timing.xdc"
                     "multitini_vectrex_psram_timing.xdc"
-                    "multitini_genesis_timing.xdc"}} {
+                    "multitini_genesis_timing.xdc" "multitini_apple_iigs_timing.xdc"}} {
                 set_property USED_IN_SYNTHESIS false [get_files $source]
                 set_property PROCESSING_ORDER LATE [get_files $source]
             }
@@ -187,6 +194,7 @@ proc configure_processing_system {ps} {
         CONFIG.PCW_USE_S_AXI_HP0 {1} \
         CONFIG.PCW_USE_S_AXI_HP1 {1} \
         CONFIG.PCW_USE_S_AXI_HP2 {1} \
+        CONFIG.PCW_USE_S_AXI_HP3 {1} \
         CONFIG.PCW_USE_FABRIC_INTERRUPT {1} \
         CONFIG.PCW_IRQ_F2P_INTR {1} \
         CONFIG.PCW_IRQ_F2P_MODE {DIRECT}] $ps
@@ -285,6 +293,11 @@ set_property target_language Verilog [current_project]
 set_property simulator_language Mixed [current_project]
 set_property default_lib work [current_project]
 add_manifest_sources $repo_root $machine
+if {$machine eq "APPLE_IIGS"} {
+    set_property include_dirs [list \
+        [file join $repo_root third_party apple-iigs upstream rtl]] \
+        [get_filesets sources_1]
+}
 set psram_timing_file [require_file \
     [file join $repo_root hdl board multitini_psram_timing.xdc]]
 if {$machine eq "VECTREX"} {
@@ -292,7 +305,7 @@ if {$machine eq "VECTREX"} {
     # input-delay constraints. Do not inherit the tunable PHY's false paths.
     set_property USED_IN_IMPLEMENTATION false [get_files $psram_timing_file]
 }
-if {$machine eq "SUPERVISOR" ||
+if {$machine eq "SUPERVISOR" || $machine eq "APPLE_IIGS" ||
     ($machine eq "GBC" && !$enable_gbc_psram)} {
     set psram_iob_file [require_file \
         [file join $repo_root hdl board multitini_psram_iob.xdc]]
@@ -355,6 +368,17 @@ set_property -dict [list CONFIG.ADDR_WIDTH {32} CONFIG.DATA_WIDTH {64} \
     CONFIG.NUM_WRITE_OUTSTANDING {1} CONFIG.READ_WRITE_MODE {READ_WRITE}] $hp2
 connect_bd_intf_net $hp2 [get_bd_intf_pins $ps/S_AXI_HP2]
 
+# The IIgs has both cycle-sensitive DDR RAM and a DDR source-frame ring.
+# Keep these clients on independent PS ports so frame DMA cannot block a CPU
+# transaction in a fabric arbiter. Retain all ports in each generated wrapper.
+set hp3 [create_bd_intf_port -mode Slave \
+    -vlnv xilinx.com:interface:aximm_rtl:1.0 S_AXI_HP3_0]
+set_property -dict [list CONFIG.ADDR_WIDTH {32} CONFIG.DATA_WIDTH {64} \
+    CONFIG.ID_WIDTH {6} CONFIG.HAS_REGION {0} CONFIG.PROTOCOL {AXI3} \
+    CONFIG.MAX_BURST_LENGTH {16} CONFIG.NUM_READ_OUTSTANDING {1} \
+    CONFIG.NUM_WRITE_OUTSTANDING {1} CONFIG.READ_WRITE_MODE {READ_WRITE}] $hp3
+connect_bd_intf_net $hp3 [get_bd_intf_pins $ps/S_AXI_HP3]
+
 
 set control_clk [create_bd_port -dir O -type clk control_clk]
 set idelay_ref_clk [create_bd_port -dir O -type clk idelay_ref_clk]
@@ -369,7 +393,7 @@ set_property CONFIG.POLARITY ACTIVE_LOW $control_aresetn
 set_property CONFIG.POLARITY ACTIVE_LOW $idelay_aresetn
 set_property CONFIG.POLARITY ACTIVE_LOW $video_aresetn
 set_property CONFIG.POLARITY ACTIVE_LOW $c64_aresetn
-set_property -dict [list CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0_0:S_AXI_HP0_0:S_AXI_HP1_0:S_AXI_HP2_0} \
+set_property -dict [list CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0_0:S_AXI_HP0_0:S_AXI_HP1_0:S_AXI_HP2_0:S_AXI_HP3_0} \
     CONFIG.ASSOCIATED_RESET {control_aresetn}] $control_clk
 set_property CONFIG.ASSOCIATED_RESET {video_aresetn} $video_clk
 set_property CONFIG.ASSOCIATED_RESET {c64_aresetn} $c64_clk
@@ -469,7 +493,8 @@ connect_bd_net [get_bd_pins $ps/FCLK_CLK0] \
     [get_bd_pins $idelay_wiz/clk_in1] [get_bd_pins $video_wiz/s_axi_aclk] $control_clk \
     [get_bd_pins $control_reset/slowest_sync_clk] \
     [get_bd_pins $ps/M_AXI_GP0_ACLK] [get_bd_pins $ps/S_AXI_HP0_ACLK] \
-    [get_bd_pins $ps/S_AXI_HP1_ACLK] [get_bd_pins $ps/S_AXI_HP2_ACLK]
+    [get_bd_pins $ps/S_AXI_HP1_ACLK] [get_bd_pins $ps/S_AXI_HP2_ACLK] \
+    [get_bd_pins $ps/S_AXI_HP3_ACLK]
 connect_bd_net [get_bd_pins $ps/FCLK_CLK2] \
     [get_bd_pins $video_wiz/clk_in1] [get_bd_pins $c64_wiz/clk_in1]
 connect_bd_net [get_bd_pins $ps/FCLK_RESET0_N] \
@@ -521,6 +546,9 @@ assign_bd_address -offset 0x00000000 -range 0x40000000 \
 assign_bd_address -offset 0x00000000 -range 0x40000000 \
     -target_address_space [get_bd_addr_spaces S_AXI_HP2_0] \
     [get_bd_addr_segs $ps/S_AXI_HP2/HP2_DDR_LOWOCM] -force
+assign_bd_address -offset 0x00000000 -range 0x40000000 \
+    -target_address_space [get_bd_addr_spaces S_AXI_HP3_0] \
+    [get_bd_addr_segs $ps/S_AXI_HP3/HP3_DDR_LOWOCM] -force
 
 regenerate_bd_layout
 validate_bd_design

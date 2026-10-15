@@ -1,11 +1,27 @@
 # Multitini One
 
 Multitini One turns the Appletini ONE card into a stand-alone FPGA computer.
-It runs the GPL MiSTer C64 core and a Game Boy Color adapter through a shared
-supervisor, menu, input, audio, storage, and core-loading system. It does not
-use an Apple II host.
+It runs C64, Game Boy Color, Vectrex, Genesis / Mega Drive and Apple IIgs
+machines through a shared supervisor, menu, input, audio, storage and
+core-loading system. It does not use an Apple II host.
 
-The latest named firmware is [M0.1.0](docs/FIRMWARE_M0.1.0.md). It adds a
+Branch `core-gs` builds the M0.4.0 hardware-test package at
+`build/firmware-core-gs3.zip`. It adds accelerated IIgs execution, the SHR
+left-edge correction, nested media folders and USB SD-card export. The new
+IIgs FPGA image passes routed timing: setup `+0.040 ns`, hold `+0.049 ns`
+and pulse width `+1.250 ns`. The six unchanged FPGA images retain their
+qualified identities. This replacement still requires board testing.
+See the [IIgs integration](docs/APPLE_IIGS_PLAN.md),
+[hardware checks](docs/APPLE_IIGS_HARDWARE_TEST.md),
+[selective builds](docs/CORE_ARTIFACT_REUSE.md) and [USB SD mount](docs/USB_SD_MOUNT.md).
+
+Private delivery packages place user-supplied boot ROMs in each core's `roms/`
+folder and provide media loaders. IIgs ROMs belong in
+`multitini/cores/apple-iigs/roms/`; disks and PRAM belong in the sibling
+`multitini/cores/apple-iigs/media/`. ROM bytes stay outside Git and source
+archives. Games and operating-system disks are not included.
+
+Earlier firmware [M0.1.0](docs/FIRMWARE_M0.1.0.md) adds a
 controller menu shortcut: hold Select and Start together for 500 ms. The ARM
 firmware uses the exact supervisor and core images from `build/firmware-efx1`;
 there is no FPGA rebuild. The release package is `build/firmware-M0.1.0.zip`.
@@ -30,7 +46,7 @@ On 2026-09-14 the owner confirmed the current GBC implementation works,
 including tested saves, and accepted completion of that baseline. See
 [GBC baseline](docs/GBC_BASELINE.md) for its scope and evidence.
 
-## Use the current package
+## Retained dated baseline
 
 The assembled SD tree is `build/current/`, with firmware at
 `build/current/FIRMWARE.BIN` and packages under
@@ -59,6 +75,13 @@ explicit direct-RAM shortcut for eligible BASIC programs.
 
 ## Documentation
 
+- [Apple IIgs integration](docs/APPLE_IIGS_PLAN.md),
+  [CPU validation](docs/APPLE_IIGS_CPU_VALIDATION.md) and
+  [hardware checks](docs/APPLE_IIGS_HARDWARE_TEST.md): pinned source, runtime
+  ROMs, media, acceleration, complete-image timing and board-test procedure.
+- [Selective FPGA builds](docs/CORE_ARTIFACT_REUSE.md): retain qualified
+  unchanged images with their original source and timing evidence.
+- [USB SD mount](docs/USB_SD_MOUNT.md): exclusive USB0 card export and recovery.
 - [Genesis / Mega Drive integration](docs/GENESIS_PLAN.md): modern Nuked-MD,
   cartridge formats, two-player controls, saves, NTSC/PAL builds, and pending
   vendor/board qualification.
@@ -125,7 +148,8 @@ machine bitstreams, which belong in the SD core packages.
 
 Original Multitini work is GPL-3.0-only. Imported files retain their notices
 and licenses; see [licenses/README.md](licenses/README.md) and
-[licenses/files.csv](licenses/files.csv). The selected stock ROMs and fast
-derivatives retain their recorded `NOASSERTION` rights status. See
+[licenses/files.csv](licenses/files.csv). Historical stock ROM and fast-ROM
+hashes retain their recorded `NOASSERTION` rights status. Current ROM bytes
+are external user inputs for private generated packages. See
 [Content policy](docs/CONTENT_POLICY.md); an HDL license grants no ROM or
 game-image rights.

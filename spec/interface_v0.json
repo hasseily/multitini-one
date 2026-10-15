@@ -2,7 +2,7 @@
   "schema_version": 1,
   "abi": {
     "major": 0,
-    "minor": 21
+    "minor": 22
   },
   "magic": "0x4D543031",
   "shell_id": "0x4D544F4E",
@@ -256,6 +256,13 @@
       "access": "ro",
       "reset": "0x00000000",
       "description": "Vectrex overlay state: loaded[0], error[1]. Zero on other cores."
+    },
+    {
+      "name": "IIGS_ACCEL_CAPS",
+      "offset": "0x0CC",
+      "access": "ro",
+      "reset": "parameter",
+      "description": "IIgs accelerator capabilities. Bit31 marks a valid mask; bits6:0 advertise supported speed codes stock,3.58,4.77,7.16,14.32,28.64,57.27MHz. Zero on other cores. Requires ABI0.22; older IIgs images use the legacy five speeds."
     },
     {
       "name": "VIDEO_EFFECT_ADDRESS",
@@ -531,6 +538,10 @@
     "VECTREX_VIDEO_CONFIG_DEFAULT": "0x0000000B",
     "VECTREX_OVERLAY_STATUS_LOADED": "0x00000001",
     "VECTREX_OVERLAY_STATUS_ERROR": "0x00000002",
+    "IIGS_ACCEL_MIN_ABI_MINOR": 22,
+    "IIGS_ACCEL_CAPS_VALID": "0x80000000",
+    "IIGS_ACCEL_SPEED_MASK": "0x0000007F",
+    "IIGS_ACCEL_LEGACY_SPEED_MASK": "0x0000001F",
     "VIDEO_EFFECT_MIN_ABI_MINOR": 15,
     "VIDEO_AXIS_MIN_ABI_MINOR": 17,
     "VIDEO_PHOSPHOR_MIN_ABI_MINOR": 20,

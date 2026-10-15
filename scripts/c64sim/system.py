@@ -7,6 +7,7 @@ import collections
 import copy
 import time
 from pathlib import Path
+from private_core_roms import default_rom_source
 
 from .c64 import C64, KEY_RUN_STOP
 from .d64 import D64
@@ -15,11 +16,11 @@ from .gcr import GCRDisk
 from .iec import IECBus
 
 ROOT = Path(__file__).resolve().parents[2]
-ROM_DIR = ROOT / "third_party" / "c64" / "ROMs"
-DEFAULT_BASIC = ROM_DIR / "basic.901226-01.bin"
-DEFAULT_KERNAL = ROM_DIR / "kernal.901227-03.bin"
-DEFAULT_CHARGEN = ROM_DIR / "characters.901225-01.bin"
-DEFAULT_DRIVE_ROM = ROM_DIR / "1541-II.251968-03.bin"
+ROM_DIR = default_rom_source() / "c64/roms"
+DEFAULT_BASIC = ROM_DIR / "basic.bin"
+DEFAULT_KERNAL = ROM_DIR / "kernal.bin"
+DEFAULT_CHARGEN = ROM_DIR / "characters.bin"
+DEFAULT_DRIVE_ROM = ROM_DIR / "1541.bin"
 
 PAL_HZ = 985248
 NTSC_HZ = 1022727

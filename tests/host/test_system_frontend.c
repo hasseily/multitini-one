@@ -74,6 +74,7 @@ static void test_actions_and_standby(void)
         {"Read documents", MT_MENU_ACTION_BROWSE_DOCUMENTS},
         {"Date and time", MT_MENU_ACTION_EDIT_CLOCK},
         {"Restart USB", MT_MENU_ACTION_RESTART_USB},
+        {"USB SD card", MT_MENU_ACTION_USB_SD},
         {"Golden updater", MT_MENU_ACTION_REBOOT_GOLDEN}
     };
     mt_system_frontend_t frontend;
@@ -83,7 +84,7 @@ static void test_actions_and_standby(void)
     view.status_text = "Status owned by runtime";
     view.content_root = "/core/content";
     mt_system_frontend_apply(&frontend, &snapshot, &view);
-    check(view.system_items == frontend.items && view.system_item_count == 19U,
+    check(view.system_items == frontend.items && view.system_item_count == 20U,
           "System descriptors fill the shared view");
     check(!item(&view, "Restart active core")->enabled &&
           !item(&view, "Autoboot current core")->enabled,
@@ -321,13 +322,13 @@ static void test_golden_update_confirmation(void)
     mt_menu_t menu;
     mt_system_frontend_apply(&frontend, &snapshot, &view);
     expect_value(&view, "Golden Boot", "Unknown");
-    check(view.system_item_count == 19U,
+    check(view.system_item_count == 20U,
           "absent BOOT.BIN does not display an update action");
     snapshot.golden_version = "B1.2.0";
     snapshot.golden_update_present = true;
     mt_system_frontend_apply(&frontend, &snapshot, &view);
     expect_value(&view, "Golden Boot", "B1.2.0");
-    check(view.system_item_count == 20U && !snapshot.multiboot_ready &&
+    check(view.system_item_count == 21U && !snapshot.multiboot_ready &&
           item(&view, "Update Golden Boot...")->enabled,
           "an SD BOOT.BIN enables update even with Golden 1.x");
     menu = focus_item(&view, "Update Golden Boot...");

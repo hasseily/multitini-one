@@ -28,7 +28,8 @@ typedef enum {
     MT_SD_FILE_BUSY,
     MT_SD_FILE_LIMIT,
     MT_SD_FILE_EXISTS,
-    MT_SD_CREATE_DIR_FAILED
+    MT_SD_CREATE_DIR_FAILED,
+    MT_SD_EXTERNAL_ACCESS
 } mt_sd_status_t;
 
 typedef struct {
@@ -78,6 +79,12 @@ mt_sd_result_t mt_sd_storage_journal_replace(const char *path,
                                              const uint8_t *src,
                                              size_t size);
 mt_sd_result_t mt_sd_storage_unmount(void);
+/* USB export owns the card exclusively. Acquire refuses live files/callbacks
+ * and unregisters FatFs. Release follows USB DMA stop and successful CTRL_SYNC;
+ * failed remount retains the lease and blocks all local filesystem access. */
+mt_sd_result_t mt_sd_storage_external_acquire(void);
+mt_sd_result_t mt_sd_storage_external_release(void);
+bool mt_sd_storage_external_active(void);
 /* Ensure a directory through the existing mount/owner; an existing ordinary
  * file at the path is an error. */
 mt_sd_result_t mt_sd_storage_ensure_directory(const char *path);

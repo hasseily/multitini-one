@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns / 1ps
 
-module tb_control_regs;
+module tb_control_regs #(parameter logic [31:0] ACCEL_CAPS=0);
     import multitini_regs_pkg::*;
 
     logic clk = 1'b0;
@@ -76,7 +76,7 @@ module tb_control_regs;
 
     always #5 clk = !clk;
 
-    multitini_control_regs #(.SHELL_BUILD_ID(32'h12345678)) dut (
+    multitini_control_regs #(.SHELL_BUILD_ID(32'h12345678),.IIGS_ACCEL_CAPS(ACCEL_CAPS)) dut (
         .effect_busy(effect_busy),.effect_active_valid(effect_active_valid),.effect_rejected(effect_rejected),
         .effect_active_sequence(effect_active_sequence),.effect_write(effect_write),.effect_commit(effect_commit),
         .effect_address(effect_address),.effect_data(effect_data),.effect_commit_sequence(effect_commit_sequence),
@@ -163,6 +163,8 @@ module tb_control_regs;
         check_value(control == 32'h0000000F, "safe reset control value");
         expect_read(MT_REG_MAGIC, MT_MAGIC, "magic");
         expect_read(MT_REG_SHELL_BUILD_ID, 32'h12345678, "build ID");
+        expect_read(MT_REG_ABI_VERSION,MT_ABI_VERSION,"ABI identity");
+        expect_read(MT_REG_IIGS_ACCEL_CAPS,ACCEL_CAPS,"installed IIgs speed capability");
         expect_read(MT_REG_CORE_ID, 32'h43363420, "core ID");
         expect_read(MT_REG_CORE_VARIANT_INDEX, 32'd1, "core variant index");
         expect_read(MT_REG_STATUS,
@@ -612,11 +614,11 @@ module tb_control_regs;
         expect_read(MT_REG_BORDER_CONFIG,32'h1408,"border byte strobes");
         write_reg(MT_REG_BORDER_CONFIG,0,4'h2);
         expect_read(MT_REG_BORDER_CONFIG,32'h108,"padding minimum");
-        expect_read(12'h0CC,32'd0,"unused register reads zero");
+        expect_read(12'h0FC,32'd0,"unused register reads zero");
         @(negedge clk);rd_en=1'b1;
         @(negedge clk);rd_en=1'b0;
         expect_read(MT_REG_ERROR,MT_ERROR_BAD_READ,"unused register read rejected");
-        write_reg(12'h0CC,32'd1,4'hF);
+        write_reg(12'h0FC,32'd1,4'hF);
         expect_read(MT_REG_ERROR,MT_ERROR_BAD_READ | MT_ERROR_BAD_WRITE,
                     "unused register write rejected");
         write_reg(MT_REG_ERROR,32'hffffffff,4'hf);
@@ -643,6 +645,8 @@ module tb_control_regs;
         expect_read(MT_REG_VIDEO_EFFECT_STATUS,15,"effect status bits");
         expect_read(MT_REG_VIDEO_EFFECT_SEQUENCE,32'h10203040,"effect committed sequence");
         expect_read(MT_REG_ERROR,MT_ERROR_BAD_WRITE,"effect malformed writes are reported");
+        write_reg(MT_REG_IIGS_ACCEL_CAPS,0,4'hF);
+        expect_read(MT_REG_IIGS_ACCEL_CAPS,ACCEL_CAPS,"speed capability is read-only");
         $display("PASS: control registers");
         $finish;
     end

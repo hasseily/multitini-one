@@ -4,6 +4,7 @@
 
 #include "multitini_content.h"
 #include "multitini_menu.h"
+#include "multitini_iigs_interface.h"
 
 /* A snapshot of services already owned by the runtime. Building a menu never
  * performs I/O or changes core, media, input, or save state. String storage must
@@ -27,6 +28,10 @@ typedef struct {
     bool fast_roms_fallback;
     bool cpu_turbo_enabled;
     uint8_t genesis_three_button_mask;
+    const char *iigs_drive_name[MT_IIGS_DRIVE_COUNT];
+    mt_iigs_config_t iigs_config;
+    uint32_t iigs_speed_mask;
+    bool iigs_ready;
 } mt_core_frontend_state_t;
 
 typedef struct {
@@ -47,5 +52,8 @@ bool mt_core_frontend_browser_supported(uint32_t core_id,
 bool mt_core_frontend_accepts_content(uint32_t core_id,
                                       mt_menu_browser_t browser,
                                       mt_content_type_t type);
+bool mt_core_frontend_browser_folders(uint32_t core_id, mt_menu_browser_t browser);
+bool mt_core_frontend_accepts_drive_content(uint32_t core_id, mt_menu_browser_t browser,
+                                           unsigned drive, mt_content_type_t type);
 
 #endif

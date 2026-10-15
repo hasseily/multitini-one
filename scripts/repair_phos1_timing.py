@@ -22,12 +22,16 @@ def main():
                         choices=("AggressiveExplore", "AlternateReplication", "Explore"))
     parser.add_argument("--vivado", default="C:/Xilinx/2025.2/Vivado/bin/vivado.bat")
     parser.add_argument("--signoff-only", action="store_true")
+    parser.add_argument("--iigs-constraint-replay", action="store_true",
+                        help="Reserialize the four existing IIgs MCP pairs without changing their timing policy")
     parser.add_argument("--replicate-cell", action="append", default=[])
     parser.add_argument("--replicate-net", action="append", default=[],
                         help="Exact combinational or registered net name to replicate before routing")
     args = parser.parse_args()
     replicate = bool(args.replicate_cell or args.replicate_net)
     package.require(not (args.signoff_only and replicate), "Signoff-only cannot replicate cells or nets")
+    package.require(not args.iigs_constraint_replay or args.signoff_only,
+                    "IIgs constraint replay requires --signoff-only")
     package.require(all(re.fullmatch(r"[A-Za-z0-9_./\[\]]+", name) for name in args.replicate_cell),
                     "Invalid cell name")
     package.require(all(re.fullmatch(r"[A-Za-z0-9_./\[\]]+", name) for name in args.replicate_net),
@@ -35,6 +39,8 @@ def main():
     directory = args.directory.resolve()
     package.require(directory.is_relative_to(ROOT / "build"), "Build must stay inside the checkout")
     record = json.loads((directory / "source-inputs.json").read_text())
+    package.require(not args.iigs_constraint_replay or record["machine"] == "APPLE_IIGS",
+                    "Constraint replay applies only to the IIgs image")
     package.verify_sources(record["files"])
     package.verify_hardware_source_archive(directory, record["files"])
     run = directory / "multitini_one.runs/impl_1"
@@ -44,6 +50,55 @@ def main():
     original = original.replace(first, f"set script_dir {{{(ROOT / 'scripts').as_posix()}}}", 1)
     start = original.index("reset_run synth_1\n")
     end = original.index("open_run impl_1\n", start) + len("open_run impl_1\n")
+    attempts = directory / "reports/repair"
+    attempts.mkdir(parents=True, exist_ok=True)
+    numbers = [int(match.group(1)) for path in attempts.glob("pass-*.tcl")
+               if (match := re.fullmatch(r"pass-([0-9]+)\.tcl", path.name))]
+    number = max(numbers, default=0) + 1
+    replay = ""
+    replay_record = None
+    if args.iigs_constraint_replay:
+        source = ROOT / "hdl/board/multitini_apple_iigs_timing.xdc"
+        body = source.read_text().split("# Software eject is sampled", 1)
+        package.require(len(body) == 2, "Missing canonical IIgs MCP section")
+        body = "# Software eject is sampled" + body[1]
+        package.require(body.count("[get_clocks apple_iigs_clk14]") == 8 and
+                        len(re.findall(r"^set_multicycle_path", body, re.M)) == 8 and
+                        body.count("-setup") == body.count("-hold") == 4,
+                        "Unexpected canonical IIgs MCP inventory")
+        # The filter is an exact-name query. The only other change resets each
+        # old pair before recreating the identical setup and companion hold.
+        candidate_text = body.replace("[get_clocks apple_iigs_clk14]",
+                                     "[get_clocks -quiet -filter {NAME == apple_iigs_clk14}]")
+        candidate_text = candidate_text.replace("-setup", "-setup -reset_path")
+        package.require(candidate_text.replace("-setup -reset_path", "-setup").replace(
+                        "[get_clocks -quiet -filter {NAME == apple_iigs_clk14}]",
+                        "[get_clocks apple_iigs_clk14]") == body,
+                        "IIgs replay changed canonical numeric timing policy")
+        candidate = attempts / f"pass-{number}-iigs-mcp.xdc"
+        candidate.write_text(candidate_text, encoding="utf-8")
+        helper = attempts / f"pass-{number}-replay-source.tcl"
+        shutil.copyfile(ROOT / "scripts/repair_apple_iigs_constraint_replay.tcl", helper)
+        tool_source = attempts / f"pass-{number}-tool-source.py"
+        shutil.copyfile(Path(__file__), tool_source)
+        equivalence = attempts / f"pass-{number}-replay-equivalence.txt"
+        replay = (f"source {{{helper.as_posix()}}}\n"
+                  f"::iigs_replay::begin {{{candidate.as_posix()}}} {{{equivalence.as_posix()}}}\n")
+        gate = "\nforeach delay_type {max min} {\n"
+        package.require(original.count(gate) == 1, "Cannot identify final timing gate")
+        original = original.replace(gate,
+            "\n::iigs_replay::check after_all_reports\n"
+            "source [file join $script_dir check_apple_iigs_phase_constraints.tcl]\n"
+            "report_timing_summary -delay_type min_max -max_paths 100 -check_timing_verbose "
+            "-report_unconstrained -file [file join $report_dir timing_summary.rpt]\n"
+            "::iigs_replay::check after_final_timing_summary\n" + gate, 1)
+        original += "\n::iigs_replay::finish\n"
+        replay_record = {"selector_reserialization": True, "numeric_timing_policy_changed": False,
+                         "original_mcp_section_sha256": hashlib.sha256(body.encode()).hexdigest(),
+                         "candidate": {"path": str(candidate), "sha256": package.sha(candidate)},
+                         "helper": {"path": str(helper), "sha256": package.sha(helper)},
+                         "tool_source": {"path": str(tool_source), "sha256": package.sha(tool_source)},
+                         "equivalence_report": str(equivalence)}
     replication = ""
     if replicate:
         replication = ('set repair_clock [get_clocks -quiet -filter {NAME =~ *clk_out1*zynq_ps_bd_clk_wiz_c64*}]\n'
@@ -71,15 +126,12 @@ def main():
         optimization = ('phys_opt_design -directive Explore\n'
             'route_design -directive Explore\n' + optimization +
             'set_clock_uncertainty -setup 0.000 $repair_clock\n')
-    repair = ("open_run impl_1\n" + replication + optimization +
+    repair = ("open_run impl_1\n" + replication + optimization + replay +
               f"write_checkpoint -force {{{(run / 'multitini_one_top_routed.dcp').as_posix()}}}\n"
               f"write_bitstream -force {{{(run / 'multitini_one_top.bit').as_posix()}}}\n")
     script = original[:start] + repair + original[end:]
     # Keep the original generation/build wrappers and their pre-build archive immutable.
     prefix = (directory / "generate.tcl").read_text().split("source {", 1)[0]
-    attempts = directory / "reports/repair"
-    attempts.mkdir(parents=True, exist_ok=True)
-    number = len(list(attempts.glob("pass-*.tcl"))) + 1
     tcl = attempts / f"pass-{number}.tcl"
     tcl.write_text(prefix + script, encoding="utf-8")
     failure = attempts / f"before-{number}"
@@ -107,7 +159,8 @@ def main():
         "replicated_nets": args.replicate_net,
         "full_reroute": replicate,
         "temporary_machine_setup_margin_ns": 0.100 if replicate else 0.000,
-        "constraints_changed": False, "rtl_changed": False,
+        "constraints_changed": bool(replay_record), "rtl_changed": False,
+        "iigs_constraint_replay": replay_record,
         "normal_signoff_script_sha256": hashlib.sha256((ROOT / "scripts/build_and_export_xsa.tcl").read_bytes()).hexdigest(),
         "generated_script_sha256": package.sha(tcl), "command": list(map(str, command)),
         "routed_checkpoint_before_sha256": package.sha(checkpoint),

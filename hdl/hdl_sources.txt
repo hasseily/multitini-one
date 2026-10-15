@@ -154,6 +154,49 @@ core/genesis/multitini_genesis_machine.sv
 core/genesis/multitini_genesis_adapter.sv
 core/genesis/multitini_genesis_video_normalizer.sv
 board/multitini_genesis_video_bridge.sv
+[apple_iigs]
+../third_party/apple-iigs/upstream/rtl/65C816/P65C816_pkg.sv
+../third_party/apple-iigs/upstream/rtl/65C816/bit_adder.v | systemverilog
+../third_party/apple-iigs/upstream/rtl/65C816/adder4.v | systemverilog
+../third_party/apple-iigs/upstream/rtl/65C816/BCDAdder.v | systemverilog
+../third_party/apple-iigs/upstream/rtl/65C816/AddSubBCD.sv
+../third_party/apple-iigs/upstream/rtl/65C816/ALU.sv
+../third_party/apple-iigs/upstream/rtl/65C816/AddrGen.sv
+core/apple_iigs/ports/mcode.sv
+core/apple_iigs/ports/P65C816.sv
+../third_party/apple-iigs/upstream/rtl/mmu.sv
+../third_party/apple-iigs/upstream/rtl/syncram.v | systemverilog
+core/apple_iigs/ports/sound.sv
+core/apple_iigs/ports/soundglu.sv
+core/apple_iigs/ports/es5503.sv
+../third_party/apple-iigs/upstream/rtl/paddle_timer.v | systemverilog
+../third_party/apple-iigs/upstream/rtl/video_timing.v | systemverilog
+../third_party/apple-iigs/upstream/rtl/clock_divider.v | systemverilog
+../third_party/apple-iigs/upstream/rtl/iwm_woz.v | systemverilog
+../third_party/apple-iigs/upstream/rtl/iwm_flux.v | systemverilog
+../third_party/apple-iigs/upstream/rtl/flux_drive.v | systemverilog
+../third_party/apple-iigs/upstream/rtl/smartport_dev.v | systemverilog
+../third_party/apple-iigs/upstream/rtl/scc_iigs_wrapper.v | systemverilog
+../third_party/apple-iigs/upstream/rtl/scc8530.v | systemverilog
+core/apple_iigs/ports/rxuart.sv
+core/apple_iigs/ports/txuart.sv
+core/apple_iigs/ports/zipgs_regs.sv
+core/apple_iigs/ports/bram.sv
+core/apple_iigs/ports/runtime_rom.sv
+core/apple_iigs/ports/iir_filter.sv
+core/apple_iigs/ports/adb.sv
+core/apple_iigs/ports/hdd.sv
+core/apple_iigs/ports/prtc.sv
+core/apple_iigs/ports/twgs_card.sv
+core/apple_iigs/ports/woz_floppy_controller.sv
+core/apple_iigs/ports/vgc.sv
+core/apple_iigs/ports/iigs.sv
+core/apple_iigs/multitini_apple_iigs_loader.sv
+core/apple_iigs/multitini_apple_iigs_cache.sv
+core/apple_iigs/multitini_apple_iigs_ddr_path.sv
+core/apple_iigs/multitini_apple_iigs_adapter.sv
+board/multitini_apple_iigs_video_normalizer.sv
+board/multitini_apple_iigs_video_bridge.sv
 [common]
 ../third_party/appletini/hdl/reset_sync.sv
 ../third_party/appletini/hdl/cdc_bit_sync.sv
@@ -189,6 +232,8 @@ board/multitini_gameboy_psram_path.sv
 board/multitini_one_top.sv
 [genesis]
 board/multitini_genesis_timing.xdc
+[apple_iigs]
+board/multitini_apple_iigs_timing.xdc
 [common]
 ../third_party/appletini/constraints/multitini_pins.xdc
 board/multitini_psram_iob.xdc

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Simulator tests for the Multitini fast-disk ROM pair in c64fast/bin.
+"""Simulator tests for the Multitini fast-disk ROM pair in the private ROM collection.
 
 The pair is exercised on the py65 C64 + 1541 simulator with the parallel
 cable and the 8 KiB drive RAM expansion enabled, exactly as the FPGA
@@ -25,8 +25,10 @@ from c64sim.d64 import D64  # noqa: E402
 from c64sim.system import System  # noqa: E402
 from test_c64sim import hello_program, make_test_disk  # noqa: E402
 
-FAST_KERNAL = ROOT / "c64fast" / "bin" / "kernal.bin"
-FAST_DOS = ROOT / "c64fast" / "bin" / "1541.bin"
+from private_core_roms import default_rom_source
+STOCK = default_rom_source() / "c64/roms"
+FAST_KERNAL = STOCK / "fast/kernal.bin"
+FAST_DOS = STOCK / "fast/1541.bin"
 PROVENANCE = ROOT / "c64fast" / "bin" / "PROVENANCE.json"
 SLOW = os.environ.get("MULTITINI_SLOW_TESTS") == "1"
 ENGINE_MAGIC_OFFSET = 0x9AF3 - 0x8000
@@ -38,6 +40,7 @@ def fast_system(image, **extra) -> System:
                   drive_rom_bytes=FAST_DOS.read_bytes(), **extra)
 
 
+@unittest.skipUnless(FAST_KERNAL.is_file() and FAST_DOS.is_file(), "private fast ROM pair not supplied")
 class FastRomBuildTests(unittest.TestCase):
     def test_images_are_present_and_sized(self):
         self.assertEqual(FAST_KERNAL.stat().st_size, 8192)
@@ -50,11 +53,11 @@ class FastRomBuildTests(unittest.TestCase):
         outputs = record["outputs"]
         for name, path in (("kernal.bin", FAST_KERNAL), ("1541.bin", FAST_DOS)):
             self.assertEqual(outputs[name]["sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
-        stock = ROOT / "third_party" / "c64" / "ROMs"
+        stock = STOCK
         self.assertEqual(record["inputs"]["kernal"]["sha256"],
-                         hashlib.sha256((stock / "kernal.901227-03.bin").read_bytes()).hexdigest())
+                         hashlib.sha256((stock / "kernal.bin").read_bytes()).hexdigest())
         self.assertEqual(record["inputs"]["1541"]["sha256"],
-                         hashlib.sha256((stock / "1541-II.251968-03.bin").read_bytes()).hexdigest())
+                         hashlib.sha256((stock / "1541.bin").read_bytes()).hexdigest())
 
     def test_rebuild_matches_committed_images(self):
         acme = shutil.which("acme") or shutil.which("acme.exe")
@@ -65,17 +68,18 @@ class FastRomBuildTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_stock_bytes_survive_outside_patch_regions(self):
-        stock = (ROOT / "third_party" / "c64" / "ROMs" / "kernal.901227-03.bin").read_bytes()
+        stock = (STOCK / "kernal.bin").read_bytes()
         fast = FAST_KERNAL.read_bytes()
         # KERNAL jump table, vectors and the message table are untouched.
         self.assertEqual(stock[0x1F81:0x2000], fast[0x1F81:0x2000])
         self.assertEqual(stock[0x10BD:0x10D8], fast[0x10BD:0x10D8])
-        stock_dos = (ROOT / "third_party" / "c64" / "ROMs" / "1541-II.251968-03.bin").read_bytes()
+        stock_dos = (STOCK / "1541.bin").read_bytes()
         fast_dos = FAST_DOS.read_bytes()
         self.assertEqual(stock_dos[0x3FE6:0x4000], fast_dos[0x3FE6:0x4000])
         self.assertEqual(stock_dos[0x0000:0x009F], fast_dos[0x0000:0x009F])
 
 
+@unittest.skipUnless(FAST_KERNAL.is_file() and FAST_DOS.is_file(), "private fast ROM pair not supplied")
 class FastRomAcceptanceTests(unittest.TestCase):
     """The fast pair talking over the simulated cable and IEC bus."""
 

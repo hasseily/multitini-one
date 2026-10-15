@@ -1,15 +1,18 @@
 # SPDX-License-Identifier: GPL-3.0-only
 from __future__ import annotations
 
-import hashlib
 import json
 import unittest
-import zlib
+import tempfile
+import sys
+from unittest.mock import patch
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVENANCE = ROOT / "provenance" / "c64_roms.json"
+sys.path.insert(0, str(ROOT / "scripts"))
+import check_repo
 EXPECTED_ROMS = (
     (
         "third_party/c64/ROMs/basic.901226-01.bin",
@@ -34,7 +37,8 @@ class C64RomProvenanceTests(unittest.TestCase):
         self.record = json.loads(PROVENANCE.read_text(encoding="utf-8"))
 
     def test_each_rom_matches_the_exact_provenance_record(self):
-        self.assertEqual(self.record["schema_version"], 1)
+        self.assertEqual(self.record["schema_version"], 2)
+        self.assertEqual(self.record["source_policy"], "external-only")
         self.assertEqual(
             [item["path"] for item in self.record["roms"]],
             [path for path, _, _ in EXPECTED_ROMS],
@@ -43,15 +47,12 @@ class C64RomProvenanceTests(unittest.TestCase):
         for item, (relative, expected_size, expected_sha256) in zip(
             self.record["roms"], EXPECTED_ROMS, strict=True
         ):
-            data = (ROOT / relative).read_bytes()
             self.assertEqual(item["size"], expected_size)
             self.assertEqual(item["sha256"], expected_sha256)
-            self.assertEqual(len(data), expected_size)
-            self.assertEqual(hashlib.sha256(data).hexdigest(), expected_sha256)
+            self.assertFalse((ROOT / relative).exists())
 
     def test_bundle_order_size_crc_and_sha256_are_exact(self):
         expected_order = [path for path, _, _ in EXPECTED_ROMS]
-        bundle = b"".join((ROOT / path).read_bytes() for path in expected_order)
         record = self.record["bundle"]
 
         self.assertEqual(record["order"], expected_order)
@@ -61,9 +62,20 @@ class C64RomProvenanceTests(unittest.TestCase):
             record["sha256"],
             "6d86861abdf674bc3d256e101ffd44f8297004aa8990a267d55c940d755f9fff",
         )
-        self.assertEqual(len(bundle), record["size"])
-        self.assertEqual(f"0x{zlib.crc32(bundle) & 0xFFFFFFFF:08X}", record["crc32"])
-        self.assertEqual(hashlib.sha256(bundle).hexdigest(), record["sha256"])
+
+    def test_policy_rejects_reintroduced_rom_bytes(self):
+        with tempfile.TemporaryDirectory() as name:
+            temporary = Path(name)
+            provenance = temporary / "provenance/c64_roms.json"
+            provenance.parent.mkdir()
+            provenance.write_text(json.dumps(self.record))
+            target = temporary / EXPECTED_ROMS[0][0]
+            target.parent.mkdir(parents=True)
+            target.write_bytes(b"private ROM must not be in source")
+            errors = []
+            with patch.object(check_repo, "ROOT", temporary):
+                check_repo.check_c64_rom_provenance(errors)
+            self.assertTrue(any("reintroduced into source" in message for message in errors))
 
     def test_record_does_not_invent_a_license(self):
         decision = self.record["distribution_decision"]

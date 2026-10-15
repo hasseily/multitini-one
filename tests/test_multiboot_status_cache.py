@@ -22,7 +22,7 @@ int qspi_nor_read(qspi_nor_t *n,uint32_t a,void *d,uint32_t s) { (void)n;(void)a
 int qspi_nor_erase_region(qspi_nor_t *n,uint32_t a,uint32_t s) { (void)n;(void)a;(void)s;assert(0);return -1; }
 int qspi_nor_program(qspi_nor_t *n,uint32_t a,const void *d,uint32_t s) { (void)n;(void)a;(void)d;(void)s;assert(0);return -1; }
 int mb_golden_available(const mb_flash_t *f,uint32_t *o) { assert(f);++golden_reads;if(o)*o=0;return MB_OK; }
-int mb_golden_installed_version(const mb_flash_t *f,char *v,uint32_t n,uint32_t *o) { assert(f&&n>=7);++version_reads;strcpy(v,"B2.0.3");if(o)*o=0;return MB_OK; }
+int mb_golden_installed_version(const mb_flash_t *f,char *v,uint32_t n,uint32_t *o) { assert(f&&n>=7);++version_reads;memcpy(v,"B2.0.3",7);if(o)*o=0;return MB_OK; }
 int mb_metadata_load(const mb_flash_t *f,mb_metadata_t *m) { assert(f);memset(m,0,sizeof(*m));m->default_product=MB_PRODUCT_APPLETINI;return metadata_status; }
 int mb_slot_probe(const mb_flash_t *f,uint32_t p,mb_image_t *o) { assert(f);(void)o;++probes;return (p==MB_PRODUCT_APPLETINI?appletini_present:multitini_present)?MB_OK:MB_E_UNAVAILABLE; }
 int mb_slot_verify(const mb_flash_t *f,uint32_t p,mb_image_t *o) { assert(f);(void)p;(void)o;++slot_reads;return payload_valid?MB_OK:MB_E_CRC; }

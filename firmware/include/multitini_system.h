@@ -26,8 +26,8 @@ typedef struct {
 } mt_system_snapshot_t;
 
 typedef struct {
-    mt_menu_item_t items[MT_MENU_MAX_ITEMS];
-    char values[MT_MENU_MAX_ITEMS][96];
+    mt_menu_item_t items[MT_MENU_MAX_SYSTEM_ITEMS];
+    char values[MT_MENU_MAX_SYSTEM_ITEMS][96];
 } mt_system_frontend_t;
 
 /* Presentation only: callers supply cached sensor values; no hardware/file I/O. */

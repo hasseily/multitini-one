@@ -5,6 +5,7 @@
 #include "multitini_vectrex_interface.h"
 #include "multitini_vectrex_overlay.h"
 #include "multitini_genesis_content.h"
+#include "multitini_iigs_interface.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -66,6 +67,9 @@ mt_content_type_t mt_content_classify(const char *path)
     if (extension_is(extension, "md") || extension_is(extension, "gen"))
         return MT_CONTENT_GENESIS_CART;
     if (extension_is(extension, "smd")) return MT_CONTENT_GENESIS_SMD;
+    if (extension_is(extension, "hdv") || extension_is(extension, "po") ||
+        extension_is(extension, "2mg")) return MT_CONTENT_IIGS_HDD;
+    if (extension_is(extension, "woz")) return MT_CONTENT_IIGS_WOZ;
     return MT_CONTENT_UNKNOWN;
 }
 
@@ -90,7 +94,8 @@ bool mt_content_supported_first_release(mt_content_type_t type)
            type == MT_CONTENT_CRT || type == MT_CONTENT_GB_CART ||
            type == MT_CONTENT_GBC_CART || type == MT_CONTENT_VECTREX_CART ||
            type == MT_CONTENT_VECTREX_BASIC || type == MT_CONTENT_VECTREX_OVERLAY ||
-           type == MT_CONTENT_GENESIS_CART || type == MT_CONTENT_GENESIS_SMD;
+           type == MT_CONTENT_GENESIS_CART || type == MT_CONTENT_GENESIS_SMD ||
+           type == MT_CONTENT_IIGS_HDD || type == MT_CONTENT_IIGS_WOZ;
 }
 
 bool mt_content_may_write_first_release(mt_content_type_t type)
@@ -115,6 +120,8 @@ const char *mt_content_type_name(mt_content_type_t type)
     case MT_CONTENT_VECTREX_OVERLAY: return "Vectrex overlay";
     case MT_CONTENT_GENESIS_CART: return "Genesis / Mega Drive cartridge";
     case MT_CONTENT_GENESIS_SMD: return "Genesis / Mega Drive SMD cartridge";
+    case MT_CONTENT_IIGS_HDD: return "Apple IIgs block disk";
+    case MT_CONTENT_IIGS_WOZ: return "Apple IIgs WOZ floppy";
     case MT_CONTENT_UNKNOWN: return "unknown";
     }
     return "unknown";
@@ -340,6 +347,8 @@ mt_content_validation_t mt_content_inspect(mt_content_type_t type,
         break;
     }
     case MT_CONTENT_TAP_FUTURE:
+    case MT_CONTENT_IIGS_HDD:
+    case MT_CONTENT_IIGS_WOZ:
     case MT_CONTENT_D81_FUTURE:
     case MT_CONTENT_UNKNOWN:
         status = MT_CONTENT_UNSUPPORTED_VERSION;

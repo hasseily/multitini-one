@@ -4,6 +4,7 @@
 #include "core_catalog_sd.h"
 #include "gameboy_content_service.h"
 #include "genesis_content_service.h"
+#include "iigs_content_service.h"
 #include "vectrex_content_service.h"
 #include "vectrex32_service.h"
 #include "multitini_ak4493.h"
@@ -37,6 +38,8 @@
 #include "supervisor_settings.h"
 #include "text_document.h"
 #include "usb_hid_service.h"
+#include "usb_storage_service.h"
+#include "multitini_usb_storage_mode.h"
 #include "multitini_video_effects_frontend.h"
 #include "video_effect_service.h"
 #include "video_worker.h"
@@ -100,6 +103,9 @@ static bool c64_drive_ready;
 static bool c64_core_reset_active;
 static bool c64_services_initialized;
 static bool genesis_service_initialized;
+static bool iigs_service_initialized;
+static bool iigs_fault_displayed;
+static unsigned iigs_browser_drive;
 static bool genesis_save_dirty_displayed;
 static bool genesis_save_fault_displayed;
 static bool gameboy_service_initialized;
@@ -149,6 +155,9 @@ static char installed_golden_version[32];
 static bool golden_update_present;
 /* Sticky until the PS restarts. Never recycle a reset CPU1's DDR in place. */
 static bool golden_update_worker_held;
+static bool usb_sd_modal, usb_sd_stop_requested, usb_sd_core_stopped, usb_sd_previously_reset;
+static bool usb_sd_had_active, usb_sd_restart_failed;
+static mt_core_selection_t usb_sd_previous;
 static mt_core_catalog_sd_t core_catalog;
 static mt_supervisor_t supervisor;
 static mt_menu_t supervisor_menu;
@@ -428,6 +437,12 @@ static void service_runtime(void)
     }
     c64_core_reset_active = false;
     if (c64_active && c64_services_initialized) c64_d64_service_poll();
+    if(shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID && iigs_service_initialized) {
+        iigs_content_service_poll();
+        if(iigs_fault_displayed!=iigs_content_service_faulted()) {
+            iigs_fault_displayed=iigs_content_service_faulted(); supervisor_menu_dirty=true;
+        }
+    }
     if (gameboy_active && gameboy_service_initialized) {
         bool dirty;
         bool faulted;
@@ -699,15 +714,23 @@ static int set_core_reset_request(bool asserted)
         xil_printf("[MD] reset release refused; save RAM remount failed\r\n");
         return -1;
     }
+    if(asserted && !currently_asserted && shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID &&
+        iigs_service_initialized && iigs_content_service_prepare_reset()!=0)return -1;
+    if(!asserted && currently_asserted && shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID &&
+        iigs_service_initialized && iigs_content_service_resume_after_reset()!=0)return -1;
     result = command(MT_COMMAND_CORE_RESET, asserted ? 1U : 0U, 0U);
     /* A synchronous assert/release can finish before the USB service observes
      * reset. Invalidate the cached Vectrex delivery state explicitly. */
     if (result == 0 && asserted && (shell_read(MT_REG_CORE_ID) == MT_VECTREX_CORE_ID ||
-                                  shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID))
+                                  shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID ||
+                                  shell_read(MT_REG_CORE_ID) == MT_IIGS_CORE_ID))
         usb_hid_service_set_core_ready(false);
     if (result != 0 && asserted && !currently_asserted &&
         c64_active && c64_services_initialized) {
         (void)c64_d64_service_resume_after_reset();
+    } else if(result!=0 && asserted && !currently_asserted &&
+        shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID && iigs_service_initialized) {
+        (void)iigs_content_service_resume_after_reset();
     } else if (result != 0 && asserted && !currently_asserted &&
                gameboy_active && gameboy_service_initialized) {
         (void)gameboy_content_service_resume_after_reset();
@@ -1137,6 +1160,14 @@ static void print_help(void)
     xil_printf("commands: h help, o menu, s status, p ping, a live audio, ");
     xil_printf("t test tone, m mute, ");
     xil_printf("v toggle video, r toggle core reset, u USB status, ");
+    if(supervisor.has_active && supervisor.active.package.core_id==MT_IIGS_CORE_ID) {
+        xil_printf("F12 opens the Multitini menu\r\n");
+        xil_printf("Apple IIgs: :disk or :dir status, :diskretry or :saveretry retry SD I/O\r\n");
+        xil_printf("Mount/eject/ROM/PRAM actions are in Media; controllers are in Input\r\n");
+        xil_printf("Keyboard: Ctrl+F11 warm reset, Ctrl+Alt+F11 cold reset\r\n");
+        xil_printf("Recovery: :reboot to golden, :selfupdate stage BOOT.BIN\r\n");
+        return;
+    }
     xil_printf("j swap joystick port, k toggle keyboard map\r\n");
     xil_printf("US map: Alt/GUI=C=, F9=up-arrow, F10=+, F11=RESTORE; ");
     xil_printf("F12 opens the Multitini menu\r\n");
@@ -1354,7 +1385,8 @@ static void switch_to_appletini(void)
     const mb_flash_t *flash;
     const uint32_t previous_boot = Xil_In32(MT_DEVCFG_MULTIBOOT);
     const bool previously_reset = (shell_read(MT_REG_CONTROL) & MT_CONTROL_CORE_RESET_REQUEST) != 0U;
-    const bool genesis_source = shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID;
+    const bool genesis_source = shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID ||
+        shell_read(MT_REG_CORE_ID) == MT_IIGS_CORE_ID;
     bool core_stopped = false, worker_stopped = false, usb_stopped = false;
     bool storage_unmounted = false, request_attempted = false, boot_changed = false;
     bool restore_safe = true;
@@ -1491,7 +1523,8 @@ static void self_update_golden(bool recovery_only)
     const bool previously_reset = !recovery_only &&
         (shell_read(MT_REG_CONTROL) & MT_CONTROL_CORE_RESET_REQUEST) != 0U;
     const bool menu_was_visible = !recovery_only && supervisor_menu.visible;
-    const bool genesis_source = !recovery_only && shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID;
+    const bool genesis_source = !recovery_only && (shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID ||
+        shell_read(MT_REG_CORE_ID) == MT_IIGS_CORE_ID);
     bool core_stopped = false, worker_stopped = false;
     bool stopped_usb = false, restore_safe = true, boot_changed = false;
     const char *error = "Golden update cancelled";
@@ -1614,14 +1647,36 @@ restore:
 
 static void change_display_mode(size_t mode);
 
+static void print_iigs_media_status(void)
+{
+    const mt_iigs_config_t *options=iigs_content_service_config();
+    xil_printf("[IIgs] ready=%u fault=%u ROM=%u speed=%u card=%u error=%s\r\n",
+        iigs_content_service_ready() ? 1U:0U,iigs_content_service_faulted() ? 1U:0U,
+        options->rom3 ? 3U:1U,(unsigned)options->speed,(unsigned)options->card,
+        iigs_content_service_error());
+    for(unsigned d=0U;d<MT_IIGS_DRIVE_COUNT;++d) {
+        const char *name=iigs_content_service_name(d);
+        xil_printf("[IIgs] drive%u: %s\r\n",d,name!=NULL ? name:"ejected");
+    }
+}
+
+static bool legacy_c64_media_command(const char *text)
+{
+    return strcmp(text,"eject")==0 || strcmp(text,"cartoff")==0 ||
+        ((strncmp(text,"load",4U)==0) && (text[4]=='\0' || text[4]==' ' || text[4]=='\t')) ||
+        ((strncmp(text,"mount",5U)==0) && (text[5]=='\0' || text[5]==' ' || text[5]=='\t')) ||
+        ((strncmp(text,"c64rx",5U)==0) && (text[5]=='\0' || text[5]==' ' || text[5]=='\t'));
+}
+
 static void handle_extended_command(bool recovery_only)
 {
     char extended[MT_EXTENDED_COMMAND_CAPACITY];
     char *argument;
     char *argument_end;
+    const bool iigs_active=!recovery_only && shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID;
 
     if (!read_extended_command(extended, sizeof(extended), recovery_only)) {
-        if (!recovery_only && strncmp(extended, "c64rx", 5U) == 0) {
+        if (!recovery_only && shell_is_c64() && strncmp(extended, "c64rx", 5U) == 0) {
             leave_core_in_reset();
         }
         xil_printf("extended command is too long\r\n");
@@ -1638,6 +1693,17 @@ static void handle_extended_command(bool recovery_only)
         change_display_mode((size_t)(extended[8]-'0'));
     } else if (strcmp(extended, "diag") == 0) {
         print_read_only_diagnostics("command");
+    } else if(iigs_active && (strcmp(extended,"disk")==0 || strcmp(extended,"dir")==0)) {
+        print_iigs_media_status();
+    } else if(iigs_active && (strcmp(extended,"diskretry")==0 || strcmp(extended,"saveretry")==0)) {
+        if(!hide_menu_for_core_action())return;
+        const int result=iigs_content_service_retry();
+        if(result!=0)set_supervisor_error(iigs_content_service_error());
+        else set_supervisor_status("Apple IIgs media retry completed");
+        print_iigs_media_status();
+    } else if(iigs_active && legacy_c64_media_command(extended)) {
+        xil_printf("[IIgs] C64 command unavailable; use the Apple IIgs Media menu\r\n");
+        set_supervisor_warning("Use the Apple IIgs Media menu");
     } else if (!recovery_only &&
                strncmp(extended, "c64rx", 5U) == 0 &&
                (extended[5] == '\0' || extended[5] == ' ' ||
@@ -2317,6 +2383,14 @@ static mt_menu_view_t supervisor_menu_view(void)
         state.save_faulted = genesis_content_service_save_faulted();
 
         state.genesis_three_button_mask = (uint8_t)(3U ^ genesis_content_service_options()->six_button_mask);
+    } else if(supervisor.has_active && supervisor.active.package.core_id==MT_IIGS_CORE_ID &&
+        iigs_service_initialized) {
+        state.services_ready=true;
+        state.iigs_ready=iigs_content_service_ready();
+        state.iigs_config=*iigs_content_service_config();
+        state.iigs_speed_mask=iigs_content_service_speed_mask();
+        state.save_faulted=iigs_content_service_faulted();
+        for(unsigned d=0U;d<MT_IIGS_DRIVE_COUNT;++d)state.iigs_drive_name[d]=iigs_content_service_name(d);
     } else if (supervisor.has_active &&
                supervisor.active.package.core_id == MT_VECTREX_CORE_ID &&
                vectrex_service_initialized) {
@@ -2371,8 +2445,8 @@ static mt_menu_view_t supervisor_menu_view(void)
     }
     view.files = supervisor_menu_files;
     view.file_count = supervisor_menu_file_count;
-    if ((supervisor_menu.browser == MT_MENU_BROWSER_DOCUMENTS || (supervisor.has_active &&
-        supervisor.active.package.core_id == MT_VECTREX_CORE_ID)) &&
+    if (mt_core_frontend_browser_folders(supervisor.has_active ? supervisor.active.package.core_id:0U,
+        supervisor_menu.browser) &&
         supervisor_menu.browser != MT_MENU_BROWSER_NONE &&
         vectrex_browser_path[0] != '\0')
         view.content_root = vectrex_browser_path;
@@ -2495,12 +2569,13 @@ static int collect_menu_file(void *context, const char *name, size_t size,
     size_t name_size;
     bool accepted;
     const bool document = !is_directory && is_text_document(name);
-    const bool folders = browser == MT_MENU_BROWSER_DOCUMENTS || (supervisor.has_active &&
-        supervisor.active.package.core_id == MT_VECTREX_CORE_ID);
+    const bool folders = mt_core_frontend_browser_folders(
+        supervisor.has_active ? supervisor.active.package.core_id:0U,browser);
     if (!mt_media_browser_visible_component(name)) return 0;
     accepted = is_directory ? folders :
         document || (supervisor.has_active && browser != MT_MENU_BROWSER_DOCUMENTS &&
-            mt_core_frontend_accepts_content(supervisor.active.package.core_id, browser, type));
+            mt_core_frontend_accepts_drive_content(supervisor.active.package.core_id, browser,
+                iigs_browser_drive,type));
     if (!accepted) return 0;
     name_size = strlen(name);
     if (name_size == 0U || name_size >= MT_MENU_FILE_NAME_MAX) return 0;
@@ -2634,10 +2709,10 @@ static void open_menu_browser(mt_menu_browser_t browser)
         set_supervisor_status("This core has no media browser yet");
         return;
     }
-    if (supervisor.active.package.core_id == MT_VECTREX_CORE_ID) {
+    if (mt_core_frontend_browser_folders(supervisor.active.package.core_id,browser)) {
         mt_media_browser_t directory;
         if (!mt_media_browser_init(&directory, supervisor.active.package.content_root)) {
-            set_supervisor_error("Invalid Vectrex media folder");
+            set_supervisor_error("Invalid core media folder");
             return;
         }
         list_vectrex_browser(browser, &directory);
@@ -2690,14 +2765,16 @@ static int supervisor_load(void *context,
 {
     mt_pl_load_result_t load;
     uint64_t drain_started;
-    const bool genesis_source = shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID;
+    const bool genesis_source = shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID ||
+        shell_read(MT_REG_CORE_ID) == MT_IIGS_CORE_ID;
     mt_video_effect_service_suspend();
     drain_started = monotonic_ms(NULL);
     while (!mt_video_effect_service_quiescent() ||
            (genesis_source && (shell_read(MT_REG_VIDEO_FRAME_STATUS) &
                                MT_VIDEO_FRAME_STATUS_QUIESCENT) == 0U)) {
         /* All active HP masters must drain before PCAP resets the fabric.
-         * With core reset asserted this also includes Genesis source HP2.
+         * With core reset asserted this includes Genesis and IIgs source
+         * transports and the IIgs memory bridge.
          * CPU1 only touches reserved DDR and can finish an old job safely. */
         usb_hid_service_poll_deferred();
         if (monotonic_ms(NULL) - drain_started >= 1000U) {
@@ -2830,6 +2907,29 @@ static void genesis_transfer_progress(void *context)
     usb_hid_service_poll_deferred();
 }
 
+static uint32_t iigs_clock_timestamp(void)
+{
+    if(!board_clock_valid || board_clock.year<1970U)return 0U;
+    uint32_t days=0U;
+    static const uint8_t month_days[]={31U,28U,31U,30U,31U,30U,31U,31U,30U,31U,30U,31U};
+    for(uint32_t y=1970U;y<board_clock.year;++y)days+=365U+((y%4U==0U && (y%100U!=0U || y%400U==0U)) ? 1U:0U);
+    for(unsigned m=1U;m<board_clock.month;++m)days+=month_days[m-1U]+((m==2U && board_clock.year%4U==0U &&
+        (board_clock.year%100U!=0U || board_clock.year%400U==0U)) ? 1U:0U);
+    days+=(uint32_t)board_clock.day-1U;
+    return days*86400U+(uint32_t)board_clock.hour*3600U+(uint32_t)board_clock.minute*60U+board_clock.second;
+}
+
+static int iigs_boot_with_input(void)
+{
+    usb_hid_service_set_core_ready(false);
+    const int result=iigs_content_service_boot();
+    const bool loaded=result==0;
+    usb_hid_service_set_core_ready(loaded);
+    if(dac_ready)set_audio(!loaded,false);
+    set_video_test(!loaded);
+    return result;
+}
+
 static int supervisor_activate(void *context,
                                const mt_core_selection_t *selection)
 {
@@ -2837,6 +2937,16 @@ static int supervisor_activate(void *context,
     bool request_fast_roms;
     (void)context;
     usb_hid_service_set_active_core(selection->package.core_id);
+    if(selection->package.core_id==MT_IIGS_CORE_ID) {
+        iigs_content_service_init(&shell_link,selection->package.content_root,genesis_transfer_progress,NULL);
+        iigs_service_initialized=true;
+        iigs_content_service_set_timestamp(iigs_clock_timestamp());
+        const int boot=iigs_boot_with_input();
+        if(boot!=0)xil_printf("[IIgs] ROM/media activation: %s\r\n",iigs_content_service_error());
+        last_settings_restore_ok=restore_selection_settings(selection);
+        /* Keep the ROM selector and retry controls available for user ROMs. */
+        return 0;
+    }
     if (selection->package.core_id == MT_VECTREX_CORE_ID) {
         mt_vectrex_content_result_t boot;
         vectrex_content_service_init(&shell_link, selection->package.content_root,
@@ -2911,6 +3021,7 @@ static int supervisor_enter_standby(void)
     c64_drive_ready = false;
     c64_core_reset_active = true;
     gameboy_service_initialized = false;
+    iigs_service_initialized = false;
     genesis_service_initialized = false;
     genesis_save_dirty_displayed = false;
     genesis_save_fault_displayed = false;
@@ -2969,6 +3080,7 @@ static void supervisor_controller_report(void *context, uint8_t slot, const mt_g
 static void supervisor_controller_action(void *context, unsigned action)
 {
     (void)context;
+    if(usb_sd_modal)return;
     if (action == MT_CONTROL_SCREENSHOT || action == MT_CONTROL_SCREENSHOT_OUTPUT)
         (void)mt_screenshot_service_request(action == MT_CONTROL_SCREENSHOT_OUTPUT);
 }
@@ -2976,7 +3088,7 @@ static void supervisor_controller_action(void *context, unsigned action)
 static bool supervisor_controller_config(void *context, uint32_t core_id, uint8_t slot,
     const mt_controller_device_t *device, mt_controller_config_t *config)
 {
-    static const uint32_t cores[] = {MT_C64_CORE_ID, MT_GBC_CORE_ID, MT_GENESIS_CORE_ID, MT_VECTREX_CORE_ID};
+    static const uint32_t cores[] = {MT_C64_CORE_ID, MT_GBC_CORE_ID, MT_GENESIS_CORE_ID, MT_VECTREX_CORE_ID, MT_IIGS_CORE_ID};
     (void)context;
     if (slot >= MT_GAMEPAD_SLOTS || device == NULL || config == NULL) return false;
     const mt_controller_settings_profile_t *saved = mt_supervisor_settings_find_controller(
@@ -3008,6 +3120,122 @@ static bool supervisor_controller_config(void *context, uint32_t core_id, uint8_
     return true;
 }
 
+static int usb_sd_quiesce(void *context)
+{
+    (void)context;
+    usb_sd_core_stopped=false;
+    usb_sd_previously_reset=(shell_read(MT_REG_CONTROL)&MT_CONTROL_CORE_RESET_REQUEST)!=0U;
+    if(!mt_screenshot_service_cancel())return -1;
+    mt_text_reader_close(&document_reader);
+    if(supervisor_quiesce(NULL)!=0)return -1;
+    usb_sd_core_stopped=true;
+    mt_video_effect_service_suspend();
+    const bool source=shell_read(MT_REG_CORE_ID)==MT_GENESIS_CORE_ID || shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID;
+    const uint64_t started=monotonic_ms(NULL);
+    while(!mt_video_effect_service_quiescent() || !mt_video_worker_quiesce() ||
+        (source && (shell_read(MT_REG_VIDEO_FRAME_STATUS)&MT_VIDEO_FRAME_STATUS_QUIESCENT)==0U)) {
+        usb_hid_service_poll_deferred();
+        if(monotonic_ms(NULL)-started>=1000U)return -1;
+    }
+    return 0;
+}
+static void usb_sd_cancel_quiesce(void *context)
+{
+    (void)context;
+    if(usb_sd_core_stopped && !usb_sd_previously_reset)(void)set_core_reset_request(false);
+    (void)mt_video_worker_resume();
+    configure_selection_effects(supervisor.has_active ? &supervisor.active:NULL);
+    usb_hid_service_set_core_ready((shell_read(MT_REG_CONTROL)&MT_CONTROL_CORE_RESET_REQUEST)==0U);
+}
+static int usb_sd_acquire(void *context)
+{ (void)context;return mt_sd_storage_external_acquire().status==MT_SD_OK ? 0:-1; }
+static int usb_sd_connect(void *context)
+{
+    (void)context;
+    if(usb_storage_service_init()!=0)return -1;
+    return usb_storage_service_connect()==0 ? 0:-1;
+}
+static void usb_sd_poll(void *context) { (void)context;usb_storage_service_poll(); }
+static bool usb_sd_host_ejected(void *context)
+{ (void)context;return usb_storage_service_consume_host_eject_request()!=0U; }
+static int usb_sd_disconnect(void *context)
+{ (void)context;return usb_storage_service_disconnect(); }
+static int usb_sd_release(void *context)
+{ (void)context;return mt_sd_storage_external_release().status==MT_SD_OK ? 0:-1; }
+static int usb_sd_restart(void *context)
+{
+    (void)context;
+    usb_sd_restart_failed=false;
+    mt_core_catalog_sd_scan(&core_catalog);
+    const mt_settings_result_t settings=mt_supervisor_settings_load(&persistent_settings);
+    settings_faulted=settings.status!=MT_SETTINGS_OK && settings.status!=MT_SETTINGS_MISSING;
+    supervisor_menu_file_count=supervisor_d64_prg_count=0U;
+    mt_menu_close_browser(&supervisor_menu);
+    if(!mt_video_worker_resume())usb_sd_restart_failed=true;
+    if(usb_sd_had_active && !usb_sd_restart_failed) {
+        const mt_core_selection_t *selected=NULL;
+        for(size_t i=0U;i<core_catalog.count && selected==NULL;++i) {
+            mt_core_selection_t *candidate=&core_catalog.cores[i];
+            if(strcmp(candidate->package.id,usb_sd_previous.package.id)!=0)continue;
+            for(size_t v=0U;v<candidate->package.variant_count;++v)
+                if(strcmp(candidate->package.variants[v].id,usb_sd_previous.package.variants[usb_sd_previous.variant_index].id)==0) {
+                    candidate->variant_index=v;selected=candidate;break;
+                }
+        }
+        if(selected==NULL || selected->package.abi_major!=MT_ABI_MAJOR || selected->package.abi_minor<MT_UI_MIN_ABI_MINOR ||
+            supervisor_load(NULL,selected)!=0 || supervisor_probe(NULL,selected->package.core_id,
+                selected->package.abi_major,selected->package.abi_minor)!=0)usb_sd_restart_failed=true;
+        else {
+            supervisor.active=*selected;supervisor.has_active=true;
+            c64_d64_service_init(&shell_link,NULL,NULL);
+            c64_services_initialized=true;
+            if(supervisor_activate(NULL,selected)!=0)usb_sd_restart_failed=true;
+        }
+    } else if(!usb_sd_had_active) {
+        if(supervisor_enter_standby()!=0)usb_sd_restart_failed=true;
+        configure_selection_effects(NULL);
+    }
+    if(usb_sd_restart_failed) {
+        (void)command(MT_COMMAND_CORE_RESET,1U,0U);
+        usb_hid_service_set_core_ready(false);
+        supervisor.has_active=false;supervisor.state=MT_SUPERVISOR_FAILED;
+    } else if(usb_sd_had_active)supervisor.state=MT_SUPERVISOR_ACTIVE;
+    supervisor_menu_dirty=true;last_system_refresh_ms=0U;
+    /* A changed/missing package leaves the machine reset and returns to the
+     * menu so the user can replace it or choose another core. */
+    return 0;
+}
+static void mount_sd_over_usb(void)
+{
+    const mt_usb_sd_ops_t ops={NULL,usb_sd_quiesce,usb_sd_acquire,usb_sd_connect,usb_sd_poll,
+        usb_sd_host_ejected,usb_sd_disconnect,usb_sd_release,usb_sd_restart,usb_sd_cancel_quiesce};
+    mt_usb_sd_mode_t mode;mt_usb_sd_mode_init(&mode,&ops);
+    usb_sd_had_active=supervisor.has_active;
+    if(usb_sd_had_active)usb_sd_previous=supervisor.active;
+    usb_sd_modal=true;usb_sd_stop_requested=false;usb_sd_restart_failed=false;
+    const int entered=mt_usb_sd_mode_enter(&mode);
+    if(entered!=0 && mode.state==MT_USB_SD_IDLE) {
+        usb_sd_modal=false;set_supervisor_error("USB SD refused; pending media or open file");return;
+    }
+    supervisor_menu.visible=true;
+    usb_hid_service_set_menu_capture(true);
+    mt_usb_sd_state_t displayed=MT_USB_SD_IDLE;
+    do {
+        if(mode.state!=displayed) { show_handoff_progress(mt_usb_sd_mode_status(&mode));displayed=mode.state; }
+        usb_hid_service_poll_deferred();
+        uint8_t byte;
+        if(uart0_try_read_byte(&byte)>0 && (byte==27U || byte=='\r' || byte=='\n' || byte=='q'))usb_sd_stop_requested=true;
+        if(usb_sd_stop_requested)mt_usb_sd_mode_stop(&mode);
+        mt_usb_sd_mode_poll(&mode);
+        if(mode.state==MT_USB_SD_REMOUNT_FAILED || mode.state==MT_USB_SD_STOP_FAILED)usleep(100000U);
+    } while(mode.state!=MT_USB_SD_IDLE);
+    usb_sd_modal=false;
+    usb_hid_service_set_menu_capture(true);
+    memset(supervisor_menu_keys,0,sizeof(supervisor_menu_keys));
+    set_supervisor_outcome(!usb_sd_restart_failed,
+        "USB SD stopped; active core restarted", "USB SD stopped; choose a core to recover");
+}
+
 static bool supervisor_keyboard_filter(void *context, uint8_t slot,
                                        uint8_t modifiers,
                                        const uint8_t *keys,
@@ -3030,6 +3258,12 @@ static bool supervisor_keyboard_filter(void *context, uint8_t slot,
         const uint8_t usage = keys == NULL ? 0U : keys[index];
         if (usage > 3U)
             next[usage >> 3U] |= (uint8_t)(1U << (usage & 7U));
+    }
+    if(usb_sd_modal && !vectrex_basic_running) {
+        const uint8_t stop_keys[]={MT_MENU_HID_ENTER,MT_MENU_HID_ESCAPE,MT_MENU_HID_F12};
+        for(size_t i=0U;i<sizeof(stop_keys);++i)
+            if(key_bitmap_get(next,stop_keys[i]) && !key_bitmap_get(supervisor_menu_keys[slot],stop_keys[i]))usb_sd_stop_requested=true;
+        memcpy(supervisor_menu_keys[slot],next,sizeof(next));return true;
     }
     if (key_bitmap_get(next, 0x46U) && !key_bitmap_get(supervisor_menu_keys[slot], 0x46U))
         (void)mt_screenshot_service_request((modifiers & 0x22U) != 0U);
@@ -3120,6 +3354,9 @@ static bool menu_action_needs_core_progress(mt_menu_action_t action)
     case MT_MENU_ACTION_LOAD_DISK_PROGRAM:
     case MT_MENU_ACTION_DIRECT_DISK_PROGRAM:
     case MT_MENU_ACTION_EJECT_DRIVE8:
+    case MT_MENU_ACTION_EJECT_IIGS_DRIVE:
+    case MT_MENU_ACTION_IIGS_PRAM:
+    case MT_MENU_ACTION_IIGS_RELOAD:
     case MT_MENU_ACTION_DETACH_CARTRIDGE:
     case MT_MENU_ACTION_RESET_CORE:
     case MT_MENU_ACTION_REBOOT_GOLDEN:
@@ -3138,6 +3375,7 @@ static bool menu_action_needs_core_progress(mt_menu_action_t action)
          * Turbo, input, video and startup settings apply while paused. */
         return supervisor.has_active &&
                (supervisor.active.package.core_id == MT_GENESIS_CORE_ID ||
+                (supervisor.active.package.core_id == MT_IIGS_CORE_ID && action.file_index==1U) ||
                 (supervisor.active.package.core_id == MT_C64_CORE_ID &&
                  action.file_index == 0U));
     default:
@@ -3428,6 +3666,24 @@ static void handle_menu_action(mt_menu_action_t action)
                    supervisor.recovered ? 1U : 0U);
     } else if (action.kind == MT_MENU_ACTION_BROWSE_DRIVE8) {
         open_menu_browser(MT_MENU_BROWSER_DRIVE8);
+    } else if(action.kind==MT_MENU_ACTION_BROWSE_IIGS_DRIVE) {
+        if(action.file_index>=MT_IIGS_DRIVE_COUNT || shell_read(MT_REG_CORE_ID)!=MT_IIGS_CORE_ID)return;
+        iigs_browser_drive=(unsigned)action.file_index;
+        open_menu_browser(MT_MENU_BROWSER_DRIVE8);
+    } else if(action.kind==MT_MENU_ACTION_EJECT_IIGS_DRIVE) {
+        const int result=iigs_content_service_eject((unsigned)action.file_index);
+        if(result!=0)set_supervisor_error(iigs_content_service_error());
+        else set_supervisor_status("Apple IIgs disk ejected");
+    } else if(action.kind==MT_MENU_ACTION_IIGS_PRAM) {
+        const bool restore=action.file_index==1U;
+        if(restore)usb_hid_service_set_core_ready(false);
+        const int result=action.file_index==2U ? iigs_content_service_retry():iigs_content_service_pram(action.file_index==0U);
+        if(restore)service_usb_input();
+        if(result!=0)set_supervisor_error(iigs_content_service_error());
+        else set_supervisor_status(action.file_index==2U ? "Apple IIgs media recovered":action.file_index==0U ? "Apple IIgs PRAM saved":"Apple IIgs PRAM restored");
+    } else if(action.kind==MT_MENU_ACTION_IIGS_RELOAD) {
+        if(iigs_boot_with_input()!=0)set_supervisor_error(iigs_content_service_error());
+        else set_supervisor_status("Apple IIgs ROMs loaded");
     } else if (action.kind == MT_MENU_ACTION_BROWSE_DISK_PROGRAM) {
         open_menu_browser(MT_MENU_BROWSER_DISK_PROGRAM);
     } else if (action.kind == MT_MENU_ACTION_BROWSE_CARTRIDGE) {
@@ -3518,6 +3774,8 @@ static void handle_menu_action(mt_menu_action_t action)
             supervisor_menu.clock_edit = false;
             set_supervisor_status("Board clock saved");
         } else set_supervisor_error("Clock write or verification failed; retry Save time");
+    } else if(action.kind==MT_MENU_ACTION_USB_SD) {
+        mount_sd_over_usb();
     } else if (action.kind == MT_MENU_ACTION_RESTART_USB) {
         int status = usb_hid_service_stop();
         if (status == 0) status = usb_hid_service_start();
@@ -3531,8 +3789,8 @@ static void handle_menu_action(mt_menu_action_t action)
         mt_media_browser_t directory = vectrex_media_browser;
         const mt_menu_file_t *entry;
         bool changed;
-        if ((supervisor_menu.browser != MT_MENU_BROWSER_DOCUMENTS && (!supervisor.has_active ||
-            supervisor.active.package.core_id != MT_VECTREX_CORE_ID)) ||
+        if (!mt_core_frontend_browser_folders(supervisor.has_active ? supervisor.active.package.core_id:0U,
+            supervisor_menu.browser) ||
             supervisor_menu.browser == MT_MENU_BROWSER_NONE ||
             action.file_index >= supervisor_menu_file_count) return;
         entry = &supervisor_menu_files[action.file_index];
@@ -3546,6 +3804,20 @@ static void handle_menu_action(mt_menu_action_t action)
         list_vectrex_browser(supervisor_menu.browser, &directory);
     } else if (action.kind == MT_MENU_ACTION_MOUNT_DRIVE8) {
         int status;
+        if(shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID) {
+            char relative[MT_IIGS_MEDIA_NAME_MAX+1U];
+            if(action.file_index>=supervisor_menu_file_count)return;
+            if((supervisor_menu_files[action.file_index].cookie&(MT_MENU_FILE_DIRECTORY|MT_MENU_FILE_TEXT))!=0U ||
+                !mt_media_browser_resolve(&vectrex_media_browser,
+                    supervisor_menu_files[action.file_index].name,relative,sizeof(relative)) ||
+                !mt_iigs_media_path_valid(relative)) {
+                set_supervisor_error("Disk path is too long or invalid");return;
+            }
+            status=iigs_content_service_mount(iigs_browser_drive,relative);
+            if(status!=0)set_supervisor_error(iigs_content_service_error());
+            else { mt_menu_close_browser(&supervisor_menu); set_supervisor_status("Apple IIgs disk mounted"); }
+            return;
+        }
         if (action.file_index >= supervisor_menu_file_count ||
             !c64_drive_ready) {
             set_supervisor_warning("Drive 8 is unavailable");
@@ -3894,6 +4166,22 @@ static void handle_menu_action(mt_menu_action_t action)
         else
             set_supervisor_status("Gamepad port changed");
     } else if (action.kind == MT_MENU_ACTION_TOGGLE_CORE_OPTION) {
+        if(supervisor.has_active && supervisor.active.package.core_id==MT_IIGS_CORE_ID) {
+            mt_iigs_config_t changed=*iigs_content_service_config();
+            if(action.file_index==0U)changed.speed=mt_iigs_next_speed(changed.speed,iigs_content_service_speed_mask());
+            else if(action.file_index==1U)changed.rom3^=1U;
+            else if(action.file_index==2U)changed.card=changed.card==0U ? 2U:0U;
+            else if(action.file_index==3U)changed.pulses^=1U;
+            else if(action.file_index<11U)changed.flags^=(uint8_t)(1U<<(action.file_index-4U));
+            else return;
+            usb_hid_service_set_core_ready(false);
+            if(iigs_content_service_configure(&changed)!=0)set_supervisor_error(iigs_content_service_error());
+            else set_supervisor_status("Apple IIgs settings saved");
+            usb_hid_service_set_core_ready(iigs_content_service_ready());
+            if(dac_ready)set_audio(!iigs_content_service_ready(),false);
+            set_video_test(!iigs_content_service_ready());
+            return;
+        }
         if (supervisor.has_active && supervisor.active.package.core_id == MT_GENESIS_CORE_ID) {
             change_genesis_controller(action.file_index);
             return;
@@ -4532,6 +4820,7 @@ int main(void)
         case 's':
             print_status();
             if (shell_is_c64()) c64_d64_service_dump_status();
+            else if(shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID)print_iigs_media_status();
             break;
         case 'p': (void)command(MT_COMMAND_PING, 0U, 0U); break;
         case 'a': set_audio(false, false); break;
@@ -4552,6 +4841,9 @@ int main(void)
             break;
         case 'u': usb_hid_service_dump_status(); break;
         case 'k': {
+            if(shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID) {
+                xil_printf("[IIgs] keyboard and controller settings are in the Input menu\r\n");break;
+            }
             const bool symbolic =
                 !usb_hid_service_symbolic_keyboard();
             if (usb_hid_service_set_symbolic_keyboard(symbolic) == 0) {
@@ -4565,6 +4857,9 @@ int main(void)
             break;
         }
         case 'j': {
+            if(shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID) {
+                xil_printf("[IIgs] controller settings are in the Input menu\r\n");break;
+            }
             const uint8_t port =
                 usb_hid_service_joystick_port() == 2U ? 1U : 2U;
             if (usb_hid_service_set_joystick_port(port) == 0) {

@@ -282,8 +282,8 @@ loop, so a C64 that resets or breaks is served within one byte.
 ## Build and test
 
 ```
-python c64fast/build.py            # writes c64fast/bin/{kernal,1541,engine}.bin and PROVENANCE.json
-python c64fast/build.py --check    # rebuild and compare with the recorded local images
+python c64fast/build.py            # writes build/c64fast/bin/{kernal,1541,engine}.bin and PROVENANCE.json
+python c64fast/build.py --check    # rebuild and compare with the supplied private fast pair
 python -m unittest tests.test_c64fast
 ```
 
@@ -296,8 +296,8 @@ python -m unittest tests.test_c64fast
 
 The build needs ACME 0.97 on the PATH. It overlays the patch sections on the
 stock images and refuses any changed byte outside the reclaimed regions
-listed in `build.py`. Install by copying `c64fast/bin/kernal.bin` and
-`c64fast/bin/1541.bin` to `0:/multitini/cores/c64/roms/fast/` and turning on
+listed in `build.py`. Install by copying `build/c64fast/bin/kernal.bin` and
+`build/c64fast/bin/1541.bin` to `0:/multitini/cores/c64/roms/fast/` and turning on
 `Fast serial ROMs` in `Core config`.
 
 `tests/test_c64fast.py` boots the pair on the simulator and covers the
@@ -310,5 +310,5 @@ resident engine on a second LOAD, and the build reproducibility.
 
 The images are derived works of the owner-supplied stock ROMs and keep their
 `NOASSERTION` rights status (`licenses/files.csv`); the patch sources and the
-build tool are GPL-3.0-only. `c64fast/bin/PROVENANCE.json` records the input
+build tool are GPL-3.0-only. `build/c64fast/bin/PROVENANCE.json` records the input
 and output digests and every changed byte range.

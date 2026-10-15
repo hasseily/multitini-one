@@ -98,6 +98,20 @@
       "commit": "083e1b1f4db8ffb32d6e8f83cf822fedc6184a61",
       "license": "GPL-2.0-or-later Nuked-MD and helpers; GPL-3.0-or-later audio/video conditioning; MIT audio filters",
       "use": "Exact selected chip models and licensed conditioning/pad helpers; no console/game ROM, image asset, VM2413 NonCommercial code, or Intel generated IP. Per-file grants in third_party/genesis/import_manifest.json and licenses/files.csv."
+    },
+    {
+      "name": "MiSTer Apple IIgs",
+      "url": "https://github.com/MiSTer-devel/Apple-IIgs_MiSTer.git",
+      "commit": "9adbba8622f378253765b7d438b6cbcc4d03fc57",
+      "license": "GPL-3.0 and GPL-3.0-or-later; GPL-2.0-or-later HDD firmware and IIR filter notices retained",
+      "use": "Exact machine logic and CPU subset; all Apple firmware supplied at runtime, inferred RAM and narrowly generated Multitini ports."
+    },
+    {
+      "name": "Appletini USB0 mass storage",
+      "url": "https://github.com/hasseily/appletini-one",
+      "commit": "7b972bfda432657444d55a3eaaccf4b1d8e06699",
+      "license": "GPL-3.0-only and file-local MIT vendor USB stack",
+      "use": "USB0 mass-storage device transport with exclusive SD ownership; per-file hashes and transformations in usb_storage.import.json"
     }
   ]
 }

@@ -19,6 +19,8 @@ static const uint8_t journal_end_magic[8] = {
 
 static FATFS sd_file_system;
 static bool sd_mounted;
+static bool sd_external_owned;
+static unsigned sd_callback_depth;
 #define MT_SD_OPEN_FILES 16U
 struct mt_sd_file {
     FIL native;
@@ -47,6 +49,7 @@ static size_t fsize_to_size_saturated(FSIZE_t value)
 mt_sd_result_t mt_sd_storage_mount(void)
 {
     FRESULT backend_status;
+    if (sd_external_owned) return result(MT_SD_EXTERNAL_ACCESS, FR_OK, 0U);
     if (sd_mounted) return result(MT_SD_OK, FR_OK, 0U);
 
     backend_status = f_mount(&sd_file_system, MT_SD_VOLUME, 1U);
@@ -235,7 +238,7 @@ mt_sd_result_t mt_sd_storage_read_file_prefix(const char *path, uint8_t *dst,
         total += received;
         if (backend_status != FR_OK || received != request)
             return close_read_file(&file, result(MT_SD_READ_FAILED, backend_status, total));
-        if (progress != NULL) progress(context);
+        if (progress != NULL) { ++sd_callback_depth; progress(context); --sd_callback_depth; }
     }
     return close_read_file(&file, result(MT_SD_OK, FR_OK, total));
 }
@@ -340,8 +343,11 @@ mt_sd_result_t mt_sd_storage_list(const char *path, mt_sd_list_fn callback,
             (void)f_closedir(&directory);
             return size_result;
         }
-        if (callback(context, info.fname, (size_t)info.fsize,
-                     (info.fattrib & AM_DIR) != 0U) != 0) {
+        ++sd_callback_depth;
+        const int callback_result = callback(context, info.fname, (size_t)info.fsize,
+                     (info.fattrib & AM_DIR) != 0U);
+        --sd_callback_depth;
+        if (callback_result != 0) {
             break;
         }
     }
@@ -513,6 +519,24 @@ mt_sd_result_t mt_sd_storage_unmount(void)
     return result(MT_SD_OK, FR_OK, 0U);
 }
 
+bool mt_sd_storage_external_active(void) { return sd_external_owned; }
+mt_sd_result_t mt_sd_storage_external_acquire(void)
+{
+    if (sd_external_owned) return result(MT_SD_EXTERNAL_ACCESS, FR_OK, 0U);
+    if (sd_callback_depth != 0U) return result(MT_SD_FILE_BUSY, FR_OK, 0U);
+    const mt_sd_result_t status = mt_sd_storage_unmount();
+    if (status.status == MT_SD_OK) sd_external_owned = true;
+    return status;
+}
+mt_sd_result_t mt_sd_storage_external_release(void)
+{
+    if (!sd_external_owned) return result(MT_SD_INVALID_ARGUMENT, FR_OK, 0U);
+    sd_external_owned = false;
+    const mt_sd_result_t status = mt_sd_storage_mount();
+    if (status.status != MT_SD_OK) sd_external_owned = true;
+    return status;
+}
+
 const char *mt_sd_status_name(mt_sd_status_t status)
 {
     switch (status) {
@@ -538,6 +562,7 @@ const char *mt_sd_status_name(mt_sd_status_t status)
     case MT_SD_FILE_LIMIT: return "too many open files";
     case MT_SD_FILE_EXISTS: return "file exists";
     case MT_SD_CREATE_DIR_FAILED: return "directory creation failed";
+    case MT_SD_EXTERNAL_ACCESS: return "SD card exported over USB";
     }
     return "unknown";
 }

@@ -639,6 +639,40 @@ static void test_shoulder_navigation(void)
     puts("PASS controller shoulders navigate menu sections without changing capture or gameplay");
 }
 
+static void test_iigs_input_transport(void)
+{
+    mt_core_link_t link;
+    mt_core_link_init(&link,NULL,input_read,input_write);
+    usb_hid_service_init(&link);
+    usb_hid_service_set_active_core(MT_IIGS_CORE_ID);
+    usb_hid_service_set_core_ready(true);
+    struct usbh_hubport port={0};
+    struct usb_endpoint_descriptor endpoint={0};
+    struct usbh_hid hid={0};
+    port.config.intf[0].altsetting[0].intf_desc.bInterfaceSubClass=HID_SUBCLASS_BOOTIF;
+    port.connected=true;
+    endpoint.bEndpointAddress=0x81U;endpoint.bmAttributes=USB_ENDPOINT_TYPE_INTERRUPT;endpoint.wMaxPacketSize=8U;
+    hid.hport=&port;hid.intin=&endpoint;hid.protocol=HID_PROTOCOL_MOUSE;
+    usbh_hid_run(&hid);
+    assert(g_slots[0].mouse && !g_slots[0].gamepad);
+    g_reports[0][0]=1U;g_reports[0][1]=4U;g_reports[0][2]=(uint8_t)-5;
+    report_complete(&g_slots[0],3);usb_hid_service_poll();
+    assert(routed_code==0x4001U && (routed_value&255U)==5U && g_iigs_input.mouse_emitted_buttons==1U);
+    usb_hid_service_set_menu_capture(true);usb_hid_service_poll();
+    assert(g_iigs_input.mouse_emitted_buttons==0U);
+    usb_hid_service_set_menu_capture(false);
+    g_reports[0][0]=1U;g_reports[0][1]=4U;g_reports[0][2]=(uint8_t)-5;
+    report_complete(&g_slots[0],3);usb_hid_service_poll();
+    assert(g_iigs_input.mouse_emitted_buttons==1U);
+    usbh_hid_stop(&hid);assert(g_iigs_input.mouse_emitted_buttons==0U);
+    const uint8_t pad=(uint8_t)usb_gamepad_input_connect();
+    port.port=1U;usb_gamepad_input_identify(pad,&port,0U,MT_CONTROLLER_TRANSPORT_XBOXONE);
+    assert(g_controller_player[pad]==0U);
+    buttons(pad,1U);assert(g_iigs_input.emitted_buttons==0x10U);
+    buttons(pad,0U);usb_gamepad_input_disconnect(pad);assert(g_iigs_input.emitted_buttons==0U);
+    puts("PASS Apple IIgs USB boot mouse capture/disconnect and one-player gamepad routing");
+}
+
 int main(void)
 {
     test_transport_slots();
@@ -649,5 +683,6 @@ int main(void)
     test_menu_chord();
     test_menu_chord_guards();
     test_shoulder_navigation();
+    test_iigs_input_transport();
     return 0;
 }

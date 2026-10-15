@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Upload the bundled or explicitly selected C64 ROMs to Multitini firmware."""
+"""Upload private, user-supplied C64 ROMs to Multitini firmware."""
 
 from __future__ import annotations
 
@@ -22,10 +22,12 @@ CHARACTER_SIZE = 4096
 BUNDLE_SIZE = BASIC_SIZE + KERNAL_SIZE + CHARACTER_SIZE
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-BUNDLED_ROM_DIRECTORY = REPO_ROOT / "third_party" / "c64" / "ROMs"
-DEFAULT_BASIC_ROM = BUNDLED_ROM_DIRECTORY / "basic.901226-01.bin"
-DEFAULT_KERNAL_ROM = BUNDLED_ROM_DIRECTORY / "kernal.901227-03.bin"
-DEFAULT_CHARACTER_ROM = BUNDLED_ROM_DIRECTORY / "characters.901225-01.bin"
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+from private_core_roms import default_rom_source
+DEFAULT_ROM_DIRECTORY = default_rom_source() / "c64/roms"
+DEFAULT_BASIC_ROM = DEFAULT_ROM_DIRECTORY / "basic.bin"
+DEFAULT_KERNAL_ROM = DEFAULT_ROM_DIRECTORY / "kernal.bin"
+DEFAULT_CHARACTER_ROM = DEFAULT_ROM_DIRECTORY / "characters.bin"
 
 XMODEM_STX = 0x02
 XMODEM_EOT = 0x04
@@ -218,25 +220,27 @@ def wait_for_boot_result(port: "serial.Serial", timeout_s: float, quiet: bool) -
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Upload the bundled or explicitly selected C64 ROMs over UART0"
+        description="Upload private, user-supplied C64 ROMs over UART0"
     )
+    parser.add_argument("--rom-source", type=Path, default=default_rom_source(),
+                        help="Private collection root (or set MULTITINI_ROM_SOURCE)")
     parser.add_argument(
         "--basic",
         type=Path,
-        default=DEFAULT_BASIC_ROM,
-        help="8192-byte BASIC ROM (defaults to the repository copy)",
+        default=None,
+        help="8192-byte BASIC ROM (defaults to private c64/roms/basic.bin)",
     )
     parser.add_argument(
         "--kernal",
         type=Path,
-        default=DEFAULT_KERNAL_ROM,
-        help="8192-byte KERNAL ROM (defaults to the repository copy)",
+        default=None,
+        help="8192-byte KERNAL ROM (defaults to private c64/roms/kernal.bin)",
     )
     parser.add_argument(
         "--character",
         type=Path,
-        default=DEFAULT_CHARACTER_ROM,
-        help="4096-byte character ROM (defaults to the repository copy)",
+        default=None,
+        help="4096-byte character ROM (defaults to private c64/roms/characters.bin)",
     )
     parser.add_argument("--port", default="COM3", help="diagnostic UART0 port")
     parser.add_argument("--baud", type=int, default=921600, help="UART baud rate")
@@ -244,7 +248,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--result-timeout", type=float, default=30.0)
     parser.add_argument("--xmodem-retries", type=int, default=10)
     parser.add_argument("--quiet", action="store_true")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    args.basic = args.basic or args.rom_source / "c64/roms/basic.bin"
+    args.kernal = args.kernal or args.rom_source / "c64/roms/kernal.bin"
+    args.character = args.character or args.rom_source / "c64/roms/characters.bin"
+    return args
 
 
 def main() -> int:

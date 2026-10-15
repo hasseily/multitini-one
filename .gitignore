@@ -54,11 +54,6 @@ dfx_runtime.txt
 # GPL font source required by the shared text overlay.
 !hdl/common/multitini_font7x8.mem
 
-# Exact C64 system ROMs included by explicit repository-owner decision.
-!third_party/c64/ROMs/basic.901226-01.bin
-!third_party/c64/ROMs/kernal.901227-03.bin
-!third_party/c64/ROMs/characters.901225-01.bin
-
 # System ROMs and user content. The repository policy check enforces these too.
 *.rom
 *.ROM

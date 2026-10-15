@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import zipfile
+from private_core_roms import default_rom_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +49,8 @@ def copy_atomic(source: Path, destination: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="verify inputs, current tree and aliases without writing")
+    parser.add_argument("--rom-source", type=Path, default=default_rom_source(),
+                        help="External private ROM collection for historical ROM entries")
     args = parser.parse_args()
     record = json.loads(MANIFEST.read_text(encoding="utf-8"))
     if record["schema_version"] != 1:
@@ -60,9 +63,11 @@ def main() -> int:
     # Check every source before overwriting any current file. There is no search
     # for a newer image or fallback to another build directory.
     copies = []
+    selected_sources = {}
     for entry in entries:
-        source = below(ROOT, entry["source"])
+        source = below(args.rom_source, entry["rom_source_relative"]) if "rom_source_relative" in entry else below(ROOT, entry["source"])
         verify(source, entry)
+        selected_sources[entry["destination"]] = source
         copies.append((source, below(CURRENT, entry["destination"])))
     for entry in record["notices"]:
         source = below(ROOT, entry["source"])
@@ -83,11 +88,11 @@ def main() -> int:
     aliases = []
     for entry in entries:
         if entry["destination"] == "FIRMWARE.BIN":
-            aliases.extend([(ROOT / entry["source"], ROOT / "FIRMWARE.BIN"),
-                            (ROOT / entry["source"], ROOT / "build/firmware-current/FIRMWARE.BIN")])
+            aliases.extend([(selected_sources[entry["destination"]], ROOT / "FIRMWARE.BIN"),
+                            (selected_sources[entry["destination"]], ROOT / "build/firmware-current/FIRMWARE.BIN")])
         elif entry["destination"].startswith("multitini/cores/"):
             relative = entry["destination"].removeprefix("multitini/cores/")
-            aliases.append((ROOT / entry["source"], below(ROOT / "build/core-packages", relative)))
+            aliases.append((selected_sources[entry["destination"]], below(ROOT / "build/core-packages", relative)))
 
     if not args.check:
         for source, destination in copies + aliases:

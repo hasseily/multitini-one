@@ -2,7 +2,8 @@
 `timescale 1ns / 1ps
 
 module multitini_control_regs #(
-    parameter logic [31:0] SHELL_BUILD_ID = 32'h00000000
+    parameter logic [31:0] SHELL_BUILD_ID = 32'h00000000,
+    parameter logic [31:0] IIGS_ACCEL_CAPS = 32'd0
 ) (
     input  logic         clk,
     input  logic         resetn,
@@ -223,6 +224,7 @@ module multitini_control_regs #(
             MT_REG_SHELL_BUILD_ID:   rd_data = SHELL_BUILD_ID;
             MT_REG_CORE_ID:          rd_data = core_id;
             MT_REG_CORE_VARIANT_INDEX: rd_data = core_variant_index;
+            MT_REG_IIGS_ACCEL_CAPS:   rd_data = IIGS_ACCEL_CAPS;
             MT_REG_STATUS:           rd_data = status_word;
             MT_REG_ERROR:            rd_data = error_flags;
             MT_REG_CONTROL:          rd_data = control;

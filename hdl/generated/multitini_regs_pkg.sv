@@ -3,7 +3,7 @@
 `timescale 1ns / 1ps
 package multitini_regs_pkg;
     localparam logic [15:0] MT_ABI_MAJOR = 16'd0;
-    localparam logic [15:0] MT_ABI_MINOR = 16'd21;
+    localparam logic [15:0] MT_ABI_MINOR = 16'd22;
     localparam logic [31:0] MT_ABI_VERSION = {MT_ABI_MAJOR, MT_ABI_MINOR};
     localparam logic [31:0] MT_MAGIC = 32'h4D543031;
     localparam logic [31:0] MT_SHELL_ID = 32'h4D544F4E;
@@ -50,6 +50,7 @@ package multitini_regs_pkg;
     localparam logic [11:0] MT_REG_BORDER_CONFIG = 12'h0C0;
     localparam logic [11:0] MT_REG_VECTREX_VIDEO_CONFIG = 12'h0C4;
     localparam logic [11:0] MT_REG_VECTREX_OVERLAY_STATUS = 12'h0C8;
+    localparam logic [11:0] MT_REG_IIGS_ACCEL_CAPS = 12'h0CC;
     localparam logic [11:0] MT_REG_VIDEO_EFFECT_ADDRESS = 12'h140;
     localparam logic [11:0] MT_REG_VIDEO_EFFECT_DATA = 12'h144;
     localparam logic [11:0] MT_REG_VIDEO_EFFECT_COMMIT = 12'h148;
@@ -180,6 +181,10 @@ package multitini_regs_pkg;
     localparam logic [31:0] MT_VECTREX_VIDEO_CONFIG_DEFAULT = 32'h0000000B;
     localparam logic [31:0] MT_VECTREX_OVERLAY_STATUS_LOADED = 32'h00000001;
     localparam logic [31:0] MT_VECTREX_OVERLAY_STATUS_ERROR = 32'h00000002;
+    localparam logic [31:0] MT_IIGS_ACCEL_MIN_ABI_MINOR = 32'h00000016;
+    localparam logic [31:0] MT_IIGS_ACCEL_CAPS_VALID = 32'h80000000;
+    localparam logic [31:0] MT_IIGS_ACCEL_SPEED_MASK = 32'h0000007F;
+    localparam logic [31:0] MT_IIGS_ACCEL_LEGACY_SPEED_MASK = 32'h0000001F;
     localparam logic [31:0] MT_VIDEO_EFFECT_MIN_ABI_MINOR = 32'h0000000F;
     localparam logic [31:0] MT_VIDEO_AXIS_MIN_ABI_MINOR = 32'h00000011;
     localparam logic [31:0] MT_VIDEO_PHOSPHOR_MIN_ABI_MINOR = 32'h00000014;

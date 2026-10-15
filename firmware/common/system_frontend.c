@@ -14,7 +14,7 @@ void mt_system_frontend_apply(mt_system_frontend_t *frontend,
         "Firmware build", "FPGA build", "Interface", "Uptime", "Board temperature",
         "USB devices", "USB errors", "SD core catalog", "Saved data", "Audio output",
         "Restart USB", "Golden updater", "Startup firmware", "Switch to Appletini",
-        "Golden Boot", "Update Golden Boot..."
+        "Golden Boot", "USB SD card", "Update Golden Boot..."
     };
     static const char *const help[] = {
         "Commits pending media changes before restarting the active core.",
@@ -36,6 +36,7 @@ void mt_system_frontend_apply(mt_system_frontend_t *frontend,
         "Choose the firmware used at power-on. A missing or damaged choice falls back to the other verified image.",
         "Saves pending media changes and restarts into Appletini. Requires a verified Appletini image and multiboot updater.",
         "Version read from a verified Golden image installed in flash. Unknown means its version could not be verified.",
+        "Exports the SD card to a PC on USB0. Flushes media first; eject on PC before stopping. Restarts the active core afterward.",
         "Validates BOOT.BIN on the SD card, stages Golden Boot, then restarts to complete the update."
     };
     size_t i;
@@ -92,7 +93,8 @@ void mt_system_frontend_apply(mt_system_frontend_t *frontend,
         snapshot->appletini_present ? "Restart into Appletini" : "Not installed or invalid");
     VALUE(18, "%s", snapshot->golden_version != NULL && snapshot->golden_version[0] != '\0' ?
         snapshot->golden_version : "Unknown");
-    VALUE(19, "BOOT.BIN on SD card");
+    VALUE(19, "Mount on PC; restart core on exit");
+    VALUE(20, "BOOT.BIN on SD card");
 #undef VALUE
     frontend->items[0].action = MT_MENU_ACTION_RESET_CORE;
     frontend->items[0].enabled = active;
@@ -116,8 +118,10 @@ void mt_system_frontend_apply(mt_system_frontend_t *frontend,
     frontend->items[17].action = MT_MENU_ACTION_SWITCH_FIRMWARE;
     frontend->items[17].argument = MB_PRODUCT_APPLETINI;
     frontend->items[17].enabled = snapshot->multiboot_ready && snapshot->appletini_present;
-    frontend->items[19].action = MT_MENU_ACTION_UPDATE_GOLDEN;
-    frontend->items[19].enabled = snapshot->golden_update_present;
+    frontend->items[19].action = MT_MENU_ACTION_USB_SD;
+    frontend->items[19].enabled = true;
+    frontend->items[20].action = MT_MENU_ACTION_UPDATE_GOLDEN;
+    frontend->items[20].enabled = snapshot->golden_update_present;
     if (view->save_faulted || view->settings_faulted || view->save_dirty)
         frontend->items[12].value_color = MT_UI_COLOR_WARNING;
     if (snapshot->usb_last_error != 0) frontend->items[10].value_color = MT_UI_COLOR_WARNING;

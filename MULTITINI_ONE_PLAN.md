@@ -2,6 +2,44 @@
 
 Status: planning baseline, written 2026-08-29
 
+Follow-up, 2026-10-15: M0.4.0 adds primary-clock 65816 execution with selectable
+28.64/57.27 MHz fast-cycle targets, a coherent small read cache ahead of the
+32 KiB DDR cache, and an advertised per-image speed capability. Slow RAM,
+shadow writes, disk controllers, audio and video retain native timing. Both
+menu and emulated ZipGS software controls use the installed maximum. Recover
+the complete 640-pixel SHR line by fetching the first pixel byte earlier;
+test every output column, including fill mode, with a distinct blue border.
+The IIgs browser must enter nested folders, retain relative media paths and
+return to its media root without permitting traversal outside that root.
+
+Port Appletini's USB0 mass-storage SD export as an exclusive modal operation:
+flush and close media, drain the running core and display, unmount FatFs,
+export the physical card, then sync/detach/remount and restart the core.
+Require durable writes before USB success acknowledgement. Package required
+user-owned boot ROMs from the explicit private collection into each core's
+roms directory; retain ROM-free current sources and per-image source archives.
+Include media loaders and empty media directories, with no games or OS disks.
+Build only the changed IIgs FPGA image and matching ARM firmware. Explicitly
+retain the six qualified older shell/core images after ABI/platform checks.
+CPU/cache/native transaction simulations, USB failure tests and strict routed
+timing precede the hardware-test package. Physical acceptance remains separate.
+
+Build follow-up, 2026-10-15: M0.3.1 separates firmware release identity from
+qualified FPGA image identity. Explicitly selected compatible images retain
+their original source archives, build IDs, interface versions and timing
+evidence. ARM-only changes reuse those images after integrity and platform
+checks. Rebuild only the images affected by machine or common-shell changes.
+IIgs ROMs live in `multitini/cores/apple-iigs/roms/`; disks and PRAM live in
+the sibling `multitini/cores/apple-iigs/media/` directory.
+
+Scope update, 2026-10-14: branch `core-gs` imports the pinned MiSTer Apple IIgs
+machine, runtime ROMs, HDD/WOZ media, persistent PRAM and selectable accelerated
+65816 operation. Reuse the shared shell and firmware; add a coherent DDR
+RAM/ROM cache and HP3 source video, with a matching FSBL/supervisor and complete
+FPGA build matrix. See [the IIgs integration](docs/APPLE_IIGS_PLAN.md).
+Instruction/transport tests and strict routed builds precede hardware testing;
+no physical support is claimed by the port alone.
+
 Scope update, 2026-09-18: ship one C64 variant, PAL, with nominal 60 Hz DVI
 output. C64 NTSC is no longer part of the build, package, or release gates.
 

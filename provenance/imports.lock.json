@@ -751,6 +751,300 @@
       "source": "MiSTer Mega Drive (Nuked-MD)",
       "source_path": "sys/iir_filter.v",
       "sha256": "570a8095c15af84a60015b5eab105cee6e2d7edde77e20f0ce40c075ab2db8b7"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/LICENSE",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "LICENSE",
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/README.md",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "README.md",
+      "sha256": "66eb4451f34f4ec7ffb426d0f59239be69feaa1be9c70db92edb97d94229922e"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/files.qip",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "files.qip",
+      "sha256": "5bb4cda2df0d1fa0a0bf66ea6fb352eb0045acb89d559445fa6d6da0a7260a60"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/65C816/65C816.qip",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/65C816/65C816.qip",
+      "sha256": "f62fac33faba04efced1ad9f612be90a38347deaffec400051eda24d3b7487ad"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/65C816/ALU.sv",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/65C816/ALU.sv",
+      "sha256": "87f1a2576aa61b45bc21b4fc84e7d8adfea30e6b9e8e7032ade9101dd1d9ee9e"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/65C816/AddSubBCD.sv",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/65C816/AddSubBCD.sv",
+      "sha256": "d2037c3abd6d33c3f3af5a6154626a0134ca7bdf373a6b04b89b445c692c6cea"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/65C816/AddrGen.sv",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/65C816/AddrGen.sv",
+      "sha256": "d83e63b546b414ebaf8c2fd9d1da5c072922264d3759cc1ed8dbb8247f697fa7"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/65C816/BCDAdder.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/65C816/BCDAdder.v",
+      "sha256": "0e926bec36af09b7227ebd1af98bfdfe1bb6d44c1033359324a16acddeab1a7c"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/65C816/LICENSE",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/65C816/LICENSE",
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/65C816/P65C816.sv",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/65C816/P65C816.sv",
+      "sha256": "0d70a6a247b9915408a90980af8eed9797cd9c68fe2a6e9684b155dc81b0f85d"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/65C816/P65C816_pkg.sv",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/65C816/P65C816_pkg.sv",
+      "sha256": "acde7ddac6f19ccd643650f7065698fe5168298c0ded41e4eee2a16ccec85da9"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/65C816/README.md",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/65C816/README.md",
+      "sha256": "d5cec16b04abba8119077192f158aa155f59c4f3492a39b61873a60acef6ae0f"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/65C816/adder4.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/65C816/adder4.v",
+      "sha256": "4d5fd8b8a2004af4cd3118f5afa6a2bf6583a18ede72b0da4d67063a16380c0f"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/65C816/bit_adder.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/65C816/bit_adder.v",
+      "sha256": "0846b21fb7ff7c81d539ffddde228149fd99897ed8f1e7841524678d543d6a36"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/65C816/mcode.sv",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/65C816/mcode.sv",
+      "sha256": "0785009a80f281e227916cf1cf9129c5ed449f06abdd87780041d086e2a1956c"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/adb.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/adb.v",
+      "sha256": "dbb939d94545821c31b7ffbff636211766c6fa30e74c3e7e46e9e0b27e402ec5"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/bram.sv",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/bram.sv",
+      "sha256": "370410a7b73009eced35dd9ea629ba348d39549bdb09d31866e346820887e95e"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/clock_divider.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/clock_divider.v",
+      "sha256": "f58f7823ee3d085b3961294b6274401e73c5f6ab0708eddd1ef79fc07d915b72"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/dhr_lut.vh",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/dhr_lut.vh",
+      "sha256": "27fcaf445a62110f98a6e8cea3621a03c4ac2936a18241745bfe9cc4c40b64c2"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/dpram.sv",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/dpram.sv",
+      "sha256": "22e12d1eef527ba5c6d85a1126f45ddcd01bfd4c12f613992a11bf3aacfacbba"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/dpram_bram.vhd",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/dpram_bram.vhd",
+      "sha256": "342f9946221a309291d6dbd905aee99fd14631b08306d72449f96d7c7c553105"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/es5503.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/es5503.v",
+      "sha256": "870edbd1bfde8be4895d8dee4ffa69fde376feb214b9d0021df03dc284b4b127"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/flux_drive.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/flux_drive.v",
+      "sha256": "42f5125f76aac5fbfecc1fece31c66e801d6bbadaf19fe7a1bb2b82171752d65"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/hdd.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/hdd.v",
+      "sha256": "a5f4ad4246cac093791d8df74334b7326820acafcb1db36bbe08d43ca00c7603"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/iigs.sv",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/iigs.sv",
+      "sha256": "4f0e053517cf0a96f9b2a02a56c938fc337dafb997b0c39250450a7ad49760ed"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/iwm_flux.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/iwm_flux.v",
+      "sha256": "ba0c03af8529077c32355f252fa6fa753cb57f5fe306a1354cd0dd0d077e297f"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/iwm_woz.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/iwm_woz.v",
+      "sha256": "0b0cea14e091459274e76876add454565198b2e728a796867db3e99f71352f2b"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/mmu.sv",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/mmu.sv",
+      "sha256": "c510ddff4795a78f11af05baea0488c58701fcf975522ab3ce052b0d7041f81f"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/paddle_timer.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/paddle_timer.v",
+      "sha256": "58aabcd01b4fc16fc9763959cc70fccb42a7c3309f3f8c21bc88b635b5e8ff4b"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/prtc.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/prtc.v",
+      "sha256": "67195d2f82422d8fba9ba173603a86e0867c1ba1678849dd561e52441b1beb0e"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/rom.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/rom.v",
+      "sha256": "d4650340c30784a8e2e6a71dc87e72d38cae6c5ab76c78cce62aff96e71e8d13"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/roms/hdd.a65",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/roms/hdd.a65",
+      "sha256": "7ddb61e844d624329332b03e3048b5775b67fc9c8437d6922f40733a2596a19c"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/scc8530.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/scc8530.v",
+      "sha256": "c0faa13800b87bfba96eb7e0c1050e4d7755e72f9b4f7efb2de41ee6e04371d7"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/scc_iigs_wrapper.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/scc_iigs_wrapper.v",
+      "sha256": "26522791d746e928d09cbb529e76497d3101a4590900617f120ec239cfaafc4c"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/smartport_dev.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/smartport_dev.v",
+      "sha256": "26f03219400c950605aa84f01db96c2d7f1a23a255ed377d8cd0f82688174726"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/sound.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/sound.v",
+      "sha256": "8194acb6bd7d4133a47426692ccce80d291b060387fc48b354ce19acd26a6444"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/soundglu.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/soundglu.v",
+      "sha256": "f6805a5928ed6162452f03910d4d738991639397544d367928b20eff1937f458"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/syncram.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/syncram.v",
+      "sha256": "165afbd9dc34ab7be1b7bd573b3bcfce755dd2d6bb743255f66a8ed0ca0c763f"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/twgs_card.sv",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/twgs_card.sv",
+      "sha256": "cab262f3088b4d3dcc25ab5d78de571454eabe1e131ae0c93e98166fb6e6e5c4"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/twgs_nvram.sv",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/twgs_nvram.sv",
+      "sha256": "8bae3fe0c9c947a39302dfd15a14211e38eb1ae7c7ce5a6ce4549e1d23d86337"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/twgs_regs.sv",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/twgs_regs.sv",
+      "sha256": "fdaa6cae9cd52cd84cf30bb895e2906dbcdd91cb407e1ea300580476f86a6aa0"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/twgs_rom.sv",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/twgs_rom.sv",
+      "sha256": "79823ad36d306a91bf7555d226d323933695f62197348bf12d2eed3beaed56bd"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/uart/rxuart.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/uart/rxuart.v",
+      "sha256": "564b0dfad05205308fd86f77954eecf5ba8ae8ad3c480dd931bed7e600d8cf6b"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/uart/txuart.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/uart/txuart.v",
+      "sha256": "c37ff988712a6b0b0ae3a494e6d39556e13526f971889323bf139ed9a212ad66"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/vgc.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/vgc.v",
+      "sha256": "3ee7960c9959f711beb359dcce536debd0ca5c5aab362114b73f2020151abd84"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/video_timing.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/video_timing.v",
+      "sha256": "1faa3c893f1d2df2835cdd687c43c620eae538d2fd4c456cb805b9999f665c51"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/woz_floppy_controller.sv",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/woz_floppy_controller.sv",
+      "sha256": "311d24c283f89687c4b06fc84e800f2c8d386a37f08fba11574ee56f896792b4"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/rtl/zipgs_regs.sv",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "rtl/zipgs_regs.sv",
+      "sha256": "63bd6aec70689adb26c6b355695c3aa0a04cddd252992aeb4830c0ef39f3c3ba"
+    },
+    {
+      "path": "third_party/apple-iigs/upstream/sys/iir_filter.v",
+      "source": "MiSTer Apple IIgs",
+      "source_path": "sys/iir_filter.v",
+      "sha256": "570a8095c15af84a60015b5eab105cee6e2d7edde77e20f0ce40c075ab2db8b7"
     }
   ]
 }

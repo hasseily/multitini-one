@@ -26,6 +26,7 @@ import zipfile
 
 import audit_vectrex_package as audit
 import capture_vectrex_build_inputs as hardware_inputs
+import core_artifacts
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD_ID = "56494434"
@@ -198,7 +199,8 @@ def verify_hardware_source_archive(directory, files):
                     "FPGA build configuration changed after source capture: " + name)
 
 
-def verify_hardware(directory, machine, *, ntsc=False, build_id=None, genesis_pal=False):
+def verify_hardware(directory, machine, *, ntsc=False, build_id=None, genesis_pal=False,
+                    gbc_psram=True, reuse=False):
     expected_build_id = BUILD_ID if build_id is None else build_id
     require(re.fullmatch(r"[0-9A-Fa-f]{8}", expected_build_id) is not None, "Invalid expected FPGA build ID")
     record = json.loads((directory / "source-inputs.json").read_text())
@@ -207,13 +209,21 @@ def verify_hardware(directory, machine, *, ntsc=False, build_id=None, genesis_pa
     if machine == "C64":
         require(configuration["c64_video_standard"] == ("NTSC" if ntsc else "PAL"), "Wrong C64 video standard")
     if machine == "GBC":
-        require(configuration["gbc_psram"] is True, "GBC package requires PSRAM=1")
+        require(configuration["gbc_psram"] is gbc_psram, "Wrong GBC PSRAM selection")
     if machine == "GENESIS":
         require(configuration["genesis_pal"] is genesis_pal, "Wrong Genesis clock variant")
-    verify_sources(record["files"])
+    if not reuse:
+        verify_sources(record["files"])
+        require(set(record["files"]) == {p.relative_to(ROOT).as_posix() for p in hardware_inputs.inputs(machine)},
+                "Incomplete FPGA source capture")
     verify_hardware_source_archive(directory, record["files"])
-    require(set(record["files"]) == {p.relative_to(ROOT).as_posix() for p in hardware_inputs.inputs(machine)},
-            "Incomplete FPGA source capture")
+    identity = core_artifacts.audit_source_archives(directory, record)
+    original_build_id = core_artifacts.archived_build_id(directory, machine)
+    if reuse:
+        expected_build_id = original_build_id
+    identity.update(build_id="0x" + original_build_id,
+                    source_status="archived-reuse" if reuse else "current-source-build",
+                    **core_artifacts.compare_current_inputs(record, machine))
     bit = directory / "multitini_one.runs/impl_1/multitini_one_top.bit"
     marker = Path(str(bit) + ".kind")
     require(marker.read_text().strip() == machine, "Wrong FPGA image kind")
@@ -222,7 +232,7 @@ def verify_hardware(directory, machine, *, ntsc=False, build_id=None, genesis_pa
             manifest.get("top") == "multitini_one_top", "Wrong FPGA build manifest")
     generics = manifest["generic"]
     require(re.search(r"SHELL_BUILD_ID=32'h" + expected_build_id + r"\b", generics, re.I), "Wrong FPGA build ID")
-    active = {"C64": 0, "GBC": 1, "SUPERVISOR": 2, "VECTREX": 3, "GENESIS": 4}[machine]
+    active = {"C64": 0, "GBC": 1, "SUPERVISOR": 2, "VECTREX": 3, "GENESIS": 4, "APPLE_IIGS": 5}[machine]
     require(re.search(rf"\bACTIVE_MACHINE={active}\b", generics), "Wrong FPGA active machine")
     require(f"C64_NTSC_MODE=1'b{int(ntsc)}" in generics, "Wrong FPGA PAL/NTSC generic")
     if machine == "GENESIS":
@@ -230,6 +240,10 @@ def verify_hardware(directory, machine, *, ntsc=False, build_id=None, genesis_pa
     psram = machine in {"C64", "VECTREX", "GENESIS"} or configuration["gbc_psram"]
     require(f"ENABLE_GBC_PSRAM=1'b{int(configuration['gbc_psram'])}" in generics, "Wrong GBC PSRAM generic")
     xsa = directory / "multitini_one.xsa"
+    with zipfile.ZipFile(xsa) as archive:
+        bits = [name for name in archive.namelist() if name.endswith(".bit")]
+        require(len(bits) == 1 and digest(archive.read(bits[0])) == sha(bit),
+                "XSA bitstream differs from selected image")
     log = (directory / "build.log").read_text(errors="replace").replace("\\", "/")
     require("Timing gates passed and XSA exported: " + xsa.as_posix() in log,
             "Build did not reach timing-gated XSA export")
@@ -240,8 +254,13 @@ def verify_hardware(directory, machine, *, ntsc=False, build_id=None, genesis_pa
             "FPGA artifact predates source capture")
     artifacts += [directory / "source-inputs.zip", directory / "generate.tcl"]
     artifacts += [p for p in (directory / "generate.log", directory / "generate.jou", directory / "build.jou") if p.is_file()]
+    # Pin every selected report, setting and binary, not only source bytes.
+    pinned = set(artifacts) | {directory / "source-inputs.json",
+                              directory / "source-inputs.sources.tar.gz"}
+    identity["artifact_sha256"] = {p.relative_to(directory).as_posix(): sha(p) for p in sorted(pinned)}
     return {"bit": bit, "xsa": xsa, "record": record, "ps7_init_sha256": video_xsa(xsa),
-            "timing": timing(directory, machine, psram), "artifacts": artifacts}
+            "timing": timing(directory, machine, psram), "artifacts": artifacts,
+            "identity": identity, "reused": reuse}
 
 
 def elf_section(path, wanted):
@@ -406,9 +425,9 @@ def archive_files(destination, files):
         require(all(digest(archive.read(name)) == sha(path) for name, path in files.items()), "ZIP content hash mismatch")
 
 
-def verify_core(directory, variants):
+def verify_core(directory, variants, *, abi=None):
     text = (directory / "core.cfg").read_text()
-    require("abi=" + ABI + "\n" in text, "Core package ABI mismatch")
+    require("abi=" + (ABI if abi is None else abi) + "\n" in text, "Core package ABI mismatch")
     rows = [line.split("=", 1)[1].split("|") for line in text.splitlines() if line.startswith("variant=")]
     require(len(rows) == len(variants) and {row[0] for row in rows} == set(variants), "Core variants mismatch")
     result = {}

@@ -24,7 +24,9 @@ from c64sim.cia import CIA6526  # noqa: E402
 from c64sim.via import VIA6522  # noqa: E402
 
 SLOW = os.environ.get("MULTITINI_SLOW_TESTS") == "1"
-ROMS = ROOT / "third_party" / "c64" / "ROMs"
+from private_core_roms import default_rom_source
+ROMS = default_rom_source() / "c64/roms"
+PRIVATE_ROMS = all((ROMS / name).is_file() for name in ("basic.bin", "kernal.bin", "characters.bin", "1541.bin"))
 
 
 def hello_program() -> bytes:
@@ -235,6 +237,7 @@ class ChipTests(unittest.TestCase):
         self.assertEqual(cia.icr, 0x10)
 
 
+@unittest.skipUnless(PRIVATE_ROMS, "private stock ROMs not supplied")
 class ParallelCableTests(unittest.TestCase):
     def test_cable_wiring(self):
         system = System(parallel_cable=True, extram=True)
@@ -344,6 +347,7 @@ class ParallelCableTests(unittest.TestCase):
         self.assertEqual(drive.cpu.ByteAt(0xC000), drive.cpu.ByteAt(0x8000))
 
 
+@unittest.skipUnless(PRIVATE_ROMS, "private stock ROMs not supplied")
 class StockRomAcceptanceTests(unittest.TestCase):
     """Stock KERNAL and 1541 DOS talking over the simulated IEC bus."""
 
@@ -549,13 +553,13 @@ class StockRomAcceptanceTests(unittest.TestCase):
             self.system.run_until(lambda system: False, 0.01)
 
     def test_rom_bytes_overrides(self):
-        basic = bytearray((ROMS / "basic.901226-01.bin").read_bytes())
+        basic = bytearray((ROMS / "basic.bin").read_bytes())
         basic[0x378:0x37E] = b"READX."
-        drive_rom = bytearray((ROMS / "1541-II.251968-03.bin").read_bytes())
+        drive_rom = bytearray((ROMS / "1541.bin").read_bytes())
         # The DOS checksums its ROM at reset, so the patch keeps the byte
         # sum of the page: "FRDF." sums like "FREE.".
         drive_rom[0x817:0x823] = b"BLOCKS FRDF."
-        kernal = (ROMS / "kernal.901227-03.bin").read_bytes()
+        kernal = (ROMS / "kernal.bin").read_bytes()
         system = System(d64=self.image, basic_bytes=bytes(basic), kernal_bytes=kernal,
                         drive_rom_bytes=bytes(drive_rom))
         system.boot_to_ready(5.0)
@@ -592,6 +596,7 @@ class StockRomAcceptanceTests(unittest.TestCase):
         self.assertEqual(system.ram_bytes(0x0800, end), bytes(data[0x400:]))
 
 
+@unittest.skipUnless(PRIVATE_ROMS, "private stock ROMs not supplied")
 class CliTests(unittest.TestCase):
     def test_cli_lists_directory(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Build the Multitini fast-disk ROM pair from the stock C64 KERNAL and 1541-II ROMs.
 
-Outputs (in c64fast/bin/):
+Private generated outputs (in build/c64fast/bin/):
   kernal.bin   8 KiB patched KERNAL 901227-03  -> SD card roms/fast/kernal.bin
   1541.bin     16 KiB patched 1541-II 251968-03 -> SD card roms/fast/1541.bin
   engine.bin   the drive engine image (also embedded in kernal.bin)
@@ -26,14 +26,16 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-ROMS = ROOT / "third_party" / "c64" / "ROMs"
-STOCK_KERNAL = ROMS / "kernal.901227-03.bin"
-STOCK_DOS = ROMS / "1541-II.251968-03.bin"
+sys.path.insert(0, str(ROOT / "scripts"))
+from private_core_roms import default_rom_source
+ROMS = default_rom_source() / "c64/roms"
+STOCK_KERNAL = ROMS / "kernal.bin"
+STOCK_DOS = ROMS / "1541.bin"
 STOCK_KERNAL_SHA256 = "83c60d47047d7beab8e5b7bf6f67f80daa088b7a6a27de0d7e016f6484042721"
 STOCK_DOS_SHA256 = "326c289c38753323d7e8167897447cf61ef35189d82eb8d75210ece949adda7c"
 
-BUILD = HERE / "build"
-BIN = HERE / "bin"
+BUILD = ROOT / "build/c64fast/work/build"
+BIN = ROOT / "build/c64fast/bin"
 
 # Inclusive address ranges that a patch may modify.
 ALLOWED_KERNAL = [
@@ -98,7 +100,7 @@ def assemble(acme: str, source: str) -> Path:
     symbols = BUILD / f"{stem}.sym"
     result = subprocess.run(
         [acme, "--symbollist", str(symbols), source],
-        cwd=HERE, capture_output=True, text=True)
+        cwd=BUILD.parent, capture_output=True, text=True)
     noise = "Segment starts inside another one"
     errors = [line for line in result.stderr.splitlines() if noise not in line]
     if result.returncode != 0:
@@ -139,7 +141,17 @@ def build() -> dict:
         raise SystemExit("stock KERNAL digest mismatch")
     if sha256(stock_dos) != STOCK_DOS_SHA256:
         raise SystemExit("stock 1541-II ROM digest mismatch")
-    BUILD.mkdir(exist_ok=True)
+    BUILD.mkdir(parents=True, exist_ok=True)
+    inputs = BUILD.parent / "inputs"
+    inputs.mkdir(exist_ok=True)
+    (inputs / "kernal.bin").write_bytes(stock_kernal)
+    (inputs / "1541.bin").write_bytes(stock_dos)
+    for source in HERE.iterdir():
+        if source.suffix.lower() in {".a", ".inc"}:
+            text = source.read_text()
+            text = text.replace('../third_party/c64/ROMs/kernal.901227-03.bin', 'inputs/kernal.bin')
+            text = text.replace('../third_party/c64/ROMs/1541-II.251968-03.bin', 'inputs/1541.bin')
+            (BUILD.parent / source.name).write_text(text)
     acme = find_acme()
     engine_symbols = assemble(acme, "engine.a")
     dos_symbols = assemble(acme, "dos_fast.a")
@@ -163,8 +175,8 @@ def build() -> dict:
         "schema_version": 1,
         "assembler": version.splitlines()[0] if version else "acme",
         "inputs": {
-            "kernal": {"path": "third_party/c64/ROMs/kernal.901227-03.bin", "sha256": sha256(stock_kernal)},
-            "1541": {"path": "third_party/c64/ROMs/1541-II.251968-03.bin", "sha256": sha256(stock_dos)},
+            "kernal": {"path": str(STOCK_KERNAL), "sha256": sha256(stock_kernal)},
+            "1541": {"path": str(STOCK_DOS), "sha256": sha256(stock_dos)},
         },
         "outputs": {
             "kernal.bin": {"size": len(kernal), "sha256": sha256(kernal),
@@ -188,21 +200,31 @@ def build() -> dict:
 
 
 def main() -> int:
+    global STOCK_KERNAL, STOCK_DOS, BUILD, BIN
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--rom-source", type=Path, default=default_rom_source())
+    parser.add_argument("--output", type=Path, default=ROOT / "build/c64fast")
     parser.add_argument("--check", action="store_true",
-                        help="rebuild and compare with the committed images in bin/")
+                        help="rebuild and compare with the supplied private roms/fast pair")
     args = parser.parse_args()
+    output = args.output.resolve()
+    if not output.is_relative_to(ROOT / "build") or output == ROOT / "build":
+        parser.error("Private generated outputs must stay under build/")
+    STOCK_KERNAL = args.rom_source / "c64/roms/kernal.bin"
+    STOCK_DOS = args.rom_source / "c64/roms/1541.bin"
+    BUILD, BIN = output / "work/build", output / "bin"
     result = build()
     outputs = {"kernal.bin": result["kernal"], "1541.bin": result["dos"], "engine.bin": result["engine"]}
     if args.check:
-        mismatches = [name for name, data in outputs.items()
-                      if not (BIN / name).exists() or (BIN / name).read_bytes() != data]
+        comparison = args.rom_source / "c64/roms/fast"
+        mismatches = [name for name, data in outputs.items() if name != "engine.bin" and
+                      (not (comparison / name).exists() or (comparison / name).read_bytes() != data)]
         if mismatches:
-            print("committed images differ from a fresh build:", ", ".join(mismatches))
+            print("private fast ROM pair differs from a fresh build:", ", ".join(mismatches))
             return 1
-        print("committed images match a fresh build")
+        print("private fast ROM pair matches a fresh build")
         return 0
-    BIN.mkdir(exist_ok=True)
+    BIN.mkdir(parents=True, exist_ok=True)
     for name, data in outputs.items():
         (BIN / name).write_bytes(data)
     (BIN / "PROVENANCE.json").write_text(json.dumps(result["report"], indent=2) + "\n",

@@ -36,9 +36,6 @@ ALLOWED_RESTRICTED_FILES = {
     "hdl/core/gameboy/boot/cgb_boot.mem",
     # GPL font derived from Appletini fb16 at the commit in licenses/files.csv.
     FONT_PATH,
-    # Exact C64 ROM set covered by provenance/c64_roms.json and the explicit
-    # repository-owner inclusion decision recorded there.
-    *C64_ROM_PATHS,
 }
 
 
@@ -81,6 +78,9 @@ def covered(path: str, patterns: list[str]) -> bool:
 
 
 def check_c64_rom_provenance(errors: list[str]) -> None:
+    for folder in ("third_party/c64/ROMs", "c64fast/bin", "c64fast/build"):
+        for path in (ROOT / folder).rglob("*.bin"):
+            errors.append("Private/generated ROM binary in source directory: " + path.relative_to(ROOT).as_posix())
     try:
         record = json.loads(
             (ROOT / "provenance" / "c64_roms.json").read_text(encoding="utf-8")
@@ -89,7 +89,7 @@ def check_c64_rom_provenance(errors: list[str]) -> None:
         errors.append(f"invalid C64 ROM provenance: {exc}")
         return
 
-    if record.get("schema_version") != 1:
+    if record.get("schema_version") != 2 or record.get("source_policy") != "external-only":
         errors.append("C64 ROM provenance has unsupported schema")
 
     roms = record.get("roms")
@@ -99,7 +99,6 @@ def check_c64_rom_provenance(errors: list[str]) -> None:
     if [item.get("path") for item in roms] != list(C64_ROM_PATHS):
         errors.append("C64 ROM provenance paths or order do not match the allowlist")
 
-    bundle_parts: list[bytes] = []
     for item in roms:
         relative = item.get("path")
         if not isinstance(relative, str) or not relative:
@@ -107,19 +106,17 @@ def check_c64_rom_provenance(errors: list[str]) -> None:
             continue
         target = ROOT / relative
         expected_digest = item.get("sha256")
-        if not target.is_file():
-            errors.append(f"provenance-locked C64 ROM is absent: {relative}")
-            continue
-        if target.stat().st_size != item.get("size"):
-            errors.append(f"provenance-locked C64 ROM has wrong size: {relative}")
+        if target.exists():
+            errors.append(f"external-only C64 ROM reintroduced into source: {relative}")
         if (
             not isinstance(expected_digest, str)
             or re.fullmatch(r"[0-9a-f]{64}", expected_digest) is None
         ):
             errors.append(f"C64 ROM provenance has invalid digest: {relative}")
-        elif sha256(target) != expected_digest:
-            errors.append(f"provenance-locked C64 ROM changed: {relative}")
-        bundle_parts.append(target.read_bytes())
+        if not isinstance(item.get("size"), int) or item["size"] <= 0:
+            errors.append(f"historical C64 ROM has invalid size: {relative}")
+        if not str(item.get("external_path", "")).startswith("c64/roms/"):
+            errors.append(f"historical C64 ROM lacks external runtime path: {relative}")
 
     bundle = record.get("bundle")
     if not isinstance(bundle, dict):
@@ -127,17 +124,9 @@ def check_c64_rom_provenance(errors: list[str]) -> None:
         return
     if bundle.get("order") != list(C64_ROM_PATHS):
         errors.append("C64 ROM bundle order does not match the allowlist")
-    if len(bundle_parts) != len(C64_ROM_PATHS):
-        return
-    bundle_bytes = b"".join(bundle_parts)
-    if len(bundle_bytes) != bundle.get("size"):
-        errors.append("C64 ROM bundle size does not match its provenance")
-    crc32 = f"0x{zlib.crc32(bundle_bytes) & 0xFFFFFFFF:08X}"
-    if crc32 != bundle.get("crc32"):
-        errors.append("C64 ROM bundle CRC32 does not match its provenance")
-    digest = hashlib.sha256(bundle_bytes).hexdigest()
-    if digest != bundle.get("sha256"):
-        errors.append("C64 ROM bundle SHA-256 does not match its provenance")
+    if bundle.get("size") != 20480 or re.fullmatch(r"0x[0-9A-F]{8}", str(bundle.get("crc32"))) is None or \
+            re.fullmatch(r"[0-9a-f]{64}", str(bundle.get("sha256"))) is None:
+        errors.append("Historical C64 ROM bundle identity is invalid")
 
 
 def main() -> int:
@@ -211,7 +200,8 @@ def main() -> int:
             if path.startswith("third_party/appletini/") or
             path.startswith("third_party/c64/upstream/") or
             path.startswith("third_party/gameboy/upstream/") or
-            path.startswith("third_party/genesis/upstream/")
+            path.startswith("third_party/genesis/upstream/") or
+            path.startswith("third_party/apple-iigs/upstream/")
         }
         if tracked_imports != import_paths:
             for path in sorted(tracked_imports - import_paths):

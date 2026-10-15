@@ -35,6 +35,8 @@ add_library(multitini_common STATIC
     firmware/common/genesis_boot.c
     firmware/common/genesis_content.c
     firmware/common/genesis_hid_input.c
+    firmware/common/iigs_content.c
+    firmware/common/iigs_hid_input.c
     firmware/common/vectrex_boot.c
     firmware/common/vectrex_hid_input.c
     firmware/common/vectrex_overlay.c
@@ -42,6 +44,7 @@ add_library(multitini_common STATIC
     firmware/common/media_browser.c
     firmware/common/supervisor.c
     firmware/common/system_frontend.c
+    firmware/common/usb_storage_mode.c
     firmware/common/text_reader.c
     firmware/common/tmp102.c
     firmware/common/ui.c
@@ -56,6 +59,34 @@ if(NOT MSVC AND NOT CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
 endif()
 
 enable_testing()
+add_executable(test_usb_storage_mode tests/host/test_usb_storage_mode.c)
+target_link_libraries(test_usb_storage_mode PRIVATE multitini_common)
+add_test(NAME usb_storage_mode COMMAND test_usb_storage_mode)
+add_executable(test_usb_storage_backend tests/host/test_usb_storage_backend.c firmware/platform/xilinx/usb_storage_sd.c)
+target_include_directories(test_usb_storage_backend PRIVATE tests/fixtures/usb_storage_backend tests/xilinx_stubs firmware/include firmware/platform/xilinx)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_usb_storage_backend PRIVATE -Wall -Wextra -Werror)
+    if(MULTITINI_SANITIZE)
+        target_compile_options(test_usb_storage_backend PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all)
+        target_link_options(test_usb_storage_backend PRIVATE -fsanitize=address,undefined)
+    endif()
+endif()
+add_test(NAME usb_storage_backend COMMAND test_usb_storage_backend)
+add_executable(test_iigs_content tests/host/test_iigs_content.c)
+target_link_libraries(test_iigs_content PRIVATE multitini_common)
+add_test(NAME iigs_content COMMAND test_iigs_content)
+add_executable(test_iigs_hid tests/host/test_iigs_hid.c)
+target_link_libraries(test_iigs_hid PRIVATE multitini_common)
+add_test(NAME iigs_hid COMMAND test_iigs_hid)
+add_executable(test_iigs_service tests/host/test_iigs_service.c firmware/platform/xilinx/iigs_content_service.c)
+target_include_directories(test_iigs_service PRIVATE firmware/platform/xilinx)
+target_link_libraries(test_iigs_service PRIVATE multitini_common)
+add_test(NAME iigs_service COMMAND test_iigs_service)
+add_library(xilinx_iigs_service_compile OBJECT firmware/platform/xilinx/iigs_content_service.c)
+target_include_directories(xilinx_iigs_service_compile PRIVATE firmware/include firmware/platform/xilinx)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(xilinx_iigs_service_compile PRIVATE -Wall -Wextra -Wpedantic -Werror -Wconversion -Wshadow -Wstrict-prototypes)
+endif()
 add_executable(test_gamepad tests/host/test_gamepad.c)
 target_link_libraries(test_gamepad PRIVATE multitini_common)
 add_test(NAME gamepad COMMAND test_gamepad)
@@ -84,6 +115,10 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/CherryUSB/core/usbh_core.h")
         third_party/CherryUSB/class/vendor/xbox third_party/CherryUSB/port/ehci)
     if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(usb_test_headers INTERFACE -Wall -Wextra -Werror)
+    endif()
+    if(CMAKE_C_COMPILER_ID STREQUAL "Clang" AND CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
+        target_compile_options(usb_test_headers INTERFACE
+            -include "${CMAKE_SOURCE_DIR}/tests/host/usb_clang_cl_compat.h")
     endif()
     if(APPLE)
         target_compile_options(usb_test_headers INTERFACE
@@ -121,6 +156,16 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 add_test(NAME text_document COMMAND test_text_document)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME core_artifacts COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/scripts/test_core_artifacts.py
+    --build-dir ${CMAKE_BINARY_DIR}/core-artifact-checks)
+add_test(NAME core_build_reuse COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/scripts/test_core_build_reuse.py)
+add_test(NAME private_core_roms COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/scripts/test_private_core_roms.py
+    --build-dir ${CMAKE_BINARY_DIR}/private-rom-checks)
+set_tests_properties(core_artifacts core_build_reuse private_core_roms PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 60)
 add_test(NAME screenshot_png COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_SOURCE_DIR}/scripts/test_screenshot_png.py
     --helper $<TARGET_FILE:test_screenshot>)
@@ -276,6 +321,15 @@ add_test(NAME menu COMMAND test_menu)
 # bare-metal startup while executing the real MMIO and settings handlers.
 if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME usb_storage_write COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/test_usb_storage_write.py" --cc "${CMAKE_C_COMPILER}"
+        --output "${CMAKE_BINARY_DIR}/usb-storage-write")
+    add_test(NAME usb_storage_queue COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/test_usb_storage_queue.py" --cc "${CMAKE_C_COMPILER}"
+        --output "${CMAKE_BINARY_DIR}/usb-storage-queue")
+    add_test(NAME iigs_serial COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/test_iigs_serial.py" --cc "${CMAKE_C_COMPILER}"
+        --build-dir "${CMAKE_BINARY_DIR}/iigs-serial-tests")
     add_test(NAME video_settings_runtime
         COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/scripts/test_video_settings_runtime.py"

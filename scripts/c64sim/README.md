@@ -6,8 +6,11 @@ they go into the FPGA build. Both CPUs are py65 6502 cores; the chip
 models follow the HDL in this repository (`c1541_logic.sv`,
 `c1541_gcr.sv`, `iecdrv_via6522.vhd`, `mos6526.v`, `fpga64_sid_iec.vhd`).
 
-Requires Python 3.12 and `py65` (`pip install py65`). ROMs are read from
-`third_party/c64/ROMs` by default.
+Requires Python 3.12 and `py65` (`pip install py65`). ROMs are private user
+inputs. Defaults read `c64/roms/{basic,kernal,characters,1541}.bin` below
+`MULTITINI_ROM_SOURCE`, or the user's OneDrive `multitini_roms` collection.
+Individual ROM paths can be supplied with the options below. No ROM bytes
+are kept in the source tree.
 
 ## Usage
 

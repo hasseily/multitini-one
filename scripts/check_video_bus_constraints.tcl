@@ -60,7 +60,7 @@ namespace eval multitini_cdc_gate {
     set machines {}
     foreach setting $::multitini_signoff_generics {
         if {[string match {ACTIVE_MACHINE=*} $setting]} {
-            if {![regexp {^ACTIVE_MACHINE=([0-4])$} $setting -> machine]} {
+            if {![regexp {^ACTIVE_MACHINE=([0-5])$} $setting -> machine]} {
                 error "Unreviewed ACTIVE_MACHINE build generic: $setting"
             }
             lappend machines $machine
@@ -74,9 +74,9 @@ namespace eval multitini_cdc_gate {
     }
     # A supervisor image may trim the inactive capture FIFO. Machine images
     # must retain both directions; a partially removed FIFO is never accepted.
-    # Genesis additionally captures its native source frame across the machine
+    # Genesis and IIgs capture their native source frame across the machine
     # to control-clock boundary before the common effects pipeline.
-    set expected_fifo_groups [expr {$active_machine == 4 ? 4 : 2}]
+    set expected_fifo_groups [expr {$active_machine in {4 5} ? 4 : 2}]
     if {$fifo_groups != $expected_fifo_groups &&
         !($fifo_groups == 0 && $active_machine == 2)} {
         error "Capture FIFO Gray crossing census changed: $fifo_groups groups"
