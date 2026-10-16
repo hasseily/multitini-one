@@ -441,6 +441,16 @@ def generate_zipgs() -> str:
 def generate_vgc() -> str:
     text = upstream("rtl/vgc.v")
     text = replace(text, "module vgc (\n", NOTICE + "module vgc (\n" + rom_inputs())
+    # Vivado 2025.2 loses the drivers of these forward-referenced net
+    # declaration assignments, then removes the legacy graphics pipeline.
+    # Declare them before any use and retain the original continuous logic.
+    text = replace(text, "output [7:0] shr_bus_byte\n);",
+                   "output [7:0] shr_bus_byte\n);\n\n"
+                   "// Declare mode nets before their first use. Vivado otherwise loses\n"
+                   "// these drivers and removes HGR/DHGR logic despite correct RTL simulation.\n"
+                   "wire GR;\nwire lores_mode;\nwire dhires_mode;")
+    for mode in ("GR", "lores_mode", "dhires_mode"):
+        text = replace(text, f"wire {mode} =", f"assign {mode} =")
     text = replace(text, 'rom #(.memfile("chr.mem"),.AW(12)) charrom(\n',
                    "apple_iigs_runtime_rom #(.AW(12)) charrom(\n  .load_clk(load_rom_clk),\n  .load_we(load_rom_we),\n  .load_addr(load_rom_addr),\n  .load_data(load_rom_data),\n")
     # The synchronous video RAM needs the first byte two pixel edges before

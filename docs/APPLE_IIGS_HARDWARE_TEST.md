@@ -1,16 +1,22 @@
 # Apple IIgs hardware test
 
-Install the complete `build/firmware-smartport-m060/sd/` contents, preserving existing
+Install the complete `build/firmware-iigs-hgr-m061/sd/` contents, preserving existing
 media and settings. Update Multitini with its included `FIRMWARE-MULTITINI.BIN` using
 Golden B2. Use the package's matching supervisor, FSBL and core configuration.
-M0.6.0 adds eight-drive SmartPort with extended IIgs calls and banked fast
-DMA. Install its ARM firmware, IIgs FPGA image, `core.cfg` and 2304-byte
+M0.6.1 restores legacy graphics logic that Vivado removed from earlier IIgs
+images. Test Choplifter from `8-bit Games.hdv` at Stock with accelerator None,
+then with ZipGS. Check lores, HGR, DHGR, mixed graphics/text, 40/80-column text
+and a return to the SHR desktop. See [legacy video diagnosis](APPLE_IIGS_LEGACY_VIDEO.md).
+These checks require owner confirmation on the new image.
+
+The package retains M0.6.0's eight-drive SmartPort with extended IIgs calls and banked fast
+DMA. Install the ARM firmware, IIgs FPGA image, `core.cfg` and 2304-byte
 `roms/hdd.rom` together. The other seven FPGA images are retained.
 Follow the [SmartPort hardware checks](APPLE_IIGS_SMARTPORT.md) as well as
 the existing checks below. The USB SD recovery, screenshot geometry and
 shared USB polling fixes from M0.5.7-M0.5.9 remain included.
 
-After installing M0.6.0, check the native GS border in SHR: 42 pixels on each
+After installing M0.6.1, check the native GS border in SHR: 42 pixels on each
 side and 24 source lines above and below the complete 640x200 image. Changing
 the guest border color must affect all four sides. Check both NTSC and PAL,
 and return to text mode to verify its existing placement inside the frame.
@@ -25,11 +31,11 @@ boot confirmation below remains valid for that installed firmware.
 Verify the selected IIgs image on the actual card. Use the size and CRC32
 from the new package's `apple-iigs/core.cfg` and confirm the same values in
 the load log. UART `s` must report core `49494753`, ABI `00000016` and build
-`4D000600`. Package hashes alone do not identify the file loaded by the board.
+`4D000601`. Package hashes alone do not identify the file loaded by the board.
 
 ## Earlier hardware evidence
 
-The following results apply to their named releases, not to M0.6.0. The old
+The following results apply to their named releases, not to M0.6.1. The old
 M0.5.7 package's `core.cfg` named
 `apple-iigs-native.bin`, size `4045568`, CRC32 `D3BAF34E`. The load log must
 have matched that size and CRC, core `49494753`, ABI `00000016` and build

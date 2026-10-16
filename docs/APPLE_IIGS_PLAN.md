@@ -1,5 +1,10 @@
 # Apple IIgs integration
 
+M0.6.1 restores legacy graphics lost during Vivado synthesis by declaring
+the VGC's three graphics-mode nets before their first use. It rebuilds the
+IIgs FPGA and ARM release; the other seven images retain their original
+identities. See [legacy video diagnosis and validation](APPLE_IIGS_LEGACY_VIDEO.md).
+
 M0.6.0 adds the eight-drive SmartPort card, extended IIgs calls and banked
 fast DMA. See [SmartPort support and validation](APPLE_IIGS_SMARTPORT.md).
 It requires the matching ARM firmware, IIgs FPGA image and source-built

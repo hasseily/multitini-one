@@ -57,6 +57,12 @@ input DHRG_MONO,
 output [7:0] shr_bus_byte
 );
 
+// Declare mode nets before their first use. Vivado otherwise loses
+// these drivers and removes HGR/DHGR logic despite correct RTL simulation.
+wire GR;
+wire lores_mode;
+wire dhires_mode;
+
 // Counter values for the border boundaries
 
 // NB: Top border range is non-monotonic due to the legacy counter reset.
@@ -747,7 +753,7 @@ reg buffer_needs_reload;         // Flag to reload buffer when chram_x increment
 // Color artifacting for hires mode (simplified version of apple2hack logic)
 
 // Current mode detection using existing line_type_w
-wire lores_mode = (line_type_w == LORES40_LINE) | (line_type_w == LORES80_LINE);
+assign lores_mode = (line_type_w == LORES40_LINE) | (line_type_w == LORES80_LINE);
 wire hires_mode = (line_type_w == HIRES40_LINE) | (line_type_w == HIRES80_LINE);
 wire graphics_mode = lores_mode | hires_mode;
 
@@ -1093,7 +1099,7 @@ wire [7:0] apple_ii_y_clamped = window_y_w[7:0];
 // GR signal calculation for mixed mode support
 // Mixed mode should switch to text at y=160 in Apple II coordinates (192-line system)
 wire mixed_mode_active = (apple_ii_y_clamped >= 160) & MIXG;
-wire GR = ~(TEXTG | mixed_mode_active);
+assign GR = ~(TEXTG | mixed_mode_active);
 
 // Apple II address generation using lineaddr() function with clamped coordinates
 wire [15:0] lineaddr_result = lineaddr({2'b0, apple_ii_y_clamped});
@@ -1101,7 +1107,7 @@ wire [22:0] video_addr_ii_base = {7'b0, lineaddr_result} + {17'b0, (dhires_mode 
 
 // 80-column modes (text80 and double hi-res) need aux memory bank switching
 wire text80_mode = (!GR & EIGHTYCOL);
-wire dhires_mode = (GR & HIRES_MODE & EIGHTYCOL & !AN3);  // Double Hi-Res mode
+assign dhires_mode = (GR & HIRES_MODE & EIGHTYCOL & !AN3);  // Double Hi-Res mode
 wire use_aux_bank = (text80_mode | dhires_mode) & (dhires_mode ? aux_bank_early : aux[16]);
 // text80 floating-bus fetch: the real Mega II shows the pair's MAIN byte to
 // the CPU ("col80 is a nop" for the FLOATBUS capture), but our schedule has

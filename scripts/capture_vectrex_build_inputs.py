@@ -48,6 +48,7 @@ def inputs(machine: str) -> list[Path]:
             "xilinx_primitives.sv", "genesis_primitives.sv", "video_fifo_model.sv"))
         paths.update((ROOT / "hdl/sim").glob("tb_genesis_*.sv"))
     if machine == "APPLE_IIGS":
+        paths.add(ROOT / "docs/APPLE_IIGS_LEGACY_VIDEO.md")
         paths.update(path for path in (ROOT / "third_party/apple-iigs").rglob("*")
                      if path.is_file())
         paths.update(path for path in (ROOT / "hdl/core/apple_iigs/roms").rglob("*")
@@ -58,6 +59,7 @@ def inputs(machine: str) -> list[Path]:
             "port_apple_iigs_core.py", "audit_apple_iigs_import.py", "test_apple_iigs_video.py",
             "test_apple_iigs_video_bridge.py",
             "test_apple_iigs_shr_edges.py",
+            "test_apple_iigs_legacy_video.py", "synth_apple_iigs_legacy_video.tcl",
             "test_apple_iigs_slowram.py",
             "test_apple_iigs_logical_cache.py",
             "test_apple_iigs_cpu_peek.py",
