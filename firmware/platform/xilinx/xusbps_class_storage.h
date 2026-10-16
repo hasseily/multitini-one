@@ -136,6 +136,9 @@ typedef struct {
 #define XUSBPS_CLASSREQ_MASS_STORAGE_RESET	0xFF
 #define XUSBPS_CLASSREQ_GET_MAX_LUN		0xFE
 
+/* Reject an errored bulk OUT dTD without admitting any of its payload. */
+void XUsbPs_StorageRxError(XUsbPs *InstancePtr);
+
 
 /* SCSI machine states
  */

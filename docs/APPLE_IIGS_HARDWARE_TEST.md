@@ -1,15 +1,16 @@
 # Apple IIgs hardware test
 
-Install the complete `build/firmware-core-gs-m058/sd/` contents, preserving existing
+Install the complete `build/firmware-usb-m059-final/sd/` contents, preserving existing
 media and settings. Update Multitini with its included `FIRMWARE-MULTITINI.BIN` using
-Golden B2. The matching supervisor and FSBL enable the new HP3 source video
-port. Load the new IIgs core only after installing the matching firmware.
-M0.5.8 adds the missing IIgs screenshot geometry. M0.5.7's shared USB service
-timestamp still skips redundant polls inside IIgs transfers. The FPGA images
-and CPU1 video worker are retained. An already repaired M0.5.7 installation
-needs only `FIRMWARE-MULTITINI.BIN` for this update.
+Golden B2. Use the package's matching supervisor, FSBL and core configuration.
+M0.5.9 repairs USB SD recovery and removes the completed IIgs HDD profiling
+diagnostic. M0.5.8 added the missing IIgs screenshot geometry. M0.5.7's shared
+USB service timestamp still skips redundant polls inside IIgs transfers. The FPGA images
+are retained; the ARM platform is rebuilt for the shared SD driver fix.
+An already repaired M0.5.7 installation needs only `FIRMWARE-MULTITINI.BIN`
+for this update.
 
-After installing M0.5.8, capture both filtered video and full screen from
+After installing M0.5.9, capture both filtered video and full screen from
 the IIgs. At Auto size, the video PNG is 1280x800 in 1920x1080, 1280x1024
 and 1680x1050 output modes; it is 640x400 in the other three modes. Full-screen
 PNGs match the selected display resolution. Check the first/last image

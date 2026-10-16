@@ -30,41 +30,6 @@ struct mt_sd_file {
     bool active, append, eof;
 };
 static mt_sd_file_t open_files[MT_SD_OPEN_FILES];
-static mt_sd_profile_clock_fn read_profile_clock;
-static void *read_profile_context;
-static mt_sd_read_profile_t read_profile;
-
-static void read_profile_record(mt_sd_profile_stage_t *stage, uint64_t start, bool failed)
-{
-    if (!read_profile.enabled) return;
-    const uint64_t elapsed = read_profile_clock(read_profile_context) - start;
-    ++stage->count;
-    if (failed) ++stage->failures;
-    stage->total_us += elapsed;
-    if (elapsed > stage->max_us) stage->max_us = elapsed;
-}
-
-void mt_sd_read_profile_reset(void)
-{
-    const bool enabled = read_profile.enabled;
-    memset(&read_profile, 0, sizeof(read_profile));
-    read_profile.enabled = enabled;
-}
-
-void mt_sd_read_profile_start(mt_sd_profile_clock_fn clock_us, void *context)
-{
-    read_profile_clock = clock_us;
-    read_profile_context = context;
-    read_profile.enabled = clock_us != NULL;
-    mt_sd_read_profile_reset();
-}
-
-void mt_sd_read_profile_stop(void) { read_profile.enabled = false; }
-void mt_sd_read_profile_snapshot(mt_sd_read_profile_t *snapshot)
-{
-    if (snapshot != NULL) *snapshot = read_profile;
-}
-
 static mt_sd_result_t result(mt_sd_status_t status, FRESULT backend_status,
                              size_t size)
 {
@@ -670,18 +635,13 @@ mt_sd_result_t mt_sd_file_read(mt_sd_file_t *file, void *data, size_t capacity)
     if (file->position >= (uint64_t)f_size(&file->native)) {
         file->eof = true; return result(MT_SD_OK, FR_OK, 0U);
     }
-    uint64_t profile_start = read_profile.enabled ? read_profile_clock(read_profile_context) : 0U;
     status = f_lseek(&file->native, (FSIZE_t)file->position);
-    read_profile_record(&read_profile.seek, profile_start, status != FR_OK);
     if (status != FR_OK) return result(MT_SD_SEEK_FAILED, status, 0U);
     while (total < capacity) {
         const size_t remaining = capacity - total;
         const UINT request = remaining > UINT_MAX ? UINT_MAX : (UINT)remaining;
         UINT received = 0U;
-        profile_start = read_profile.enabled ? read_profile_clock(read_profile_context) : 0U;
         status = f_read(&file->native, (uint8_t *)data + total, request, &received);
-        read_profile_record(&read_profile.read, profile_start, status != FR_OK);
-        if (read_profile.enabled) read_profile.bytes += received;
         total += received; file->position += received;
         if (status != FR_OK) return result(MT_SD_READ_FAILED, status, total);
         if (received != request) { file->eof = true; break; }

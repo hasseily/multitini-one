@@ -38,24 +38,6 @@ typedef struct {
     size_t size;
 } mt_sd_result_t;
 
-/* Optional diagnostic clock, in monotonic microseconds. No UART or allocation.
- * These counters cover managed-file reads only; seek measures the actual
- * FatFs f_lseek performed by mt_sd_file_read, not the logical seek API. */
-typedef uint64_t (*mt_sd_profile_clock_fn)(void *context);
-typedef struct {
-    uint32_t count, failures;
-    uint64_t total_us, max_us;
-} mt_sd_profile_stage_t;
-typedef struct {
-    bool enabled;
-    uint64_t bytes;
-    mt_sd_profile_stage_t seek, read;
-} mt_sd_read_profile_t;
-void mt_sd_read_profile_start(mt_sd_profile_clock_fn clock_us, void *context);
-void mt_sd_read_profile_stop(void);
-void mt_sd_read_profile_reset(void);
-void mt_sd_read_profile_snapshot(mt_sd_read_profile_t *snapshot);
-
 typedef int (*mt_sd_list_fn)(void *context, const char *name, size_t size,
                              bool is_directory);
 

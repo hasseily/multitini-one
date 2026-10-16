@@ -21,17 +21,44 @@ before stopping export. A completed host eject can close the screen
 automatically. Otherwise press **Enter**, **Esc** or **F12** on the Multitini
 keyboard. The serial console also accepts Enter, Esc or `q` to stop.
 
-Complete USB writes reach the SD backend and finish `CTRL_SYNC` before a
-successful SCSI write acknowledgement. An incomplete transfer delays stopping.
-The controller must stop, its endpoint DMA must drain, and SD synchronization
-must succeed before local filesystem access resumes. Sync or DMA errors keep
-the card exclusive and display a retry status. A failed local remount also
-retains exclusive ownership and retries while the screen remains open.
+Complete USB writes reach the SD backend and finish synchronization before a
+successful SCSI write acknowledgement. Stopping gives an incomplete transfer
+two seconds to finish, then detaches USB and cancels that incomplete command.
+An already running polled SD operation can extend the wait by its driver
+timeout. Complete queued writes are flushed before canceling class state.
+Both USB endpoint DMA and SD DMA must be quiescent before local filesystem
+access resumes. A failed SD operation invalidates the shared driver's ready
+state and requires a controller reset before buffers can be reused. A reset
+card is initialized again by the local remount. DMA or sync failures retain
+exclusive ownership and display a retry status; so does a failed remount.
+Interrupted transfers are reported after exit: check the copied files.
 
 After a successful remount, Multitini rescans packages and settings and
 restarts the previously active core from the current files on SD. Unsaved
 machine state is lost. If that package was removed or cannot restart, the
 machine stays in reset and the menu allows another core to be chosen.
+
+## Recovery and diagnostics
+
+M0.5.9 removes interrupt-handler infinite loops after failed USB descriptor
+sends. A mass-storage reset clears deferred DATA and rebuilds the bulk
+endpoint rings only after their DMA stops. Invalid command wrappers, failed
+receive descriptors and dropped queue packets stall bulk traffic until host
+reset recovery; they cannot become a new disk command or silently shift a
+write's payload. Endpoint flush waits are bounded.
+
+During USB SD mode, UART `u` prints a short snapshot of existing transfer,
+reset and error counters. It adds no periodic logging or new per-packet
+timestamps. **Printing can briefly pause foreground transfer service**; use
+it after a failure, not during a throughput measurement. Another snapshot is
+printed after detach. This temporary report should be removed once it has
+served the intermittent-failure diagnosis.
+
+On 2026-10-16 the owner tried one roughly 700 MB copy at about 8 MB/s, a group
+of about twelve files, and individual copies without reproducing the freeze.
+Passive UART captures on COM12 and COM13 received no bytes. These trials did
+not establish the installed firmware identity or validate M0.5.9. The original
+intermittent trigger remains unobserved.
 
 ## Validation and limits
 
@@ -44,7 +71,16 @@ existing forms. A queue regression injects resets during blocking SD work,
 checks nested USB0 interrupt ownership and rejects the original stale-request
 replay. Write-handler tests suppress obsolete replies after bus, port and
 mass-storage resets without consuming pending endpoint-zero requests. The
-complete GNU host suite passed with 84 tests.
+original USB integration passed the then-current 84-test GNU host suite.
+The recovery regressions additionally inject descriptor-send failures,
+malformed command wrappers, stale DATA at mass-storage reset, endpoint flush
+failures, queue overflow and abandoned-write deadlines. SD recovery tests
+exercise the generated driver patch and controller quiescence separately
+from the modal lifecycle. None of these tests reproduce a physical USB fault.
+M0.5.9 passes all 92 GNU host tests, strict ARM/BSP object compilation and
+the complete Vitis firmware build. Its eight FPGA images are reused exactly;
+the rebuilt video worker differs only in its GNU build-ID metadata. The new
+firmware has not been installed or tested on the board.
 
 `scripts/test_usb_storage_native.py --bsp <generated-domain>` compiles the
 production USB0 sources against the actual ARM compiler and Xilinx BSP.
@@ -63,10 +99,11 @@ For the first board test, use a backed-up test card:
    core restarts and newly copied media appears in its browser.
 4. Repeat export and stop with **F12** after PC transfers have completed.
    Check that the core restarts and local saves still work.
-5. In a controlled fault test, keep a host write incomplete or inject an SD
-   sync/remount failure. Check that stopping remains pending, local SD access
-   stays blocked and recovery succeeds before the core restarts. The host
-   fixtures cover these cases before board fault testing.
+5. In a controlled fault test, abandon a host write, then request stop. Check
+   that the incomplete command is canceled after its grace period, both DMA
+   engines stop and local access resumes only after remount. Injected DMA or
+   sync failures must keep local access blocked until recovery. Verify the
+   interruption notice and recheck copied file contents.
 
 The device transport derives from Appletini One commit
 `7b972bfda432657444d55a3eaaccf4b1d8e06699`. Original and ported file hashes,

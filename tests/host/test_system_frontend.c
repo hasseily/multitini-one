@@ -92,7 +92,7 @@ static void test_actions_and_standby(void)
     view.status_text = "Status owned by runtime";
     view.content_root = "/core/content";
     mt_system_frontend_apply(&frontend, &snapshot, &view);
-    check(view.system_items == frontend.items && view.system_item_count == 10U,
+    check(view.system_items == frontend.items && view.system_item_count == 9U,
           "System descriptors fill the shared view");
     check(!item(&view, "Restart active core")->enabled &&
           !item(&view, "Autoboot current core")->enabled,
@@ -330,16 +330,18 @@ static void test_golden_update_confirmation(void)
     mt_menu_t menu;
     mt_system_frontend_apply(&frontend, &snapshot, &view);
     expect_value(&view, "Golden Boot", "Unknown");
-    check(view.system_item_count == 10U,
+    check(view.system_item_count == 9U,
           "absent BOOT.BIN does not display an update action");
     snapshot.golden_version = "B1.2.0";
     snapshot.golden_update_present = true;
     mt_system_frontend_apply(&frontend, &snapshot, &view);
     expect_value(&view, "Golden Boot", "B1.2.0");
-    check(view.system_item_count == 11U && !snapshot.multiboot_ready &&
+    check(view.system_item_count == 10U && !snapshot.multiboot_ready &&
           item(&view, "Update Golden Boot...")->enabled,
           "an SD BOOT.BIN enables update even with Golden 1.x");
     menu = focus_item(&view, "Update Golden Boot...");
+    check(menu.page == MT_MENU_PAGE_SYSTEM,
+          "Golden update remains an action on System");
     check(mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true).kind == MT_MENU_ACTION_NONE &&
           menu.golden_update_confirm && !menu.golden_update_accept,
           "update opens a Cancel-default modal without dispatching");
@@ -381,13 +383,13 @@ static void test_golden_update_confirmation(void)
 static void test_about_move_and_navigation(void)
 {
     static const char *const about[] = {
-        "Firmware build", "FPGA build", "Interface", "Uptime", "Board temperature",
+        "Firmware build", "FPGA build", "Interface", "Golden Boot", "Uptime", "Board temperature",
         "USB devices", "USB errors", "SD core catalog", "Saved data", "Audio output"
     };
     static const char *const system[] = {
         "Restart active core", "Autoboot current core", "Read documents", "Date and time",
         "Restart USB", "Golden updater", "Startup firmware", "Switch to Appletini",
-        "Golden Boot", "USB SD card", "Update Golden Boot..."
+        "USB SD card", "Update Golden Boot..."
     };
     mt_system_frontend_t frontend;
     mt_system_snapshot_t snapshot = {0};
@@ -395,12 +397,12 @@ static void test_about_move_and_navigation(void)
     mt_ui_frame_t frame;
     snapshot.golden_update_present = true;
     mt_system_frontend_apply(&frontend, &snapshot, &view);
-    check(view.about_items == frontend.about_items && view.about_item_count == 10U,
-          "About owns all ten moved status descriptors");
+    check(view.about_items == frontend.about_items && view.about_item_count == 11U,
+          "About owns all eleven status descriptors");
     for (size_t i = 0U; i < sizeof(about) / sizeof(about[0]); ++i) {
         const mt_menu_item_t *const current = &view.about_items[i];
         check(strcmp(current->label, about[i]) == 0 && current->help != NULL && current->help[0] != '\0',
-              "About retains the inclusive status range in its original order with contextual help");
+              "About places Golden Boot below Interface and retains contextual help");
         check(!current->enabled && current->action == MT_MENU_ACTION_NONE,
               "moved status rows remain informational");
     }
@@ -414,7 +416,7 @@ static void test_about_move_and_navigation(void)
     check(menu.page == MT_MENU_PAGE_ABOUT && menu.row == 0U,
           "About follows System in tab navigation");
     (void)mt_menu_key(&menu, &view, MT_MENU_HID_END, true);
-    check(menu.row == 9U && mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true).kind == MT_MENU_ACTION_NONE,
+    check(menu.row == 10U && mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true).kind == MT_MENU_ACTION_NONE,
           "About navigation reaches Audio output without dispatching an action");
     mt_menu_render(&menu, &view, &frame);
     for (size_t i = 0U; i < sizeof(about) / sizeof(about[0]); ++i)
@@ -424,7 +426,7 @@ static void test_about_move_and_navigation(void)
     (void)mt_menu_key(&menu, &view, MT_MENU_HID_TAB, true);
     check(menu.page == MT_MENU_PAGE_CORES, "About wraps forward to Cores");
     (void)mt_menu_key_with_modifiers(&menu, &view, MT_MENU_HID_TAB, true, 2U);
-    check(menu.page == MT_MENU_PAGE_ABOUT && menu.row == 9U, "About remembers its selected row");
+    check(menu.page == MT_MENU_PAGE_ABOUT && menu.row == 10U, "About remembers its selected row");
     (void)mt_menu_key_with_modifiers(&menu, &view, MT_MENU_HID_TAB, true, 2U);
     check(menu.page == MT_MENU_PAGE_SYSTEM && menu.row == 3U, "System keeps its selected action after visiting About");
 }

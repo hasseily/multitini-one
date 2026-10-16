@@ -7,45 +7,45 @@
       "source_path": "ps_sources/frontend/usb_storage_service.c",
       "source_sha256": "94ad1b81f9e19229cc7f2b54fd60cc371cfdb32e08a9c058a3123587e581ae5b",
       "source_dirty": false,
-      "sha256": "ff54c3caec08ae83cf1e4fbbf41058d5343bc24638aded27ef6f5e4bd149c35a",
+      "sha256": "f87a90c5c73ae741ec91746ff2cf43babb04ef43ac3e67fb9679a48ff042e71a",
       "license": "MIT",
-      "transform": "Multitini exclusive USB0 SD modal; storage-only identity; shared GIC; full-card backend; write-through SD sync and guarded DMA stop as applicable; USB0 GIC/IER ownership through blocking storage and reset-aware reply suppression"
+      "transform": "Multitini exclusive USB0 SD modal; storage-only identity; shared GIC; full-card backend; write-through SD sync and guarded DMA stop as applicable; USB0 GIC/IER ownership through blocking storage and reset-aware reply suppression; M0.5.9: bounded abandoned-transfer disconnect; USB and SD DMA ownership barriers; stale-packet rejection and deferred bulk-ring reset; explicit existing-counter diagnostics"
     },
     {
       "path": "firmware/platform/xilinx/usb_storage_service.h",
       "source_path": "ps_sources/frontend/usb_storage_service.h",
       "source_sha256": "2525b211e015eb403b93a3e5cefd2e0ca488d0dccc42c52e176d2954aa2e8f13",
       "source_dirty": false,
-      "sha256": "efd9ab5f8749a65a3709eada7a9f5baf96b45e0b373f1453e3169744670a213e",
+      "sha256": "ba736609e30d58d7f32a593d05ebd3530faa90a268ed7bd32cc13c4c494489de",
       "license": "GPL-3.0-only",
-      "transform": "Multitini exclusive USB0 SD modal; storage-only identity; shared GIC; full-card backend; write-through SD sync and guarded DMA stop as applicable"
+      "transform": "Multitini exclusive USB0 SD modal; storage-only identity; shared GIC; full-card backend; write-through SD sync and guarded DMA stop as applicable; M0.5.9: bounded disconnect and explicit diagnostic API"
     },
     {
       "path": "firmware/platform/xilinx/usb_storage_sd.c",
       "source_path": "ps_sources/frontend/usb_storage_sd.c",
       "source_sha256": "c5f3d5cf77be3ef81009022a095193cbeced9ff1f17e5ce518e32bd65ae503c7",
       "source_dirty": false,
-      "sha256": "39570ab1622992614dd2f193851c98d0d20932288c16c21ea1bde4ccd6c91bb8",
+      "sha256": "4e2deaead6567aae87587221a3a050dec5e640558a996c66c4c3f1a98d4caf19",
       "license": "GPL-3.0-only",
-      "transform": "Multitini exclusive USB0 SD modal; storage-only identity; shared GIC; full-card backend; write-through SD sync and guarded DMA stop as applicable"
+      "transform": "Multitini exclusive USB0 SD modal; storage-only identity; shared GIC; full-card backend; write-through SD sync and guarded DMA stop as applicable; M0.5.9: shared-driver SD fault invalidation and bounded DMA quiescence before buffer reuse or reinitialization"
     },
     {
       "path": "firmware/platform/xilinx/usb_storage_backend.h",
       "source_path": "ps_sources/frontend/usb_storage_backend.h",
       "source_sha256": "0ab40d74f4e84daaf3d30b74e97439a4f58307b297fcf1f44d89805e41e7c5fa",
       "source_dirty": false,
-      "sha256": "0d93e8d5acd3bdfbdbf3774ea113f509b61c9c1d405fdd8f6b6d9eae7a26563d",
+      "sha256": "e449b7a691dd91e4908d040ca402b828e8896edfaba621152c8c9993c159922c",
       "license": "GPL-3.0-only",
-      "transform": "Multitini exclusive USB0 SD modal; storage-only identity; shared GIC; full-card backend; write-through SD sync and guarded DMA stop as applicable"
+      "transform": "Multitini exclusive USB0 SD modal; storage-only identity; shared GIC; full-card backend; write-through SD sync and guarded DMA stop as applicable; M0.5.9: shared-driver SD quiescence API"
     },
     {
       "path": "firmware/platform/xilinx/xusbps_ch9.c",
       "source_path": "ps_sources/frontend/xusbps_ch9.c",
       "source_sha256": "291d5848715c7ebca1fa99fdd0bc587b96fc18cba79b761ab8154624a71c664f",
       "source_dirty": false,
-      "sha256": "291d5848715c7ebca1fa99fdd0bc587b96fc18cba79b761ab8154624a71c664f",
+      "sha256": "9a296bb8b1bca8c97ccea901cd1606bc4227a8c0e125a21814bcbcb13d2f00a7",
       "license": "MIT",
-      "transform": "Multitini exclusive USB0 SD modal; storage-only identity; shared GIC; full-card backend; write-through SD sync and guarded DMA stop as applicable"
+      "transform": "Multitini exclusive USB0 SD modal; storage-only identity; shared GIC; full-card backend; write-through SD sync and guarded DMA stop as applicable; M0.5.9: return and stall on descriptor-send failure instead of trapping in IRQ"
     },
     {
       "path": "firmware/platform/xilinx/xusbps_ch9.h",
@@ -79,18 +79,18 @@
       "source_path": "ps_sources/frontend/xusbps_class_storage.c",
       "source_sha256": "6e01ec3c31a941a9f92090ee5edf853ef8511bfa5a6179fb594616df64ae87e2",
       "source_dirty": false,
-      "sha256": "e46e2ee448376275fe9e7e68f84908ec949e21a6b6f5df8e199efbd5977b9570",
+      "sha256": "d0c6ba91e63477b421f755981b81bd01091ffd9094770b27bab3a2c5f031876f",
       "license": "MIT",
-      "transform": "Multitini exclusive USB0 SD modal; storage-only identity; shared GIC; full-card backend; write-through SD sync and guarded DMA stop as applicable; USB0 GIC/IER ownership through blocking storage and reset-aware reply suppression"
+      "transform": "Multitini exclusive USB0 SD modal; storage-only identity; shared GIC; full-card backend; write-through SD sync and guarded DMA stop as applicable; USB0 GIC/IER ownership through blocking storage and reset-aware reply suppression; M0.5.9: validate exact CBW; require BOT reset after invalid or lost OUT payload; bounded IN ring flush"
     },
     {
       "path": "firmware/platform/xilinx/xusbps_class_storage.h",
       "source_path": "ps_sources/frontend/xusbps_class_storage.h",
       "source_sha256": "36cbc1d109dafb610b21432cb4f2faa8afcaa1a64a39417cb24b72730ee791dd",
       "source_dirty": false,
-      "sha256": "36cbc1d109dafb610b21432cb4f2faa8afcaa1a64a39417cb24b72730ee791dd",
+      "sha256": "f957c1be1eb03de43953c7edfc4d51c71bdb63f003a543a44f317f6029d03fdf",
       "license": "MIT",
-      "transform": "Multitini exclusive USB0 SD modal; storage-only identity; shared GIC; full-card backend; write-through SD sync and guarded DMA stop as applicable"
+      "transform": "Multitini exclusive USB0 SD modal; storage-only identity; shared GIC; full-card backend; write-through SD sync and guarded DMA stop as applicable; M0.5.9: BOT receive-error recovery API"
     },
     {
       "path": "firmware/platform/xilinx/gic_init.c",

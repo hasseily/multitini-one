@@ -75,6 +75,8 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     endif()
 endif()
 add_test(NAME usb_storage_backend COMMAND test_usb_storage_backend)
+add_executable(test_sd_dma_quiesce tests/host/test_sd_dma_quiesce.c)
+add_test(NAME sd_dma_quiesce COMMAND test_sd_dma_quiesce)
 add_executable(test_iigs_content tests/host/test_iigs_content.c)
 target_link_libraries(test_iigs_content PRIVATE multitini_common)
 add_test(NAME iigs_content COMMAND test_iigs_content)
@@ -166,6 +168,8 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 add_test(NAME text_document COMMAND test_text_document)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME sd_quiesce_bsp_patch COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/test_sd_quiesce_patch.py)
 add_test(NAME core_artifacts COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_SOURCE_DIR}/scripts/test_core_artifacts.py
     --build-dir ${CMAKE_BINARY_DIR}/core-artifact-checks)
@@ -337,6 +341,12 @@ if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
     add_test(NAME usb_storage_queue COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/test_usb_storage_queue.py" --cc "${CMAKE_C_COMPILER}"
         --output "${CMAKE_BINARY_DIR}/usb-storage-queue")
+    add_test(NAME usb_storage_disconnect COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/test_usb_storage_disconnect.py" --cc "${CMAKE_C_COMPILER}"
+        --output "${CMAKE_BINARY_DIR}/usb-storage-disconnect")
+    add_test(NAME usb_storage_protocol COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/test_usb_storage_protocol.py" --cc "${CMAKE_C_COMPILER}"
+        --output "${CMAKE_BINARY_DIR}/usb-storage-protocol")
     add_test(NAME iigs_serial COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/test_iigs_serial.py" --cc "${CMAKE_C_COMPILER}"
         --build-dir "${CMAKE_BINARY_DIR}/iigs-serial-tests")

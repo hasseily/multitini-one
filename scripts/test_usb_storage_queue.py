@@ -11,13 +11,16 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 NAMES = ('UsbStorageIrqSave', 'UsbStorageIrqRestore', 'UsbProcessQueuedStorageReq',
-         'UsbResetStorageQueue', 'UsbResetLocalStorageState')
+         'UsbQueueStorageReq',
+         'UsbResetStorageQueue', 'UsbResetLocalStorageState',
+         'UsbCompleteBulkReset', 'usb_storage_debug_note_msc_reset',
+         'XUsbPs_Ep1EventHandler')
 INPUTS = ('firmware/platform/xilinx/usb_storage_service.c',
           'scripts/test_usb_storage_queue.py', 'tests/host/test_usb_storage_queue.c')
 
 
 def function(source, name):
-    match = re.search(r'^static\s+[A-Za-z_][\w *]*?\b' + name + r'\([^;]*?\)\s*\{', source, re.M)
+    match = re.search(r'^(?:static\s+)?[A-Za-z_][\w *]*?\b' + name + r'\([^;]*?\)\s*\{', source, re.M)
     if match is None:
         raise ValueError('Missing production function: ' + name)
     depth, end = 1, match.end()
@@ -33,11 +36,15 @@ def main():
     parser.add_argument('--output', type=Path, default=ROOT / 'build/usb-storage-queue')
     parser.add_argument('--negative-before', type=Path,
                         help='Optional captured old queue function; must fail the same regression')
+    parser.add_argument('--msc-before', type=Path,
+                        help='Captured old service source; its MSC hook must fail stale DATA regression')
     args = parser.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
     before = {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in INPUTS}
     source = (ROOT / INPUTS[0]).read_text()
+    poll = function(source, 'usb_storage_service_poll')
+    assert poll.index('UsbCompleteBulkReset(') < poll.index('UsbProcessQueuedStorageReq(')
     functions = {name: function(source, name) for name in NAMES}
     env = os.environ.copy()
     if os.name == 'nt':
@@ -72,11 +79,22 @@ def main():
                 raise ValueError('Captured unguarded queue unexpectedly passed')
             negative = {'status': 'EXPECTED_FAILURE', 'exit_code': failed.returncode,
                         'captured_function_sha256': hashlib.sha256(args.negative_before.read_bytes()).hexdigest()}
+        msc_negative = None
+        if args.msc_before:
+            selected = dict(functions)
+            old = function(args.msc_before.read_text(encoding='utf-8-sig'), 'usb_storage_debug_note_msc_reset')
+            selected['usb_storage_debug_note_msc_reset'] = old
+            failed = run_case(out / 'negative-msc-before', selected)
+            if failed.returncode == 0:
+                raise ValueError('Old MSC hook unexpectedly cleared stale DATA')
+            msc_negative = {'status': 'EXPECTED_FAILURE', 'exit_code': failed.returncode,
+                            'source_sha256': hashlib.sha256(args.msc_before.read_bytes()).hexdigest(),
+                            'function_sha256': hashlib.sha256(old.encode()).hexdigest()}
         after = {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in INPUTS}
         if before != after:
             raise ValueError('Queue test inputs changed while executing')
         record = {'status': 'PASS', 'files': before, 'commands': commands,
-                  'negative_before': negative, 'result': result.stdout.strip(),
+                  'negative_before': negative, 'msc_negative_before': msc_negative, 'result': result.stdout.strip(),
                   'scope': 'Actual USB0 GIC/IER/queue/reset functions; injected reset during blocking class handling; USB1 stays enabled.'}
         (out / 'validation.json').write_text(json.dumps(record, indent=2) + '\n')
         print(result.stdout.strip())

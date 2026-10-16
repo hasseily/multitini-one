@@ -17,8 +17,7 @@
 static bool golden_update_worker_held;
 static const char *test_command;
 static unsigned forbidden,retries,warnings,statuses;
-static unsigned profile_calls,unknown_commands;
-static char profile_argument[MT_EXTENDED_COMMAND_CAPACITY];
+static unsigned unknown_commands;
 static uint32_t active_core=MT_IIGS_CORE_ID;
 static bool hidden=true;
 static mt_iigs_config_t gs_config={1U,4U,0U,0U,0U,0U};
@@ -52,8 +51,6 @@ static bool remember_active_drive8(const char *text) { (void)text;++forbidden;re
 static void print_c64_content_result(const char *operation,const char *name,const mt_c64_content_service_result_t *result)
 { (void)operation;(void)name;(void)result;++forbidden; }
 static void print_help(void) {}
-static void handle_iigs_profile(const char *argument)
-{ assert(strlen(argument)<sizeof(profile_argument));strcpy(profile_argument,argument);++profile_calls; }
 void c64_d64_service_list(void) { ++forbidden; }
 void c64_d64_service_dump_status(void) { ++forbidden; }
 int c64_d64_service_retry(void) { ++forbidden;return 0; }
@@ -78,11 +75,9 @@ typedef uint64_t XTime;
 #define TEST_SLEEP_FREQ TEST_CPU_FREQ/2
 #define COUNTS_PER_SECOND TEST_SLEEP_FREQ
 static XTime clock_ticks;
-static unsigned clock_reads,usb_progress_calls,usb_due_calls;
+static unsigned clock_reads,usb_due_calls;
 static uint32_t usb_due_interval_us;
-static bool iigs_progress_paced=true;
 static void XTime_GetTime(XTime *value) { ++clock_reads;*value=clock_ticks; }
-static void usb_hid_service_poll_deferred(void) { ++usb_progress_calls; }
 static void usb_hid_service_poll_deferred_if_due(uint32_t minimum_interval_us)
 { usb_due_interval_us=minimum_interval_us;++usb_due_calls; }
 #include "iigs_serial_handlers.inc"
@@ -98,9 +93,9 @@ static void test_clock_and_progress(void)
         1999999U,2000000U,2000001U,7999999U,8000000U,
         UINT64_C(86400000000),UINT64_C(2000000000000)};
     for(size_t i=0U;i<sizeof(microseconds)/sizeof(microseconds[0]);++i) {
-        set_clock_us(microseconds[i]);assert(monotonic_us(NULL)==microseconds[i]);
+        set_clock_us(microseconds[i]);assert(monotonic_ms(NULL)==microseconds[i]/1000U);
     }
-    iigs_progress_paced=true;usb_progress_calls=usb_due_calls=0U;
+    usb_due_calls=0U;
     const unsigned before=clock_reads;
     /* The USB service owns the shared timestamp, including normal runtime
      * polling. The IIgs wrapper delegates every paced call with a 1 ms budget. */
@@ -108,14 +103,10 @@ static void test_clock_and_progress(void)
     for(size_t i=0U;i<sizeof(progress_times)/sizeof(progress_times[0]);++i) {
         set_clock_us(progress_times[i]);iigs_transfer_progress(NULL);
         assert(usb_due_calls==i+1U && usb_due_interval_us==1000U);
-        assert(usb_progress_calls==0U && clock_reads==before);
+        assert(clock_reads==before);
     }
-    iigs_progress_paced=false;
-    for(unsigned i=0U;i<4U;++i)iigs_transfer_progress(NULL);
-    assert(usb_progress_calls==4U && usb_due_calls==5U && clock_reads==before);
-    iigs_progress_paced=true;
     iigs_transfer_progress(NULL);
-    assert(usb_progress_calls==4U && usb_due_calls==6U && usb_due_interval_us==1000U && clock_reads==before);
+    assert(usb_due_calls==6U && usb_due_interval_us==1000U && clock_reads==before);
 }
 int main(void)
 {
@@ -131,33 +122,30 @@ int main(void)
     test_command="diskretry";handle_extended_command(false);assert(retries==1U && statuses==1U && forbidden==0U);
     test_command="saveretry";handle_extended_command(false);assert(retries==2U && statuses==2U && forbidden==0U);
     hidden=false;test_command="diskretry";handle_extended_command(false);assert(retries==2U && forbidden==0U);
-    static const struct { const char *command,*argument; } profiling[]={
-        {"gsprofile stop","stop"},{"gsprofile start","start"},
-        {"gsprofile boot 6","boot 6"},{"gsprofile boot 0","boot 0"},
-        {"gsprofile boot 4","boot 4"},{"gsprofile",""}};
-    for(unsigned i=0U;i<sizeof(profiling)/sizeof(profiling[0]);++i) {
-        test_command=profiling[i].command;const unsigned before=profile_calls;
+    static const char *const removed_commands[]={"gsprofile stop","gsprofile start",
+        "gsprofile boot 6","gsprofile boot 0","gsprofile boot 4","gsprofile"};
+    for(unsigned i=0U;i<sizeof(removed_commands)/sizeof(removed_commands[0]);++i) {
+        test_command=removed_commands[i];const unsigned before=unknown_commands;
         handle_extended_command(false);
-        assert(profile_calls==before+1U && strcmp(profile_argument,profiling[i].argument)==0);
+        assert(unknown_commands==before+1U);
         assert(forbidden==0U && retries==2U);
     }
-    const unsigned dispatched=profile_calls;
-    for(unsigned i=0U;i<sizeof(profiling)/sizeof(profiling[0]);++i) {
-        test_command=profiling[i].command;const unsigned before=unknown_commands;
+    for(unsigned i=0U;i<sizeof(removed_commands)/sizeof(removed_commands[0]);++i) {
+        test_command=removed_commands[i];const unsigned before=unknown_commands;
         handle_extended_command(true);
-        assert(profile_calls==dispatched && unknown_commands==before+1U && forbidden==0U);
+        assert(unknown_commands==before+1U && forbidden==0U);
     }
     static const uint32_t other_cores[]={MT_C64_CORE_ID,MT_NES_CORE_ID,0U};
     for(unsigned core=0U;core<sizeof(other_cores)/sizeof(other_cores[0]);++core) {
         active_core=other_cores[core];
-        for(unsigned i=0U;i<sizeof(profiling)/sizeof(profiling[0]);++i) {
-            test_command=profiling[i].command;const unsigned before=unknown_commands;
+        for(unsigned i=0U;i<sizeof(removed_commands)/sizeof(removed_commands[0]);++i) {
+            test_command=removed_commands[i];const unsigned before=unknown_commands;
             handle_extended_command(false);
-            assert(profile_calls==dispatched && unknown_commands==before+1U && forbidden==0U);
+            assert(unknown_commands==before+1U && forbidden==0U);
         }
     }
     active_core=MT_IIGS_CORE_ID;test_command="gsprofiles start";
     const unsigned before=unknown_commands;handle_extended_command(false);
-    assert(profile_calls==dispatched && unknown_commands==before+1U && forbidden==0U);
-    puts("PASS Apple IIgs serial routing, exact BSP diagnostic clock boundaries and paced/baseline shared USB progress delegation");return 0;
+    assert(unknown_commands==before+1U && forbidden==0U);
+    puts("PASS Apple IIgs serial routing, removed profiling commands, exact BSP clock boundaries and shared USB progress delegation");return 0;
 }

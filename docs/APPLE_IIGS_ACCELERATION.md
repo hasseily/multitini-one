@@ -116,12 +116,21 @@ Those are model observations, not measured board stall counters.
 The model uses compatibility flags `0x10` versus `0x17` on the board, so its
 individual wait times cannot be subtracted from these hardware captures.
 
-The opt-in UART commands are `:gsprofile boot 0`, `:gsprofile boot 4` and
+In M0.5.6 through M0.5.8, the opt-in UART commands were `:gsprofile boot 0`, `:gsprofile boot 4` and
 `:gsprofile boot 6` for Stock, 14 and 57 MHz. They safely reset/remount the
 selected IIgs and start timing at reset release. Append ` baseline` to restore
 the original progress behavior for that capture. `:gsprofile stop` freezes
 and prints the report, then restores paced behavior. Select ZipGS first.
 The diagnostic emits no UART output during the measurement interval.
+
+M0.5.9 removes this completed diagnostic: the stage timers, statistics,
+per-transfer callback wrapper, main-loop profiling checks and slow-baseline
+switch are deleted. The shared USB poll timestamp and one-millisecond
+fallback remain functional input-service code. Enabled profiling added timer
+reads and statistics updates; disabled profiling still left checks and the
+callback wrapper. Their overhead was not measured independently. The timing
+table above remains the original instrumented hardware result, not a new
+measurement of M0.5.9.
 
 All 88 host tests pass. Permanent production-linked checks cover the BSP clock
 macro, rollover, callback pacing and serial routing. The real stream-code

@@ -52,9 +52,6 @@ static unsigned dir_entry_count;
 static const char *dir_names[3];
 static FSIZE_t dir_sizes[3];
 static BYTE dir_attributes[3];
-static uint64_t profile_us;
-static uint64_t profile_clock_us(void *context)
-{ assert(context == &profile_us); return profile_us; }
 
 #define JOURNAL_TARGET "0:/multitini/cores/c64/media/writeback.d64"
 #define JOURNAL_PATH "0:/multitini/cores/c64/media/writeback.d64.mtj"
@@ -135,7 +132,6 @@ FSIZE_t f_size(const FIL *file)
 FRESULT f_read(FIL *file, void *buffer, UINT bytes_to_read,
                UINT *bytes_read)
 {
-    profile_us += 11U;
     UINT delivered = bytes_to_read;
     assert(file != NULL);
     assert(buffer != NULL);
@@ -229,7 +225,6 @@ FRESULT f_unlink(const char *path)
 
 FRESULT f_lseek(FIL *file, FSIZE_t offset)
 {
-    profile_us += 3U;
     if (seek_status != FR_OK) return seek_status;
     assert(offset <= f_size(file));
     file->placeholder = (unsigned)offset;
@@ -280,7 +275,6 @@ FRESULT f_closedir(DIR *directory)
 
 static void reset_fake(void)
 {
-    mt_sd_read_profile_stop(); profile_us = 0U;
     unmount_status = FR_OK;
     (void)mt_sd_storage_unmount();
     mount_status = FR_OK;
@@ -481,40 +475,6 @@ static void test_prefix_reads(void)
     assert(mt_sd_storage_read_file_prefix("prefix.txt", destination, sizeof(destination), NULL, NULL, NULL).status ==
            MT_SD_INVALID_ARGUMENT);
     assert(mount_calls == 0U && open_calls == 0U);
-}
-
-static void test_read_profile(void)
-{
-    mt_sd_file_t *file = NULL;
-    uint8_t data[1];
-    mt_sd_read_profile_t snapshot;
-    reset_fake();
-    assert(mt_sd_file_open(JOURNAL_TARGET, "rb", &file).status == MT_SD_OK);
-    mt_sd_read_profile_start(profile_clock_us, &profile_us);
-    assert(mt_sd_file_seek(file, 0, 0).status == MT_SD_OK);
-    mt_sd_read_profile_snapshot(&snapshot);
-    assert(snapshot.enabled && snapshot.seek.count == 0U); /* Logical seek does no FatFs work. */
-    assert(mt_sd_file_read(file, data, sizeof(data)).status == MT_SD_OK);
-    mt_sd_read_profile_snapshot(&snapshot);
-    assert(snapshot.bytes == 1U && snapshot.seek.count == 1U && snapshot.read.count == 1U);
-    assert(snapshot.seek.total_us == 3U && snapshot.seek.max_us == 3U);
-    assert(snapshot.read.total_us == 11U && snapshot.read.max_us == 11U);
-    assert(mt_sd_file_seek(file, 0, 0).status == MT_SD_OK);
-    seek_status = FR_DISK_ERR;
-    assert(mt_sd_file_read(file, data, sizeof(data)).status == MT_SD_SEEK_FAILED);
-    mt_sd_read_profile_snapshot(&snapshot);
-    assert(snapshot.seek.count == 2U && snapshot.seek.failures == 1U && snapshot.read.count == 1U);
-    seek_status = FR_OK; read_status = FR_DISK_ERR;
-    assert(mt_sd_file_read(file, data, sizeof(data)).status == MT_SD_READ_FAILED);
-    mt_sd_read_profile_snapshot(&snapshot);
-    assert(snapshot.seek.count == 3U && snapshot.read.count == 2U && snapshot.read.failures == 1U && snapshot.bytes == 1U);
-    mt_sd_read_profile_reset();mt_sd_read_profile_snapshot(&snapshot);
-    assert(snapshot.enabled && snapshot.bytes == 0U && snapshot.seek.count == 0U && snapshot.read.count == 0U);
-    mt_sd_read_profile_stop();read_status = FR_OK;
-    assert(mt_sd_file_read(file, data, sizeof(data)).status == MT_SD_OK);
-    mt_sd_read_profile_snapshot(&snapshot);assert(!snapshot.enabled && snapshot.read.count == 0U);
-    mt_sd_read_profile_start(NULL, NULL);mt_sd_read_profile_snapshot(&snapshot);assert(!snapshot.enabled);
-    assert(mt_sd_file_close(file).status == MT_SD_OK);
 }
 
 static void test_managed_files(void)
@@ -1062,7 +1022,6 @@ int main(void)
                   "journal invalid") == 0);
     assert(strcmp(mt_sd_status_name((mt_sd_status_t)99), "unknown") == 0);
     test_prefix_reads();
-    test_read_profile();
     test_managed_files();
     test_settings_journal_migration();
     test_external_storage_lease();

@@ -12,6 +12,8 @@ typedef enum { RES_OK,RES_ERROR } DRESULT;
 #define STA_NODISK 2U
 #define CTRL_SYNC 0U
 #define GET_SECTOR_COUNT 1U
+#define MT_SD_CTRL_QUIESCE 0x80U
+#define MT_SD_QUIESCE_RESET 1U
 DSTATUS disk_initialize(BYTE);
 DSTATUS disk_status(BYTE);
 DRESULT disk_ioctl(BYTE,BYTE,void *);

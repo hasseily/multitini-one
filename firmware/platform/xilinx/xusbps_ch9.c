@@ -383,8 +383,7 @@ static void XUsbPs_StdDevReq(XUsbPs *InstancePtr,
 						usb_storage_debug_note_ep_send_failure(0,
 										       (u32)ReplyLen,
 										       Status);
-						/* Failure case needs to be handled */
-						for (;;);
+						Error = 1;
 					}
 					break;
 
@@ -412,8 +411,7 @@ static void XUsbPs_StdDevReq(XUsbPs *InstancePtr,
 						usb_storage_debug_note_ep_send_failure(0,
 										       (u32)ReplyLen,
 										       Status);
-						/* Failure case needs to be handled */
-						for (;;);
+						Error = 1;
 					}
 					break;
 
@@ -464,8 +462,7 @@ static void XUsbPs_StdDevReq(XUsbPs *InstancePtr,
 						usb_storage_debug_note_ep_send_failure(0,
 										       (u32)ReplyLen,
 										       Status);
-						/* Failure case needs to be handled */
-						for (;;);
+						Error = 1;
 					}
 					break;
 
@@ -484,8 +481,7 @@ static void XUsbPs_StdDevReq(XUsbPs *InstancePtr,
 					Status = XUsbPs_Ep0GuardedSend(InstancePtr,
 								     Reply, ReplyLen);
 					if (XST_SUCCESS != Status) {
-						/* Failure case needs to be handled */
-						for (;;);
+						Error = 1;
 					}
 					break;
 
@@ -506,8 +502,7 @@ static void XUsbPs_StdDevReq(XUsbPs *InstancePtr,
 					Status = XUsbPs_Ep0GuardedSend(InstancePtr,
 								     Reply, ReplyLen);
 					if (XST_SUCCESS != Status) {
-						/* Failure case needs to be handled */
-						for (;;);
+						Error = 1;
 					}
 					break;
 #endif /* MOUSE_SIMULATION */

@@ -18,7 +18,7 @@
 #define MT_MENU_MAX_CORE_OPTIONS 12U
 #define MT_MENU_MAX_ITEMS 20U
 #define MT_MENU_MAX_SYSTEM_ITEMS 21U
-#define MT_MENU_MAX_ABOUT_ITEMS 10U
+#define MT_MENU_MAX_ABOUT_ITEMS 11U
 #define MT_MENU_MAX_EFFECT_ITEMS 32U
 /* Reserved cookie flags; ordinary file and D64 cookies retain their values. */
 #define MT_MENU_FILE_DIRECTORY UINT32_C(0x80000000)

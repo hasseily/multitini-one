@@ -3,22 +3,6 @@
 #define MULTITINI_IIGS_CONTENT_SERVICE_H
 #include "multitini_core_link.h"
 #include "multitini_iigs_content.h"
-#include "sd_storage.h"
-typedef struct {
-    bool enabled;
-    uint32_t requests, read_requests, write_requests, completions, failures;
-    uint64_t elapsed_us, last_discovery_us, last_completion_us;
-    mt_sd_profile_stage_t service, stream, complete, progress;
-    mt_sd_read_profile_t sd;
-} mt_iigs_profile_t;
-/* Opt-in HDD-only service timings. SD timings include all managed-file reads
- * while enabled. A service spans discovery through accepted completion,
- * including retries; progress time is a subset of stream/completion time.
- * Discovery intervals also contain guest execution, not just ARM latency. */
-void iigs_content_service_profile_start(mt_sd_profile_clock_fn clock_us, void *context);
-void iigs_content_service_profile_stop(void);
-void iigs_content_service_profile_reset(void);
-void iigs_content_service_profile_snapshot(mt_iigs_profile_t *snapshot);
 /* content_root is the package's /media folder; ROMs use sibling /roms. */
 void iigs_content_service_init(mt_core_link_t *, const char *content_root, mt_link_progress_fn, void *);
 int iigs_content_service_boot(void);

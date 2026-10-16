@@ -2,6 +2,27 @@
 
 Status: planning baseline, written 2026-08-29
 
+About follow-up, 2026-10-16: move the Golden Boot version from System to
+About, immediately below Interface. Keep the Golden Boot update action in
+System. Include this menu change in the M0.5.9 ARM delivery and main commit.
+
+USB SD recovery follow-up, 2026-10-16: investigate the owner's intermittent
+Windows-to-SD transfer freeze. The attempted large and multiple-file copies
+did not reproduce it. Repair confirmed source failure paths: descriptor-send
+errors must return from the USB interrupt; BOT reset must discard stale DATA
+and rebuild stopped bulk rings; malformed commands and lost packets require
+reset recovery. Bound the abandoned-write stop grace and prove both USB and
+SD DMA quiescent before releasing filesystem ownership. Test injected faults,
+then build ARM M0.5.9 and retain the qualified FPGA images. Keep hardware
+reproduction and acceptance separate from host fault injection.
+
+Telemetry follow-up: remove the completed IIgs HDD profiling probes, callback
+wrappers and slow-baseline switch. Preserve the shared USB polling fix and its
+functional tests. USB diagnostics must reuse existing counters, with no new
+per-packet timing or periodic logging. Explicit UART status output can pause
+service while printing; use it after a failure and remove temporary diagnostics
+after they identify the cause. Record any measured instrumentation overhead.
+
 IIgs screenshot follow-up, 2026-10-16: the ARM screenshot renderer omitted
 the IIgs core ID and rejected its valid 640x400 processed frame. Add the
 display's existing Auto scales: 2x at 1080p, 1280x1024 and 1680x1050; 1x at

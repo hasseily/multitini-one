@@ -35,18 +35,9 @@ static unsigned pram_load_packets,warm_reset_packets,pram_load_complete_event,wa
 static bool pram_restore_pending,fail_sector_transfer;
 static unsigned reset_assertions,reset_releases,reset_event,release_event,config_event,close_event,mount_event[5];
 static bool core_reset_asserted;
-static uint64_t profile_us;
 static bool fail_media_complete;
-static mt_sd_read_profile_t mock_sd_profile;
-void mt_sd_read_profile_start(mt_sd_profile_clock_fn clock_us,void *context)
-{ (void)context;memset(&mock_sd_profile,0,sizeof(mock_sd_profile));mock_sd_profile.enabled=clock_us!=NULL; }
-void mt_sd_read_profile_stop(void) { mock_sd_profile.enabled=false; }
-void mt_sd_read_profile_reset(void)
-{ const bool enabled=mock_sd_profile.enabled;memset(&mock_sd_profile,0,sizeof(mock_sd_profile));mock_sd_profile.enabled=enabled; }
-void mt_sd_read_profile_snapshot(mt_sd_read_profile_t *snapshot)
-{ if(snapshot!=NULL)*snapshot=mock_sd_profile; }
-static uint64_t profile_clock_us(void *context) { assert(context==&profile_us);return profile_us; }
-static void timed_progress(void *context) { assert(context==&profile_us);profile_us+=7U; }
+static unsigned progress_calls,sector_streams;
+static void count_progress(void *context) { assert(context==&progress_calls);++progress_calls; }
 static void request(unsigned slot,uint32_t lba,bool writing);
 static mt_sd_result_t result(mt_sd_status_t s,size_t n) { return (mt_sd_result_t){s,0U,n}; }
 static test_file_t *file_find(const char *path,bool create)
@@ -120,7 +111,7 @@ const char *mt_sd_status_name(mt_sd_status_t s)
 { return s==MT_SD_OPEN_FAILED ? "SD open failed":s==MT_SD_SIZE_MISMATCH ? "SD size mismatch":"simulated SD failure"; }
 static uint32_t read_reg(void *c,uint32_t o)
 {
-    (void)c;++profile_us;
+    (void)c;
     if(o==MT_REG_MEDIA_STATE)return (dirty_drives ? MT_MEDIA_STATE_DIRTY:0U)|(eject_pending_test ? MT_MEDIA_STATE_EJECT_PENDING:0U);
     if(o==MT_REG_MEDIA_DATA) {
         if(reverse_index>=512U)return 0U;
@@ -132,7 +123,7 @@ static uint32_t read_reg(void *c,uint32_t o)
 }
 static void write_reg(void *c,uint32_t o,uint32_t v)
 {
-    (void)c;++profile_us;regs[o/4U]=v;
+    (void)c;regs[o/4U]=v;
     if(o==MT_REG_STREAM_DATA_BURST) {
         const unsigned total=regs[MT_REG_COMMAND_ARG1/4U];
         for(unsigned i=0U;i<4U && stream_index<total;++i) {
@@ -172,6 +163,7 @@ static void write_reg(void *c,uint32_t o,uint32_t v)
             break;
         case MT_COMMAND_STREAM_BEGIN:
             stream_kind=(uint8_t)a;stream_index=0U;
+            if(stream_kind==MT_LOAD_IIGS_SECTOR)++sector_streams;
             for(unsigned i=0U;i<ROM_FILES;++i)if(a==rom_files[i].kind) {
                 assert(rom_stream_count<32U && b==rom_files[i].size);rom_streams[rom_stream_count++]=i;break;
             }
@@ -216,7 +208,7 @@ static void write_reg(void *c,uint32_t o,uint32_t v)
 static mt_core_link_t core;
 static void reset(void)
 {
-    iigs_content_service_profile_stop();profile_us=0U;fail_media_complete=false;
+    progress_calls=sector_streams=0U;fail_media_complete=false;
     memset(files,0,sizeof(files));memset(handles,0,sizeof(handles));memset(regs,0,sizeof(regs));
     memset(generations,0,sizeof(generations));memset(mount_sizes,0,sizeof(mount_sizes));
     fail_disk_write=fail_journal=deny_writes=early_last=pram_eject_write=eject_pending_test=false;
@@ -248,39 +240,26 @@ static void request(unsigned slot,uint32_t lba,bool writing)
     regs[MT_REG_MEDIA_REQUEST_GENERATION/4U]=generations[slot];
     regs[MT_REG_MEDIA_REQUEST_BLOCK_COUNT/4U]=(slot<<8U)|2U;reverse_index=0U;
 }
-static void test_media_profile(void)
+static void test_media_progress_and_completion_retry(void)
 {
-    reset();(void)disk("profile.hdv");
-    iigs_content_service_init(&core,TEST_MEDIA_ROOT,timed_progress,&profile_us);
-    assert(iigs_content_service_mount(0U,"profile.hdv")==0);
-    iigs_content_service_profile_start(profile_clock_us,&profile_us);
+    reset();test_file_t *f=disk("progress.hdv");
+    iigs_content_service_init(&core,TEST_MEDIA_ROOT,count_progress,&progress_calls);
+    assert(iigs_content_service_mount(0U,"progress.hdv")==0);
+    progress_calls=0U;
     request(0U,1U,false);iigs_content_service_poll();
-    mt_iigs_profile_t snapshot;iigs_content_service_profile_snapshot(&snapshot);
-    assert(snapshot.enabled && snapshot.requests==1U && snapshot.read_requests==1U && snapshot.write_requests==0U);
-    assert(snapshot.completions==1U && snapshot.failures==0U && snapshot.service.count==1U);
-    assert(snapshot.stream.count==1U && snapshot.complete.count==1U && snapshot.progress.count==3U);
-    assert(snapshot.progress.total_us==21U && snapshot.progress.max_us==7U);
-    assert(snapshot.stream.total_us>snapshot.progress.total_us && snapshot.service.total_us>snapshot.stream.total_us);
-    assert(snapshot.last_completion_us>=snapshot.last_discovery_us && snapshot.sd.enabled);
-    request(4U,0U,false);iigs_content_service_poll(); /* PRAM is excluded, even on an invalid request. */
-    iigs_content_service_profile_snapshot(&snapshot);assert(snapshot.requests==1U && snapshot.completions==1U);
-    iigs_content_service_profile_reset();
+    assert(completions==1U && completion_status==MT_RESPONSE_OK && sector_streams==1U);
+    assert(memcmp(stream_data,f->data+512U,512U)==0 && progress_calls==3U);
+    /* Retry only the completion: the already transferred sector is not sent twice. */
     request(0U,1U,false);fail_media_complete=true;iigs_content_service_poll();
-    iigs_content_service_profile_snapshot(&snapshot);
-    assert(snapshot.requests==1U && snapshot.completions==0U && snapshot.complete.failures==1U);
-    profile_us+=1000U;fail_media_complete=false;iigs_content_service_poll();
-    iigs_content_service_profile_snapshot(&snapshot);
-    assert(snapshot.requests==1U && snapshot.completions==1U && snapshot.complete.count==2U);
-    assert(snapshot.service.count==1U && snapshot.service.total_us>=1000U && snapshot.service.max_us==snapshot.service.total_us);
-    iigs_content_service_profile_reset();
+    assert(completions==1U && sector_streams==2U);
+    fail_media_complete=false;iigs_content_service_poll();
+    assert(completions==2U && completion_status==MT_RESPONSE_OK && sector_streams==2U);
+    const unsigned before=progress_calls;
+    request(0U,2U,true);iigs_content_service_poll();
+    assert(completions==3U && completion_status==MT_RESPONSE_OK && disk_writes==1U);
+    assert(progress_calls>=before+512U); /* Reverse-stream ticks retain the caller's context. */
     request(0U,9U,false);iigs_content_service_poll();
-    iigs_content_service_profile_snapshot(&snapshot);assert(snapshot.failures==1U && snapshot.service.failures==1U);
-    iigs_content_service_profile_stop();iigs_content_service_profile_snapshot(&snapshot);
-    const uint64_t stopped=snapshot.elapsed_us;profile_us+=999U;
-    iigs_content_service_profile_snapshot(&snapshot);assert(!snapshot.enabled && !snapshot.sd.enabled && snapshot.elapsed_us==stopped);
-    iigs_content_service_profile_start(NULL,NULL);
-    request(0U,1U,false);iigs_content_service_poll();
-    iigs_content_service_profile_snapshot(&snapshot);assert(!snapshot.enabled && snapshot.requests==0U);
+    assert(completions==4U && completion_status==MT_RESPONSE_IO_ERROR && sector_streams==2U);
 }
 static void assert_rom_loads(const unsigned order[4],unsigned read_start,unsigned stream_start)
 {
@@ -714,7 +693,7 @@ static void test_raw_floppy_protection(void)
 }
 int main(void)
 {
-    test_media_profile();
+    test_media_progress_and_completion_retry();
     test_raw_floppy_transport();
     test_raw_floppy_recovery();
     test_raw_floppy_protection();

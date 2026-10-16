@@ -23,6 +23,10 @@
 #include "sd_storage.h"
 #include <string.h>
 
+#if !defined(MT_SD_CTRL_QUIESCE) || !defined(MT_SD_QUIESCE_RESET)
+#error "Rebuild the shared xilffs BSP with the Multitini SD quiesce patch"
+#endif
+
 /* Cold-boot card detect / power-up settling can let the first
  * disk_initialize fail. Retry a few times with a delay between attempts
  * before giving up. */
@@ -40,6 +44,8 @@ static u32 SdBlockCount;
 static u32 SdExportBaseBlock;
 static u32 SdExportBlockCount;
 static int SdReady;
+static u8 SdDmaUnsafe;
+static u8 SdInterrupted;
 static volatile int SdIoBusy;
 static u8 ProbeBlock[USB_STORAGE_BLOCK_SIZE] __attribute__ ((aligned(32)));
 static usb_storage_backend_stats_t SdStats;
@@ -65,6 +71,39 @@ static int sd_io_begin(void)
 static void sd_io_end(void)
 {
     SdIoBusy = 0;
+}
+
+/* Called while this main-context operation owns SdIoBusy. Do not clear a
+ * failed-DMA latch until the shared driver proves reset/idle. */
+static s32 sd_quiesce_locked(u8 *interrupted)
+{
+    BYTE recovered = 0U;
+    const DRESULT status = disk_ioctl(SD_PDRV, MT_SD_CTRL_QUIESCE, &recovered);
+    if (status != RES_OK) {
+        SdReady = 0;
+        SdDmaUnsafe = SdInterrupted = 1U;
+        return XST_FAILURE;
+    }
+    SdDmaUnsafe = 0U;
+    if ((recovered & MT_SD_QUIESCE_RESET) != 0U) {
+        SdReady = 0;
+        SdInterrupted = 1U;
+    }
+    if (interrupted != NULL) {
+        *interrupted = SdInterrupted;
+        SdInterrupted = 0U;
+    }
+    return XST_SUCCESS;
+}
+
+static void sd_failed_io(void)
+{
+    /* The driver may still own this buffer after a timeout. Hide the medium
+     * before returning to BOT, and reset/prove idle before buffer reuse.
+     * A failed proof leaves it hidden until a later successful quiesce. */
+    SdReady = 0;
+    SdDmaUnsafe = SdInterrupted = 1U;
+    (void)sd_quiesce_locked(NULL);
 }
 
 static void update_backend_stats(u8 IsWrite,
@@ -134,7 +173,9 @@ static s32 sd_read_blocks(u32 Block, u32 Count, u8 *Buffer)
     if (!sd_io_begin()) {
         return XST_FAILURE;
     }
+    if (SdDmaUnsafe != 0U) { sd_io_end(); return XST_FAILURE; }
     dr = disk_read(SD_PDRV, Buffer, (LBA_t)Block, (UINT)Count);
+    if (dr != RES_OK) sd_failed_io();
     sd_io_end();
 
     if (dr != RES_OK) {
@@ -154,16 +195,16 @@ static s32 sd_write_blocks(u32 Block, u32 Count, const u8 *Buffer)
     u32 FlushLen;
     DRESULT dr;
 
+    if (!sd_io_begin()) return XST_FAILURE;
+    if (SdDmaUnsafe != 0U) { sd_io_end(); return XST_FAILURE; }
     Addr = (UINTPTR)Buffer;
     FlushAddr = Addr & ~(UINTPTR)31U;
     FlushLen = (u32)((Addr - FlushAddr) + (Count * USB_STORAGE_BLOCK_SIZE));
     FlushLen = (FlushLen + 31U) & ~31U;
     Xil_DCacheFlushRange((unsigned int)FlushAddr, FlushLen);
 
-    if (!sd_io_begin()) {
-        return XST_FAILURE;
-    }
     dr = disk_write(SD_PDRV, Buffer, (LBA_t)Block, (UINT)Count);
+    if (dr != RES_OK) sd_failed_io();
     sd_io_end();
     return (dr == RES_OK) ? XST_SUCCESS : XST_FAILURE;
 }
@@ -187,7 +228,12 @@ static s32 sd_attach_internal(int InitAttempts, int ProbeAttempts, u32 RetryUsec
         if (!sd_io_begin()) {
             return XST_FAILURE;
         }
+        if (sd_quiesce_locked(NULL) != XST_SUCCESS) { sd_io_end(); return XST_FAILURE; }
         st = disk_initialize(SD_PDRV);
+        if ((st & STA_NOINIT) != 0U) {
+            SdInterrupted = 1U;
+            (void)sd_quiesce_locked(NULL);
+        }
         sd_io_end();
         if ((st & STA_NOINIT) == 0U) {
             break;
@@ -215,7 +261,6 @@ static s32 sd_attach_internal(int InitAttempts, int ProbeAttempts, u32 RetryUsec
     if (SdBlockCount == 0U) return XST_FAILURE;
     SdExportBaseBlock = 0U;
     SdExportBlockCount = SdBlockCount;
-    SdReady = 1;
 
     Status = XST_FAILURE;
     for (Attempt = 0; Attempt < ProbeAttempts; Attempt++) {
@@ -233,6 +278,14 @@ static s32 sd_attach_internal(int InitAttempts, int ProbeAttempts, u32 RetryUsec
         SdReady = 0;
         return Status;
     }
+    /* Never advertise a newly probed card before its DMA has retired. A
+     * recovered controller must go through real disk_initialize next time. */
+    if (!sd_io_begin()) return XST_FAILURE;
+    const s32 quiet = sd_quiesce_locked(NULL);
+    const DSTATUS ready = disk_status(SD_PDRV);
+    sd_io_end();
+    if (quiet != XST_SUCCESS || (ready & STA_NOINIT) != 0U) return XST_FAILURE;
+    SdReady = 1;
 
     /* Export every physical sector, including the partition table. */
 
@@ -244,8 +297,10 @@ static s32 sd_attach_internal(int InitAttempts, int ProbeAttempts, u32 RetryUsec
 
 s32 usb_storage_init(void)
 {
-    return sd_attach_internal(SD_INIT_MAX_ATTEMPTS, SD_INIT_MAX_ATTEMPTS,
-                              SD_INIT_RETRY_USEC);
+    const s32 status = sd_attach_internal(SD_INIT_MAX_ATTEMPTS, SD_INIT_MAX_ATTEMPTS,
+                                         SD_INIT_RETRY_USEC);
+    if (status == XST_SUCCESS) SdInterrupted = 0U;
+    return status;
 }
 
 int usb_storage_medium_ready(void)
@@ -255,10 +310,20 @@ int usb_storage_medium_ready(void)
 
 s32 usb_storage_sync(void)
 {
+    if (!SdReady || SdDmaUnsafe != 0U) return XST_FAILURE;
     if (!sd_io_begin()) return XST_FAILURE;
     const DRESULT status = disk_ioctl(SD_PDRV, CTRL_SYNC, NULL);
     sd_io_end();
     return status == RES_OK ? XST_SUCCESS : XST_FAILURE;
+}
+
+s32 usb_storage_quiesce(u8 *interrupted)
+{
+    if (interrupted != NULL) *interrupted = 0U;
+    if (!sd_io_begin()) return XST_FAILURE;
+    const s32 status = sd_quiesce_locked(interrupted);
+    sd_io_end();
+    return status;
 }
 
 /* One quick attach attempt, no settling sleeps. Called from the main-loop
@@ -275,27 +340,6 @@ s32 usb_storage_try_reinit(void)
     }
     SdStats.reinit_successes++;
     return XST_SUCCESS;
-}
-
-/* On an I/O failure, ask the disk layer whether the medium is actually
- * gone (card removed / controller back to uninitialized). Dropping
- * SdReady routes the host to medium-not-present + recovery instead of an
- * endless string of failing commands against a dead card. */
-static void sd_note_io_failure(void)
-{
-    DSTATUS st;
-
-    if (!sd_io_begin()) {
-        return;
-    }
-    st = disk_status(SD_PDRV);
-    sd_io_end();
-    if ((st & (STA_NOINIT | STA_NODISK)) != 0U) {
-        if (SdReady) {
-            xil_printf("SD backend: medium lost st=0x%02x\r\n", (unsigned)st);
-        }
-        SdReady = 0;
-    }
 }
 
 u32 usb_storage_block_count(void)
@@ -319,9 +363,6 @@ s32 usb_storage_read(u32 block, u32 count, u8 *buffer)
     Status = sd_read_blocks(SdExportBaseBlock + block, count, buffer);
     XTime_GetTime(&T1);
     update_backend_stats(0U, count, (u64)(T1 - T0), Status);
-    if (Status != XST_SUCCESS) {
-        sd_note_io_failure();
-    }
     return Status;
 }
 
@@ -341,9 +382,6 @@ s32 usb_storage_write(u32 block, u32 count, const u8 *buffer)
     Status = sd_write_blocks(SdExportBaseBlock + block, count, buffer);
     XTime_GetTime(&T1);
     update_backend_stats(1U, count, (u64)(T1 - T0), Status);
-    if (Status != XST_SUCCESS) {
-        sd_note_io_failure();
-    }
     return Status;
 }
 

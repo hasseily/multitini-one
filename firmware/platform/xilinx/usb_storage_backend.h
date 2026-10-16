@@ -46,6 +46,9 @@ u32 usb_storage_block_count(void);
 s32 usb_storage_read(u32 block, u32 count, u8 *buffer);
 s32 usb_storage_write(u32 block, u32 count, const u8 *buffer);
 s32 usb_storage_sync(void);
+/* Prove shared SD-controller DMA is stopped. A recovered/aborted I/O sets
+ * interrupted; failure retains exclusive ownership and DMA buffer contents. */
+s32 usb_storage_quiesce(u8 *interrupted);
 void usb_storage_get_backend_stats(usb_storage_backend_stats_t *stats);
 void usb_storage_reset_backend_stats(void);
 

@@ -125,11 +125,17 @@ void mt_system_frontend_apply(mt_system_frontend_t *frontend,
     if (view->save_faulted || view->settings_faulted || view->save_dirty)
         frontend->items[12].value_color = MT_UI_COLOR_WARNING;
     if (snapshot->usb_last_error != 0) frontend->items[10].value_color = MT_UI_COLOR_WARNING;
-    /* Move Firmware build through Audio output intact. Their value pointers
-     * keep the existing formatting and refresh behavior in the shared cache. */
-    memcpy(frontend->about_items, frontend->items + 4U, sizeof(frontend->about_items));
+    /* About shows the installed Golden version directly below Interface.
+     * Keep value pointers into the same cache and updater actions in System. */
+    memcpy(frontend->about_items, frontend->items + 4U,
+        3U * sizeof(frontend->items[0]));
+    frontend->about_items[3] = frontend->items[18];
+    memcpy(frontend->about_items + 4U, frontend->items + 7U,
+        7U * sizeof(frontend->items[0]));
     memmove(frontend->items + 4U, frontend->items + 14U,
-        (sizeof(labels) / sizeof(labels[0]) - 14U) * sizeof(frontend->items[0]));
+        4U * sizeof(frontend->items[0]));
+    memmove(frontend->items + 8U, frontend->items + 19U,
+        2U * sizeof(frontend->items[0]));
     view->system_items = frontend->items;
     view->system_item_count = sizeof(labels) / sizeof(labels[0]) - MT_MENU_MAX_ABOUT_ITEMS -
         (snapshot->golden_update_present ? 0U : 1U);

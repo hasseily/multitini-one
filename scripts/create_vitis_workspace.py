@@ -38,7 +38,7 @@ XILFFS_VERSION = "xilffs_v5_5"
 XILFFS_READY_STAMP = ".multitini-xilffs-ready"
 XILFFS_READY_DESCRIPTION = (
     "xilffs_v5_5 lfn=1 exfat=1 media-validation=r0.16-patch2 "
-    "fat-time-hook=rtc-cache no-card=bounded\n"
+    "fat-time-hook=rtc-cache no-card=bounded sd-quiesce=reset-v1\n"
 )
 
 
@@ -410,7 +410,9 @@ def verify_fatfs_exfat_configuration(domain_bsp: Path) -> None:
     diskio_source = diskio_path.read_text(encoding="utf-8")
     for marker in ("__attribute__((weak)) DWORD "
                    "multitini_fatfs_get_fattime (void)",
-                   "return multitini_fatfs_get_fattime();"):
+                   "return multitini_fatfs_get_fattime();",
+                   "/* Multitini shared SD quiesce reset-v1 */",
+                   "if (cmd == MT_SD_CTRL_QUIESCE) return MultitiniSdQuiesce(pdrv, buff);"):
         if marker not in diskio_source:
             raise RuntimeError(f"Missing FatFs RTC timestamp hook "
                                f"{marker!r} in {diskio_path}")
@@ -545,6 +547,53 @@ def patch_fatfs_no_card_hang(domain_bsp: Path) -> None:
     print(f"Patched FatFs no-card handling: {path}")
 
 
+def patch_fatfs_sd_quiesce(domain_bsp: Path) -> None:
+    """Add a shared-instance, bounded SD-DMA quiesce ioctl for USB recovery."""
+    directory = domain_bsp / "libsrc" / "xilffs" / "src"
+    path = require(directory / "diskio.c", "generated FatFs diskio.c")
+    header = require(directory / "include" / "diskio.h", "generated diskio.h")
+    text, declarations = path.read_text(encoding="utf-8"), header.read_text(encoding="utf-8")
+    marker = "/* Multitini shared SD quiesce reset-v1 */"
+    additions = (marker + "\n#define MT_SD_CTRL_QUIESCE 0x80U\n"
+                 "#define MT_SD_QUIESCE_RESET 1U\n\n")
+    helper = require(ROOT / "firmware/platform/xilinx/sd_quiesce_diskio.inc",
+                     "SD quiesce implementation").read_text(encoding="utf-8")
+    if marker not in declarations:
+        anchor = "/* Generic command (Not used by FatFs) */"
+        if declarations.count(anchor) != 1:
+            raise RuntimeError(f"Missing diskio ioctl declaration anchor: {header}")
+        declarations = declarations.replace(anchor, additions + anchor, 1)
+    if marker not in text:
+        include = '#include "xsdps.h"\t\t/* SD device driver */'
+        if text.count(include) != 1:
+            raise RuntimeError(f"Missing SD driver include: {path}")
+        text = text.replace(include, include + '\n#include "xsdps_core.h"', 1)
+        anchor = "DSTATUS disk_status (\n"
+        if text.count(anchor) != 1:
+            raise RuntimeError(f"Missing shared SD instance insertion anchor: {path}")
+        text = text.replace(anchor, marker + "\n" + helper + "\n" + anchor, 1)
+        pattern = re.compile(r"(\t\tStatus  = XSdPs_(?:Read|Write)Polled\([^\n]*\);\n"
+                             r"\t\tif \(Status != XST_SUCCESS\) \{\n)(\t\t\treturn RES_ERROR;)")
+        text, count = pattern.subn(r"\1\t\t\tStat[pdrv] |= STA_NOINIT;\n"
+                                  r"\t\t\tMultitiniSdFault[pdrv] = 1U;\n\2", text)
+        if count != 2:
+            raise RuntimeError(f"Expected two polled SD fault paths, got {count}: {path}")
+        anchor = "\tif ((disk_status(pdrv) & STA_NOINIT) != 0U) {\t/* Check if card is in the socket */"
+        if text.count(anchor) != 1:
+            raise RuntimeError(f"Missing disk_ioctl pre-initialization anchor: {path}")
+        early = ("#if defined(FILE_SYSTEM_INTERFACE_SD) && defined(XPAR_XSDPS_NUM_INSTANCES)\n"
+                 "\tif (cmd == MT_SD_CTRL_QUIESCE) return MultitiniSdQuiesce(pdrv, buff);\n"
+                 "#endif\n\n")
+        text = text.replace(anchor, early + anchor, 1)
+    # Repeated application is allowed only when the exact implementation is present.
+    if (helper not in text or additions not in declarations or '#include "xsdps_core.h"' not in text or
+            text.count("MultitiniSdFault[pdrv] = 1U;") != 3):
+        raise RuntimeError(f"SD quiesce BSP patch is missing or stale: {path}")
+    path.write_text(text, encoding="utf-8")
+    header.write_text(declarations, encoding="utf-8")
+    print(f"Patched FatFs shared SD quiesce: {path}")
+
+
 def configure_xilffs(platform: object) -> None:
     vitis_root = os.environ.get("XILINX_VITIS")
     if not vitis_root:
@@ -566,6 +615,7 @@ def configure_xilffs(platform: object) -> None:
     patch_fatfs_media_validation(domain_bsp)
     enable_fatfs_timestamp_hook(domain_bsp)
     patch_fatfs_no_card_hang(domain_bsp)
+    patch_fatfs_sd_quiesce(domain_bsp)
     verify_fatfs_exfat_configuration(domain_bsp)
 
 
@@ -592,6 +642,9 @@ def validate_reused_xilffs(xpfm: Path) -> None:
         if marker not in config_text:
             raise RuntimeError(
                 f"Reused platform lacks {marker}: {config}")
+    diskio = require(include / "diskio.h", "reused SD quiesce ioctl header")
+    if "#define MT_SD_CTRL_QUIESCE 0x80U" not in diskio.read_text(encoding="utf-8"):
+        raise RuntimeError(f"Reused platform lacks the shared SD quiesce driver: {diskio}")
 
 
 def configure_cpu1_domain(platform: object) -> None:

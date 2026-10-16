@@ -7,6 +7,11 @@ Upstream is `MiSTer-devel/Apple-IIgs_MiSTer` at
 files and explicit per-file licenses. Original machine code remains separate
 from reproducible Multitini ports. Apple ROM bytes are runtime user inputs.
 
+M0.5.9 removes the completed ARM HDD timing diagnostic, including its stream
+callback wrapper and slow-baseline switch. The shared USB polling fix remains.
+The earlier instrumented hardware measurements below are retained as evidence;
+removing the probes is not itself a new board speed measurement.
+
 M0.5.7 shares the last completed full USB poll time between the main loop and
 IIgs transfers. Short transfers avoid a redundant poll; long transfers retain
 the one-millisecond deferred-service fallback. Normal runtime polls remain

@@ -79,6 +79,9 @@
  * completed the START STOP UNIT CSW. Keep servicing USB briefly after the
  * class layer sees eject, then detach from the modal. */
 #define USB_STORAGE_HOST_EJECT_GRACE_TICKS (COUNTS_PER_SECOND / 2U)
+/* A host that abandoned a DATA phase will never supply the remaining bytes.
+ * Give a requested stop time to finish, then detach before discarding it. */
+#define USB_STORAGE_STOP_TIMEOUT_TICKS ((XTime)(COUNTS_PER_SECOND) * 2U)
 #ifndef XINTR_IS_LEVEL_TRIGGERED
 #define XINTR_IS_LEVEL_TRIGGERED 0x03U
 #endif
@@ -131,6 +134,7 @@ static void UsbStorageSnapshotEp1In(XUsbPs *UsbInstancePtr);
 static void UsbSnapshotPhyAndUlpi(XUsbPs *UsbInstancePtr);
 static void UsbNoteEpPrime(u8 EpNum, u8 Direction, int Status);
 static void UsbResetLocalStorageState(void);
+static int UsbCompleteBulkReset(void);
 static void UsbResetEnumerationState(XUsbPs *UsbInstancePtr);
 static void UsbRequestEp0Prime(void);
 static void UsbRequestDeviceReconfigure(void);
@@ -160,6 +164,8 @@ static XUsbPs UsbInstance;	/* The instance of the USB Controller */
 static XUsbPs_Local UsbLocalData;
 static u16 UsbGicIntrId;
 static uint8_t UsbGicIntrReady;
+static volatile uint8_t NeedBulkReset;
+static u32 BulkResetEnableBits;
 
 typedef struct {
 	XScuGic *Gic;
@@ -238,6 +244,9 @@ static uint8_t UsbLocallyDetached = 0U;
 static XTime LastReinitTick = 0;
 static uint8_t HostEjectPendingDetach = 0U;
 static XTime HostEjectRequestTick = 0;
+static uint8_t UsbStopRequested;
+static uint8_t UsbTransferInterrupted;
+static XTime UsbStopRequestTick;
 static usb_storage_service_stats_t StorageStats;
 
 static void UsbStorageSnapshotRegs(XUsbPs *UsbInstancePtr)
@@ -479,6 +488,8 @@ int usb_storage_service_connect(void)
 
 	if (!mt_sd_storage_external_active() || UsbStorageStarted == 0) return XST_FAILURE;
 	if (UsbConnected != 0) return XST_SUCCESS;
+	UsbStopRequested = UsbTransferInterrupted = 0U;
+	UsbStopRequestTick = 0;
 	State = UsbStorageIrqSave(&UsbInstance);
 
 	/* Replay the same controller reset/configure sequence used at boot.
@@ -529,49 +540,73 @@ int usb_storage_service_connect(void)
 int usb_storage_service_disconnect(void)
 {
     UsbStorageIrqState state;
-    int status;
+    XTime now;
+    u8 sd_interrupted = 0U;
     if (!mt_sd_storage_external_active()) return -1;
-    if (UsbStorageStarted == 0 || UsbConnected == 0) {
-        state=UsbStorageIrqSave(&UsbInstance);
-        if (UsbInstance.Config.BaseAddress != 0U) {
-            UsbSoftDisconnect(&UsbInstance);
-            if (UsbDmaStopped() != XST_SUCCESS) {
-                state.Ier=state.GicEnabled=0U;
-                UsbStorageIrqRestore(&UsbInstance,state);
-                return -1;
-            }
-        }
-        status=usb_storage_sync() == XST_SUCCESS ? 0 : -1;
-        state.Ier=state.GicEnabled=0U;
-        UsbStorageIrqRestore(&UsbInstance,state);
-        return status;
+    XTime_GetTime(&now);
+    if (!UsbStopRequested) {
+        UsbStopRequested=1U;
+        UsbStopRequestTick=now;
     }
-    usb_storage_service_poll();
+    if (UsbStorageStarted && UsbConnected) usb_storage_service_poll();
     state=UsbStorageIrqSave(&UsbInstance);
-    if (!UsbStorageQueueEmpty() || XUsbPs_StorageHasPending()) {
-        UsbStorageIrqRestore(&UsbInstance,state);
-        return 1;
+    if (UsbStorageStarted && UsbConnected &&
+        (!UsbStorageQueueEmpty() || XUsbPs_StorageHasPending())) {
+        XTime_GetTime(&now);
+        if (now-UsbStopRequestTick<USB_STORAGE_STOP_TIMEOUT_TICKS) {
+            UsbStorageIrqRestore(&UsbInstance,state);
+            return 1;
+        }
+        UsbTransferInterrupted=1U;
+        StorageStats.forced_stops++;
     }
-    if (XUsbPs_StorageFlushPending() != XST_SUCCESS) {
+    UsbLocallyDetached = 1U;
+    UsbConnected = 0;
+    state.Ier=state.GicEnabled=0U;
+    if (UsbInstance.Config.BaseAddress != 0U) {
+        UsbSoftDisconnect(&UsbInstance);
+        if (UsbDmaStopped() != XST_SUCCESS) {
+            UsbTransferInterrupted=1U;
+            UsbStorageIrqRestore(&UsbInstance,state);
+            return -1;
+        }
+    }
+    /* USB DMA and callbacks are stopped. Preserve complete queued writes,
+     * but never acknowledge or write the incomplete active command. Record
+     * a failed write before Reset clears the class's sticky error latch. */
+    if (XUsbPs_StorageFlushPending() != XST_SUCCESS) UsbTransferInterrupted=1U;
+    /* CTRL_SYNC alone is not an SD DMA ownership barrier. A failed polled
+     * transfer must release its buffer before class reset or local remount. */
+    if (usb_storage_quiesce(&sd_interrupted) != XST_SUCCESS) {
+        UsbTransferInterrupted=1U;
         UsbStorageIrqRestore(&UsbInstance,state);
         return -1;
     }
-    UsbLocallyDetached = 1U;
-    UsbSoftDisconnect(&UsbInstance);
-    usleep(250000U);
+    if (sd_interrupted) UsbTransferInterrupted=1U;
+    UsbResetLocalStorageState();
     UsbConfiguredOnce = UsbSawPhysicalDisconnect = 0U;
     NeedFullReconfigure = NeedEndpointReset = NeedEp0Prime = 0;
     HostEjectPendingDetach = 0U;
     HostEjectRequestTick = 0;
     XUsbPs_StorageClearHostEjectRequested();
-    UsbConnected = 0;
-    status=UsbDmaStopped();
-    state.Ier=state.GicEnabled=0U;
     UsbStorageIrqRestore(&UsbInstance,state);
-    if (status != XST_SUCCESS) return -1;
-    /* No USB/ISR code may touch SD after this point. */
-    return usb_storage_sync() == XST_SUCCESS ? 0 : -1;
+    /* No USB/ISR code may touch SD after this point. If recovery reset the
+     * card, the local remount will initialize it again. Quiescence proves
+     * buffer ownership, not successful completion of interrupted writes. */
+    if (!usb_storage_medium_ready()) {
+        UsbTransferInterrupted=1U;
+        return 0;
+    }
+    if (usb_storage_sync() != XST_SUCCESS) {
+        UsbTransferInterrupted=1U;
+        StorageStats.stop_sync_failures++;
+        return -1;
+    }
+    return 0;
 }
+
+uint8_t usb_storage_service_transfer_interrupted(void)
+{ return UsbTransferInterrupted; }
 
 void usb_storage_service_poll(void)
 {
@@ -584,6 +619,9 @@ void usb_storage_service_poll(void)
 
 	if (NeedFullReconfigure != 0) {
 		(void)UsbReconfigureAttachedDevice();
+	}
+	if (NeedBulkReset != 0U && UsbCompleteBulkReset() != XST_SUCCESS) {
+		return; /* EP0 and modal input remain live while EP1 is quiesced. */
 	}
 
 	/* Drain the request queue each poll so packet handling does not inherit
@@ -654,7 +692,7 @@ int usb_storage_service_needs_attention(void)
 	if (UsbStorageStarted == 0) {
 		return 0;
 	}
-	if (NeedEp0Prime != 0) {
+	if (NeedEp0Prime != 0 || NeedBulkReset != 0U) {
 		return 1;
 	}
 	if (!UsbStorageQueueEmpty()) {
@@ -881,6 +919,8 @@ static int UsbConfigureStorageDevice(XUsbPs *UsbInstancePtr,
 
 	UsbResetLocalStorageState();
 	UsbSoftDisconnect(UsbInstancePtr);
+	NeedBulkReset = 0U;
+	BulkResetEnableBits = 0U;
 	if (detached_delay_us != 0U) {
 		usleep(detached_delay_us);
 	}
@@ -1040,6 +1080,56 @@ static void UsbResetLocalStorageState(void)
 	UsbStorageIrqRestore(&UsbInstance, State);
 }
 
+/* MSC reset runs in EP0's IRQ before the same IRQ dispatches completed OUT
+ * dTDs. Keep bulk admission disabled until poll has flushed that old DMA work
+ * and rebuilt both rings. Never use the vendor's unbounded EpFlush here. */
+static int UsbCompleteBulkReset(void)
+{
+	const u32 Mask = 0x00020002U; /* EP1 OUT and IN */
+	const u32 Enable = XUSBPS_EPCR_RXE_MASK | XUSBPS_EPCR_TXE_MASK;
+	UsbStorageIrqState State = UsbStorageIrqSave(&UsbInstance);
+	u32 Base = UsbInstance.Config.BaseAddress;
+	u32 Poll;
+	int Status = XST_FAILURE;
+
+	if (NeedBulkReset == 0U) {
+		UsbStorageIrqRestore(&UsbInstance, State);
+		return XST_SUCCESS;
+	}
+	if (Base != 0U && UsbInstance.DeviceConfig.NumEndpoints > 1U) {
+		XUsbPs_WriteReg(Base, XUSBPS_EPFLUSH_OFFSET, Mask);
+		for (Poll = 0U; Poll < 100000U; ++Poll) {
+			u32 Busy = XUsbPs_ReadReg(Base, XUSBPS_EPFLUSH_OFFSET) |
+				XUsbPs_ReadReg(Base, XUSBPS_EPPRIME_OFFSET) |
+				XUsbPs_ReadReg(Base, XUSBPS_EPRDY_OFFSET);
+			if ((Busy & Mask) == 0U) {
+				break;
+			}
+		}
+		if (Poll < 100000U &&
+		    XUsbPs_ReconfigureEp(&UsbInstance, &UsbInstance.DeviceConfig,
+					1, XUSBPS_EP_DIRECTION_OUT, 0) == XST_SUCCESS &&
+		    XUsbPs_ReconfigureEp(&UsbInstance, &UsbInstance.DeviceConfig,
+					1, XUSBPS_EP_DIRECTION_IN, 0) == XST_SUCCESS) {
+			u32 Control = XUsbPs_ReadReg(Base, XUSBPS_EPCR1_OFFSET);
+			XUsbPs_WriteReg(Base, XUSBPS_EPCOMPL_OFFSET, Mask);
+			/* Preserve halts and any CLEAR_FEATURE toggle reset observed
+			 * since the MSC request. BOT reset itself does not clear them. */
+			XUsbPs_WriteReg(Base, XUSBPS_EPCR1_OFFSET,
+					(Control & ~Enable) | BulkResetEnableBits);
+			Status = UsbGuardedEpPrime(&UsbInstance, 1,
+						 XUSBPS_EP_DIRECTION_OUT);
+			if (Status == XST_SUCCESS) {
+				NeedBulkReset = 0U;
+			} else {
+				XUsbPs_ClrBits(&UsbInstance, XUSBPS_EPCR1_OFFSET, Enable);
+			}
+		}
+	}
+	UsbStorageIrqRestore(&UsbInstance, State);
+	return Status;
+}
+
 static void UsbResetEnumerationState(XUsbPs *UsbInstancePtr)
 {
 	u32 BaseAddress;
@@ -1165,6 +1255,36 @@ void usb_storage_service_get_stats(usb_storage_service_stats_t *stats)
 		UsbSnapshotPhyAndUlpi(&UsbInstance);
 		*stats = StorageStats;
 	}
+}
+
+void usb_storage_service_dump_status(void)
+{
+    usb_storage_class_stats_t bot;
+    usb_storage_backend_stats_t sd;
+    usb_storage_service_stats_t service;
+    const UsbStorageIrqState state=UsbStorageIrqSave(&UsbInstance);
+    const u32 queued=UsbStorageQueueDepth(StorageReqHead,StorageReqTail);
+    const unsigned connected=UsbConnected, stopped=UsbStopRequested;
+    const unsigned interrupted=UsbTransferInterrupted;
+    XUsbPs_StorageGetStats(&bot);
+    usb_storage_get_backend_stats(&sd);
+    service=StorageStats;
+    UsbStorageIrqRestore(&UsbInstance,state);
+    /* Capture coherent counters briefly, then print with interrupts enabled.
+     * This explicit report can pause foreground service; never call per poll. */
+    xil_printf("[USB-SD] connected=%u stop=%u interrupted=%u queue=%u drops=%u phase=%u remaining=%u\r\n",
+        connected,stopped,interrupted,(unsigned)queued,
+        (unsigned)service.queue_drops,(unsigned)bot.phase,(unsigned)bot.rx_bytes_left);
+    xil_printf("[USB-SD] writes=%u received=%08x%08x committed=%08x%08x failures=%u sd_failures=%u last_blocks=%u max_blocks=%u\r\n",
+        (unsigned)bot.write_cmds,(unsigned)(bot.write_received_bytes>>32),(unsigned)bot.write_received_bytes,
+        (unsigned)(bot.write_committed_bytes>>32),(unsigned)bot.write_committed_bytes,
+        (unsigned)bot.write_failures,(unsigned)sd.write_failures,
+        (unsigned)bot.last_write_blocks,(unsigned)bot.max_write_blocks);
+    xil_printf("[USB-SD] reset=%u msc_reset=%u port=%u usb_error=%u rx_fail=%u csw_fail=%u ring_recovery=%u forced_stop=%u\r\n",
+        (unsigned)service.reset_irqs,(unsigned)service.msc_resets,
+        (unsigned)service.pc_irqs,(unsigned)service.ue_irqs,
+        (unsigned)service.ep1_rx_failures,(unsigned)bot.csw_send_failures,
+        (unsigned)bot.ring_full_recoveries,(unsigned)service.forced_stops);
 }
 
 void usb_storage_service_reset_stats(void)
@@ -1321,6 +1441,7 @@ static void XUsbPs_Ep1EventHandler(void *CallBackRef, u8 EpNum,
 	u32	BufferLen;
 	u32 InavalidateLen;
 	u32	Handle;
+	u32 Token;
 
 	(void)Data;
 
@@ -1332,10 +1453,26 @@ static void XUsbPs_Ep1EventHandler(void *CallBackRef, u8 EpNum,
 		case XUSBPS_EP_EVENT_DATA_RX:
 			StorageStats.ep1_rx_events++;
 			StorageStats.last_ep1_event = EventType;
+			/* The vendor RX ISR invalidates this dTD before calling us.
+			 * Read error flags before Receive rewrites its token/length. */
+			Token = XUsbPs_ReaddTD(InstancePtr->DeviceConfig.Ep[EpNum].Out.dTDCurr,
+						XUSBPS_dTDTOKEN);
 			/* Get the data buffer.*/
 			Status = XUsbPs_EpBufferReceive(InstancePtr, EpNum,
 							&BufferPtr, &BufferLen, &Handle);
 			if (XST_SUCCESS == Status) {
+				if (NeedBulkReset != 0U) {
+					/* Completed before MSC reset: discard, never reinterpret
+					 * these DATA bytes as a new CBW. */
+					XUsbPs_EpBufferRelease(Handle);
+					break;
+				}
+				if ((Token & 0x68U) != 0U) { /* XERR, buffer error or HALT */
+					StorageStats.ep1_rx_failures++;
+					XUsbPs_StorageRxError(InstancePtr);
+					XUsbPs_EpBufferRelease(Handle);
+					break;
+				}
 				/* Invalidate the Buffer Pointer */
 				InavalidateLen =  BufferLen;
 				if (BufferLen % 32) {
@@ -1353,8 +1490,11 @@ static void XUsbPs_Ep1EventHandler(void *CallBackRef, u8 EpNum,
 					StorageStats.fast_packets++;
 					StorageStats.fast_bytes += BufferLen;
 				} else {
-					(void)UsbQueueStorageReq(BufferPtr,
-								 BufferLen);
+					if (UsbQueueStorageReq(BufferPtr, BufferLen) != XST_SUCCESS) {
+						/* Missing even one DATA packet invalidates the
+						 * whole WRITE; never shift following bytes. */
+						XUsbPs_StorageRxError(InstancePtr);
+					}
 				}
 				/* Release the dTD immediately. The OUT dTDs are
 				 * a circular all-active ring; holding any of
@@ -1419,7 +1559,21 @@ void usb_storage_debug_note_clear_feature_halt(u8 EpNum)
 
 void usb_storage_debug_note_msc_reset(void)
 {
+	UsbStorageIrqState State = UsbStorageIrqSave(&UsbInstance);
+	const u32 Enable = XUSBPS_EPCR_RXE_MASK | XUSBPS_EPCR_TXE_MASK;
+	u32 Base = UsbInstance.Config.BaseAddress;
 	StorageStats.msc_resets++;
+	/* A BOT reset invalidates deferred DATA as well as the class phase.
+	 * Otherwise old write bytes can be replayed as a new command. */
+	UsbResetLocalStorageState();
+	if (Base != 0U && UsbInstance.DeviceConfig.NumEndpoints > 1U) {
+		if (NeedBulkReset == 0U) {
+			BulkResetEnableBits = XUsbPs_ReadReg(Base, XUSBPS_EPCR1_OFFSET) & Enable;
+		}
+		NeedBulkReset = 1U;
+		XUsbPs_ClrBits(&UsbInstance, XUSBPS_EPCR1_OFFSET, Enable);
+	}
+	UsbStorageIrqRestore(&UsbInstance, State);
 }
 
 void usb_storage_debug_note_set_address(u16 Address)

@@ -15,6 +15,8 @@ typedef struct {
     u64 pc_irqs;
     u64 soft_disconnects;
     u64 soft_connects;
+    u64 forced_stops;
+    u64 stop_sync_failures;
     u64 ep0_setup_events;
     u64 ep0_data_rx_events;
     u64 ep0_rx_failures;
@@ -110,13 +112,18 @@ typedef struct {
 
 int usb_storage_service_init(void);
 int usb_storage_service_connect(void);
-/* 0 stopped and synced; 1 pending transfer; -1 failure. Retain exclusive SD
- * ownership until this returns zero. */
+/* 0 quiescent and ready for local remount; 1 finishing a transfer;
+ * -1 stop/sync failure. Interrupted writes are reported separately.
+ * After two seconds, detach and cancel incomplete commands. Retain exclusive
+ * SD ownership until this returns zero. */
 int usb_storage_service_disconnect(void);
+uint8_t usb_storage_service_transfer_interrupted(void);
 void usb_storage_service_poll(void);
 int usb_storage_service_needs_attention(void);
 uint8_t usb_storage_service_consume_host_eject_request(void);
 void usb_storage_service_get_stats(usb_storage_service_stats_t *stats);
 void usb_storage_service_reset_stats(void);
+/* Explicit diagnostic only: UART output can pause foreground USB service. */
+void usb_storage_service_dump_status(void);
 
 #endif /* USB_STORAGE_SERVICE_H */

@@ -48,6 +48,7 @@
 
 /************************** Constant Definitions *****************************/
 
+#define USB_CBW_SIGNATURE	0x43425355U
 #define USB_CSW_SIGNATURE	0x53425355U
 #define USB_CSW_RING_COUNT	8U
 #define USB_WRITE_PIPE_DEPTH	16U
@@ -201,6 +202,7 @@ static volatile u32 writePipeQueued;
 static u32 activeWriteSlot = USB_WRITE_PIPE_INVALID;
 static volatile u32 asyncWriteFailed;
 static volatile u32 hostEjectRequested;
+static u32 botResetRequired;
 
 /* SCSI sense bookkeeping. While media is absent, REQUEST SENSE must report
  * NOT READY / MEDIUM NOT PRESENT so the host keeps polling TEST UNIT READY
@@ -303,6 +305,7 @@ static void WritePipeIrqRestore(u32 Cpsr)
 
 static void ResetStorageState(void)
 {
+	botResetRequired = 0U;
 	writeBlock = 0;
 	writeBlockCount = 0;
 	writeBlockFill = 0;
@@ -323,6 +326,43 @@ static void ResetStorageState(void)
 void XUsbPs_StorageReset(void)
 {
 	ResetStorageState();
+}
+
+/* A malformed CBW has no valid tag/residue to acknowledge. Require BOT reset
+ * recovery and discard further bulk packets until then; never interpret stale
+ * DATA (for example after an aborted WRITE) as a command or an LBA. */
+static int StorageValidateCbw(XUsbPs *InstancePtr, const u8 *BufferPtr,
+			      u32 BufferLen)
+{
+	const USB_CBW *CBW;
+
+	if (botResetRequired != 0U) {
+		return 0;
+	}
+	if ((BufferPtr != NULL) && (BufferLen == sizeof(USB_CBW))) {
+		CBW = (const USB_CBW *)BufferPtr;
+		if ((CBW->dCBWSignature == USB_CBW_SIGNATURE) &&
+		    ((CBW->bmCBWFlags & 0x7FU) == 0U) &&
+		    (CBW->cCBWLUN == 0U) &&
+		    (CBW->bCBWCBLength >= 1U) &&
+		    (CBW->bCBWCBLength <= sizeof(CBW->CBWCB))) {
+			return 1;
+		}
+	}
+	botResetRequired = 1U;
+	cswPending = 0U;
+	cswQueued = 0U;
+	ClassStats.ep1_protocol_stalls++;
+	XUsbPs_EpStall(InstancePtr, 1U, XUSBPS_EP_DIRECTION_IN);
+	XUsbPs_EpStall(InstancePtr, 1U, XUSBPS_EP_DIRECTION_OUT);
+	return 0;
+}
+
+/* A failed OUT DMA packet has an unknown byte count. Stall until BOT reset;
+ * accepting later bytes would silently shift the active WRITE payload. */
+void XUsbPs_StorageRxError(XUsbPs *InstancePtr)
+{
+	(void)StorageValidateCbw(InstancePtr, NULL, 0U);
 }
 
 void XUsbPs_StorageInitReadBuffer(void)
@@ -505,6 +545,26 @@ static void StorageWaitEp1InIdle(XUsbPs *InstancePtr)
 	}
 }
 
+/* A stuck controller must not trap poll forever in the vendor EpFlush loop.
+ * Do not rewrite descriptors unless DMA has relinquished this endpoint. */
+static int StorageFlushEp1In(XUsbPs *InstancePtr)
+{
+	const u32 Mask = 0x00020000U;
+	u32 Base = InstancePtr->Config.BaseAddress;
+	u32 Poll;
+
+	XUsbPs_WriteReg(Base, XUSBPS_EPFLUSH_OFFSET, Mask);
+	for (Poll = 0U; Poll < 100000U; ++Poll) {
+		u32 Busy = XUsbPs_ReadReg(Base, XUSBPS_EPFLUSH_OFFSET) |
+			XUsbPs_ReadReg(Base, XUSBPS_EPPRIME_OFFSET) |
+			XUsbPs_ReadReg(Base, XUSBPS_EPRDY_OFFSET);
+		if ((Busy & Mask) == 0U) {
+			return XST_SUCCESS;
+		}
+	}
+	return XST_FAILURE;
+}
+
 /* EP1 IN prime watchdog -- the structural backstop for the ENDPTPRIME vs
  * ATDTW race (see StorageWaitEp1InIdle). If a submitted dTD is sitting
  * Active while the controller shows EP1 IN neither primed (ENDPTPRIME) nor
@@ -565,8 +625,11 @@ void XUsbPs_StoragePrimeWatchdog(XUsbPs *InstancePtr)
 		    ((Stat & Ep1InMask) == 0U)) {
 			FullStreak++;
 			if (FullStreak >= 2U) {
-				XUsbPs_EpFlush(InstancePtr, 1,
-					       XUSBPS_EP_DIRECTION_IN);
+				if (StorageFlushEp1In(InstancePtr) != XST_SUCCESS) {
+					FullStreak = 0U;
+					WritePipeIrqRestore(Cpsr);
+					return;
+				}
 				(void)XUsbPs_ReconfigureEp(InstancePtr,
 					&InstancePtr->DeviceConfig, 1,
 					XUSBPS_EP_DIRECTION_IN, 0);
@@ -1090,10 +1153,14 @@ void XUsbPs_HandleStorageReq(XUsbPs *InstancePtr, u8 EpNum,
 	u32	TransferBytes;
 
 	(void)EpNum;
+	if (botResetRequired != 0U) return;
 	if (StorageResetPending(InstancePtr)) return;
 
 	/* COMMAND phase. */
 	if (USB_EP_STATE_COMMAND == phase) {
+		if (!StorageValidateCbw(InstancePtr, BufferPtr, BufferLen)) {
+			return;
+		}
 		CBW = (USB_CBW *) BufferPtr;
 		StorageNoteCbw(CBW, BufferLen);
 		StorageNoteScsiCommand(CBW->CBWCB[0]);
@@ -1423,10 +1490,11 @@ static int StorageOpcodeNeedsDefer(u8 Opcode)
 int XUsbPs_StorageTryFastRx(XUsbPs *InstancePtr, u8 *BufferPtr, u32 BufferLen)
 {
 	USB_CBW *CBW;
+	if (botResetRequired != 0U) return 1;
 
 	if (USB_EP_STATE_COMMAND == phase) {
-		if (BufferLen < sizeof(USB_CBW)) {
-			return 0;
+		if (!StorageValidateCbw(InstancePtr, BufferPtr, BufferLen)) {
+			return 1; /* Consumed by BOT reset recovery, never queued. */
 		}
 		CBW = (USB_CBW *)BufferPtr;
 

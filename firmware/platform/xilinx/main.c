@@ -101,31 +101,6 @@ static XIicPs i2c_instance;
 static mt_core_link_t shell_link;
 static mt_ak4493_bus_t dac_bus;
 static bool i2c_ready;
-static bool iigs_profile_running, iigs_profile_on_release;
-static bool iigs_progress_paced = true;
-static uint64_t iigs_profile_last_poll;
-static mt_sd_profile_stage_t iigs_profile_poll_gap, iigs_profile_rtc;
-static mt_sd_profile_stage_t iigs_profile_usb, iigs_profile_video;
-static uint64_t monotonic_us(void *context);
-
-static void profile_stage_end(mt_sd_profile_stage_t *stage, uint64_t start)
-{
-    const uint64_t elapsed = monotonic_us(NULL) - start;
-    ++stage->count;
-    stage->total_us += elapsed;
-    if (elapsed > stage->max_us) stage->max_us = elapsed;
-}
-
-static void start_iigs_profile(void)
-{
-    memset(&iigs_profile_poll_gap, 0, sizeof(iigs_profile_poll_gap));
-    memset(&iigs_profile_rtc, 0, sizeof(iigs_profile_rtc));
-    memset(&iigs_profile_usb, 0, sizeof(iigs_profile_usb));
-    memset(&iigs_profile_video, 0, sizeof(iigs_profile_video));
-    iigs_profile_last_poll = 0U;
-    iigs_content_service_profile_start(monotonic_us, NULL);
-    iigs_profile_running = true;
-}
 static bool dac_ready;
 static bool c64_drive_ready;
 static bool c64_core_reset_active;
@@ -444,23 +419,8 @@ static void service_runtime(void)
     const bool c64_active = shell_is_c64();
     const bool gameboy_active =
         shell_read(MT_REG_CORE_ID) == MT_GBC_CORE_ID;
-    uint64_t profile_started = 0U;
-    if (iigs_profile_running) {
-        if (iigs_profile_last_poll != 0U)
-            profile_stage_end(&iigs_profile_poll_gap, iigs_profile_last_poll);
-        iigs_profile_last_poll = monotonic_us(NULL);
-        profile_started = iigs_profile_last_poll;
-    }
     (void)service_fatfs_time();
-    if (iigs_profile_running) {
-        profile_stage_end(&iigs_profile_rtc, profile_started);
-        profile_started = monotonic_us(NULL);
-    }
     service_usb_input();
-    if (iigs_profile_running) {
-        profile_stage_end(&iigs_profile_usb, profile_started);
-        profile_started = monotonic_us(NULL);
-    }
     {
         static const char *last_effect_status;
         const char *status;
@@ -471,7 +431,6 @@ static void service_runtime(void)
             supervisor_menu_dirty = true;
         }
     }
-    if (iigs_profile_running) profile_stage_end(&iigs_profile_video, profile_started);
     if ((control & MT_CONTROL_CORE_RESET_REQUEST) != 0U) {
         if (c64_active && c64_services_initialized &&
             !c64_core_reset_active) {
@@ -690,16 +649,6 @@ static uint64_t monotonic_ms(void *context)
                counts_per_second;
 }
 
-static uint64_t monotonic_us(void *context)
-{
-    XTime now = 0U;
-    const uint64_t counts_per_second = (uint64_t)COUNTS_PER_SECOND;
-    (void)context;
-    XTime_GetTime(&now);
-    return ((uint64_t)now / counts_per_second) * UINT64_C(1000000) +
-        (((uint64_t)now % counts_per_second) * UINT64_C(1000000)) / counts_per_second;
-}
-
 static int uart0_try_read_byte(uint8_t *value)
 {
     const uint32_t status = XUartPs_ReadReg(
@@ -803,11 +752,6 @@ static int set_core_reset_request(bool asserted)
         iigs_service_initialized && iigs_content_service_prepare_reset()!=0)return -1;
     if(!asserted && currently_asserted && shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID &&
         iigs_service_initialized && iigs_content_service_resume_after_reset()!=0)return -1;
-    /* Start after media remount, immediately before machine reset release. */
-    if (!asserted && currently_asserted && iigs_profile_on_release) {
-        iigs_profile_on_release = false;
-        start_iigs_profile();
-    }
     result = command(MT_COMMAND_CORE_RESET, asserted ? 1U : 0U, 0U);
     /* A synchronous assert/release can finish before the USB service observes
      * reset. Invalidate the cached Vectrex delivery state explicitly. */
@@ -1257,7 +1201,6 @@ static void print_help(void)
     if(supervisor.has_active && supervisor.active.package.core_id==MT_IIGS_CORE_ID) {
         xil_printf("F12 opens the Multitini menu\r\n");
         xil_printf("Apple IIgs: :disk or :dir status, :diskretry or :saveretry retry SD I/O\r\n");
-        xil_printf("Timing: :gsprofile boot 0|4|6, :gsprofile stop (no output during capture)\r\n");
         xil_printf("Mount/eject/ROM/PRAM actions are in Media; controllers are in Input\r\n");
         xil_printf("Keyboard: Ctrl+F11 warm reset, Ctrl+Alt+F11 cold reset\r\n");
         xil_printf("Recovery: :reboot to golden, :selfupdate stage BOOT.BIN\r\n");
@@ -1758,93 +1701,6 @@ static void print_iigs_media_status(void)
     }
 }
 
-static void print_profile_stage(const char *name, const mt_sd_profile_stage_t *stage)
-{
-    char line[192];
-    (void)snprintf(line, sizeof(line),
-        "[GS-PROFILE] %s count=%lu failures=%lu total_us=%llu max_us=%llu\r\n",
-        name, (unsigned long)stage->count, (unsigned long)stage->failures,
-        (unsigned long long)stage->total_us, (unsigned long long)stage->max_us);
-    xil_printf("%s", line);
-}
-
-static void print_iigs_profile(void)
-{
-    mt_iigs_profile_t p;
-    char line[256];
-    iigs_profile_running = false;
-    iigs_profile_on_release = false;
-    iigs_content_service_profile_stop();
-    iigs_content_service_profile_snapshot(&p);
-    print_iigs_media_status();
-    xil_printf("[GS-PROFILE] v2 paced=%u flags=%02x ui=%08x sd_ref=%08x sd_host=%08x sd_clock=%08x timer_hz=%u\r\n",
-        iigs_progress_paced ? 1U : 0U, (unsigned)iigs_content_service_config()->flags, shell_read(MT_REG_UI_STATUS),
-        Xil_In32(UINT32_C(0xf8000150)),
-        Xil_In32(XPAR_XSDPS_0_BASEADDR + UINT32_C(0x28)),
-        Xil_In32(XPAR_XSDPS_0_BASEADDR + UINT32_C(0x2c)),
-        (unsigned)COUNTS_PER_SECOND);
-    (void)snprintf(line, sizeof(line),
-        "[GS-PROFILE] requests=%lu reads=%lu writes=%lu complete=%lu failures=%lu elapsed_us=%llu last_discovery_us=%llu last_complete_us=%llu sd_bytes=%llu\r\n",
-        (unsigned long)p.requests, (unsigned long)p.read_requests,
-        (unsigned long)p.write_requests, (unsigned long)p.completions,
-        (unsigned long)p.failures, (unsigned long long)p.elapsed_us,
-        (unsigned long long)p.last_discovery_us, (unsigned long long)p.last_completion_us,
-        (unsigned long long)p.sd.bytes);
-    xil_printf("%s", line);
-    print_profile_stage("hdd_service", &p.service);
-    print_profile_stage("sd_seek", &p.sd.seek);
-    print_profile_stage("sd_read", &p.sd.read);
-    print_profile_stage("stream", &p.stream);
-    print_profile_stage("complete", &p.complete);
-    print_profile_stage("progress_subset", &p.progress);
-    print_profile_stage("poll_gap", &iigs_profile_poll_gap);
-    print_profile_stage("rtc", &iigs_profile_rtc);
-    print_profile_stage("usb", &iigs_profile_usb);
-    print_profile_stage("video", &iigs_profile_video);
-    iigs_progress_paced = true;
-}
-
-static void handle_iigs_profile(const char *argument)
-{
-    if (strcmp(argument, "stop") == 0 || *argument == '\0') {
-        print_iigs_profile();
-    } else if (strcmp(argument, "start") == 0) {
-        xil_printf("[GS-PROFILE] capture starts now; :gsprofile stop freezes and reports\r\n");
-        start_iigs_profile();
-    } else if (strncmp(argument, "boot ", 5U) == 0 &&
-               (argument[5] == '0' || argument[5] == '4' || argument[5] == '6') &&
-               (argument[6] == '\0' || strcmp(argument + 6U, " baseline") == 0)) {
-        mt_iigs_config_t options = *iigs_content_service_config();
-        const uint8_t speed = (uint8_t)(argument[5] - '0');
-        if (options.card != 0U ||
-            (iigs_content_service_speed_mask() & (UINT32_C(1) << speed)) == 0U) {
-            xil_printf("[GS-PROFILE] select ZipGS and a supported speed first\r\n");
-            return;
-        }
-        iigs_profile_running = false;
-        iigs_content_service_profile_stop();
-        if (set_core_reset_request(true) != 0) return;
-        iigs_progress_paced = argument[6] == '\0';
-        options.speed = speed;
-        if (iigs_content_service_configure(&options) != 0) {
-            xil_printf("[GS-PROFILE] configuration failed; core remains in reset: %s\r\n",
-                iigs_content_service_error());
-            return;
-        }
-        xil_printf("[GS-PROFILE] reset boot speed=%u paced=%u; capture begins after media remount\r\n",
-            (unsigned)speed, iigs_progress_paced ? 1U : 0U);
-        iigs_profile_on_release = true;
-        if (set_core_reset_request(false) != 0) {
-            iigs_profile_on_release = false;
-            iigs_profile_running = false;
-            iigs_content_service_profile_stop();
-            xil_printf("[GS-PROFILE] reset release failed\r\n");
-        }
-    } else {
-        xil_printf("usage: :gsprofile start|stop|boot 0|boot 4|boot 6 [baseline]\r\n");
-    }
-}
-
 static bool legacy_c64_media_command(const char *text)
 {
     return strcmp(text,"eject")==0 || strcmp(text,"cartoff")==0 ||
@@ -1878,10 +1734,6 @@ static void handle_extended_command(bool recovery_only)
         change_display_mode((size_t)(extended[8]-'0'));
     } else if (strcmp(extended, "diag") == 0) {
         print_read_only_diagnostics("command");
-    } else if (iigs_active && (strcmp(extended, "gsprofile") == 0 ||
-               strncmp(extended, "gsprofile ", 10U) == 0)) {
-        handle_iigs_profile(extended + (extended[9] == ' ' ? 10U : 9U));
-        return;
     } else if(iigs_active && (strcmp(extended,"disk")==0 || strcmp(extended,"dir")==0)) {
         print_iigs_media_status();
     } else if(iigs_active && (strcmp(extended,"diskretry")==0 || strcmp(extended,"saveretry")==0)) {
@@ -3140,14 +2992,10 @@ static void genesis_transfer_progress(void *context)
 static void iigs_transfer_progress(void *context)
 {
     (void)context;
-    if (iigs_progress_paced) {
-        /* The normal runtime loop already services USB between disk requests.
-         * Poll inside a transfer only when no full USB poll has completed in
-         * the last millisecond. Long transfers still collect input safely. */
-        usb_hid_service_poll_deferred_if_due(1000U);
-    } else {
-        usb_hid_service_poll_deferred();
-    }
+    /* The normal runtime loop already services USB between disk requests.
+     * Poll inside a transfer only when no full USB poll has completed in
+     * the last millisecond. Long transfers still collect input safely. */
+    usb_hid_service_poll_deferred_if_due(1000U);
 }
 
 static uint32_t iigs_clock_timestamp(void)
@@ -3483,15 +3331,21 @@ static void mount_sd_over_usb(void)
         if(mode.state!=displayed) { show_handoff_progress(mt_usb_sd_mode_status(&mode));displayed=mode.state; }
         usb_hid_service_poll_deferred();
         uint8_t byte;
-        if(uart0_try_read_byte(&byte)>0 && (byte==27U || byte=='\r' || byte=='\n' || byte=='q'))usb_sd_stop_requested=true;
+        if(uart0_try_read_byte(&byte)>0) {
+            if(byte==27U || byte=='\r' || byte=='\n' || byte=='q')usb_sd_stop_requested=true;
+            else if(byte=='u')usb_storage_service_dump_status();
+        }
         if(usb_sd_stop_requested)mt_usb_sd_mode_stop(&mode);
         mt_usb_sd_mode_poll(&mode);
         if(mode.state==MT_USB_SD_REMOUNT_FAILED || mode.state==MT_USB_SD_STOP_FAILED)usleep(100000U);
     } while(mode.state!=MT_USB_SD_IDLE);
     usb_sd_modal=false;
+    usb_storage_service_dump_status();
     usb_hid_service_set_menu_capture(true);
     memset(supervisor_menu_keys,0,sizeof(supervisor_menu_keys));
-    set_supervisor_outcome(!usb_sd_restart_failed,
+    if(usb_storage_service_transfer_interrupted())
+        set_supervisor_error("USB SD stopped after transfer error; check copied files");
+    else set_supervisor_outcome(!usb_sd_restart_failed,
         "USB SD stopped; active core restarted", "USB SD stopped; choose a core to recover");
 }
 
