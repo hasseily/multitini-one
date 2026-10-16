@@ -38,6 +38,9 @@ void usb_hid_service_poll(void);
 /* Collect reports and run the keyboard filter without issuing core commands.
  * Pending input changes are delivered by the next ordinary poll. */
 void usb_hid_service_poll_deferred(void);
+/* Normal and deferred full polls share a deadline measured from completion.
+ * A zero interval always polls; this does not throttle ordinary runtime polls. */
+void usb_hid_service_poll_deferred_if_due(uint32_t min_interval_us);
 void usb_hid_service_vectrex_controls(int controls[2][6]);
 void usb_hid_service_set_active_core(uint32_t core_id);
 void usb_hid_service_set_core_ready(bool ready);

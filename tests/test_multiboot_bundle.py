@@ -155,9 +155,9 @@ class BundleTests(unittest.TestCase):
         image = bundle.image_manifest
         raw = image.RECOVERY_MARKER + b"\0" + image.PRODUCT_MARKER[image.PRODUCT_BY_NAME[product]]
         if product == "multitini":
-            firmware = directory / "FIRMWARE-M0.2.0.BIN"
+            firmware = directory / "FIRMWARE-MULTITINI.BIN"
             firmware.write_bytes(append(raw, 2, product))
-            bundle.p.copy(firmware, directory / "sd/FIRMWARE.BIN")
+            bundle.p.stage_firmware(directory, firmware)
             bundle.p.copy(self.write("component-fsbl.elf", self.fsbl), directory / "inputs/fsbl.elf")
             self.write("build/multitini/inputs/platform.xsa", b"selected XSA")
             schema, version = "multitini-named-firmware-package-v1", "M0.2.0"
@@ -257,9 +257,20 @@ class BundleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Source archive differs"):
             bundle.verify_component(self.multi, "multitini")
 
+    def test_historical_multitini_component_retains_its_original_filenames(self):
+        firmware = self.multi / "FIRMWARE-MULTITINI.BIN"
+        historical = self.multi / "FIRMWARE-M0.2.0.BIN"
+        firmware.rename(historical)
+        (self.multi / "sd/FIRMWARE-MULTITINI.BIN").rename(self.multi / "sd/FIRMWARE.BIN")
+        seal(self.multi, {"schema": "multitini-named-firmware-package-v1", "firmware_version": "M0.2.0"})
+        _, _, selected = bundle.verify_component(self.multi, "multitini")
+        self.assertEqual(selected, historical)
+        self.assertFalse(firmware.exists())
+        self.assertTrue((self.multi / "sd/FIRMWARE.BIN").is_file())
+
     def test_sd_root_aliases_require_exact_selected_bytes_and_valid_product_contents(self):
         out = self.build / "sd-aliases"
-        firmwares = {"multitini": self.multi / "FIRMWARE-M0.2.0.BIN",
+        firmwares = {"multitini": self.multi / "FIRMWARE-MULTITINI.BIN",
                      "appletini": self.app / "FIRMWARE.BIN"}
         # Check-only remains usable for previously delivered bundles.
         bundle.verify_sd_root_firmware(out, firmwares)
@@ -375,7 +386,7 @@ class BundleTests(unittest.TestCase):
         self.assertEqual((out / bundle.SD_ROOT_FIRMWARE["appletini"]).read_bytes(),
                          (out / "appletini/FIRMWARE.BIN").read_bytes())
         self.assertEqual((out / bundle.SD_ROOT_FIRMWARE["multitini"]).read_bytes(),
-                         (out / "multitini/sd/FIRMWARE.BIN").read_bytes())
+                         (out / "multitini/sd/FIRMWARE-MULTITINI.BIN").read_bytes())
         self.assertEqual(bundle.load(out / "manifest.json")["install_files"], bundle.SD_ROOT_FIRMWARE)
         self.assertEqual(bundle.verify_directory(out, compare_zip=True)["status"], "PASS")
         self.assertEqual(bundle.verify_zip(Path(str(out) + ".zip"))["status"], "PASS")
@@ -400,7 +411,7 @@ class BundleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Missing SD-root"):
             bundle.verify_directory(out)
         for product, source in (("appletini", "appletini/FIRMWARE.BIN"),
-                                ("multitini", "multitini/sd/FIRMWARE.BIN")):
+                                ("multitini", "multitini/sd/FIRMWARE-MULTITINI.BIN")):
             bundle.p.copy(out / source, out / bundle.SD_ROOT_FIRMWARE[product])
         seal(out, {name: value for name, value in bundle.load(out / "manifest.json").items()
                    if name != "files"})

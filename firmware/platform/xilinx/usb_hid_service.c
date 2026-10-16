@@ -163,6 +163,8 @@ static uint8_t g_started;
 static uint8_t g_power_shutdown_required;
 static uint8_t g_core_ready;
 static uint8_t g_emit_deferred;
+static bool g_poll_completed_valid;
+static XTime g_poll_completed;
 static uint32_t g_active_core_id;
 static mt_usb_keyboard_filter_fn g_keyboard_filter;
 static void *g_keyboard_filter_context;
@@ -1441,6 +1443,7 @@ void usb_hid_service_init(mt_core_link_t *link)
     g_power_shutdown_required = 0U;
     g_core_ready = 0U;
     g_emit_deferred = 0U;
+    g_poll_completed_valid = false;
     g_active_core_id = 0U;
     g_keyboard_filter = NULL;
     g_keyboard_filter_context = NULL;
@@ -1465,6 +1468,7 @@ int usb_hid_service_start(void)
     int cleanup_result;
     int result;
     if (g_started != 0U) return 0;
+    g_poll_completed_valid = false;
     if (g_power_shutdown_required != 0U) {
         result = cherryusb_usb1_host_power_stop();
         if (result != 0) {
@@ -1499,6 +1503,7 @@ int usb_hid_service_start(void)
 int usb_hid_service_stop(void)
 {
     int power_result = 0;
+    g_poll_completed_valid = false;
 
     if (g_started != 0U || g_power_shutdown_required != 0U) {
         g_power_shutdown_required = 1U;
@@ -1595,6 +1600,8 @@ void usb_hid_service_poll(void)
     }
     poll_menu_chords();
     poll_active_input();
+    XTime_GetTime(&g_poll_completed);
+    g_poll_completed_valid = true;
 }
 
 void usb_hid_service_poll_deferred(void)
@@ -1603,6 +1610,19 @@ void usb_hid_service_poll_deferred(void)
     g_emit_deferred = 1U;
     usb_hid_service_poll();
     g_emit_deferred = previous;
+}
+
+void usb_hid_service_poll_deferred_if_due(uint32_t min_interval_us)
+{
+    if (g_poll_completed_valid && min_interval_us != 0U) {
+        const uint64_t counts_per_second = (uint64_t)COUNTS_PER_SECOND;
+        const XTime interval = ((uint64_t)min_interval_us * counts_per_second +
+                                UINT64_C(999999)) / UINT64_C(1000000);
+        XTime now;
+        XTime_GetTime(&now);
+        if (now - g_poll_completed < interval) return;
+    }
+    usb_hid_service_poll_deferred();
 }
 
 void usb_hid_service_vectrex_controls(int controls[2][6])

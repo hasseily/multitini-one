@@ -316,6 +316,7 @@ static void test_drive_readback_failure(void)
 
 /* Compile the production HID lifecycle with only machine input adapters mocked. */
 static unsigned g_started, g_power_shutdown_required;
+static bool g_poll_completed_valid;
 static int g_last_error;
 static unsigned init_calls, deinit_calls;
 static int init_result;
@@ -377,6 +378,7 @@ static void reset_hid_model(void)
 {
     reset_model(0U);
     g_started = g_power_shutdown_required = 0U;
+    g_poll_completed_valid = false;
     init_calls = deinit_calls = 0U;
     init_result = g_last_error = 0;
     missing_hub_handles = skip_deinit_hook = fail_deinit_power = 0U;
@@ -387,11 +389,14 @@ static void reset_hid_model(void)
 static void test_public_lifecycle(void)
 {
     reset_hid_model();
+    g_poll_completed_valid = true; /* A new host lifecycle discards an old deadline. */
     CHECK(usb_hid_service_start() == 0);
-    CHECK(g_started == 1U && init_calls == 1U);
+    CHECK(g_started == 1U && init_calls == 1U && !g_poll_completed_valid);
+    g_poll_completed_valid = true;
     CHECK(usb_hid_service_start() == 0 && init_calls == 1U);
+    CHECK(g_poll_completed_valid); /* An already-running host keeps its deadline. */
     (void)usb_hid_service_stop();
-    CHECK(g_started == 0U && g_power_shutdown_required == 0U && deinit_calls == 1U);
+    CHECK(g_started == 0U && g_power_shutdown_required == 0U && deinit_calls == 1U && !g_poll_completed_valid);
     puts("PASS USB1 public HID start/stop sequences controller and connector power");
 }
 

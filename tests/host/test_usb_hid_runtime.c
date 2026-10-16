@@ -3,8 +3,17 @@
 #include <assert.h>
 #include <stdio.h>
 #include "multitini_menu.h"
+#include "xiltimer.h"
+#undef COUNTS_PER_SECOND
+/* The real BSP macro is not parenthesized. */
+#define TEST_CPU_FREQ UINT32_C(666666687)
+#define TEST_SLEEP_FREQ TEST_CPU_FREQ/2
+#define COUNTS_PER_SECOND TEST_SLEEP_FREQ
 #include "../../firmware/platform/xilinx/usb_hid_service.c"
 static XTime fake_now;
+static XTime host_poll_duration;
+static unsigned host_polls;
+static bool host_mouse_once;
 static unsigned submits;
 static unsigned string_mode, string_requests;
 static uint8_t serial_suffix = '1';
@@ -35,7 +44,14 @@ int cherryusb_usb1_power_result(void) { return 0; }
 int cherryusb_usb1_power_stop_result(void) { return 0; }
 uint32_t cherryusb_usb1_portsc(void) { return 0; }
 void cherryusb_usb1_phy_status(cherryusb_usb1_phy_status_t *status) { memset(status, 0, sizeof(*status)); }
-void cherryusb_host_poll(uint8_t bus) { (void)bus; }
+void cherryusb_host_poll(uint8_t bus)
+{
+    (void)bus;++host_polls;fake_now+=host_poll_duration;
+    if(host_mouse_once) {
+        host_mouse_once=false;
+        mt_iigs_hid_mouse_report(&g_iigs_input,4,-2,1U);
+    }
+}
 void usb_xbox_one_poll(void) {}
 void usb_xbox_one_stop(void) {}
 void usb_xbox_one_dump_status(void) {}
@@ -84,6 +100,90 @@ int usbh_hid_set_protocol(struct usbh_hid *hid, uint8_t protocol)
 { (void)hid; (void)protocol; return 0; }
 int usbh_hid_parse_report_descriptor(const uint8_t *data, uint32_t size, struct usbh_hid_report_info *info)
 { (void)data; (void)size; memset(info, 0, sizeof(*info)); return 0; }
+
+static void test_shared_poll_deadline(void)
+{
+    const uint64_t frequency=(uint64_t)COUNTS_PER_SECOND;
+    const XTime millisecond=(frequency+UINT64_C(999))/UINT64_C(1000);
+    mt_core_link_t link;
+    mt_core_link_init(&link,NULL,input_read,input_write);
+    usb_hid_service_init(&link);usb_hid_service_set_active_core(MT_IIGS_CORE_ID);
+    usb_hid_service_set_core_ready(true);
+    g_usbhost_bus[CHERRYUSB_USB1_BUSID].hub_mq=&fake_now;
+    g_usbhost_bus[CHERRYUSB_USB1_BUSID].hub_sem=&fake_now;
+    assert(usb_hid_service_start()==0);
+    fake_now=0U;host_polls=0U;host_poll_duration=0U;
+    usb_hid_service_poll_deferred_if_due(1000U);assert(host_polls==1U);
+    usb_hid_service_poll_deferred_if_due(1000U);assert(host_polls==1U); /* Tick zero is valid. */
+    fake_now=millisecond-1U;
+    usb_hid_service_poll_deferred_if_due(1000U);assert(host_polls==1U);
+    fake_now=millisecond;
+    usb_hid_service_poll_deferred_if_due(1000U);assert(host_polls==2U);
+    usb_hid_service_poll_deferred_if_due(1000U);assert(host_polls==2U); /* Deferred poll refreshes it. */
+    usb_hid_service_poll();assert(host_polls==3U); /* Normal polling is never throttled. */
+    usb_hid_service_poll_deferred_if_due(1000U);assert(host_polls==3U);
+    fake_now+=millisecond-1U;
+    usb_hid_service_poll_deferred_if_due(1000U);assert(host_polls==3U);
+    ++fake_now;
+    usb_hid_service_poll_deferred_if_due(1000U);assert(host_polls==4U);
+    host_poll_duration=2U*millisecond;
+    usb_hid_service_poll();assert(host_polls==5U);
+    host_poll_duration=0U;
+    usb_hid_service_poll_deferred_if_due(1000U);assert(host_polls==5U); /* Completion, not entry. */
+    fake_now+=millisecond-1U;
+    usb_hid_service_poll_deferred_if_due(1000U);assert(host_polls==5U);
+    ++fake_now;
+    usb_hid_service_poll_deferred_if_due(1000U);assert(host_polls==6U);
+    usb_hid_service_poll_deferred_if_due(0U);assert(host_polls==7U);
+    usb_hid_service_poll_deferred_if_due(0U);assert(host_polls==8U);
+    host_poll_duration=2U*millisecond;fake_now+=millisecond;
+    usb_hid_service_poll_deferred_if_due(1000U);
+    const unsigned after_long_deferred=host_polls;
+    host_poll_duration=0U;
+    usb_hid_service_poll_deferred_if_due(1000U);assert(host_polls==after_long_deferred);
+    fake_now+=millisecond-1U;
+    usb_hid_service_poll_deferred_if_due(1000U);assert(host_polls==after_long_deferred);
+    ++fake_now;
+    usb_hid_service_poll_deferred_if_due(1000U);assert(host_polls==after_long_deferred+1U);
+    g_emit_deferred=1U;
+    usb_hid_service_poll_deferred_if_due(0U);assert(g_emit_deferred==1U);
+    g_emit_deferred=0U;
+    /* Short HDD-like requests keep ordinary polling frequent for several
+     * milliseconds; the fallback must not run on an independent deadline. */
+    const unsigned before_sectors=host_polls;
+    const XTime quarter_ms=(frequency+UINT64_C(3999))/UINT64_C(4000);
+    const XTime microsecond=(frequency+UINT64_C(999999))/UINT64_C(1000000);
+    for(unsigned i=0U;i<20U;++i) {
+        fake_now+=quarter_ms;
+        usb_hid_service_poll();
+        fake_now+=microsecond;
+        usb_hid_service_poll_deferred_if_due(1000U);
+        assert(host_polls==before_sectors+i+1U);
+    }
+    fake_now=g_poll_completed+millisecond-1U;
+    usb_hid_service_poll_deferred_if_due(1000U);assert(host_polls==before_sectors+20U);
+    ++fake_now;
+    usb_hid_service_poll_deferred_if_due(1000U);assert(host_polls==before_sectors+21U);
+    fake_now=UINT64_MAX-millisecond/2U;usb_hid_service_poll();
+    const unsigned wrapped=host_polls;
+    fake_now+=millisecond-1U;
+    usb_hid_service_poll_deferred_if_due(1000U);assert(host_polls==wrapped);
+    ++fake_now;
+    usb_hid_service_poll_deferred_if_due(1000U);assert(host_polls==wrapped+1U);
+    const unsigned events=routed_events;
+    host_mouse_once=true;
+    usb_hid_service_poll_deferred_if_due(0U);
+    assert(!host_mouse_once && routed_events==events && g_emit_deferred==0U);
+    usb_hid_service_poll();
+    assert(routed_events==events+2U && g_iigs_input.mouse_emitted_buttons==1U);
+    assert(usb_hid_service_stop()==0 && !g_poll_completed_valid);
+    assert(usb_hid_service_start()==0 && !g_poll_completed_valid);
+    const unsigned restarted=host_polls;
+    usb_hid_service_poll_deferred_if_due(1000U);assert(host_polls==restarted+1U);
+    usb_hid_service_init(&link);assert(!g_poll_completed_valid);
+    fake_now=0U;
+    puts("PASS shared normal/deferred USB completion deadlines, tick-zero/wrap and deferred input delivery");
+}
 
 static void test_transport_slots(void)
 {
@@ -720,6 +820,7 @@ static void test_nes_input_transport(void)
 
 int main(void)
 {
+    test_shared_poll_deadline();
     test_transport_slots();
     test_controller_routing();
     test_identity_strings_and_spare();

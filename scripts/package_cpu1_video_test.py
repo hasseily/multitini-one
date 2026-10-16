@@ -31,6 +31,8 @@ import core_artifacts
 ROOT = Path(__file__).resolve().parents[1]
 BUILD_ID = "56494434"
 ABI = "0.15"
+FIRMWARE_NAME = "FIRMWARE-MULTITINI.BIN"
+SD_FIRMWARE_NAME = "sd/" + FIRMWARE_NAME
 GUARD = [sys.executable, "-u", str(ROOT / "scripts/run_native_tool.py"), "--"]
 REQUIRED_REPORTS = {
     "timing_summary.rpt", "bus_skew.rpt", "cdc.rpt", "route_status.rpt",
@@ -65,6 +67,15 @@ def write_json(path, value):
 def copy(source, destination):
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, destination)
+
+
+def stage_firmware(directory, source):
+    """Publish identical named update images at the package and SD roots."""
+    firmware = directory / FIRMWARE_NAME
+    if source.resolve() != firmware.resolve():
+        copy(source, firmware)
+    copy(firmware, directory / SD_FIRMWARE_NAME)
+    return firmware
 
 
 def run(command, *, vitis=None):
@@ -505,8 +516,9 @@ def main():
     write_json(out / "evidence/vitis/platform-manifest.json", cpu["record"]["platform_files"])
     bootgen = vitis / "bin/bootgen.bat"
     (out / "sd").mkdir()
-    run([ROOT / "scripts/make_firmware_bin.bat", out / "sd/FIRMWARE.BIN", out / "inputs/fsbl.elf",
+    run([ROOT / "scripts/make_firmware_bin.bat", out / FIRMWARE_NAME, out / "inputs/fsbl.elf",
          out / "inputs/supervisor.bit", out / "inputs/diagnostic.elf"], vitis=vitis)
+    stage_firmware(out, out / FIRMWARE_NAME)
     core_audits = {}
     core_specs = (("c64", "Commodore 64", "0x43363420", [("pal", "PAL", "c64-pal")]),
                   ("gbc", "Game Boy Color", "0x47424320", [("native", "Game Boy / Game Boy Color", "gbc")]),
@@ -528,7 +540,7 @@ def main():
             for variant, _, build_name in variants:
                 processed, _ = audit.process_bit(bootgen, out / "inputs" / (build_name + ".bit"), scratch, build_name)
                 require(digest(processed) == core_audits[ident][variant]["sha256"], "SD core differs from selected BIT")
-        images = audit.parse_firmware((out / "sd/FIRMWARE.BIN").read_bytes())
+        images = audit.parse_firmware((out / SD_FIRMWARE_NAME).read_bytes())
         payload = {"status": "PASS", "fsbl": audit.verify_elf(images[0], out / "inputs/fsbl.elf"),
                    "cpu0": audit.verify_elf(images[2], out / "inputs/diagnostic.elf"), "cores": core_audits,
                    "cpu1_embedded_sha256": sha(out / "inputs/video_core1_blob.bin")}
@@ -536,13 +548,13 @@ def main():
         require(images[1][0]["payload"] == processed and images[1][0]["attributes"] == 0x20 and
                 images[1][0]["load_address"] == images[1][0]["entry_address"] == 0, "Supervisor payload mismatch")
         payload.update(supervisor_processed_sha256=digest(processed), bootgen_process_output=log,
-                       bootgen_readback=audit.bootgen(bootgen, ["-read", out / "sd/FIRMWARE.BIN"], scratch))
+                       bootgen_readback=audit.bootgen(bootgen, ["-read", out / SD_FIRMWARE_NAME], scratch))
     write_json(out / "evidence/payload-audit.json", payload)
     write_json(out / "evidence/timing-audit.json", {name: build["timing"] for name, build in builds.items()})
     (out / "README.txt").write_text(
         "Multitini VID4 source-resolution video test bundle / ABI 0.15\n\n"
         "Copy sd/ contents to the SD card, preserving existing user media and settings.\n"
-        "Use the existing golden updater for FIRMWARE.BIN. No flash is performed here.\n"
+        "Use the existing golden updater for FIRMWARE-MULTITINI.BIN. No flash is performed here.\n"
         "The supervisor and all supplied machine cores form one matching HP0+HP1/ABI15 set.\n"
         "C64 supplies one PAL variant; the display output remains nominal 60 Hz.\n"
         "The FPGA scheduler consumes captures in order against the 60 Hz output cadence.\n"
@@ -577,7 +589,7 @@ def main():
     files["manifest.json"] = describe(out / "manifest.json")
     (out / "SHA256SUMS.txt").write_text("".join(f"{v['sha256']}  {name}\n" for name, v in sorted(files.items())), encoding="ascii")
     archive_files(out.with_suffix(".zip"), {p.relative_to(out).as_posix(): p for p in out.rglob("*") if p.is_file()})
-    print(json.dumps({"firmware": describe(out / "sd/FIRMWARE.BIN"), "bundle": describe(out.with_suffix(".zip")),
+    print(json.dumps({"firmware": describe(out / SD_FIRMWARE_NAME), "bundle": describe(out.with_suffix(".zip")),
                       "output": str(out), "status": "PASS"}, indent=2))
     return 0
 

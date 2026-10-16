@@ -10,7 +10,7 @@ the shared-interface source commit does not replace those generated files.
 
 | Component | Build | ABI |
 | --- | --- | --- |
-| ARM firmware (`FIRMWARE.BIN`) | 20260917 | 0.10 |
+| ARM firmware (`FIRMWARE-MULTITINI.BIN`) | 20260917 | 0.10 |
 | Supervisor FPGA and C64 PAL/NTSC cores | 20260915 | 0.10 |
 | Game Boy Color core with PSRAM | 20260913 | 0.9 |
 
@@ -22,14 +22,15 @@ The current selection was accepted on 2026-09-14.
 
 The assembled package is `build/current/`; its ZIP is
 `build/multitini-current-20260917.zip`. Firmware is also available at the
-repository root as `FIRMWARE.BIN`.
+repository root as `FIRMWARE-MULTITINI.BIN`. Promotion keeps the historical
+selection record and image bytes, and uses the current delivery filename.
 
 1. Back up the SD card, including writable disks, saves, settings, and previous
    firmware.
 2. Merge the package's `multitini` directory into the SD card root. It contains
    both C64 variants, the GBC core, four stock C64/1541 ROMs, and the matching
    fast KERNAL/1541 pair. Preserve existing media, saves, and settings.
-3. Update `FIRMWARE.BIN` using the normal golden recovery/SD update procedure.
+3. Update `FIRMWARE-MULTITINI.BIN` using the normal golden recovery/SD update procedure.
 4. Select C64 PAL or NTSC. Enable **Fast serial ROMs** to select the paired
    fast profile; CPU turbo remains a separate option.
 
@@ -79,8 +80,8 @@ python scripts/promote_current_release.py --check
 
 The script requires the selected dated build outputs and local ROM inputs.
 It fails on missing or changed inputs and never substitutes another build.
-It refreshes `build/current`, root `FIRMWARE.BIN`,
-`build/firmware-current/FIRMWARE.BIN`, and `build/core-packages`.
+It refreshes `build/current`, root `FIRMWARE-MULTITINI.BIN`,
+`build/firmware-current/FIRMWARE-MULTITINI.BIN`, and `build/core-packages`.
 The ZIP contains `CURRENT_RELEASE.json`, `SHA256SUMS.txt`, and notices.
 Generated artifacts remain outside Git; source, provenance, and packaging
 scripts are committed. Stock ROMs and fast derivatives retain their recorded

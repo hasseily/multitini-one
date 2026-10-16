@@ -333,9 +333,7 @@ def verify_component(directory, product):
         p.require(manifest.get("schema") == "multitini-named-firmware-package-v1",
                   "Expected a complete named Multitini firmware package")
         source = release.verify_source_archive(directory)
-        firmware = directory / ("FIRMWARE-" + manifest["firmware_version"] + ".BIN")
-        p.require(firmware.read_bytes() == (directory / "sd/FIRMWARE.BIN").read_bytes(),
-                  "Multitini SD firmware copy differs")
+        firmware, _ = release.firmware_paths(directory, manifest["firmware_version"])
     else:
         manifest = verify_native_package(directory)
         p.require(manifest.get("schema") in (None, "appletini-multiboot-firmware-package-v1"),

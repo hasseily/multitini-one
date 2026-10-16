@@ -7,6 +7,15 @@ Upstream is `MiSTer-devel/Apple-IIgs_MiSTer` at
 files and explicit per-file licenses. Original machine code remains separate
 from reproducible Multitini ports. Apple ROM bytes are runtime user inputs.
 
+M0.5.7 shares the last completed full USB poll time between the main loop and
+IIgs transfers. Short transfers avoid a redundant poll; long transfers retain
+the one-millisecond deferred-service fallback. Normal runtime polls remain
+unthrottled. This is an ARM-only follow-up with the same FPGA/video-worker
+inputs. After replacing an older core/configuration found on the actual SD
+card, the owner confirms that M0.5.7 boots Finder. The load log matches the
+selected FPGA CRC32 `D3BAF34E`. New packages use `FIRMWARE-MULTITINI.BIN`;
+M0.5.6's timed results below remain the performance baseline.
+
 M0.5.6 fixes an ARM disk-transfer bottleneck: every four-byte FIFO pause
 previously invoked a full USB poll. Pace that callback to one poll per
 millisecond, correct the USB time conversion, and retain an opt-in UART

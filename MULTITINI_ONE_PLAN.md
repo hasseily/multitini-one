@@ -2,6 +2,31 @@
 
 Status: planning baseline, written 2026-08-29
 
+IIgs screenshot follow-up, 2026-10-16: the ARM screenshot renderer omitted
+the IIgs core ID and rejected its valid 640x400 processed frame. Add the
+display's existing Auto scales: 2x at 1080p, 1280x1024 and 1680x1050; 1x at
+the other three output modes. Cover filtered-video and full-screen capture,
+plus manual 1x through 4x clipping. Deliver M0.5.8 with ARM firmware only;
+retain the verified FPGA images and CPU1 worker. Host PNG/rendering tests
+precede packaging; physical screenshot acceptance remains separate.
+
+Delivery follow-up, 2026-10-16: name new Multitini firmware files
+`FIRMWARE-MULTITINI.BIN` at both the package and SD roots. Golden already
+accepts this name. Preserve historical package readers. A reported IIgs boot
+freeze was traced to the actual SD card loading build `4D000400`, CRC32
+`5E618146`, while the current package selects build `4D000505`, CRC32
+`D3BAF34E`. Compare live PCAP size/CRC and runtime identity with the selected
+package before attributing hardware behavior to a firmware change.
+After the card repair, M0.5.7 runs with the expected PCAP CRC and runtime
+build; the owner confirms Finder boots. No new speed measurement was taken.
+
+USB polling follow-up, 2026-10-16: remove redundant IIgs transfer polls by
+sharing the last completed full USB poll time with the normal runtime loop.
+Use raw timer ticks and retain the one-millisecond fallback during long
+transfers. Keep ordinary USB polling and the diagnostic baseline mode intact.
+Deliver M0.5.7 with an ARM-only build and the retained FPGA/video-worker inputs.
+The owner's M0.5.6 hardware result remains specific to that installed image.
+
 HDD performance follow-up, 2026-10-16: live ARM profiling found a full USB
 host poll at every four-byte IIgs disk-stream handshake. Pace this callback
 to once per millisecond while retaining normal USB polling between requests.

@@ -1,9 +1,36 @@
 # Apple IIgs hardware test
 
-Install the complete `build/firmware-core-gs-m056-tested/sd/` contents, preserving existing
-media and settings. Update Multitini with its included `FIRMWARE.BIN` using
+Install the complete `build/firmware-core-gs-m058/sd/` contents, preserving existing
+media and settings. Update Multitini with its included `FIRMWARE-MULTITINI.BIN` using
 Golden B2. The matching supervisor and FSBL enable the new HP3 source video
 port. Load the new IIgs core only after installing the matching firmware.
+M0.5.8 adds the missing IIgs screenshot geometry. M0.5.7's shared USB service
+timestamp still skips redundant polls inside IIgs transfers. The FPGA images
+and CPU1 video worker are retained. An already repaired M0.5.7 installation
+needs only `FIRMWARE-MULTITINI.BIN` for this update.
+
+After installing M0.5.8, capture both filtered video and full screen from
+the IIgs. At Auto size, the video PNG is 1280x800 in 1920x1080, 1280x1024
+and 1680x1050 output modes; it is 640x400 in the other three modes. Full-screen
+PNGs match the selected display resolution. Check the first/last image
+columns, menu overlays and manual 1x through 4x clipping against the display.
+These screenshot checks still need physical acceptance; the M0.5.7 Finder
+boot confirmation below remains valid for that installed firmware.
+
+Verify the selected IIgs image on the actual card. Its `core.cfg` must name
+`apple-iigs-native.bin`, size `4045568`, CRC32 `D3BAF34E`. The load log must
+report that same size and CRC; UART `s` must then report core `49494753`, ABI
+`00000016` and build `4D000505`. On 2026-10-16 a copyright-screen freeze came
+from an old card image: build `4D000400`, CRC32 `5E618146`. It also froze under
+M0.5.6. Replacing both the FPGA file and its matching `core.cfg` prevents that
+old image from being selected. Package hashes alone do not identify the file
+loaded by the board.
+
+After repairing the card and installing M0.5.7 with the named firmware file,
+the load log confirmed CRC32 `D3BAF34E` and the owner confirmed that Finder
+boots. The shared USB polling change remains enabled. This confirms boot
+recovery; it is not a new boot-time measurement.
+
 The M0.5.6 ARM image was installed through Golden and measured on the owner's
 board. Copying the package does not itself apply the firmware update.
 

@@ -23,13 +23,18 @@ and CPU1 worker. Package explicit artifacts with:
 
 ```
 scripts\make_boot_bin.bat BOOT.BIN fsbl.elf golden.elf
-scripts\make_firmware_bin.bat FIRMWARE.BIN fsbl.elf supervisor.bit diagnostic.elf
+scripts\make_firmware_bin.bat FIRMWARE-MULTITINI.BIN fsbl.elf supervisor.bit diagnostic.elf
 ```
 
 Both packagers append and verify a 32-byte CRC manifest, enforce the destination
 slot size, require the linked recovery marker, and install output only after
 verification. The firmware bitstream must carry a `SUPERVISOR` kind marker.
 Golden contains the FSBL and recovery app; it needs no configured fabric.
+
+New Multitini deliveries use `FIRMWARE-MULTITINI.BIN` at both package root and
+`sd/`. Copy it to the SD root. Multiboot Golden already scans this name and
+renames a successful update to `FIRMWARE-MULTITINI.OK`; no Golden rebuild is
+needed. Its legacy `FIRMWARE.BIN` input remains available for older packages.
 
 Install recovery-capable firmware before trying to update golden. The updater
 refuses to erase a slot unless primary is bootable and the firmware fallback

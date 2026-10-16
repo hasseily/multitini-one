@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Run production serial handlers, diagnostic clock and IIgs stream pacing."""
+"""Run production serial handlers, diagnostic clock and shared USB pacing delegation."""
 import argparse,os,re,subprocess,sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]

@@ -3,6 +3,7 @@
 #include "multitini_c64_interface.h"
 #include "multitini_gameboy_interface.h"
 #include "multitini_genesis_interface.h"
+#include "multitini_iigs_interface.h"
 #include "multitini_vectrex_interface.h"
 #include <assert.h>
 #include <stdio.h>
@@ -65,12 +66,12 @@ static void full_screen_ui(void)
 }
 static void manual_geometry(void)
 {
-    static const uint32_t cores[]={MT_C64_CORE_ID,MT_GBC_CORE_ID,MT_VECTREX_CORE_ID,MT_GENESIS_CORE_ID};
-    static const unsigned widths[]={382U,160U,540U,320U},heights[]={270U,144U,720U,240U};
+    static const uint32_t cores[]={MT_C64_CORE_ID,MT_GBC_CORE_ID,MT_VECTREX_CORE_ID,MT_GENESIS_CORE_ID,MT_IIGS_CORE_ID};
+    static const unsigned widths[]={382U,160U,540U,320U,640U},heights[]={270U,144U,720U,240U,400U};
     static const unsigned screen_w[]={1920U,1024U,1200U,1280U,1360U,1680U};
     static const unsigned screen_h[]={1080U,768U,800U,1024U,768U,1050U};
     mt_screenshot_scene_t scene={0};scene.pixels=source;
-    for(unsigned c=0U;c<4U;++c)for(unsigned mode=0U;mode<6U;++mode)for(unsigned scale=1U;scale<=4U;++scale) {
+    for(unsigned c=0U;c<sizeof(cores)/sizeof(cores[0]);++c)for(unsigned mode=0U;mode<6U;++mode)for(unsigned scale=1U;scale<=4U;++scale) {
         scene.core_id=cores[c];scene.width=widths[c];scene.height=heights[c];
         scene.display_mode=(uint8_t)mode;scene.video_multiplier=(uint8_t)scale;
         for(unsigned y=0U;y<scene.height;++y)for(unsigned x=0U;x<scene.width;++x)
@@ -107,6 +108,43 @@ static void manual_geometry(void)
     assert(mt_screenshot_render_row(&scene,0U,row) && row[0]==source[1U] && row[1023U]==source[342U]);
     assert(mt_screenshot_render_row(&scene,767U,row) && row[0]==source[256U*343U+1U]);
     scene.video_multiplier=5U;assert(!mt_screenshot_dimensions(&scene,&w,&h));
+}
+static void iigs_geometry(void)
+{
+    /* Literal FPGA MACHINE=5 Auto viewports, independent of the C decoder. */
+    static const unsigned screen_w[]={1920U,1024U,1200U,1280U,1360U,1680U};
+    static const unsigned screen_h[]={1080U,768U,800U,1024U,768U,1050U};
+    static const unsigned view_w[]={1280U,640U,640U,1280U,640U,1280U};
+    static const unsigned view_h[]={800U,400U,400U,800U,400U,800U};
+    static const unsigned left[]={320U,192U,280U,0U,360U,200U};
+    static const unsigned top[]={140U,184U,200U,112U,184U,125U};
+    mt_screenshot_scene_t scene={0};
+    scene.pixels=source;scene.width=640U;scene.height=400U;scene.core_id=MT_IIGS_CORE_ID;
+    for(unsigned y=0U;y<400U;++y)for(unsigned x=0U;x<640U;++x)
+        source[y*640U+x]=(uint16_t)((y*37U+x*113U)&65535U);
+    for(unsigned mode=0U;mode<6U;++mode) {
+        uint32_t w,h;scene.display_mode=(uint8_t)mode;scene.full_output=false;
+        assert(mt_screenshot_dimensions(&scene,&w,&h) && w==view_w[mode] && h==view_h[mode]);
+        const unsigned rows[]={0U,view_h[mode]/2U,view_h[mode]-1U};
+        for(unsigned r=0U;r<3U;++r) {
+            const unsigned y=rows[r];
+            scene.full_output=false;assert(mt_screenshot_render_row(&scene,y,cropped_row));
+            scene.full_output=true;assert(mt_screenshot_dimensions(&scene,&w,&h) && w==screen_w[mode] && h==screen_h[mode]);
+            assert(mt_screenshot_render_row(&scene,y+top[mode],row));
+            assert(memcmp(cropped_row,row+left[mode],view_w[mode]*sizeof(uint16_t))==0);
+            for(unsigned x=0U;x<screen_w[mode];++x) {
+                const uint16_t expected=x>=left[mode] && x<left[mode]+view_w[mode] ?
+                    source[(y*400U/view_h[mode])*640U+(x-left[mode])*640U/view_w[mode]]:0U;
+                assert(row[x]==expected);
+            }
+        }
+        assert(mt_screenshot_render_row(&scene,0U,row));
+        for(unsigned x=0U;x<screen_w[mode];++x)assert(row[x]==0U);
+    }
+    scene.core_id=UINT32_C(0xDEADBEEF);scene.display_mode=0U;
+    uint32_t w,h;
+    assert(!mt_screenshot_dimensions(&scene,&w,&h));
+    assert(!mt_screenshot_render_row(&scene,0U,row));
 }
 static void renderer(void)
 {
@@ -209,6 +247,7 @@ static void renderer(void)
 int main(int argc,char **argv)
 {
     renderer();
+    iigs_geometry();
     manual_geometry();
     full_screen_ui();
     mt_screenshot_png_t png;

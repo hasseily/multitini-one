@@ -286,7 +286,7 @@ def read_after_update(ser: "serial.Serial", timeout_s: float, quiet: bool) -> No
 
 
 def load_upload_image(image_arg: str | None, golden: bool) -> tuple[Path, bytes]:
-    default_name = "BOOT.BIN" if golden else "FIRMWARE.BIN"
+    default_name = "BOOT.BIN" if golden else "FIRMWARE-MULTITINI.BIN"
     image_path = Path(image_arg if image_arg is not None else default_name)
 
     if golden:
@@ -306,7 +306,7 @@ def load_upload_image(image_arg: str | None, golden: bool) -> tuple[Path, bytes]
 
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Upload an image through the golden serial monitor")
-    ap.add_argument("image", nargs="?", help="image to send (default: FIRMWARE.BIN or BOOT.BIN with --golden)")
+    ap.add_argument("image", nargs="?", help="image to send (default: FIRMWARE-MULTITINI.BIN or BOOT.BIN with --golden)")
     ap.add_argument("--golden", action="store_true", help="validate a recovery-capable golden image and send selfrx")
     ap.add_argument("--port", default="COM3", help="golden firmware-update UART port")
     ap.add_argument("--baud", type=int, default=921600, help="UART baud rate")

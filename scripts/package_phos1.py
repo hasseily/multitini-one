@@ -186,7 +186,7 @@ def main():
     if not args.check_only:
         package.require(not out.exists(), "Output directory already exists: " + str(out))
         package.require(not out.with_suffix(".zip").exists(), "Output ZIP already exists: " + str(out.with_suffix(".zip")))
-    firmware_name = f"FIRMWARE-{args.suffix}.BIN"
+    firmware_name = package.FIRMWARE_NAME
     identity = bytes.fromhex(args.build_id).decode("ascii", errors="replace")
     if not re.fullmatch(r"[A-Z0-9]+", identity):
         identity = "0x" + args.build_id
@@ -256,7 +256,7 @@ def main():
     (out / "sd").mkdir()
     package.run([ROOT / "scripts/make_firmware_bin.bat", out / firmware_name, out / "inputs/fsbl.elf",
                  out / "inputs/supervisor.bit", out / "inputs/diagnostic.elf"], vitis=vitis)
-    package.copy(out / firmware_name, out / "sd/FIRMWARE.BIN")
+    package.stage_firmware(out, out / firmware_name)
     core_specs = (("c64", "Commodore 64", "0x43363420", [("pal", "PAL", "c64-pal")]),
                   ("gbc", "Game Boy Color", "0x47424320", [("native", "Game Boy / Game Boy Color", "gbc")]),
                   ("vectrex", "Vectrex", "0x56454358", [("native", "Vectrex / Vectrex32", "vectrex")]),
@@ -331,7 +331,7 @@ def main():
     (out / "README.txt").write_text(
         f"Multitini {identity} / -{args.suffix} / ABI {package.ABI}\n\n"
         "Copy sd/ contents to the SD card, preserving media and settings.\n"
-        f"{firmware_name} is identical to sd/FIRMWARE.BIN, the updater's required filename.\n"
+        f"{firmware_name} is identical to sd/{firmware_name}; copy it to the SD root.\n"
         "Use the existing golden updater, then reload cores. Packaging does not install firmware.\n"
         "Selected cores: C64 PAL, PSRAM GBC, Vectrex, Genesis NTSC/PAL.\n"
         + ("NES adds iNES cartridge loading through the shared PSRAM service.\n"

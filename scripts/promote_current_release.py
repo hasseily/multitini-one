@@ -17,6 +17,12 @@ from private_core_roms import default_rom_source
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "provenance/current_release.json"
 CURRENT = ROOT / "build/current"
+FIRMWARE_NAME = "FIRMWARE-MULTITINI.BIN"
+
+
+def delivery_name(name: str) -> str:
+    # Keep the historical selection record intact; only its delivered name changes.
+    return FIRMWARE_NAME if name == "FIRMWARE.BIN" else name
 
 
 def below(root: Path, relative: str) -> Path:
@@ -56,7 +62,7 @@ def main() -> int:
     if record["schema_version"] != 1:
         raise ValueError("unsupported current release manifest")
     entries = record["files"]
-    destinations = [entry["destination"] for entry in entries]
+    destinations = [delivery_name(entry["destination"]) for entry in entries]
     if len(destinations) != len(set(destinations)):
         raise ValueError("duplicate release destination")
 
@@ -68,7 +74,7 @@ def main() -> int:
         source = below(args.rom_source, entry["rom_source_relative"]) if "rom_source_relative" in entry else below(ROOT, entry["source"])
         verify(source, entry)
         selected_sources[entry["destination"]] = source
-        copies.append((source, below(CURRENT, entry["destination"])))
+        copies.append((source, below(CURRENT, delivery_name(entry["destination"]))))
     for entry in record["notices"]:
         source = below(ROOT, entry["source"])
         if not source.is_file():
@@ -87,9 +93,9 @@ def main() -> int:
     # These compatibility locations refer to the same accepted runtime files.
     aliases = []
     for entry in entries:
-        if entry["destination"] == "FIRMWARE.BIN":
-            aliases.extend([(selected_sources[entry["destination"]], ROOT / "FIRMWARE.BIN"),
-                            (selected_sources[entry["destination"]], ROOT / "build/firmware-current/FIRMWARE.BIN")])
+        if delivery_name(entry["destination"]) == FIRMWARE_NAME:
+            aliases.extend([(selected_sources[entry["destination"]], ROOT / FIRMWARE_NAME),
+                            (selected_sources[entry["destination"]], ROOT / "build/firmware-current" / FIRMWARE_NAME)])
         elif entry["destination"].startswith("multitini/cores/"):
             relative = entry["destination"].removeprefix("multitini/cores/")
             aliases.append((selected_sources[entry["destination"]], below(ROOT / "build/core-packages", relative)))

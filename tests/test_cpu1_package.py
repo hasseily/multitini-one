@@ -41,6 +41,20 @@ class PackageTests(unittest.TestCase):
             "WNS(ns) TNS(ns) TNS Failing Endpoints TNS Total Endpoints\n-----\n"
             f"{wns} 0 {failures} {endpoints} {whs} 0 0 20 {wpws} 0 0 20\n")
 
+    def test_firmware_delivery_has_named_identical_root_and_sd_copies(self):
+        original = self.root / "original.bin"
+        original.write_bytes(b"selected tagged Multitini firmware")
+        out = self.root / "delivery"
+        firmware = package.stage_firmware(out, original)
+        self.assertEqual(firmware, out / "FIRMWARE-MULTITINI.BIN")
+        self.assertEqual({path.relative_to(out).as_posix() for path in out.rglob("*") if path.is_file()},
+                         {"FIRMWARE-MULTITINI.BIN", "sd/FIRMWARE-MULTITINI.BIN"})
+        self.assertEqual(firmware.read_bytes(), original.read_bytes())
+        self.assertEqual((out / "sd/FIRMWARE-MULTITINI.BIN").read_bytes(), original.read_bytes())
+        # Normal packaging generates the named root image before staging it.
+        package.stage_firmware(out, firmware)
+        self.assertEqual((out / "sd/FIRMWARE-MULTITINI.BIN").read_bytes(), original.read_bytes())
+
     def test_strict_positive_setup_hold_pulse_and_endpoint_gates(self):
         self.assertEqual(package.timing(self.root, "SUPERVISOR", False)["timing_ns"]["WNS"], .01)
         for values in ({"wns": "0"}, {"wns": "-0.01"}, {"wns": "nan"},

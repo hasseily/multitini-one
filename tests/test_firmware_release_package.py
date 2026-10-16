@@ -14,6 +14,8 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import package_firmware_release as release
+import promote_current_release as promote
+import serial_firmware_update as upload
 
 
 class FirmwareReleaseTests(unittest.TestCase):
@@ -27,6 +29,69 @@ class FirmwareReleaseTests(unittest.TestCase):
         release.p.write_json(self.root / "manifest.json", {"files": files})
         (self.root / "SHA256SUMS.txt").write_text("".join(
             f"{record['sha256']}  {name}\n" for name, record in release.inventory(self.root).items()))
+
+    def test_named_and_historical_multitini_paths_validate_without_rewriting_inputs(self):
+        body = b"exact selected firmware"
+        historical = self.root / "FIRMWARE-M0.5.7.BIN"
+        historical.write_bytes(body)
+        (self.root / "sd").mkdir()
+        legacy_sd = self.root / "sd/FIRMWARE.BIN"
+        legacy_sd.write_bytes(body)
+        self.assertEqual(release.firmware_paths(self.root, "M0.5.7"), (historical, legacy_sd))
+        release.p.stage_firmware(self.root, historical)
+        canonical = (self.root / "FIRMWARE-MULTITINI.BIN", self.root / "sd/FIRMWARE-MULTITINI.BIN")
+        self.assertEqual(release.firmware_paths(self.root, "M0.5.7"), canonical)
+        self.assertEqual(historical.read_bytes(), body)
+        self.assertEqual(legacy_sd.read_bytes(), body)
+        legacy_sd.write_bytes(b"stale shadow firmware")
+        with self.assertRaisesRegex(ValueError, "Conflicting"):
+            release.firmware_paths(self.root, "M0.5.7")
+
+    def test_named_firmware_rejects_missing_or_different_sd_copy(self):
+        (self.root / "FIRMWARE-MULTITINI.BIN").write_bytes(b"selected")
+        with self.assertRaisesRegex(ValueError, "Missing"):
+            release.firmware_paths(self.root, "M0.5.7")
+        (self.root / "sd").mkdir()
+        (self.root / "sd/FIRMWARE-MULTITINI.BIN").write_bytes(b"different")
+        with self.assertRaisesRegex(ValueError, "copy differs"):
+            release.firmware_paths(self.root, "M0.5.7")
+
+    def test_serial_default_is_named_multitini_and_explicit_names_remain_usable(self):
+        with patch.object(upload, "Path", side_effect=lambda name: self.root / name):
+            named = self.root / "FIRMWARE-MULTITINI.BIN"
+            named.write_bytes(b"Multitini")
+            legacy = self.root / "FIRMWARE.BIN"
+            legacy.write_bytes(b"explicit older firmware")
+            self.assertEqual(upload.load_upload_image(None, False), (named, b"Multitini"))
+            self.assertEqual(upload.load_upload_image("FIRMWARE.BIN", False),
+                             (legacy, b"explicit older firmware"))
+            golden = self.root / "BOOT.BIN"
+            golden.write_bytes(b"Golden")
+            with patch.object(upload.image_manifest, "verify_image") as verify:
+                self.assertEqual(upload.load_upload_image(None, True), (golden, b"Golden"))
+                verify.assert_called_once()
+
+    def test_current_promotion_renames_delivery_without_changing_selected_record(self):
+        source = self.root / "selected.bin"
+        source.write_bytes(b"historical selected firmware")
+        selection = {"schema_version": 1, "release_id": "test", "notices": [], "files": [{
+            "source": "selected.bin", "destination": "FIRMWARE.BIN", "size": source.stat().st_size,
+            "sha256": promote.digest(source)}]}
+        manifest = self.root / "selected.json"
+        manifest.write_text(json.dumps(selection))
+        current = self.root / "build/current"
+        with patch.object(promote, "ROOT", self.root), patch.object(promote, "MANIFEST", manifest), \
+             patch.object(promote, "CURRENT", current), patch.object(sys, "argv", ["promote"]):
+            self.assertEqual(promote.main(), 0)
+            with patch.object(sys, "argv", ["promote", "--check"]):
+                self.assertEqual(promote.main(), 0)
+        for path in (current, self.root, self.root / "build/firmware-current"):
+            self.assertEqual((path / "FIRMWARE-MULTITINI.BIN").read_bytes(), source.read_bytes())
+            self.assertFalse((path / "FIRMWARE.BIN").exists())
+        self.assertEqual(json.loads(manifest.read_text()), selection)
+        with zipfile.ZipFile(self.root / "build/multitini-current-test.zip") as archive:
+            self.assertIn("FIRMWARE-MULTITINI.BIN", archive.namelist())
+            self.assertNotIn("FIRMWARE.BIN", archive.namelist())
 
     def test_baseline_rejects_corruption_extra_files_and_missing_checksum(self):
         member = self.root / "supervisor.bit"

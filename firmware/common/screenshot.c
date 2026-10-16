@@ -5,6 +5,7 @@
 #include "multitini_c64_interface.h"
 #include "multitini_gameboy_interface.h"
 #include "multitini_genesis_interface.h"
+#include "multitini_iigs_interface.h"
 #include "multitini_nes_interface.h"
 #include "multitini_vectrex_interface.h"
 #include "multitini_video_frame.h"
@@ -92,6 +93,7 @@ static bool geometry(const mt_screenshot_scene_t *s,geometry_t *g)
     const uint8_t m=s->display_mode;
     g->w=widths[m]; g->h=heights[m]; g->num=g->den=1U;
     if(s->core_id==MT_VECTREX_CORE_ID) { g->num=m==0U ? 3U:1U; g->den=m==0U ? 2U:1U; }
+    else if(s->core_id==MT_IIGS_CORE_ID) g->num=m==0U || m==3U || m==5U ? 2U:1U;
     else if(s->core_id==MT_GENESIS_CORE_ID || s->core_id==MT_NES_CORE_ID) g->num=m==0U || m==5U ? 4U:3U;
     else if(s->core_id==MT_GBC_CORE_ID) g->num=m==1U || m==2U || m==4U ? 5U:6U;
     else if(s->core_id==MT_C64_CORE_ID) g->num=m==0U ? 4U : m==1U || m==2U || m==4U ? 2U:3U;

@@ -103,7 +103,6 @@ static mt_ak4493_bus_t dac_bus;
 static bool i2c_ready;
 static bool iigs_profile_running, iigs_profile_on_release;
 static bool iigs_progress_paced = true;
-static uint64_t iigs_progress_last_us;
 static uint64_t iigs_profile_last_poll;
 static mt_sd_profile_stage_t iigs_profile_poll_gap, iigs_profile_rtc;
 static mt_sd_profile_stage_t iigs_profile_usb, iigs_profile_video;
@@ -1826,7 +1825,6 @@ static void handle_iigs_profile(const char *argument)
         iigs_content_service_profile_stop();
         if (set_core_reset_request(true) != 0) return;
         iigs_progress_paced = argument[6] == '\0';
-        iigs_progress_last_us = 0U;
         options.speed = speed;
         if (iigs_content_service_configure(&options) != 0) {
             xil_printf("[GS-PROFILE] configuration failed; core remains in reset: %s\r\n",
@@ -3143,16 +3141,13 @@ static void iigs_transfer_progress(void *context)
 {
     (void)context;
     if (iigs_progress_paced) {
-        const uint64_t now = monotonic_us(NULL);
-        /* A four-byte FIFO publication can briefly deassert READY. Recheck
-         * that hardware handshake without paying for a full USB host poll
-         * each time. Long transfers still service USB every millisecond;
-         * the normal runtime loop also polls it between disk requests. */
-        if (iigs_progress_last_us != 0U &&
-            now - iigs_progress_last_us < UINT64_C(1000)) return;
-        iigs_progress_last_us = now;
+        /* The normal runtime loop already services USB between disk requests.
+         * Poll inside a transfer only when no full USB poll has completed in
+         * the last millisecond. Long transfers still collect input safely. */
+        usb_hid_service_poll_deferred_if_due(1000U);
+    } else {
+        usb_hid_service_poll_deferred();
     }
-    usb_hid_service_poll_deferred();
 }
 
 static uint32_t iigs_clock_timestamp(void)

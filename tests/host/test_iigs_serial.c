@@ -78,11 +78,13 @@ typedef uint64_t XTime;
 #define TEST_SLEEP_FREQ TEST_CPU_FREQ/2
 #define COUNTS_PER_SECOND TEST_SLEEP_FREQ
 static XTime clock_ticks;
-static unsigned clock_reads,usb_progress_calls;
+static unsigned clock_reads,usb_progress_calls,usb_due_calls;
+static uint32_t usb_due_interval_us;
 static bool iigs_progress_paced=true;
-static uint64_t iigs_progress_last_us;
 static void XTime_GetTime(XTime *value) { ++clock_reads;*value=clock_ticks; }
 static void usb_hid_service_poll_deferred(void) { ++usb_progress_calls; }
+static void usb_hid_service_poll_deferred_if_due(uint32_t minimum_interval_us)
+{ usb_due_interval_us=minimum_interval_us;++usb_due_calls; }
 #include "iigs_serial_handlers.inc"
 static void set_clock_us(uint64_t microseconds)
 {
@@ -98,22 +100,22 @@ static void test_clock_and_progress(void)
     for(size_t i=0U;i<sizeof(microseconds)/sizeof(microseconds[0]);++i) {
         set_clock_us(microseconds[i]);assert(monotonic_us(NULL)==microseconds[i]);
     }
-    iigs_progress_paced=true;iigs_progress_last_us=0U;usb_progress_calls=0U;
-    set_clock_us(500U);iigs_transfer_progress(NULL); /* First call always services USB. */
-    assert(usb_progress_calls==1U);
-    iigs_transfer_progress(NULL);assert(usb_progress_calls==1U);
-    set_clock_us(1499U);iigs_transfer_progress(NULL);assert(usb_progress_calls==1U);
-    set_clock_us(1500U);iigs_transfer_progress(NULL);assert(usb_progress_calls==2U);
-    set_clock_us(2499U);iigs_transfer_progress(NULL);assert(usb_progress_calls==2U);
-    set_clock_us(2500U);iigs_transfer_progress(NULL);assert(usb_progress_calls==3U);
-    set_clock_us(100000U);iigs_transfer_progress(NULL);assert(usb_progress_calls==4U);
-    iigs_progress_paced=false;
+    iigs_progress_paced=true;usb_progress_calls=usb_due_calls=0U;
     const unsigned before=clock_reads;
+    /* The USB service owns the shared timestamp, including normal runtime
+     * polling. The IIgs wrapper delegates every paced call with a 1 ms budget. */
+    static const uint64_t progress_times[]={500U,500U,1499U,1500U,100000U};
+    for(size_t i=0U;i<sizeof(progress_times)/sizeof(progress_times[0]);++i) {
+        set_clock_us(progress_times[i]);iigs_transfer_progress(NULL);
+        assert(usb_due_calls==i+1U && usb_due_interval_us==1000U);
+        assert(usb_progress_calls==0U && clock_reads==before);
+    }
+    iigs_progress_paced=false;
     for(unsigned i=0U;i<4U;++i)iigs_transfer_progress(NULL);
-    assert(usb_progress_calls==8U && clock_reads==before); /* Baseline polls every time. */
+    assert(usb_progress_calls==4U && usb_due_calls==5U && clock_reads==before);
     iigs_progress_paced=true;
-    iigs_transfer_progress(NULL);assert(usb_progress_calls==8U);
-    set_clock_us(101000U);iigs_transfer_progress(NULL);assert(usb_progress_calls==9U);
+    iigs_transfer_progress(NULL);
+    assert(usb_progress_calls==4U && usb_due_calls==6U && usb_due_interval_us==1000U && clock_reads==before);
 }
 int main(void)
 {
@@ -157,5 +159,5 @@ int main(void)
     active_core=MT_IIGS_CORE_ID;test_command="gsprofiles start";
     const unsigned before=unknown_commands;handle_extended_command(false);
     assert(profile_calls==dispatched && unknown_commands==before+1U && forbidden==0U);
-    puts("PASS Apple IIgs serial routing, exact BSP diagnostic clock boundaries and live/baseline USB stream pacing");return 0;
+    puts("PASS Apple IIgs serial routing, exact BSP diagnostic clock boundaries and paced/baseline shared USB progress delegation");return 0;
 }

@@ -10,6 +10,53 @@ M0.5.4 core, with measured boot times of 59 seconds at Stock, 37 seconds at
 penalty without rebuilding the FPGA. Synthetic CPU throughput still does not
 establish boot or UI throughput.
 
+## M0.5.7 shared USB poll timing
+
+M0.5.6's transfer callback kept its own poll timestamp. The normal runtime loop
+already serviced USB before each HDD request, but did not update that timestamp.
+A callback could therefore repeat a full USB poll immediately after the main
+loop had done one.
+
+M0.5.7 records the completion time of every ordinary or deferred full USB poll
+inside the USB service. The IIgs callback requests a deferred poll only when
+one millisecond has passed since that shared timestamp. The check uses raw
+timer ticks, avoiding microsecond conversion for every FIFO pause. Ordinary
+runtime polling remains unthrottled; long transfers still collect input, and
+the diagnostic baseline continues to poll on every callback. The interval is
+measured from poll completion so a long poll does not trigger another poll
+immediately when it returns.
+
+All 88 host tests pass, including strict main/USB compilation. The shared-timer
+regression runs 20 short requests across five milliseconds without an extra
+transfer poll, then permits the fallback at the one-millisecond deadline.
+It also covers poll completion timing, timer wrap, host restart and deferred
+mouse delivery. The native ARM build passes. Build and test receipts are in
+`build/iigs-usb-shared-poll-m057/validation.json` and the packaged evidence.
+
+This is an ARM-only change. The package is
+`build/firmware-core-gs-m057-named.zip`, with all eight FPGA images and the
+CPU1 video worker retained. It delivers `FIRMWARE-MULTITINI.BIN` at both the
+package and SD roots; the existing Golden updater accepts that name.
+
+The first reported M0.5.7 copyright-screen freeze used an older FPGA file on
+the actual SD card. UART reported build `4D000400` and PCAP CRC32 `5E618146`;
+the card readback had SHA256
+`0490cc1ed27d5930e6266c1688554c9dea074c6a000c8f8461a02bc7fc959f62`.
+Both paced and original-polling resets made zero HDD requests. Restoring the
+exact previously accepted M0.5.6 ARM image also left that old core stuck.
+
+The selected package instead contains build `4D000505`, CRC32 `D3BAF34E`,
+SHA256 `96c165622a06415cf945b8bca6dae929f569c4c77bb6bf6247d0290fb44f6736`.
+The old card image and configuration were backed up; both were replaced and
+read back against the package. M0.5.7 was then installed using the named
+update file, and its running firmware banner was observed. The next core
+load reported PCAP size `4045568` and CRC32 `D3BAF34E`. The owner confirmed
+"Restarted; Finder boots". The redundant-poll removal remains enabled.
+No new speed measurement was taken; the M0.5.6 timings below remain
+specific to their earlier captures. Compare live PCAP size/CRC and runtime
+identity with the delivery; a package hash alone does not identify a running
+board image.
+
 ## M0.5.6 HDD transfer pacing
 
 The stream FIFO briefly deasserts READY after each four-byte publication.
@@ -29,8 +76,10 @@ that clock run at one quarter speed.
 
 The owner-authorized Golden UART update installed M0.5.6 on the board.
 Golden verified file and flash CRC32 `F5A33519`; the running ARM banner reports
-`M0.5.6 build=4D000506`. All eight FPGA images and the CPU1 video worker remain
-byte-identical to the retained qualified inputs.
+`M0.5.6 build=4D000506`. The package retains all eight FPGA images and the
+CPU1 video worker byte for byte. The hardware captures report IIgs build
+`4D000505`; their aggregate's FPGA SHA256 was declared from the package,
+not measured by reading back the then-installed SD file.
 
 These live measurements use ROM3, the owner's System 6.0.1 HDD, ZipGS, all four
 compatibility delays off, other drives ejected and the menu closed. Time starts

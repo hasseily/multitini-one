@@ -5,6 +5,11 @@ It runs C64, Game Boy Color, Vectrex, Genesis / Mega Drive and Apple IIgs
 machines through a shared supervisor, menu, input, audio, storage and
 core-loading system. It does not use an Apple II host.
 
+M0.5.7 shares USB poll timing between the main loop and IIgs transfers, so a
+transfer skips USB work when the main loop has just serviced it. Long transfers
+retain the one-millisecond fallback. This ARM-only follow-up is separate from
+the M0.5.6 hardware result below.
+
 M0.5.6 removes about 32 seconds of USB polling from the IIgs HDD boot path.
 On the board, the final System 6 HDD request at 57 MHz completes in 4.74 seconds
 instead of 36.57 seconds with the original polling behavior. These are disk
@@ -101,9 +106,12 @@ including tested saves, and accepted completion of that baseline. See
 ## Retained dated baseline
 
 The assembled SD tree is `build/current/`, with firmware at
-`build/current/FIRMWARE.BIN` and packages under
-`build/current/multitini/cores/{c64,gbc}`. The repository-root `FIRMWARE.BIN`
-is the same firmware. Generated images remain outside Git.
+`build/current/FIRMWARE-MULTITINI.BIN` and packages under
+`build/current/multitini/cores/{c64,gbc}`. The repository-root `FIRMWARE-MULTITINI.BIN`
+is the same firmware. Generated images remain outside Git. New packages use
+`FIRMWARE-MULTITINI.BIN` at the package root and under `sd/`; copy the latter
+to the SD root for the Golden updater. Version labels remain in ZIP names and
+manifests. Historical packages and their recorded filenames are unchanged.
 
 [provenance/current_release.json](provenance/current_release.json) pins the
 selected dated inputs, ROM pairs, sizes, hashes, and destinations. Recreate

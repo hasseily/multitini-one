@@ -43,6 +43,21 @@ def inventory(directory):
             for path in sorted(directory.rglob("*")) if path.is_file()}
 
 
+def firmware_paths(directory, version):
+    """Read named releases and explicit historical packages without rewriting them."""
+    roots = [directory / p.FIRMWARE_NAME, directory / ("FIRMWARE-" + version + ".BIN")]
+    sd = [directory / p.SD_FIRMWARE_NAME, directory / "sd/FIRMWARE.BIN"]
+    selected = []
+    for candidates in (roots, sd):
+        present = [path for path in candidates if path.is_file()]
+        p.require(present, "Missing packaged Multitini firmware")
+        p.require(all(path.read_bytes() == present[0].read_bytes() for path in present),
+                  "Conflicting packaged Multitini firmware aliases")
+        selected.append(present[0])
+    p.require(selected[0].read_bytes() == selected[1].read_bytes(), "Updater firmware copy differs")
+    return tuple(selected)
+
+
 def verify_directory(directory):
     manifest = json.loads((directory / "manifest.json").read_text())
     files = manifest["files"]
@@ -124,8 +139,8 @@ def verify_hardware_source(old, new):
 
 
 def audit_payload(out, cpu, version, build_id, hardware_id, vitis):
-    firmware = out / ("FIRMWARE-" + version + ".BIN")
-    p.require(firmware.read_bytes() == (out / "sd/FIRMWARE.BIN").read_bytes(),
+    firmware = out / p.FIRMWARE_NAME
+    p.require(firmware.read_bytes() == (out / p.SD_FIRMWARE_NAME).read_bytes(),
               "Updater firmware copy differs")
     update = image_manifest.verify_image(firmware, expected_role=image_manifest.ROLE_FIRMWARE,
                                          expected_recovery=True,
@@ -219,7 +234,7 @@ def complete_check(out, baseline, old, cpu, args, compare_zip=True):
             p.require(all(p.digest(archive.read(name)) == record["sha256"] for name, record in files.items()),
                       "Release ZIP differs from directory")
     return {"status": "PASS", "firmware_version": args.version,
-            "firmware": p.describe(out / ("FIRMWARE-" + args.version + ".BIN")),
+            "firmware": p.describe(out / p.FIRMWARE_NAME),
             "bundle": p.describe(Path(str(out) + ".zip")) if compare_zip else None,
             "output": str(out), "cores_rebuilt": False, "board_validation": False}
 
@@ -284,10 +299,10 @@ def main():
         p.copy(path, out / "evidence/validation" / f"{index:02d}-{path.name}")
     p.archive_files(out / "source.zip", {name: ROOT / name for name in source})
     p.write_json(out / "source-manifest.json", source)
-    firmware = out / ("FIRMWARE-" + args.version + ".BIN")
+    firmware = out / p.FIRMWARE_NAME
     p.run([ROOT / "scripts/make_firmware_bin.bat", firmware, out / "inputs/fsbl.elf",
            out / "inputs/supervisor.bit", out / "inputs/diagnostic.elf"], vitis=args.vitis)
-    p.copy(firmware, out / "sd/FIRMWARE.BIN")
+    p.stage_firmware(out, firmware)
     hardware_id = old.get("hardware_firmware_id", old["firmware_id"])
     p.write_json(out / "evidence/payload-audit.json",
                  audit_payload(out, cpu, args.version, args.build_id, hardware_id, args.vitis))
@@ -296,9 +311,9 @@ def main():
         "Hold SELECT + START together for 0.5 seconds to open or close the menu.\n"
         "Release both buttons before using the gesture again. F12 remains available.\n"
         "In menus: D-pad navigates, A confirms, B goes back/closes, L/R changes tabs.\n\n"
-        f"FIRMWARE-{args.version}.BIN and sd/FIRMWARE.BIN are identical.\n"
+        f"{p.FIRMWARE_NAME} and {p.SD_FIRMWARE_NAME} are identical.\n"
         "Requires multiboot Golden; B2.0.1 adds named multi-file updates. Install BOOT.BIN first via :selfupdate.\n"
-        "Then copy sd/FIRMWARE.BIN to the SD root and use the multiboot golden updater.\n"
+        f"Then copy {p.SD_FIRMWARE_NAME} to the SD root and use the multiboot golden updater.\n"
         "This tagged image installs at 0x800000 and preserves the Appletini slot.\n"
         "System: Startup firmware saves the power-on choice; Switch to Appletini is one-shot.\n"
         "Installed baseline cores can remain; all included core files are retained byte for byte.\n"
