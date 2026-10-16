@@ -664,15 +664,15 @@ module multitini_one_top #(
     // Capture always observes the complete original Auto raster. The reader
     // independently scales/crops the completed native image at scanout.
     multitini_display_geometry #(.MACHINE(ACTIVE_MACHINE),
-        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==5 ? 640 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382),
-        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==5 ? 400 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270)) capture_geometry(
+        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==5 ? 724 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382),
+        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==5 ? 496 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270)) capture_geometry(
         .mode(display_pixel_mode),.multiplier(3'd0),
         .scale_num(capture_display_scale_num_next),.scale_den(capture_display_scale_den_next),
         .view_x(capture_display_view_x_next),.view_y(capture_display_view_y_next),
         .view_width(capture_display_view_width_next),.view_height(capture_display_view_height_next));
     multitini_display_geometry #(.ENABLE_MULTIPLIER(1'b1),.MACHINE(ACTIVE_MACHINE),
-        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==5 ? 640 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382),
-        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==5 ? 400 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270)) display_geometry(
+        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==5 ? 724 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382),
+        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==5 ? 496 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270)) display_geometry(
         .mode(display_pixel_mode),.multiplier(display_pixel_multiplier),.h_active(display_h_active_next),.h_front(display_h_front_next),.h_sync(display_h_sync_next),.h_total(display_h_total_next),
         .v_active(display_v_active_next),.v_front(display_v_front_next),.v_sync(display_v_sync_next),.v_total(display_v_total_next),
         .h_positive(display_h_positive_next),.v_positive(display_v_positive_next),
@@ -1633,6 +1633,7 @@ module multitini_one_top #(
             wire gs_memory_burst,gs_memory_busy;
             wire [9:0] gs_video_x;
             wire [8:0] gs_video_y;
+            wire gs_video_pal;
             assign c64_rom_loaded={2'd0,gs_rom_loaded};
             assign c64_prg_loaded=0,c64_cart_loaded=0,c64_cart_hardware_type=0,c64_prg_run_busy=0;
             assign gbc_cart_size=0,gbc_cart_loaded=0;
@@ -1691,7 +1692,7 @@ module multitini_one_top #(
                 .video_b(c64_video_b), .video_de(c64_video_de),
                 .video_hsync(c64_video_hsync),
                 .video_vsync(c64_video_vsync),
-                .video_x(gs_video_x),.video_y(gs_video_y),.video_pal(),.video_valid(c64_video_valid), .audio_l(c64_audio_l),
+                .video_x(gs_video_x),.video_y(gs_video_y),.video_pal(gs_video_pal),.video_valid(c64_video_valid), .audio_l(c64_audio_l),
                 .audio_r(c64_audio_r), .audio_valid(c64_audio_valid)
             );
 
@@ -1699,7 +1700,7 @@ module multitini_one_top #(
                 .source_clk(c64_clk),.source_resetn(c64_aresetn),.source_ready(c64_ready),
                 .source_ready_control(c64_ready_control),
                 .source_r(c64_video_r),.source_g(c64_video_g),.source_b(c64_video_b),
-                .source_valid(c64_video_valid),.source_x(gs_video_x),.source_y(gs_video_y),
+                .source_valid(c64_video_valid),.source_x(gs_video_x),.source_y(gs_video_y),.source_pal(gs_video_pal),
                 .control_clk(control_clk),.control_resetn(control_aresetn),
                 .pixel_clk(video_clk),.pixel_resetn(video_aresetn),.shared_pixel_resetn(video_control_resetn),
                 .shared_pixel_running(video_pixel_running),
@@ -1992,10 +1993,10 @@ module multitini_one_top #(
     multitini_video_framebuffer #(
         .DYNAMIC_DISPLAY(1'b1),
         .SHARED_PIXEL_RESET(1'b1),
-        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==5 ? 640 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382),
-        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==5 ? 400 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270),
-        .VIEW_X(ACTIVE_MACHINE==1 ? 480 : ACTIVE_MACHINE==3 ? 555 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==5 ? 320 : ACTIVE_MACHINE==6 ? 448 : C64_NTSC_MODE ? 152 : 196),
-        .VIEW_Y(ACTIVE_MACHINE==1 ? 108 : ACTIVE_MACHINE==3 ? 0 : ACTIVE_MACHINE==4 ? 60 : ACTIVE_MACHINE==5 ? 140 : ACTIVE_MACHINE==6 ? 60 : C64_NTSC_MODE ? 40 : 0),
+        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==5 ? 724 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382),
+        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==5 ? 496 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270),
+        .VIEW_X(ACTIVE_MACHINE==1 ? 480 : ACTIVE_MACHINE==3 ? 555 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==5 ? 236 : ACTIVE_MACHINE==6 ? 448 : C64_NTSC_MODE ? 152 : 196),
+        .VIEW_Y(ACTIVE_MACHINE==1 ? 108 : ACTIVE_MACHINE==3 ? 0 : ACTIVE_MACHINE==4 ? 60 : ACTIVE_MACHINE==5 ? 44 : ACTIVE_MACHINE==6 ? 60 : C64_NTSC_MODE ? 40 : 0),
         .SCALE_NUM(ACTIVE_MACHINE==1 ? 6 : ACTIVE_MACHINE==3 ? 3 : ACTIVE_MACHINE==5 ? 2 : 4),
         .SCALE_DEN(ACTIVE_MACHINE==3 ? 2 : 1)) video_framebuffer (
         .display_view_x(display_view_x),.display_view_y(display_view_y),

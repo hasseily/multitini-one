@@ -1,27 +1,39 @@
 # Apple IIgs hardware test
 
-Install the complete `build/firmware-usb-m059-final/sd/` contents, preserving existing
+Install the complete `build/firmware-smartport-m060/sd/` contents, preserving existing
 media and settings. Update Multitini with its included `FIRMWARE-MULTITINI.BIN` using
 Golden B2. Use the package's matching supervisor, FSBL and core configuration.
-M0.5.9 repairs USB SD recovery and removes the completed IIgs HDD profiling
-diagnostic. M0.5.8 added the missing IIgs screenshot geometry. M0.5.7's shared
-USB service timestamp still skips redundant polls inside IIgs transfers. The FPGA images
-are retained; the ARM platform is rebuilt for the shared SD driver fix.
-An already repaired M0.5.7 installation needs only `FIRMWARE-MULTITINI.BIN`
-for this update.
+M0.6.0 adds eight-drive SmartPort with extended IIgs calls and banked fast
+DMA. Install its ARM firmware, IIgs FPGA image, `core.cfg` and 2304-byte
+`roms/hdd.rom` together. The other seven FPGA images are retained.
+Follow the [SmartPort hardware checks](APPLE_IIGS_SMARTPORT.md) as well as
+the existing checks below. The USB SD recovery, screenshot geometry and
+shared USB polling fixes from M0.5.7-M0.5.9 remain included.
 
-After installing M0.5.9, capture both filtered video and full screen from
-the IIgs. At Auto size, the video PNG is 1280x800 in 1920x1080, 1280x1024
-and 1680x1050 output modes; it is 640x400 in the other three modes. Full-screen
-PNGs match the selected display resolution. Check the first/last image
-columns, menu overlays and manual 1x through 4x clipping against the display.
+After installing M0.6.0, check the native GS border in SHR: 42 pixels on each
+side and 24 source lines above and below the complete 640x200 image. Changing
+the guest border color must affect all four sides. Check both NTSC and PAL,
+and return to text mode to verify its existing placement inside the frame.
+Capture both filtered video and full screen. At Auto size, the video PNG is
+1448x992 in 1920x1080 and 1680x1050 output modes; it is 724x496 in the other
+four modes. Full-screen PNGs match the selected display resolution. Check the
+first/last active image columns, all four borders, menu overlays and manual
+1x through 4x clipping against the display.
 These screenshot checks still need physical acceptance; the M0.5.7 Finder
 boot confirmation below remains valid for that installed firmware.
 
-Verify the selected IIgs image on the actual card. Its `core.cfg` must name
+Verify the selected IIgs image on the actual card. Use the size and CRC32
+from the new package's `apple-iigs/core.cfg` and confirm the same values in
+the load log. UART `s` must report core `49494753`, ABI `00000016` and build
+`4D000600`. Package hashes alone do not identify the file loaded by the board.
+
+## Earlier hardware evidence
+
+The following results apply to their named releases, not to M0.6.0. The old
+M0.5.7 package's `core.cfg` named
 `apple-iigs-native.bin`, size `4045568`, CRC32 `D3BAF34E`. The load log must
-report that same size and CRC; UART `s` must then report core `49494753`, ABI
-`00000016` and build `4D000505`. On 2026-10-16 a copyright-screen freeze came
+have matched that size and CRC, core `49494753`, ABI `00000016` and build
+`4D000505`. On 2026-10-16 a copyright-screen freeze came
 from an old card image: build `4D000400`, CRC32 `5E618146`. It also froze under
 M0.5.6. Replacing both the FPGA file and its matching `core.cfg` prevents that
 old image from being selected. Package hashes alone do not identify the file
@@ -76,8 +88,8 @@ stock-speed and accelerated board checks before recording physical acceptance.
 
 ## User ROMs
 
-The private hardware-test package stages these files from the owner's supplied
-ROM collection in `multitini/cores/apple-iigs/roms/`:
+The private hardware-test package stages the owner's supplied system ROMs
+and the source-built SmartPort ROM in `multitini/cores/apple-iigs/roms/`:
 
 | File | Bytes | Required |
 | --- | ---: | --- |
@@ -86,7 +98,7 @@ ROM collection in `multitini/cores/apple-iigs/roms/`:
 | `char.rom` | 4096 | Both revisions |
 | `adb3.rom` | 4096 | ROM3 selected |
 | `adb1.rom` | 4096 | ROM1 selected |
-| `hdd.rom` | 256 | Included GPL source-built bootstrap |
+| `hdd.rom` | 2304 | Included source-built SmartPort slot and expansion ROM |
 
 Put disks and PRAM in `multitini/cores/apple-iigs/media/`. ROMs and media are
 separate sibling directories. If you used the first test bundle, move its ROM
@@ -115,7 +127,7 @@ cold reset. Command/OpenApple uses Alt; Option/SolidApple uses the Windows key.
 ## Disk and board checks
 
 1. Start at stock speed with a user-owned HDD `.hdv`, `.po` or ProDOS `.2mg`.
-   Mount HDD0/HDD1 independently. Confirm boot and a write/read-back cycle;
+   Mount the eight hard disks independently. Confirm boot and a write/read-back cycle;
    verify the same file after eject and re-mount. Preserve 2MG headers. Enter
    several nested media folders, return to their parent with Back, and mount
    two images with the same basename in different folders. Confirm remembered

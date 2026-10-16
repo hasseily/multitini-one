@@ -6,7 +6,7 @@
 // ordered effects pipeline still consumes the output at its normal cadence.
 module multitini_apple_iigs_video_bridge (
     input wire source_clk,source_resetn,source_ready,source_ready_control,
-    input wire source_valid,
+    input wire source_valid,source_pal,
     input wire [7:0] source_r,source_g,source_b,
     input wire [9:0] source_x,
     input wire [8:0] source_y,
@@ -42,7 +42,7 @@ module multitini_apple_iigs_video_bridge (
     wire [31:0] malformed_frames;
     multitini_apple_iigs_video_normalizer normalizer(
         .clk(source_clk),.resetn(source_resetn),.ready(source_ready),
-        .pixel_ce(source_valid),.pixel_x(source_x),.pixel_y(source_y),
+        .pixel_ce(source_valid),.pal(source_pal),.pixel_x(source_x),.pixel_y(source_y),
         .red(source_r),.green(source_g),.blue(source_b),
         .scan_x(normalized_x),.scan_y(normalized_y),.rgb565(normalized_rgb),
         .frame_start(normalized_start),.malformed_frames(malformed_frames));
@@ -79,10 +79,10 @@ module multitini_apple_iigs_video_bridge (
     // Wait until the registered enable has fallen before acknowledging drain;
     // otherwise a capture can re-arm while the display clock is being stopped.
     assign display_quiescent=!enabled && capture_quiet && reader_quiet;
-    multitini_video_capture #(.WIDTH(640),.HEIGHT(400),.VIEW_X(0),.VIEW_Y(0),
+    multitini_video_capture #(.WIDTH(724),.HEIGHT(496),.VIEW_X(0),.VIEW_Y(0),
         .SCALE_NUM(1),.SCALE_DEN(1),.BASE(32'h23000000),.SHARED_PIXEL_RESET(1'b1),
         .ABORT_INCOMPLETE_ON_VBLANK(1'b1)) capture_i(
-        .display_view_x(12'd0),.display_view_y(12'd0),.display_view_width(12'd640),.display_view_height(12'd400),
+        .display_view_x(12'd0),.display_view_y(12'd0),.display_view_width(12'd724),.display_view_height(12'd496),
         .display_scale_num(4'd1),.display_scale_den(4'd1),
         .clk(control_clk),.resetn(control_resetn),.enable(enabled),.consumer(consumer),
         .producer(producer),.drops(capture_drops),.errors(capture_errors),.busy(),.quiescent(capture_quiet),.pixel_running(),
@@ -92,8 +92,8 @@ module multitini_apple_iigs_video_bridge (
         .awaddr(awaddr),.awlen(awlen),.awsize(awsize),.awburst(awburst),.awvalid(awvalid),.awready(awready),
         .wdata(wdata),.wstrb(wstrb),.wlast(wlast),.wvalid(wvalid),.wready(wready),
         .bresp(bresp),.bvalid(bvalid),.bready(bready));
-    multitini_video_frame_reader #(.DYNAMIC_DISPLAY(1'b1),.WIDTH(640),.HEIGHT(400),
-        .VIEW_X(320),.VIEW_Y(140),.SCALE_NUM(2),.SCALE_DEN(1),.BASE(32'h23000000),
+    multitini_video_frame_reader #(.DYNAMIC_DISPLAY(1'b1),.WIDTH(724),.HEIGHT(496),
+        .VIEW_X(236),.VIEW_Y(44),.SCALE_NUM(2),.SCALE_DEN(1),.BASE(32'h23000000),
         .SHARED_PIXEL_RESET(1'b1),.SHARED_PIXEL_LIVENESS(1'b1)) reader_i(
         .display_view_x(display_view_x),.display_view_y(display_view_y),
         .display_view_width(display_view_width),.display_view_height(display_view_height),

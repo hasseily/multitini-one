@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Verify every SHR image pixel through the real VGC and source normalizer."""
+"""Verify SHR image/borders with real native timing, VGC and source normalizer."""
 import argparse
 import hashlib
 import json
@@ -22,7 +22,8 @@ def main():
     env['VERILATOR_ROOT']=(runtime.parent/'share/verilator').as_posix()
     top='tb_apple_iigs_shr_edges';obj=build/'obj'
     paths=['hdl/sim/'+top+'.sv','hdl/board/multitini_apple_iigs_video_normalizer.sv',
-           'hdl/core/apple_iigs/ports/vgc.sv','hdl/core/apple_iigs/ports/runtime_rom.sv']
+           'hdl/core/apple_iigs/ports/vgc.sv','hdl/core/apple_iigs/ports/runtime_rom.sv',
+           'third_party/apple-iigs/upstream/rtl/video_timing.v']
     if args.vgc_source:paths[2]=str(args.vgc_source.resolve())
     captured=paths+['third_party/apple-iigs/upstream/rtl/dhr_lut.vh','scripts/port_apple_iigs_core.py',
                     'scripts/test_apple_iigs_shr_edges.py']
@@ -50,8 +51,14 @@ def main():
     if 'PASS IIgs SHR edges:' not in output:raise RuntimeError('No SHR PASS marker')
     if hashes()!=before:raise RuntimeError('SHR inputs changed during verification')
     (build/'validation.json').write_text(json.dumps({'passed':True,'source_sha256':before,
-        'pixels':768000,'checks':['320/640/fill','all640columns','distinct palette ramp','blue border excluded',
-        'one-pixel synchronous video RAM','production normalizer RGB565 and coordinates']},indent=2)+'\n')
+        'frames':6,'pixels':2285568,'real_pixels':2154624,'active_pixels':1536000,
+        'stride_padding_pixels':130944,'checks':['NTSC/PAL320/640/fill','all640imagecolumns',
+        'distinct palette ramp','nativeC034/BORDERCOLOR palette all4bands with perrawline changes',
+        '42pixels eachside,24source lines top/bottom','NTSC494wrap/PAL232 consecutive topborder',
+        'RGB border retained during nativeblanking','44zero stridepadding samples eachrow',
+        'native912pixels and262/312lines unchanged','one-pixel synchronous video RAM',
+        'production normalizer RGB565 and coordinates'],
+        'limits':['BORDERCOLOR is driven at the nativeVGC port; CPU C034 decoding is a separate integration path. No hardware acceptance implied.']},indent=2)+'\n')
     print(output.strip())
 
 

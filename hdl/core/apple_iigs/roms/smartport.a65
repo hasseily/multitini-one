@@ -1,0 +1,588 @@
+; SPDX-License-Identifier: GPL-3.0-only
+; Multitini One eight-unit SmartPort firmware, 2026.
+; New 65816 implementation of the Apple SmartPort firmware interface.
+; Compatibility references: Apple IIgs Firmware Reference chapter 7 and
+; Apple IIgs Technical Note 25; Appletini a2retronet-style ROM at
+; 7b972bfda432657444d55a3eaaccf4b1d8e06699 (Oliver Schmidt, MIT).
+; Legacy register/boot ABI: AppleWin hdd.a65, Robert Hoem and AppleWin
+; contributors, GPL-2.0-or-later, pinned IIgs source 9adbba8622f378253765b7d438b6cbcc4d03fc57.
+; This source does not include the Apple SSC ROM wrappers.
+;
+; Entry requirements for both standard and extended SmartPort: E=1,
+; PBR=DBR=0 and D=0. Extended calls still use JSR, not JSL. Four-byte
+; pointers must have a zero fourth byte on this 24-bit machine.
+; I and B are preserved, decimal is cleared, A/C report error, X/Y give
+; the transferred byte count. Scratch $60-$7C is saved and restored.
+; Maximum stack usage is 35 bytes, including caller and helper JSR frames.
+; Disk payloads use the controller DMA, never a 512-byte CPU copy loop.
+!cpu 65816
+!to "hdd.rom", plain
+!sl "smartport.labels"
+
+execute=$c0f0
+completion=$c0f1
+command=$c0f2
+drive=$c0f3
+buffer_lo=$c0f4
+buffer_hi=$c0f5
+block_lo=$c0f6
+block_hi=$c0f7
+buffer_bank=$c0f8
+block_upper=$c0f9
+block_top=$c0fa
+geometry=$c0fb
+drive_flags=$c0ff
+
+header=$60
+params=$63
+buffer=$66
+cmd=$69
+unit=$6a
+extended=$6b
+result=$6c
+count_lo=$6d
+count_hi=$6e
+scratch=$6f
+blocks=$70
+flags=$74
+code_offset=$75
+return_index=$76
+range_low=$7b
+range_high=$7c
+
+!macro save_context {
+    php
+    sei
+    cld
+    xba
+    pha                         ; save caller's hidden B accumulator byte
+    xba
+    ldx #28
+.save lda $60,x
+    pha
+    dex
+    bpl .save
+    stz result
+    stz count_lo
+    stz count_hi
+}
+
+*=$c700
+    cmp #$20
+    cmp #$00
+    cmp #$03
+    cmp #$00
+    clv
+    !byte $50                   ; BVC displacement is the JMP opcode at C70A
+prodos_entry:
+    jmp prodos
+smartport_entry:
+    jmp smartport
+    !fill $c757-*, $ea
+    jmp boot
+    !fill $c7fb-*, $ea
+    !byte $80                   ; generic extended-call interface, not a SCSI card
+    !word 0                     ; obtain legacy capacity with STATUS
+    !byte $9f                   ; removable, two legacy units, format/read/write/status
+    !byte $0a
+
+*=$c800
+smartport:
+    +save_context
+    ; Caller return address is above 29 scratch bytes, B and P. Index
+    ; arithmetic is deliberately eight-bit, including a stack-page wrap.
+    tsx
+    txa
+    clc
+    adc #32
+    tax
+    stx return_index
+    lda $0100,x
+    sta header
+    inx
+    lda $0100,x
+    sta header+1
+    stz header+2
+    jsr next_inline
+    sta cmd
+    and #$40
+    sta extended
+    ; next_inline advanced header from the JSR return to the command.
+    ; Recover the original return, then add the complete inline length.
+    lda header
+    sec
+    sbc #1
+    sta header
+    lda header+1
+    sbc #0
+    sta header+1
+    lda #3
+    ldy extended
+    beq .return_length
+    lda #5
+.return_length clc
+    adc header
+    ldx return_index
+    sta $0100,x
+    lda header+1
+    adc #0
+    inx
+    sta $0100,x
+    ; header again denotes the command byte for parameter extraction.
+    inc header
+    bne .pointer
+    inc header+1
+.pointer jsr next_inline
+    sta params
+    jsr next_inline
+    sta params+1
+    stz params+2
+    lda extended
+    beq .parameter_list
+    jsr next_inline
+    sta params+2
+    jsr next_inline
+    beq .parameter_list
+    jmp invalid_pointer
+.parameter_list
+    lda cmd
+    and #$bf                    ; only bit 6 selects the extended form
+    cmp #6
+    bcc .known_command
+    jmp bad_command
+.known_command sta cmd
+    tax
+    lda extended
+    beq .standard_list
+    lda extended_parameter_ends,x
+    bra .list_span
+.standard_list lda standard_parameter_ends,x
+.list_span ldy #0
+    ldx #params
+    jsr validate_range
+    beq .valid_list
+    jmp return_error
+.valid_list ldx cmd
+    ldy #0
+    lda [params],y
+    cmp parameter_counts,x
+    beq .count_ok
+    jmp bad_count
+.count_ok iny
+    lda [params],y
+    sta unit
+    cmp #9
+    bcc .unit_ok
+    jmp no_drive
+.unit_ok
+    lda cmd
+    cmp #5
+    bne .not_init
+    lda unit
+    bne .init_unit_error
+    jmp success
+.init_unit_error jmp bad_unit
+.not_init
+    cmp #6
+    bcc .block_command
+    jmp bad_command             ; OPEN/CLOSE/byte READ/WRITE are not disk calls
+.block_command
+    lda #$80
+    ora extended
+    ora cmd
+    sta command
+    lda unit
+    sta drive
+    lda cmd
+    cmp #3
+    beq format
+    ; STATUS, READ, WRITE and CONTROL have a buffer pointer.
+    ldy #2
+    lda [params],y
+    sta buffer
+    iny
+    lda [params],y
+    sta buffer+1
+    stz buffer+2
+    lda extended
+    beq .short_buffer
+    iny
+    lda [params],y
+    sta buffer+2
+    iny
+    lda [params],y
+    beq .short_buffer
+    jmp invalid_pointer
+.short_buffer iny
+    sty code_offset
+    lda cmd
+    bne .not_status
+    jmp status
+.not_status
+    cmp #4
+    bne .not_control
+    jmp control
+.not_control
+    lda unit
+    bne .rw_unit
+    jmp bad_unit
+.rw_unit
+    jsr validate_dma_buffer
+    beq .valid_buffer
+    jmp return_error
+.valid_buffer
+    ; Three-byte standard or four-byte extended disk block number.
+    ldy code_offset
+    lda [params],y
+    sta block_lo
+    iny
+    lda [params],y
+    sta block_hi
+    iny
+    lda [params],y
+    sta block_upper
+    stz block_top
+    lda extended
+    beq .dma
+    iny
+    lda [params],y
+    sta block_top
+.dma lda buffer
+    sta buffer_lo
+    lda buffer+1
+    sta buffer_hi
+    lda buffer+2
+    sta buffer_bank
+    jsr run_dma
+    bne return_error
+    lda cmd
+    cmp #1
+    bne success
+    lda #2
+    sta count_hi
+    bra success
+
+format:
+    lda unit
+    beq bad_unit
+    jsr mounted
+    bne return_error
+    lda flags
+    and #2
+    bne protected
+    ; Images already contain addressable sectors. A physical FORMAT is
+    ; intentionally a successful no-op; it does not erase a filesystem.
+success:
+    lda #0
+return_error:
+    sta result
+    jmp restore_context
+bad_command: lda #$01
+    bra return_error
+bad_count: lda #$04
+    bra return_error
+bad_unit: lda #$11
+    bra return_error
+bad_control: lda #$21
+    bra return_error
+invalid_pointer: lda #$22
+    bra return_error
+protected: lda #$2b
+    bra return_error
+no_drive: lda #$28
+    bra return_error
+
+control:
+    ldy code_offset
+    lda [params],y
+    beq .reset
+    cmp #3
+    bne bad_control
+    lda #$1f                    ; no device interrupts to acknowledge
+    bra return_error
+.reset
+    ldx #1                      ; two-byte mandatory empty control list
+    jsr validate_short_buffer
+    beq .read_reset_list
+    jmp return_error
+.read_reset_list
+    ldy #0
+    lda [buffer],y
+    iny
+    ora [buffer],y
+    bne invalid_pointer         ; reset requires an empty control list
+    lda unit
+    beq success
+    jsr mounted
+    bra return_error            ; disk state is already reset/idempotent
+
+status:
+    ldy code_offset
+    lda [params],y
+    beq .status_code
+    cmp #3
+    bne bad_control
+.status_code sta scratch
+    lda unit
+    bne .device_length
+    lda scratch
+    beq .host_length
+    jmp bad_control
+.host_length ldx #7             ; host status is eight bytes
+    bra .check_buffer
+.device_length ldx #3           ; device status is four/five bytes
+    lda extended
+    beq .dib_length
+    inx
+.dib_length lda scratch
+    beq .check_buffer
+    txa
+    clc
+    adc #21                     ; ID length/name/type/subtype/version
+    tax
+.check_buffer jsr validate_short_buffer
+    beq .valid_status_buffer
+    jmp return_error
+.valid_status_buffer
+    lda unit
+    bne .device
+    lda scratch
+    bne bad_control             ; controller exposes the standard host status
+    ldy #0
+    lda #8                      ; eight stable virtual units, including empty drives
+    sta [buffer],y
+    lda #0
+.controller iny
+    sta [buffer],y
+    cpy #7
+    bne .controller
+    lda #8
+    sta count_lo
+    jmp success
+.device lda drive_flags
+    sta flags
+    ldx #3
+.capacity lda geometry,x
+    sta blocks,x
+    dex
+    bpl .capacity
+    lda extended
+    bne .general
+    ; A standard caller cannot express a count above 24 bits. Saturate
+    ; rather than wrapping a large disk to zero blocks.
+    lda blocks+3
+    beq .general
+    lda #$ff
+    sta blocks
+    sta blocks+1
+    sta blocks+2
+.general lda flags
+    and #2
+    beq .writable
+    lda #$a4
+    bra .emit_general
+.writable lda #$e8
+.emit_general sta scratch+8
+    lda flags
+    and #1
+    beq .offline
+    lda scratch+8
+    ora #$10
+    bra .put_general
+.offline lda scratch+8
+.put_general ldy #0
+    sta [buffer],y
+    ldx #0
+.emit_capacity iny
+    lda blocks,x
+    sta [buffer],y
+    inx
+    cpx #3
+    bne .emit_capacity
+    lda extended
+    beq .after_capacity
+    iny
+    lda blocks+3
+    sta [buffer],y
+.after_capacity
+    lda scratch
+    beq .finish_status
+    iny
+    lda #13
+    sta [buffer],y
+    ldx #0
+.name iny
+    lda disk_name,x
+    sta [buffer],y
+    inx
+    cpx #16
+    bne .name
+    iny
+    lda #2                      ; hard disk
+    sta [buffer],y
+    iny
+    lda #$80                    ; extended calls, removable media, no disk-switched errors
+    sta [buffer],y
+    iny
+    lda #0                      ; firmware version 1.0
+    sta [buffer],y
+    iny
+    lda #1
+    sta [buffer],y
+.finish_status iny
+    sty count_lo
+    jmp success
+
+mounted:
+    lda drive_flags
+    sta flags
+    and #1
+    bne .yes
+    lda #$2f
+    rts
+.yes lda #0
+    rts
+
+run_dma:
+    lda execute
+.wait lda completion
+    bmi .wait
+    rts
+
+validate_dma_buffer:
+    ; A complete512-byte transfer must fit its address domain. Standard
+    ; SmartPort buffers stay in bank0; extended pointers carry between banks
+    ; but cannot wrap the24-bit machine into bank0. Legacy ProDOS retains
+    ; its original controller address-wrap behavior.
+    lda #$ff
+    ldy #1
+    ldx #buffer
+    bra validate_range
+validate_short_buffer:
+    txa                         ; X is the exact response/list length minus1
+    ldy #0
+    ldx #buffer
+validate_range:
+    sta range_low
+    sty range_high
+    clc
+    lda $00,x
+    adc range_low
+    inx
+    lda $00,x
+    adc range_high
+    inx
+    lda $00,x
+    adc #0
+    bcs .bad
+    ldx extended
+    bne .good
+    cmp #0
+    bne .bad
+.good lda #0
+    rts
+.bad lda #$22
+    rts
+
+next_inline:
+    inc header
+    bne .get
+    inc header+1
+.get lda (header)
+    rts
+
+prodos:
+    +save_context
+    stz buffer_bank
+    stz block_upper
+    stz block_top
+    lda $43
+    sta drive
+    lda $42
+    cmp #4
+    bcc .supported
+    jmp bad_command
+.supported sta command
+    sta cmd
+    lda $44
+    sta buffer_lo
+    lda $45
+    sta buffer_hi
+    lda $46
+    sta block_lo
+    lda $47
+    sta block_hi
+    lda cmd
+    cmp #3
+    bne .execute
+    jsr mounted
+    beq .format_present
+    jmp return_error
+.format_present lda flags
+    and #2
+    beq .format_ok
+    jmp protected
+.format_ok jmp success
+.execute
+    jsr run_dma
+    bne .finish
+    lda cmd
+    beq .status_capacity
+    lda #0
+    jmp return_error
+.status_capacity
+    lda geometry+2
+    ora geometry+3
+    bne .large
+    lda geometry
+    sta count_lo
+    lda geometry+1
+    sta count_hi
+    bra .finish_ok
+.large lda #$ff
+    sta count_lo
+    sta count_hi
+.finish_ok lda #0
+.finish jmp return_error
+
+restore_context:
+    ldx count_lo
+    ldy count_hi
+    lda result
+    xba                         ; retain result while restoring all scratch
+    !for address,$60,$7c {
+        pla
+        sta address
+    }
+    pla                         ; original B
+    xba                         ; A=result; B=original B
+    plp                         ; restore original interrupt-disable flag
+    cld
+    cmp #1                      ; carry clear only when result is zero
+    rts
+
+boot:
+    lda #1
+    sta $42
+    lda #$70
+    sta $43
+    stz $44
+    lda #8
+    sta $45
+    stz $46
+    stz $47
+    jsr prodos_entry
+    bcs .floppy
+    ldx #$70
+    jmp $0801
+.floppy jmp $c600
+
+parameter_counts:
+    !byte 3,3,3,1,3,1
+standard_parameter_ends:
+    !byte 4,6,6,1,4,1
+extended_parameter_ends:
+    !byte 6,9,9,1,6,1
+disk_name:
+    !text "Multitini HDD   "
+    !fill $d000-*, $00

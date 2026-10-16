@@ -1,4 +1,5 @@
 path,origin,commit,license,status,notes
+hdl/core/apple_iigs/roms/smartport.a65,Multitini One,,GPL-3.0-only,CPU-tested,Original eight-unit standard and extended SmartPort ROM with DMA controller interface; AppleWin and pinned Appletini MIT handler compatibility references in provenance/iigs_smartport.import.json; no Apple SSC wrappers included
 hdl/core/nes/multitini_nes_adapter.sv,MiSTer NES and Multitini One,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Original shared-shell adapter with licensed RGB palette constants from pinned rtl/video.sv; original upstream source retained and import-locked
 README.md,Multitini One,,GPL-3.0-only,reviewed,Original project documentation
 MULTITINI_ONE_PLAN.md,Multitini One,,GPL-3.0-only,reviewed,Original product plan

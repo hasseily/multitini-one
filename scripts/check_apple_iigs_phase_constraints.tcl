@@ -185,8 +185,12 @@ foreach cell $iigs_woz_registers {
     }
 }
 set iigs_phase0_registers [get_cells -hierarchical -quiet -regexp \
-    {.*g_apple_iigs_machine[/.]machine_adapter/(native_(reset|cold)_q|woz_(sd_(addr|data|ack|write)|mount|readonly|size)_q)_reg(\[[0-9]+\])*(_rep[^/]*)?$}]
+    {.*g_apple_iigs_machine[/.]machine_adapter/(native_(reset|cold)_q|woz_(sd_(addr|data|ack|write)|mount|readonly|size)_q|hdd_(sd_(addr|data|ack|write|error)|mount|readonly|size)_q)_reg(\[[0-9]+\])*(_rep[^/]*)?$}]
 if {[llength $iigs_phase0_registers] < 27} {error "IIgs phase0 native publication register census changed"}
+require_one_object "IIgs HDD ACK phase0 publication" [get_cells -hierarchical -quiet -regexp \
+    {.*g_apple_iigs_machine[/.]machine_adapter/hdd_sd_ack_q_reg\[0\]$}]
+require_one_object "IIgs HDD result phase0 publication" [get_cells -hierarchical -quiet -regexp \
+    {.*g_apple_iigs_machine[/.]machine_adapter/hdd_sd_error_q_reg\[0\]$}]
 require_one_object "IIgs native reset publication" [get_cells -hierarchical -quiet -regexp \
     {.*g_apple_iigs_machine[/.]machine_adapter/native_reset_q_reg$}]
 require_one_object "IIgs native cold-reset publication" [get_cells -hierarchical -quiet -regexp \

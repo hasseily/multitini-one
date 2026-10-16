@@ -16,7 +16,7 @@ def main():
     parser.add_argument('--hdd-rom',type=Path,default=ROOT/'build/apple-iigs-assets/hdd.rom')
     args=parser.parse_args();build=args.build_dir.resolve();build.mkdir(parents=True,exist_ok=True)
     data=args.hdd_rom.read_bytes()
-    if len(data)!=256:raise ValueError('Source-built licensed HDD ROM must be256 bytes')
+    if len(data)!=2304:raise ValueError('Source-built licensed SmartPort ROM must be2304 bytes')
     fixture=build/'hdd.hex';fixture.write_text('\n'.join(f'{v:02x}' for v in data)+'\n')
     core=ROOT/'hdl/core/apple_iigs';top='tb_apple_iigs_paused_settings'
     sources=machine_sources()+[core/(n+'.sv') for n in ['multitini_apple_iigs_loader','multitini_apple_iigs_cache','multitini_apple_iigs_adapter']]

@@ -28,13 +28,14 @@ module multitini_apple_iigs_loader(
     reg [127:0] staging_config;
     wire stale=(aborted && load_epoch==abort_epoch) || (load_abort && load_epoch==load_abort_epoch);
     wire is_rom=load_kind==8'h40 || load_kind==8'h41;
-    wire aux=load_kind==8'h42 || load_kind==8'h44 || load_kind==8'h45 || load_kind==8'h46;
+    wire aux=load_kind==8'h42 || load_kind==8'h44 || load_kind==8'h45 || load_kind==8'h46 || load_kind==8'h49;
     wire protected_kind=is_rom || aux;
     wire first_ok=load_offset==0 && (!protected_kind || core_reset_request) &&
         ((load_kind==8'h40 && load_total==262144) || (load_kind==8'h41 && load_total==131072) ||
          (load_kind==8'h42 && load_total==4096) || (load_kind==8'h43 && load_total==16) ||
          ((load_kind==8'h44 || load_kind==8'h46) && load_total==4096) ||
          (load_kind==8'h45 && load_total==256) ||
+         (load_kind==8'h49 && load_total==2304) ||
          ((load_kind==8'h47 || load_kind==8'h48) && load_total==512));
     wire sequence_ok=load_first ? ((!active || load_epoch!=epoch) && first_ok) :
         (active && load_epoch==epoch && load_kind==kind && load_total==total && load_offset==expected);
@@ -96,12 +97,13 @@ module multitini_apple_iigs_loader(
                             8'h42:aux_addr<={4'h0,load_offset[11:0]};
                             8'h44:aux_addr<={4'h1,load_offset[11:0]};
                             8'h45:aux_addr<={8'h20,load_offset[7:0]};
+                            8'h49:aux_addr<={4'h2,load_offset[11:0]};
                             default:aux_addr<={4'h3,load_offset[11:0]};
                         endcase
                         if(load_last)begin
                             active<=0;
                             case(load_kind)
-                                8'h42:loaded[2]<=1;8'h44:loaded[3]<=1;8'h45:loaded[4]<=1;8'h46:loaded[5]<=1;
+                                8'h42:loaded[2]<=1;8'h44:loaded[3]<=1;8'h45,8'h49:loaded[4]<=1;8'h46:loaded[5]<=1;
                             endcase
                         end
                     end else if(load_kind==8'h43)begin

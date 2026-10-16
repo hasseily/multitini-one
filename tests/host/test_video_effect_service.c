@@ -511,6 +511,23 @@ static void test_frame_fault_precedes_control_update_status(void)
     }
 }
 
+static void test_frame_geometry_budget(void)
+{
+    const unsigned geometry[][3]={{724U,496U,1U},{724U,636U,1U},{640U,720U,1U},
+        {724U,637U,0U},{724U,720U,0U},{725U,1U,0U}};
+    for(unsigned i=0U;i<sizeof(geometry)/sizeof(geometry[0]);++i) {
+        mt_video_effects_settings_t settings;reset_service();
+        const unsigned width=geometry[i][0],height=geometry[i][1];
+        registers[MT_REG_VIDEO_FRAME_GEOMETRY/4U]=(height<<16)|width;
+        registers[MT_REG_VIDEO_FRAME_STRIDE/4U]=((width*2U+127U)&~127U);
+        mt_video_effects_defaults(&settings);settings.enabled=1U;
+        mt_video_effect_service_configure(true,&settings);poll_bounded();finish_apply();poll_bounded();
+        assert(mt_video_frame_service_failed()==(geometry[i][2]==0U));
+        assert((registers[MT_REG_VIDEO_FRAME_CONTROL/4U]!=0U)==(geometry[i][2]!=0U));
+        assert(error_clears==geometry[i][2]);
+    }
+}
+
 int main(void)
 {
     test_complete_upload();
@@ -526,6 +543,7 @@ int main(void)
     test_horizontal_frame_options();
     test_initial_drain_and_error_retry();
     test_frame_fault_precedes_control_update_status();
+    test_frame_geometry_budget();
     puts("Video controls preserve autonomous frame scheduling");
     return 0;
 }

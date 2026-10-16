@@ -455,7 +455,7 @@ int main(void) {
     job.timestamp_ms = 100000; run(&job, false, 64);
     job.epoch++; job.timestamp_ms = UINT32_MAX - 4U; run(&job, true, 1);
     job.timestamp_ms = 10; run(&job, false, 0);
-    for (unsigned which = 0; which < 11; ++which) {
+    for (unsigned which = 0; which < 13; ++which) {
         const unsigned old_calls = calls;
         bad = job; size = sizeof(result);
         switch (which) {
@@ -470,6 +470,8 @@ int main(void) {
         case 8: bad.options.persistence = 4; break;
         case 9: size = sizeof(result) - 1; break;
         case 10: bad.options.softness = 4; break;
+        case 11: bad.width = 724; bad.height = 637; bad.stride = 1536; break;
+        case 12: bad.width = 724; bad.height = 720; bad.stride = 1536; break;
         }
         assert(mt_video_worker_execute(&bad, sizeof(bad), &result, &size) != 0);
         assert(calls == old_calls);
@@ -484,7 +486,8 @@ int main(void) {
        preserve the following output slot. */
     {
         static const uint32_t geometry[][2] = {
-            {382, 270}, {404, 250}, {160, 144}, {540, 720}, {640, 720}
+            {382, 270}, {404, 250}, {160, 144}, {540, 720}, {640, 720},
+            {640, 400}, {724, 496}, {724, 636}
         };
         for (unsigned i = 0; i < sizeof(geometry) / sizeof(geometry[0]); ++i) {
             job.width = geometry[i][0]; job.height = geometry[i][1];

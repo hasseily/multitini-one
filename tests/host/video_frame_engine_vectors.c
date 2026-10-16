@@ -24,7 +24,8 @@ int main(int argc,char **argv)
     unsigned exhaustive=(unsigned)strtoul(argv[4],NULL,10);
     uint32_t scale_num=argc==7 ? (uint32_t)strtoul(argv[5],NULL,10) : 3U;
     uint32_t scale_den=argc==7 ? (uint32_t)strtoul(argv[6],NULL,10) : 2U;
-    if(!width || width>640 || !height || height>720 || exhaustive>1)return 2;
+    if(!width || width>MT_VIDEO_FRAME_MAX_WIDTH || !height || height>MT_VIDEO_FRAME_MAX_HEIGHT ||
+       width*height>MT_VIDEO_FRAME_MAX_PIXELS || exhaustive>1)return 2;
     if(scale_num==0 || scale_num>64 || scale_den==0 || scale_den>64)return 2;
     uint32_t count=width*height;
     uint16_t *input=calloc(count,sizeof(*input)),*output=calloc(count,sizeof(*output));

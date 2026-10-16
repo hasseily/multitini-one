@@ -23,7 +23,7 @@ def main() -> int:
     parser.add_argument("--cache-bypass",action="store_true",help="disable caches through actual ZipGS software registers")
     args=parser.parse_args();build=args.build_dir.resolve();build.mkdir(parents=True,exist_ok=True)
     data=args.hdd_rom.read_bytes()
-    if len(data)!=256:raise ValueError("Licensed assembled HDD ROM must be256 bytes")
+    if len(data)!=2304:raise ValueError("Licensed assembled SmartPort ROM must be2304 bytes")
     fixture=build/"hdd.hex";fixture.write_text("\n".join(f"{b:02x}" for b in data)+"\n")
     runtime=Path(os.environ.get("MULTITINI_UCRT_BIN","C:/msys64/ucrt64/bin"))
     env=os.environ.copy()

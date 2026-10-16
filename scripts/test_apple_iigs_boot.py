@@ -83,7 +83,7 @@ def main() -> int:
     fixtures=build/"private"
     fixtures.mkdir(exist_ok=True)
     roms={}
-    for name,size in (("rom3",262144),("char",4096),("adb3",4096),("hdd",256)):
+    for name,size in (("rom3",262144),("char",4096),("adb3",4096),("hdd",2304)):
         path=args.rom_source/(name+".rom")
         data=path.read_bytes()
         if len(data)!=size or len(set(data))<2:

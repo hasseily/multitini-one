@@ -55,7 +55,7 @@ module tb_apple_iigs_adapter;
             end
         end
     end
-    reg [7:0] rom[0:131071],hdd_rom[0:255];integer program_cursor;
+    reg [7:0] rom[0:131071],hdd_rom[0:2303];integer program_cursor;
     integer trace_count=0;
     reg [23:0] trace_addr=24'hffffff;
     always @(negedge core_clk)if($test$plusargs("TRACE") && !dut.machine_reset && trace_addr!=dut.machine_i.cpu_addr && trace_count<64)begin
@@ -108,7 +108,7 @@ module tb_apple_iigs_adapter;
         begin
             load_epoch=~load_epoch;
             for(integer i=0;i<size;i=i+1)begin
-                value=kind==8'h41 ? rom[i]:kind==8'h45 ? hdd_rom[i]:kind==8'h48 ? ((i*7+19)&255):
+                value=kind==8'h41 ? rom[i]:kind==8'h49 ? hdd_rom[i]:kind==8'h48 ? ((i*7+19)&255):
                     kind==8'h43 && i==1 ? speed:0;
                 @(negedge core_clk);load_kind=kind;load_total=size;load_offset=i;load_data=value;
                 load_first=i==0;load_last=i==size-1;load_valid=1;
@@ -124,7 +124,7 @@ module tb_apple_iigs_adapter;
             @(negedge core_clk);reset=1;core_reset_request=1;
             repeat(20)@(negedge core_clk);reset=0;
             build_program(disk);packet(8'h43,16,speed);packet(8'h41,131072,0);
-            packet(8'h42,4096,0);packet(8'h46,4096,0);packet(8'h45,256,0);
+            packet(8'h42,4096,0);packet(8'h46,4096,0);packet(8'h49,2304,0);
             if(!rom_loaded)$fatal(1,"synthetic ROMs did not become ready");
             if(memory[24'hf9fff8>>3][47:32]!==16'he000 || memory[24'hf9e000>>3][7:0]!==8'h78)
                 $fatal(1,"runtime reset vector/program memory incorrect vector=%x program=%x",memory[24'hf9fff8>>3],memory[24'hf9e000>>3]);
@@ -278,6 +278,7 @@ module tb_apple_iigs_adapter;
         end
     endtask
 `include "tb_apple_iigs_native_woz_cases.sv"
+`include "tb_apple_iigs_smartport_cases.sv"
     initial begin
         if(!$value$plusargs("HDD_ROM=%s",rom_path))$fatal(1,"licensed HDD ROM fixture required");
         $readmemh(rom_path,hdd_rom);
@@ -292,13 +293,17 @@ module tb_apple_iigs_adapter;
         disk_bypass=bypass_mode!=0;
         start_machine(1,6);wait_media(0);packet(8'h48,512,0);complete(0);
         wait_media(1);receive_sector();
-        complete(4);repeat(100)@(negedge core_clk);
-        if(!dut.sd_ack[0] || !media_state_dirty || !media_request_valid)$fatal(1,"failed HDD write lost dirty state/ACK");
-        wait_media(1);receive_sector();complete(0);wait_stopped();
+        complete(32'h27);wait_stopped();
+        if(dut.sd_ack[0] || media_request_valid || dut.machine_i.hdd.reg_status!=8'h27)
+            $fatal(1,"failed HDD write did not release ACK/CPU with explicit I/O error");
         for(integer i=0;i<512;i=i+1)if(memory[(16'h4000+i)>>3][((16'h4000+i)&7)*8+:8]!==((i*7+19)&255))
             $fatal(1,"HDD read DMA memory mismatch at byte %0d",i);
-        $display("PASS: complete HDD read/write DMA, every sector byte, failed-write retry and native RAM coherence");
+        $display("PASS: complete HDD read/write DMA, every sector byte, failed-write completion and native RAM coherence");
         end
+        smartport_machine_checks(0,0);smartport_machine_checks(6,0);smartport_machine_checks(6,1);
+        smartport_reset_checks();
+        smartport_rom_call_checks(0);smartport_rom_call_checks(6);
+        smartport_metadata_checks();
         for(integer i=0;i<2560;i=i+1)woz_image[i]=0;
         woz_u32(0,32'h325a4f57);woz_u32(4,32'h0a0d0aff);
         woz_u32(12,32'h4f464e49);woz_u32(16,60);woz_image[20]=2;woz_image[21]=2;

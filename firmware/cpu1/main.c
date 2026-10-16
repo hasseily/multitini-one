@@ -51,8 +51,7 @@ static bool frame_job_valid(const mt_video_frame_job_t *job)
 {
     return job->magic == MT_VIDEO_FRAME_JOB_MAGIC && job->abi == MT_VIDEO_FRAME_JOB_ABI &&
         job->source_slot < MT_VIDEO_FRAME_SLOT_COUNT && job->output_slot < MT_VIDEO_FRAME_SLOT_COUNT &&
-        job->width != 0U && job->width <= MT_VIDEO_FRAME_MAX_WIDTH &&
-        job->height != 0U && job->height <= MT_VIDEO_FRAME_MAX_HEIGHT &&
+        mt_video_frame_geometry_valid(job->width, job->height) &&
         job->stride == ((job->width + 63U) / 64U) * 128U &&
         job->height * job->stride <= MT_VIDEO_FRAME_SLOT_BYTES &&
         job->options.enabled <= 1U && job->options.persistence <= 3U &&

@@ -33,7 +33,7 @@ int main(int argc,char **argv)
     unsigned exhaustive=(unsigned)strtoul(argv[4],NULL,10);
     uint32_t scale_num=argc==7 ? (uint32_t)strtoul(argv[5],NULL,10) : 3U;
     uint32_t scale_den=argc==7 ? (uint32_t)strtoul(argv[6],NULL,10) : 2U;
-    if(width==0 || width>640 || height==0 || height>720 || exhaustive>1)return 2;
+    if(!mt_video_frame_geometry_valid(width,height) || exhaustive>1)return 2;
     if(scale_num==0 || scale_num>64 || scale_den==0 || scale_den>64)return 2;
     uint32_t count=width*height;
     uint16_t *input=calloc(count,sizeof(*input)),*output=calloc(count,sizeof(*output));

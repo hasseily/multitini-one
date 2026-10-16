@@ -492,6 +492,24 @@ add_executable(test_sd_storage tests/host/test_sd_storage.c)
 target_link_libraries(test_sd_storage PRIVATE
     xilinx_supervisor_settings_host xilinx_sd_storage_host)
 add_test(NAME sd_storage COMMAND test_sd_storage)
+add_executable(test_sd_storage_arm_metadata tests/host/test_sd_storage.c
+    firmware/platform/xilinx/sd_storage.c)
+target_include_directories(test_sd_storage_arm_metadata PRIVATE
+    tests/xilinx_stubs firmware/platform/xilinx)
+target_link_libraries(test_sd_storage_arm_metadata PRIVATE xilinx_supervisor_settings_host)
+if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC" OR CMAKE_C_COMPILER_ID STREQUAL "MSVC")
+    target_compile_options(test_sd_storage_arm_metadata PRIVATE
+        /FI${CMAKE_SOURCE_DIR}/tests/fixtures/sd_arm_size_max.h)
+else()
+    target_compile_options(test_sd_storage_arm_metadata PRIVATE
+        -include ${CMAKE_SOURCE_DIR}/tests/fixtures/sd_arm_size_max.h)
+endif()
+if(MULTITINI_SANITIZE AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_sd_storage_arm_metadata PRIVATE
+        -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all)
+    target_link_options(test_sd_storage_arm_metadata PRIVATE -fsanitize=address,undefined)
+endif()
+add_test(NAME sd_storage_arm_metadata COMMAND test_sd_storage_arm_metadata)
 
 add_executable(test_persistent_save tests/host/test_persistent_save.c)
 target_link_libraries(test_persistent_save PRIVATE

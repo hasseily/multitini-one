@@ -25,9 +25,10 @@ static void test_nested_browser(void)
     assert(mt_media_browser_up(&browser) && !mt_media_browser_can_up(&browser));
     assert(!mt_media_browser_up(&browser));
     for(unsigned drive=0U;drive<MT_IIGS_DRIVE_COUNT;++drive) {
-        assert(mt_core_frontend_accepts_drive_content(MT_IIGS_CORE_ID,MT_MENU_BROWSER_DRIVE8,drive,MT_CONTENT_IIGS_HDD)==(drive<=2U));
+        assert(mt_core_frontend_accepts_drive_content(MT_IIGS_CORE_ID,MT_MENU_BROWSER_DRIVE8,drive,MT_CONTENT_IIGS_HDD)==
+            (mt_iigs_drive_hdd_unit(drive)<MT_IIGS_HDD_COUNT || drive==MT_IIGS_FLOPPY35_DRIVE));
         assert(mt_core_frontend_accepts_drive_content(MT_IIGS_CORE_ID,MT_MENU_BROWSER_DRIVE8,drive,MT_CONTENT_IIGS_FLOPPY)==(drive==3U));
-        assert(mt_core_frontend_accepts_drive_content(MT_IIGS_CORE_ID,MT_MENU_BROWSER_DRIVE8,drive,MT_CONTENT_IIGS_WOZ)==(drive>=2U));
+        assert(mt_core_frontend_accepts_drive_content(MT_IIGS_CORE_ID,MT_MENU_BROWSER_DRIVE8,drive,MT_CONTENT_IIGS_WOZ)==(drive==2U || drive==3U));
         assert(!mt_core_frontend_accepts_drive_content(MT_IIGS_CORE_ID,MT_MENU_BROWSER_DRIVE8,drive,MT_CONTENT_PRG));
     }
     assert(!mt_core_frontend_accepts_drive_content(MT_IIGS_CORE_ID,MT_MENU_BROWSER_DRIVE8,MT_IIGS_DRIVE_COUNT,MT_CONTENT_IIGS_HDD));
@@ -43,7 +44,12 @@ int main(void)
     assert(mt_iigs_media_inspect(0U,"disk.hdv",h,sizeof(h),1024U,&media)==MT_CONTENT_VALID);
     assert(media.offset==0U && media.size==1024U && media.writable);
     assert(mt_iigs_media_inspect(0U,"disk.po",h,sizeof(h),33554432U,&media)==MT_CONTENT_VALID);
-    assert(mt_iigs_media_inspect(0U,"disk.po",h,sizeof(h),33554944U,&media)==MT_CONTENT_WRONG_SIZE);
+    assert(mt_iigs_media_inspect(0U,"disk.po",h,sizeof(h),33554944U,&media)==MT_CONTENT_VALID);
+    assert(mt_iigs_media_inspect(9U,"large.hdv",h,sizeof(h),UINT64_C(0x100000000),&media)==MT_CONTENT_VALID);
+    assert(media.kind==MT_IIGS_MEDIA_BLOCK32 && media.size==UINT64_C(0x100000000));
+    assert(mt_iigs_media_inspect(9U,"limit.hdv",h,sizeof(h),MT_IIGS_MAX_HDD_BYTES,&media)==MT_CONTENT_VALID);
+    assert(mt_iigs_media_inspect(9U,"overflow.hdv",h,sizeof(h),MT_IIGS_MAX_HDD_BYTES+512U,&media)==MT_CONTENT_WRONG_SIZE);
+    assert(mt_iigs_media_inspect(9U,"overflow.hdv",h,sizeof(h),UINT64_MAX,&media)==MT_CONTENT_WRONG_SIZE);
     assert(mt_iigs_media_inspect(0U,"disk.hdv",h,sizeof(h),513U,&media)==MT_CONTENT_WRONG_SIZE);
     memcpy(h,"2IMGTEST",8U); h[8]=64U; h[10]=1U;
     store32(h+12U,1U); store32(h+20U,2U); store32(h+24U,128U); store32(h+28U,1024U);
@@ -55,6 +61,21 @@ int main(void)
     assert(mt_iigs_media_inspect(0U,"disk.2mg",h,sizeof(h),1152U,&media)==MT_CONTENT_BAD_STRUCTURE);
     store32(h+24U,128U); store32(h+12U,0U);
     assert(mt_iigs_media_inspect(0U,"disk.2mg",h,sizeof(h),1152U,&media)==MT_CONTENT_UNSUPPORTED_VERSION);
+    store32(h+12U,1U);store32(h+24U,64U);store32(h+20U,UINT32_MAX);store32(h+28U,0U);
+    assert(mt_iigs_media_inspect(9U,"large.2mg",h,sizeof(h),MT_IIGS_MAX_HDD_BYTES+64U,&media)==MT_CONTENT_VALID);
+    assert(media.offset==64U && media.size==MT_IIGS_MAX_HDD_BYTES && !media.writable);
+    assert(mt_iigs_media_inspect(9U,"short.2mg",h,sizeof(h),MT_IIGS_MAX_HDD_BYTES+63U,&media)==MT_CONTENT_BAD_STRUCTURE);
+    bool slots[MT_IIGS_MEDIA_SLOT_COUNT]={false};
+    for(unsigned unit=0U;unit<MT_IIGS_HDD_COUNT;++unit) {
+        const unsigned drive=mt_iigs_hdd_drive(unit),slot=mt_iigs_drive_wire_slot(drive);
+        assert(drive<MT_IIGS_DRIVE_COUNT && mt_iigs_drive_hdd_unit(drive)==unit);
+        assert(slot<MT_IIGS_MEDIA_SLOT_COUNT && slot!=MT_IIGS_PRAM_SLOT && !slots[slot]);
+        slots[slot]=true;assert(mt_iigs_wire_slot_drive(slot)==drive);
+    }
+    assert(mt_iigs_drive_hdd_unit(2U)==MT_IIGS_HDD_COUNT && mt_iigs_drive_hdd_unit(3U)==MT_IIGS_HDD_COUNT);
+    assert(mt_iigs_wire_slot_drive(MT_IIGS_PRAM_SLOT)==MT_IIGS_DRIVE_COUNT);
+    assert(mt_iigs_wire_slot_drive(MT_IIGS_MEDIA_SLOT_COUNT)==MT_IIGS_DRIVE_COUNT);
+    assert(mt_iigs_hdd_drive(MT_IIGS_HDD_COUNT)==MT_IIGS_DRIVE_COUNT);
     memset(h,0,sizeof(h)); memcpy(h,"WOZ2\xff\x0a\x0d\x0a",8U); memcpy(h+12U,"INFO",4U); store32(h+16U,60U); h[20]=2U; h[21]=2U;
     assert(mt_iigs_media_inspect(2U,"disk.woz",h,sizeof(h),16000U,&media)==MT_CONTENT_VALID);
     assert(media.kind==MT_IIGS_MEDIA_WOZ);
@@ -101,7 +122,10 @@ int main(void)
     mt_core_frontend_t frontend; mt_menu_view_t view={0};
     mt_core_frontend_state_t state={0}; state.core_id=MT_IIGS_CORE_ID; state.services_ready=true; state.iigs_config.speed=4U;
     mt_core_frontend_apply(&frontend,&state,&view);
-    assert(view.media_item_count==8U && view.core_option_count==10U);
+    assert(view.media_item_count==MT_IIGS_DRIVE_COUNT+4U && view.core_option_count==10U);
+    for(unsigned drive=0U;drive<MT_IIGS_DRIVE_COUNT;++drive)
+        assert(view.media_items[drive].argument==drive && view.media_items[drive].action==MT_MENU_ACTION_BROWSE_IIGS_DRIVE);
+    assert(strcmp(view.media_items[9].label,"Hard disk 8")==0);
     assert(strcmp(view.core_options[9].label,"Mouse sensitivity")==0 && strcmp(view.core_options[9].value,"100%")==0);
     assert(view.core_options[9].argument==9U && view.core_options[9].action==MT_MENU_ACTION_TOGGLE_CORE_OPTION);
     state.iigs_mouse_sensitivity=25U;mt_core_frontend_apply(&frontend,&state,&view);

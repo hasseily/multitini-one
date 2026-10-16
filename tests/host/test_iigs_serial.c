@@ -18,6 +18,7 @@ static bool golden_update_worker_held;
 static const char *test_command;
 static unsigned forbidden,retries,warnings,statuses;
 static unsigned unknown_commands;
+static unsigned status_drive_mask;
 static uint32_t active_core=MT_IIGS_CORE_ID;
 static bool hidden=true;
 static mt_iigs_config_t gs_config={1U,4U,0U,0U,0U,0U};
@@ -67,7 +68,8 @@ bool iigs_content_service_ready(void) { return true; }
 bool iigs_content_service_faulted(void) { return false; }
 const mt_iigs_config_t *iigs_content_service_config(void) { return &gs_config; }
 const char *iigs_content_service_error(void) { return ""; }
-const char *iigs_content_service_name(unsigned d) { assert(d<4U);return "disk"; }
+const char *iigs_content_service_name(unsigned d)
+{ assert(d<MT_IIGS_DRIVE_COUNT);status_drive_mask|=1U<<d;return "disk"; }
 static bool c64_drive_ready=true; /* Retained state must not be used by GS. */
 /* Match the selected BSP: division inside this macro is not parenthesized. */
 typedef uint64_t XTime;
@@ -117,8 +119,10 @@ int main(void)
         test_command=legacy[i];const unsigned before=warnings;
         handle_extended_command(false);assert(warnings==before+1U && forbidden==0U && retries==0U);
     }
-    test_command="disk";handle_extended_command(false);assert(forbidden==0U);
-    test_command="dir";handle_extended_command(false);assert(forbidden==0U);
+    test_command="disk";handle_extended_command(false);
+    assert(forbidden==0U && status_drive_mask==(1U<<MT_IIGS_DRIVE_COUNT)-1U);
+    status_drive_mask=0U;test_command="dir";handle_extended_command(false);
+    assert(forbidden==0U && status_drive_mask==(1U<<MT_IIGS_DRIVE_COUNT)-1U);
     test_command="diskretry";handle_extended_command(false);assert(retries==1U && statuses==1U && forbidden==0U);
     test_command="saveretry";handle_extended_command(false);assert(retries==2U && statuses==2U && forbidden==0U);
     hidden=false;test_command="diskretry";handle_extended_command(false);assert(retries==2U && forbidden==0U);

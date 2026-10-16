@@ -1,5 +1,10 @@
 # Apple IIgs integration
 
+M0.6.0 adds the eight-drive SmartPort card, extended IIgs calls and banked
+fast DMA. See [SmartPort support and validation](APPLE_IIGS_SMARTPORT.md).
+It requires the matching ARM firmware, IIgs FPGA image and source-built
+2304-byte `hdd.rom`. The other seven FPGA images are retained.
+
 The owner requested branch `core-gs`, the complete MiSTer IIgs port, all required
 builds for a board test, and an efficient selectable accelerated 65816.
 Upstream is `MiSTer-devel/Apple-IIgs_MiSTer` at
@@ -140,10 +145,21 @@ to that clock; native eject returns through a phase-1 register. Reset holds the
 controller long enough to observe native clock edges without discarding media
 on a CPU warm reset.
 
-HP3 holds the canonical 640x400 source ring at `0x23000000`. The adapter
-preserves the 640x200 active image, including the centered legacy 560-pixel
-display, and duplicates each source row. PAL's extra border is cropped; the
-active image is preserved. SHR prefetch starts a pixel earlier so its first
+HP3 holds the canonical 724x496 source ring at `0x23000000`. The adapter
+preserves the 640x200 SHR image with 42 pixels of native border on each side
+and 24 source lines above and below, then duplicates each row. The legacy
+560x192 display retains its existing position within that image. Border RGB
+comes from the VGC, including its line-latched guest border color. Capture
+uses the 24 lines immediately preceding SHR in each standard: NTSC wraps
+from 511 to 250, while PAL uses 232 through 255. Guest video timing is unchanged.
+The 724-pixel rows use a 1536-byte DDR stride; the 44 padding pixels are never
+displayed. Auto uses 2x at 1920x1080 and 1680x1050, and 1x at the other modes,
+so all four borders fit. Manual sizes retain centered clipping.
+Each scanout cache keeps three rows. IIgs rows contain 181 DDR words and use
+256-word internal cache slots, making bank selection simple address bits.
+The padding stays inside BRAM; it adds no DDR reads or pixel latency.
+Other core widths retain their existing cache layout.
+SHR prefetch starts a pixel earlier so its first
 visible column contains image data and its final column is retained. Fill
 history uses the same first byte as the RGB bypass. The common nominal 60 Hz DVI path consumes these
 complete frames. Its output clock remains independent of the machine.
@@ -157,8 +173,8 @@ the selected platform's exact PS initialization hash.
 ## Content and persistence
 
 ROM1/ROM3, character and ADB ROMs are supplied by the user and uploaded while
-the machine is reset. The slot-7 HDD bootstrap is assembled from its licensed
-AppleWin source and included with provenance. No Apple or TransWarp ROM bytes
+the machine is reset. The slot-7 SmartPort ROM is assembled from source and
+included with provenance. No Apple system or TransWarp ROM bytes
 are embedded in the FPGA image or source bundle.
 
 All runtime ROMs belong in `multitini/cores/apple-iigs/roms/`. Disk images,
@@ -171,7 +187,7 @@ The stored relative image path, including folders and filename, is limited to
 95 characters by the existing settings format. Longer selections report an
 explicit error rather than truncating a path or mounting another file.
 
-Two HDDs accept raw HDV/PO and ProDOS-ordered 2MG payloads. The 3.5-inch drive
+Eight SmartPort HDDs accept raw HDV/PO and ProDOS-ordered 2MG payloads. The 3.5-inch drive
 also accepts exactly 800 KiB PO and ProDOS 2MG payloads; the 5.25-inch drive
 accepts exactly 140 KiB DOS-order DSK files. Both drives retain native WOZ2.
 The firmware presents sector images as generated WOZ2 GCR tracks, preserving

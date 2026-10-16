@@ -4,6 +4,7 @@
 #include "multitini_gameboy_interface.h"
 #include "multitini_genesis_interface.h"
 #include "multitini_iigs_interface.h"
+#include "multitini_video_frame.h"
 #include "multitini_vectrex_interface.h"
 #include <assert.h>
 #include <stdio.h>
@@ -13,7 +14,7 @@ static bool file_write(void *context,const void *bytes,size_t size)
 { return fwrite(bytes,1U,size,(FILE *)context)==size; }
 static bool reject_write(void *context,const void *bytes,size_t size)
 { (void)context;(void)bytes;(void)size;return false; }
-static uint16_t source[640U*720U],row[MT_SCREENSHOT_MAX_WIDTH],cropped_row[MT_SCREENSHOT_MAX_WIDTH];
+static uint16_t source[MT_VIDEO_FRAME_MAX_PIXELS],row[MT_SCREENSHOT_MAX_WIDTH],cropped_row[MT_SCREENSHOT_MAX_WIDTH];
 static mt_ui_frame_t ui;
 static void full_screen_ui(void)
 {
@@ -66,8 +67,8 @@ static void full_screen_ui(void)
 }
 static void manual_geometry(void)
 {
-    static const uint32_t cores[]={MT_C64_CORE_ID,MT_GBC_CORE_ID,MT_VECTREX_CORE_ID,MT_GENESIS_CORE_ID,MT_IIGS_CORE_ID};
-    static const unsigned widths[]={382U,160U,540U,320U,640U},heights[]={270U,144U,720U,240U,400U};
+    static const uint32_t cores[]={MT_C64_CORE_ID,MT_GBC_CORE_ID,MT_VECTREX_CORE_ID,MT_GENESIS_CORE_ID,MT_IIGS_CORE_ID,MT_IIGS_CORE_ID};
+    static const unsigned widths[]={382U,160U,540U,320U,640U,724U},heights[]={270U,144U,720U,240U,400U,496U};
     static const unsigned screen_w[]={1920U,1024U,1200U,1280U,1360U,1680U};
     static const unsigned screen_h[]={1080U,768U,800U,1024U,768U,1050U};
     mt_screenshot_scene_t scene={0};scene.pixels=source;
@@ -242,12 +243,48 @@ static void renderer(void)
     assert(row[509U]==0x738eU && row[510U]==0xffffU);
     settings.negative=1U;assert(mt_video_effects_build(&settings,&tables));
     assert(mt_screenshot_render_row(&scene,540U,row) && row[510U]==0xffffU);
-    scene.width=641U;assert(!mt_screenshot_dimensions(&scene,&w,&h));
+    scene.width=MT_VIDEO_FRAME_MAX_WIDTH+1U;assert(!mt_screenshot_dimensions(&scene,&w,&h));
+}
+static void iigs_border_geometry(void)
+{
+    const unsigned sw[]={1920U,1024U,1200U,1280U,1360U,1680U};
+    const unsigned sh[]={1080U,768U,800U,1024U,768U,1050U};
+    const unsigned vw[]={1448U,724U,724U,724U,724U,1448U};
+    const unsigned vh[]={992U,496U,496U,496U,496U,992U};
+    const unsigned left[]={236U,150U,238U,278U,318U,116U};
+    const unsigned top[]={44U,136U,152U,264U,136U,29U};
+    mt_screenshot_scene_t scene={0};scene.pixels=source;
+    scene.width=724U;scene.height=496U;scene.core_id=MT_IIGS_CORE_ID;
+    for(unsigned i=0U;i<724U*496U;++i)source[i]=(uint16_t)(i*113U+37U);
+    for(unsigned mode=0U;mode<6U;++mode) {
+        uint32_t w,h;scene.display_mode=(uint8_t)mode;scene.full_output=false;
+        assert(mt_screenshot_dimensions(&scene,&w,&h) && w==vw[mode] && h==vh[mode]);
+        const unsigned rows[]={0U,vh[mode]/2U,vh[mode]-1U};
+        for(unsigned r=0U;r<3U;++r) {
+            const unsigned y=rows[r];scene.full_output=false;
+            assert(mt_screenshot_render_row(&scene,y,cropped_row));
+            scene.full_output=true;
+            assert(mt_screenshot_dimensions(&scene,&w,&h) && w==sw[mode] && h==sh[mode]);
+            assert(mt_screenshot_render_row(&scene,y+top[mode],row));
+            assert(memcmp(cropped_row,row+left[mode],vw[mode]*sizeof(uint16_t))==0);
+            for(unsigned x=0U;x<sw[mode];++x) {
+                const uint16_t expected=x>=left[mode] && x<left[mode]+vw[mode] ?
+                    source[(y*496U/vh[mode])*724U+(x-left[mode])*724U/vw[mode]]:0U;
+                assert(row[x]==expected);
+            }
+        }
+    }
+    scene.display_mode=0U;scene.height=637U;
+    uint32_t w,h;assert(!mt_screenshot_dimensions(&scene,&w,&h));
+    assert(!mt_screenshot_render_row(&scene,0U,row));
+    scene.height=1U;scene.width=MT_VIDEO_FRAME_MAX_WIDTH+1U;
+    assert(!mt_screenshot_dimensions(&scene,&w,&h));
 }
 int main(int argc,char **argv)
 {
     renderer();
     iigs_geometry();
+    iigs_border_geometry();
     manual_geometry();
     full_screen_ui();
     mt_screenshot_png_t png;

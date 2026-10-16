@@ -69,6 +69,21 @@ class PrivateRomTests(unittest.TestCase):
                 path.write_bytes(data)
         self.assertFalse(self.out.exists())
 
+    def test_generated_smartport_rom_supersedes_old_private_copy(self):
+        old = self.source / 'apple-iigs/roms/hdd.rom'
+        old.write_bytes(pattern(256))
+        built = self.workspace / 'build/smartport/hdd.rom'
+        built.parent.mkdir(parents=True)
+        built.write_bytes(pattern(2304, 71))
+        collection = self.collect(iigs_hdd_rom=built)
+        self.assertEqual(collection.outputs['sd/multitini/cores/apple-iigs/roms/hdd.rom'], built.read_bytes())
+        self.assertNotIn('apple-iigs/roms/hdd.rom', collection.provenance['inputs'])
+        roms.stage(self.out, collection)
+        self.assertEqual(old.read_bytes(), pattern(256))
+        built.write_bytes(pattern(2304, 72))
+        with self.assertRaisesRegex(ValueError, 'changed after validation'):
+            roms.verify_inputs(collection)
+
     def test_wrong_size_and_uniform_data_are_rejected(self):
         path = self.source / 'c64/roms/basic.bin'
         for data in (pattern(8191), bytes(8192), b'\xff' * 8192):

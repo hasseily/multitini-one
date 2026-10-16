@@ -121,28 +121,34 @@ static uint32_t big32_at(size_t offset)
     (uint32_t)written[offset+2U]<<8|written[offset+3U]; }
 static void iigs_capture(void)
 {
-    for(unsigned mode=0U;mode<2U;++mode) {
+    for(unsigned geometry=0U;geometry<2U;++geometry)for(unsigned mode=0U;mode<2U;++mode) {
+        const unsigned width=geometry ? 724U:640U,height=geometry ? 496U:400U;
+        const unsigned stride=geometry ? 1536U:1280U;
         reset_test();
         registers[MT_REG_ABI_VERSION/4U]=22U;
         registers[MT_REG_CORE_ID/4U]=MT_IIGS_CORE_ID;
-        registers[MT_REG_VIDEO_FRAME_GEOMETRY/4U]=(400U<<16)|640U;
-        registers[MT_REG_VIDEO_FRAME_STRIDE/4U]=1280U;
+        registers[MT_REG_VIDEO_FRAME_GEOMETRY/4U]=(height<<16)|width;
+        registers[MT_REG_VIDEO_FRAME_STRIDE/4U]=stride;
         assert(mt_screenshot_service_request(mode!=0U));
         for(unsigned i=0U;i<1200U && mt_screenshot_service_busy();++i)
             mt_screenshot_service_poll(MT_IIGS_CORE_ID,"Apple IIgs",0U,0U,NULL,false);
         assert(!mt_screenshot_service_busy());
         assert(strstr(mt_screenshot_service_status(),"Screenshot saved")!=NULL);
-        assert(copies==400U && copied_base==MT_VIDEO_FRAME_OUTPUT_BASE+MT_VIDEO_FRAME_SLOT_BYTES);
-        assert(copied_last==copied_base+399U*1280U);
+        assert(copies==height && copied_base==MT_VIDEO_FRAME_OUTPUT_BASE+MT_VIDEO_FRAME_SLOT_BYTES);
+        assert(copied_last==copied_base+(height-1U)*stride);
         assert(open_calls==1U && close_calls==1U && rename_calls==1U && remove_calls==0U);
         assert(memcmp(written,"\211PNG\r\n\032\n",8U)==0);
-        assert(big32_at(16U)==(mode!=0U ? 1920U:1280U));
-        assert(big32_at(20U)==(mode!=0U ? 1080U:800U));
-        assert(progress_calls==(mode!=0U ? 1080U:800U) && write_calls==progress_calls+2U);
+        assert(big32_at(16U)==(mode!=0U ? 1920U:width*2U));
+        assert(big32_at(20U)==(mode!=0U ? 1080U:height*2U));
+        assert(progress_calls==(mode!=0U ? 1080U:height*2U) && write_calls==progress_calls+2U);
         assert(strstr(renamed_to,mode!=0U ? "-screen.png":"-video.png")!=NULL);
         assert(test_file.position>3U*big32_at(16U)*big32_at(20U));
         assert(memcmp(written+test_file.position-12U,"\0\0\0\0IEND",8U)==0);
     }
+    reset_test();registers[MT_REG_VIDEO_FRAME_GEOMETRY/4U]=(637U<<16)|724U;
+    registers[MT_REG_VIDEO_FRAME_STRIDE/4U]=1536U;
+    assert(mt_screenshot_service_request(false));finish();
+    assert(copies==0U && open_calls==0U && strstr(mt_screenshot_service_status(),"invalid capture geometry")!=NULL);
     reset_test();registers[MT_REG_CORE_ID/4U]=UINT32_C(0xDEADBEEF);
     assert(mt_screenshot_service_request(false));
     for(unsigned i=0U;i<10U && mt_screenshot_service_busy();++i)

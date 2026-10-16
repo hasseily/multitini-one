@@ -15,6 +15,29 @@ import package_cpu1_video_test as package
 ROOT = package.ROOT
 
 
+def dvi_replay_candidate_text(source):
+    """Reserialize only the original DVI pair, preserving its exact scope."""
+    flattened = source.replace("\\\n", " ")
+    ports = "[get_ports {dvi_red[*] dvi_grn[*] dvi_blu[*] dvi_de dvi_hsync dvi_vsync}]"
+    declarations = [" ".join(line.split()) for line in flattened.splitlines()
+                    if line.startswith("set dvi_data_ports ")]
+    package.require(declarations == ["set dvi_data_ports " + ports],
+                    "Unexpected canonical DVI output-port scope")
+    original = [line.strip() for line in source.splitlines()
+                if line.startswith("set_output_delay -clock dvi_clk_out ")]
+    expected = ["set_output_delay -clock dvi_clk_out -max 1.2 $dvi_data_ports",
+                "set_output_delay -clock dvi_clk_out -min -1.3 $dvi_data_ports"]
+    package.require(original == expected, "Unexpected canonical DVI output-delay pair")
+    candidate = [line.replace("-clock dvi_clk_out",
+                            "-clock [get_clocks -quiet -filter {NAME == dvi_clk_out}]")
+                 .replace("$dvi_data_ports", ports) for line in original]
+    package.require([line.replace("[get_clocks -quiet -filter {NAME == dvi_clk_out}]",
+                                  "dvi_clk_out").replace(ports, "$dvi_data_ports")
+                     for line in candidate] == original,
+                    "DVI replay changed the canonical timing policy")
+    return "\n".join(candidate) + "\n"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path)
@@ -24,6 +47,8 @@ def main():
     parser.add_argument("--signoff-only", action="store_true")
     parser.add_argument("--iigs-constraint-replay", action="store_true",
                         help="Reserialize the four existing IIgs MCP pairs without changing their timing policy")
+    parser.add_argument("--dvi-constraint-replay", action="store_true",
+                        help="Reserialize the existing IIgs DVI output-delay pair during signoff only")
     parser.add_argument("--replicate-cell", action="append", default=[])
     parser.add_argument("--replicate-net", action="append", default=[],
                         help="Exact combinational or registered net name to replicate before routing")
@@ -32,6 +57,10 @@ def main():
     package.require(not (args.signoff_only and replicate), "Signoff-only cannot replicate cells or nets")
     package.require(not args.iigs_constraint_replay or args.signoff_only,
                     "IIgs constraint replay requires --signoff-only")
+    package.require(not args.dvi_constraint_replay or args.signoff_only,
+                    "DVI constraint replay requires --signoff-only")
+    package.require(not (args.dvi_constraint_replay and args.iigs_constraint_replay),
+                    "DVI and IIgs MCP constraint replays cannot be combined")
     package.require(all(re.fullmatch(r"[A-Za-z0-9_./\[\]]+", name) for name in args.replicate_cell),
                     "Invalid cell name")
     package.require(all(re.fullmatch(r"[A-Za-z0-9_./\[\]]+", name) for name in args.replicate_net),
@@ -41,6 +70,8 @@ def main():
     record = json.loads((directory / "source-inputs.json").read_text())
     package.require(not args.iigs_constraint_replay or record["machine"] == "APPLE_IIGS",
                     "Constraint replay applies only to the IIgs image")
+    package.require(not args.dvi_constraint_replay or record["machine"] == "APPLE_IIGS",
+                    "DVI constraint replay applies only to the IIgs image")
     package.verify_sources(record["files"])
     package.verify_hardware_source_archive(directory, record["files"])
     run = directory / "multitini_one.runs/impl_1"
@@ -57,6 +88,7 @@ def main():
     number = max(numbers, default=0) + 1
     replay = ""
     replay_record = None
+    dvi_replay_record = None
     if args.iigs_constraint_replay:
         source = ROOT / "hdl/board/multitini_apple_iigs_timing.xdc"
         body = source.read_text().split("# Software eject is sampled", 1)
@@ -99,6 +131,34 @@ def main():
                          "helper": {"path": str(helper), "sha256": package.sha(helper)},
                          "tool_source": {"path": str(tool_source), "sha256": package.sha(tool_source)},
                          "equivalence_report": str(equivalence)}
+    if args.dvi_constraint_replay:
+        source = ROOT / "hdl/board/multitini_timing.xdc"
+        candidate = attempts / f"pass-{number}-dvi-output-delay.xdc"
+        candidate.write_text(dvi_replay_candidate_text(source.read_text()), encoding="utf-8")
+        helper = attempts / f"pass-{number}-dvi-replay-source.tcl"
+        shutil.copyfile(ROOT / "scripts/repair_dvi_constraint_replay.tcl", helper)
+        tool_source = attempts / f"pass-{number}-tool-source.py"
+        shutil.copyfile(Path(__file__), tool_source)
+        equivalence = attempts / f"pass-{number}-dvi-replay-equivalence.txt"
+        replay = (f"source {{{helper.as_posix()}}}\n"
+                  f"::dvi_replay::begin {{{candidate.as_posix()}}} {{{equivalence.as_posix()}}}\n")
+        gate = "\nforeach delay_type {max min} {\n"
+        package.require(original.count(gate) == 1, "Cannot identify final timing gate")
+        original = original.replace(gate,
+            "\n::dvi_replay::check after_all_reports\n"
+            "source [file join $script_dir check_apple_iigs_phase_constraints.tcl]\n"
+            "report_timing_summary -delay_type min_max -max_paths 100 -check_timing_verbose "
+            "-report_unconstrained -file [file join $report_dir timing_summary.rpt]\n"
+            "::dvi_replay::check after_final_timing_summary\n" + gate, 1)
+        original += "\n::dvi_replay::finish\n"
+        dvi_replay_record = {"selector_reserialization": True,
+                            "numeric_timing_policy_changed": False,
+                            "scope": "19 DVI output ports, max 1.2 ns and min -1.3 ns, original generated clock",
+                            "source": {"path": str(source), "sha256": package.sha(source)},
+                            "candidate": {"path": str(candidate), "sha256": package.sha(candidate)},
+                            "helper": {"path": str(helper), "sha256": package.sha(helper)},
+                            "tool_source": {"path": str(tool_source), "sha256": package.sha(tool_source)},
+                            "equivalence_report": str(equivalence)}
     replication = ""
     if replicate:
         replication = ('set repair_clock [get_clocks -quiet -filter {NAME =~ *clk_out1*zynq_ps_bd_clk_wiz_c64*}]\n'
@@ -153,14 +213,19 @@ def main():
     with console.open("w", encoding="utf-8") as stream:
         result = subprocess.run(list(map(str, command)), cwd=directory,
                                 stdout=stream, stderr=subprocess.STDOUT)
+    if dvi_replay_record is not None:
+        dvi_replay_record["equivalence"] = (
+            {"path": str(equivalence), "sha256": package.sha(equivalence)}
+            if equivalence.is_file() else None)
     package.write_json(attempts / f"pass-{number}.json", {
         "directive": None if args.signoff_only else args.directive,
         "replicated_cells": args.replicate_cell,
         "replicated_nets": args.replicate_net,
         "full_reroute": replicate,
         "temporary_machine_setup_margin_ns": 0.100 if replicate else 0.000,
-        "constraints_changed": bool(replay_record), "rtl_changed": False,
+        "constraints_changed": bool(replay_record or dvi_replay_record), "rtl_changed": False,
         "iigs_constraint_replay": replay_record,
+        "dvi_constraint_replay": dvi_replay_record,
         "normal_signoff_script_sha256": hashlib.sha256((ROOT / "scripts/build_and_export_xsa.tcl").read_bytes()).hexdigest(),
         "generated_script_sha256": package.sha(tcl), "command": list(map(str, command)),
         "routed_checkpoint_before_sha256": package.sha(checkpoint),

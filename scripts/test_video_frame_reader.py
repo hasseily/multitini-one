@@ -36,6 +36,10 @@ def main():
         cases += [{"name":f"margin-{x}","SCALE_NUM":3,"SCALE_DEN":2,"VIEW_X":x,"VIEW_Y":0,"H_ACTIVE":104,"V_ACTIVE":13} for x in (1,2,3)]
         cases += [{"name":"wide-crop-4","SCALE_NUM":4,"SCALE_DEN":1,"WIDTH":640,"HEIGHT":19,
                    "VIEW_X":-117,"VIEW_Y":-13,"H_ACTIVE":511,"V_ACTIVE":55}]
+        cases += [{"name":"iigs-border-auto-2","SCALE_NUM":2,"SCALE_DEN":1,"WIDTH":724,"HEIGHT":19,
+                   "VIEW_X":236,"VIEW_Y":4,"H_ACTIVE":1920,"V_ACTIVE":46},
+                  {"name":"iigs-border-crop-2","SCALE_NUM":2,"SCALE_DEN":1,"WIDTH":724,"HEIGHT":19,
+                   "VIEW_X":-84,"VIEW_Y":-3,"H_ACTIVE":1280,"V_ACTIVE":32}]
     if args.case:
         known={case["name"] for case in cases}
         if set(args.case)-known:

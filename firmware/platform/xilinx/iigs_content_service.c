@@ -9,6 +9,7 @@
 #define GS_NAME (MT_IIGS_MEDIA_NAME_MAX+1U)
 #define GS_JOURNAL_BYTES (32U+MT_IIGS_SECTOR_BYTES)
 #define GS_SETTINGS_BYTES (24U+MT_IIGS_DRIVE_COUNT*GS_NAME)
+#define GS_LEGACY_SETTINGS_BYTES (24U+4U*GS_NAME)
 #define GS_RAW_JOURNAL_BYTES (64U+MT_IIGS_FLOPPY_TRACK_BYTES)
 typedef struct {
     mt_sd_file_t *file;
@@ -16,11 +17,12 @@ typedef struct {
     uint64_t file_size;
     uint32_t generation;
     bool mounted;
+    bool journal_pending;
     bool woz_crc_disabled;
     int cached_track;
     uint32_t raw_received;
     bool raw_pending;
-    uint32_t wire_size;
+    uint64_t wire_size;
     char name[GS_NAME], path[GS_PATH], journal[GS_PATH], recovery[GS_PATH];
     char raw_journal[GS_PATH], raw_recovery[GS_PATH];
 } gs_drive_t;
@@ -97,7 +99,7 @@ static int settings_save(void)
     char target[GS_PATH], journal[GS_PATH];
     if(!path(target,"gs-settings.bin") || !path(journal,"gs-settings.bin.mtj"))return fail("Settings path too long");
     memset(settings_wire,0,sizeof(settings_wire));
-    memcpy(settings_wire,"MTGSSET1",8U);
+    memcpy(settings_wire,"MTGSSET2",8U);
     mt_iigs_config_t saved=config; saved.timestamp=0U; saved.pulses&=1U;
     mt_iigs_config_encode(&saved,settings_wire+8U);
     /* ARM-only setting in a formerly zero byte. Legacy zero means 100%. */
@@ -115,18 +117,23 @@ static void settings_load(void)
     if(!path(target,"gs-settings.bin") || !path(journal,"gs-settings.bin.mtj"))return;
     mt_sd_result_t r=mt_sd_storage_journal_recover(target,journal,settings_wire,sizeof(settings_wire));
     if(r.status!=MT_SD_OK) { (void)sd_fail(r); return; }
-    r=mt_sd_storage_read_file_optional_exact(target,settings_wire,sizeof(settings_wire),&found);
+    memset(settings_wire,0,sizeof(settings_wire));
+    r=mt_sd_storage_read_file_optional_max(target,settings_wire,sizeof(settings_wire),&found);
     if(r.status!=MT_SD_OK) { (void)sd_fail(r); return; }
     if(!found)return;
+    const bool legacy=r.size==GS_LEGACY_SETTINGS_BYTES && memcmp(settings_wire,"MTGSSET1",8U)==0;
+    const bool current=r.size==sizeof(settings_wire) && memcmp(settings_wire,"MTGSSET2",8U)==0;
+    if(!legacy && !current) { (void)fail("Apple IIgs settings size or version invalid"); return; }
+    const unsigned saved_drives=legacy ? 4U:MT_IIGS_DRIVE_COUNT;
     uint32_t saved_crc=le32(settings_wire+20U); store32(settings_wire+20U,0U);
     mt_iigs_config_t candidate={settings_wire[8],settings_wire[9],settings_wire[10],settings_wire[11],0U,settings_wire[16]};
     const uint16_t candidate_mouse=settings_wire[17]==0U ? 100U:(uint16_t)((uint16_t)settings_wire[17]*25U);
-    if(memcmp(settings_wire,"MTGSSET1",8U)!=0 || crc32(settings_wire,sizeof(settings_wire))!=saved_crc ||
+    if(crc32(settings_wire,r.size)!=saved_crc ||
         !mt_iigs_config_valid(&candidate) || candidate.card==1U || (candidate.pulses&~1U)!=0U ||
         !mt_iigs_mouse_sensitivity_valid(candidate_mouse)) {
         (void)fail("Apple IIgs settings checksum or values invalid"); return;
     }
-    for(unsigned i=0U;i<MT_IIGS_DRIVE_COUNT;++i) {
+    for(unsigned i=0U;i<saved_drives;++i) {
         const char *name=(const char *)settings_wire+24U+i*GS_NAME;
         if(memchr(name,0,GS_NAME)==NULL || (name[0]!='\0' && !safe_name(name))) {
             (void)fail("Apple IIgs remembered media name invalid"); return;
@@ -135,18 +142,19 @@ static void settings_load(void)
     normalize_config(&candidate);
     config=candidate;
     mouse_sensitivity=candidate_mouse;
-    for(unsigned i=0U;i<MT_IIGS_DRIVE_COUNT;++i)memcpy(remembered[i],settings_wire+24U+i*GS_NAME,GS_NAME);
+    for(unsigned i=0U;i<saved_drives;++i)memcpy(remembered[i],settings_wire+24U+i*GS_NAME,GS_NAME);
 }
 /* One durable write-ahead sector record per image. This avoids duplicating
  * large hard disks while keeping interrupted writes replayable at mount. */
 static int apply_journal(gs_drive_t *d)
 {
     bool found=false;
+    d->journal_pending=true;
     mt_sd_result_t r=mt_sd_storage_journal_recover(d->journal,d->recovery,journal_wire,sizeof(journal_wire));
     if(r.status!=MT_SD_OK)return sd_fail(r);
     r=mt_sd_storage_read_file_optional_exact(d->journal,journal_wire,sizeof(journal_wire),&found);
     if(r.status!=MT_SD_OK)return sd_fail(r);
-    if(!found)return 0;
+    if(!found) { d->journal_pending=false; return 0; }
     const uint32_t checksum=le32(journal_wire+28U); store32(journal_wire+28U,0U);
     const uint64_t offset=(uint64_t)le32(journal_wire+8U)|((uint64_t)le32(journal_wire+12U)<<32);
     const uint64_t image_size=(uint64_t)le32(journal_wire+16U)|((uint64_t)le32(journal_wire+20U)<<32);
@@ -156,7 +164,9 @@ static int apply_journal(gs_drive_t *d)
         count>d->file_size-offset)return fail("Disk sector journal invalid; retained for recovery");
     r=mt_sd_file_seek(d->file,(int64_t)offset,SEEK_SET); if(r.status!=MT_SD_OK)return sd_fail(r);
     r=mt_sd_file_write(d->file,journal_wire+32U,count); if(r.status!=MT_SD_OK)return sd_fail(r);
-    r=mt_sd_file_remove(d->journal); return r.status==MT_SD_OK ? 0:sd_fail(r);
+    r=mt_sd_file_remove(d->journal);
+    if(r.status!=MT_SD_OK)return sd_fail(r);
+    d->journal_pending=false; return 0;
 }
 static int write_sector(gs_drive_t *d,uint64_t offset,size_t count)
 {
@@ -165,6 +175,7 @@ static int write_sector(gs_drive_t *d,uint64_t offset,size_t count)
     store32(journal_wire+16U,(uint32_t)d->file_size); store32(journal_wire+20U,(uint32_t)(d->file_size>>32));
     store32(journal_wire+24U,(uint32_t)count); memcpy(journal_wire+32U,sector,count);
     store32(journal_wire+28U,crc32(journal_wire,sizeof(journal_wire)));
+    d->journal_pending=true;
     mt_sd_result_t r=mt_sd_storage_journal_replace(d->journal,d->recovery,journal_wire,sizeof(journal_wire));
     if(r.status!=MT_SD_OK)return sd_fail(r);
     return apply_journal(d);
@@ -336,48 +347,59 @@ void iigs_content_service_poll(void)
     const bool writing=(word&MT_MEDIA_REQUEST_WRITE)!=0U;
     seen=true; seen_id=id; seen_generation=gen;
     uint32_t status=MT_RESPONSE_OK;
-    const bool valid_slot=slot<MT_IIGS_DRIVE_COUNT ? drives[slot].mounted && drives[slot].generation==gen:
+    const unsigned drive=mt_iigs_wire_slot_drive(slot);
+    gs_drive_t *d=drive<MT_IIGS_DRIVE_COUNT ? &drives[drive]:NULL;
+    const bool hdd=mt_iigs_drive_hdd_unit(drive)<MT_IIGS_HDD_COUNT;
+    /* The shared shell accepts only generic transport responses. SmartPort
+     * unit/protection/range errors are validated in the HDD controller. */
+    const uint32_t io_error=MT_RESPONSE_IO_ERROR;
+    const bool valid_slot=d!=NULL ? d->mounted && d->generation==gen:
         slot==MT_IIGS_PRAM_SLOT && pram_mounted && pram_generation==gen;
-    if(!valid_slot || (blocks&255U)!=2U || (blocks>>16U)!=0U ||
+    if(!valid_slot)status=MT_RESPONSE_INVALID_ARGUMENT;
+    if((blocks&255U)!=2U || (blocks>>16U)!=0U ||
         (slot==MT_IIGS_PRAM_SLOT && lba>=2U))status=MT_RESPONSE_INVALID_ARGUMENT;
-    gs_drive_t *d=slot<MT_IIGS_DRIVE_COUNT ? &drives[slot]:NULL;
     const uint64_t offset=(uint64_t)lba*512U;
     size_t count=512U;
     if(status==MT_RESPONSE_OK && d!=NULL) {
-        if(offset>=d->wire_size || (writing && !d->info.writable))status=MT_RESPONSE_IO_ERROR;
+        if(offset>=d->wire_size)status=io_error;
+        else if(writing && !d->info.writable)status=io_error;
         else if(d->wire_size-offset<512U)count=(size_t)(d->wire_size-offset);
+        /* HDD errors finish the SmartPort call. Repair a prior durable write
+         * before a later call can observe a partially updated sector. */
+        if(status==MT_RESPONSE_OK && hdd && d->journal_pending && apply_journal(d)!=0)status=io_error;
     }
     if(status==MT_RESPONSE_OK && !writing) {
         memset(sector,0,sizeof(sector));
         if(d==NULL)memcpy(sector,pram+offset,512U);
         else if(d->info.raw_format!=MT_IIGS_RAW_NONE) {
-            if(raw_sector(d,lba,false)!=0)status=MT_RESPONSE_IO_ERROR;
+            if(raw_sector(d,lba,false)!=0)status=io_error;
         } else {
             mt_sd_result_t r=mt_sd_file_seek(d->file,(int64_t)(d->info.offset+offset),SEEK_SET);
             if(r.status==MT_SD_OK)r=mt_sd_file_read(d->file,sector,count);
-            if(r.status!=MT_SD_OK || r.size!=count) { (void)sd_fail(r); status=MT_RESPONSE_IO_ERROR; }
+            if(r.status!=MT_SD_OK || r.size!=count) { (void)sd_fail(r); status=io_error; }
         }
     }
     const bool staged=writing && staged_write && staged_id==id && staged_generation==gen;
     if(staged)memcpy(sector,staged_sector,sizeof(sector));
-    if(status==MT_RESPONSE_OK && !staged && transfer(writing)!=0)status=MT_RESPONSE_IO_ERROR;
+    if(status==MT_RESPONSE_OK && !staged && transfer(writing)!=0)status=io_error;
     if(status==MT_RESPONSE_OK && writing && !staged) {
         staged_write=true; staged_id=id; staged_generation=gen; memcpy(staged_sector,sector,sizeof(sector));
     }
     if(status==MT_RESPONSE_OK && writing) {
-        if(d==NULL) { memcpy(pram+offset,sector,512U); if(pram_save()!=0)status=MT_RESPONSE_IO_ERROR; }
+        if(d==NULL) { memcpy(pram+offset,sector,512U); if(pram_save()!=0)status=io_error; }
         else if(d->info.raw_format!=MT_IIGS_RAW_NONE) {
-            if(raw_sector(d,lba,true)!=0)status=MT_RESPONSE_IO_ERROR;
+            if(raw_sector(d,lba,true)!=0)status=io_error;
         }
-        else if(disable_woz_crc(d)!=0)status=MT_RESPONSE_IO_ERROR;
+        else if(disable_woz_crc(d)!=0)status=io_error;
         else {
             if(d->info.kind==MT_IIGS_MEDIA_WOZ && lba==0U)memset(sector+8U,0,4U);
-            if(write_sector(d,d->info.offset+offset,count)!=0)status=MT_RESPONSE_IO_ERROR;
+            if(write_sector(d,d->info.offset+offset,count)!=0)status=io_error;
         }
         if(status==MT_RESPONSE_OK)staged_write=false;
     }
     completion_id=id; completion_status=status; completion_blocks=status==MT_RESPONSE_OK ? blocks:0U;
     completion_generation=gen; completion_pending=true;
+    if(hdd && status!=MT_RESPONSE_OK)staged_write=false;
     if(status!=MT_RESPONSE_OK)faulted=true;
     (void)complete_pending();
 }
@@ -396,10 +418,15 @@ static int drain_state(bool flush)
     return fail("Apple IIgs media did not finish flushing");
 }
 static int drain(void) { return drain_state(true); }
-static int mount_wire(unsigned slot,uint8_t kind,uint32_t bytes,uint32_t gen,bool ro)
+static int mount_wire(unsigned slot,uint8_t kind,uint64_t bytes,uint32_t gen,bool ro)
 {
     const uint32_t flags=slot|((uint32_t)kind<<MT_MEDIA_KIND_SHIFT)|(ro ? MT_MEDIA_MOUNT_READ_ONLY:0U);
-    const mt_link_result_t r=command(MT_COMMAND_MEDIA_MOUNT,flags,bytes,gen,0U);
+    const uint64_t size=kind==MT_IIGS_MEDIA_BLOCK32 ? bytes/512U:bytes;
+    if(size>UINT32_MAX || (kind==MT_IIGS_MEDIA_BLOCK32 && (bytes&511U)!=0U))
+        return fail("Apple IIgs disk capacity is not representable");
+    const mt_link_result_t r=command(MT_COMMAND_MEDIA_MOUNT,flags,(uint32_t)size,gen,0U);
+    if(r==MT_LINK_REMOTE_ERROR && kind==MT_IIGS_MEDIA_BLOCK32)
+        return fail("Update IIgs core/ROM for SmartPort disks");
     return r==MT_LINK_OK ? 0:fail(mt_link_result_name(r));
 }
 static int mount_internal(unsigned drive,const char *name,bool remember)
@@ -448,9 +475,9 @@ static int mount_internal(unsigned drive,const char *name,bool remember)
         }
     }
     if(d->info.raw_format!=MT_IIGS_RAW_NONE && d->info.writable && raw_recover(d)!=0)goto close_failed;
-    d->wire_size=d->info.raw_format==MT_IIGS_RAW_NONE ? (uint32_t)d->info.size:mt_iigs_floppy_woz_size(d->info.raw_format);
+    d->wire_size=d->info.raw_format==MT_IIGS_RAW_NONE ? d->info.size:mt_iigs_floppy_woz_size(d->info.raw_format);
     d->generation=generation();
-    if(mount_wire(drive,d->info.kind,d->wire_size,d->generation,!d->info.writable)!=0)goto close_failed;
+    if(mount_wire(mt_iigs_drive_wire_slot(drive),d->info.kind,d->wire_size,d->generation,!d->info.writable)!=0)goto close_failed;
     d->mounted=true; (void)snprintf(d->name,sizeof(d->name),"%s",name);
     if(remember) { (void)snprintf(remembered[drive],GS_NAME,"%s",name); return settings_save(); }
     return 0;
@@ -468,7 +495,8 @@ static int eject_internal(unsigned drive,bool forget)
         /* A WOZ track can stay dirty while its motor runs. Finish only the
          * current transfer before requesting eject, which forces its flush. */
         if(drain_state(false)!=0)return -1;
-        const mt_link_result_t r=command(MT_COMMAND_MEDIA_EJECT,drive,generation(),0U,0U);
+        if(d->journal_pending && apply_journal(d)!=0)return -1;
+        const mt_link_result_t r=command(MT_COMMAND_MEDIA_EJECT,mt_iigs_drive_wire_slot(drive),generation(),0U,0U);
         if(r!=MT_LINK_OK)return fail(mt_link_result_name(r));
         if(drain()!=0)return -1;
         if(d->raw_pending)return fail("Raw floppy track flush incomplete; .gsraw retained");
@@ -563,6 +591,8 @@ static int load_rom(const char *name,uint8_t kind,size_t bytes)
     if(length<0 || (size_t)length>=sizeof(filename))return fail("ROM path too long");
     mt_sd_result_t sd=mt_sd_storage_read_file_exact(filename,rom_buffer,bytes);
     if(sd.status!=MT_SD_OK) {
+        if(kind==MT_LOAD_IIGS_HDD_ROM && sd.status==MT_SD_SIZE_MISMATCH)
+            return fail("Update IIgs core/ROM for SmartPort disks");
         char message[128];
         (void)snprintf(message,sizeof(message),"ROM %s: %s",name,mt_sd_status_name(sd.status));
         return fail(message);
@@ -571,6 +601,8 @@ static int load_rom(const char *name,uint8_t kind,size_t bytes)
     for(size_t i=1U;i<bytes;++i)difference|=(uint8_t)(rom_buffer[i]^rom_buffer[0]);
     if(difference==0U)return fail("System ROM is blank");
     mt_link_result_t r=mt_core_link_stream(link,kind,rom_buffer,bytes,GS_POLLS,progress,progress_context);
+    if(r==MT_LINK_REMOTE_ERROR && kind==MT_LOAD_IIGS_HDD_ROM)
+        return fail("Update IIgs core/ROM for SmartPort disks");
     return r==MT_LINK_OK ? 0:fail(mt_link_result_name(r));
 }
 int iigs_content_service_boot(void)
@@ -659,6 +691,8 @@ bool iigs_content_service_faulted(void) { return faulted; }
 int iigs_content_service_retry(void)
 {
     faulted=false; seen=false; error[0]='\0';
+    for(unsigned i=0U;i<MT_IIGS_DRIVE_COUNT;++i)
+        if(drives[i].mounted && drives[i].journal_pending && apply_journal(&drives[i])!=0)return -1;
     iigs_content_service_poll();
     const int r=drain();
     return r==0 && faulted ? -1:r;

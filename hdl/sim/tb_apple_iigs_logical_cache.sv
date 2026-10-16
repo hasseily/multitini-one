@@ -59,7 +59,7 @@ module tb_apple_iigs_logical_cache;
     localparam integer ITERATIONS=16384,WARMUP=256;
     localparam [15:0] LOOP_START=16'he080,LOOP_END=16'he085;
     localparam integer EXPECTED_ADVANCES=(ITERATIONS-WARMUP)*9-1;
-    reg [7:0] rom[0:262143],hdd_rom[0:255];
+    reg [7:0] rom[0:262143],hdd_rom[0:2303];
     integer cursor,current_speed=-1;
     longint unsigned primary_ticks=0,start_tick=0,elapsed_ticks=0,cpu_advances=0;
     longint unsigned miss_start=0,wait_start=0,hits_start=0,memory_reads=0;
@@ -97,7 +97,7 @@ module tb_apple_iigs_logical_cache;
         begin
             load_epoch=~load_epoch;
             for(integer i=0;i<size;i=i+1)begin
-                value=(kind==8'h40 || kind==8'h41) ? rom[i] : kind==8'h45 ? hdd_rom[i] : kind==8'h43 && i==1 ? speed : kind==8'h43 && i==0 ? config_rom : 0;
+                value=(kind==8'h40 || kind==8'h41) ? rom[i] : kind==8'h49 ? hdd_rom[i] : kind==8'h43 && i==1 ? speed : kind==8'h43 && i==0 ? config_rom : 0;
                 @(negedge core_clk);load_kind=kind;load_total=size;load_offset=i;load_data=value;
                 load_first=i==0;load_last=i==size-1;load_valid=1;
                 while(!load_ready)@(negedge core_clk);
@@ -113,7 +113,7 @@ module tb_apple_iigs_logical_cache;
             memory[24'h020000>>3]=0;
             repeat(20)@(negedge core_clk);reset=0;
             program_rom();packet(8'h43,16,speed);packet(8'h41,131072,0);
-            packet(8'h42,4096,0);packet(8'h46,4096,0);packet(8'h45,256,0);
+            packet(8'h42,4096,0);packet(8'h46,4096,0);packet(8'h49,2304,0);
             if(!rom_loaded)$fatal(1,"synthetic system/aux ROM load failed");
             core_reset_request=0;
         end

@@ -54,7 +54,7 @@ set_multicycle_path 2 -hold -start \
 # release/local-update path is phase0-qualified. ACK/image fields are still
 # timed through these exact publication registers, without clock-group cuts.
 set apple_iigs_phase0_registers [get_cells -hierarchical -quiet -regexp \
-    {.*g_apple_iigs_machine[/.]machine_adapter/(native_(reset|cold)_q|woz_(sd_(addr|data|ack|write)|mount|readonly|size)_q)_reg(\[[0-9]+\])*(_rep[^/]*)?$}]
+    {.*g_apple_iigs_machine[/.]machine_adapter/(native_(reset|cold)_q|woz_(sd_(addr|data|ack|write)|mount|readonly|size)_q|hdd_(sd_(addr|data|ack|write|error)|mount|readonly|size)_q)_reg(\[[0-9]+\])*(_rep[^/]*)?$}]
 set_multicycle_path 3 -setup -start \
     -from [get_pins -of_objects $apple_iigs_phase0_registers -filter {REF_PIN_NAME == C}] \
     -to [get_clocks apple_iigs_clk14]

@@ -74,6 +74,11 @@ module multitini_video_frame_reader #(
     wire [9:0] source_x0,source_y0;
     wire [3:0] phase_x0,phase_y0,scale_num,scale_den;
     localparam integer WORDS = (WIDTH + 3) / 4;
+    // The bordered IIgs needs 181 words per line, crossing the 512-word
+    // capacity of one BRAM for three rows. Pad its cache rows to 256 words
+    // so pixel-rate bank selection is wiring, not a multiply/add. DDR row
+    // lengths and the cache layout of existing machine images stay unchanged.
+    localparam integer CACHE_WORDS = WIDTH == 724 ? 256 : WORDS;
     localparam integer STRIDE = ((WIDTH + 63) / 64) * 128;
     localparam integer OUT_WIDTH = WIDTH * SCALE_NUM / SCALE_DEN;
     localparam integer OUT_HEIGHT = HEIGHT * SCALE_NUM / SCALE_DEN;
@@ -240,7 +245,7 @@ module multitini_video_frame_reader #(
     // A 64-bit simple dual-port RAM allows one AXI beat to be stored at a
     // time. Pixel side reads one word synchronously and selects one of its
     // four pixels; no asynchronous or uninitialized data reaches scanout.
-    (* ram_style = "block" *) reg [63:0] cache [0:3*WORDS-1];
+    (* ram_style = "block" *) reg [63:0] cache [0:3*CACHE_WORDS-1];
     reg [1:0] fill_bank;
     reg [9:0] fill_row;
     reg [31:0] fill_epoch;
@@ -256,10 +261,13 @@ module multitini_video_frame_reader #(
     // Native row strides are 128-byte aligned. A cropped first burst stops
     // at the next 16-word boundary, so later full bursts cannot cross 4 KB.
     wire [4:0] first_burst_limit=5'd16-{1'b0,request_control[79:76]};
+    wire [8:0] fill_cache_word=fill_word+beat_index;
+    wire [31:0] fill_cache_address=WIDTH==724 ? {22'd0,fill_bank,fill_cache_word[7:0]} :
+        fill_bank*WORDS+fill_word+beat_index;
     always @(posedge clk) begin
         if (take_read && beat_index < burst_words &&
             fill_word + beat_index < WORDS)
-            cache[fill_bank*WORDS + fill_word + beat_index] <= rdata;
+            cache[fill_cache_address] <= rdata;
     end
 
     (* ASYNC_REG = "TRUE" *) reg [2:0] underrun_sync;
@@ -438,11 +446,14 @@ module multitini_video_frame_reader #(
         end
     end
     integer bank;
+    wire [31:0] read_cache_word=preload_left ? first_fill_word : preload ? first_word :
+        start_line ? (first_word+1 < WORDS ? first_word+1 : first_word) :
+        (source_x[9:2]+1 < WORDS ? source_x[9:2]+1 : source_x[9:2]);
+    wire [31:0] read_cache_address=WIDTH==724 ? {22'd0,read_bank,read_cache_word[7:0]} :
+        read_bank*WORDS+read_cache_word;
     always @(posedge pixel_clk) begin
         if (preload_left || preload || start_line || (prefetch && source_x < WIDTH))
-            cache_word<=cache[read_bank*WORDS + (preload_left ? first_fill_word : preload ? first_word :
-                start_line ? (first_word+1 < WORDS ? first_word+1 : first_word) :
-                (source_x[9:2]+1 < WORDS ? source_x[9:2]+1 : source_x[9:2]))];
+            cache_word<=cache[read_cache_address];
         if (!pixel_run) begin
             enabled_pixel<=0; frame_failed<=0; value_pixel<=0;
             next_row<=0; current_row<=0; line_valid<=0; row_outstanding<=0;

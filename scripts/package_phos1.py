@@ -20,7 +20,7 @@ from build_phos1 import MATRIX, BUILD_ID
 ROOT = package.ROOT
 ABI_MINOR = 19
 GS_GUIDES = ("APPLE_IIGS_HARDWARE_TEST.md", "APPLE_IIGS_CPU_VALIDATION.md",
-             "APPLE_IIGS_PLAN.md", "APPLE_IIGS_ACCELERATION.md",
+             "APPLE_IIGS_PLAN.md", "APPLE_IIGS_ACCELERATION.md", "APPLE_IIGS_SMARTPORT.md",
              "APPLE_IIGS_M053_BUILD.md", "APPLE_IIGS_M052_BUILD.md",
              "CORE_ARTIFACT_REUSE.md", "USB_SD_MOUNT.md")
 
@@ -122,7 +122,7 @@ def prepare_iigs_content(out, hdd_bootstrap):
     media.mkdir(parents=True, exist_ok=True)
     (media / "README.txt").write_text(
         "Apple IIgs media and persistent state\n\n"
-        "Hard disks accept .hdv, .po or ProDOS .2mg.\n"
+        "Eight SmartPort hard disks accept .hdv, .po or ProDOS .2mg.\n"
         "The 3.5-inch drive accepts 800 KiB .po/.2mg and matching WOZ2 images.\n"
         "The 5.25-inch drive accepts 140 KiB DOS-order .dsk and matching WOZ2 images.\n"
         "The firmware saves pram.bin, gs-settings.bin and recovery journals here.\n"
@@ -146,7 +146,9 @@ def prepare_nes_content(out):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    # Large evidence inventories exceed Windows' command-line limit. argparse
+    # response files keep each argument on its own line, including spaced paths.
+    parser = argparse.ArgumentParser(description=__doc__, fromfile_prefix_chars="@")
     parser.add_argument("--hardware", type=Path, required=True)
     parser.add_argument("--supervisor-dir", type=Path, help="Explicit separately rebuilt supervisor")
     parser.add_argument("--workspace", type=Path, required=True)
@@ -198,7 +200,8 @@ def main():
     cpu = package.verify_cpu_images(workspace, build_id=args.build_id, abi_minor=args.abi_minor)
     builds = verify_image_set(args, cpu)
     rom_cores = {"c64", "gbc", "vectrex", "genesis"} | ({"apple-iigs"} if args.include_apple_iigs else set())
-    roms = private_core_roms.collect(args.rom_source, rom_cores, iigs_mame_zip=args.iigs_mame_zip)
+    roms = private_core_roms.collect(args.rom_source, rom_cores, iigs_mame_zip=args.iigs_mame_zip,
+        iigs_hdd_rom=ROOT / "build/apple-iigs-assets/hdd.rom" if args.include_apple_iigs else None)
     if args.include_apple_iigs:
         package.require(roms.outputs["sd/multitini/cores/apple-iigs/roms/hdd.rom"] ==
                         (ROOT / "build/apple-iigs-assets/hdd.rom").read_bytes(),
@@ -266,11 +269,20 @@ def main():
         # Verify the licensed source-built bootstrap before staging private ROMs.
         asset=ROOT/'build/apple-iigs-assets/hdd.rom'
         asset_record=json.loads((asset.parent/'provenance.json').read_text())
-        package.require(asset.is_file() and asset.stat().st_size==256, "Missing source-built IIgs HDD bootstrap")
-        package.require(asset_record.get('license')=='GPL-2.0-or-later' and
+        package.require(asset.is_file() and asset.stat().st_size==2304, "Missing source-built IIgs SmartPort ROM")
+        package.require(asset_record.get('license') == 'GPL-3.0-only' and
+                        asset_record.get('size') == 2304 and
                         asset_record.get('sha256')==package.sha(asset) and
                         asset_record.get('source_sha256')==package.sha(ROOT/asset_record['source']),
-                        "IIgs HDD bootstrap/source provenance differs")
+                        "IIgs SmartPort ROM/source provenance differs")
+        expected_rom_sources = {
+            'hdl/core/apple_iigs/roms/smartport.a65',
+            'scripts/build_apple_iigs_smartport_rom.py',
+        }
+        package.require(set(asset_record.get('source_inputs', {})) == expected_rom_sources and
+                        all(package.sha(ROOT / name) == digest
+                            for name, digest in asset_record['source_inputs'].items()),
+                        "IIgs SmartPort ROM was built from different source inputs")
         prepare_iigs_content(out, asset)
         package.copy(asset.parent/'provenance.json',out/'evidence/apple-iigs/hdd-rom-provenance.json')
     if args.include_nes:
@@ -337,7 +349,8 @@ def main():
         + ("NES adds iNES cartridge loading through the shared PSRAM service.\n"
            "No NES BIOS or cartridges are included; see docs/NES_PLAN.md.\n" if args.include_nes else "") +
         "This is a private local delivery with validated user-supplied boot ROMs in sd/*/roms.\n"
-        + ("Apple IIgs includes selectable stock/accelerated CPU, HDD/WOZ media and PRAM.\n"
+        + ("Apple IIgs includes selectable stock/accelerated CPU, eight SmartPort HDDs, floppy media and PRAM.\n"
+           "Install its matching FPGA image, core.cfg and 2304-byte roms/hdd.rom with this firmware.\n"
            "Apple system/character/ADB ROMs are included privately; see docs/APPLE_IIGS_HARDWARE_TEST.md.\n"
            "The new FSBL enables HP3; install matching firmware before selecting the GS core.\n" if args.include_apple_iigs else "") +
         "Appletini F1.2.5-derived Dot bleed, Blur and Glow replace independent axis smoothing.\n"

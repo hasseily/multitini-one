@@ -50,7 +50,7 @@ module display_geometry_case #(
                 1:numerator=(m==1 || m==2 || m==4) ? 5 : 6;
                 3:begin numerator=m==0 ? 3 : 1;denominator=m==0 ? 2 : 1;end
                 4,6:numerator=(m==0 || m==5) ? 4 : 3;
-                5:numerator=(m==0 || m==3 || m==5) ? 2 : 1;
+                5:numerator=(m==0 || m==3 || m==5) && WIDTH*2<=aw && HEIGHT*2<=ah ? 2 : 1;
                 default:numerator=m==0 ? 4 : (m==1 || m==2 || m==4) ? 2 : 3;
             endcase
             // The old arithmetic first truncates the scaled dimensions to
@@ -75,7 +75,10 @@ module display_geometry_case #(
                     numerator,denominator,x12,y12,width12,height12);
             if(source_x0!==0 || source_y0!==0 || phase_x0!==0 || phase_y0!==0)
                 $fatal(1,"Auto source crop must stay zero");
-            if(m<6 && WIDTH>0 && WIDTH<=640 && HEIGHT>0 && HEIGHT<=800)begin
+            if(MACHINE==5 && WIDTH==724 && HEIGHT==496 && m<6 &&
+               (vw>ha || vh>va || vx+vw>ha || vy+vh>va))
+                $fatal(1,"IIgs Auto clipped the native border in mode %0d",m);
+            if(m<6 && WIDTH>0 && WIDTH<=724 && HEIGHT>0 && HEIGHT<=800)begin
                 for(integer size=1;size<=4;size=size+1)begin
                     manual_w=WIDTH*size;manual_h=HEIGHT*size;
                     manual_x=(aw-manual_w)>>>1;manual_y=(ah-manual_h)>>>1;
@@ -95,7 +98,7 @@ module display_geometry_case #(
 endmodule
 
 module tb_display_geometry;
-    localparam integer MACHINES=7, DIMENSIONS=15;
+    localparam integer MACHINES=7, DIMENSIONS=16;
     wire [MACHINES*DIMENSIONS-1:0] done;
     for(genvar machine=0;machine<MACHINES;machine=machine+1)begin:machines
         for(genvar pair=0;pair<DIMENSIONS;pair=pair+1)begin:dimensions
@@ -104,18 +107,18 @@ module tb_display_geometry;
             localparam integer W=pair==0 ? 382 : pair==1 ? 404 : pair==2 ? 160 :
                 pair==3 ? 540 : pair==4 ? 320 : pair==5 ? 0 : pair==6 ? 1 :
                 pair==7 ? 541 : pair==8 ? 1919 : pair==9 ? 1365 :
-                pair==10 ? 4095 : pair==11 ? 4096 : pair==12 ? 8191 : pair==13 ? 640 : 256;
+                pair==10 ? 4095 : pair==11 ? 4096 : pair==12 ? 8191 : pair==13 ? 640 : pair==14 ? 256 : 724;
             localparam integer H=pair==0 ? 270 : pair==1 ? 250 : pair==2 ? 144 :
                 pair==3 ? 720 : pair==4 ? 240 : pair==5 ? 0 : pair==6 ? 1 :
                 pair==7 ? 721 : pair==8 ? 1079 : pair==9 ? 2731 :
-                pair==10 ? 4095 : pair==11 ? 4097 : pair==12 ? 8193 : pair==13 ? 400 : 240;
+                pair==10 ? 4095 : pair==11 ? 4097 : pair==12 ? 8193 : pair==13 ? 400 : pair==14 ? 240 : 496;
             display_geometry_case #(.MACHINE(machine),.WIDTH(W),.HEIGHT(H)) check_case(
                 .done(done[machine*DIMENSIONS+pair]));
         end
     end
     initial begin
         wait(&done);
-        $display("PASS display geometry: %0d cases; 16 mode IDs, 7 machines, 15 dimension pairs",MACHINES*DIMENSIONS*16);
+        $display("PASS display geometry: %0d cases; 16 mode IDs, 7 machines, 16 dimension pairs",MACHINES*DIMENSIONS*16);
         $finish;
     end
     initial begin #100;$fatal(1,"display geometry timeout");end

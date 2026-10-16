@@ -23,11 +23,15 @@ hidden on the standby screen. Borders never resize the game window. Parts
 outside the display are clipped: Vectrex has visible side
 borders while the horizontal borders lie off-screen at 1080p. Padding uses
 physical output pixels, not emulated machine pixels. The C64's own VIC border is
-part of its machine image and remains intact.
+part of its machine image and remains intact. The IIgs native border is also
+part of its machine image: 42 pixels on each side and 24 source lines above
+and below SHR, with guest-controlled color. The complete IIgs frame is 724x496
+after line doubling; the optional menu border surrounds that frame.
 
 At the default 1920×1080 resolution, the original centered game windows are
 preserved: C64 PAL is 1528×1080, Game Boy / Color is 960×864, and Vectrex /
-Vectrex32 is 810×1080 when Video size is Auto. Genesis Auto is 1280×960.
+Vectrex32 is 810×1080 when Video size is Auto. Genesis Auto is 1280×960,
+and IIgs Auto is 1448×992.
 Video size can select a centered native-pixel integer multiplier; oversized
 images clip at the display edges. The current package
 supplies one C64 variant, PAL; display output remains nominal 60 Hz.
@@ -42,19 +46,19 @@ ABI 0.16 provides **Display resolution** in Video. Left/Right or Enter
 cycles these modes. Mode 0 is the power-on default. Each mode centers the
 complete machine image without cropping when Video size is Auto:
 
-| Mode | Output | Pixel clock | C64 Auto | GBC Auto | Vectrex Auto | Genesis Auto |
-| --- | --- | --- | --- | --- | --- | --- |
-| 0 | 1920×1080 | 148.5 MHz | 4× | 6× | 3:2 | 4× |
-| 1 | 1024×768 | 65 MHz | 2× | 5× | 1× | 3× |
-| 2 | 1200×800 | 67.5 MHz | 2× | 5× | 1× | 3× |
-| 3 | 1280×1024 | 108 MHz | 3× | 6× | 1× | 3× |
-| 4 | 1360×768 | 85.5 MHz | 2× | 5× | 1× | 3× |
-| 5 | 1680×1050 | 119 MHz | 3× | 6× | 1× | 4× |
+| Mode | Output | Pixel clock | C64 Auto | GBC Auto | Vectrex Auto | Genesis Auto | IIgs Auto |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 0 | 1920×1080 | 148.5 MHz | 4× | 6× | 3:2 | 4× | 2× |
+| 1 | 1024×768 | 65 MHz | 2× | 5× | 1× | 3× | 1× |
+| 2 | 1200×800 | 67.5 MHz | 2× | 5× | 1× | 3× | 1× |
+| 3 | 1280×1024 | 108 MHz | 3× | 6× | 1× | 3× | 1× |
+| 4 | 1360×768 | 85.5 MHz | 2× | 5× | 1× | 3× | 1× |
+| 5 | 1680×1050 | 119 MHz | 3× | 6× | 1× | 4× | 2× |
 
 All modes are about 60 Hz. Scanline spacing and Dot bleed follow the actual
 scale. PHO3 retains the weaker Blur and fixed native-pixel Glow kernels; Blur
 mixes 12.5%, 25% or 50% of its normalized kernel with the original pixel.
-The native DDR images retain their original dimensions and addresses.
+Display resolution changes retain each core's native DDR dimensions and addresses.
 All 128×60 menu cells remain visible; smaller outputs use the existing 7×8 font
 at 1×, centered in each cell. Border padding remains measured in output pixels.
 

@@ -87,13 +87,13 @@ static bool geometry(const mt_screenshot_scene_t *s,geometry_t *g)
 {
     static const uint16_t widths[6]={1920U,1024U,1200U,1280U,1360U,1680U};
     static const uint16_t heights[6]={1080U,768U,800U,1024U,768U,1050U};
-    if(s==NULL || s->pixels==NULL || s->width==0U || s->height==0U ||
-       s->width>MT_VIDEO_FRAME_MAX_WIDTH || s->height>MT_VIDEO_FRAME_MAX_HEIGHT ||
+    if(s==NULL || s->pixels==NULL || !mt_video_frame_geometry_valid(s->width,s->height) ||
        s->display_mode>=6U || s->video_multiplier>4U) return false;
     const uint8_t m=s->display_mode;
     g->w=widths[m]; g->h=heights[m]; g->num=g->den=1U;
     if(s->core_id==MT_VECTREX_CORE_ID) { g->num=m==0U ? 3U:1U; g->den=m==0U ? 2U:1U; }
-    else if(s->core_id==MT_IIGS_CORE_ID) g->num=m==0U || m==3U || m==5U ? 2U:1U;
+    else if(s->core_id==MT_IIGS_CORE_ID)
+        g->num=(m==0U || m==3U || m==5U) && s->width*2U<=g->w && s->height*2U<=g->h ? 2U:1U;
     else if(s->core_id==MT_GENESIS_CORE_ID || s->core_id==MT_NES_CORE_ID) g->num=m==0U || m==5U ? 4U:3U;
     else if(s->core_id==MT_GBC_CORE_ID) g->num=m==1U || m==2U || m==4U ? 5U:6U;
     else if(s->core_id==MT_C64_CORE_ID) g->num=m==0U ? 4U : m==1U || m==2U || m==4U ? 2U:3U;

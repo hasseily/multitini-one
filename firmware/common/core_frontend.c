@@ -215,7 +215,8 @@ static void build_genesis(mt_core_frontend_t *frontend,
 static void build_iigs(mt_core_frontend_t *frontend,
     const mt_core_frontend_state_t *state, mt_menu_view_t *view)
 {
-    static const char *const labels[] = {"Hard disk 1", "Hard disk 2", "3.5-inch floppy", "5.25-inch floppy"};
+    static const char *const labels[] = {"Hard disk 1", "Hard disk 2", "3.5-inch floppy", "5.25-inch floppy",
+        "Hard disk 3", "Hard disk 4", "Hard disk 5", "Hard disk 6", "Hard disk 7", "Hard disk 8"};
     static const char *const speeds[] = {"2.8 MHz (stock)","3.6 MHz","4.8 MHz","7.2 MHz","14.3 MHz","28.6 MHz","57.3 MHz"};
     const uint32_t speed_mask=state->iigs_speed_mask!=0U ? state->iigs_speed_mask:MT_IIGS_ACCEL_LEGACY_SPEED_MASK;
     const bool speed_valid=state->iigs_config.speed<MT_IIGS_SPEED_COUNT &&
@@ -223,7 +224,7 @@ static void build_iigs(mt_core_frontend_t *frontend,
     for(unsigned d=0U;d<MT_IIGS_DRIVE_COUNT;++d) {
         const char *name=state->iigs_drive_name[d];
         frontend->media_items[view->media_item_count++]=item(labels[d],name!=NULL ? name:"Choose disk...",
-            name!=NULL ? "Flush writes and eject this disk.":d<2U ? "Mount HDV, ProDOS-order PO or ProDOS 2MG (up to 32 MiB).":
+            name!=NULL ? "Flush writes and eject this disk.":mt_iigs_drive_hdd_unit(d)<MT_IIGS_HDD_COUNT ? "Mount HDV, ProDOS-order PO or ProDOS 2MG; capacity is checked before mounting.":
                 d==2U ? "Mount an 800 KiB PO or 2MG, or a 3.5-inch WOZ2.":
                 "Mount a 140 KiB DOS-order DSK, or a 5.25-inch WOZ2.",
             name!=NULL ? MT_MENU_ACTION_EJECT_IIGS_DRIVE:MT_MENU_ACTION_BROWSE_IIGS_DRIVE,d,true,name!=NULL ? MT_UI_COLOR_SUCCESS:MT_UI_COLOR_BLUE);
@@ -376,7 +377,7 @@ bool mt_core_frontend_accepts_drive_content(uint32_t core_id, mt_menu_browser_t 
 {
     if(core_id==MT_IIGS_CORE_ID && browser==MT_MENU_BROWSER_DRIVE8) {
         if(drive>=MT_IIGS_DRIVE_COUNT) return false;
-        if(drive<2U) return type==MT_CONTENT_IIGS_HDD;
+        if(mt_iigs_drive_hdd_unit(drive)<MT_IIGS_HDD_COUNT) return type==MT_CONTENT_IIGS_HDD;
         return type==MT_CONTENT_IIGS_WOZ ||
             (drive==2U ? type==MT_CONTENT_IIGS_HDD:type==MT_CONTENT_IIGS_FLOPPY);
     }

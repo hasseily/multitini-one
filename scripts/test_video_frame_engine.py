@@ -14,7 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--small-only", action="store_true")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--small-only", action="store_true")
+    selection.add_argument("--iigs-only", action="store_true", help="Check the complete bordered IIgs frame")
     args = parser.parse_args()
     build = ROOT / "build/video-frame-engine-tests"
     build.mkdir(parents=True, exist_ok=True)
@@ -44,9 +46,11 @@ def main():
              for num, den in ((3, 2), (4, 1), (6, 1))
              for width, height in ((13, 9), (1, 1), (2, 3))]
     cases += [(13, 9, 260, 0, 1, 1), (13, 9, 260, 0, 5, 2)]
-    if not args.small_only:
+    if args.iigs_only:
+        cases = [(724, 496, 1, 0, 2, 1)]
+    elif not args.small_only:
         cases += [(160, 144, 1, 0, 6, 1), (382, 270, 1, 0, 4, 1), (404, 250, 1, 0, 4, 1),
-                  (540, 720, 1, 0, 3, 2), (640, 720, 1, 0, 3, 2)]
+                  (540, 720, 1, 0, 3, 2), (640, 720, 1, 0, 3, 2), (724, 496, 1, 0, 2, 1)]
     for width, height, jobs, faults, num, den in cases:
         directory = build / f"{width}x{height}-s{num}-{den}"
         directory.mkdir(exist_ok=True)

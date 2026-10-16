@@ -291,24 +291,27 @@ module multitini_apple_iigs_adapter #(
             end else audio_phase<=audio_phase+AUDIO_SAMPLE_HZ;
         end
     end
-    // Media clients retain their pending buffers until a matching generation
-    // succeeds. Failed file writes never produce the ACK falling edge.
-    reg [4:0] mounted,eject_pending,sd_ack;
-    reg [31:0] sizes[0:4],generations[0:4];
-    reg [4:0] readonly;
-    reg [1:0] hdd_mount_pulse;
+    // Wire slots0/1 are HDD0/1,2/3 are floppy,4 is PRAM;5..10 are HDD2..7.
+    // Floppy/PRAM retain dirty writes for retry. HDD errors complete with an
+    // explicit SmartPort result, leaving durability recovery to the ARM journal.
+    reg [10:0] mounted,eject_pending,sd_ack;
+    reg [31:0] sizes[0:10],generations[0:10];
+    reg [10:0] readonly;
+    reg [7:0] hdd_mount_pulse;
+    reg [7:0] hdd_metadata_pending,hdd_block32;
     reg [4:0] mount_hold;
     reg [63:0] mount_size;
     reg mount_readonly;
     reg pending,media_error;
-    reg [2:0] selected;
+    reg [3:0] selected;
+    reg [7:0] hdd_error;
     reg [4:0] completion_delay,retry_delay;
     reg [8:0] send_addr;
     reg [4:0] send_delay;
     reg send_done;
     reg pram_read,pram_write;
-    wire [1:0] hdd_read,hdd_write;
-    wire [15:0] hdd_sector;
+    wire [7:0] hdd_read,hdd_write;
+    wire [31:0] hdd_sector;
     wire [31:0] woz_lba[0:1];
     wire [1:0] woz_read,woz_write,woz_ready,woz_mounted,woz_busy,woz_dirty;
     wire native_eject35;
@@ -321,44 +324,70 @@ module multitini_apple_iigs_adapter #(
     // through several native edges after its clock restarts. CPU warm reset
     // never resets controller metadata or retained dirty tracks.
     wire woz_reset=reset || woz_reset_hold!=0;
-    wire [7:0] sd_data[0:4];
-    wire [4:0] reads={pram_read,woz_read & {2{!woz_reset}},hdd_read};
-    wire [4:0] writes={pram_write,woz_write & {2{!woz_reset}},hdd_write};
-    wire mount_valid=media_slot<5 &&
-        (media_slot<2 ? (media_kind==8'h40 && media_image_size!=0 && media_image_size[8:0]==0 && media_image_size<=33554432) :
+    wire [7:0] sd_data[0:10];
+    wire [10:0] reads={hdd_read[7:2],pram_read,woz_read & {2{!woz_reset}},hdd_read[1:0]};
+    wire [10:0] writes={hdd_write[7:2],pram_write,woz_write & {2{!woz_reset}},hdd_write[1:0]};
+    wire mount_is_hdd=media_slot<2 || (media_slot>=5 && media_slot<11);
+    wire selected_is_hdd=selected<2 || selected>=5;
+    wire [2:0] mount_hdd_unit=media_slot<2 ? media_slot[2:0] : media_slot[2:0]-3'd3;
+    wire mount_valid=media_slot<11 &&
+        (mount_is_hdd ? (media_image_size!=0 && (media_kind==8'h43 ||
+            (media_kind==8'h40 && media_image_size[8:0]==0 && media_image_size<=33554432))) :
          media_slot<4 ? (media_kind==8'h41 && media_image_size>=80) :
          (media_kind==8'h42 && media_image_size==1024));
     wire [8:0] sd_addr=pending && media_request_write ? send_addr : sector_addr;
+    wire [7:0] hdd_unmount_pending=hdd_metadata_pending & ~{mounted[10:5],mounted[1:0]};
+    wire mount_waits_for_eject=mount_is_hdd && (eject_pending[media_slot] ||
+        hdd_unmount_pending[mount_hdd_unit] ||
+        (mount_hold!=0 && mount_size==0 && hdd_mount_pulse[mount_hdd_unit]));
+    reg [7:0] hdd_eject_ready;
+    always @*begin
+        hdd_eject_ready=0;
+        for(integer disk=0;disk<8;disk=disk+1)begin
+            if(eject_pending[disk<2 ? disk : disk+3] && !hdd_dma &&
+                !(pending && selected==(disk<2 ? disk : disk+3)) &&
+                !reads[disk<2 ? disk : disk+3] && !writes[disk<2 ? disk : disk+3])
+                hdd_eject_ready[disk]=1;
+        end
+    end
     assign media_state_mounted=|mounted;
     assign media_state_dirty=(!woz_reset && |woz_dirty) || (pending && media_request_write) || media_error || pram_write;
-    assign media_state_eject_pending=|eject_pending;
+    // A host eject is complete only after the held native unmount tuple has
+    // crossed phase0 and several CLK14 edges. Keep its file open until then.
+    assign media_state_eject_pending=(|eject_pending) || (|hdd_unmount_pending) ||
+        (mount_hold!=0 && mount_size==0 && (|hdd_mount_pulse));
     integer slot;
     always @(posedge core_clk)begin
         if(reset)begin
             mounted<=0;eject_pending<=0;sd_ack<=0;readonly<=0;pending<=0;media_error<=0;
-            hdd_mount_pulse<=0;mount_hold<=0;mount_size<=0;mount_readonly<=0;
+            // Clear retained native metadata when the whole adapter resets;
+            // warm CPU resets do not enter this branch or remove media.
+            hdd_mount_pulse<=8'hff;mount_hold<=16;mount_size<=0;mount_readonly<=0;hdd_error<=0;
+            hdd_metadata_pending<=0;hdd_block32<=0;
             media_request_valid<=0;media_request_write<=0;media_request_id<=0;media_request_lba<=0;
             media_request_block_count<=0;media_request_generation<=0;
             media_write_data<=0;media_write_data_valid<=0;media_write_data_last<=0;
             selected<=0;completion_delay<=0;retry_delay<=0;send_addr<=0;send_delay<=0;send_done<=0;
             pram_read<=0;pram_write<=0;
-            for(slot=0;slot<5;slot=slot+1)begin sizes[slot]<=0;generations[slot]<=0;end
+            for(slot=0;slot<11;slot=slot+1)begin sizes[slot]<=0;generations[slot]<=0;end
         end else begin
             if(clear_load_error)media_error<=0;
             if(mount_hold!=0)mount_hold<=mount_hold-1'b1;else hdd_mount_pulse<=0;
             if(retry_delay!=0)retry_delay<=retry_delay-1'b1;
-            if(media_mount && (!mount_valid || (pending && selected==media_slot)))media_error<=1;
-            if(media_mount && mount_valid && (!pending || selected!=media_slot))begin
+            if(media_mount && (!mount_valid || mount_waits_for_eject || (pending && selected==media_slot)))media_error<=1;
+            if(media_mount && mount_valid && !mount_waits_for_eject && (!pending || selected!=media_slot))begin
                 mounted[media_slot]<=media_image_size!=0;readonly[media_slot]<=media_read_only;
                 sizes[media_slot]<=media_image_size;generations[media_slot]<=media_generation;eject_pending[media_slot]<=0;
-                if(media_slot<2)begin hdd_mount_pulse<=2'b1<<media_slot;mount_hold<=16;
-                    mount_size<={32'd0,media_image_size};mount_readonly<=media_read_only;end
+                if(mount_is_hdd)begin
+                    hdd_metadata_pending[mount_hdd_unit]<=1;
+                    hdd_block32[mount_hdd_unit]<=media_kind==8'h43;
+                end
             end
             if(config_commit)begin
                 if(config_bytes[67] && mounted[4])pram_write<=1;
                 if(config_bytes[68] && mounted[4])pram_read<=1;
             end
-            if(media_eject && media_slot<5)begin
+            if(media_eject && media_slot<11)begin
                 eject_pending[media_slot]<=1;
                 if(media_slot==4 && mounted[4])pram_write<=1;
             end
@@ -367,29 +396,49 @@ module multitini_apple_iigs_adapter #(
             // every dirty block has received a successful file-service ACK.
             // ARM keeps its file open until a later menu eject/reinsert.
             if(native_eject35_q && mounted[2])eject_pending[2]<=1;
-            for(slot=0;slot<5;slot=slot+1)begin
+            for(slot=0;slot<11;slot=slot+1)begin
                 if(eject_pending[slot] && !(pending && selected==slot) && !reads[slot] && !writes[slot] &&
+                    !((slot<2 || slot>=5) && hdd_dma) &&
                     !(slot==2 && (woz_busy[0] || woz_dirty[0] || bit_we35)) &&
                     !(slot==3 && (woz_busy[1] || woz_dirty[1] || bit_we525)))begin
                     mounted[slot]<=0;eject_pending[slot]<=0;
-                    if(slot<2)begin hdd_mount_pulse<=2'b1<<slot;mount_hold<=16;mount_size<=0;end
+                    if(slot<2 || slot>=5)begin
+                        hdd_metadata_pending[slot<2 ? slot : slot-3]<=1;sizes[slot]<=0;
+                    end
+                end
+            end
+            // Never overwrite a live pulse's size/readonly tuple. Pending
+            // mounts coalesce by unit to the latest complete metadata. Zero
+            // sized unmounts can share one mask and are delivered together.
+            // Event sets dominate: defer publication on any mount/eject event.
+            if(mount_hold==0 && !media_mount && !(|hdd_eject_ready))begin
+                if(|hdd_unmount_pending)begin
+                    hdd_mount_pulse<=hdd_unmount_pending;mount_hold<=16;mount_size<=0;mount_readonly<=0;
+                    hdd_metadata_pending<=hdd_metadata_pending & ~hdd_unmount_pending;
+                end else if(|hdd_metadata_pending)begin
+                    for(slot=7;slot>=0;slot=slot-1)if(hdd_metadata_pending[slot])begin
+                        hdd_mount_pulse<=8'b1<<slot;mount_hold<=16;
+                        mount_size<=hdd_block32[slot] ? {23'd0,sizes[slot<2 ? slot : slot+3],9'd0} :
+                            {32'd0,sizes[slot<2 ? slot : slot+3]};
+                        mount_readonly<=readonly[slot<2 ? slot : slot+3];
+                    end
+                    // Lowest pending unit wins the priority loop above.
+                    for(slot=7;slot>=0;slot=slot-1)if(hdd_metadata_pending[slot])
+                        hdd_metadata_pending<=hdd_metadata_pending & ~(8'b1<<slot);
                 end
             end
             if(!pending && retry_delay==0 && (|(reads|writes)))begin
                 // Fixed priority is bounded: each request releases on ACK;
                 // track seeks cannot erase another client's request.
-                if((reads|writes)&5'b00001)selected<=0;
-                else if((reads|writes)&5'b00010)selected<=1;
-                else if((reads|writes)&5'b00100)selected<=2;
-                else if((reads|writes)&5'b01000)selected<=3;
-                else selected<=4;
+                for(slot=10;slot>=0;slot=slot-1)if(reads[slot] || writes[slot])selected<=slot[3:0];
                 pending<=1;completion_delay<=0;media_request_valid<=0;send_addr<=0;send_delay<=20;
             end else if(pending && !media_request_valid && completion_delay==0 && retry_delay==0)begin
                 sd_ack[selected]<=1;
                 media_request_write<=writes[selected];
-                media_request_lba<=selected<2 ? {16'd0,hdd_sector} : selected<4 ? woz_lba[selected-2] : {31'd0,!config_bytes[0]};
+                media_request_lba<=selected_is_hdd ? hdd_sector : selected<4 ? woz_lba[selected-2] : {31'd0,!config_bytes[0]};
                 media_request_generation<=generations[selected];
-                media_request_block_count<={5'd0,selected,8'd2};media_request_id<=media_request_id+1'b1;
+                media_request_block_count<={4'd0,selected,8'd2};media_request_id<=media_request_id+1'b1;
+                if(selected_is_hdd)hdd_error<=0;
                 media_request_valid<=1;media_write_data_valid<=0;send_addr<=0;send_delay<=20;send_done<=0;
                 if(selected==4)begin pram_read<=0;pram_write<=0;end
             end
@@ -408,7 +457,12 @@ module multitini_apple_iigs_adapter #(
                 media_complete_generation==media_request_generation &&
                 (media_complete_status!=0 || media_complete_block_count==media_request_block_count))begin
                 media_write_data_valid<=0;
-                if(media_complete_status==0)begin media_request_valid<=0;completion_delay<=16;media_error<=0;end
+                if(media_complete_status==0 || selected_is_hdd)begin
+                    media_request_valid<=0;completion_delay<=16;media_error<=0;
+                    if(selected_is_hdd)hdd_error<=media_complete_status==0 ? 8'd0 :
+                        media_complete_status==32'h28 ? 8'h28 : media_complete_status==32'h2b ? 8'h2b :
+                        media_complete_status==32'h2d ? 8'h2d : media_complete_status==32'h2f ? 8'h2f : 8'h27;
+                end
                 else begin
                     // Preserve the original operation/LBA and retry the same
                     // retained buffer using a fresh ID. ACK stays asserted.
@@ -419,6 +473,12 @@ module multitini_apple_iigs_adapter #(
             if(completion_delay!=0)begin
                 completion_delay<=completion_delay-1'b1;
                 if(completion_delay==1)begin sd_ack[selected]<=0;pending<=0;retry_delay<=16;end
+            end
+            // A machine reset abandons only HDD commands. Old completion IDs
+            // cannot satisfy a subsequent request; dirty WOZ/PRAM stay intact.
+            if(machine_reset && pending && selected_is_hdd)begin
+                pending<=0;sd_ack[selected]<=0;media_request_valid<=0;media_write_data_valid<=0;
+                media_request_id<=media_request_id+1'b1;completion_delay<=0;retry_delay<=16;hdd_error<=8'h27;
             end
         end
     end
@@ -439,6 +499,10 @@ module multitini_apple_iigs_adapter #(
     reg [7:0] woz_sd_data_q;
     reg [1:0] woz_sd_ack_q,woz_sd_write_q,woz_mount_q,woz_readonly_q;
     reg [31:0] woz_size_q[0:1];
+    reg [8:0] hdd_sd_addr_q;
+    reg [7:0] hdd_sd_data_q,hdd_sd_ack_q,hdd_sd_error_q,hdd_mount_q;
+    reg hdd_sd_write_q,hdd_readonly_q;
+    reg [63:0] hdd_size_q;
     // Publish complete ARM/file-service tuples on phase0. Held loader bytes
     // are observed once at the next native edge, and all tuple fields have
     // three primary periods of setup. Twenty send-delay ticks cover this
@@ -447,11 +511,17 @@ module multitini_apple_iigs_adapter #(
         if(reset)begin
             woz_sd_addr_q<=0;woz_sd_data_q<=0;woz_sd_ack_q<=0;woz_sd_write_q<=0;
             woz_mount_q<=0;woz_readonly_q<=0;woz_size_q[0]<=0;woz_size_q[1]<=0;
+            hdd_sd_addr_q<=0;hdd_sd_data_q<=0;hdd_sd_ack_q<=0;hdd_sd_error_q<=0;
+            hdd_sd_write_q<=0;hdd_mount_q<=0;hdd_readonly_q<=0;hdd_size_q<=0;
         end else if(byte_tick)begin
             woz_sd_addr_q<=sd_addr;woz_sd_data_q<=sector_data;woz_sd_ack_q<=sd_ack[3:2];
             woz_sd_write_q<={2{sector_write}} & sd_ack[3:2];
             woz_mount_q<=mounted[3:2];woz_readonly_q<=readonly[3:2];
             woz_size_q[0]<=sizes[2];woz_size_q[1]<=sizes[3];
+            hdd_sd_addr_q<=sd_addr;hdd_sd_data_q<=sector_data;
+            hdd_sd_ack_q<={sd_ack[10:5],sd_ack[1:0]};hdd_sd_error_q<=hdd_error;
+            hdd_sd_write_q<=sector_write && (|{sd_ack[10:5],sd_ack[1:0]});
+            hdd_mount_q<=hdd_mount_pulse;hdd_readonly_q<=mount_readonly;hdd_size_q<=mount_size;
         end
     end
     wire [7:0] track525_id=qtrack>=2 ? qtrack[7:0]-8'd2 : 0;
@@ -478,6 +548,9 @@ module multitini_apple_iigs_adapter #(
     end endgenerate
     wire [8:0] nv_address=nv_write ? nv_load_addr : sd_addr;
     assign sd_data[1]=sd_data[0];
+    generate for(genvar disk=5;disk<11;disk=disk+1)begin:g_hdd_data
+        assign sd_data[disk]=sd_data[0];
+    end endgenerate
     iigs #(.RAMSIZE(128),.EXTERNAL_CPU(1),.MAX_ACCEL_SPEED(MAX_ACCEL_SPEED)) machine_i(
         .CPU_CLK(core_clk),.CPU_CE(cpu_ce),.CPU_PUBLISH(byte_tick),.CPU_DIN(cpu_read_data),.NATIVE_COMMIT(native_commit_q),
         .CPU_FAST_CE(cpu_ce && !native_pending),.NATIVE_EDGE(pixel_ce),
@@ -506,9 +579,9 @@ module multitini_apple_iigs_adapter #(
         .accel_active(),.mem_stall(native_stall_q),.dbg_hdd_dma(hdd_dma),.floppy_wp(1'b0),
         .joystick_0({16'd0,joy}),.joystick_1(32'd0),.joystick_l_analog_0(analog_xy),.joystick_l_analog_1(16'd0),
         .paddle_0(analog_xy[7:0]),.paddle_1(analog_xy[15:8]),.paddle_2(8'h80),.paddle_3(8'h80),
-        .HDD_SECTOR(hdd_sector),.HDD_READ(hdd_read),.HDD_WRITE(hdd_write),.HDD_MOUNTED(hdd_mount_pulse),
-        .img_readonly(mount_readonly),.img_size(mount_size),.HDD_RAM_ADDR(sd_addr),.HDD_RAM_DI(sector_data),
-        .HDD_RAM_DO(sd_data[0]),.HDD_RAM_WE(sector_write && (|sd_ack[1:0])),.HDD_ACK(sd_ack[1:0]),
+        .HDD_SECTOR(hdd_sector),.HDD_READ(hdd_read),.HDD_WRITE(hdd_write),.HDD_MOUNTED(hdd_mount_q),
+        .img_readonly(hdd_readonly_q),.img_size(hdd_size_q),.HDD_RAM_ADDR(hdd_sd_addr_q),.HDD_RAM_DI(hdd_sd_data_q),
+        .HDD_RAM_DO(sd_data[0]),.HDD_RAM_WE(hdd_sd_write_q),.HDD_ACK(hdd_sd_ack_q),.HDD_ERROR(hdd_sd_error_q),
         .WOZ_TRACK3(track35),.WOZ_TRACK3_BIT_ADDR(bit_addr35),.WOZ_TRACK3_STABLE_SIDE(stable_side),
         .WOZ_TRACK3_BIT_DATA(bit_data[0]),.WOZ_TRACK3_BIT_COUNT(bit_count[0]),.WOZ_TRACK3_READY(woz_ready[0]),
         .WOZ_TRACK3_DATA_VALID(track_valid[0]),.WOZ_TRACK3_LOAD_COMPLETE(load_complete[0]),

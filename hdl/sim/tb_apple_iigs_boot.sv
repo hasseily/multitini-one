@@ -55,7 +55,7 @@ module tb_apple_iigs_boot;
             end
         end
     end
-    reg [7:0] rom3[0:262143],character[0:4095],adb3[0:4095],hdd_rom[0:255];
+    reg [7:0] rom3[0:262143],character[0:4095],adb3[0:4095],hdd_rom[0:2303];
     reg [7:0] disk_image[0:33554431];
     string fixture_path,disk_path;
     integer speed=0,compatibility_flags=16,max_ticks=20000000,media_bytes=0,media_offset=0;
@@ -79,7 +79,7 @@ module tb_apple_iigs_boot;
             load_epoch=~load_epoch;
             for(integer i=0;i<size;i=i+1)begin
                 case(kind)
-                    8'h40:value=rom3[i];8'h42:value=character[i];8'h44:value=adb3[i];8'h45:value=hdd_rom[i];
+                    8'h40:value=rom3[i];8'h42:value=character[i];8'h44:value=adb3[i];8'h49:value=hdd_rom[i];
                     8'h43:value=i==0 ? 1:i==1 ? speed:i==3 ? compatibility_flags:i==4 ? 8'h00:i==5 ? 8'h00:i==6 ? 8'hd0:i==7 ? 8'h6a:0;
                     8'h48:value=disk_image[media_offset+lba*512+i];
                     default:value=0;
@@ -194,14 +194,14 @@ module tb_apple_iigs_boot;
         end
         for(integer i=0;i<256;i=i+1)begin io_reads[i]=0;io_writes[i]=0;end
         repeat(20)@(negedge core_clk);reset=0;
-        packet(8'h43,16,0);packet(8'h40,262144,0);packet(8'h42,4096,0);packet(8'h44,4096,0);packet(8'h45,256,0);
+        packet(8'h43,16,0);packet(8'h40,262144,0);packet(8'h42,4096,0);packet(8'h44,4096,0);packet(8'h49,2304,0);
         if(!rom_loaded || load_error)$fatal(1,"Actual ROM3 set not ready");
         $display("ACTUAL_ROM3_LOADED reset_vector=%04x first_opcode=%02x speed=%0d compatibility_flags=%02x",memory[24'hfffff8>>3][47:32],memory[24'hfc0000>>3][7:0],speed,compatibility_flags);
         media_slot=4;media_kind=8'h42;media_image_size=1024;media_generation=1;media_mount=1;
         @(negedge core_clk);media_mount=0;
         if(have_disk)begin
-            repeat(40)@(negedge core_clk);media_slot=floppy!=0 ? 2:0;media_kind=floppy!=0 ? 8'h41:8'h40;
-            media_image_size=floppy!=0 ? media_bytes:((media_bytes-media_offset)/512)*512;
+            repeat(40)@(negedge core_clk);media_slot=floppy!=0 ? 2:0;media_kind=floppy!=0 ? 8'h41:8'h43;
+            media_image_size=floppy!=0 ? media_bytes:(media_bytes-media_offset)/512;
             media_generation=2;media_read_only=1;media_mount=1;
             @(negedge core_clk);media_mount=0;
         end

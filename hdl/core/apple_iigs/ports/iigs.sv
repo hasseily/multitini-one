@@ -227,17 +227,18 @@ output video_pal,
 
 
    // HDD control (supports 2 units - ProDOS limit)
-  output [15:0] HDD_SECTOR,
-  output [1:0]  HDD_READ,
-  output [1:0]  HDD_WRITE,
-  input [1:0]   HDD_MOUNTED,
+  output [31:0] HDD_SECTOR,
+  output [7:0]  HDD_READ,
+  output [7:0]  HDD_WRITE,
+  input [7:0]   HDD_MOUNTED,
   input         img_readonly,
   input [63:0]  img_size,
   input [8:0]   HDD_RAM_ADDR,
   input [7:0]   HDD_RAM_DI,
   output [7:0]  HDD_RAM_DO,
   input         HDD_RAM_WE,
-  input [1:0]   HDD_ACK,
+  input [7:0]   HDD_ACK,
+  input [7:0] HDD_ERROR=8'd0,
 
    // --- WOZ bit interface for 3.5" drive 1 ---
    output [7:0]       WOZ_TRACK3,           // Track number being read
@@ -353,7 +354,7 @@ output video_pal,
   logic [7:0]         cpu_dout;
   logic [23:0]        addr_bus /* verilator public_flat */;
   logic [23:0]        fastram_addr_bus;
-  logic [15:0]        hdd_dma_addr;
+  logic [23:0]        hdd_dma_addr;
   logic               cpu_vpa, cpu_vpb;
   logic               cpu_vda, cpu_mlb;
   logic               cpu_we_n;
@@ -501,7 +502,7 @@ output video_pal,
   );
 
   // Use combinational logic but add debug to detect timing issues
-  assign { bank_bef, addr_bef } = hdd_dma ? {DMAREG, hdd_dma_addr} : cpu_addr;
+  assign { bank_bef, addr_bef } = hdd_dma ? hdd_dma_addr : cpu_addr;
 
   // Debug: Track bank changes to detect potential timing issues
   reg [7:0] prev_bank;
@@ -1810,6 +1811,20 @@ wire slot_internalrom_ce;
 reg [7:0]  device_select;
 reg [7:0]  io_select;
 wire       hdd_dma;
+// A Cn access selects that slot's C800 firmware. CFFF releases ownership
+// after its data phase. Internal/other slots never inherit slot-7 ownership.
+reg hdd_expansion_owner=1'b0;
+wire hdd_slot_bank=bank_bef==8'h00 || bank_bef==8'h01 || bank_bef==8'he0 || bank_bef==8'he1;
+wire hdd_expansion_select=hdd_expansion_owner && hdd_slot_bank && !inhibit_cxxx &&
+    !CXROM && SLTROMSEL[7] && addr_bef>=16'hc800 && addr_bef<=16'hcfff;
+always @(posedge CLK_14M) begin
+    if(reset)hdd_expansion_owner<=0;
+    else if(bus_phi2 && !hdd_dma && hdd_slot_bank && !inhibit_cxxx)begin
+        if(addr_bef==16'hcfff)hdd_expansion_owner<=0;
+        else if(addr_bef>=16'hc100 && addr_bef<16'hc800)
+            hdd_expansion_owner<=io_select[7];
+    end
+end
 assign dbg_hdd_dma = hdd_dma;
 wire [7:0] slowram_dout;
 
@@ -2008,7 +2023,7 @@ vgc vgc(
 wire [7:0] floating_bus = (bank_bef >= RAMSIZE && bank_bef < 8'hE0) ? bank_bef : 8'h80;
 
 wire [7:0] din =
-  (io_select[7] == 1'b1 | device_select[7] == 1'b1 | (hdd_dma & hdd_dma_we)) ? HDD_DO :
+  (io_select[7] | hdd_expansion_select | device_select[7] | (hdd_dma & hdd_dma_we)) ? HDD_DO :
   (fastram_ce | rom_ce) ?  top_din :
   slowram_ce ? slowram_dout :
   slot_ce ? slot_dout :
@@ -2625,12 +2640,12 @@ wire ready_out;
     // Legacy slot-7 HDD (supports 4 units)
     hdd #(.EXTERNAL_BUS(EXTERNAL_CPU)) hdd(
         .load_rom_clk(load_rom_clk),
-        .load_rom_we(load_rom_we & (load_rom_addr[15:8]==8'h20)),
-        .load_rom_addr(load_rom_addr[7:0]),
+        .load_rom_we(load_rom_we & (load_rom_addr[15:12]==4'h2)),
+        .load_rom_addr(load_rom_addr[11:0]),
         .load_rom_data(load_rom_data),
         .CLK_14M(CLK_14M),
         .phi0(bus_phi2 & ~mem_stall),    // Gate on CPU clock (ph2_en), held during memory-path stalls: the DMA engine does not honor CPU RDY, and its fast-RAM reads go through the same (possibly missing) cache path
-        .IO_SELECT(io_select[7]),
+        .IO_SELECT(io_select[7] | hdd_expansion_select),
         .DEVICE_SELECT(device_select[7]),
         //.IO_SELECT(1'b0),
         //.DEVICE_SELECT(1'b0),
@@ -2641,6 +2656,7 @@ wire ready_out;
         .D_OUT(HDD_DO),
         .DMA(hdd_dma),
         .DMA_ADDR(hdd_dma_addr),
+        .DMA_BANK(DMAREG),
         .DMA_WE(hdd_dma_we),
         .sector(HDD_SECTOR),
         .sd_rd(HDD_READ),
@@ -2652,7 +2668,8 @@ wire ready_out;
         .ram_di(HDD_RAM_DI),
         .ram_do(HDD_RAM_DO),
         .ram_we(HDD_RAM_WE),
-        .sd_ack(HDD_ACK)
+        .sd_ack(HDD_ACK),
+        .sd_error(HDD_ERROR)
     );
 /*
     // Native SmartPort HDD on Slot 5 ($C0D0–$C0DF), no ROM
@@ -3245,14 +3262,14 @@ assign cpu_local_data = EXTERNAL_CPU ? zip_peek_data : zip_rdata;
 // Its IO cycle still needs a memory lookup before the native commit.
 wire cpu_irq_dispatch_read = IO && !we && addr_bef[15:0]>=16'hc071 && addr_bef[15:0]<=16'hc07f;
 assign cpu_memory_cycle = cpu_valid && (fastram_ce || (rom_ce && !we)) &&
-    (hdd_dma || ((!IO || cpu_irq_dispatch_read) && !EXTERNAL_IO && !(|device_select) && !(|io_select) && !slot_ce));
+    (hdd_dma || ((!IO || cpu_irq_dispatch_read) && !EXTERNAL_IO && !(|device_select) && !(|io_select) && !slot_ce && !hdd_expansion_select));
 // Use the current MMU classification, not CLK14's delayed slowMem register:
 // Shadow reads select fast RAM even when the mirror enable is also asserted.
 // Slot/IO and Mega II $C000-$CFFF use the native bridge. Direct E0/E1 RAM
 // ($0000-$BFFF, $D000-$FFFF with aux/ALTZP/LC/bank-latch mapping already in
 // the physical address) and every slow-RAM write (E0/E1 or shadow copy) use
 // the primary-clock slow-RAM port. E0/E1 LC ROM reads use the ROM cache.
-wire cpu_plain_bus = !IO && !EXTERNAL_IO && !(|device_select) && !(|io_select) && !slot_ce;
+wire cpu_plain_bus = !IO && !EXTERNAL_IO && !(|device_select) && !(|io_select) && !slot_ce && !hdd_expansion_select;
 wire cpu_mega2_bank = bank_bef == 8'hE0 || bank_bef == 8'hE1;
 wire cpu_mega2_window = cpu_mega2_bank && (addr_bef < 16'hC000 || addr_bef >= 16'hD000);
 assign cpu_slowram_read = EXTERNAL_CPU && !hdd_dma && valid && !we && cpu_plain_bus &&
@@ -3267,7 +3284,7 @@ assign cpu_fast_cycle = !hdd_dma && (!valid || cpu_local_read ||
 // hdd.sv registers slot ROM twice (address -> rom_dout -> D_OUT) and its
 // register mirror once. Without the 1 MHz sync the native bridge must give
 // these reads a second preparation edge before its capture edge.
-assign cpu_native_two_edge = !we && ((|io_select) || (|device_select));
+assign cpu_native_two_edge = !we && ((|io_select) || (|device_select) || hdd_expansion_select);
 // The cache and slow-RAM write byte. Unlike dout it never passes through the
 // I/O read mux (cpu_din); only write cycles consume it.
 wire [7:0] cpu_bus_write_byte = (hdd_dma & hdd_dma_we) ? HDD_DO : cpu_dout;

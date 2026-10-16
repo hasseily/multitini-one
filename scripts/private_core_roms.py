@@ -16,7 +16,7 @@ REQUIRED = {
     "c64": {"basic.bin": 8192, "kernal.bin": 8192, "characters.bin": 4096, "1541.bin": 16384},
     "vectrex": {"bios.bin": 8192},
     "apple-iigs": {"rom3.rom": 262144, "rom1.rom": 131072, "char.rom": 4096,
-                   "adb3.rom": 4096, "adb1.rom": 4096, "hdd.rom": 256},
+                   "adb3.rom": 4096, "adb1.rom": 4096, "hdd.rom": 2304},
 }
 NO_EXTERNAL = {
     "gbc": "The core embeds the licensed MIT SameBoy bootstrap. Supply a user cartridge in ../media/.\n",
@@ -47,14 +47,14 @@ class RomCollection:
     provenance: dict
 
 
-def collect(source, cores, *, iigs_mame_zip=None):
+def collect(source, cores, *, iigs_mame_zip=None, iigs_hdd_rom=None):
     source = Path(source).resolve()
     cores = set(cores)
     if not source.is_dir() or not cores or not cores <= CORES:
         raise ValueError("A complete user ROM source directory and known core set are required")
     if source.is_relative_to(ROOT) and not source.is_relative_to(ROOT / "build"):
         raise ValueError("Private ROM inputs must stay outside source directories")
-    inputs, outputs, records = {}, {}, {}
+    inputs, outputs, records, built_inputs = {}, {}, {}, {}
 
     def read(path):
         path = Path(path).resolve()
@@ -89,6 +89,17 @@ def collect(source, cores, *, iigs_mame_zip=None):
         folder = source / "apple-iigs/roms"
         prepared = {}
         for name, size in REQUIRED["apple-iigs"].items():
+            if name == "hdd.rom" and iigs_hdd_rom is not None:
+                # The runtime card ROM must match the selected source build,
+                # not an older copy in the owner's private system-ROM folder.
+                built = Path(iigs_hdd_rom).resolve()
+                if not built.is_relative_to(ROOT / "build") or not built.is_file():
+                    raise ValueError("Source-built IIgs ROM must be under build/")
+                data = checked(built.read_bytes(), size, name)
+                origin = built.relative_to(ROOT).as_posix()
+                built_inputs[origin] = {"bytes": len(data), "sha256": sha(data)}
+                prepared[name] = (data, [origin], "source-built-SmartPort-ROM")
+                continue
             path = folder / name
             candidates = [path] if path.is_file() else []
             if not candidates and name in {"char.rom", "adb1.rom", "adb3.rom"}:
@@ -168,6 +179,7 @@ def collect(source, cores, *, iigs_mame_zip=None):
     provenance = {"schema_version": 1, "classification": "Private local delivery with user-supplied boot ROMs",
         "cores": sorted(cores),
         "source_directory": str(source), "inputs": inputs, "outputs": records,
+        "source_built_inputs": built_inputs,
         "optional_c64_fast_pair": fast,
         "no_external_boot_rom": {core: NO_EXTERNAL[core].strip() for core in sorted(cores & NO_EXTERNAL.keys())},
         "boot_limits": {"c64": "System ROMs can start BASIC; no disk or program is included.",
@@ -179,6 +191,13 @@ def collect(source, cores, *, iigs_mame_zip=None):
 
 
 def verify_inputs(collection):
+    for name, record in collection.provenance.get("source_built_inputs", {}).items():
+        path = (ROOT / name).resolve()
+        if not path.is_relative_to(ROOT / "build") or not path.is_file():
+            raise ValueError("Source-built IIgs ROM disappeared: " + name)
+        data = path.read_bytes()
+        if len(data) != record["bytes"] or sha(data) != record["sha256"]:
+            raise ValueError("Source-built IIgs ROM changed after validation: " + name)
     source = Path(collection.provenance["source_directory"])
     for name, record in collection.provenance["inputs"].items():
         if "container" in record:

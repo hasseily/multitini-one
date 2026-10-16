@@ -88,8 +88,7 @@ void mt_video_frame_service_poll(void)
         const uint32_t width = geometry & UINT32_C(0xffff), height = geometry >> 16;
         const uint32_t stride = bus.read(MT_REG_VIDEO_FRAME_STRIDE);
         if ((bus.read(MT_REG_VIDEO_FRAME_STATUS) & MT_VIDEO_FRAME_STATUS_AUTONOMOUS_SUPPORTED) == 0U ||
-            width == 0U || width > MT_VIDEO_FRAME_MAX_WIDTH || height == 0U ||
-            height > MT_VIDEO_FRAME_MAX_HEIGHT || stride != ((width * 2U + 127U) & ~UINT32_C(127)) ||
+            !mt_video_frame_geometry_valid(width, height) || stride != ((width * 2U + 127U) & ~UINT32_C(127)) ||
             stride * height > MT_VIDEO_FRAME_SLOT_BYTES) { fail(false); return; }
         bus.write(MT_REG_VIDEO_FRAME_ERROR_CLEAR, 1U);
         bus.write(MT_REG_VIDEO_FRAME_OPTIONS, packed_options);

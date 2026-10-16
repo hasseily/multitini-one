@@ -19,23 +19,28 @@ static const struct { const char *name; size_t size; uint8_t kind; } rom_files[R
 static unsigned rom_reads[32],rom_streams[32],rom_read_count,rom_stream_count;
 static int failed_rom;
 static mt_sd_status_t rom_failure_status;
-typedef struct { char path[256]; uint8_t data[819456]; size_t size; bool present; } test_file_t;
-struct mt_sd_file { test_file_t *file; size_t position; bool open; };
+typedef struct { char path[256]; uint8_t data[819456]; uint64_t size; bool present,sparse,sparse_written;
+    uint64_t sparse_offset;uint8_t sparse_data[512]; } test_file_t;
+struct mt_sd_file { test_file_t *file; uint64_t position; bool open; };
 static test_file_t files[FILES]; static struct mt_sd_file handles[FILES];
-static uint32_t regs[1024], generations[5], mount_sizes[5];
+static uint32_t regs[1024], generations[MT_IIGS_MEDIA_SLOT_COUNT];
+static uint64_t mount_sizes[MT_IIGS_MEDIA_SLOT_COUNT];
+static uint8_t mount_kinds[MT_IIGS_MEDIA_SLOT_COUNT];
 static uint8_t stream_kind, stream_data[512]; static unsigned stream_index,reverse_index;
 static const uint8_t *reverse_data;
 static uint8_t config_stream[MT_IIGS_CONFIG_BYTES];
 static uint32_t completions,completion_status; static bool fail_disk_write,fail_journal,deny_writes,early_last;
 static unsigned journal_writes,disk_writes,events; static bool journal_durable;
 static unsigned raw_snapshots;
-static uint8_t dirty_drives;
+static uint16_t dirty_drives;
 static bool pram_eject_write,eject_pending_test;
 static unsigned pram_load_packets,warm_reset_packets,pram_load_complete_event,warm_reset_event,recovery_calls;
 static bool pram_restore_pending,fail_sector_transfer;
-static unsigned reset_assertions,reset_releases,reset_event,release_event,config_event,close_event,mount_event[5];
+static unsigned reset_assertions,reset_releases,reset_event,release_event,config_event,close_event,mount_event[MT_IIGS_MEDIA_SLOT_COUNT];
 static bool core_reset_asserted;
 static bool fail_media_complete;
+static bool reject_smartport_rom;
+static uint64_t last_read_offset,last_write_offset;
 static unsigned progress_calls,sector_streams;
 static void count_progress(void *context) { assert(context==&progress_calls);++progress_calls; }
 static void request(unsigned slot,uint32_t lba,bool writing);
@@ -49,6 +54,8 @@ static test_file_t *file_find(const char *path,bool create)
     return NULL;
 }
 static void store32(uint8_t *p,uint32_t v) { for(unsigned i=0U;i<4U;++i)p[i]=(uint8_t)(v>>(i*8U)); }
+static uint8_t sparse_byte(uint64_t offset)
+{ return (uint8_t)(UINT64_C(0xa7)^offset^(offset>>16U)^(offset>>32U)); }
 mt_sd_result_t mt_sd_storage_journal_recover(const char *p,const char *j,uint8_t *b,size_t n)
 { (void)p;(void)j;(void)b;(void)n;++recovery_calls;return result(MT_SD_OK,0U); }
 mt_sd_result_t mt_sd_storage_journal_replace(const char *p,const char *j,const uint8_t *b,size_t n)
@@ -66,6 +73,13 @@ mt_sd_result_t mt_sd_storage_read_file_optional_exact(const char *p,uint8_t *b,s
     if(f==NULL)return result(MT_SD_OK,0U);
     if(f->size!=n)return result(MT_SD_SIZE_MISMATCH,0U);
     memcpy(b,f->data,n); return result(MT_SD_OK,n);
+}
+mt_sd_result_t mt_sd_storage_read_file_optional_max(const char *p,uint8_t *b,size_t n,bool *found)
+{
+    test_file_t *f=file_find(p,false);*found=f!=NULL;
+    if(f==NULL)return result(MT_SD_OK,0U);
+    if(f->size>n)return result(MT_SD_TOO_LARGE,0U);
+    memcpy(b,f->data,f->size);return result(MT_SD_OK,f->size);
 }
 mt_sd_result_t mt_sd_storage_read_file_exact(const char *p,uint8_t *b,size_t n)
 {
@@ -89,18 +103,36 @@ mt_sd_result_t mt_sd_file_open(const char *p,const char *mode,mt_sd_file_t **out
     return result(MT_SD_FILE_LIMIT,0U);
 }
 mt_sd_result_t mt_sd_file_read(mt_sd_file_t *h,void *b,size_t n)
-{ assert(h->open); if(n>h->file->size-h->position)n=h->file->size-h->position; memcpy(b,h->file->data+h->position,n);h->position+=n;return result(MT_SD_OK,n); }
+{
+    assert(h->open);if(n>h->file->size-h->position)n=(size_t)(h->file->size-h->position);
+    last_read_offset=h->position;
+    if(h->file->sparse && h->position>=512U) {
+        for(size_t i=0U;i<n;++i)((uint8_t *)b)[i]=sparse_byte(h->position+i);
+        if(h->file->sparse_written && h->position==h->file->sparse_offset) {
+            assert(n<=512U);memcpy(b,h->file->sparse_data,n);
+        }
+    } else { assert(h->position+n<=sizeof(h->file->data));memcpy(b,h->file->data+h->position,n); }
+    h->position+=n;return result(MT_SD_OK,n);
+}
 mt_sd_result_t mt_sd_file_write(mt_sd_file_t *h,const void *b,size_t n)
 {
-    assert(h->open && h->position+n<=sizeof(h->file->data));
+    assert(h->open && h->position+n<=h->file->size);
     assert(journal_durable); ++disk_writes; ++events;
-    if(fail_disk_write) { memcpy(h->file->data+h->position,b,n/2U); return result(MT_SD_WRITE_FAILED,n/2U); }
-    memcpy(h->file->data+h->position,b,n); h->position+=n; return result(MT_SD_OK,n);
+    last_write_offset=h->position;
+    uint8_t *dst;
+    if(h->file->sparse) {
+        assert(n<=512U);
+        if(!h->file->sparse_written || h->file->sparse_offset!=h->position)
+            for(size_t i=0U;i<512U;++i)h->file->sparse_data[i]=sparse_byte(h->position+i);
+        h->file->sparse_written=true;h->file->sparse_offset=h->position;dst=h->file->sparse_data;
+    } else { assert(h->position+n<=sizeof(h->file->data));dst=h->file->data+h->position; }
+    if(fail_disk_write) { memcpy(dst,b,n/2U);return result(MT_SD_WRITE_FAILED,n/2U); }
+    memcpy(dst,b,n);h->position+=n;return result(MT_SD_OK,n);
 }
 mt_sd_result_t mt_sd_file_seek(mt_sd_file_t *h,int64_t offset,int origin)
 {
     int64_t p=origin==SEEK_END ? (int64_t)h->file->size:origin==SEEK_CUR ? (int64_t)h->position:0;
-    p+=offset; assert(p>=0 && (uint64_t)p<=h->file->size); h->position=(size_t)p;return result(MT_SD_OK,0U);
+    p+=offset; assert(p>=0 && (uint64_t)p<=h->file->size); h->position=(uint64_t)p;return result(MT_SD_OK,0U);
 }
 int64_t mt_sd_file_tell(const mt_sd_file_t *h) { return (int64_t)h->position; }
 mt_sd_result_t mt_sd_file_close(mt_sd_file_t *h)
@@ -150,10 +182,13 @@ static void write_reg(void *c,uint32_t o,uint32_t v)
             }
             break;
         case MT_COMMAND_MEDIA_MOUNT:
-            assert((a&255U)<5U);generations[a&255U]=regs[MT_REG_COMMAND_ARG2/4U];mount_sizes[a&255U]=b;
+            assert((a&255U)<MT_IIGS_MEDIA_SLOT_COUNT && d==0U);
+            generations[a&255U]=regs[MT_REG_COMMAND_ARG2/4U];
+            mount_kinds[a&255U]=(uint8_t)(a>>MT_MEDIA_KIND_SHIFT);
+            mount_sizes[a&255U]=((a>>MT_MEDIA_KIND_SHIFT)&255U)==MT_IIGS_MEDIA_BLOCK32 ? (uint64_t)b*512U:b;
             mount_event[a&255U]=++events;break;
         case MT_COMMAND_MEDIA_EJECT:
-            dirty_drives&=(uint8_t)~(1U<<(a&255U));
+            dirty_drives&=(uint16_t)~(1U<<(a&255U));
             if(a==4U && pram_eject_write) {
                 regs[MT_REG_MEDIA_REQUEST/4U]=MT_MEDIA_REQUEST_VALID|MT_MEDIA_REQUEST_WRITE;
                 regs[MT_REG_MEDIA_REQUEST_ID/4U]=0xeeeeU;regs[MT_REG_MEDIA_REQUEST_LBA/4U]=0U;
@@ -162,6 +197,7 @@ static void write_reg(void *c,uint32_t o,uint32_t v)
             }
             break;
         case MT_COMMAND_STREAM_BEGIN:
+            if(a==MT_LOAD_IIGS_HDD_ROM && reject_smartport_rom) { response=MT_RESPONSE_UNSUPPORTED;break; }
             stream_kind=(uint8_t)a;stream_index=0U;
             if(stream_kind==MT_LOAD_IIGS_SECTOR)++sector_streams;
             for(unsigned i=0U;i<ROM_FILES;++i)if(a==rom_files[i].kind) {
@@ -189,6 +225,18 @@ static void write_reg(void *c,uint32_t o,uint32_t v)
             break;
         case MT_COMMAND_MEDIA_COMPLETE:
             if(fail_media_complete) { response=MT_RESPONSE_IO_ERROR;break; }
+            /* Match multitini_control_regs: SmartPort result bytes are not
+             * legal shell completion statuses, and errors carry no blocks. */
+            if((regs[MT_REG_MEDIA_REQUEST/4U]&MT_MEDIA_REQUEST_VALID)==0U ||
+                (regs[MT_REG_MEDIA_REQUEST_BLOCK_COUNT/4U]&UINT32_C(0xffff))==0U ||
+                a!=regs[MT_REG_MEDIA_REQUEST_ID/4U] ||
+                (b!=MT_RESPONSE_OK && b!=MT_RESPONSE_INVALID_ARGUMENT &&
+                    b!=MT_RESPONSE_IO_ERROR && b!=MT_RESPONSE_TIMEOUT) ||
+                (b==MT_RESPONSE_OK && regs[MT_REG_COMMAND_ARG2/4U]!=regs[MT_REG_MEDIA_REQUEST_BLOCK_COUNT/4U]) ||
+                (b!=MT_RESPONSE_OK && regs[MT_REG_COMMAND_ARG2/4U]!=0U) ||
+                d!=regs[MT_REG_MEDIA_REQUEST_GENERATION/4U]) {
+                response=MT_RESPONSE_INVALID_ARGUMENT;break;
+            }
             ++completions;completion_status=b;
             if(b==MT_RESPONSE_OK) {
                 assert(regs[MT_REG_COMMAND_ARG2/4U]==regs[MT_REG_MEDIA_REQUEST_BLOCK_COUNT/4U]);
@@ -198,7 +246,12 @@ static void write_reg(void *c,uint32_t o,uint32_t v)
                 }
                 regs[MT_REG_MEDIA_REQUEST/4U]=0U;eject_pending_test=false;
             }
-            else assert(regs[MT_REG_COMMAND_ARG2/4U]==0U);
+            else {
+                assert(regs[MT_REG_COMMAND_ARG2/4U]==0U);
+                const unsigned slot=(regs[MT_REG_MEDIA_REQUEST_BLOCK_COUNT/4U]>>8U)&255U;
+                if(mt_iigs_drive_hdd_unit(mt_iigs_wire_slot_drive(slot))<MT_IIGS_HDD_COUNT)
+                    regs[MT_REG_MEDIA_REQUEST/4U]=0U; /* HDD error returns to guest. */
+            }
             assert(d==regs[MT_REG_MEDIA_REQUEST_GENERATION/4U]);break;
         default: break;
         }
@@ -209,8 +262,10 @@ static mt_core_link_t core;
 static void reset(void)
 {
     progress_calls=sector_streams=0U;fail_media_complete=false;
+    reject_smartport_rom=false;last_read_offset=last_write_offset=0U;
     memset(files,0,sizeof(files));memset(handles,0,sizeof(handles));memset(regs,0,sizeof(regs));
     memset(generations,0,sizeof(generations));memset(mount_sizes,0,sizeof(mount_sizes));
+    memset(mount_kinds,0,sizeof(mount_kinds));
     fail_disk_write=fail_journal=deny_writes=early_last=pram_eject_write=eject_pending_test=false;
     pram_restore_pending=fail_sector_transfer=false;
     failed_rom=-1;rom_failure_status=MT_SD_OPEN_FAILED;rom_read_count=rom_stream_count=0U;
@@ -385,7 +440,7 @@ static void test_nested_media_paths(void)
     assert(completion_status==MT_RESPONSE_IO_ERROR);
     assert(file_find(TEST_MEDIA_ROOT "/Operating Systems/GS OS/System.hdv.gsj",false)!=NULL);
     assert(file_find(TEST_MEDIA_ROOT "/System.hdv.gsj",false)==NULL);
-    fail_disk_write=false;assert(iigs_content_service_retry()==0 && completion_status==MT_RESPONSE_OK);
+    fail_disk_write=false;assert(iigs_content_service_retry()==0 && !iigs_content_service_faulted());
     assert(f->data[512U]==0x31U && file_find(TEST_MEDIA_ROOT "/Operating Systems/GS OS/System.hdv.gsj",false)==NULL);
     request(0U,1U,false);iigs_content_service_poll();assert(completion_status==MT_RESPONSE_OK && stream_data[0]==0x31U);
     assert(iigs_content_service_prepare_reset()==0);
@@ -691,8 +746,114 @@ static void test_raw_floppy_protection(void)
         assert(disk_writes==0U && file_find(path,false)==s && s->data[0]==0xa5U);
     }
 }
+static void test_eight_hdd_and_legacy_settings(void)
+{
+    reset();assert(iigs_content_service_boot()==0);
+    for(unsigned unit=0U;unit<MT_IIGS_HDD_COUNT;++unit) {
+        char name[40];(void)snprintf(name,sizeof(name),"Hard disks/volume%u.hdv",unit+1U);
+        test_file_t *image=disk(name);image->data[0]=(uint8_t)(0x80U+unit);
+        const unsigned drive=mt_iigs_hdd_drive(unit),slot=mt_iigs_drive_wire_slot(drive);
+        assert(iigs_content_service_mount(drive,name)==0);
+        assert(generations[slot]!=0U && mount_sizes[slot]==2048U && mount_kinds[slot]==MT_IIGS_MEDIA_BLOCK32);
+        request(slot,0U,false);iigs_content_service_poll();
+        assert(completion_status==MT_RESPONSE_OK && stream_data[0]==(uint8_t)(0x80U+unit));
+        request(slot,1U,true);iigs_content_service_poll();
+        assert(completion_status==MT_RESPONSE_OK && image->data[512U]==0x31U && image->data[0]==(uint8_t)(0x80U+unit));
+    }
+    (void)raw_disk("Floppy/Sony.po",MT_IIGS_RAW_PRODOS35,0U);
+    (void)raw_disk("Floppy/DOS.dsk",MT_IIGS_RAW_DOS525,0U);
+    assert(iigs_content_service_mount(2U,"Floppy/Sony.po")==0);
+    assert(iigs_content_service_mount(3U,"Floppy/DOS.dsk")==0);
+    assert(mount_kinds[2]==MT_IIGS_MEDIA_WOZ && mount_kinds[3]==MT_IIGS_MEDIA_WOZ &&
+        mount_kinds[MT_IIGS_PRAM_SLOT]==MT_IIGS_MEDIA_PRAM);
+    /* The reserved PRAM wire slot never aliases saved index4 (hard disk3). */
+    request(MT_IIGS_PRAM_SLOT,0U,true);iigs_content_service_poll();
+    assert(completion_status==MT_RESPONSE_OK);
+    request(mt_iigs_drive_wire_slot(4U),0U,false);iigs_content_service_poll();
+    assert(completion_status==MT_RESPONSE_OK && stream_data[0]==0x82U);
+    assert(iigs_content_service_set_mouse_sensitivity(75U)==0);
+    assert(iigs_content_service_prepare_reset()==0);
+    for(unsigned i=0U;i<FILES;++i)assert(!handles[i].open);
+    iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
+    assert(iigs_content_service_boot()==0 && iigs_content_service_mouse_sensitivity()==75U);
+    for(unsigned unit=0U;unit<MT_IIGS_HDD_COUNT;++unit) {
+        char name[40];(void)snprintf(name,sizeof(name),"Hard disks/volume%u.hdv",unit+1U);
+        assert(strcmp(iigs_content_service_name(mt_iigs_hdd_drive(unit)),name)==0);
+    }
+    assert(strcmp(iigs_content_service_name(2U),"Floppy/Sony.po")==0);
+    assert(strcmp(iigs_content_service_name(3U),"Floppy/DOS.dsk")==0);
+    /* Reconstruct an exact pre-extension MTGSSET1 record. Migration reads
+     * its original length/CRC and retains the first four drive meanings. */
+    assert(iigs_content_service_prepare_reset()==0);
+    test_file_t *saved=file_find(TEST_MEDIA_ROOT "/gs-settings.bin",false);
+    assert(saved!=NULL && saved->size==24U+MT_IIGS_DRIVE_COUNT*96U && memcmp(saved->data,"MTGSSET2",8U)==0);
+    saved->size=24U+4U*96U;memcpy(saved->data,"MTGSSET1",8U);settings_checksum(saved);
+    iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
+    assert(!iigs_content_service_faulted() && iigs_content_service_boot()==0);
+    assert(strcmp(iigs_content_service_name(0U),"Hard disks/volume1.hdv")==0);
+    assert(strcmp(iigs_content_service_name(1U),"Hard disks/volume2.hdv")==0);
+    assert(strcmp(iigs_content_service_name(2U),"Floppy/Sony.po")==0);
+    assert(strcmp(iigs_content_service_name(3U),"Floppy/DOS.dsk")==0);
+    for(unsigned drive=4U;drive<MT_IIGS_DRIVE_COUNT;++drive)assert(iigs_content_service_name(drive)==NULL);
+    assert(iigs_content_service_mouse_sensitivity()==75U && saved->size==408U);
+    assert(iigs_content_service_set_mouse_sensitivity(150U)==0);
+    assert(saved->size==984U && memcmp(saved->data,"MTGSSET2",8U)==0);
+    for(size_t i=408U;i<saved->size;++i)assert(saved->data[i]==0U);
+}
+static void test_wide_hdd_and_error_recovery(void)
+{
+    reset();test_file_t *image=disk("wide.2mg");image->sparse=true;
+    const uint32_t blocks=UINT32_C(0x02000000),lba=UINT32_C(0x01000002);
+    const uint64_t expected=(uint64_t)lba*512U+128U;
+    image->size=(uint64_t)blocks*512U+128U;
+    memset(image->data,0,512U);memcpy(image->data,"2IMG",4U);image->data[8]=64U;image->data[10]=1U;
+    store32(image->data+12U,1U);store32(image->data+20U,blocks);store32(image->data+24U,128U);
+    const unsigned drive=mt_iigs_hdd_drive(7U),slot=mt_iigs_drive_wire_slot(drive);
+    assert(iigs_content_service_mount(drive,"wide.2mg")==0 && mount_sizes[slot]==(uint64_t)blocks*512U);
+    request(slot,lba,false);iigs_content_service_poll();
+    assert(completion_status==MT_RESPONSE_OK && last_read_offset==expected);
+    for(size_t i=0U;i<512U;++i)assert(stream_data[i]==sparse_byte(expected+i));
+    request(slot,lba,true);fail_disk_write=true;iigs_content_service_poll();
+    assert(completion_status==MT_RESPONSE_IO_ERROR && last_write_offset==expected);
+    assert(regs[MT_REG_MEDIA_REQUEST/4U]==0U && file_find(TEST_MEDIA_ROOT "/wide.2mg.gsj",false)!=NULL);
+    /* The next read repairs the durable journal before observing any bytes. */
+    fail_disk_write=false;request(slot,lba,false);iigs_content_service_poll();
+    assert(completion_status==MT_RESPONSE_OK && last_read_offset==expected && last_write_offset==expected);
+    for(size_t i=0U;i<512U;++i)assert(stream_data[i]==(uint8_t)(i+0x31U));
+    assert(file_find(TEST_MEDIA_ROOT "/wide.2mg.gsj",false)==NULL && memcmp(image->data,"2IMG",4U)==0);
+    request(slot,lba,true);fail_disk_write=true;iigs_content_service_poll();
+    assert(completion_status==MT_RESPONSE_IO_ERROR && iigs_content_service_eject(drive)!=0);
+    fail_disk_write=false;assert(iigs_content_service_eject(drive)==0);
+    assert(file_find(TEST_MEDIA_ROOT "/wide.2mg.gsj",false)==NULL);
+    request(slot,0U,false);iigs_content_service_poll();assert(completion_status==MT_RESPONSE_INVALID_ARGUMENT);
+    assert(iigs_content_service_mount(drive,"wide.2mg")==0);
+    request(slot,blocks,false);iigs_content_service_poll();assert(completion_status==MT_RESPONSE_IO_ERROR);
+    request(slot,lba,true);--regs[MT_REG_MEDIA_REQUEST_GENERATION/4U];iigs_content_service_poll();
+    assert(completion_status==MT_RESPONSE_INVALID_ARGUMENT && reverse_index==0U);
+    /* Full 32-bit capacity remains representable without wrapping at4GiB. */
+    assert(iigs_content_service_eject(drive)==0);
+    image->size=MT_IIGS_MAX_HDD_BYTES+128U;store32(image->data+20U,UINT32_MAX);
+    assert(iigs_content_service_mount(drive,"wide.2mg")==0 && mount_sizes[slot]==MT_IIGS_MAX_HDD_BYTES);
+    request(slot,UINT32_MAX-1U,false);iigs_content_service_poll();
+    assert(completion_status==MT_RESPONSE_OK && last_read_offset==(uint64_t)(UINT32_MAX-1U)*512U+128U);
+    request(slot,UINT32_MAX,false);iigs_content_service_poll();assert(completion_status==MT_RESPONSE_IO_ERROR);
+    assert(iigs_content_service_eject(drive)==0);
+    deny_writes=true;assert(iigs_content_service_mount(drive,"wide.2mg")==0);
+    request(slot,lba,true);iigs_content_service_poll();
+    assert(completion_status==MT_RESPONSE_IO_ERROR && reverse_index==0U);
+    reset();reject_smartport_rom=true;
+    assert(iigs_content_service_boot()!=0 && !iigs_content_service_ready() && core_reset_asserted);
+    assert(strcmp(iigs_content_service_error(),"Update IIgs core/ROM for SmartPort disks")==0);
+    for(unsigned i=0U;i<MT_IIGS_MEDIA_SLOT_COUNT;++i)assert(generations[i]==0U);
+    reset();failed_rom=HDD_FILE;rom_failure_status=MT_SD_SIZE_MISMATCH;
+    assert(iigs_content_service_boot()!=0 && !iigs_content_service_ready() && core_reset_asserted);
+    assert(strcmp(iigs_content_service_error(),"Update IIgs core/ROM for SmartPort disks")==0);
+    for(unsigned i=0U;i<MT_IIGS_MEDIA_SLOT_COUNT;++i)assert(generations[i]==0U);
+}
 int main(void)
 {
+    test_eight_hdd_and_legacy_settings();
+    test_wide_hdd_and_error_recovery();
     test_media_progress_and_completion_retry();
     test_raw_floppy_transport();
     test_raw_floppy_recovery();
@@ -712,14 +873,14 @@ int main(void)
     request(1U,1U,true);iigs_content_service_poll();assert(completion_status==MT_RESPONSE_OK && journal_writes==1U && disk_writes==1U);
     assert(f->data[1024U]==0x31U && f->data[1535U]==0x30U && memcmp(f->data,"2IMG",4U)==0);
     assert(file_find("0:/multitini/cores/apple-iigs/media/test.2mg.gsj",false)==NULL);
-    request(1U,3U,false);iigs_content_service_poll();assert(completion_status==MT_RESPONSE_INVALID_ARGUMENT || completion_status==MT_RESPONSE_IO_ERROR);
-    assert(iigs_content_service_eject(1U)!=0); /* A failed live request blocks eject. */
+    request(1U,3U,false);iigs_content_service_poll();assert(completion_status==MT_RESPONSE_IO_ERROR);
+    assert(iigs_content_service_eject(1U)==0); /* HDD errors complete instead of hanging the guest. */
 
     reset();f=disk("write.hdv");assert(iigs_content_service_mount(0U,"write.hdv")==0);
     request(0U,0U,true);fail_disk_write=true;iigs_content_service_poll();
     assert(completion_status==MT_RESPONSE_IO_ERROR && iigs_content_service_faulted());
     assert(file_find("0:/multitini/cores/apple-iigs/media/write.hdv.gsj",false)!=NULL);
-    fail_disk_write=false;assert(iigs_content_service_retry()==0 && completion_status==MT_RESPONSE_OK);
+    fail_disk_write=false;assert(iigs_content_service_retry()==0 && !iigs_content_service_faulted());
     assert(f->data[511U]==0x30U && reverse_index==512U); /* Retry uses retained sector, not exhausted FIFO. */
     assert(iigs_content_service_eject(0U)==0);
 
@@ -735,7 +896,7 @@ int main(void)
     assert(file_find("0:/multitini/cores/apple-iigs/media/powerloss.hdv.gsj",false)==NULL);
 
     reset();f=disk("protected.hdv");deny_writes=true;assert(iigs_content_service_mount(0U,"protected.hdv")==0);
-    request(0U,0U,true);iigs_content_service_poll();assert(completion_status==MT_RESPONSE_IO_ERROR && disk_writes==0U);
+    request(0U,0U,true);iigs_content_service_poll();assert(completion_status==MT_RESPONSE_IO_ERROR && disk_writes==0U && reverse_index==0U);
 
     static const char *const sidecars[]={".gsj",".gsj.mtj"};
     for(unsigned i=0U;i<2U;++i) {
@@ -777,5 +938,5 @@ int main(void)
     fail_sector_transfer=true;
     assert(iigs_content_service_pram(false)!=0 && completion_status==MT_RESPONSE_IO_ERROR);
     assert(pram_load_packets==1U && warm_reset_packets==0U && pram_restore_pending);
-    puts("Apple IIgs sectors, 2MG offsets, protected recovery, retry journals, WOZ CRC and PRAM reset ordering passed");return 0;
+    puts("Apple IIgs eight HDDs, wide LBA/2MG, settings migration, durable recovery, floppy CRC and PRAM reset ordering passed");return 0;
 }

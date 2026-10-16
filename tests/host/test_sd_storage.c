@@ -379,6 +379,17 @@ static int collect_entry(void *context, const char *name, size_t size,
     list->saw_directory = list->saw_directory || is_directory;
     return list->stop_after != 0U && list->count == list->stop_after;
 }
+static int collect_large_entry(void *context,const char *name,size_t size,bool is_directory)
+{
+    unsigned *count=context;
+    if(*count==0U) {
+        const uint64_t bytes=UINT64_C(5)*1024U*1024U*1024U;
+        assert(strcmp(name,"wide.hdv")==0 && !is_directory);
+        assert(size==(bytes>SIZE_MAX ? SIZE_MAX:(size_t)bytes));
+    } else if(*count==1U)assert(strcmp(name,"subdir")==0 && is_directory && size==0U);
+    else assert(*count==2U && strcmp(name,"small.po")==0 && !is_directory && size==512U);
+    ++*count;return 0;
+}
 
 static void prefix_progress(void *context)
 {
@@ -497,6 +508,11 @@ static void test_managed_files(void)
     assert(mt_sd_file_seek(file, -1, 0).status == MT_SD_SEEK_FAILED);
     assert(mt_sd_file_seek(file, INT64_MIN, 1).status == MT_SD_SEEK_FAILED);
     assert(mt_sd_file_seek(file, 0, 3).status == MT_SD_INVALID_ARGUMENT);
+    assert(mt_sd_file_seek(file, INT64_C(0x100000000), 0).status == MT_SD_OK);
+    assert(mt_sd_file_tell(file)==INT64_C(0x100000000));
+    assert(mt_sd_file_seek(file, INT64_MAX, 1).status==MT_SD_SEEK_FAILED);
+    assert(mt_sd_file_tell(file)==INT64_C(0x100000000));
+    assert(mt_sd_file_seek(file, 0, 0).status==MT_SD_OK);
     assert(mt_sd_file_open(JOURNAL_TARGET, "w", &other).status == MT_SD_FILE_BUSY);
     assert(mt_sd_file_remove(JOURNAL_TARGET).status == MT_SD_FILE_BUSY);
     assert(mt_sd_file_rename(JOURNAL_TARGET, JOURNAL_PATH).status == MT_SD_FILE_BUSY);
@@ -930,6 +946,11 @@ int main(void)
     assert(result.status == MT_SD_OK);
     assert(result.size == 1U);
     assert(dir_close_calls == 2U);
+    dir_names[0]="wide.hdv";dir_sizes[0]=UINT64_C(5)*1024U*1024U*1024U;
+    dir_names[2]="small.po";dir_sizes[2]=512U;dir_attributes[2]=0U;dir_entry_count=3U;
+    unsigned large_entries=0U;
+    result=mt_sd_storage_list("0:/multitini/cores/apple-iigs/media",collect_large_entry,&large_entries);
+    assert(result.status==MT_SD_OK && result.size==3U && large_entries==3U && dir_close_calls==3U);
 
     assert(strcmp(mt_sd_status_name(MT_SD_MOUNT_FAILED), "mount failed") ==
            0);

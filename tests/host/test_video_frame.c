@@ -6,9 +6,9 @@
 #include "appletini_phosphor_reference.h"
 
 enum { TEST_PIXELS = 65536 };
-static uint16_t input[MT_VIDEO_FRAME_MAX_PIXELS], output[MT_VIDEO_FRAME_MAX_PIXELS];
-static uint32_t history[MT_VIDEO_FRAME_MAX_PIXELS], base[MT_VIDEO_FRAME_MAX_PIXELS];
-static uint32_t scratch[MT_VIDEO_FRAME_MAX_PIXELS];
+static uint16_t input[MT_VIDEO_FRAME_MAX_PIXELS+2U], output[MT_VIDEO_FRAME_MAX_PIXELS+2U];
+static uint32_t history[MT_VIDEO_FRAME_MAX_PIXELS+2U], base[MT_VIDEO_FRAME_MAX_PIXELS+2U];
+static uint32_t scratch[MT_VIDEO_FRAME_MAX_PIXELS+2U];
 
 static void process(uint32_t width, uint32_t height, mt_video_frame_options_t options,
                     uint32_t steps, bool reset)
@@ -198,7 +198,7 @@ static void invalid(void)
     assert(!mt_video_frame_process(input,output,history,base,scratch,1U,1U,&bad_horizontal,1U,true));
     const mt_video_frame_options_t good={1U,0U,0U,0U,0U};
     assert(!mt_video_frame_process(input,output,history,base,scratch,0U,1U,&good,1U,true));
-    assert(!mt_video_frame_process(input,output,history,base,scratch,641U,1U,&good,1U,true));
+    assert(!mt_video_frame_process(input,output,history,base,scratch,MT_VIDEO_FRAME_MAX_WIDTH+1U,1U,&good,1U,true));
     assert(!mt_video_frame_process(input,output,history,base,scratch,1U,721U,&good,1U,true));
     assert(!mt_video_frame_process(NULL,output,history,base,scratch,1U,1U,&good,1U,true));
     const uint32_t invalid_scales[][2]={{0U,1U},{1U,0U},{65U,1U},{1U,65U},{UINT32_MAX,1U}};
@@ -207,6 +207,38 @@ static void invalid(void)
         assert(!mt_video_frame_process_scaled(input,output,history,base,scratch,1U,1U,
             invalid_scales[i][0],invalid_scales[i][1],&good,1U,true));
         assert(output[0]==0x1234U && history[0]==0x123456U && base[0]==0xabcdefU && scratch[0]==0x987654U);
+    }
+}
+
+static void native_geometry_limits(void)
+{
+    const unsigned sizes[][2]={{724U,496U},{724U,636U},{640U,720U},{540U,720U}};
+    assert(MT_VIDEO_FRAME_MAX_PIXELS==460800U);
+    assert(MT_VIDEO_FRAME_MAX_PIXELS*sizeof(uint16_t)<=MT_VIDEO_FRAME_SLOT_BYTES);
+    assert(MT_VIDEO_FRAME_MAX_PIXELS*sizeof(uint32_t)<=MT_VIDEO_FRAME_HISTORY_BYTES);
+    for(unsigned g=0U;g<sizeof(sizes)/sizeof(sizes[0]);++g) {
+        const unsigned width=sizes[g][0],height=sizes[g][1],pixels=width*height;
+        assert(mt_video_frame_geometry_valid(width,height));
+        input[pixels]=output[pixels]=0x1234U;
+        history[pixels]=base[pixels]=scratch[pixels]=0x12345678U;
+        for(unsigned i=0U;i<pixels;++i)input[i]=(uint16_t)(i*113U+37U);
+        process(width,height,(mt_video_frame_options_t){1U,0U,0U,0U,0U},1U,true);
+        assert(memcmp(input,output,pixels*sizeof(*input))==0);
+        process(width,height,(mt_video_frame_options_t){0U,0U,0U,0U,0U},1U,true);
+        assert(memcmp(input,output,pixels*sizeof(*input))==0);
+        for(unsigned i=0U;i<pixels;++i)input[i]=0xffffU;
+        process(width,height,(mt_video_frame_options_t){1U,3U,3U,3U,0U},1U,true);
+        for(unsigned i=0U;i<pixels;++i)assert(output[i]==0xffffU);
+        assert(input[pixels]==0x1234U && output[pixels]==0x1234U);
+        assert(history[pixels]==0x12345678U && base[pixels]==0x12345678U && scratch[pixels]==0x12345678U);
+    }
+    const unsigned bad[][2]={{724U,637U},{724U,720U},{725U,1U},{UINT32_MAX,UINT32_MAX}};
+    for(unsigned g=0U;g<sizeof(bad)/sizeof(bad[0]);++g) {
+        output[0]=0x1234U;history[0]=base[0]=scratch[0]=0x12345678U;
+        assert(!mt_video_frame_geometry_valid(bad[g][0],bad[g][1]));
+        assert(!mt_video_frame_process(input,output,history,base,scratch,bad[g][0],bad[g][1],
+            &(mt_video_frame_options_t){1U,3U,3U,3U,0U},1U,true));
+        assert(output[0]==0x1234U && history[0]==0x12345678U && base[0]==0x12345678U && scratch[0]==0x12345678U);
     }
 }
 
@@ -491,7 +523,7 @@ static void fixed_radius_bloom(void)
 
 int main(void)
 {
-    identity(); uniform_and_edges(); blur_preserves_solid_rgb565(); persistence(); persistence_extinction();
+    identity(); native_geometry_limits(); uniform_and_edges(); blur_preserves_solid_rgb565(); persistence(); persistence_extinction();
     blur_and_bloom(); blur_step_strengths(); invalid();
     phosphor_reference();scaled_identity();unaffected_bloom_and_history();fixed_radius_bloom();
 

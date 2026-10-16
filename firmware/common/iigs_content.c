@@ -55,13 +55,15 @@ void mt_iigs_config_encode(const mt_iigs_config_t *c, uint8_t wire[MT_IIGS_CONFI
 mt_content_validation_t mt_iigs_media_inspect(unsigned drive,const char *name,
     const uint8_t *p,size_t n,uint64_t size,mt_iigs_media_info_t *info)
 {
-    mt_iigs_media_info_t r={0U,size,MT_IIGS_MEDIA_BLOCK,true,MT_IIGS_RAW_NONE};
+    mt_iigs_media_info_t r={0U,size,MT_IIGS_MEDIA_BLOCK32,true,MT_IIGS_RAW_NONE};
     if (drive>=MT_IIGS_DRIVE_COUNT || name==NULL || p==NULL || info==NULL)
         return MT_CONTENT_INVALID_ARGUMENT;
     if (size==0U) return MT_CONTENT_TOO_SMALL;
-    if (size>UINT32_MAX) return MT_CONTENT_WRONG_SIZE;
+    if (size>INT64_MAX) return MT_CONTENT_WRONG_SIZE;
+    const bool hdd=mt_iigs_drive_hdd_unit(drive)<MT_IIGS_HDD_COUNT;
     if (extension(name,"woz")) {
-        if (drive<2U) return MT_CONTENT_UNSUPPORTED_VERSION;
+        if (hdd) return MT_CONTENT_UNSUPPORTED_VERSION;
+        if (size>UINT32_MAX) return MT_CONTENT_WRONG_SIZE;
         if (n<80U) return MT_CONTENT_TOO_SMALL;
         if (memcmp(p,"WOZ2\xff\x0a\x0d\x0a",8U)!=0)
             return MT_CONTENT_BAD_MAGIC;
@@ -71,7 +73,8 @@ mt_content_validation_t mt_iigs_media_inspect(unsigned drive,const char *name,
         if (p[21]!=(drive==2U ? 2U:1U)) return MT_CONTENT_BAD_STRUCTURE;
         r.kind=MT_IIGS_MEDIA_WOZ; r.writable=p[22]==0U;
     } else if (extension(name,"2mg")) {
-        uint32_t offset,length,blocks;
+        uint32_t offset,blocks;
+        uint64_t length;
         const unsigned header_size=n>=10U ? (unsigned)p[8]+((unsigned)p[9]<<8):0U;
         if (n<64U) return MT_CONTENT_TOO_SMALL;
         if (memcmp(p,"2IMG",4U)!=0) return MT_CONTENT_BAD_MAGIC;
@@ -81,7 +84,7 @@ mt_content_validation_t mt_iigs_media_inspect(unsigned drive,const char *name,
         offset=le32(p+24U); length=le32(p+28U); blocks=le32(p+20U);
         /* Sweet 16 / WOOF images can leave data_length zero. The block count
          * remains authoritative; never infer past the declared file bounds. */
-        if (length==0U && blocks<=UINT32_MAX/512U)length=blocks*512U;
+        if (length==0U)length=(uint64_t)blocks*512U;
         if (offset<header_size || length==0U || (length&511U)!=0U ||
             (uint64_t)offset+length>size || blocks!=length/512U)
             return MT_CONTENT_BAD_STRUCTURE;
@@ -98,8 +101,8 @@ mt_content_validation_t mt_iigs_media_inspect(unsigned drive,const char *name,
         r.kind=MT_IIGS_MEDIA_WOZ; r.raw_format=MT_IIGS_RAW_PRODOS35;
     }
     if (drive==3U && r.kind!=MT_IIGS_MEDIA_WOZ) return MT_CONTENT_UNSUPPORTED_VERSION;
-    if (drive<2U && ((r.size&511U)!=0U || r.size/512U>65536U))
-        return MT_CONTENT_WRONG_SIZE; /* upstream HDD sector address is 16 bits */
+    if (hdd && ((r.size&511U)!=0U || r.size>MT_IIGS_MAX_HDD_BYTES))
+        return MT_CONTENT_WRONG_SIZE;
     *info=r; return MT_CONTENT_VALID;
 }
 

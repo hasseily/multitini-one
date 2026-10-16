@@ -50,8 +50,13 @@ def inputs(machine: str) -> list[Path]:
     if machine == "APPLE_IIGS":
         paths.update(path for path in (ROOT / "third_party/apple-iigs").rglob("*")
                      if path.is_file())
+        paths.update(path for path in (ROOT / "hdl/core/apple_iigs/roms").rglob("*")
+                     if path.is_file())
+        paths.update((ROOT / "scripts").glob("*apple_iigs_smartport*.py"))
+        paths.update((ROOT / "hdl/sim").glob("apple_iigs_smartport*.cpp"))
         paths.update(ROOT / "scripts" / name for name in (
             "port_apple_iigs_core.py", "audit_apple_iigs_import.py", "test_apple_iigs_video.py",
+            "test_apple_iigs_video_bridge.py",
             "test_apple_iigs_shr_edges.py",
             "test_apple_iigs_slowram.py",
             "test_apple_iigs_logical_cache.py",

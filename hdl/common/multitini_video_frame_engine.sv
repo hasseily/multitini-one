@@ -54,7 +54,7 @@ module multitini_video_frame_engine #(
 
     // Static geometry checks are also elaborated by the focused benches.
     initial begin
-        if(WIDTH<1 || WIDTH>640 || HEIGHT<1 || HEIGHT>720 || STRIDE<WIDTH*2 ||
+        if(WIDTH<1 || WIDTH>724 || HEIGHT<1 || HEIGHT>720 || PIXELS>460800 || STRIDE<WIDTH*2 ||
            STRIDE%128!=0 || STRIDE*HEIGHT>1048576 || PIXELS*4>2097152)
             $error("Invalid native-frame DMA geometry");
         if(FIFO_DEPTH<32 || (FIFO_DEPTH & (FIFO_DEPTH-1))!=0)

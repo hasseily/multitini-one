@@ -269,7 +269,7 @@ bool mt_video_frame_process_scaled(const uint16_t *input, uint16_t *output,
 {
     uint32_t i = 0U;
     if (input == NULL || output == NULL || history == NULL || base == NULL || scratch == NULL ||
-        options == NULL || width == 0U || height == 0U || width > 640U || height > 720U ||
+        options == NULL || !mt_video_frame_geometry_valid(width, height) ||
         scale_num == 0U || scale_num > 64U || scale_den == 0U || scale_den > 64U ||
         options->enabled > 1U || options->persistence > 3U || options->blur > 3U ||
         options->bloom > 3U || options->softness > 3U)

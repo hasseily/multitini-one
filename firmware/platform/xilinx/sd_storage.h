@@ -68,6 +68,8 @@ mt_sd_result_t mt_sd_storage_read_file_optional_exact(
     const char *path, uint8_t *dst, size_t expected_size, bool *found);
 mt_sd_result_t mt_sd_storage_read_file_optional_max(
     const char *path, uint8_t *dst, size_t capacity, bool *found);
+/* Directory sizes are display metadata, saturated at SIZE_MAX. Open a managed
+ * file and seek/tell for its exact 64-bit size before validating media. */
 mt_sd_result_t mt_sd_storage_list(const char *path, mt_sd_list_fn callback,
                                   void *context);
 mt_sd_result_t mt_sd_storage_journal_recover(const char *path,

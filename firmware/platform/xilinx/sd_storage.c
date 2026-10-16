@@ -336,14 +336,8 @@ mt_sd_result_t mt_sd_storage_list(const char *path, mt_sd_list_fn callback,
         }
         if (info.fname[0] == '\0') break;
         ++count;
-        if (info.fsize > (FSIZE_t)SIZE_MAX) {
-            const mt_sd_result_t size_result =
-                result(MT_SD_TOO_LARGE, FR_OK, SIZE_MAX);
-            (void)f_closedir(&directory);
-            return size_result;
-        }
         ++sd_callback_depth;
-        const int callback_result = callback(context, info.fname, (size_t)info.fsize,
+        const int callback_result = callback(context, info.fname, fsize_to_size_saturated(info.fsize),
                      (info.fattrib & AM_DIR) != 0U);
         --sd_callback_depth;
         if (callback_result != 0) {

@@ -279,7 +279,7 @@ static void test_iigs_drive_formats(void)
     for(unsigned drive=0U;drive<=MT_IIGS_DRIVE_COUNT;++drive) {
         for(unsigned type=0U;type<=MT_CONTENT_IIGS_FLOPPY;++type) {
             const bool expected=drive<MT_IIGS_DRIVE_COUNT &&
-                (drive<2U ? type==MT_CONTENT_IIGS_HDD:
+                (mt_iigs_drive_hdd_unit(drive)<MT_IIGS_HDD_COUNT ? type==MT_CONTENT_IIGS_HDD:
                  type==MT_CONTENT_IIGS_WOZ ||
                  (drive==2U ? type==MT_CONTENT_IIGS_HDD:type==MT_CONTENT_IIGS_FLOPPY));
             check(mt_core_frontend_accepts_drive_content(MT_IIGS_CORE_ID,

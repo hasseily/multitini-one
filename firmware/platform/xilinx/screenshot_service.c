@@ -105,7 +105,7 @@ static bool snapshot(uint32_t core_id,uint8_t mode,uint32_t border,const mt_ui_f
     if((bus.read(MT_REG_VIDEO_FRAME_CONTROL)&MT_VIDEO_FRAME_CAPTURE_ENABLE)==0U)return false;
     const uint32_t geometry=bus.read(MT_REG_VIDEO_FRAME_GEOMETRY),stride=bus.read(MT_REG_VIDEO_FRAME_STRIDE);
     const uint32_t width=geometry&0xffffU,height=geometry>>16;
-    if(width==0U || width>MT_VIDEO_FRAME_MAX_WIDTH || height==0U || height>MT_VIDEO_FRAME_MAX_HEIGHT ||
+    if(!mt_video_frame_geometry_valid(width,height) ||
        stride!=((width*2U+127U)&~UINT32_C(127)) || stride*height>MT_VIDEO_FRAME_SLOT_BYTES) {
         fail("invalid capture geometry");return false;
     }

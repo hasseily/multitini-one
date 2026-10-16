@@ -128,13 +128,14 @@ def main():
     rng = random.Random(0xC0FFEE)
     cases = [(w, h, (1, rng.randrange(4), rng.randrange(4), rng.randrange(4)),
               rng.choice((0, 1, 2, 5, 32, 64)), bool(rng.randrange(2)))
-             for w in (1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 33, 63, 64, 65, 127, 160, 382, 404, 540, 640)
+             for w in (1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 33, 63, 64, 65, 127, 160, 382, 404, 540, 640, 724)
              for h in (1, 3, 7)]
     cases += [(17, 9, (1, persistence, blur, bloom), 2, False)
               for persistence in range(4) for blur in range(4) for bloom in range(4)]
     cases += [(256, 256, (1, 0, 0, 0), 1, True),
               (31, 7, (0, 3, 3, 3), 64, False),
-              (540, 720, (1, 3, 3, 3), 1, False)]
+              (540, 720, (1, 3, 3, 3), 1, False),
+              (724, 496, (1, 3, 3, 3), 1, False)]
     cases += [(256, 1, (1, strength, 0, 0), steps, False)
               for strength, bound in ((1, 18), (2, 24), (3, 33))
               for steps in (bound-1, bound, 64)]

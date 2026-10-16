@@ -1,0 +1,93 @@
+{
+  "schema": 1,
+  "implementation": "Original Multitini One 65816 SmartPort firmware",
+  "path": "hdl/core/apple_iigs/roms/smartport.a65",
+  "sha256": "7dad592eb418b31cf71c312b44c57b1c58e3a3d354ea037a52b65f38cfbde3f7",
+  "license": "GPL-3.0-only",
+  "imports": [],
+  "source_references": [
+    {
+      "repository": "https://github.com/hasseily/appletini-one",
+      "commit": "7b972bfda432657444d55a3eaaccf4b1d8e06699",
+      "handler_license": "MIT; Copyright2024OliverSchmidt",
+      "files": [
+        {
+          "path": "6502_SMARTPORT.S",
+          "bytes": 13367,
+          "sha256": "ba0ea639c9baafb8b45839adcac22635950981b4036e9637e6b7ae46962d59b7",
+          "role": "Compatibility reference only; no copied payload/source"
+        },
+        {
+          "path": "scripts/build_smartport_rom.py",
+          "bytes": 22403,
+          "sha256": "bdf983b934beeaf64809e09500934f35e6b427c137c96aba6eab1b68a75a38f6",
+          "role": "Compatibility reference only; no copied payload/source"
+        },
+        {
+          "path": "hdl/apple/smartport_card.sv",
+          "bytes": 27938,
+          "sha256": "b78623d9f9f6dadc479822d272cf09123619529d9bc62a637b5778d0db7b754d",
+          "role": "Compatibility reference only; no copied payload/source"
+        },
+        {
+          "path": "ps_sources/frontend/smartport_service.c",
+          "bytes": 95961,
+          "sha256": "a1b8d81fb5d58d17d930e51ff4dc418781702eca805c8198865c352bd5df6732",
+          "role": "Compatibility reference only; no copied payload/source"
+        }
+      ]
+    },
+    {
+      "repository": "https://github.com/MiSTer-devel/Apple-IIgs_MiSTer",
+      "commit": "9adbba8622f378253765b7d438b6cbcc4d03fc57",
+      "path": "rtl/roms/hdd.a65",
+      "license": "GPL-2.0-or-later",
+      "role": "Existing legacy AppleWin register and ProDOS boot ABI reference; attribution retained in source"
+    }
+  ],
+  "primary_specifications": [
+    {
+      "url": "https://www.brutaldeluxe.fr/documentation/cortland/v2_01_AppleIIGSFirmwareReferenceManual.pdf",
+      "sections": "Chapter7: calls/return7-6..7-7; status/DIB7-8..7-11; block7-12..7-13; preformatted FORMAT7-14; control/init7-15..7-17; errors7-36"
+    },
+    {
+      "url": "https://apple2.gs/technotes/tn-iigs-025/",
+      "sections": "Corrected JSR and four-byte extended parameter-list pointer; return byte counts"
+    },
+    {
+      "url": "https://apple2.gs/downloads/library/apda_appleiiscsicardtechnicalreferencemanual_a2g0029_ocr.pdf",
+      "sections": "Page19: slot signature Cn01/03/05/07 and CnFB extended flag82"
+    },
+    {
+      "url": "https://www.brutaldeluxe.fr/documentation/cortland/v2_01_AppleIIGSFirmwareReferenceManual.pdf",
+      "sections": "Figure7-1/printed7-2: CnFB bits0RAMcard,1SCSI,7extended; this generic device publishes80 rather than SCSI82"
+    }
+  ],
+  "interface": {
+    "ROM_bytes": 2304,
+    "slot": "C700-C7FF",
+    "expansion": "C800-CFFF",
+    "runtime_load_kind": "0x49",
+    "runtime_load_range": "0x2000-0x28FF",
+    "legacy_entry": "C70A",
+    "SmartPort_entry": "C70D",
+    "unit_count": 8,
+    "standard_buffer_policy": "Bank0; reject512-byte transfer extending beyond00FFFF with error22. LegacyProDOS keeps16-bit DMAREG bank wrap.",
+    "extended_buffer_policy": "Four-byte API pointer with fourthbyte zero; carry across64KiB banks; reject512-byte24-bit endoverflow22 beforeDMA.",
+    "format_policy": "Mounted writable preformatted images return success without erasing filesystem sectors; offline2F/protected2B.",
+    "calling_mode": "EmulationE1,PBR0,DBR0,D0; originalI/B/SP/ZPscratch preserved;Dclear;A/Cerror;X/Yreadbytecount",
+    "empty_drives": "All8virtual units enumerate; emptySTATUS/DIBonlineclear,size0; blockIOoffline2F",
+    "CnFB": "0x80: generic extended interface; SCSI/RAMcard ID bits clear",
+    "parameter_list_policy": "Validate the complete command-specific list before any parameter read or MMIO staging: standard lengths5/7/7/2/5/2 and extended7/10/10/2/7/2 for commands0..5. Standard lists remain bank0; extended lists carry across64KiB banks and reject24-bit wrap.",
+    "response_buffer_policy": "Validate actual response/list lengths before access: controller STATUS8, device STATUS4/5, DIB25/26, CONTROL reset2. Reject standard bank0 overflow and extended24-bit overflow22; unsupported control codes never access the buffer.",
+    "stack_policy": "Maximum35bytes including callerJSR2, savedP/B2,29scratch bytes60..7C and deepesthelperJSR2; originalSP and scratch restored, with emulation stack-page wrap."
+  },
+  "scope_exclusions": [
+    "No AppleSSC CN00/CF00 wrapper imported",
+    "No Apple system ROM/disk/game bytes",
+    "No Appletini private glyph/memory/overlay/vTW services",
+    "Character-only OPEN/CLOSE/byteREAD/WRITE returnBADCMD"
+  ],
+  "generation": "python -B scripts/build_apple_iigs_smartport_rom.py --asset-dir build/apple-iigs-assets; generated payloads stay ignored underbuild/",
+  "test": "python -B scripts/test_apple_iigs_smartport_rom.py --build-dir build/apple-iigs-smartport-rom-tests"
+}

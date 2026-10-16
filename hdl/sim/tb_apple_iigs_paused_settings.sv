@@ -56,7 +56,7 @@ module tb_apple_iigs_paused_settings;
         end
     end
 
-    reg [7:0] rom[0:131071],hdd_rom[0:255];integer cursor;
+    reg [7:0] rom[0:131071],hdd_rom[0:2303];integer cursor;
     integer selected=0,config_flags=0,case_number=0,card=0,guest_mode=0;
     integer card_case_number=0,mode_restarts=0,scenario=0;
     bit sei_loop=0,live=0,card_matrix_active=0;
@@ -102,7 +102,7 @@ module tb_apple_iigs_paused_settings;
         begin
             load_epoch=~load_epoch;
             for(integer i=0;i<size;i++)begin
-                value=kind==8'h41 ? rom[i]:kind==8'h45 ? hdd_rom[i]:
+                value=kind==8'h41 ? rom[i]:kind==8'h49 ? hdd_rom[i]:
                     kind==8'h43&&i==1 ? 8'(selected):kind==8'h43&&i==2 ? 8'(card):
                     kind==8'h43&&i==3 ? 8'(config_flags):0;
                 @(negedge core_clk);load_kind=kind;load_total=size;load_offset=i;load_data=value;
@@ -119,7 +119,7 @@ module tb_apple_iigs_paused_settings;
             live=0;reset=1;core_reset_request=1;pause_request=0;
             repeat(20)@(negedge core_clk);reset=0;
             program_rom();packet(8'h43,16);packet(8'h41,131072);
-            packet(8'h42,4096);packet(8'h46,4096);packet(8'h45,256);
+            packet(8'h42,4096);packet(8'h46,4096);packet(8'h49,2304);
             core_reset_request=0;
             while(dut.machine_reset || dut.machine_reset_raw || dut.machine_i.cpu.Y<64)@(negedge core_clk);
             live=1;
@@ -198,7 +198,7 @@ module tb_apple_iigs_paused_settings;
             program_rom();packet(8'h43,16);
             if(!skip)begin
                 // Same protected streams as the existing firmware boot path.
-                packet(8'h41,131072);packet(8'h42,4096);packet(8'h46,4096);packet(8'h45,256);
+                packet(8'h41,131072);packet(8'h42,4096);packet(8'h46,4096);packet(8'h49,2304);
                 check_reset_zip();core_reset_request=0;
             end
             repeat(32)@(negedge core_clk);

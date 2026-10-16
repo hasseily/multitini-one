@@ -13,9 +13,18 @@
 #define MT_VIDEO_FRAME_HISTORY_BYTES UINT32_C(0x00200000)
 #define MT_VIDEO_FRAME_SLOT_BYTES UINT32_C(0x00100000)
 #define MT_VIDEO_FRAME_SLOT_COUNT 4U
-#define MT_VIDEO_FRAME_MAX_WIDTH 640U
+#define MT_VIDEO_FRAME_MAX_WIDTH 724U
 #define MT_VIDEO_FRAME_MAX_HEIGHT 720U
-#define MT_VIDEO_FRAME_MAX_PIXELS (MT_VIDEO_FRAME_MAX_WIDTH * MT_VIDEO_FRAME_MAX_HEIGHT)
+/* Width and height limits are independent. Keep the original packed-array
+ * allocation budget; the padded DDR stride must also fit its own slot. */
+#define MT_VIDEO_FRAME_MAX_PIXELS 460800U
+
+static inline bool mt_video_frame_geometry_valid(uint32_t width, uint32_t height)
+{
+    return width != 0U && width <= MT_VIDEO_FRAME_MAX_WIDTH &&
+        height != 0U && height <= MT_VIDEO_FRAME_MAX_HEIGHT &&
+        width <= MT_VIDEO_FRAME_MAX_PIXELS / height;
+}
 
 typedef struct {
     uint8_t enabled;

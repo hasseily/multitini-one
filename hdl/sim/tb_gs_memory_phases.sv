@@ -197,7 +197,7 @@ module tb_gs_memory_phases;
             if(native_cpu_state()!==held)$fatal(1,"CPU architectural/bus state changed under primary hold");
         end
     end
-    reg [7:0] rom[0:131071],hdd_rom[0:255];integer cursor,expected_pc;
+    reg [7:0] rom[0:131071],hdd_rom[0:2303];integer cursor,expected_pc;
     string rom_path;
     task emit(input [7:0] value);begin rom[cursor]=value;cursor=cursor+1;end endtask
     task program_rom;
@@ -250,7 +250,7 @@ module tb_gs_memory_phases;
         begin
             load_epoch=~load_epoch;
             for(integer i=0;i<size;i=i+1)begin
-                value=kind==8'h41 ? rom[i]:kind==8'h45 ? hdd_rom[i]:kind==8'h43 && i==1 ? test_speed:0;
+                value=kind==8'h41 ? rom[i]:kind==8'h49 ? hdd_rom[i]:kind==8'h43 && i==1 ? test_speed:0;
                 @(negedge core_clk);load_kind=kind;load_total=size;load_offset=i;load_data=value;
                 load_first=i==0;load_last=i==size-1;load_valid=1;
                 while(!load_ready)@(negedge core_clk);
@@ -278,7 +278,7 @@ module tb_gs_memory_phases;
         for(integer i=0;i<WORDS;i=i+1)memory[(BASE+i*8)>>3]=64'hbcbcbcbcbcbcbcbc;
         repeat(20)@(negedge core_clk);reset=0;
         program_rom();packet(8'h43,16);packet(8'h41,131072);
-        packet(8'h42,4096);packet(8'h46,4096);packet(8'h45,256);
+        packet(8'h42,4096);packet(8'h46,4096);packet(8'h49,2304);
         if(!rom_loaded)$fatal(1,"synthetic ROMs not ready");
         core_reset_request=0;polls=0;
         while(!dut.machine_i.cpu.STPExec && polls<200000)begin @(negedge core_clk);polls=polls+1;end
