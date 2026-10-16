@@ -7,6 +7,16 @@ Upstream is `MiSTer-devel/Apple-IIgs_MiSTer` at
 files and explicit per-file licenses. Original machine code remains separate
 from reproducible Multitini ports. Apple ROM bytes are runtime user inputs.
 
+M0.5.6 fixes an ARM disk-transfer bottleneck: every four-byte FIFO pause
+previously invoked a full USB poll. Pace that callback to one poll per
+millisecond, correct the USB time conversion, and retain an opt-in UART
+profiler for same-image comparisons. The board's final HDD request at 57 MHz
+falls from 36.573 to 4.735 seconds; this timestamp is distinct from a visual
+Finder-ready check. See the [acceleration record](APPLE_IIGS_ACCELERATION.md).
+The owner has also confirmed a usable Finder in roughly five seconds at
+57 MHz, working mouse/keyboard and normal window drawing on M0.5.6.
+All eight FPGA images and the video worker are retained.
+
 M0.5.5 changes accelerator-card selection in ARM firmware. None forces stock
 speed, including older saved None configurations. Card changes use the same
 safe save/reset/reload/remount path as ROM changes, clearing all guest ZipGS
@@ -201,9 +211,11 @@ The selected M0.4.0 IIgs image passes those gates with `+0.040 ns` setup,
 `xc7z020clg484-2`. The new ARM firmware and six retained FPGA images are
 audited separately for the combined hardware-test package.
 
-Physical board acceptance remains separate: boot both ROM revisions, legacy
-and SHR graphics, audio, keyboard/mouse/pads, disk read/write/retry, PRAM,
-core switching, every display mode/effect and sustained accelerated operation.
+The owner confirms M0.5.6 System 6 HDD boot, usable Finder, mouse/keyboard and
+normal window drawing at 57 MHz. The broader board matrix still covers both
+ROM revisions, legacy and SHR graphics modes, audio, gamepads, disk
+write/retry, PRAM, core switching, every display mode/effect and sustained
+accelerated operation.
 See `APPLE_IIGS_HARDWARE_TEST.md` for installation and the test procedure.
 
 ## Reproduce the hardware package

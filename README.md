@@ -5,6 +5,14 @@ It runs C64, Game Boy Color, Vectrex, Genesis / Mega Drive and Apple IIgs
 machines through a shared supervisor, menu, input, audio, storage and
 core-loading system. It does not use an Apple II host.
 
+M0.5.6 removes about 32 seconds of USB polling from the IIgs HDD boot path.
+On the board, the final System 6 HDD request at 57 MHz completes in 4.74 seconds
+instead of 36.57 seconds with the original polling behavior. These are disk
+completion timestamps. The fix is ARM-only and retains all eight FPGA images.
+The owner confirms a usable Finder in roughly five seconds at 57 MHz, with
+working mouse/keyboard and normal window drawing.
+See the [hardware measurements](docs/APPLE_IIGS_ACCELERATION.md).
+
 M0.5.5 makes Apple IIgs **Accelerator card: None** run at stock speed.
 Changing accelerator cards saves media and restarts the IIgs to clear guest
 ZipGS overrides. This is an ARM-only update; all eight FPGA images are reused,
@@ -16,7 +24,8 @@ writes and I/O no longer wait for the 1 MHz sync at accelerated speeds, DDR
 writes are posted and cache lines fill by burst. Synthetic loops run 12–24x
 faster than stock at 57 MHz, against 2–4x before. See the
 [acceleration record](docs/APPLE_IIGS_ACCELERATION.md). The owner confirms
-System 6.0.1 boots on hardware; the weak 14-to-57 MHz speedup remains under review.
+System 6.0.1 boots on hardware. The M0.5.6 measurements separate the ARM disk
+penalty from CPU and device work that remains after the fix.
 
 M0.5.3 corrects IIgs acceleration holdoffs from empty floppy drives, interrupt
 dispatch reads and shadow-RAM reads. It adds saved mouse sensitivity from 25%

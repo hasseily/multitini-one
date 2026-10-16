@@ -54,9 +54,12 @@ __attribute__((weak)) void cherryusb_background_poll(void)
 uint32_t cherryusb_baremetal_ms(void)
 {
     XTime now = 0U;
+    /* The BSP macro expands to CPU_FREQ / 2 without parentheses. Evaluate it
+     * first so division here does not apply that /2 a second time. */
+    const uint64_t counts_per_second = (uint64_t)COUNTS_PER_SECOND;
 
     XTime_GetTime(&now);
-    return (uint32_t)(((uint64_t)now * 1000ULL) / (uint64_t)COUNTS_PER_SECOND);
+    return (uint32_t)(((uint64_t)now * 1000ULL) / counts_per_second);
 }
 
 static uint8_t cherry_time_after_eq(uint32_t now, uint32_t deadline)

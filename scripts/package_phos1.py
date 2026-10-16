@@ -332,7 +332,7 @@ def main():
         f"Multitini {identity} / -{args.suffix} / ABI {package.ABI}\n\n"
         "Copy sd/ contents to the SD card, preserving media and settings.\n"
         f"{firmware_name} is identical to sd/FIRMWARE.BIN, the updater's required filename.\n"
-        "Use the existing golden updater, then reload cores. No flash was performed here.\n"
+        "Use the existing golden updater, then reload cores. Packaging does not install firmware.\n"
         "Selected cores: C64 PAL, PSRAM GBC, Vectrex, Genesis NTSC/PAL.\n"
         + ("NES adds iNES cartridge loading through the shared PSRAM service.\n"
            "No NES BIOS or cartridges are included; see docs/NES_PLAN.md.\n" if args.include_nes else "") +
@@ -363,7 +363,7 @@ def main():
         "source ZIP/TAR and settings under evidence/<image>/. manifest.json records each identity.\n"
         + ("See docs/CORE_ARTIFACT_REUSE.md for per-image selection and compatibility limits.\n"
            if args.include_apple_iigs else "") +
-        "Vivado/Vitis 2025.2; board performance and gameplay acceptance remain pending.\n", encoding="utf-8")
+        "Vivado/Vitis 2025.2; see the included core documentation and evidence for build and hardware validation status.\n", encoding="utf-8")
     package.verify_sources(source)
     package.verify_cpu_images(workspace, build_id=args.build_id, abi_minor=args.abi_minor)
     for name, build in builds.items():

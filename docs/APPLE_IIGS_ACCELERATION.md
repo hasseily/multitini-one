@@ -5,8 +5,91 @@ booting, Finder window drawing and applications. This record covers the
 measurements that explained it, the changes on branch `iigs-accel-fixes`, and
 the simulation evidence. The owner now confirms System 6.0.1 boots on the
 M0.5.4 core, with measured boot times of 59 seconds at Stock, 37 seconds at
-14 MHz and 35 seconds at 57 MHz. The small 14-to-57 MHz improvement remains
-unexplained; synthetic CPU throughput does not establish boot or UI throughput.
+14 MHz and 35 seconds at 57 MHz. Live ARM measurements now identify about
+32 seconds of USB polling inside the HDD transfer path. M0.5.6 removes that
+penalty without rebuilding the FPGA. Synthetic CPU throughput still does not
+establish boot or UI throughput.
+
+## M0.5.6 HDD transfer pacing
+
+The stream FIFO briefly deasserts READY after each four-byte publication.
+`mt_core_link_stream` calls its progress callback before retrying. The IIgs
+callback previously ran the full USB host poll every time. A real System 6
+boot performed 236,422 callbacks: 1,793 reads with 128 burst waits and three
+command waits each, plus three writes with 512 byte waits and one completion
+wait each. This placed about 32 seconds of ARM work in the disk path regardless
+of the selected 65816 speed.
+
+The IIgs callback now services USB at most once per millisecond during a
+transfer. The normal runtime loop still polls USB between disk requests.
+Command ordering, stream data, timeouts and cancellation are unchanged.
+The USB OSAL millisecond clock also now evaluates the BSP frequency macro
+before division; its unparenthesized `CPU_FREQ/2` expansion previously made
+that clock run at one quarter speed.
+
+The owner-authorized Golden UART update installed M0.5.6 on the board.
+Golden verified file and flash CRC32 `F5A33519`; the running ARM banner reports
+`M0.5.6 build=4D000506`. All eight FPGA images and the CPU1 video worker remain
+byte-identical to the retained qualified inputs.
+
+These live measurements use ROM3, the owner's System 6.0.1 HDD, ZipGS, all four
+compatibility delays off, other drives ejected and the menu closed. Time starts
+at IIgs reset release. **The endpoint is the final completed HDD request,
+not an automated assertion that Finder is usable.** Profiling is enabled.
+
+On 2026-10-16 the owner separately confirmed that M0.5.6 at 57 MHz reaches a
+usable Finder desktop in roughly five seconds, with working mouse/keyboard
+and normal window drawing: "Yes, fast and working normally". This is physical
+board acceptance for that boot and desktop workflow. The approximate visual
+timing is separate from the precise disk-completion timestamps below.
+
+| CPU setting | Transfer callback | Final HDD completion | HDD service total | Progress callback total | Reads / writes |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 57 MHz | Original, same M0.5.6 image | 36.573 s | 33.932 s | 32.102 s | 1,793 / 3 |
+| 57 MHz | Paced | 4.735 s | 1.907 s | 0.806 s | 1,793 / 3 |
+| 14 MHz | Paced | 5.670 s | 1.725 s | 0.782 s | 1,793 / 0 |
+| Stock | Paced | 24.552 s | 1.941 s | 0.845 s | 1,793 / 3 |
+| 57 MHz repeat | Paced | 4.717 s | 1.905 s | 0.808 s | 1,793 / 3 |
+
+Every request completed without an error. Every run read 918,016 bytes from
+the same image. At 57 MHz the fix saves 31.838 seconds at the measured endpoint,
+a 7.72x improvement. SD reads take about 0.64 seconds in the paced runs.
+Progress is a subset of HDD service; do not add overlapping stage totals.
+
+After the fix, time outside HDD service is 22.611 seconds at Stock, 3.945 at
+14 MHz and 2.828 at 57 MHz. This remainder includes CPU execution, DDR waits,
+firmware request discovery and emulated device timing; it is not a CPU-only
+counter. The remaining 14-to-57 MHz difference cannot be assigned entirely to
+DDR from these ARM measurements. The selected production-model trace also
+contains about 0.95 seconds in the SmartPort/IWM ROM wait loop and 147,905
+sound-GLU writes; their device cadence does not scale with the CPU selector.
+Those are model observations, not measured board stall counters.
+The model uses compatibility flags `0x10` versus `0x17` on the board, so its
+individual wait times cannot be subtracted from these hardware captures.
+
+The opt-in UART commands are `:gsprofile boot 0`, `:gsprofile boot 4` and
+`:gsprofile boot 6` for Stock, 14 and 57 MHz. They safely reset/remount the
+selected IIgs and start timing at reset release. Append ` baseline` to restore
+the original progress behavior for that capture. `:gsprofile stop` freezes
+and prints the report, then restores paced behavior. Select ZipGS first.
+The diagnostic emits no UART output during the measurement interval.
+
+All 88 host tests pass. Permanent production-linked checks cover the BSP clock
+macro, rollover, callback pacing and serial routing. The real stream-code
+probe checks byte integrity, timeout and cancellation. The earlier v1 capture
+had a diagnostic clock conversion error: its absolute durations are rejected
+and retained only as raw evidence. All results above use the corrected v2
+clock and pass a comparison against the host observation window.
+
+Evidence: `build/iigs-accel-diagnosis/hardware-timing-20261016/m056-hardware-validation.json`,
+the five referenced raw captures, `build/iigs-accel-diagnosis/host-final-validation.json`,
+and `build/iigs-accel-diagnosis/permanent-serial-clock-progress-validation.json`.
+The owner confirmation is recorded in
+`build/iigs-accel-diagnosis/hardware-timing-20261016/m056-owner-acceptance.json`.
+The residual timing review is
+`build/reviews/iigs-m056-residual-acceleration-review.json`. The complete private
+delivery is `build/firmware-core-gs-m056-tested.zip`; it includes the tested
+firmware, retained cores, private boot ROMs, media loaders, source and evidence.
 
 ## M0.5.5 accelerator-card selection
 
@@ -259,8 +342,9 @@ python scripts/package_core_gs.py --hardware build/core-gs-m054h/hardware --work
 
 ## Open items
 
-- Board acceptance: boot, Finder drawing, sound, floppies, ZipGS controls and
-  core switching at stock and maximum speed.
+- M0.5.6 HDD boot, usable Finder, mouse/keyboard and window drawing at 57 MHz
+  are owner-confirmed on the board. Remaining checks cover sound, floppies,
+  ZipGS controls and core switching at stock and maximum speed.
 - The DDR latency used in these figures is an estimate. The cache keeps
   hit, miss and wait counters that could be exposed to measure it on the board.
 - Accelerated I/O no longer waits for the 1 MHz sync. Software that times

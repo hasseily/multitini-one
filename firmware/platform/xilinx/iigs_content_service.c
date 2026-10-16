@@ -43,6 +43,62 @@ static uint32_t completion_id, completion_status, completion_blocks, completion_
 static bool ready, faulted, seen, completion_pending, pram_mounted, pram_exists, reset_pending;
 static bool staged_write;
 static uint32_t staged_id, staged_generation;
+static mt_sd_profile_clock_fn profile_clock;
+static void *profile_context;
+static mt_iigs_profile_t profile;
+static uint64_t profile_started, profile_request_started;
+static bool profile_request_active;
+static uint64_t profile_now(void) { return profile_clock(profile_context); }
+static void profile_record(mt_sd_profile_stage_t *stage,uint64_t start,bool failed)
+{
+    if(!profile.enabled || !profile_request_active)return;
+    const uint64_t elapsed=profile_now()-start;
+    ++stage->count; if(failed)++stage->failures;
+    stage->total_us+=elapsed; if(elapsed>stage->max_us)stage->max_us=elapsed;
+}
+void iigs_content_service_profile_reset(void)
+{
+    const bool enabled=profile.enabled;
+    memset(&profile,0,sizeof(profile));profile.enabled=enabled;
+    profile_request_active=false;
+    profile_started=enabled ? profile_now():0U;
+    mt_sd_read_profile_reset();
+}
+void iigs_content_service_profile_start(mt_sd_profile_clock_fn clock_us,void *context)
+{
+    profile_clock=clock_us;profile_context=context;profile.enabled=clock_us!=NULL;
+    mt_sd_read_profile_start(clock_us,context);
+    iigs_content_service_profile_reset();
+}
+void iigs_content_service_profile_stop(void)
+{
+    if(profile.enabled)profile.elapsed_us=profile_now()-profile_started;
+    profile.enabled=false;profile_request_active=false;
+    mt_sd_read_profile_stop();
+}
+void iigs_content_service_profile_snapshot(mt_iigs_profile_t *snapshot)
+{
+    if(snapshot==NULL)return;
+    *snapshot=profile;
+    if(profile.enabled)snapshot->elapsed_us=profile_now()-profile_started;
+    mt_sd_read_profile_snapshot(&snapshot->sd);
+}
+static void profile_progress(void *context)
+{
+    (void)context;
+    if(progress==NULL)return;
+    const uint64_t start=profile.enabled && profile_request_active ? profile_now():0U;
+    progress(progress_context);
+    profile_record(&profile.progress,start,false);
+}
+static void profile_finish(bool failed)
+{
+    if(!profile.enabled || !profile_request_active)return;
+    ++profile.completions;if(failed)++profile.failures;
+    profile.last_completion_us=profile_now()-profile_started;
+    profile_record(&profile.service,profile_request_started,failed);
+    profile_request_active=false;
+}
 static uint32_t crc32(const uint8_t *p,size_t n)
 {
     uint32_t c=UINT32_MAX;
@@ -56,7 +112,7 @@ static uint32_t le32(const uint8_t *p)
 { return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24; }
 static void store32(uint8_t *p,uint32_t v)
 { for(unsigned i=0U;i<4U;++i)p[i]=(uint8_t)(v>>(i*8U)); }
-static void tick(void) { if(progress!=NULL)progress(progress_context); }
+static void tick(void) { profile_progress(NULL); }
 static int fail(const char *text)
 { (void)snprintf(error,sizeof(error),"%s",text); faulted=true; return -1; }
 static int sd_fail(mt_sd_result_t result)
@@ -72,7 +128,7 @@ static mt_link_result_t command(uint32_t opcode,uint32_t a,uint32_t b,uint32_t c
     const uint32_t args[4]={a,b,c,d};
     for(unsigned attempt=0U;attempt<16U;++attempt) {
         mt_command_response_t response={0};
-        mt_link_result_t r=mt_core_link_command(link,opcode,args,GS_POLLS,progress,progress_context,&response);
+        mt_link_result_t r=mt_core_link_command(link,opcode,args,GS_POLLS,profile_progress,NULL,&response);
         if(r!=MT_LINK_REMOTE_ERROR || response.status!=MT_RESPONSE_BUSY)return r;
     }
     return MT_LINK_TIMEOUT;
@@ -294,19 +350,21 @@ static int pram_save(void)
 static int complete_pending(void)
 {
     if(!completion_pending)return 0;
+    const uint64_t start=profile.enabled && profile_request_active ? profile_now():0U;
     const mt_link_result_t r=command(MT_COMMAND_MEDIA_COMPLETE,completion_id,completion_status,completion_blocks,completion_generation);
-    if(r==MT_LINK_OK) { completion_pending=false; return 0; }
+    profile_record(&profile.complete,start,r!=MT_LINK_OK);
+    if(r==MT_LINK_OK) { completion_pending=false; profile_finish(completion_status!=MT_RESPONSE_OK); return 0; }
     if((link->read32(link->context,MT_REG_MEDIA_REQUEST)&MT_MEDIA_REQUEST_VALID)==0U ||
         link->read32(link->context,MT_REG_MEDIA_REQUEST_ID)!=completion_id ||
         link->read32(link->context,MT_REG_MEDIA_REQUEST_GENERATION)!=completion_generation) {
-        completion_pending=false; return 0;
+        completion_pending=false; profile_finish(true); return 0;
     }
     return fail(mt_link_result_name(r));
 }
-static int transfer(bool writing)
+static int transfer_data(bool writing)
 {
     if(!writing) {
-        const mt_link_result_t r=mt_core_link_stream(link,0x48U,sector,sizeof(sector),GS_POLLS,progress,progress_context);
+        const mt_link_result_t r=mt_core_link_stream(link,0x48U,sector,sizeof(sector),GS_POLLS,profile_progress,NULL);
         return r==MT_LINK_OK ? 0:fail(mt_link_result_name(r));
     }
     for(unsigned i=0U;i<512U;++i) {
@@ -321,6 +379,13 @@ static int transfer(bool writing)
     }
     return 0;
 }
+static int transfer(bool writing)
+{
+    const uint64_t start=profile.enabled && profile_request_active ? profile_now():0U;
+    const int result=transfer_data(writing);
+    profile_record(&profile.stream,start,result!=0);
+    return result;
+}
 void iigs_content_service_poll(void)
 {
     if(link==NULL)return;
@@ -334,6 +399,11 @@ void iigs_content_service_poll(void)
     const unsigned slot=(blocks>>8U)&255U;
     const uint32_t lba=link->read32(link->context,MT_REG_MEDIA_REQUEST_LBA);
     const bool writing=(word&MT_MEDIA_REQUEST_WRITE)!=0U;
+    if(profile.enabled && slot<2U) {
+        profile_request_active=true;profile_request_started=profile_now();
+        profile.last_discovery_us=profile_request_started-profile_started;
+        ++profile.requests;if(writing)++profile.write_requests;else ++profile.read_requests;
+    }
     seen=true; seen_id=id; seen_generation=gen;
     uint32_t status=MT_RESPONSE_OK;
     const bool valid_slot=slot<MT_IIGS_DRIVE_COUNT ? drives[slot].mounted && drives[slot].generation==gen:

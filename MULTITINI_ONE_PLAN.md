@@ -2,6 +2,15 @@
 
 Status: planning baseline, written 2026-08-29
 
+HDD performance follow-up, 2026-10-16: live ARM profiling found a full USB
+host poll at every four-byte IIgs disk-stream handshake. Pace this callback
+to once per millisecond while retaining normal USB polling between requests.
+Correct the USB millisecond clock conversion and add opt-in UART stage timing
+with a same-image baseline switch for board comparisons. M0.5.6 is ARM-only;
+retain all eight qualified FPGA images and measure the owner's System 6 HDD.
+The owner confirms M0.5.6 at 57 MHz reaches a usable Finder in roughly five
+seconds, with working mouse/keyboard and normal window drawing.
+
 Accelerator selection fix, 2026-10-16: None means stock CPU speed. Normalize
 older saved None configurations, disable speed selection while None is active,
 and use the existing safe machine restart when changing accelerator cards.

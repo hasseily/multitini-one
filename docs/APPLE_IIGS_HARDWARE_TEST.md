@@ -1,10 +1,20 @@
 # Apple IIgs hardware test
 
-Install the complete `build/firmware-core-gs-m055/sd/` contents, preserving existing
+Install the complete `build/firmware-core-gs-m056-tested/sd/` contents, preserving existing
 media and settings. Update Multitini with its included `FIRMWARE.BIN` using
 Golden B2. The matching supervisor and FSBL enable the new HP3 source video
 port. Load the new IIgs core only after installing the matching firmware.
-This package does not itself flash or test the board.
+The M0.5.6 ARM image was installed through Golden and measured on the owner's
+board. Copying the package does not itself apply the firmware update.
+
+M0.5.6 paces USB polling during IIgs disk transfers and corrects the USB clock
+conversion. It reuses all eight FPGA images and the CPU1 video worker. With the
+owner's System 6 HDD, final disk completion falls from 36.57 to 4.74 seconds
+at 57 MHz; Stock and 14 MHz measure 24.55 and 5.67 seconds with the fix.
+These are reset-to-final-HDD timestamps. On 2026-10-16 the owner separately
+confirmed a usable Finder in roughly five seconds at 57 MHz, with working
+mouse/keyboard and normal window drawing: "Yes, fast and working normally".
+See the [measurement details](APPLE_IIGS_ACCELERATION.md).
 
 M0.5.5 changes ARM firmware only and retains all eight qualified FPGA images,
 including the M0.5.4 IIgs image. Accelerator card **None** forces stock speed
@@ -123,7 +133,8 @@ cold reset. Command/OpenApple uses Alt; Option/SolidApple uses the Windows key.
    ejected, including Finder startup, window opening/redraw and a CPU-heavy
    workload. Record all delay settings and the observed speedup. The owner
    reports 59/37/35-second System 6.0.1 boots at Stock/14/57 MHz on M0.5.4;
-   the small 14-to-57 MHz improvement remains unexplained. At maximum
+   M0.5.6 identifies and removes about 32 seconds of ARM USB polling from
+   that workload, as recorded above. At maximum
    speed also check DOC sound effects and music, the boot beep, paddles,
    keyboard and mouse, the Control Panel, 3.5-inch and 5.25-inch boot, read and
    write, and switching speed while a program runs. Report any program that
