@@ -80,16 +80,24 @@ void mt_gamepad_report(mt_gamepad_input_t *input, uint8_t slot,
         (input->allocated & (1U << slot)) == 0U) return;
     mt_gamepad_state_t *state = &input->raw[slot];
     state->connected = 1U;
+    state->generic_axes = report->generic_axes;
     if (report->buttons_valid != 0U) {
         const uint32_t mask = report->buttons_mask == 0U ? UINT32_MAX : report->buttons_mask;
         state->buttons = (state->buttons & ~mask) | (report->buttons & mask);
     }
-    for (unsigned i = 0U; i < MT_GAMEPAD_AXIS_COUNT; ++i) {
+    for (unsigned i = 0U; i < MT_INPUT_AXIS_COUNT; ++i) {
         if ((report->axis_valid_mask & (1U << i)) == 0U) continue;
-        state->axis[i] = normalize(report->axis[i], report->logical_min[i], report->logical_max[i]);
-        state->axis_valid_mask |= (uint8_t)(1U << i);
-        state->trigger_mask = (uint8_t)((state->trigger_mask & (uint8_t)~(1U << i)) |
-            (report->trigger_mask & (1U << i)));
+        const uint16_t bit = (uint16_t)(1U << i);
+        if ((report->relative_mask & bit) != 0U) {
+            const int32_t value = report->axis[i];
+            state->axis[i] = value > INT16_MAX ? INT16_MAX :
+                value < INT16_MIN ? INT16_MIN : (int16_t)value;
+        } else state->axis[i] = normalize(report->axis[i], report->logical_min[i], report->logical_max[i]);
+        state->axis_valid_mask |= bit;
+        state->relative_mask = (uint16_t)((state->relative_mask & (uint16_t)~bit) |
+            (report->relative_mask & bit));
+        state->trigger_mask = (uint16_t)((state->trigger_mask & (uint16_t)~bit) |
+            (report->trigger_mask & bit & (uint16_t)~report->relative_mask));
     }
     /* 255 means absent in a partial report; 8 means explicitly neutral. */
     if (hat != UINT8_MAX) state->hat = hat < 8U ? hat : 8U;
@@ -107,7 +115,12 @@ void mt_gamepad_mapped(const mt_gamepad_input_t *input, uint8_t slot,
     const mt_gamepad_config_t *config = &input->config[slot];
     if (!raw->connected) return;
     *state = *raw;
-    state->buttons = state->axis_valid_mask = 0U;
+    state->buttons = 0U;
+    const uint16_t extra_mask = (uint16_t)(((1U << MT_INPUT_AXIS_COUNT) - 1U) &
+                                         ~((1U << MT_GAMEPAD_AXIS_COUNT) - 1U));
+    state->axis_valid_mask &= extra_mask;
+    state->trigger_mask &= extra_mask;
+    state->relative_mask &= extra_mask;
     for (unsigned i = 0U; i < 8U; ++i)
         if (config->button[i] < 8U && (raw->buttons & (1U << config->button[i])) != 0U)
             state->buttons |= (uint8_t)(1U << i);
@@ -119,15 +132,20 @@ void mt_gamepad_mapped(const mt_gamepad_input_t *input, uint8_t slot,
         int32_t value = raw->axis[axis->source];
         const int32_t sign = value < 0 ? -1 : 1;
         int32_t magnitude = value < 0 ? -value : value;
-        const int32_t deadzone = (int32_t)axis->deadzone_percent * 32768 / 100;
+        const bool relative = (raw->relative_mask & (1U << axis->source)) != 0U;
+        const int32_t deadzone = relative ? 0 : (int32_t)axis->deadzone_percent * 32768 / 100;
         magnitude = magnitude <= deadzone ? 0 :
             (magnitude - deadzone) * 32768 / (32768 - deadzone);
         magnitude = magnitude * axis->sensitivity_percent / 100;
+        if (relative && value != 0 && magnitude == 0) magnitude = 1;
         value = magnitude * sign * (axis->invert != 0U ? -1 : 1);
         if (value > INT16_MAX) value = INT16_MAX;
         if (value < INT16_MIN) value = INT16_MIN;
         state->axis[i] = (int16_t)value;
-        state->axis_valid_mask |= (uint8_t)(1U << i);
+        const uint16_t bit = (uint16_t)(1U << i);
+        state->axis_valid_mask |= bit;
+        if (relative) state->relative_mask |= bit;
+        else if ((raw->trigger_mask & (1U << axis->source)) != 0U) state->trigger_mask |= bit;
     }
 }
 

@@ -1734,6 +1734,8 @@ static void handle_extended_command(bool recovery_only)
         change_display_mode((size_t)(extended[8]-'0'));
     } else if (strcmp(extended, "diag") == 0) {
         print_read_only_diagnostics("command");
+    } else if (!recovery_only && strcmp(extended, "hid") == 0) {
+        usb_hid_service_dump_descriptors();
     } else if(iigs_active && (strcmp(extended,"disk")==0 || strcmp(extended,"dir")==0)) {
         print_iigs_media_status();
     } else if(iigs_active && (strcmp(extended,"diskretry")==0 || strcmp(extended,"saveretry")==0)) {
@@ -3188,6 +3190,20 @@ static void supervisor_controller_action(void *context, unsigned action)
 {
     (void)context;
     if(usb_sd_modal)return;
+    if (action == MT_CONTROL_MENU) {
+        if (vectrex_basic_running) { vectrex_basic_stop = true; return; }
+        if (!supervisor_menu_ready || supervisor_menu_action_active) return;
+        const mt_menu_view_t view = supervisor_menu_view();
+        const mt_menu_action_t selected = mt_menu_key_with_modifiers(
+            &supervisor_menu, &view, MT_MENU_HID_F12, true, 0U);
+        (void)mt_menu_key_with_modifiers(&supervisor_menu, &view, MT_MENU_HID_F12, false, 0U);
+        if (selected.kind != MT_MENU_ACTION_NONE && pending_menu_action.kind == MT_MENU_ACTION_NONE)
+            pending_menu_action = selected;
+        supervisor_menu_dirty = true;
+        usb_hid_service_set_menu_capture(supervisor_menu.visible);
+        controller_preview_capture();
+        return;
+    }
     if (action == MT_CONTROL_SCREENSHOT || action == MT_CONTROL_SCREENSHOT_OUTPUT)
         (void)mt_screenshot_service_request(action == MT_CONTROL_SCREENSHOT_OUTPUT);
 }

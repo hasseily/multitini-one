@@ -16,7 +16,8 @@ enum { MT_CONTROLLER_AUTO, MT_CONTROLLER_PORT1, MT_CONTROLLER_PORT2,
 enum { MT_CONTROL_SOURCE_NONE = 0, MT_CONTROL_SOURCE_BUTTON = 1,
        MT_CONTROL_SOURCE_HAT = 33, MT_CONTROL_SOURCE_AXIS_NEG = 37,
        MT_CONTROL_SOURCE_AXIS = 49, MT_CONTROL_SOURCE_DPAD_STICK = 55,
-       MT_CONTROL_SOURCE_COUNT = 59 };
+       MT_CONTROL_SOURCE_EXTRA_AXIS_NEG = 59,
+       MT_CONTROL_SOURCE_EXTRA_AXIS = 67, MT_CONTROL_SOURCE_COUNT = 71 };
 
 typedef struct {
     uint16_t vendor_id, product_id;
@@ -26,7 +27,8 @@ typedef struct {
 typedef struct {
     mt_controller_identity_t identity;
     uint32_t buttons_present;
-    uint8_t connected, home_button, axis_mask;
+    uint8_t connected, home_button, generic_axes;
+    uint16_t axis_mask;
     char name[48];
 } mt_controller_device_t;
 typedef struct {
@@ -44,6 +46,10 @@ uint32_t mt_controls_action_mask(uint32_t core_id);
 const char *mt_controls_action_name(uint32_t core_id, unsigned action);
 void mt_controls_source_name(const mt_controller_device_t *device,
                             uint16_t source, char *text, size_t capacity);
+uint16_t mt_controls_axis_source(unsigned axis, bool analog, bool positive);
+/* MT_INPUT_AXIS_COUNT means the source is not an individual axis. */
+unsigned mt_controls_source_axis(uint16_t source);
+bool mt_controls_source_is_analog(uint16_t source);
 void mt_controls_default(uint32_t core_id, const mt_controller_device_t *device,
                          mt_controller_config_t *config);
 bool mt_controls_config_valid(uint32_t core_id, const mt_controller_config_t *config);

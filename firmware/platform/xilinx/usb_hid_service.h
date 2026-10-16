@@ -52,6 +52,9 @@ int usb_hid_service_set_symbolic_keyboard(bool enabled);
 bool usb_hid_service_symbolic_keyboard(void);
 void usb_hid_service_get_status(mt_usb_hid_status_t *status);
 void usb_hid_service_dump_status(void);
+/* Explicit foreground diagnostic only; performs bounded descriptor requests.
+ * No logging or extra work is added to normal report/poll callbacks. */
+void usb_hid_service_dump_descriptors(void);
 
 void usb_hid_service_set_menu_capture(bool captured);
 bool usb_hid_service_set_iigs_mouse_sensitivity(uint16_t percent);

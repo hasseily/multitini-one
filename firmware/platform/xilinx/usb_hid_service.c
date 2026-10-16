@@ -51,6 +51,7 @@
 #define MT_XINPUT_OUTPUT_ATTEMPTS 3U
 #define MT_CONTROLLER_STRING_TIMEOUT_MS 25U
 #define MT_CONTROLLER_STRING_BYTES 256U
+#define MT_RELATIVE_PULSE_TICKS ((XTime)(COUNTS_PER_SECOND / UINT64_C(50)))
 
 #if (MT_XINPUT_PACKET_BYTES % CONFIG_USB_ALIGN_SIZE) != 0
 #error XInput DMA buffers must span whole cache lines
@@ -64,6 +65,15 @@
 typedef struct {
     struct usbh_hid *hid;
     struct usbh_hid_report_info report_info;
+    mt_usb_hid_descriptor_meta_t descriptor_meta;
+    XTime relative_started[MT_INPUT_AXIS_COUNT];
+    int8_t relative_queue[MT_INPUT_AXIS_COUNT][32];
+    uint8_t relative_head[MT_INPUT_AXIS_COUNT], relative_count[MT_INPUT_AXIS_COUNT];
+    uint16_t relative_pending;
+    uint8_t report_protocol;
+    uint8_t generic_axes;
+    uint8_t mouse_buttons;
+    uint8_t keyboard_state[MT_USB_HID_MAX_KEYBOARD_ITEMS][32];
     XTime retry_started;
     uint32_t reports;
     uint32_t submit_errors;
@@ -374,7 +384,7 @@ static void controller_optional_strings(mt_controller_device_t *device,
 
 static void identify_controller(uint8_t slot, struct usbh_hubport *port,
     uint8_t interface_id, uint8_t transport, uint32_t descriptor_hash,
-    uint32_t buttons, uint8_t axes)
+    uint32_t buttons, uint16_t axes, bool generic_axes)
 {
     if (slot >= MT_GAMEPAD_SLOTS || port == NULL) return;
     mt_controller_device_t *device = &g_devices[slot];
@@ -383,6 +393,7 @@ static void identify_controller(uint8_t slot, struct usbh_hubport *port,
     device->home_button = transport == MT_CONTROLLER_TRANSPORT_HID ? UINT8_MAX : MT_USB_PAD_HOME;
     device->buttons_present = buttons;
     device->axis_mask = axes;
+    device->generic_axes = generic_axes ? 1U : 0U;
     device->identity.vendor_id = port->device_desc.idVendor;
     device->identity.product_id = port->device_desc.idProduct;
     device->identity.interface_id = interface_id;
@@ -418,7 +429,7 @@ void usb_gamepad_input_identify(uint8_t slot, struct usbh_hubport *port,
 {
     const uint32_t buttons = transport == MT_CONTROLLER_TRANSPORT_PS4 ? UINT32_C(0x3fff) : UINT32_C(0x7ff);
     identify_controller(slot, port, interface_id, transport,
-                         UINT32_C(0x80000000) | transport, buttons, 0x3fU);
+                         UINT32_C(0x80000000) | transport, buttons, 0x3fU, false);
 }
 
 static void poll_active_input(void)
@@ -543,36 +554,33 @@ static uint16_t usage_for_field(const struct usbh_hid_report_item *item,
 
 static bool descriptor_has_gamepad(const mt_hid_slot_t *slot)
 {
-    uint8_t axes = 0U;
-    bool hat = false;
+    for (unsigned i = 0; i < slot->descriptor_meta.application_count; ++i)
+        if (slot->descriptor_meta.applications[i].capabilities &
+            (MT_USB_HID_APPLICATION_GAMEPAD | MT_USB_HID_APPLICATION_AXIS | MT_USB_HID_APPLICATION_HAT))
+            return slot->report_info.report_item_count != 0U;
+    return false;
+}
 
-    for (uint32_t index = 0U;
-         index < slot->report_info.report_item_count; ++index) {
-        const struct usbh_hid_report_item *const item =
-            &slot->report_info.report_items[index];
-        if (item->report_type == HID_REPORT_INPUT &&
-            item->attribute.usage_page == HID_USAGE_PAGE_BUTTON &&
-            (item->report_flags & HID_MAINITEM_CONSTANT) == 0U) return true;
-        if (item->report_type != HID_REPORT_INPUT ||
-            item->attribute.usage_page !=
-                HID_USAGE_PAGE_GENERIC_DESKTOP_CONTROLS ||
-            (item->report_flags & HID_MAINITEM_CONSTANT) != 0U ||
-            (item->report_flags & HID_MAINITEM_RELATIVE) != 0U) {
-            continue;
-        }
-        for (uint32_t field = 0U;
-             field < item->attribute.report_count; ++field) {
-            const uint16_t usage = usage_for_field(item, field);
-            if (usage == HID_DESKTOP_USAGE_X ||
-                usage == HID_DESKTOP_USAGE_RX) axes |= 1U;
-            else if (usage == HID_DESKTOP_USAGE_Y ||
-                     usage == HID_DESKTOP_USAGE_RY) axes |= 2U;
-            else if (usage == HID_DESKTOP_USAGE_HATSWITCH ||
-                     (usage >= HID_DESKTOP_USAGE_DPAD_UP &&
-                      usage <= HID_DESKTOP_USAGE_DPAD_LEFT)) hat = true;
-        }
+static unsigned input_axis(uint16_t page, uint16_t usage)
+{
+    if (page == HID_USAGE_PAGE_GENERIC_DESKTOP_CONTROLS) {
+        if (usage >= HID_DESKTOP_USAGE_X && usage <= HID_DESKTOP_USAGE_RZ)
+            return usage - HID_DESKTOP_USAGE_X;
+        if (usage >= 0x36U && usage <= 0x38U)
+            return MT_INPUT_AXIS_SLIDER + usage - 0x36U;
     }
-    return axes == 3U || hat;
+    if (page == 0x0cU && usage == 0x238U) return MT_INPUT_AXIS_PAN;
+    if (page == 2U && (usage == 0xc4U || usage == 0xc5U))
+        return usage == 0xc4U ? MT_GAMEPAD_AXIS_Z : MT_GAMEPAD_AXIS_RZ;
+    return MT_INPUT_AXIS_COUNT;
+}
+
+static uint8_t mouse_buttons(void)
+{
+    uint8_t buttons = 0U;
+    for (unsigned i = 0; i < CONFIG_USBHOST_MAX_HID_CLASS; ++i)
+        if (g_slots[i].active) buttons |= g_slots[i].mouse_buttons;
+    return buttons;
 }
 
 static void deliver_gamepad(uint8_t index)
@@ -652,6 +660,7 @@ static bool pad_active(const mt_gamepad_state_t *state)
 
 static uint32_t menu_chord_buttons(uint8_t index)
 {
+    if (g_devices[index].generic_axes) return 0U;
     if (g_devices[index].identity.transport != MT_CONTROLLER_TRANSPORT_HID)
         return UINT32_C(0xc0); /* Normalized Select and Start. */
     /* Generic HID preserves button usages. Ten-button pads use 9/10;
@@ -681,7 +690,7 @@ static void update_menu_chord(uint8_t index)
         chord->state = MT_MENU_CHORD_IDLE;
     } else if (chord->state == MT_MENU_CHORD_HOLDING && held != chord->buttons) {
         chord->state = MT_MENU_CHORD_BLOCKED;
-    } else if (chord->state == MT_MENU_CHORD_IDLE && held == chord->buttons) {
+    } else if (chord->buttons != 0U && chord->state == MT_MENU_CHORD_IDLE && held == chord->buttons) {
         XTime_GetTime(&chord->started);
         chord->state = MT_MENU_CHORD_HOLDING;
     }
@@ -712,10 +721,13 @@ static void controller_navigation(uint8_t index)
     if (g_keyboard_filter == NULL || g_gamepad_preview) return;
     uint8_t keys[7], count = 0U;
     const mt_gamepad_state_t *raw = &g_gamepads.raw[index];
+    /* A combined keyboard/axis interface owns this filter slot's physical
+     * key state. Even an empty synthetic report would erase its held keys. */
+    if (raw->generic_axes) return;
     const bool chord = g_menu_chord[index].state != MT_MENU_CHORD_IDLE;
     const bool menu = !chord &&
         (g_controller_output[index].actions & (UINT32_C(1) << MT_CONTROL_MENU)) != 0U;
-    const bool navigation = !chord && !menu && g_menu_navigation_guard[index] == 0U;
+    const bool navigation = !raw->generic_axes && !chord && !menu && g_menu_navigation_guard[index] == 0U;
     const uint8_t directions = navigation ? mt_gamepad_digital(raw) & 15U : 0U;
     if ((directions & 1U) != 0U) keys[count++] = 0x52U;
     if ((directions & 2U) != 0U) keys[count++] = 0x51U;
@@ -769,6 +781,8 @@ static void process_shared_report(uint8_t index, const mt_gamepad_report_t *repo
     if (g_action_handler != NULL && !g_gamepad_preview &&
         g_menu_chord[index].state == MT_MENU_CHORD_IDLE) {
         const uint32_t edges = g_controller_output[index].actions & ~previous;
+        if (g_devices[index].generic_axes && (edges & (UINT32_C(1) << MT_CONTROL_MENU)))
+            g_action_handler(g_action_handler_context, MT_CONTROL_MENU);
         if (edges & (UINT32_C(1) << MT_CONTROL_SCREENSHOT))
             g_action_handler(g_action_handler_context, MT_CONTROL_SCREENSHOT);
         if (edges & (UINT32_C(1) << MT_CONTROL_SCREENSHOT_OUTPUT))
@@ -804,18 +818,120 @@ void usb_gamepad_input_report(uint8_t slot, const mt_gamepad_report_t *report,
     process_shared_report(slot, report, hat, extra_active);
 }
 
+static int16_t clamp_axis(int64_t value)
+{
+    return value > INT16_MAX ? INT16_MAX : value < INT16_MIN ? INT16_MIN : (int16_t)value;
+}
+
+static int pop_relative_detent(mt_hid_slot_t *slot, unsigned axis)
+{
+    const unsigned head = slot->relative_head[axis];
+    const int step = slot->relative_queue[axis][head];
+    slot->relative_head[axis] = (uint8_t)((head + 1U) % 32U);
+    --slot->relative_count[axis];
+    return step;
+}
+
+/* Relative inputs have a release edge even when a device stops sending.
+ * Wheel/dial bursts retain up to 32 pending detents per axis. Motion uses a
+ * short, centered velocity pulse; it is never left latched like a joystick. */
+static void prepare_relative_report(mt_hid_slot_t *slot, mt_gamepad_report_t *report)
+{
+    XTime now;
+    XTime_GetTime(&now);
+    for (unsigned axis = 0; axis < MT_INPUT_AXIS_COUNT; ++axis) {
+        const uint16_t bit = (uint16_t)(1U << axis);
+        if ((report->relative_mask & bit) == 0U) continue;
+        const int32_t delta = report->axis[axis];
+        if (delta == 0) { report->axis_valid_mask &= (uint16_t)~bit; continue; }
+        if (axis >= MT_INPUT_AXIS_DIAL) {
+            const int step = delta > 0 ? 1 : -1;
+            const uint32_t magnitude = delta > 0 ? (uint32_t)delta : (uint32_t)-(int64_t)delta;
+            for (uint32_t n = 0; n < magnitude && slot->relative_count[axis] < 32U; ++n) {
+                const unsigned tail = (slot->relative_head[axis] + slot->relative_count[axis]) % 32U;
+                slot->relative_queue[axis][tail] = (int8_t)step;
+                ++slot->relative_count[axis];
+            }
+            if ((slot->relative_pending & bit) != 0U) {
+                report->axis_valid_mask &= (uint16_t)~bit;
+                continue;
+            }
+            report->axis[axis] = pop_relative_detent(slot, axis) * 4096;
+        } else report->axis[axis] = clamp_axis((int64_t)delta * 256);
+        slot->relative_started[axis] = now;
+        slot->relative_pending |= bit;
+    }
+}
+
+static void poll_relative_inputs(void)
+{
+    XTime now = 0;
+    bool have_time = false;
+    for (unsigned i = 0; i < CONFIG_USBHOST_MAX_HID_CLASS; ++i) {
+        mt_hid_slot_t *slot = &g_slots[i];
+        if (!slot->active || slot->relative_pending == 0U) continue;
+        if (!have_time) { XTime_GetTime(&now); have_time = true; }
+        mt_gamepad_report_t report = {0};
+        report.generic_axes = slot->generic_axes;
+        for (unsigned axis = 0; axis < MT_INPUT_AXIS_COUNT; ++axis) {
+            const uint16_t bit = (uint16_t)(1U << axis);
+            if ((slot->relative_pending & bit) == 0U ||
+                now - slot->relative_started[axis] < MT_RELATIVE_PULSE_TICKS) continue;
+            report.axis_valid_mask |= bit;
+            report.relative_mask |= bit;
+            if (g_gamepads.raw[slot->input_slot].axis[axis] == 0 && slot->relative_count[axis] != 0U) {
+                report.axis[axis] = pop_relative_detent(slot, axis) * 4096;
+            } else if (slot->relative_count[axis] == 0U) slot->relative_pending &= (uint16_t)~bit;
+            slot->relative_started[axis] = now;
+        }
+        if (report.axis_valid_mask) process_shared_report(slot->input_slot, &report, UINT8_MAX, 0U);
+    }
+}
+
+static void clear_relative_inputs(void)
+{
+    for (unsigned i = 0; i < CONFIG_USBHOST_MAX_HID_CLASS; ++i) {
+        mt_hid_slot_t *slot = &g_slots[i];
+        if (!slot->active || slot->relative_pending == 0U) continue;
+        mt_gamepad_report_t report = {0};
+        report.generic_axes = slot->generic_axes;
+        report.axis_valid_mask = report.relative_mask = slot->relative_pending;
+        slot->relative_pending = 0U;
+        memset(slot->relative_queue, 0, sizeof(slot->relative_queue));
+        memset(slot->relative_head, 0, sizeof(slot->relative_head));
+        memset(slot->relative_count, 0, sizeof(slot->relative_count));
+        process_shared_report(slot->input_slot, &report, UINT8_MAX, 0U);
+    }
+}
+
 static void process_gamepad_report(mt_hid_slot_t *slot,
                                    const uint8_t *data, uint32_t length)
 {
     mt_gamepad_report_t report = {0};
     uint8_t hat = UINT8_MAX, extra = 0U;
+    int64_t mouse_x = 0, mouse_y = 0;
+    uint32_t native_buttons = slot->mouse_buttons;
+    uint32_t native_array_mask = 0U, native_array_buttons = 0U;
+    bool native_mouse = false;
+    report.generic_axes = slot->generic_axes;
     if (slot->ps4 != 0U) {
         if (usb_ps4_decode(data, length, &report, &hat, &extra) != 0U)
             process_shared_report(slot->input_slot, &report, hat, extra);
         return;
     }
+    /* Never commit a prefix of a short USB report: axes/buttons from the
+     * same report must change together. Other report IDs remain untouched. */
+    for (unsigned i = 0; i < slot->report_info.report_item_count; ++i) {
+        const struct usbh_hid_report_item *item = &slot->report_info.report_items[i];
+        uint32_t last;
+        if (report_id_matches(item, data, length) && item->attribute.report_count != 0U &&
+            !extract_bits(item, data, length, item->attribute.report_count - 1U, &last)) return;
+    }
     for (uint32_t index = 0U; index < slot->report_info.report_item_count; ++index) {
         const struct usbh_hid_report_item *item = &slot->report_info.report_items[index];
+        const unsigned application = slot->descriptor_meta.field_application[index];
+        const bool is_mouse = application < slot->descriptor_meta.application_count &&
+            (slot->descriptor_meta.applications[application].capabilities & MT_USB_HID_APPLICATION_MOUSE) != 0U;
         if (item->report_type != HID_REPORT_INPUT ||
             (item->report_flags & HID_MAINITEM_CONSTANT) != 0U ||
             !report_id_matches(item, data, length)) continue;
@@ -823,38 +939,48 @@ static void process_gamepad_report(mt_hid_slot_t *slot,
             uint32_t raw;
             if (!extract_bits(item, data, length, field, &raw)) continue;
             const uint16_t usage = usage_for_field(item, field);
+            const unsigned axis = input_axis(item->attribute.usage_page, usage);
+            if (is_mouse) native_mouse = true;
             if (item->attribute.usage_page == HID_USAGE_PAGE_BUTTON) {
                 if ((item->report_flags & HID_MAINITEM_VARIABLE) == 0U) {
                     /* Array fields contain usage numbers, not one bit per key. */
                     report.buttons_valid = 1U;
                     for (unsigned id = item->attribute.usage_min; id <= item->attribute.usage_max && id <= 32U; ++id)
-                        if (id != 0U) report.buttons_mask |= UINT32_C(1) << (id - 1U);
+                        if (id != 0U) {
+                            report.buttons_mask |= UINT32_C(1) << (id - 1U);
+                            if (is_mouse) native_array_mask |= UINT32_C(1) << (id - 1U);
+                        }
                     if (raw >= item->attribute.usage_min && raw <= item->attribute.usage_max && raw > 0U && raw <= 32U)
+                    {
                         report.buttons |= UINT32_C(1) << (raw - 1U);
+                        if (is_mouse) native_array_buttons |= UINT32_C(1) << (raw - 1U);
+                    }
                 } else if (usage >= 1U && usage <= 32U) {
                     report.buttons_valid = 1U;
                     report.buttons_mask |= UINT32_C(1) << (usage - 1U);
                     if (raw != 0U) report.buttons |= UINT32_C(1) << (usage - 1U);
+                    if (is_mouse && usage <= 8U) {
+                        const uint32_t bit = UINT32_C(1) << (usage - 1U);
+                        native_buttons = (native_buttons & ~bit) | (raw != 0U ? bit : 0U);
+                    }
                 }
-            } else if (item->attribute.usage_page == 2U && (usage == 0xc4U || usage == 0xc5U)) {
-                const unsigned axis = usage == 0xc4U ? MT_GAMEPAD_AXIS_Z : MT_GAMEPAD_AXIS_RZ;
-                report.axis_valid_mask |= (uint8_t)(1U << axis);
-                report.trigger_mask |= (uint8_t)(1U << axis);
+            } else if (axis < MT_INPUT_AXIS_COUNT) {
+                report.axis_valid_mask |= (uint16_t)(1U << axis);
+                if (item->attribute.usage_page == 2U) report.trigger_mask |= (uint16_t)(1U << axis);
                 report.axis[axis] = item_value(item, raw);
                 item_bounds(item, &report.logical_min[axis], &report.logical_max[axis]);
+                if (item->report_flags & HID_MAINITEM_RELATIVE) {
+                    report.relative_mask |= (uint16_t)(1U << axis);
+                    if (is_mouse && axis == MT_GAMEPAD_AXIS_X) mouse_x += report.axis[axis];
+                    if (is_mouse && axis == MT_GAMEPAD_AXIS_Y) mouse_y += report.axis[axis];
+                }
             } else if (item->attribute.usage_page == HID_USAGE_PAGE_GENERIC_DESKTOP_CONTROLS &&
                        (item->report_flags & HID_MAINITEM_VARIABLE) != 0U &&
                        (item->report_flags & HID_MAINITEM_RELATIVE) == 0U) {
                 int32_t minimum, maximum;
                 const int32_t value = item_value(item, raw);
                 item_bounds(item, &minimum, &maximum);
-                if (usage >= HID_DESKTOP_USAGE_X && usage <= HID_DESKTOP_USAGE_RZ) {
-                    const unsigned axis = usage - HID_DESKTOP_USAGE_X;
-                    report.axis_valid_mask |= (uint8_t)(1U << axis);
-                    report.axis[axis] = value;
-                    report.logical_min[axis] = minimum;
-                    report.logical_max[axis] = maximum;
-                } else if (usage == HID_DESKTOP_USAGE_HATSWITCH) {
+                if (usage == HID_DESKTOP_USAGE_HATSWITCH) {
                     const int64_t direction = (int64_t)value - minimum;
                     hat = direction >= 0 && direction < 8 ? (uint8_t)direction : 8U;
                 } else if (usage >= HID_DESKTOP_USAGE_DPAD_UP && usage <= HID_DESKTOP_USAGE_DPAD_LEFT) {
@@ -868,7 +994,17 @@ static void process_gamepad_report(mt_hid_slot_t *slot,
             }
         }
     }
-    process_shared_report(slot->input_slot, &report, hat, extra);
+    native_buttons = (native_buttons & ~native_array_mask) | native_array_buttons;
+    if (native_mouse && g_active_core_id == MT_IIGS_CORE_ID) {
+        slot->mouse_buttons = (uint8_t)native_buttons;
+        mt_iigs_hid_mouse_report(&g_iigs_input, g_menu_capture ? 0 : clamp_axis(mouse_x),
+            g_menu_capture ? 0 : clamp_axis(mouse_y), g_menu_capture ? 0U : mouse_buttons());
+    } else if (native_mouse) slot->mouse_buttons = (uint8_t)native_buttons;
+    if (slot->gamepad) {
+        if (report.relative_mask != 0U) prepare_relative_report(slot, &report);
+        if (report.axis_valid_mask != 0U || report.buttons_valid || hat != UINT8_MAX)
+            process_shared_report(slot->input_slot, &report, hat, extra);
+    }
 }
 
 static uint32_t report_length(const mt_hid_slot_t *slot)
@@ -884,6 +1020,80 @@ static uint32_t report_length(const mt_hid_slot_t *slot)
 
 static void submit_report(mt_hid_slot_t *slot);
 
+static void keyboard_report(mt_hid_slot_t *slot, uint8_t modifiers,
+                            uint8_t *keys, size_t count)
+{
+    const bool captured = g_keyboard_filter != NULL &&
+        g_keyboard_filter(g_keyboard_filter_context, slot->input_slot, modifiers, keys, count);
+    if (captured) submit_keyboard_state(slot->input_slot, 0U, NULL, 0U);
+    else {
+        for (size_t key = 0; key < count; ++key) if (keys[key] == 0x46U) keys[key] = 0U;
+        submit_keyboard_state(slot->input_slot, modifiers, keys, count);
+    }
+}
+
+static void process_keyboard_report(mt_hid_slot_t *slot, const uint8_t *data, uint32_t length)
+{
+    bool changed = false;
+    uint8_t pending[MT_USB_HID_MAX_KEYBOARD_ITEMS][32];
+    memcpy(pending, slot->keyboard_state, sizeof(pending));
+    const mt_usb_hid_descriptor_meta_t *meta = &slot->descriptor_meta;
+    for (unsigned i = 0; i < meta->keyboard_item_count; ++i) {
+        const mt_usb_hid_keyboard_item_t *keyboard = &meta->keyboard_items[i];
+        const struct usbh_hid_report_item *item = &keyboard->item;
+        if (!report_id_matches(item, data, length)) continue;
+        uint8_t next[32] = {0};
+        bool valid = true;
+        for (uint32_t field = 0; field < item->attribute.report_count; ++field) {
+            uint32_t value;
+            if (!extract_bits(item, data, length, field, &value)) { valid = false; break; }
+            uint16_t usage;
+            if (item->report_flags & HID_MAINITEM_VARIABLE) {
+                if (value == 0U) continue;
+                usage = mt_usb_hid_keyboard_usage(meta, keyboard, field);
+            } else {
+                const int64_t selector = (int64_t)item_value(item, value) - item->attribute.logical_min;
+                if (selector < 0 || selector > UINT32_MAX) continue;
+                usage = mt_usb_hid_keyboard_usage(meta, keyboard, (uint32_t)selector);
+                if (usage >= 1U && usage <= 3U) { valid = false; break; }
+            }
+            if (usage > 3U && usage < 256U) next[usage / 8U] |= (uint8_t)(1U << (usage % 8U));
+        }
+        if (!valid) return;
+        memcpy(pending[i], next, sizeof(next));
+        changed = true;
+    }
+    if (changed) {
+        memcpy(slot->keyboard_state, pending, sizeof(pending));
+        uint8_t aggregate[32] = {0}, keys[256], modifiers = 0;
+        size_t count = 0;
+        for (unsigned i = 0; i < meta->keyboard_item_count; ++i)
+            for (unsigned b = 0; b < sizeof(aggregate); ++b) aggregate[b] |= slot->keyboard_state[i][b];
+        for (unsigned key = 4; key < 256U; ++key) {
+            if ((aggregate[key / 8U] & (1U << (key % 8U))) == 0U) continue;
+            if (key >= 0xe0U && key <= 0xe7U) modifiers |= (uint8_t)(1U << (key - 0xe0U));
+            else keys[count++] = (uint8_t)key;
+        }
+        keyboard_report(slot, modifiers, keys, count);
+    }
+}
+
+static bool complete_hid_packet(const mt_hid_slot_t *slot, const uint8_t *data, uint32_t length)
+{
+    uint32_t last;
+    for (unsigned i = 0; i < slot->report_info.report_item_count; ++i) {
+        const struct usbh_hid_report_item *item = &slot->report_info.report_items[i];
+        if (report_id_matches(item, data, length) && item->attribute.report_count &&
+            !extract_bits(item, data, length, item->attribute.report_count - 1U, &last)) return false;
+    }
+    for (unsigned i = 0; i < slot->descriptor_meta.keyboard_item_count; ++i) {
+        const struct usbh_hid_report_item *item = &slot->descriptor_meta.keyboard_items[i].item;
+        if (report_id_matches(item, data, length) && item->attribute.report_count &&
+            !extract_bits(item, data, length, item->attribute.report_count - 1U, &last)) return false;
+    }
+    return true;
+}
+
 static void report_complete(void *argument, int bytes)
 {
     mt_hid_slot_t *const slot = argument;
@@ -894,11 +1104,16 @@ static void report_complete(void *argument, int bytes)
     slot->report_pending = 0U;
     if (slot->active == 0U || slot->hid == NULL) return;
 
-    if (bytes > 0) {
+    if (bytes > 0 && bytes <= (int)MT_HID_REPORT_BYTES) {
         slot->last_error = 0;
         ++slot->reports;
         ++g_reports_total;
-        if (slot->keyboard != 0U && bytes >= 8) {
+        if (slot->report_protocol != 0U) {
+            if (complete_hid_packet(slot, g_reports[index], (uint32_t)bytes)) {
+                if (slot->keyboard) process_keyboard_report(slot, g_reports[index], (uint32_t)bytes);
+                if (slot->gamepad || slot->mouse) process_gamepad_report(slot, g_reports[index], (uint32_t)bytes);
+            }
+        } else if (slot->keyboard != 0U && bytes >= 8) {
             const struct usb_hid_kbd_report *const keyboard =
                 (const struct usb_hid_kbd_report *)g_reports[index];
             const bool captured = g_keyboard_filter != NULL &&
@@ -915,9 +1130,19 @@ static void report_complete(void *argument, int bytes)
                 submit_keyboard_state(slot->input_slot, keyboard->modifier,
                                       machine_keys, sizeof(machine_keys));
             }
-        } else if (slot->mouse != 0U && bytes >= 3 && g_active_core_id == MT_IIGS_CORE_ID) {
-            mt_iigs_hid_mouse_report(&g_iigs_input,g_menu_capture ? 0:(int8_t)g_reports[index][1],
-                g_menu_capture ? 0:(int8_t)g_reports[index][2],g_menu_capture ? 0U:g_reports[index][0]);
+        } else if (slot->mouse != 0U && bytes >= 3) {
+            slot->mouse_buttons = g_reports[index][0] & 7U;
+            if (g_active_core_id == MT_IIGS_CORE_ID)
+                mt_iigs_hid_mouse_report(&g_iigs_input,g_menu_capture ? 0:(int8_t)g_reports[index][1],
+                    g_menu_capture ? 0:(int8_t)g_reports[index][2],g_menu_capture ? 0U:mouse_buttons());
+            if (slot->gamepad) {
+                mt_gamepad_report_t report = {0};
+                report.generic_axes = 1U; report.buttons_valid = 1U; report.buttons_mask = 7U;
+                report.buttons = slot->mouse_buttons; report.axis_valid_mask = report.relative_mask = 3U;
+                report.axis[0] = (int8_t)g_reports[index][1]; report.axis[1] = (int8_t)g_reports[index][2];
+                prepare_relative_report(slot, &report);
+                process_shared_report(slot->input_slot, &report, UINT8_MAX, 0U);
+            }
         } else if (slot->gamepad != 0U) {
             process_gamepad_report(slot, g_reports[index], (uint32_t)bytes);
         }
@@ -1308,36 +1533,49 @@ static void parse_descriptor(mt_hid_slot_t *slot)
         slot->hid->report_size > MT_HID_DESCRIPTOR_BYTES) return;
     result = usbh_hid_get_report_descriptor(
         slot->hid, g_descriptors[index], slot->hid->report_size);
+    if (result <= 0 || result > (int)slot->hid->report_size) {
+        slot->last_error = result;
+        g_last_error = result;
+        return;
+    }
+    const uint32_t descriptor_length = (uint32_t)result;
+    result = mt_usb_parse_input_descriptor(
+        g_descriptors[index], descriptor_length, &slot->report_info, &slot->descriptor_meta);
     if (result < 0) {
         slot->last_error = result;
         g_last_error = result;
         return;
     }
-    result = mt_usb_parse_gamepad_descriptor(
-        g_descriptors[index], slot->hid->report_size, &slot->report_info);
-    if (result < 0) {
-        slot->last_error = result;
-        g_last_error = result;
-        return;
+    slot->report_protocol = 1U;
+    slot->generic_axes = 1U;
+    for (unsigned i = 0; i < slot->descriptor_meta.application_count; ++i) {
+        const unsigned capabilities = slot->descriptor_meta.applications[i].capabilities;
+        if (capabilities & MT_USB_HID_APPLICATION_GAMEPAD) slot->generic_axes = 0U;
+        if (capabilities & MT_USB_HID_APPLICATION_MOUSE) slot->mouse = 1U;
+    }
+    if (slot->descriptor_meta.keyboard_item_count) {
+        slot->keyboard = 1U;
+        /* Shared keyboard/controller interfaces keep their physical key
+         * filter state and opt into bindings, like keyboard/mouse combos. */
+        slot->generic_axes = 1U;
     }
     slot->gamepad = descriptor_has_gamepad(slot) ? 1U : 0U;
     if (slot->gamepad) {
         uint32_t buttons = 0U;
-        uint8_t axes = 0U;
+        uint16_t axes = 0U;
         for (uint32_t i = 0U; i < slot->report_info.report_item_count; ++i) {
             const struct usbh_hid_report_item *item = &slot->report_info.report_items[i];
             if (item->attribute.usage_page == HID_USAGE_PAGE_BUTTON) {
                 for (unsigned usage = item->attribute.usage_min; usage <= item->attribute.usage_max && usage <= 32U; ++usage)
                     if (usage > 0U) buttons |= UINT32_C(1) << (usage - 1U);
-            } else if (item->attribute.usage_page == HID_USAGE_PAGE_GENERIC_DESKTOP_CONTROLS &&
-                       item->attribute.usage_min >= HID_DESKTOP_USAGE_X && item->attribute.usage_min <= HID_DESKTOP_USAGE_RZ)
-                axes |= (uint8_t)(1U << (item->attribute.usage_min - HID_DESKTOP_USAGE_X));
-            else if (item->attribute.usage_page == 2U && (item->attribute.usage_min == 0xc4U || item->attribute.usage_min == 0xc5U))
-                axes |= (uint8_t)(1U << (item->attribute.usage_min == 0xc4U ? MT_GAMEPAD_AXIS_Z : MT_GAMEPAD_AXIS_RZ));
+            } else {
+                const unsigned axis = input_axis(item->attribute.usage_page, item->attribute.usage_min);
+                if (axis < MT_INPUT_AXIS_COUNT) axes |= (uint16_t)(1U << axis);
+            }
         }
         identify_controller(slot->input_slot, slot->hid->hport, slot->hid->intf,
             MT_CONTROLLER_TRANSPORT_HID,
-            identity_hash(UINT32_C(2166136261), g_descriptors[index], slot->hid->report_size), buttons, axes);
+            identity_hash(UINT32_C(2166136261), g_descriptors[index], descriptor_length), buttons, axes, slot->generic_axes != 0U);
     }
 }
 
@@ -1373,8 +1611,32 @@ void usbh_hid_run(struct usbh_hid *hid)
         descriptor->bInterfaceSubClass == HID_SUBCLASS_BOOTIF);
     hid->user_data = slot;
     (void)usbh_hid_set_idle(hid, 0U, 0U);
-    if (slot->keyboard != 0U || slot->mouse != 0U) {
-        (void)usbh_hid_set_protocol(hid, HID_PROTOCOL_BOOT);
+    const bool boot_keyboard = slot->keyboard != 0U;
+    const bool boot_mouse = slot->mouse != 0U;
+    if (boot_keyboard || boot_mouse) {
+        parse_descriptor(slot);
+        /* Pure keyboards retain their proven boot path. Mouse and combined
+         * keyboard/axis interfaces need report protocol for wheel/extra axes. */
+        if (slot->report_protocol && (!boot_keyboard || slot->gamepad) &&
+            usbh_hid_set_protocol(hid, HID_PROTOCOL_REPORT) == 0) {
+            /* Descriptor decoding remains enabled. */
+        } else {
+            slot->report_protocol = 0U;
+            slot->keyboard = boot_keyboard ? 1U : 0U;
+            slot->mouse = boot_mouse ? 1U : 0U;
+            slot->gamepad = boot_mouse ? 1U : 0U;
+            const int boot_result = usbh_hid_set_protocol(hid, HID_PROTOCOL_BOOT);
+            if (boot_result != 0) {
+                slot->keyboard = slot->mouse = slot->gamepad = 0U;
+                slot->last_error = g_last_error = boot_result;
+                memset(&g_devices[slot->input_slot], 0, sizeof(g_devices[slot->input_slot]));
+                xil_printf("[usb1] HID protocol setup failed interface=%u error=%d\r\n", hid->intf, boot_result);
+            } else if (boot_mouse) {
+                slot->generic_axes = 1U;
+                identify_controller(slot->input_slot, hid->hport, hid->intf,
+                    MT_CONTROLLER_TRANSPORT_HID, UINT32_C(0x424f4f54), 7U, 3U, true);
+            } else memset(&g_devices[slot->input_slot], 0, sizeof(g_devices[slot->input_slot]));
+        }
     } else {
         slot->ps4 = usb_ps4_supported(hid->hport->device_desc.idVendor,
                                       hid->hport->device_desc.idProduct);
@@ -1400,8 +1662,9 @@ void usbh_hid_stop(struct usbh_hid *hid)
     xil_printf("[usb1] HID disconnected slot=%u\r\n",
                (unsigned int)hid->minor);
     if(slot->mouse && g_active_core_id==MT_IIGS_CORE_ID) {
+        slot->mouse_buttons = 0U;
         mt_iigs_hid_clear_mouse_motion(&g_iigs_input);
-        mt_iigs_hid_mouse_report(&g_iigs_input,0,0,0U);
+        mt_iigs_hid_mouse_report(&g_iigs_input,0,0,g_menu_capture ? 0U : mouse_buttons());
     }
     disconnect_input_slot(slot->input_slot);
     mt_gamepad_disconnect(&g_gamepads, slot->input_slot);
@@ -1548,14 +1811,18 @@ int usb_hid_service_stop(void)
 void usb_hid_service_set_active_core(uint32_t core_id)
 {
     g_core_ready = 0U;
+    clear_relative_inputs();
     g_active_core_id = core_id;
     for (uint8_t slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot) {
         g_release_guard[slot] = pad_active(&g_gamepads.raw[slot]) ? 1U : 0U;
         reset_menu_chord(slot);
     }
     refresh_controller_outputs(true, true);
-    if (g_active_core_id == MT_IIGS_CORE_ID)
+    if (g_active_core_id == MT_IIGS_CORE_ID) {
+        mt_iigs_hid_clear_mouse_motion(&g_iigs_input);
+        mt_iigs_hid_mouse_report(&g_iigs_input, 0, 0, g_menu_capture ? 0U : mouse_buttons());
         mt_iigs_hid_reassert(&g_iigs_input);
+    }
     else if (g_active_core_id == MT_VECTREX_CORE_ID)
         mt_vectrex_hid_reassert(&g_vectrex_input);
     else if (g_active_core_id == MT_GBC_CORE_ID)
@@ -1598,6 +1865,7 @@ void usb_hid_service_poll(void)
         retry_reports();
         usb_xbox_one_poll();
     }
+    poll_relative_inputs();
     poll_menu_chords();
     poll_active_input();
     XTime_GetTime(&g_poll_completed);
@@ -1689,6 +1957,45 @@ void usb_hid_service_get_status(mt_usb_hid_status_t *status)
         status->gamepads += g_vendor_slots[i];
 }
 
+void usb_hid_service_dump_descriptors(void)
+{
+    static uint8_t descriptor[MT_HID_DESCRIPTOR_BYTES]
+        __attribute__((aligned(CONFIG_USB_ALIGN_SIZE)));
+    xil_printf("[hid] descriptor snapshot begin\r\n");
+    for (unsigned index = 0U; index < CONFIG_USBHOST_MAX_HID_CLASS; ++index) {
+        const mt_hid_slot_t *slot = &g_slots[index];
+        struct usbh_hid *hid = slot->hid;
+        if (!slot->active || hid == NULL || hid->hport == NULL) continue;
+        const struct usb_interface_descriptor *intf =
+            &hid->hport->config.intf[hid->intf].altsetting[0].intf_desc;
+        xil_printf("[hid] slot=%u input=%u vid=%04x pid=%04x interface=%u subclass=%u protocol=%u keyboard=%u mouse=%u gamepad=%u reports=%u errors=%u/%u length=%u name=%s\r\n",
+            index, (unsigned)slot->input_slot,
+            (unsigned)hid->hport->device_desc.idVendor,
+            (unsigned)hid->hport->device_desc.idProduct,
+            (unsigned)hid->intf, (unsigned)intf->bInterfaceSubClass,
+            (unsigned)intf->bInterfaceProtocol, (unsigned)slot->keyboard,
+            (unsigned)slot->mouse, (unsigned)slot->gamepad,
+            (unsigned)slot->reports, (unsigned)slot->submit_errors,
+            (unsigned)slot->transfer_errors, (unsigned)hid->report_size,
+            g_devices[slot->input_slot].name);
+        if (hid->report_size == 0U || hid->report_size > sizeof(descriptor)) {
+            xil_printf("[hid] descriptor unavailable: length outside buffer\r\n");
+            continue;
+        }
+        memset(descriptor, 0, sizeof(descriptor));
+        const int length = usbh_hid_get_report_descriptor(hid, descriptor, hid->report_size);
+        if (length <= 0 || (unsigned)length > sizeof(descriptor)) {
+            xil_printf("[hid] descriptor request failed: %d\r\n", length);
+            continue;
+        }
+        xil_printf("[hid] descriptor slot=%u bytes=%u data=", index, (unsigned)length);
+        for (unsigned byte = 0U; byte < (unsigned)length; ++byte)
+            xil_printf("%02x", (unsigned)descriptor[byte]);
+        xil_printf("\r\n");
+    }
+    xil_printf("[hid] descriptor snapshot end\r\n");
+}
+
 void usb_hid_service_dump_status(void)
 {
     mt_usb_hid_status_t status;
@@ -1761,6 +2068,7 @@ void usb_hid_service_set_menu_capture(bool captured)
 {
     if (g_menu_capture == captured) return;
     g_menu_capture = captured;
+    clear_relative_inputs();
     if(captured && g_active_core_id==MT_IIGS_CORE_ID) {
         mt_iigs_hid_clear_mouse_motion(&g_iigs_input);
         mt_iigs_hid_mouse_report(&g_iigs_input,0,0,0U);

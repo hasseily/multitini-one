@@ -447,8 +447,10 @@ static void gamepad_start_capture(mt_menu_t *menu, const mt_menu_view_t *view,
     menu->gamepad_capture_armed = false;
     menu->gamepad_previous = view->gamepad_preview;
     menu->gamepad_capture_started = view->gamepad_now_ms;
-    (void)snprintf(menu->gamepad_notice, sizeof(menu->gamepad_notice),
-                   "Release the buttons and center the sticks before assigning an input.");
+    (void)snprintf(menu->gamepad_notice, sizeof(menu->gamepad_notice), "%s",
+        view->gamepad_preview.generic_axes ?
+        "Release the buttons and stop moving the controls before assigning an input." :
+        "Release the buttons and center the sticks before assigning an input.");
 }
 
 static void gamepad_next_capture(mt_menu_t *menu, const mt_menu_view_t *view)
@@ -466,13 +468,13 @@ static bool gamepad_sources_overlap(const mt_controller_config_t *config, uint16
 {
     if (left == 0U || right == 0U) return false;
     if (left == right) return true;
-    if (left >= MT_CONTROL_SOURCE_DPAD_STICK && left < MT_CONTROL_SOURCE_COUNT) {
+    if (left >= MT_CONTROL_SOURCE_DPAD_STICK && left < MT_CONTROL_SOURCE_EXTRA_AXIS_NEG) {
         const unsigned direction = (unsigned)left - MT_CONTROL_SOURCE_DPAD_STICK;
         const unsigned axis = config->axis[direction < 2U ? MT_GAMEPAD_AXIS_Y : MT_GAMEPAD_AXIS_X].source;
         return right == MT_CONTROL_SOURCE_HAT + direction ||
                (axis < MT_GAMEPAD_AXIS_COUNT && right == MT_CONTROL_SOURCE_AXIS_NEG + axis * 2U + (direction & 1U));
     }
-    if (right >= MT_CONTROL_SOURCE_DPAD_STICK && right < MT_CONTROL_SOURCE_COUNT)
+    if (right >= MT_CONTROL_SOURCE_DPAD_STICK && right < MT_CONTROL_SOURCE_EXTRA_AXIS_NEG)
         return gamepad_sources_overlap(config, right, left);
     return false;
 }
@@ -488,6 +490,21 @@ static void gamepad_assign(mt_menu_t *menu, const mt_menu_view_t *view, uint16_t
     }
     config->binding[menu->gamepad_control] = source;
     gamepad_next_capture(menu, view);
+}
+
+static bool gamepad_capture_at_rest(const mt_gamepad_state_t *before,
+                                    const mt_gamepad_state_t *now)
+{
+    if (!mt_controls_neutral(now)) return false;
+    if (!now->generic_axes) return true;
+    for (unsigned axis = 0U; axis < MT_INPUT_AXIS_COUNT; ++axis) {
+        const unsigned bit = 1U << axis;
+        if ((now->axis_valid_mask & bit) == 0U || (now->relative_mask & bit) != 0U) continue;
+        if ((before->axis_valid_mask & bit) == 0U) return false;
+        const int32_t movement = (int32_t)now->axis[axis] - before->axis[axis];
+        if (movement < -512 || movement > 512) return false;
+    }
+    return true;
 }
 
 bool mt_menu_gamepad_update(mt_menu_t *menu, const mt_menu_view_t *view)
@@ -507,18 +524,20 @@ bool mt_menu_gamepad_update(mt_menu_t *menu, const mt_menu_view_t *view)
     }
     if (menu->gamepad_conflict) return false;
     if (!menu->gamepad_capture_armed) {
+        const bool at_rest = gamepad_capture_at_rest(&menu->gamepad_previous,
+                                                    &view->gamepad_preview);
         menu->gamepad_previous = view->gamepad_preview;
-        if (!mt_controls_neutral(&view->gamepad_preview)) return false;
+        if (!at_rest) return false;
         menu->gamepad_capture_armed = true;
         (void)snprintf(menu->gamepad_notice, sizeof(menu->gamepad_notice), "%s",
             menu->gamepad_control == MT_CONTROL_AXIS_X || menu->gamepad_control == MT_CONTROL_AXIS_Y ?
-            "Ready. Move the stick axis you want to use." :
-            "Ready. Press a button or D-pad direction, or move a stick or trigger.");
+            "Ready. Move the axis you want to use." :
+            "Ready. Press a button or D-pad direction, or move an axis.");
         return true;
     }
     uint16_t source = mt_controls_capture_source(&menu->gamepad_previous,
         &view->gamepad_preview, menu->gamepad_control == MT_CONTROL_AXIS_X || menu->gamepad_control == MT_CONTROL_AXIS_Y);
-    menu->gamepad_previous = view->gamepad_preview;
+    /* Keep the arming position so slow slider movement can accumulate. */
     if (source == 0U) return false;
     const mt_controller_config_t *config = &menu->gamepad_config[menu->gamepad_slot];
     if (source >= MT_CONTROL_SOURCE_AXIS_NEG && source < MT_CONTROL_SOURCE_AXIS) {
@@ -1300,18 +1319,33 @@ static void render_gamepad(const mt_menu_t *menu, const mt_menu_view_t *view,
             ++position;
         }
         const unsigned start = LIST_Y + (position + 1U) / 2U + 1U;
-        static const char *const directions[] = {"D-pad Up", "D-pad Down", "D-pad Left", "D-pad Right"};
-        const uint8_t directions_held = mt_gamepad_hat_bits(view->gamepad_preview.hat);
-        for (unsigned index = 0U; index < 4U; ++index) {
-            (void)snprintf(text, sizeof(text), "%s: %s", directions[index], (directions_held & (1U << index)) != 0U ? "HELD" : "released");
-            field(frame, ITEM_X + (index % 2U) * (ITEM_W / 2U), start + index / 2U, ITEM_W / 2U - 1U, text, MT_UI_COLOR_TEXT, MT_UI_COLOR_PANEL);
+        static const char *const directions[] = {"Up", "Down", "Left", "Right"};
+        const mt_gamepad_state_t *raw = &view->gamepad_preview;
+        const uint8_t hat_held = mt_gamepad_hat_bits(raw->hat);
+        uint8_t axes_held = 0U;
+        for (unsigned index = 0U; index < 2U; ++index) {
+            if ((raw->axis_valid_mask & (1U << index)) == 0U) continue;
+            const int threshold = (raw->relative_mask & (1U << index)) != 0U ? 0 : 10922;
+            const unsigned negative = index == MT_GAMEPAD_AXIS_X ? 2U : 0U;
+            if (raw->axis[index] < -threshold) axes_held |= (uint8_t)(1U << negative);
+            if (raw->axis[index] > threshold) axes_held |= (uint8_t)(1U << (negative + 1U));
         }
-        for (unsigned index = 0U; index < MT_GAMEPAD_AXIS_COUNT; ++index) {
-            mt_controls_source_name(device, (uint16_t)(MT_CONTROL_SOURCE_AXIS + index), value, sizeof(value));
-            if ((view->gamepad_preview.axis_valid_mask & (1U << index)) != 0U)
-                (void)snprintf(text, sizeof(text), "%s: %d", value, (int)view->gamepad_preview.axis[index]);
+        field(frame, ITEM_X, start, ITEM_W, "Directions (D-pad / X-Y)", MT_UI_COLOR_MUTED, MT_UI_COLOR_PANEL);
+        for (unsigned index = 0U; index < 4U; ++index) {
+            const unsigned bit = 1U << index;
+            const char *held = (hat_held & bit) != 0U ?
+                ((axes_held & bit) != 0U ? "D-pad + X/Y" : "D-pad") :
+                ((axes_held & bit) != 0U ? "X/Y" : "released");
+            (void)snprintf(text, sizeof(text), "%s: %s", directions[index], held);
+            field(frame, ITEM_X + (index % 2U) * (ITEM_W / 2U), start + 1U + index / 2U, ITEM_W / 2U - 1U, text, MT_UI_COLOR_TEXT, MT_UI_COLOR_PANEL);
+        }
+        for (unsigned index = 0U; index < MT_INPUT_AXIS_COUNT; ++index) {
+            mt_controls_source_name(device, mt_controls_axis_source(index, true, false), value, sizeof(value));
+            if ((raw->axis_valid_mask & (1U << index)) != 0U)
+                (void)snprintf(text, sizeof(text), "%s: %d%s", value, (int)raw->axis[index],
+                    (raw->relative_mask & (1U << index)) != 0U ? " (relative)" : "");
             else (void)snprintf(text, sizeof(text), "%s: not reported", value);
-            field(frame, ITEM_X, start + 3U + index, ITEM_W, text, MT_UI_COLOR_TEXT, MT_UI_COLOR_PANEL);
+            field(frame, ITEM_X + (index % 2U) * (ITEM_W / 2U), start + 4U + index / 2U, ITEM_W / 2U - 1U, text, MT_UI_COLOR_TEXT, MT_UI_COLOR_PANEL);
         }
         mt_controls_output_t mapped;
         mt_controls_evaluate(view->gamepad_core_id, config, &view->gamepad_preview, 0U, &mapped);

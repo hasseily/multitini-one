@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "supervisor_settings.h"
+#include "multitini_vectrex_interface.h"
 #include "multitini_c64_interface.h"
 #include "multitini_gameboy_interface.h"
 #include "multitini_genesis_interface.h"
@@ -805,8 +806,44 @@ static void test_controller_profiles(void)
     assert(memcmp(&loaded, &settings, sizeof(settings)) == 0);
 }
 
+static void test_extended_axis_profile_wire(void)
+{
+    enum { POOL_OFFSET = V7_WIRE_SIZE + 8U, RECORD_SIZE = 92U };
+    mt_supervisor_settings_t settings, loaded;
+    mt_controller_device_t pad = controller_device(1U, 0U);
+    mt_controller_config_t config;
+    uint8_t legacy_record[RECORD_SIZE];
+    reset_fake();
+    mt_supervisor_settings_defaults(&settings);
+    mt_controls_default(MT_GENESIS_CORE_ID, &pad, &config);
+    assert(mt_supervisor_settings_remember_controller(&settings, MT_GENESIS_CORE_ID, &pad.identity, &config));
+    assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
+    memcpy(legacy_record, stored_file + POOL_OFFSET, sizeof(legacy_record));
+    /* Literal pre-extension IDs and offsets verify the unchanged record. */
+    assert(legacy_record[24] == 55U && legacy_record[26] == 56U &&
+           legacy_record[28] == 57U && legacy_record[30] == 58U);
+    assert(legacy_record[58] == 0U && legacy_record[60] == 10U &&
+           legacy_record[61] == 100U && legacy_record[83] == 5U && legacy_record[88] == 0U);
+    pad.identity.port_path = 2U; pad.generic_axes = 1U;
+    mt_controls_default(MT_VECTREX_CORE_ID, &pad, &config);
+    config.assignment = MT_CONTROLLER_PORT1;
+    config.binding[MT_CONTROL_A] = 64U; /* Wheel + */
+    config.binding[MT_CONTROL_B] = 65U; /* Pan - */
+    config.binding[MT_CONTROL_AXIS_X] = 67U; /* Slider */
+    config.binding[MT_CONTROL_AXIS_Y] = 70U; /* Pan */
+    assert(mt_supervisor_settings_remember_controller(&settings, MT_VECTREX_CORE_ID, &pad.identity, &config));
+    assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
+    assert(memcmp(legacy_record, stored_file + POOL_OFFSET, sizeof(legacy_record)) == 0);
+    const uint8_t *record = stored_file + POOL_OFFSET + RECORD_SIZE;
+    assert(record[32] == 64U && record[34] == 65U && record[48] == 67U && record[50] == 70U);
+    assert(record[88] == 1U && record[89] == 0U);
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
+    assert(memcmp(&loaded, &settings, sizeof(settings)) == 0);
+}
+
 int main(void)
 {
+    test_extended_axis_profile_wire();
     test_controller_profiles();
     test_gamepad_settings();
     test_genesis_settings();

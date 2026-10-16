@@ -75,7 +75,10 @@ The IIgs frame includes 42 native border pixels on each side and 24 source
 lines above and below SHR, giving 724x496 after line doubling. Auto scaling
 keeps the full border visible. Machine frame rates remain independent. Audio feeds the shared I2S/SPDIF
 output with controlled mute/reset behavior. USB input is translated to stable
-machine events. See [video settings](docs/VIDEO_SETTINGS.md) and
+machine events. Axis-bearing HID devices share controller bindings while
+composite keyboard/mouse reports retain their native functions; relative
+motion expires instead of latching. See [USB input](docs/USB_INPUT.md),
+[video settings](docs/VIDEO_SETTINGS.md) and
 [shared front end](docs/SHARED_FRONTEND.md).
 
 ## Storage and user flow

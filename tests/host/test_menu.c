@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "multitini_menu.h"
+#include "multitini_c64_interface.h"
+#include "multitini_vectrex_interface.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -644,6 +646,185 @@ static void test_vectrex_video(void)
           "overlay browser retains nested directory navigation");
 }
 
+static void init_controller_menu(mt_menu_t *menu, mt_menu_view_t *view,
+                                 uint32_t core, bool generic_axes)
+{
+    mt_controller_config_t configs[MT_GAMEPAD_SLOTS];
+    memset(view, 0, sizeof(*view));
+    view->active_core_id = core == MT_C64_CORE_ID ? "c64" : "vectrex";
+    view->gamepad_core_id = core;
+    view->gamepad_devices[0].connected = 1U;
+    view->gamepad_devices[0].generic_axes = generic_axes ? 1U : 0U;
+    view->gamepad_devices[0].buttons_present = UINT32_MAX;
+    strcpy(view->gamepad_devices[0].name, "Input test device");
+    view->gamepad_preview.connected = 1U;
+    view->gamepad_preview.generic_axes = generic_axes ? 1U : 0U;
+    view->gamepad_preview.hat = 8U;
+    for (unsigned slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot)
+        mt_controls_default(core, &view->gamepad_devices[slot], &configs[slot]);
+    mt_menu_init(menu, view);
+    menu->visible = true;
+    mt_menu_gamepad_begin(menu, view, configs);
+    check(menu->gamepad_edit, "controller editor opens for active system");
+}
+
+static void start_controller_capture(mt_menu_t *menu, mt_menu_view_t *view,
+                                     unsigned action)
+{
+    const uint32_t mask = mt_controls_action_mask(view->gamepad_core_id);
+    unsigned row = 2U;
+    check((mask & (1U << action)) != 0U, "test capture action exists");
+    for (unsigned index = 0U; index < action; ++index)
+        if ((mask & (1U << index)) != 0U) ++row;
+    menu->gamepad_field = (uint8_t)row;
+    (void)press(menu, view, MT_MENU_HID_ENTER);
+    check(menu->gamepad_capture && !menu->gamepad_capture_armed,
+          "assignment starts unarmed");
+}
+
+static void test_generic_axis_capture(void)
+{
+    mt_menu_t menu;
+    mt_menu_view_t view;
+    init_controller_menu(&menu, &view, MT_C64_CORE_ID, true);
+    check(menu.gamepad_config[0].assignment == MT_CONTROLLER_OFF,
+          "generic devices enter the editor disabled");
+    for (unsigned action = 0U; action < MT_CONTROL_COUNT; ++action)
+        check(menu.gamepad_config[0].binding[action] == 0U,
+              "generic devices enter the editor unassigned");
+    view.gamepad_preview.axis_valid_mask = (uint16_t)(1U << MT_INPUT_AXIS_SLIDER);
+    view.gamepad_preview.axis[MT_INPUT_AXIS_SLIDER] = 10000;
+    start_controller_capture(&menu, &view, MT_CONTROL_A);
+    check(strstr(menu.gamepad_notice, "stop moving") != NULL,
+          "generic capture asks for rest rather than a centered stick");
+    view.gamepad_preview.axis[MT_INPUT_AXIS_SLIDER] = 11000;
+    check(!mt_menu_gamepad_update(&menu, &view) && !menu.gamepad_capture_armed,
+          "moving slider does not establish the capture baseline");
+    check(mt_menu_gamepad_update(&menu, &view) && menu.gamepad_capture_armed,
+          "stable off-center slider arms capture");
+    for (int value = 12000; value <= 19000; value += 1000) {
+        view.gamepad_preview.axis[MT_INPUT_AXIS_SLIDER] = (int16_t)value;
+        check(!mt_menu_gamepad_update(&menu, &view) && menu.gamepad_capture,
+              "small slider movement does not assign prematurely");
+        check(menu.gamepad_previous.axis[MT_INPUT_AXIS_SLIDER] == 11000,
+              "capture retains the original stable position");
+    }
+    view.gamepad_preview.axis[MT_INPUT_AXIS_SLIDER] = 20000;
+    check(mt_menu_gamepad_update(&menu, &view) && !menu.gamepad_capture &&
+          menu.gamepad_config[0].binding[MT_CONTROL_A] ==
+              mt_controls_axis_source(MT_INPUT_AXIS_SLIDER, false, true),
+          "cumulative slider motion assigns the extra positive direction");
+    check(menu.gamepad_config[0].assignment == MT_CONTROLLER_OFF,
+          "assigning a generic control does not implicitly enable routing");
+
+    init_controller_menu(&menu, &view, MT_VECTREX_CORE_ID, true);
+    view.gamepad_preview.axis_valid_mask = (uint16_t)(1U << MT_INPUT_AXIS_PAN);
+    view.gamepad_preview.axis[MT_INPUT_AXIS_PAN] = -20000;
+    start_controller_capture(&menu, &view, MT_CONTROL_AXIS_X);
+    check(mt_menu_gamepad_update(&menu, &view), "off-center analog capture arms");
+    view.gamepad_preview.axis[MT_INPUT_AXIS_PAN] = -11000;
+    check(mt_menu_gamepad_update(&menu, &view) && !menu.gamepad_capture &&
+          menu.gamepad_config[0].binding[MT_CONTROL_AXIS_X] ==
+              mt_controls_axis_source(MT_INPUT_AXIS_PAN, true, false),
+          "analog assignment accepts an extra full axis at an arbitrary endpoint");
+}
+
+static void test_relative_axis_capture_and_conflicts(void)
+{
+    mt_menu_t menu;
+    mt_menu_view_t view;
+    init_controller_menu(&menu, &view, MT_C64_CORE_ID, true);
+    const uint16_t wheel_negative = mt_controls_axis_source(MT_INPUT_AXIS_WHEEL, false, false);
+    const uint16_t slider_positive = mt_controls_axis_source(MT_INPUT_AXIS_SLIDER, false, true);
+    menu.gamepad_config[0].binding[MT_CONTROL_B] = slider_positive;
+    view.gamepad_preview.axis_valid_mask = (uint16_t)(1U << MT_INPUT_AXIS_WHEEL);
+    view.gamepad_preview.relative_mask = view.gamepad_preview.axis_valid_mask;
+    view.gamepad_preview.axis[MT_INPUT_AXIS_WHEEL] = -1;
+    start_controller_capture(&menu, &view, MT_CONTROL_A);
+    check(!mt_menu_gamepad_update(&menu, &view) && !menu.gamepad_capture_armed,
+          "even a one-unit relative motion prevents arming");
+    view.gamepad_preview.axis[MT_INPUT_AXIS_WHEEL] = 0;
+    check(mt_menu_gamepad_update(&menu, &view), "expired relative motion allows arming");
+    view.gamepad_preview.axis[MT_INPUT_AXIS_WHEEL] = -1;
+    check(mt_menu_gamepad_update(&menu, &view) && !menu.gamepad_capture &&
+          menu.gamepad_config[0].binding[MT_CONTROL_A] == wheel_negative &&
+          menu.gamepad_config[0].binding[MT_CONTROL_B] == slider_positive,
+          "relative capture assigns one-unit motion without aliasing another extra axis");
+
+    view.gamepad_preview.axis[MT_INPUT_AXIS_WHEEL] = 0;
+    start_controller_capture(&menu, &view, MT_CONTROL_C);
+    check(mt_menu_gamepad_update(&menu, &view), "second relative capture arms");
+    view.gamepad_preview.axis[MT_INPUT_AXIS_WHEEL] = -1;
+    check(mt_menu_gamepad_update(&menu, &view) && menu.gamepad_conflict &&
+          menu.gamepad_pending_source == wheel_negative,
+          "same extra axis produces an explicit assignment conflict");
+    (void)press(&menu, &view, MT_MENU_HID_ENTER);
+    check(!menu.gamepad_capture && menu.gamepad_config[0].binding[MT_CONTROL_A] == 0U &&
+          menu.gamepad_config[0].binding[MT_CONTROL_C] == wheel_negative &&
+          menu.gamepad_config[0].binding[MT_CONTROL_B] == slider_positive,
+          "conflict confirmation moves only the matching extra source");
+
+    view.gamepad_preview.axis[MT_INPUT_AXIS_WHEEL] = 0;
+    start_controller_capture(&menu, &view, MT_CONTROL_A);
+    check(mt_menu_gamepad_update(&menu, &view), "timeout capture arms");
+    view.gamepad_now_ms += UINT64_C(20000);
+    check(mt_menu_gamepad_update(&menu, &view) && !menu.gamepad_capture &&
+          menu.gamepad_config[0].binding[MT_CONTROL_A] == 0U,
+          "generic capture retains the existing timeout without changing assignments");
+
+    init_controller_menu(&menu, &view, MT_C64_CORE_ID, false);
+    view.gamepad_preview.axis_valid_mask = 1U;
+    view.gamepad_preview.axis[MT_GAMEPAD_AXIS_X] = 16000;
+    start_controller_capture(&menu, &view, MT_CONTROL_A);
+    check(!mt_menu_gamepad_update(&menu, &view) && !menu.gamepad_capture_armed,
+          "ordinary pads still require centered sticks");
+    view.gamepad_preview.axis[MT_GAMEPAD_AXIS_X] = 0;
+    check(mt_menu_gamepad_update(&menu, &view), "centered ordinary pad arms");
+    view.gamepad_preview.axis[MT_GAMEPAD_AXIS_X] = -20000;
+    check(mt_menu_gamepad_update(&menu, &view) && menu.gamepad_conflict,
+          "ordinary stick capture still overlaps its composite D-pad binding");
+    (void)press(&menu, &view, MT_MENU_HID_ESCAPE);
+    check(menu.gamepad_config[0].binding[MT_CONTROL_LEFT] == MT_CONTROL_SOURCE_DPAD_STICK + 2U,
+          "cancel preserves the existing D-pad/stick assignment");
+}
+
+static void test_controller_axis_display(void)
+{
+    mt_menu_t menu;
+    mt_menu_view_t view;
+    mt_ui_frame_t frame;
+    init_controller_menu(&menu, &view, MT_VECTREX_CORE_ID, true);
+    menu.gamepad_test = true;
+    view.gamepad_preview.buttons = UINT32_C(1) << 31U;
+    view.gamepad_preview.axis_valid_mask = (uint16_t)((1U << MT_INPUT_AXIS_COUNT) - 1U);
+    view.gamepad_preview.relative_mask = (uint16_t)((1U << MT_INPUT_AXIS_WHEEL) | (1U << MT_INPUT_AXIS_PAN));
+    view.gamepad_preview.axis[MT_GAMEPAD_AXIS_X] = -32768;
+    view.gamepad_preview.axis[MT_GAMEPAD_AXIS_Y] = 32767;
+    view.gamepad_preview.axis[MT_INPUT_AXIS_SLIDER] = 12345;
+    view.gamepad_preview.axis[MT_INPUT_AXIS_DIAL] = -12345;
+    view.gamepad_preview.axis[MT_INPUT_AXIS_WHEEL] = 1;
+    view.gamepad_preview.axis[MT_INPUT_AXIS_PAN] = -1;
+    mt_menu_render(&menu, &view, &frame);
+    check(contains(&frame, "Button 32: HELD") && contains(&frame, "Button 1: released"),
+          "tester retains all 32 buttons with expanded axes");
+    check(contains(&frame, "Left: X/Y") && contains(&frame, "Down: X/Y") &&
+          !contains(&frame, "Left: D-pad"),
+          "axis-encoded directions are visible without mislabeling an analog stick as D-pad");
+    check(contains(&frame, "Slider: 12345") && contains(&frame, "Dial: -12345") &&
+          contains(&frame, "Wheel: 1 (relative)") && contains(&frame, "Pan: -1 (relative)"),
+          "tester renders all extra axis values with relative semantics");
+    check(contains(&frame, "Assigned actions: none") && contains(&frame, "Mapped stick: X 0  Y 0") &&
+          contains(&frame, "Game and navigation actions are paused"),
+          "maximum buttons and axes leave room for mapped output and help");
+    view.gamepad_preview.hat = 6U;
+    view.gamepad_preview.axis[MT_INPUT_AXIS_WHEEL] = 0;
+    view.gamepad_preview.axis[MT_INPUT_AXIS_PAN] = 0;
+    mt_menu_render(&menu, &view, &frame);
+    check(contains(&frame, "Left: D-pad + X/Y") && contains(&frame, "Wheel: 0 (relative)") &&
+          contains(&frame, "Pan: 0 (relative)"),
+          "tester distinguishes simultaneous direction sources and shows expired relative motion");
+}
+
 int main(void)
 {
     test_core_navigation();
@@ -653,6 +834,9 @@ int main(void)
     test_borders();
     test_vectrex_video();
     test_empty_and_faults();
+    test_generic_axis_capture();
+    test_relative_axis_capture_and_conflicts();
+    test_controller_axis_display();
     puts("PASS: scalable menu navigation, descriptors, clipping and save status");
     return 0;
 }

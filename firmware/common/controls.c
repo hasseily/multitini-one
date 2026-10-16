@@ -45,6 +45,36 @@ const char *mt_controls_action_name(uint32_t core, unsigned action)
     return names[action];
 }
 
+uint16_t mt_controls_axis_source(unsigned axis, bool analog, bool positive)
+{
+    if (axis >= MT_INPUT_AXIS_COUNT) return MT_CONTROL_SOURCE_NONE;
+    if (axis < MT_GAMEPAD_AXIS_COUNT)
+        return (uint16_t)(analog ? MT_CONTROL_SOURCE_AXIS + axis :
+            MT_CONTROL_SOURCE_AXIS_NEG + axis * 2U + (positive ? 1U : 0U));
+    axis -= MT_GAMEPAD_AXIS_COUNT;
+    return (uint16_t)(analog ? MT_CONTROL_SOURCE_EXTRA_AXIS + axis :
+        MT_CONTROL_SOURCE_EXTRA_AXIS_NEG + axis * 2U + (positive ? 1U : 0U));
+}
+
+unsigned mt_controls_source_axis(uint16_t source)
+{
+    if (source >= MT_CONTROL_SOURCE_AXIS_NEG && source < MT_CONTROL_SOURCE_AXIS)
+        return ((unsigned)source - MT_CONTROL_SOURCE_AXIS_NEG) / 2U;
+    if (source >= MT_CONTROL_SOURCE_AXIS && source < MT_CONTROL_SOURCE_DPAD_STICK)
+        return (unsigned)source - MT_CONTROL_SOURCE_AXIS;
+    if (source >= MT_CONTROL_SOURCE_EXTRA_AXIS_NEG && source < MT_CONTROL_SOURCE_EXTRA_AXIS)
+        return MT_GAMEPAD_AXIS_COUNT + ((unsigned)source - MT_CONTROL_SOURCE_EXTRA_AXIS_NEG) / 2U;
+    if (source >= MT_CONTROL_SOURCE_EXTRA_AXIS && source < MT_CONTROL_SOURCE_COUNT)
+        return MT_GAMEPAD_AXIS_COUNT + (unsigned)source - MT_CONTROL_SOURCE_EXTRA_AXIS;
+    return MT_INPUT_AXIS_COUNT;
+}
+
+bool mt_controls_source_is_analog(uint16_t source)
+{
+    return (source >= MT_CONTROL_SOURCE_AXIS && source < MT_CONTROL_SOURCE_DPAD_STICK) ||
+        (source >= MT_CONTROL_SOURCE_EXTRA_AXIS && source < MT_CONTROL_SOURCE_COUNT);
+}
+
 void mt_controls_source_name(const mt_controller_device_t *device, uint16_t source,
                             char *text, size_t capacity)
 {
@@ -55,7 +85,8 @@ void mt_controls_source_name(const mt_controller_device_t *device, uint16_t sour
     static const char *const sony[] = { "Cross", "Circle", "Square", "Triangle", "L1", "R1",
         "Share", "Options", "L3", "R3", "PS", "L2 button", "R2 button", "Touchpad click" };
     static const char *const hats[] = { "D-pad up", "D-pad down", "D-pad left", "D-pad right" };
-    static const char *const axes[] = { "X", "Y", "Z", "Rx", "Ry", "Rz" };
+    static const char *const axes[] = { "X", "Y", "Z", "Rx", "Ry", "Rz",
+        "Slider", "Dial", "Wheel", "Pan" };
     static const char *const vendor_axes[] = { "Left stick X", "Left stick Y", "Left trigger", "Right stick X", "Right stick Y", "Right trigger" };
     const bool vendor = device != NULL && device->identity.transport != MT_CONTROLLER_TRANSPORT_HID;
     if (text == NULL || capacity == 0U) return;
@@ -73,10 +104,15 @@ void mt_controls_source_name(const mt_controller_device_t *device, uint16_t sour
         (void)snprintf(text, capacity, "%s %s", vendor ? vendor_axes[axis] : axes[axis], positive ? "+" : "-");
     } else if (source < MT_CONTROL_SOURCE_DPAD_STICK)
         (void)snprintf(text, capacity, "%s", vendor ? vendor_axes[source - MT_CONTROL_SOURCE_AXIS] : axes[source - MT_CONTROL_SOURCE_AXIS]);
-    else if (source < MT_CONTROL_SOURCE_COUNT) {
+    else if (source < MT_CONTROL_SOURCE_EXTRA_AXIS_NEG) {
         static const char *const directions[] = {"up", "down", "left", "right"};
         (void)snprintf(text, capacity, "D-pad / stick %s", directions[source - MT_CONTROL_SOURCE_DPAD_STICK]);
-    }
+    } else if (source < MT_CONTROL_SOURCE_EXTRA_AXIS) {
+        const unsigned axis = mt_controls_source_axis(source);
+        (void)snprintf(text, capacity, "%s %s", axes[axis],
+            ((source - MT_CONTROL_SOURCE_EXTRA_AXIS_NEG) & 1U) != 0U ? "+" : "-");
+    } else if (source < MT_CONTROL_SOURCE_COUNT)
+        (void)snprintf(text, capacity, "%s", axes[mt_controls_source_axis(source)]);
     else (void)snprintf(text, capacity, "Unavailable");
 }
 
@@ -97,6 +133,10 @@ void mt_controls_default(uint32_t core, const mt_controller_device_t *device,
         config->axis[i].source = (uint8_t)i;
         config->axis[i].deadzone_percent = 10U;
         config->axis[i].sensitivity_percent = 100U;
+    }
+    if (device != NULL && device->generic_axes) {
+        config->assignment = MT_CONTROLLER_OFF;
+        return;
     }
     const uint32_t actions = mt_controls_action_mask(core);
     for (unsigned i = 0U; i < 4U; ++i)
@@ -126,7 +166,7 @@ bool mt_controls_config_valid(uint32_t core, const mt_controller_config_t *confi
         const unsigned source = config->binding[i];
         const bool analog = i == MT_CONTROL_AXIS_X || i == MT_CONTROL_AXIS_Y;
         if (source >= MT_CONTROL_SOURCE_COUNT || ((actions & BIT(i)) == 0U && source != 0U)) return false;
-        if (source != 0U && (analog != (source >= MT_CONTROL_SOURCE_AXIS && source < MT_CONTROL_SOURCE_DPAD_STICK))) return false;
+        if (source != 0U && (analog != mt_controls_source_is_analog((uint16_t)source))) return false;
     }
     for (unsigned i = 0U; i < MT_GAMEPAD_AXIS_COUNT; ++i) {
         const mt_gamepad_axis_config_t *a = &config->axis[i];
@@ -153,7 +193,7 @@ void mt_controls_migrate_legacy(uint32_t core, const mt_controller_device_t *dev
                                const mt_gamepad_config_t *legacy, mt_controller_config_t *config)
 {
     mt_controls_default(core, device, config);
-    if (config == NULL || !mt_gamepad_config_valid(legacy)) return;
+    if (config == NULL || (device != NULL && device->generic_axes) || !mt_gamepad_config_valid(legacy)) return;
     /* Tuning now belongs to a physical axis. Prioritize the old horizontal
      * and vertical controls when several old logical axes shared a source. */
     for (unsigned i = MT_GAMEPAD_AXIS_COUNT; i-- > 0U;) {
@@ -184,15 +224,18 @@ void mt_controls_migrate_legacy(uint32_t core, const mt_controller_device_t *dev
 
 static int16_t tuned_axis(const mt_controller_config_t *config, const mt_gamepad_state_t *raw, unsigned axis)
 {
-    if (axis >= MT_GAMEPAD_AXIS_COUNT || (raw->axis_valid_mask & (1U << axis)) == 0U) return 0;
+    if (axis >= MT_INPUT_AXIS_COUNT || (raw->axis_valid_mask & (1U << axis)) == 0U) return 0;
+    if (axis >= MT_GAMEPAD_AXIS_COUNT) return raw->axis[axis];
     const mt_gamepad_axis_config_t *setting = &config->axis[axis];
     int32_t value = raw->axis[axis], sign = value < 0 ? -1 : 1;
-    const bool trigger = (raw->trigger_mask & (1U << axis)) != 0U;
+    const bool relative = (raw->relative_mask & (1U << axis)) != 0U;
+    const bool trigger = !relative && (raw->trigger_mask & (1U << axis)) != 0U;
     int32_t magnitude = trigger ? value + 32768 : value * sign;
     const int32_t range = trigger ? 65535 : 32768;
-    const int32_t dead = (int32_t)setting->deadzone_percent * range / 100;
+    const int32_t dead = relative ? 0 : (int32_t)setting->deadzone_percent * range / 100;
     magnitude = magnitude <= dead ? 0 : (int32_t)((int64_t)(magnitude - dead) * range / (range - dead));
     magnitude = magnitude * setting->sensitivity_percent / 100;
+    if (relative && value != 0 && magnitude == 0) magnitude = 1;
     if (magnitude > range) magnitude = range;
     value = trigger ? magnitude - 32768 : magnitude * sign;
     if (setting->invert != 0U) value = -value;
@@ -204,7 +247,7 @@ static int16_t tuned_axis(const mt_controller_config_t *config, const mt_gamepad
 static bool source_pressed(uint16_t source, const mt_controller_config_t *config,
                            const mt_gamepad_state_t *raw, bool held)
 {
-    if (source >= MT_CONTROL_SOURCE_DPAD_STICK && source < MT_CONTROL_SOURCE_COUNT) {
+    if (source >= MT_CONTROL_SOURCE_DPAD_STICK && source < MT_CONTROL_SOURCE_EXTRA_AXIS_NEG) {
         const unsigned direction = (unsigned)source - MT_CONTROL_SOURCE_DPAD_STICK;
         const unsigned axis = config->axis[direction < 2U ? MT_GAMEPAD_AXIS_Y : MT_GAMEPAD_AXIS_X].source;
         const uint16_t stick = axis < MT_GAMEPAD_AXIS_COUNT ?
@@ -212,15 +255,17 @@ static bool source_pressed(uint16_t source, const mt_controller_config_t *config
         return source_pressed((uint16_t)(MT_CONTROL_SOURCE_HAT + direction), config, raw, held) ||
             source_pressed(stick, config, raw, held);
     }
-    if (source == 0U || source >= MT_CONTROL_SOURCE_AXIS) return false;
+    if (source == 0U) return false;
     if (source < MT_CONTROL_SOURCE_HAT) return (raw->buttons & (UINT32_C(1) << (source - 1U))) != 0U;
     if (source < MT_CONTROL_SOURCE_AXIS_NEG)
         return (mt_gamepad_hat_bits(raw->hat) & (1U << (source - MT_CONTROL_SOURCE_HAT))) != 0U;
-    const unsigned axis = ((unsigned)source - MT_CONTROL_SOURCE_AXIS_NEG) / 2U;
-    if ((raw->axis_valid_mask & (1U << axis)) == 0U) return false;
+    const unsigned axis = mt_controls_source_axis(source);
+    if (axis >= MT_INPUT_AXIS_COUNT || mt_controls_source_is_analog(source) ||
+        (raw->axis_valid_mask & (1U << axis)) == 0U) return false;
     const int32_t value = tuned_axis(config, raw, axis);
-    const int32_t threshold = held ? 8000 : 11000;
-    return (((unsigned)source - MT_CONTROL_SOURCE_AXIS_NEG) & 1U) != 0U ? value > threshold : value < -threshold;
+    const int32_t threshold = (raw->relative_mask & (1U << axis)) != 0U ? 0 : held ? 8000 : 11000;
+    const unsigned base = axis < MT_GAMEPAD_AXIS_COUNT ? MT_CONTROL_SOURCE_AXIS_NEG : MT_CONTROL_SOURCE_EXTRA_AXIS_NEG;
+    return (((unsigned)source - base) & 1U) != 0U ? value > threshold : value < -threshold;
 }
 
 void mt_controls_evaluate(uint32_t core, const mt_controller_config_t *config,
@@ -238,8 +283,8 @@ void mt_controls_evaluate(uint32_t core, const mt_controller_config_t *config,
     if ((out->actions & 12U) == 12U) out->actions &= ~UINT32_C(12);
     for (unsigned a = MT_CONTROL_AXIS_X; a <= MT_CONTROL_AXIS_Y; ++a) {
         const uint16_t source = config->binding[a];
-        if (source >= MT_CONTROL_SOURCE_AXIS && source < MT_CONTROL_SOURCE_DPAD_STICK) {
-            int16_t value = tuned_axis(config, raw, (unsigned)source - MT_CONTROL_SOURCE_AXIS);
+        if (mt_controls_source_is_analog(source)) {
+            int16_t value = tuned_axis(config, raw, mt_controls_source_axis(source));
             if (a == MT_CONTROL_AXIS_X) out->x = value;
             else out->y = value == INT16_MIN ? INT16_MAX : (int16_t)-value;
         }
@@ -257,9 +302,11 @@ bool mt_controls_neutral(const mt_gamepad_state_t *raw)
 {
     if (raw == NULL || !raw->connected) return true;
     if (raw->buttons != 0U || raw->extra_active != 0U || raw->hat < 8U) return false;
-    for (unsigned i = 0U; i < MT_GAMEPAD_AXIS_COUNT; ++i) {
+    for (unsigned i = 0U; i < MT_INPUT_AXIS_COUNT; ++i) {
         if ((raw->axis_valid_mask & (1U << i)) == 0U) continue;
-        if ((raw->trigger_mask & (1U << i)) != 0U) { if (raw->axis[i] > -24576) return false; }
+        if ((raw->relative_mask & (1U << i)) != 0U) { if (raw->axis[i] != 0) return false; }
+        else if (raw->generic_axes) continue; /* Sliders may rest anywhere. */
+        else if ((raw->trigger_mask & (1U << i)) != 0U) { if (raw->axis[i] > -24576) return false; }
         else if (raw->axis[i] < -8192 || raw->axis[i] > 8192) return false;
     }
     return true;
@@ -276,16 +323,28 @@ uint16_t mt_controls_capture_source(const mt_gamepad_state_t *before,
         for (unsigned i = 0U; i < 4U; ++i) if ((hat & (1U << i)) != 0U) return (uint16_t)(MT_CONTROL_SOURCE_HAT + i);
     }
     unsigned best = 0U; int32_t strength = 0;
-    for (unsigned i = 0U; i < MT_GAMEPAD_AXIS_COUNT; ++i) {
+    for (unsigned i = 0U; i < MT_INPUT_AXIS_COUNT; ++i) {
         if ((now->axis_valid_mask & (1U << i)) == 0U) continue;
+        const bool relative = (now->relative_mask & (1U << i)) != 0U;
         const bool trigger = (now->trigger_mask & (1U << i)) != 0U;
         const int32_t value = now->axis[i], old = before->axis[i];
+        if (relative) {
+            const int32_t magnitude = value < 0 ? -value : value;
+            if (magnitude != 0 && old == 0 && magnitude > strength) { best = i; strength = magnitude; }
+            continue;
+        }
+        if (now->generic_axes) {
+            if ((before->axis_valid_mask & (1U << i)) == 0U) continue;
+            const int32_t delta = value - old, movement = delta < 0 ? -delta : delta;
+            if (movement >= 8192 && movement > strength &&
+                (analog || value <= -18000 || value >= 18000)) { best = i; strength = movement; }
+            continue;
+        }
         const int32_t magnitude = trigger ? value + 32768 : value < 0 ? -value : value;
         const int32_t old_magnitude = trigger ? old + 32768 : old < 0 ? -old : old;
         if (magnitude >= 18000 && old_magnitude < 18000 && magnitude > strength) { best = i; strength = magnitude; }
     }
     if (strength == 0) return 0U;
-    if (analog) return (uint16_t)(MT_CONTROL_SOURCE_AXIS + best);
-    return (uint16_t)(MT_CONTROL_SOURCE_AXIS_NEG + best * 2U +
-        (((now->trigger_mask & (1U << best)) != 0U || now->axis[best] >= 0) ? 1U : 0U));
+    return mt_controls_axis_source(best, analog,
+        ((now->trigger_mask & (1U << best)) != 0U && (now->relative_mask & (1U << best)) == 0U) || now->axis[best] >= 0);
 }

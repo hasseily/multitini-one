@@ -18,6 +18,7 @@ static bool golden_update_worker_held;
 static const char *test_command;
 static unsigned forbidden,retries,warnings,statuses;
 static unsigned unknown_commands;
+static unsigned hid_snapshots;
 static unsigned status_drive_mask;
 static uint32_t active_core=MT_IIGS_CORE_ID;
 static bool hidden=true;
@@ -33,6 +34,7 @@ static void reboot_to_golden(bool recovery) { (void)recovery;++forbidden; }
 static void self_update_golden(bool recovery) { (void)recovery;++forbidden; }
 static void change_display_mode(size_t mode) { (void)mode;++forbidden; }
 static void print_read_only_diagnostics(const char *where) { (void)where; }
+static void usb_hid_service_dump_descriptors(void) { ++hid_snapshots; }
 static void set_supervisor_error(const char *message) { (void)message;++warnings; }
 static void set_supervisor_warning(const char *message)
 { assert(strcmp(message,"Use the Apple IIgs Media menu")==0);++warnings; }
@@ -113,6 +115,14 @@ static void test_clock_and_progress(void)
 int main(void)
 {
     test_clock_and_progress();
+    test_command="hid";handle_extended_command(false);
+    assert(hid_snapshots==1U && forbidden==0U);
+    const unsigned unknown_before=unknown_commands;
+    handle_extended_command(true);
+    assert(hid_snapshots==1U && unknown_commands==unknown_before+1U && forbidden==0U);
+    golden_update_worker_held=true;handle_extended_command(false);
+    assert(hid_snapshots==1U && forbidden==0U);
+    golden_update_worker_held=false;
     static const char *const legacy[]={"mount OLD.D64","mount\tOLD.G64","mount","eject","cartoff",
         "load OLD.PRG","load\tOLD.CRT","load","c64rx 20480 0x1234","c64rx"};
     for(unsigned i=0U;i<sizeof(legacy)/sizeof(legacy[0]);++i) {
@@ -151,5 +161,5 @@ int main(void)
     active_core=MT_IIGS_CORE_ID;test_command="gsprofiles start";
     const unsigned before=unknown_commands;handle_extended_command(false);
     assert(unknown_commands==before+1U && forbidden==0U);
-    puts("PASS Apple IIgs serial routing, removed profiling commands, exact BSP clock boundaries and shared USB progress delegation");return 0;
+    puts("PASS Apple IIgs serial routing, guarded HID snapshot, removed profiling commands, exact BSP clock boundaries and shared USB progress delegation");return 0;
 }

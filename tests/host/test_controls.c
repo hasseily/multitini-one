@@ -93,7 +93,7 @@ static void test_defaults_and_validation(void)
     config = empty_config(MT_GBC_CORE_ID);
     for (unsigned source = 0U; source < MT_CONTROL_SOURCE_COUNT; ++source) {
         config.binding[MT_CONTROL_A] = (uint16_t)source;
-        const bool whole_axis = source >= MT_CONTROL_SOURCE_AXIS && source < MT_CONTROL_SOURCE_DPAD_STICK;
+        const bool whole_axis = (source >= 49U && source < 55U) || (source >= 67U && source < 71U);
         check(mt_controls_config_valid(MT_GBC_CORE_ID, &config) == !whole_axis,
               "digital actions accept buttons, directions and composite defaults but not whole axes");
         char text[48];
@@ -274,6 +274,104 @@ static void test_legacy_axis_migration(void)
     check(output.actions == BIT(MT_CONTROL_UP), "D-pad remains usable when the legacy analog vertical source was disabled");
 }
 
+static void test_extended_axis_controls(void)
+{
+    _Static_assert(MT_GAMEPAD_AXIS_COUNT == 6 && MT_GAMEPAD_AXIS_OFF == 6,
+                   "Persisted gamepad tuning and disabled source must stay unchanged");
+    _Static_assert(MT_CONTROL_SOURCE_BUTTON == 1 && MT_CONTROL_SOURCE_HAT == 33 &&
+        MT_CONTROL_SOURCE_AXIS_NEG == 37 && MT_CONTROL_SOURCE_AXIS == 49 &&
+        MT_CONTROL_SOURCE_DPAD_STICK == 55 && MT_CONTROL_SOURCE_EXTRA_AXIS_NEG == 59 &&
+        MT_CONTROL_SOURCE_EXTRA_AXIS == 67 && MT_CONTROL_SOURCE_COUNT == 71,
+        "Saved binding identifiers must stay stable");
+    const char *const names[] = {"Slider", "Dial", "Wheel", "Pan"};
+    mt_controller_device_t generic = device(MT_CONTROLLER_TRANSPORT_HID);
+    generic.generic_axes = 1U;
+    mt_controller_config_t config;
+    mt_controls_default(MT_VECTREX_CORE_ID, &generic, &config);
+    check(config.assignment == MT_CONTROLLER_OFF, "axis devices do not automatically claim a player");
+    for (unsigned action = 0; action < MT_CONTROL_COUNT; ++action)
+        check(config.binding[action] == 0U, "axis devices start without gameplay or menu shortcuts");
+    mt_gamepad_config_t legacy;
+    mt_gamepad_default_config(&legacy);
+    mt_controls_migrate_legacy(MT_VECTREX_CORE_ID, &generic, &legacy, &config);
+    check(config.assignment == MT_CONTROLLER_OFF && config.binding[MT_CONTROL_A] == 0U,
+          "a legacy gamepad profile does not create mouse or rotary defaults");
+    for (unsigned axis = 0; axis < MT_INPUT_AXIS_COUNT; ++axis) {
+        for (unsigned positive = 0; positive < 2U; ++positive) {
+            const uint16_t source = mt_controls_axis_source(axis, false, positive != 0U);
+            check(source == (axis < 6U ? 37U + axis * 2U : 59U + (axis - 6U) * 2U) + positive,
+                  "old and extended axis directions have distinct stable numbers");
+            check(mt_controls_source_axis(source) == axis && !mt_controls_source_is_analog(source),
+                  "direction sources identify the exact physical axis");
+        }
+        const uint16_t analog = mt_controls_axis_source(axis, true, false);
+        check(analog == (axis < 6U ? 49U + axis : 67U + axis - 6U) &&
+              mt_controls_source_axis(analog) == axis && mt_controls_source_is_analog(analog),
+              "full-axis bindings preserve six old IDs and extend without collisions");
+    }
+    check(mt_controls_axis_source(MT_INPUT_AXIS_COUNT, true, true) == 0U &&
+          mt_controls_source_axis(MT_CONTROL_SOURCE_DPAD_STICK) == MT_INPUT_AXIS_COUNT,
+          "invalid and composite axes cannot index tuning arrays");
+    mt_gamepad_state_t raw = neutral(), before = neutral();
+    mt_controls_output_t output;
+    raw.generic_axes = before.generic_axes = 1U;
+    config.assignment = MT_CONTROLLER_PORT1;
+    for (unsigned axis = MT_INPUT_AXIS_SLIDER; axis < MT_INPUT_AXIS_COUNT; ++axis) {
+        const uint16_t bit = (uint16_t)(1U << axis);
+        raw.axis_valid_mask = before.axis_valid_mask = bit;
+        raw.relative_mask = before.relative_mask = bit;
+        before.axis[axis] = 0;
+        char text[48];
+        mt_controls_source_name(&generic, mt_controls_axis_source(axis, true, false), text, sizeof(text));
+        check(strcmp(text, names[axis - MT_INPUT_AXIS_SLIDER]) == 0, "extra axis names are distinct");
+        for (int sign = -1; sign <= 1; sign += 2) {
+            const uint16_t source = mt_controls_axis_source(axis, false, sign > 0);
+            memset(config.binding, 0, sizeof(config.binding));
+            config.binding[MT_CONTROL_A] = source;
+            raw.axis[axis] = (int16_t)sign;
+            check(!mt_controls_neutral(&raw), "one wheel detent counts as active motion");
+            check(mt_controls_capture_source(&before, &raw, false) == source,
+                  "a single relative step captures its exact axis and direction");
+            check(mt_controls_capture_source(&raw, &raw, false) == 0U,
+                  "an unreleased relative pulse cannot bind a second wizard step");
+            mt_controls_evaluate(MT_VECTREX_CORE_ID, &config, &raw, 0U, &output);
+            check(output.actions == BIT(MT_CONTROL_A), "a one-unit relative pulse activates its binding");
+            raw.axis[axis] = 0;
+            mt_controls_evaluate(MT_VECTREX_CORE_ID, &config, &raw, output.actions, &output);
+            check(output.actions == 0U && mt_controls_neutral(&raw), "expired relative motion releases immediately");
+        }
+        memset(config.binding, 0, sizeof(config.binding));
+        config.binding[MT_CONTROL_AXIS_X] = mt_controls_axis_source(axis, true, false);
+        raw.axis[axis] = 1234;
+        mt_controls_evaluate(MT_VECTREX_CORE_ID, &config, &raw, 0U, &output);
+        check(output.x == 1234 && output.actions == 0U, "relative analog binding preserves transient velocity");
+        raw.relative_mask = before.relative_mask = 0U;
+        raw.axis[axis] = before.axis[axis] = -24000;
+        check(mt_controls_neutral(&raw) && mt_controls_capture_source(&before, &raw, true) == 0U,
+              "an off-center slider arms without capturing its resting position");
+        raw.axis[axis] = -16000;
+        check(mt_controls_capture_source(&before, &raw, true) == 0U, "small absolute changes do not capture");
+        raw.axis[axis] = -15000;
+        check(mt_controls_capture_source(&before, &raw, true) == config.binding[MT_CONTROL_AXIS_X],
+              "slow slider motion captures against a fixed resting baseline");
+        raw.axis[axis] = -30000;
+        mt_controls_evaluate(MT_VECTREX_CORE_ID, &config, &raw, 0U, &output);
+        check(output.x == -30000, "extra absolute axes have unity gain without a dead zone");
+    }
+    config = empty_config(MT_GBC_CORE_ID);
+    config.binding[MT_CONTROL_A] = MT_CONTROL_SOURCE_AXIS_NEG + 1U;
+    config.axis[0].deadzone_percent = 50U;
+    config.axis[0].sensitivity_percent = 25U;
+    raw = neutral(); raw.generic_axes = 1U;
+    raw.axis_valid_mask = raw.relative_mask = 1U; raw.axis[0] = 1;
+    mt_controls_evaluate(MT_GBC_CORE_ID, &config, &raw, 0U, &output);
+    check(output.actions == BIT(MT_CONTROL_A), "relative XY bypasses stick deadzone and retains a small scaled pulse");
+    config.axis[0].invert = 1U;
+    config.binding[MT_CONTROL_A] = MT_CONTROL_SOURCE_AXIS_NEG;
+    mt_controls_evaluate(MT_GBC_CORE_ID, &config, &raw, 0U, &output);
+    check(output.actions == BIT(MT_CONTROL_A), "relative XY respects inversion");
+}
+
 int main(void)
 {
     test_defaults_and_validation();
@@ -281,6 +379,7 @@ int main(void)
     test_direction_hysteresis_and_analog();
     test_capture_and_identity();
     test_legacy_axis_migration();
+    test_extended_axis_controls();
     puts("PASS controls: all button sources, per-core defaults, capture, analog tuning and stable identities");
     return 0;
 }

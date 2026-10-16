@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Shared six-axis input, adapted from Appletini ONE be2ea4f. */
+/* Shared input, adapted from Appletini ONE be2ea4f. */
 #ifndef MULTITINI_GAMEPAD_H
 #define MULTITINI_GAMEPAD_H
 #include <stdbool.h>
@@ -10,14 +10,21 @@ enum { MT_GAMEPAD_AXIS_X, MT_GAMEPAD_AXIS_Y, MT_GAMEPAD_AXIS_Z,
        MT_GAMEPAD_AXIS_RX, MT_GAMEPAD_AXIS_RY, MT_GAMEPAD_AXIS_RZ,
        MT_GAMEPAD_AXIS_COUNT };
 #define MT_GAMEPAD_AXIS_OFF MT_GAMEPAD_AXIS_COUNT
+/* The six persisted gamepad tuning entries remain unchanged. Extra axes are
+ * live input capabilities, with fixed unity gain and no dead zone. */
+enum { MT_INPUT_AXIS_SLIDER = MT_GAMEPAD_AXIS_COUNT, MT_INPUT_AXIS_DIAL,
+       MT_INPUT_AXIS_WHEEL, MT_INPUT_AXIS_PAN, MT_INPUT_AXIS_COUNT };
 typedef struct {
-    uint8_t axis_valid_mask, buttons_valid, trigger_mask;
+    uint16_t axis_valid_mask, trigger_mask, relative_mask;
+    uint8_t buttons_valid, generic_axes;
     uint32_t buttons;
     /* Zero means all buttons, for complete vendor reports. */
     uint32_t buttons_mask;
-    int32_t axis[MT_GAMEPAD_AXIS_COUNT];
-    int32_t logical_min[MT_GAMEPAD_AXIS_COUNT];
-    int32_t logical_max[MT_GAMEPAD_AXIS_COUNT];
+    /* Relative values are signed transient velocity, already scaled by the
+     * transport. Absolute values use the supplied logical bounds. */
+    int32_t axis[MT_INPUT_AXIS_COUNT];
+    int32_t logical_min[MT_INPUT_AXIS_COUNT];
+    int32_t logical_max[MT_INPUT_AXIS_COUNT];
 } mt_gamepad_report_t;
 typedef struct {
     uint8_t source, invert, deadzone_percent;
@@ -29,9 +36,10 @@ typedef struct {
     uint8_t button[8];
 } mt_gamepad_config_t;
 typedef struct {
-    uint8_t connected, axis_valid_mask, hat, extra_active, trigger_mask;
+    uint8_t connected, hat, extra_active, generic_axes;
+    uint16_t axis_valid_mask, trigger_mask, relative_mask;
     uint32_t buttons;
-    int16_t axis[MT_GAMEPAD_AXIS_COUNT];
+    int16_t axis[MT_INPUT_AXIS_COUNT];
 } mt_gamepad_state_t;
 typedef struct {
     uint16_t allocated;

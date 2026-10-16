@@ -5,8 +5,59 @@
 #include <stdio.h>
 #include <string.h>
 
+static void test_extended_partial_reports(void)
+{
+    mt_gamepad_input_t input;
+    mt_gamepad_state_t mapped;
+    mt_gamepad_report_t report = {0};
+    mt_gamepad_init(&input);
+    assert(mt_gamepad_connect(&input, 0U) == 0);
+    report.generic_axes = 1U;
+    report.axis_valid_mask = (1U << MT_INPUT_AXIS_SLIDER) | (1U << MT_INPUT_AXIS_WHEEL) | (1U << MT_INPUT_AXIS_PAN);
+    report.relative_mask = (1U << MT_INPUT_AXIS_WHEEL) | (1U << MT_INPUT_AXIS_PAN);
+    report.axis[MT_INPUT_AXIS_SLIDER] = 0;
+    report.logical_max[MT_INPUT_AXIS_SLIDER] = 255;
+    report.axis[MT_INPUT_AXIS_WHEEL] = 1;
+    report.axis[MT_INPUT_AXIS_PAN] = INT32_MIN;
+    mt_gamepad_report(&input, 0U, &report, UINT8_MAX, 0U);
+    assert(input.raw[0].generic_axes && input.raw[0].axis_valid_mask == 0x340U);
+    assert(input.raw[0].axis[MT_INPUT_AXIS_SLIDER] == INT16_MIN);
+    assert(input.raw[0].axis[MT_INPUT_AXIS_WHEEL] == 1);
+    assert(input.raw[0].axis[MT_INPUT_AXIS_PAN] == INT16_MIN);
+    assert(input.raw[0].relative_mask == 0x300U);
+    /* An unrelated button report cannot replay, release or renormalize axes. */
+    memset(&report, 0, sizeof(report)); report.generic_axes = 1U;
+    report.buttons_valid = 1U; report.buttons_mask = 16U; report.buttons = 16U;
+    mt_gamepad_report(&input, 0U, &report, UINT8_MAX, 0U);
+    assert(input.raw[0].buttons == 16U && input.raw[0].axis[MT_INPUT_AXIS_WHEEL] == 1);
+    assert(input.raw[0].relative_mask == 0x300U);
+    report.buttons_valid = 0U;
+    report.axis_valid_mask = report.relative_mask = 1U << MT_INPUT_AXIS_WHEEL;
+    report.axis[MT_INPUT_AXIS_WHEEL] = 0;
+    mt_gamepad_report(&input, 0U, &report, UINT8_MAX, 0U);
+    assert(input.raw[0].axis[MT_INPUT_AXIS_WHEEL] == 0 && input.raw[0].buttons == 16U);
+    assert(input.raw[0].axis[MT_INPUT_AXIS_PAN] == INT16_MIN);
+    mt_gamepad_mapped(&input, 0U, &mapped);
+    assert(mapped.axis_valid_mask == 0x340U && mapped.relative_mask == 0x300U);
+    assert(mapped.axis[MT_INPUT_AXIS_PAN] == INT16_MIN);
+    /* Relative mapped axes bypass the old stick dead zone and remap flags. */
+    report.axis_valid_mask = report.relative_mask = 1U << MT_GAMEPAD_AXIS_RX;
+    report.axis[MT_GAMEPAD_AXIS_RX] = 1;
+    mt_gamepad_report(&input, 0U, &report, UINT8_MAX, 0U);
+    input.config[0].axis[0].source = MT_GAMEPAD_AXIS_RX;
+    input.config[0].axis[0].deadzone_percent = 50U;
+    input.config[0].axis[0].sensitivity_percent = 25U;
+    input.config[0].axis[0].invert = 1U;
+    mt_gamepad_mapped(&input, 0U, &mapped);
+    assert(mapped.axis[0] == -1 && (mapped.relative_mask & 1U) != 0U);
+    mt_gamepad_disconnect(&input, 0U);
+    assert(!input.raw[0].connected && input.raw[0].relative_mask == 0U &&
+           input.raw[0].axis_valid_mask == 0U && input.raw[0].axis[MT_INPUT_AXIS_PAN] == 0);
+}
+
 int main(void)
 {
+    test_extended_partial_reports();
     mt_gamepad_input_t input;
     mt_gamepad_state_t state;
     mt_gamepad_report_t report = {0};
