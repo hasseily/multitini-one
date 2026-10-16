@@ -50,9 +50,9 @@ def main() -> int:
         script=build/'slowram_mapping.tcl'
         script.write_text('''read_verilog -sv {'''+ram.as_posix()+'''}
 synth_design -top apple_iigs_slowram -part '''+PART+''' -mode out_of_context -flatten_hierarchy rebuilt
-create_clock -name native14 -period 69.841 [get_ports clock_a]
-create_clock -name video57 -period 17.460 [get_ports clock_b]
-set_clock_groups -asynchronous -group native14 -group video57
+# External-CPU production clocks both ports from the one 57.272728 MHz
+# primary clock: port A on CPU_CLK, port B on clk_vid. No clock-group cut.
+create_clock -name core57 -period 17.460 [get_ports {clock_a clock_b}]
 opt_design
 set memories [get_cells -hier -filter {REF_NAME == RAMB36E1}]
 if {[llength $memories] != 32} {error "Expected exactly32 RAMB36E1, got [llength $memories]"}
@@ -67,9 +67,16 @@ foreach cell [lsort $memories] {
         }
         if {[get_property WRITE_MODE_$port $cell] ne "WRITE_FIRST"} {error "Wrong write mode: $cell"}
     }
-    puts $census "$cell A=[get_property RAM_EXTENSION_A $cell]/[get_property READ_WIDTH_A $cell] B=[get_property RAM_EXTENSION_B $cell]/[get_property READ_WIDTH_B $cell]"
+    puts $census "$cell A=[get_property RAM_EXTENSION_A $cell]/[get_property READ_WIDTH_A $cell]/[get_property WRITE_MODE_A $cell] B=[get_property RAM_EXTENSION_B $cell]/[get_property READ_WIDTH_B $cell]/[get_property WRITE_MODE_B $cell]"
 }
 close $census
+# Same-clock true dual port: a WRITE_FIRST write on A and a same-address read
+# on B in one cycle return invalid B data (UG473). The machine never writes
+# port A on the video port's read edge, so the mode is reported, not changed.
+puts "WRITE_MODE: A=[lsort -unique [get_property WRITE_MODE_A $memories]] B=[lsort -unique [get_property WRITE_MODE_B $memories]] clock=core57 17.460ns both ports"
+set clocks [get_clocks]
+if {[llength $clocks] != 1} {error "Expected one synchronous slow-RAM clock, got $clocks"}
+report_clock_interaction -file slowram_clock_interaction.rpt
 report_drc -file slowram_optimized_drc.rpt
 if {[llength [get_drc_violations -quiet -filter {SEVERITY == Error}]]} {error "Optimized RAM DRC error"}
 place_design
@@ -77,14 +84,19 @@ report_drc -file slowram_placed_drc.rpt
 if {[llength [get_drc_violations -quiet -filter {SEVERITY == Error}]]} {error "Placed RAM DRC error"}
 report_utilization -file slowram_utilization.rpt
 write_checkpoint -force slowram_placed.dcp
-puts "PASS: banked slowram mapped32 parallel16Kx2 RAMB36E1, no hard cascades, opt/place DRC clean"
+puts "PASS: banked slowram mapped32 parallel16Kx2 RAMB36E1, no hard cascades, opt/place DRC clean, one synchronous 17.460ns clock"
 ''')
         output=run([shutil.which('python') or 'python',ROOT/'scripts/run_native_tool.py','--',args.vivado.resolve(),'-mode','batch','-source',script,'-log',build/'slowram_vivado.log','-journal',build/'slowram_vivado.jou'],'slowram-vivado-console')
         if 'PASS: banked slowram mapped32' not in output:raise ValueError('Missing Vivado mapping marker')
-        mapping={'part':PART,'ramb36':32,'shape':'16Kx2','extension_a':'NONE','extension_b':'NONE','optimized_drc':'PASS','placed_drc':'PASS','limits':'Isolated mapping/placement gate; full machine timing and DRC remain required.'}
+        mode=re.search(r'WRITE_MODE: A=(\S+) B=(\S+) clock=core57',output)
+        if not mode:raise ValueError('Missing Vivado write-mode report')
+        mapping={'part':PART,'ramb36':32,'shape':'16Kx2','extension_a':'NONE','extension_b':'NONE',
+            'clock':'one 17.460 ns clock on both ports (no asynchronous groups)','write_mode_a':mode.group(1),'write_mode_b':mode.group(2),
+            'optimized_drc':'PASS','placed_drc':'PASS','limits':'Isolated mapping/placement gate; full machine timing and DRC remain required.'}
+        print(mode.group(0),flush=True)
         print(output[output.index('PASS: banked slowram mapped32'):].splitlines()[0],flush=True)
     if hashes()!=before:raise ValueError('Inputs changed during slow RAM qualification')
-    (build/'validation.json').write_text(json.dumps({'schema_version':1,'files':before,'result':result,'mapping':mapping,'limits':['Different-clock accesses to the same byte during a write are undefined; tests use disjoint bytes during concurrent operations.','No physical board test is implied.']},indent=2)+'\n')
+    (build/'validation.json').write_text(json.dumps({'schema_version':1,'files':before,'result':result,'mapping':mapping,'limits':['Production clocks both ports from one 17.460 ns clock. Port A is WRITE_FIRST: a port-A write and a same-cycle port-B read of the same byte give invalid port-B data, so the machine stages every port-A write off the video read edge. This bench drives two unrelated clocks on disjoint bytes during concurrent operations.','No physical board test is implied.']},indent=2)+'\n')
     return 0
 
 if __name__=='__main__':raise SystemExit(main())

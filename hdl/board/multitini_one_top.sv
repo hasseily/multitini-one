@@ -810,7 +810,9 @@ module multitini_one_top #(
                       reg_rd_addr < 16'h1000 ? control_rd_data : 32'd0;
         // Firmware holds the machine reset before PCAP. Its shared DMA
         // quiescence read also drains autonomous source rings and IIgs RAM,
-        // including when the effects service was already off.
+        // including when the effects service was already off. The IIgs RAM
+        // level is 1 only after this same request reached the machine domain,
+        // stopped the core and every posted write then drained.
         // A running-machine effects suspension keeps the normal status;
         // output-clock changes separately pause/drain the video HP masters.
         if((ACTIVE_MACHINE==4 || ACTIVE_MACHINE==5 || ACTIVE_MACHINE==6) && reg_rd_addr==MT_REG_VIDEO_FRAME_STATUS &&
@@ -1626,6 +1628,9 @@ module multitini_one_top #(
                 );
         end else if (ACTIVE_MACHINE == 5) begin : g_apple_iigs_machine
             wire gs_rom_loaded;
+            // Memory interface v2 extensions: 4-beat line reads, and the
+            // cache's registered drain level (posted writes or a request).
+            wire gs_memory_burst,gs_memory_busy;
             wire [9:0] gs_video_x;
             wire [8:0] gs_video_y;
             assign c64_rom_loaded={2'd0,gs_rom_loaded};
@@ -1650,6 +1655,8 @@ module multitini_one_top #(
                 .memory_wdata(c64_memory_wdata),
                 .memory_wstrb(c64_memory_wstrb),
                 .memory_valid(c64_memory_valid),
+                .memory_burst(gs_memory_burst),
+                .memory_busy(gs_memory_busy),
                 .memory_ready(c64_memory_ready),
                 .memory_rdata(c64_memory_rdata),
                 .memory_rvalid(c64_memory_rvalid),
@@ -1734,12 +1741,21 @@ module multitini_one_top #(
                 .bvalid(hp3_bvalid),
                 .bready(hp3_bready)
             );
+            // HP2's ACLK is c64_clk in this image (create_project.tcl), so the
+            // AXI master runs in the machine domain. Only the registered
+            // drain level crosses to control_clk for gs_memory_quiescent.
+            // Quiescence also proves the stop: it needs the control-domain
+            // core reset request (the bit the status consumer masks on) and
+            // its synchronized machine copy, which holds the adapter in reset.
             multitini_apple_iigs_ddr_path ddr_path_i (
                 .core_clk(c64_clk),.core_resetn(c64_aresetn),
                 .control_clk(control_clk),.control_resetn(control_aresetn),
+                .control_reset_request(|(shell_control & MT_CONTROL_CORE_RESET_REQUEST)),
+                .core_reset_request(c64_core_reset_request),
                 .core_memory_addr(c64_memory_addr),.core_memory_write(c64_memory_write),
                 .core_memory_wdata(c64_memory_wdata),.core_memory_wstrb(c64_memory_wstrb),
-                .core_memory_valid(c64_memory_valid),.core_memory_ready(c64_memory_ready),
+                .core_memory_valid(c64_memory_valid),.core_memory_burst(gs_memory_burst),
+                .core_memory_busy(gs_memory_busy),.core_memory_ready(c64_memory_ready),
                 .core_memory_rdata(c64_memory_rdata),.core_memory_rvalid(c64_memory_rvalid),
                 .core_memory_fault(c64_memory_fault),.quiescent(gs_memory_quiescent),
                 .araddr(hp2_araddr),.arlen(hp2_arlen),.arsize(hp2_arsize),.arburst(hp2_arburst),

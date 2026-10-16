@@ -63,9 +63,17 @@ def inputs(machine: str) -> list[Path]:
             "test_apple_iigs_paused_settings.py",
             "test_apple_iigs_ports.py",
             "test_apple_iigs_native_clock.py",
+            # Memory-path evidence: cache, posted writes, burst fills, the
+            # machine-clock HP2 master and the accelerated bus phases.
+            "test_apple_iigs_runtime.py",
+            "test_apple_iigs_adapter.py",
+            "test_gs_memory_phases.py",
+            "test_gs_acceleration.py",
+            "test_gs_external_cpu.py",
             "check_apple_iigs_phase_constraints.tcl"))
         paths.add(ROOT / "hdl/sim/apple_iigs_bufgce.sv")
         paths.update((ROOT / "hdl/sim").glob("tb_apple_iigs_*.sv"))
+        paths.update((ROOT / "hdl/sim").glob("tb_gs_*.sv"))
     if machine == "NES":
         paths.update(path for path in (ROOT / "third_party/nes").rglob("*")
                      if path.is_file())

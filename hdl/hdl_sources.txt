@@ -172,7 +172,7 @@ core/apple_iigs/ports/es5503.sv
 ../third_party/apple-iigs/upstream/rtl/paddle_timer.v | systemverilog
 ../third_party/apple-iigs/upstream/rtl/video_timing.v | systemverilog
 ../third_party/apple-iigs/upstream/rtl/clock_divider.v | systemverilog
-../third_party/apple-iigs/upstream/rtl/iwm_woz.v | systemverilog
+core/apple_iigs/ports/iwm_woz.sv
 core/apple_iigs/ports/iwm_flux.sv | systemverilog
 core/apple_iigs/ports/flux_drive.sv | systemverilog
 ../third_party/apple-iigs/upstream/rtl/smartport_dev.v | systemverilog

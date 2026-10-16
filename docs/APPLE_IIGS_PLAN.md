@@ -7,6 +7,12 @@ Upstream is `MiSTer-devel/Apple-IIgs_MiSTer` at
 files and explicit per-file licenses. Original machine code remains separate
 from reproducible Multitini ports. Apple ROM bytes are runtime user inputs.
 
+The acceleration rework on branch `iigs-accel-fixes` removes the emulated
+1 MHz Mega II sync while accelerated, posts DDR writes, fills 32-byte cache
+lines by burst, clocks the IIgs HP2 port from the machine clock, holds sound
+GLU accesses while the GLU is busy and corrects the IWM mode-register decode.
+Stock timing is retained. See the [acceleration record](APPLE_IIGS_ACCELERATION.md).
+
 M0.5.3 fixes three acceleration holdoffs: only actual `$C070` paddle accesses
 trigger the paddle delay, fast shadow-RAM reads use the fast path, and floppy
 motor holds require mounted media of the matching drive family. Native shadow
@@ -41,11 +47,14 @@ Its rising edge remains on phase 3; the constraints describe its shorter high
 pulse explicitly. The reserved 28.636364 MHz port retains its divided BUFG.
 The video pixel enable is 14.318182 MHz. CPU and peripheral timebases remain
 related. The 65816 now runs on the primary clock with an
-execution enable; native peripherals keep their 14.318182 MHz clock. Only
-the CPU's fast bus cycles accelerate: stock 2.86 MHz, 3.58 MHz, 4.77 MHz,
-7.16 MHz, 14.32 MHz, 28.64 MHz and 57.27 MHz. Slow RAM, I/O,
-shadowed video writes and disk compatibility windows retain the upstream
-timing rules. ZipGS registers and an optional host-only accelerator are
+execution enable; native peripherals keep their 14.318182 MHz clock. The CPU
+runs at stock 2.86 MHz, 3.58 MHz, 4.77 MHz, 7.16 MHz, 14.32 MHz, 28.64 MHz
+or 57.27 MHz. While accelerated, no access waits for the 1 MHz Mega II sync:
+E0/E1 RAM and shadowed writes use a primary-clock slow-RAM port, and I/O
+commits through the native bridge without the sync. Sound GLU accesses wait
+while the GLU is busy. Stock speed, and the speaker, paddle, counter, IRQ and
+CPS compatibility holds and floppy activity with mounted media, restore the
+upstream timing rules. ZipGS registers and an optional host-only accelerator are
 supported. Software ZipGS percentages scale against the installed maximum,
 including 100% above the former 14.32 MHz host-only ceiling. Its millisecond
 timer remains on the native clock. A TransWarp ROM is not supplied.
@@ -58,24 +67,31 @@ zero sequential clock loads for that reserved port. Any future use must first
 define and qualify its phase relative to the native clock.
 
 Fast RAM (8 MiB expansion) and ROMs occupy a dedicated DDR aperture on HP2 at
-`0x24000000..0x24ffffff`. A coherent 32 KiB cache shares CPU and HDD DMA accesses;
-an eight-word asynchronous L0 serves warm fast reads at the primary cadence.
+`0x24000000..0x24ffffff`. A coherent 32 KiB cache with 32-byte lines shares CPU
+and HDD DMA accesses and fills a line with one four-beat burst. Writes are
+posted into a four-entry merging buffer behind a one-cycle retire slot. Read
+misses, bypass reads and loader requests wait until it drains, because AXI does
+not order reads against writes. An eight-word asynchronous L0 serves warm fast
+reads at the primary cadence.
 L1 uses physical tags. L0 uses raw CPU address tags to keep MMU decoding off
 warm reads. It invalidates on writes, DMA, loading, reset, configuration,
 cache bypass and each native CPU retirement, including mapping soft switches.
 Vector pulls bypass L0 so forced-ROM vector bytes cannot alias ordinary RAM.
 CPU-only MMU and ZipGS read ports keep the HDD DMA address out of the CPU data
 selection; native and DMA accesses retain their shared physical path.
-Misses and unacknowledged writes hold the complete bus cycle and all side
-effects. The dedicated DDR transport respects independent AXI AW/W acceptance,
-returns write completion only after B, propagates errors and drains its CDC
-mailboxes before PL reload. Video RAM (128 KiB), DOC RAM (64 KiB) and floppy
-track buffers remain in BRAM. Variable-lane cache writes use a complete-word
-merge to preserve efficient BRAM inference.
+Misses and a full write buffer hold the complete bus cycle and all side
+effects. In the IIgs image the HP2 port runs on the machine clock; Genesis and
+NES keep it on FCLK0. The DDR path is a synchronous AXI3 master that respects
+independent AW/W acceptance, reports write completion only after B, propagates
+errors and completes an issued handshake through a machine reset. Video RAM
+(128 KiB), DOC RAM (64 KiB) and floppy track buffers remain in BRAM. Cache
+writes use byte-lane write enables in the standard inference template.
 
 DDR drain status uses a retained source-clock register before the control-clock
-synchronizer. It covers request acceptance and outstanding completion, then
-requires 15 quiet control cycles. A regression injects a decode pulse between
+synchronizer. It covers posted writes, request acceptance and outstanding
+completion, then requires 15 quiet control cycles counted only after the core
+reset request has reached the machine domain. After a sticky fault the held
+machine's posted writes are dropped so the drain still completes. A regression injects a decode pulse between
 source edges: the registered design suppresses it; the previous captured design
 fails. The final CDC gate must confirm the source register and synchronizer.
 

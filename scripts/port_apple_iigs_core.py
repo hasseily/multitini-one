@@ -64,6 +64,25 @@ input [7:0] CPU_DIN=8'hFF,
 input NATIVE_COMMIT=1'b0,
 output [2:0] cpu_speed,
 output cpu_fast_cycle,
+// A fast CPU enable that is not a native retirement, and the primary edge
+// equivalent to the CLK_14M rise (one edge per native commit or DMA cycle).
+input CPU_FAST_CE=1'b0,
+input NATIVE_EDGE=1'b0,
+// Primary-clock Mega II RAM path: direct E0/E1 RAM reads, and E0/E1 or
+// shadowed writes, complete on CPU_CE without the native bridge. A read
+// completes from registered port-A data (ready/data are registers). A write
+// is staged and written on a later edge; pending is high while it is staged
+// and no store may retire while it is pending on NATIVE_EDGE.
+output cpu_slowram_read,
+output cpu_slowram_write,
+output cpu_slowram_ready,
+output [7:0] cpu_slowram_data,
+output cpu_slowram_pending,
+// A native peripheral cannot take another host access yet (sound GLU busy).
+output cpu_native_hold,
+// Slot reads whose device output is registered twice need two native
+// preparation edges before the capture edge.
+output cpu_native_two_edge,
 output cpu_memory_cycle,
 output [23:0] cpu_logical_addr,
 output cpu_vector_n,
@@ -98,11 +117,130 @@ assign cpu_memory_cycle = cpu_valid && (fastram_ce || (rom_ce && !we)) &&
     (hdd_dma || ((!IO || cpu_irq_dispatch_read) && !EXTERNAL_IO && !(|device_select) && !(|io_select) && !slot_ce));
 // Use the current MMU classification, not CLK14's delayed slowMem register:
 // Shadow reads select fast RAM even when the mirror enable is also asserted.
-// Shadow writes, slot/IO and direct slow-RAM accesses use the native bridge.
+// Slot/IO and Mega II $C000-$CFFF use the native bridge. Direct E0/E1 RAM
+// ($0000-$BFFF, $D000-$FFFF with aux/ALTZP/LC/bank-latch mapping already in
+// the physical address) and every slow-RAM write (E0/E1 or shadow copy) use
+// the primary-clock slow-RAM port. E0/E1 LC ROM reads use the ROM cache.
+wire cpu_plain_bus = !IO && !EXTERNAL_IO && !(|device_select) && !(|io_select) && !slot_ce;
+wire cpu_mega2_bank = bank_bef == 8'hE0 || bank_bef == 8'hE1;
+wire cpu_mega2_window = cpu_mega2_bank && (addr_bef < 16'hC000 || addr_bef >= 16'hD000);
+assign cpu_slowram_read = EXTERNAL_CPU && !hdd_dma && valid && !we && cpu_plain_bus &&
+    cpu_mega2_window && slowram_ce && !fastram_ce && !rom_ce && !twgs_sel;
+assign cpu_slowram_write = EXTERNAL_CPU && !hdd_dma && valid && we && cpu_plain_bus &&
+    slowram_ce && (cpu_mega2_window || fastram_ce);
+wire cpu_mega2_rom_read = EXTERNAL_CPU && !hdd_dma && valid && !we && cpu_plain_bus &&
+    cpu_mega2_bank && addr_bef >= 16'hD000 && rom_ce;
 assign cpu_fast_cycle = !hdd_dma && (!valid || cpu_local_read ||
-    (!IO && !EXTERNAL_IO && !(|device_select) && !(|io_select) &&
-     !slot_ce && (!slowram_ce || (!we && fastram_ce)) && (fastram_ce || rom_ce)));
+    (cpu_plain_bus && (!slowram_ce || (!we && fastram_ce)) && (fastram_ce || rom_ce)) ||
+    cpu_slowram_read || cpu_slowram_write || cpu_mega2_rom_read);
+// hdd.sv registers slot ROM twice (address -> rom_dout -> D_OUT) and its
+// register mirror once. Without the 1 MHz sync the native bridge must give
+// these reads a second preparation edge before its capture edge.
+assign cpu_native_two_edge = !we && ((|io_select) || (|device_select));
+// The cache and slow-RAM write byte. Unlike dout it never passes through the
+// I/O read mux (cpu_din); only write cycles consume it.
+wire [7:0] cpu_bus_write_byte = (hdd_dma & hdd_dma_we) ? HDD_DO : cpu_dout;
+// The sound GLU runs one host access per DOC oscillator slot (osc_en, every
+// 16 CLK_14M). Without the 1 MHz sync an accelerated CPU reaches C03C-C03F
+// again before that access ran, so a register/RAM write is lost or lands at
+// a moved address and a read returns stale data. Hold the next GLU access
+// on the native bridge until the GLU is idle. Stock timing is unchanged.
+assign cpu_native_hold = external_accel && native_snd_sel && snd_busy;
 """)
+    # External CPU mode clocks slow-RAM port A from the primary clock. Every
+    # port-A write is staged: a fast store on CPU_FAST_CE, or a native/DMA
+    # commit on its CLK_14M edge, captures {address,data} from the held bus on
+    # that edge. The write lands on the next primary edge that is not
+    # NATIVE_EDGE (the video port's read edge) and exactly once per commit.
+    # WEA, ENA and DIA then come from registers, never from CPU/MMU decode or
+    # cpu_ce in the same cycle, and no write meets a same-edge video read.
+    text=replace(text,"/* verilator lint_off PINMISSING */\napple_iigs_slowram slowram\n", """wire slowram_wr_set;
+reg slowram_wr_pending = 1'b0;
+reg [16:0] slowram_wr_addr = 17'd0;
+reg [7:0] slowram_wr_data = 8'd0;
+wire slowram_wren_a = EXTERNAL_CPU ? (slowram_wr_pending & ~NATIVE_EDGE) : (slowram_we & bus_phi2);
+/* verilator lint_off PINMISSING */
+apple_iigs_slowram slowram
+""")
+    text=replace(text,"        .clock_a(CLK_14M),", "        .clock_a(EXTERNAL_CPU ? CPU_CLK : CLK_14M),")
+    text=replace(text,"        .address_a({bank[0], addr}),", "        .address_a((EXTERNAL_CPU && slowram_wr_pending) ? slowram_wr_addr : {bank[0], addr}),")
+    text=replace(text,"        .data_a(dout),", "        .data_a(EXTERNAL_CPU ? slowram_wr_data : dout),")
+    text=replace(text,"        .wren_a(slowram_we & bus_phi2),", "        .wren_a(slowram_wren_a),")
+    # Port A reads its (live or staged) address on every primary edge, so the
+    # MMU decode never reaches the block-RAM enables. Consumers use q_a only
+    # while slowram_ce selects it, and each bank still enables by address.
+    text=replace(text,"        .enable_a(slowram_ce),", "        .enable_a(EXTERNAL_CPU ? 1'b1 : slowram_ce),")
+    text=replace(text,"        .enable_b(ce_pix)\n);\n/* verilator lint_on PINMISSING */\n", """        .enable_b(ce_pix)
+);
+/* verilator lint_on PINMISSING */
+// External mode enables port A on every primary edge: q_a always holds the
+// last (live or staged) address, and no MMU decode reaches the enables.
+// Fast E0/E1 reads: the first held edge with no staged write (and no CPU_CE)
+// reads the live address and arms; the next edge registers port A's output;
+// the CPU completes from that register on the third edge. The bus and its
+// MMU mapping cannot change while CPU_CE is low: soft switches change only
+// on retired native cycles, and DMA clears the flags. The CPU data input and
+// its select therefore see only registers on this path.
+reg slowram_rd_armed = 1'b0;
+reg slowram_rd_ready = 1'b0;
+reg [7:0] slowram_rd_data = 8'd0;
+generate if (EXTERNAL_CPU) begin : g_slowram_fast
+  assign slowram_wr_set = slowram_we & slowram_ce &
+      ((bus_phi2 & NATIVE_EDGE) | (CPU_FAST_CE & cpu_slowram_write));
+  always @(posedge CPU_CLK) begin
+    // A staged tuple is held until it is written. The edge that writes it may
+    // stage the next store; on a NATIVE_EDGE that defers it the adapter
+    // retires no write, and native/DMA commits are four primary edges apart.
+    if (!slowram_wr_pending || !NATIVE_EDGE) begin
+      slowram_wr_addr <= {bank[0], addr};
+      slowram_wr_data <= cpu_bus_write_byte;
+    end
+    slowram_wr_pending <= slowram_wr_set | (slowram_wr_pending & NATIVE_EDGE);
+    if (reset || CPU_CE || hdd_dma) begin
+      slowram_rd_armed <= 1'b0;
+      slowram_rd_ready <= 1'b0;
+    end else begin
+      slowram_rd_armed <= cpu_slowram_read & ~slowram_wr_pending;
+      slowram_rd_ready <= slowram_rd_armed;
+    end
+    if (slowram_rd_armed) slowram_rd_data <= slowram_dout;
+  end
+end else begin : g_slowram_legacy
+  assign slowram_wr_set = 1'b0;
+end endgenerate
+assign cpu_slowram_ready = EXTERNAL_CPU && slowram_rd_ready;
+assign cpu_slowram_data = slowram_rd_data;
+assign cpu_slowram_pending = EXTERNAL_CPU && slowram_wr_pending;
+""")
+    # External CPU acceleration has no physical Mega II bus to synchronize
+    # with. While accelerated, the divider sees no slow-class cycle, so IO,
+    # E0/E1, shadow writes and slot space never wait for the 1 MHz PH0 sync,
+    # and CYAREG motor-detect bits cannot force 1 MHz. Accelerated HDD DMA
+    # runs 3-tick cycles, the floor of hdd.sv's two-register sector pipeline.
+    # Native timing (fast_thresh==4) feeds the upstream inputs unchanged.
+    text=replace(text,"clock_divider clk_div_inst (\n", """wire external_accel = EXTERNAL_CPU && fast_thresh != 4'd4;
+wire [7:0] cd_cyareg = external_accel ? {CYAREG[7:4], 4'b0000} : CYAREG;
+wire [3:0] cd_fast_thresh = (external_accel && hdd_dma) ? 4'd2 : fast_thresh;
+wire cd_dma_active = external_accel ? 1'b0 : hdd_dma;
+wire cd_slot_access = external_accel ? 1'b0 : slot_delay_this;
+wire cd_valid = external_accel ? 1'b0 : valid;
+clock_divider clk_div_inst (
+""")
+    text=replace(text,"    .cyareg(CYAREG),","    .cyareg(cd_cyareg),")
+    text=replace(text,"    .fast_thresh(fast_thresh),","    .fast_thresh(cd_fast_thresh),")
+    text=replace(text,"    .dma_active(hdd_dma),","    .dma_active(cd_dma_active),")
+    text=replace(text,"    .slot_access(slot_delay_this),","    .slot_access(cd_slot_access),")
+    text=replace(text,"    .valid(valid),","    .valid(cd_valid),")
+    # The 2 ms IWM access hold applies only while the drive the IWM selects
+    # ($C031 bit 6 family, $C0EA/$C0EB drive) holds media. Probes of an empty
+    # drive stay accelerated even when the other drive of its family has a disk.
+    text=replace(text,"reg [14:0] iwm_holdoff;\n", """reg [14:0] iwm_holdoff;
+wire iwm_selected_media = iwm_drive_media;
+""")
+    text=replace(text,"  iwm_woz iwmc (\n", "  // Media in the drive the IWM has selected ($C031 bit 6 and $C0EA/B).\n  wire iwm_drive_media;\n  iwm_woz iwmc (\n")
+    text=replace(text,"      .DRIVE35_EJECT_REQ(drive35_eject_req)\n  );", "      .DRIVE35_EJECT_REQ(drive35_eject_req),\n      .SELECTED_MEDIA(iwm_drive_media)\n  );")
+    text=replace(text,"                          && iwm_holdoff == 15'd0\n",
+                 "                          && (iwm_holdoff == 15'd0 || (EXTERNAL_CPU && !iwm_selected_media))\n")
     # IIgs paddle reset is C070 only; C071-C07F are IRQ dispatch ROM.
     # Match the native read/write decode, including its full 12-bit selector.
     text=replace(text,"wire acc_ptrig = bus_phi2 && IO && (addr_bef[7:4] == 4'h7);    // $C070-$C07F paddle trigger",
@@ -165,7 +303,8 @@ assign cpu_fast_cycle = !hdd_dma && (!valid || cpu_local_read ||
   wire native_prtc_sel = IO && (addr_bef[7:0]==8'h33 || addr_bef[7:0]==8'h34);
   wire native_scc_sel = IO && (addr_bef[7:2]==6'h0E);
   wire native_snd_sel = IO && (addr_bef[7:2]==6'h0F);
-  wire [7:0] snd_read_peek;""")
+  wire [7:0] snd_read_peek;
+  wire snd_busy;""")
     text=replace(text,"          .addr(adb_addr_mux),", "          .addr(EXTERNAL_CPU ? addr_bef[7:0] : adb_addr_mux),")
     text=replace(text,"          .rw(adb_rw_mux),", "          .rw(EXTERNAL_CPU ? ~we : adb_rw_mux),")
     text=replace(text,"          .din(adb_din),", "          .din(EXTERNAL_CPU ? cpu_dout : adb_din),")
@@ -181,11 +320,12 @@ assign cpu_fast_cycle = !hdd_dma && (!valid || cpu_local_read ||
     text=replace(text,"            .wr(snd_rw),", "            .wr(EXTERNAL_CPU ? we : snd_rw),")
     text=replace(text,"            .host_addr(snd_addr),", "            .host_addr(EXTERNAL_CPU ? addr_bef[1:0] : snd_addr),")
     text=replace(text,"            .host_data_in(snd_din),", "            .host_data_in(EXTERNAL_CPU ? cpu_dout : snd_din),")
-    text=replace(text,"            .host_data_out(snd_dout),", "            .host_data_out(snd_dout),\n            .host_read_peek(snd_read_peek),")
+    text=replace(text,"            .host_data_out(snd_dout),", "            .host_data_out(snd_dout),\n            .host_read_peek(snd_read_peek),\n            .host_busy(snd_busy),")
     text=replace(text,"  wire [7:0] cpu_din = IO ? ((adb_read ? adb_dout : (iwm_strobe ? iwm_dout : io_dout)))", """  wire [7:0] external_io_din = adb_read ? adb_dout :
       native_prtc_sel ? prtc_dout : native_scc_sel ? scc_dout :
       native_snd_sel ? snd_read_peek : (addr_bef[7:4]==4'hE) ? iwm_dout : io_dout;
   wire [7:0] cpu_din = IO ? (EXTERNAL_CPU ? external_io_din : (adb_read ? adb_dout : (iwm_strobe ? iwm_dout : io_dout)))""")
+    text=replace(text,"   assign top_dout = dout;", "   assign top_dout = EXTERNAL_CPU ? cpu_bus_write_byte : dout;")
     text=replace(text,"zipgs_regs zipgs (", "zipgs_regs #(.MAX_SPEED_CODE(MAX_ACCEL_SPEED)) zipgs (")
     text=replace(text,"    hdd hdd(", "    hdd #(.EXTERNAL_BUS(EXTERNAL_CPU)) hdd(")
     text=replace(text,"? (4'd4 - {1'b0, eff_speed_code})", "? ((eff_speed_code>=3'd4) ? 4'd0 : (4'd4 - {1'b0, eff_speed_code}))")
@@ -194,13 +334,16 @@ assign cpu_fast_cycle = !hdd_dma && (!valid || cpu_local_read ||
 def generate_sound() -> str:
     text=NOTICE+upstream("rtl/sound.v")
     text=replace(text,"    output [7:0]      host_data_out,", "    output [7:0]      host_data_out,\n    output [7:0]      host_read_peek,")
-    text=replace(text,"      .host_data_out(host_data_out),", "      .host_data_out(host_data_out),\n      .host_read_peek(host_read_peek),")
+    text=replace(text,"    output [7:0]      host_read_peek,", "    output [7:0]      host_read_peek,\n    output            host_busy,")
+    text=replace(text,"      .host_data_out(host_data_out),", "      .host_data_out(host_data_out),\n      .host_read_peek(host_read_peek),\n      .host_busy(host_busy),")
     return normalize(text)
 
 def generate_soundglu() -> str:
     text=NOTICE+upstream("rtl/soundglu.v")
-    text=replace(text,"   output reg [7:0]  host_data_out,", "   output reg [7:0]  host_data_out,\n   output reg [7:0]  host_read_peek,")
-    text=replace(text,"   always @(posedge CLK_14M) begin", """   // Read-only view of the existing host register mux. External CPU bridge
+    text=replace(text,"   output reg [7:0]  host_data_out,", "   output reg [7:0]  host_data_out,\n   output reg [7:0]  host_read_peek,\n   output wire       host_busy,")
+    text=replace(text,"   always @(posedge CLK_14M) begin", """   // A host access is pending or finishing until the GLU returns to idle.
+   assign host_busy = sound_cycle_state != ST_IDLE;
+   // Read-only view of the existing host register mux. External CPU bridge
    // samples this before its commit edge, without speculative DOC accesses.
    always @* begin
       case (host_addr)
@@ -544,6 +687,42 @@ def generate_iwm_flux() -> str:
     return normalize(text)
 
 
+def generate_iwm_woz() -> str:
+    text = upstream("rtl/iwm_woz.v")
+    text = replace(text, "module iwm_woz (\n", NOTICE + "module iwm_woz (\n")
+    # A real IWM latches the mode register on a write to any odd address
+    # while Q6=Q7=1 and the chip is idle, not only at $C0EF. The GS/OS 5.25"
+    # driver stores mode $04 through $C0ED to make motor-off immediate; the
+    # dropped write left the one-second motor-off timer running three times.
+    # The motor-on access ($C0E9) is excluded: MAME turns the motor on first,
+    # so that write is a data/motor access and leaves the mode unchanged.
+    text = replace(text, "    wire is_mode_write_access = cpu_access_edge && cpu_wr && !iwm_active &&\n"
+                   "                                (A[3:0] == 4'hF) && write_mode_q6 && write_mode_q7;",
+                   "    wire is_mode_write_access = cpu_access_edge && cpu_wr && !iwm_active &&\n"
+                   "                                A[0] && write_mode_q6 && write_mode_q7 &&\n"
+                   "                                !(A[3:1] == 3'b100 && A[0]);")
+    text = replace(text, "            if (cpu_access_edge && bus_wr && !iwm_active && (bus_addr == 4'hF)) begin",
+                   "            if (cpu_access_edge && bus_wr && !iwm_active && bus_addr[0] && immediate_q6 && immediate_q7 &&\n"
+                   "                !(bus_addr[3:1] == 3'b100 && bus_addr[0])) begin")
+    # The immediate mode view feeds the drives and the status register on
+    # the write tick itself; it must agree with the mode-register decode.
+    text = replace(text, "    wire mode_write_active = bus_wr && !iwm_active && immediate_q7 && immediate_q6 && bus_addr[0];",
+                   "    wire mode_write_active = bus_wr && !iwm_active && immediate_q7 && immediate_q6 && bus_addr[0] &&\n"
+                   "                             !(bus_addr[3:1] == 3'b100);")
+    # Export media presence of the drive software has selected: $C031 bit 6
+    # picks the family and $C0EA/$C0EB the drive. The machine gates its 2 ms
+    # IWM access hold on it, so polls of an empty drive stay accelerated.
+    text = replace(text, "    output          DRIVE35_EJECT_REQ\n);",
+                   "    output          DRIVE35_EJECT_REQ,\n\n"
+                   "    // Media present in the selected drive ($C031 bit 6 family, drive select)\n"
+                   "    output          SELECTED_MEDIA\n);")
+    text = replace(text, "    // Disk mounted status\n",
+                   "    // Disk mounted status\n"
+                   "    assign SELECTED_MEDIA = is_35_inch ? (drive_sel ? DISK_READY[3] : DISK_READY[2])\n"
+                   "                                       : (drive_sel ? DISK_READY[1] : DISK_READY[0]);\n")
+    return normalize(text)
+
+
 def outputs() -> dict[str, str]:
     return {"iigs.sv": generate_iigs(), "vgc.sv": generate_vgc(), "adb.sv": generate_adb(),
             "hdd.sv": generate_hdd(), "prtc.sv": generate_prtc(), "bram.sv": generate_bram(),
@@ -552,7 +731,8 @@ def outputs() -> dict[str, str]:
             "es5503.sv": generate_es5503(), "rxuart.sv": generate_uart("rxuart"), "txuart.sv": generate_uart("txuart"),
             "P65C816.sv": generate_cpu(), "mcode.sv": generate_mcode(),
             "zipgs_regs.sv": generate_zipgs(), "sound.sv": generate_sound(), "soundglu.sv": generate_soundglu(),
-            "flux_drive.sv": generate_flux_drive(), "iwm_flux.sv": generate_iwm_flux()}
+            "flux_drive.sv": generate_flux_drive(), "iwm_flux.sv": generate_iwm_flux(),
+            "iwm_woz.sv": generate_iwm_woz()}
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)

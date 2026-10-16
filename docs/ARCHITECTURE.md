@@ -120,6 +120,7 @@ Planned initial domains:
 | Video | 148.5 MHz | PS FCLK2 through Clocking Wizard | 1080p diagnostic output |
 | C64 machine | requested 31.527954 MHz PAL or 32.727266 MHz NTSC | PS FCLK2 through a separate Clocking Wizard | FPGA64 machine, ROM/input loaders, raw video/audio |
 | GBC machine | requested 33.554432 MHz | PS FCLK2 through the build-selected machine Clocking Wizard | GB/GBC machine, cart/bootstrap loaders, raw video/audio |
+| IIgs machine | 57.272728 MHz | PS FCLK2 through the build-selected machine Clocking Wizard | 65816 and its 14.318 MHz enable grid, slow RAM, cache and, in the IIgs image only, the HP2 AXI port for CPU RAM |
 | Audio MCLK | 12.288 MHz | board oscillator | DAC clock and I2S derivation |
 | Audio BCLK | 3.072 MHz | MCLK divided by four | 48 kHz, 64-bit I2S frames |
 

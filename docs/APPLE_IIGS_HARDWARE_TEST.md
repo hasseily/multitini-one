@@ -6,6 +6,15 @@ Golden B2. The matching supervisor and FSBL enable the new HP3 source video
 port. Load the new IIgs core only after installing the matching firmware.
 This package does not itself flash or test the board.
 
+The acceleration rework on branch `iigs-accel-fixes` changes only the IIgs FPGA
+image and its block design; firmware, ABI and PS initialization are unchanged.
+Its bundle is `build/firmware-core-gs-m054b.zip`: install its `sd/` contents
+the same way as the M0.5.3 package below. It carries the M0.5.3 firmware.
+While accelerated, E0/E1 memory, shadowed screen writes and I/O no longer wait
+for the 1 MHz sync, DDR writes are posted, and the IWM accepts mode writes as a
+real IWM does. See the [acceleration record](APPLE_IIGS_ACCELERATION.md). Stock
+speed keeps its native timing. Step 6 covers the accelerated checks.
+
 M0.5.3 corrects three accelerator slowdowns: an empty floppy drive's motor
 latch, IRQ dispatch ROM reads counted as paddle accesses, and fast shadow-RAM
 reads classified as slow. Mounted floppy timing and shadow writes stay native.
@@ -99,9 +108,13 @@ cold reset. Command/OpenApple uses Alt; Option/SolidApple uses the Windows key.
    control software provides an additional interface inside GS/OS, as described
    in the [original manual](https://www.whatisthe2gs.apple2.org.za/files/ZipGSX/Manual/ZIPGSX_Manual.pdf).
    Compare Stock and maximum during an HDD-only session with both floppies
-   ejected, including Finder window opening/redraw and a CPU-heavy workload.
-   Record all delay settings. The selected MHz describes eligible CPU cycles;
-   screen writes through native memory do not scale by the same factor.
+   ejected, including Finder startup, window opening/redraw and a CPU-heavy
+   workload. Record all delay settings. With the acceleration rework, screen
+   drawing should scale far beyond 2x; record the observed factor. At maximum
+   speed also check DOC sound effects and music, the boot beep, paddles,
+   keyboard and mouse, the Control Panel, 3.5-inch and 5.25-inch boot, read and
+   write, and switching speed while a program runs. Report any program that
+   misbehaves only at maximum speed, with its delay settings.
 7. Switch between IIgs and each existing core, then Appletini/Multitini via
    Golden. Confirm pending disk writes finish before the switch.
 8. Use the System USB SD mount action. Confirm dirty media finishes before

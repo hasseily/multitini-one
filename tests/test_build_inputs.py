@@ -380,6 +380,80 @@ class BuildInputTests(unittest.TestCase):
         for value in required:
             self.assertIn(value, script)
 
+    def test_apple_iigs_hp2_uses_the_machine_clock(self):
+        script = (ROOT / "scripts" / "create_project.tcl").read_text()
+        associations = script.split(
+            'if {$machine eq "APPLE_IIGS"} {\n    set_property -dict [list CONFIG.ASSOCIATED_BUSIF', 1
+        )[1].split("\n}\n", 1)[0]
+        iigs, other = associations.split("\n} else {\n", 1)
+        self.assertIn(
+            " {M_AXI_GP0_0:S_AXI_HP0_0:S_AXI_HP1_0:S_AXI_HP3_0} \\\n"
+            "        CONFIG.ASSOCIATED_RESET {control_aresetn}] $control_clk", iigs)
+        self.assertIn(
+            "CONFIG.ASSOCIATED_BUSIF {S_AXI_HP2_0} \\\n"
+            "        CONFIG.ASSOCIATED_RESET {c64_aresetn}] $c64_clk", iigs)
+        # Genesis and NES keep their HP2 source rings on the control clock.
+        self.assertIn(
+            "CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0_0:S_AXI_HP0_0:S_AXI_HP1_0:S_AXI_HP2_0:S_AXI_HP3_0} \\\n"
+            "        CONFIG.ASSOCIATED_RESET {control_aresetn}] $control_clk", other)
+        self.assertIn("set_property CONFIG.ASSOCIATED_RESET {c64_aresetn} $c64_clk", other)
+        self.assertNotIn("S_AXI_HP2_0", other.split("$control_clk", 1)[1])
+
+        self.assertIn(
+            'if {$machine eq "APPLE_IIGS"} {\n'
+            '    connect_bd_net [get_bd_pins $c64_wiz/clk_out1] [get_bd_pins $ps/S_AXI_HP2_ACLK]\n'
+            '} else {\n'
+            '    connect_bd_net [get_bd_pins $ps/FCLK_CLK0] [get_bd_pins $ps/S_AXI_HP2_ACLK]\n}', script)
+        fclk_net = script.split(
+            "connect_bd_net [get_bd_pins $ps/FCLK_CLK0]", 1
+        )[1].split("\n\n", 1)[0]
+        self.assertIn("[get_bd_pins $ps/S_AXI_HP3_ACLK]", fclk_net)
+        self.assertNotIn("S_AXI_HP2_ACLK", fclk_net.split("connect_bd_net", 1)[0])
+        self.assertEqual(script.count("S_AXI_HP2_ACLK"), 2)
+
+        top = (ROOT / "hdl/board/multitini_one_top.sv").read_text()
+        iigs_block = top.split("begin : g_apple_iigs_machine", 1)[1].split(
+            "begin : g_vectrex_machine", 1)[0]
+        ddr = iigs_block.split("multitini_apple_iigs_ddr_path ddr_path_i (", 1)[1]
+        for marker in (".core_clk(c64_clk),.core_resetn(c64_aresetn)",
+                       ".control_reset_request(|(shell_control & MT_CONTROL_CORE_RESET_REQUEST))",
+                       ".core_reset_request(c64_core_reset_request)",
+                       ".core_memory_burst(gs_memory_burst)",
+                       ".core_memory_busy(gs_memory_busy)",
+                       ".quiescent(gs_memory_quiescent)",
+                       ".araddr(hp2_araddr)"):
+            self.assertIn(marker, ddr)
+        self.assertIn(".memory_burst(gs_memory_burst)", iigs_block)
+        self.assertIn(".memory_busy(gs_memory_busy)", iigs_block)
+
+        path = (ROOT / "hdl/core/apple_iigs/multitini_apple_iigs_ddr_path.sv").read_text()
+        self.assertNotIn("multitini_memory_cdc", path)
+        self.assertIn("always @(posedge core_clk)", path)
+        self.assertIn(".din(core_busy_q)", path)
+        # Drain is a stop proof: the window opens only with the request set,
+        # and the machine copy must have been held before busy can clear.
+        self.assertIn("!control_resetn || !control_reset_request || core_busy_control", path)
+        self.assertIn("stop_count!=STOP_HOLD", path)
+
+    def test_apple_iigs_capture_includes_memory_path_evidence(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "capture_build_inputs", ROOT / "scripts" / "capture_vectrex_build_inputs.py")
+        capture = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(capture)
+        captured = {path.relative_to(ROOT).as_posix() for path in capture.inputs("APPLE_IIGS")}
+        for name in ("test_apple_iigs_runtime.py", "test_apple_iigs_adapter.py",
+                     "test_gs_memory_phases.py", "test_gs_acceleration.py",
+                     "test_gs_external_cpu.py"):
+            self.assertIn(f"scripts/{name}", captured)
+        benches = {path.relative_to(ROOT).as_posix()
+                   for pattern in ("tb_apple_iigs_*.sv", "tb_gs_*.sv")
+                   for path in (ROOT / "hdl" / "sim").glob(pattern)}
+        self.assertIn("hdl/sim/tb_apple_iigs_ddr.sv", benches)
+        self.assertIn("hdl/sim/tb_gs_memory_phases.sv", benches)
+        self.assertLessEqual(benches, captured)
+        self.assertIn("hdl/core/apple_iigs/multitini_apple_iigs_ddr_path.sv", captured)
+
     def test_boot_shell_has_no_packaged_machine_core(self):
         project = (ROOT / "scripts" / "create_project.tcl").read_text()
         top = (ROOT / "hdl" / "board" / "multitini_one_top.sv").read_text()

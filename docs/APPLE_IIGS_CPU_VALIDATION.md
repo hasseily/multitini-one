@@ -255,8 +255,10 @@ applications, disk/graphics throughput, physical oscillator accuracy or
 performance measured on the card. A coherent eight-word asynchronous L0
 serves this warm loop; the synchronous 32 KiB L1 and DDR remain behind it.
 CPU writes, loader traffic, HDD DMA and software cache-disable invalidate L0.
-Writes still wait for DDR acknowledgement. A store-heavy or cache-missing
-application therefore has lower effective throughput than this peak kernel.
+Since the [acceleration rework](APPLE_IIGS_ACCELERATION.md), writes are posted
+into a merging buffer rather than waiting for DDR acknowledgement. A
+cache-missing application still has lower effective throughput than this peak
+kernel.
 The ninth measurement explicitly disables the cache through `$C059.7`:
 **80,640 completed CPU memory reads produce exactly 80,640 DDR requests**,
 with 645,120 wait ticks and the same final state. This latency-controlled case
@@ -339,8 +341,9 @@ transport; it is separate from P65 instruction execution and ROM boot tests.
 
 SEI/CLI speed gating remains a primary-clock combinational path from the
 CPU's architectural I flag. Native FPI divider status can adapt one sampling
-edge later around a speed transition; actual I/O, slow RAM and shadow writes
-remain held until their prepared native commit. The active transient opcode
+edge later around a speed transition; actual I/O remains held until its
+prepared native commit. Since the acceleration rework, accelerated E0/E1 RAM
+and shadow writes use the primary-clock slow-RAM path instead. The active transient opcode
 watch is transported explicitly; unused TransWarp boot/fetch watches do not
 participate in this build.
 
@@ -398,6 +401,17 @@ until resume; all 128 pause/resume events complete and retire once. The tests
 verify actual primary CPU enable and the architectural/bus tuple while held.
 Source hashes accompany the raw logs. Routed timing and hardware behavior
 remain separate gates.
+
+The acceleration rework posts writes, so the test now checks each byte's
+retirement against its cache enqueue and compares DDR only after the buffer
+drains. It also adds read pauses, eight scenarios per cache mode. Those runs
+first read the program's code into the cache, then store and read back one
+cache line at a time, newest word first. One kind pauses four target
+read-backs during their line fill or single-beat bypass read. The other
+pauses four reads that wait for posted writes to drain: the read-back of the
+word just written with the cache on, or, in bypass mode, the instruction
+fetch after a store. Each paused read retires once, after release; paused
+read-backs return the stored byte.
 
 `python scripts/test_apple_iigs_adapter.py --build-dir build/core-gs3/adapter-primary-peek-tests`
 passes twelve machine cases: seven host speed settings, cached and

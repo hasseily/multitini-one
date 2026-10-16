@@ -82,7 +82,8 @@ switch -- $machine {
     }
     APPLE_IIGS {
         # IIgs VGC master, with phase-related /2 and /4 clocks in the adapter.
-        # CPU RAM uses HP2 and complete source rasters use HP3.
+        # CPU RAM uses HP2, clocked by this machine clock in this image only,
+        # and complete source rasters use HP3 on the control clock.
         set c64_clock_mhz 57.272728
         set c64_video_standard "N/A"
         set active_machine 5
@@ -365,9 +366,12 @@ set_property -dict [list CONFIG.ADDR_WIDTH {32} CONFIG.DATA_WIDTH {64} \
     CONFIG.NUM_WRITE_OUTSTANDING {1} CONFIG.READ_WRITE_MODE {READ_WRITE}] $hp1
 connect_bd_intf_net $hp1 [get_bd_intf_pins $ps/S_AXI_HP1]
 
-# Genesis captures its source frames directly into a separate DDR pool. This
-# avoids spending machine BRAM on complete triple-buffered raster frames.
-# Keep the port present in every image so the generated wrapper stays stable.
+# Genesis and NES capture their source frames directly into a separate DDR
+# pool on HP2, clocked by FCLK0 with the control domain. This avoids spending
+# machine BRAM on complete triple-buffered raster frames. The IIgs image uses
+# HP2 for CPU RAM instead and clocks it from the machine clock, so its AXI
+# master needs no clock crossing (see the clock nets below). Keep the port
+# present in every image so the generated wrapper stays stable.
 set hp2 [create_bd_intf_port -mode Slave \
     -vlnv xilinx.com:interface:aximm_rtl:1.0 S_AXI_HP2_0]
 set_property -dict [list CONFIG.ADDR_WIDTH {32} CONFIG.DATA_WIDTH {64} \
@@ -376,9 +380,10 @@ set_property -dict [list CONFIG.ADDR_WIDTH {32} CONFIG.DATA_WIDTH {64} \
     CONFIG.NUM_WRITE_OUTSTANDING {1} CONFIG.READ_WRITE_MODE {READ_WRITE}] $hp2
 connect_bd_intf_net $hp2 [get_bd_intf_pins $ps/S_AXI_HP2]
 
-# The IIgs has both cycle-sensitive DDR RAM and a DDR source-frame ring.
-# Keep these clients on independent PS ports so frame DMA cannot block a CPU
-# transaction in a fabric arbiter. Retain all ports in each generated wrapper.
+# The IIgs has both cycle-sensitive DDR RAM (HP2, machine clock) and a DDR
+# source-frame ring (HP3, control clock). Keep these clients on independent
+# PS ports so frame DMA cannot block a CPU transaction in a fabric arbiter.
+# Retain all ports in each generated wrapper.
 set hp3 [create_bd_intf_port -mode Slave \
     -vlnv xilinx.com:interface:aximm_rtl:1.0 S_AXI_HP3_0]
 set_property -dict [list CONFIG.ADDR_WIDTH {32} CONFIG.DATA_WIDTH {64} \
@@ -401,10 +406,19 @@ set_property CONFIG.POLARITY ACTIVE_LOW $control_aresetn
 set_property CONFIG.POLARITY ACTIVE_LOW $idelay_aresetn
 set_property CONFIG.POLARITY ACTIVE_LOW $video_aresetn
 set_property CONFIG.POLARITY ACTIVE_LOW $c64_aresetn
-set_property -dict [list CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0_0:S_AXI_HP0_0:S_AXI_HP1_0:S_AXI_HP2_0:S_AXI_HP3_0} \
-    CONFIG.ASSOCIATED_RESET {control_aresetn}] $control_clk
+# HP2 follows its ACLK: the machine clock and reset in the IIgs image, the
+# control clock and reset in every other image.
+if {$machine eq "APPLE_IIGS"} {
+    set_property -dict [list CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0_0:S_AXI_HP0_0:S_AXI_HP1_0:S_AXI_HP3_0} \
+        CONFIG.ASSOCIATED_RESET {control_aresetn}] $control_clk
+    set_property -dict [list CONFIG.ASSOCIATED_BUSIF {S_AXI_HP2_0} \
+        CONFIG.ASSOCIATED_RESET {c64_aresetn}] $c64_clk
+} else {
+    set_property -dict [list CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0_0:S_AXI_HP0_0:S_AXI_HP1_0:S_AXI_HP2_0:S_AXI_HP3_0} \
+        CONFIG.ASSOCIATED_RESET {control_aresetn}] $control_clk
+    set_property CONFIG.ASSOCIATED_RESET {c64_aresetn} $c64_clk
+}
 set_property CONFIG.ASSOCIATED_RESET {video_aresetn} $video_clk
-set_property CONFIG.ASSOCIATED_RESET {c64_aresetn} $c64_clk
 set irq [create_bd_port -dir I IRQ]
 
 set idelay_wiz [create_bd_cell -type ip \
@@ -497,12 +511,12 @@ set_property -dict [list CONFIG.CONST_VAL {1} CONFIG.CONST_WIDTH {1}] \
 # in the PL. Full-PL PCAP replaces the clock wizards themselves; making either
 # half of the control domain wait on one can strand the first shell probe after
 # configuration. FCLK0 and FCLK_RESET0_N remain sourced by the PS.
+# HP2's ACLK is connected with the machine clock below.
 connect_bd_net [get_bd_pins $ps/FCLK_CLK0] \
     [get_bd_pins $idelay_wiz/clk_in1] [get_bd_pins $video_wiz/s_axi_aclk] $control_clk \
     [get_bd_pins $control_reset/slowest_sync_clk] \
     [get_bd_pins $ps/M_AXI_GP0_ACLK] [get_bd_pins $ps/S_AXI_HP0_ACLK] \
-    [get_bd_pins $ps/S_AXI_HP1_ACLK] [get_bd_pins $ps/S_AXI_HP2_ACLK] \
-    [get_bd_pins $ps/S_AXI_HP3_ACLK]
+    [get_bd_pins $ps/S_AXI_HP1_ACLK] [get_bd_pins $ps/S_AXI_HP3_ACLK]
 connect_bd_net [get_bd_pins $ps/FCLK_CLK2] \
     [get_bd_pins $video_wiz/clk_in1] [get_bd_pins $c64_wiz/clk_in1]
 connect_bd_net [get_bd_pins $ps/FCLK_RESET0_N] \
@@ -531,6 +545,18 @@ connect_bd_net [get_bd_pins $video_reset/peripheral_aresetn] $video_aresetn
 
 connect_bd_net [get_bd_pins $c64_wiz/clk_out1] $c64_clk \
     [get_bd_pins $c64_reset/slowest_sync_clk]
+# HP2's ACLK is FCLK0 for the Genesis and NES source rings, and in every image
+# without an HP2 client. The IIgs CPU RAM bridge instead clocks HP2 from the
+# machine clock so its AXI master needs no clock crossing. Either way the
+# firmware drains HP2 before PCAP with the core held in reset: the machine
+# MMCM keeps running then, and its clock stops with the other PL clock buffers
+# only once PCAP starts. No PS7 setting changes, so ps7_init.c must stay
+# identical; packaging verifies its hash against the firmware's FSBL.
+if {$machine eq "APPLE_IIGS"} {
+    connect_bd_net [get_bd_pins $c64_wiz/clk_out1] [get_bd_pins $ps/S_AXI_HP2_ACLK]
+} else {
+    connect_bd_net [get_bd_pins $ps/FCLK_CLK0] [get_bd_pins $ps/S_AXI_HP2_ACLK]
+}
 if {$machine eq "VECTREX"} {
     connect_bd_net [get_bd_pins $c64_wiz/clk_out2] $c64_capture_clk
 } else {

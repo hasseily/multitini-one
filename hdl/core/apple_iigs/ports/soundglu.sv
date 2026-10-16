@@ -13,6 +13,7 @@ module soundglu
    output reg	     ram_access,
    output reg [7:0]  host_data_out,
    output reg [7:0]  host_read_peek,
+   output wire       host_busy,
    output reg [15:0] sound_addr,
    output reg [7:0]  sound_data_out,
    output reg	     ram_wr,
@@ -32,6 +33,8 @@ module soundglu
    reg		    select_d;
    reg		    increment_pending;
 
+   // A host access is pending or finishing until the GLU returns to idle.
+   assign host_busy = sound_cycle_state != ST_IDLE;
    // Read-only view of the existing host register mux. External CPU bridge
    // samples this before its commit edge, without speculative DOC accesses.
    always @* begin

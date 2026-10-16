@@ -2,6 +2,16 @@
 
 Status: planning baseline, written 2026-08-29
 
+Acceleration rework, 2026-10-16: the owner reports about 2x at 57 MHz in
+real use. Profile the real ROM/OS boot and synthetic loops, then remove the
+measured limits while keeping stock timing: no emulated 1 MHz Mega II sync
+while accelerated (the core has no physical bus), posted DDR writes, 32-byte
+burst lines, the IIgs HP2 port on the machine clock, faster accelerated DMA,
+slot ROM without the sync, an IWM mode-register decode that matches a real
+IWM, and a selected-drive IWM hold. Keep compatibility holds and sound GLU
+pacing. Implement in parallel tracks, run fast regressions per track and the
+long boot, profile and Vivado runs once at the end.
+
 Acceleration follow-up, 2026-10-15: the owner reports unchanged System 6 boot
 and Finder redraw after changing speed in the Multitini menu. Measure the
 real ROM/OS workload and paused menu speed changes. Correct false paddle

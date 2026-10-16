@@ -11,7 +11,7 @@ module tb_apple_iigs_boot;
     reg load_valid=0,load_first=0,load_last=0,load_epoch=0,load_abort=0,load_abort_epoch=0;
     reg [31:0] load_offset=0,load_total=0;wire load_ready;
     wire [23:0] memory_addr;wire memory_write;wire [63:0] memory_wdata;wire [7:0] memory_wstrb;
-    wire memory_valid,memory_ready;reg [63:0] memory_rdata=0;reg memory_rvalid=0,memory_fault=0;
+    wire memory_valid,memory_ready,memory_burst,memory_busy;reg [63:0] memory_rdata=0;reg memory_rvalid=0,memory_fault=0;
     reg media_mount=0,media_eject=0,media_complete=0;
     reg [7:0] media_slot=0,media_kind=0;reg media_read_only=0;
     reg [31:0] media_image_size=0,media_generation=0;
@@ -29,7 +29,7 @@ module tb_apple_iigs_boot;
     wire signed [23:0] audio_l,audio_r;wire audio_valid;
     multitini_apple_iigs_adapter dut(.*);
     reg [63:0] memory[0:2097151];
-    reg busy=0,pending_write=0;reg [23:0] pending_addr;reg [63:0] pending_data;reg [7:0] pending_mask;
+    reg busy=0,pending_write=0,pending_burst=0;integer beats_left=0;reg [23:0] pending_addr;reg [63:0] pending_data;reg [7:0] pending_mask;
     integer delay_count=0,writes=0;
     assign memory_ready=!busy;
     always @(posedge core_clk)begin
@@ -37,6 +37,9 @@ module tb_apple_iigs_boot;
         if(memory_valid && memory_ready)begin
             pending_addr<=memory_addr;pending_data<=memory_wdata;pending_mask<=memory_wstrb;
             pending_write<=memory_write;delay_count<=3+memory_addr[5:3];busy<=1;
+            // Memory interface v2: a burst is a 4-beat read of an aligned line.
+            pending_burst<=memory_burst;beats_left<=memory_burst ? 4 : 1;
+            if(memory_burst && (memory_write || memory_addr[4:0]!=0))$fatal(1,"invalid DDR burst %x",memory_addr);
         end else if(busy)begin
             if(delay_count!=0)delay_count<=delay_count-1;
             else begin
@@ -45,7 +48,10 @@ module tb_apple_iigs_boot;
                         if(pending_mask[lane])memory[pending_addr[23:3]][lane*8+:8]<=pending_data[lane*8+:8];
                     writes<=writes+1;
                 end
-                memory_rdata<=memory[pending_addr[23:3]];memory_rvalid<=1;busy<=0;
+                memory_rdata<=memory[pending_addr[23:3]];memory_rvalid<=1;
+                // Ascending beats, sometimes with idle cycles between them.
+                if(beats_left>1)begin beats_left<=beats_left-1;pending_addr<=pending_addr+8;delay_count<=pending_addr[3];end
+                else busy<=0;
             end
         end
     end

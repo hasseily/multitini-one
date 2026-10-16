@@ -16,8 +16,8 @@ python scripts/port_apple_iigs_core.py --check
 python scripts/test_apple_iigs_ports.py
 ```
 
-The ports preserve the original CPU bus and VGC raster timing. Their changes
-are bounded:
+The ports preserve the original CPU bus and VGC raster timing at stock speed.
+Their changes are bounded:
 
 - Infer enabled synchronous, write-first dual-port RAM in place of Intel
   `altsyncram`. Keep slow/video RAM and DOC wave RAM inside the FPGA.
@@ -42,6 +42,15 @@ are bounded:
   delays for the selected controller clock.
 - Represent TransWarp as an absent card. ZipGS register logic and host CPU
   speed controls remain available without TransWarp ROM dependencies.
+- While the external-CPU build is accelerated, feed the original clock
+  divider gated inputs so no access waits for the 1 MHz Mega II sync, and run
+  HDD DMA at three CLK14 ticks per byte. Serve E0/E1 RAM and shadowed writes
+  from a primary-clock slow-RAM port with staged writes, hold sound GLU
+  accesses while the GLU is busy, and apply the 2 ms IWM hold only when the
+  selected drive has media. Stock speed keeps the original divider inputs.
+- Derive `iwm_woz.sv` so the IWM mode register latches on any odd address with
+  Q6=Q7=1 while idle, as a real IWM does, except the `$C0E9` motor-on access.
+  The immediate mode view seen on the write tick uses the same decode.
 
 The HDD slot ROM is open-source AppleWin firmware. Assemble its licensed
 source, rather than copying a generated upstream image:

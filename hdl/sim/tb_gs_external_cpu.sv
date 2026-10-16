@@ -9,14 +9,21 @@ module tb_gs_external_cpu;
     reg cpu_ce=0,native_commit=0,waiting=0,seen_return=0;
     wire [7:0] native_read_data,cpu_local_data;
     wire native_return_toggle,cpu_fast_cycle,cpu_local_read;
+    wire cpu_slowram_read,cpu_slowram_write,cpu_slowram_ready,cpu_slowram_pending,cpu_native_two_edge,cpu_native_hold;
+    wire [7:0] cpu_slowram_data;
     wire [2:0] cpu_speed;wire phi2,cpu_valid;
     wire [23:0] top_addr;wire [7:0] top_dout;wire we,fastram_ce,rom_ce;
     reg [7:0] rom[0:65535],ram[0:65535];
     wire [7:0] top_din=rom_ce ? rom[top_addr[15:0]] : ram[top_addr[15:0]];
-    wire [7:0] cpu_din=waiting ? native_read_data : cpu_local_read ? cpu_local_data : top_din;
+    wire [7:0] cpu_din=waiting ? native_read_data : cpu_local_read ? cpu_local_data :
+        cpu_slowram_ready ? cpu_slowram_data : top_din;
     iigs #(.EXTERNAL_CPU(1),.MAX_ACCEL_SPEED(6)) dut(
         .reset(reset),.cold_reset(reset),.CPU_CLK(primary),.CPU_CE(cpu_ce),.CPU_PUBLISH(phase==0),.CPU_DIN(cpu_din),
-        .NATIVE_COMMIT(native_commit),.cpu_speed(cpu_speed),.cpu_fast_cycle(cpu_fast_cycle),
+        .NATIVE_COMMIT(native_commit),
+        .CPU_FAST_CE(cpu_ce && !waiting),.NATIVE_EDGE(phase==2),.cpu_slowram_read(cpu_slowram_read),
+        .cpu_slowram_write(cpu_slowram_write),.cpu_slowram_ready(cpu_slowram_ready),.cpu_slowram_data(cpu_slowram_data),
+        .cpu_slowram_pending(cpu_slowram_pending),.cpu_native_hold(cpu_native_hold),
+        .cpu_native_two_edge(cpu_native_two_edge),.cpu_speed(cpu_speed),.cpu_fast_cycle(cpu_fast_cycle),
         .cpu_local_read(cpu_local_read),.cpu_local_data(cpu_local_data),.native_read_data(native_read_data),
         .native_return_toggle(native_return_toggle),.CLK_14M(native_clk),.CLK_28M(1'b0),.clk_vid(primary),.ce_pix(phase==0),
         .load_rom_clk(primary),.load_rom_we(1'b0),.load_rom_addr(16'b0),.load_rom_data(8'b0),
@@ -43,8 +50,12 @@ module tb_gs_external_cpu;
             if(waiting)begin
                 if(native_return_toggle!=seen_return)cpu_ce=1;
             end else if(cpu_fast_cycle && cpu_speed!=0)begin
-                if(pace==0)begin cpu_ce=1;pace=period-1;end else pace=pace-1;
-            end else if(phase==2 && phi2)begin native_commit=1;waiting=1;end
+                // Direct Mega II reads wait for the registered slow-RAM read; no
+                // store retires on the NATIVE_EDGE that defers a staged write.
+                if(cpu_slowram_read && !cpu_slowram_ready);
+                else if(we && cpu_slowram_pending && phase==2);
+                else if(pace==0)begin cpu_ce=1;pace=period-1;end else pace=pace-1;
+            end else if(phase==2 && phi2 && !cpu_native_hold)begin native_commit=1;waiting=1;end
         end
     end
     always @(posedge primary)begin
@@ -69,6 +80,13 @@ module tb_gs_external_cpu;
             end
         end
     end
+    // Count actual slow-RAM port writes on that port's own (primary) clock:
+    // native commits and fast Mega II stores must each write exactly once,
+    // from the staged tuple and never on the native (video read) edge.
+    always @(posedge primary)if(!reset && dut.slowram.enable_a && dut.slowram.wren_a)begin
+        slow_writes=slow_writes+1;
+        if(phase==2)$fatal(1,"slow-RAM port A wrote on the native edge");
+    end
     reg [7:0] last_text=0;reg [15:0] last_sound_addr=0;
     always @(posedge native_clk)begin
         if(!reset)begin
@@ -83,7 +101,6 @@ module tb_gs_external_cpu;
                         16'hc034:prtc_control_writes=prtc_control_writes+1;
                     endcase
                 end
-                if(we && dut.slowram_ce)slow_writes=slow_writes+1;
             end
             if(!native_commit && (dut.TEXTCOLOR!==last_text || dut.snd.glu.sound_addr!==last_sound_addr))
                 $fatal(1,"native write changed state without commit");

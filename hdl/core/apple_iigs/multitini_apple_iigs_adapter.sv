@@ -13,7 +13,7 @@ module multitini_apple_iigs_adapter #(
     input wire [31:0] load_offset,load_total,output wire load_ready,
     output wire [23:0] memory_addr,output wire memory_write,
     output wire [63:0] memory_wdata,output wire [7:0] memory_wstrb,
-    output wire memory_valid,input wire memory_ready,
+    output wire memory_valid,output wire memory_burst,output wire memory_busy,input wire memory_ready,
     input wire [63:0] memory_rdata,input wire memory_rvalid,memory_fault,
     input wire media_mount,media_eject,media_complete,
     input wire [7:0] media_slot,media_kind,
@@ -49,9 +49,12 @@ module multitini_apple_iigs_adapter #(
     BUFGCE clk14_buffer_i(.I(core_clk),.CE(phase==3),.O(clk14));
     BUFG clk28_buffer_i(.I(clk28_divider),.O(clk28));
     wire pixel_ce=phase==3;
-    (* KEEP="TRUE" *) wire byte_tick=phase==0;
-    (* KEEP="TRUE" *) wire lookup_tick=phase==1;
-    (* KEEP="TRUE" *) wire request_tick=phase==2;
+    // DIRECT_ENABLE keeps each phase tick on the CE pin of the registers it
+    // enables. Control-set reduction must not fold a tick into D logic: the
+    // build's phase proof checks publication/configuration CE pins directly.
+    (* KEEP="TRUE", DIRECT_ENABLE="yes" *) wire byte_tick=phase==0;
+    (* KEEP="TRUE", DIRECT_ENABLE="yes" *) wire lookup_tick=phase==1;
+    (* KEEP="TRUE", DIRECT_ENABLE="yes" *) wire request_tick=phase==2;
     reg [10:0] key;
     reg [24:0] mouse;
     reg [15:0] mouse_low,joy,analog_xy;
@@ -122,6 +125,8 @@ module multitini_apple_iigs_adapter #(
     wire cpu_vector_n;
     wire [7:0] cpu_local_data,native_read_data;
     wire native_return_toggle;
+    wire cpu_slowram_read,cpu_slowram_write,cpu_slowram_ready,cpu_slowram_pending,cpu_native_two_edge,cpu_native_hold;
+    wire [7:0] cpu_slowram_data;
     reg native_stall_q;
     // Publish the complete native hold condition on phase2. Lookup/tag/data
     // have settled since phase1; late DDR responses or control requests must
@@ -146,8 +151,13 @@ module multitini_apple_iigs_adapter #(
     wire [2:0] l0_index=cpu_logical_addr[5:3];
     wire l0_hit=cpu_valid && cpu_vector_n && l0_valid[l0_index] && l0_tags[l0_index]==cpu_logical_addr[23:6] &&
         !cache_disable && !hdd_dma && !bus_write && !invalidate && !loader_valid && !config_commit;
-    wire access_valid=cpu_memory_cycle &&
-        !machine_reset_raw && !machine_reset && !pause_request && !l0_hit;
+    // A native write's slow-RAM and peripheral side effects land on the
+    // phase3 CLK14 edge. Post its DDR copy on that same edge, so a reset or
+    // pause before the CPU retires cannot leave the two copies different.
+    reg native_commit_q;
+    wire native_write_commit=phase==3 && native_commit_q && !hdd_dma && !machine_reset && bus_write;
+    wire access_valid=cpu_memory_cycle && !l0_hit &&
+        (native_write_commit || (!machine_reset_raw && !machine_reset && !pause_request));
     always @(posedge core_clk)begin
         // Retire after native_read_data was captured, not on the parent edge
         // that raises CLK14: native memory may still be reading this L0 word.
@@ -160,40 +170,61 @@ module multitini_apple_iigs_adapter #(
             l0_valid[l0_index]<=1;
         end
     end
-    reg native_commit_q,native_pending,native_return_seen;
-    reg native_prepare_q,native_prepared;
+    reg native_pending,native_return_seen;
+    reg native_prepare_q,native_prepared,native_prepared2;
     reg [4:0] cpu_cooldown;
     wire native_path=!cpu_fast_cycle || cpu_speed==0;
     wire native_response=native_pending && native_return_toggle!=native_return_seen;
+    // Direct Mega II RAM reads complete from the machine's registered
+    // slow-RAM read (ready and data are flops, set three edges after the bus
+    // appears). Slow-RAM writes (E0/E1 or a shadow copy) are staged in the
+    // machine and written on the next non-phase3 edge, which may stage the
+    // next store. A phase3 edge defers a staged write, so no write retires on
+    // it while one is pending. Both terms are registers, so neither deepens
+    // CPU CE. A shadow write also waits for the cache's DDR copy.
     wire fast_response=!native_pending && !native_path &&
-        (!cpu_valid || cpu_local_read || l0_hit || !cache_stall);
+        (cpu_slowram_read ? cpu_slowram_ready : (!cpu_valid || cpu_local_read || l0_hit || !cache_stall)) &&
+        !(bus_write && cpu_slowram_pending && phase==3);
     wire cpu_ce=!machine_reset && !machine_reset_raw && !pause_request && !hdd_dma &&
         (native_response || (fast_response && cpu_cooldown==0));
     // A valid raw hit cannot overlap a local IO register: every mapping or
     // native IO transaction retires before the CPU can consume another hit.
     // Invalid internal cycles retain L1's floating-bus value via cpu_valid.
-    wire [7:0] cpu_read_data=native_pending ? native_read_data : l0_hit ? l0_data[l0_index][cpu_logical_addr[2:0]*8+:8] :
+    // Every select ahead of the L0/L1 byte is a register; the slow-RAM data
+    // is a register too, so no MMU decode or BRAM output reaches CPU_DIN.
+    // Priority is native, slow RAM, L0, local, L1. The raw-address L0 hit
+    // arrives last, so it drives the final 2:1 stage of the same priority.
+    wire [7:0] cpu_read_other=native_pending ? native_read_data : cpu_slowram_ready ? cpu_slowram_data :
         cpu_local_read ? cpu_local_data : bus_read_word[cpu_logical_addr[2:0]*8+:8];
+    wire cpu_read_l0=l0_hit && !native_pending && !cpu_slowram_ready;
+    wire [7:0] cpu_read_data=cpu_read_l0 ? l0_data[l0_index][cpu_logical_addr[2:0]*8+:8] : cpu_read_other;
     wire [7:0] native_memory_data=l0_hit ? l0_data[l0_index][cpu_logical_addr[2:0]*8+:8] : bus_read_data;
     // A native request is published one primary edge before CLK14 rises.
     // Its bus stays held until the response toggle is observed on core_clk.
     always @(posedge core_clk)begin
         if(reset || machine_reset)begin
             native_commit_q<=0;native_pending<=0;native_return_seen<=0;cpu_cooldown<=0;
-            native_prepare_q<=0;native_prepared<=0;
+            native_prepare_q<=0;native_prepared<=0;native_prepared2<=0;
         end else begin
             // A held native bus is identified at phase1, before its phase3
             // BRAM/HDD read-preparation edge. Publish readiness at phase0 only
             // after that edge; never commit a first-edge stale native read.
+            // Slot reads from a twice-registered device need a second edge.
             if(lookup_tick)native_prepare_q<=native_path && !native_pending && !hdd_dma;
-            if(byte_tick)begin native_commit_q<=0;native_prepared<=native_prepare_q && native_path && !native_pending;end
-            if(request_tick)native_commit_q<=native_prepared && native_path && !native_pending && !hdd_dma && phi2 &&
+            if(byte_tick)begin
+                native_commit_q<=0;native_prepared<=native_prepare_q && native_path && !native_pending;
+                native_prepared2<=native_prepared && native_prepare_q && native_path && !native_pending;
+            end
+            // A busy native peripheral (the sound GLU between host accesses)
+            // keeps the prepared access waiting for a later request_tick.
+            if(request_tick)native_commit_q<=(cpu_native_two_edge ? native_prepared2 : native_prepared) &&
+                native_path && !native_pending && !hdd_dma && phi2 && !cpu_native_hold &&
                 !cache_stall && !pause_request && !machine_reset_raw;
             if(phase==3 && native_commit_q && !hdd_dma)native_pending<=1;
-            if(hdd_dma)begin native_prepare_q<=0;native_prepared<=0;end
+            if(hdd_dma)begin native_prepare_q<=0;native_prepared<=0;native_prepared2<=0;end
             if(cpu_cooldown!=0)cpu_cooldown<=cpu_cooldown-1'b1;
             if(cpu_ce)begin
-                native_prepare_q<=0;native_prepared<=0;
+                native_prepare_q<=0;native_prepared<=0;native_prepared2<=0;
                 if(native_pending)begin native_pending<=0;native_return_seen<=native_return_toggle;end
                 case(cpu_speed)
                     1:cpu_cooldown<=15;
@@ -214,21 +245,26 @@ module multitini_apple_iigs_adapter #(
         if(reset)committed_bus<=0;
         else if(phase==3)committed_bus<=hdd_dma && phi2 && !native_stall_q && !machine_reset;
     end
-    wire bus_commit=cpu_ce || (phase==0 && committed_bus);
+    // A native-path write already posted on its native edge; its later CPU
+    // retirement must not post it again.
+    wire bus_commit=(cpu_ce && !(native_pending && bus_write)) || native_write_commit || (phase==0 && committed_bus);
     multitini_apple_iigs_cache cache_i(
         .clk(core_clk),.reset(reset),.invalidate(invalidate),
         .lookup_tick(hdd_dma ? lookup_tick : 1'b1),.request_tick(hdd_dma ? request_tick : 1'b1),
         .bus_addr(physical_addr),.bus_wdata(bus_write_data),.bus_valid(access_valid),
         // HDD DMA's sector-to-bus byte is a native registered pipeline.
         // Capture its writes only once the native PH2 data window arrives.
-        .bus_write(bus_write),.bus_commit(bus_commit),.write_launch(!hdd_dma || phi2),.bypass(cache_disable),
+        // DMA retires on the phase0 after its native edge; its write was
+        // staged at the PH2 request_tick before the bus moved on.
+        .bus_write(bus_write),.bus_commit(bus_commit),.commit_staged(phase==0 && committed_bus),
+        .write_launch(!hdd_dma || phi2),.bypass(cache_disable),
         .bus_rdata(bus_read_data),.bus_rword(bus_read_word),.stall(cache_stall),.fault(cache_error),.hits(),.misses(),.wait_cycles(),
         .loader_valid(loader_valid),.loader_write(loader_write),.loader_addr(loader_addr),
         .loader_wdata(loader_data),.loader_wstrb(loader_strobe),.loader_ready(loader_ready),
         .loader_response(loader_response),.loader_rdata(),
         .memory_addr(memory_addr),.memory_write(memory_write),.memory_wdata(memory_wdata),.memory_wstrb(memory_wstrb),
-        .memory_valid(memory_valid),.memory_ready(memory_ready),.memory_rdata(memory_rdata),
-        .memory_rvalid(memory_rvalid),.memory_fault(memory_fault));
+        .memory_burst(memory_burst),.memory_valid(memory_valid),.memory_ready(memory_ready),.memory_rdata(memory_rdata),
+        .memory_rvalid(memory_rvalid),.memory_fault(memory_fault),.memory_busy(memory_busy));
     assign core_id=32'h49494753;
     assign load_error=loader_error || cache_error || media_error;
     assign ready=rom_loaded && !loader_error && !cache_error && !memory_fault &&
@@ -444,6 +480,10 @@ module multitini_apple_iigs_adapter #(
     assign sd_data[1]=sd_data[0];
     iigs #(.RAMSIZE(128),.EXTERNAL_CPU(1),.MAX_ACCEL_SPEED(MAX_ACCEL_SPEED)) machine_i(
         .CPU_CLK(core_clk),.CPU_CE(cpu_ce),.CPU_PUBLISH(byte_tick),.CPU_DIN(cpu_read_data),.NATIVE_COMMIT(native_commit_q),
+        .CPU_FAST_CE(cpu_ce && !native_pending),.NATIVE_EDGE(pixel_ce),
+        .cpu_slowram_read(cpu_slowram_read),.cpu_slowram_write(cpu_slowram_write),
+        .cpu_slowram_ready(cpu_slowram_ready),.cpu_slowram_data(cpu_slowram_data),.cpu_slowram_pending(cpu_slowram_pending),
+        .cpu_native_two_edge(cpu_native_two_edge),.cpu_native_hold(cpu_native_hold),
         .cpu_speed(cpu_speed),.cpu_fast_cycle(cpu_fast_cycle),.cpu_local_read(cpu_local_read),.cpu_local_data(cpu_local_data),
         .cpu_memory_cycle(cpu_memory_cycle),.cpu_logical_addr(cpu_logical_addr),.cpu_vector_n(cpu_vector_n),
         .native_read_data(native_read_data),.native_return_toggle(native_return_toggle),

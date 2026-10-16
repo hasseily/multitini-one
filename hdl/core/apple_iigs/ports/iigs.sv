@@ -57,6 +57,25 @@ input [7:0] CPU_DIN=8'hFF,
 input NATIVE_COMMIT=1'b0,
 output [2:0] cpu_speed,
 output cpu_fast_cycle,
+// A fast CPU enable that is not a native retirement, and the primary edge
+// equivalent to the CLK_14M rise (one edge per native commit or DMA cycle).
+input CPU_FAST_CE=1'b0,
+input NATIVE_EDGE=1'b0,
+// Primary-clock Mega II RAM path: direct E0/E1 RAM reads, and E0/E1 or
+// shadowed writes, complete on CPU_CE without the native bridge. A read
+// completes from registered port-A data (ready/data are registers). A write
+// is staged and written on a later edge; pending is high while it is staged
+// and no store may retire while it is pending on NATIVE_EDGE.
+output cpu_slowram_read,
+output cpu_slowram_write,
+output cpu_slowram_ready,
+output [7:0] cpu_slowram_data,
+output cpu_slowram_pending,
+// A native peripheral cannot take another host access yet (sound GLU busy).
+output cpu_native_hold,
+// Slot reads whose device output is registered twice need two native
+// preparation edges before the capture edge.
+output cpu_native_two_edge,
 output cpu_memory_cycle,
 output [23:0] cpu_logical_addr,
 output cpu_vector_n,
@@ -283,7 +302,7 @@ output video_pal,
 );
 
    assign top_addr = addr_bus;
-   assign top_dout = dout;
+   assign top_dout = EXTERNAL_CPU ? cpu_bus_write_byte : dout;
 
    logic [7:0]       bank;
    logic [15:0]      addr;
@@ -1810,15 +1829,20 @@ begin
   end
 end
 
+wire slowram_wr_set;
+reg slowram_wr_pending = 1'b0;
+reg [16:0] slowram_wr_addr = 17'd0;
+reg [7:0] slowram_wr_data = 8'd0;
+wire slowram_wren_a = EXTERNAL_CPU ? (slowram_wr_pending & ~NATIVE_EDGE) : (slowram_we & bus_phi2);
 /* verilator lint_off PINMISSING */
 apple_iigs_slowram slowram
 (
-        .clock_a(CLK_14M),
-        .address_a({bank[0], addr}),
-        .data_a(dout),
+        .clock_a(EXTERNAL_CPU ? CPU_CLK : CLK_14M),
+        .address_a((EXTERNAL_CPU && slowram_wr_pending) ? slowram_wr_addr : {bank[0], addr}),
+        .data_a(EXTERNAL_CPU ? slowram_wr_data : dout),
         .q_a(slowram_dout),
-        .wren_a(slowram_we & bus_phi2),
-        .enable_a(slowram_ce),
+        .wren_a(slowram_wren_a),
+        .enable_a(EXTERNAL_CPU ? 1'b1 : slowram_ce),
         .clock_b(clk_vid),
         .address_b(video_addr[16:0]),
         .data_b(8'b0),
@@ -1827,6 +1851,44 @@ apple_iigs_slowram slowram
         .enable_b(ce_pix)
 );
 /* verilator lint_on PINMISSING */
+// External mode enables port A on every primary edge: q_a always holds the
+// last (live or staged) address, and no MMU decode reaches the enables.
+// Fast E0/E1 reads: the first held edge with no staged write (and no CPU_CE)
+// reads the live address and arms; the next edge registers port A's output;
+// the CPU completes from that register on the third edge. The bus and its
+// MMU mapping cannot change while CPU_CE is low: soft switches change only
+// on retired native cycles, and DMA clears the flags. The CPU data input and
+// its select therefore see only registers on this path.
+reg slowram_rd_armed = 1'b0;
+reg slowram_rd_ready = 1'b0;
+reg [7:0] slowram_rd_data = 8'd0;
+generate if (EXTERNAL_CPU) begin : g_slowram_fast
+  assign slowram_wr_set = slowram_we & slowram_ce &
+      ((bus_phi2 & NATIVE_EDGE) | (CPU_FAST_CE & cpu_slowram_write));
+  always @(posedge CPU_CLK) begin
+    // A staged tuple is held until it is written. The edge that writes it may
+    // stage the next store; on a NATIVE_EDGE that defers it the adapter
+    // retires no write, and native/DMA commits are four primary edges apart.
+    if (!slowram_wr_pending || !NATIVE_EDGE) begin
+      slowram_wr_addr <= {bank[0], addr};
+      slowram_wr_data <= cpu_bus_write_byte;
+    end
+    slowram_wr_pending <= slowram_wr_set | (slowram_wr_pending & NATIVE_EDGE);
+    if (reset || CPU_CE || hdd_dma) begin
+      slowram_rd_armed <= 1'b0;
+      slowram_rd_ready <= 1'b0;
+    end else begin
+      slowram_rd_armed <= cpu_slowram_read & ~slowram_wr_pending;
+      slowram_rd_ready <= slowram_rd_armed;
+    end
+    if (slowram_rd_armed) slowram_rd_data <= slowram_dout;
+  end
+end else begin : g_slowram_legacy
+  assign slowram_wr_set = 1'b0;
+end endgenerate
+assign cpu_slowram_ready = EXTERNAL_CPU && slowram_rd_ready;
+assign cpu_slowram_data = slowram_rd_data;
+assign cpu_slowram_pending = EXTERNAL_CPU && slowram_wr_pending;
 
 // video_timing's position ports are one bit wider than the counters this
 // core consumes; take the ports at full width and use the low bits.
@@ -2433,6 +2495,7 @@ wire ready_out;
   wire native_scc_sel = IO && (addr_bef[7:2]==6'h0E);
   wire native_snd_sel = IO && (addr_bef[7:2]==6'h0F);
   wire [7:0] snd_read_peek;
+  wire snd_busy;
 
   adb adb(
           .load_rom_clk(load_rom_clk),
@@ -2498,6 +2561,8 @@ wire ready_out;
                    nv_twgs_sel ? nv_twgs_q : 8'hFF;
 
   // Hardware-accurate IWM with WOZ/flux-based disk interface
+  // Media in the drive the IWM has selected ($C031 bit 6 and $C0EA/B).
+  wire iwm_drive_media;
   iwm_woz iwmc (
       // Global clocks/resets
       .CLK_14M(CLK_14M),
@@ -2552,7 +2617,8 @@ wire ready_out;
       // Motor status for clock slowdown
       .FLOPPY_MOTOR_ON(floppy_motor_on),
       .FLOPPY35_MOTOR_ON(floppy35_motor_on),
-      .DRIVE35_EJECT_REQ(drive35_eject_req)
+      .DRIVE35_EJECT_REQ(drive35_eject_req),
+      .SELECTED_MEDIA(iwm_drive_media)
   );
   // Internal wires not used with flux-based IWM
 
@@ -2623,6 +2689,7 @@ wire ready_out;
             .host_data_in(EXTERNAL_CPU ? cpu_dout : snd_din),
             .host_data_out(snd_dout),
             .host_read_peek(snd_read_peek),
+            .host_busy(snd_busy),
             .sound_out_l(AUDIO_L),
             .sound_out_r(AUDIO_R),
             .irq(snd_irq),
@@ -3006,6 +3073,7 @@ wire       slot_delay_this = slot_ce;
 // acceleration stays off for the drive's whole motor-on span, not just the
 // last 2 ms of register activity.
 reg [14:0] iwm_holdoff;
+wire iwm_selected_media = iwm_drive_media;
 always @(posedge CLK_14M) begin
   if (reset)
     iwm_holdoff <= 15'd0;
@@ -3093,7 +3161,7 @@ wire irq_slowdown = cpu_i_flag &&
 // System Speed Normal -- manual ch.3).
 wire cps_gate = twgs_present ? 1'b1 : (CYAREG[7] || !zip_cps_follow_en);
 wire [3:0] fast_thresh = (accel_capable && eff_accel_en && eff_speed_code != 3'd0
-                          && iwm_holdoff == 15'd0
+                          && (iwm_holdoff == 15'd0 || (EXTERNAL_CPU && !iwm_selected_media))
                           && !(floppy_motor_on && (|DISK_READY[1:0]))
                           && !(floppy35_motor_on && (|DISK_READY[3:2]))
                           && !io_slow_holdoff
@@ -3117,19 +3185,25 @@ wire [3:0] fast_thresh = (accel_capable && eff_accel_en && eff_speed_code != 3'd
 assign accel_active = (fast_thresh != 4'd4) && !hdd_dma;
 
 // Clock divider instance
+wire external_accel = EXTERNAL_CPU && fast_thresh != 4'd4;
+wire [7:0] cd_cyareg = external_accel ? {CYAREG[7:4], 4'b0000} : CYAREG;
+wire [3:0] cd_fast_thresh = (external_accel && hdd_dma) ? 4'd2 : fast_thresh;
+wire cd_dma_active = external_accel ? 1'b0 : hdd_dma;
+wire cd_slot_access = external_accel ? 1'b0 : slot_delay_this;
+wire cd_valid = external_accel ? 1'b0 : valid;
 clock_divider clk_div_inst (
     .clk_14M(CLK_14M),
-    .cyareg(CYAREG),
+    .cyareg(cd_cyareg),
     .bank(bank),      // physical bank: aux-resolved, so E0/E1 (Mega II) cycles classify slow
     .addr(addr_bef),  // logical address: soft-switch decode must not see the LC $Dxxx->$Cxxx A12 fold
-    .fast_thresh(fast_thresh),
-    .dma_active(hdd_dma),
-    .slot_access(slot_delay_this),
+    .fast_thresh(cd_fast_thresh),
+    .dma_active(cd_dma_active),
+    .slot_access(cd_slot_access),
     .zipregs_fast(zip_unlocked),
     .shadow(shadow),
     .IO(IO),
     .we(we),
-    .valid(valid),
+    .valid(cd_valid),
     .is_rom_access(rom_ce),
     .reset(reset),
     .stretch(1'b0),  // legacy unused stretch input (superseded by ph0_*_vid below)
@@ -3174,10 +3248,35 @@ assign cpu_memory_cycle = cpu_valid && (fastram_ce || (rom_ce && !we)) &&
     (hdd_dma || ((!IO || cpu_irq_dispatch_read) && !EXTERNAL_IO && !(|device_select) && !(|io_select) && !slot_ce));
 // Use the current MMU classification, not CLK14's delayed slowMem register:
 // Shadow reads select fast RAM even when the mirror enable is also asserted.
-// Shadow writes, slot/IO and direct slow-RAM accesses use the native bridge.
+// Slot/IO and Mega II $C000-$CFFF use the native bridge. Direct E0/E1 RAM
+// ($0000-$BFFF, $D000-$FFFF with aux/ALTZP/LC/bank-latch mapping already in
+// the physical address) and every slow-RAM write (E0/E1 or shadow copy) use
+// the primary-clock slow-RAM port. E0/E1 LC ROM reads use the ROM cache.
+wire cpu_plain_bus = !IO && !EXTERNAL_IO && !(|device_select) && !(|io_select) && !slot_ce;
+wire cpu_mega2_bank = bank_bef == 8'hE0 || bank_bef == 8'hE1;
+wire cpu_mega2_window = cpu_mega2_bank && (addr_bef < 16'hC000 || addr_bef >= 16'hD000);
+assign cpu_slowram_read = EXTERNAL_CPU && !hdd_dma && valid && !we && cpu_plain_bus &&
+    cpu_mega2_window && slowram_ce && !fastram_ce && !rom_ce && !twgs_sel;
+assign cpu_slowram_write = EXTERNAL_CPU && !hdd_dma && valid && we && cpu_plain_bus &&
+    slowram_ce && (cpu_mega2_window || fastram_ce);
+wire cpu_mega2_rom_read = EXTERNAL_CPU && !hdd_dma && valid && !we && cpu_plain_bus &&
+    cpu_mega2_bank && addr_bef >= 16'hD000 && rom_ce;
 assign cpu_fast_cycle = !hdd_dma && (!valid || cpu_local_read ||
-    (!IO && !EXTERNAL_IO && !(|device_select) && !(|io_select) &&
-     !slot_ce && (!slowram_ce || (!we && fastram_ce)) && (fastram_ce || rom_ce)));
+    (cpu_plain_bus && (!slowram_ce || (!we && fastram_ce)) && (fastram_ce || rom_ce)) ||
+    cpu_slowram_read || cpu_slowram_write || cpu_mega2_rom_read);
+// hdd.sv registers slot ROM twice (address -> rom_dout -> D_OUT) and its
+// register mirror once. Without the 1 MHz sync the native bridge must give
+// these reads a second preparation edge before its capture edge.
+assign cpu_native_two_edge = !we && ((|io_select) || (|device_select));
+// The cache and slow-RAM write byte. Unlike dout it never passes through the
+// I/O read mux (cpu_din); only write cycles consume it.
+wire [7:0] cpu_bus_write_byte = (hdd_dma & hdd_dma_we) ? HDD_DO : cpu_dout;
+// The sound GLU runs one host access per DOC oscillator slot (osc_en, every
+// 16 CLK_14M). Without the 1 MHz sync an accelerated CPU reaches C03C-C03F
+// again before that access ran, so a register/RAM write is lost or lands at
+// a moved address and a read returns stale data. Hold the next GLU access
+// on the native bridge until the GLU is idle. Stock timing is unchanged.
+assign cpu_native_hold = external_accel && native_snd_sel && snd_busy;
 
 assign cpu_valid = cpu_vpa | cpu_vda | hdd_dma;
 assign video_x = H;
