@@ -291,6 +291,34 @@ static void test_iigs_drive_formats(void)
           "all IIgs drive choosers retain folder navigation");
 }
 
+static void test_iigs_card_speed(void)
+{
+    mt_core_frontend_t frontend;
+    mt_core_frontend_state_t state = {0};
+    mt_menu_view_t view = {0};
+    state.core_id = MT_IIGS_CORE_ID;
+    state.services_ready = true;
+    state.iigs_speed_mask = MT_IIGS_ACCEL_SPEED_MASK;
+    state.iigs_config.speed = 6U;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(view.core_options[0].enabled &&
+          strcmp(view.core_options[0].value, "57.3 MHz") == 0,
+          "ZipGS exposes live CPU speed selection");
+    state.iigs_config.card = 2U;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(!view.core_options[0].enabled &&
+          strcmp(view.core_options[0].value, "2.8 MHz (stock)") == 0,
+          "no accelerator always shows stock and disables speed changes");
+    check(strstr(view.core_options[2].help, "restarts") != NULL,
+          "card changes explain the machine restart");
+    state.iigs_config.card = 0U;
+    state.iigs_config.speed = 0U;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(view.core_options[0].enabled &&
+          strcmp(view.core_options[0].value, "2.8 MHz (stock)") == 0,
+          "returning to ZipGS permits speed selection from stock");
+}
+
 int main(void)
 {
     test_profile_lifecycle();
@@ -299,6 +327,7 @@ int main(void)
     test_browser_filters();
     test_genesis_profile();
     test_iigs_drive_formats();
+    test_iigs_card_speed();
     puts("Core front-end profile tests passed");
     return 0;
 }

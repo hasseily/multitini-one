@@ -1,10 +1,17 @@
 # Apple IIgs hardware test
 
-Install the complete `build/firmware-core-gs-m053/sd/` contents, preserving existing
+Install the complete `build/firmware-core-gs-m055/sd/` contents, preserving existing
 media and settings. Update Multitini with its included `FIRMWARE.BIN` using
 Golden B2. The matching supervisor and FSBL enable the new HP3 source video
 port. Load the new IIgs core only after installing the matching firmware.
 This package does not itself flash or test the board.
+
+M0.5.5 changes ARM firmware only and retains all eight qualified FPGA images,
+including the M0.5.4 IIgs image. Accelerator card **None** forces stock speed
+and disables the CPU speed control. Changing between None and ZipGS saves
+media and restarts the IIgs, clearing prior software speed, cache, unlock and
+delay overrides. Saved menu delay choices are reapplied. Returning to ZipGS
+starts at Stock; select a faster rate afterward without restarting.
 
 The acceleration rework on branch `iigs-accel-fixes` changes only the IIgs FPGA
 image and its block design; firmware, ABI and PS initialization are unchanged.
@@ -63,7 +70,7 @@ default output has the SD directory layout under `build/apple-iigs-user-roms/sd/
 
 Select **Apple IIgs** in Cores. Missing ROMs leave the shared menu available;
 use its System ROM action after supplying the required files. Choose ROM1 or
-ROM3, stock CPU speed and ZipGS/host-only settings in core options. F12 and the
+ROM3, stock CPU speed and ZipGS or None in core options. F12 and the
 shared Select+Start gesture open the menu. Ctrl+F11 resets; Ctrl+OpenApple+F11 is a
 cold reset. Command/OpenApple uses Alt; Option/SolidApple uses the Windows key.
 
@@ -98,19 +105,25 @@ cold reset. Command/OpenApple uses Alt; Option/SolidApple uses the Windows key.
    and a different image background: no stray border column should enter the
    640-pixel image. Check 320 fill mode as well. Exercise all six DVI modes,
    picture effects and manual/Auto sizing.
-6. Raise CPU speed through 3.58, 4.77, 7.16, 14.32, 28.64 and 57.27 MHz,
+6. Select None and confirm a restart, a Stock speed label and a disabled speed
+   control. Reboot with an older saved None/nonzero-speed configuration and
+   confirm it is normalized to Stock. Return to ZipGS and confirm another
+   restart at Stock. Previously software-selected ZipGS speed, cache disable,
+   register unlock and delay settings must not survive these transitions;
+   the saved menu delay choices apply instead. Remembered media must remount.
+   With ZipGS selected, raise CPU speed through 3.58, 4.77, 7.16, 14.32, 28.64 and 57.27 MHz,
    using only the rates advertised by the installed image. Check software
    ZipGS changes, native I/O/disk slowdown, warm/cold reset and sustained
-   gameplay. The menu's Accelerator card option selects ZipGS software controls
-   or host-only control. ZipGS 100% selects the installed maximum. Effective
+   gameplay. Speed-only changes remain live. ZipGS 100% selects the installed maximum. Effective
    throughput depends on memory misses, writes, interrupts and I/O.
    The Multitini CPU acceleration menu needs no GS/OS driver. Optional ZipGS
    control software provides an additional interface inside GS/OS, as described
    in the [original manual](https://www.whatisthe2gs.apple2.org.za/files/ZipGSX/Manual/ZIPGSX_Manual.pdf).
    Compare Stock and maximum during an HDD-only session with both floppies
    ejected, including Finder startup, window opening/redraw and a CPU-heavy
-   workload. Record all delay settings. With the acceleration rework, screen
-   drawing should scale far beyond 2x; record the observed factor. At maximum
+   workload. Record all delay settings and the observed speedup. The owner
+   reports 59/37/35-second System 6.0.1 boots at Stock/14/57 MHz on M0.5.4;
+   the small 14-to-57 MHz improvement remains unexplained. At maximum
    speed also check DOC sound effects and music, the boot beep, paddles,
    keyboard and mouse, the Control Panel, 3.5-inch and 5.25-inch boot, read and
    write, and switching speed while a program runs. Report any program that

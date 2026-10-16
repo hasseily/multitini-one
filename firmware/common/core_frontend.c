@@ -237,12 +237,15 @@ static void build_iigs(mt_core_frontend_t *frontend,
     frontend->input_items[view->input_item_count++]=item("Keyboard","USB keyboard","F12 opens this menu; Ctrl+F11 resets; Windows keys are Apple keys.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
     frontend->input_items[view->input_item_count++]=item("Mouse","USB boot mouse","Mouse movement and buttons reach the Apple IIgs ADB controller.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
     frontend->input_items[view->input_item_count++]=item("Joystick","USB analog gamepad","Stick and three fire buttons; configure bindings in Controllers.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
-    frontend->core_options[view->core_option_count++]=item("CPU acceleration",speed_valid ? speeds[state->iigs_config.speed]:"Unavailable",
-        "Choose a 65816 speed. Peripheral timing and compatibility delays stay active.",MT_MENU_ACTION_TOGGLE_CORE_OPTION,0U,true,MT_UI_COLOR_BLUE);
+    const bool zipgs=state->iigs_config.card==0U;
+    frontend->core_options[view->core_option_count++]=item("CPU acceleration",!zipgs ? speeds[0]:speed_valid ? speeds[state->iigs_config.speed]:"Unavailable",
+        zipgs ? "Choose a 65816 speed. Peripheral timing and compatibility delays stay active.":
+            "No accelerator card: stock speed. Select ZipGS to enable acceleration.",
+        MT_MENU_ACTION_TOGGLE_CORE_OPTION,0U,zipgs,MT_UI_COLOR_BLUE);
     frontend->core_options[view->core_option_count++]=item("ROM version",state->iigs_config.rom3 ? "ROM 3":"ROM 1",
         "Changing ROM restarts the machine after saving and ejecting media.",MT_MENU_ACTION_TOGGLE_CORE_OPTION,1U,true,MT_UI_COLOR_BLUE);
     frontend->core_options[view->core_option_count++]=item("Accelerator card",state->iigs_config.card==0U ? "ZipGS":"None",
-        "ZipGS registers allow software to select acceleration. None uses the menu speed.",MT_MENU_ACTION_TOGGLE_CORE_OPTION,2U,true,MT_UI_COLOR_BLUE);
+        "None runs at stock speed. Changing cards saves media and restarts the IIgs to clear ZipGS state.",MT_MENU_ACTION_TOGGLE_CORE_OPTION,2U,true,MT_UI_COLOR_BLUE);
     frontend->core_options[view->core_option_count++]=item("Force self test",(state->iigs_config.pulses&1U)!=0U ? "On":"Off",
         "Run Apple's self test on reset.",MT_MENU_ACTION_TOGGLE_CORE_OPTION,3U,true,MT_UI_COLOR_BLUE);
     static const char *const options[]={"Speaker delay","Joystick delay","Counter delay","Sync to 1 MHz","IRQ delay"};

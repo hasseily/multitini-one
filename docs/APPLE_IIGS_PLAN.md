@@ -7,6 +7,12 @@ Upstream is `MiSTer-devel/Apple-IIgs_MiSTer` at
 files and explicit per-file licenses. Original machine code remains separate
 from reproducible Multitini ports. Apple ROM bytes are runtime user inputs.
 
+M0.5.5 changes accelerator-card selection in ARM firmware. None forces stock
+speed, including older saved None configurations. Card changes use the same
+safe save/reset/reload/remount path as ROM changes, clearing all guest ZipGS
+state before applying the saved menu configuration. CPU speed changes within
+ZipGS remain live. All eight qualified FPGA images are reused.
+
 The acceleration rework on branch `iigs-accel-fixes` removes the emulated
 1 MHz Mega II sync while accelerated, posts DDR writes, fills 32-byte cache
 lines by burst, clocks the IIgs HP2 port from the machine clock, holds sound
@@ -54,8 +60,8 @@ E0/E1 RAM and shadowed writes use a primary-clock slow-RAM port, and I/O
 commits through the native bridge without the sync. Sound GLU accesses wait
 while the GLU is busy. Stock speed, and the speaker, paddle, counter, IRQ and
 CPS compatibility holds and floppy activity with mounted media, restore the
-upstream timing rules. ZipGS registers and an optional host-only accelerator are
-supported. Software ZipGS percentages scale against the installed maximum,
+upstream timing rules. Firmware exposes ZipGS acceleration or None at stock
+speed. Software ZipGS percentages scale against the installed maximum,
 including 100% above the former 14.32 MHz host-only ceiling. Its millisecond
 timer remains on the native clock. A TransWarp ROM is not supplied.
 ABI 0.22 advertises supported speed codes in `IIGS_ACCEL_CAPS`; firmware uses

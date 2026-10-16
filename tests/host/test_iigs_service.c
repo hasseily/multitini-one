@@ -33,6 +33,8 @@ static uint8_t dirty_drives;
 static bool pram_eject_write,eject_pending_test;
 static unsigned pram_load_packets,warm_reset_packets,pram_load_complete_event,warm_reset_event,recovery_calls;
 static bool pram_restore_pending,fail_sector_transfer;
+static unsigned reset_assertions,reset_releases,reset_event,release_event,config_event,close_event,mount_event[5];
+static bool core_reset_asserted;
 static void request(unsigned slot,uint32_t lba,bool writing);
 static mt_sd_result_t result(mt_sd_status_t s,size_t n) { return (mt_sd_result_t){s,0U,n}; }
 static test_file_t *file_find(const char *path,bool create)
@@ -98,7 +100,8 @@ mt_sd_result_t mt_sd_file_seek(mt_sd_file_t *h,int64_t offset,int origin)
     p+=offset; assert(p>=0 && (uint64_t)p<=h->file->size); h->position=(size_t)p;return result(MT_SD_OK,0U);
 }
 int64_t mt_sd_file_tell(const mt_sd_file_t *h) { return (int64_t)h->position; }
-mt_sd_result_t mt_sd_file_close(mt_sd_file_t *h) { assert(h->open); h->open=false;return result(MT_SD_OK,0U); }
+mt_sd_result_t mt_sd_file_close(mt_sd_file_t *h)
+{ assert(h->open); h->open=false;close_event=++events;return result(MT_SD_OK,0U); }
 mt_sd_result_t mt_sd_file_remove(const char *p)
 { test_file_t *f=file_find(p,false);if(f!=NULL)f->present=false;return result(MT_SD_OK,0U); }
 const char *mt_sd_status_name(mt_sd_status_t s)
@@ -130,8 +133,22 @@ static void write_reg(void *c,uint32_t o,uint32_t v)
         const uint32_t a=regs[MT_REG_COMMAND_ARG0/4U], b=regs[MT_REG_COMMAND_ARG1/4U], d=regs[MT_REG_COMMAND_ARG3/4U];
         uint32_t response=MT_RESPONSE_OK;
         switch(regs[MT_REG_COMMAND_OPCODE/4U]) {
+        case MT_COMMAND_CORE_RESET:
+            if(a!=0U) {
+                /* A machine reset is forbidden until all durable media work
+                 * is complete and every ARM disk handle has been closed. */
+                assert(dirty_drives==0U && !eject_pending_test &&
+                    (regs[MT_REG_MEDIA_REQUEST/4U]&MT_MEDIA_REQUEST_VALID)==0U);
+                for(unsigned i=0U;i<FILES;++i)assert(!handles[i].open);
+                ++reset_assertions;reset_event=++events;core_reset_asserted=true;
+            } else {
+                assert(core_reset_asserted && config_event>reset_event);
+                ++reset_releases;release_event=++events;core_reset_asserted=false;
+            }
+            break;
         case MT_COMMAND_MEDIA_MOUNT:
-            assert((a&255U)<5U);generations[a&255U]=regs[MT_REG_COMMAND_ARG2/4U];mount_sizes[a&255U]=b;break;
+            assert((a&255U)<5U);generations[a&255U]=regs[MT_REG_COMMAND_ARG2/4U];mount_sizes[a&255U]=b;
+            mount_event[a&255U]=++events;break;
         case MT_COMMAND_MEDIA_EJECT:
             dirty_drives&=(uint8_t)~(1U<<(a&255U));
             if(a==4U && pram_eject_write) {
@@ -154,6 +171,7 @@ static void write_reg(void *c,uint32_t o,uint32_t v)
             }
             if(stream_kind==MT_LOAD_IIGS_CONFIG) {
                 assert(stream_index==sizeof(config_stream));
+                config_event=++events;
                 if((config_stream[8]&16U)!=0U) {
                     assert((config_stream[8]&2U)==0U && !pram_restore_pending);
                     ++pram_load_packets;pram_restore_pending=true;
@@ -192,6 +210,8 @@ static void reset(void)
     failed_rom=-1;rom_failure_status=MT_SD_OPEN_FAILED;rom_read_count=rom_stream_count=0U;
     pram_load_packets=warm_reset_packets=pram_load_complete_event=warm_reset_event=recovery_calls=0U;
     journal_writes=disk_writes=events=completions=0U; journal_durable=false;dirty_drives=0U;
+    reset_assertions=reset_releases=reset_event=release_event=config_event=close_event=0U;
+    core_reset_asserted=false;memset(mount_event,0,sizeof(mount_event));
     raw_snapshots=0U;reverse_data=NULL;
     regs[MT_REG_ABI_VERSION/4U]=MT_ABI_VERSION;
     regs[MT_REG_STREAM_STATUS/4U]=MT_STREAM_STATUS_READY|MT_STREAM_STATUS_DRAINED;
@@ -359,6 +379,104 @@ static void settings_checksum(test_file_t *file)
         for(unsigned bit=0U;bit<8U;++bit)crc=(crc>>1U)^((0U-(crc&1U))&UINT32_C(0xedb88320));
     }
     store32(file->data+20U,~crc);
+}
+static void start_accelerated(void)
+{
+    reset();regs[MT_REG_IIGS_ACCEL_CAPS/4U]=MT_IIGS_ACCEL_CAPS_VALID|MT_IIGS_ACCEL_SPEED_MASK;
+    iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
+    assert(iigs_content_service_boot()==0 && reset_assertions==1U && reset_releases==1U);
+    mt_iigs_config_t c=*iigs_content_service_config();c.speed=6U;c.flags=UINT8_C(0x05);
+    assert(iigs_content_service_configure(&c)==0);
+    assert(reset_assertions==1U && config_stream[1]==6U && config_stream[2]==0U);
+}
+static void test_card_mode_lifecycle(void)
+{
+    start_accelerated();test_file_t *image=disk("System/boot.hdv");
+    assert(iigs_content_service_mount(0U,"System/boot.hdv")==0);
+    assert(iigs_content_service_set_mouse_sensitivity(75U)==0);
+    /* Pending writes and motor-on dirty state must flush before the full
+     * reset that clears all software-controlled ZipGS state. */
+    request(0U,1U,true);dirty_drives=1U;pram_eject_write=true;
+    mt_iigs_config_t c=*iigs_content_service_config();c.card=2U;
+    assert(iigs_content_service_configure(&c)==0);
+    assert(reset_assertions==2U && reset_releases==2U && !core_reset_asserted);
+    assert(close_event<reset_event && config_event>reset_event &&
+        mount_event[0]>config_event && mount_event[4]>config_event && release_event>mount_event[0]);
+    assert(config_stream[1]==0U && config_stream[2]==2U && rom_stream_count==8U);
+    assert(iigs_content_service_config()->card==2U && iigs_content_service_config()->speed==0U);
+    assert(iigs_content_service_config()->flags==UINT8_C(0x05) && iigs_content_service_mouse_sensitivity()==75U);
+    assert(strcmp(iigs_content_service_name(0U),"System/boot.hdv")==0 && image->data[512U]==0x31U);
+    assert(file_find(TEST_MEDIA_ROOT "/System/boot.hdv.gsj",false)==NULL && dirty_drives==0U);
+    assert(file_find(TEST_MEDIA_ROOT "/pram.bin",false)!=NULL);
+    test_file_t *saved=file_find(TEST_MEDIA_ROOT "/gs-settings.bin",false);
+    assert(saved!=NULL && saved->data[9]==0U && saved->data[10]==2U);
+    /* A direct caller cannot leave turbo selected while the card is None. */
+    c=*iigs_content_service_config();c.speed=6U;
+    assert(iigs_content_service_configure(&c)==0 && reset_assertions==2U && config_stream[1]==0U);
+    /* Returning to ZipGS also resets, even if the requested speed is stock.
+     * Only subsequent speed changes remain live. */
+    c=*iigs_content_service_config();c.card=0U;
+    assert(iigs_content_service_configure(&c)==0 && reset_assertions==3U && reset_releases==3U);
+    assert(config_stream[1]==0U && config_stream[2]==0U);
+    c=*iigs_content_service_config();c.speed=6U;
+    assert(iigs_content_service_configure(&c)==0 && reset_assertions==3U && config_stream[1]==6U);
+    c.speed=4U;assert(iigs_content_service_configure(&c)==0 && reset_assertions==3U && config_stream[1]==4U);
+}
+static void test_legacy_none_and_card_rollback(void)
+{
+    start_accelerated();
+    test_file_t *saved=file_find(TEST_MEDIA_ROOT "/gs-settings.bin",false);
+    assert(saved!=NULL);saved->data[10]=2U;settings_checksum(saved);
+    /* Old None+turbo records remain valid, but load as stock without an
+     * unsolicited settings rewrite. Boot must transmit only stock. */
+    iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
+    assert(iigs_content_service_config()->card==2U && iigs_content_service_config()->speed==0U);
+    assert(saved->data[9]==6U && saved->data[10]==2U);
+    assert(iigs_content_service_boot()==0 && config_stream[1]==0U && config_stream[2]==2U);
+    assert(iigs_content_service_set_mouse_sensitivity(200U)==0 && saved->data[9]==0U);
+    regs[MT_REG_IIGS_ACCEL_CAPS/4U]=MT_IIGS_ACCEL_CAPS_VALID|UINT32_C(1);
+    iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
+    mt_iigs_config_t c=*iigs_content_service_config();c.speed=6U;
+    assert(iigs_content_service_configure(&c)==0 && config_stream[1]==0U);
+    c.speed=7U;assert(iigs_content_service_configure(&c)!=0); /* Invalid wire values still fail. */
+
+    start_accelerated();(void)disk("boot.hdv");assert(iigs_content_service_mount(0U,"boot.hdv")==0);
+    saved=file_find(TEST_MEDIA_ROOT "/gs-settings.bin",false);assert(saved!=NULL);
+    fail_journal=true;c=*iigs_content_service_config();c.card=2U;
+    assert(iigs_content_service_configure(&c)!=0);
+    assert(reset_assertions==3U && reset_releases==3U && !core_reset_asserted);
+    assert(iigs_content_service_ready() && iigs_content_service_faulted());
+    assert(strcmp(iigs_content_service_error(),"simulated SD failure")==0);
+    assert(iigs_content_service_config()->card==0U && iigs_content_service_config()->speed==6U);
+    assert(config_stream[1]==6U && config_stream[2]==0U && saved->data[9]==6U && saved->data[10]==0U);
+    assert(strcmp(iigs_content_service_name(0U),"boot.hdv")==0);
+}
+static void test_card_restart_failures(void)
+{
+    start_accelerated();(void)disk("busy.hdv");assert(iigs_content_service_mount(0U,"busy.hdv")==0);
+    test_file_t *saved=file_find(TEST_MEDIA_ROOT "/gs-settings.bin",false);assert(saved!=NULL);
+    request(0U,1U,true);dirty_drives=1U;fail_disk_write=true;
+    mt_iigs_config_t c=*iigs_content_service_config();c.card=2U;
+    assert(iigs_content_service_configure(&c)!=0);
+    /* A failed durable write must never be bypassed by the mode reset. */
+    assert(reset_assertions==1U && reset_releases==1U && !core_reset_asserted);
+    assert(iigs_content_service_config()->card==0U && saved->data[9]==6U && saved->data[10]==0U);
+    assert(file_find(TEST_MEDIA_ROOT "/busy.hdv.gsj",false)!=NULL);
+    assert(strcmp(iigs_content_service_name(0U),"busy.hdv")==0);
+    assert(strstr(iigs_content_service_error(),"rollback failed")!=NULL);
+    fail_disk_write=false;assert(iigs_content_service_retry()==0);
+    c=*iigs_content_service_config();c.card=2U;
+    assert(iigs_content_service_configure(&c)==0 && reset_assertions==2U && reset_releases==2U);
+
+    start_accelerated();saved=file_find(TEST_MEDIA_ROOT "/gs-settings.bin",false);assert(saved!=NULL);
+    failed_rom=ROM3_FILE;c=*iigs_content_service_config();c.card=2U;
+    assert(iigs_content_service_configure(&c)!=0);
+    assert(core_reset_asserted && !iigs_content_service_ready() && iigs_content_service_faulted());
+    assert(reset_assertions==3U && reset_releases==1U && saved->data[10]==0U);
+    assert(iigs_content_service_config()->card==0U && iigs_content_service_config()->speed==6U);
+    assert(strstr(iigs_content_service_error(),"rollback failed")!=NULL);
+    failed_rom=-1;assert(iigs_content_service_boot()==0 && !core_reset_asserted);
+    assert(config_stream[1]==6U && config_stream[2]==0U && iigs_content_service_ready());
 }
 static void test_mouse_settings(void)
 {
@@ -554,6 +672,9 @@ int main(void)
     test_speed_capability();
     test_irq_default_and_saved_choices();
     test_mouse_settings();
+    test_card_mode_lifecycle();
+    test_legacy_none_and_card_rollback();
+    test_card_restart_failures();
     test_rom_paths();
     test_nested_media_paths();
     reset();test_file_t *f=disk("test.2mg");memset(f->data,0,64U);memcpy(f->data,"2IMG",4U);f->data[8]=64U;f->data[10]=1U;

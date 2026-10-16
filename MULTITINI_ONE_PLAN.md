@@ -2,6 +2,16 @@
 
 Status: planning baseline, written 2026-08-29
 
+Accelerator selection fix, 2026-10-16: None means stock CPU speed. Normalize
+older saved None configurations, disable speed selection while None is active,
+and use the existing safe machine restart when changing accelerator cards.
+The restart clears guest ZipGS speed, enable, unlock, cache and delay overrides;
+the saved menu settings apply on restart. Speed changes within ZipGS stay live.
+Deliver M0.5.5 with an ARM-only rebuild and explicitly reuse all eight qualified
+FPGA images. Do not start an FPGA rebuild until the weak 14-to-57 MHz hardware
+speedup is diagnosed. The owner confirms System 6.0.1 boots on the M0.5.4 core;
+the new card-selection behavior still needs board verification.
+
 Acceleration rework, 2026-10-16: the owner reports about 2x at 57 MHz in
 real use. Profile the real ROM/OS boot and synthetic loops, then remove the
 measured limits while keeping stock timing: no emulated 1 MHz Mega II sync

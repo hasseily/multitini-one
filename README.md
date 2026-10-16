@@ -5,11 +5,18 @@ It runs C64, Game Boy Color, Vectrex, Genesis / Mega Drive and Apple IIgs
 machines through a shared supervisor, menu, input, audio, storage and
 core-loading system. It does not use an Apple II host.
 
+M0.5.5 makes Apple IIgs **Accelerator card: None** run at stock speed.
+Changing accelerator cards saves media and restarts the IIgs to clear guest
+ZipGS overrides. This is an ARM-only update; all eight FPGA images are reused,
+including the M0.5.4 IIgs core. See the [card-selection update](docs/APPLE_IIGS_ACCELERATION.md)
+and [installation checks](docs/APPLE_IIGS_HARDWARE_TEST.md).
+
 Branch `iigs-accel-fixes` reworks IIgs acceleration: E0/E1 memory, screen
 writes and I/O no longer wait for the 1 MHz sync at accelerated speeds, DDR
 writes are posted and cache lines fill by burst. Synthetic loops run 12–24x
 faster than stock at 57 MHz, against 2–4x before. See the
-[acceleration record](docs/APPLE_IIGS_ACCELERATION.md); it is not yet board-tested.
+[acceleration record](docs/APPLE_IIGS_ACCELERATION.md). The owner confirms
+System 6.0.1 boots on hardware; the weak 14-to-57 MHz speedup remains under review.
 
 M0.5.3 corrects IIgs acceleration holdoffs from empty floppy drives, interrupt
 dispatch reads and shadow-RAM reads. It adds saved mouse sensitivity from 25%

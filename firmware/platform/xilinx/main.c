@@ -4346,7 +4346,10 @@ static void handle_menu_action(mt_menu_action_t action)
                 return;
             }
             mt_iigs_config_t changed=*iigs_content_service_config();
-            if(action.file_index==0U)changed.speed=mt_iigs_next_speed(changed.speed,iigs_content_service_speed_mask());
+            if(action.file_index==0U) {
+                if(changed.card!=0U)return;
+                changed.speed=mt_iigs_next_speed(changed.speed,iigs_content_service_speed_mask());
+            }
             else if(action.file_index==1U)changed.rom3^=1U;
             else if(action.file_index==2U)changed.card=changed.card==0U ? 2U:0U;
             else if(action.file_index==3U)changed.pulses^=1U;

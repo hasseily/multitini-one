@@ -57,13 +57,17 @@ module tb_apple_iigs_paused_settings;
     end
 
     reg [7:0] rom[0:131071],hdd_rom[0:255];integer cursor;
-    integer selected=0,config_flags=0,case_number=0;bit sei_loop=0,live=0;
+    integer selected=0,config_flags=0,case_number=0,card=0,guest_mode=0;
+    integer card_case_number=0,mode_restarts=0,scenario=0;
+    bit sei_loop=0,live=0,card_matrix_active=0;
+    bit negative_skip_reset=0,negative_keep_none_speed=0;
     longint unsigned primary_ticks=0;
     string rom_path;
     always @(posedge core_clk)begin
         primary_ticks=primary_ticks+1;
         if(live&&(dut.machine_reset||dut.machine_reset_raw||reset||core_reset_request))
             $fatal(1,"Live settings unexpectedly reset machine");
+        if(card_matrix_active && reset)$fatal(1,"Card-mode restart used global reset");
     end
     task emit(input [7:0] value);begin rom[cursor]=value;cursor++;end endtask
     task program_rom;
@@ -71,6 +75,21 @@ module tb_apple_iigs_paused_settings;
             for(integer i=0;i<131072;i++)rom[i]=8'hea;
             rom[131068]=0;rom[131069]=8'he0;cursor=122880;
             emit(8'h78);emit(8'ha9);emit(8'h80);emit(8'h8d);emit(8'h36);emit(8'hc0);
+            if(guest_mode!=0)begin
+                // Real guest stores unlock and dirty speed, cache bypass,
+                // compatibility delays and the per-slot delay mask.
+                emit(8'ha9);emit(8'h50);
+                repeat(4)begin emit(8'h8d);emit(8'h5a);emit(8'hc0);end
+                emit(8'ha9);emit(8'hf8);emit(8'h8d);emit(8'h59);emit(8'hc0);
+                emit(8'ha9);emit(8'hfe);emit(8'h8d);emit(8'h5c);emit(8'hc0);
+                if(guest_mode==2)begin
+                    emit(8'ha9);emit(0);emit(8'h8d);emit(8'h5a);emit(8'hc0);
+                end else begin
+                    emit(8'ha9);emit(guest_mode==1 ? 8'hc0:0);
+                    emit(8'h8d);emit(8'h5d);emit(8'hc0);
+                    emit(8'h8d);emit(8'h5b);emit(8'hc0);
+                end
+            end
             emit(8'h18);emit(8'hfb);emit(8'hc2);emit(8'h30);
             emit(8'ha9);emit(8'h34);emit(8'h12);emit(8'ha0);emit(0);emit(0);
             if(!sei_loop)emit(8'h58);
@@ -84,7 +103,8 @@ module tb_apple_iigs_paused_settings;
             load_epoch=~load_epoch;
             for(integer i=0;i<size;i++)begin
                 value=kind==8'h41 ? rom[i]:kind==8'h45 ? hdd_rom[i]:
-                    kind==8'h43&&i==1 ? 8'(selected):kind==8'h43&&i==3 ? 8'(config_flags):0;
+                    kind==8'h43&&i==1 ? 8'(selected):kind==8'h43&&i==2 ? 8'(card):
+                    kind==8'h43&&i==3 ? 8'(config_flags):0;
                 @(negedge core_clk);load_kind=kind;load_total=size;load_offset=i;load_data=value;
                 load_first=i==0;load_last=i==size-1;load_valid=1;
                 while(!load_ready)@(negedge core_clk);
@@ -124,13 +144,88 @@ module tb_apple_iigs_paused_settings;
             pc=dut.machine_i.cpu.PC;sp=dut.machine_i.cpu.SP;p=dut.machine_i.cpu.P;state=dut.machine_i.cpu.STATE;
             packet(8'h43,16);
             if(dut.config_bytes[15:8]!==8'(selected)||dut.config_bytes[31:24]!==8'(config_flags)||
-               dut.machine_i.zipgs.host_prev!==3'(selected)||dut.machine_i.zip_speed_code!==3'(selected))
+               dut.machine_i.zipgs.host_prev!==3'(selected)||dut.machine_i.zip_speed_code!==3'(selected)||
+               dut.config_bytes[23:16]!==8'(card))
                 $fatal(1,"Paused loader/Zip speed setting did not apply");
             if(dut.machine_i.zip_irq_delay_en!==!config_flags[4])$fatal(1,"Paused IRQ setting did not apply");
             if(dut.machine_i.cpu.A!==a||dut.machine_i.cpu.X!==x||dut.machine_i.cpu.Y!==y||dut.machine_i.cpu.PC!==pc||
                dut.machine_i.cpu.SP!==sp||dut.machine_i.cpu.P!==p||dut.machine_i.cpu.STATE!==state)
                 $fatal(1,"Paused config changed architectural CPU state");
             pause_request=0;warm();
+        end
+    endtask
+    task check_reset_zip;
+        begin
+            if(!core_reset_request || !dut.machine_reset ||
+               dut.machine_i.zipgs.unlock!==0 || dut.machine_i.zipgs.disabled!==1 ||
+               dut.machine_i.zipgs.speed_reg!==0 || dut.machine_i.zipgs.sp!==0 ||
+               dut.machine_i.zipgs.host_prev!==0 || dut.machine_i.zipgs.reg_c059!==8'h77 ||
+               dut.machine_i.zipgs.reg_c05c!==8'h01 || dut.machine_i.zipgs.ms_ctr!==0 ||
+               dut.machine_i.zipgs.ms_toggle!==0)
+                $fatal(1,"Core-reset request failed to clear complete ZipGS state");
+        end
+    endtask
+    task check_clean_zip;
+        reg [7:0] expected_c059;
+        begin
+            expected_c059=8'h07 | (!config_flags[1] ? 8'h40:0) | (!config_flags[2] ? 8'h10:0) |
+                (config_flags[3] ? 8'h08:0) | (!config_flags[4] ? 8'h20:0);
+            if(dut.machine_i.zipgs.unlock!==0 || dut.machine_i.zip_unlocked_raw!==0 ||
+               dut.machine_i.zipgs.disabled!==(selected==0) ||
+               dut.machine_i.zipgs.speed_reg!==3'(selected) || dut.machine_i.zipgs.host_prev!==3'(selected) ||
+               dut.machine_i.zipgs.reg_c059!==expected_c059 ||
+               dut.machine_i.zipgs.reg_c05c!==(!config_flags[0] ? 8'h01:8'h00) ||
+               dut.machine_i.cache_disable!==0)
+                $fatal(1,"Mode restart left stale ZipGS guest state card%0d speed%0d unlock%0d disabled%0d speedreg%0d c059%02x c05c%02x",
+                    card,selected,dut.machine_i.zipgs.unlock,dut.machine_i.zipgs.disabled,
+                    dut.machine_i.zipgs.speed_reg,dut.machine_i.zipgs.reg_c059,dut.machine_i.zipgs.reg_c05c);
+        end
+    endtask
+    task restart_mode(input integer next_card,input integer next_speed,input integer next_guest);
+        bit skip;
+        begin
+            live=0;pause_request=1;
+            repeat(32)@(negedge core_clk);
+            skip=negative_skip_reset && next_card==2 && scenario==3;
+            if(!skip)begin
+                // Exactly the existing ARM command boundary. Global reset is
+                // never asserted in this whole mode-transition matrix.
+                core_reset_request=1;
+                repeat(24)@(negedge core_clk);
+                check_reset_zip();mode_restarts++;
+            end
+            card=next_card;selected=next_speed;guest_mode=next_guest;
+            program_rom();packet(8'h43,16);
+            if(!skip)begin
+                // Same protected streams as the existing firmware boot path.
+                packet(8'h41,131072);packet(8'h42,4096);packet(8'h46,4096);packet(8'h45,256);
+                check_reset_zip();core_reset_request=0;
+            end
+            repeat(32)@(negedge core_clk);
+            check_clean_zip();
+            pause_request=0;
+            while(dut.machine_reset || dut.machine_reset_raw || dut.machine_i.cpu.Y<64)@(negedge core_clk);
+            live=1;warm();
+        end
+    endtask
+    task measure_card(input integer effective);
+        integer count,cycles,misses;longint unsigned first_tick,elapsed;
+        begin
+            count=0;cycles=0;first_tick=0;elapsed=0;misses=dut.cache_i.misses;
+            while(count<=4096)begin
+                @(posedge core_clk);cycles++;
+                if(dut.cpu_ce)begin
+                    if(dut.cpu_speed!==3'(effective))$fatal(1,"None must use Stock; mode live speed%0d expected%0d",dut.cpu_speed,effective);
+                    if(count==0)first_tick=primary_ticks;
+                    if(count==4096)elapsed=primary_ticks-first_tick;
+                    count++;
+                end
+                if(cycles>200000)$fatal(1,"Card-mode CPU measurement timed out");
+            end
+            if(dut.cache_i.misses!=misses)$fatal(1,"Clean card-mode warm loop missed DDR cache");
+            $display("CARD_RESET_MEASURE case=%0d scenario=%0d requested=%0d card=%0d effective=%0d ticks=%0d advances=4096",
+                card_case_number,scenario,selected,card,effective,elapsed);
+            card_case_number++;@(negedge core_clk);
         end
     endtask
     task measure(input integer effective);
@@ -154,6 +249,8 @@ module tb_apple_iigs_paused_settings;
         end
     endtask
     initial begin
+        negative_skip_reset=$test$plusargs("NEG_SKIP_MODE_RESET");
+        negative_keep_none_speed=$test$plusargs("NEG_KEEP_NONE_SPEED");
         if(!$value$plusargs("HDD_ROM=%s",rom_path))$fatal(1,"Licensed HDD bootstrap required");
         $readmemh(rom_path,hdd_rom);
         selected=0;config_flags=0;sei_loop=0;start_machine();warm();
@@ -169,6 +266,27 @@ module tb_apple_iigs_paused_settings;
         config_flags=0;live_config();measure(0);
         if(case_number!=10)$fatal(1,"Incomplete paused-settings matrix");
         $display("PASS: live paused settings all7 rates plus IRQ On/Off/On, exact config and frozen architecture, no reset");
+        card_matrix_active=1;config_flags=16;sei_loop=0;
+        for(integer which=1;which<=3;which++)begin
+            scenario=which;
+            restart_mode(0,scenario==3 ? 0:6,scenario);
+            if(!dut.machine_i.zip_unlocked_raw || dut.machine_i.zipgs.reg_c059!==8'hff ||
+               dut.machine_i.zipgs.reg_c05c!==8'hfe ||
+               dut.machine_i.zip_speed_code!==(scenario==1 ? 3'd4:scenario==2 ? 3'd0:3'd6) ||
+               dut.machine_i.zipgs.disabled!==(scenario==2))
+                $fatal(1,"Actual guest ZipGS override did not execute scenario%0d",scenario);
+            $display("CARD_RESET_SEED scenario=%0d requested=%0d effective=%0d c059=%02x c05c=%02x unlock=%0d",
+                scenario,selected,dut.cpu_speed,dut.machine_i.zipgs.reg_c059,dut.machine_i.zipgs.reg_c05c,dut.machine_i.zipgs.unlock);
+            restart_mode(2,negative_keep_none_speed ? 6:0,scenario);
+            check_clean_zip();measure_card(0);
+            // Returning to a real card starts clean. The fixture does not
+            // legitimately reprogram it after this restart.
+            restart_mode(0,0,0);check_clean_zip();measure_card(0);
+            selected=4;live_config();measure_card(4);
+            selected=6;live_config();measure_card(6);
+        end
+        if(card_case_number!=12 || mode_restarts!=9)$fatal(1,"Incomplete reset-only mode matrix");
+        $display("PASS: core-reset-only card switches clear3 guest overrides, None ignores guest writes and stays Stock, clean ZipGS return plus live14/57; resets=9 measurements=12 global_resets=0");
         $finish;
     end
     initial begin #1000000000;$fatal(1,"Paused settings regression timed out");end

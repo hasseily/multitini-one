@@ -79,6 +79,12 @@ static mt_link_result_t command(uint32_t opcode,uint32_t a,uint32_t b,uint32_t c
 }
 static uint32_t generation(void)
 { uint32_t g=next_generation++; if(g==0U)g=next_generation++; return g; }
+static void normalize_config(mt_iigs_config_t *value)
+{
+    /* None is a stock machine, including older records that stored a turbo
+     * speed independently of the software-visible accelerator card. */
+    if(value->card==2U)value->speed=0U;
+}
 static int send_config(const mt_iigs_config_t *c)
 {
     uint8_t wire[MT_IIGS_CONFIG_BYTES];
@@ -126,6 +132,7 @@ static void settings_load(void)
             (void)fail("Apple IIgs remembered media name invalid"); return;
         }
     }
+    normalize_config(&candidate);
     config=candidate;
     mouse_sensitivity=candidate_mouse;
     for(unsigned i=0U;i<MT_IIGS_DRIVE_COUNT;++i)memcpy(remembered[i],settings_wire+24U+i*GS_NAME,GS_NAME);
@@ -569,6 +576,7 @@ static int load_rom(const char *name,uint8_t kind,size_t bytes)
 int iigs_content_service_boot(void)
 {
     if(link==NULL || root[0]=='\0')return fail("Apple IIgs service unavailable");
+    normalize_config(&config);
     bool mounted=pram_mounted;
     for(unsigned i=0U;i<MT_IIGS_DRIVE_COUNT;++i)mounted=mounted||drives[i].mounted;
     if((ready || mounted) && iigs_content_service_prepare_reset()!=0)return -1;
@@ -599,20 +607,37 @@ int iigs_content_service_boot(void)
     }
     return fail("Apple IIgs ready timeout");
 }
+static int restore_configuration(const mt_iigs_config_t *previous,bool restart)
+{
+    char original_error[sizeof(error)];
+    memcpy(original_error,error,sizeof(original_error));
+    config=*previous;
+    const int restored=restart ? iigs_content_service_boot():send_config(&config);
+    if(restored!=0) {
+        char message[sizeof(error)];
+        (void)snprintf(message,sizeof(message),"Config rollback failed: %.96s",error);
+        return fail(message);
+    }
+    /* A successful restart clears its error state; retain the failure that
+     * made the original settings change fail so the menu can report it. */
+    return fail(original_error);
+}
 int iigs_content_service_configure(const mt_iigs_config_t *candidate)
 {
-    if(!mt_iigs_config_valid(candidate) || candidate->card==1U || (candidate->pulses&~1U)!=0U ||
-        (speed_mask&(UINT32_C(1)<<candidate->speed))==0U)
+    if(!mt_iigs_config_valid(candidate) || candidate->card==1U || (candidate->pulses&~1U)!=0U)
         return fail("Unsupported Apple IIgs configuration");
-    const mt_iigs_config_t previous=config; config=*candidate;
-    const int r=previous.rom3!=config.rom3 ? iigs_content_service_boot():send_config(&config);
-    if(r!=0) { config=previous; return -1; }
-    if(settings_save()!=0) {
-        config=previous;
-        if(previous.rom3!=candidate->rom3)(void)iigs_content_service_boot();
-        else (void)send_config(&config);
-        return -1;
-    }
+    mt_iigs_config_t next=*candidate;
+    normalize_config(&next);
+    if((speed_mask&(UINT32_C(1)<<next.speed))==0U)return fail("Unsupported Apple IIgs configuration");
+    const mt_iigs_config_t previous=config;
+    const bool restart=previous.rom3!=next.rom3 || previous.card!=next.card;
+    config=next;
+    /* The existing boot path saves PRAM, drains/ejects disks and holds the
+     * machine in reset while loading ROMs/remounting. Card changes need that
+     * reset to clear ZipGS speed, enable, unlock, cache and delay/slot state. */
+    const int r=restart ? iigs_content_service_boot():send_config(&config);
+    if(r!=0)return restore_configuration(&previous,restart);
+    if(settings_save()!=0)return restore_configuration(&previous,restart);
     return 0;
 }
 const mt_iigs_config_t *iigs_content_service_config(void) { return &config; }

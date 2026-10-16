@@ -3,7 +3,59 @@
 The owner reported that 57 MHz felt barely twice as fast as stock in real use:
 booting, Finder window drawing and applications. This record covers the
 measurements that explained it, the changes on branch `iigs-accel-fixes`, and
-the simulation evidence. Nothing here has been tested on the board.
+the simulation evidence. The owner now confirms System 6.0.1 boots on the
+M0.5.4 core, with measured boot times of 59 seconds at Stock, 37 seconds at
+14 MHz and 35 seconds at 57 MHz. The small 14-to-57 MHz improvement remains
+unexplained; synthetic CPU throughput does not establish boot or UI throughput.
+
+## M0.5.5 accelerator-card selection
+
+Previously, None hid the ZipGS registers but retained acceleration. A focused
+executed-CPU review measured the same 2.86/14.32/57.27 MHz warm-loop rates with
+ZipGS and None. It also reproduced guest speed and disable overrides surviving
+a card-only change because the unchanged host speed was not reapplied.
+The reported 37-second None boot was therefore not a stock-speed baseline.
+
+M0.5.5 makes None force Stock and disables its speed control. Older saved None
+configurations with a nonzero speed normalize to Stock. Changing card mode
+saves media and uses the existing full IIgs reset/reload/remount path, which
+clears guest ZipGS speed, enable, unlock, cache, slot and delay state. Menu
+delay choices apply again after reset. Returning to ZipGS starts at Stock;
+subsequent speed-only changes remain live. This uses the current FPGA reset
+interface and requires only an ARM firmware rebuild. No FPGA build is run.
+
+The package is `build/firmware-core-gs-m055.zip`, with M0.5.5 firmware and all
+eight explicitly reused qualified images. The IIgs bitstream is the unchanged
+M0.5.4 image identified below. Required private ROMs remain in each core's
+`roms` directory; media loaders and empty media directories are included.
+The new card-selection behavior still needs a hardware check.
+
+All 87 host checks pass, including mode-change media ordering, legacy saved
+settings, rejected changes and rollback failures. The production CPU/adapter
+regression retains its ten live-speed/IRQ cases and adds twelve measurements
+across three guest overrides and nine machine resets. These use only the
+existing core-reset command boundary, with no global FPGA reset. Guest writes
+dirty ZipGS speed/disable, unlock, cache, slot and delay state before each
+transition. None executes the same writes without enabling acceleration;
+returning to ZipGS starts clean, then reaches 14.32 and 57.27 MHz in the warm
+loop. Both negative controls fail: omitting the reset leaves stale state, and
+omitting None-speed normalization leaves acceleration enabled. Evidence is in
+`build/host-gs-m055/ctest.log` and
+`build/reviews/iigs-card-mode-reset-production/validation.json`.
+
+Reproduce the ARM-only build and private package with the explicit retained
+platform and all eight images:
+
+```powershell
+$env:MULTITINI_VITIS_WORKSPACE = "$PWD/build/gs055"
+$env:MULTITINI_XSA = "$PWD/build/core-gs/hardware/supervisor/multitini_one.xsa"
+$env:MULTITINI_PLATFORM_XPFM = "$PWD/build/core-gs/vitis/multitini_platform/export/multitini_platform/multitini_platform.xpfm"
+$env:MULTITINI_CPU1_BASELINE = "$PWD/build/firmware-core-gs-m054b"
+$env:MULTITINI_SKIP_GOLDEN = '1'
+$env:XILINX_VITIS = 'C:/Xilinx/2025.2/Vitis'
+python scripts/run_native_tool.py -- C:/Xilinx/2025.2/Vitis/bin/vitis.bat -s scripts/create_vitis_workspace.py
+python scripts/package_core_gs.py --hardware build/core-gs-m054h/hardware --workspace build/gs055 --build-id 4D000505 --abi-minor 22 --include-nes --suffix core-gs-m055 --output build/firmware-core-gs-m055 --reuse-image supervisor=build/core-gs/hardware/supervisor --reuse-image c64-pal=build/core-gs/hardware/c64-pal --reuse-image gbc=build/core-gs/hardware/gbc --reuse-image vectrex=build/core-gs/hardware/vectrex --reuse-image genesis-ntsc=build/core-gs/hardware/genesis-ntsc --reuse-image genesis-pal=build/core-gs/hardware/genesis-pal --reuse-image nes=build/core-nes-m051/hardware/nes --reuse-image apple-iigs=build/core-gs-m054h/hardware/apple-iigs --evidence build/host-gs-m055/ctest.log --evidence build/reviews/iigs-card-mode-reset-production/validation.json
+```
 
 ## What limited the old design
 
