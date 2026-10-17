@@ -14,6 +14,8 @@ def main():
              "write edge, IWM odd-address mode write, IWM motor-on exclusion in the mode register and in the immediate "
              "mode view, C070-only paddle trigger, shadow-write fast class, sound GLU native hold, and that hold for "
              "reads")
+    p.add_argument("--joystick-negative-control",action="store_true",
+        help="also prove removing the adapter's unsigned-to-signed analog conversion fails the joystick check")
     a=p.parse_args();build=a.build_dir.resolve();build.mkdir(parents=True,exist_ok=True)
     runtime=Path(os.environ.get("MULTITINI_UCRT_BIN","C:/msys64/ucrt64/bin"))
     env=os.environ.copy()
@@ -49,7 +51,7 @@ def main():
         return executable
     executable=build_bench(sources,build/"obj","")
     out=run([executable],"simulate")
-    if out.count("PASS:")!=14 or "COMPARE shadow_ram=49664" not in out or "COMPARE mounted_motor=64" not in out:
+    if out.count("PASS:")!=15 or "COMPARE shadow_ram=49664" not in out or "COMPARE mounted_motor=64" not in out:
         raise ValueError("acceleration gate groups/comparison coverage did not all pass")
     kernels=("shadow_kernel","shadow_store_kernel","mega2_store_kernel","mega2_load_kernel")
     rows=[{"workload":work,"speed":int(s),"primary_ticks":int(t),"cpu_advances":int(c)} for work,s,t,c in
@@ -100,7 +102,7 @@ def main():
     if fast["min_delta"]!=12 or fast["max_delta"]>20 or fast["primary_ticks"]>511*12+64:
         raise ValueError(f"accelerated E1 DMA is not paced at three CLK14 ticks per byte: {fast}")
     negatives=[]
-    if a.negative_controls:
+    if a.negative_controls or a.joystick_negative_control:
         adapter=core/"multitini_apple_iigs_adapter.sv";iigs=core/"ports/iigs.sv"
         mutations=(("slot_edge",adapter,"(cpu_native_two_edge ? native_prepared2 : native_prepared)","native_prepared","+ONLY_DMA","slot-7 ROM byte"),
             ("iwm_media",iigs,"(iwm_holdoff == 15'd0 || (EXTERNAL_CPU && !iwm_selected_media))","iwm_holdoff == 15'd0","+ONLY_MOTOR",
@@ -123,6 +125,10 @@ def main():
             ("sound_hold",adapter,"&& !cpu_native_hold &&","&&","+ONLY_SOUND","sound GLU"),
             ("sound_read_hold",iigs,"assign cpu_native_hold = external_accel && native_snd_sel && snd_busy;",
              "assign cpu_native_hold = external_accel && native_snd_sel && snd_busy && we;","+ONLY_SOUND","sound GLU read-back"))
+        if not a.negative_controls:mutations=()
+        if a.joystick_negative_control:
+            mutations+=(("joystick_unsigned",adapter,".joystick_l_analog_0(analog_xy ^ 16'h8080)",
+                ".joystick_l_analog_0(analog_xy)","+ONLY_JOYSTICK","joystick neutral after reset"),)
         for name,original,before_text,after_text,plusarg,message in mutations:
             text=original.read_text(encoding="utf-8")
             befores=before_text if isinstance(before_text,tuple) else (before_text,)
@@ -142,7 +148,10 @@ def main():
     (build/"validation.json").write_text(json.dumps({"schema_version":1,"result":"PASS","files":before,
         "measurements":rows,"dma_measurements":dma,"sound_glu":glu,"mega2_store_speedup":ratio,"mega2_load_speedup":load_ratio,
         "negative_controls":negatives,"negative_controls_run":a.negative_controls,
-        "checks":["C071-C07F read/write bank aliases never trigger paddle compatibility delay",
+        "joystick_negative_control_run":a.joystick_negative_control,
+        "checks":["production 0x4101 input handshake preserves all256 unsigned values per axis, independent endpoints and reset/release center; unassigned second joystick stays centered",
+            "C070 read/write triggers produce C064/C065 bit7 expiry at native paddle timing for center and independent minimum/maximum axes",
+            "C071-C07F read/write bank aliases never trigger paddle compatibility delay",
             "C070 read/write and C064-C067 retain four-ms delay and restore acceleration",
             "IOLC-inhibited C070 RAM has no IO side effect",
             "all shadow/config RAM read/write classes fast, mirror writes on the slow-RAM port; E0/E1 RAM/LC ROM fast, E0/E1 C000-CFFF native",

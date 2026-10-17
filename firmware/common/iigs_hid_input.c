@@ -19,7 +19,9 @@ int mt_iigs_hid_assigned_report(mt_iigs_hid_input_t *in,uint8_t slot,uint8_t pla
     if(in==NULL || slot>=MT_C64_HID_SLOT_COUNT)return -1;
     in->active[slot]=player==0U ? 1U:0U;
     in->buttons[slot]=(uint16_t)((buttons&7U)<<4U);
-    uint8_t ax=analog(x),ay=analog(y);
+    /* Shared controls use positive-up Y; Apple paddle values increase down. */
+    const int16_t paddle_y=y==INT16_MIN ? INT16_MAX:(int16_t)-y;
+    uint8_t ax=analog(x),ay=analog(paddle_y);
     if((directions&12U)!=0U)ax=(directions&12U)==12U ? 128U:(directions&4U)!=0U ? 0U:255U;
     if((directions&3U)!=0U)ay=(directions&3U)==3U ? 128U:(directions&1U)!=0U ? 0U:255U;
     in->xy[slot]=(uint16_t)(ax|((uint16_t)ay<<8U));

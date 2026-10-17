@@ -24,6 +24,15 @@ hat from those reported as X/Y. Many SNES-style pads use absolute X/Y for
 their physical D-pad; those readings can be bound normally. Generic absolute
 axes can be captured from their resting position without centering them.
 
+IIgs joystick packets carry unsigned paddle coordinates: 0 is left/up, 128
+is center and 255 is right/down. The IIgs adapter converts these to the
+imported core's signed MiSTer axes. Shared controller Y increases upward;
+the ARM IIgs input service reverses it for Apple paddle Y. M0.6.3 corrects
+both conversions. Its centering correction requires the matching new IIgs
+FPGA image as well as the ARM firmware. Host tests cover controller bindings
+through packet encoding; HDL simulation covers the full axis range and
+the Apple-visible paddle timer reads. Board acceptance is recorded separately.
+
 Relative movement produces short centered velocity pulses when bound to an
 analog control, and directional presses when bound to a digital control.
 Mouse movement scales by 256 per reported count. Dial, wheel and pan detents

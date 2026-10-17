@@ -254,6 +254,7 @@ module tb_apple_iigs_accel_gates;
             while(dut.machine_reset || dut.machine_reset_raw) @(negedge core_clk);
         end
     endtask
+    byte bus_received;
     task bus_cycle(input [23:0] address,input bit wr,input byte data,input bit check,input byte expected,input bit expected_native);
         integer polls,commits_before,slow_before,ddr_before;
         byte received;
@@ -274,7 +275,7 @@ module tb_apple_iigs_accel_gates;
                 end
                 $fatal(1,"acceleration gate transaction timeout address%06x",address);
             end
-            @(negedge core_clk);pause_request=1;forced_vda=0;
+            @(negedge core_clk);pause_request=1;forced_vda=0;bus_received=received;
             if(check && received!==expected) $fatal(1,"gate read data address%06x got%02x expected%02x",address,received,expected);
             if(native_commits-commits_before!=integer'(expected_native)) $fatal(1,"native completion count address%06x count%0d",address,native_commits-commits_before);
             // A retired write is posted; once drained it reached DDR once.
@@ -299,6 +300,84 @@ module tb_apple_iigs_accel_gates;
         bus_cycle(address,1,value,0,0,native_cycle);
     endtask
     task mark(input string name);begin cases++;$display("PASS: acceleration gates %s",name);end endtask
+
+    task joystick_packet(input [15:0] xy);
+        begin
+            @(negedge core_clk);input_code=16'h4101;input_value=xy;input_valid=1;
+            do @(posedge core_clk); while(!input_ready);
+            @(negedge core_clk);input_valid=0;
+        end
+    endtask
+    task joystick_axes(input [15:0] xy,input string what);
+        begin
+            if(dut.machine_i.paddle_input[0]!==xy[7:0] || dut.machine_i.paddle_input[1]!==xy[15:8])
+                $fatal(1,"joystick %s got X=%02x Y=%02x expected %04x",what,
+                    dut.machine_i.paddle_input[0],dut.machine_i.paddle_input[1],xy);
+            if(dut.machine_i.paddle_input[2]!==8'h80 || dut.machine_i.paddle_input[3]!==8'h80)
+                $fatal(1,"unassigned second joystick must stay centered");
+        end
+    endtask
+    task paddle_bit(input integer axis,input bit active);
+        begin
+            side_read(24'h00c064+24'(axis));
+            if(bus_received[7]!==active)
+                $fatal(1,"paddle C06%0d bit7=%0b expected%0b age=%0d",axis+4,bus_received[7],active,
+                    dut.machine_i.tick_counter_14m-dut.machine_i.paddle_timers[0].timer_inst.trigger_tick);
+        end
+    endtask
+    task paddle_age(input integer ticks);
+        begin
+            while((dut.machine_i.tick_counter_14m-dut.machine_i.paddle_timers[0].timer_inst.trigger_tick)<32'(ticks))
+                @(negedge core_clk);
+        end
+    endtask
+    task paddle_start(input bit write_trigger);
+        integer triggers_before,polls;
+        begin
+            triggers_before=paddle_triggers;
+            if(write_trigger)write_byte(24'h00c070,0);
+            else side_read(24'h00c070);
+            // CPU retirement precedes the registered trigger's consumption
+            // by the timers. Start age checks only after that native edge.
+            polls=0;
+            while(paddle_triggers==triggers_before && polls<64) begin @(negedge core_clk);polls++;end
+            if(paddle_triggers!=triggers_before+1) $fatal(1,"C070 did not trigger the paddle timers exactly once");
+        end
+    endtask
+    task joystick_checks;
+        begin
+            // Production transport is unsigned, while the imported machine
+            // accepts signed MiSTer axes. Include reset before any packets.
+            joystick_axes(16'h8080,"neutral after reset");
+            for(integer axis=0;axis<256;axis++) begin
+                joystick_packet({8'h80,8'(axis)});joystick_axes({8'h80,8'(axis)},"X range");
+                joystick_packet({8'(axis),8'h80});joystick_axes({8'(axis),8'h80},"Y range");
+            end
+            joystick_packet(16'h0000);joystick_axes(16'h0000,"top left");
+            joystick_packet(16'hffff);joystick_axes(16'hffff,"bottom right");
+            joystick_packet(16'h8080);joystick_axes(16'h8080,"release/disconnect neutral");
+            // Read the actual Apple-visible bit, allowing the native bus
+            // transaction margin on either side of each timer deadline.
+            paddle_start(0);
+            paddle_bit(0,1);paddle_bit(1,1);
+            paddle_age(128*158-64);paddle_bit(0,1);paddle_bit(1,1);
+            paddle_age(128*158+4);paddle_bit(0,0);paddle_bit(1,0);
+            joystick_packet(16'hff00);joystick_axes(16'hff00,"X minimum Y maximum");
+            paddle_start(1);
+            paddle_age(64);paddle_bit(0,0);paddle_bit(1,1);
+            paddle_age(255*158-64);paddle_bit(0,0);paddle_bit(1,1);
+            paddle_age(255*158+4);paddle_bit(0,0);paddle_bit(1,0);
+            joystick_packet(16'h00ff);joystick_axes(16'h00ff,"X maximum Y minimum");
+            paddle_start(0);
+            paddle_age(64);paddle_bit(0,1);paddle_bit(1,0);
+            paddle_age(255*158-64);paddle_bit(0,1);paddle_bit(1,0);
+            paddle_age(255*158+4);paddle_bit(0,0);paddle_bit(1,0);
+            joystick_packet(16'h8080);joystick_axes(16'h8080,"neutral after travel");
+            // Leave the following compatibility checks at maximum speed.
+            repeat(4*57272+8) @(negedge core_clk);
+            mark("unsigned joystick full X/Y ranges, reset/release center and C070-triggered C064/C065 timing at center and independent endpoints");
+        end
+    endtask
 
     task paddle_checks;
         integer trigger_start;
@@ -800,7 +879,9 @@ module tb_apple_iigs_accel_gates;
         else if($test$plusargs("ONLY_MOTOR")) motor_checks();
         else if($test$plusargs("ONLY_IWM_MODE")) iwm_mode_checks();
         else if($test$plusargs("ONLY_SOUND")) sound_program();
+        else if($test$plusargs("ONLY_JOYSTICK")) joystick_checks();
         else begin
+            if(!$test$plusargs("ONLY_SHADOW") && !$test$plusargs("ONLY_PADDLE")) joystick_checks();
             if(!$test$plusargs("ONLY_SHADOW")) paddle_checks();
             if(!$test$plusargs("ONLY_PADDLE")) shadow_checks();
             if(!$test$plusargs("ONLY_PADDLE") && !$test$plusargs("ONLY_SHADOW")) mega2_mapping_checks();

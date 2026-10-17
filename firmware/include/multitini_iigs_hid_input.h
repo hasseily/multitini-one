@@ -20,6 +20,10 @@ typedef struct {
 } mt_iigs_hid_input_t;
 void mt_iigs_hid_init(mt_iigs_hid_input_t *,mt_c64_hid_emit_fn,void *);
 int mt_iigs_hid_keyboard_report(mt_iigs_hid_input_t *,uint8_t,uint8_t,const uint8_t *,size_t);
+/* Signed shared controls: X increases right, Y increases up. Command 0x4101
+ * carries unsigned Apple paddle X in the low byte and Y in the high byte:
+ * 0=left/up, 128=center, 255=right/down. The FPGA adapter converts that wire
+ * value to the imported core's signed MiSTer format. */
 int mt_iigs_hid_assigned_report(mt_iigs_hid_input_t *,uint8_t,uint8_t,uint8_t,int16_t,int16_t,uint8_t);
 void mt_iigs_hid_mouse_report(mt_iigs_hid_input_t *,int16_t,int16_t,uint8_t);
 bool mt_iigs_mouse_sensitivity_valid(uint16_t percent);

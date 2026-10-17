@@ -577,7 +577,9 @@ module multitini_apple_iigs_adapter #(
         .nv_addr(nv_address),.nv_wr(nv_write || (sector_write && sd_ack[4])),
         .nv_din(nv_write ? nv_data : sector_data),.nv_dout(sd_data[4]),
         .accel_active(),.mem_stall(native_stall_q),.dbg_hdd_dma(hdd_dma),.floppy_wp(1'b0),
-        .joystick_0({16'd0,joy}),.joystick_1(32'd0),.joystick_l_analog_0(analog_xy),.joystick_l_analog_1(16'd0),
+        // The transport uses unsigned paddle bytes (center 128); MiSTer axes
+        // are signed bytes (center 0). The machine converts them back to paddles.
+        .joystick_0({16'd0,joy}),.joystick_1(32'd0),.joystick_l_analog_0(analog_xy ^ 16'h8080),.joystick_l_analog_1(16'd0),
         .paddle_0(analog_xy[7:0]),.paddle_1(analog_xy[15:8]),.paddle_2(8'h80),.paddle_3(8'h80),
         .HDD_SECTOR(hdd_sector),.HDD_READ(hdd_read),.HDD_WRITE(hdd_write),.HDD_MOUNTED(hdd_mount_q),
         .img_readonly(hdd_readonly_q),.img_size(hdd_size_q),.HDD_RAM_ADDR(hdd_sd_addr_q),.HDD_RAM_DI(hdd_sd_data_q),
