@@ -33,6 +33,9 @@
 module iwm_woz (
     // Global signals
     input           CLK_14M,
+    input wire CLOCK_ENABLE=1'b1,
+    input wire WRITE_DRAIN_ENABLE=1'b0,
+    input wire NATIVE_ENABLE=1'b1,
     input           CLK_7M_EN,
     input           Q3,
     input           PH0,
@@ -102,7 +105,12 @@ module iwm_woz (
     output          DRIVE35_EJECT_REQ,
 
     // Media present in the selected drive ($C031 bit 6 family, drive select)
-    output          SELECTED_MEDIA
+    output          SELECTED_MEDIA,
+    // Timing policy observes command state, never alters drive behavior.
+    output          MOTOR_COMMAND_ON,
+    output reg      WRITE_TIMING_ACTIVE,
+    output SMARTPORT_MODE,
+    output [1:0] WRITE_PIPELINE_PENDING
 );
 
     //=========================================================================
@@ -134,9 +142,11 @@ module iwm_woz (
     always @(posedge CLK_14M or posedge RESET) begin
         if (RESET) begin
             diskreg_sel_latched <= 1'b0;
-        end else if (is_35_inch) begin
+        end else if (CLOCK_ENABLE) begin
+         if (is_35_inch) begin
             diskreg_sel_latched <= DISK35[7];
         end
+    end
     end
     wire       diskreg_sel = is_35_inch ? DISK35[7] : diskreg_sel_latched;
 
@@ -226,6 +236,7 @@ module iwm_woz (
     reg [15:0] status_read_dbg_count;
     reg [15:0] phase_access_dbg_count;
     always @(posedge CLK_14M) begin
+        if (CLOCK_ENABLE) begin
 `ifdef DEBUG_VERBOSE
         // Log status reads (capped — ROM polls these in tight loops)
         if (cpu_rd && PH2 && immediate_q6 && !immediate_q7 && status_read_dbg_count < 16'd64) begin
@@ -240,6 +251,7 @@ module iwm_woz (
 `endif
         prev_immediate_mode <= mode_reg;
         prev_cpu_rd <= cpu_rd;
+    end
     end
 `endif
 
@@ -289,7 +301,7 @@ module iwm_woz (
             latched_sense_reg <= 3'b000;
             iwm_active <= 1'b0;
             iwm_delay_cnt <= 24'd0;
-        end else begin
+        end else if (CLOCK_ENABLE) begin
             // Robust mode register capture:
             // The IIgs ROM expects a write to $C0EF (odd, Q7=1) while the IWM is idle to latch the
             // mode bits, then immediately reads back via $C0EE. Capture the mode write when the
@@ -427,7 +439,7 @@ module iwm_woz (
             motor_spinning <= 1'b0;
             motor_counter <= 24'd0;
             motor_spinup_done <= 1'b0;
-        end else begin
+        end else if (CLOCK_ENABLE) begin
             if (drive_on) begin
                 // Motor ON ($C0E9): The motor control pin on the 19-pin disk
                 // connector always reflects drive_on, regardless of DISK35.
@@ -522,6 +534,7 @@ module iwm_woz (
         .IS_35_INCH(1'b1),
         .DRIVE_ID(2'd1),
         .CLK_14M(CLK_14M),
+        .CLOCK_ENABLE(CLOCK_ENABLE),
         .RESET(RESET),
         .PHASES(motor_phase),
         .IMMEDIATE_PHASES(immediate_phases),
@@ -561,6 +574,8 @@ module iwm_woz (
         .WRITE_BIT(flux_write_bit),
         .WRITE_STROBE(disk_write_strobe),
         .WRITE_MODE(disk_write_mode),
+        .WRITE_DRAIN_ENABLE(WRITE_DRAIN_ENABLE),
+        .WRITE_PIPELINE_PENDING(WRITE_PIPELINE_PENDING[0]),
         .WRITE_BYTE_OUT(drive35_write_byte),
         .WRITE_WE_OUT(drive35_write_we),
         .WRITE_ADDR_OUT(drive35_write_addr),
@@ -607,7 +622,8 @@ module iwm_woz (
     always @(posedge CLK_14M or posedge RESET) begin
         if (RESET) begin
             stable_side_reg <= 1'b0;
-        end else if (!DISK_READY[2]) begin
+        end else if (CLOCK_ENABLE) begin
+         if (!DISK_READY[2]) begin
             stable_side_reg <= 1'b0;
         end else begin
             // Capture HDSEL only when the CPU reads the IWM data register.
@@ -621,6 +637,7 @@ module iwm_woz (
 `endif
             end
         end
+    end
     end
     assign WOZ_TRACK3_STABLE_SIDE = stable_side_reg;
 
@@ -639,6 +656,7 @@ module iwm_woz (
     reg prev_diskreg_sel;
     reg [6:0] prev_drive35_track;
     always @(posedge CLK_14M) begin
+        if (CLOCK_ENABLE) begin
         if (prev_diskreg_sel != diskreg_sel) begin
             $display("IWM_WOZ: *** diskreg_sel CHANGED: %0d -> %0d (DISK35=%02h drive35_track=%0d WOZ_TRACK3_comb=%0d WOZ_TRACK3_reg=%0d)",
                      prev_diskreg_sel, diskreg_sel, DISK35, drive35_track, woz_track3_comb, woz_track3_comb);
@@ -650,6 +668,7 @@ module iwm_woz (
         end
         prev_diskreg_sel <= diskreg_sel;
         prev_drive35_track <= drive35_track;
+    end
     end
 `endif
 
@@ -674,6 +693,7 @@ module iwm_woz (
         .IS_35_INCH(1'b1),
         .DRIVE_ID(2'd2),
         .CLK_14M(CLK_14M),
+        .CLOCK_ENABLE(CLOCK_ENABLE),
         .RESET(RESET),
         .PHASES(motor_phase),
         .IMMEDIATE_PHASES(immediate_phases),
@@ -772,6 +792,7 @@ module iwm_woz (
         .IS_35_INCH(1'b0),
         .DRIVE_ID(2'd0),
         .CLK_14M(CLK_14M),
+        .CLOCK_ENABLE(CLOCK_ENABLE),
         .RESET(RESET),
         .PHASES(motor_phase),
         .IMMEDIATE_PHASES(immediate_phases),
@@ -812,6 +833,8 @@ module iwm_woz (
         .WRITE_BIT(flux_write_bit),
         .WRITE_STROBE(disk_write_strobe),
         .WRITE_MODE(disk_write_mode),
+        .WRITE_DRAIN_ENABLE(WRITE_DRAIN_ENABLE),
+        .WRITE_PIPELINE_PENDING(WRITE_PIPELINE_PENDING[1]),
         .WRITE_BYTE_OUT(drive525_write_byte),
         .WRITE_WE_OUT(drive525_write_we),
         .WRITE_ADDR_OUT(drive525_write_addr),
@@ -877,13 +900,15 @@ module iwm_woz (
     always @(posedge CLK_14M or posedge RESET) begin
         if (RESET) begin
             drive35_type_hold_cnt <= 21'd0;
-        end else if (drive35_motor_spinning || drive35_2_motor_spinning ||
+        end else if (CLOCK_ENABLE) begin
+         if (drive35_motor_spinning || drive35_2_motor_spinning ||
                      (is_35_inch && (cpu_access_edge || drive_on) &&
                       (DISK_READY[2] || DISK_READY[3]))) begin
             drive35_type_hold_cnt <= DRIVE35_TYPE_HOLD_CYCLES;
         end else if (drive35_type_hold_cnt != 21'd0) begin
             drive35_type_hold_cnt <= drive35_type_hold_cnt - 21'd1;
         end
+    end
     end
 
     wire flux_is_35_inch = drive35_motor_spinning ? 1'b1 :
@@ -972,7 +997,7 @@ module iwm_woz (
         if (RESET) begin
             cbus_enable2_cnt <= 4'd0;
             cbus_enable2_blocked <= 1'b0;
-        end else begin
+        end else if (CLOCK_ENABLE) begin
             if (!cbus_enable2_raw) begin
                 cbus_enable2_blocked <= 1'b0;
             end else if (cpu_access_edge && (access_phase1 || access_phase3) && bus_addr[0]) begin
@@ -1083,6 +1108,7 @@ module iwm_woz (
     // stale inputs; computing it in the parent with registered outputs avoids that.
     reg drive_sense_reg;
     always @(posedge CLK_14M) begin
+        if (CLOCK_ENABLE) begin
         if (RESET)
             drive_sense_reg <= 1'b1;
         else begin
@@ -1094,6 +1120,7 @@ module iwm_woz (
 `endif
             drive_sense_reg <= drive_sense;
         end
+    end
     end
 
     // Hybrid sense output: Use registered value normally (avoids Verilator eval-order
@@ -1113,6 +1140,7 @@ module iwm_woz (
 
     smartport_dev sp_dev (
         .clk(CLK_14M),
+        .CLOCK_ENABLE(NATIVE_ENABLE),
         .reset(RESET),
         .smartport_mode(smartport_mode),
         .wr_strobe(sp_wr_strobe),
@@ -1143,6 +1171,21 @@ module iwm_woz (
     // Disk mounted status
     assign SELECTED_MEDIA = is_35_inch ? (drive_sel ? DISK_READY[3] : DISK_READY[2])
                                        : (drive_sel ? DISK_READY[1] : DISK_READY[0]);
+    assign MOTOR_COMMAND_ON = drive_on;
+    // Registered mode only: current CPU strobe must not feed its own enable.
+    assign SMARTPORT_MODE = !mode_reg[3] && mode_reg[1];
+    // Use actual routed media: Sony cleanup may clear DISK35 before
+    // the write protocol ends. SmartPort packet writes are excluded
+    // by disk_write_mode itself.
+    // Publish a registered guard: immediate mode decode consumes the
+    // current bus cycle and must not feed the divider combinationally.
+    // The access lease covers this one-native-edge entry latency.
+    always @(posedge CLK_14M) begin
+        if (CLOCK_ENABLE) begin
+        if (RESET) WRITE_TIMING_ACTIVE <= 1'b0;
+        else WRITE_TIMING_ACTIVE <= disk_write_mode && disk_mounted;
+    end
+    end
     wire disk_mounted = flux_is_35_inch ? (drive_sel ? DISK_READY[3] : DISK_READY[2])
                                         : (drive_sel ? DISK_READY[1] : DISK_READY[0]);
 
@@ -1212,6 +1255,7 @@ module iwm_woz (
 
     iwm_flux iwm (
         .CLK_14M(CLK_14M),
+        .CLOCK_ENABLE(CLOCK_ENABLE),
         .CLK_7M_EN(CLK_7M_EN),  // 7M clock enable for IWM timing (matches real hardware)
         .RESET(RESET),
         // In this sim architecture, IWM bus address/control are valid on PH2+1.
@@ -1287,6 +1331,7 @@ module iwm_woz (
     reg       prev_smartport_mode;
     reg [31:0] debug_cycle;
     always @(posedge CLK_14M) begin
+        if (CLOCK_ENABLE) begin
         if (RESET) begin
             debug_cycle <= 0;
             prev_iwm_active <= 1'b0;
@@ -1331,6 +1376,7 @@ module iwm_woz (
         end
 `endif
     end
+    end
 
     // Debug: Monitor flux transitions
     reg [15:0] flux_count;
@@ -1338,6 +1384,7 @@ module iwm_woz (
     reg        prev_flux;
     reg        prev_flux35_raw;
     always @(posedge CLK_14M) begin
+        if (CLOCK_ENABLE) begin
         if (RESET) begin
             flux_count <= 16'd0;
             flux35_raw_count <= 16'd0;
@@ -1370,6 +1417,7 @@ module iwm_woz (
 `endif
             end
         end
+    end
     end
 `endif
 

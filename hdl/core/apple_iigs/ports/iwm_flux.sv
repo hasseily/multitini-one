@@ -64,7 +64,8 @@
 // Multitini port, 2026-10-14: reproduced by scripts/port_apple_iigs_core.py.
 module iwm_flux (
     // Global signals
-    input  wire        CLK_14M,         // 14MHz master clock
+    input  wire        CLK_14M,
+    input wire CLOCK_ENABLE=1'b1,         // 14MHz master clock
     input  wire        CLK_7M_EN,       // 7MHz clock enable (IWM runs at 7M like real hardware)
     input  wire        RESET,
     input  wire        CEN,             // Clock enable (phi2) for CPU bus timing
@@ -611,7 +612,7 @@ module iwm_flux (
             dbg_first_flux_cycle <= 32'd0;
             dbg_flux_count_after_idle <= 8'd0;
 `endif
-        end else begin
+        end else if (CLOCK_ENABLE) begin
 `ifdef DEBUG_VERBOSE
             debug_cycle <= debug_cycle + 1;
 `endif
@@ -2119,6 +2120,7 @@ module iwm_flux (
     // Debug: log register reads (only on CEN/PH2 to log once per CPU access)
     reg [31:0] debug_win_count;
     always @(posedge CLK_14M) begin
+        if (CLOCK_ENABLE) begin
 `ifdef DEBUG_IWM_VERBOSE
             if (RD && CEN) begin
             case ({immediate_q7, immediate_q6})
@@ -2170,6 +2172,7 @@ module iwm_flux (
                      m_rsh, m_data, byte_completing, async_update_pending);
             debug_win_count <= debug_win_count + 1;
         end
+    end
     end
 `endif
 
@@ -2343,7 +2346,8 @@ module iwm_flux (
 	            sec_prologue_miss_count <= 16'd0;
 	            sec_log_count <= 16'd0;
 	            prev_byte_completing <= 1'b0;
-        end else if (motor_decode_ok) begin
+        end else if (CLOCK_ENABLE) begin
+         if (motor_decode_ok) begin
             prev_byte_completing <= byte_completing;
 
             // State machine triggered by new bytes
@@ -2489,9 +2493,11 @@ module iwm_flux (
             end
         end
     end
+    end
 
 	    // Periodic statistics for sector tracking
 	    always @(posedge CLK_14M) begin
+        if (CLOCK_ENABLE) begin
 	        if (debug_cycle[24:0] == 25'h0 && debug_cycle > 0 && MOTOR_ACTIVE) begin
 	            if (sec_log_count < SEC_LOG_MAX) begin
 	                sec_log_count <= sec_log_count + 1'd1;
@@ -2500,6 +2506,7 @@ module iwm_flux (
 	            end
 	        end
 	    end
+    end
 `endif
 
 endmodule

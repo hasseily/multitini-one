@@ -7,6 +7,7 @@
 #define FILES 20U
 #define TEST_MEDIA_ROOT "0:/multitini/cores/apple-iigs/media"
 #define TEST_ROM_ROOT "0:/multitini/cores/apple-iigs/roms"
+#define TEST_IIGS_CAPS (MT_IIGS_ACCEL_CAPS_VALID|MT_IIGS_ACCEL_SPEED_MASK|MT_IIGS_MEDIA_TARGET_DRAIN_SUPPORTED|MT_IIGS_FAST_FLOPPY_SUPPORTED)
 enum { ROM3_FILE,ROM1_FILE,CHARACTER_FILE,ADB3_FILE,ADB1_FILE,HDD_FILE,ROM_FILES };
 static const struct { const char *name; size_t size; uint8_t kind; } rom_files[ROM_FILES]={
     {"rom3.rom",MT_SIZE_IIGS_ROM3,MT_LOAD_IIGS_ROM3},
@@ -29,7 +30,7 @@ static uint8_t mount_kinds[MT_IIGS_MEDIA_SLOT_COUNT];
 static uint8_t stream_kind, stream_data[512]; static unsigned stream_index,reverse_index;
 static const uint8_t *reverse_data;
 static uint8_t config_stream[MT_IIGS_CONFIG_BYTES];
-static uint32_t completions,completion_status; static bool fail_disk_write,fail_journal,deny_writes,early_last;
+static uint32_t completions,completion_status; static bool fail_disk_write,fail_journal,fail_settings_journal,deny_writes,early_last;
 static unsigned journal_writes,disk_writes,events; static bool journal_durable;
 static unsigned raw_snapshots;
 static uint16_t dirty_drives;
@@ -38,12 +39,63 @@ static unsigned pram_load_packets,warm_reset_packets,pram_load_complete_event,wa
 static bool pram_restore_pending,fail_sector_transfer;
 static unsigned reset_assertions,reset_releases,reset_event,release_event,config_event,close_event,mount_event[MT_IIGS_MEDIA_SLOT_COUNT];
 static bool core_reset_asserted;
+static uint8_t applied_fast_floppy;
 static bool fail_media_complete;
+static bool fail_config_begin,fail_config_end_once,config_committed;
+static unsigned pram_save_pulses;
 static bool reject_smartport_rom;
 static uint64_t last_read_offset,last_write_offset;
-static unsigned progress_calls,sector_streams;
+static unsigned progress_calls,sector_streams,file_open_calls;
+/* Optional adapter model for drains: unrelated HDD work continues while a
+ * target eject crosses clock domains and publishes a durable raw-track flush.
+ * The corrected IIgs shell preserves a live read snapshot on MEDIA_EJECT. */
+static struct {
+    bool enabled,hdd_admit,eject_wait,busy_target,fail_target_completion,fail_pram_completion;
+    bool legacy_eject_cancels_read,orphaned_read,hdd_turn,prior_pram_eject_pending;
+    unsigned hdd_left,hdd_completions,ejects,eject_delay,target_completions;
+    unsigned target_closes,completion_attempts,pram_completions,pram_admission_delay,coalesced_pram_pulses;
+    unsigned flush_lba,flush_blocks,flush_index;
+    const uint8_t *flush_data;
+    test_file_t *target;
+} media_model;
+static bool queued_pram,queued_pram_write;
+static unsigned queued_pram_lba,queued_pram_hdd_delay;
 static void count_progress(void *context) { assert(context==&progress_calls);++progress_calls; }
 static void request(unsigned slot,uint32_t lba,bool writing);
+static unsigned request_slot(void)
+{ return (regs[MT_REG_MEDIA_REQUEST_BLOCK_COUNT/4U]>>8U)&255U; }
+static void post_queued_request(void)
+{
+    if((regs[MT_REG_MEDIA_REQUEST/4U]&MT_MEDIA_REQUEST_VALID)!=0U || media_model.orphaned_read)return;
+    if(queued_pram && queued_pram_hdd_delay==0U) {
+        request(MT_IIGS_PRAM_SLOT,queued_pram_lba,queued_pram_write);
+        reverse_data=NULL;queued_pram=false;return;
+    }
+    if(media_model.enabled && media_model.eject_wait && media_model.eject_delay==0U &&
+        !media_model.busy_target && (!media_model.hdd_turn || !media_model.hdd_admit || media_model.hdd_left==0U)) {
+        assert(media_model.flush_index<media_model.flush_blocks);
+        request(2U,media_model.flush_lba+media_model.flush_index,true);
+        reverse_data=media_model.flush_data+media_model.flush_index*512U;return;
+    }
+    if(media_model.enabled && media_model.hdd_admit && media_model.hdd_left!=0U) {
+        --media_model.hdd_left;media_model.hdd_turn=false;request(0U,0U,false);
+    }
+}
+static void queue_pram(bool writing)
+{
+    if(queued_pram) {
+        /* The adapter holds a pending boolean, not a queue of pulse IDs. A
+         * second same-direction pulse cannot create another hidden request. */
+        assert(media_model.enabled && queued_pram_write==writing);
+        ++media_model.coalesced_pram_pulses;return;
+    }
+    queued_pram=true;queued_pram_write=writing;
+    queued_pram_lba=(config_stream[0]&1U)!=0U ? 0U:1U;
+    /* A pending adapter PRAM request can be hidden behind HDD admissions for
+     * longer than the drain's sixteen idle samples. */
+    queued_pram_hdd_delay=media_model.enabled ? media_model.pram_admission_delay:0U;
+    post_queued_request();
+}
 static mt_sd_result_t result(mt_sd_status_t s,size_t n) { return (mt_sd_result_t){s,0U,n}; }
 static test_file_t *file_find(const char *path,bool create)
 {
@@ -60,7 +112,7 @@ mt_sd_result_t mt_sd_storage_journal_recover(const char *p,const char *j,uint8_t
 { (void)p;(void)j;(void)b;(void)n;++recovery_calls;return result(MT_SD_OK,0U); }
 mt_sd_result_t mt_sd_storage_journal_replace(const char *p,const char *j,const uint8_t *b,size_t n)
 {
-    (void)j; if(fail_journal)return result(MT_SD_WRITE_FAILED,0U);
+    (void)j; if(fail_journal || (fail_settings_journal && strstr(p,"gs-settings.bin")!=NULL))return result(MT_SD_WRITE_FAILED,0U);
     test_file_t *f=file_find(p,true); assert(f!=NULL && n<=sizeof(f->data));
     memcpy(f->data,b,n); f->size=n;
     if(strstr(p,".gsj")!=NULL) { ++journal_writes; journal_durable=true; ++events; }
@@ -97,6 +149,7 @@ mt_sd_result_t mt_sd_storage_read_file_exact(const char *p,uint8_t *b,size_t n)
 }
 mt_sd_result_t mt_sd_file_open(const char *p,const char *mode,mt_sd_file_t **out)
 {
+    ++file_open_calls;
     if(deny_writes && strchr(mode,'+')!=NULL)return result(MT_SD_OPEN_FAILED,0U);
     test_file_t *f=file_find(p,false); if(f==NULL)return result(MT_SD_OPEN_FAILED,0U);
     for(unsigned i=0U;i<FILES;++i)if(!handles[i].open) { handles[i]=(struct mt_sd_file){f,0U,true}; *out=&handles[i]; return result(MT_SD_OK,0U); }
@@ -136,7 +189,16 @@ mt_sd_result_t mt_sd_file_seek(mt_sd_file_t *h,int64_t offset,int origin)
 }
 int64_t mt_sd_file_tell(const mt_sd_file_t *h) { return (int64_t)h->position; }
 mt_sd_result_t mt_sd_file_close(mt_sd_file_t *h)
-{ assert(h->open); h->open=false;close_event=++events;return result(MT_SD_OK,0U); }
+{
+    assert(h->open);
+    if(media_model.enabled && h->file==media_model.target) {
+        assert(!media_model.eject_wait && media_model.eject_delay==0U && !eject_pending_test);
+        assert((dirty_drives&4U)==0U && media_model.flush_index==media_model.flush_blocks);
+        assert((regs[MT_REG_MEDIA_REQUEST/4U]&MT_MEDIA_REQUEST_VALID)==0U || request_slot()!=2U);
+        ++media_model.target_closes;
+    }
+    h->open=false;close_event=++events;return result(MT_SD_OK,0U);
+}
 mt_sd_result_t mt_sd_file_remove(const char *p)
 { test_file_t *f=file_find(p,false);if(f!=NULL)f->present=false;return result(MT_SD_OK,0U); }
 const char *mt_sd_status_name(mt_sd_status_t s)
@@ -144,7 +206,13 @@ const char *mt_sd_status_name(mt_sd_status_t s)
 static uint32_t read_reg(void *c,uint32_t o)
 {
     (void)c;
-    if(o==MT_REG_MEDIA_STATE)return (dirty_drives ? MT_MEDIA_STATE_DIRTY:0U)|(eject_pending_test ? MT_MEDIA_STATE_EJECT_PENDING:0U);
+    if(o==MT_REG_MEDIA_STATE) {
+        if(media_model.enabled && media_model.eject_wait && media_model.eject_delay!=0U &&
+            --media_model.eject_delay==0U) {
+            eject_pending_test=true;post_queued_request();
+        }
+        return (dirty_drives ? MT_MEDIA_STATE_DIRTY:0U)|(eject_pending_test ? MT_MEDIA_STATE_EJECT_PENDING:0U);
+    }
     if(o==MT_REG_MEDIA_DATA) {
         if(reverse_index>=512U)return 0U;
         const unsigned i=reverse_index++;
@@ -152,6 +220,27 @@ static uint32_t read_reg(void *c,uint32_t o)
             ((i==511U || (early_last && i==10U)) ? MT_MEDIA_DATA_LAST:0U);
     }
     return regs[o/4U];
+}
+static void commit_config(void)
+{
+    assert(stream_index==sizeof(config_stream) && !config_committed);
+    const uint8_t next_fast=config_stream[3]&MT_IIGS_FLAG_FAST_FLOPPY;
+    if(next_fast!=applied_fast_floppy) {
+        assert(core_reset_asserted && dirty_drives==0U && !eject_pending_test &&
+            (regs[MT_REG_MEDIA_REQUEST/4U]&MT_MEDIA_REQUEST_VALID)==0U);
+        for(unsigned i=0U;i<FILES;++i)assert(!handles[i].open);
+    }
+    applied_fast_floppy=next_fast;
+    config_committed=true;config_event=++events;
+    if((config_stream[8]&16U)!=0U) {
+        assert((config_stream[8]&2U)==0U && !pram_restore_pending);
+        ++pram_load_packets;pram_restore_pending=true;queue_pram(false);
+    }
+    if((config_stream[8]&8U)!=0U) { ++pram_save_pulses;queue_pram(true); }
+    if((config_stream[8]&2U)!=0U) {
+        assert(!pram_restore_pending && (regs[MT_REG_MEDIA_REQUEST/4U]&MT_MEDIA_REQUEST_VALID)==0U);
+        ++warm_reset_packets;warm_reset_event=++events;
+    }
 }
 static void write_reg(void *c,uint32_t o,uint32_t v)
 {
@@ -163,6 +252,9 @@ static void write_reg(void *c,uint32_t o,uint32_t v)
             if(stream_kind==MT_LOAD_IIGS_CONFIG) { assert(stream_index<sizeof(config_stream));config_stream[stream_index]=(uint8_t)(v>>(i*8U)); }
             ++stream_index;
         }
+        /* The production loader commits a config on its final payload byte,
+         * before the later STREAM_END command can report a transport error. */
+        if(stream_kind==MT_LOAD_IIGS_CONFIG && stream_index==total && !config_committed)commit_config();
     }
     if(o==MT_REG_COMMAND_DOORBELL) {
         const uint32_t a=regs[MT_REG_COMMAND_ARG0/4U], b=regs[MT_REG_COMMAND_ARG1/4U], d=regs[MT_REG_COMMAND_ARG3/4U];
@@ -188,6 +280,19 @@ static void write_reg(void *c,uint32_t o,uint32_t v)
             mount_sizes[a&255U]=((a>>MT_MEDIA_KIND_SHIFT)&255U)==MT_IIGS_MEDIA_BLOCK32 ? (uint64_t)b*512U:b;
             mount_event[a&255U]=++events;break;
         case MT_COMMAND_MEDIA_EJECT:
+            if(media_model.enabled) {
+                if(media_model.legacy_eject_cancels_read &&
+                    (regs[MT_REG_MEDIA_REQUEST/4U]&(MT_MEDIA_REQUEST_VALID|MT_MEDIA_REQUEST_WRITE))==MT_MEDIA_REQUEST_VALID) {
+                    /* Old shell cleared the snapshot while the adapter kept
+                     * its source request pending: no new request can arrive. */
+                    regs[MT_REG_MEDIA_REQUEST/4U]=0U;media_model.orphaned_read=true;
+                }
+                if(a==0U)media_model.hdd_admit=false;
+                if(a==2U) {
+                    ++media_model.ejects;media_model.eject_wait=true;media_model.eject_delay=3U;
+                    break;
+                }
+            }
             dirty_drives&=(uint16_t)~(1U<<(a&255U));
             if(a==4U && pram_eject_write) {
                 regs[MT_REG_MEDIA_REQUEST/4U]=MT_MEDIA_REQUEST_VALID|MT_MEDIA_REQUEST_WRITE;
@@ -198,7 +303,8 @@ static void write_reg(void *c,uint32_t o,uint32_t v)
             break;
         case MT_COMMAND_STREAM_BEGIN:
             if(a==MT_LOAD_IIGS_HDD_ROM && reject_smartport_rom) { response=MT_RESPONSE_UNSUPPORTED;break; }
-            stream_kind=(uint8_t)a;stream_index=0U;
+            if(a==MT_LOAD_IIGS_CONFIG && fail_config_begin) { response=MT_RESPONSE_IO_ERROR;break; }
+            stream_kind=(uint8_t)a;stream_index=0U;config_committed=false;
             if(stream_kind==MT_LOAD_IIGS_SECTOR)++sector_streams;
             for(unsigned i=0U;i<ROM_FILES;++i)if(a==rom_files[i].kind) {
                 assert(rom_stream_count<32U && b==rom_files[i].size);rom_streams[rom_stream_count++]=i;break;
@@ -210,20 +316,19 @@ static void write_reg(void *c,uint32_t o,uint32_t v)
                 if(fail_sector_transfer)response=MT_RESPONSE_IO_ERROR;
             }
             if(stream_kind==MT_LOAD_IIGS_CONFIG) {
-                assert(stream_index==sizeof(config_stream));
-                config_event=++events;
-                if((config_stream[8]&16U)!=0U) {
-                    assert((config_stream[8]&2U)==0U && !pram_restore_pending);
-                    ++pram_load_packets;pram_restore_pending=true;
-                    request(4U,(config_stream[0]&1U)!=0U ? 0U:1U,false);
-                }
-                if((config_stream[8]&2U)!=0U) {
-                    assert(!pram_restore_pending && (regs[MT_REG_MEDIA_REQUEST/4U]&MT_MEDIA_REQUEST_VALID)==0U);
-                    ++warm_reset_packets;warm_reset_event=++events;
-                }
+                assert(stream_index==sizeof(config_stream) && config_committed);
+                if(fail_config_end_once) { fail_config_end_once=false;response=MT_RESPONSE_IO_ERROR; }
             }
             break;
-        case MT_COMMAND_MEDIA_COMPLETE:
+        case MT_COMMAND_MEDIA_COMPLETE: {
+            const unsigned completed_slot=request_slot();
+            if(media_model.enabled)++media_model.completion_attempts;
+            if(media_model.enabled && completed_slot==2U && media_model.fail_target_completion) {
+                response=MT_RESPONSE_IO_ERROR;break;
+            }
+            if(media_model.enabled && completed_slot==MT_IIGS_PRAM_SLOT && media_model.fail_pram_completion) {
+                response=MT_RESPONSE_IO_ERROR;break;
+            }
             if(fail_media_complete) { response=MT_RESPONSE_IO_ERROR;break; }
             /* Match multitini_control_regs: SmartPort result bytes are not
              * legal shell completion statuses, and errors carry no blocks. */
@@ -240,19 +345,42 @@ static void write_reg(void *c,uint32_t o,uint32_t v)
             ++completions;completion_status=b;
             if(b==MT_RESPONSE_OK) {
                 assert(regs[MT_REG_COMMAND_ARG2/4U]==regs[MT_REG_MEDIA_REQUEST_BLOCK_COUNT/4U]);
-                if(pram_restore_pending) {
+                if(pram_restore_pending && completed_slot==MT_IIGS_PRAM_SLOT) {
                     assert(regs[MT_REG_MEDIA_REQUEST_BLOCK_COUNT/4U]==0x402U && stream_kind==MT_LOAD_IIGS_SECTOR && stream_index==512U);
                     pram_restore_pending=false;pram_load_complete_event=++events;
                 }
-                regs[MT_REG_MEDIA_REQUEST/4U]=0U;eject_pending_test=false;
+                regs[MT_REG_MEDIA_REQUEST/4U]=0U;
+                if(!media_model.enabled)eject_pending_test=false;
+                else if(completed_slot==0U) {
+                    ++media_model.hdd_completions;
+                    if(queued_pram_hdd_delay!=0U)--queued_pram_hdd_delay;
+                } else if(completed_slot==MT_IIGS_PRAM_SLOT) {
+                    ++media_model.pram_completions;
+                    if(media_model.prior_pram_eject_pending) {
+                        media_model.prior_pram_eject_pending=false;eject_pending_test=false;
+                    }
+                }
+                else if(completed_slot==2U && media_model.eject_wait) {
+                    ++media_model.target_completions;++media_model.flush_index;media_model.hdd_turn=true;
+                    if(media_model.flush_index==media_model.flush_blocks) {
+                        media_model.eject_wait=false;eject_pending_test=false;dirty_drives&=(uint16_t)~4U;
+                    }
+                }
             }
             else {
                 assert(regs[MT_REG_COMMAND_ARG2/4U]==0U);
                 const unsigned slot=(regs[MT_REG_MEDIA_REQUEST_BLOCK_COUNT/4U]>>8U)&255U;
                 if(mt_iigs_drive_hdd_unit(mt_iigs_wire_slot_drive(slot))<MT_IIGS_HDD_COUNT)
                     regs[MT_REG_MEDIA_REQUEST/4U]=0U; /* HDD error returns to guest. */
+                else if(media_model.enabled) {
+                    /* Current adapter retains the buffer but retries with a
+                     * fresh ID and reverse stream, never the old seen ID. */
+                    request(slot,regs[MT_REG_MEDIA_REQUEST_LBA/4U],
+                        (regs[MT_REG_MEDIA_REQUEST/4U]&MT_MEDIA_REQUEST_WRITE)!=0U);
+                }
             }
-            assert(d==regs[MT_REG_MEDIA_REQUEST_GENERATION/4U]);break;
+            assert(d==regs[MT_REG_MEDIA_REQUEST_GENERATION/4U]);post_queued_request();break;
+        }
         default: break;
         }
         regs[MT_REG_RESPONSE_SEQ/4U]=v;regs[MT_REG_RESPONSE_STATUS/4U]=response;
@@ -261,12 +389,15 @@ static void write_reg(void *c,uint32_t o,uint32_t v)
 static mt_core_link_t core;
 static void reset(void)
 {
-    progress_calls=sector_streams=0U;fail_media_complete=false;
+    progress_calls=sector_streams=file_open_calls=0U;fail_media_complete=false;
+    fail_config_begin=fail_config_end_once=config_committed=false;pram_save_pulses=0U;applied_fast_floppy=0U;
+    memset(&media_model,0,sizeof(media_model));queued_pram=queued_pram_write=false;
+    queued_pram_lba=queued_pram_hdd_delay=0U;
     reject_smartport_rom=false;last_read_offset=last_write_offset=0U;
     memset(files,0,sizeof(files));memset(handles,0,sizeof(handles));memset(regs,0,sizeof(regs));
     memset(generations,0,sizeof(generations));memset(mount_sizes,0,sizeof(mount_sizes));
     memset(mount_kinds,0,sizeof(mount_kinds));
-    fail_disk_write=fail_journal=deny_writes=early_last=pram_eject_write=eject_pending_test=false;
+    fail_disk_write=fail_journal=fail_settings_journal=deny_writes=early_last=pram_eject_write=eject_pending_test=false;
     pram_restore_pending=fail_sector_transfer=false;
     failed_rom=-1;rom_failure_status=MT_SD_OPEN_FAILED;rom_read_count=rom_stream_count=0U;
     pram_load_packets=warm_reset_packets=pram_load_complete_event=warm_reset_event=recovery_calls=0U;
@@ -275,6 +406,7 @@ static void reset(void)
     core_reset_asserted=false;memset(mount_event,0,sizeof(mount_event));
     raw_snapshots=0U;reverse_data=NULL;
     regs[MT_REG_ABI_VERSION/4U]=MT_ABI_VERSION;
+    regs[MT_REG_IIGS_ACCEL_CAPS/4U]=TEST_IIGS_CAPS;
     regs[MT_REG_STREAM_STATUS/4U]=MT_STREAM_STATUS_READY|MT_STREAM_STATUS_DRAINED;
     regs[MT_REG_STATUS/4U]=MT_STATUS_CORE_READY;
     mt_core_link_init(&core,NULL,read_reg,write_reg);
@@ -375,11 +507,12 @@ static void test_rom_paths(void)
 }
 static void test_speed_capability(void)
 {
-    reset();
+    reset();regs[MT_REG_IIGS_ACCEL_CAPS/4U]=0U;
+    iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
     assert(iigs_content_service_speed_mask()==MT_IIGS_ACCEL_LEGACY_SPEED_MASK);
     mt_iigs_config_t c=*iigs_content_service_config();c.speed=6U;
     assert(iigs_content_service_configure(&c)!=0);
-    regs[MT_REG_IIGS_ACCEL_CAPS/4U]=MT_IIGS_ACCEL_CAPS_VALID|MT_IIGS_ACCEL_SPEED_MASK;
+    regs[MT_REG_IIGS_ACCEL_CAPS/4U]=TEST_IIGS_CAPS;
     iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
     assert(iigs_content_service_speed_mask()==MT_IIGS_ACCEL_SPEED_MASK);
     c=*iigs_content_service_config();c.speed=6U;
@@ -404,7 +537,7 @@ static void test_irq_default_and_saved_choices(void)
 {
     reset();
     assert(iigs_content_service_config()->flags==UINT8_C(0x10));
-    regs[MT_REG_IIGS_ACCEL_CAPS/4U]=MT_IIGS_ACCEL_CAPS_VALID|MT_IIGS_ACCEL_SPEED_MASK;
+    regs[MT_REG_IIGS_ACCEL_CAPS/4U]=TEST_IIGS_CAPS;
     iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
     assert(iigs_content_service_boot()==0 && config_stream[3]==UINT8_C(0x10));
     /* A pre-existing explicit On survives initialization byte-for-byte, even
@@ -464,7 +597,7 @@ static void settings_checksum(test_file_t *file)
 }
 static void start_accelerated(void)
 {
-    reset();regs[MT_REG_IIGS_ACCEL_CAPS/4U]=MT_IIGS_ACCEL_CAPS_VALID|MT_IIGS_ACCEL_SPEED_MASK;
+    reset();regs[MT_REG_IIGS_ACCEL_CAPS/4U]=TEST_IIGS_CAPS;
     iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
     assert(iigs_content_service_boot()==0 && reset_assertions==1U && reset_releases==1U);
     mt_iigs_config_t c=*iigs_content_service_config();c.speed=6U;c.flags=UINT8_C(0x05);
@@ -504,6 +637,67 @@ static void test_card_mode_lifecycle(void)
     assert(iigs_content_service_configure(&c)==0 && reset_assertions==3U && config_stream[1]==6U);
     c.speed=4U;assert(iigs_content_service_configure(&c)==0 && reset_assertions==3U && config_stream[1]==4U);
 }
+static void test_fast_floppy_lifecycle(void)
+{
+    reset();regs[MT_REG_IIGS_ACCEL_CAPS/4U]=TEST_IIGS_CAPS&~MT_IIGS_ACCEL_CAPS_VALID;
+    iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
+    assert(!iigs_content_service_fast_floppy_supported());
+    mt_iigs_config_t unsupported=*iigs_content_service_config();unsupported.flags|=MT_IIGS_FLAG_FAST_FLOPPY;
+    assert(iigs_content_service_configure(&unsupported)!=0 && events==0U);
+    start_accelerated();assert(iigs_content_service_fast_floppy_supported());
+    assert((iigs_content_service_config()->flags&MT_IIGS_FLAG_FAST_FLOPPY)==0U);
+    test_file_t *image=disk("fast.hdv");
+    assert(iigs_content_service_mount(0U,"fast.hdv")==0);
+    request(0U,1U,true);dirty_drives=1U;pram_eject_write=true;
+    mt_iigs_config_t c=*iigs_content_service_config();c.flags|=MT_IIGS_FLAG_FAST_FLOPPY;
+    /* commit_config asserts that every fast-bit transition is made only with
+     * reset asserted, no pending/dirty request and no open disk handles. */
+    assert(iigs_content_service_configure(&c)==0 && reset_assertions==2U && reset_releases==2U);
+    assert(image->data[512U]==0x31U && dirty_drives==0U &&
+        (config_stream[3]&MT_IIGS_FLAG_FAST_FLOPPY)!=0U);
+    test_file_t *saved=file_find(TEST_MEDIA_ROOT "/gs-settings.bin",false);
+    assert(saved!=NULL && (saved->data[11]&MT_IIGS_FLAG_FAST_FLOPPY)!=0U);
+    assert(strcmp(iigs_content_service_name(0U),"fast.hdv")==0);
+    assert(iigs_content_service_shutdown()==0);
+    iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
+    assert((iigs_content_service_config()->flags&MT_IIGS_FLAG_FAST_FLOPPY)!=0U);
+    assert(iigs_content_service_boot()==0 && (config_stream[3]&MT_IIGS_FLAG_FAST_FLOPPY)!=0U);
+    /* Older safe-media cores retain the saved preference but never receive
+     * their formerly reserved bit, including on live unrelated changes. */
+    assert(iigs_content_service_shutdown()==0);
+    regs[MT_REG_IIGS_ACCEL_CAPS/4U]=TEST_IIGS_CAPS&~MT_IIGS_FAST_FLOPPY_SUPPORTED;
+    iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
+    assert(!iigs_content_service_fast_floppy_supported() &&
+        (iigs_content_service_config()->flags&MT_IIGS_FLAG_FAST_FLOPPY)!=0U);
+    assert(iigs_content_service_boot()==0 && (config_stream[3]&MT_IIGS_FLAG_FAST_FLOPPY)==0U);
+    c=*iigs_content_service_config();c.speed=4U;
+    assert(iigs_content_service_configure(&c)==0 && (config_stream[3]&MT_IIGS_FLAG_FAST_FLOPPY)==0U &&
+        (saved->data[11]&MT_IIGS_FLAG_FAST_FLOPPY)!=0U);
+    const unsigned before=events;c.flags&=(uint8_t)~MT_IIGS_FLAG_FAST_FLOPPY;
+    assert(iigs_content_service_configure(&c)!=0 && events==before &&
+        (iigs_content_service_config()->flags&MT_IIGS_FLAG_FAST_FLOPPY)!=0U);
+    assert(iigs_content_service_shutdown()==0);
+    regs[MT_REG_IIGS_ACCEL_CAPS/4U]=TEST_IIGS_CAPS;
+    iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
+    assert(iigs_content_service_boot()==0 && (config_stream[3]&MT_IIGS_FLAG_FAST_FLOPPY)!=0U);
+    c=*iigs_content_service_config();c.flags&=(uint8_t)~MT_IIGS_FLAG_FAST_FLOPPY;
+    assert(iigs_content_service_configure(&c)==0 && (config_stream[3]&MT_IIGS_FLAG_FAST_FLOPPY)==0U &&
+        (saved->data[11]&MT_IIGS_FLAG_FAST_FLOPPY)==0U);
+
+    start_accelerated();(void)disk("dirty.hdv");assert(iigs_content_service_mount(0U,"dirty.hdv")==0);
+    request(0U,1U,true);dirty_drives=1U;fail_disk_write=true;
+    c=*iigs_content_service_config();c.flags|=MT_IIGS_FLAG_FAST_FLOPPY;
+    assert(iigs_content_service_configure(&c)!=0 && reset_assertions==1U && applied_fast_floppy==0U);
+    assert((iigs_content_service_config()->flags&MT_IIGS_FLAG_FAST_FLOPPY)==0U &&
+        file_find(TEST_MEDIA_ROOT "/dirty.hdv.gsj",false)!=NULL);
+
+    start_accelerated();(void)disk("rollback.hdv");assert(iigs_content_service_mount(0U,"rollback.hdv")==0);
+    fail_settings_journal=true;c=*iigs_content_service_config();c.flags|=MT_IIGS_FLAG_FAST_FLOPPY;
+    assert(iigs_content_service_configure(&c)!=0 && reset_assertions==3U && reset_releases==3U &&
+        (iigs_content_service_config()->flags&MT_IIGS_FLAG_FAST_FLOPPY)==0U && applied_fast_floppy==0U);
+    assert(iigs_content_service_ready() && iigs_content_service_faulted() &&
+        strcmp(iigs_content_service_error(),"simulated SD failure")==0);
+}
 static void test_legacy_none_and_card_rollback(void)
 {
     start_accelerated();
@@ -516,7 +710,7 @@ static void test_legacy_none_and_card_rollback(void)
     assert(saved->data[9]==6U && saved->data[10]==2U);
     assert(iigs_content_service_boot()==0 && config_stream[1]==0U && config_stream[2]==2U);
     assert(iigs_content_service_set_mouse_sensitivity(200U)==0 && saved->data[9]==0U);
-    regs[MT_REG_IIGS_ACCEL_CAPS/4U]=MT_IIGS_ACCEL_CAPS_VALID|UINT32_C(1);
+    regs[MT_REG_IIGS_ACCEL_CAPS/4U]=MT_IIGS_ACCEL_CAPS_VALID|MT_IIGS_MEDIA_TARGET_DRAIN_SUPPORTED|UINT32_C(1);
     iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
     mt_iigs_config_t c=*iigs_content_service_config();c.speed=6U;
     assert(iigs_content_service_configure(&c)==0 && config_stream[1]==0U);
@@ -524,7 +718,9 @@ static void test_legacy_none_and_card_rollback(void)
 
     start_accelerated();(void)disk("boot.hdv");assert(iigs_content_service_mount(0U,"boot.hdv")==0);
     saved=file_find(TEST_MEDIA_ROOT "/gs-settings.bin",false);assert(saved!=NULL);
-    fail_journal=true;c=*iigs_content_service_config();c.card=2U;
+    /* Fail settings persistence after reset, allowing the preceding durable
+     * PRAM save to complete before testing rollback. */
+    fail_settings_journal=true;c=*iigs_content_service_config();c.card=2U;
     assert(iigs_content_service_configure(&c)!=0);
     assert(reset_assertions==3U && reset_releases==3U && !core_reset_asserted);
     assert(iigs_content_service_ready() && iigs_content_service_faulted());
@@ -627,10 +823,103 @@ static void simulate_power_cut(void)
 {
     memset(handles,0,sizeof(handles));memset(regs,0,sizeof(regs));
     regs[MT_REG_ABI_VERSION/4U]=MT_ABI_VERSION;
+    regs[MT_REG_IIGS_ACCEL_CAPS/4U]=TEST_IIGS_CAPS;
     regs[MT_REG_STREAM_STATUS/4U]=MT_STREAM_STATUS_READY|MT_STREAM_STATUS_DRAINED;
     regs[MT_REG_STATUS/4U]=MT_STATUS_CORE_READY;
     fail_disk_write=fail_journal=false;
     iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
+}
+static void assert_request_rejected(uint32_t status,const char *message)
+{
+    const unsigned completed_before=completions,streams_before=sector_streams;
+    const unsigned writes_before=disk_writes,journals_before=journal_writes,snapshots_before=raw_snapshots;
+    const uint32_t id=regs[MT_REG_MEDIA_REQUEST_ID/4U],gen=regs[MT_REG_MEDIA_REQUEST_GENERATION/4U];
+    const uint32_t descriptor=regs[MT_REG_MEDIA_REQUEST_BLOCK_COUNT/4U],lba=regs[MT_REG_MEDIA_REQUEST_LBA/4U];
+    iigs_content_service_poll();
+    assert(iigs_content_service_faulted() && strcmp(iigs_content_service_error(),message)==0);
+    assert(completions==completed_before+1U && completion_status==status);
+    assert(regs[MT_REG_COMMAND_ARG0/4U]==id && regs[MT_REG_COMMAND_ARG2/4U]==0U &&
+        regs[MT_REG_COMMAND_ARG3/4U]==gen);
+    assert(sector_streams==streams_before && reverse_index==0U && disk_writes==writes_before &&
+        journal_writes==journals_before && raw_snapshots==snapshots_before);
+    /* This model retains a rejected floppy/PRAM snapshot. Rejection must not
+     * alter its identity or consume the retained write stream. A fresh adapter
+     * ID, tested separately, is required before ordinary polling retries it. */
+    assert((regs[MT_REG_MEDIA_REQUEST/4U]&MT_MEDIA_REQUEST_VALID)!=0U &&
+        regs[MT_REG_MEDIA_REQUEST_ID/4U]==id && regs[MT_REG_MEDIA_REQUEST_GENERATION/4U]==gen &&
+        regs[MT_REG_MEDIA_REQUEST_BLOCK_COUNT/4U]==descriptor && regs[MT_REG_MEDIA_REQUEST_LBA/4U]==lba);
+    iigs_content_service_poll();assert(completions==completed_before+1U);
+}
+static void test_media_request_rejection_errors(void)
+{
+    reset();(void)raw_disk("request.po",MT_IIGS_RAW_PRODOS35,0U);
+    assert(iigs_content_service_mount(2U,"request.po")==0 && mount_sizes[2]==3203U*512U);
+    /* Live-board failure: a corrupt track pointer looked like the WOZ header's
+     * first little-endian word. Report the range error without serving bytes. */
+    request(2U,UINT32_C(0x4f57),false);
+    assert_request_rejected(MT_RESPONSE_IO_ERROR,"Apple IIgs disk request exceeds image");
+    assert(strcmp(iigs_content_service_name(2U),"request.po")==0);
+    request(2U,0U,false);++regs[MT_REG_MEDIA_REQUEST_GENERATION/4U];
+    assert_request_rejected(MT_RESPONSE_INVALID_ARGUMENT,"Apple IIgs media request slot or generation invalid");
+    request(2U,0U,false);regs[MT_REG_MEDIA_REQUEST_BLOCK_COUNT/4U]=UINT32_C(0xff02);
+    assert_request_rejected(MT_RESPONSE_INVALID_ARGUMENT,"Apple IIgs media request slot or generation invalid");
+    const uint32_t malformed[]={UINT32_C(0x0201),UINT32_C(0x0203),UINT32_C(0x10202)};
+    for(unsigned i=0U;i<sizeof(malformed)/sizeof(malformed[0]);++i) {
+        request(2U,0U,false);regs[MT_REG_MEDIA_REQUEST_BLOCK_COUNT/4U]=malformed[i];
+        assert_request_rejected(MT_RESPONSE_INVALID_ARGUMENT,"Apple IIgs media request descriptor invalid");
+    }
+    request(2U,0U,false);iigs_content_service_poll();
+    assert(completion_status==MT_RESPONSE_OK && memcmp(stream_data,"WOZ2",4U)==0);
+    assert(iigs_content_service_retry()==0 && !iigs_content_service_faulted() &&
+        iigs_content_service_error()[0]=='\0' && strcmp(iigs_content_service_name(2U),"request.po")==0);
+
+    reset();(void)raw_disk("readonly.po",MT_IIGS_RAW_PRODOS35,0U);deny_writes=true;
+    assert(iigs_content_service_mount(2U,"readonly.po")==0);
+    request(2U,3U,true);
+    assert_request_rejected(MT_RESPONSE_IO_ERROR,"Apple IIgs disk is read-only");
+
+    reset();assert(iigs_content_service_boot()==0);
+    request(MT_IIGS_PRAM_SLOT,2U,false);
+    assert_request_rejected(MT_RESPONSE_INVALID_ARGUMENT,"Apple IIgs PRAM request exceeds image");
+}
+static uint32_t metadata_le32(const uint8_t *p)
+{ return (uint32_t)p[0]|(uint32_t)p[1]<<8U|(uint32_t)p[2]<<16U|(uint32_t)p[3]<<24U; }
+static void test_raw_metadata_transport(void)
+{
+    const uint8_t formats[]={MT_IIGS_RAW_DOS525,MT_IIGS_RAW_PRODOS35,MT_IIGS_RAW_PRODOS35};
+    const char *const names[]={"metadata.dsk","metadata.po","metadata.2mg"};
+    for(unsigned test=0U;test<3U;++test) {
+        const uint8_t format=formats[test];
+        const unsigned slot=format==MT_IIGS_RAW_DOS525 ? 3U:2U;
+        const unsigned tracks=format==MT_IIGS_RAW_DOS525 ? 35U:160U;
+        const unsigned slots=format==MT_IIGS_RAW_DOS525 ? 13U:20U;
+        reset();(void)raw_disk(names[test],format,test==2U ? 128U:0U);
+        assert(iigs_content_service_mount(slot,names[test])==0);
+        uint8_t delivered[MT_IIGS_FLOPPY_HEADER_BYTES];
+        for(unsigned block=0U;block<3U;++block) {
+            const unsigned streams_before=sector_streams;
+            request(slot,block,false);iigs_content_service_poll();
+            assert(completion_status==MT_RESPONSE_OK && sector_streams==streams_before+1U);
+            memcpy(delivered+block*512U,stream_data,512U);
+        }
+        assert(memcmp(delivered,"WOZ2\xff\x0a\x0d\x0a",8U)==0 &&
+            memcmp(delivered+80U,"TMAP",4U)==0 && memcmp(delivered+248U,"TRKS",4U)==0);
+        assert(metadata_le32(delivered+252U)==(3U+tracks*slots)*512U-256U);
+        for(unsigned track=0U;track<160U;++track) {
+            const uint8_t *entry=delivered+256U+track*8U;
+            if(track>=tracks) {
+                for(unsigned b=0U;b<8U;++b)assert(entry[b]==0U);
+                continue;
+            }
+            const unsigned bits=format==MT_IIGS_RAW_DOS525 ? 52224U:1480U+(12U-track/32U)*6358U;
+            const unsigned first_block=(unsigned)entry[0]|(unsigned)entry[1]<<8U;
+            const unsigned block_count=(unsigned)entry[2]|(unsigned)entry[3]<<8U;
+            assert(first_block==3U+track*slots && block_count==(bits+4095U)/4096U &&
+                metadata_le32(entry+4U)==bits && first_block+block_count<=3U+tracks*slots);
+            if(format==MT_IIGS_RAW_PRODOS35)assert(delivered[88U+track]==track);
+            else assert(delivered[88U+track*4U]==track);
+        }
+    }
 }
 static void test_raw_floppy_transport(void)
 {
@@ -850,11 +1139,174 @@ static void test_wide_hdd_and_error_recovery(void)
     assert(strcmp(iigs_content_service_error(),"Update IIgs core/ROM for SmartPort disks")==0);
     for(unsigned i=0U;i<MT_IIGS_MEDIA_SLOT_COUNT;++i)assert(generations[i]==0U);
 }
+static test_file_t *start_busy_media_model(bool boot)
+{
+    reset();if(boot)assert(iigs_content_service_boot()==0);
+    (void)disk("background.hdv");test_file_t *target=raw_disk("target.po",MT_IIGS_RAW_PRODOS35,0U);
+    assert(iigs_content_service_mount(0U,"background.hdv")==0);
+    assert(iigs_content_service_mount(2U,"target.po")==0);
+    mt_iigs_floppy_track_t track;assert(mt_iigs_floppy_track(MT_IIGS_RAW_PRODOS35,0U,&track));
+    raw_prepare(target,MT_IIGS_RAW_PRODOS35,0U,0U);
+    media_model.enabled=true;media_model.target=target;media_model.hdd_admit=true;
+    media_model.pram_admission_delay=32U;
+    media_model.hdd_left=100010U;media_model.flush_data=encoded;
+    media_model.flush_lba=track.first_block;media_model.flush_blocks=track.block_count;
+    dirty_drives=4U;request(0U,0U,false);return target;
+}
+static void test_target_eject_amid_hdd_traffic(void)
+{
+    test_file_t *target=start_busy_media_model(false);
+    const int result=iigs_content_service_eject(2U);
+    if(result!=0) {
+        printf("TARGET_EJECT failure commands=%u HDD_completions=%u error=%s\n",
+            media_model.ejects,media_model.hdd_completions,iigs_content_service_error());fflush(stdout);
+    }
+    assert(result==0 && media_model.ejects==1U && media_model.target_closes==1U);
+    assert(media_model.hdd_left!=0U && media_model.hdd_completions>16U);
+    assert(media_model.target_completions==media_model.flush_blocks && !media_model.eject_wait);
+    assert((regs[MT_REG_MEDIA_REQUEST/4U]&MT_MEDIA_REQUEST_VALID)!=0U && request_slot()==0U);
+    assert(iigs_content_service_name(2U)==NULL && strcmp(iigs_content_service_name(0U),"background.hdv")==0);
+    mt_iigs_floppy_track_t track;assert(mt_iigs_floppy_track(MT_IIGS_RAW_PRODOS35,0U,&track));
+    assert(memcmp(target->data,raw_changed,track.raw_bytes)==0 && raw_snapshots==track.block_count);
+    assert(file_find(TEST_MEDIA_ROOT "/target.po.gsraw",false)==NULL);
+}
+static void test_target_drain_failures_preserve_media(void)
+{
+    test_file_t *target=start_busy_media_model(false);media_model.busy_target=true;
+    assert(iigs_content_service_eject(2U)!=0 && media_model.ejects==1U);
+    assert(media_model.target_closes==0U && eject_pending_test && (dirty_drives&4U)!=0U);
+    assert(iigs_content_service_name(2U)!=NULL && media_model.completion_attempts<=100000U);
+    assert(memcmp(target->data,raw_source,MT_IIGS_FLOPPY_RAW_TRACK_BYTES)==0);
+
+    target=start_busy_media_model(false);media_model.fail_target_completion=true;
+    assert(iigs_content_service_eject(2U)!=0 && media_model.ejects==1U);
+    assert(media_model.target_closes==0U && eject_pending_test && request_slot()==2U);
+    assert(media_model.target_completions==0U && media_model.completion_attempts<=100000U);
+    assert(raw_snapshots==1U && file_find(TEST_MEDIA_ROOT "/target.po.gsraw",false)!=NULL);
+    assert(iigs_content_service_name(2U)!=NULL && memcmp(target->data,raw_source,MT_IIGS_FLOPPY_RAW_TRACK_BYTES)==0);
+
+    (void)start_busy_media_model(false);media_model.legacy_eject_cancels_read=true;
+    assert(iigs_content_service_eject(2U)!=0 && media_model.orphaned_read);
+    assert(media_model.target_closes==0U && eject_pending_test && media_model.target_completions==0U);
+    /* The old shared shell can orphan an unrelated read. The ARM service
+     * must leave the target open; the corrected shell is tested in HDL. */
+    assert(iigs_content_service_name(2U)!=NULL && (dirty_drives&4U)!=0U);
+}
+static void test_pram_and_reset_amid_hdd_traffic(void)
+{
+    (void)start_busy_media_model(true);
+    assert(iigs_content_service_pram(true)==0);
+    assert(media_model.pram_completions==1U && media_model.hdd_completions>=32U && media_model.hdd_left!=0U);
+    assert(file_find(TEST_MEDIA_ROOT "/pram.bin",false)!=NULL && !queued_pram);
+    assert(iigs_content_service_prepare_reset()==0);
+    /* prepare_reset must require its own new PRAM completion, then finish
+     * target media work rather than consume the background HDD burst. */
+    assert(media_model.pram_completions==2U && media_model.hdd_left!=0U);
+    assert(media_model.target_closes==1U && media_model.target_completions==media_model.flush_blocks);
+    assert(!eject_pending_test && dirty_drives==0U);
+    for(unsigned i=0U;i<FILES;++i)assert(!handles[i].open);
+
+    (void)start_busy_media_model(true);request(MT_IIGS_PRAM_SLOT,0U,true);
+    assert(iigs_content_service_pram(true)==0);
+    /* An old visible save must not satisfy a newly issued same-direction
+     * pulse while that new request is hidden behind background HDD work. */
+    assert(media_model.pram_completions==2U && !queued_pram && media_model.hdd_left!=0U);
+
+    (void)start_busy_media_model(true);media_model.hdd_left=200100U;
+    media_model.pram_admission_delay=100050U;
+    assert(iigs_content_service_pram(true)!=0 && queued_pram && media_model.pram_completions==0U);
+    media_model.pram_admission_delay=32U;
+    assert(iigs_content_service_pram(true)==0);
+    /* Retire an accepted save that timed out before publishing any slot4
+     * snapshot. Its later completion must not satisfy the next save pulse. */
+    assert(media_model.pram_completions==2U && !queued_pram && media_model.coalesced_pram_pulses==0U);
+
+    (void)start_busy_media_model(true);
+    queued_pram=true;queued_pram_write=true;queued_pram_lba=0U;queued_pram_hdd_delay=32U;
+    media_model.prior_pram_eject_pending=true;eject_pending_test=true;
+    assert(iigs_content_service_pram(true)==0);
+    /* An earlier eject can force a hidden save without a public-pulse marker.
+     * Its pending fence must retire before a new pulse is acknowledged. */
+    assert(pram_save_pulses==1U && media_model.pram_completions==2U && !eject_pending_test);
+    assert(media_model.coalesced_pram_pulses==0U && !queued_pram);
+
+    (void)start_busy_media_model(true);assert(iigs_content_service_pram(true)==0);
+    media_model.fail_pram_completion=true;
+    assert(iigs_content_service_pram(false)!=0);
+    assert(media_model.pram_completions==1U && pram_restore_pending && warm_reset_packets==0U);
+    assert(media_model.target_closes==0U && iigs_content_service_name(2U)!=NULL);
+}
+static void test_fresh_floppy_error_retry(void)
+{
+    (void)start_busy_media_model(false);request(2U,0U,false);
+    const uint32_t old_id=regs[MT_REG_MEDIA_REQUEST_ID/4U];
+    fail_sector_transfer=true;iigs_content_service_poll();
+    assert(completion_status==MT_RESPONSE_IO_ERROR && regs[MT_REG_MEDIA_REQUEST_ID/4U]!=old_id);
+    fail_sector_transfer=false;iigs_content_service_poll();
+    assert(completion_status==MT_RESPONSE_OK && request_slot()==0U);
+}
+static void test_pram_config_transport_boundaries(void)
+{
+    (void)start_busy_media_model(true);fail_config_end_once=true;
+    assert(iigs_content_service_pram(true)!=0);
+    assert(pram_save_pulses==1U && queued_pram && media_model.pram_completions==0U);
+    /* STREAM_END failed after the final config byte committed the old pulse.
+     * A later call must finish it before sending its own fresh save pulse. */
+    assert(iigs_content_service_pram(true)==0);
+    assert(pram_save_pulses==2U && media_model.pram_completions==2U && !queued_pram);
+    assert(media_model.coalesced_pram_pulses==0U && media_model.target_closes==0U);
+
+    (void)start_busy_media_model(true);media_model.hdd_left=300100U;fail_config_begin=true;
+    assert(iigs_content_service_pram(true)!=0);
+    assert(pram_save_pulses==0U && !queued_pram && media_model.pram_completions==0U);
+    fail_config_begin=false;
+    /* No request committed. Preserve the ambiguous operation rather than
+     * inventing an ACK, issuing another pulse, or discarding open media. */
+    assert(iigs_content_service_pram(true)!=0 && iigs_content_service_prepare_reset()!=0);
+    assert(pram_save_pulses==0U && media_model.pram_completions==0U && warm_reset_packets==0U);
+    assert(media_model.ejects==0U && media_model.target_closes==0U && reset_assertions==1U);
+    assert(iigs_content_service_name(0U)!=NULL && iigs_content_service_name(2U)!=NULL);
+    assert((dirty_drives&4U)!=0U);
+}
+static void test_media_capability_guard(void)
+{
+    static const struct {uint32_t abi,caps;} incompatible[]={
+        {MT_ABI_VERSION,MT_IIGS_ACCEL_CAPS_VALID|MT_IIGS_ACCEL_SPEED_MASK},
+        {MT_ABI_VERSION,MT_IIGS_MEDIA_TARGET_DRAIN_SUPPORTED|MT_IIGS_ACCEL_SPEED_MASK},
+        {21U,TEST_IIGS_CAPS}
+    };
+    for(unsigned i=0U;i<sizeof(incompatible)/sizeof(incompatible[0]);++i) {
+        reset();(void)raw_disk("old-core.po",MT_IIGS_RAW_PRODOS35,0U);
+        regs[MT_REG_ABI_VERSION/4U]=incompatible[i].abi;regs[MT_REG_IIGS_ACCEL_CAPS/4U]=incompatible[i].caps;
+        iigs_content_service_init(&core,TEST_MEDIA_ROOT,NULL,NULL);
+        assert(iigs_content_service_boot()!=0 && !iigs_content_service_ready());
+        assert(iigs_content_service_mount(2U,"old-core.po")!=0);
+        assert(iigs_content_service_eject(2U)!=0 && iigs_content_service_pram(true)!=0);
+        request(2U,0U,false);iigs_content_service_poll();
+        assert(iigs_content_service_retry()!=0);
+        assert(strcmp(iigs_content_service_error(),"Update IIgs core for safe media changes")==0);
+        assert(iigs_content_service_faulted() && file_open_calls==0U && rom_read_count==0U && rom_stream_count==0U);
+        assert(reset_assertions==0U && regs[MT_REG_COMMAND_DOORBELL/4U]==0U);
+        for(unsigned slot=0U;slot<MT_IIGS_MEDIA_SLOT_COUNT;++slot)assert(generations[slot]==0U);
+        /* Reject unsafe media commands without trapping the user in a core
+         * that has no open handles or pending state to preserve. */
+        assert(iigs_content_service_prepare_reset()==0 && regs[MT_REG_COMMAND_DOORBELL/4U]==0U);
+        assert(iigs_content_service_resume_after_reset()!=0 && regs[MT_REG_COMMAND_DOORBELL/4U]==0U);
+    }
+}
 int main(void)
 {
+    test_target_eject_amid_hdd_traffic();
+    test_target_drain_failures_preserve_media();
+    test_pram_and_reset_amid_hdd_traffic();
+    test_fresh_floppy_error_retry();
+    test_pram_config_transport_boundaries();
+    test_media_capability_guard();
     test_eight_hdd_and_legacy_settings();
     test_wide_hdd_and_error_recovery();
     test_media_progress_and_completion_retry();
+    test_media_request_rejection_errors();
+    test_raw_metadata_transport();
     test_raw_floppy_transport();
     test_raw_floppy_recovery();
     test_raw_floppy_protection();
@@ -862,6 +1314,7 @@ int main(void)
     test_irq_default_and_saved_choices();
     test_mouse_settings();
     test_card_mode_lifecycle();
+    test_fast_floppy_lifecycle();
     test_legacy_none_and_card_rollback();
     test_card_restart_failures();
     test_rom_paths();

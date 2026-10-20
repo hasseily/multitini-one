@@ -173,17 +173,34 @@ set iigs_woz_registers [get_cells -hierarchical -quiet -regexp \
     {.*g_apple_iigs_machine[/.]machine_adapter/native_eject35_q_reg$}]
 require_one_object "IIgs native eject phase1 latch" [get_cells -hierarchical -quiet -regexp \
     {.*g_apple_iigs_machine[/.]machine_adapter/native_eject35_q_reg$}]
+set iigs_fast_request_registers [get_cells -hierarchical -quiet -regexp \
+    {.*g_apple_iigs_machine[/.]machine_adapter/fast_floppy_request_reg(_rep[^/]*)?$}]
+if {[llength $iigs_fast_request_registers] == 0} {error "IIgs reset-latched fast floppy option is missing"}
+set iigs_fast_request_outputs [get_pins -quiet -of_objects $iigs_fast_request_registers -filter {REF_PIN_NAME == Q}]
+if {[llength $iigs_fast_request_outputs] != [llength $iigs_fast_request_registers]} {
+    error "IIgs fast floppy option feedback census changed"
+}
+# Off preserves the phase1 sampler. Fast eject pulses may arrive on any
+# primary edge and are retained until the adapter's service loop sees them.
+set iigs_phase_logic_fixed_drivers [dict create]
+foreach pin $iigs_fast_request_outputs {dict set iigs_phase_logic_fixed_drivers $pin 0}
 foreach cell $iigs_woz_registers {
+    set clock_pin [get_pins -quiet -of_objects $cell -filter {REF_PIN_NAME == C}]
+    require_one_object "IIgs eject primary clock pin" $clock_pin
+    if {[get_clocks -quiet -of_objects $clock_pin] ne $primary || [get_property IS_INVERTED $clock_pin]!=0} {
+        error "IIgs eject latch must use positive primary edges: $cell"
+    }
     set ce [get_pins -quiet -of_objects $cell -filter {REF_PIN_NAME == CE}]
     set data [get_pins -quiet -of_objects $cell -filter {REF_PIN_NAME == D}]
     foreach phase {0 2 3} {
         # Eject pulses have CE=1 and force D=0 outside phase1.
         if {[iigs_phase_logic_value $ce $phase] ne "0" &&
             [iigs_phase_logic_value $data $phase] ne "0"} {
-            error "IIgs WOZ tuple is not proven inactive in phase$phase: $cell"
+            error "IIgs Normal-mode eject is not proven inactive in phase$phase: $cell"
         }
     }
 }
+set iigs_phase_logic_fixed_drivers [dict create]
 set iigs_phase0_registers [get_cells -hierarchical -quiet -regexp \
     {.*g_apple_iigs_machine[/.]machine_adapter/(native_(reset|cold)_q|woz_(sd_(addr|data|ack|write)|mount|readonly|size)_q|hdd_(sd_(addr|data|ack|write|error)|mount|readonly|size)_q)_reg(\[[0-9]+\])*(_rep[^/]*)?$}]
 if {[llength $iigs_phase0_registers] < 27} {error "IIgs phase0 native publication register census changed"}
@@ -259,6 +276,44 @@ foreach reset_value {0 1} {
     }
 }
 set iigs_phase_logic_fixed_drivers [dict create]
+# A timing-option transition is admitted only while the native guest reset
+# is asserted. Prove the mapped hold function with both old option values;
+# neither a combinational mode input nor an unreviewed CE may alter it live.
+foreach iigs_fast_request_register $iigs_fast_request_registers {
+if {[get_property REF_NAME $iigs_fast_request_register] ne "FDRE"} {
+    error "IIgs fast floppy option requires a synchronous clear-only register"
+}
+set iigs_fast_request_c [get_pins -quiet -of_objects $iigs_fast_request_register -filter {REF_PIN_NAME == C}]
+set iigs_fast_request_d [get_pins -quiet -of_objects $iigs_fast_request_register -filter {REF_PIN_NAME == D}]
+set iigs_fast_request_ce [get_pins -quiet -of_objects $iigs_fast_request_register -filter {REF_PIN_NAME == CE}]
+set iigs_fast_request_r [get_pins -quiet -of_objects $iigs_fast_request_register -filter {REF_PIN_NAME == R}]
+set iigs_fast_request_q [get_pins -quiet -of_objects $iigs_fast_request_register -filter {REF_PIN_NAME == Q}]
+foreach pin [list $iigs_fast_request_c $iigs_fast_request_d $iigs_fast_request_ce $iigs_fast_request_r] {
+    require_one_object "IIgs fast floppy option primitive pin" $pin
+    if {[get_property IS_INVERTED $pin]!=0} {
+        error "IIgs fast floppy option acquired an inverted primitive pin: $pin"
+    }
+}
+if {[get_clocks -quiet -of_objects $iigs_fast_request_c] ne $primary ||
+    [get_property IS_INVERTED $iigs_fast_request_c]!=0} {
+    error "IIgs fast floppy option must use positive primary edges"
+}
+set iigs_native_reset_q [get_pins -quiet -of_objects $iigs_native_reset_register -filter {REF_PIN_NAME == Q}]
+require_one_object "IIgs native reset option-admission level" $iigs_native_reset_q
+foreach old_value {0 1} {
+    set iigs_phase_logic_fixed_drivers [dict create $iigs_global_reset_driver 0 \
+        $iigs_native_reset_q 0 $iigs_fast_request_q $old_value]
+    foreach phase {0 1 2 3} {
+        if {[iigs_phase_logic_value $iigs_fast_request_r $phase] ne "0" ||
+            ([iigs_phase_logic_value $iigs_fast_request_ce $phase] ne "0" &&
+             [iigs_phase_logic_value $iigs_fast_request_d $phase] ne $old_value)} {
+            error "IIgs fast floppy option can change outside guest reset: phase$phase"
+        }
+    }
+}
+}
+set iigs_phase_logic_fixed_drivers [dict create]
+puts "APPLE_IIGS_FAST_FLOPPY_OPTION_PASS reset_only=1 primary_clock=1 normal_eject_phase=1"
 # The same phase evaluator proves the actual mapped CE cone and counter.
 foreach phase {0 1 2 3} {
     if {[iigs_phase_logic_value $iigs_gate_ce $phase] ne [expr {$phase==3 ? "1" : "0"}]} {
@@ -367,16 +422,27 @@ foreach cell $iigs_native_track_ram {
     foreach pin [get_pins -quiet -of_objects $cell -filter \
         {REF_PIN_NAME == CLKARDCLK || REF_PIN_NAME == CLKBWRCLK}] {
         set clocks [get_clocks -quiet -of_objects $pin]
-        if {[llength $clocks] != 1 || $clocks ne "apple_iigs_clk14"} {
-            error "IIgs WOZ track RAM must retain native CLK_14M latency: $pin ($clocks)"
+        if {[llength $clocks] != 1 || $clocks ne $primary || [get_property IS_INVERTED $pin]!=0} {
+            error "IIgs WOZ track RAM must use positive primary edges with explicit enables: $pin ($clocks)"
         }
     }
 }
+set iigs_floppy_registers [get_cells -hierarchical -quiet -filter \
+    {NAME =~ *machine_adapter/machine_i/iwmc/* && IS_SEQUENTIAL == 1}]
+if {[llength $iigs_floppy_registers] < 250} {error "IIgs primary IWM consumer census changed"}
+set iigs_floppy_clock_pins [get_pins -quiet -leaf -of_objects $iigs_floppy_registers -filter {IS_CLOCK == 1}]
+if {[llength $iigs_floppy_clock_pins] < 250} {error "IIgs IWM clock-pin census changed"}
+foreach pin $iigs_floppy_clock_pins {
+    if {[get_clocks -quiet -of_objects $pin] ne $primary || [get_property IS_INVERTED $pin]!=0} {
+        error "IIgs IWM/flux/SmartPort acquired an unreviewed clock: $pin"
+    }
+}
+puts "APPLE_IIGS_FAST_FLOPPY_CLOCK_PASS primary_clock_pins=[llength $iigs_floppy_clock_pins] track_ram=[llength $iigs_native_track_ram] new_clock_domains=0"
 set iigs_woz_endpoints [get_pins -of_objects $iigs_woz_registers -filter {REF_PIN_NAME == D}]
 set iigs_config_sources [get_pins -of_objects $iigs_config_registers -filter {REF_PIN_NAME == C}]
 set iigs_publication_sources [get_pins -of_objects $iigs_phase0_registers -filter {REF_PIN_NAME == C}]
 foreach {description from to periods} [list \
-    WOZ [get_clocks apple_iigs_clk14] $iigs_woz_endpoints 2 \
+    WOZ $primary $iigs_woz_endpoints 1 \
     native_stall [get_clocks apple_iigs_clk14] $iigs_native_stall_endpoint 3 \
     configuration $iigs_config_sources [get_clocks apple_iigs_clk14] 3 \
     publication $iigs_publication_sources [get_clocks apple_iigs_clk14] 3] {

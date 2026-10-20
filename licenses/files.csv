@@ -1,4 +1,9 @@
 path,origin,commit,license,status,notes
+hdl/core/apple_iigs/ports/smartport_dev.sv,MiSTer Apple IIgs and Multitini One,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-3.0,source-reviewed,Reproduced by scripts/port_apple_iigs_core.py; native clock enable preserves SmartPort timing inside the separately paced floppy subsystem
+hdl/sim/tb_apple_iigs_fast_floppy_boot.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original production-adapter floppy boot and independent native video and audio cadence checks; private ROMs and media are external test inputs
+hdl/sim/tb_apple_iigs_fast_floppy_protocol.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original real-65816 formatted track read and write and durable eject test; generated sector payloads and mechanical fixtures
+scripts/test_apple_iigs_fast_floppy_boot.py,Multitini One,,GPL-3.0-only,source-reviewed,Original source-capturing ROM1 and ROM3 normal and fast floppy boot runner
+scripts/test_apple_iigs_fast_floppy_protocol.py,Multitini One,,GPL-3.0-only,source-reviewed,Original generated-sector codec and full-track CPU protocol and durable save validation runner
 hdl/sim/tb_apple_iigs_legacy_video.sv,Multitini One,,GPL-3.0-only,sim-tested,Original synthetic-memory functional netlist oracle for legacy graphics and text plus SHR
 scripts/synth_apple_iigs_legacy_video.tcl,Multitini One,,GPL-3.0-only,sim-tested,Original isolated VGC synthesis and functional netlist export
 scripts/test_apple_iigs_legacy_video.py,Multitini One,,GPL-3.0-only,sim-tested,Original guarded synthesis and Xsim runner with ordered pixel checks and source-hash evidence

@@ -28,14 +28,11 @@ create_generated_clock -name apple_iigs_clk14 \
 # Every CPU/cache address, tag, data and retirement path keeps ordinary
 # single-cycle timing. Native-only phase exceptions below do not select it.
 
-# Software eject is sampled on phase1. Native WOZ track RAM and IWM use the
-# same CLK_14M and retain their original synchronous read/write semantics.
-set apple_iigs_woz_registers [get_cells -hierarchical -quiet -regexp \
-    {.*g_apple_iigs_machine[/.]machine_adapter/native_eject35_q_reg$}]
-set_multicycle_path 2 -setup -end -from [get_clocks apple_iigs_clk14] \
-    -to [get_pins -of_objects $apple_iigs_woz_registers -filter {REF_PIN_NAME == D}]
-set_multicycle_path 1 -hold -end -from [get_clocks apple_iigs_clk14] \
-    -to [get_pins -of_objects $apple_iigs_woz_registers -filter {REF_PIN_NAME == D}]
+# The IWM, flux engines and WOZ buffers use the primary clock with explicit
+# native/fast enables. Their RAM, CPU and eject paths keep ordinary one-cycle
+# primary setup/hold timing in both modes. The exporter checks clock identity
+# and Normal-mode eject sampling; regressions check native edge equivalence.
+# No floppy multicycle or generated-clock exception is introduced for Fast.
 
 # Configuration publishes only on loader phase0. The following native phase3
 # edge is three primary clocks later. Select only those launch registers;

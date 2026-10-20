@@ -31,6 +31,7 @@ typedef struct {
     const char *iigs_drive_name[MT_IIGS_DRIVE_COUNT];
     mt_iigs_config_t iigs_config;
     uint32_t iigs_speed_mask;
+    bool iigs_fast_floppy_supported;
     uint16_t iigs_mouse_sensitivity;
     bool iigs_ready;
 } mt_core_frontend_state_t;

@@ -387,6 +387,14 @@ static void all_actions(void) {
         assert(menu_action_needs_core_progress(action));
         action.file_index = 1U;
         assert(menu_action_needs_core_progress(action));
+        supervisor.active.package.core_id = MT_IIGS_CORE_ID;
+        assert(menu_action_needs_core_progress(action));
+        action.file_index = 2U;
+        assert(menu_action_needs_core_progress(action));
+        action.file_index = 10U;
+        assert(menu_action_needs_core_progress(action));
+        action.file_index = 0U;
+        assert(!menu_action_needs_core_progress(action));
     }
 }
 static void result_and_browser_retention(void) {

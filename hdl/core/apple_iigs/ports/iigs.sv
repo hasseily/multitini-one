@@ -53,6 +53,24 @@ input [7:0] load_rom_data,
 input CPU_CLK=1'b0,
 input CPU_CE=1'b0,
 input CPU_PUBLISH=1'b0,
+// Optional four-times-native floppy virtual time. Other peripherals retain CLK14.
+input fast_floppy_request=1'b0,
+input fast_floppy_stall=1'b0,
+output fast_floppy_active,
+output floppy_engine_ce,
+output floppy_backend_ce,
+output cpu_floppy_access,
+output cpu_floppy_guard,
+output cpu_floppy_slow,
+// Captured Fast IWM bus and its separate registered-response path.
+input CPU_FLOPPY_PENDING=1'b0,
+input CPU_FLOPPY_REQUEST=1'b0,
+input [7:0] CPU_FLOPPY_ADDR=8'd0,
+input [7:0] CPU_FLOPPY_DATA=8'd0,
+input CPU_FLOPPY_READ=1'b1,
+output [7:0] cpu_floppy_data,
+output [1:0] floppy_write_pending,
+output floppy_write_drain,
 input [7:0] CPU_DIN=8'hFF,
 input NATIVE_COMMIT=1'b0,
 output [2:0] cpu_speed,
@@ -2576,23 +2594,46 @@ wire ready_out;
                    nv_twgs_sel ? nv_twgs_q : 8'hFF;
 
   // Hardware-accurate IWM with WOZ/flux-based disk interface
-  // Media in the drive the IWM has selected ($C031 bit 6 and $C0EA/B).
-  wire iwm_drive_media;
+  // The optional floppy island uses the primary clock and explicit enables.
+  // The native enable preserves the original edge/BRAM sequence when disabled.
+  wire iwm_drive_media, iwm_motor_command, iwm_write_timing, iwm_smartport_mode;
+  // A native access already published before eligibility rises must still
+  // commit once on its native edge, before any captured Fast bus can own it.
+  wire iwm_native_pending = EXTERNAL_CPU && NATIVE_COMMIT && IO && addr_bef[7:4]==4'hE;
+  wire iwm_bus_commit = CPU_FLOPPY_PENDING ? CPU_FLOPPY_REQUEST :
+      (EXTERNAL_CPU ? (NATIVE_COMMIT && !hdd_dma && NATIVE_EDGE) : bus_phi2);
+  wire iwm_bus_select = CPU_FLOPPY_PENDING ? 1'b1 :
+      (fast_floppy_active ? (IO && addr_bef[7:4]==4'hE) : iwm_device_select);
+  assign cpu_floppy_data = iwm_dout;
+  // Finish a captured bus at its original rate before changing eligibility.
+  // The CPU cannot start a SmartPort packet until this bounded access retires.
+  wire fast_floppy_clock_active = (fast_floppy_active || CPU_FLOPPY_PENDING) && !iwm_native_pending;
+  reg floppy_7m_phase;
+  always @(posedge CPU_CLK) begin
+    if (reset) floppy_7m_phase<=0;
+    else if (!fast_floppy_clock_active) begin
+      if (NATIVE_EDGE) floppy_7m_phase<=~clk_7M_en;
+    end
+    else if (floppy_engine_ce) floppy_7m_phase<=~floppy_7m_phase;
+  end
   iwm_woz iwmc (
       // Global clocks/resets
-      .CLK_14M(CLK_14M),
-      .CLK_7M_EN(clk_7M_en),
+      .CLK_14M(EXTERNAL_CPU ? CPU_CLK : CLK_14M),
+      .CLOCK_ENABLE(EXTERNAL_CPU ? floppy_engine_ce : 1'b1),
+      .WRITE_DRAIN_ENABLE(floppy_write_drain),
+      .NATIVE_ENABLE(EXTERNAL_CPU ? NATIVE_EDGE : 1'b1),
+      .CLK_7M_EN(fast_floppy_clock_active ? floppy_7m_phase : clk_7M_en),
       .Q3(q3_en),
       .PH0(phi0),
-      .PH2(bus_phi2),
+      .PH2(iwm_bus_commit),
       .RESET(reset),
       // Bus interface
       .IO_SELECT(iwm_device_select),
-      .DEVICE_SELECT(iwm_device_select),
-      .WR_CYCLE(cpu_we_n),  // 1 = read, 0 = write (matches cpu_we_n)
+      .DEVICE_SELECT(iwm_bus_select),
+      .WR_CYCLE(CPU_FLOPPY_PENDING ? CPU_FLOPPY_READ : cpu_we_n),  // 1 = read, 0 = write (matches cpu_we_n)
       .VDA(cpu_vda),
-      .A({8'b0, cpu_addr[7:0]}),  // Combinational address (low byte; zero-extended)
-      .D_IN(cpu_dout),      // Combinational data
+      .A({8'b0, CPU_FLOPPY_PENDING ? CPU_FLOPPY_ADDR : cpu_addr[7:0]}),  // Combinational address (low byte; zero-extended)
+      .D_IN(CPU_FLOPPY_PENDING ? CPU_FLOPPY_DATA : cpu_dout),      // Combinational data
       .D_OUT(iwm_dout),
       // Drive status and control
       .DISK_READY(DISK_READY),
@@ -2633,7 +2674,11 @@ wire ready_out;
       .FLOPPY_MOTOR_ON(floppy_motor_on),
       .FLOPPY35_MOTOR_ON(floppy35_motor_on),
       .DRIVE35_EJECT_REQ(drive35_eject_req),
-      .SELECTED_MEDIA(iwm_drive_media)
+      .SELECTED_MEDIA(iwm_drive_media),
+      .MOTOR_COMMAND_ON(iwm_motor_command),
+      .WRITE_TIMING_ACTIVE(iwm_write_timing),
+      .SMARTPORT_MODE(iwm_smartport_mode),
+      .WRITE_PIPELINE_PENDING(floppy_write_pending)
   );
   // Internal wires not used with flux-based IWM
 
@@ -3072,13 +3117,12 @@ wire       slot_delay_this = slot_ce;
 // a real ZipGS/TWGS (I/O and Mega II accesses stay at stock speed).
 // accel_capable gates BOTH control paths (OSD and ZipGS software): on a
 // memory path that cannot sustain short cycles this must never leave native.
-// ZipGS IWM compatibility hold-off: a real accelerator drops to native speed
-// around floppy activity -- the IWM and the ROM disk drivers' cycle-counted
-// delays (spin-up, head settle) cannot be accelerated. Any CPU access to the
-// IWM ($C0E0-$C0EF) arms a ~2 ms native window, refreshed per access, so the
-// whole driver runs at the speed it was written for while the disk is being
-// worked, and acceleration resumes between disk phases. (Without this the
-// ROM3 3.5" driver mis-times the drive at 7.16 MHz: "Check startup device".)
+// Normal floppy mode keeps the original fixed controller/flux timebase.
+// Cycle-counted software delays and byte/command protocols need native
+// CPU pacing. An IWM access ($C0E0-$C0EF) arms a retriggerable two-ms
+// guard for nearby protocol work; the external CPU can accelerate other
+// computation when the guest and write engine no longer request native
+// timing. No driver PC or ROM revision is hardcoded in this policy.
 //
 // The 2 ms timer alone only covers gaps between IWM register touches; motor
 // spin-up and head-settle waits are plain CPU count-down loops that don't
@@ -3086,18 +3130,33 @@ wire       slot_delay_this = slot_ce;
 // can lapse mid-delay and let acceleration resume before the loop is done --
 // desyncing the driver's cycle-counted timing regardless of ROM version or
 // which accelerated step is selected. floppy_motor_on/floppy35_motor_on
-// (rtl/iwm_woz.v) already track real motor state; gate on those too so
-// acceleration stays off for the drive's whole motor-on span, not just the
-// last 2 ms of register activity.
+// (rtl/iwm_woz.v) retain that whole-motor policy on the original CPU path.
+// The external CPU instead honors the selected mounted drive's C036
+// native-speed request and its active write protocol. The two-ms access
+// guard still protects nearby IWM traffic. Ordinary computation can run
+// fast between those intervals while the spindle continues rotating. Raw
+// motor, mechanical/flux clocks and dirty flushing are unchanged in Normal mode.
+// Fast mode advances only the floppy island at four times native time,
+// pacing driver CPU work with it and pausing virtual time on real stalls.
 reg [14:0] iwm_holdoff;
 wire iwm_selected_media = iwm_drive_media;
-always @(posedge CLK_14M) begin
+// Honor the guest's timing requests only for the mounted drive it selects.
+// Sony entry code requests fast speed; its long delay helpers clear C036.7.
+// Disk II software can instead request motor-based 1 MHz timing via C036.2.
+wire floppy_guest_native_request = iwm_selected_media &&
+    (!CYAREG[7] || (!DISK35[6] && CYAREG[2] && iwm_motor_command));
+// The actual routed write protocol can outlive a Sony C031 deselection.
+wire floppy_timing_hold = EXTERNAL_CPU &&
+    (floppy_guest_native_request || iwm_write_timing);
+always @(posedge (EXTERNAL_CPU ? CPU_CLK : CLK_14M)) begin
   if (reset)
     iwm_holdoff <= 15'd0;
-  else if (bus_phi2 && IO && addr_bef[7:4] == 4'hE)
-    iwm_holdoff <= 15'd28636;               // 2 ms at 14.318 MHz
-  else if (iwm_holdoff != 15'd0)
-    iwm_holdoff <= iwm_holdoff - 15'd1;
+  else if (!EXTERNAL_CPU || floppy_engine_ce) begin
+    if (iwm_bus_commit && IO && addr_bef[7:4] == 4'hE)
+      iwm_holdoff <= 15'd28636; // Two milliseconds of floppy virtual time.
+    else if (iwm_holdoff != 15'd0)
+      iwm_holdoff <= iwm_holdoff - 15'd1;
+  end
 end
 
 // Speaker + paddle transparent auto-slowdown (TransWarp/ZipGS behavior).
@@ -3177,10 +3236,32 @@ wire irq_slowdown = cpu_i_flag &&
 // here: its accel_en already includes CYAREG.7 ("the TWGS will not override"
 // System Speed Normal -- manual ch.3).
 wire cps_gate = twgs_present ? 1'b1 : (CYAREG[7] || !zip_cps_follow_en);
+// SmartPort packets keep their native schedule and original bus bridge.
+// Eligibility follows configured acceleration, independently of C036 requests.
+assign fast_floppy_active = EXTERNAL_CPU && fast_floppy_request && accel_capable &&
+    eff_accel_en && eff_speed_code>=3'd4 && !iwm_smartport_mode &&
+    !io_slow_holdoff && !irq_slowdown && !twgs_boot_armed;
+// A rate change cannot abandon an already accepted Fast write. Retain the
+// primary-clock drain/fence only until its pending bit reaches track RAM.
+reg floppy_fast_history;
+always @(posedge CPU_CLK) begin
+    if(reset)floppy_fast_history<=0;
+    else if(fast_floppy_clock_active)floppy_fast_history<=1;
+    else if(!(|floppy_write_pending))floppy_fast_history<=0;
+end
+assign floppy_write_drain=fast_floppy_clock_active || (floppy_fast_history && (|floppy_write_pending));
+assign floppy_engine_ce = EXTERNAL_CPU && (fast_floppy_clock_active ? !fast_floppy_stall : NATIVE_EDGE);
+assign floppy_backend_ce = EXTERNAL_CPU && (floppy_write_drain || NATIVE_EDGE);
+assign cpu_floppy_access = fast_floppy_active && !hdd_dma && valid && IO && addr_bef[7:4]==4'hE;
+assign cpu_floppy_guard = fast_floppy_active &&
+    ((iwm_holdoff!=0 && iwm_selected_media) || floppy_timing_hold);
+assign cpu_floppy_slow = !CYAREG[7] ||
+    (iwm_selected_media && !DISK35[6] && CYAREG[2] && iwm_motor_command);
 wire [3:0] fast_thresh = (accel_capable && eff_accel_en && eff_speed_code != 3'd0
                           && (iwm_holdoff == 15'd0 || (EXTERNAL_CPU && !iwm_selected_media))
-                          && !(floppy_motor_on && (|DISK_READY[1:0]))
-                          && !(floppy35_motor_on && (|DISK_READY[3:2]))
+                          && !(floppy_motor_on && (|DISK_READY[1:0]) && !EXTERNAL_CPU)
+                          && !(floppy35_motor_on && (|DISK_READY[3:2]) && !EXTERNAL_CPU)
+                          && !floppy_timing_hold
                           && !io_slow_holdoff
                           && !irq_slowdown
                           && !(twgs_present && (bank_bef == 8'hBC
@@ -3250,7 +3331,7 @@ always @(posedge CLK_14M) begin
         native_return_toggle<=~native_return_toggle;
     end
 end
-assign cpu_speed = accel_active ? eff_speed_code : 3'd0;
+assign cpu_speed = (accel_active || cpu_floppy_guard || cpu_floppy_access) ? eff_speed_code : 3'd0;
 assign cpu_logical_addr = cpu_addr;
 assign cpu_vector_n = cpu_vpb;
 assign cpu_local_read = EXTERNAL_CPU ? (cpu_peek_io && cpu_we_n && zip_unlocked && (cpu_addr[7:3]==5'b01011)) :
@@ -3278,7 +3359,7 @@ assign cpu_slowram_write = EXTERNAL_CPU && !hdd_dma && valid && we && cpu_plain_
     slowram_ce && (cpu_mega2_window || fastram_ce);
 wire cpu_mega2_rom_read = EXTERNAL_CPU && !hdd_dma && valid && !we && cpu_plain_bus &&
     cpu_mega2_bank && addr_bef >= 16'hD000 && rom_ce;
-assign cpu_fast_cycle = !hdd_dma && (!valid || cpu_local_read ||
+assign cpu_fast_cycle = !hdd_dma && (!valid || cpu_local_read || cpu_floppy_access ||
     (cpu_plain_bus && (!slowram_ce || (!we && fastram_ce)) && (fastram_ce || rom_ce)) ||
     cpu_slowram_read || cpu_slowram_write || cpu_mega2_rom_read);
 // hdd.sv registers slot ROM twice (address -> rom_dout -> D_OUT) and its

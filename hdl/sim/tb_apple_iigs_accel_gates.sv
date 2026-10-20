@@ -135,6 +135,8 @@ module tb_apple_iigs_accel_gates;
 
     reg test_motor525=0,test_motor35=0;
     reg [3:0] test_disks=0;
+    reg test_command=0;
+    reg [7:0] test_cyareg=8'hc0;
     // A real IWM latches its mode register on a write to any odd address
     // while Q6=Q7=1 and idle. GS/OS stores mode $04 through $C0ED; with
     // bit 2 set, motor-off must clear the IWM active state at once.
@@ -178,7 +180,7 @@ module tb_apple_iigs_accel_gates;
         end
     endtask
     task motor_checks;
-        bit expected_native;
+        bit expected_native,selected_media;
         integer motor_checks_count;
         begin
             // A real empty-drive motor command still reaches the controller
@@ -188,6 +190,7 @@ module tb_apple_iigs_accel_gates;
             if(dut.machine_i.iwm_holdoff==0 || !dut.machine_i.iwmc.drive_on)
                 $fatal(1,"empty-drive IWM access lost native command");
             if(dut.cpu_speed!=6) $fatal(1,"empty-drive IWM access held the accelerator");
+            side_read(24'h00c0ee); // Leave a prior mode-register Q7 setting in read mode.
             force dut.machine_i.iwmc.motor_spinning=test_motor525;
             force dut.machine_i.iwmc.drive35_motor_spinning=test_motor35;
             force dut.machine_i.DISK_READY=test_disks;
@@ -218,25 +221,81 @@ module tb_apple_iigs_accel_gates;
             if(dut.cpu_speed!=6) $fatal(1,"unmounted IWM motor latch falsely clamps accelerator");
             if(!dut.machine_i.floppy_motor_on || !dut.machine_i.iwmc.drive_on)
                 $fatal(1,"accelerator gating changed raw motor output or command");
+            force dut.machine_i.iwm_holdoff=15'd0;
             motor_checks_count=0;
-            for(integer disks=0;disks<16;disks++) for(integer motors=0;motors<4;motors++) begin
-                test_disks=disks;test_motor525=motors[0];test_motor35=motors[1];#0.001;
-                expected_native=((disks&3)!=0 && motors[0]) || ((disks&12)!=0 && motors[1]);
-                if(dut.cpu_speed!==(expected_native ? 3'd0:3'd6))
-                    $fatal(1,"mounted motor family timing failed disks%0h motors%0d speed%0d",test_disks,motors,dut.cpu_speed);
-                if(dut.machine_i.floppy_motor_on!==test_motor525 || dut.machine_i.floppy35_motor_on!==test_motor35)
-                    $fatal(1,"raw motor status changed with accelerator gate");
-                motor_checks_count++;
+            for(integer family=0;family<2;family++) for(integer drive=0;drive<2;drive++) begin
+                write_byte(24'h00c031,family ? 8'h40 : 8'h00);
+                side_read(drive ? 24'h00c0eb : 24'h00c0ea);
+                for(integer request_bits=0;request_bits<4;request_bits++) for(integer command_on=0;command_on<2;command_on++) begin
+                    test_cyareg=8'h40 | (request_bits[0] ? 8'h80 : 8'h00) | (request_bits[1] ? 8'h04 : 8'h00);
+                    write_byte(24'h00c036,test_cyareg);
+                    side_read(command_on ? 24'h00c0e9 : 24'h00c0e8);test_command=command_on;
+                    for(integer disks=0;disks<16;disks++) for(integer motors=0;motors<4;motors++) begin
+                    test_disks=disks;test_motor525=motors[0];test_motor35=motors[1];
+                    #0.001;
+                    selected_media=disks[family*2+drive];
+                    expected_native=selected_media && (!request_bits[0] || (!family && request_bits[1] && command_on));
+                    if(dut.cpu_speed!==(expected_native ? 3'd0:3'd6))
+                        $fatal(1,"floppy guest timing matrix failed family%0d drive%0d disks%0h motors%0d request%0d command%0d speed%0d",family,drive,test_disks,motors,request_bits,command_on,dut.cpu_speed);
+                    if(dut.machine_i.iwm_motor_command!==test_command || dut.machine_i.floppy_motor_on!==test_motor525 || dut.machine_i.floppy35_motor_on!==test_motor35)
+                        $fatal(1,"raw motor status or command changed with accelerator gate");
+                    motor_checks_count++;
+                    end
+                end
             end
+            release dut.machine_i.iwm_holdoff;
+            write_byte(24'h00c036,8'hc0);write_byte(24'h00c031,0);side_read(24'h00c0ea);
             test_disks=1;test_motor525=1;test_motor35=0;
+            side_read(24'h00c0e8);
+            repeat(4*28636+8) @(negedge core_clk);
+            if(dut.cpu_speed!=6 || !dut.machine_i.floppy_motor_on || dut.machine_i.iwm_motor_command)
+                $fatal(1,"Disk II coast retained the command-based native hold");
+            write_byte(24'h00c036,8'hc4);side_read(24'h00c0e9);
+            repeat(4*28636+8) @(negedge core_clk);
+            if(dut.machine_i.iwm_holdoff!=0 || dut.cpu_speed!=0 || !dut.machine_i.clk_div_inst.slow)
+                $fatal(1,"Disk II motor native request did not outlive the access lease");
             memory[24'h001008>>3]=64'h3c3c3c3c3c3c3c3c;
-            read_byte(24'h001008,8'h3c,1); // Mounted motor retains native bus cadence.
-            test_disks=0;read_byte(24'h001008,8'h3c,0); // Eject releases only the accelerator.
+            read_byte(24'h001008,8'h3c,1);
+            side_read(24'h00c0e8);repeat(4*28636+8) @(negedge core_clk);
+            if(dut.cpu_speed!=6 || !dut.machine_i.floppy_motor_on)
+                $fatal(1,"Disk II motor-off did not release acceleration while coasting");
+            read_byte(24'h001008,8'h3c,0);
+            // Actual IWM write-mode entry must protect a long gap, including
+            // Sony cleanup where C031 selects an empty 5.25-inch drive.
+            write_byte(24'h00c036,8'hc0);write_byte(24'h00c031,8'h40);
+            test_disks=4;test_motor525=0;test_motor35=1;
+            side_read(24'h00c0e9);side_read(24'h00c0ed);write_byte(24'h00c0ef,8'hd5);
+            repeat(8) @(negedge core_clk);
+            if(!dut.machine_i.iwm_write_timing) $fatal(1,"IWM write protocol did not enter timing guard");
+            repeat(4*28636+8) @(negedge core_clk);
+            if(dut.machine_i.iwm_holdoff!=0 || dut.cpu_speed!=0)
+                $fatal(1,"IWM active write lost native timing after access lease");
+            write_byte(24'h00c031,0);
+            if(dut.machine_i.iwm_selected_media || !dut.machine_i.iwm_write_timing || dut.cpu_speed!=0)
+                $fatal(1,"Sony write cleanup deselection lost native timing");
+            side_read(24'h00c0eb);
+            repeat(8) @(negedge core_clk);
+            if(dut.machine_i.iwm_write_timing || dut.cpu_speed!=6)
+                $fatal(1,"empty routed write drive retained native timing");
+            test_disks=12;repeat(8) @(negedge core_clk);
+            if(!dut.machine_i.iwm_write_timing || dut.cpu_speed!=0)
+                $fatal(1,"mounted routed write drive 2 lost native timing");
+            side_read(24'h00c0ea);write_byte(24'h00c031,8'h40);side_read(24'h00c0ee);
+            repeat(4*28636+8) @(negedge core_clk);
+            if(dut.machine_i.iwm_write_timing || dut.cpu_speed!=6 || !dut.machine_i.floppy35_motor_on)
+                $fatal(1,"write completion failed to restore selected-spinning acceleration");
+            // Reset must clear an asserted exported guard on its native edge.
+            side_read(24'h00c0ed);write_byte(24'h00c0ef,8'hd5);
+            repeat(8) @(negedge core_clk);
+            if(!dut.machine_i.iwm_write_timing) $fatal(1,"IWM reset fixture never entered the write guard");
+            core_reset_request=1;repeat(16) @(negedge core_clk);
+            if(dut.machine_i.iwm_write_timing!==1'b0) $fatal(1,"IWM reset retained the write timing guard");
+            core_reset_request=0;
             release dut.machine_i.iwmc.motor_spinning;
             release dut.machine_i.iwmc.drive35_motor_spinning;
             release dut.machine_i.DISK_READY;
             $display("COMPARE mounted_motor=%0d",motor_checks_count);
-            mark("empty-drive motor and IWM access keep acceleration; mounted-family motor and selected-drive IWM holds retained");
+            mark("selected mounted guest timing requests and active routed writes retain native pace; ordinary work and motor coast accelerate; raw motors unchanged");
         end
     endtask
     bit mount_disk=0;
@@ -613,6 +672,68 @@ module tb_apple_iigs_accel_gates;
             mark("real 65816 IRQ-ROM-to-shadow-RAM loop exact stock/max execution and 57MHz warm cadence");
         end
     endtask
+    // A Sony spindle keeps rotating across DISK35 deselection. A guest idle
+    // loop must regain its configured rate without ejecting that same disk.
+    // Keep real CPU execution and the complete adapter/cache/ROM path here;
+    // only media/spindle state is synthetic, independent of disk contents.
+    task idle_floppy_kernel;
+        integer polls,family;
+        longint unsigned selected_ticks,deselected_ticks,native_ticks;
+        begin
+            pause_request=1;forced_vda=0;
+            release dut.machine_i.cpu_addr;release dut.machine_i.cpu_vpa;release dut.machine_i.cpu_vda;
+            release dut.machine_i.cpu_we_n;release dut.machine_i.cpu_dout;release dut.machine_i.cpu_vpb;
+            release dut.machine_i.cpu_i_flag;
+            speed=6;kernel_start=16'h2000;kernel_end=16'h2004;kernel_warm_x=16'h0f00;
+            for(integer scenario=0;scenario<3;scenario++) begin
+                family=scenario!=0;
+                loop_elapsed=0;measuring=0;
+                for(integer i=0;i<131072;i++) rom[i]=8'hea;
+                rom[131068]=0;rom[131069]=8'he0;
+                rom[65536+16'hc074]=8'h5c;rom[65536+16'hc075]=0;
+                rom[65536+16'hc076]=8'h20;rom[65536+16'hc077]=0;
+                cursor=122880;emit(8'h78);emit(8'h18);emit(8'hfb);
+                emit(8'ha9);emit(family ? 8'h40 : 8'h00); // Guest chooses the Sony bus.
+                emit(8'h8d);emit(8'h31);emit(8'hc0);
+                if(scenario==2)begin
+                    emit(8'had);emit(8'hec);emit(8'hc0); // Arm the finite IWM lease.
+                    emit(8'ha9);emit(8'h40); // Long delay explicitly requests native speed.
+                    emit(8'h8d);emit(8'h36);emit(8'hc0);
+                end
+                emit(8'hc2);emit(8'h30);
+                emit(8'ha9);emit(8'h34);emit(8'h12);emit(8'ha2);emit(0);emit(8'h10);emit(8'h58);
+                emit(8'h5c);emit(8'h74);emit(8'hc0);emit(0);
+                memory[24'h002000>>3]=64'h0201008ffcd0ca1a;
+                memory[(24'h002000>>3)+1]=64'heaeaeaeaeaeaeAdb;
+                start_machine();
+                test_disks=4'b0100;test_motor35=1;test_motor525=0;
+                force dut.machine_i.DISK_READY=test_disks;
+                force dut.machine_i.iwmc.motor_spinning=test_motor525;
+                force dut.machine_i.iwmc.drive35_motor_spinning=test_motor35;
+                beam_sync();pause_request=0;polls=0;
+                while(!dut.machine_i.cpu.STPExec && polls<2000000) begin @(negedge core_clk);polls++;end
+                pause_request=1;drain();
+                if(!dut.machine_i.cpu.STPExec || loop_elapsed==0 || dut.machine_i.cpu.A!==16'h2234 || dut.machine_i.cpu.X!==0 ||
+                   memory[24'h020100>>3][15:0]!==16'h2234)
+                    $fatal(1,"idle Sony kernel architectural state incorrect family%0d",family);
+                if(!dut.machine_i.floppy35_motor_on || dut.machine_i.DISK_READY!==4'b0100)
+                    $fatal(1,"idle Sony kernel changed raw media/spindle status");
+                if(scenario!=2 && (dut.cpu_speed!=6 || loop_elapsed!=loop_advances))
+                    $fatal(1,"selected spinning Sony fast work failed to regain maximum cadence scenario%0d ticks%0d advances%0d",scenario,loop_elapsed,loop_advances);
+                if(scenario==2 && (dut.cpu_speed!=0 || dut.machine_i.iwm_holdoff!=0))
+                    $fatal(1,"long floppy guest-native countdown resumed acceleration or did not outlive the access lease");
+                if(scenario==0)deselected_ticks=loop_elapsed;
+                else if(scenario==1)selected_ticks=loop_elapsed;
+                else native_ticks=loop_elapsed;
+                $display("MEASURE idle_floppy scenario=%0d family=%0d native_request=%0d primary_ticks=%0d cpu_advances=%0d",scenario,family,scenario==2,loop_elapsed,loop_advances);
+                release dut.machine_i.DISK_READY;release dut.machine_i.iwmc.motor_spinning;
+                release dut.machine_i.iwmc.drive35_motor_spinning;
+            end
+            if(selected_ticks!=deselected_ticks || native_ticks/selected_ticks<20)
+                $fatal(1,"Sony guest request did not separate accelerated work from native countdown cadence");
+            mark("real 65816 selected-spinning and deselected Sony computation both run at maximum; guest-native countdown remains native beyond the two-ms access lease");
+        end
+    endtask
     // Real 65816 store loops. Bank 00 $2000 is a shadowed store (fast RAM
     // plus the Mega II mirror at E0:2000); bank E1 $2000 is a direct Mega II
     // store. DDR contents are checked only after a drain pause.
@@ -877,6 +998,7 @@ module tb_apple_iigs_accel_gates;
         if($test$plusargs("ONLY_DMA")) dma_program();
         else if($test$plusargs("ONLY_KERNELS")) begin real_cpu_kernel();native_write_kernel();load_kernel();dma_program();end
         else if($test$plusargs("ONLY_MOTOR")) motor_checks();
+        else if($test$plusargs("ONLY_FLOPPY_IDLE")) idle_floppy_kernel();
         else if($test$plusargs("ONLY_IWM_MODE")) iwm_mode_checks();
         else if($test$plusargs("ONLY_SOUND")) sound_program();
         else if($test$plusargs("ONLY_JOYSTICK")) joystick_checks();
@@ -885,7 +1007,7 @@ module tb_apple_iigs_accel_gates;
             if(!$test$plusargs("ONLY_SHADOW")) paddle_checks();
             if(!$test$plusargs("ONLY_PADDLE")) shadow_checks();
             if(!$test$plusargs("ONLY_PADDLE") && !$test$plusargs("ONLY_SHADOW")) mega2_mapping_checks();
-            if(!$test$plusargs("ONLY_PADDLE") && !$test$plusargs("ONLY_SHADOW")) begin iwm_mode_checks();motor_checks();real_cpu_kernel();native_write_kernel();load_kernel();sound_program();dma_program();end
+            if(!$test$plusargs("ONLY_PADDLE") && !$test$plusargs("ONLY_SHADOW")) begin iwm_mode_checks();motor_checks();real_cpu_kernel();idle_floppy_kernel();native_write_kernel();load_kernel();sound_program();dma_program();end
         end
         $display("CHECKS completed=%0d",cases);$finish;
     end

@@ -26,6 +26,7 @@ namespace eval multitini_run_profile {
     set_if_changed $impl STRATEGY {Vivado Implementation Defaults}
 
     set synth_settings [dict create \
+        WRITE_INCREMENTAL_SYNTH_CHECKPOINT 1 \
         STEPS.SYNTH_DESIGN.ARGS.DIRECTIVE Default \
         STEPS.SYNTH_DESIGN.ARGS.GLOBAL_RETIMING auto \
         STEPS.SYNTH_DESIGN.ARGS.CONTROL_SET_OPT_THRESHOLD auto \
@@ -54,8 +55,8 @@ namespace eval multitini_run_profile {
                 dict set settings $property {}
             }
         }
-        dict set settings AUTO_INCREMENTAL_CHECKPOINT 0
         dict set settings INCREMENTAL_CHECKPOINT {}
+        dict set settings AUTO_INCREMENTAL_CHECKPOINT 1
         dict for {property expected} $settings {
             set_if_changed $run $property $expected
         }
@@ -65,5 +66,5 @@ namespace eval multitini_run_profile {
     foreach run [get_runs -filter {IS_SYNTHESIS && SRCSET != sources_1}] {
         set_if_changed $run STEPS.SYNTH_DESIGN.TCL.PRE $threads_hook
     }
-    puts "Vivado profile: OPT Explore, PLACE Default, PHYS Explore, ROUTE Explore, routed PHYS AggressiveExplore"
+    puts "Vivado profile: automatic checkpoints enabled, OPT Explore, PLACE Default, PHYS Explore, ROUTE Explore, routed PHYS AggressiveExplore"
 }

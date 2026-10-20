@@ -36,11 +36,17 @@ The legacy 80x36 overlay retains its previous execution behavior. Older firmware
 does not request dense mode and cannot hide its menu before blocking native
 loads. New firmware always requests dense mode and requires ABI 0.11 packages.
 
-## IIgs installed acceleration capability
+## IIgs installed capabilities
 
 ABI 0.22 adds read-only `IIGS_ACCEL_CAPS` at `0x0CC`. Bit 31 marks a valid
-IIgs capability; bits 6:0 advertise supported CPU speed codes. Other bits are
-zero. Other machine images return zero. Never read this register on older
+IIgs capability; bits 6:0 advertise supported CPU speed codes. Bit 8 advertises
+retained media requests across mount/eject and fresh-ID retry publication.
+Bit 9 (`MT_IIGS_FAST_FLOPPY_SUPPORTED`, `0x200`) permits configuration flags
+bit 7 (wire byte 3 bit 7): Fast floppy. It defaults Off. Changing it saves and
+ejects media under the old timing, then applies the new value while reset is
+asserted and remounts media. Firmware retains a saved On preference with an
+older image, disables its menu toggle and transmits the bit as zero.
+Other bits are zero. Other machine images return zero. Never read this register on older
 ABIs; those IIgs images support the legacy mask `0x1F`.
 
 | Code | Fast-cycle target |
@@ -58,6 +64,16 @@ misses, acknowledged writes and compatibility delays reduce application
 throughput. Firmware offers only advertised codes and clamps persisted faster
 settings when an older image is selected. ZipGS software percentages use the
 installed maximum, with its wall-clock timer retained on the native clock.
+
+Target-scoped media draining requires bit 8. Such firmware rejects older
+IIgs images before issuing media commands and asks for a core update. A
+capable IIgs shell retains outstanding read and write snapshots across mount
+and eject, and publishes a fresh request ID/generation even when the native
+controller keeps request-valid asserted during a retry. The file service
+keeps the target file open until its requests and hardware eject state finish;
+requests from other drives can continue. PRAM operations also require an
+acknowledged matching request before reset can proceed. Older firmware can
+ignore bit 8 and retain its original global drain policy.
 
 ## Video and audio
 

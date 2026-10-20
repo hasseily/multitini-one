@@ -366,7 +366,10 @@ module multitini_video_frame_reader #(
     reg [31:0] value_pixel, epoch;
     reg pixel_reset_seen;
     reg [43:0] outstanding_token; // epoch32, row10, bank2
-    reg [9:0] next_row, current_row;
+    reg [9:0] next_row;
+    // Preserve the exact row-update cycles while keeping the held value's
+    // feedback mux on D instead of sharing the long pixel-rate CE cone.
+    (* EXTRACT_ENABLE = "no" *) reg [9:0] current_row;
     reg [2:0] line_valid;
     reg [9:0] line_row [0:2];
     reg [31:0] line_epoch [0:2];

@@ -1,5 +1,369 @@
 # Apple IIgs acceleration rework
 
+## FPGA 4D000609 timing closure
+
+The first complete 4D000609 build failed setup by 0.984 ns on 2,314
+endpoints. It included four later timing-only RTL changes: grouped L0 tag
+equality, a merged WOZ track-RAM address mux, precomputed CPU address
+increments and a rewritten `adder4`. Nearly every failing path starts at the
+CPU microcode ROM and crosses address generation and MMU/IO decode. About 75%
+of each path is routing. In Fast mode the floppy engine enables also depend on
+the CPU's same-cycle address (`iwm_native_pending`, `fast_floppy_stall`),
+which puts WOZ, IWM and flux logic on the CPU's critical paths. Across today's
+builds the routed setup slack ranged from -0.19 to -1.57 ns.
+
+Eight placement variants of that netlist reached -0.56 to -1.29 ns. Repeated
+unroute/reroute repair reached -0.23 ns at best. The earlier `gs609-hdl1`
+netlist, without the four changes, had -0.186 ns on 60 endpoints. One repair
+pass closed it: 0.100 ns temporary machine-clock margin, unroute,
+AggressiveExplore physical optimization, Explore routing, then the normal
+0.200 ns video-margin AggressiveExplore pass. All temporary margins are
+cleared before measurement. No RTL, clock rate or timing exception changed.
+
+The working tree was restored byte-exactly to the `gs609-hdl1` capture. The
+four changes are kept in `build/gs609-post-hdl1-tweaks/`. The storage overlap
+logic is unchanged. The normal export gates pass in a fresh process: setup
+slack `+0.027 ns`, hold slack `+0.053 ns`, pulse-width slack `+1.250 ns`,
+complete routing, phase proofs, CDC, bus skew and timing coverage. The Fast
+floppy overlap (15 cases, 3 negative controls) and protocol suites were rerun
+on these exact sources and pass; all 16 protocol track outputs are
+byte-identical to the baseline 609 run. The SD
+update is `build/gs609r-delivery/core609-sd.zip`; evidence is in
+`core609-evidence.zip` beside it. This image has not been tested on the board.
+
+Open item: the floppy-enable coupling to the CPU address remains. Further
+growth in this logic will likely need those enables registered first.
+
+## Fast floppy storage overlap
+
+Independent CPU work can continue during a Fast floppy track load or flush
+outside the existing two-millisecond IWM guard, guest-requested native delay
+and active write protocol. Its configured CPU pacing continues while the
+floppy's virtual timeline waits for storage. Cache, pause, reset and DMA
+holds remain effective. Normal mode keeps its existing behavior.
+
+An IWM access waits for storage and completes through the existing captured
+request/response path. Protected driver delays stay coupled to the paused
+disk; letting those loops run could feed the next serial write byte too early.
+The backend and pending final write bits continue to drain. This change adds
+no clock, reset or timing exception. Compatibility tests, implementation
+timing and physical acceptance are separate qualification steps.
+
+## M0.6.5 optional fast floppy timing
+
+The candidate pairs ARM M0.6.5 (`4D000605`) with IIgs FPGA `4D000607`.
+Options > Floppy speed selects Normal or Fast. Normal is the default. Changing
+the option flushes mounted media with the old timing, resets the machine,
+applies the new configuration and remounts the images. The setting is saved;
+older FPGA images mask the unsupported option and show it as unavailable.
+
+Fast advances the floppy controller, serial bit cells, mechanics and the
+CPU's associated timing together at up to four times their native rate.
+It uses the existing primary clock and clock enables, with one disk engine
+and no new clock domain. Video, audio, RTC, paddles and SmartPort retain
+their existing timebases. Normal retains the selective slowdown described
+for FPGA `4D000606` below.
+
+Fast requires enabled acceleration at a configured speed of at least
+14 MHz. Stock and lower speeds retain normal floppy timing. SmartPort,
+speaker/paddle/counter holds and IRQ compatibility holds also retain their
+normal schedules. The menu's supported accelerated configuration is ZipGS.
+
+Within an eligible floppy timing window, an ordinary CPU cycle takes at
+least five virtual ticks; a guest slow-speed request takes fourteen.
+IWM register transactions take at least fourteen ticks and commit once.
+Their address, direction and write byte are captured, and a response
+register separates the controller read from CPU completion. The request,
+response and acknowledgment fit within that virtual cycle.
+Outside that window the CPU can use its full configured speed. Cache
+waits, a stopped guest and track service pause virtual disk time while the
+file-service backend continues. An already emitted final write bit drains
+before a save or eject can complete. Other native I/O charges its virtual
+cycle once and pauses the disk during the remaining physical bridge wait.
+These rules bound acceleration; they do not promise a fourfold application
+speed increase.
+
+All 38 protocol cases pass across both drive families: full decoded
+sector reads/writes, pending-bit pause and resume, eligibility changes,
+failed-block retry, durable flush and eject. The Normal results, complete
+read/written/saved tracks and 5.25-inch store trace match the frozen606
+reference exactly. Two pre-correction controls reproduce lost pending bits
+with the final test oracle. ROM1 and ROM3 pass bounded boot in both modes.
+Another 113 cases cover captured IWM requests and responses across pause,
+cache waits, backend work, DMA, eligibility changes and SmartPort transitions.
+Two actual HDD DMA runs cross the IWM address window, preserving all 512
+data bytes and the IWM state in Normal and Fast modes. All 157 cases pass
+against the current source after the timing cleanup.
+
+The synthetic formatted read/write transfer is 3.922 times faster for the
+3.5-inch track and 3.952 times faster for the 5.25-inch track. The selected,
+spinning idle CPU kernel differs by at most two dispatches in 100,000 primary
+clocks between the modes. Native,
+video and audio cadence remain unchanged. These are simulation measurements,
+not application or board benchmarks.
+
+FPGA `4D000607` passes the normal timing, coverage, routing, CDC and phase
+gates. A fresh process reopens the saved checkpoint without optimization or
+constraint replay and independently passes the same gates: setup slack is
+`+0.004 ns`, hold slack is `+0.012 ns` and pulse-width slack is `+1.250 ns`.
+The audit checks all 222 frozen source inputs, the resolved constraint scopes
+and zero added clock uncertainty. These are tool results; physical-board
+acceptance remains pending.
+
+## FPGA 4D000606 selective floppy timing
+
+This change replaces the external CPU's whole-motor slowdown with timing
+requests from the selected mounted drive and the active write engine. The
+CPU can resume its configured accelerated rate while the spindle continues
+rotating, including when the drive remains selected.
+
+Native timing remains active in these intervals:
+
+- The guest clears `$C036` bit 7 while selecting a mounted floppy. ROM1 and
+  ROM3 use this request for their long Sony spin-up and seek delays.
+- A selected, mounted 5.25-inch drive has its IWM motor command on and the
+  guest requests motor-based slowdown with `$C036` bit 2. Physical motor
+  coast after the off command does not extend this request.
+- The IWM has an active disk-write protocol with media in its routed drive.
+  This also covers Sony write cleanup after `$C031` deselects the 3.5-inch bus.
+
+The existing retriggerable two-millisecond guard after IWM register accesses
+still covers nearby command and byte-transfer work for a selected mounted
+drive. Outside these intervals, ordinary computation can accelerate. Other
+accelerator gates, the original CPU path, mechanical delays, flux clocks,
+track buffers and media flushing retain their existing behavior. No ROM
+addresses or program-counter ranges select this policy.
+
+The IWM exports its existing motor command and a write-active observation.
+Write-active is registered on the existing 14 MHz clock and cleared by the
+existing reset. The access guard covers its one-edge entry latency. This
+breaks feedback from immediate IWM bus decode into CPU speed selection. It
+adds no clock domain, asynchronous crossing or timing exception. The new
+register uses the existing timed relationship between native and primary
+clocks. The port script reproduces both HDL changes from the pinned upstream.
+
+The small production-adapter regression passes 16 groups and 2,048
+family/drive/media/motor/guest-request/command combinations, plus directed
+active-write and reset checks. A real 65816 program
+performs the same 26,879 CPU advances with identical register and memory
+results. Both deselected idle and selected, spinning, guest-fast operation
+take 26,879 primary ticks. A guest-native request remains effective after
+the two-millisecond guard expires and takes 1,508,528 ticks for that work.
+These warm-loop measurements do not predict application or desktop speed.
+Five negative controls fail as intended: restoring the previous motor hold
+loses acceleration, and removing each native-request, motor-command,
+write-active or routed-write guard breaks its corresponding timing check.
+
+CPU-executed write tests cover Sony asynchronous, Disk II synchronous and
+Disk II asynchronous modes. Each executes 1,025 real guest data writes and a
+7.2 ms CPU-only gap while write mode remains active. All critical I/O timing,
+serial bits, track positions, CPU results and 512 final synthetic track bytes
+match the previous policy exactly, including after the access guard expires.
+After write mode ends and the guard expires, the drive remains selected and
+spinning: 300,000 primary ticks permit 120,000 instruction dispatches versus
+5,443 under the previous motor hold. This is a bounded synthetic write and
+warm-RAM test with simulated mechanics, not a filesystem or hardware test.
+
+ROM1 and ROM3 boot the supplied read-only Arkanoid 800K image through the
+native IWM/WOZ path at speed code 6. ROM3 executes the exact bootblock opcode
+at tick 143,151,383 and completes 1,219 reads over 180 million primary ticks.
+ROM1 reaches that opcode at 152,164,718 and completes 755 reads in the same
+window. Neither enters a repeated BRK loop. Their long native-speed waits
+remain intact. This establishes bounded boot progress; it does not establish
+full game or copy-protected disk compatibility.
+
+The extended ROM3 run passes 650 million primary ticks, reaches the native
+IRQ handler at tick 345,032,636, completes all 4,109 reads and makes 113 track
+changes without a repeated BRK loop. The same 153,228 native-delay dispatches
+and 28,286,096 native-speed ticks after access-guard expiry remain protected.
+The matched ROM1 control changes only the CPU timing policy: both boot,
+preserve native-duration waits, and execute the same 20,448 eligible dispatches
+take 1,890,568 ticks with the previous policy versus 105,004 with this change.
+These are bounded simulation results, not hardware performance measurements.
+
+The new IIgs FPGA identity is `4D000606`, ABI 0.22. ARM M0.6.4 (`4D000604`)
+and its media-safety capability are retained. No ARM source or firmware
+binary changes are required.
+
+The selected FPGA passes the original strict export gates with nominal setup
+slack `+0.002 ns`, hold slack `+0.052 ns` and pulse-width slack `+1.250 ns`.
+The primary CPU clock group has `+0.084 ns` setup slack. Clock identity,
+native phase, timing coverage, CDC, bus-skew, routing and design-rule gates
+pass. The native clock census covers 9,059 pins; native CE setup and hold
+slacks are `+13.795 ns` and `+1.218 ns`.
+
+Timing closure uses physical replication of the shared PH2 enable and two
+CPU decode branches, rerouting and recorded incremental optimization. The
+original failed build and every later attempt remain preserved. One attempted
+post-route forced replication was rejected without changing the checkpoint;
+the selected result uses the supported unroute/replicate/reroute sequence.
+Temporary optimization uncertainty is restored to zero before nominal
+measurements and export. No RTL, clock rate, timing exception or constraint
+policy changes were made during closure. All 217 captured inputs still match
+the freeze.
+Evidence is under `build/iigs606-selective/hardware/apple-iigs/` and
+`build/iigs-floppy-critical/`. These are offline results; board acceptance of
+FPGA `4D000606` remains open.
+
+An independent process directly reopens the selected routed checkpoint and
+repeats the original timing, phase, coverage, CDC, skew, routing and DRC gates.
+The accepted `fresh-dcp-audit-final-2` passes with the same `+0.002 ns` setup,
+`+0.052 ns` hold and `+1.250 ns` pulse-width slack. All 131 serialized clock
+and exception directives have equivalent numeric values and object scopes.
+The comparison resolves 418 selectors, including 312 scoped selectors and
+336 hierarchy commands, with zero empty selectors. All 42 timed clock pairs
+have zero user uncertainty. The first supplemental audit is explicitly
+rejected because it did not honor hierarchy context; its raw PASS is retained
+as historical evidence and is not accepted for delivery. The corrected
+comparator passes ten scoped-query and failure controls.
+
+The test delivery is `build/iigs-floppy-critical/core606-update.zip`, with
+exact source, physical repair history, build reports and validation tools.
+`core606-sd.zip` is the small two-file update for a board already running ARM
+M0.6.4. Its IIgs binary and `core.cfg` are byte-identical to the full delivery.
+Keep the existing ROMs, media, settings and recovery journals. After copying
+the two files, verify FPGA `4D000606` and ARM `4D000604`, then test Thexder
+idle responsiveness, eject/reinsert and Restart active core at 57 MHz with
+the menu closed. No board installation or physical test of `4D000606` was
+performed as part of this offline build.
+
+## Mounted 3.5-inch idle slowdown
+
+The owner reports that inserting a 3.5-inch floppy slows the whole machine
+until the image is ejected, including after disk activity finishes. At
+diagnosis the board reported IIgs FPGA `4D000603`, ROM3 and speed code 6
+(57 MHz).
+
+The Sony drive's physical spindle state intentionally survives deselection
+through `$C031` bit 6. The accelerator previously treated that entire spindle
+lifetime as a native-speed compatibility hold whenever a 3.5-inch image was
+mounted. Ejecting removed the media qualification and released the hold.
+
+The FPGA `4D000604` correction qualified that 3.5-inch motor hold with the active
+3.5-inch selection. A selected, spinning drive retains native timing for the
+driver's spin-up and seek loops; deselection permits the configured CPU speed
+again. Physical rotation, flux timing, track buffers, dirty-track flushing,
+the separate IWM access timer and the stock CPU path are unchanged. The port
+script reproduces the correction without modifying the pinned upstream.
+
+The production-adapter regression executes the same 26,879 real 65816
+advances and checks identical register and DDR results with that disk still
+mounted and spinning. Selected activity takes 592,636 primary ticks;
+deselected idle takes 26,879, restoring the maximum warm-loop cadence. All
+16 acceleration groups and 128 media/motor/selection combinations pass.
+IWM byte timing and live speed/card-setting regressions also pass.
+
+The exact supplied Arkanoid 800K image also passes the ROM3 native-floppy boot
+gate at maximum speed through 650 million primary ticks. It executes its boot
+byte at tick 143,227,031, reaches the native IRQ handler at 353,941,668 and
+completes 4,109 WOZ reads without a repeated BRK loop. This is bounded boot
+and ongoing media progress, not full game compatibility. Its exact inputs and
+results are in `build/iigs-floppy-idle-repro/arkanoid-corrected/validation.json`.
+
+An equal-time HDD-booted insertion comparison uses the same ROM3, System 6.0.1
+HDD and Arkanoid floppy. Before insertion its traces match. During the next
+150 million ticks, the correction completes 3,299 media requests and
+22,921,202 CPU advances, versus 1,667 and 16,513,297 with the old spindle-wide
+hold. Both perform active disk work. This is a mixed-workload comparison,
+not a settled Finder-idle or hardware benchmark. See
+`build/iigs-floppy-idle-repro/comparison-validation.json`.
+
+The selected FPGA `4D000604` passes strict signoff with nominal setup slack
+`+0.100 ns`, hold slack `+0.028 ns` and pulse-width slack `+1.250 ns`.
+Physical replication of one high-fanout CPU decode net and rerouting closed
+setup timing. The temporary optimization uncertainty was restored to zero
+before checkpoint and bitstream export. RTL and release timing constraints
+were unchanged by that physical repair. All 216 captured inputs and their
+source archives match; the PS7 initialization hash matches M0.6.3 exactly.
+Evidence is under `build/iigs-floppy-idle/hardware-native/apple-iigs/`.
+
+The standalone package is `build/iigs-floppy-idle/core-update-m064.zip`.
+It contains the two SD update files, exact source, repair provenance and
+validation evidence; it reuses ARM M0.6.3 without rebuilding it. The previous
+SD files were backed up, both replacements passed SHA256 readback, and host
+flush, exclusive lock, dismount and eject succeeded. UART then reported
+PCAP CRC32 `3451E6DB`, FPGA `4D000604`, ABI 0.22, `ready=1` and `fault=0`,
+with the owner's Thexder 2MG still mounted in drive 2. This establishes
+delivery and initial live core health. Subsequent eject and restart attempts
+failed with "Apple IIgs media did not finish flushing". A media retry restored
+one eject, and a warm CPU reset restored one restart, but the failure returned.
+The owner powered the system off before the combined correction below was
+installed. The idle-performance check on FPGA `4D000604` was not completed.
+Receipts are in `build/iigs-floppy-idle/live-board-604.json` and
+`build/iigs-floppy-idle/flush-restart-live.json`.
+
+## M0.6.4 floppy flush and restart correction
+
+The firmware previously required every drive to stop requesting data before
+sending an eject. A production-service reproduction completes 100,000 healthy
+HDD requests while the unrelated floppy never receives its eject command.
+The new drain waits for the requested drive and continues serving the others.
+The file remains open until that drive's requests, the FPGA eject-pending
+state and its recovery journal have all drained.
+
+The shared FPGA media bridge also cleared a retained request snapshot on
+mount or eject, even for a different drive. The IIgs adapter still awaited
+its completion, so firmware could lose the operation needed to finish a
+flush. The IIgs bridge now retains the snapshot until completion. A fresh
+request ID or media generation republishes a retained-buffer retry even
+when VALID remains high. Other machine cores keep their existing policy.
+The change adds no clock or crossing; the identity latches use the existing
+core clock and mailbox path.
+
+PRAM saves now require an acknowledged operation for slot 4 with the expected
+generation and direction. Firmware fences an earlier save before issuing
+another configuration pulse, including when the final payload byte committed
+but the transport's end operation failed. An uncertain pulse remains an
+error until service initialization; it cannot manufacture a successful flush.
+Dirty media and recovery journals remain retained on failure.
+
+The paired identities are ARM firmware M0.6.4 (`4D000604`) and IIgs FPGA
+`4D000605`, ABI 0.22. The new firmware checks optional capability bit 8 before
+starting IIgs media service. An older IIgs FPGA reports an update error before
+media changes. Both files and the matching `core.cfg` must be installed.
+The 2MG parser is unchanged; the owner withdrew the earlier size-error report.
+
+The production bridge regression passes five IIgs groups, 36 snapshots and
+70 commands, including mount/eject at 12 mailbox phases and retry identity
+changes. It also checks all six other machine policies. Five negative
+controls restore the old failures. Production firmware tests cover unrelated
+HDD traffic, retained dirty data, failed saves, acknowledged PRAM completion,
+transport failures and the capability guard; six negative controls fail as
+expected. A separate production-adapter test finishes real protected WOZ
+track reads with the spindle running and the 3.5-inch bus deselected. The
+synthetic CPU program has reached STP; host eject passes with the pause
+input off or on. Native eject passes with the pause input on by pulsing the
+native core's eject output. This tests output-boundary capture, not guest
+IWM command decoding. Deselection is the reset value of `$C031`, not a guest
+write. Each case retains its request until completion, drains both
+sides without a write or reset during the drain, and clears mounted, busy,
+dirty, pending, ACK and disk-ready state. All 87 host checks pass. These
+results do not establish physical acceptance of the combined update.
+
+The selected FPGA `4D000605` passes strict nominal signoff with setup slack
+`+0.008 ns`, hold slack `+0.046 ns` and pulse-width slack `+1.250 ns`.
+All 56,661 nets are routed with zero routing errors. Phase proofs, timing
+coverage, bus skew, CDC and design-rule gates pass; critical CDC rows and
+waivers are both zero. The normal implementation flow closes timing without
+an additional repair pass or constraint replay. All 217 captured inputs match
+the current source. The PS7 initialization hash still matches M0.6.3 exactly.
+Evidence is in `build/iigs605-isolated/hardware/apple-iigs/`.
+
+The paired package is `build/iigs-media-fix/combined-update-m064.zip`.
+Its SD payload contains the new ARM firmware, IIgs native FPGA binary and
+matching `core.cfg`. CPU0 and CPU1 are freshly built; the FSBL, supervisor
+FPGA and exported platform are explicitly retained from the pinned M0.6.3
+package. The source archives include the exact FPGA capture, complete current
+ARM and FPGA source, retained boot-partition provenance and local validation
+tools. `INSTALL.txt` covers the three-file copy, Golden firmware update,
+identity checks and the original Thexder idle/eject/change/restart tests.
+On 2026-10-19 the owner confirmed the combined update working on the board.
+This records owner-reported acceptance; the installation and live device
+identity were not independently reread by the agent after that confirmation.
+The package remains the exact sealed build delivered before the board test.
+
+## Earlier acceleration measurements
+
 The owner reported that 57 MHz felt barely twice as fast as stock in real use:
 booting, Finder window drawing and applications. This record covers the
 measurements that explained it, the changes on branch `iigs-accel-fixes`, and

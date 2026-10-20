@@ -345,6 +345,8 @@ module multitini_one_top #(
     logic        media_request_mailbox_dst_valid;
     logic        media_request_mailbox_dst_ready;
     logic        c64_media_request_sent;
+    logic [31:0] c64_media_request_sent_id;
+    logic [31:0] c64_media_request_sent_generation;
     logic [8:0]  media_data_mailbox_destination;
     logic        media_data_valid_control;
     logic [7:0]  media_data_control;
@@ -728,7 +730,7 @@ module multitini_one_top #(
     );
 
     multitini_control_regs #(.SHELL_BUILD_ID(SHELL_BUILD_ID),
-        .IIGS_ACCEL_CAPS(ACTIVE_MACHINE==5 ? 32'h8000007f : 32'd0)) control_regs (
+        .IIGS_ACCEL_CAPS(ACTIVE_MACHINE==5 ? 32'h8000037f : 32'd0)) control_regs (
         .clk(control_clk), .resetn(control_aresetn),
         .core_id(c64_core_id),
         .core_variant_index((ACTIVE_MACHINE == 0 && C64_NTSC_MODE) ||
@@ -950,15 +952,25 @@ module multitini_one_top #(
     );
 
     // A request is captured once and held coherently in the control domain
-    // until software completes or ejects it. The source latch prevents the
-    // still-asserted core request from being submitted twice.
+    // until software completes it. The source latch prevents the same core
+    // request from being submitted twice. IIgs retains its buffer and VALID
+    // after a failed operation, but retries with a fresh ID; that new identity
+    // must cross without requiring an intervening deassertion of VALID.
     assign media_request_mailbox_source = {
         c64_media_request_write, c64_media_request_id,
         c64_media_request_lba, c64_media_request_block_count,
         c64_media_request_generation
     };
     assign media_request_mailbox_src_valid =
-        c64_media_request_valid && !c64_media_request_sent;
+        // IIgs remounts metadata while guest reset is held. Its retained
+        // request must wait until release: the reset clears the sent latch
+        // and the destination discards reset-time snapshots, so publishing
+        // then could queue a second LBA0 snapshot behind the first completion.
+        c64_media_request_valid && (ACTIVE_MACHINE != 5 || !c64_core_reset_request) &&
+        (!c64_media_request_sent ||
+            (ACTIVE_MACHINE == 5 &&
+             (c64_media_request_id != c64_media_request_sent_id ||
+              c64_media_request_generation != c64_media_request_sent_generation)));
     // While a soft core reset is asserted, acknowledge and discard any
     // pre-reset mailbox item so it cannot reappear as a stale MMIO request.
     assign media_request_mailbox_dst_ready =
@@ -966,13 +978,18 @@ module multitini_one_top #(
         |(shell_control & MT_CONTROL_CORE_RESET_REQUEST);
 
     always_ff @(posedge c64_clk) begin
-        if (!c64_aresetn || c64_core_reset_request)
+        if (!c64_aresetn || c64_core_reset_request) begin
             c64_media_request_sent <= 1'b0;
-        else if (!c64_media_request_valid)
+            c64_media_request_sent_id <= 32'd0;
+            c64_media_request_sent_generation <= 32'd0;
+        end else if (!c64_media_request_valid)
             c64_media_request_sent <= 1'b0;
         else if (media_request_mailbox_src_valid &&
-                 media_request_mailbox_src_ready)
+                 media_request_mailbox_src_ready) begin
             c64_media_request_sent <= 1'b1;
+            c64_media_request_sent_id <= c64_media_request_id;
+            c64_media_request_sent_generation <= c64_media_request_generation;
+        end
     end
 
     multitini_async_mailbox #(.WIDTH(113)) media_request_mailbox (
@@ -1066,13 +1083,13 @@ module multitini_one_top #(
             media_request_block_count_control <= 16'd0;
             media_request_generation_control <= 32'd0;
         end else begin
-            // A dirty eject deliberately preserves an outstanding reverse
-            // write request in the drive domain. Keep the matching coherent
-            // MMIO snapshot until software completes that write; clearing it
-            // here would also leave the source request latch asserted, so the
-            // request could never be submitted again.
-            if (media_mount || media_complete ||
-                (media_eject && !media_request_write_control))
+            // IIgs keeps every active transfer until completion, including a
+            // read during target eject or an unrelated drive's mount/eject.
+            // Preserve its coherent snapshot so ARM can still finish it.
+            // Other machines retain their existing cancellation behavior;
+            // their dirty eject keeps an outstanding reverse write request.
+            if (media_complete || (ACTIVE_MACHINE != 5 &&
+                (media_mount || (media_eject && !media_request_write_control))))
                 media_request_valid_control <= 1'b0;
             if (media_request_mailbox_dst_valid &&
                 media_request_mailbox_dst_ready) begin

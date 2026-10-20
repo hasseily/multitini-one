@@ -623,7 +623,7 @@ puts $manifest "sources=build_inputs.sources.tar.gz"
 foreach run_name {synth_1 impl_1} {
     set run [get_runs $run_name]
     foreach property [lsort [list_property $run]] {
-        if {[string match {STEPS.*} $property] || $property in {STRATEGY AUTO_INCREMENTAL_CHECKPOINT INCREMENTAL_CHECKPOINT}} {
+        if {[string match {STEPS.*} $property] || $property in {STRATEGY AUTO_INCREMENTAL_CHECKPOINT INCREMENTAL_CHECKPOINT WRITE_INCREMENTAL_SYNTH_CHECKPOINT}} {
             puts $manifest "$run_name.$property=[get_property $property $run]"
         }
     }

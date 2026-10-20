@@ -42,7 +42,14 @@ static uint16_t mouse_sensitivity;
 static uint32_t speed_mask;
 static uint32_t next_generation, pram_generation, seen_id, seen_generation;
 static uint32_t completion_id, completion_status, completion_blocks, completion_generation;
+static unsigned completion_slot;
+static bool completion_writing;
+static uint32_t pram_completions[2];
+static uint32_t pram_operation_before;
+static bool pram_operation_pending,pram_operation_save;
 static bool ready, faulted, seen, completion_pending, pram_mounted, pram_exists, reset_pending;
+static bool media_target_drain_supported;
+static bool fast_floppy_supported;
 static bool staged_write;
 static uint32_t staged_id, staged_generation;
 static uint32_t crc32(const uint8_t *p,size_t n)
@@ -63,6 +70,12 @@ static int fail(const char *text)
 { (void)snprintf(error,sizeof(error),"%s",text); faulted=true; return -1; }
 static int sd_fail(mt_sd_result_t result)
 { return fail(mt_sd_status_name(result.status)); }
+static int require_safe_media(void)
+{
+    if(media_target_drain_supported)return 0;
+    ready=false;
+    return fail("Update IIgs core for safe media changes");
+}
 static bool safe_name(const char *name)
 {
     return mt_iigs_media_path_valid(name);
@@ -91,6 +104,9 @@ static int send_config(const mt_iigs_config_t *c)
 {
     uint8_t wire[MT_IIGS_CONFIG_BYTES];
     mt_iigs_config_encode(c,wire);
+    /* Keep the saved preference when using an older FPGA, but never transmit
+     * its formerly reserved bit unless the active image advertises support. */
+    if(!fast_floppy_supported)wire[3]&=(uint8_t)~MT_IIGS_FLAG_FAST_FLOPPY;
     const mt_link_result_t r=mt_core_link_stream(link,MT_LOAD_IIGS_CONFIG,wire,sizeof(wire),GS_POLLS,progress,progress_context);
     return r==MT_LINK_OK ? 0:fail(mt_link_result_name(r));
 }
@@ -306,7 +322,12 @@ static int complete_pending(void)
 {
     if(!completion_pending)return 0;
     const mt_link_result_t r=command(MT_COMMAND_MEDIA_COMPLETE,completion_id,completion_status,completion_blocks,completion_generation);
-    if(r==MT_LINK_OK) { completion_pending=false; return 0; }
+    if(r==MT_LINK_OK) {
+        if(completion_slot==MT_IIGS_PRAM_SLOT && completion_status==MT_RESPONSE_OK &&
+            completion_generation==pram_generation)
+            ++pram_completions[completion_writing ? 1U:0U];
+        completion_pending=false; return 0;
+    }
     if((link->read32(link->context,MT_REG_MEDIA_REQUEST)&MT_MEDIA_REQUEST_VALID)==0U ||
         link->read32(link->context,MT_REG_MEDIA_REQUEST_ID)!=completion_id ||
         link->read32(link->context,MT_REG_MEDIA_REQUEST_GENERATION)!=completion_generation) {
@@ -334,7 +355,7 @@ static int transfer(bool writing)
 }
 void iigs_content_service_poll(void)
 {
-    if(link==NULL)return;
+    if(link==NULL || !media_target_drain_supported)return;
     if(completion_pending) { (void)complete_pending(); return; }
     const uint32_t word=link->read32(link->context,MT_REG_MEDIA_REQUEST);
     if((word&MT_MEDIA_REQUEST_VALID)==0U) { seen=false; return; }
@@ -355,14 +376,26 @@ void iigs_content_service_poll(void)
     const uint32_t io_error=MT_RESPONSE_IO_ERROR;
     const bool valid_slot=d!=NULL ? d->mounted && d->generation==gen:
         slot==MT_IIGS_PRAM_SLOT && pram_mounted && pram_generation==gen;
-    if(!valid_slot)status=MT_RESPONSE_INVALID_ARGUMENT;
-    if((blocks&255U)!=2U || (blocks>>16U)!=0U ||
-        (slot==MT_IIGS_PRAM_SLOT && lba>=2U))status=MT_RESPONSE_INVALID_ARGUMENT;
+    if(!valid_slot) {
+        (void)fail("Apple IIgs media request slot or generation invalid");
+        status=MT_RESPONSE_INVALID_ARGUMENT;
+    } else if((blocks&255U)!=2U || (blocks>>16U)!=0U) {
+        (void)fail("Apple IIgs media request descriptor invalid");
+        status=MT_RESPONSE_INVALID_ARGUMENT;
+    } else if(slot==MT_IIGS_PRAM_SLOT && lba>=2U) {
+        (void)fail("Apple IIgs PRAM request exceeds image");
+        status=MT_RESPONSE_INVALID_ARGUMENT;
+    }
     const uint64_t offset=(uint64_t)lba*512U;
     size_t count=512U;
     if(status==MT_RESPONSE_OK && d!=NULL) {
-        if(offset>=d->wire_size)status=io_error;
-        else if(writing && !d->info.writable)status=io_error;
+        if(offset>=d->wire_size) {
+            (void)fail("Apple IIgs disk request exceeds image");
+            status=io_error;
+        } else if(writing && !d->info.writable) {
+            (void)fail("Apple IIgs disk is read-only");
+            status=io_error;
+        }
         else if(d->wire_size-offset<512U)count=(size_t)(d->wire_size-offset);
         /* HDD errors finish the SmartPort call. Repair a prior durable write
          * before a later call can observe a partially updated sector. */
@@ -398,28 +431,42 @@ void iigs_content_service_poll(void)
         if(status==MT_RESPONSE_OK)staged_write=false;
     }
     completion_id=id; completion_status=status; completion_blocks=status==MT_RESPONSE_OK ? blocks:0U;
-    completion_generation=gen; completion_pending=true;
+    completion_generation=gen; completion_slot=slot; completion_writing=writing; completion_pending=true;
     if(hdd && status!=MT_RESPONSE_OK)staged_write=false;
     if(status!=MT_RESPONSE_OK)faulted=true;
     (void)complete_pending();
 }
-static int drain_state(bool flush)
+static int drain_state(unsigned slot,bool flush,const uint32_t *completed,uint32_t before)
 {
     unsigned idle=0U;
     for(uint32_t poll=0U;poll<GS_POLLS;++poll) {
         iigs_content_service_poll(); tick();
-        if(!completion_pending && (link->read32(link->context,MT_REG_MEDIA_REQUEST)&MT_MEDIA_REQUEST_VALID)==0U &&
+        const bool all=slot==MT_IIGS_MEDIA_SLOT_COUNT;
+        const bool requested=(link->read32(link->context,MT_REG_MEDIA_REQUEST)&MT_MEDIA_REQUEST_VALID)!=0U &&
+            (all || ((link->read32(link->context,MT_REG_MEDIA_REQUEST_BLOCK_COUNT)>>8U)&255U)==slot);
+        if(!(completion_pending && (all || completion_slot==slot)) && !requested &&
+            (completed==NULL || *completed!=before) &&
             (!flush || (link->read32(link->context,MT_REG_MEDIA_STATE)&MT_MEDIA_STATE_EJECT_PENDING)==0U)) {
             /* Allow the config/eject request to cross into the machine clock
-             * and back before treating an initially idle mailbox as drained. */
+             * and back before treating the target as drained. Other mounted
+             * drives keep receiving service without restarting this guard. */
             if(++idle>=16U)return 0;
         } else idle=0U;
     }
     return fail("Apple IIgs media did not finish flushing");
 }
-static int drain(void) { return drain_state(true); }
+static int drain(void) { return drain_state(MT_IIGS_MEDIA_SLOT_COUNT,true,NULL,0U); }
+static int finish_pram_operation(void)
+{
+    if(!pram_operation_pending)return 0;
+    const uint32_t *const completed=&pram_completions[pram_operation_save ? 1U:0U];
+    if(drain_state(MT_IIGS_PRAM_SLOT,false,completed,pram_operation_before)!=0)return -1;
+    pram_operation_pending=false;
+    return 0;
+}
 static int mount_wire(unsigned slot,uint8_t kind,uint64_t bytes,uint32_t gen,bool ro)
 {
+    if(require_safe_media()!=0)return -1;
     const uint32_t flags=slot|((uint32_t)kind<<MT_MEDIA_KIND_SHIFT)|(ro ? MT_MEDIA_MOUNT_READ_ONLY:0U);
     const uint64_t size=kind==MT_IIGS_MEDIA_BLOCK32 ? bytes/512U:bytes;
     if(size>UINT32_MAX || (kind==MT_IIGS_MEDIA_BLOCK32 && (bytes&511U)!=0U))
@@ -432,6 +479,7 @@ static int mount_wire(unsigned slot,uint8_t kind,uint64_t bytes,uint32_t gen,boo
 static int mount_internal(unsigned drive,const char *name,bool remember)
 {
     if(drive>=MT_IIGS_DRIVE_COUNT || !safe_name(name))return fail("Invalid Apple IIgs disk name");
+    if(require_safe_media()!=0)return -1;
     gs_drive_t *d=&drives[drive];
     if(d->mounted && iigs_content_service_eject(drive)!=0)return -1;
     if(!path(d->path,name) || strlen(d->path)+9U>GS_PATH)
@@ -492,13 +540,16 @@ static int eject_internal(unsigned drive,bool forget)
 {
     gs_drive_t *d=&drives[drive];
     if(d->mounted) {
-        /* A WOZ track can stay dirty while its motor runs. Finish only the
-         * current transfer before requesting eject, which forces its flush. */
-        if(drain_state(false)!=0)return -1;
+        if(require_safe_media()!=0)return -1;
+        /* Retire a staged completion before issuing another command. Eject
+         * keeps the target mounted until its current transfer, dirty tracks
+         * and native unmount finish; its file remains open throughout. */
+        if(completion_pending && complete_pending()!=0)return -1;
         if(d->journal_pending && apply_journal(d)!=0)return -1;
-        const mt_link_result_t r=command(MT_COMMAND_MEDIA_EJECT,mt_iigs_drive_wire_slot(drive),generation(),0U,0U);
+        const unsigned slot=mt_iigs_drive_wire_slot(drive);
+        const mt_link_result_t r=command(MT_COMMAND_MEDIA_EJECT,slot,generation(),0U,0U);
         if(r!=MT_LINK_OK)return fail(mt_link_result_name(r));
-        if(drain()!=0)return -1;
+        if(drain_state(slot,true,NULL,0U)!=0)return -1;
         if(d->raw_pending)return fail("Raw floppy track flush incomplete; .gsraw retained");
         mt_sd_result_t sd=mt_sd_file_close(d->file); if(sd.status!=MT_SD_OK)return sd_fail(sd);
         d->file=NULL; d->mounted=false; d->name[0]='\0';
@@ -507,14 +558,33 @@ static int eject_internal(unsigned drive,bool forget)
     return 0;
 }
 int iigs_content_service_eject(unsigned drive)
-{ return drive<MT_IIGS_DRIVE_COUNT ? eject_internal(drive,true):fail("Invalid disk drive"); }
+{
+    if(drive>=MT_IIGS_DRIVE_COUNT)return fail("Invalid disk drive");
+    return require_safe_media()==0 ? eject_internal(drive,true):-1;
+}
 int iigs_content_service_pram(bool save)
 {
+    if(require_safe_media()!=0)return -1;
     if(!ready)return fail("System ROMs required");
+    /* A timed-out pulse may still be queued in the adapter without a visible
+     * request. Finish that exact operation before sending another pulse. */
+    if(finish_pram_operation()!=0)return -1;
     if(!save && !pram_exists)return fail("No saved Apple IIgs PRAM yet");
+    /* Retire prior eject work and any visible PRAM transfer even if it did
+     * not originate here, so neither can acknowledge the new pulse. */
+    if(drain_state(MT_IIGS_PRAM_SLOT,true,NULL,0U)!=0)return -1;
+    if(completion_pending && complete_pending()!=0)return -1;
+    const uint32_t *const completed=&pram_completions[save ? 1U:0U];
+    const uint32_t before=*completed;
     mt_iigs_config_t pulse=config; pulse.pulses|=save ? 8U:16U;
+    /* The loader can commit the pulse before STREAM_END acknowledges it.
+     * Retain even an uncertain operation after a transport failure: if it
+     * never committed, only full service initialization can clear the wait. */
+    pram_operation_before=before; pram_operation_save=save; pram_operation_pending=true;
     if(send_config(&pulse)!=0)return -1;
-    if(drain_state(false)!=0)return -1;
+    /* PRAM may queue behind another drive. An idle target snapshot alone
+     * cannot prove that the requested save/load has reached the machine. */
+    if(finish_pram_operation()!=0)return -1;
     if(!save) {
         /* Reset only after the selected PRAM sector has reached the machine. */
         pulse=config; pulse.pulses|=2U;
@@ -526,12 +596,12 @@ int iigs_content_service_prepare_reset(void)
 {
     if(link==NULL)return 0;
     if(ready && iigs_content_service_pram(true)!=0)return -1;
-    if(drain_state(false)!=0)return -1;
     for(unsigned i=0U;i<MT_IIGS_DRIVE_COUNT;++i)if(eject_internal(i,false)!=0)return -1;
     if(pram_mounted) {
+        if(completion_pending && complete_pending()!=0)return -1;
         if(command(MT_COMMAND_MEDIA_EJECT,MT_IIGS_PRAM_SLOT,generation(),0U,0U)!=MT_LINK_OK)
             return fail("PRAM could not eject");
-        if(drain()!=0)return -1;
+        if(drain_state(MT_IIGS_PRAM_SLOT,true,NULL,0U)!=0)return -1;
         pram_mounted=false;
     }
     reset_pending=true; return 0;
@@ -555,6 +625,10 @@ void iigs_content_service_init(mt_core_link_t *l,const char *content_root,mt_lin
     memset(drives,0,sizeof(drives)); memset(remembered,0,sizeof(remembered)); memset(pram,0,sizeof(pram));
     root[0]='\0'; rom_root[0]='\0'; error[0]='\0'; ready=false; faulted=false; seen=false;
     completion_pending=false; pram_mounted=false; pram_exists=false; reset_pending=false; next_generation=1U;
+    memset(pram_completions,0,sizeof(pram_completions));
+    pram_operation_pending=false;
+    media_target_drain_supported=false;
+    fast_floppy_supported=false;
     staged_write=false;
     /* ZipGS SW1/3 powers up with AppleTalk/IRQ delay disabled. A valid saved
      * configuration below replaces this default, including an explicit On. */
@@ -565,8 +639,11 @@ void iigs_content_service_init(mt_core_link_t *l,const char *content_root,mt_lin
         const uint32_t abi=link->read32(link->context,MT_REG_ABI_VERSION);
         if((abi>>16U)==MT_ABI_MAJOR && (abi&UINT32_C(0xffff))>=MT_IIGS_ACCEL_MIN_ABI_MINOR) {
             const uint32_t caps=link->read32(link->context,MT_REG_IIGS_ACCEL_CAPS);
-            if((caps&MT_IIGS_ACCEL_CAPS_VALID)!=0U)
+            if((caps&MT_IIGS_ACCEL_CAPS_VALID)!=0U) {
                 speed_mask=(caps&MT_IIGS_ACCEL_SPEED_MASK)|UINT32_C(1);
+                media_target_drain_supported=(caps&MT_IIGS_MEDIA_TARGET_DRAIN_SUPPORTED)!=0U;
+                fast_floppy_supported=(caps&MT_IIGS_FAST_FLOPPY_SUPPORTED)!=0U;
+            }
         }
     }
     if(content_root==NULL || strlen(content_root)>=sizeof(root) || strlen(content_root)<3U ||
@@ -581,7 +658,7 @@ void iigs_content_service_init(mt_core_link_t *l,const char *content_root,mt_lin
     memcpy(rom_root,content_root,parent_length);
     memcpy(rom_root+parent_length,"/roms",6U);
     memcpy(root,content_root,strlen(content_root)+1U); settings_load();
-    /* A saved faster setting must still boot an explicitly reused older image. */
+    /* Clamp a saved faster setting to the image's advertised speed range. */
     while(config.speed!=0U && (speed_mask&(UINT32_C(1)<<config.speed))==0U)--config.speed;
 }
 static int load_rom(const char *name,uint8_t kind,size_t bytes)
@@ -608,6 +685,7 @@ static int load_rom(const char *name,uint8_t kind,size_t bytes)
 int iigs_content_service_boot(void)
 {
     if(link==NULL || root[0]=='\0')return fail("Apple IIgs service unavailable");
+    if(require_safe_media()!=0)return -1;
     normalize_config(&config);
     bool mounted=pram_mounted;
     for(unsigned i=0U;i<MT_IIGS_DRIVE_COUNT;++i)mounted=mounted||drives[i].mounted;
@@ -639,12 +717,22 @@ int iigs_content_service_boot(void)
     }
     return fail("Apple IIgs ready timeout");
 }
+static int apply_configuration(const mt_iigs_config_t *next,bool restart)
+{
+    if(restart) {
+        /* PRAM save itself sends CONFIG. Retire all dirty work using the old
+         * timing before publishing the new flag, including during rollback. */
+        if(iigs_content_service_prepare_reset()!=0)return -1;
+        ready=false;
+    }
+    config=*next;
+    return restart ? iigs_content_service_boot():send_config(&config);
+}
 static int restore_configuration(const mt_iigs_config_t *previous,bool restart)
 {
     char original_error[sizeof(error)];
     memcpy(original_error,error,sizeof(original_error));
-    config=*previous;
-    const int restored=restart ? iigs_content_service_boot():send_config(&config);
+    const int restored=apply_configuration(previous,restart);
     if(restored!=0) {
         char message[sizeof(error)];
         (void)snprintf(message,sizeof(message),"Config rollback failed: %.96s",error);
@@ -662,12 +750,13 @@ int iigs_content_service_configure(const mt_iigs_config_t *candidate)
     normalize_config(&next);
     if((speed_mask&(UINT32_C(1)<<next.speed))==0U)return fail("Unsupported Apple IIgs configuration");
     const mt_iigs_config_t previous=config;
-    const bool restart=previous.rom3!=next.rom3 || previous.card!=next.card;
-    config=next;
+    const bool fast_changed=((previous.flags^next.flags)&MT_IIGS_FLAG_FAST_FLOPPY)!=0U;
+    if(fast_changed && !fast_floppy_supported)return fail("Update IIgs core for Fast floppy");
+    const bool restart=previous.rom3!=next.rom3 || previous.card!=next.card || fast_changed;
     /* The existing boot path saves PRAM, drains/ejects disks and holds the
      * machine in reset while loading ROMs/remounting. Card changes need that
      * reset to clear ZipGS speed, enable, unlock, cache and delay/slot state. */
-    const int r=restart ? iigs_content_service_boot():send_config(&config);
+    const int r=apply_configuration(&next,restart);
     if(r!=0)return restore_configuration(&previous,restart);
     if(settings_save()!=0)return restore_configuration(&previous,restart);
     return 0;
@@ -683,6 +772,7 @@ int iigs_content_service_set_mouse_sensitivity(uint16_t percent)
     return 0;
 }
 uint32_t iigs_content_service_speed_mask(void) { return speed_mask; }
+bool iigs_content_service_fast_floppy_supported(void) { return fast_floppy_supported; }
 void iigs_content_service_set_timestamp(uint32_t timestamp) { config.timestamp=timestamp; }
 const char *iigs_content_service_name(unsigned d) { return d<MT_IIGS_DRIVE_COUNT && drives[d].mounted ? drives[d].name:NULL; }
 const char *iigs_content_service_error(void) { return error; }
@@ -690,6 +780,7 @@ bool iigs_content_service_ready(void) { return ready; }
 bool iigs_content_service_faulted(void) { return faulted; }
 int iigs_content_service_retry(void)
 {
+    if(require_safe_media()!=0)return -1;
     faulted=false; seen=false; error[0]='\0';
     for(unsigned i=0U;i<MT_IIGS_DRIVE_COUNT;++i)
         if(drives[i].mounted && drives[i].journal_pending && apply_journal(&drives[i])!=0)return -1;

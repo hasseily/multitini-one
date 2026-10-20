@@ -96,7 +96,7 @@ def main() -> int:
     env=os.environ.copy();env["PATH"]=str(runtime)+os.pathsep+env.get("PATH","")
     env["VERILATOR_ROOT"]=(runtime.parent/"share/verilator").as_posix()
     cpu=ROOT/"third_party/apple-iigs/upstream/rtl/65C816"
-    sources=[cpu/"P65C816_pkg.sv"]+sorted(path for path in cpu.glob("*") if path.suffix in (".sv",".v") and path.name not in ("P65C816_pkg.sv","P65C816.sv","mcode.sv"))+[ROOT/"hdl/core/apple_iigs/ports/P65C816.sv",ROOT/"hdl/core/apple_iigs/ports/mcode.sv"]
+    sources=[cpu/"P65C816_pkg.sv"]+sorted(path for path in cpu.glob("*") if path.suffix in (".sv",".v") and path.name not in ("P65C816_pkg.sv","P65C816.sv","mcode.sv","adder4.v"))+[ROOT/"hdl/core/apple_iigs/ports/P65C816.sv",ROOT/"hdl/core/apple_iigs/ports/mcode.sv",ROOT/"hdl/core/apple_iigs/ports/adder4.sv"]
     directory=build/"model";executable=directory/"cpu-tests.exe"
     model_inputs={path.relative_to(ROOT).as_posix():hashlib.sha256(path.read_bytes()).hexdigest()
                   for path in sources+[ROOT/"hdl/sim/apple_iigs_single_step.cpp",policy_path,Path(__file__).resolve()]}

@@ -175,7 +175,7 @@ core/apple_iigs/ports/es5503.sv
 core/apple_iigs/ports/iwm_woz.sv
 core/apple_iigs/ports/iwm_flux.sv | systemverilog
 core/apple_iigs/ports/flux_drive.sv | systemverilog
-../third_party/apple-iigs/upstream/rtl/smartport_dev.v | systemverilog
+core/apple_iigs/ports/smartport_dev.sv | systemverilog
 ../third_party/apple-iigs/upstream/rtl/scc_iigs_wrapper.v | systemverilog
 ../third_party/apple-iigs/upstream/rtl/scc8530.v | systemverilog
 core/apple_iigs/ports/rxuart.sv

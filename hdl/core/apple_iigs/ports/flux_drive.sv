@@ -42,7 +42,10 @@ module flux_drive (
     input  wire [1:0]  DRIVE_ID,        // Drive instance identifier for debug
 
     // Global clocks and reset
-    input  wire        CLK_14M,         // 14MHz master clock
+    input  wire        CLK_14M,
+    input wire CLOCK_ENABLE=1'b1,
+    input wire WRITE_DRAIN_ENABLE=1'b0,
+    output wire WRITE_PIPELINE_PENDING,         // 14MHz master clock
     input  wire        RESET,
 
     // Control from IWM
@@ -184,7 +187,7 @@ module flux_drive (
     reg [9:0]   bit_half_frac;          // Fractional half-cell accumulator (3.5")
     reg [5:0]   bit_cell_cycles_reg;    // Per-bit-cell length (with fractional add)
     reg         prev_write_mode;        // For detecting write→read transitions
-    reg         write_strobe_steal;     // WRITE_STROBE stole position advance from bit_timer
+    reg         write_strobe_steal;     // accepted_write_strobe stole position advance from bit_timer
 `ifdef DEBUG_VERBOSE
     reg [31:0]  flux_write_dbg_count;   // Cap for noisy partial-match debug output
 `endif
@@ -587,6 +590,7 @@ module flux_drive (
     reg prev_sense_debug;
     reg [15:0] sense_read_cnt;
     always @(posedge CLK_14M) begin
+        if (CLOCK_ENABLE) begin
         if (RESET) begin
             sense_read_cnt <= 16'd0;
         end
@@ -596,12 +600,13 @@ module flux_drive (
         end
         prev_sense_debug <= sense_35;
     end
+    end
 `endif
 
     //=========================================================================
     // Write Logic - Read-Modify-Write to BRAM
     //=========================================================================
-    // When IWM is in write mode, each WRITE_STROBE pulse sets/clears one bit
+    // When IWM is in write mode, each accepted_write_strobe pulse sets/clears one bit
     // at the current bit_position in the track BRAM. A 1-cycle delay accounts
     // for BRAM read latency (address at cycle N → data valid at cycle N+1).
     //
@@ -615,6 +620,15 @@ module flux_drive (
     reg [2:0]  write_shift_d1;  // Delayed bit_shift (latched at read time)
     reg [15:0] write_addr_d1;   // Delayed BRAM address (latched at read time)
 
+    reg drain_strobe_seen,drain_phase_pending;
+    wire accepted_write_strobe=WRITE_STROBE && !drain_strobe_seen;
+    wire pending_strobe=accepted_write_strobe && WRITE_MODE && !WRITE_PROTECT && TRACK_LOADED;
+    assign WRITE_PIPELINE_PENDING=pending_strobe || write_strobe_d1 || WRITE_WE_OUT;
+    always @(posedge CLK_14M or posedge RESET) begin
+        if(RESET)drain_strobe_seen<=0;
+        else if(!WRITE_STROBE)drain_strobe_seen<=0;
+        else if(WRITE_DRAIN_ENABLE && pending_strobe)drain_strobe_seen<=1;
+    end
     reg [31:0] write_count;  // Debug counter for writes
     always @(posedge CLK_14M or posedge RESET) begin
         if (RESET) begin
@@ -629,8 +643,8 @@ module flux_drive (
 `ifdef DEBUG_VERBOSE
             flux_write_dbg_count <= 32'd0;
 `endif
-        end else begin
-            write_strobe_d1 <= WRITE_STROBE && WRITE_MODE && !WRITE_PROTECT && TRACK_LOADED;
+        end else if (CLOCK_ENABLE || (WRITE_DRAIN_ENABLE && WRITE_PIPELINE_PENDING)) begin
+            write_strobe_d1 <= accepted_write_strobe && WRITE_MODE && !WRITE_PROTECT && TRACK_LOADED;
             write_bit_d1    <= WRITE_BIT;
             write_shift_d1  <= bit_shift;    // Latch bit_shift at read time
             write_addr_d1   <= BRAM_ADDR;    // Latch BRAM address at read time
@@ -640,7 +654,7 @@ module flux_drive (
             // avoid tens of millions of lines when FLUX_WRITE_STROBE gets stuck high
             // during 5.25" read mode (a pre-existing iwm_flux bug unrelated to the
             // write path we're debugging).
-            if (WRITE_STROBE && !write_strobe_d1 && flux_write_dbg_count < 32'd16) begin
+            if (accepted_write_strobe && !write_strobe_d1 && flux_write_dbg_count < 32'd16) begin
                 if (!WRITE_MODE)
                     $display("FLUX_WRITE_DBG[%0d]: STROBE but WRITE_MODE=0 (n=%0d)", DRIVE_ID, flux_write_dbg_count);
                 else if (WRITE_PROTECT)
@@ -712,7 +726,7 @@ module flux_drive (
             prev_disk_mounted <= 1'b0;
             first_mount_done <= 1'b0;
             step_busy_cnt <= 18'd0;
-        end else begin
+        end else if (CLOCK_ENABLE) begin
             EJECT_REQ <= 1'b0;
 
             if (step_busy_cnt != 18'd0)
@@ -1040,7 +1054,7 @@ module flux_drive (
             spinup_bits <= 18'd0;
             drive_ready <= 1'b0;
             spinup_timer <= BIT_CELL_35;
-        end else begin
+        end else if (CLOCK_ENABLE) begin
             prev_motor_spinning <= motor_spinning;
 
             if (IS_35_INCH) begin
@@ -1143,6 +1157,7 @@ module flux_drive (
     always @(posedge CLK_14M or posedge RESET) begin
         if (RESET) begin
             bit_position <= 17'd0;
+            drain_phase_pending<=0;
             bit_timer <= bit_cell_base;  // Start at full bit cell time
             bit_half_timer <= bit_half_base;
             bit_cell_cycles_reg <= bit_cell_base;
@@ -1178,7 +1193,7 @@ module flux_drive (
             debug_read_count <= 5'd16;       // Disable log until first track change
             side_transition_byte_count <= 5'd16;  // Start above threshold to avoid spam
 `endif
-        end else begin
+        end else if (CLOCK_ENABLE) begin
             // Default: no flux transition this cycle, no rotation complete
             FLUX_TRANSITION <= 1'b0;
             SD_TRACK_STROBE <= 1'b0;
@@ -1609,7 +1624,7 @@ module flux_drive (
                     // not position tracking. This keeps the simulated disk synchronized with real timing.
                     // skip_position_advance is set when TRACK_LOAD_COMPLETE or drive_ready resets position.
                     //
-                    // WRITE MODE: When WRITE_MODE is active, advance bit_position from WRITE_STROBE
+                    // WRITE MODE: When WRITE_MODE is active, advance bit_position from accepted_write_strobe
                     // instead of bit_timer. The IWM's write state machine controls bit cell timing,
                     // and we must stay exactly in sync with it. If we advance from bit_timer
                     // independently, fractional accumulator drift causes bit_position to be off by
@@ -1628,21 +1643,21 @@ module flux_drive (
                     prev_write_mode <= WRITE_MODE;
 
                     // WRITE MODE POSITION SYNC:
-                    // During writes, WRITE_STROBE from the IWM fires once per bit cell.
+                    // During writes, accepted_write_strobe from the IWM fires once per bit cell.
                     // bit_timer also ticks once per bit cell, but they can be slightly
                     // out of phase (different fractional accumulators). Over hundreds of
                     // writes, this drift corrupts GCR checksums.
                     //
-                    // Solution: when WRITE_STROBE fires, it "steals" the position advance
+                    // Solution: when accepted_write_strobe fires, it "steals" the position advance
                     // for that bit cell — bit_timer continues counting but its position
                     // advance is suppressed for that one cycle. This keeps bit_position
                     // exactly aligned with the IWM's byte framing while preserving
                     // bit_timer's phase for seamless read-back after writes end.
                     //
-                    // write_strobe_steal is set when WRITE_STROBE advances position,
+                    // write_strobe_steal is set when accepted_write_strobe advances position,
                     // preventing bit_timer from also advancing in the same bit cell.
-                    if (WRITE_MODE && WRITE_STROBE && !skip_position_advance) begin
-                        // WRITE_STROBE fires: advance position and mark this cell as handled
+                    if (WRITE_MODE && accepted_write_strobe && !skip_position_advance) begin
+                        // accepted_write_strobe fires: advance position and mark this cell as handled
                         if (TRACK_BIT_COUNT > 0) begin
                             if (effective_bit_position + 1 >= track_bit_count_17)
                                 bit_position <= 17'd0;
@@ -1655,7 +1670,8 @@ module flux_drive (
                     end
 
                     if (!bram_first_read_pending) begin
-                        if (WRITE_MODE && WRITE_STROBE && !skip_position_advance) begin
+                        if (WRITE_MODE && (accepted_write_strobe || drain_phase_pending) && !skip_position_advance) begin
+                        drain_phase_pending<=0;
                         // Keep the physical bit-cell timer phase locked to the IWM's write
                         // strobe. The strobe is the authoritative write-cell boundary; if the
                         // free-running timer is allowed to drift independently, the disk can be
@@ -1686,13 +1702,13 @@ module flux_drive (
                                 weak_bit_active <= 1'b1;
                         end
 
-                        // Advance bit_position — UNLESS WRITE_STROBE already advanced
+                        // Advance bit_position — UNLESS accepted_write_strobe already advanced
                         // it for this cell. Check both the registered steal flag from a
-                        // prior cycle and the live WRITE_STROBE condition from this cycle:
+                        // prior cycle and the live accepted_write_strobe condition from this cycle:
                         // both blocks execute in the same always_ff, so relying only on the
-                        // registered flag misses the case where WRITE_STROBE and bit_timer==1
+                        // registered flag misses the case where accepted_write_strobe and bit_timer==1
                         // coincide and would otherwise double-advance the position.
-                        if (write_strobe_steal || (WRITE_MODE && WRITE_STROBE)) begin
+                        if (write_strobe_steal || (WRITE_MODE && accepted_write_strobe)) begin
                             write_strobe_steal <= 1'b0;  // Consumed — next cell is normal
                         end else begin
                             if (TRACK_BIT_COUNT > 0) begin
@@ -1748,7 +1764,14 @@ module flux_drive (
                 end
             end
 `endif
-        end
+        end else if (WRITE_DRAIN_ENABLE && pending_strobe && motor_spinning &&
+                 !IS_FLUX_TRACK && !skip_position_advance) begin
+        if (TRACK_BIT_COUNT>0 && effective_bit_position+1>=track_bit_count_17)
+            bit_position<=0;
+        else bit_position<=bit_position+1'b1;
+        write_strobe_steal<=1;
+        drain_phase_pending<=1;
+    end
     end
 
     reg [4:0] debug_read_count;  // Counter for track dump logging
@@ -1778,6 +1801,7 @@ module flux_drive (
     reg [7:0]  dbg_sync_count;
     reg [3:0]  dbg_prolog_count;
     always @(posedge CLK_14M) begin
+        if (CLOCK_ENABLE) begin
         if (RESET) begin
             flux_count_debug <= 0;
             rotate_cycles <= 0;
@@ -1896,6 +1920,7 @@ module flux_drive (
                      prev_head_phase[8:2], head_phase[8:2], TRACK);
         end
         prev_head_phase <= head_phase;
+    end
     end
 `endif
 

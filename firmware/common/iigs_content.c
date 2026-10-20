@@ -34,7 +34,7 @@ static bool extension(const char *name, const char *ext)
 }
 bool mt_iigs_config_valid(const mt_iigs_config_t *c)
 { return c != NULL && c->rom3 <= 1U && c->speed < MT_IIGS_SPEED_COUNT && c->card <= 2U &&
-    (c->flags & 0x80U) == 0U && (c->pulses & 0xe0U) == 0U; }
+    (c->pulses & 0xe0U) == 0U; }
 uint8_t mt_iigs_next_speed(uint8_t current, uint32_t supported_mask)
 {
     supported_mask &= (UINT32_C(1) << MT_IIGS_SPEED_COUNT) - UINT32_C(1);

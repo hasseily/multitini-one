@@ -18,6 +18,7 @@ int iigs_content_service_configure(const mt_iigs_config_t *config);
 int iigs_content_service_pram(bool save);
 const mt_iigs_config_t *iigs_content_service_config(void);
 uint32_t iigs_content_service_speed_mask(void);
+bool iigs_content_service_fast_floppy_supported(void);
 uint16_t iigs_content_service_mouse_sensitivity(void);
 int iigs_content_service_set_mouse_sensitivity(uint16_t percent);
 const char *iigs_content_service_name(unsigned drive);

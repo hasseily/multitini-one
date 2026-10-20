@@ -265,6 +265,13 @@ static void build_iigs(mt_core_frontend_t *frontend,
     frontend->core_options[view->core_option_count++]=item("Mouse sensitivity",mouse_value,
         "Adjust USB mouse movement immediately; 100% is normal. Saved for Apple IIgs.",
         MT_MENU_ACTION_TOGGLE_CORE_OPTION,9U,true,MT_UI_COLOR_BLUE);
+    frontend->core_options[view->core_option_count++]=item("Floppy speed",
+        !state->iigs_fast_floppy_supported ? "Unavailable":
+            (state->iigs_config.flags&MT_IIGS_FLAG_FAST_FLOPPY)!=0U ? "Fast":"Normal",
+        state->iigs_fast_floppy_supported ?
+            "Fast uses 4x floppy timing with ZipGS at 14 MHz or higher. Changing saves media and restarts the IIgs.":
+            "Update the Apple IIgs FPGA core to enable Fast floppy.",
+        MT_MENU_ACTION_TOGGLE_CORE_OPTION,10U,state->iigs_fast_floppy_supported,MT_UI_COLOR_BLUE);
     view->save_faulted=state->save_faulted;
 }
 

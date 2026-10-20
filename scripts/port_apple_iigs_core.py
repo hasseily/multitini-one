@@ -267,9 +267,17 @@ clock_divider clk_div_inst (
     # drive stay accelerated even when the other drive of its family has a disk.
     text=replace(text,"reg [14:0] iwm_holdoff;\n", """reg [14:0] iwm_holdoff;
 wire iwm_selected_media = iwm_drive_media;
+// Honor the guest's timing requests only for the mounted drive it selects.
+// Sony entry code requests fast speed; its long delay helpers clear C036.7.
+// Disk II software can instead request motor-based 1 MHz timing via C036.2.
+wire floppy_guest_native_request = iwm_selected_media &&
+    (!CYAREG[7] || (!DISK35[6] && CYAREG[2] && iwm_motor_command));
+// The actual routed write protocol can outlive a Sony C031 deselection.
+wire floppy_timing_hold = EXTERNAL_CPU &&
+    (floppy_guest_native_request || iwm_write_timing);
 """)
-    text=replace(text,"  iwm_woz iwmc (\n", "  // Media in the drive the IWM has selected ($C031 bit 6 and $C0EA/B).\n  wire iwm_drive_media;\n  iwm_woz iwmc (\n")
-    text=replace(text,"      .DRIVE35_EJECT_REQ(drive35_eject_req)\n  );", "      .DRIVE35_EJECT_REQ(drive35_eject_req),\n      .SELECTED_MEDIA(iwm_drive_media)\n  );")
+    text=replace(text,"  iwm_woz iwmc (\n", "  // Media/command/write state stays in the native IWM clock domain.\n  wire iwm_drive_media, iwm_motor_command, iwm_write_timing;\n  iwm_woz iwmc (\n")
+    text=replace(text,"      .DRIVE35_EJECT_REQ(drive35_eject_req)\n  );", "      .DRIVE35_EJECT_REQ(drive35_eject_req),\n      .SELECTED_MEDIA(iwm_drive_media),\n      .MOTOR_COMMAND_ON(iwm_motor_command),\n      .WRITE_TIMING_ACTIVE(iwm_write_timing)\n  );")
     text=replace(text,"                          && iwm_holdoff == 15'd0\n",
                  "                          && (iwm_holdoff == 15'd0 || (EXTERNAL_CPU && !iwm_selected_media))\n")
     # IIgs paddle reset is C070 only; C071-C07F are IRQ dispatch ROM.
@@ -278,10 +286,35 @@ wire iwm_selected_media = iwm_drive_media;
                  "wire acc_ptrig = bus_phi2 && IO && (addr_bef[11:0] == 12'h070); // IIgs paddle trigger only")
     # Raw IWM motor state can remain on after probing an empty drive. Keep it
     # intact for status and dirty flushing, but hold the accelerator only when
-    # that drive family actually contains media. IWM access delay is separate.
+    # that drive family actually contains media. The Sony spindle can remain
+    # on while its bus is deselected; an external CPU must resume acceleration
+    # in that idle window. IWM access delay is separate.
     text=replace(text,"                          && !floppy_motor_on && !floppy35_motor_on",
-                 "                          && !(floppy_motor_on && (|DISK_READY[1:0]))\n"
-                 "                          && !(floppy35_motor_on && (|DISK_READY[3:2]))")
+                 "                          && !(floppy_motor_on && (|DISK_READY[1:0]) && !EXTERNAL_CPU)\n"
+                 "                          && !(floppy35_motor_on && (|DISK_READY[3:2]) && !EXTERNAL_CPU)\n"
+                 "                          && !floppy_timing_hold")
+    text=replace(text,"// ZipGS IWM compatibility hold-off: a real accelerator drops to native speed\n"
+                 "// around floppy activity -- the IWM and the ROM disk drivers' cycle-counted\n"
+                 "// delays (spin-up, head settle) cannot be accelerated. Any CPU access to the\n"
+                 "// IWM ($C0E0-$C0EF) arms a ~2 ms native window, refreshed per access, so the\n"
+                 "// whole driver runs at the speed it was written for while the disk is being\n"
+                 "// worked, and acceleration resumes between disk phases. (Without this the\n"
+                 "// ROM3 3.5\" driver mis-times the drive at 7.16 MHz: \"Check startup device\".)",
+                 "// IWM CPU timing compatibility: controller and flux clocks stay fixed.\n"
+                 "// Cycle-counted software delays and byte/command protocols need native\n"
+                 "// CPU pacing. An IWM access ($C0E0-$C0EF) arms a retriggerable two-ms\n"
+                 "// guard for nearby protocol work; the external CPU can accelerate other\n"
+                 "// computation when the guest and write engine no longer request native\n"
+                 "// timing. No driver PC or ROM revision is hardcoded in this policy.")
+    text=replace(text,"// (rtl/iwm_woz.v) already track real motor state; gate on those too so\n"
+                 "// acceleration stays off for the drive's whole motor-on span, not just the\n"
+                 "// last 2 ms of register activity.",
+                 "// (rtl/iwm_woz.v) retain that whole-motor policy on the original CPU path.\n"
+                 "// The external CPU instead honors the selected mounted drive's C036\n"
+                 "// native-speed request and its active write protocol. The two-ms access\n"
+                 "// guard still protects nearby IWM traffic. Ordinary computation can run\n"
+                 "// fast between those intervals while the spindle continues rotating. Raw\n"
+                 "// motor, mechanical/flux clocks and dirty flushing are unchanged.")
     text=replace(text,"              .CLK(CLK_14M),", "              .CLK(EXTERNAL_CPU ? CPU_CLK : CLK_14M),")
     text=replace(text,"              .CE(bus_phi2),", "              .CE(EXTERNAL_CPU ? CPU_CE : bus_phi2),")
     text=replace(text,"              .RDY_IN(~hdd_dma & ~mem_stall),", "              .RDY_IN(~hdd_dma & (EXTERNAL_CPU | ~mem_stall)),")
@@ -906,16 +939,274 @@ def generate_iwm_woz() -> str:
     text = replace(text, "    output          DRIVE35_EJECT_REQ\n);",
                    "    output          DRIVE35_EJECT_REQ,\n\n"
                    "    // Media present in the selected drive ($C031 bit 6 family, drive select)\n"
-                   "    output          SELECTED_MEDIA\n);")
+                   "    output          SELECTED_MEDIA,\n"
+                   "    // Timing policy observes command state, never alters drive behavior.\n"
+                   "    output          MOTOR_COMMAND_ON,\n"
+                   "    output reg      WRITE_TIMING_ACTIVE\n);")
     text = replace(text, "    // Disk mounted status\n",
                    "    // Disk mounted status\n"
                    "    assign SELECTED_MEDIA = is_35_inch ? (drive_sel ? DISK_READY[3] : DISK_READY[2])\n"
-                   "                                       : (drive_sel ? DISK_READY[1] : DISK_READY[0]);\n")
+                   "                                       : (drive_sel ? DISK_READY[1] : DISK_READY[0]);\n"
+                   "    assign MOTOR_COMMAND_ON = drive_on;\n"
+                   "    // Use actual routed media: Sony cleanup may clear DISK35 before\n"
+                   "    // the write protocol ends. SmartPort packet writes are excluded\n"
+                   "    // by disk_write_mode itself.\n"
+                   "    // Publish a registered guard: immediate mode decode consumes the\n"
+                   "    // current bus cycle and must not feed the divider combinationally.\n"
+                   "    // The access lease covers this one-native-edge entry latency.\n"
+                   "    always @(posedge CLK_14M) begin\n"
+                   "        if (RESET) WRITE_TIMING_ACTIVE <= 1'b0;\n"
+                   "        else WRITE_TIMING_ACTIVE <= disk_write_mode && disk_mounted;\n"
+                   "    end\n")
+    return normalize(text)
+
+
+def enable_clocked_blocks(text: str, clock: str, enable: str) -> str:
+    """Retain pinned sequential logic, adding a primary-clock CE around it.
+
+    Token positions are kept while stripping comments/strings for matching.
+    Async reset remains live without CE; synchronous reset keeps its old edge.
+    """
+    masked = re.sub(r'//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"',
+                    lambda m: ' ' * len(m[0]), text)
+    edits = []
+    pattern = re.compile(r'always\s*@\s*\(\s*posedge\s+' + re.escape(clock) +
+                         r'(?P<async>\s+or\s+posedge\s+(?P<reset>\w+))?\s*\)\s*begin\b')
+    for match in pattern.finditer(masked):
+        depth = 1
+        for token in re.finditer(r'\bbegin\b|\bend\b', masked[match.end():]):
+            depth += 1 if token[0] == 'begin' else -1
+            if depth == 0:
+                finish = match.end() + token.start()
+                break
+        else:
+            raise ValueError(f'unclosed sequential block on {clock}')
+        if match['async']:
+            # Keep the asynchronous reset as the first hardware condition.
+            # Wrapping it in (CE || RESET) gives Vivado a different async
+            # set/reset structure and can infer extra latches/FDPEs.
+            reset_match = re.search(r'\bif\s*\(\s*' + re.escape(match['reset']) +
+                                    r'\s*\)\s*begin\b', masked[match.end():finish])
+            if reset_match is None:
+                raise ValueError(f'no explicit async reset branch on {clock}')
+            reset_start = match.end() + reset_match.end()
+            reset_depth = 1
+            for token in re.finditer(r'\bbegin\b|\bend\b', masked[reset_start:finish]):
+                reset_depth += 1 if token[0] == 'begin' else -1
+                if reset_depth == 0:
+                    reset_end = reset_start + token.end()
+                    break
+            else:
+                raise ValueError(f'unclosed reset branch on {clock}')
+            following = re.match(r'\s*else\s+(begin\b|if\b)', masked[reset_end:finish])
+            if following is None:
+                raise ValueError(f'no nonreset branch on {clock}')
+            else_start = reset_end + following[0].index('else')
+            if following[1]=='begin':
+                edits.append((else_start + len('else'), f' if ({enable})'))
+            else:
+                edits.extend([(else_start + len('else'), f' if ({enable}) begin\n        '),
+                              (finish, 'end\n    ')])
+        else:
+            edits.extend([(match.end(), f'\n        if ({enable}) begin'),
+                          (finish, 'end\n    ')])
+    if not edits:
+        raise ValueError(f'no sequential blocks on {clock}')
+    for position, addition in sorted(edits, reverse=True):
+        text = text[:position] + addition + text[position:]
+    return text
+
+
+def generate_fast_floppy_iigs(text: str) -> str:
+    text = replace(text, "input CPU_PUBLISH=1'b0,", """input CPU_PUBLISH=1'b0,
+// Optional four-times-native floppy virtual time. Other peripherals retain CLK14.
+input fast_floppy_request=1'b0,
+input fast_floppy_stall=1'b0,
+output fast_floppy_active,
+output floppy_engine_ce,
+output floppy_backend_ce,
+output cpu_floppy_access,
+output cpu_floppy_guard,
+output cpu_floppy_slow,
+// Captured Fast IWM bus and its separate registered-response path.
+input CPU_FLOPPY_PENDING=1'b0,
+input CPU_FLOPPY_REQUEST=1'b0,
+input [7:0] CPU_FLOPPY_ADDR=8'd0,
+input [7:0] CPU_FLOPPY_DATA=8'd0,
+input CPU_FLOPPY_READ=1'b1,
+output [7:0] cpu_floppy_data,
+output [1:0] floppy_write_pending,
+output floppy_write_drain,""")
+    text = replace(text, "  // Media/command/write state stays in the native IWM clock domain.\n  wire iwm_drive_media, iwm_motor_command, iwm_write_timing;\n  iwm_woz iwmc (",
+                   """  // The optional floppy island uses the primary clock and explicit enables.
+  // The native enable preserves the original edge/BRAM sequence when disabled.
+  wire iwm_drive_media, iwm_motor_command, iwm_write_timing, iwm_smartport_mode;
+  // A native access already published before eligibility rises must still
+  // commit once on its native edge, before any captured Fast bus can own it.
+  wire iwm_native_pending = EXTERNAL_CPU && NATIVE_COMMIT && IO && addr_bef[7:4]==4'hE;
+  wire iwm_bus_commit = CPU_FLOPPY_PENDING ? CPU_FLOPPY_REQUEST :
+      (EXTERNAL_CPU ? (NATIVE_COMMIT && !hdd_dma && NATIVE_EDGE) : bus_phi2);
+  wire iwm_bus_select = CPU_FLOPPY_PENDING ? 1'b1 :
+      (fast_floppy_active ? (IO && addr_bef[7:4]==4'hE) : iwm_device_select);
+  assign cpu_floppy_data = iwm_dout;
+  // Finish a captured bus at its original rate before changing eligibility.
+  // The CPU cannot start a SmartPort packet until this bounded access retires.
+  wire fast_floppy_clock_active = (fast_floppy_active || CPU_FLOPPY_PENDING) && !iwm_native_pending;
+  reg floppy_7m_phase;
+  always @(posedge CPU_CLK) begin
+    if (reset) floppy_7m_phase<=0;
+    else if (!fast_floppy_clock_active) begin
+      if (NATIVE_EDGE) floppy_7m_phase<=~clk_7M_en;
+    end
+    else if (floppy_engine_ce) floppy_7m_phase<=~floppy_7m_phase;
+  end
+  iwm_woz iwmc (""")
+    # Only this instance is moved; every unrelated CLK14 consumer is retained.
+    start = text.index('  iwm_woz iwmc (')
+    end = text.index('\n  );', start) + len('\n  );')
+    instance = text[start:end]
+    instance = replace(instance, '.CLK_14M(CLK_14M),', '.CLK_14M(EXTERNAL_CPU ? CPU_CLK : CLK_14M),\n      .CLOCK_ENABLE(EXTERNAL_CPU ? floppy_engine_ce : 1\'b1),\n      .WRITE_DRAIN_ENABLE(floppy_write_drain),\n      .NATIVE_ENABLE(EXTERNAL_CPU ? NATIVE_EDGE : 1\'b1),')
+    instance = replace(instance, '.CLK_7M_EN(clk_7M_en),', '.CLK_7M_EN(fast_floppy_clock_active ? floppy_7m_phase : clk_7M_en),')
+    instance = replace(instance, '.PH2(bus_phi2),', '.PH2(iwm_bus_commit),')
+    instance = replace(instance, '.DEVICE_SELECT(iwm_device_select),', '.DEVICE_SELECT(iwm_bus_select),')
+    instance = replace(instance, '.WR_CYCLE(cpu_we_n),', '.WR_CYCLE(CPU_FLOPPY_PENDING ? CPU_FLOPPY_READ : cpu_we_n),')
+    instance = replace(instance, '.A({8\'b0, cpu_addr[7:0]}),', '.A({8\'b0, CPU_FLOPPY_PENDING ? CPU_FLOPPY_ADDR : cpu_addr[7:0]}),')
+    instance = replace(instance, '.D_IN(cpu_dout),', '.D_IN(CPU_FLOPPY_PENDING ? CPU_FLOPPY_DATA : cpu_dout),')
+    instance = replace(instance, '.WRITE_TIMING_ACTIVE(iwm_write_timing)', '.WRITE_TIMING_ACTIVE(iwm_write_timing),\n      .SMARTPORT_MODE(iwm_smartport_mode),\n      .WRITE_PIPELINE_PENDING(floppy_write_pending)')
+    text = text[:start] + instance + text[end:]
+    text = replace(text, 'always @(posedge CLK_14M) begin\n  if (reset)\n    iwm_holdoff <= 15\'d0;',
+                   "always @(posedge (EXTERNAL_CPU ? CPU_CLK : CLK_14M)) begin\n  if (reset)\n    iwm_holdoff <= 15'd0;")
+    text = replace(text, "  else if (bus_phi2 && IO && addr_bef[7:4] == 4'hE)\n    iwm_holdoff <= 15'd28636;               // 2 ms at 14.318 MHz\n  else if (iwm_holdoff != 15'd0)\n    iwm_holdoff <= iwm_holdoff - 15'd1;",
+                   """  else if (!EXTERNAL_CPU || floppy_engine_ce) begin
+    if (iwm_bus_commit && IO && addr_bef[7:4] == 4'hE)
+      iwm_holdoff <= 15'd28636; // Two milliseconds of floppy virtual time.
+    else if (iwm_holdoff != 15'd0)
+      iwm_holdoff <= iwm_holdoff - 15'd1;
+  end""")
+    text = replace(text, 'wire [3:0] fast_thresh =', """// SmartPort packets keep their native schedule and original bus bridge.
+// Eligibility follows configured acceleration, independently of C036 requests.
+assign fast_floppy_active = EXTERNAL_CPU && fast_floppy_request && accel_capable &&
+    eff_accel_en && eff_speed_code>=3'd4 && !iwm_smartport_mode &&
+    !io_slow_holdoff && !irq_slowdown && !twgs_boot_armed;
+// A rate change cannot abandon an already accepted Fast write. Retain the
+// primary-clock drain/fence only until its pending bit reaches track RAM.
+reg floppy_fast_history;
+always @(posedge CPU_CLK) begin
+    if(reset)floppy_fast_history<=0;
+    else if(fast_floppy_clock_active)floppy_fast_history<=1;
+    else if(!(|floppy_write_pending))floppy_fast_history<=0;
+end
+assign floppy_write_drain=fast_floppy_clock_active || (floppy_fast_history && (|floppy_write_pending));
+assign floppy_engine_ce = EXTERNAL_CPU && (fast_floppy_clock_active ? !fast_floppy_stall : NATIVE_EDGE);
+assign floppy_backend_ce = EXTERNAL_CPU && (floppy_write_drain || NATIVE_EDGE);
+assign cpu_floppy_access = fast_floppy_active && !hdd_dma && valid && IO && addr_bef[7:4]==4'hE;
+assign cpu_floppy_guard = fast_floppy_active &&
+    ((iwm_holdoff!=0 && iwm_selected_media) || floppy_timing_hold);
+assign cpu_floppy_slow = !CYAREG[7] ||
+    (iwm_selected_media && !DISK35[6] && CYAREG[2] && iwm_motor_command);
+wire [3:0] fast_thresh =""")
+    text = replace(text, "assign cpu_speed = accel_active ? eff_speed_code : 3'd0;",
+                   "assign cpu_speed = (accel_active || cpu_floppy_guard || cpu_floppy_access) ? eff_speed_code : 3'd0;")
+    # IWM responses use the adapter's captured reply; no live IWM data may
+    # rejoin CPU_DIN after the combinational CPU-enable/cache decision.
+    text = replace(text, "assign cpu_fast_cycle = !hdd_dma && (!valid || cpu_local_read ||",
+                   "assign cpu_fast_cycle = !hdd_dma && (!valid || cpu_local_read || cpu_floppy_access ||")
+    text = replace(text, '// IWM CPU timing compatibility: controller and flux clocks stay fixed.',
+                   '// Normal floppy mode keeps the original fixed controller/flux timebase.')
+    text = replace(text, '// motor, mechanical/flux clocks and dirty flushing are unchanged.',
+                   '// motor, mechanical/flux clocks and dirty flushing are unchanged in Normal mode.\n'
+                   '// Fast mode advances only the floppy island at four times native time,\n'
+                   '// pacing driver CPU work with it and pausing virtual time on real stalls.')
+    return normalize(text)
+
+
+def generate_enabled_floppy(text: str, name: str) -> str:
+    clock = 'clk' if name in ('woz_floppy_controller', 'smartport_dev') else 'CLK_14M'
+    declaration = f"    input             {clock}," if name=='woz_floppy_controller' else (
+        '    input  wire        clk,' if name=='smartport_dev' else (
+        '    input           CLK_14M,' if name=='iwm_woz' else
+        '    input  wire        CLK_14M,'))
+    # Preserve each pinned source's spacing/comment after the clock token.
+    if declaration not in text:
+        raise ValueError(f'{name}: clock declaration not found')
+    text = replace(text, declaration, declaration + "\n    input wire CLOCK_ENABLE=1'b1,")
+    if name=='iwm_woz':
+        text = replace(text, "    input wire CLOCK_ENABLE=1'b1,", "    input wire CLOCK_ENABLE=1'b1,\n    input wire WRITE_DRAIN_ENABLE=1'b0,\n    input wire NATIVE_ENABLE=1'b1,")
+        text = replace(text, '    output reg      WRITE_TIMING_ACTIVE\n);', '    output reg      WRITE_TIMING_ACTIVE,\n    output SMARTPORT_MODE,\n    output [1:0] WRITE_PIPELINE_PENDING\n);')
+        text = replace(text, '    assign MOTOR_COMMAND_ON = drive_on;', "    assign MOTOR_COMMAND_ON = drive_on;\n    // Registered mode only: current CPU strobe must not feed its own enable.\n    assign SMARTPORT_MODE = !mode_reg[3] && mode_reg[1];")
+        text = replace(text, '    smartport_dev sp_dev (\n        .clk(CLK_14M),', '    smartport_dev sp_dev (\n        .clk(CLK_14M),\n        .CLOCK_ENABLE(NATIVE_ENABLE),')
+        text = replace(text, '        .CLK_14M(CLK_14M),', '        .CLK_14M(CLK_14M),\n        .CLOCK_ENABLE(CLOCK_ENABLE),', 4)
+        text = replace(text, '        .WRITE_BYTE_OUT(drive35_write_byte),', '        .WRITE_DRAIN_ENABLE(WRITE_DRAIN_ENABLE),\n        .WRITE_PIPELINE_PENDING(WRITE_PIPELINE_PENDING[0]),\n        .WRITE_BYTE_OUT(drive35_write_byte),')
+        text = replace(text, '        .WRITE_BYTE_OUT(drive525_write_byte),', '        .WRITE_DRAIN_ENABLE(WRITE_DRAIN_ENABLE),\n        .WRITE_PIPELINE_PENDING(WRITE_PIPELINE_PENDING[1]),\n        .WRITE_BYTE_OUT(drive525_write_byte),')
+    if name=='flux_drive':
+        text = replace(text, "    input wire CLOCK_ENABLE=1'b1,", "    input wire CLOCK_ENABLE=1'b1,\n    input wire WRITE_DRAIN_ENABLE=1'b0,\n    output wire WRITE_PIPELINE_PENDING,")
+        # An IWM strobe already emitted before a pause is a queued bit, not
+        # a new time event. Admit it once while draining; mask it on resume
+        # until the paused IWM itself has cleared its held output pulse.
+        text = re.sub(r'\bWRITE_STROBE\b', 'accepted_write_strobe', text)
+        text = replace(text, 'input  wire        accepted_write_strobe,', 'input  wire        WRITE_STROBE,')
+    if name=='woz_floppy_controller':
+        text = replace(text, "    input wire CLOCK_ENABLE=1'b1,", "    input wire CLOCK_ENABLE=1'b1,\n    input wire BIT_CLOCK_ENABLE=1'b1,\n    input wire WRITE_PENDING=1'b0,")
+        text = text.replace(".enable_a(1'b1)", '.enable_a(CLOCK_ENABLE)').replace(".enable_b(1'b1)", '.enable_b(CLOCK_ENABLE)')
+        # Track port B belongs to virtual mechanics. It must pause with its
+        # RMW source while port A/controller continue servicing ARM and SD.
+        text = replace(text, '.enable_b(CLOCK_ENABLE)', '.enable_b(CLOCK_ENABLE && BIT_CLOCK_ENABLE)', 3)
+        # The first B port is metadata, read by the backend FSM rather than
+        # the mechanics. Keep it running while a track is loading.
+        text = text.replace('.enable_b(CLOCK_ENABLE && BIT_CLOCK_ENABLE)', '.enable_b(CLOCK_ENABLE)', 1)
+        # Save/load admission is fenced until every already-emitted bit has
+        # reached track RAM. In-flight SD service remains fully enabled.
+        text = replace(text, '                S_IDLE: begin', '                S_IDLE: begin\n                    if (!WRITE_PENDING) begin')
+        text = replace(text, '                // Lookup FLUX (if available) then TMAP, then TRKS',
+                       '                    end // pending serial/RMW writes have drained\n\n                // Lookup FLUX (if available) then TMAP, then TRKS')
+    if name=='smartport_dev':
+        # The SD-facing block RAM has a separate write always block too.
+        text = NOTICE + text
+    text = enable_clocked_blocks(text, clock, 'CLOCK_ENABLE')
+    if name=='flux_drive':
+        text = replace(text, '    reg [31:0] write_count;  // Debug counter for writes\n', """    reg drain_strobe_seen,drain_phase_pending;
+    wire accepted_write_strobe=WRITE_STROBE && !drain_strobe_seen;
+    wire pending_strobe=accepted_write_strobe && WRITE_MODE && !WRITE_PROTECT && TRACK_LOADED;
+    assign WRITE_PIPELINE_PENDING=pending_strobe || write_strobe_d1 || WRITE_WE_OUT;
+    always @(posedge CLK_14M or posedge RESET) begin
+        if(RESET)drain_strobe_seen<=0;
+        else if(!WRITE_STROBE)drain_strobe_seen<=0;
+        else if(WRITE_DRAIN_ENABLE && pending_strobe)drain_strobe_seen<=1;
+    end
+    reg [31:0] write_count;  // Debug counter for writes
+""")
+        a=text.index('    reg [31:0] write_count;  // Debug counter for writes')
+        b=text.index('    // Head Stepper Motor Logic',a)
+        rmw=replace(text[a:b],'end else if (CLOCK_ENABLE) begin',
+                    'end else if (CLOCK_ENABLE || (WRITE_DRAIN_ENABLE && WRITE_PIPELINE_PENDING)) begin')
+        text=text[:a]+rmw+text[b:]
+        # Drain the already emitted serial bit's position/phase-lock event.
+        # The rotation timers, flux playback, mechanics and IWM remain frozen.
+        tail='''    end
+    end
+
+    reg [4:0] debug_read_count;  // Counter for track dump logging'''
+        replacement='''    end else if (WRITE_DRAIN_ENABLE && pending_strobe && motor_spinning &&
+                 !IS_FLUX_TRACK && !skip_position_advance) begin
+        if (TRACK_BIT_COUNT>0 && effective_bit_position+1>=track_bit_count_17)
+            bit_position<=0;
+        else bit_position<=bit_position+1'b1;
+        write_strobe_steal<=1;
+        drain_phase_pending<=1;
+    end
+    end
+
+    reg [4:0] debug_read_count;  // Counter for track dump logging'''
+        text = replace(text, tail, replacement)
+        text = replace(text, "            bit_position <= 17'd0;\n            bit_timer <= bit_cell_base;",
+                       "            bit_position <= 17'd0;\n            drain_phase_pending<=0;\n            bit_timer <= bit_cell_base;")
+        text = replace(text, '                        if (WRITE_MODE && accepted_write_strobe && !skip_position_advance) begin\n                        // Keep the physical bit-cell timer phase locked to the IWM\'s write',
+                       '                        if (WRITE_MODE && (accepted_write_strobe || drain_phase_pending) && !skip_position_advance) begin\n                        drain_phase_pending<=0;\n                        // Keep the physical bit-cell timer phase locked to the IWM\'s write')
     return normalize(text)
 
 
 def outputs() -> dict[str, str]:
-    return {"iigs.sv": generate_iigs(), "vgc.sv": generate_vgc(), "adb.sv": generate_adb(),
+    result = {"iigs.sv": generate_fast_floppy_iigs(generate_iigs()), "vgc.sv": generate_vgc(), "adb.sv": generate_adb(),
             "hdd.sv": generate_hdd(), "prtc.sv": generate_prtc(), "bram.sv": generate_bram(),
             "runtime_rom.sv": generate_runtime_rom(), "twgs_card.sv": normalize(generate_twgs()),
             "woz_floppy_controller.sv": generate_woz(), "iir_filter.sv": generate_iir(),
@@ -923,7 +1214,11 @@ def outputs() -> dict[str, str]:
             "P65C816.sv": generate_cpu(), "mcode.sv": generate_mcode(),
             "zipgs_regs.sv": generate_zipgs(), "sound.sv": generate_sound(), "soundglu.sv": generate_soundglu(),
             "flux_drive.sv": generate_flux_drive(), "iwm_flux.sv": generate_iwm_flux(),
-            "iwm_woz.sv": generate_iwm_woz()}
+            "iwm_woz.sv": generate_iwm_woz(),
+            "smartport_dev.sv": upstream('rtl/smartport_dev.v')}
+    for name in ('iwm_woz','iwm_flux','flux_drive','woz_floppy_controller','smartport_dev'):
+        result[name+'.sv']=generate_enabled_floppy(result[name+'.sv'],name)
+    return result
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)

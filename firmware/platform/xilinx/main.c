@@ -2471,6 +2471,7 @@ static mt_menu_view_t supervisor_menu_view(void)
         state.iigs_ready=iigs_content_service_ready();
         state.iigs_config=*iigs_content_service_config();
         state.iigs_speed_mask=iigs_content_service_speed_mask();
+        state.iigs_fast_floppy_supported=iigs_content_service_fast_floppy_supported();
         state.iigs_mouse_sensitivity=iigs_content_service_mouse_sensitivity();
         state.save_faulted=iigs_content_service_faulted();
         for(unsigned d=0U;d<MT_IIGS_DRIVE_COUNT;++d)state.iigs_drive_name[d]=iigs_content_service_name(d);
@@ -3504,7 +3505,8 @@ static bool menu_action_needs_core_progress(mt_menu_action_t action)
          * Turbo, input, video and startup settings apply while paused. */
         return supervisor.has_active &&
                (supervisor.active.package.core_id == MT_GENESIS_CORE_ID ||
-                (supervisor.active.package.core_id == MT_IIGS_CORE_ID && action.file_index==1U) ||
+                (supervisor.active.package.core_id == MT_IIGS_CORE_ID &&
+                 (action.file_index==1U || action.file_index==2U || action.file_index==10U)) ||
                 (supervisor.active.package.core_id == MT_C64_CORE_ID &&
                  action.file_index == 0U));
     default:
@@ -4385,6 +4387,10 @@ static void handle_menu_action(mt_menu_action_t action)
             else if(action.file_index==2U)changed.card=changed.card==0U ? 2U:0U;
             else if(action.file_index==3U)changed.pulses^=1U;
             else if(action.file_index<9U)changed.flags^=(uint8_t)(1U<<(action.file_index-4U));
+            else if(action.file_index==10U) {
+                if(!iigs_content_service_fast_floppy_supported())return;
+                changed.flags^=MT_IIGS_FLAG_FAST_FLOPPY;
+            }
             else return;
             usb_hid_service_set_core_ready(false);
             if(iigs_content_service_configure(&changed)!=0)set_supervisor_error(iigs_content_service_error());
@@ -4873,6 +4879,23 @@ static void print_read_only_diagnostics(const char *stage)
             xil_printf("stream status=%08x variant=%u\r\n",
                 (unsigned int)shell_read(MT_REG_STREAM_STATUS),
                 (unsigned int)shell_read(MT_REG_CORE_VARIANT_INDEX));
+        if ((abi & UINT32_C(0xffff)) >= 8U) {
+            /* Compare both ends of this read-only snapshot. MEDIA_DATA is
+             * deliberately excluded because reading it consumes save bytes. */
+            const uint32_t id_before = shell_read(MT_REG_MEDIA_REQUEST_ID);
+            const uint32_t request_before = shell_read(MT_REG_MEDIA_REQUEST);
+            const uint32_t lba = shell_read(MT_REG_MEDIA_REQUEST_LBA);
+            const uint32_t blocks = shell_read(MT_REG_MEDIA_REQUEST_BLOCK_COUNT);
+            const uint32_t generation = shell_read(MT_REG_MEDIA_REQUEST_GENERATION);
+            const uint32_t state = shell_read(MT_REG_MEDIA_STATE);
+            const uint32_t request_after = shell_read(MT_REG_MEDIA_REQUEST);
+            const uint32_t id_after = shell_read(MT_REG_MEDIA_REQUEST_ID);
+            xil_printf("media request=%08x/%08x id=%08x/%08x lba=%08x blocks=%08x generation=%08x state=%08x\r\n",
+                (unsigned int)request_before, (unsigned int)request_after,
+                (unsigned int)id_before, (unsigned int)id_after,
+                (unsigned int)lba, (unsigned int)blocks,
+                (unsigned int)generation, (unsigned int)state);
+        }
         if ((abi & UINT32_C(0xffff)) >= MT_VIDEO_PHOSPHOR_MIN_ABI_MINOR) {
             /* Status/counter reads have no register side effects. In
              * particular, never read MEDIA_DATA here: that pops save bytes. */

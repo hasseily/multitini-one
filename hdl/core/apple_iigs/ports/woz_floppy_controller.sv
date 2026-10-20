@@ -25,6 +25,9 @@ module woz_floppy_controller #(
     parameter BRAM_ADDR_WIDTH = IS_35_INCH ? 16 : 15  // 64KB for 3.5", 32KB for 5.25" (supports FLUX tracks)
 ) (
     input             clk,
+    input wire CLOCK_ENABLE=1'b1,
+    input wire BIT_CLOCK_ENABLE=1'b1,
+    input wire WRITE_PENDING=1'b0,
     input             reset,
 
     // SD Block Device Interface
@@ -107,13 +110,13 @@ module woz_floppy_controller #(
 
     bram #(.width_a(8), .widthad_a(11)) meta_ram (
         .clock_a(clk),
-        .enable_a(1'b1),
+        .enable_a(CLOCK_ENABLE),
         .address_a(meta_addr),
         .wren_a(meta_we),
         .data_a(meta_din),
         .q_a(meta_dout),
         .clock_b(clk),
-        .enable_b(1'b1),
+        .enable_b(CLOCK_ENABLE),
         .address_b(meta_read_addr), // Port B used for lookups
         .wren_b(1'b0),
         .data_b(8'h00),
@@ -180,14 +183,14 @@ module woz_floppy_controller #(
     // Dual port RAM for Track Data (Side 0) — used by both 3.5" and 5.25"
     bram #(.width_a(8), .widthad_a(BRAM_ADDR_WIDTH)) track_ram_side0 (
         .clock_a(clk),
-        .enable_a(1'b1),
+        .enable_a(CLOCK_ENABLE),
         .address_a(bram_addr_a),
         .wren_a(track_load_we && (!IS_35_INCH || (track_load_side == 1'b0))),
         .data_a(track_load_data),
         .q_a(track_ram_dout0),
 
         .clock_b(clk),
-        .enable_b(1'b1),
+        .enable_b(CLOCK_ENABLE && BIT_CLOCK_ENABLE),
         .address_b(bram_addr_b[BRAM_ADDR_WIDTH-1:0]),
         .wren_b(bit_we && (!IS_35_INCH || (track_id[0] == 1'b0))),
         .data_b(bit_data_in),
@@ -199,14 +202,14 @@ module woz_floppy_controller #(
         if (IS_35_INCH) begin : gen_side1_ram
             bram #(.width_a(8), .widthad_a(BRAM_ADDR_WIDTH)) track_ram_side1 (
                 .clock_a(clk),
-        .enable_a(1'b1),
+        .enable_a(CLOCK_ENABLE),
                 .address_a(bram_addr_a),
                 .wren_a(track_load_we && (track_load_side == 1'b1)),
                 .data_a(track_load_data),
                 .q_a(track_ram_dout1),
 
                 .clock_b(clk),
-        .enable_b(1'b1),
+        .enable_b(CLOCK_ENABLE && BIT_CLOCK_ENABLE),
                 .address_b(bram_addr_b),
                 .wren_b(bit_we && (track_id[0] == 1'b1)),
                 .data_b(bit_data_in),
@@ -420,6 +423,7 @@ module woz_floppy_controller #(
     reg request_issued;
 
     always @(posedge clk) begin
+        if (CLOCK_ENABLE) begin
         old_ack <= sd_ack;
 
         // Track when a real transfer is in progress
@@ -725,6 +729,7 @@ module woz_floppy_controller #(
 	                end
 
                 S_IDLE: begin
+                    if (!WRITE_PENDING) begin
                     busy <= 0;
 
                     // Dirty flush timer: after IWM writes stop for ~500ms, flush to disk.
@@ -917,6 +922,8 @@ module woz_floppy_controller #(
                         end
                     end
                 end
+
+                    end // pending serial/RMW writes have drained
 
                 // Lookup FLUX (if available) then TMAP, then TRKS
 	                S_SEEK_LOOKUP: begin
@@ -1538,6 +1545,7 @@ module woz_floppy_controller #(
 	                // Writing RAM -> SD: handled combinationally via bram_addr_a and save_din
             end
         end
+    end
     end
 
 endmodule

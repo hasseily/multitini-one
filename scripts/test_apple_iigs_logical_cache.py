@@ -53,8 +53,9 @@ def main() -> int:
     before=hashes();original=adapter.read_text(encoding='utf-8')
     variants=[('production',original,None)]
     if not args.skip_negative_controls:
-        vector=replace_once(original,'reg [17:0] l0_tags[0:7];','reg [18:0] l0_tags[0:7];')
-        vector=replace_once(vector,'wire l0_hit=cpu_valid && cpu_vector_n && l0_valid[l0_index] && l0_tags[l0_index]==cpu_logical_addr[23:6] &&','wire l0_hit=cpu_valid && l0_valid[l0_index] && l0_tags[l0_index]=={cpu_vector_n,cpu_logical_addr[23:6]} &&')
+        vector=replace_once(original,'reg [7:0][17:0] l0_tags;','reg [7:0][18:0] l0_tags;')
+        vector=replace_once(vector,'l0_tags[l0_line]==cpu_logical_addr[23:6] &&','l0_tags[l0_line]=={cpu_vector_n,cpu_logical_addr[23:6]} &&')
+        vector=replace_once(vector,'wire l0_hit=cpu_valid && cpu_vector_n && (|l0_match) &&','wire l0_hit=cpu_valid && (|l0_match) &&')
         vector=replace_once(vector,'else if(access_valid && !cache_stall && cpu_vector_n)begin','else if(access_valid && !cache_stall)begin')
         vector=replace_once(vector,'l0_tags[l0_index]<=cpu_logical_addr[23:6];','l0_tags[l0_index]<={cpu_vector_n,cpu_logical_addr[23:6]};')
         config=replace_once(original,' || config_commit ||\n',' ||\n')

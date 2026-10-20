@@ -262,7 +262,7 @@
       "offset": "0x0CC",
       "access": "ro",
       "reset": "parameter",
-      "description": "IIgs accelerator capabilities. Bit31 marks a valid mask; bits6:0 advertise supported speed codes stock,3.58,4.77,7.16,14.32,28.64,57.27MHz. Zero on other cores. Requires ABI0.22; older IIgs images use the legacy five speeds."
+      "description": "IIgs capabilities. Bit31 marks a valid mask; bits6:0 advertise supported speed codes stock,3.58,4.77,7.16,14.32,28.64,57.27MHz. Bit8 advertises retained media requests across mount/eject and fresh-ID retries, required for target-scoped media drains. Zero on other cores. Requires ABI0.22; older IIgs images use the legacy five speeds."
     },
     {
       "name": "VIDEO_EFFECT_ADDRESS",
@@ -540,6 +540,8 @@
     "VECTREX_OVERLAY_STATUS_ERROR": "0x00000002",
     "IIGS_ACCEL_MIN_ABI_MINOR": 22,
     "IIGS_ACCEL_CAPS_VALID": "0x80000000",
+    "IIGS_MEDIA_TARGET_DRAIN_SUPPORTED": "0x00000100",
+    "IIGS_FAST_FLOPPY_SUPPORTED": "0x00000200",
     "IIGS_ACCEL_SPEED_MASK": "0x0000007F",
     "IIGS_ACCEL_LEGACY_SPEED_MASK": "0x0000001F",
     "VIDEO_EFFECT_MIN_ABI_MINOR": 15,

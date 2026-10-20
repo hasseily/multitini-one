@@ -111,6 +111,9 @@ int main(void)
     mt_iigs_config_t c={1U,4U,0U,8U,UINT32_C(0x12345678),1U};
     assert(mt_iigs_config_valid(&c)); mt_iigs_config_encode(&c,wire);
     assert(wire[0]==1U && wire[1]==4U && wire[4]==0x78U && wire[7]==0x12U && wire[8]==1U && wire[15]==0U);
+    c.flags|=MT_IIGS_FLAG_FAST_FLOPPY;
+    assert(mt_iigs_config_valid(&c));mt_iigs_config_encode(&c,wire);
+    assert(wire[3]==UINT8_C(0x88));
     c.speed=5U; assert(mt_iigs_config_valid(&c));c.speed=6U;assert(mt_iigs_config_valid(&c));
     c.speed=7U; assert(!mt_iigs_config_valid(&c));
     assert(mt_iigs_next_speed(4U,MT_IIGS_ACCEL_LEGACY_SPEED_MASK)==0U);
@@ -122,12 +125,22 @@ int main(void)
     mt_core_frontend_t frontend; mt_menu_view_t view={0};
     mt_core_frontend_state_t state={0}; state.core_id=MT_IIGS_CORE_ID; state.services_ready=true; state.iigs_config.speed=4U;
     mt_core_frontend_apply(&frontend,&state,&view);
-    assert(view.media_item_count==MT_IIGS_DRIVE_COUNT+4U && view.core_option_count==10U);
+    assert(view.media_item_count==MT_IIGS_DRIVE_COUNT+4U && view.core_option_count==11U);
     for(unsigned drive=0U;drive<MT_IIGS_DRIVE_COUNT;++drive)
         assert(view.media_items[drive].argument==drive && view.media_items[drive].action==MT_MENU_ACTION_BROWSE_IIGS_DRIVE);
     assert(strcmp(view.media_items[9].label,"Hard disk 8")==0);
     assert(strcmp(view.core_options[9].label,"Mouse sensitivity")==0 && strcmp(view.core_options[9].value,"100%")==0);
     assert(view.core_options[9].argument==9U && view.core_options[9].action==MT_MENU_ACTION_TOGGLE_CORE_OPTION);
+    assert(strcmp(view.core_options[10].label,"Floppy speed")==0 && !view.core_options[10].enabled &&
+        strcmp(view.core_options[10].value,"Unavailable")==0 && view.core_options[10].argument==10U);
+    state.iigs_fast_floppy_supported=true;mt_core_frontend_apply(&frontend,&state,&view);
+    assert(view.core_options[10].enabled && strcmp(view.core_options[10].value,"Normal")==0 &&
+        strstr(view.core_options[10].help,"restarts")!=NULL);
+    state.iigs_config.flags|=MT_IIGS_FLAG_FAST_FLOPPY;mt_core_frontend_apply(&frontend,&state,&view);
+    assert(strcmp(view.core_options[10].value,"Fast")==0);
+    state.iigs_fast_floppy_supported=false;mt_core_frontend_apply(&frontend,&state,&view);
+    assert(!view.core_options[10].enabled && strcmp(view.core_options[10].value,"Unavailable")==0);
+    state.iigs_config.flags=0U;
     state.iigs_mouse_sensitivity=25U;mt_core_frontend_apply(&frontend,&state,&view);
     assert(strcmp(view.core_options[9].value,"25%")==0);
     state.iigs_mouse_sensitivity=400U;mt_core_frontend_apply(&frontend,&state,&view);

@@ -126,6 +126,74 @@ module multitini_apple_iigs_adapter #(
     wire [7:0] cpu_local_data,native_read_data;
     wire native_return_toggle;
     wire cpu_slowram_read,cpu_slowram_write,cpu_slowram_ready,cpu_slowram_pending,cpu_native_two_edge,cpu_native_hold;
+    wire fast_floppy_active,floppy_engine_ce,floppy_backend_ce;
+    wire cpu_floppy_access,cpu_floppy_guard,cpu_floppy_slow;
+    wire [1:0] floppy_write_pending;
+    wire floppy_write_drain;
+    wire [7:0] cpu_floppy_data;
+    reg floppy_iwm_owned,floppy_iwm_replied;
+    reg [7:0] floppy_iwm_addr,floppy_iwm_data,floppy_iwm_response_data;
+    reg floppy_iwm_read;
+    wire floppy_clock_active=fast_floppy_active || floppy_iwm_owned;
+    reg fast_floppy_request;
+    // Changing the saved option takes effect only while the guest is reset.
+    // Neither the system/native clock nor another peripheral's timebase changes.
+    always @(posedge core_clk)begin
+        if(reset)fast_floppy_request<=0;
+        else if(machine_reset)fast_floppy_request<=config_bytes[31];
+    end
+    // Real SD service and WOZ RAM/FSM progress independently of virtual time.
+    // Stopping both on a cache miss or track load would deadlock the guest.
+    wire floppy_backend_wait=floppy_clock_active && (motor35 || motor525) && (|woz_busy);
+    // Keep cycle-counted driver delays coupled to the paused disk, including
+    // an accepted IWM transaction whose eligibility changes before retirement.
+    // Outside those windows, unrelated CPU work can overlap storage service.
+    wire floppy_backend_cpu_hold=floppy_backend_wait &&
+        (cpu_floppy_guard || cpu_floppy_access || floppy_iwm_owned);
+    wire floppy_cpu_stall=cache_stall || pause_request || machine_reset_raw || machine_reset ||
+        hdd_dma || floppy_backend_cpu_hold;
+    reg [3:0] native_io_virtual_age;
+    // A non-floppy register still traverses the native bridge. Charge its
+    // guest-visible 14-tick I/O cycle once, then pause the floppy timeline
+    // during the extra physical bridge latency; the bridge itself keeps going.
+    wire floppy_virtual_stall=floppy_cpu_stall || floppy_backend_wait ||
+        (fast_floppy_active && native_path && native_io_virtual_age>=14);
+    always @(posedge core_clk)begin
+        if(reset || machine_reset || !fast_floppy_active || !native_path || cpu_ce)native_io_virtual_age<=0;
+        else if(floppy_engine_ce && native_io_virtual_age!=15)native_io_virtual_age<=native_io_virtual_age+1'b1;
+    end
+    reg [3:0] floppy_io_age;
+    // A Fast IWM access owns its captured bus until CPU retirement, even if
+    // a mode write or compatibility gate changes the selected clock rate.
+    // Issue one edge before retirement within the existing 14-tick budget.
+    // The response is the exact pre-edge byte observed by the IWM access;
+    // the following enabled CEN-low edge acknowledges that same read.
+    wire floppy_iwm_request=floppy_iwm_owned && !floppy_iwm_replied && floppy_io_age>=12 &&
+        !pause_request && !machine_reset_raw && !machine_reset && !hdd_dma;
+    wire floppy_iwm_response=floppy_iwm_owned && floppy_iwm_replied && floppy_engine_ce;
+    always @(posedge core_clk)begin
+        if(reset || machine_reset || (!cpu_floppy_access && !floppy_iwm_owned) || cpu_ce)floppy_io_age<=0;
+        else if(floppy_engine_ce && floppy_io_age!=15)floppy_io_age<=floppy_io_age+1'b1;
+        if(reset || machine_reset)begin
+            floppy_iwm_owned<=0;floppy_iwm_replied<=0;
+            floppy_iwm_addr<=0;floppy_iwm_data<=0;floppy_iwm_read<=1;
+            floppy_iwm_response_data<=0;
+        end else begin
+            if(!floppy_iwm_owned && cpu_floppy_access && !native_pending && !native_commit_q)begin
+                floppy_iwm_owned<=1;
+                floppy_iwm_addr<=cpu_logical_addr[7:0];
+                floppy_iwm_data<=bus_write_data;
+                floppy_iwm_read<=!bus_write;
+            end
+            if(floppy_iwm_request && floppy_engine_ce)begin
+                floppy_iwm_response_data<=cpu_floppy_data;
+                floppy_iwm_replied<=1;
+            end
+            if(cpu_ce && floppy_iwm_owned)begin
+                floppy_iwm_owned<=0;floppy_iwm_replied<=0;
+            end
+        end
+    end
     wire [7:0] cpu_slowram_data;
     reg native_stall_q;
     // Publish the complete native hold condition on phase2. Lookup/tag/data
@@ -146,10 +214,18 @@ module multitini_apple_iigs_adapter #(
     // Vector pulls bypass L0: exact vector-forced ROM lanes can share a raw
     // word with RAM when IOLC is inhibited. L1 keeps physical tags throughout.
     (* ram_style="distributed" *) reg [63:0] l0_data[0:7];
-    reg [17:0] l0_tags[0:7];
+    // Compare each registered tag in parallel so the late word index does not
+    // traverse an asynchronous tag RAM before the equality comparison.
+    reg [7:0][17:0] l0_tags;
     reg [7:0] l0_valid;
     wire [2:0] l0_index=cpu_logical_addr[5:3];
-    wire l0_hit=cpu_valid && cpu_vector_n && l0_valid[l0_index] && l0_tags[l0_index]==cpu_logical_addr[23:6] &&
+    wire [7:0] l0_match;
+    for(genvar l0_line=0;l0_line<8;l0_line++)begin:g_l0_match
+        localparam logic [2:0] LINE_INDEX=l0_line;
+        assign l0_match[l0_line]=l0_valid[l0_line] &&
+            l0_tags[l0_line]==cpu_logical_addr[23:6] && l0_index==LINE_INDEX;
+    end
+    wire l0_hit=cpu_valid && cpu_vector_n && (|l0_match) &&
         !cache_disable && !hdd_dma && !bus_write && !invalidate && !loader_valid && !config_commit;
     // A native write's slow-RAM and peripheral side effects land on the
     // phase3 CLK14 edge. Post its DDR copy on that same edge, so a reset or
@@ -173,7 +249,7 @@ module multitini_apple_iigs_adapter #(
     reg native_pending,native_return_seen;
     reg native_prepare_q,native_prepared,native_prepared2;
     reg [4:0] cpu_cooldown;
-    wire native_path=!cpu_fast_cycle || cpu_speed==0;
+    wire native_path=!floppy_iwm_owned && (!cpu_fast_cycle || cpu_speed==0);
     wire native_response=native_pending && native_return_toggle!=native_return_seen;
     // Direct Mega II RAM reads complete from the machine's registered
     // slow-RAM read (ready and data are flops, set three edges after the bus
@@ -182,11 +258,13 @@ module multitini_apple_iigs_adapter #(
     // next store. A phase3 edge defers a staged write, so no write retires on
     // it while one is pending. Both terms are registers, so neither deepens
     // CPU CE. A shadow write also waits for the cache's DDR copy.
-    wire fast_response=!native_pending && !native_path &&
+    wire fast_response=!native_pending && !native_path && !floppy_iwm_owned && !cpu_floppy_access &&
         (cpu_slowram_read ? cpu_slowram_ready : (!cpu_valid || cpu_local_read || l0_hit || !cache_stall)) &&
-        !(bus_write && cpu_slowram_pending && phase==3);
+        !(bus_write && cpu_slowram_pending && phase==3) &&
+        (!cpu_floppy_access || floppy_io_age>=13);
     wire cpu_ce=!machine_reset && !machine_reset_raw && !pause_request && !hdd_dma &&
-        (native_response || (fast_response && cpu_cooldown==0));
+        !(floppy_clock_active && floppy_cpu_stall) &&
+        (native_response || floppy_iwm_response || (fast_response && cpu_cooldown==0));
     // A valid raw hit cannot overlap a local IO register: every mapping or
     // native IO transaction retires before the CPU can consume another hit.
     // Invalid internal cycles retain L1's floating-bus value via cpu_valid.
@@ -194,9 +272,10 @@ module multitini_apple_iigs_adapter #(
     // is a register too, so no MMU decode or BRAM output reaches CPU_DIN.
     // Priority is native, slow RAM, L0, local, L1. The raw-address L0 hit
     // arrives last, so it drives the final 2:1 stage of the same priority.
-    wire [7:0] cpu_read_other=native_pending ? native_read_data : cpu_slowram_ready ? cpu_slowram_data :
+    wire [7:0] cpu_read_other=floppy_iwm_owned ? floppy_iwm_response_data :
+        native_pending ? native_read_data : cpu_slowram_ready ? cpu_slowram_data :
         cpu_local_read ? cpu_local_data : bus_read_word[cpu_logical_addr[2:0]*8+:8];
-    wire cpu_read_l0=l0_hit && !native_pending && !cpu_slowram_ready;
+    wire cpu_read_l0=l0_hit && !native_pending && !cpu_slowram_ready && !floppy_iwm_owned;
     wire [7:0] cpu_read_data=cpu_read_l0 ? l0_data[l0_index][cpu_logical_addr[2:0]*8+:8] : cpu_read_other;
     wire [7:0] native_memory_data=l0_hit ? l0_data[l0_index][cpu_logical_addr[2:0]*8+:8] : bus_read_data;
     // A native request is published one primary edge before CLK14 rises.
@@ -222,11 +301,17 @@ module multitini_apple_iigs_adapter #(
                 !cache_stall && !pause_request && !machine_reset_raw;
             if(phase==3 && native_commit_q && !hdd_dma)native_pending<=1;
             if(hdd_dma)begin native_prepare_q<=0;native_prepared<=0;native_prepared2<=0;end
-            if(cpu_cooldown!=0)cpu_cooldown<=cpu_cooldown-1'b1;
+            // Independent CPU cycles keep their configured pacing while the
+            // disk timeline waits for storage. Protected driver cycles still
+            // count only enabled disk ticks, preserving their IWM bit timing.
+            if(cpu_cooldown!=0 && (!floppy_clock_active || floppy_engine_ce ||
+                (floppy_backend_wait && !floppy_cpu_stall)))cpu_cooldown<=cpu_cooldown-1'b1;
             if(cpu_ce)begin
                 native_prepare_q<=0;native_prepared<=0;native_prepared2<=0;
                 if(native_pending)begin native_pending<=0;native_return_seen<=native_return_toggle;end
-                case(cpu_speed)
+                if(cpu_floppy_guard || cpu_floppy_access)
+                    cpu_cooldown<=cpu_floppy_slow ? 13 : 4;
+                else case(cpu_speed)
                     1:cpu_cooldown<=15;
                     2:cpu_cooldown<=11;
                     3:cpu_cooldown<=7;
@@ -391,16 +476,16 @@ module multitini_apple_iigs_adapter #(
                 eject_pending[media_slot]<=1;
                 if(media_slot==4 && mounted[4])pram_write<=1;
             end
-            // The Sony command is a full CLK_14M pulse. Capture it on the
-            // same phase as native track writes, and retain the image until
+            // Normal Sony pulses last a native period; Fast can pulse for
+            // one primary edge. Capture either, and retain the image until
             // every dirty block has received a successful file-service ACK.
             // ARM keeps its file open until a later menu eject/reinsert.
             if(native_eject35_q && mounted[2])eject_pending[2]<=1;
             for(slot=0;slot<11;slot=slot+1)begin
                 if(eject_pending[slot] && !(pending && selected==slot) && !reads[slot] && !writes[slot] &&
                     !((slot<2 || slot>=5) && hdd_dma) &&
-                    !(slot==2 && (woz_busy[0] || woz_dirty[0] || bit_we35)) &&
-                    !(slot==3 && (woz_busy[1] || woz_dirty[1] || bit_we525)))begin
+                    !(slot==2 && (woz_busy[0] || woz_dirty[0] || bit_we35 || (floppy_write_drain && floppy_write_pending[0]))) &&
+                    !(slot==3 && (woz_busy[1] || woz_dirty[1] || bit_we525 || (floppy_write_drain && floppy_write_pending[1]))))begin
                     mounted[slot]<=0;eject_pending[slot]<=0;
                     if(slot<2 || slot>=5)begin
                         hdd_metadata_pending[slot<2 ? slot : slot-3]<=1;sizes[slot]<=0;
@@ -489,8 +574,14 @@ module multitini_apple_iigs_adapter #(
     wire bit_we35,bit_we525,stable_side,motor35,motor525;
     reg native_eject35_q;
     always @(posedge core_clk)begin
-        native_eject35_q<=0;
-        if(!reset && lookup_tick)native_eject35_q<=native_eject35;
+        if(reset)native_eject35_q<=0;
+        else if(fast_floppy_request)begin
+            if(native_eject35)native_eject35_q<=1;
+            else if(lookup_tick)native_eject35_q<=0;
+        end else begin
+            native_eject35_q<=0;
+            if(lookup_tick)native_eject35_q<=native_eject35;
+        end
     end
     wire [1:0] track_valid,load_complete,flux,wp;
     wire [31:0] bit_count[0:1],flux_size[0:1],flux_ticks[0:1];
@@ -527,20 +618,21 @@ module multitini_apple_iigs_adapter #(
     wire [7:0] track525_id=qtrack>=2 ? qtrack[7:0]-8'd2 : 0;
     genvar drive;
     generate for(drive=0;drive<2;drive=drive+1)begin:g_woz
-        // Preserve the upstream CLK_14M track RAM latency and immediate
-        // lookahead. In particular, native RMW at N+1 reads the byte whose
-        // address it latched at N, even when WRITE_MODE changes late.
+        // Normal CE keeps the original phase3 controller/RAM sequence. Fast
+        // port A/backend service continues while virtual time waits for SD;
+        // port B follows virtual steps plus any pending bit's RMW drain.
         woz_floppy_controller #(.IS_35_INCH(drive==0),.CLOCK_MULTIPLIER(1)) floppy_i(
-            .clk(clk14),.reset(woz_reset),.sd_lba(woz_lba[drive]),.sd_rd(woz_read[drive]),.sd_wr(woz_write[drive]),
+            .clk(core_clk),.CLOCK_ENABLE(floppy_backend_ce),.BIT_CLOCK_ENABLE(floppy_engine_ce || (floppy_write_drain && floppy_write_pending[drive])),
+            .WRITE_PENDING(floppy_write_drain && floppy_write_pending[drive]),.reset(woz_reset),.sd_lba(woz_lba[drive]),.sd_rd(woz_read[drive]),.sd_wr(woz_write[drive]),
             .sd_ack(woz_sd_ack_q[drive]),.sd_buff_addr(woz_sd_addr_q),.sd_buff_dout(woz_sd_data_q),.sd_buff_din(sd_data[drive+2]),
-            .sd_buff_wr(woz_sd_write_q[drive]),
+            .sd_buff_wr(woz_sd_write_q[drive] && pixel_ce),
             .img_mounted(woz_mount_q[drive]),.img_readonly(woz_readonly_q[drive]),.img_size({32'd0,woz_size_q[drive]}),
             .track_id(drive==0 ? track35 : track525_id),.ready(woz_ready[drive]),.disk_mounted(woz_mounted[drive]),
-            .busy(woz_busy[drive]),.dirty(woz_dirty[drive]),.force_flush(eject_pending[drive+2]),
-            .active(drive==0 ? motor35 : motor525),.bit_count(bit_count[drive]),
+            .busy(woz_busy[drive]),.dirty(woz_dirty[drive]),.force_flush(eject_pending[drive+2] && (!floppy_write_drain || !floppy_write_pending[drive])),
+            .active((drive==0 ? motor35 : motor525) || (floppy_write_drain && floppy_write_pending[drive])),.bit_count(bit_count[drive]),
             .bit_addr(drive==0 ? bit_addr35 : bit_addr525),.stable_side(drive==0 ? stable_side : 1'b0),
             .bit_data(bit_data[drive]),.bit_data_in(drive==0 ? track35_data_in : track525_data_in),
-            .bit_we(drive==0 ? bit_we35 : bit_we525),.bit_wr_addr(drive==0 ? bit_wr_addr35 : bit_wr_addr525),
+            .bit_we((floppy_engine_ce || floppy_write_drain) && (drive==0 ? bit_we35 : bit_we525)),.bit_wr_addr(drive==0 ? bit_wr_addr35 : bit_wr_addr525),
             .track_load_complete(load_complete[drive]),.is_flux_track(flux[drive]),
             .flux_data_size(flux_size[drive]),.flux_total_ticks(flux_ticks[drive]),
             .track_data_valid(track_valid[drive]),.disk_type_mismatch(),.disk_write_protected(wp[drive]),
@@ -554,6 +646,14 @@ module multitini_apple_iigs_adapter #(
     iigs #(.RAMSIZE(128),.EXTERNAL_CPU(1),.MAX_ACCEL_SPEED(MAX_ACCEL_SPEED)) machine_i(
         .CPU_CLK(core_clk),.CPU_CE(cpu_ce),.CPU_PUBLISH(byte_tick),.CPU_DIN(cpu_read_data),.NATIVE_COMMIT(native_commit_q),
         .CPU_FAST_CE(cpu_ce && !native_pending),.NATIVE_EDGE(pixel_ce),
+        .fast_floppy_request(fast_floppy_request),.fast_floppy_stall(floppy_virtual_stall),
+        .fast_floppy_active(fast_floppy_active),.floppy_engine_ce(floppy_engine_ce),.floppy_backend_ce(floppy_backend_ce),
+        .cpu_floppy_access(cpu_floppy_access),.cpu_floppy_guard(cpu_floppy_guard),.cpu_floppy_slow(cpu_floppy_slow),
+        .CPU_FLOPPY_PENDING(floppy_iwm_owned),.CPU_FLOPPY_REQUEST(floppy_iwm_request),
+        .CPU_FLOPPY_ADDR(floppy_iwm_addr),.CPU_FLOPPY_DATA(floppy_iwm_data),.CPU_FLOPPY_READ(floppy_iwm_read),
+        .cpu_floppy_data(cpu_floppy_data),
+        .floppy_write_pending(floppy_write_pending),
+        .floppy_write_drain(floppy_write_drain),
         .cpu_slowram_read(cpu_slowram_read),.cpu_slowram_write(cpu_slowram_write),
         .cpu_slowram_ready(cpu_slowram_ready),.cpu_slowram_data(cpu_slowram_data),.cpu_slowram_pending(cpu_slowram_pending),
         .cpu_native_two_edge(cpu_native_two_edge),.cpu_native_hold(cpu_native_hold),

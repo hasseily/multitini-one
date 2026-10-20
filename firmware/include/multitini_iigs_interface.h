@@ -35,10 +35,13 @@ static inline unsigned mt_iigs_drive_wire_slot(unsigned drive)
 static inline unsigned mt_iigs_wire_slot_drive(unsigned slot)
 { return slot<4U ? slot:slot>MT_IIGS_PRAM_SLOT && slot<MT_IIGS_MEDIA_SLOT_COUNT ? slot-1U:MT_IIGS_DRIVE_COUNT; }
 #define MT_IIGS_SPEED_COUNT 7U
+#define MT_IIGS_FLAG_FAST_FLOPPY UINT8_C(0x80)
 /* Configuration wire bytes: ROM3, speed (0..6), card (Zip/TW/none), flags;
  * Unix timestamp LE32; pulse byte (selftest/warm/cold/save/load); seven zeros.
  * Flags disable speaker/paddle/counter delay, CPS, disable IRQ delay,
- * disable TW startup graphics/sound. Pulse bits1..4 are never persisted. */
+ * disable TW startup graphics/sound, Fast floppy. Fast floppy defaults Off,
+ * requires MT_IIGS_FAST_FLOPPY_SUPPORTED and changes only through a restart.
+ * Pulse bits1..4 are never persisted. */
 typedef struct { uint8_t rom3, speed, card, flags; uint32_t timestamp;
     uint8_t pulses; } mt_iigs_config_t;
 #endif

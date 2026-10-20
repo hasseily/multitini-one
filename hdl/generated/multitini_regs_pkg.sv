@@ -183,6 +183,8 @@ package multitini_regs_pkg;
     localparam logic [31:0] MT_VECTREX_OVERLAY_STATUS_ERROR = 32'h00000002;
     localparam logic [31:0] MT_IIGS_ACCEL_MIN_ABI_MINOR = 32'h00000016;
     localparam logic [31:0] MT_IIGS_ACCEL_CAPS_VALID = 32'h80000000;
+    localparam logic [31:0] MT_IIGS_MEDIA_TARGET_DRAIN_SUPPORTED = 32'h00000100;
+    localparam logic [31:0] MT_IIGS_FAST_FLOPPY_SUPPORTED = 32'h00000200;
     localparam logic [31:0] MT_IIGS_ACCEL_SPEED_MASK = 32'h0000007F;
     localparam logic [31:0] MT_IIGS_ACCEL_LEGACY_SPEED_MASK = 32'h0000001F;
     localparam logic [31:0] MT_VIDEO_EFFECT_MIN_ABI_MINOR = 32'h0000000F;
