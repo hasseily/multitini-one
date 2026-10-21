@@ -214,19 +214,25 @@ module tb_apple_iigs_logical_cache;
         read_byte(24'h001000,8'h44);
         write_byte(24'h00c002,0);read_byte(24'h001000,8'h33);
         mark("RAMRD main/aux alias");
-        // IOLC inhibit creates mixed physical mapping within raw00FFE8:
-        // nativeIRQ vector FFEE/FFEF forces ROM, other VPB-low lanes remain RAM.
+        // IOLC inhibit maps every vector lane to RAM, including native IRQ.
         write_byte(24'h00c035,8'h7f);
         memory[24'h00ffe8>>3]=64'h5555555555555555;
         memory[24'hf9ffe8>>3]=64'h6666666666666666;
         read_byte(24'h00ffe8,8'h55);
-        bus_cycle(24'h00ffee,0,0,0,1,8'h66);
+        bus_cycle(24'h00ffee,0,0,0,1,8'h55);
         bus_cycle(24'h00ffea,0,0,0,1,8'h55);
-        bus_cycle(24'h00ffee,0,0,0,1,8'h66);
+        bus_cycle(24'h00ffee,0,0,0,1,8'h55);
         read_byte(24'h00ffee,8'h55);
-        mark("mixed-vector pull and ordinary LC RAM same8B word");
+        mark("IOLC-inhibited vectors and ordinary reads use RAM");
         // Restore IOLC via E0, which remains native when bank00C0xx is RAM.
         write_byte(24'he0c035,8'h3f);
+        // With the language card mapped and RDROM=0, ordinary reads use RAM
+        // but vector pulls use ROM. A warm raw cache word must not alias them.
+        read_byte(24'h00ffee,8'h55);
+        bus_cycle(24'h00ffee,0,0,0,1,8'h66);
+        bus_cycle(24'h00ffea,0,0,0,1,8'h66);
+        read_byte(24'h00ffee,8'h55);
+        mark("mapped LC RAM and ROM vectors share a raw cache word safely");
         side_read(24'h00c081); // RDROM=1.
         memory[24'hf9d008>>3]=64'h7777777777777777;
         read_byte(24'h00d008,8'h77);
@@ -255,7 +261,7 @@ module tb_apple_iigs_logical_cache;
         config_rom=0;packet(8'h43,16,6);
         read_byte(24'hffe000,8'h99);
         mark("hot ROM1/ROM3 config selection");
-        if(cases!=6)$fatal(1,"mapping coverage mismatch");
+        if(cases!=7)$fatal(1,"mapping coverage mismatch");
         $display("PASS: raw logical mapping total=%0d",cases);
         $finish;
     end

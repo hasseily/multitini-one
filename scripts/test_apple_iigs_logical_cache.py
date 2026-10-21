@@ -53,15 +53,11 @@ def main() -> int:
     before=hashes();original=adapter.read_text(encoding='utf-8')
     variants=[('production',original,None)]
     if not args.skip_negative_controls:
-        vector=replace_once(original,'reg [7:0][17:0] l0_tags;','reg [7:0][18:0] l0_tags;')
-        vector=replace_once(vector,'l0_tags[l0_line]==cpu_logical_addr[23:6] &&','l0_tags[l0_line]=={cpu_vector_n,cpu_logical_addr[23:6]} &&')
-        vector=replace_once(vector,'wire l0_hit=cpu_valid && cpu_vector_n && (|l0_match) &&','wire l0_hit=cpu_valid && (|l0_match) &&')
-        vector=replace_once(vector,'else if(access_valid && !cache_stall && cpu_vector_n)begin','else if(access_valid && !cache_stall)begin')
-        vector=replace_once(vector,'l0_tags[l0_index]<=cpu_logical_addr[23:6];','l0_tags[l0_index]<={cpu_vector_n,cpu_logical_addr[23:6]};')
+        vector=replace_once(original,'wire l0_hit=cpu_valid && cpu_vector_n && (|l0_match) &&','wire l0_hit=cpu_valid && (|l0_match) &&')
         config=replace_once(original,' || config_commit ||\n',' ||\n')
         config=replace_once(config,' && !config_commit;',';')
         valid=replace_once(original,'wire l0_hit=cpu_valid && cpu_vector_n &&','wire l0_hit=cpu_vector_n &&')
-        variants += [('vpb-tag-only',vector,'Mapping data addr00ffea vector0 actual66 expected55'),
+        variants += [('missing-vector-bypass',vector,'Mapping data addr00ffee vector0 actual55 expected66'),
                      ('missing-config-commit',config,'Mapping data addrffe000 vector1 actual99 expected88'),
                      ('missing-raw-valid',valid,'Invalid-cycle raw cache validity gating failed')]
     controls=[];positive=None
@@ -82,11 +78,11 @@ def main() -> int:
             controls.append({'name':name,'status':'REJECTED_EXPECTED','exit_status':exit_status,'expected_failure':expected,'derived_adapter_sha256':hashlib.sha256(text.encode('utf-8')).hexdigest(),'log':name+'-simulate.log'})
             print('PASS: rejected '+name+' at exact '+expected,flush=True)
         else:
-            if output.count('PASS: raw logical mapping ')!=7 or 'PASS: raw logical mapping total=6' not in output:
-                raise ValueError('Production did not complete all6 mapping groups')
+            if output.count('PASS: raw logical mapping ')!=8 or 'PASS: raw logical mapping total=7' not in output:
+                raise ValueError('Production did not complete all7 mapping groups')
             positive=output;print(output,flush=True)
     if hashes()!=before:raise ValueError('Production or test sources changed during logical cache qualification')
-    (build/'validation.json').write_text(json.dumps({'schema_version':1,'status':'PASS','files':before,'hdd_rom_sha256':hashlib.sha256(rom).hexdigest(),'result':positive,'negative_controls':controls,'checks':['LC bank switching by native IO reads','RAMRD main/aux alias','invalid internal cycle retains L1 floating bus','mixed VPB-low vector/ordinary LC8B word','warm-reset mapping','hot ROM1/ROM3 selection with both loaded','raw/physical byte lanes agree','raw hit and local register are mutually exclusive'],'limits':['Synthetic P65 bus-boundary transport test; forced CPU outputs are separate from instruction execution tests.','No synthesis, routed timing or physical board test is implied.']},indent=2)+'\n')
+    (build/'validation.json').write_text(json.dumps({'schema_version':1,'status':'PASS','files':before,'hdd_rom_sha256':hashlib.sha256(rom).hexdigest(),'result':positive,'negative_controls':controls,'checks':['LC bank switching by native IO reads','RAMRD main/aux alias','invalid internal cycle retains L1 floating bus','IOLC-inhibited RAM vectors','mapped LC RAM and ROM vectors in the same8B word','warm-reset mapping','hot ROM1/ROM3 selection with both loaded','raw/physical byte lanes agree','raw hit and local register are mutually exclusive'],'limits':['Synthetic P65 bus-boundary transport test; forced CPU outputs are separate from instruction execution tests.','No synthesis, routed timing or physical board test is implied.']},indent=2)+'\n')
     return 0
 
 if __name__=='__main__':raise SystemExit(main())

@@ -20,7 +20,7 @@ def machine_sources() -> list[Path]:
     cpu=UPSTREAM/"rtl/65C816"
     result=[cpu/"P65C816_pkg.sv"]+sorted(path for path in cpu.glob("*") if path.suffix in (".sv",".v") and path.name not in ("P65C816_pkg.sv","P65C816.sv","mcode.sv"))
     result+=sorted(PORTS.glob("*.sv"))
-    result += [UPSTREAM/"rtl"/relative for relative in ("mmu.sv","syncram.v",
+    result += [UPSTREAM/"rtl"/relative for relative in ("syncram.v",
         "paddle_timer.v","video_timing.v","clock_divider.v",
         "scc_iigs_wrapper.v","scc8530.v")]
     return result

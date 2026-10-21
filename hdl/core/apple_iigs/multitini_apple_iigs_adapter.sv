@@ -211,8 +211,8 @@ module multitini_apple_iigs_adapter #(
     // together. Raw CPU tags keep the FPI/MMU decode off this data path.
     // Every native CPU retirement invalidates: IO reads also change mapping.
     // Reset/configuration, all writers, DMA and cache-disable invalidate too.
-    // Vector pulls bypass L0: exact vector-forced ROM lanes can share a raw
-    // word with RAM when IOLC is inhibited. L1 keeps physical tags throughout.
+    // Vector pulls bypass L0: with the language card mapped, ROM vectors can
+    // share a raw word with ordinary RAM reads. L1 keeps physical tags throughout.
     (* ram_style="distributed" *) reg [63:0] l0_data[0:7];
     // Compare each registered tag in parallel so the late word index does not
     // traverse an asynchronous tag RAM before the equality comparison.

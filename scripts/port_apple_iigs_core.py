@@ -509,6 +509,69 @@ def generate_adb() -> str:
         source_name = "adb_rom3" if bank == 0 else "adb_rom1"
         text = replace(text, f'rom #(12, 8, "rtl/roms/{source_name}.hex") {name} (\n',
                        f"apple_iigs_runtime_rom #(.AW(12)) {name} (\n  .load_clk(load_rom_clk),\n  .load_we(load_rom_we & (load_rom_bank==1'b{bank})),\n  .load_addr(load_rom_addr),\n  .load_data(load_rom_data),\n")
+    # KEGS adb_kbd_talk_reg0 always completes, including an empty keyboard.
+    # adb_response_packet(0, ...) emits $80; C027 DATA_VALID and data IRQ
+    # depend on that header independently of the payload count.
+    # https://github.com/a2kegs/kegs/blob/main/src/adb.c
+    text = replace(text, "// IRQ generation\nwire data_irq = data_int & (pending_data > 0);",
+                   "// A response header is valid data even when it has no payload.\n"
+                   "// Both C027 status paths and enabled data IRQ include that header.\n"
+                   "wire data_irq = data_int & (cmd_response_ready | (pending_data > 0));")
+    text = replace(text, "(kbd_autopoll_off & data_int & (pending_data > 3'd0))",
+                   "(kbd_autopoll_off & data_irq)")
+    text = replace(text, "(pending_data > 0) | kbd_srq_pending | desk_mgr_pending,",
+                   "cmd_response_ready | (pending_data > 0) | kbd_srq_pending | desk_mgr_pending,", 2)
+    text = replace(text, "c026_status_read_with_data", "c026_response_read", 9)
+    text = replace(text, "reg c026_response_read;  // Track if C026 status was read with pending data (for IDLE->DATA transition)",
+                   "reg c026_response_read;  // Acknowledge a C026 response header after its read strobe falls")
+    text = replace(text, """                  // Clear on rising edge only
+                  if (strobe & ~strobe_prev) begin
+                    cmd_response_ready <= 1'b0;  // Clear after returning status
+`ifdef DEBUG_ADB
+                    $display("ADB C026: returning 0x80, no data");
+`endif
+                  end""", """                  // Keep the header visible throughout the CPU read, including
+                  // late combinational sampling by the external bus bridge.
+                  if (strobe & (addr == 8'h26)) c026_response_read <= 1'b1;""")
+    text = replace(text, """                  end else begin
+                    // No queued data / device not present: send NO response so the
+                    // firmware moves on to poll other devices (per gsplus).
+                    state <= IDLE;
+                  end
+                end
+                default: begin""", """                  end else if (din[3:0] == 4'd2) begin
+                    // An empty keyboard TALK still completes at the IIgs host
+                    // interface with header $80 and no payload (KEGS adb.c).
+                    // Raw ADB clients use this completion to allow another TALK.
+                    pending_data <= 3'd0;
+                    cmd_response_ready <= 1'b1;
+                    // A simultaneous key arrival must keep its newly set SRQ.
+                    state <= IDLE;
+                  end else begin
+                    // Other empty devices and absent addresses retain their
+                    // existing no-response behavior.
+                    state <= IDLE;
+                  end
+                end
+                default: begin""")
+    text = replace(text, """    if (~strobe & strobe_prev & c026_response_read) begin
+      state <= DATA;""", """    if (~strobe & strobe_prev & c026_response_read) begin
+      state <= (pending_data > 3'd0) ? DATA : IDLE;""")
+    text = replace(text, """    // Clear cmd_response_ready when no pending data (after status byte was read)
+    // This handles the case where there's no data to return after the status byte
+    if (~strobe & strobe_prev & cmd_response_ready & (pending_data == 3'd0) & (state == IDLE)) begin
+      cmd_response_ready <= 1'b0;
+    end
+
+""", "")
+    text = replace(text, "//   (b) data_int & pending_data>0 — a TALK-R0 RESPONSE is waiting to be read.",
+                   "//   (b) data_int & (header or payload) — a TALK-R0 RESPONSE is waiting.")
+    text = replace(text, "// reads the response (pending_data -> 0) and is gated on data_int (the firmware's",
+                   "// reads the header and payload, and is gated on data_int (the firmware's")
+    text = replace(text, "    // IDLE->DATA transition: on the strobe FALLING edge after the response\n"
+                        "    // header was read (flag set in the C026 IDLE read block). Doing this on the",
+                   "    // Acknowledge the header on its read strobe FALLING edge, entering DATA\n"
+                   "    // only when payload bytes remain. Doing this on the")
     return normalize(text)
 
 def generate_hdd() -> str:
@@ -1205,6 +1268,18 @@ def generate_enabled_floppy(text: str, name: str) -> str:
     return normalize(text)
 
 
+def generate_mmu() -> str:
+    text = upstream("rtl/mmu.sv")
+    text = replace(text, "module mmu", NOTICE + "module mmu")
+    text = replace(text,
+        "  // Force ROM2 on IRQ/BRK vector fetch cycles (VPB low) to return correct vectors from ROM bank FF\n"
+        "  wire vec_fetch_force_rom_ce = (~vpb_n) && (bank_log == 8'h00) &&",
+        "  // IOLC inhibit selects bank-00 RAM for vectors as well as instructions.\n"
+        "  // Retain the ROM vector override only while the language card is mapped.\n"
+        "  wire vec_fetch_force_rom_ce = (~vpb_n) && !shadow[6] && (bank_log == 8'h00) &&")
+    return normalize(text)
+
+
 def outputs() -> dict[str, str]:
     result = {"iigs.sv": generate_fast_floppy_iigs(generate_iigs()), "vgc.sv": generate_vgc(), "adb.sv": generate_adb(),
             "hdd.sv": generate_hdd(), "prtc.sv": generate_prtc(), "bram.sv": generate_bram(),
@@ -1214,7 +1289,7 @@ def outputs() -> dict[str, str]:
             "P65C816.sv": generate_cpu(), "mcode.sv": generate_mcode(),
             "zipgs_regs.sv": generate_zipgs(), "sound.sv": generate_sound(), "soundglu.sv": generate_soundglu(),
             "flux_drive.sv": generate_flux_drive(), "iwm_flux.sv": generate_iwm_flux(),
-            "iwm_woz.sv": generate_iwm_woz(),
+            "iwm_woz.sv": generate_iwm_woz(), "mmu.sv": generate_mmu(),
             "smartport_dev.sv": upstream('rtl/smartport_dev.v')}
     for name in ('iwm_woz','iwm_flux','flux_drive','woz_floppy_controller','smartport_dev'):
         result[name+'.sv']=generate_enabled_floppy(result[name+'.sv'],name)

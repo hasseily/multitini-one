@@ -1,5 +1,11 @@
 # Apple IIgs integration
 
+The current source corrects IRQ vector mapping when `SHADOW.IOLC` selects RAM.
+Real-CPU simulation verifies the RAM-vector path used by Doom GS. A separate
+ADB correction completes empty keyboard polls used by the game's input loop.
+See [Doom GS diagnosis](APPLE_IIGS_DOOM_GS.md) for the live observations,
+regression evidence and hardware-validation boundary.
+
 M0.6.1 restores legacy graphics lost during Vivado synthesis by declaring
 the VGC's three graphics-mode nets before their first use. It rebuilds the
 IIgs FPGA and ARM release; the other seven images retain their original

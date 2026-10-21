@@ -164,7 +164,7 @@ board/multitini_genesis_video_bridge.sv
 ../third_party/apple-iigs/upstream/rtl/65C816/AddrGen.sv
 core/apple_iigs/ports/mcode.sv
 core/apple_iigs/ports/P65C816.sv
-../third_party/apple-iigs/upstream/rtl/mmu.sv
+core/apple_iigs/ports/mmu.sv
 ../third_party/apple-iigs/upstream/rtl/syncram.v | systemverilog
 core/apple_iigs/ports/sound.sv
 core/apple_iigs/ports/soundglu.sv

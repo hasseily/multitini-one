@@ -49,6 +49,7 @@ def inputs(machine: str) -> list[Path]:
         paths.update((ROOT / "hdl/sim").glob("tb_genesis_*.sv"))
     if machine == "APPLE_IIGS":
         paths.add(ROOT / "docs/APPLE_IIGS_LEGACY_VIDEO.md")
+        paths.add(ROOT / "docs/APPLE_IIGS_DOOM_GS.md")
         paths.update(path for path in (ROOT / "third_party/apple-iigs").rglob("*")
                      if path.is_file())
         paths.update(path for path in (ROOT / "hdl/core/apple_iigs/roms").rglob("*")
@@ -66,6 +67,8 @@ def inputs(machine: str) -> list[Path]:
             "test_apple_iigs_cpu_peek.py",
             "test_apple_iigs_boot.py",
             "test_apple_iigs_irq_dispatch.py",
+            "test_apple_iigs_iolc_vectors.py",
+            "test_apple_iigs_adb_empty_talk.py",
             "test_apple_iigs_iwm.py",
             "test_apple_iigs_accel_gates.py",
             "test_apple_iigs_paused_settings.py",

@@ -90,9 +90,9 @@ def main() -> int:
             if found != [str(count)]:
                 raise ValueError("Missing or incorrect CPU peek coverage: " + label)
             actual[label] = count
-        if output.count("PASS: raw logical mapping ") != 7 or "PASS: raw logical mapping total=6" not in output:
-            raise ValueError("CPU peek did not complete all six hot-mapping/floating-bus groups")
-        measurements.append({"clock_skew_ps": skew, "counts": actual, "hot_mapping_groups": 6})
+        if output.count("PASS: raw logical mapping ") != 8 or "PASS: raw logical mapping total=7" not in output:
+            raise ValueError("CPU peek did not complete all seven hot-mapping/floating-bus groups")
+        measurements.append({"clock_skew_ps": skew, "counts": actual, "hot_mapping_groups": 7})
         print(output, flush=True)
     if hashes() != before:
         raise ValueError("Production or test inputs changed during CPU peek qualification")
@@ -105,7 +105,7 @@ def main() -> int:
             "independent CPU/native Zip read selectors over256 register-state patterns",
             "all eight CPU/native fallback lanes, cached/bypass and valid/invalid CPU cycles",
             "HDD DMA holds CPU and retained floating bus",
-            "LC read-soft-switch, RAMRD, mixed-vector, invalid-cycle, reset and hot-ROM mapping"],
+            "LC read-soft-switch, RAMRD, IOLC RAM vectors, mapped ROM vectors, invalid-cycle, reset and hot-ROM mapping"],
         "limits": ["Synthetic fixtures and forced P65 bus outputs; real instruction execution is tested separately.",
                    "No synthesis, routed timing, Apple ROM boot or physical hardware claim is implied."]}, indent=2) + "\n")
     return 0

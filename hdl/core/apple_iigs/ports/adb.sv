@@ -122,7 +122,7 @@ reg cmd_response_ready;  // Flag indicating command completed with response
 reg strobe_prev;  // Previous strobe value for edge detection
 reg rw_prev;      // Previous rw value to detect read->write transitions
 reg c024_was_read;  // Track if C024 was read on previous strobe (for falling edge handling)
-reg c026_status_read_with_data;  // Track if C026 status was read with pending data (for IDLE->DATA transition)
+reg c026_response_read;  // Acknowledge a C026 response header after its read strobe falls
 reg deskmgr_read_with_pending;   // Track if C026 status was read while desk-mgr (0x20) pending (clear on strobe falling edge)
 reg data_last_byte_read;  // Flag: last DATA byte was output, waiting for strobe to fall before IDLE
 
@@ -194,8 +194,9 @@ localparam CLK_60HZ_PERIOD = 18'd233333; // 14MHz / 60Hz
 reg [7:0] repeat_delay_vbl;          // Initial delay before repeat starts
 reg [7:0] repeat_rate_vbl;           // Interval between repeats
 
-// IRQ generation
-wire data_irq = data_int & (pending_data > 0);
+// A response header is valid data even when it has no payload.
+// Both C027 status paths and enabled data IRQ include that header.
+wire data_irq = data_int & (cmd_response_ready | (pending_data > 0));
 wire mouse_irq = mouse_int & valid_mouse_data;
 wire kbd_irq = kbd_int & kbd_strobe;
 assign irq = data_irq | mouse_irq | kbd_irq;
@@ -221,18 +222,18 @@ wire kbd_autopoll_off = adb_mode[0];  // Set Modes bit0 = disable keyboard autop
 reg  desk_mgr_pending;
 // ADB IRQ to the CPU while keyboard autopoll is off (Wolfenstein 3D SRQ path):
 //   (a) kbd_srq_pending  — a key transition is waiting (cleared by TALK R0), and
-//   (b) data_int & pending_data>0 — a TALK-R0 RESPONSE is waiting to be read.
+//   (b) data_int & (header or payload) — a TALK-R0 RESPONSE is waiting.
 // (b) is the ADB "data" interrupt (data_irq, line ~160) which was computed but
 // never wired to cpu_irq, so the 2-byte keyboard response the firmware requests
 // via TALK R0 had nothing to prompt the firmware to read it -> the key never
 // reached the game and held keys didn't move. It self-clears when the firmware
-// reads the response (pending_data -> 0) and is gated on data_int (the firmware's
+// reads the header and payload, and is gated on data_int (the firmware's
 // own enable) + autopoll-off, so it cannot fire during GS/OS boot or autopoll-on
 // use (regression-safe) and only after the firmware itself issues the TALK
 // (so it can't storm on a stale key-press at game load like the reverted
 // device_data_pending level-signal did).
 assign kbd_srq_irq = kbd_srq_pending |
-                     (kbd_autopoll_off & data_int & (pending_data > 3'd0)) |
+                     (kbd_autopoll_off & data_irq) |
                      // Ctrl-OA-Esc Desk Manager interrupt (autopoll-on desktop):
                      // gated on data_int ($C027 DATA_INT enable) exactly like the
                      // gsplus adb_add_data_int() path. Self-clears on $C026 read.
@@ -663,7 +664,7 @@ always @(*) begin
         dout_comb_reg = {
           valid_mouse_data,                        // bit 7: mouse data valid ONLY (see $C027 reg path)
           mouse_int,                               // bit 6: mouse interrupt enable
-          (pending_data > 0) | kbd_srq_pending | desk_mgr_pending,  // bit 5: data valid (cmd response, SRQ byte, or Ctrl-OA-Esc desk-mgr)
+          cmd_response_ready | (pending_data > 0) | kbd_srq_pending | desk_mgr_pending,  // bit 5: data valid (cmd response, SRQ byte, or Ctrl-OA-Esc desk-mgr)
           data_int,                                // bit 4: data interrupt enable
           valid_kbd,                               // bit 3: keyboard data valid
           kbd_int,                                 // bit 2: keyboard interrupt enable
@@ -727,7 +728,7 @@ always @(posedge CLK_14M) begin
     strobe_prev <= 1'b0;
     rw_prev <= 1'b1;  // Initialize to read (high) so first write is detected
     c024_was_read <= 1'b0;
-    c026_status_read_with_data <= 1'b0;
+    c026_response_read <= 1'b0;
     deskmgr_read_with_pending <= 1'b0;
     data_last_byte_read <= 1'b0;
 
@@ -1452,16 +1453,12 @@ always @(posedge CLK_14M) begin
                   // forever (e.g. the autopoll-off ADB-SRQ command-response path
                   // the ROM IRQ handler at FF:BE67 / FC:DB30 walks). Falling-edge
                   // delivery mirrors the working C024 mouse register mechanism.
-                  if (strobe & (addr == 8'h26)) c026_status_read_with_data <= 1'b1;
+                  if (strobe & (addr == 8'h26)) c026_response_read <= 1'b1;
                 end else begin
                   dout <= 8'h80;  // Response received, no data
-                  // Clear on rising edge only
-                  if (strobe & ~strobe_prev) begin
-                    cmd_response_ready <= 1'b0;  // Clear after returning status
-`ifdef DEBUG_ADB
-                    $display("ADB C026: returning 0x80, no data");
-`endif
-                  end
+                  // Keep the header visible throughout the CPU read, including
+                  // late combinational sampling by the external bus bridge.
+                  if (strobe & (addr == 8'h26)) c026_response_read <= 1'b1;
                 end
               end else begin
                 // No command response - return SRQ status (bit 3) when a
@@ -1480,7 +1477,7 @@ always @(posedge CLK_14M) begin
                 // desk_mgr_pending on the rising edge raced the read and the CPU
                 // latched 0x00 -> the ROM IRQ handler (FF:BE67) saw no desk-mgr
                 // bit and never opened the Control Panel. Mirrors the cmd-response
-                // (c026_status_read_with_data) falling-edge mechanism.
+                // (c026_response_read) falling-edge mechanism.
                 if (desk_mgr_pending & strobe & (addr == 8'h26))
                   deskmgr_read_with_pending <= 1'b1;
                 // No debug here - too noisy
@@ -1517,7 +1514,7 @@ always @(posedge CLK_14M) begin
             default: ;
           endcase
           // Note: State transitions for IDLE->DATA moved outside address case block
-          // (see c026_status_read_with_data handling below c024_was_read handling)
+          // (see c026_response_read handling below c024_was_read handling)
         end
         // Write $C026 - ADB Commands
         // Detect write on: (1) strobe rising edge, OR (2) read->write transition while strobe high
@@ -1699,9 +1696,17 @@ always @(posedge CLK_14M) begin
                     device_data_pending[3] <= 8'h00;
                     valid_mouse_data <= 1'b0;
                     state <= IDLE;
+                  end else if (din[3:0] == 4'd2) begin
+                    // An empty keyboard TALK still completes at the IIgs host
+                    // interface with header $80 and no payload (KEGS adb.c).
+                    // Raw ADB clients use this completion to allow another TALK.
+                    pending_data <= 3'd0;
+                    cmd_response_ready <= 1'b1;
+                    // A simultaneous key arrival must keep its newly set SRQ.
+                    state <= IDLE;
                   end else begin
-                    // No queued data / device not present: send NO response so the
-                    // firmware moves on to poll other devices (per gsplus).
+                    // Other empty devices and absent addresses retain their
+                    // existing no-response behavior.
                     state <= IDLE;
                   end
                 end
@@ -1957,7 +1962,7 @@ always @(posedge CLK_14M) begin
               state <= IDLE;
               pending_data <= 3'd0;
               cmd_response_ready <= 1'b0;
-              c026_status_read_with_data <= 1'b0;
+              c026_response_read <= 1'b0;
               data_last_byte_read <= 1'b0;
 
               // Process as new command (same as IDLE state)
@@ -2086,7 +2091,7 @@ always @(posedge CLK_14M) begin
           dout <= {
             valid_mouse_data,      // bit 7: mouse data valid ONLY
             mouse_int,             // bit 6: mouse interrupt enable
-            (pending_data > 0) | kbd_srq_pending | desk_mgr_pending,  // bit 5: valid data (cmd response, SRQ byte, or Ctrl-OA-Esc desk-mgr)
+            cmd_response_ready | (pending_data > 0) | kbd_srq_pending | desk_mgr_pending,  // bit 5: valid data (cmd response, SRQ byte, or Ctrl-OA-Esc desk-mgr)
             data_int,              // bit 4: data interrupt enable
             valid_kbd,             // bit 3: keyboard data valid
             kbd_int,               // bit 2: keyboard interrupt enable
@@ -2250,31 +2255,25 @@ always @(posedge CLK_14M) begin
       c024_was_read <= 1'b0;
     end
 
-    // IDLE->DATA transition: on the strobe FALLING edge after the response
-    // header was read (flag set in the C026 IDLE read block). Doing this on the
+    // Acknowledge the header on its read strobe FALLING edge, entering DATA
+    // only when payload bytes remain. Doing this on the
     // falling edge guarantees the CPU has already latched the header byte, and
     // is robust to phi2/strobe-edge alignment (the rising-edge+cen approach
     // could miss, stranding the response). Mirrors the C024 falling-edge handler.
-    if (~strobe & strobe_prev & c026_status_read_with_data) begin
-      state <= DATA;
+    if (~strobe & strobe_prev & c026_response_read) begin
+      state <= (pending_data > 3'd0) ? DATA : IDLE;
       cmd_response_ready <= 1'b0;
-      c026_status_read_with_data <= 1'b0;
+      c026_response_read <= 1'b0;
 `ifdef DEBUG_ADB
       $display("ADB C026 HEADER->DATA (falling): pending=%d data=%08h", pending_data, data);
 `endif
-    end
-
-    // Clear cmd_response_ready when no pending data (after status byte was read)
-    // This handles the case where there's no data to return after the status byte
-    if (~strobe & strobe_prev & cmd_response_ready & (pending_data == 3'd0) & (state == IDLE)) begin
-      cmd_response_ready <= 1'b0;
     end
 
     // Ctrl-OA-Esc desk-mgr byte (0x20): clear desk_mgr_pending on the strobe
     // FALLING edge, AFTER the CPU has latched the combinational dout_comb=0x20.
     // (Clearing on the rising edge raced the CPU read -> it latched 0x00 and the
     // ROM ADB IRQ handler at FF:BE67 never saw the desk-mgr bit, so the Control
-    // Panel never opened.) Mirrors the c026_status_read_with_data handler above.
+    // Panel never opened.) Mirrors the c026_response_read handler above.
     if (~strobe & strobe_prev & deskmgr_read_with_pending) begin
       desk_mgr_pending <= 1'b0;
       deskmgr_read_with_pending <= 1'b0;
