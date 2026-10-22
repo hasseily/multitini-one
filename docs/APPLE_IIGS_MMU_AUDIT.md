@@ -147,9 +147,50 @@ stalls after 41 requests; no ROM01 pre-audit comparison was run.
 and verifies 508 recorded source hashes against the final working tree.
 The generator check, repository policy check and `git diff --check` pass.
 
-This audit produces source changes, not a bitstream, ARM firmware or installed
-package. Synthesis, routed timing, full-game behavior and board acceptance
-remain separate gates. Delivery needs an IIgs FPGA rebuild and matching
-SmartPort `hdd.rom`; it does not inherently need an ARM rebuild.
+## FPGA build attempt
+
+On 2026-10-22, IIgs image `4D000611` was built from commit `5e3a20c` on
+`m07`, using Vivado 2025.2 and the build/repair recipe from the previously
+qualified `4D000610` delivery. The input capture contains 235 files.
+
+```text
+python scripts/build_core_gs.py --image apple-iigs --build-id 4D000611 --output build/gs611 --jobs 1
+```
+
+Synthesis and routing completed. The initial build generated a bitstream,
+but the setup-timing export gate rejected it. Both subsequent physical
+optimization passes also failed nominal setup timing:
+
+| Implementation | Setup WNS (ns) | Hold WHS (ns) | Failing setup endpoints | Setup TNS (ns) |
+| --- | ---: | ---: | ---: | ---: |
+| Standard build | -0.813 | +0.042 | 2,013 | -540.729 |
+| `reroute_high`, 4 threads | -0.324 | +0.017 | 115 | -10.948 |
+| `phys2_fanout`, 6 threads | -0.209 | +0.017 | 58 | -4.100 |
+
+These are final timing-report values after clearing temporary optimization
+margins. Pulse-width slack is +1.250 ns in all three reports. The last
+checkpoint has 56 failing machine-clock endpoints and two video endpoints;
+the machine-to-CLK14 crossing passes at +0.201 ns. All 57,469 routable nets
+are routed without errors. The initial native-clock and phase gates passed,
+but no repaired checkpoint qualified for full signoff or bitstream export.
+
+The worst machine path runs from CPU microcode BRAM through address
+generation, the L0 cache lookup/data mux and ALU flags to `P_reg[1]`.
+It has 28 logic levels and 65% routing delay. Floppy track-RAM address paths
+also fail. The separate video limit is text-bank BRAM to a glyph-ROM address
+pin. These are the remaining timing targets; the current reports do not
+attribute all of their delay to the MMU changes alone.
+
+The attempt receipt is `build/gs611/build-attempt.json`; diagnosis is in
+`build/gs611/initial-diagnosis.json` and `final-diagnosis.json`. Repair
+checkpoints, exact Tcl recipes, logs and result receipts are retained under
+`build/gs611-repair/`. Its `recorder-recovery/transition.json` records a
+log-header parser correction; the Vivado run and its evidence were preserved.
+
+No qualified `4D000611` package was produced or installed. The previously
+qualified `4D000610` delivery is unchanged. Further timing closure is required
+before the MMU changes can be tested on the board. The matching SmartPort
+`hdd.rom` was rebuilt with the hash recorded above; ARM firmware was not
+rebuilt. Full-game behavior and board acceptance remain unproven.
 See [Arkanoid diagnosis](APPLE_IIGS_ARKANOID.md) for game
 evidence and the separate ROM03 image-compatibility question.
