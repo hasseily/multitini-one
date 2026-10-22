@@ -78,6 +78,19 @@ low byte on the original page before fetching from the corrected address.
 Architectural PC updates and other CPU modes retain their upstream behavior.
 The unchanged imported T65 remains available for provenance.
 
+NMOS interrupt polling uses the current IRQ level and pending NMI edge at
+accepted CPU bus accesses. The existing status-register update order preserves
+CLI/SEI/PLP interrupt-mask behavior. BRK snapshots pending NMI at the status
+push to select the NMI vector while preserving the stacked B flag.
+
+Selected NMI consumption follows MAME's vector-completion boundary, including
+RDY holds and a second edge. A fresh edge can also discard the first handler
+opcode under MAME's retained interrupt sample. The production wrapper supplies
+an explicit bus-start strobe so that this decision is fixed when the scheduler
+issues the transaction. Later changes cannot alter its address or opcode
+effects between issue and retirement. Standalone CPU tests retain a combined
+issue/retire clock by default. No new clock or clock-domain crossing is added.
+
 The processor port is separate from backing RAM. MAME resets its direction,
 data and retained-drive registers to `$FF`. CPU reads use external pins and
 retained floating charge; external output pins use the configured pull-ups.
@@ -93,6 +106,20 @@ MAME's C64 memory-write handler. DMA uses that same backing-memory rule.
 The local RGB palette compatibility port only adds coverage for VHDL
 metavalues so the real VIC/color path can participate in strict simulation.
 Every defined binary palette value remains unchanged.
+
+## VIC sprite timing
+
+The production manifest selects the local `ports/video_vicII_656x.vhd` port.
+For the 6567R8 NTSC model, the second idle cycle moves from before sprite 0
+to cycle 10 after sprite 7. Sprite 0 starts at cycle 59, and sprite 3 spans
+cycles 65/1. The raster transition moves with that schedule; sprite 7 releases
+BA before the added idle. PAL timing and the 65-cycle NTSC line length remain
+unchanged.
+
+`python scripts/port_c64_vic.py --check` verifies deterministic regeneration
+from the locked upstream source. The source snapshot retains both versions,
+the generator and their provenance. Bus ownership comparisons do not establish
+pixel rendering or mid-cycle register-write compatibility.
 
 ## Validation and evidence
 
@@ -127,6 +154,113 @@ RAM inference before allowing image export.
 Required evidence is separate for RAM function, RAM inference, actual CPU bus
 traces, native peripheral cadence, memory mapping, complete-image timing and
 physical-board behavior. Retain exact source hashes with each test/build.
+
+## Expanded MAME comparisons
+
+Run the complete bounded differential suite with:
+
+```powershell
+python scripts/test_c64_mame_comparisons.py --build-dir build/c64-mame-comparisons-fixed
+```
+
+The runner checks the reference pin before starting, runs every selected
+comparison even when another reports a mismatch, and retains the individual
+logs and receipts under the selected build directory. Its `validation.json`
+records source hashes, child receipt hashes and any source changes during the
+run. A comparison failure, missing receipt, changed source or tool failure
+returns a nonzero exit status. A completed run is not automatically a pass.
+
+| Comparison | What is compared | Boundary |
+| --- | --- | --- |
+| CPU baseline | Accepted accesses from the existing synthetic program, including decimal arithmetic, NMOS RMW, undocumented instructions, branches and addressing wraps | Flat memory; two CPU service schedules |
+| CPU boundaries | IRQ/NMI arrival around CLI, SEI, PLP, BRK, RTI and a page-crossing branch; short IRQ pulses; repeated NMI at vector/handler boundaries; RDY holds and writes | Address, direction, data, SYNC and relative CPU attempt tick; every stimulus runs under both enable schedules |
+| 6510 port | Reset, direction/data writes, external pins and floating-charge expiry | Actual pinned MAME port methods; native-tick integration is checked separately |
+| Memory handlers | Read data, addresses, peripheral selects and RAM/color backing writes from actual MAME C64 handlers and production RTL | Conditional on supplied PLA outputs; no independent decoder proof or observation of peripheral register writes |
+| VIC ownership | PAL and NTSC BA/AEC traces across complete frames with display/badline and sprite configurations | Static registers after warm-up; no pixel, collision, lightpen or register-write-edge proof |
+
+The new CPU, memory and VIC comparisons include deliberate trace corruptions
+that must be rejected. Observation copies add outputs only. Expected traces
+come from the unchanged pinned MAME source; production corrections are made
+in local RTL ports and checked against those same expectations.
+Synthetic programs, generated C++, vectors and traces
+remain under `build/`; no private ROM or PLA dump is required.
+
+Individual comparisons can be run with `--test cpu-baseline`,
+`--test cpu-boundaries`, `--test port`, `--test memory` or `--test vic` on the
+aggregate runner. Repeating `--test` selects several checks. Receipts identify
+a partial selection separately from the complete suite.
+
+The memory-handler check supplies PLA decisions explicitly because the pinned
+C64 implementation obtains its truth table from an external PLA fuse dump.
+Sweeping bank and cartridge inputs is useful handler coverage but is not an
+independent MAME-versus-RTL decode proof. Full-machine comparisons and a
+separately supplied, verified PLA reference remain additional work.
+
+Memory vectors exercise active VIC address ownership. Their BA variation
+checks MAME's PLA input packing only; inactive VIC address fallback and RTL
+BA/AEC arbitration are outside this test. Peripheral write addresses, data
+and register effects are also outside the memory bench's observation scope.
+
+### Corrected comparison results
+
+The first expanded run exposed 22 failing CPU boundary runs and eight failing
+NTSC sprite scenarios. Its receipts and traces remain in
+`build/c64-mame-comparisons/`. The local CPU and VIC corrections above address
+those failures without changing the pinned MAME reference or trace alignment.
+The CPU matrix also includes new discriminating cases for one-tick IRQ pulses
+and repeated NMI arrivals through vector completion and first-handler prefetch.
+
+| Check | Result |
+| --- | --- |
+| CPU baseline | 258 accepted accesses agree with MAME under both service schedules |
+| CPU interrupt/RDY boundaries | All 188 runs agree under both schedules, including the original 126 cases and 62 additional IRQ-pulse/double-NMI cases |
+| 6510 port | 44 events over 2,100,072 native ticks agree |
+| Conditional memory handlers | 7,118 transactions agree: 5,134 CPU reads, 1,632 CPU writes and 352 VIC reads; five corruption controls rejected |
+| VIC ownership | All 24 PAL/NTSC scenarios agree, with zero differences across 441,012 native cycles |
+
+The full corrected run on October 22, 2026 passes all five suites. Its receipt
+is `build/c64-mame-comparisons-fixed/validation.json`, with `complete_suite`
+true and no changed sources. Aggregate and child source fingerprints were
+also verified against the final working tree. The original failing run is
+preserved separately.
+
+For the original IRQ-before-SEI discrepancy, RTL now agrees with MAME's
+stacked PC `$080E` and status `$20`. NMI on the BRK status push selects
+`$FFFA/$FFFB`, with the original BRK B flag preserved. Repeated-NMI tests
+check consumption through the vector and recognition after it, including
+RDY-held reads and cancellation of the first handler opcode.
+
+The NTSC sprite-0 case now lowers BA at cycle 56 and AEC at cycle 59 on
+raster line 80, matching MAME. The correction also covers sprite 3 across
+the raster boundary and sprite 7's release before refresh. PAL traces retain
+their original alignment and match.
+
+Run the separate production integration checks with:
+
+```powershell
+python scripts/test_c64_machine_schedule.py
+python scripts/test_c64_machine_interrupts.py
+```
+
+These use the actual CPU, VIC, scheduler and local RAM with synthetic ROMs.
+They check peripheral cadence, waits, DMA and pause; interrupt delivery during
+real badline/sprite steals; and transaction stability around late NMI. They
+are integration assertions, not a whole-machine MAME oracle.
+
+The machine-scheduling check passes all 12 PAL/NTSC mode combinations. The
+interrupt check passes eight cases: four PAL/NTSC stock/dense cases with real
+VIC steals, plus four PAL stock/dense cases around the late-NMI issue boundary.
+The latter verify that pre-issue cancellation stacks `$0B00`, whereas a
+post-issue edge allows the already-started PHA to complete and stacks `$0B01`.
+Both paths complete exactly two NMI vector pairs and RTIs, resume the main
+program, and keep the issued address, direction and write data stable.
+The specifically RDY-held first-handler late-NMI boundary is covered by the
+standalone CPU comparison; the machine tests do not combine that exact edge
+with a real VIC hold. Their receipts are
+`build/c64-mame-fix-machine-schedule/validation.json` and
+`build/c64-machine-interrupts-fixed/validation.json`.
+
+Routed FPGA timing, pixel rendering and board acceptance remain separate gates.
 
 ## Delivery boundary
 

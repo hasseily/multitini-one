@@ -109,6 +109,21 @@ class C64ImportTests(unittest.TestCase):
         self.assertEqual(without_trailing_whitespace(body),
                          without_trailing_whitespace(upstream))
 
+    def test_vic_build_uses_licensed_local_conformance_port(self):
+        # A passing standalone port comparison must not leave the product
+        # building the original VIC that still has the NTSC scheduling bug.
+        sources = (ROOT / "hdl/hdl_sources.txt").read_text().splitlines()
+        local = "core/c64/ports/video_vicII_656x.vhd"
+        self.assertEqual(sources.count(local), 1)
+        self.assertNotIn("../third_party/c64/upstream/rtl/video_vicII_656x.vhd", sources)
+        product = (ROOT / "hdl" / local).read_text()
+        self.assertIn("Peter Wendrich (pwsoft@syntiac.com)", product)
+        with (ROOT / "licenses/files.csv").open(newline="", encoding="utf-8") as stream:
+            by_path = {row["path"]: row for row in csv.DictReader(stream)}
+        row = by_path["hdl/" + local]
+        self.assertEqual(row["commit"], self.manifest["source"]["commit"])
+        self.assertIn("port_c64_vic.py", row["notes"])
+
     def test_video_sync_port_only_exposes_locked_pixel_tick(self):
         upstream = (
             ROOT / "third_party/c64/upstream/rtl/video_sync.vhd"

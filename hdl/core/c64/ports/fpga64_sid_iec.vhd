@@ -844,10 +844,14 @@ end process;
 -- 6510 CPU / DMA
 -- -----------------------------------------------------------------------
 cpu: entity work.cpu_6510
+generic map (SEPARATE_BUS_START => true)
 port map (
 	clk => clk32,
 	reset => reset,
 	enable => enableCpu and not dma_active and not memory_wait_q,
+	-- Resolve a prefetched interrupt before issuing its next bus request.
+	-- Native RDY-held attempts still start; DMA and external holds do not.
+	bus_start => cpu_cyc and not dma_active and not memory_wait_q,
 	nmi_n => irq_cia2 and nmi_n,
 	nmi_ack => nmi_ack,
 	irq_n => irq_cia1 and irq_vic and irq_n and irq_ext_n,

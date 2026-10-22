@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -19,12 +20,15 @@ using offs_t = uint32_t;
 
 struct device_double {
     uint8_t value=0xa5;
+    bool patterned=false;
+    unsigned address_mask=0xffff;
+    uint8_t floating=0xa5;
     uint16_t last_address{};
     uint8_t last_data{};
     unsigned reads{},writes{};
     int phi0_r() const { return 1; }
-    uint8_t bus_r() const { return value; }
-    uint8_t read(offs_t address) { reads++;last_address=address;return value; }
+    uint8_t bus_r() const { return patterned ? floating : value; }
+    uint8_t read(offs_t address) { reads++;last_address=address;return patterned ? uint8_t(value^(address&address_mask)) : value; }
     void write(offs_t address,uint8_t data) { writes++;last_address=address;last_data=data; }
 };
 struct ram_double {
@@ -40,7 +44,9 @@ struct expansion_double {
     unsigned reads{},writes{};
     int roml{},romh{},io1{},io2{};
     uint8_t data{};
-    int game_r(offs_t,int,int,int,int,int) const {return 1;}
+    int game=1,exrom=1,mode=0;
+    bool patterned=false;
+    int game_r(offs_t,int,int,int,int,int) const {return game;}
 };
 class c64_state {
 public:
@@ -59,12 +65,17 @@ public:
     std::array<uint8_t,1024> m_color_ram{};
     uint8_t *m_basic=basic.data(),*m_kernal=kernal.data(),*m_charom=character.data();
     int m_loram=1,m_hiram=1,m_charen=1,m_va14=1,m_va15=1;
-    int exp_exrom_r(offs_t,int,int,int) { return 1; }
+    int exp_exrom_r(offs_t,int,int,int) { return expansion.exrom; }
     uint8_t sid_r(offs_t address) { return sid.read(address); }
     void sid_w(offs_t address,uint8_t data) {sid.write(address,data);}
-    uint8_t exp_cd_r(offs_t,uint8_t data,int,int,int roml,int romh,int io1,int io2) {
+    uint8_t exp_cd_r(offs_t address,uint8_t data,int,int,int roml,int romh,int io1,int io2) {
         expansion.reads++;expansion.data=data;expansion.roml=roml;expansion.romh=romh;
-        expansion.io1=io1;expansion.io2=io2;return data;
+        expansion.io1=io1;expansion.io2=io2;
+        if(expansion.patterned) {
+            if(!roml || !romh) return uint8_t(0x96^(address&0x1fff)^((address&0x1fff)>>8));
+            if((!io1 || !io2) && expansion.mode) return uint8_t((expansion.mode==1?0x69:0x3c)^(address&0xff));
+        }
+        return data;
     }
     void exp_cd_w(offs_t,uint8_t data,int,int,int roml,int romh,int io1,int io2) {
         expansion.writes++;expansion.data=data;expansion.roml=roml;expansion.romh=romh;
@@ -81,8 +92,49 @@ public:
 };
 #include "mame_memory.inc"
 
+// Batch mode compares the actual handlers with HDL observations. PLA output is
+// explicitly supplied by the caller from DUT decode observations, NOT a MAME
+// fuse-map oracle. No machine ROM or PLA dump is required or imported.
+static int batch(const char *input,const char *output) {
+    std::ifstream in(input);
+    std::ofstream out(output);
+    if(!in || !out) throw std::runtime_error("cannot open conditional handler batch files");
+    out<<"id,result,ram_after,color_after,pla_input,vic_reads,vic_writes,sid_reads,sid_writes,cia1_reads,cia1_writes,cia2_reads,cia2_writes,roml,romh,io1,io2,exp_data\n";
+    unsigned id,owner,write,address,vicaddr,bank,game,exrom,ba,floating,data,mode,pla,count=0;
+    while(in>>id>>owner>>write>>std::hex>>address>>vicaddr>>bank>>game>>exrom>>ba>>floating>>data>>mode>>pla>>std::dec) {
+        c64_state s;
+        s.m_loram=bank&1;s.m_hiram=(bank>>1)&1;s.m_charen=(bank>>2)&1;
+        s.m_va14=!BIT(vicaddr,14);s.m_va15=!BIT(vicaddr,15);
+        s.expansion.game=game;s.expansion.exrom=exrom;s.expansion.mode=mode;s.expansion.patterned=true;
+        s.pla.output=pla;s.vic.floating=floating;
+        s.vic.patterned=s.sid.patterned=s.cia1.patterned=s.cia2.patterned=true;
+        s.vic.value=0xa5;s.vic.address_mask=0x3f;s.sid.address_mask=0x1f;
+        s.cia1.address_mask=s.cia2.address_mask=0xf;
+        for(unsigned i=0;i<s.basic.size();i++) {s.basic[i]=uint8_t(0xb1^i^(i>>8));s.kernal[i]=uint8_t(0xe2^i^(i>>8));}
+        for(unsigned i=0;i<s.character.size();i++) s.character[i]=uint8_t(0xc3^i^(i>>8));
+        for(unsigned i=0;i<s.m_color_ram.size();i++)s.m_color_ram[i]=uint8_t((0xb^i^(i>>4))&15);
+        int result=-1;
+        // CPU VA is undriven high on reads and zero in the MAME write handler.
+        // VIC offset is its 14-bit bus; bank selection is supplied separately.
+        unsigned offset=owner?address:(vicaddr&0x3fff);
+        unsigned va=owner?0x3fff:(vicaddr&0x3fff);
+        if(write)s.write_memory(offset,data,owner,ba);
+        else result=s.read_memory(offset,va,owner,ba);
+        out<<id<<','<<result<<','<<unsigned(s.ram.bytes[address])<<','<<unsigned(s.m_color_ram[address&0x3ff])<<','<<s.pla.last_input
+           <<','<<s.vic.reads<<','<<s.vic.writes<<','<<s.sid.reads<<','<<s.sid.writes<<','<<s.cia1.reads<<','<<s.cia1.writes<<','<<s.cia2.reads<<','<<s.cia2.writes
+           <<','<<s.expansion.roml<<','<<s.expansion.romh<<','<<s.expansion.io1<<','<<s.expansion.io2<<','<<unsigned(s.expansion.data)<<'\n';
+        count++;
+    }
+    if(!in.eof() || count==0)throw std::runtime_error("malformed or empty conditional handler input");
+    out.flush();
+    if(!out)throw std::runtime_error("conditional handler output write failed");
+    std::cout<<"MAME conditional handlers: "<<count<<" DUT-derived PLA vectors executed\n";
+    return 0;
+}
+
 int main(int argc,char **argv) {
     try {
+        if(argc==4 && std::string(argv[1])=="--batch-dut-pla")return batch(argv[2],argv[3]);
         if(argc!=2) throw std::runtime_error("output.csv argument required");
         FILE *out=std::fopen(argv[1],"wb");
         if(!out) throw std::runtime_error("cannot create memory-handler vectors");

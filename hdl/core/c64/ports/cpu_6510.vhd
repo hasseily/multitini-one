@@ -29,6 +29,7 @@ use ieee.numeric_std.ALL;
 
 entity cpu_6510 is
 	generic (
+		SEPARATE_BUS_START : boolean := false;
 		PULLUP        : unsigned(7 downto 0) := x"17";
 		FLOATING      : unsigned(7 downto 0) := x"C8";
 		FALLOFF_MASK  : unsigned(7 downto 0) := x"C0";
@@ -37,6 +38,7 @@ entity cpu_6510 is
 	port (
 		clk     : in  std_logic;
 		enable  : in  std_logic;
+		bus_start : in std_logic := '0';
 		reset   : in  std_logic;
 		nmi_n   : in  std_logic;
 		nmi_ack : out std_logic;
@@ -68,10 +70,12 @@ architecture rtl of cpu_6510 is
 begin
 
 	cpu: entity work.T65
+	generic map (SeparateBusStart => SEPARATE_BUS_START)
 	port map(
 		Mode    => "00",
 		Res_n   => not reset,
 		Enable  => enable,
+		BusStart => bus_start,
 		Clk     => clk,
 		Rdy     => rdy,
 		Abort_n => '1',

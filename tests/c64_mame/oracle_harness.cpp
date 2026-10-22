@@ -42,6 +42,7 @@ public:
     uint16_t start=0x0800,stop_address=0x0204;
     uint8_t stop_data=0xa5;
     bool tracing=false,done=false;
+    uint64_t trace_start_cycle{};
     unsigned sequence{};
 
     m6502_device() {
@@ -58,7 +59,10 @@ public:
     offs_t pc_to_external(u16 pc) { return pc; }
 #include "mame_inline.inc"
     void record(uint16_t address,char direction,uint8_t data) {
-        if (direction=='R' && m_sync && address==start) tracing=true;
+        if (!tracing && direction=='R' && m_sync && address==start) {
+            tracing=true;
+            trace_start_cycle=cycle;
+        }
         if (tracing) std::fprintf(trace,"%u,%04x,%c,%02x,%llu,%d,%02x\n",sequence++,address,direction,data,
                                   static_cast<unsigned long long>(cycle),m_sync?1:0,get_port());
         if (tracing && direction=='W' && address==stop_address && data==stop_data) done=true;
@@ -145,16 +149,33 @@ int main(int argc,char **argv) {
         uint64_t limit=std::stoull(argv[7]);
         struct event { uint64_t cycle; int ready,irq,nmi; };
         std::vector<event> events;
+        bool trace_relative=false;
         if(argc==9) {
             std::ifstream input(argv[8]);
             if(!input) throw std::runtime_error("cannot read events");
+            // Test-bench alignment only: the CPU's real input/sampling
+            // methods are unchanged. Tick zero is the first traced fetch.
+            if(input.peek()=='@') {
+                std::string header;
+                input>>header;
+                if(header!="@trace") throw std::runtime_error("unknown event time base");
+                trace_relative=true;
+            }
             event row{};
-            while(input>>row.cycle>>row.ready>>row.irq>>row.nmi) events.push_back(row);
+            while(input>>row.cycle>>row.ready>>row.irq>>row.nmi) {
+                if((trace_relative && row.cycle==0) ||
+                   (!events.empty() && row.cycle<=events.back().cycle) ||
+                   row.ready<0 || row.ready>1 || row.irq<0 || row.irq>1 || row.nmi<0 || row.nmi>1)
+                    throw std::runtime_error("invalid or unordered event");
+                events.push_back(row);
+            }
             if(!input.eof()) throw std::runtime_error("malformed event row");
         }
         size_t next=0;
         for(;cpu.cycle<limit && !cpu.done;cpu.cycle++) {
-            while(next<events.size() && events[next].cycle==cpu.cycle) {
+            const bool events_active=!trace_relative || cpu.tracing;
+            const uint64_t event_cycle=trace_relative ? cpu.cycle-cpu.trace_start_cycle : cpu.cycle;
+            while(events_active && next<events.size() && events[next].cycle==event_cycle) {
                 cpu.execute_set_input(cpu.RDY_LINE,events[next].ready);
                 cpu.execute_set_input(cpu.IRQ_LINE,events[next].irq);
                 cpu.execute_set_input(cpu.NMI_LINE,events[next].nmi);

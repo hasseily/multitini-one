@@ -38,8 +38,34 @@ the handler mechanics, including underlying RAM `$0000/$0001` writes using
 the VIC bus byte, color-RAM open-bus bits, VIC RAM banks and peripheral routing.
 It does not evaluate the Commodore PLA truth table or emulate the peripherals.
 
-These are bounded reference checks. Whole-machine MAME equivalence, VIC BA/AEC
-timing, peripheral timing and physical-board acceptance remain separate gates.
+The CPU boundary runner adds trace-relative IRQ/NMI/RDY stimuli, including
+interrupt sampling around CLI/SEI/PLP, BRK/NMI vector selection, RTI and taken
+branches. It compares relative CPU attempt ticks and SYNC as well as accepted
+address/direction/data. Enable gaps change FPGA service spacing without
+changing the stimulus time base. MAME's input and execution methods remain
+unchanged.
+
+The memory differential runner drives the production bus logic and compares
+its read routing, peripheral selects and RAM/color backing effects with these
+MAME handlers. It does not observe peripheral write addresses/data or register
+effects. VIC addresses are active; BA input packing does not validate RTL
+arbitration or inactive VIC ownership. PLA outputs are supplied
+explicitly from the selected RTL decode; this is a conditional handler check,
+not independent validation of the Commodore PLA truth table. Fixed decoder
+fixtures, where present, are separate from the MAME comparison.
+
+The VIC ownership runner extracts the pinned reset, cycle-decode, execution,
+badline, sprite-DMA and fetch methods. Its framework, drawing, IRQ callbacks
+and memory values are explicit test doubles. It compares native PAL/NTSC BA
+and AEC frame traces with the production VIC under static register settings
+after warm-up. It does not model rendering, collisions, lightpen activity or
+mid-cycle register writes. Generated reference code retains the MAME license
+and copyright notices and is excluded from product builds.
+
+These are bounded reference checks. Whole-machine MAME equivalence, dynamic
+VIC effects, other peripheral timing and physical-board acceptance remain
+separate gates. A disagreement is retained as a failing trace and nonzero
+test result, not waived or normalized into a passing conformance claim.
 The installed MAME 0.289 executable is a different reference revision and is
 not used as evidence for this pinned source oracle. Native timing is the
 conformance target; accelerated CPU scheduling is an extension whose accepted
@@ -51,6 +77,7 @@ Run from the repository root:
 python scripts/c64_mame_oracle.py
 python scripts/c64_mame_oracle.py --image build/c64-acceleration-tests/cpu/memory.bin
 python scripts/test_c64_mame_port.py
+python scripts/test_c64_mame_comparisons.py
 ```
 
 The optional image is exactly 64 KiB and may be an original synthetic test.

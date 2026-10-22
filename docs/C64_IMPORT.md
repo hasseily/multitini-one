@@ -98,8 +98,13 @@ source path still requires vendor elaboration and board validation. It explicitl
 compiles `mos6526.v` as SystemVerilog because that upstream file uses block
 declarations despite its `.v` suffix. The local `ports/cpu_6510.vhd` changes
 the T65 binding to direct entity instantiation because the upstream wrapper
-does not declare a component. Multitini
-replaces only the pieces needed for a ROM-free Xilinx build:
+does not declare a component. The local T65 and VIC ports also correct
+MAME-observed bus timing: NMOS interrupt sampling and BRK vector selection,
+and 6567R8 NTSC sprite slots across the raster boundary. Run
+`python scripts/port_c64_vic.py --check` to verify the VIC port against its
+locked upstream source. Exact upstream files remain unchanged. See
+[C64 RAM and CPU scheduling](C64_RAM_CPU.md) for the differential tests and
+their limits. The other local adaptations provide the ROM-free Xilinx build:
 
 - `multitini_c64_buslogic.vhd` removes embedded MIF selections and provides
   writable BASIC/KERNAL and character ROM stores;

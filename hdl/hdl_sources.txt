@@ -27,7 +27,7 @@ core/c64/multitini_c64_6510_port.vhd
 core/c64/ports/cpu_6510.vhd
 core/c64/ports/fpga64_rgbcolor.vhd
 ../third_party/c64/upstream/rtl/fpga64_keyboard.vhd
-../third_party/c64/upstream/rtl/video_vicII_656x.vhd
+core/c64/ports/video_vicII_656x.vhd
 core/c64/multitini_c64_buslogic.vhd
 # This source uses SystemVerilog block declarations despite its .v suffix.
 ../third_party/c64/upstream/rtl/mos6526.v | systemverilog

@@ -446,13 +446,16 @@ class BuildInputTests(unittest.TestCase):
             "hdl/core/c64/multitini_c64_local_ram.sv",
             "hdl/core/c64/multitini_c64_cpu_scheduler.vhd",
             "hdl/core/c64/ports/T65.vhd",
+            "hdl/core/c64/ports/video_vicII_656x.vhd",
             "third_party/c64/upstream/rtl/t65/T65.vhd",
+            "third_party/c64/upstream/rtl/video_vicII_656x.vhd",
             "third_party/mame_reference/import_manifest.json",
             "third_party/mame_reference/upstream/src/devices/cpu/m6502/m6510.cpp",
             "tests/c64_mame/oracle_harness.cpp",
             "scripts/c64_mame_oracle.py",
             "scripts/test_c64_acceleration.py",
             "scripts/check_c64_local_ram_synthesis.tcl",
+            "scripts/port_c64_vic.py",
             "docs/C64_RAM_CPU.md",
         }
         self.assertLessEqual(required, captured)
