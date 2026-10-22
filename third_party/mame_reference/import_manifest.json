@@ -1,0 +1,79 @@
+{
+  "repository": "https://github.com/mamedev/mame",
+  "commit": "122719e8d13e2fdb7dd33886455484207de59fc8",
+  "scope": "Test-only CPU/port oracle and C64/VIC reference sources. No system ROMs.",
+  "files": [
+    {
+      "path": "src/devices/cpu/m6502/m6502.cpp",
+      "sha256": "1d82cd32ddf2cec9052a37f4b9d00edee721e78f642f62b4920e6a03e7727404",
+      "git_blob": "d434a64bfba23ed0824a1cbef1a59a51a7064e8b",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "src/devices/cpu/m6502/m6502.h",
+      "sha256": "6611ca7d06d604e42125d5b6776f901fc11fa1ed04b561b21d5d68da083b69bb",
+      "git_blob": "9cc73f6ad7e757c63abe3cf5dc0181015a719fc4",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "src/devices/cpu/m6502/m6510.cpp",
+      "sha256": "75d4f5e016fd57e26755249b629e26b0cdaa5a5c285e1d699b06256a0fa38465",
+      "git_blob": "eeaa2d5cd24b15af0eff8ed7eea50de39ed07ae6",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "src/devices/cpu/m6502/m6510.h",
+      "sha256": "3a8c6563900fa436b141a111145d0d8a35295ec05279d679fe930283a37e781c",
+      "git_blob": "6485c2751deae4f7929840ba2779d7f16411258e",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "src/devices/cpu/m6502/m6502make.py",
+      "sha256": "f9d0d55c1f685d68e0737d5f3dab295809d430cd29020985563f5a0f989b36a8",
+      "git_blob": "278d71856e2ecb777a0dd881018775a67ba10b72",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "src/devices/cpu/m6502/om6502.lst",
+      "sha256": "f4552535594578a205a81a698182eff4e5d5abbe973a60c2657739b37f9fdedc",
+      "git_blob": "ebb790953883fcd0c72bc8430d7800759bb7483a",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "src/devices/cpu/m6502/om6510.lst",
+      "sha256": "6cdd2b7bb4e6a3f8601f6fd8c2c25d8da090ff5d85d8540faa8aed8e75b6652a",
+      "git_blob": "6a13d3ffe01792cd91649ca4df104e7a13b08627",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "src/devices/cpu/m6502/dm6510.lst",
+      "sha256": "6443bbf34d139d230e25fb46156aecc271e7c8a94b20bc1d16922f3acf66afc1",
+      "git_blob": "18b78643795dcac767a07741ee923235db497be3",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "src/mame/commodore/c64.cpp",
+      "sha256": "10b046c2471f91ef1a696d617c74808f804b4d1f94c9697c1b92885c8346c756",
+      "git_blob": "d0a623748df6b86201713f3bfe43e066de309e87",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "src/devices/video/mos6566.cpp",
+      "sha256": "5f09fcd058a07e53526cd8068e6a17778addd8b4bfbe4c45d528cc23da267a29",
+      "git_blob": "afd99e4a5410c7b1be022d56073aa17684131da4",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "src/devices/video/mos6566.h",
+      "sha256": "eaf828e424dc714ad4366235844e6912526f743f33fceee48817e712da85c454",
+      "git_blob": "edfb210fb677edbff2d6df4d4a7a7640db40b7e3",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "COPYING",
+      "sha256": "9814ccb157fdb0a8f0fa049f858b6ac761320e90eb28f54e2972468d6d6ac0ca",
+      "git_blob": "7f5bf1b1070672895aa9136cc6f0e26680f90fae",
+      "license": "License text"
+    }
+  ]
+}

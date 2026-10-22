@@ -42,4 +42,8 @@ verilator $lint_common --top-module multitini_c64_input \
     "$repo_root/hdl/core/c64/multitini_c64_defs_pkg.sv" \
     "$repo_root/hdl/core/c64/multitini_c64_input.sv"
 
+# shellcheck disable=SC2086
+verilator $lint_common --top-module multitini_c64_local_ram \
+    "$repo_root/hdl/core/c64/multitini_c64_local_ram.sv"
+
 echo "PASS: C64 SystemVerilog lint"

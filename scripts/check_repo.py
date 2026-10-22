@@ -199,6 +199,7 @@ def main() -> int:
             path for path in files
             if path.startswith("third_party/appletini/") or
             path.startswith("third_party/c64/upstream/") or
+            path.startswith("third_party/mame_reference/upstream/") or
             path.startswith("third_party/gameboy/upstream/") or
             path.startswith("third_party/genesis/upstream/") or
             path.startswith("third_party/apple-iigs/upstream/") or

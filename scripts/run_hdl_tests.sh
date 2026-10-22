@@ -226,6 +226,7 @@ iverilog -g2012 -Wall -Wimplicit -i -s multitini_one_top \
     "$repo_root/hdl/core/c64/multitini_c64_1541.sv" \
     "$repo_root/hdl/core/c64/multitini_c64_cpu_turbo_guard.sv" \
     "$repo_root/hdl/core/c64/multitini_c64_adapter.sv" \
+    "$repo_root/hdl/core/c64/multitini_c64_local_ram.sv" \
     "$repo_root/hdl/core/gameboy/multitini_gameboy_defs_pkg.sv" \
     "$repo_root/hdl/core/gameboy/multitini_gameboy_loader.sv" \
     "$repo_root/hdl/core/gameboy/multitini_gameboy_clock_enable.sv" \

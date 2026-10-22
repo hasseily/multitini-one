@@ -215,10 +215,10 @@ class BuildInputTests(unittest.TestCase):
             "fpga64_sid_iec.vhd"
         ).read_text(encoding="utf-8")
         self.assertIn(
-            ".turbo_mode({1'b0, cpu_turbo_active})", adapter
+            ".turbo_mode({cpu_turbo_active, 1'b0})", adapter
         )
         self.assertNotIn(
-            ".turbo_mode({cpu_turbo_active, 1'b0})", adapter
+            ".turbo_mode({1'b0, cpu_turbo_active})", adapter
         )
         self.assertIn("turbo_en <= turbo_mode(0);", fpga64)
         self.assertIn(
@@ -434,6 +434,29 @@ class BuildInputTests(unittest.TestCase):
         # and the machine copy must have been held before busy can clear.
         self.assertIn("!control_resetn || !control_reset_request || core_busy_control", path)
         self.assertIn("stop_count!=STOP_HOLD", path)
+
+    def test_c64_capture_includes_reference_and_local_memory_evidence(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "capture_build_inputs", ROOT / "scripts" / "capture_vectrex_build_inputs.py")
+        capture = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(capture)
+        captured = {path.relative_to(ROOT).as_posix() for path in capture.inputs("C64")}
+        required = {
+            "hdl/core/c64/multitini_c64_local_ram.sv",
+            "hdl/core/c64/multitini_c64_cpu_scheduler.vhd",
+            "hdl/core/c64/ports/T65.vhd",
+            "third_party/c64/upstream/rtl/t65/T65.vhd",
+            "third_party/mame_reference/import_manifest.json",
+            "third_party/mame_reference/upstream/src/devices/cpu/m6502/m6510.cpp",
+            "tests/c64_mame/oracle_harness.cpp",
+            "scripts/c64_mame_oracle.py",
+            "scripts/test_c64_acceleration.py",
+            "scripts/check_c64_local_ram_synthesis.tcl",
+            "docs/C64_RAM_CPU.md",
+        }
+        self.assertLessEqual(required, captured)
+        self.assertFalse(any("__pycache__" in path for path in captured))
 
     def test_apple_iigs_capture_includes_memory_path_evidence(self):
         import importlib.util

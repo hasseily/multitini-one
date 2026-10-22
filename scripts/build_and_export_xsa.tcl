@@ -35,6 +35,17 @@ proc require_one_object {description objects} {
     }
 }
 
+proc require_c64_local_ram {stage} {
+    set cells [get_cells -hierarchical -quiet -filter {NAME =~ *g_c64_machine*machine_adapter*main_ram_i*}]
+    set bram36 [filter $cells {REF_NAME =~ RAMB36*}]
+    set bram18 [filter $cells {REF_NAME =~ RAMB18*}]
+    set distributed [filter $cells {REF_NAME =~ RAMD* || REF_NAME =~ RAMS* || REF_NAME =~ RAM32* || REF_NAME =~ RAM64* || REF_NAME =~ RAM128* || REF_NAME =~ RAM256*}]
+    if {[expr {2 * [llength $bram36] + [llength $bram18]}] != 32 || [llength $distributed] != 0} {
+        error "C64 $stage: 64 KiB local RAM must use 16 RAMB36 equivalents and no distributed RAM"
+    }
+    puts "PASS: C64 $stage local RAM uses 16 RAMB36 equivalents and no distributed RAM"
+}
+
 proc require_nes_save_ram {stage} {
     set storage [get_cells -hierarchical -quiet -filter \
         {NAME =~ *g_nes_machine*machine_adapter*memory_service*save_lanes*lane_ram* && REF_NAME =~ RAM*}]
@@ -174,6 +185,10 @@ if {$image_kind eq "NES"} {
     open_run synth_1
     require_nes_save_ram synthesis
     close_design
+} elseif {$image_kind eq "C64"} {
+    open_run synth_1
+    require_c64_local_ram synthesis
+    close_design
 }
 
 reset_run impl_1
@@ -181,6 +196,10 @@ launch_runs impl_1 -to_step write_bitstream -jobs $jobs
 wait_on_run impl_1
 require_complete_run impl_1
 open_run impl_1
+
+if {$image_kind eq "C64"} {
+    require_c64_local_ram implementation
+}
 
 
 # XDC files cannot contain Tcl control flow. Enforce every hierarchical timing

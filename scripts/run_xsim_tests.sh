@@ -40,7 +40,7 @@ xvhdl --nolog --2008 \
     "$repo_root/third_party/c64/upstream/rtl/t65/T65_Pack.vhd" \
     "$repo_root/third_party/c64/upstream/rtl/t65/T65_ALU.vhd" \
     "$repo_root/third_party/c64/upstream/rtl/t65/T65_MCode.vhd" \
-    "$repo_root/third_party/c64/upstream/rtl/t65/T65.vhd" \
+    "$repo_root/hdl/core/c64/ports/T65.vhd" \
     "$repo_root/third_party/c64/upstream/rtl/iec_drive/iecdrv_via6522.vhd"
 # Pinned leaves carry no timescale; give them the shell default.
 xelab --nolog --timescale 1ns/1ps -s tb_c64_parallel_cable_sim \

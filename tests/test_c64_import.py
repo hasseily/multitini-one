@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -87,21 +88,26 @@ class C64ImportTests(unittest.TestCase):
         self.assertNotIn("upstream/rtl/dprom.vhd", sources)
         self.assertNotIn("upstream/rtl/spram.vhd", sources)
 
-    def test_cpu_port_only_uses_direct_t65_entity_instantiation(self):
-        upstream = (ROOT / "third_party/c64/upstream/rtl/cpu_6510.vhd").read_text()
+    def test_cpu_build_uses_local_conformance_ports(self):
         product = (ROOT / "hdl/core/c64/ports/cpu_6510.vhd").read_text()
-        marker = "-- BEGIN PINNED SOURCE BODY\n"
-        self.assertIn(marker, product)
-        expected = upstream.replace(
-            "\tcpu: work.T65", "\tcpu: entity work.T65", 1
-        )
-        self.assertEqual(
-            without_trailing_whitespace(product.split(marker, 1)[1]),
-            without_trailing_whitespace(expected),
-        )
+        self.assertIn("cpu: entity work.T65", product)
+        self.assertIn("Copyright 2005-2008 by Peter Wendrich", product)
         sources = (ROOT / "hdl/hdl_sources.txt").read_text()
         self.assertIn("core/c64/ports/cpu_6510.vhd", sources)
+        self.assertIn("core/c64/ports/T65.vhd", sources)
         self.assertNotIn("../third_party/c64/upstream/rtl/cpu_6510.vhd", sources)
+        self.assertNotIn("../third_party/c64/upstream/rtl/t65/T65.vhd", sources)
+
+    def test_rgb_port_preserves_all_defined_palette_values(self):
+        upstream = (ROOT / "third_party/c64/upstream/rtl/fpga64_rgbcolor.vhd").read_text()
+        product = (ROOT / "hdl/core/c64/ports/fpga64_rgbcolor.vhd").read_text()
+        # The four header lines and nine metavalue alternatives are the entire
+        # strict-simulator port; preserve every original table byte and branch.
+        body = "\n".join(product.splitlines()[4:])
+        self.assertEqual(body.count("when others => null;"), 9)
+        body = re.sub(r"(?m)^\s*when others => null;\n", "", body)
+        self.assertEqual(without_trailing_whitespace(body),
+                         without_trailing_whitespace(upstream))
 
     def test_video_sync_port_only_exposes_locked_pixel_tick(self):
         upstream = (

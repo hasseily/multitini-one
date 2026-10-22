@@ -1165,6 +1165,78 @@
       "source": "MiSTer NES",
       "source_path": "rtl/t65/T65_Pack.vhd",
       "sha256": "986f55ef2f35bfa54588bc936ee6a7499178b57d43bff8e66273d029e8009bf0"
+    },
+    {
+      "path": "third_party/mame_reference/upstream/COPYING",
+      "source": "MAME C64 conformance reference",
+      "source_path": "COPYING",
+      "sha256": "9814ccb157fdb0a8f0fa049f858b6ac761320e90eb28f54e2972468d6d6ac0ca"
+    },
+    {
+      "path": "third_party/mame_reference/upstream/src/devices/cpu/m6502/dm6510.lst",
+      "source": "MAME C64 conformance reference",
+      "source_path": "src/devices/cpu/m6502/dm6510.lst",
+      "sha256": "6443bbf34d139d230e25fb46156aecc271e7c8a94b20bc1d16922f3acf66afc1"
+    },
+    {
+      "path": "third_party/mame_reference/upstream/src/devices/cpu/m6502/m6502.cpp",
+      "source": "MAME C64 conformance reference",
+      "source_path": "src/devices/cpu/m6502/m6502.cpp",
+      "sha256": "1d82cd32ddf2cec9052a37f4b9d00edee721e78f642f62b4920e6a03e7727404"
+    },
+    {
+      "path": "third_party/mame_reference/upstream/src/devices/cpu/m6502/m6502.h",
+      "source": "MAME C64 conformance reference",
+      "source_path": "src/devices/cpu/m6502/m6502.h",
+      "sha256": "6611ca7d06d604e42125d5b6776f901fc11fa1ed04b561b21d5d68da083b69bb"
+    },
+    {
+      "path": "third_party/mame_reference/upstream/src/devices/cpu/m6502/m6502make.py",
+      "source": "MAME C64 conformance reference",
+      "source_path": "src/devices/cpu/m6502/m6502make.py",
+      "sha256": "f9d0d55c1f685d68e0737d5f3dab295809d430cd29020985563f5a0f989b36a8"
+    },
+    {
+      "path": "third_party/mame_reference/upstream/src/devices/cpu/m6502/m6510.cpp",
+      "source": "MAME C64 conformance reference",
+      "source_path": "src/devices/cpu/m6502/m6510.cpp",
+      "sha256": "75d4f5e016fd57e26755249b629e26b0cdaa5a5c285e1d699b06256a0fa38465"
+    },
+    {
+      "path": "third_party/mame_reference/upstream/src/devices/cpu/m6502/m6510.h",
+      "source": "MAME C64 conformance reference",
+      "source_path": "src/devices/cpu/m6502/m6510.h",
+      "sha256": "3a8c6563900fa436b141a111145d0d8a35295ec05279d679fe930283a37e781c"
+    },
+    {
+      "path": "third_party/mame_reference/upstream/src/devices/cpu/m6502/om6502.lst",
+      "source": "MAME C64 conformance reference",
+      "source_path": "src/devices/cpu/m6502/om6502.lst",
+      "sha256": "f4552535594578a205a81a698182eff4e5d5abbe973a60c2657739b37f9fdedc"
+    },
+    {
+      "path": "third_party/mame_reference/upstream/src/devices/cpu/m6502/om6510.lst",
+      "source": "MAME C64 conformance reference",
+      "source_path": "src/devices/cpu/m6502/om6510.lst",
+      "sha256": "6cdd2b7bb4e6a3f8601f6fd8c2c25d8da090ff5d85d8540faa8aed8e75b6652a"
+    },
+    {
+      "path": "third_party/mame_reference/upstream/src/devices/video/mos6566.cpp",
+      "source": "MAME C64 conformance reference",
+      "source_path": "src/devices/video/mos6566.cpp",
+      "sha256": "5f09fcd058a07e53526cd8068e6a17778addd8b4bfbe4c45d528cc23da267a29"
+    },
+    {
+      "path": "third_party/mame_reference/upstream/src/devices/video/mos6566.h",
+      "source": "MAME C64 conformance reference",
+      "source_path": "src/devices/video/mos6566.h",
+      "sha256": "eaf828e424dc714ad4366235844e6912526f743f33fceee48817e712da85c454"
+    },
+    {
+      "path": "third_party/mame_reference/upstream/src/mame/commodore/c64.cpp",
+      "source": "MAME C64 conformance reference",
+      "source_path": "src/mame/commodore/c64.cpp",
+      "sha256": "10b046c2471f91ef1a696d617c74808f804b4d1f94c9697c1b92885c8346c756"
     }
   ]
 }

@@ -58,6 +58,14 @@ service time and the machine's wait rules fit. Use DDR for large stores and
 frame buffers, with explicit arbitration, caching and backpressure. Capacity
 alone does not establish that a memory path meets a machine's timing needs.
 
+MAME is the C64 behavioral reference. Pin the reference source and compare
+observable CPU bus transactions and memory mapping against it. Stock mode
+must preserve native machine timing. CPU acceleration is an explicit extension;
+it must preserve NMOS 6510 instruction and bus semantics while VIC, CIA, SID
+and drive timing remain native. Keep local-RAM inference, scheduler tests,
+MAME differential coverage, routed timing and board acceptance as separate
+gates. See [C64 RAM and CPU scheduling](docs/C64_RAM_CPU.md).
+
 The IIgs uses a coherent DDR cache, posted writes and a fast DMA path. Its
 65816 runs at selectable stock or accelerated rates up to the image's
 advertised maximum. Native video, audio and peripheral timing remain defined

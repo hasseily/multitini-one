@@ -25,6 +25,7 @@ third_party/apple-iigs/upstream/** -text -whitespace
 licenses/third_party/CiderPress2/LICENSE -text
 licenses/third_party/CiderPress2/NOTICE -text
 third_party/c64/upstream/** -text -whitespace
+third_party/mame_reference/upstream/** -text -whitespace
 third_party/gameboy/upstream/** -text -whitespace
 third_party/genesis/upstream/** -text -whitespace
 third_party/nes/upstream/** -text -whitespace
@@ -45,5 +46,7 @@ firmware/platform/xilinx/usb0_personality.h -text whitespace=blank-at-eol,blank-
 hdl/board/multitini_psram_driver.sv -whitespace
 hdl/core/c64/ports/cartridge.sv -whitespace
 hdl/core/c64/ports/fpga64_sid_iec.vhd -whitespace
+hdl/core/c64/ports/T65.vhd -whitespace
+hdl/core/c64/ports/fpga64_rgbcolor.vhd -whitespace
 hdl/core/gameboy/ports/gbc_snd.vhd -whitespace
 hdl/core/genesis/ports/** -whitespace

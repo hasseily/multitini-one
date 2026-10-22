@@ -178,12 +178,11 @@ module multitini_c64_adapter #(
     logic [6:0]  joy_b;
 
     logic [15:0] ram_addr;
-    logic [7:0]  main_ram_din = 8'd0;
+    wire [7:0]   main_ram_din;
     logic [7:0]  core_ram_din;
     logic [7:0]  ram_dout;
     logic        ram_ce;
     logic        ram_we;
-    logic [7:0]  main_ram [0:65535];
 
     logic        cart_game;
     logic        cart_exrom;
@@ -349,21 +348,15 @@ module multitini_c64_adapter #(
             core_enable <= 1'b1;
     end
 
-    // One synchronous byte-wide 64 KiB store matches the FPGA64 bus latency.
-    // RAM contents are deliberately not initialized or cleared as ROM data.
-    always_ff @(posedge core_clk) begin
-        if (prg_ram_wr) begin
-            main_ram[prg_ram_addr] <= prg_ram_data;
-        end else if (ram_ce) begin
-            if (ram_we) begin
-                if (cart_mem_we && !cart_external_select)
-                    main_ram[ram_addr] <= ram_dout;
-                main_ram_din <= ram_dout;
-            end else begin
-                main_ram_din <= main_ram[ram_addr];
-            end
-        end
-    end
+    multitini_c64_local_ram main_ram_i (
+        .clk(core_clk),
+        .loader_we(prg_ram_wr), .loader_addr(prg_ram_addr),
+        .loader_data(prg_ram_data),
+        .machine_ce(ram_ce), .machine_we(ram_we),
+        .machine_store(cart_mem_we && !cart_external_select),
+        .machine_addr(ram_addr), .machine_data(ram_dout),
+        .machine_q(main_ram_din)
+    );
 
     assign cart_external_select = cart_loaded && cart_mem_ce &&
                                   cart_mem_addr[24:16] != 9'd0;
@@ -430,8 +423,9 @@ module multitini_c64_adapter #(
         // FPGA64 Smart turbo adds CPU RAM/ROM cycles while CIA/IEC and VIC
         // remain at 1x. The independent setting is automatically suspended
         // around IEC traffic, matching the pinned upstream integration.
-        .cia_mode(1'b0), .turbo_mode({1'b0, cpu_turbo_active}),
+        .cia_mode(1'b0), .turbo_mode({cpu_turbo_active, 1'b0}),
         .turbo_speed(2'b00),
+        .local_turbo_allowed(!cart_loaded),
         .vic_variant(2'b00), .ntscMode(NTSC_MODE),
         .hsync(raw_hsync), .vsync(raw_vsync), .palette(3'b000),
         .r(raw_r), .g(raw_g), .b(raw_b),

@@ -71,6 +71,9 @@ port(
 	cia_mode    : in  std_logic;
 	turbo_mode  : in  std_logic_vector(1 downto 0);
 	turbo_speed : in  std_logic_vector(1 downto 0);
+	-- Extra CPU transactions require deterministic local memory. The adapter
+	-- clears this permission while an external cartridge is installed.
+	local_turbo_allowed : in std_logic := '0';
 
 	-- VGA/SCART interface
 	vic_variant : in  std_logic_vector(1 downto 0);
@@ -191,11 +194,13 @@ type sysCycleDef is (
 
 signal sysCycle     : sysCycleDef := sysCycleDef'low;
 signal preCycle     : sysCycleDef := sysCycleDef'low;
-signal sysEnable    : std_logic;
+signal sysEnable    : std_logic := '0';
 -- Delaying memory_wait by one clock lets VIC0/CPUC capture the request once,
 -- then holds VIC1/CPUD until the external-memory response is cached.
 signal memory_wait_q: std_logic := '0';
-signal rfsh_cycle   : unsigned(1 downto 0);
+-- Match FPGA power-on state explicitly. Without this initialization the
+-- pause/refresh boundary never becomes known in a four-state simulation.
+signal rfsh_cycle   : unsigned(1 downto 0) := (others => '0');
 
 signal dma_active   : std_logic;
 
@@ -240,8 +245,9 @@ signal iof_i        : std_logic;
 
 signal io_enable    : std_logic;
 signal cpu_cyc      : std_logic;
-signal cpu_cyc_s    : std_logic_vector(1 downto 0);
 signal turbo_m      : std_logic_vector(2 downto 0);
+signal turbo_dense  : std_logic := '0';
+signal cpu_extra_allowed : std_logic;
 
 signal reset        : std_logic := '1';
 
@@ -409,15 +415,17 @@ end process;
 process(clk32)
 begin
 	if rising_edge(clk32) then
-		if sysCycle = sysCycleDef'pred(CYCLE_CPU0) then
-			phi0_cpu <= '1';
-			if baLoc = '1' or (cpuWe = '1' and dma_active = '0') or (ba_dma = '1' and dma_active = '1') then
-				cpuHasBus <= '1';
+		if memory_wait_q = '0' then
+			if sysCycle = sysCycleDef'pred(CYCLE_CPU0) then
+				phi0_cpu <= '1';
+				if baLoc = '1' or (cpuWe = '1' and dma_active = '0') or (ba_dma = '1' and dma_active = '1') then
+					cpuHasBus <= '1';
+				end if;
 			end if;
-		end if;
-		if sysCycle = sysCycleDef'high then
-			phi0_cpu <= '0';
-			cpuHasBus <= '0';
+			if sysCycle = sysCycleDef'high then
+				phi0_cpu <= '0';
+				cpuHasBus <= '0';
+			end if;
 		end if;
 	end if;
 end process;
@@ -530,7 +538,7 @@ begin
 	if rising_edge(clk32) then
 		pulseWr_io <= '0';
 		if cpuWe = '1' then
-			if sysCycle = CYCLE_CPUC then
+			if sysCycle = CYCLE_CPUC and cpu_cyc = '1' then
 				pulseWr_io <= '1';
 			end if;
 		end if;
@@ -618,7 +626,7 @@ port map (
 process(clk32)
 begin
 	if rising_edge(clk32) then
-		if sysCycle = CYCLE_VIC3 then
+		if sysCycle = CYCLE_VIC3 and memory_wait_q = '0' then
 			lastVicDi <= vicDi;
 		end if;
 	end if;
@@ -648,16 +656,18 @@ vicAddr(15 downto 14) <= "11" when ((vicAddr1514 xor not cia2_pao(1 downto 0)) =
 process(clk32)
 begin
 	if rising_edge(clk32) then
-		enablePixel <= '0';
-		if sysCycle = CYCLE_VIC2
-		or sysCycle = CYCLE_EXT2
-		or sysCycle = CYCLE_DMA2
-		or sysCycle = CYCLE_EXT6
-		or sysCycle = CYCLE_CPU2
-		or sysCycle = CYCLE_CPU6
-		or sysCycle = CYCLE_CPUA
-		or sysCycle = CYCLE_CPUE then
-			enablePixel <= '1';
+		if memory_wait_q = '0' then
+			enablePixel <= '0';
+			if sysCycle = CYCLE_VIC2
+			or sysCycle = CYCLE_EXT2
+			or sysCycle = CYCLE_DMA2
+			or sysCycle = CYCLE_EXT6
+			or sysCycle = CYCLE_CPU2
+			or sysCycle = CYCLE_CPU6
+			or sysCycle = CYCLE_CPUA
+			or sysCycle = CYCLE_CPUE then
+				enablePixel <= '1';
+			end if;
 		end if;
 	end if;
 end process;
@@ -848,29 +858,52 @@ port map (
 	do => cpuDo_pre,
 	we => cpuWe_pre,
 
-	diIO => cpuIO(7) & cpuIO(6) & cpuIO(5) & cass_sense & cpuIO(3) & "111",
+	-- Physical external inputs only. The port model owns pull-ups, retained
+	-- drive and native-time falloff; do not feed its outputs back as inputs.
+	diIO => "000" & cass_sense & "0111",
+	port_tick => enableSid and not memory_wait_q,
 	doIO => cpuIO
 );
 
 cass_motor <= cpuIO(5);
 cass_write <= cpuIO(3);
 
-ramDout <= cpuDo;
+-- Match MAME c64_state::write_memory: writes beneath the internal 6510
+-- port put the VIC floating-bus byte into external RAM. The CPU wrapper
+-- still receives its original DDR/latch write data through cpuDo_pre.
+-- MAME applies the same board-memory rule to expansion DMA writes.
+ramDout <= lastVicDi when systemWe = '1' and systemAddr(15 downto 1) = 0
+	else cpuDo;
 ramAddr <= systemAddr;
 ramWE   <= systemWe when sysCycle >= CYCLE_CPU0 else '0';
-ramCE   <= cs_ram when sysCycle = CYCLE_VIC0 or cpu_cyc = '1' else '0';
-cpu_cyc <= '1' when
-				(sysCycle = CYCLE_CPU0 and turbo_m(0) = '1' and cs_ram = '1' ) or
-				(sysCycle = CYCLE_CPU4 and turbo_m(1) = '1' and cs_ram = '1' ) or
-				(sysCycle = CYCLE_CPU8 and turbo_m(2) = '1' and cs_ram = '1' ) or
-				(sysCycle = CYCLE_CPUC and (io_enable = '1'  or cs_ram = '1')) else '0';
+ramCE   <= cs_ram and not memory_wait_q when
+				sysCycle = CYCLE_VIC0 or cpu_cyc = '1' else '0';
+
+-- $0000/$0001 are native-cycle barriers: complete the 6510 port-register
+-- update before admitting another accelerated request through its mapping.
+-- VIC and DMA ownership take precedence over extra local CPU opportunities.
+cpu_extra_allowed <= local_turbo_allowed and cpuHasBus and not dma_active
+	when cpuAddr_pre(15 downto 1) /= 0 else '0';
+
+cpu_scheduler: entity work.multitini_c64_cpu_scheduler
+port map (
+	clk => clk32,
+	reset => reset,
+	hold => memory_wait_q,
+	phase => to_unsigned(sysCycleDef'pos(sysCycle), 5),
+	memory_access => cs_ram,
+	io_enable => io_enable,
+	extra_mask => turbo_m,
+	dense_mode => turbo_dense,
+	extra_allowed => cpu_extra_allowed,
+	request => cpu_cyc,
+	retire => enableCpu
+);
 
 process(clk32)
 begin
 	if rising_edge(clk32) then
 		if memory_wait_q = '0' then
-			cpu_cyc_s <= cpu_cyc_s(0) & cpu_cyc;
-			enableCpu <= cpu_cyc_s(1);
 			io_enable <= io_enable and not enableCpu;
 
 			if sysCycle = CYCLE_EXT0 then
@@ -882,12 +915,13 @@ begin
 				dma_active <= dma_req;
 				turbo_en <= turbo_mode(0);
 				turbo_m <= "000";
+				turbo_dense <= '0';
 				if cs_io = '0' and dma_req = '0' and ((turbo_mode(0) and turbo_state) = '1' or turbo_mode(1) = '1') then
 					case turbo_speed is
 						when "00" => turbo_m <= "010";
 						when "01" => turbo_m <= "110";
 						when "10" => turbo_m <= "111";
-						when "11" => turbo_m <= "111"; -- unused
+						when "11" => turbo_dense <= '1';
 						when others => turbo_m <= "000";
 					end case;
 				end if;

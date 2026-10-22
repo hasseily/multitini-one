@@ -36,6 +36,23 @@ def inputs(machine: str) -> list[Path]:
     paths.update(path for base in ("licenses", "provenance", "spec")
                  for path in (ROOT / base).rglob("*") if path.is_file())
     paths.update((ROOT / "LICENSE", ROOT / "MULTITINI_ONE_PLAN.md"))
+    if machine == "C64":
+        paths.add(ROOT / "docs/C64_RAM_CPU.md")
+        paths.add(ROOT / "third_party/c64/import_manifest.json")
+        # Retain the exact originals alongside the local conformance ports.
+        paths.update(ROOT / "third_party/c64/upstream/rtl" / name for name in (
+            "t65/T65.vhd", "cpu_6510.vhd", "fpga64_sid_iec.vhd",
+            "fpga64_rgbcolor.vhd"))
+        paths.update(path for path in (ROOT / "third_party/mame_reference").rglob("*")
+                     if path.is_file() and "__pycache__" not in path.parts)
+        paths.update(path for path in (ROOT / "tests/c64_mame").rglob("*")
+                     if path.is_file() and "__pycache__" not in path.parts)
+        paths.update(ROOT / "scripts" / name for name in (
+            "c64_mame_oracle.py", "test_c64_acceleration.py",
+            "check_c64_local_ram_synthesis.tcl"))
+        paths.update((ROOT / "scripts").glob("test_c64_machine*.py"))
+        paths.update((ROOT / "scripts").glob("*c64_mame*.py"))
+        paths.update((ROOT / "hdl/sim").glob("tb_c64_*.sv"))
     if machine == "GENESIS":
         # Preserve enclosed license notices, exact originals for every helper
         # port, and the scripts that reproduce those ports in public bundles.
