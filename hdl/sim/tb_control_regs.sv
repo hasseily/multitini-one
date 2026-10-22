@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns / 1ps
 
-module tb_control_regs #(parameter logic [31:0] ACCEL_CAPS=0);
+module tb_control_regs #(parameter logic [31:0] ACCEL_CAPS=0,
+                         parameter logic [31:0] C64_CAPS=0);
     import multitini_regs_pkg::*;
 
     logic clk = 1'b0;
@@ -76,7 +77,8 @@ module tb_control_regs #(parameter logic [31:0] ACCEL_CAPS=0);
 
     always #5 clk = !clk;
 
-    multitini_control_regs #(.SHELL_BUILD_ID(32'h12345678),.IIGS_ACCEL_CAPS(ACCEL_CAPS)) dut (
+    multitini_control_regs #(.SHELL_BUILD_ID(32'h12345678),.IIGS_ACCEL_CAPS(ACCEL_CAPS),
+        .C64_EXPANSION_CAPS(C64_CAPS)) dut (
         .effect_busy(effect_busy),.effect_active_valid(effect_active_valid),.effect_rejected(effect_rejected),
         .effect_active_sequence(effect_active_sequence),.effect_write(effect_write),.effect_commit(effect_commit),
         .effect_address(effect_address),.effect_data(effect_data),.effect_commit_sequence(effect_commit_sequence),
@@ -165,6 +167,21 @@ module tb_control_regs #(parameter logic [31:0] ACCEL_CAPS=0);
         expect_read(MT_REG_SHELL_BUILD_ID, 32'h12345678, "build ID");
         expect_read(MT_REG_ABI_VERSION,MT_ABI_VERSION,"ABI identity");
         expect_read(MT_REG_IIGS_ACCEL_CAPS,ACCEL_CAPS,"installed IIgs speed capability");
+        expect_read(MT_REG_C64_EXPANSION_CAPS,C64_CAPS,"installed C64 expansion capability");
+        expect_read(MT_REG_C64_EXPANSION_CONFIG,C64_CAPS[31]?32'hb:32'd0,"C64 expansion reset configuration");
+        for(integer expansion=0;expansion<16;expansion++)begin
+            logic[31:0] expected_config;
+            expected_config=(expansion&8)|((expansion&7)==2?2:((expansion&7)==3?3:0));
+            if(!C64_CAPS[31])expected_config=0;
+            write_reg(MT_REG_C64_EXPANSION_CONFIG,32'hfffffff0|expansion,4'hf);
+            expect_read(MT_REG_C64_EXPANSION_CONFIG,expected_config,"C64 reserved bits/modes sanitized");
+            write_reg(MT_REG_C64_EXPANSION_CONFIG,32'h12345678,4'he);
+            expect_read(MT_REG_C64_EXPANSION_CONFIG,expected_config,"C64 upper-byte strobes preserve config");
+            write_reg(MT_REG_C64_EXPANSION_CONFIG,32'd0,4'h0);
+            expect_read(MT_REG_C64_EXPANSION_CONFIG,expected_config,"C64 zero strobe preserves config");
+        end
+        write_reg(MT_REG_C64_EXPANSION_CONFIG,32'h0000000b,4'h1);
+        expect_read(MT_REG_C64_EXPANSION_CONFIG,C64_CAPS[31]?32'hb:32'd0,"C64 low-byte update");
         expect_read(MT_REG_CORE_ID, 32'h43363420, "core ID");
         expect_read(MT_REG_CORE_VARIANT_INDEX, 32'd1, "core variant index");
         expect_read(MT_REG_STATUS,
@@ -650,4 +667,9 @@ module tb_control_regs #(parameter logic [31:0] ACCEL_CAPS=0);
         $display("PASS: control registers");
         $finish;
     end
+endmodule
+
+// Explicit top avoids Windows batch argument rewriting of xelab generic values.
+module tb_control_regs_c64_caps;
+    tb_control_regs #(.C64_CAPS(32'h80000003)) test_i();
 endmodule

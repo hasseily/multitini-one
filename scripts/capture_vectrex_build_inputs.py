@@ -38,6 +38,7 @@ def inputs(machine: str) -> list[Path]:
     paths.update((ROOT / "LICENSE", ROOT / "MULTITINI_ONE_PLAN.md"))
     if machine == "C64":
         paths.add(ROOT / "docs/C64_RAM_CPU.md")
+        paths.add(ROOT / "docs/C64_EXPANSIONS.md")
         paths.add(ROOT / "third_party/c64/import_manifest.json")
         # Retain the exact originals alongside the local conformance ports.
         paths.update(ROOT / "third_party/c64/upstream/rtl" / name for name in (
@@ -49,7 +50,10 @@ def inputs(machine: str) -> list[Path]:
                      if path.is_file() and "__pycache__" not in path.parts)
         paths.update(ROOT / "scripts" / name for name in (
             "c64_mame_oracle.py", "test_c64_acceleration.py",
+            "test_c64_reu.py", "test_c64_reu_machine.py",
+            "test_c64_expansion_infrastructure.py",
             "check_c64_local_ram_synthesis.tcl", "port_c64_vic.py"))
+        paths.add(ROOT / "hdl/sim/tb_control_regs.sv")
         paths.update((ROOT / "scripts").glob("test_c64_machine*.py"))
         paths.update((ROOT / "scripts").glob("*c64_mame*.py"))
         paths.update((ROOT / "hdl/sim").glob("tb_c64_*.sv"))

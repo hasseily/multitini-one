@@ -264,6 +264,10 @@ Routed FPGA timing, pixel rendering and board acceptance remain separate gates.
 
 ## Delivery boundary
 
+The later dev3 checkpoint adds dual SID controls and a 16 MB REU using the
+native DMA slots established here. See [C64 expansions](C64_EXPANSIONS.md)
+for its memory exclusion rule, MAME reference boundary and validation.
+
 The changed RTL requires a rebuilt C64 FPGA image. The public control ABI and
 ARM menu remain unchanged for this checkpoint. A qualified delivery must use
 the explicit new C64 image and its source/timing evidence; do not relabel a

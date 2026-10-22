@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/mamedev/mame",
   "commit": "122719e8d13e2fdb7dd33886455484207de59fc8",
-  "scope": "Test-only CPU/port oracle and C64/VIC reference sources. No system ROMs.",
+  "scope": "Test-only CPU/port oracle and C64/VIC/SID/REU reference sources. No system ROMs.",
   "files": [
     {
       "path": "src/devices/cpu/m6502/m6502.cpp",
@@ -74,6 +74,48 @@
       "sha256": "9814ccb157fdb0a8f0fa049f858b6ac761320e90eb28f54e2972468d6d6ac0ca",
       "git_blob": "7f5bf1b1070672895aa9136cc6f0e26680f90fae",
       "license": "License text"
+    },
+    {
+      "path": "src/devices/machine/mos8726.cpp",
+      "sha256": "f95f408b4bca5986df531138cbbb5cc9c5a61e29ee643882d483182de3068e35",
+      "git_blob": "2575bcbf3c8a37c1d8e3dd0d42cf53e4f97349ab",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "src/devices/machine/mos8726.h",
+      "sha256": "4ef926ffd25fef10de8d6ed483435e04030e5bfde8aaf92c6faef39bb6fc327a",
+      "git_blob": "8102317834b2cc7abd2efba42d7e9e70c7d6b72b",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "src/devices/bus/c64/reu.cpp",
+      "sha256": "c9b18f04b16608984cd343d5c4a3964c4e4f3b0f3df596b909ba03b73ce2f271",
+      "git_blob": "c219a23113b913ee1bf5bc1748162e5e1f3ac396",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "src/devices/bus/c64/reu.h",
+      "sha256": "e6e4bbaa07a030dbca3283406ee9983d148d35ec2af318509fd9991dcb116d60",
+      "git_blob": "134c2ffb59b11b59d7dae79177e8667962bc7d77",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "src/devices/bus/c64/sid.cpp",
+      "sha256": "5c04a90a8ffd28196c12c06388062302f6a7bf80625381559ab4f324d63c9ef5",
+      "git_blob": "3d8b851a48c31fc0c5e15e29c933cfe91777bfd1",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "src/devices/bus/c64/dualsid.cpp",
+      "sha256": "9f6898a97bcb3090bb3778d940202c0a1da78c3ddf88390044e94d72797693d7",
+      "git_blob": "a5d267683ee3d387ab8b8a04cf15bd01954d06a5",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "path": "src/devices/bus/c64/dualsid.h",
+      "sha256": "1c02853f4e3932a73a9014c2866ecfc475cae63e749d37701c282a0497f95622",
+      "git_blob": "e871199a779bba9e51f64f214da8cae6a0d6a051",
+      "license": "BSD-3-Clause"
     }
   ]
 }

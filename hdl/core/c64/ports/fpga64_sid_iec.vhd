@@ -109,6 +109,14 @@ port(
 
 	-- dma access
 	dma_req     : in  std_logic := '0';
+	-- A memory-backed DMA master may own the CPU while waiting for its store.
+	-- Only valid slots touch the machine bus; native device clocks keep running.
+	dma_valid   : in  std_logic := '1';
+	dma_ack     : out std_logic;
+	cpu_bus_valid : out std_logic;
+	cpu_bus_addr : out unsigned(15 downto 0);
+	cpu_bus_wdata : out unsigned(7 downto 0);
+	cpu_bus_write : out std_logic;
 	dma_cycle   : out std_logic;
 	dma_addr    : in  unsigned(15 downto 0) := (others => '0');
 	dma_dout    : in  unsigned(7 downto 0) := (others => '0');
@@ -203,6 +211,8 @@ signal memory_wait_q: std_logic := '0';
 signal rfsh_cycle   : unsigned(1 downto 0) := (others => '0');
 
 signal dma_active   : std_logic;
+signal dma_slot_valid : std_logic := '0';
+signal bus_access_valid : std_logic;
 
 signal phi0_cpu     : std_logic;
 signal cpuHasBus    : std_logic;
@@ -418,7 +428,10 @@ begin
 		if memory_wait_q = '0' then
 			if sysCycle = sysCycleDef'pred(CYCLE_CPU0) then
 				phi0_cpu <= '1';
-				if baLoc = '1' or (cpuWe = '1' and dma_active = '0') or (ba_dma = '1' and dma_active = '1') then
+				dma_slot_valid <= dma_valid;
+				-- MAME's MOS8726 waits whenever VIC BA is low. Do not use
+				-- upstream's early ba_dma grant during badline refresh.
+				if baLoc = '1' or (cpuWe = '1' and dma_active = '0') then
 					cpuHasBus <= '1';
 				end if;
 			end if;
@@ -510,7 +523,7 @@ port map (
 	dataToCpu => cpuDi,
 	dataToVic => vicDi,
 
-	io_enable => io_enable,
+	io_enable => io_enable and bus_access_valid,
 
 	cs_vic => cs_vic,
 	cs_sid => cs_sid,
@@ -538,7 +551,7 @@ begin
 	if rising_edge(clk32) then
 		pulseWr_io <= '0';
 		if cpuWe = '1' then
-			if sysCycle = CYCLE_CPUC and cpu_cyc = '1' then
+			if sysCycle = CYCLE_CPUC and cpu_cyc = '1' and bus_access_valid = '1' then
 				pulseWr_io <= '1';
 			end if;
 		end if;
@@ -699,6 +712,10 @@ port map (
 	data_out => sid_do,
 	pot_x_l => pot_x1 and pot_x2,
 	pot_y_l => pot_y1 and pot_y2,
+	-- The dual-SID socket adapter connects paddles only to the first chip.
+	-- MAME's unconnected second SID potentiometer inputs read $FF.
+	pot_x_r => (others => '1'),
+	pot_y_r => (others => '1'),
 
 	audio_l => audio_l,
 	audio_r => audio_r,
@@ -881,7 +898,16 @@ ramDout <= lastVicDi when systemWe = '1' and systemAddr(15 downto 1) = 0
 ramAddr <= systemAddr;
 ramWE   <= systemWe when sysCycle >= CYCLE_CPU0 else '0';
 ramCE   <= cs_ram and not memory_wait_q when
-				sysCycle = CYCLE_VIC0 or cpu_cyc = '1' else '0';
+				sysCycle = CYCLE_VIC0 or (cpu_cyc = '1' and bus_access_valid = '1') else '0';
+
+bus_access_valid <= not dma_active or dma_slot_valid;
+dma_ack <= enableCpu and dma_active and dma_slot_valid and cpuHasBus and not memory_wait_q;
+-- Register side effects occur once on the completed CPU transaction. DMA
+-- accesses cannot retrigger the REU's own command or delayed $FF00 trigger.
+cpu_bus_valid <= enableCpu and not dma_active and cpuHasBus and not memory_wait_q;
+cpu_bus_addr <= cpuAddr_pre;
+cpu_bus_wdata <= cpuDo_pre;
+cpu_bus_write <= cpuWe_pre;
 
 -- $0000/$0001 are native-cycle barriers: complete the 6510 port-register
 -- update before admitting another accelerated request through its mapping.

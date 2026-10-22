@@ -63,6 +63,10 @@ static void build_c64(mt_core_frontend_t *frontend,
                        const mt_core_frontend_state_t *state,
                        mt_menu_view_t *view)
 {
+    const bool expansion_valid = state->abi_minor >= MT_C64_EXPANSION_MIN_ABI_MINOR &&
+        (state->c64_expansion_caps & MT_C64_EXPANSION_CAPS_VALID) != 0U;
+    const bool reu_supported = expansion_valid &&
+        (state->c64_expansion_caps & MT_C64_EXPANSION_CAPS_REU_16MB) != 0U;
     frontend->media_items[view->media_item_count++] = item(
         "Drive 8", state->drive8_mounted ? attached_name(state->drive8_name) :
             (state->drive8_ready ? "Choose disk..." : "Drive ROM required"),
@@ -84,6 +88,13 @@ static void build_c64(mt_core_frontend_t *frontend,
                 MT_UI_COLOR_BLUE : MT_UI_COLOR_MUTED);
     }
     cartridge_item(frontend, state, view, "Load a CRT cartridge image.");
+    if (reu_supported && state->c64_reu_enabled && !state->cartridge_attached) {
+        mt_menu_item_t *const cartridge = &frontend->media_items[view->media_item_count - 1U];
+        cartridge->value = "Turn REU off first";
+        cartridge->help = "REU and cartridges share memory; turn REU off in Core options.";
+        cartridge->enabled = false;
+        cartridge->value_color = MT_UI_COLOR_MUTED;
+    }
     frontend->media_items[view->media_item_count++] = item(
         "Program", "Choose file...", "Load a PRG file into the C64.",
         MT_MENU_ACTION_BROWSE_PROGRAM, 0U, true, MT_UI_COLOR_BLUE);
@@ -113,6 +124,22 @@ static void build_c64(mt_core_frontend_t *frontend,
         frontend->core_options[0].control_value = state->fast_roms_active ? 1U : 0U;
         frontend->core_options[1].control = MT_MENU_CONTROL_CHECKBOX;
         frontend->core_options[1].control_value = state->cpu_turbo_enabled ? 1U : 0U;
+    }
+    if (expansion_valid && (state->c64_expansion_caps & MT_C64_EXPANSION_CAPS_DUAL_SID) != 0U) {
+        frontend->core_options[view->core_option_count++] = item(
+            "SID audio", state->c64_sid_mode == 2U ? "Dual $D420" :
+                state->c64_sid_mode == 3U ? "Dual $D500" : "Single",
+            "Cycle single SID or dual 6581 stereo at $D420 or $D500.",
+            MT_MENU_ACTION_TOGGLE_CORE_OPTION, 2U, true, MT_UI_COLOR_BLUE);
+    }
+    if (reu_supported) {
+        const size_t index = view->core_option_count++;
+        frontend->core_options[index] = item(
+            "RAM expansion", state->c64_reu_enabled ? "16 MB REU" : "Off",
+            "Enable the 16 MB REU; eject any cartridge first.",
+            MT_MENU_ACTION_TOGGLE_CORE_OPTION, 3U, true, MT_UI_COLOR_BLUE);
+        frontend->core_options[index].control = MT_MENU_CONTROL_CHECKBOX;
+        frontend->core_options[index].control_value = state->c64_reu_enabled ? 1U : 0U;
     }
 }
 

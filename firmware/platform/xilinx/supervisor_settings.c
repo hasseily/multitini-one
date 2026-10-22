@@ -11,7 +11,9 @@
 #define MT_SETTINGS_SCHEMA_V6 UINT32_C(6)
 #define MT_SETTINGS_SCHEMA_V7 UINT32_C(7)
 #define MT_SETTINGS_SCHEMA_V8 UINT32_C(8)
-#define MT_SETTINGS_SCHEMA UINT32_C(9)
+#define MT_SETTINGS_SCHEMA_V9 UINT32_C(9)
+#define MT_SETTINGS_SCHEMA UINT32_C(10)
+#define MT_SETTINGS_V9_WIRE_SIZE 10950U
 #define MT_SETTINGS_V7_WIRE_SIZE 5054U
 #define MT_SETTINGS_V6_WIRE_SIZE 5038U
 #define MT_SETTINGS_V5_WIRE_SIZE 4696U
@@ -42,7 +44,7 @@ _Static_assert(MT_SETTINGS_CONTROLLER_ASSIGNMENT_OFFSET + 4U == MT_SETTINGS_CONT
 #if MT_SETTINGS_HEADER_SIZE + MT_SETTINGS_GLOBAL_SIZE + \
     MT_SETTINGS_MAX_PROFILES * MT_SETTINGS_PROFILE_SIZE + MT_GAMEPAD_SLOTS * MT_SETTINGS_PAD_SIZE + \
     MT_SETTINGS_MAX_PROFILES + MT_SETTINGS_CONTROLLERS_HEADER_SIZE + \
-    MT_SETTINGS_MAX_CONTROLLER_PROFILES * MT_SETTINGS_CONTROLLER_SIZE != \
+    MT_SETTINGS_MAX_CONTROLLER_PROFILES * MT_SETTINGS_CONTROLLER_SIZE + MT_SETTINGS_MAX_PROFILES != \
     MT_SETTINGS_WIRE_SIZE
 #error Supervisor settings wire-size constants disagree
 #endif
@@ -200,6 +202,8 @@ static mt_core_settings_profile_t *find_profile(
                       MT_CORE_PACKAGE_ID_MAX, core_id);
     settings->profiles[settings->profile_count].symbolic_keyboard = true;
     settings->profiles[settings->profile_count].joystick_port = 2U;
+    settings->profiles[settings->profile_count].c64_sid_mode = MT_SETTINGS_C64_SID_MODE_DEFAULT;
+    settings->profiles[settings->profile_count].c64_reu_enabled = MT_SETTINGS_C64_REU_DEFAULT;
     settings->profiles[settings->profile_count].border_style =
         MT_SETTINGS_BORDER_STYLE_DEFAULT;
     settings->profiles[settings->profile_count].border_color =
@@ -318,6 +322,24 @@ bool mt_supervisor_settings_remember_c64_cpu_turbo(
         find_profile(settings, core_id, true);
     if (profile == NULL) return false;
     profile->c64_cpu_turbo = enabled;
+    return true;
+}
+
+static bool c64_sid_mode_valid(uint8_t mode)
+{
+    return mode == 0U || mode == 2U || mode == 3U;
+}
+
+bool mt_supervisor_settings_remember_c64_expansion(
+    mt_supervisor_settings_t *settings, const char *core_id,
+    uint8_t sid_mode, bool reu_enabled)
+{
+    mt_core_settings_profile_t *profile;
+    if (!c64_sid_mode_valid(sid_mode)) return false;
+    profile = find_profile(settings, core_id, true);
+    if (profile == NULL) return false;
+    profile->c64_sid_mode = sid_mode;
+    profile->c64_reu_enabled = reu_enabled;
     return true;
 }
 
@@ -469,6 +491,7 @@ static bool settings_valid(const mt_supervisor_settings_t *settings)
                             profile->border_padding) ||
             profile->vectrex_beam_gain > 3U || profile->vectrex_overlay_opacity > 3U ||
             profile->genesis_three_button_mask > 3U || profile->video_multiplier > 4U ||
+            !c64_sid_mode_valid(profile->c64_sid_mode) ||
             !mt_video_effects_settings_valid(&profile->video_effects) ||
             (profile->joystick_port != 1U && profile->joystick_port != 2U)) {
             return false;
@@ -582,6 +605,8 @@ static bool encode_settings(const mt_supervisor_settings_t *settings)
         output[250U] = profile->vectrex_overlay_opacity;
         output[251U] = profile->video_multiplier;
         settings_wire[MT_SETTINGS_V6_WIRE_SIZE + index] = profile->genesis_three_button_mask;
+        settings_wire[MT_SETTINGS_V9_WIRE_SIZE + index] =
+            profile->c64_sid_mode | (profile->c64_reu_enabled ? 8U : 0U);
         for (effect = 0U; effect < MT_VIDEO_EFFECT_COUNT; ++effect) {
             const uint16_t value = (uint16_t)mt_video_effects_get(
                 &profile->video_effects, (mt_video_effect_id_t)effect);
@@ -644,13 +669,15 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
          schema == MT_SETTINGS_SCHEMA_V4 ? MT_SETTINGS_V4_WIRE_SIZE :
          schema == MT_SETTINGS_SCHEMA_V5 ? MT_SETTINGS_V5_WIRE_SIZE :
          schema == MT_SETTINGS_SCHEMA_V6 ? MT_SETTINGS_V6_WIRE_SIZE :
-         schema == MT_SETTINGS_SCHEMA_V7 ? MT_SETTINGS_V7_WIRE_SIZE : MT_SETTINGS_WIRE_SIZE);
+         schema == MT_SETTINGS_SCHEMA_V7 ? MT_SETTINGS_V7_WIRE_SIZE :
+         schema == MT_SETTINGS_SCHEMA_V8 || schema == MT_SETTINGS_SCHEMA_V9 ?
+             MT_SETTINGS_V9_WIRE_SIZE : MT_SETTINGS_WIRE_SIZE);
     size_t index;
     if (memcmp(settings_wire, settings_magic, sizeof(settings_magic)) != 0 ||
         (!legacy && schema != MT_SETTINGS_SCHEMA_V3 && schema != MT_SETTINGS_SCHEMA_V4 &&
          schema != MT_SETTINGS_SCHEMA_V5 && schema != MT_SETTINGS_SCHEMA_V6 &&
          schema != MT_SETTINGS_SCHEMA_V7 && schema != MT_SETTINGS_SCHEMA_V8 &&
-         schema != MT_SETTINGS_SCHEMA) ||
+         schema != MT_SETTINGS_SCHEMA_V9 && schema != MT_SETTINGS_SCHEMA) ||
         wire_size != expected_size ||
         load_u32_le(settings_wire + 12U) != wire_size ||
         load_u32_le(settings_wire + 20U) != ~crc ||
@@ -663,11 +690,18 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
         for (index = 0U; index < MT_SETTINGS_MAX_PROFILES; ++index) {
             const uint8_t multiplier = settings_wire[MT_SETTINGS_HEADER_SIZE + MT_SETTINGS_GLOBAL_SIZE +
                                                      index * profile_size + 251U];
-            if (schema < MT_SETTINGS_SCHEMA ? multiplier != 0U :
+            if (schema < MT_SETTINGS_SCHEMA_V9 ? multiplier != 0U :
                 (multiplier > 4U || (index >= profile_count && multiplier != 0U))) return false;
         }
     }
     mt_supervisor_settings_defaults(&settings_decode_candidate);
+    if (schema == MT_SETTINGS_SCHEMA) {
+        for (index = 0U; index < MT_SETTINGS_MAX_PROFILES; ++index) {
+            const uint8_t config = settings_wire[MT_SETTINGS_V9_WIRE_SIZE + index];
+            if ((config & 0xf0U) != 0U || !c64_sid_mode_valid(config & 7U) ||
+                (index >= profile_count && config != 0U)) return false;
+        }
+    }
     if (schema < MT_SETTINGS_SCHEMA_V8) {
         settings_decode_candidate.legacy_gamepad_pending = MT_SETTINGS_LEGACY_PAD_MASK;
     } else {
@@ -736,6 +770,10 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
         profile->c64_fast_roms = schema != MT_SETTINGS_SCHEMA_V1 &&
                                  input[242U] != 0U;
         profile->c64_cpu_turbo = input[243U] != 0U;
+        profile->c64_sid_mode = schema == MT_SETTINGS_SCHEMA ?
+            settings_wire[MT_SETTINGS_V9_WIRE_SIZE + index] & 7U : MT_SETTINGS_C64_SID_MODE_DEFAULT;
+        profile->c64_reu_enabled = schema == MT_SETTINGS_SCHEMA ?
+            (settings_wire[MT_SETTINGS_V9_WIRE_SIZE + index] & 8U) != 0U : MT_SETTINGS_C64_REU_DEFAULT;
         profile->genesis_three_button_mask = schema >= MT_SETTINGS_SCHEMA_V7 ?
             settings_wire[MT_SETTINGS_V6_WIRE_SIZE + index] : 0U;
         if (legacy) {
@@ -758,7 +796,7 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
             profile->vectrex_overlay_enabled = input[248U] != 0U;
             profile->vectrex_beam_gain = input[249U];
             profile->vectrex_overlay_opacity = input[250U];
-            profile->video_multiplier = schema >= MT_SETTINGS_SCHEMA ? input[251U] : 0U;
+            profile->video_multiplier = schema >= MT_SETTINGS_SCHEMA_V9 ? input[251U] : 0U;
         }
         mt_video_effects_defaults(&profile->video_effects);
         if (schema >= MT_SETTINGS_SCHEMA_V5) {
@@ -799,7 +837,8 @@ mt_settings_result_t mt_supervisor_settings_load(
     if (sd.status == MT_SD_SIZE_MISMATCH &&
         (sd.size == MT_SETTINGS_LEGACY_WIRE_SIZE || sd.size == MT_SETTINGS_V3_WIRE_SIZE ||
          sd.size == MT_SETTINGS_V4_WIRE_SIZE || sd.size == MT_SETTINGS_V5_WIRE_SIZE ||
-         sd.size == MT_SETTINGS_V6_WIRE_SIZE || sd.size == MT_SETTINGS_V7_WIRE_SIZE)) {
+         sd.size == MT_SETTINGS_V6_WIRE_SIZE || sd.size == MT_SETTINGS_V7_WIRE_SIZE ||
+         sd.size == MT_SETTINGS_V9_WIRE_SIZE)) {
         sd = mt_sd_storage_read_file_optional_exact(
             MT_SETTINGS_PATH, settings_wire, sd.size,
             &found);

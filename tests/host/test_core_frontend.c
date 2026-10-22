@@ -5,6 +5,7 @@
 #include "multitini_gameboy_interface.h"
 #include "multitini_genesis_interface.h"
 #include "multitini_iigs_interface.h"
+#include "multitini_regs.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -120,6 +121,37 @@ static void test_c64_capabilities(void)
     check(view.media_items[1].enabled &&
           view.media_items[1].action == MT_MENU_ACTION_BROWSE_DISK_PROGRAM,
           "D64 mount enables its existing launch path");
+
+    state.c64_expansion_caps = MT_C64_EXPANSION_CAPS_VALID | MT_C64_EXPANSION_CAPS_DUAL_SID | MT_C64_EXPANSION_CAPS_REU_16MB;
+    state.c64_sid_mode = 3U;
+    state.c64_reu_enabled = true;
+    state.abi_minor = 22U;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(view.core_option_count == 2U, "older ABI cannot expose expansion controls even with stale capability bits");
+    state.abi_minor = 23U;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(view.core_option_count == 4U && view.core_options[2].argument == 2U &&
+          strcmp(view.core_options[2].value, "Dual $D500") == 0 && view.core_options[3].argument == 3U &&
+          strcmp(view.core_options[3].value, "16 MB REU") == 0,
+          "capable C64 exposes SID and REU with stable action arguments");
+    check(view.media_items[2].enabled && view.media_items[2].action == MT_MENU_ACTION_DETACH_CARTRIDGE,
+          "attached cartridge can always be ejected");
+    state.cartridge_attached = false;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(!view.media_items[2].enabled && strcmp(view.media_items[2].value, "Turn REU off first") == 0,
+          "REU ownership explains why cartridge attachment is disabled");
+    state.c64_reu_enabled = false;
+    state.c64_sid_mode = 2U;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(view.media_items[2].enabled && strcmp(view.core_options[2].value, "Dual $D420") == 0,
+          "disabled REU restores cartridge attachment");
+    state.c64_expansion_caps = MT_C64_EXPANSION_CAPS_VALID | MT_C64_EXPANSION_CAPS_REU_16MB;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(view.core_option_count == 3U && view.core_options[2].argument == 3U,
+          "REU-only capability preserves semantic option argument");
+    state.c64_expansion_caps = MT_C64_EXPANSION_CAPS_DUAL_SID | MT_C64_EXPANSION_CAPS_REU_16MB;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(view.core_option_count == 2U, "capability valid bit is required");
 }
 
 static void test_gameboy_saves_and_input(void)

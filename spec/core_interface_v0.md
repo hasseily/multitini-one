@@ -36,6 +36,25 @@ The legacy 80x36 overlay retains its previous execution behavior. Older firmware
 does not request dense mode and cannot hide its menu before blocking native
 loads. New firmware always requests dense mode and requires ABI 0.11 packages.
 
+## C64 expansion capabilities
+
+ABI 0.23 adds `C64_EXPANSION_CONFIG` at `0x0D0` and read-only
+`C64_EXPANSION_CAPS` at `0x0D4`. Capability bit 31 marks a valid mask; bit 0
+advertises dual SID and bit 1 advertises the 16 MB REU. Other machines return
+zero. Firmware must check ABI and capability before reading or writing these
+registers.
+
+Configuration bits 2:0 select SID addressing: 0 sends the same accesses to
+both engines, 2 selects $D420 for chip 2, and 3 selects $D500. Other encodings
+become 0. Bit 3 enables the REU. Reserved bits read zero; the supported C64
+image defaults to `0xB`. Partial writes respect byte strobes. A coherent
+mailbox carries the latest complete word to the machine clock domain.
+
+REU and CRT cannot simultaneously own PSRAM. Firmware rejects their conflicting
+actions before loading or saving settings, and the adapter suppresses REU while
+a cartridge is present or loading. Disabling REU resets its command state and
+drains any accepted memory response. See [C64 expansions](../docs/C64_EXPANSIONS.md).
+
 ## IIgs installed capabilities
 
 ABI 0.22 adds read-only `IIGS_ACCEL_CAPS` at `0x0CC`. Bit 31 marks a valid

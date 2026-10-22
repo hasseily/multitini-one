@@ -3,7 +3,8 @@
 
 module multitini_control_regs #(
     parameter logic [31:0] SHELL_BUILD_ID = 32'h00000000,
-    parameter logic [31:0] IIGS_ACCEL_CAPS = 32'd0
+    parameter logic [31:0] IIGS_ACCEL_CAPS = 32'd0,
+    parameter logic [31:0] C64_EXPANSION_CAPS = 32'd0
 ) (
     input  logic         clk,
     input  logic         resetn,
@@ -45,6 +46,7 @@ module multitini_control_regs #(
     output logic [31:0]  control,
     output logic [31:0]  border_config,
     output logic [31:0]  vectrex_video_config,
+    output logic [31:0]  c64_expansion_config,
     output logic         effect_write, effect_commit,
     output logic [9:0]   effect_address,
     output logic [31:0]  effect_data, effect_commit_sequence,
@@ -215,6 +217,13 @@ module multitini_control_regs #(
             status_word |= MT_STATUS_MEDIA_DATA;
     end
 
+    function automatic logic [31:0] clamp_c64_expansion(input logic [31:0] value);
+        logic [31:0] result;
+        result = value & MT_C64_EXPANSION_CONFIG_MASK;
+        if (value[2:0] != 3'd2 && value[2:0] != 3'd3) result[2:0] = 3'd0;
+        return C64_EXPANSION_CAPS[31] ? result : 32'd0;
+    endfunction
+
     always_comb begin
         rd_known = 1'b1;
         unique case (rd_addr)
@@ -225,6 +234,8 @@ module multitini_control_regs #(
             MT_REG_CORE_ID:          rd_data = core_id;
             MT_REG_CORE_VARIANT_INDEX: rd_data = core_variant_index;
             MT_REG_IIGS_ACCEL_CAPS:   rd_data = IIGS_ACCEL_CAPS;
+            MT_REG_C64_EXPANSION_CAPS: rd_data = C64_EXPANSION_CAPS;
+            MT_REG_C64_EXPANSION_CONFIG: rd_data = c64_expansion_config;
             MT_REG_STATUS:           rd_data = status_word;
             MT_REG_ERROR:            rd_data = error_flags;
             MT_REG_CONTROL:          rd_data = control;
@@ -324,6 +335,7 @@ module multitini_control_regs #(
             MT_REG_CONTROL,
             MT_REG_BORDER_CONFIG,
             MT_REG_VECTREX_VIDEO_CONFIG,
+            MT_REG_C64_EXPANSION_CONFIG,
             MT_REG_IRQ_ENABLE,
             MT_REG_SCRATCH,
             MT_REG_COMMAND_SEQ,
@@ -342,6 +354,7 @@ module multitini_control_regs #(
             error_flags     <= 32'h00000000;
             border_config   <= MT_BORDER_CONFIG_DEFAULT;
             vectrex_video_config <= MT_VECTREX_VIDEO_CONFIG_DEFAULT;
+            c64_expansion_config <= clamp_c64_expansion(MT_C64_EXPANSION_CONFIG_DEFAULT);
             effect_write <= 0;
             effect_commit <= 0;
             effect_address <= 0;
@@ -500,6 +513,9 @@ module multitini_control_regs #(
                         vectrex_video_config <=
                             merge_strobes(vectrex_video_config, wr_data, wr_strb) &
                             MT_VECTREX_VIDEO_CONFIG_MASK;
+                    MT_REG_C64_EXPANSION_CONFIG:
+                        c64_expansion_config <= clamp_c64_expansion(
+                            merge_strobes(c64_expansion_config, wr_data, wr_strb));
                     MT_REG_VIDEO_EFFECT_ADDRESS:
                         if (wr_strb == 4'hF && wr_data[31:10] == 0)
                             effect_address <= wr_data[9:0];

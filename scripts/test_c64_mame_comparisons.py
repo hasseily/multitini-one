@@ -30,6 +30,8 @@ SUITES = {
     "memory": ("test_c64_mame_memory.py", [],
                "Memory-handler routing and effects conditional on supplied PLA outputs"),
     "vic": ("test_c64_mame_vic.py", [], "VIC native bus ownership"),
+    "sid": ("test_c64_mame_sid.py", [], "Dual SID address selection and socket registers"),
+    "reu": ("test_c64_reu.py", [], "MAME 512 KiB REU transfers; separate 16 MiB extension and transport checks"),
 }
 
 
@@ -128,7 +130,7 @@ def main() -> int:
         child_receipt.unlink(missing_ok=True)
         command = [sys.executable, str(ROOT / "scripts" / script),
                    "--build-dir", str(directory), *extra]
-        if args.vivado_bin:
+        if args.vivado_bin and name != "reu":
             command += ["--vivado-bin", str(args.vivado_bin.resolve())]
         log = build / (name + ".log")
         record = {"name": name, "scope": scope, "command": command,

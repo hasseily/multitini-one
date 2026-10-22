@@ -681,8 +681,8 @@ static void test_settings_journal_migration(void)
     assert(mt_supervisor_settings_save(&original).status == MT_SETTINGS_OK);
     assert(target_size == MT_SETTINGS_WIRE_SIZE && !journal_exists);
     memcpy(current_wire, target_data, sizeof(current_wire));
-    for (schema = 1U; schema <= 9U; ++schema) {
-        const size_t wire_size = schema >= 8U ? MT_SETTINGS_WIRE_SIZE : schema == 7U ? 5054U : schema == 6U ? 5038U : schema == 5U ? 4696U :
+    for (schema = 1U; schema <= 10U; ++schema) {
+        const size_t wire_size = schema == 10U ? MT_SETTINGS_WIRE_SIZE : schema >= 8U ? 10950U : schema == 7U ? 5054U : schema == 6U ? 5038U : schema == 5U ? 4696U :
             (schema == 4U ? 4088U : (schema == 3U ? 4024U : 3960U));
         unsigned fault;
         memcpy(wire, current_wire, sizeof(wire));
@@ -717,6 +717,10 @@ static void test_settings_journal_migration(void)
             expected.profiles[0].c64_fast_roms = schema != 1U;
         }
         settings_store_u32(wire + 8U, schema);
+        settings_store_u32(wire + 12U, (uint32_t)wire_size);
+        const uint32_t crc = settings_crc32(wire + 24U, wire_size - 24U);
+        settings_store_u32(wire + 16U, crc);
+        settings_store_u32(wire + 20U, ~crc);
         /* Real storage optional/exact readers must accept each on-card length
          * without writing anything when there is no outstanding journal. */
         reset_fake();
@@ -743,7 +747,7 @@ static void test_settings_journal_migration(void)
             assert(memcmp(&loaded, &expected, sizeof(loaded)) == 0);
             /* Saving a migrated file always writes the complete new format. */
             assert(mt_supervisor_settings_save(&loaded).status == MT_SETTINGS_OK);
-            assert(target_size == MT_SETTINGS_WIRE_SIZE && target_data[8U] == 9U);
+            assert(target_size == MT_SETTINGS_WIRE_SIZE && target_data[8U] == 10U);
             assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
             assert(memcmp(&loaded, &expected, sizeof(loaded)) == 0);
         }

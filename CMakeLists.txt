@@ -355,6 +355,9 @@ if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
             "${CMAKE_SOURCE_DIR}/scripts/test_video_settings_runtime.py"
             --cc "${CMAKE_C_COMPILER}"
             --build-dir "${CMAKE_BINARY_DIR}/video-settings-runtime")
+    add_test(NAME c64_expansion_runtime
+        COMMAND "${CMAKE_COMMAND}" -E env "CC=${CMAKE_C_COMPILER}"
+            "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/test_c64_expansion_runtime.py")
 endif()
 
 add_executable(test_core_frontend tests/host/test_core_frontend.c)

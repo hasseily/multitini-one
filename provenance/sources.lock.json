@@ -132,7 +132,7 @@
       "url": "https://github.com/mamedev/mame.git",
       "commit": "122719e8d13e2fdb7dd33886455484207de59fc8",
       "license": "BSD-3-Clause selected CPU and C64/VIC source; upstream COPYING retained",
-      "use": "Test-only behavioral reference for C64 memory and NMOS 6510 bus execution. No system ROMs or MAME binary; excluded from FPGA and ARM firmware builds. Exact subset and hashes in third_party/mame_reference/import_manifest.json."
+      "use": "Test-only behavioral reference for C64 memory and NMOS 6510 bus execution. No system ROMs or MAME binary; excluded from FPGA and ARM firmware builds. Exact subset and hashes in third_party/mame_reference/import_manifest.json. Dual-SID adapter and MOS8726 REU methods provide test-only expansion references; 16MB address capacity is an explicit extension beyond the MAME 512KB model."
     }
   ]
 }

@@ -108,6 +108,7 @@ module multitini_one_top #(
     logic [31:0] shell_control;
     logic [31:0] border_config;
     logic [31:0] vectrex_video_config;
+    logic [31:0] c64_expansion_config;
     wire effect_write, effect_commit, effect_busy, effect_active_valid, effect_rejected;
     wire [9:0] effect_address;
     wire [31:0] effect_data, effect_commit_sequence, effect_active_sequence;
@@ -730,7 +731,8 @@ module multitini_one_top #(
     );
 
     multitini_control_regs #(.SHELL_BUILD_ID(SHELL_BUILD_ID),
-        .IIGS_ACCEL_CAPS(ACTIVE_MACHINE==5 ? 32'h8000037f : 32'd0)) control_regs (
+        .IIGS_ACCEL_CAPS(ACTIVE_MACHINE==5 ? 32'h8000037f : 32'd0),
+        .C64_EXPANSION_CAPS(ACTIVE_MACHINE==0 ? 32'h80000003 : 32'd0)) control_regs (
         .clk(control_clk), .resetn(control_aresetn),
         .core_id(c64_core_id),
         .core_variant_index((ACTIVE_MACHINE == 0 && C64_NTSC_MODE) ||
@@ -765,6 +767,7 @@ module multitini_one_top #(
         .rd_data(control_rd_data), .control(shell_control),
         .border_config(border_config),
         .vectrex_video_config(vectrex_video_config),
+        .c64_expansion_config(c64_expansion_config),
         .effect_write(effect_write),.effect_address(effect_address),.effect_data(effect_data),
         .effect_commit(effect_commit),.effect_commit_sequence(effect_commit_sequence),
         .effect_busy(effect_busy),.effect_active_valid(effect_active_valid),
@@ -1174,6 +1177,13 @@ module multitini_one_top #(
     // and centers the shorter NTSC raster in the 1920x1080 active area.
     generate
         if (ACTIVE_MACHINE == 0) begin : g_c64_machine
+            wire [3:0] expansion_config;
+            multitini_c64_expansion_config expansion_config_i (
+                .control_clk(control_clk), .control_resetn(control_aresetn),
+                .requested_config(c64_expansion_config),
+                .core_clk(c64_clk), .core_resetn(c64_aresetn),
+                .config_value(expansion_config)
+            );
             assign gbc_cart_size = 32'd0;
             assign gbc_cart_loaded = 1'b0;
             assign gbc_memory_fault = 1'b0;
@@ -1185,6 +1195,8 @@ module multitini_one_top #(
                 .pause_request(core_menu_pause),
                 .cpu_turbo_enable(c64_cpu_turbo_enable),
                 .drive_parallel_enable(c64_drive_parallel_enable),
+                .sid_mode(expansion_config[2:0]),
+                .reu_enable(expansion_config[3]),
                 .load_abort(c64_load_abort),
                 .load_abort_epoch(c64_load_abort_epoch),
                 .clear_load_error(c64_load_error_clear),

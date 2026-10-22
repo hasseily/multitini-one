@@ -1,6 +1,7 @@
 // Multitini compatibility port of MiSTer C64 commit
-// 62fc697e3c9b5982c9dc76aa8cd03db545d20803. Only the function declarations
-// are changed to standards-compliant ANSI port syntax.
+// 62fc697e3c9b5982c9dc76aa8cd03db545d20803. Function declarations use ANSI
+// syntax, persistent scratch registers have explicit module scope, and the
+// two filter integrator banks have a defined power-on state.
 // ----------------------------------------------------------------------------
 // SID filter
 // Copyright (C) 2022 Alexey Melnikov
@@ -87,9 +88,9 @@ wire signed [33:0] o = s ? (c - m) : (c + m);
 // vbp = vbp - w0*vhp
 // vhp = 1/Q*vbp - vlp - vi
 // Widened to 18 bits (+2 fractional bits) to cut low-cutoff LP quant noise.
-reg signed [17:0] vlp, vlp2, vlp_next;
-reg signed [17:0] vbp, vbp2, vbp_next;
-reg signed [17:0] vhp, vhp2, vhp_next;
+reg signed [17:0] vlp = 0, vlp2 = 0, vlp_next;
+reg signed [17:0] vbp = 0, vbp2 = 0, vbp_next;
+reg signed [17:0] vhp = 0, vhp2 = 0, vhp_next;
 reg signed [18:0] dv;
 
 // Filtered-tap mix and its compressed form. tmix_s / center_s are registered
@@ -125,13 +126,14 @@ always_comb begin
 end
 
 
+// These values persist between states 2 and 7. Module scope makes their
+// lifetime unambiguous to both simulation and synthesis tools.
+reg [10:0] _1_Q_lsl10;
+reg signed [17:0] vi = 0;   // wide-scale (signal<<2) input for 18-bit state
+reg signed [15:0] vd = 0;
+
 // Filter
 always @(posedge clk) begin
-	reg [10:0] _1_Q_lsl10;
-
-	reg signed [17:0] vi = 0;   // wide-scale (signal<<2) input for 18-bit state
-	reg signed [15:0] vd = 0;
-
 	case (state)
 		2:	begin
 				// MOS6581: 1/Q =~ ~res/8 (not used - op-amps are not ideal)

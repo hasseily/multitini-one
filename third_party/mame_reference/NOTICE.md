@@ -71,6 +71,14 @@ not used as evidence for this pinned source oracle. Native timing is the
 conformance target; accelerated CPU scheduling is an extension whose accepted
 CPU bus semantics must remain consistent with the reference.
 
+The expansion subset adds the unchanged dual-SID adapter and MOS8726 REU
+methods. SID comparisons cover socket selection, register mirrors and stereo
+routing; the audio synthesis remains the pinned MiSTer SID implementation.
+The REU comparison uses the 512 KiB MAME address profile. Production extends
+the address counter and bank register to 24 bits for 16 MiB, with separate
+high-bank and wrap tests. Native DMA scheduling and delayed memory service are
+tested in the real machine RTL separately from the MAME transaction oracle.
+
 Run from the repository root:
 
 ```powershell

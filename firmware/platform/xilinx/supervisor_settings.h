@@ -17,7 +17,9 @@
 #define MT_SETTINGS_MAX_PROFILES 16U
 #define MT_SETTINGS_MEDIA_NAME_MAX 96U
 #define MT_SETTINGS_MAX_CONTROLLER_PROFILES 64U
-#define MT_SETTINGS_WIRE_SIZE 10950U
+#define MT_SETTINGS_WIRE_SIZE 10966U
+#define MT_SETTINGS_C64_SID_MODE_DEFAULT 3U
+#define MT_SETTINGS_C64_REU_DEFAULT true
 #define MT_SETTINGS_BORDER_STYLE_DEFAULT 0U
 #define MT_SETTINGS_BORDER_COLOR_DEFAULT 7U
 #define MT_SETTINGS_BORDER_PADDING_DEFAULT 6U
@@ -33,6 +35,8 @@ typedef struct {
     uint8_t joystick_port;
     bool c64_fast_roms;
     bool c64_cpu_turbo;
+    uint8_t c64_sid_mode; /* 0 = single, 2 = dual $D420, 3 = dual $D500. */
+    bool c64_reu_enabled;
     uint8_t genesis_three_button_mask; /* Port bits 0/1, zero defaults to six buttons. */
     bool border_enabled;
     uint8_t border_style;
@@ -101,6 +105,9 @@ bool mt_supervisor_settings_remember_c64_fast_roms(
     mt_supervisor_settings_t *settings, const char *core_id, bool enabled);
 bool mt_supervisor_settings_remember_c64_cpu_turbo(
     mt_supervisor_settings_t *settings, const char *core_id, bool enabled);
+bool mt_supervisor_settings_remember_c64_expansion(
+    mt_supervisor_settings_t *settings, const char *core_id,
+    uint8_t sid_mode, bool reu_enabled);
 bool mt_supervisor_settings_remember_genesis_pads(
     mt_supervisor_settings_t *settings, const char *core_id, uint8_t three_button_mask);
 bool mt_supervisor_settings_remember_borders(

@@ -1281,6 +1281,11 @@ static bool finish_c64_content_change(void)
 static void handle_c64_content_load(const char *file_name)
 {
     mt_c64_content_service_result_t result;
+    if (mt_content_classify(file_name) == MT_CONTENT_CRT && c64_content_service_reu_enabled()) {
+        set_supervisor_warning("Turn REU off before loading a cartridge");
+        xil_printf("[C64] turn REU off before loading a cartridge\r\n");
+        return;
+    }
     if (!prepare_c64_content_change()) return;
     result = c64_content_service_load(file_name);
     print_c64_content_result("load", file_name, &result);
@@ -2242,6 +2247,28 @@ static bool configured_auto_boot_selection(mt_core_selection_t *selection)
     return false;
 }
 
+static uint32_t selection_c64_expansion_caps(const mt_core_selection_t *selection)
+{
+    if (selection == NULL || selection->package.core_id != MT_C64_CORE_ID ||
+        selection->package.abi_major != MT_ABI_MAJOR ||
+        selection->package.abi_minor < MT_C64_EXPANSION_MIN_ABI_MINOR) return 0U;
+    return c64_content_service_expansion_caps();
+}
+
+static void configure_c64_expansion(const mt_core_selection_t *selection,
+                                     const mt_core_settings_profile_t *profile)
+{
+    const uint32_t caps = selection_c64_expansion_caps(selection);
+    if ((caps & (MT_C64_EXPANSION_CAPS_DUAL_SID | MT_C64_EXPANSION_CAPS_REU_16MB)) == 0U) return;
+    uint32_t config = 0U;
+    if ((caps & MT_C64_EXPANSION_CAPS_DUAL_SID) != 0U)
+        config |= profile != NULL ? profile->c64_sid_mode : MT_SETTINGS_C64_SID_MODE_DEFAULT;
+    if ((caps & MT_C64_EXPANSION_CAPS_REU_16MB) != 0U &&
+        (profile != NULL ? profile->c64_reu_enabled : MT_SETTINGS_C64_REU_DEFAULT))
+        config |= MT_C64_EXPANSION_REU_ENABLE;
+    Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_C64_EXPANSION_CONFIG, config);
+}
+
 static bool restore_selection_settings(
     const mt_core_selection_t *selection)
 {
@@ -2269,6 +2296,7 @@ static bool restore_selection_settings(
                   profile_vectrex_video_config(profile));
     }
     if (selection->package.core_id == MT_C64_CORE_ID) {
+        configure_c64_expansion(selection, profile);
         set_c64_cpu_turbo(selection->package.abi_minor >= 8U &&
                           profile != NULL && profile->c64_cpu_turbo);
         if (profile != NULL) {
@@ -2281,7 +2309,10 @@ static bool restore_selection_settings(
             }
             if (profile->cartridge_name[0] != '\0') {
                 mt_c64_content_service_result_t content;
-                if (!prepare_c64_content_change()) {
+                if (c64_content_service_reu_enabled()) {
+                    xil_printf("[settings] cartridge restore skipped; turn REU off first\r\n");
+                    ok = false;
+                } else if (!prepare_c64_content_change()) {
                     ok = false;
                 } else {
                     content = c64_content_service_load(
@@ -2426,6 +2457,12 @@ static mt_menu_view_t supervisor_menu_view(void)
         state.drive8_name = c64_d64_service_mounted_name();
         state.cartridge_attached = c64_content_service_crt_attached();
         state.cartridge_name = c64_content_service_crt_name();
+        state.c64_expansion_caps = selection_c64_expansion_caps(&supervisor.active);
+        if (state.c64_expansion_caps != 0U) {
+            const uint32_t config = shell_read(MT_REG_C64_EXPANSION_CONFIG);
+            state.c64_sid_mode = (uint8_t)(config & MT_C64_EXPANSION_SID_MODE_MASK);
+            state.c64_reu_enabled = (config & MT_C64_EXPANSION_REU_ENABLE) != 0U;
+        }
         state.fast_roms_active = c64_fast_roms_active;
         state.fast_roms_fallback = c64_fast_roms_fallback;
         state.cpu_turbo_enabled = (shell_read(MT_REG_CONTROL) &
@@ -3816,6 +3853,47 @@ static void document_read_progress(void *context)
     usb_hid_service_poll_deferred();
 }
 
+static void change_c64_expansion(size_t option)
+{
+    const uint32_t caps = supervisor.has_active ?
+        selection_c64_expansion_caps(&supervisor.active) : 0U;
+    const uint32_t required = option == 2U ? MT_C64_EXPANSION_CAPS_DUAL_SID :
+        option == 3U ? MT_C64_EXPANSION_CAPS_REU_16MB : 0U;
+    if (required == 0U || (caps & required) == 0U) {
+        set_supervisor_warning("Core option unavailable");
+        return;
+    }
+    const uint32_t old_config = shell_read(MT_REG_C64_EXPANSION_CONFIG);
+    uint8_t sid = (uint8_t)(old_config & MT_C64_EXPANSION_SID_MODE_MASK);
+    bool reu = (old_config & MT_C64_EXPANSION_REU_ENABLE) != 0U;
+    if (option == 2U) sid = sid == 0U ? 2U : sid == 2U ? 3U : 0U;
+    else reu = !reu;
+    if (option == 3U && reu && c64_content_service_crt_attached()) {
+        set_supervisor_warning("Eject the cartridge before enabling REU");
+        return;
+    }
+    settings_before_update = persistent_settings;
+    bool valid = ensure_active_settings_profile();
+    if (valid) {
+        const mt_core_settings_profile_t *const profile =
+            mt_supervisor_settings_find(&persistent_settings, supervisor.active.package.id);
+        valid = mt_supervisor_settings_remember_c64_expansion(&persistent_settings,
+            supervisor.active.package.id, option == 2U ? sid : profile->c64_sid_mode,
+            option == 3U ? reu : profile->c64_reu_enabled);
+    }
+    if (!valid || !save_persistent_settings()) {
+        persistent_settings = settings_before_update;
+        set_supervisor_warning("Expansion setting not saved");
+        return;
+    }
+    const uint32_t mask = option == 2U ? MT_C64_EXPANSION_SID_MODE_MASK : MT_C64_EXPANSION_REU_ENABLE;
+    const uint32_t value = option == 2U ? sid : reu ? MT_C64_EXPANSION_REU_ENABLE : 0U;
+    Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_C64_EXPANSION_CONFIG, (old_config & ~mask) | value);
+    supervisor_menu_dirty = true;
+    set_supervisor_status(option == 2U ? "SID audio setting saved" :
+        reu ? "16 MB REU enabled" : "REU disabled; cartridges available");
+}
+
 static void handle_menu_action(mt_menu_action_t action)
 {
     if (golden_update_worker_held && action.kind != MT_MENU_ACTION_UPDATE_GOLDEN &&
@@ -3884,6 +3962,10 @@ static void handle_menu_action(mt_menu_action_t action)
     } else if (action.kind == MT_MENU_ACTION_BROWSE_DISK_PROGRAM) {
         open_menu_browser(MT_MENU_BROWSER_DISK_PROGRAM);
     } else if (action.kind == MT_MENU_ACTION_BROWSE_CARTRIDGE) {
+        if (shell_read(MT_REG_CORE_ID) == MT_C64_CORE_ID && c64_content_service_reu_enabled()) {
+            set_supervisor_warning("Turn REU off before loading a cartridge");
+            return;
+        }
         open_menu_browser(MT_MENU_BROWSER_CARTRIDGE);
     } else if (action.kind == MT_MENU_ACTION_BROWSE_PROGRAM) {
         open_menu_browser(MT_MENU_BROWSER_PROGRAM);
@@ -4238,6 +4320,11 @@ static void handle_menu_action(mt_menu_action_t action)
         } else {
             mt_c64_content_service_result_t result;
             bool remounted;
+            if (mt_content_classify(supervisor_menu_files[action.file_index].name) == MT_CONTENT_CRT &&
+                c64_content_service_reu_enabled()) {
+                set_supervisor_warning("Turn REU off before loading a cartridge");
+                return;
+            }
             if (!prepare_c64_content_change()) {
                 set_supervisor_error("Content load could not start");
                 return;
@@ -4402,6 +4489,11 @@ static void handle_menu_action(mt_menu_action_t action)
         }
         if (supervisor.has_active && supervisor.active.package.core_id == MT_GENESIS_CORE_ID) {
             change_genesis_controller(action.file_index);
+            return;
+        }
+        if (supervisor.has_active && supervisor.active.package.core_id == MT_C64_CORE_ID &&
+            action.file_index >= 2U) {
+            change_c64_expansion(action.file_index);
             return;
         }
         const uint32_t control = shell_read(MT_REG_CONTROL);

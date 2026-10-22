@@ -27,6 +27,9 @@ typedef struct {
     bool fast_roms_active;
     bool fast_roms_fallback;
     bool cpu_turbo_enabled;
+    uint32_t c64_expansion_caps;
+    uint8_t c64_sid_mode;
+    bool c64_reu_enabled;
     uint8_t genesis_three_button_mask;
     const char *iigs_drive_name[MT_IIGS_DRIVE_COUNT];
     mt_iigs_config_t iigs_config;

@@ -26,16 +26,20 @@ typedef struct {
     uint32_t core_load_error_clears;
     bool media_request_active;
     uint32_t media_request_cancellations;
+    uint32_t expansion_reads;
 } shell_t;
 
 static char requested_path[256];
 static int fail_read;
 static uint64_t fake_time_ms;
 static uint32_t fake_time_calls;
+static uint32_t sd_reads;
 
 static uint32_t read32(void *context, uint32_t offset)
 {
     shell_t *const shell = context;
+    if (offset == MT_REG_C64_EXPANSION_CONFIG || offset == MT_REG_C64_EXPANSION_CAPS)
+        ++shell->expansion_reads;
     return shell->registers[offset / sizeof(uint32_t)];
 }
 
@@ -43,6 +47,12 @@ static void write32(void *context, uint32_t offset, uint32_t value)
 {
     shell_t *const shell = context;
     ++shell->writes;
+    if (offset == MT_REG_STREAM_DATA_BURST) {
+        const uint32_t remaining = shell->active_size - shell->active_offset;
+        assert(remaining != 0U);
+        shell->active_offset += remaining < MT_STREAM_BURST_BYTES ? remaining : MT_STREAM_BURST_BYTES;
+        return;
+    }
     if (offset == MT_REG_ERROR && (value & MT_ERROR_CORE_LOAD) != 0U) {
         ++shell->core_load_error_clears;
         shell->registers[MT_REG_STATUS / 4U] &=
@@ -164,6 +174,7 @@ static size_t make_crt(uint8_t *data, uint16_t hardware_type)
 mt_sd_result_t mt_sd_storage_read_file_max(const char *path, uint8_t *dst,
                                            size_t capacity)
 {
+    ++sd_reads;
     mt_sd_result_t result = {MT_SD_OK, 0U, 0U};
     static uint8_t crt[0x40U + 0x10U + 0x2000U];
     assert(strlen(path) < sizeof(requested_path));
@@ -186,6 +197,50 @@ mt_sd_result_t mt_sd_storage_read_file_max(const char *path, uint8_t *dst,
         memcpy(dst, crt, result.size);
     }
     return result;
+}
+
+static void test_reu_excludes_cartridges(void)
+{
+    shell_t shell = {0};
+    mt_core_link_t link;
+    mt_core_link_init(&link, &shell, read32, write32);
+    c64_content_service_init(&link, respond, &shell, NULL, NULL);
+    shell.registers[MT_REG_CORE_ID / 4U] = MT_C64_CORE_ID;
+    shell.registers[MT_REG_ABI_VERSION / 4U] = 23U;
+    shell.registers[MT_REG_STREAM_STATUS / 4U] = MT_STREAM_STATUS_READY | MT_STREAM_STATUS_DRAINED;
+    shell.registers[MT_REG_STATUS / 4U] = MT_STATUS_CORE_READY;
+    shell.registers[MT_REG_C64_EXPANSION_CAPS / 4U] = MT_C64_EXPANSION_CAPS_VALID | MT_C64_EXPANSION_CAPS_REU_16MB;
+    shell.registers[MT_REG_C64_EXPANSION_CONFIG / 4U] = MT_C64_EXPANSION_CONFIG_DEFAULT;
+    const uint32_t reads_before = sd_reads;
+    assert(c64_content_service_load("test.crt").status == MT_C64_CONTENT_SERVICE_REU_CONFLICT);
+    assert(sd_reads == reads_before && shell.writes == 0U && !c64_content_service_crt_attached());
+    assert(strstr(c64_content_service_status_name(MT_C64_CONTENT_SERVICE_REU_CONFLICT), "REU off") != NULL);
+    assert(c64_content_service_load("test.prg").status == MT_C64_CONTENT_SERVICE_OK);
+    shell.registers[MT_REG_C64_EXPANSION_CONFIG / 4U] = 3U;
+    assert(c64_content_service_load("test.crt").status == MT_C64_CONTENT_SERVICE_OK);
+    assert(c64_content_service_crt_attached());
+    shell.registers[MT_REG_C64_EXPANSION_CONFIG / 4U] = MT_C64_EXPANSION_CONFIG_DEFAULT;
+    const uint32_t writes_before = shell.writes;
+    assert(c64_content_service_load("replacement.crt").status == MT_C64_CONTENT_SERVICE_REU_CONFLICT);
+    assert(shell.writes == writes_before && c64_content_service_crt_attached());
+    assert(strcmp(c64_content_service_crt_name(), "test.crt") == 0);
+    for (unsigned abi = 0U; abi < 23U; ++abi) {
+        shell.registers[MT_REG_ABI_VERSION / 4U] = abi;
+        shell.expansion_reads = 0U;
+        assert(!c64_content_service_reu_enabled() && shell.expansion_reads == 0U);
+    }
+    shell.registers[MT_REG_ABI_VERSION / 4U] = 0x10017U;
+    assert(!c64_content_service_reu_enabled() && shell.expansion_reads == 0U);
+    shell.registers[MT_REG_ABI_VERSION / 4U] = 23U;
+    shell.registers[MT_REG_C64_EXPANSION_CAPS / 4U] = MT_C64_EXPANSION_CAPS_REU_16MB;
+    assert(!c64_content_service_reu_enabled());
+    shell.registers[MT_REG_C64_EXPANSION_CAPS / 4U] = MT_C64_EXPANSION_CAPS_VALID | MT_C64_EXPANSION_CAPS_DUAL_SID;
+    assert(!c64_content_service_reu_enabled());
+    shell.registers[MT_REG_CORE_ID / 4U] = 0U;
+    shell.expansion_reads = 0U;
+    assert(!c64_content_service_reu_enabled() && shell.expansion_reads == 0U);
+    c64_content_service_init(NULL, NULL, NULL, NULL, NULL);
+    assert(!c64_content_service_reu_enabled());
 }
 
 static void test_run_preserves_pending_media_request(void)
@@ -286,6 +341,7 @@ int main(void)
         0x01U, 0x08U, 0x0bU, 0x08U, 0x01U, 0x00U
     };
 
+    test_reu_excludes_cartridges();
     test_run_preserves_pending_media_request();
     test_run_refuses_existing_core_fault();
 

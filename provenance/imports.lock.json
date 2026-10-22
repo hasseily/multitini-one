@@ -1237,6 +1237,48 @@
       "source": "MAME C64 conformance reference",
       "source_path": "src/mame/commodore/c64.cpp",
       "sha256": "10b046c2471f91ef1a696d617c74808f804b4d1f94c9697c1b92885c8346c756"
+    },
+    {
+      "path": "third_party/mame_reference/upstream/src/devices/bus/c64/dualsid.cpp",
+      "source": "MAME C64 conformance reference",
+      "source_path": "src/devices/bus/c64/dualsid.cpp",
+      "sha256": "9f6898a97bcb3090bb3778d940202c0a1da78c3ddf88390044e94d72797693d7"
+    },
+    {
+      "path": "third_party/mame_reference/upstream/src/devices/bus/c64/dualsid.h",
+      "source": "MAME C64 conformance reference",
+      "source_path": "src/devices/bus/c64/dualsid.h",
+      "sha256": "1c02853f4e3932a73a9014c2866ecfc475cae63e749d37701c282a0497f95622"
+    },
+    {
+      "path": "third_party/mame_reference/upstream/src/devices/bus/c64/reu.cpp",
+      "source": "MAME C64 conformance reference",
+      "source_path": "src/devices/bus/c64/reu.cpp",
+      "sha256": "c9b18f04b16608984cd343d5c4a3964c4e4f3b0f3df596b909ba03b73ce2f271"
+    },
+    {
+      "path": "third_party/mame_reference/upstream/src/devices/bus/c64/reu.h",
+      "source": "MAME C64 conformance reference",
+      "source_path": "src/devices/bus/c64/reu.h",
+      "sha256": "e6e4bbaa07a030dbca3283406ee9983d148d35ec2af318509fd9991dcb116d60"
+    },
+    {
+      "path": "third_party/mame_reference/upstream/src/devices/bus/c64/sid.cpp",
+      "source": "MAME C64 conformance reference",
+      "source_path": "src/devices/bus/c64/sid.cpp",
+      "sha256": "5c04a90a8ffd28196c12c06388062302f6a7bf80625381559ab4f324d63c9ef5"
+    },
+    {
+      "path": "third_party/mame_reference/upstream/src/devices/machine/mos8726.cpp",
+      "source": "MAME C64 conformance reference",
+      "source_path": "src/devices/machine/mos8726.cpp",
+      "sha256": "f95f408b4bca5986df531138cbbb5cc9c5a61e29ee643882d483182de3068e35"
+    },
+    {
+      "path": "third_party/mame_reference/upstream/src/devices/machine/mos8726.h",
+      "source": "MAME C64 conformance reference",
+      "source_path": "src/devices/machine/mos8726.h",
+      "sha256": "4ef926ffd25fef10de8d6ed483435e04030e5bfde8aaf92c6faef39bb6fc327a"
     }
   ]
 }

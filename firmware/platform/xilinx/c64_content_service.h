@@ -15,7 +15,8 @@ typedef enum {
     MT_C64_CONTENT_SERVICE_INVALID_ARGUMENT,
     MT_C64_CONTENT_SERVICE_READ_FAILED,
     MT_C64_CONTENT_SERVICE_REJECTED,
-    MT_C64_CONTENT_SERVICE_TRANSFER_FAILED
+    MT_C64_CONTENT_SERVICE_TRANSFER_FAILED,
+    MT_C64_CONTENT_SERVICE_REU_CONFLICT
 } mt_c64_content_service_status_t;
 
 typedef struct {
@@ -49,6 +50,9 @@ mt_c64_content_service_result_t c64_content_service_run_staged_prg(void);
 bool c64_content_service_prg_staged(void);
 mt_c64_content_service_result_t c64_content_service_detach_crt(void);
 bool c64_content_service_crt_attached(void);
+/* Read the expansion registers only after a matching C64 ABI has been verified. */
+uint32_t c64_content_service_expansion_caps(void);
+bool c64_content_service_reu_enabled(void);
 const char *c64_content_service_crt_name(void);
 const char *c64_content_service_status_name(
     mt_c64_content_service_status_t status);

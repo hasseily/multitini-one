@@ -18,6 +18,8 @@ module multitini_c64_adapter #(
     input  logic        pause_request,
     input  logic        cpu_turbo_enable,
     input  logic        drive_parallel_enable,
+    input  logic [2:0]  sid_mode,
+    input  logic        reu_enable,
     input  logic        load_abort,
     input  logic        load_abort_epoch,
     input  logic        clear_load_error,
@@ -208,6 +210,20 @@ module multitini_c64_adapter #(
     logic        cart_external_select;
     logic        cart_runtime_request;
     logic        cart_stall;
+    logic [23:0] cart_memory_addr, reu_memory_addr;
+    logic cart_memory_write, reu_memory_write;
+    logic [63:0] cart_memory_wdata, reu_memory_wdata;
+    logic [7:0] cart_memory_wstrb, reu_memory_wstrb;
+    logic cart_memory_valid, reu_memory_valid;
+    logic cart_memory_ready, reu_memory_ready;
+    logic cart_memory_rvalid, reu_memory_rvalid;
+    logic reu_active, reu_irq, reu_busy, reu_fault;
+    logic reu_fault_latched;
+    logic reu_dma_req, reu_dma_valid, reu_dma_ack, reu_dma_write;
+    logic [15:0] reu_dma_addr, cpu_bus_addr;
+    logic [7:0] reu_dma_wdata, reu_dma_rdata, cpu_bus_wdata, reu_io_rdata;
+    logic cpu_bus_valid, cpu_bus_write;
+    logic reu_io_select;
 
     logic        raw_hsync;
     logic        raw_vsync;
@@ -259,9 +275,9 @@ module multitini_c64_adapter #(
         endcase
     end
     assign load_error = rom_load_error || content_load_error ||
-                        drive_media_error || cart_memory_fault;
+                        drive_media_error || cart_memory_fault || reu_fault_latched;
     assign fatal_load_error = rom_load_error || content_load_error ||
-                              cart_memory_fault;
+                              cart_memory_fault || reu_fault_latched;
     assign ready = core_enable && !reset && !core_reset_request &&
                    !system_rom_load_valid && !content_load_valid &&
                    !rom_load_active && !content_load_active &&
@@ -379,11 +395,52 @@ module multitini_c64_adapter #(
         .core_stall(cart_stall), .busy(cart_memory_busy),
         .loader_busy(cart_loader_busy),
         .fault(cart_memory_fault), .clear_fault(clear_load_error),
+        .memory_addr(cart_memory_addr), .memory_write(cart_memory_write),
+        .memory_wdata(cart_memory_wdata), .memory_wstrb(cart_memory_wstrb),
+        .memory_valid(cart_memory_valid), .memory_ready(cart_memory_ready),
+        .memory_rdata(memory_rdata), .memory_rvalid(cart_memory_rvalid),
+        .memory_fault(memory_fault)
+    );
+
+    // The 16 MB store occupies the complete PSRAM address space. Firmware
+    // rejects CRT/REU conflicts, and the hardware also excludes cartridge
+    // loading/ownership before the REU can access that shared store.
+    assign reu_active = reu_enable && !cart_loaded && !cart_loading;
+    // MAME releases the REU register aperture during its own DMA. A transfer
+    // reading $DFxx observes the machine's floating bus, not REU status.
+    assign reu_io_select = reu_active && !reu_dma_req && cart_iof;
+    always_ff @(posedge core_clk) begin
+        if (reset || clear_load_error) reu_fault_latched <= 1'b0;
+        else if (reu_fault) reu_fault_latched <= 1'b1;
+    end
+    multitini_c64_reu reu_i (
+        .clk(core_clk), .reset(reset || !core_reset_n), .enable(reu_active),
+        .io_valid(cpu_bus_valid && reu_io_select), .io_addr(cpu_bus_addr[4:0]),
+        .io_write(cpu_bus_write), .io_wdata(cpu_bus_wdata), .io_rdata(reu_io_rdata),
+        .ff00_write(cpu_bus_valid && cpu_bus_write && cpu_bus_addr == 16'hff00),
+        .dma_req(reu_dma_req), .dma_valid(reu_dma_valid), .dma_addr(reu_dma_addr),
+        .dma_wdata(reu_dma_wdata), .dma_write(reu_dma_write), .dma_ack(reu_dma_ack),
+        .dma_rdata(reu_dma_rdata), .irq(reu_irq), .busy(reu_busy), .fault(reu_fault),
+        .memory_addr(reu_memory_addr), .memory_write(reu_memory_write),
+        .memory_wdata(reu_memory_wdata), .memory_wstrb(reu_memory_wstrb),
+        .memory_valid(reu_memory_valid), .memory_ready(reu_memory_ready),
+        .memory_rdata(memory_rdata), .memory_rvalid(reu_memory_rvalid),
+        .memory_fault(memory_fault)
+    );
+    multitini_c64_memory_arbiter expansion_memory_i (
+        .clk(core_clk), .reset(reset),
+        .cart_addr(cart_memory_addr), .cart_write(cart_memory_write),
+        .cart_wdata(cart_memory_wdata), .cart_wstrb(cart_memory_wstrb),
+        .cart_valid(cart_memory_valid), .cart_ready(cart_memory_ready),
+        .cart_rvalid(cart_memory_rvalid),
+        .reu_addr(reu_memory_addr), .reu_write(reu_memory_write),
+        .reu_wdata(reu_memory_wdata), .reu_wstrb(reu_memory_wstrb),
+        .reu_valid(reu_memory_valid), .reu_ready(reu_memory_ready),
+        .reu_rvalid(reu_memory_rvalid),
         .memory_addr(memory_addr), .memory_write(memory_write),
         .memory_wdata(memory_wdata), .memory_wstrb(memory_wstrb),
         .memory_valid(memory_valid), .memory_ready(memory_ready),
-        .memory_rdata(memory_rdata), .memory_rvalid(memory_rvalid),
-        .memory_fault(memory_fault)
+        .memory_rvalid(memory_rvalid), .memory_fault(memory_fault)
     );
 
     cartridge cartridge_i (
@@ -430,19 +487,24 @@ module multitini_c64_adapter #(
         .hsync(raw_hsync), .vsync(raw_vsync), .palette(3'b000),
         .r(raw_r), .g(raw_g), .b(raw_b),
         .game(cart_game), .exrom(cart_exrom), .io_rom(cart_io_rom),
-        .io_ext(cart_io_read), .io_data(cart_io_data), .irq_n(1'b1),
+        .io_ext(cart_io_read || reu_io_select),
+        .io_data(reu_io_select ? reu_io_rdata : cart_io_data), .irq_n(1'b1),
         .nmi_n(!cart_nmi), .nmi_ack(cart_nmi_ack),
         .romL(cart_rom_l), .romH(cart_rom_h),
         .UMAXromH(cart_umax_rom_h), .IOE(cart_ioe), .IOF(cart_iof),
         .freeze_key(), .mod_key(),
         .tape_play(), .tape_rew(),
         .tape_stop(), .tape_ff(), .tape_reset_counter(),
-        .dma_req(1'b0), .dma_cycle(), .dma_addr(16'd0),
-        .dma_dout(8'd0), .dma_din(), .dma_we(1'b0), .irq_ext_n(1'b1),
+        .dma_req(reu_dma_req), .dma_valid(reu_dma_valid), .dma_ack(reu_dma_ack),
+        .cpu_bus_valid(cpu_bus_valid), .cpu_bus_addr(cpu_bus_addr),
+        .cpu_bus_wdata(cpu_bus_wdata), .cpu_bus_write(cpu_bus_write),
+        .dma_cycle(), .dma_addr(reu_dma_addr),
+        .dma_dout(reu_dma_wdata), .dma_din(reu_dma_rdata),
+        .dma_we(reu_dma_write), .irq_ext_n(!reu_irq),
         .joyA(joy_a), .joyB(joy_b),
         .pot1(8'hFF), .pot2(8'hFF), .pot3(8'hFF), .pot4(8'hFF),
         .audio_l(raw_audio_l), .audio_r(raw_audio_r),
-        .sid_filter(2'b11), .sid_ver(SID_VERSION), .sid_mode(3'b000),
+        .sid_filter(2'b11), .sid_ver(SID_VERSION), .sid_mode(sid_mode),
         .sid_cfg(4'b0000), .sid_fc_off_l(13'd0), .sid_fc_off_r(13'd0),
         .sid_ld_clk(core_clk), .sid_ld_addr(12'd0), .sid_ld_data(16'd0),
         .sid_ld_wr(1'b0), .sid_digifix(1'b0),

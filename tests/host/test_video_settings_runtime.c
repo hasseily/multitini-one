@@ -75,6 +75,10 @@ void mt_ui_presenter_invalidate(mt_ui_presenter_t *presenter)
 int c64_d64_service_prepare_reset(void) { unexpected_service(); }
 int c64_d64_service_resume_after_reset(void) { unexpected_service(); }
 
+/* This fixture exercises video settings; its hardware exposes no C64 expansion. */
+uint32_t c64_content_service_expansion_caps(void) { return 0U; }
+bool c64_content_service_reu_enabled(void) { return false; }
+
 mt_c64_content_service_result_t c64_content_service_load(const char *name)
 {
     (void)name;
@@ -198,7 +202,7 @@ mt_sd_result_t mt_sd_storage_journal_replace(const char *path,
     const mt_sd_result_t result = {test_save_status, 0U, size};
     assert(strcmp(path, MT_SETTINGS_PATH) == 0);
     assert(strcmp(journal_path, MT_SETTINGS_JOURNAL_PATH) == 0);
-    assert(source != NULL && source[8U] == 9U && size == MT_SETTINGS_WIRE_SIZE);
+    assert(source != NULL && source[8U] == 10U && size == MT_SETTINGS_WIRE_SIZE);
     /* The visible hardware state must still have its previous value while
      * the complete settings write is in progress. */
     if(test_display_enabled)assert((test_display_status&(MT_DISPLAY_BUSY|MT_DISPLAY_ERROR))==0U && test_display_writes>0U);

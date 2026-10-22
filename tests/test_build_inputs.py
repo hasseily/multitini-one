@@ -454,9 +454,14 @@ class BuildInputTests(unittest.TestCase):
             "tests/c64_mame/oracle_harness.cpp",
             "scripts/c64_mame_oracle.py",
             "scripts/test_c64_acceleration.py",
+            "scripts/test_c64_reu.py",
+            "scripts/test_c64_reu_machine.py",
+            "scripts/test_c64_expansion_infrastructure.py",
+            "hdl/sim/tb_control_regs.sv",
             "scripts/check_c64_local_ram_synthesis.tcl",
             "scripts/port_c64_vic.py",
             "docs/C64_RAM_CPU.md",
+            "docs/C64_EXPANSIONS.md",
         }
         self.assertLessEqual(required, captured)
         self.assertFalse(any("__pycache__" in path for path in captured))
