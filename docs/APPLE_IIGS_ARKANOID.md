@@ -13,9 +13,9 @@ This is a source and directed-simulation diagnosis. The failing board image
 and the owner's running disk have not been hash-matched. No serial port was
 available during this investigation. The subsequent [MMU audit](APPLE_IIGS_MMU_AUDIT.md)
 corrects production HDL through its port generator, with independent decode
-and CPU-executed HDL regressions. A corrected FPGA build (`4D000611`) was
-attempted, but failed routed timing qualification after both repair passes
-from the previous build's recipe. It has not been tested on hardware.
+and CPU-executed HDL regressions. The corrected FPGA image (`4D000611`)
+first failed routed timing. It then closed with new placement and post-route
+repair, with no RTL or constraint change. It has not been tested on hardware.
 
 ROM 03 startup failure is a separate, image-dependent question. MAME's
 [original-disk manifest](https://raw.githubusercontent.com/mamedev/mame/master/hash/apple2gs_flop_orig.xml)
@@ -127,9 +127,9 @@ pre-audit ROM03 run reaches the identical IWM poll with unchanged media,
 other captured sources and simulator arguments, so this observed failure
 predates the MMU changes. Native floppy gameplay remains unvalidated.
 
-Hardware acceptance of a correction still requires closing routed timing and
-qualifying the IIgs FPGA, installing the selected image, and testing moving
-objects and background restoration on the board. The full MMU audit also requires the
+Hardware acceptance of the correction still requires installing the qualified
+`4D000611` image and testing moving objects and background restoration on the
+board. The full MMU audit also requires the
 matching rebuilt SmartPort `hdd.rom` to release internal C800 ownership before
 entering slot expansion ROM. It does not inherently require an ARM firmware
 change. ROM 03 acceptance must identify the game revision separately.

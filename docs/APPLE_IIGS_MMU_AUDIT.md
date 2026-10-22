@@ -187,10 +187,67 @@ checkpoints, exact Tcl recipes, logs and result receipts are retained under
 `build/gs611-repair/`. Its `recorder-recovery/transition.json` records a
 log-header parser correction; the Vivado run and its evidence were preserved.
 
-No qualified `4D000611` package was produced or installed. The previously
-qualified `4D000610` delivery is unchanged. Further timing closure is required
-before the MMU changes can be tested on the board. The matching SmartPort
-`hdd.rom` was rebuilt with the hash recorded above; ARM firmware was not
-rebuilt. Full-game behavior and board acceptance remain unproven.
+That attempt produced no qualified package. The previously qualified
+`4D000610` delivery is unchanged.
+
+## FPGA timing closure
+
+The same `4D000611` netlist then closed timing by new placement plus the
+`4D000610` post-route repair scripts. No RTL, clock, constraint or timing
+exception changed, and synthesis was not rerun. The 235 captured inputs
+still match the working tree.
+
+The normal build places with a temporary 0.2 ns fabric-clock margin only.
+Four new placements of the image's own post-opt checkpoint also held a
+temporary 0.3 ns machine-clock margin through placement, physical
+optimization and routing, then ran the build's routed AggressiveExplore
+pass. All values below are nominal, with temporary margins cleared:
+
+| Step | Setup WNS (ns) | Hold WHS (ns) | Failing setup endpoints |
+| --- | ---: | ---: | ---: |
+| Original build | -0.813 | +0.042 | 2,013 |
+| Placement `ExtraTimingOpt` | -0.370 | +0.040 | 177 |
+| Then `reroute` (gs610 `repair_routed.tcl`) | -0.045 | +0.053 | 6 |
+| Then `phys2` (gs610 `repair_round2.tcl`) | +0.101 | +0.053 | 0 |
+
+Placements with `AltSpreadLogic_high`, `ExtraNetDelay_high` and `Explore`
+routed at -1.65, -1.78 and -1.94 ns; the last two were stopped before their
+final pass. The other first-round repairs of the `ExtraTimingOpt` route
+reached -0.006 to -0.068 ns. On the -0.006 ns result, both second-round
+recipes left the same CPU microcode-to-`P_reg[1]` path, 29 logic levels,
+unchanged. Two other second-round results also closed, at +0.038 ns.
+
+`build/gs611-sweep/apply_repair.py` installed the selected chain. It checks
+each step's command line, input hash and routing status back to the frozen
+post-opt checkpoint. Its record is
+`build/gs611/apple-iigs/reports/repair/pre-signoff-reroute/repair.json`.
+`scripts/repair_phos1_timing.py --signoff-only` then reran every normal
+export gate in a fresh Vivado process:
+
+- Setup slack is +0.101 ns, hold slack +0.053 ns and pulse-width slack
+  +1.250 ns.
+- The machine clock has +0.101 ns, the machine-to-CLK14 crossing +0.154 ns,
+  the fabric clock +0.259 ns and video +0.208 ns.
+- All 57,485 routable nets are routed. The IIgs clock, phase and native-CE
+  proofs, CDC, bus skew and timing coverage pass.
+- The bitstream reports `SHELL_BUILD_ID=32'h4D000611`.
+
+An independent rerun on the same sources passes all 15 suites:
+
+- Port check and import audit.
+- MMU decode, state and slots.
+- SmartPort ROM.
+- IOLC vectors and ADB, each with its upstream negative control.
+- IRQ dispatch, acceleration gates, ports, CPU peek and logical cache.
+
+The receipt is `build/gs611-verify/results.txt`. The ROM-image HDD boot runs
+were not repeated; their receipts above still verify against these sources.
+
+The SD test update is `build/gs611r-delivery/core611-sd.zip`, with evidence
+in `core611-evidence.zip` and hashes in `delivery.json`. It pairs the image
+with the rebuilt SmartPort `hdd.rom` recorded above. It requires ABI 0.22
+(ARM firmware M0.6.5); ARM firmware was not rebuilt. The package has not
+been installed or tested on the board. Full-game behavior and board
+acceptance remain unproven.
 See [Arkanoid diagnosis](APPLE_IIGS_ARKANOID.md) for game
 evidence and the separate ROM03 image-compatibility question.
