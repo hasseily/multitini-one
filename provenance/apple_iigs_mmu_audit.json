@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "policy": "KEGS takes precedence on MMU differences by user instruction. See docs/APPLE_IIGS_MMU_AUDIT.md for exclusions.",
+  "references": {
+    "kegs": {
+      "version": "1.38",
+      "url": "https://kegs.sourceforge.net/kegs.1.38.zip",
+      "archive_sha256": "d54c04cef80cc2d0dbd605210130047c03c5c2a89edc13745b74d16aa97d97ff",
+      "files": {
+        "src/moremem.c": "627c0ea1b0edb28f4300c8964d2d7e9253f38c6b1168c9b5d19338044d482704",
+        "src/sim65816.c": "8fcafd8042cec597f7359e2b235e1d2cc1f3dd48e1beba574540507f9c5b2396",
+        "src/video.c": "fbae6b8e296a799539408af3dabc5f0fb54bd9532097095e360463925fbc41c4",
+        "src/config.c": "d0bc3d468e693be611a8712e34a49c952514927398870075c6f75cdaa236a01d"
+      }
+    },
+    "gssquared": {
+      "commit": "695e627acb8154adfe7ea5ac972b32fbd50e2c3a",
+      "files": {
+        "src/mmus/mmu_iigs.cpp": "83090235e70e214f02ae1c2f57af2e47836a6c6c1a15be7e557a015dc122743c",
+        "src/mmus/mmu_iigs.hpp": "005de60381b410fb68b914072d4c98dbc58270ea52cf84b65c55c2a1a9e79eed",
+        "src/mmus/mmu_iie.cpp": "36302dc0e59ae8cfd855eb14c7abf43cc4ebb93ea4d8b18cd0749a74344c8d6d",
+        "src/mmus/mmu_ii.cpp": "ca7b7700a25f561c6e6b623f2e4aa9fa49c9fd87963f4a373557e94b83baaa25",
+        "apps/iigsmmutest/tests.hpp": "405ef79fe578ce3eaaa440a2d8f0724794e847f55d90422acfd09e04abd0e4e6"
+      }
+    }
+  },
+  "implementation": "Original HDL and independent tests; reference source is not imported or required at runtime."
+}

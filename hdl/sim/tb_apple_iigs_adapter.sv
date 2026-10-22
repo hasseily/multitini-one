@@ -89,6 +89,7 @@ module tb_apple_iigs_adapter;
             end else begin
                 immediate(8'h3f);sta(16'hc035); // Disable shadow copies, retain bank-0 I/O.
                 immediate(8'h80);sta(16'hc02d); // Slot 7 external I/O/ROM.
+                sta(16'hc006); // Release KEGS reset's internal Cx-ROM override.
                 if(disk_bypass)begin
                     immediate(8'h50);repeat(4)sta(16'hc05a);
                     immediate(8'hf7);sta(16'hc059); // Software disables both cache levels.

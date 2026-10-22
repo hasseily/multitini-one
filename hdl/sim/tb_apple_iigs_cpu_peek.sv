@@ -186,8 +186,8 @@ module tb_apple_iigs_cpu_peek;
       bit bank_io,external_io,predicted_io,old_local;
       begin
         #0.001;
-        bank_io=((forced_addr[23:16]<=1 && !f_shadow[6]) || forced_addr[23:16]==8'he0 || forced_addr[23:16]==8'he1 ||
-                 (f_cya[4] && forced_addr[23:16]>=2 && forced_addr[23:16]<=8'h7f));
+        // KEGS shadow-all mirrors odd-bank SHR writes; it does not add I/O aliases.
+        bank_io=((forced_addr[23:16]<=1 && !f_shadow[6]) || forced_addr[23:16]==8'he0 || forced_addr[23:16]==8'he1);
         external_io=((forced_addr[23:16]<=1 && !f_shadow[6]) || forced_addr[23:16]==8'he0 || forced_addr[23:16]==8'he1) &&
                     forced_addr[15:0]>=16'hc090 && forced_addr[15:0]<16'hc100 && f_slot[forced_addr[6:4]];
         predicted_io=bank_io && forced_addr[15:8]==8'hc0 && !external_io;
@@ -253,10 +253,10 @@ module tb_apple_iigs_cpu_peek;
             f_dma_bank=(bank+127)&255;
             f_dma_addr=native_class==0 ? 16'hc059 : native_class==1 ? 16'hc0f2 : 16'h1003;
             #0.001;
-            expected_cpu_io=((bank<=1 && !f_shadow[6]) || bank==224 || bank==225 || (f_cya[4] && bank>=2 && bank<=127));
+            expected_cpu_io=((bank<=1 && !f_shadow[6]) || bank==224 || bank==225);
             expected_native_external=((f_dma_bank<=1 && !f_shadow[6]) || f_dma_bank==224 || f_dma_bank==225) && f_dma_addr==16'hc0f2;
             expected_native_io=f_dma_addr[15:8]==8'hc0 && !expected_native_external &&
-              ((f_dma_bank<=1 && !f_shadow[6]) || f_dma_bank==224 || f_dma_bank==225 || (f_cya[4] && f_dma_bank>=2 && f_dma_bank<=127));
+              ((f_dma_bank<=1 && !f_shadow[6]) || f_dma_bank==224 || f_dma_bank==225);
             if(dut.cpu_local_read!==expected_cpu_io || dut.machine_i.IO!==expected_native_io || dut.cpu_ce)
               $fatal(1,"Independent CPU/DMA IO classification failed cpu%06x dma%02x%04x",forced_addr,f_dma_bank,f_dma_addr);
             dma_decode_checks++;

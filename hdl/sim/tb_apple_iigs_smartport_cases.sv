@@ -44,7 +44,7 @@
             @(negedge core_clk);reset=1;core_reset_request=1;repeat(20)@(negedge core_clk);reset=0;
             build_program(0);program_cursor=122880;
             emit(8'h78);immediate(8'h80);sta(16'hc036);immediate(8'h3f);sta(16'hc035);
-            immediate(8'h80);sta(16'hc02d);
+            immediate(8'h80);sta(16'hc02d);sta(16'hc006);
             if(bypass)begin immediate(8'h50);repeat(4)sta(16'hc05a);immediate(8'hf7);sta(16'hc059);end
             for(integer unit=0;unit<8;unit=unit+1)begin
                 buffer=24'h02ff80+unit*512;
@@ -62,7 +62,7 @@
             lda(16'hc700);smart_long_store(24'h020140);
             lda(16'hc800);smart_long_store(24'h020141);
             lda(16'hcfff);smart_long_store(24'h020142);
-            lda(16'hc800);smart_long_store(24'h020143); // CFFF released to internalROM.
+            lda(16'hc800);smart_long_store(24'h020143); // CFFF leaves no owner.
             lda(16'hc700);lda(16'hc600);lda(16'hc800);smart_long_store(24'h020144);
             emit(8'hdb);
             for(integer i=0;i<8;i=i+1)begin
@@ -99,8 +99,8 @@
             if(memory[24'h020150>>3][15:0]!==16'haa27 || memory[24'h050000>>3]!==64'haaaaaaaaaaaaaaaa)
                 $fatal(1,"failed read copied stale sector bytes or lost final error %x",memory[24'h020150>>3]);
             if(memory[24'h020140>>3][7:0]!==hdd_rom[0] || memory[24'h020140>>3][15:8]!==hdd_rom[256] ||
-                memory[24'h020140>>3][23:16]!==hdd_rom[2303] || memory[24'h020140>>3][31:24]!==8'hea ||
-                memory[24'h020140>>3][39:32]!==8'hea)
+                memory[24'h020140>>3][23:16]!==hdd_rom[2303] || memory[24'h020140>>3][31:24]!==8'h80 ||
+                memory[24'h020140>>3][39:32]!==8'h80)
                 $fatal(1,"C700/C800 owner,CFFF release,otherCn release %x",memory[24'h020140>>3]);
             $display("PASS: SmartPort production eight-unit stock/max/bypass speed%0d bypass%b32-bitLBA24-bitDMA bankcross cachecoherence/errors",speed,bypass);
         end
@@ -112,14 +112,17 @@
             @(negedge core_clk);reset=1;core_reset_request=1;repeat(20)@(negedge core_clk);reset=0;
             build_program(0);program_cursor=122880;
             emit(8'h78);immediate(8'h80);sta(16'hc036);immediate(8'h3f);sta(16'hc035);
-            immediate(8'h80);sta(16'hc02d);
+            immediate(8'h80);sta(16'hc02d);sta(16'hc006);
             emit(8'ha2);emit(8'hff);emit(8'h9a); // Establish the caller's known emulation stack.
             emit(8'h5c);emit(0);emit(8'h20);emit(0);
-            // Bank0 emulation caller: JSR C70D; extended READ; banked list.
+            // The real IIgs boot scan probes C3 before the slot7 call, leaving
+            // internal C800 latched. The C7 firmware must release it itself.
+            // Bank0 emulation caller: LDA C300; JSR C70D; extended READ; banked list.
             for(integer i=0;i<64;i=i+1)caller[i]=8'hea;
-            caller[0]=8'h20;caller[1]=8'h0d;caller[2]=8'hc7;caller[3]=8'h41;
-            caller[4]=0;caller[5]=8'h40;caller[6]=2;caller[7]=0;
-            cursor=8;
+            caller[0]=8'had;caller[1]=0;caller[2]=8'hc3;
+            caller[3]=8'h20;caller[4]=8'h0d;caller[5]=8'hc7;caller[6]=8'h41;
+            caller[7]=0;caller[8]=8'h40;caller[9]=2;caller[10]=0;
+            cursor=11;
             caller[cursor++]=8'h8f;caller[cursor++]=8'h60;caller[cursor++]=1;caller[cursor++]=2;
             caller[cursor++]=8'h08;caller[cursor++]=8'h68;
             caller[cursor++]=8'h8f;caller[cursor++]=8'h61;caller[cursor++]=1;caller[cursor++]=2;
@@ -143,7 +146,7 @@
             if(memory[24'h020160>>3][7:0]!==0 || (memory[24'h020160>>3][15:8]&8'h05)!==8'h04 ||
                 memory[24'h020160>>3][31:16]!==16'h0200 || memory[24'h020160>>3][39:32]!==8'hff)
                 $fatal(1,"actual SmartPort ROM A/P/X/Y/SP return=%x",memory[24'h020160>>3]);
-            $display("PASS: actual C70D/C800 extended SmartPort ROM unit8 banked param+DMA return/status/registers speed%0d",speed);
+            $display("PASS: prelatched INTC8 actual C70D/C800 extended SmartPort ROM unit8 banked param+DMA return/status/registers speed%0d",speed);
         end
     endtask
     task smartport_reset_checks;

@@ -449,7 +449,8 @@ output video_pal,
   logic               RAMWRT;
   logic               INTCXROM;
   logic               ALTZP;
-  logic               SLOTC3ROM;
+  // KEGS keeps C00A/B and C02D bit 3 in the same slot byte.
+  wire                SLOTC3ROM = SLTROMSEL[3];
   //logic               EIGHTYCOL;
   //logic               ALTCHARSET;
   //logic PAGE2;
@@ -559,6 +560,9 @@ output video_pal,
     .bank_latch(NEWVIDEO[0]),
     .shadow_all(CYAREG[4]),
     .SLTROMSEL(SLTROMSEL),
+    .INTCXROM(INTCXROM),
+    .SLOTC3ROM(SLOTC3ROM),
+    .INTC8ROM(INTC8ROM),
 
     .dbg_wdata(dout),
     .dbg_cpu_addr(cpu_addr),
@@ -606,6 +610,9 @@ output video_pal,
     .bank_latch(NEWVIDEO[0]),
     .shadow_all(CYAREG[4]),
     .SLTROMSEL(SLTROMSEL),
+    .INTCXROM(INTCXROM),
+    .SLOTC3ROM(SLOTC3ROM),
+    .INTC8ROM(INTC8ROM),
 
     .dbg_wdata(dout),
     .dbg_cpu_addr(cpu_addr),
@@ -927,33 +934,12 @@ output video_pal,
     end
 `endif
     if (reset) begin
-      // C036 Speed Register initialization - proper warm/cold reset handling
-      // Bit 7: Fast mode (2.8MHz) - always set
-      // Bit 6: Power-on status - SET on power-up/cold reset, CLEAR on warm reset
-      //        When bit 6=1, ROM performs full initialization (RAM test, etc.)
-      //        When bit 6=0, ROM skips initialization (warm reset behavior)
-      if (cold_reset) begin
-        // Cold/power-on reset: Set bit 6=1 for full ROM initialization sequence
-        CYAREG <= 8'hC0;  // Bit 7=fast mode, Bit 6=power-on status
-`ifdef DEBUG_RESET
-        $display("RESET_TRACE: *** COLD RESET *** CYAREG=$C0 (bit 6=1 for full boot)");
-`endif
-      end else begin
-        // Warm reset: Preserve bit 6, set bit 7, clear other bits
-        CYAREG <= {1'b1, CYAREG[6], 6'b000000};
-`ifdef DEBUG_RESET
-        $display("RESET_TRACE: *** WARM RESET *** CYAREG=$%02X (preserving bit 6=%b)", {1'b1, CYAREG[6], 6'b000000}, CYAREG[6]);
-`endif
-      end
-      shadow <= 8'b0000_1000;  // Original value: bit 3=1 (SHGR disabled), others=0 (enabled)
+      // KEGS cold start: fast mode and ROM03 power-on status. A warm
+      // reset preserves the complete speed register, including shadow-all.
+      if (cold_reset) CYAREG <= rom_select ? 8'h80 : 8'hc0;
+      shadow <= 8'h00;
       DMAREG <= 8'h00;
-`ifdef DEBUG_RESET
-      $display("SHADOW_REG_INIT: shadow=%08b (Original shadowing config)", 8'b0000_1000);
-      $display("  TXT1=%b HGR1=%b HGR2=%b SHGR=%b AUX=%b TXT2=%b LC=%b",
-               1'b1, 1'b1, 1'b1, 1'b0, 1'b0, 1'b1, 1'b1);
-      $display("  Text/HGR shadowing ACTIVE, Super HiRes shadowing DISABLED");
-`endif
-      NEWVIDEO <= 8'h41;
+      NEWVIDEO <= cold_reset ? 8'h41 : (NEWVIDEO & 8'h41);
       C02BVAL <= 8'h08;
 
       // FROM GSPLUS
@@ -963,7 +949,7 @@ output video_pal,
       LC_WE_PRE<=1'b0;  // Sather: PRE-WRITE is reset by a system reset (LC_WE itself resets enabled)
 
       SLTROMSEL<=0;
-      TEXTCOLOR<='hf2;
+      TEXTCOLOR<=8'hf0;
       speaker_state<=0;
       DISK35<=0;
       VGCINT<=0; //23
@@ -972,13 +958,16 @@ output video_pal,
       STORE80<=0;
       RAMRD<=0;
       RAMWRT<=0;
-      INTCXROM<=0;
+      INTCXROM<=1;
       ALTZP<=0;
-      SLOTC3ROM<=0;
+      SLTROMSEL[3]<=0;
       EIGHTYCOL<=0;
       ALTCHARSET<=0;
       PAGE2<=0;
-      AN3<=0;
+      AN3<=1;
+      TEXTG<=1;
+      MIXG<=0;
+      HIRES_MODE<=0;
       RDROM<=1;
       LCRAM2<=1;  // Fix: Should be 1 to match STATEREG initialization (bit 1 = LCRAM2)
       LC_WE<=1;  // Per Apple IIgs HW ref: "reset initializes for writing to the RAM"
@@ -1039,42 +1028,41 @@ output video_pal,
         begin
           case (addr[11:0])
             // Apple II compatibility soft switches ($C000-$C00F)
-            // These should ONLY respond to bank $00 and $E0 accesses, NOT bank $01/$E1
-            // This prevents MVN/MVP block moves through bank $01 I/O space from corrupting state
+            // All four mapped I/O aliases have identical side effects.
 `ifdef DEBUG_IO
-            12'h000: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin $display("**STORE80 %x",0); STORE80<= 1'b0 ; end end
-            12'h001: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin $display("**STORE80 %x",1); STORE80<= 1'b1 ; end end
-            12'h002: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin $display("**RAMRD %x",0); RAMRD<= 1'b0 ; end end
-            12'h003: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin $display("**RAMRD %x",1); RAMRD<= 1'b1 ; end end
-            12'h004: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin $display("**RAMWRT %x",0); RAMWRT<= 1'b0 ; end end
-            12'h005: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin $display("**RAMWRT %x",1); RAMWRT<= 1'b1 ; end end
-            12'h006: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin $display("**INTCXROM %x",0);INTCXROM<= 1'b0; end end
-            12'h007: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin $display("**INTCXROM %x",1);INTCXROM <= 1'b1; end end
-            12'h008: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin $display("**ALTZP %x",0); ALTZP<= 1'b0; end end
-            12'h009: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin $display("**ALTZP %x",1); ALTZP<= 1'b1; end end
-            12'h00A: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin $display("**SLOTC3ROM %x",0);SLOTC3ROM<= 1'b0; end end
-            12'h00B: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin $display("**SLOTC3ROM %x",1);SLOTC3ROM<= 1'b1; end end
-            12'h00C: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin $display("**EIGHTYCOL %x",0); EIGHTYCOL<= 1'b0; end end
-            12'h00D: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin $display("**EIGHTYCOL %x",1); EIGHTYCOL<= 1'b1; end end
-            12'h00E: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin $display("**ALTCHARSET %x",0); ALTCHARSET<= 1'b0; end end
-            12'h00F: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin $display("**ALTCHARSET %x",1); ALTCHARSET<= 1'b1; end end
+            12'h000: begin $display("**STORE80 %x",0); STORE80<= 1'b0 ; end
+            12'h001: begin $display("**STORE80 %x",1); STORE80<= 1'b1 ; end
+            12'h002: begin $display("**RAMRD %x",0); RAMRD<= 1'b0 ; end
+            12'h003: begin $display("**RAMRD %x",1); RAMRD<= 1'b1 ; end
+            12'h004: begin $display("**RAMWRT %x",0); RAMWRT<= 1'b0 ; end
+            12'h005: begin $display("**RAMWRT %x",1); RAMWRT<= 1'b1 ; end
+            12'h006: begin $display("**INTCXROM %x",0);INTCXROM<= 1'b0; end
+            12'h007: begin $display("**INTCXROM %x",1);INTCXROM <= 1'b1; end
+            12'h008: begin $display("**ALTZP %x",0); ALTZP<= 1'b0; end
+            12'h009: begin $display("**ALTZP %x",1); ALTZP<= 1'b1; end
+            12'h00A: begin $display("**SLOTC3ROM %x",0);SLTROMSEL[3]<= 1'b0; end
+            12'h00B: begin $display("**SLOTC3ROM %x",1);SLTROMSEL[3]<= 1'b1; end
+            12'h00C: begin $display("**EIGHTYCOL %x",0); EIGHTYCOL<= 1'b0; end
+            12'h00D: begin $display("**EIGHTYCOL %x",1); EIGHTYCOL<= 1'b1; end
+            12'h00E: begin $display("**ALTCHARSET %x",0); ALTCHARSET<= 1'b0; end
+            12'h00F: begin $display("**ALTCHARSET %x",1); ALTCHARSET<= 1'b1; end
 `else
-            12'h000: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin STORE80<= 1'b0 ; end end
-            12'h001: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin STORE80<= 1'b1 ; end end
-            12'h002: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin RAMRD<= 1'b0 ; end end
-            12'h003: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin RAMRD<= 1'b1 ; end end
-            12'h004: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin RAMWRT<= 1'b0 ; end end
-            12'h005: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin RAMWRT<= 1'b1 ; end end
-            12'h006: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin INTCXROM<= 1'b0; end end
-            12'h007: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin INTCXROM <= 1'b1; end end
-            12'h008: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin ALTZP<= 1'b0; end end
-            12'h009: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin ALTZP<= 1'b1; end end
-            12'h00A: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin SLOTC3ROM<= 1'b0; end end
-            12'h00B: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin SLOTC3ROM<= 1'b1; end end
-            12'h00C: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin EIGHTYCOL<= 1'b0; end end
-            12'h00D: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin EIGHTYCOL<= 1'b1; end end
-            12'h00E: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin ALTCHARSET<= 1'b0; end end
-            12'h00F: begin if (bank_bef == 8'h00 || bank_bef == 8'he0) begin ALTCHARSET<= 1'b1; end end
+            12'h000: begin STORE80<= 1'b0 ; end
+            12'h001: begin STORE80<= 1'b1 ; end
+            12'h002: begin RAMRD<= 1'b0 ; end
+            12'h003: begin RAMRD<= 1'b1 ; end
+            12'h004: begin RAMWRT<= 1'b0 ; end
+            12'h005: begin RAMWRT<= 1'b1 ; end
+            12'h006: begin INTCXROM<= 1'b0; end
+            12'h007: begin INTCXROM <= 1'b1; end
+            12'h008: begin ALTZP<= 1'b0; end
+            12'h009: begin ALTZP<= 1'b1; end
+            12'h00A: begin SLTROMSEL[3]<= 1'b0; end
+            12'h00B: begin SLTROMSEL[3]<= 1'b1; end
+            12'h00C: begin EIGHTYCOL<= 1'b0; end
+            12'h00D: begin EIGHTYCOL<= 1'b1; end
+            12'h00E: begin ALTCHARSET<= 1'b0; end
+            12'h00F: begin ALTCHARSET<= 1'b1; end
 `endif
             12'h010, 12'h026, 12'h027, 12'h070: begin
               // Note: $C010 (key strobe clear) now handled directly by ADB module
@@ -1111,9 +1099,9 @@ output video_pal,
             // unimplemented. Any software accessing C028 is likely erroneous or written for third-party cards.
             // 12'h028: [REMOVED - does not exist on real hardware]
 `ifdef DEBUG_IO
-            12'h029: begin $display("**NEWVIDEO %x",dout);NEWVIDEO <= dout; end
+            12'h029: begin $display("**NEWVIDEO %x",dout);NEWVIDEO <= dout & 8'he1; end
 `else
-            12'h029: NEWVIDEO <= dout;
+            12'h029: NEWVIDEO <= dout & 8'he1;
 `endif
             12'h02b: C02BVAL <= dout; // from gsplus
 `ifdef DEBUG_IO
@@ -1164,9 +1152,9 @@ output video_pal,
               shadow <= dout;
             end
 `ifdef DEBUG_IO
-            12'h036: begin $display("__CYAREG %x",dout);CYAREG <= dout; end
+            12'h036: begin $display("__CYAREG %x",dout);CYAREG <= (dout & 8'h9f) | ((!rom_select && !dout[5]) ? (dout & 8'h40) : 8'h00); end
 `else
-            12'h036: begin CYAREG <= dout; end
+            12'h036: begin CYAREG <= (dout & 8'h9f) | ((!rom_select && !dout[5]) ? (dout & 8'h40) : 8'h00); end
 `endif
             12'h037: DMAREG <= dout;
             // SCC (Serial Communications Controller) - Zilog 8530
@@ -1829,18 +1817,27 @@ wire slot_internalrom_ce;
 reg [7:0]  device_select;
 reg [7:0]  io_select;
 wire       hdd_dma;
-// A Cn access selects that slot's C800 firmware. CFFF releases ownership
-// after its data phase. Internal/other slots never inherit slot-7 ownership.
+// C3 accesses latch internal C800 when slot 3 is internal. Other slots do
+// not clear that latch. CFFF releases it after its read/write data phase.
+// Slot 7's expansion firmware is a board extension, below internal priority.
+reg INTC8ROM=1'b0;
 reg hdd_expansion_owner=1'b0;
 wire hdd_slot_bank=bank_bef==8'h00 || bank_bef==8'h01 || bank_bef==8'he0 || bank_bef==8'he1;
 wire hdd_expansion_select=hdd_expansion_owner && hdd_slot_bank && !inhibit_cxxx &&
-    !CXROM && SLTROMSEL[7] && addr_bef>=16'hc800 && addr_bef<=16'hcfff;
+    !CXROM && !INTC8ROM && SLTROMSEL[7] && addr_bef>=16'hc800 && addr_bef<=16'hcfff;
 always @(posedge CLK_14M) begin
-    if(reset)hdd_expansion_owner<=0;
-    else if(bus_phi2 && !hdd_dma && hdd_slot_bank && !inhibit_cxxx)begin
-        if(addr_bef==16'hcfff)hdd_expansion_owner<=0;
-        else if(addr_bef>=16'hc100 && addr_bef<16'hc800)
-            hdd_expansion_owner<=io_select[7];
+    if(reset)begin
+        INTC8ROM<=0;
+        hdd_expansion_owner<=0;
+    end else if(bus_phi2 && valid && !hdd_dma && hdd_slot_bank && !inhibit_cxxx)begin
+        if(addr_bef==16'hcfff)begin
+            INTC8ROM<=0;
+            hdd_expansion_owner<=0;
+        end else begin
+            if(addr_bef[15:8]==8'hc3 && !SLOTC3ROM)INTC8ROM<=1;
+            if(addr_bef>=16'hc100 && addr_bef<16'hc800)
+                hdd_expansion_owner<=io_select[7];
+        end
     end
 end
 assign dbg_hdd_dma = hdd_dma;
@@ -2037,10 +2034,16 @@ vgc vgc(
 
 
 
-// Floating bus: reads from non-existent RAM banks return the bank number
-wire [7:0] floating_bus = (bank_bef >= RAMSIZE && bank_bef < 8'hE0) ? bank_bef : 8'h80;
+// KEGS returns zero for uninstalled memory; mapped empty I/O retains
+// this core's existing bus value. The KEGS EF DOC alias is not exposed.
+wire unmapped_bank = bank_bef >= RAMSIZE && bank_bef != 8'he0 &&
+    bank_bef != 8'he1 && bank_bef < 8'hfc;
+wire [7:0] floating_bus = unmapped_bank ? 8'h00 : 8'h80;
 
+// KEGS zero-fills the unused FC/FD half of a ROM01 image.
+wire reserved_rom01 = rom_select && (bank_bef==8'hfc || bank_bef==8'hfd);
 wire [7:0] din =
+  reserved_rom01 ? 8'h00 :
   (io_select[7] | hdd_expansion_select | device_select[7] | (hdd_dma & hdd_dma_we)) ? HDD_DO :
   (fastram_ce | rom_ce) ?  top_din :
   slowram_ce ? slowram_dout :
@@ -3349,8 +3352,12 @@ assign cpu_memory_cycle = cpu_valid && (fastram_ce || (rom_ce && !we)) &&
 // Slot/IO and Mega II $C000-$CFFF use the native bridge. Direct E0/E1 RAM
 // ($0000-$BFFF, $D000-$FFFF with aux/ALTZP/LC/bank-latch mapping already in
 // the physical address) and every slow-RAM write (E0/E1 or shadow copy) use
-// the primary-clock slow-RAM port. E0/E1 LC ROM reads use the ROM cache.
-wire cpu_plain_bus = !IO && !EXTERNAL_IO && !(|device_select) && !(|io_select) && !slot_ce && !hdd_expansion_select;
+// the primary-clock slow-RAM port. KEGS E0/E1 LC windows always use RAM.
+// All mapped C1-CF accesses retire through the native bridge, including
+// internal ROM reads. This clocks C3/CFFF ownership once at every speed.
+wire cpu_mapped_slot_bus = hdd_slot_bank && !inhibit_cxxx &&
+    addr_bef>=16'hc100 && addr_bef<=16'hcfff;
+wire cpu_plain_bus = !cpu_mapped_slot_bus && !IO && !EXTERNAL_IO && !(|device_select) && !(|io_select) && !slot_ce && !hdd_expansion_select;
 wire cpu_mega2_bank = bank_bef == 8'hE0 || bank_bef == 8'hE1;
 wire cpu_mega2_window = cpu_mega2_bank && (addr_bef < 16'hC000 || addr_bef >= 16'hD000);
 assign cpu_slowram_read = EXTERNAL_CPU && !hdd_dma && valid && !we && cpu_plain_bus &&

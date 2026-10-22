@@ -129,7 +129,9 @@ int main(int argc,char**argv) {
             r->P65C816__DOT__SP=c.stack;r->P65C816__DOT__SPW=c.stack;r->P65C816__DOT__P=0x130|c.i;
             r->P65C816__DOT__oldXF=1;r->P65C816__DOT__PBR=0;r->P65C816__DOT__DBR=0;r->P65C816__DOT__D=0;
             r->P65C816__DOT__AddrGen__DOT__PCr=c.boot?0xc700:pc;r->P65C816__DOT__GotInterrupt=0;r->P65C816__DOT__IsResetInterrupt=0;cpu.eval();
-            bool done=false;unsigned peak_stack=0;
+            bool done=false,internal_c8=true,entry_seen=false;unsigned peak_stack=0,cfff_reads=0;
+            std::array<unsigned,5> entry_state{};
+            auto caller_state=[&](){return std::array<unsigned,5>{r->P65C816__DOT__A,r->P65C816__DOT__P,r->P65C816__DOT__X,r->P65C816__DOT__Y,r->P65C816__DOT__SP};};
             for(unsigned cycle=0;cycle<100000;cycle++) {
                 // Measure from before the caller JSR, including its two bytes,
                 // the saved P/B/scratch and every nested helper return frame.
@@ -141,7 +143,17 @@ int main(int argc,char**argv) {
                 if(cpu.WE&&(cpu.VPA||cpu.VDA)) {
                     if(op==4&&cpu.VDA&&!cpu.VPA&&(a==b||a==((b+1)&0xffffff)))control_reads++;
                     if(cpu.VPA&&cpu.VDA&&((!c.boot&&a==end)||(c.boot&&a==(c.mounted?0x801:0xc600)))){done=true;break;}
-                    if(cpu.VPA&&a>=0xc800&&a<=0xcfff)rom_fetch++;
+                    if(cpu.VPA&&cpu.VDA&&a==(c.boot?0xc757:c.legacy?0xc70a:0xc70d)&&!entry_seen) {
+                        entry_state=caller_state();entry_seen=true;
+                    }
+                    // Firmware callers may arrive with the IIgs internal C800
+                    // latch set. CFFF releases it after returning the old byte.
+                    if(a==0xcfff) {data=0xc0;internal_c8=false;cfff_reads++;}
+                    else if(cpu.VPA&&a>=0xc800&&a<0xcfff) {
+                        require(!internal_c8,c.name+" entered masked C800 before releasing INTC8ROM");
+                        if(!rom_fetch)require(entry_seen&&caller_state()==entry_state,c.name+" C7 trampoline changed A/P/X/Y/SP");
+                        rom_fetch++;
+                    }
                     if(a>=0xc0f0&&a<=0xc0ff) {
                         unsigned reg=a&15;
                         if(reg==15)data=flags();
@@ -168,6 +180,7 @@ int main(int argc,char**argv) {
             }
             require(done,c.name+" timeout PC="+std::to_string(r->P65C816__DOT__AddrGen__DOT__PCr));
             require(rom_fetch>0,c.name+" never executed expansion ROM");
+            require(cfff_reads>0,c.name+" did not release prelatched internal C800");
             if(!c.boot) {
                 require((r->P65C816__DOT__A&255)==c.error,c.name+" wrong A error actual="+std::to_string(r->P65C816__DOT__A&255));
                 require(bool(r->P65C816__DOT__P&1)==bool(c.error),c.name+" wrong C");

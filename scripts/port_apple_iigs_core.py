@@ -51,7 +51,7 @@ def generate_iigs() -> str:
     text = replace(text, "  adb adb(\n", "  adb adb(\n          .load_rom_clk(load_rom_clk),\n          .load_rom_we(load_rom_we & ((load_rom_addr[15:12]==4'h1) | (load_rom_addr[15:12]==4'h3))),\n          .load_rom_bank(load_rom_addr[13]),\n          .load_rom_addr(load_rom_addr[11:0]),\n          .load_rom_data(load_rom_data),\n")
     text = replace(text, "    hdd hdd(\n", "    hdd hdd(\n        .load_rom_clk(load_rom_clk),\n        .load_rom_we(load_rom_we & (load_rom_addr[15:12]==4'h2)),\n        .load_rom_addr(load_rom_addr[11:0]),\n        .load_rom_data(load_rom_data),\n")
     text = smartport_iigs(text)
-    return normalize(external_cpu_port(text))
+    return normalize(mmu_state_iigs(external_cpu_port(text)))
 
 
 def smartport_iigs(text: str) -> str:
@@ -1268,16 +1268,219 @@ def generate_enabled_floppy(text: str, name: str) -> str:
     return normalize(text)
 
 
+def mmu_state_iigs(text: str) -> str:
+    """Apply KEGS MMU state/retirement rules to the machine and its CPU peek."""
+    text = replace(text, "    .SLTROMSEL(SLTROMSEL),",
+                   "    .SLTROMSEL(SLTROMSEL),\n    .INTCXROM(INTCXROM),\n"
+                   "    .SLOTC3ROM(SLOTC3ROM),\n    .INTC8ROM(INTC8ROM),", count=2)
+    text = replace(text, "  logic               SLOTC3ROM;",
+                   "  // KEGS keeps C00A/B and C02D bit 3 in the same slot byte.\n"
+                   "  wire                SLOTC3ROM = SLTROMSEL[3];")
+    text = text.replace("SLOTC3ROM<=", "SLTROMSEL[3]<=").replace("SLOTC3ROM <=", "SLTROMSEL[3] <=")
+    start = text.index("      // C036 Speed Register initialization")
+    end = text.index("      NEWVIDEO <=", start)
+    text = text[:start] + """      // KEGS cold start: fast mode and ROM03 power-on status. A warm
+      // reset preserves the complete speed register, including shadow-all.
+      if (cold_reset) CYAREG <= rom_select ? 8'h80 : 8'hc0;
+      shadow <= 8'h00;
+      DMAREG <= 8'h00;
+""" + text[end:]
+    text = replace(text, "      INTCXROM<=0;", "      INTCXROM<=1;")
+    text = replace(text, "      NEWVIDEO <= 8'h41;",
+                   "      NEWVIDEO <= cold_reset ? 8'h41 : (NEWVIDEO & 8'h41);")
+    text = replace(text, "NEWVIDEO <= dout;", "NEWVIDEO <= dout & 8'he1;", count=2)
+    text = replace(text, "      TEXTCOLOR<='hf2;", "      TEXTCOLOR<=8'hf0;")
+    text = replace(text, "      AN3<=0;",
+                   "      AN3<=1;\n      TEXTG<=1;\n      MIXG<=0;\n      HIRES_MODE<=0;")
+    text = replace(text,
+        "            // These should ONLY respond to bank $00 and $E0 accesses, NOT bank $01/$E1\n"
+        "            // This prevents MVN/MVP block moves through bank $01 I/O space from corrupting state",
+        "            // All four mapped I/O aliases have identical side effects.")
+    text, count = re.subn(r"(12'h00[0-9A-F]: begin )if \(bank_bef == 8'h00 \|\| bank_bef == 8'he0\) begin (.*?) end end",
+                          r"\1\2 end", text)
+    if count != 32:
+        raise ValueError(f"Expected 32 guarded MMU soft switches, found {count}")
+    text = replace(text, "CYAREG <= dout;",
+                   "CYAREG <= (dout & 8'h9f) | ((!rom_select && !dout[5]) ? (dout & 8'h40) : 8'h00);", count=2)
+    start = text.index("// A Cn access selects that slot's C800 firmware.")
+    end = text.index("assign dbg_hdd_dma", start)
+    text = text[:start] + """// C3 accesses latch internal C800 when slot 3 is internal. Other slots do
+// not clear that latch. CFFF releases it after its read/write data phase.
+// Slot 7's expansion firmware is a board extension, below internal priority.
+reg INTC8ROM=1'b0;
+reg hdd_expansion_owner=1'b0;
+wire hdd_slot_bank=bank_bef==8'h00 || bank_bef==8'h01 || bank_bef==8'he0 || bank_bef==8'he1;
+wire hdd_expansion_select=hdd_expansion_owner && hdd_slot_bank && !inhibit_cxxx &&
+    !CXROM && !INTC8ROM && SLTROMSEL[7] && addr_bef>=16'hc800 && addr_bef<=16'hcfff;
+always @(posedge CLK_14M) begin
+    if(reset)begin
+        INTC8ROM<=0;
+        hdd_expansion_owner<=0;
+    end else if(bus_phi2 && valid && !hdd_dma && hdd_slot_bank && !inhibit_cxxx)begin
+        if(addr_bef==16'hcfff)begin
+            INTC8ROM<=0;
+            hdd_expansion_owner<=0;
+        end else begin
+            if(addr_bef[15:8]==8'hc3 && !SLOTC3ROM)INTC8ROM<=1;
+            if(addr_bef>=16'hc100 && addr_bef<16'hc800)
+                hdd_expansion_owner<=io_select[7];
+        end
+    end
+end
+""" + text[end:]
+    text = replace(text, "wire cpu_plain_bus = !IO",
+                   "// All mapped C1-CF accesses retire through the native bridge, including\n"
+                   "// internal ROM reads. This clocks C3/CFFF ownership once at every speed.\n"
+                   "wire cpu_mapped_slot_bus = hdd_slot_bank && !inhibit_cxxx &&\n"
+                   "    addr_bef>=16'hc100 && addr_bef<=16'hcfff;\n"
+                   "wire cpu_plain_bus = !cpu_mapped_slot_bus && !IO")
+    text = replace(text, "// the primary-clock slow-RAM port. E0/E1 LC ROM reads use the ROM cache.",
+                   "// the primary-clock slow-RAM port. KEGS E0/E1 LC windows always use RAM.")
+    text = replace(text, "wire [7:0] din =\n",
+                   "// KEGS zero-fills the unused FC/FD half of a ROM01 image.\n"
+                   "wire reserved_rom01 = rom_select && (bank_bef==8'hfc || bank_bef==8'hfd);\n"
+                   "wire [7:0] din =\n  reserved_rom01 ? 8'h00 :\n")
+    text = replace(text,
+                   "// Floating bus: reads from non-existent RAM banks return the bank number\n"
+                   "wire [7:0] floating_bus = (bank_bef >= RAMSIZE && bank_bef < 8'hE0) ? bank_bef : 8'h80;",
+                   "// KEGS returns zero for uninstalled memory; mapped empty I/O retains\n"
+                   "// this core's existing bus value. The KEGS EF DOC alias is not exposed.\n"
+                   "wire unmapped_bank = bank_bef >= RAMSIZE && bank_bef != 8'he0 &&\n"
+                   "    bank_bef != 8'he1 && bank_bef < 8'hfc;\n"
+                   "wire [7:0] floating_bus = unmapped_bank ? 8'h00 : 8'h80;")
+    return text
+
+
 def generate_mmu() -> str:
     text = upstream("rtl/mmu.sv")
     text = replace(text, "module mmu", NOTICE + "module mmu")
-    text = replace(text,
-        "  // Force ROM2 on IRQ/BRK vector fetch cycles (VPB low) to return correct vectors from ROM bank FF\n"
-        "  wire vec_fetch_force_rom_ce = (~vpb_n) && (bank_log == 8'h00) &&",
-        "  // IOLC inhibit selects bank-00 RAM for vectors as well as instructions.\n"
-        "  // Retain the ROM vector override only while the language card is mapped.\n"
-        "  wire vec_fetch_force_rom_ce = (~vpb_n) && !shadow[6] && (bank_log == 8'h00) &&")
-    return normalize(text)
+    # Keep the imported license/interface; implement the audited mapping as one
+    # decoder. KEGS 1.38 is the selected compatibility authority; see the audit
+    # for deliberate differences from GSSquared and unsupported KEGS switches.
+    start = text.index("// ============================================================================")
+    end = text.index(NOTICE, start)
+    text = text[:start] + """// Apple IIgs memory decode. Pure combinational translation of a logical bus
+// access and the current soft switches. Reference: KEGS 1.38 moremem.c.
+// See docs/APPLE_IIGS_MMU_AUDIT.md for the reference policy and regressions.
+
+""" + text[end:]
+    text = replace(text, "    input  wire [7:0]  SLTROMSEL,     // $C02D slot ROM select",
+                   "    input  wire [7:0]  SLTROMSEL,     // $C02D slot ROM select\n"
+                   "    input  wire        INTCXROM,\n"
+                   "    input  wire        SLOTC3ROM,\n"
+                   "    input  wire        INTC8ROM,")
+    text = text[:text.index("  // --------------------------------------------------------------------------")]
+    return normalize(text + """  wire low_bank = bank_log == 8'h00 || bank_log == 8'h01;
+  wire slow_bank = bank_log == 8'he0 || bank_log == 8'he1;
+  wire iolc_bank = (low_bank && !shadow[6]) || slow_bank;
+  wire mapped_cxxx = iolc_bank && addr_log[15:12] == 4'hc;
+  wire flat_low = low_bank && shadow[6];
+
+  // KEGS fixup_altzp/ramrd/ramwrt and fixup_bank0_{0400,2000}.
+  // Higher banks never inherit the bank-00 aux switches. KEGS does not support
+  // NEWVIDEO[0]=0; retain the existing direct E1 latch-off implementation.
+  wire [7:0] bank_eff = (bank_log == 8'he1 && !bank_latch) ? 8'he0 : bank_log;
+  wire switched_bank = bank_eff == 8'h00 || bank_eff == 8'he0;
+  always_comb begin
+    aux = 1'b0;
+    if (switched_bank) begin
+      if (addr_log < 16'h0200 || addr_log >= 16'hc000)
+        // IOLC-inhibited Cxxx bypasses ALTZP (KEGS fixup_shadow_iolc).
+        aux = ALTZP && !(flat_low && addr_log[15:12] == 4'hc);
+      else if (STORE80 && (addr_log >= 16'h0400 && addr_log < 16'h0800 ||
+               HIRES_MODE && addr_log >= 16'h2000 && addr_log < 16'h4000))
+        aux = PAGE2;
+      else
+        aux = we ? RAMWRT : RAMRD;
+    end else if (bank_eff == 8'h01 || bank_eff == 8'he1)
+      aux = 1'b1;
+  end
+  wire [7:0] bank_phys = {bank_eff[7:1], bank_eff[0] | aux};
+
+  // Keep KEGS's backing layout: LC bank 1 at Cxxx, bank 2 at Dxxx.
+  // IOLC inhibit swaps C/D, exposing bank 2 at Cxxx and bank 1 at Dxxx.
+  // E0/E1 never overlay ROM or write-protect RAM; RDROM still selects the
+  // read-side Dxxx backing window in KEGS fixup_lc.
+  wire lc_dxxx_fold = addr_log[15:12] == 4'hd &&
+      (flat_low || (iolc_bank && !LCRAM2 &&
+       (!RDROM || (we && (slow_bank || LC_WE)))));
+  wire flat_cxxx_swap = flat_low && addr_log[15:12] == 4'hc;
+  assign addr_bus = {bank_phys, addr_log[15:13],
+                    addr_log[12] ^ (lc_dxxx_fold || flat_cxxx_swap), addr_log[11:0]};
+  assign lcram2_sel = iolc_bank && addr_log >= 16'hd000 &&
+                     (lc_dxxx_fold || !RDROM);
+  assign inhibit_cxxx = lcram2_sel || flat_low;
+
+  assign slowram_we = we;
+  assign is_internal_io = !SLTROMSEL[addr_log[6:4]];
+  assign EXTERNAL_IO = iolc_bank && addr_log >= 16'hc090 && addr_log < 16'hc100 && !is_internal_io;
+  assign IO = iolc_bank && addr_log[15:8] == 8'hc0 && !EXTERNAL_IO;
+  assign is_internal = INTCXROM ||
+      ((addr_log[10:8] == 3'd3) ? !SLOTC3ROM : !SLTROMSEL[addr_log[10:8]]);
+  wire slot_window = mapped_cxxx && addr_log >= 16'hc100 && addr_log < 16'hc800;
+  assign slot_ce = slot_window && !is_internal;
+  assign slot_internalrom_ce = slot_window && is_internal;
+
+  // ROM 01 has no FC/FD payload. The machine returns the KEGS zero-filled
+  // reserved-ROM value without accessing or aliasing the loaded FE/FF image.
+  assign romc_ce = bank_log == 8'hfc && !rom_select;
+  assign romd_ce = bank_log == 8'hfd && !rom_select;
+  assign rom1_ce = bank_log == 8'hfe;
+  assign rom2_ce = bank_log == 8'hff ||
+      (low_bank && !shadow[6] && addr_log >= 16'hd000 && (RDROM || !vpb_n)) ||
+      (mapped_cxxx && addr_log >= 16'hc800 && (INTCXROM || INTC8ROM)) ||
+      (iolc_bank && addr_log >= 16'hc071 && addr_log <= 16'hc07f);
+  assign rom_writethrough = low_bank && !shadow[6] && addr_log >= 16'hd000 && LC_WE && we;
+
+  wire txt1_shadow = !shadow[0] && addr_log >= 16'h0400 && addr_log < 16'h0800;
+  wire txt2_shadow = !rom_select && !shadow[5] && addr_log >= 16'h0800 && addr_log < 16'h0c00;
+  wire hgr1_shadow = !shadow[1] && addr_log >= 16'h2000 && addr_log < 16'h4000;
+  wire hgr2_shadow = !shadow[2] && addr_log >= 16'h4000 && addr_log < 16'h6000;
+  wire shr_shadow = !shadow[3] && addr_log >= 16'h2000 && addr_log < 16'ha000;
+  // Aux HGR requires both its page enable and AUXHGR, unless SHR overrides.
+  // Test the resolved bank, including bank-00 RAMWRT/80STORE redirection.
+  wire low_shadow = txt1_shadow || txt2_shadow ||
+      (bank_phys[0] ? (shr_shadow || (!shadow[4] && (hgr1_shadow || hgr2_shadow))) :
+                     (hgr1_shadow || hgr2_shadow));
+
+  always_comb begin
+    fastram_ce = 1'b0;
+    slowram_ce = 1'b0;
+    // Slot/ROM writes must not corrupt LC bank 1 behind the Cxxx window.
+    // Test the logical address so a legitimate Dxxx->Cxxx LC write survives.
+    if (!mapped_cxxx) begin
+      if (slow_bank)
+        slowram_ce = 1'b1;
+      else if (low_bank) begin
+        if (!(addr_log >= 16'hd000 && !shadow[6] &&
+              (we ? !LC_WE : (RDROM || !vpb_n)))) begin
+          fastram_ce = 1'b1;
+          slowram_ce = we && low_shadow;
+        end
+      end else if (bank_log < RAMSIZE && bank_log < 8'he0) begin
+        fastram_ce = 1'b1;
+        // KEGS fixup_shadow_all_banks: installed odd banks 03+, SHR only.
+        slowram_ce = we && shadow_all && bank_log[0] && shr_shadow;
+      end
+    end
+  end
+
+`ifdef VERILATOR
+  always @(*) begin
+    if (addr_bus[11:0] != addr_log[11:0])
+      $fatal(1, "mmu: translation changed A[11:0]");
+    if (addr_bus[15:13] != addr_log[15:13])
+      $fatal(1, "mmu: translation changed A[15:13]");
+    if (bank_phys[7:1] != bank_log[7:1])
+      $fatal(1, "mmu: unexpected bank translation");
+    if (fastram_ce && slow_bank)
+      $fatal(1, "mmu: fast RAM enabled for Mega II bank");
+    if (mapped_cxxx && (fastram_ce || slowram_ce))
+      $fatal(1, "mmu: mapped Cxxx enabled RAM");
+  end
+`endif
+endmodule
+""")
 
 
 def outputs() -> dict[str, str]:

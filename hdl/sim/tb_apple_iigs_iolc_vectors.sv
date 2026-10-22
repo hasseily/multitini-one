@@ -117,7 +117,8 @@ module tb_apple_iigs_iolc_vectors;
         ram_emit(8'ha9);ram_emit(iolc_case ? 8'h40 : 0);ram_emit(8'h8f);ram_emit(8'h35);ram_emit(8'hc0);ram_emit(8'he0);
         ram_emit(8'h58);ram_emit(8'hcb);ram_emit(8'hdb);
         // Correct RAM vector target and distinct wrong-ROM-vector target are both RAM code under IOLC.
-        ram_cursor=24'h00dd00;ram_emit(8'ha9);ram_emit(8'ha5);ram_emit(8'h8f);ram_emit(0);ram_emit(1);ram_emit(2);ram_emit(8'hdb);
+        // KEGS IOLC mapping exposes logical DD00 at physical CD00 (LC bank 1).
+        ram_cursor=24'h00cd00;ram_emit(8'ha9);ram_emit(8'ha5);ram_emit(8'h8f);ram_emit(0);ram_emit(1);ram_emit(2);ram_emit(8'hdb);
         ram_cursor=24'h00e400;ram_emit(8'ha9);ram_emit(8'h5a);ram_emit(8'h8f);ram_emit(0);ram_emit(1);ram_emit(2);ram_emit(8'hdb);
         put(24'h020100,0);
         repeat(20)@(negedge core_clk);reset=0;

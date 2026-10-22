@@ -50,6 +50,13 @@ The source-built ROM contains a 256-byte slot page followed by a 2 KiB
 expansion ROM. It is loaded with IIgs stream kind 0x49; an older FPGA image
 cannot accept this stream and must be updated with the firmware.
 
+The [KEGS-priority MMU audit](APPLE_IIGS_MMU_AUDIT.md) adds internal C800
+ownership. Its matching `hdd.rom` releases that latch through CFFF in C7
+before entering expansion ROM, preserving the published C70A/C70D/C757
+entries and caller registers. Install the rebuilt slot ROM with the corrected
+IIgs FPGA: the previous slot ROM can fail after the system boot scan selects
+internal C800. This change does not inherently require an ARM rebuild.
+
 Media kind 0x43 carries a 32-bit block count in the existing media-size
 argument. This preserves the common shell ABI and avoids changing the other
 cores. Wire slots 0 and 1 retain the original HDDs; slots 2 and 3 remain

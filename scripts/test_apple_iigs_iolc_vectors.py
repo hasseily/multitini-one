@@ -29,9 +29,17 @@ def main():
         ROOT/"hdl/sim/tb_apple_iigs_iolc_vectors.sv"]
     if a.upstream_negative_control:
         sources=[s for s in sources if s.name!="mmu.sv"]
-        sources.append(ROOT/"third_party/apple-iigs/upstream/rtl/mmu.sv")
+        # Preserve the pinned decoder, adding only unused compatibility pins
+        # for the current machine interface. Never edit the imported source.
+        original=(ROOT/"third_party/apple-iigs/upstream/rtl/mmu.sv").read_text()
+        anchor="    input  wire [7:0]  SLTROMSEL,"
+        if original.count(anchor)!=1:raise ValueError("Upstream MMU interface changed")
+        compatibility=build/"upstream_mmu.sv"
+        compatibility.write_text(original.replace(anchor,
+            "    input wire INTCXROM, SLOTC3ROM, INTC8ROM,\n"+anchor),newline="\n")
+        sources.append(compatibility)
     sources += [ROOT/"hdl/sim/apple_iigs_bufgce.sv"]
-    captured=sources+[ROOT/"third_party/apple-iigs/upstream/rtl/dhr_lut.vh",
+    captured=sources+[ROOT/"third_party/apple-iigs/upstream/rtl/dhr_lut.vh",ROOT/"third_party/apple-iigs/upstream/rtl/mmu.sv",
         ROOT/"scripts/port_apple_iigs_core.py",Path(__file__).resolve()]
     hashes=lambda:{path.relative_to(ROOT).as_posix():hashlib.sha256(path.read_bytes()).hexdigest() for path in captured}
     before=hashes();directory=build/"obj";top="tb_apple_iigs_iolc_vectors"

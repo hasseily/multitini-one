@@ -440,15 +440,15 @@ module tb_apple_iigs_accel_gates;
 
     task paddle_checks;
         integer trigger_start;
-        reg [23:0] bank_base[0:4];
+        reg [23:0] bank_base[0:3];
         begin
             bank_base[0]=24'h000000;bank_base[1]=24'h010000;
-            bank_base[2]=24'he00000;bank_base[3]=24'he10000;bank_base[4]=24'h020000;
-            write_byte(24'h00c036,8'h90); // Enable modeled all-bank IO aliases.
+            bank_base[2]=24'he00000;bank_base[3]=24'he10000;
+            write_byte(24'h00c036,8'h90); // KEGS shadow-all does not add I/O aliases.
             trigger_start=paddle_triggers;
             // IRQ-dispatch ROM and unused neighboring writes are not the IIgs
             // paddle-reset register. Exercise every decoded bank alias.
-            for(integer bank=0;bank<5;bank++) for(integer selector=1;selector<16;selector++) begin
+            for(integer bank=0;bank<4;bank++) for(integer selector=1;selector<16;selector++) begin
                 side_read(bank_base[bank]+24'h00c070+selector);
                 if(dut.machine_i.pdl_holdoff!=0) $fatal(1,"IRQ dispatch falsely arms paddle holdoff address%06x",bank_base[bank]+24'h00c070+selector);
                 write_byte(bank_base[bank]+24'h00c070+selector,0);
@@ -456,7 +456,7 @@ module tb_apple_iigs_accel_gates;
             end
             if(paddle_triggers!=trigger_start) $fatal(1,"IRQ dispatch triggered physical paddle timers");
             mark("all C071-C07F read/write bank aliases leave paddle holdoff idle");
-            for(integer bank=0;bank<5;bank++) begin
+            for(integer bank=0;bank<4;bank++) begin
                 side_read(bank_base[bank]+24'h00c070);
                 if(dut.machine_i.pdl_holdoff==0 || dut.cpu_speed!=0) $fatal(1,"C070 read must retain native paddle delay");
                 write_byte(bank_base[bank]+24'h00c070,0);
@@ -471,7 +471,7 @@ module tb_apple_iigs_accel_gates;
             if(dut.machine_i.pdl_holdoff!=0 || dut.cpu_speed!=6) $fatal(1,"paddle compatibility delay failed to expire");
             mark("C070 read/write and C064-C067 retain four-ms delay then restore max");
             write_byte(24'h00c035,8'h7f); // C070 becomes RAM in bank00/01.
-            memory[24'h00c070>>3]=64'h3333333333333333;
+            memory[24'h00d070>>3]=64'h3333333333333333; // KEGS inhibited Cxxx backing.
             read_byte(24'h00c070,8'h33,0);
             if(dut.machine_i.pdl_holdoff!=0) $fatal(1,"IOLC-inhibited RAM alias triggered paddle delay");
             write_byte(24'he0c035,0);write_byte(24'h00c036,8'h80);
@@ -488,7 +488,7 @@ module tb_apple_iigs_accel_gates;
         begin
             pause_request=1;forced_vda=1;forced_we_n=1;forced_addr=24'h002000;
             #1;
-            if(!dut.machine_i.fastram_ce || !dut.machine_i.slowram_ce || !dut.cpu_fast_cycle)
+            if(!dut.machine_i.fastram_ce || dut.machine_i.slowram_ce || !dut.cpu_fast_cycle)
                 $fatal(1,"fast shadow RAM read incorrectly classified native");
             addresses[0]=16'h0000;addresses[1]=16'h0400;addresses[2]=16'h07ff;
             addresses[3]=16'h0800;addresses[4]=16'h0bff;addresses[5]=16'h1fff;
@@ -514,8 +514,8 @@ module tb_apple_iigs_accel_gates;
                         decode_checks++;
                     end
                 end
-            // Direct Mega II RAM reads use the slow-RAM port and LC ROM reads
-            // the ROM cache; $C000-$CFFF (IO, slots, C800) stays native.
+            // Direct Mega II RAM and LC reads use the slow-RAM port under KEGS;
+            // $C000-$CFFF (IO, slots, C800) stays native.
             for(integer bank=224;bank<=225;bank++) for(integer addr=0;addr<65536;addr+=256) begin
                 forced_addr={8'(bank),16'(addr)};forced_we_n=1;#0.001;
                 expected_fast=addr<'hc000 || addr>='hd000;
@@ -596,8 +596,8 @@ module tb_apple_iigs_accel_gates;
             write_byte(24'he0c003,0);read_byte(24'he01000,8'h66,0);
             write_byte(24'he0c002,0);write_byte(24'he0c004,0);read_byte(24'he01000,8'h77,0);
             expect_slow(17'h01000,8'h77,"RAMWRT main");expect_slow(17'h11000,8'h66,"RAMWRT aux");
-            // Language card: bank1 folds to physical C000, bank2 stays D000,
-            // write protect discards, and ROM reads use the ROM cache.
+            // KEGS slow-bank LC: bank1 folds to C000, bank2 stays D000.
+            // RDROM never overlays ROM and LC write protection is fast-bank only.
             side_read(24'he0c08b);side_read(24'he0c08b); // Bank1 RAM read/write.
             write_ram(24'he0d000,8'h88,0);read_byte(24'he0d000,8'h88,0);
             side_read(24'he0c083);side_read(24'he0c083); // Bank2 RAM read/write.
@@ -606,10 +606,10 @@ module tb_apple_iigs_accel_gates;
             side_read(24'he0c08b);read_byte(24'he0d000,8'h88,0);
             expect_slow(17'h0c000,8'h88,"LC bank1");expect_slow(17'h0d000,8'h99,"LC bank2");
             side_read(24'he0c080); // Bank2 RAM read, write protected.
-            write_ram(24'he0d000,8'hcc,0);read_byte(24'he0d000,8'h99,0);
-            expect_slow(17'h0d000,8'h99,"LC write protect");
+            write_ram(24'he0d000,8'hcc,0);read_byte(24'he0d000,8'hcc,0);
+            expect_slow(17'h0d000,8'hcc,"KEGS slow LC remains writable");
             side_read(24'he0c082); // ROM read, write protected.
-            read_byte(24'he0e000,8'hea,0);read_byte(24'he0d000,8'hea,0);
+            read_byte(24'he0e000,8'hab,0);read_byte(24'he0d000,8'hcc,0);
             mark("Mega II fast reads/writes honor bank latch, ALTZP, RAMRD/RAMWRT and LC banks; video port coherent");
         end
     endtask
@@ -853,6 +853,7 @@ module tb_apple_iigs_accel_gates;
                 cursor=122880;emit(8'h78);emit(8'h58); // SEI; CLI (IRQ delay enabled, no IRQ sources).
                 ld_imm(8'h80);st_abs(16'hc036);ld_imm(8'h00);st_abs(16'hc035);
                 ld_imm(8'h80);st_abs(16'hc02d); // Slot 7 external ROM and registers.
+                st_abs(16'hc006); // KEGS reset selects internal Cx ROM; explicitly release it.
                 // Four copies with NOP / BIT dp fillers rotate the slot read
                 // through every primary-clock phase relative to CLK14, so a
                 // missing second preparation edge cannot pass by alignment.

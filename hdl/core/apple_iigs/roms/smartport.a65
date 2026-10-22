@@ -75,11 +75,32 @@ range_high=$7c
     clv
     !byte $50                   ; BVC displacement is the JMP opcode at C70A
 prodos_entry:
-    jmp prodos
+    jmp prodos_select
 smartport_entry:
+    jmp smartport_select
+
+; The IIgs boot scan reads C3xx, which can leave internal C800 ROM selected.
+; Release that latch before entering our expansion ROM. Each following C7
+; fetch selects our slot again after CFFF also releases its external owner.
+; BIT changes flags, so retain the complete caller status and stack depth.
+; Keep the published ProDOS/SmartPort entries at C70A/C70D and boot at C757.
+prodos_select:
+    php
+    bit $cfff
+    plp
+    jmp prodos
+smartport_select:
+    php
+    bit $cfff
+    plp
     jmp smartport
-    !fill $c757-*, $ea
+boot_select:
+    php
+    bit $cfff
+    plp
     jmp boot
+    !fill $c757-*, $ea
+    jmp boot_select
     !fill $c7fb-*, $ea
     !byte $80                   ; generic extended-call interface, not a SCSI card
     !word 0                     ; obtain legacy capacity with STATUS
