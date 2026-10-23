@@ -406,9 +406,9 @@ set_property CONFIG.POLARITY ACTIVE_LOW $control_aresetn
 set_property CONFIG.POLARITY ACTIVE_LOW $idelay_aresetn
 set_property CONFIG.POLARITY ACTIVE_LOW $video_aresetn
 set_property CONFIG.POLARITY ACTIVE_LOW $c64_aresetn
-# HP2 follows its ACLK: the machine clock and reset in the IIgs image, the
-# control clock and reset in every other image.
-if {$machine eq "APPLE_IIGS"} {
+# HP2 follows its ACLK: the machine clock and reset for C64 REU and IIgs RAM,
+# the control clock and reset in every other image.
+if {$machine in {C64 APPLE_IIGS}} {
     set_property -dict [list CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0_0:S_AXI_HP0_0:S_AXI_HP1_0:S_AXI_HP3_0} \
         CONFIG.ASSOCIATED_RESET {control_aresetn}] $control_clk
     set_property -dict [list CONFIG.ASSOCIATED_BUSIF {S_AXI_HP2_0} \
@@ -546,13 +546,13 @@ connect_bd_net [get_bd_pins $video_reset/peripheral_aresetn] $video_aresetn
 connect_bd_net [get_bd_pins $c64_wiz/clk_out1] $c64_clk \
     [get_bd_pins $c64_reset/slowest_sync_clk]
 # HP2's ACLK is FCLK0 for the Genesis and NES source rings, and in every image
-# without an HP2 client. The IIgs CPU RAM bridge instead clocks HP2 from the
-# machine clock so its AXI master needs no clock crossing. Either way the
+# without an HP2 client. C64 REU and IIgs CPU RAM instead clock HP2 from the
+# machine clock so their AXI masters need no clock crossing. Either way the
 # firmware drains HP2 before PCAP with the core held in reset: the machine
 # MMCM keeps running then, and its clock stops with the other PL clock buffers
 # only once PCAP starts. No PS7 setting changes, so ps7_init.c must stay
 # identical; packaging verifies its hash against the firmware's FSBL.
-if {$machine eq "APPLE_IIGS"} {
+if {$machine in {C64 APPLE_IIGS}} {
     connect_bd_net [get_bd_pins $c64_wiz/clk_out1] [get_bd_pins $ps/S_AXI_HP2_ACLK]
 } else {
     connect_bd_net [get_bd_pins $ps/FCLK_CLK0] [get_bd_pins $ps/S_AXI_HP2_ACLK]

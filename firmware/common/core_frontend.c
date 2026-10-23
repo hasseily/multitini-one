@@ -91,7 +91,7 @@ static void build_c64(mt_core_frontend_t *frontend,
     if (reu_supported && state->c64_reu_enabled && !state->cartridge_attached) {
         mt_menu_item_t *const cartridge = &frontend->media_items[view->media_item_count - 1U];
         cartridge->value = "Turn REU off first";
-        cartridge->help = "REU and cartridges share memory; turn REU off in Core options.";
+        cartridge->help = "Cartridges can conflict with REU I/O; turn REU off in Core options.";
         cartridge->enabled = false;
         cartridge->value_color = MT_UI_COLOR_MUTED;
     }
@@ -136,7 +136,9 @@ static void build_c64(mt_core_frontend_t *frontend,
         const size_t index = view->core_option_count++;
         frontend->core_options[index] = item(
             "RAM expansion", state->c64_reu_enabled ? "16 MB REU" : "Off",
-            "Enable the 16 MB REU; eject any cartridge first.",
+            (state->c64_expansion_caps & MT_C64_EXPANSION_CAPS_REU_DDR) != 0U ?
+                "Enable the 16 MB DDR REU; eject any cartridge first." :
+                "Enable the 16 MB REU; eject any cartridge first.",
             MT_MENU_ACTION_TOGGLE_CORE_OPTION, 3U, true, MT_UI_COLOR_BLUE);
         frontend->core_options[index].control = MT_MENU_CONTROL_CHECKBOX;
         frontend->core_options[index].control_value = state->c64_reu_enabled ? 1U : 0U;

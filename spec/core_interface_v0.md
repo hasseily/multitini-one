@@ -40,7 +40,8 @@ loads. New firmware always requests dense mode and requires ABI 0.11 packages.
 
 ABI 0.23 adds `C64_EXPANSION_CONFIG` at `0x0D0` and read-only
 `C64_EXPANSION_CAPS` at `0x0D4`. Capability bit 31 marks a valid mask; bit 0
-advertises dual SID and bit 1 advertises the 16 MB REU. Other machines return
+advertises dual SID, bit 1 advertises the 16 MB REU, and bit 2 (`REU_DDR`)
+advertises DDR-backed REU with the shared DDR quiescence contract. Other machines return
 zero. Firmware must check ABI and capability before reading or writing these
 registers.
 
@@ -50,10 +51,16 @@ become 0. Bit 3 enables the REU. Reserved bits read zero; the supported C64
 image defaults to `0xB`. Partial writes respect byte strobes. A coherent
 mailbox carries the latest complete word to the machine clock domain.
 
-REU and CRT cannot simultaneously own PSRAM. Firmware rejects their conflicting
+The REU owns DDR `0x25000000-0x25FFFFFF`; cartridge storage remains on PSRAM.
+REU and CRT remain mutually exclusive pending a simultaneous IO2 mapping policy.
+Firmware rejects their conflicting
 actions before loading or saving settings, and the adapter suppresses REU while
 a cartridge is present or loading. Disabling REU resets its command state and
-drains any accepted memory response. See [C64 expansions](../docs/C64_EXPANSIONS.md).
+drains accepted writes and memory responses without erasing REU storage. Firmware
+checks the live ABI and `VALID | REU_DDR` capabilities before requiring the DDR
+quiescent bit in `VIDEO_FRAME_STATUS`. This check does not depend on whether REU
+is currently enabled: dirty writes can outlive disable. Older C64 images do not
+advertise this contract. See [C64 expansions](../docs/C64_EXPANSIONS.md).
 
 ## IIgs installed capabilities
 

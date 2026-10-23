@@ -403,6 +403,23 @@ static bool shell_is_c64(void)
     return shell_read(MT_REG_CORE_ID) == MT_C64_CORE_ID;
 }
 
+/* This must inspect the live image, including before content services are
+ * initialized. A disabled REU can still have posted DDR writes to drain.
+ * Older C64 images have no DDR drain contract at VIDEO_FRAME_STATUS. */
+static bool core_requires_ddr_drain(void)
+{
+    const uint32_t core = shell_read(MT_REG_CORE_ID);
+    if (core == MT_GENESIS_CORE_ID || core == MT_NES_CORE_ID || core == MT_IIGS_CORE_ID)
+        return true;
+    if (core != MT_C64_CORE_ID) return false;
+    const uint32_t abi = shell_read(MT_REG_ABI_VERSION);
+    if ((abi >> 16U) != MT_ABI_MAJOR || (uint16_t)abi < MT_C64_EXPANSION_MIN_ABI_MINOR)
+        return false;
+    const uint32_t caps = shell_read(MT_REG_C64_EXPANSION_CAPS);
+    const uint32_t required = MT_C64_EXPANSION_CAPS_VALID | MT_C64_EXPANSION_CAPS_REU_DDR;
+    return (caps & required) == required;
+}
+
 static void service_usb_input(void)
 {
     const uint32_t status = shell_read(MT_REG_STATUS);
@@ -1429,9 +1446,7 @@ static void switch_to_appletini(void)
     const mb_flash_t *flash;
     const uint32_t previous_boot = Xil_In32(MT_DEVCFG_MULTIBOOT);
     const bool previously_reset = (shell_read(MT_REG_CONTROL) & MT_CONTROL_CORE_RESET_REQUEST) != 0U;
-    const bool genesis_source = shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID ||
-        shell_read(MT_REG_CORE_ID) == MT_NES_CORE_ID ||
-        shell_read(MT_REG_CORE_ID) == MT_IIGS_CORE_ID;
+    const bool ddr_source = core_requires_ddr_drain();
     bool core_stopped = false, worker_stopped = false, usb_stopped = false;
     bool storage_unmounted = false, request_attempted = false, boot_changed = false;
     bool restore_safe = true;
@@ -1459,7 +1474,7 @@ static void switch_to_appletini(void)
     worker_stopped = true;
     started = monotonic_ms(NULL);
     while (!mt_video_effect_service_quiescent() || !mt_video_worker_quiesce() ||
-           (genesis_source && (shell_read(MT_REG_VIDEO_FRAME_STATUS) &
+           (ddr_source && (shell_read(MT_REG_VIDEO_FRAME_STATUS) &
                               MT_VIDEO_FRAME_STATUS_QUIESCENT) == 0U)) {
         usb_hid_service_poll_deferred();
         if (monotonic_ms(NULL) - started >= 1000U) {
@@ -1568,9 +1583,7 @@ static void self_update_golden(bool recovery_only)
     const bool previously_reset = !recovery_only &&
         (shell_read(MT_REG_CONTROL) & MT_CONTROL_CORE_RESET_REQUEST) != 0U;
     const bool menu_was_visible = !recovery_only && supervisor_menu.visible;
-    const bool genesis_source = !recovery_only && (shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID ||
-        shell_read(MT_REG_CORE_ID) == MT_NES_CORE_ID ||
-        shell_read(MT_REG_CORE_ID) == MT_IIGS_CORE_ID);
+    const bool ddr_source = !recovery_only && core_requires_ddr_drain();
     bool core_stopped = false, worker_stopped = false;
     bool stopped_usb = false, restore_safe = true, boot_changed = false;
     const char *error = "Golden update cancelled";
@@ -1592,7 +1605,7 @@ static void self_update_golden(bool recovery_only)
         worker_stopped = true;
         started = monotonic_ms(NULL);
         while (!mt_video_effect_service_quiescent() || !mt_video_worker_quiesce() ||
-               (genesis_source && (shell_read(MT_REG_VIDEO_FRAME_STATUS) &
+               (ddr_source && (shell_read(MT_REG_VIDEO_FRAME_STATUS) &
                                   MT_VIDEO_FRAME_STATUS_QUIESCENT) == 0U)) {
             usb_hid_service_poll_deferred();
             if (monotonic_ms(NULL) - started >= 1000U) {
@@ -2886,17 +2899,15 @@ static int supervisor_load(void *context,
 {
     mt_pl_load_result_t load;
     uint64_t drain_started;
-    const bool genesis_source = shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID ||
-        shell_read(MT_REG_CORE_ID) == MT_NES_CORE_ID ||
-        shell_read(MT_REG_CORE_ID) == MT_IIGS_CORE_ID;
+    const bool ddr_source = core_requires_ddr_drain();
     mt_video_effect_service_suspend();
     drain_started = monotonic_ms(NULL);
     while (!mt_video_effect_service_quiescent() ||
-           (genesis_source && (shell_read(MT_REG_VIDEO_FRAME_STATUS) &
+           (ddr_source && (shell_read(MT_REG_VIDEO_FRAME_STATUS) &
                                MT_VIDEO_FRAME_STATUS_QUIESCENT) == 0U)) {
         /* All active HP masters must drain before PCAP resets the fabric.
-         * With core reset asserted this includes Genesis and IIgs source
-         * transports and the IIgs memory bridge.
+         * With core reset asserted this includes source transports, the
+         * IIgs memory bridge and capable C64 REU DDR caches/bridges.
          * CPU1 only touches reserved DDR and can finish an old job safely. */
         usb_hid_service_poll_deferred();
         if (monotonic_ms(NULL) - drain_started >= 1000U) {
@@ -3291,7 +3302,7 @@ static int usb_sd_quiesce(void *context)
     if(supervisor_quiesce(NULL)!=0)return -1;
     usb_sd_core_stopped=true;
     mt_video_effect_service_suspend();
-    const bool source=shell_read(MT_REG_CORE_ID)==MT_GENESIS_CORE_ID || shell_read(MT_REG_CORE_ID)==MT_NES_CORE_ID || shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID;
+    const bool source=core_requires_ddr_drain();
     const uint64_t started=monotonic_ms(NULL);
     while(!mt_video_effect_service_quiescent() || !mt_video_worker_quiesce() ||
         (source && (shell_read(MT_REG_VIDEO_FRAME_STATUS)&MT_VIDEO_FRAME_STATUS_QUIESCENT)==0U)) {

@@ -380,10 +380,10 @@ class BuildInputTests(unittest.TestCase):
         for value in required:
             self.assertIn(value, script)
 
-    def test_apple_iigs_hp2_uses_the_machine_clock(self):
+    def test_c64_and_apple_iigs_hp2_use_the_machine_clock(self):
         script = (ROOT / "scripts" / "create_project.tcl").read_text()
         associations = script.split(
-            'if {$machine eq "APPLE_IIGS"} {\n    set_property -dict [list CONFIG.ASSOCIATED_BUSIF', 1
+            'if {$machine in {C64 APPLE_IIGS}} {\n    set_property -dict [list CONFIG.ASSOCIATED_BUSIF', 1
         )[1].split("\n}\n", 1)[0]
         iigs, other = associations.split("\n} else {\n", 1)
         self.assertIn(
@@ -400,7 +400,7 @@ class BuildInputTests(unittest.TestCase):
         self.assertNotIn("S_AXI_HP2_0", other.split("$control_clk", 1)[1])
 
         self.assertIn(
-            'if {$machine eq "APPLE_IIGS"} {\n'
+            'if {$machine in {C64 APPLE_IIGS}} {\n'
             '    connect_bd_net [get_bd_pins $c64_wiz/clk_out1] [get_bd_pins $ps/S_AXI_HP2_ACLK]\n'
             '} else {\n'
             '    connect_bd_net [get_bd_pins $ps/FCLK_CLK0] [get_bd_pins $ps/S_AXI_HP2_ACLK]\n}', script)
@@ -425,6 +425,20 @@ class BuildInputTests(unittest.TestCase):
             self.assertIn(marker, ddr)
         self.assertIn(".memory_burst(gs_memory_burst)", iigs_block)
         self.assertIn(".memory_busy(gs_memory_busy)", iigs_block)
+
+        c64_block = top.split("begin : g_c64_machine", 1)[1].split(
+            "begin : g_gameboy_machine", 1)[0]
+        c64_ddr = c64_block.split("multitini_c64_ddr_path reu_ddr_path_i (", 1)[1]
+        for marker in (".core_clk(c64_clk)", ".core_resetn(c64_aresetn)",
+                       ".core_reset_request(c64_core_reset_request)",
+                       ".core_memory_burst(reu_memory_burst)",
+                       ".core_memory_busy(reu_memory_busy)",
+                       ".quiescent(c64_reu_memory_quiescent)",
+                       ".araddr(hp2_araddr)"):
+            self.assertIn(marker, c64_ddr)
+        self.assertIn("multitini_gameboy_psram_path psram_path_i", c64_block)
+        self.assertIn(".core_memory_addr(c64_memory_addr)", c64_block)
+        self.assertIn("!c64_reu_memory_quiescent", top)
 
         path = (ROOT / "hdl/core/apple_iigs/multitini_apple_iigs_ddr_path.sv").read_text()
         self.assertNotIn("multitini_memory_cdc", path)

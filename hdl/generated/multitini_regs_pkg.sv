@@ -187,6 +187,7 @@ package multitini_regs_pkg;
     localparam logic [31:0] MT_C64_EXPANSION_CAPS_VALID = 32'h80000000;
     localparam logic [31:0] MT_C64_EXPANSION_CAPS_DUAL_SID = 32'h00000001;
     localparam logic [31:0] MT_C64_EXPANSION_CAPS_REU_16MB = 32'h00000002;
+    localparam logic [31:0] MT_C64_EXPANSION_CAPS_REU_DDR = 32'h00000004;
     localparam logic [31:0] MT_C64_EXPANSION_CONFIG_MASK = 32'h0000000F;
     localparam logic [31:0] MT_C64_EXPANSION_CONFIG_DEFAULT = 32'h0000000B;
     localparam logic [31:0] MT_C64_EXPANSION_SID_MODE_MASK = 32'h00000007;

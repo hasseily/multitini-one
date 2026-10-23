@@ -49,6 +49,20 @@ module multitini_c64_adapter #(
     input  logic        memory_rvalid,
     input  logic        memory_fault,
 
+    // Cartridge traffic above remains on PSRAM; REU has an independent DDR
+    // aperture and cannot consume or overwrite cartridge storage.
+    output logic [23:0] reu_memory_addr,
+    output logic        reu_memory_write,
+    output logic [63:0] reu_memory_wdata,
+    output logic [7:0]  reu_memory_wstrb,
+    output logic        reu_memory_valid,
+    output logic        reu_memory_burst,
+    output logic        reu_memory_busy,
+    input  logic        reu_memory_ready,
+    input  logic [63:0] reu_memory_rdata,
+    input  logic        reu_memory_rvalid,
+    input  logic        reu_memory_fault,
+
     input  logic        media_mount,
     input  logic        media_eject,
     input  logic        media_complete,
@@ -210,14 +224,19 @@ module multitini_c64_adapter #(
     logic        cart_external_select;
     logic        cart_runtime_request;
     logic        cart_stall;
-    logic [23:0] cart_memory_addr, reu_memory_addr;
-    logic cart_memory_write, reu_memory_write;
-    logic [63:0] cart_memory_wdata, reu_memory_wdata;
-    logic [7:0] cart_memory_wstrb, reu_memory_wstrb;
-    logic cart_memory_valid, reu_memory_valid;
-    logic cart_memory_ready, reu_memory_ready;
-    logic cart_memory_rvalid, reu_memory_rvalid;
+    logic [23:0] cart_memory_addr;
+    logic cart_memory_write;
+    logic [63:0] cart_memory_wdata;
+    logic [7:0] cart_memory_wstrb;
+    logic cart_memory_valid;
+    logic cart_memory_ready;
+    logic cart_memory_rvalid;
     logic reu_active, reu_irq, reu_busy, reu_fault;
+    logic reu_cache_busy, reu_cache_fault;
+    logic [23:0] reu_request_addr, reu_hint_addr;
+    logic reu_request_write, reu_request_valid, reu_request_ready, reu_response_valid, reu_hint_read;
+    logic [63:0] reu_request_wdata, reu_response_rdata;
+    logic [7:0] reu_request_wstrb;
     logic reu_fault_latched;
     logic reu_dma_req, reu_dma_valid, reu_dma_ack, reu_dma_write;
     logic [15:0] reu_dma_addr, cpu_bus_addr;
@@ -402,16 +421,15 @@ module multitini_c64_adapter #(
         .memory_fault(memory_fault)
     );
 
-    // The 16 MB store occupies the complete PSRAM address space. Firmware
-    // rejects CRT/REU conflicts, and the hardware also excludes cartridge
-    // loading/ownership before the REU can access that shared store.
+    // Keep the existing cartridge exclusion until simultaneous IO2 mapping
+    // has a defined compatibility policy. Storage is now independent DDR.
     assign reu_active = reu_enable && !cart_loaded && !cart_loading;
     // MAME releases the REU register aperture during its own DMA. A transfer
     // reading $DFxx observes the machine's floating bus, not REU status.
     assign reu_io_select = reu_active && !reu_dma_req && cart_iof;
     always_ff @(posedge core_clk) begin
         if (reset || clear_load_error) reu_fault_latched <= 1'b0;
-        else if (reu_fault) reu_fault_latched <= 1'b1;
+        else if (reu_fault || reu_cache_fault) reu_fault_latched <= 1'b1;
     end
     multitini_c64_reu reu_i (
         .clk(core_clk), .reset(reset || !core_reset_n), .enable(reu_active),
@@ -421,27 +439,37 @@ module multitini_c64_adapter #(
         .dma_req(reu_dma_req), .dma_valid(reu_dma_valid), .dma_addr(reu_dma_addr),
         .dma_wdata(reu_dma_wdata), .dma_write(reu_dma_write), .dma_ack(reu_dma_ack),
         .dma_rdata(reu_dma_rdata), .irq(reu_irq), .busy(reu_busy), .fault(reu_fault),
+        .memory_addr(reu_request_addr), .memory_write(reu_request_write),
+        .memory_wdata(reu_request_wdata), .memory_wstrb(reu_request_wstrb),
+        .memory_valid(reu_request_valid), .memory_ready(reu_request_ready),
+        .memory_hint_addr(reu_hint_addr), .memory_hint_read(reu_hint_read),
+        .memory_rdata(reu_response_rdata), .memory_rvalid(reu_response_valid),
+        .memory_fault(reu_cache_fault)
+    );
+    // Guest reset/disable stops speculation, but accepted writes survive and
+    // drain before the shell reports DDR quiescence for PCAP or storage handoff.
+    multitini_c64_reu_cache reu_cache_i (
+        .clk(core_clk), .reset(reset), .enable(reu_active && core_reset_n), .flush(!reu_busy),
+        .hint_addr(reu_hint_addr), .hint_read(reu_hint_read),
+        .request_addr(reu_request_addr), .request_write(reu_request_write),
+        .request_wdata(reu_request_wdata), .request_wstrb(reu_request_wstrb),
+        .request_valid(reu_request_valid), .request_ready(reu_request_ready),
+        .response_rdata(reu_response_rdata), .response_valid(reu_response_valid),
         .memory_addr(reu_memory_addr), .memory_write(reu_memory_write),
         .memory_wdata(reu_memory_wdata), .memory_wstrb(reu_memory_wstrb),
-        .memory_valid(reu_memory_valid), .memory_ready(reu_memory_ready),
-        .memory_rdata(memory_rdata), .memory_rvalid(reu_memory_rvalid),
-        .memory_fault(memory_fault)
+        .memory_burst(reu_memory_burst), .memory_valid(reu_memory_valid),
+        .memory_ready(reu_memory_ready), .memory_rdata(reu_memory_rdata),
+        .memory_rvalid(reu_memory_rvalid), .memory_fault(reu_memory_fault),
+        .busy(reu_cache_busy), .fault(reu_cache_fault)
     );
-    multitini_c64_memory_arbiter expansion_memory_i (
-        .clk(core_clk), .reset(reset),
-        .cart_addr(cart_memory_addr), .cart_write(cart_memory_write),
-        .cart_wdata(cart_memory_wdata), .cart_wstrb(cart_memory_wstrb),
-        .cart_valid(cart_memory_valid), .cart_ready(cart_memory_ready),
-        .cart_rvalid(cart_memory_rvalid),
-        .reu_addr(reu_memory_addr), .reu_write(reu_memory_write),
-        .reu_wdata(reu_memory_wdata), .reu_wstrb(reu_memory_wstrb),
-        .reu_valid(reu_memory_valid), .reu_ready(reu_memory_ready),
-        .reu_rvalid(reu_memory_rvalid),
-        .memory_addr(memory_addr), .memory_write(memory_write),
-        .memory_wdata(memory_wdata), .memory_wstrb(memory_wstrb),
-        .memory_valid(memory_valid), .memory_ready(memory_ready),
-        .memory_rvalid(memory_rvalid), .memory_fault(memory_fault)
-    );
+    assign memory_addr = cart_memory_addr;
+    assign memory_write = cart_memory_write;
+    assign memory_wdata = cart_memory_wdata;
+    assign memory_wstrb = cart_memory_wstrb;
+    assign memory_valid = cart_memory_valid;
+    assign cart_memory_ready = memory_ready;
+    assign cart_memory_rvalid = memory_rvalid;
+    assign reu_memory_busy = reu_busy || reu_cache_busy;
 
     cartridge cartridge_i (
         .clk32(core_clk), .reset_n(core_reset_n),

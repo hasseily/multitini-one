@@ -51,6 +51,7 @@ def inputs(machine: str) -> list[Path]:
         paths.update(ROOT / "scripts" / name for name in (
             "c64_mame_oracle.py", "test_c64_acceleration.py",
             "test_c64_reu.py", "test_c64_reu_machine.py",
+            "test_c64_ddr.py", "test_c64_reu_cache.py", "test_c64_reu_native.py",
             "test_c64_expansion_infrastructure.py",
             "check_c64_local_ram_synthesis.tcl", "port_c64_vic.py"))
         paths.add(ROOT / "hdl/sim/tb_control_regs.sv")

@@ -20,23 +20,43 @@ def synthetic_memory() -> bytes:
     program = bytearray.fromhex("78 D8 A9 2F 85 00 A9 37 85 01")
     def store(address: int, value: int) -> None:
         program.extend([0xA9, value, 0x8D, address & 255, address >> 8])
+    # Keep VIC storage in initialized RAM, away from $0000/$0001 backing
+    # bytes that receive the floating bus during startup 6510 port writes.
+    store(0xDD02, 0x03)
+    store(0xDD00, 0x02)  # Inverted CIA2 bank pins select $4000.
+    store(0xD018, 0x18)  # Screen at $4400; glyphs at $6000.
     # Display and all sprites steal the actual production bus during DMA.
     store(0xD011, 0x1B)
     store(0xD015, 0xFF)
     for sprite in range(8):
         store(0xD001 + sprite * 2, 80)
     store(0xDF09, 0xE0)
-    def transfer(c64_address: int, count: int, command: int, result: int, fixed: int = 0) -> None:
-        values = [c64_address & 255, c64_address >> 8, 0x80, 0xFE, 0xFF, count & 255, count >> 8]
+    def transfer(c64_address: int, count: int, command: int, result: int, fixed: int = 0,
+                 reu_address: int = 0xFFFE80, character_bank: bool = False) -> None:
+        values = [c64_address & 255, c64_address >> 8, reu_address & 255,
+                  (reu_address >> 8) & 255, reu_address >> 16, count & 255, count >> 8]
         for offset, value in enumerate(values): store(0xDF02 + offset, value)
         store(0xDF0A, fixed)
         store(0xDF01, command)
+        if character_bank:
+            # Arm with I/O visible, then expose character ROM before the
+            # delayed $FF00 trigger. The DMA must retain the 6510 bank pins.
+            store(0x0001, 0x33)
+            store(0xFF00, 0x00)
+            store(0x0001, 0x37)
         program.extend([0xAD, 0, 0xDF, 0x8D, result & 255, result >> 8])
     transfer(0x4000, 768, 0x90, 0x2100)
     transfer(0x4800, 768, 0x91, 0x2101)
     transfer(0xD500, 16, 0x91, 0x2102, 0x80)
     transfer(0xDF00, 16, 0x90, 0x2103, 0x80)
-    store(0x2105, 0xA5)
+    # Cross $D800 while CHAREN=0 to discriminate chargen from SID/color I/O.
+    transfer(0xD7F0, 512, 0x80, 0x2104, reu_address=0x802120, character_bank=True)
+    transfer(0xC000, 512, 0x91, 0x2105, reu_address=0x802120)
+    transfer(0x4000, 512, 0x90, 0x2106, reu_address=0x900120)
+    transfer(0xD7F0, 512, 0x81, 0x2107, reu_address=0x900120, character_bank=True)
+    # Read chargen again after the underlying RAM write: ROM must be unchanged.
+    transfer(0xD7F0, 512, 0x80, 0x2108, reu_address=0xA00120, character_bank=True)
+    store(0x210F, 0xA5)
     stop = 0x0800 + len(program)
     program.extend([0x4C, stop & 255, stop >> 8])
     memory[0x0800:0x0800 + len(program)] = program
@@ -52,6 +72,8 @@ def instrument(source: str) -> str:
     dbg_cpu_di, dbg_cpu_do, dbg_cpu_port, dbg_vic_bus : out std_logic_vector(7 downto 0);
     dbg_cpu_we, dbg_request, dbg_retire, dbg_reset, dbg_hold : out std_logic;
     dbg_rdy, dbg_cpu_owned, dbg_dma : out std_logic;
+    dbg_aec, dbg_ram_select : out std_logic;
+    dbg_vic_addr : out std_logic_vector(15 downto 0);
     dbg_native_ce : out std_logic_vector(5 downto 0);
     dbg_io_cs : out std_logic_vector(4 downto 0);
     dbg_io_write : out std_logic;
@@ -71,6 +93,9 @@ def instrument(source: str) -> str:
     dbg_rdy <= baLoc;
     dbg_cpu_owned <= cpuHasBus;
     dbg_dma <= dma_active;
+    dbg_aec <= aec;
+    dbg_ram_select <= cs_ram;
+    dbg_vic_addr <= std_logic_vector(vicAddr);
     dbg_native_ce <= '0' & (enablePixel and not memory_wait_q) &
         (enableVic and not memory_wait_q) & (enableCia_n and not memory_wait_q) &
         (enableCia_p and not memory_wait_q) & (enableSid and not memory_wait_q);
@@ -154,6 +179,12 @@ def main() -> int:
         output = result.stdout + result.stderr
         (build / (name + ".log")).write_text(output, encoding="utf-8")
         if result.returncode or re.search(r"\b(?:ERROR|FAIL|FATAL)\s*:|\bFatal\b", output, re.I):
+            receipt.write_text(json.dumps({"schema": 1, "status": "FAIL", "stage": name,
+                "returncode": result.returncode, "source_sha256": before,
+                "observation_only_copy_sha256": hashlib.sha256(observed.read_bytes()).hexdigest(),
+                "observation_only_wrapper_sha256": hashlib.sha256(observed_wrapper.read_bytes()).hexdigest(),
+                "log": name + ".log", "log_sha256": hashlib.sha256((build / (name + ".log")).read_bytes()).hexdigest(),
+                "error": output[-14000:]}, indent=2) + "\n")
             raise RuntimeError(f"{name} failed ({result.returncode}):\n{output[-14000:]}")
         return output
 

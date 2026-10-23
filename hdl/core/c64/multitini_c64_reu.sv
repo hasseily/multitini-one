@@ -33,6 +33,8 @@ module multitini_c64_reu #(
     output logic [63:0] memory_wdata,
     output logic [7:0]  memory_wstrb,
     output logic        memory_valid,
+    output logic [23:0] memory_hint_addr,
+    output logic        memory_hint_read,
     input  logic        memory_ready,
     input  logic [63:0] memory_rdata,
     input  logic        memory_rvalid,
@@ -73,6 +75,11 @@ module multitini_c64_reu #(
     assign busy = active || memory_pending;
 
     assign memory_addr = {reu_address[23:3], 3'b000};
+    // Prepare the first line while software programs the registers, and
+    // stream the following line ahead of fetch/swap/verify. Stash needs no
+    // speculative reads while active; writes are combined by the DDR cache.
+    assign memory_hint_addr = reu_address;
+    assign memory_hint_read = run && (!active || command[1:0] != 0);
     assign memory_write = state == RAM_WRITE_REQUEST;
     assign memory_wdata = {56'd0, c64_byte} << (reu_address[2:0] * 8);
     assign memory_wstrb = memory_write ? (8'b1 << reu_address[2:0]) : 8'd0;

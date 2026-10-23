@@ -897,8 +897,11 @@ ramDout <= lastVicDi when systemWe = '1' and systemAddr(15 downto 1) = 0
 	else cpuDo;
 ramAddr <= systemAddr;
 ramWE   <= systemWe when sysCycle >= CYCLE_CPU0 else '0';
+-- DMA readiness gates only the CPU/DMA owner. VIC phi2 fetches must still
+-- reach local RAM while the REU is waiting for its expansion-memory data.
 ramCE   <= cs_ram and not memory_wait_q when
-				sysCycle = CYCLE_VIC0 or (cpu_cyc = '1' and bus_access_valid = '1') else '0';
+				sysCycle = CYCLE_VIC0 or
+				(cpu_cyc = '1' and (cpuHasBus = '0' or bus_access_valid = '1')) else '0';
 
 bus_access_valid <= not dma_active or dma_slot_valid;
 dma_ack <= enableCpu and dma_active and dma_slot_valid and cpuHasBus and not memory_wait_q;

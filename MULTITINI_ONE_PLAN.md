@@ -13,7 +13,8 @@ and build receipts; do not append a chronological work log here.
 
 ## Board and execution model
 
-The board uses a Zynq-7020 (XC7Z020-2CLG484I), 1 GB DDR3L, 16 MB QPI PSRAM,
+The board uses a Zynq-7020 (XC7Z020-2CLG484I), 1 GB DDR3L, 8 MiB usable QPI PSRAM
+(the PSRAM devices operate in parallel),
 16 MB QSPI flash, SD, a TFP410 DVI transmitter, an AK4493 stereo DAC, two
 USB3300 PHYs, RTC, temperature sensor and UARTs. The standalone 5 V jumper
 fix is assumed present. The Apple connector supplies no machine clocks,
@@ -57,6 +58,9 @@ Use BRAM for state requiring predictable latency. Use PSRAM where its measured
 service time and the machine's wait rules fit. Use DDR for large stores and
 frame buffers, with explicit arbitration, caching and backpressure. Capacity
 alone does not establish that a memory path meets a machine's timing needs.
+The C64's 16 MiB REU belongs in DDR, not PSRAM. Its reserved DDR aperture is
+`0x25000000-0x25FFFFFF`; cached reads, read-ahead and buffered writes must
+preserve native DMA timing without stopping VIC, CIA or SID time.
 
 MAME is the C64 behavioral reference. Pin the reference source and compare
 observable CPU bus transactions and memory mapping against it. Stock mode

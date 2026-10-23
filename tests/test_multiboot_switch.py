@@ -18,6 +18,11 @@ PREAMBLE = r'''
 #include <string.h>
 #include "multiboot_platform.h"
 #include "sd_storage.h"
+#include "multitini_regs.h"
+#include "multitini_c64_interface.h"
+#include "multitini_genesis_interface.h"
+#include "multitini_iigs_interface.h"
+#include "multitini_nes_interface.h"
 #define MT_DEVCFG_MULTIBOOT 1U
 #define MT_DEVCFG_MULTIBOOT_MASK 0x1fffU
 #define MT_SLCR_UNLOCK 2U
@@ -26,15 +31,10 @@ PREAMBLE = r'''
 #define MT_SLCR_UNLOCK_KEY 0xdf0dU
 #define MT_SLCR_LOCK_KEY 0x767bU
 #define MT_PS_SOFTWARE_RESET 1U
-#define MT_REG_CORE_ID 5U
-#define MT_REG_VIDEO_FRAME_STATUS 6U
-#define MT_REG_CONTROL 7U
-#define MT_CONTROL_CORE_RESET_REQUEST 1U
-#define MT_GENESIS_CORE_ID 9U
-#define MT_IIGS_CORE_ID 10U
-#define MT_NES_CORE_ID 11U
-#define MT_VIDEO_FRAME_STATUS_QUIESCENT 1U
 #define DATA_SYNC ((void)0)
+#ifndef TEST_SOURCE_CORE
+#define TEST_SOURCE_CORE MT_GENESIS_CORE_ID
+#endif
 static struct { bool has_active; int active; } supervisor;
 static struct { bool visible; } supervisor_menu;
 static mb_flash_t flash;
@@ -66,7 +66,10 @@ static void Xil_Out32(uint32_t address, uint32_t value) {
     assert(address==MT_SLCR_LOCK && value==MT_SLCR_LOCK_KEY);
 }
 static uint32_t shell_read(uint32_t address) {
-    if (address==MT_REG_CORE_ID) return MT_GENESIS_CORE_ID;
+    if (address==MT_REG_CORE_ID) return TEST_SOURCE_CORE;
+    if (address==MT_REG_ABI_VERSION) return 23U;
+    if (address==MT_REG_C64_EXPANSION_CAPS)
+        return MT_C64_EXPANSION_CAPS_VALID | MT_C64_EXPANSION_CAPS_REU_DDR;
     if (address==MT_REG_CONTROL) return core_paused ? MT_CONTROL_CORE_RESET_REQUEST : 0U;
     assert(address==MT_REG_VIDEO_FRAME_STATUS);
     return fault==8 ? 0U : MT_VIDEO_FRAME_STATUS_QUIESCENT;
@@ -286,6 +289,11 @@ int main(int argc, char **argv) {
 
 
 class MultibootSwitchTests(unittest.TestCase):
+    @staticmethod
+    def drain_helper(source: str) -> str:
+        start = source.index("static bool core_requires_ddr_drain(void)\n{")
+        return source[start:source.index("\n}", start) + 2]
+
     def run_native(self, source: str) -> str:
         compiler = os.environ.get("CC") or shutil.which("gcc") or shutil.which("clang")
         if not compiler:
@@ -299,6 +307,7 @@ class MultibootSwitchTests(unittest.TestCase):
                                      compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wpedantic",
                                      "-I", str(ROOT / "firmware/golden/lib"),
                                      "-I", str(ROOT / "firmware/platform/xilinx"), str(harness),
+                                     "-I", str(ROOT / "firmware/include"),
                                      "-o", str(executable)], capture_output=True, text=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             result = subprocess.run([sys.executable, str(ROOT / "scripts/run_native_tool.py"), "--",
@@ -316,12 +325,13 @@ class MultibootSwitchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="multiboot-switch-") as name:
             directory = Path(name)
             harness = directory / "switch.c"
-            harness.write_text(PREAMBLE + source[start:end] + SCENARIO)
+            harness.write_text(PREAMBLE + self.drain_helper(source) + source[start:end] + SCENARIO)
             executable = directory / ("switch.exe" if os.name == "nt" else "switch")
             result = subprocess.run([sys.executable, str(ROOT / "scripts/run_native_tool.py"), "--",
                                      compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wpedantic",
                                      "-I", str(ROOT / "firmware/golden/lib"),
                                      "-I", str(ROOT / "firmware/platform/xilinx"), str(harness),
+                                     "-I", str(ROOT / "firmware/include"),
                                      "-o", str(executable)], capture_output=True, text=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             result = subprocess.run([sys.executable, str(ROOT / "scripts/run_native_tool.py"), "--",
@@ -334,7 +344,19 @@ class MultibootSwitchTests(unittest.TestCase):
         start = source.index("static void self_update_golden(bool recovery_only)\n{")
         end = source.index("\n}", start) + 2
         self.assertIn("15 cancellation boundaries", self.run_native(
-            PREAMBLE + GOLDEN_PREAMBLE + source[start:end] + GOLDEN_SCENARIO))
+            PREAMBLE + GOLDEN_PREAMBLE + self.drain_helper(source) + source[start:end] + GOLDEN_SCENARIO))
+
+    def test_c64_ddr_switch_and_golden_update_fail_closed(self):
+        source = (ROOT / "firmware/platform/xilinx/main.c").read_text()
+        prefix = "#define TEST_SOURCE_CORE MT_C64_CORE_ID\n" + PREAMBLE
+        start = source.index("static void switch_to_appletini(void)\n{")
+        end = source.index("\n}", start) + 2
+        self.assertIn("14 cancellation faults", self.run_native(
+            prefix + self.drain_helper(source) + source[start:end] + SCENARIO))
+        start = source.index("static void self_update_golden(bool recovery_only)\n{")
+        end = source.index("\n}", start) + 2
+        self.assertIn("15 cancellation boundaries", self.run_native(
+            prefix + GOLDEN_PREAMBLE + self.drain_helper(source) + source[start:end] + GOLDEN_SCENARIO))
 
     def test_system_uses_advisory_status_and_startup_warms_cache(self):
         source = (ROOT / "firmware/platform/xilinx/main.c").read_text()

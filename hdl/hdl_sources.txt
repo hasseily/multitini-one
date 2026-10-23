@@ -53,7 +53,9 @@ core/c64/multitini_c64_cpu_turbo_guard.sv
 core/c64/multitini_c64_adapter.sv
 core/c64/multitini_c64_expansion_config.sv
 core/c64/multitini_c64_reu.sv
+core/c64/multitini_c64_reu_cache.sv
 core/c64/multitini_c64_memory_arbiter.sv
+core/c64/multitini_c64_ddr_path.sv
 board/multitini_c64_video_bridge.sv
 [gbc]
 core/gameboy/multitini_gameboy_defs_pkg.sv

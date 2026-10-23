@@ -140,6 +140,13 @@ static void test_c64_capabilities(void)
     mt_core_frontend_apply(&frontend, &state, &view);
     check(!view.media_items[2].enabled && strcmp(view.media_items[2].value, "Turn REU off first") == 0,
           "REU ownership explains why cartridge attachment is disabled");
+    check(strstr(view.media_items[2].help, "I/O") != NULL &&
+          strstr(view.core_options[3].help, "DDR") == NULL,
+          "legacy image keeps its REU description while cartridge exclusion identifies I/O conflicts");
+    state.c64_expansion_caps |= MT_C64_EXPANSION_CAPS_REU_DDR;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(strstr(view.core_options[3].help, "DDR REU") != NULL && !view.media_items[2].enabled,
+          "DDR capability describes the new backing store without allowing conflicting cartridges");
     state.c64_reu_enabled = false;
     state.c64_sid_mode = 2U;
     mt_core_frontend_apply(&frontend, &state, &view);

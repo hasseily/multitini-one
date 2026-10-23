@@ -52,6 +52,8 @@ static size_t trace_size;
 static void mark(char value) {assert(trace_size < sizeof(trace)-1U); trace[trace_size++]=value; trace[trace_size]=0;}
 static uint32_t shell_read(uint32_t offset) {
     if(offset==MT_REG_CORE_ID) return current_core;
+    if(offset==MT_REG_ABI_VERSION) return 23U;
+    if(offset==MT_REG_C64_EXPANSION_CAPS) return 0U;
     if(offset==MT_REG_STATUS) return status;
     if(offset==MT_REG_VIDEO_FRAME_STATUS) {
         ++source_status_reads;
@@ -208,6 +210,7 @@ class GenesisRuntimeTests(unittest.TestCase):
         self.assertIsNotNone(compiler, "host C compiler is required")
         source = (ROOT / "firmware/platform/xilinx/main.c").read_text()
         signatures = [
+            "static bool core_requires_ddr_drain(void)",
             "static int set_core_reset_request(bool asserted)",
             "static int supervisor_quiesce(void *context)",
             "static int supervisor_load(void *context,\n                           const mt_core_selection_t *selection)",

@@ -579,6 +579,7 @@ module multitini_one_top #(
     wire display_busy,display_error,display_pause,display_hold,display_quiescent,display_commit;
     wire framebuffer_display_quiescent,genesis_source_quiescent;
     wire gs_memory_quiescent;
+    wire c64_reu_memory_quiescent;
     assign display_quiescent=framebuffer_display_quiescent && genesis_source_quiescent;
     wire [3:0] display_active_mode;
     reg [3:0] display_requested_mode;
@@ -732,7 +733,7 @@ module multitini_one_top #(
 
     multitini_control_regs #(.SHELL_BUILD_ID(SHELL_BUILD_ID),
         .IIGS_ACCEL_CAPS(ACTIVE_MACHINE==5 ? 32'h8000037f : 32'd0),
-        .C64_EXPANSION_CAPS(ACTIVE_MACHINE==0 ? 32'h80000003 : 32'd0)) control_regs (
+        .C64_EXPANSION_CAPS(ACTIVE_MACHINE==0 ? 32'h80000007 : 32'd0)) control_regs (
         .clk(control_clk), .resetn(control_aresetn),
         .core_id(c64_core_id),
         .core_variant_index((ACTIVE_MACHINE == 0 && C64_NTSC_MODE) ||
@@ -814,14 +815,15 @@ module multitini_one_top #(
         reg_rd_data = display_rd_select ? display_rd_data : framebuffer_rd_select ? framebuffer_rd_data :
                       reg_rd_addr < 16'h1000 ? control_rd_data : 32'd0;
         // Firmware holds the machine reset before PCAP. Its shared DMA
-        // quiescence read also drains autonomous source rings and IIgs RAM,
-        // including when the effects service was already off. The IIgs RAM
+        // quiescence read also drains autonomous source rings, IIgs RAM and
+        // C64 REU DDR, even when effects were already off. Each RAM drain
         // level is 1 only after this same request reached the machine domain,
         // stopped the core and every posted write then drained.
         // A running-machine effects suspension keeps the normal status;
         // output-clock changes separately pause/drain the video HP masters.
-        if((ACTIVE_MACHINE==4 || ACTIVE_MACHINE==5 || ACTIVE_MACHINE==6) && reg_rd_addr==MT_REG_VIDEO_FRAME_STATUS &&
-           |(shell_control & MT_CONTROL_CORE_RESET_REQUEST) && (!genesis_source_quiescent || !gs_memory_quiescent))
+        if((ACTIVE_MACHINE==0 || ACTIVE_MACHINE==4 || ACTIVE_MACHINE==5 || ACTIVE_MACHINE==6) && reg_rd_addr==MT_REG_VIDEO_FRAME_STATUS &&
+           |(shell_control & MT_CONTROL_CORE_RESET_REQUEST) &&
+           (!genesis_source_quiescent || !gs_memory_quiescent || !c64_reu_memory_quiescent))
             reg_rd_data=framebuffer_rd_data & ~MT_VIDEO_FRAME_STATUS_QUIESCENT;
     end
 
@@ -1177,6 +1179,11 @@ module multitini_one_top #(
     // and centers the shorter NTSC raster in the 1920x1080 active area.
     generate
         if (ACTIVE_MACHINE == 0) begin : g_c64_machine
+            wire [23:0] reu_memory_addr;
+            wire [63:0] reu_memory_wdata, reu_memory_rdata;
+            wire [7:0] reu_memory_wstrb;
+            wire reu_memory_write, reu_memory_valid, reu_memory_ready;
+            wire reu_memory_rvalid, reu_memory_fault, reu_memory_burst, reu_memory_busy;
             wire [3:0] expansion_config;
             multitini_c64_expansion_config expansion_config_i (
                 .control_clk(control_clk), .control_resetn(control_aresetn),
@@ -1216,6 +1223,12 @@ module multitini_one_top #(
                 .memory_rdata(c64_memory_rdata),
                 .memory_rvalid(c64_memory_rvalid),
                 .memory_fault(c64_memory_fault),
+                .reu_memory_addr(reu_memory_addr), .reu_memory_write(reu_memory_write),
+                .reu_memory_wdata(reu_memory_wdata), .reu_memory_wstrb(reu_memory_wstrb),
+                .reu_memory_valid(reu_memory_valid), .reu_memory_burst(reu_memory_burst),
+                .reu_memory_busy(reu_memory_busy), .reu_memory_ready(reu_memory_ready),
+                .reu_memory_rdata(reu_memory_rdata), .reu_memory_rvalid(reu_memory_rvalid),
+                .reu_memory_fault(reu_memory_fault),
                 .media_mount(c64_media_mount),
                 .media_eject(c64_media_eject),
                 .media_complete(c64_media_complete),
@@ -1293,6 +1306,27 @@ module multitini_one_top #(
                 .memory_fault(c64_memory_fault),
                 .psram_a_io(psram_a_io), .psram_b_io(psram_b_io),
                 .psram_ce_n(psram_ce_n), .psram_clk(psram_clk)
+            );
+            // Dedicated REU backing: 16 MiB at DDR 0x25000000, HP2 on c64_clk.
+            // Guest reset stops the machine while the cache and AXI writes drain.
+            multitini_c64_ddr_path reu_ddr_path_i (
+                .core_clk(c64_clk), .core_resetn(c64_aresetn),
+                .control_clk(control_clk), .control_resetn(control_aresetn),
+                .control_reset_request(|(shell_control & MT_CONTROL_CORE_RESET_REQUEST)),
+                .core_reset_request(c64_core_reset_request),
+                .core_memory_addr(reu_memory_addr), .core_memory_write(reu_memory_write),
+                .core_memory_wdata(reu_memory_wdata), .core_memory_wstrb(reu_memory_wstrb),
+                .core_memory_valid(reu_memory_valid), .core_memory_burst(reu_memory_burst),
+                .core_memory_busy(reu_memory_busy), .core_memory_ready(reu_memory_ready),
+                .core_memory_rdata(reu_memory_rdata), .core_memory_rvalid(reu_memory_rvalid),
+                .core_memory_fault(reu_memory_fault), .quiescent(c64_reu_memory_quiescent),
+                .araddr(hp2_araddr), .arlen(hp2_arlen), .arsize(hp2_arsize), .arburst(hp2_arburst),
+                .arvalid(hp2_arvalid), .arready(hp2_arready),
+                .rdata(hp2_rdata), .rresp(hp2_rresp), .rlast(hp2_rlast), .rvalid(hp2_rvalid), .rready(hp2_rready),
+                .awaddr(hp2_awaddr), .awlen(hp2_awlen), .awsize(hp2_awsize), .awburst(hp2_awburst),
+                .awvalid(hp2_awvalid), .awready(hp2_awready),
+                .wdata(hp2_wdata), .wstrb(hp2_wstrb), .wlast(hp2_wlast), .wvalid(hp2_wvalid), .wready(hp2_wready),
+                .bresp(hp2_bresp), .bvalid(hp2_bvalid), .bready(hp2_bready)
             );
         end else if (ACTIVE_MACHINE == 1) begin : g_gameboy_machine
             assign c64_rom_loaded = {2'd0, gbc_cart_loaded};
@@ -1955,8 +1989,13 @@ module multitini_one_top #(
         end
     endgenerate
 
-    generate if(ACTIVE_MACHINE!=4 && ACTIVE_MACHINE!=5 && ACTIVE_MACHINE!=6)begin : g_no_machine_ddr
+    generate if(ACTIVE_MACHINE!=4 && ACTIVE_MACHINE!=5 && ACTIVE_MACHINE!=6)begin : g_no_source_ddr
         assign genesis_source_quiescent=1'b1;
+    end endgenerate
+    generate if(ACTIVE_MACHINE!=0)begin : g_no_c64_ddr
+        assign c64_reu_memory_quiescent=1'b1;
+    end endgenerate
+    generate if(ACTIVE_MACHINE!=0 && ACTIVE_MACHINE!=4 && ACTIVE_MACHINE!=5 && ACTIVE_MACHINE!=6)begin : g_no_machine_ddr
         assign hp2_araddr=0,hp2_arlen=0,hp2_arsize=3'd3,hp2_arburst=2'd1,hp2_arvalid=0,hp2_rready=1;
         assign hp2_awaddr=0,hp2_awlen=0,hp2_awsize=3'd3,hp2_awburst=2'd1,hp2_awvalid=0;
         assign hp2_wdata=0,hp2_wstrb=0,hp2_wlast=0,hp2_wvalid=0,hp2_bready=1;

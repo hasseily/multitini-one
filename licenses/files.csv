@@ -607,3 +607,12 @@ hdl/sim/tb_c64_reu_transport.sv,Multitini One,,GPL-3.0-only,source-reviewed,Orig
 hdl/sim/tb_c64_sid_socket.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 expansion simulation fixture with synthetic data
 hdl/sim/tb_c64_expansion_config.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 expansion CDC and memory response ownership checks
 hdl/sim/tb_c64_memory_arbiter.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 expansion CDC and memory response ownership checks
+hdl/core/c64/multitini_c64_ddr_path.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 REU HP2 DDR aperture and AXI response/reset drain transport adapted from the local IIgs path
+hdl/core/c64/multitini_c64_reu_cache.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original REU read-ahead cache and coherent posted-write queue
+hdl/sim/tb_c64_ddr.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 DDR AXI response/backpressure/reset regression with synthetic data adapted from the local IIgs fixture
+hdl/sim/tb_c64_reu_cache.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original independent cache byte scoreboard and fill/queue/fault/reset regression with synthetic data
+hdl/sim/tb_c64_reu_native.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original native REU DMA cadence regression through production cache and DDR bridge with a synthetic AXI store
+scripts/test_c64_ddr.py,Multitini One,,GPL-3.0-only,source-reviewed,Original source-sealed DDR bridge regression runner with aperture corruption negative control
+scripts/test_c64_reu_cache.py,Multitini One,,GPL-3.0-only,source-reviewed,Original source-sealed cache regression runner with forwarding corruption negative control
+scripts/test_c64_reu_native.py,Multitini One,,GPL-3.0-only,source-reviewed,Original source-sealed native REU cadence regression runner
+tests/test_c64_ddr_drain_runtime.py,Multitini One,,GPL-3.0-only,host-tested,Original production firmware DDR handoff regression for capable and legacy C64 images

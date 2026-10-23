@@ -12,6 +12,8 @@ module tb_c64_reu_transport;
     logic dma_ack=0;
     logic [7:0] dma_rdata=0;
     wire [23:0] memory_addr;
+    wire [23:0] memory_hint_addr;
+    wire memory_hint_read;
     wire memory_write,memory_valid;
     wire [63:0] memory_wdata;
     wire [7:0] memory_wstrb;

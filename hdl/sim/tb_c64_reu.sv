@@ -14,6 +14,8 @@ module tb_c64_reu #(
     wire [7:0] dma_wdata;
     logic [7:0] dma_rdata;
     wire [23:0] memory_addr;
+    wire [23:0] memory_hint_addr;
+    wire memory_hint_read;
     wire memory_write, memory_valid, memory_ready, memory_rvalid;
     wire [63:0] memory_wdata;
     logic [63:0] memory_rdata;

@@ -27,6 +27,8 @@ module tb_c64_reu_machine;
     wire [7:0] dbg_cpu_di, dbg_cpu_do, dbg_cpu_port, dbg_vic_bus;
     wire dbg_cpu_we, dbg_request, dbg_retire, dbg_reset, dbg_hold;
     wire dbg_rdy, dbg_cpu_owned, dbg_dma;
+    wire dbg_aec, dbg_ram_select;
+    wire [15:0] dbg_vic_addr;
     wire [5:0] dbg_native_ce;
     wire [4:0] dbg_io_cs;
     wire dbg_io_write;
@@ -88,8 +90,13 @@ module tb_c64_reu_machine;
         .dbg_cpu_port(dbg_cpu_port), .dbg_vic_bus(dbg_vic_bus),
         .dbg_retire(dbg_retire), .dbg_reset(dbg_reset), .dbg_hold(dbg_hold),
         .dbg_rdy(dbg_rdy), .dbg_cpu_owned(dbg_cpu_owned), .dbg_dma(dbg_dma),
+        .dbg_aec(dbg_aec), .dbg_ram_select(dbg_ram_select), .dbg_vic_addr(dbg_vic_addr),
         .dbg_native_ce(dbg_native_ce), .dbg_io_cs(dbg_io_cs), .dbg_io_write(dbg_io_write)
     );
+
+    function automatic logic [7:0] character_byte(input integer address);
+        character_byte = 8'hc7 ^ address[7:0] ^ {4'b0,address[11:8]};
+    endfunction
 
     task automatic load_roms;
         @(negedge clk); bios = 0; rom_we = 1;
@@ -101,7 +108,7 @@ module tb_c64_reu_machine;
         end
         bios = 1;
         for (integer address = 0; address < 4096; address++) begin
-            rom_addr = address; rom_data = 8'hC7;
+            rom_addr = address; rom_data = character_byte(address);
             @(negedge clk);
         end
         rom_we = 0; bios = 0;
@@ -124,6 +131,11 @@ module tb_c64_reu_machine;
     logic last_irq = 0;
     logic [7:0] dma_floating [0:15];
     integer floating_reads = 0;
+    integer character_reads = 0, under_rom_writes = 0, delayed_triggers = 0;
+    logic delayed_armed = 0;
+    integer vic_wait_reads = 0, vic_wait_data_checks = 0;
+    logic vic_wait_read_pending = 0;
+    logic [7:0] vic_wait_expected;
 
     multitini_c64_reu reu (
         .clk(clk), .reset(!reset_n), .enable(1'b1),
@@ -185,12 +197,29 @@ module tb_c64_reu_machine;
     endtask
     always @(posedge clk) begin
         if (running && !dbg_reset && !paused) begin
+            if (vic_wait_read_pending) begin
+                check(ram_q === vic_wait_expected, "VIC phi2 RAM response during REU wait");
+                vic_wait_data_checks++;
+                vic_wait_read_pending = 0;
+            end
             check(!dbg_hold && !reu_fault, "REU waits never hold the machine clock");
             if (dbg_dma) begin
                 check(!dbg_retire, "DMA ownership holds only CPU retirement");
                 if (!dma_valid) begin
                     blocked_clocks++;
-                    if (dbg_phase == 28) check(!ram_ce, "unready DMA does not issue machine RAM access");
+                    if (dbg_phase == 28 && dbg_request) begin
+                        if (dbg_cpu_owned) check(!ram_ce, "unready DMA does not issue CPU-owned RAM access");
+                        else if (dbg_ram_select && dbg_aec) begin
+                            check(ram_ce, $sformatf("unready DMA must preserve VIC-owned phi2 RAM request addr=%04x vic=%04x AEC=%0d",
+                                                   ram_addr,dbg_vic_addr,dbg_aec));
+                            check(!$isunknown({ram_addr,dbg_vic_addr}) && ram_addr === dbg_vic_addr && !ram_we,
+                                  "VIC owns a known read address during REU wait");
+                            vic_wait_expected = memory_i.ram[ram_addr];
+                            check(!$isunknown(vic_wait_expected), "VIC expected RAM byte is initialized");
+                            vic_wait_reads++;
+                            vic_wait_read_pending = 1;
+                        end
+                    end
                     check(!dbg_io_write, "unready DMA has no I/O write side effect");
                 end
                 if (!dbg_rdy) dma_checks++;
@@ -198,6 +227,18 @@ module tb_c64_reu_machine;
             if (dma_ack) begin
                 check(dbg_rdy, "REU waits for raw VIC BA as in MAME");
                 dma_acks++;
+                if (dma_addr >= 16'hd7f0 && dma_addr < 16'hd9f0) begin
+                    check(dbg_cpu_port[2:0] === 3'b011, "DMA retains character-ROM bank pins");
+                    if (dma_we) begin
+                        check(dma_data === initial_ram[16'h4000 + dma_addr - 16'hd7f0],
+                              "Under-ROM fetch writes the distinct RAM source pattern");
+                        under_rom_writes++;
+                    end else begin
+                        check(dma_result === character_byte(dma_addr & 16'h0fff),
+                              "Character-ROM DMA read uses chargen rather than RAM or color I/O");
+                        character_reads++;
+                    end
+                end
                 if (!dma_we && dma_addr == 16'hdf00) begin
                     check(floating_reads < 16 && dma_result === dbg_vic_bus,
                           "DMA from REU aperture reads VIC floating bus as in MAME");
@@ -208,6 +249,16 @@ module tb_c64_reu_machine;
             if (dbg_io_write && dbg_io_cs[1]) sid_dma_writes++;
             if (reu_irq && !last_irq) irq_assertions++;
             last_irq = reu_irq;
+            if (delayed_armed) check(!dma_req, "Delayed DMA started before FF00");
+            if (cpu_bus_valid && cpu_bus_write) begin
+                if (cpu_bus_addr == 16'hdf01 && (cpu_bus_wdata == 8'h80 || cpu_bus_wdata == 8'h81))
+                    delayed_armed = 1;
+                if (cpu_bus_addr == 16'hff00) begin
+                    check(delayed_armed && dbg_cpu_port[2:0] === 3'b011,
+                          "FF00 starts an armed command after character banking");
+                    delayed_armed = 0; delayed_triggers++;
+                end
+            end
             if (count_native) begin
                 active_ticks++;
                 if (dbg_native_ce[0]) begin
@@ -219,7 +270,7 @@ module tb_c64_reu_machine;
                 if (dbg_native_ce[3]) vic_ticks++;
                 if (dbg_native_ce[4]) pixel_ticks++;
             end
-            if (cpu_bus_valid && cpu_bus_write && cpu_bus_addr == 16'h2105 && cpu_bus_wdata == 8'ha5)
+            if (cpu_bus_valid && cpu_bus_write && cpu_bus_addr == 16'h210f && cpu_bus_wdata == 8'ha5)
                 finished = 1;
         end
     end
@@ -235,6 +286,8 @@ module tb_c64_reu_machine;
         loader_we=0;
         turbo_mode=mode ? 2'b10 : 2'b00; turbo_speed=mode ? 2'b11 : 2'b00;
         dma_acks=0; sid_dma_writes=0; blocked_clocks=0; dma_checks=0; irq_assertions=0; last_irq=0; floating_reads=0;
+        character_reads=0; under_rom_writes=0; delayed_triggers=0; delayed_armed=0;
+        vic_wait_reads=0; vic_wait_data_checks=0; vic_wait_read_pending=0;
         native_ticks=0; cia_p_ticks=0; cia_n_ticks=0; vic_ticks=0; pixel_ticks=0;
         active_ticks=0; last_sid_tick=-1; finished=0; run_clocks=0;
         reset_n=1; pause=0; running=1;
@@ -243,22 +296,34 @@ module tb_c64_reu_machine;
             if (!dbg_reset && dbg_phase==0) count_native=1;
         end
         check(finished, "CPU finishes actual REU register command program");
-        check(dma_acks==1568, $sformatf("exact accepted DMA transactions expected1568 got%0d",dma_acks));
+        check(dma_acks==4128, $sformatf("exact accepted DMA transactions expected4128 got%0d",dma_acks));
         check(sid_dma_writes==16, "PSRAM stalls never duplicate DMA SID writes");
         check(blocked_clocks>10000 && dma_checks>0, "delayed PSRAM and real VIC bus steals exercised");
-        check(irq_assertions==4 && floating_reads==16, "REU completion IRQs and floating-bus aperture reads");
-        for(integer i=0;i<4;i++) check(memory_i.ram[16'h2100+i]===8'hd0,"CPU reads MAME completion/IRQ status");
+        check(vic_wait_reads>0 && vic_wait_data_checks==vic_wait_reads,
+              "VIC phi2 RAM reads and data checked while REU waits");
+        check(irq_assertions==9 && floating_reads==16, "REU completion IRQs and floating-bus aperture reads");
+        check(character_reads==1024 && under_rom_writes==512 && delayed_triggers==3 && !delayed_armed,
+              "Character-ROM/under-ROM/FF00 coverage completed");
+        for(integer i=0;i<9;i++) check(memory_i.ram[16'h2100+i]===8'hd0,"CPU reads MAME completion/IRQ status");
         for(integer i=0;i<768;i++) begin
             check(memory_i.ram[16'h4800+i]===initial_ram[16'h4000+i], "REU high-bank round-trip data");
             check(expansion_ram[(24'hfffe80+i)&24'hffffff]===
                   (i<16 ? dma_floating[i] : initial_ram[16'h4000+i]),"24-bit REU wrap and floating-bus data");
         end
+        for(integer i=0;i<512;i++) begin
+            check(expansion_ram[24'h802120+i]===character_byte(12'h7f0+i) &&
+                  memory_i.ram[16'hc000+i]===character_byte(12'h7f0+i),
+                  "Delayed FF00 stash captures address-dependent character ROM");
+            check(memory_i.ram[16'hd7f0+i]===initial_ram[16'h4000+i] &&
+                  expansion_ram[24'ha00120+i]===character_byte(12'h7f0+i),
+                  "Fetch changes under-ROM RAM but preserves character ROM");
+        end
         check(cia_p_ticks>=native_ticks-1 && cia_p_ticks<=native_ticks+1 &&
               cia_n_ticks>=native_ticks-1 && cia_n_ticks<=native_ticks+1,"native CIA cadence");
         check(vic_ticks>=native_ticks*2-2 && vic_ticks<=native_ticks*2+2 &&
               pixel_ticks>=native_ticks*8-8 && pixel_ticks<=native_ticks*8+8,"native VIC data/pixel cadence");
-        $display("REU_MACHINE_SUMMARY ntsc=%0d mode=%0d dma=%0d waits=%0d vic_held=%0d sid_writes=%0d clocks=%0d",
-                 ntsc,mode,dma_acks,blocked_clocks,dma_checks,sid_dma_writes,run_clocks);
+        $display("REU_MACHINE_SUMMARY ntsc=%0d mode=%0d dma=%0d waits=%0d vic_held=%0d sid_writes=%0d char_reads=%0d under_rom_writes=%0d ff00=%0d vic_wait_reads=%0d clocks=%0d",
+                 ntsc,mode,dma_acks,blocked_clocks,dma_checks,sid_dma_writes,character_reads,under_rom_writes,delayed_triggers,vic_wait_data_checks,run_clocks);
         running=0; count_native=0;
     endtask
     initial begin
@@ -268,7 +333,7 @@ module tb_c64_reu_machine;
             ntsc=standard;
             for(integer mode=0;mode<2;mode++) run_case(mode);
         end
-        $display("PASS: C64 production REU machine PAL/NTSC stock/dense, native VIC/CIA/SID, 24-bit wrap, DMA I/O and IRQ");
+        $display("PASS: C64 production REU machine PAL/NTSC stock/dense, native VIC/CIA/SID, 24-bit wrap, DMA I/O and IRQ, delayed FF00 character-ROM stash and under-ROM fetch");
         $finish;
     end
     initial begin #60000000; $fatal(1,"FAIL: REU machine timeout"); end
