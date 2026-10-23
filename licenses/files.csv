@@ -1,4 +1,8 @@
 path,origin,commit,license,status,notes
+hdl/sim/tb_c64_ua_stock_bus.sv,Multitini One,,GPL-3.0-only,sim-tested,Original observation-only PAL and NTSC stock IO2 and REU bus trace wrapper
+scripts/test_c64_ua_stock_bus.py,Multitini One,,GPL-3.0-only,sim-tested,Original immutable pre-turbo and pre-UA synthetic bus capture and comparison runner
+tests/c64_ua/stock_bus.csv,Multitini One,,GPL-3.0-only,sim-tested,Generated synthetic production-RTL bus trace; contains no system ROM or game content
+tests/c64_ua/stock_bus_manifest.json,Multitini One,,GPL-3.0-only,sim-tested,Source hashes and provenance of the immutable stock bus trace
 hdl/core/apple_iigs/ports/smartport_dev.sv,MiSTer Apple IIgs and Multitini One,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-3.0,source-reviewed,Reproduced by scripts/port_apple_iigs_core.py; native clock enable preserves SmartPort timing inside the separately paced floppy subsystem
 hdl/sim/tb_apple_iigs_fast_floppy_boot.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original production-adapter floppy boot and independent native video and audio cadence checks; private ROMs and media are external test inputs
 hdl/sim/tb_apple_iigs_fast_floppy_protocol.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original real-65816 formatted track read and write and durable eject test; generated sector payloads and mechanical fixtures
