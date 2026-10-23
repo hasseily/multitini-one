@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Compare the REU controller with pinned MAME and test its 24-bit extension.
+"""Retain MAME REU comparisons with explicit VICE compatibility differences.
 
 The 19-bit comparison executes verbatim MOS8726 methods. The 24-bit fixtures
 are separate directed expectations; MAME does not model a 16 MiB REU here.
-Neither test establishes native transfer throughput or physical PSRAM proof.
+Four named cases record the deliberate VICE differences. The independent
+test_c64_vice_reu.py comparison is authoritative. Neither test establishes
+native transfer throughput or physical DDR proof.
 """
 from __future__ import annotations
 import argparse
@@ -114,7 +116,7 @@ def extension_vectors() -> tuple[Vectors,list[str]]:
     def transfer(ca: int,ra: int,data: list[int],fetch: bool=False) -> None:
         v.setup(ca,ra,len(data));v.write(1,0x91 if fetch else 0x90)
         for i,value in enumerate(data):
-            c=(ca+i)&65535;r=(ra+i)&0xffffff
+            c=(ca+i)&65535;r=(ra&0xf80000)|((ra+i)&0x7ffff)
             if fetch:
                 value=ram.get(r,initial(r))
                 expected.extend((f"M R {r:06x} {value:02x}",f"C W {c:06x} {value:02x}"))
@@ -127,14 +129,14 @@ def extension_vectors() -> tuple[Vectors,list[str]]:
             pokes=v.lines[-len(data):];del v.lines[-len(data):]
             command=v.lines.pop();v.lines.extend(pokes);v.lines.append(command)
         if fetch:
-            r=(ra+len(data))&0xffffff;expected.append(f"M R {r:06x} {ram.get(r,initial(r)):02x}")
+            r=(ra&0xf80000)|((ra+len(data))&0x7ffff);expected.append(f"M R {r:06x} {ram.get(r,initial(r)):02x}")
         v.put(4);expected.append("S 0 0")
-        finalca=(ca+len(data))&65535;finalra=(ra+len(data))&0xffffff
+        finalca=(ca+len(data))&65535;finalra=(ra&0xf80000)|((ra+len(data))&0x7ffff)
         values={0:0x50,1:0x11 if fetch else 0x10,2:finalca&255,3:finalca>>8,
-                4:finalra&255,5:(finalra>>8)&255,6:finalra>>16,7:1,8:0,9:0x1f,10:0x3f}
+                4:finalra&255,5:(finalra>>8)&255,6:(finalra>>16)|0xf8,7:1,8:0,9:0x1f,10:0x3f}
         for reg,val in values.items():
             v.read(reg);expected.append(f"R {reg:02x} {val:02x} 0")
-    start("16mb-end-wrap-both-directions")
+    start("16mb-upper-window-rec-wrap-both-directions")
     transfer(0xfffe,0xfffffe,[0x12,0x34,0x56]);transfer(0x4000,0xfffffe,[0]*3,True)
     start("full-eight-bank-bits-no-alias")
     for i,addr in enumerate((0x000123,0x080123,0x800123,0xff0123)):
@@ -149,18 +151,64 @@ def compare(actual: list[str], expected: list[str]) -> None:
         raise RuntimeError(f"REU trace differs at {first}: actual={actual[first:first+4]}, expected={expected[first:first+4]}; lengths {len(actual)}/{len(expected)}")
 
 
+def compare_historical_mame(actual: list[str], expected: list[str], names: list[str]) -> list[dict]:
+    """Keep MAME bytes intact and gate four documented VICE disagreements.
+
+    These narrow fixture deltas describe historical differences, not a new
+    oracle. The independent unchanged VICE-method suite is authoritative.
+    Any additional difference, or disappearance of an expected one, fails.
+    """
+    def groups(lines):
+        out={}; current=None
+        for line in lines:
+            if line.startswith('E '): current=int(line[2:]); out[current]=[]
+            else: out[current].append(line)
+        return out
+    aa,bb=groups(actual),groups(expected)
+    if set(aa)!=set(bb) or len(aa)!=len(names): raise RuntimeError('MAME case boundaries differ')
+    declared={
+        'verify-fault-0-length-2':'VICE peeks the equal last byte after a penultimate mismatch and sets EOB',
+        'verify-fault-3-length-5':'VICE peeks the equal last byte after a penultimate mismatch and sets EOB',
+        'irq-mask-does-not-retroactively-assert-or-clear':'VICE mask enable raises IRQ from existing completion status',
+        'shadow-byte-updates-after-nonautoload':'VICE low/high REU address writes preserve the current bank latch',
+    }
+    differences=[]
+    for i,name in enumerate(names,1):
+        a,b=aa[i],bb[i]
+        if name not in declared:
+            compare(a,b); continue
+        if a==b: raise RuntimeError('Expected historical MAME disagreement disappeared: '+name)
+        adjusted=b.copy()
+        if name.startswith('verify-fault-'):
+            addr,reu,value=(0x3001,0x12341,0x6b) if name.endswith('length-2') else (0x3004,0x12344,0x6e)
+            at=adjusted.index('S 1 0')
+            adjusted[at:at]=[f'C R {addr:06x} {value:02x}',f'M R {reu:06x} {value:02x}']
+            adjusted[adjusted.index('R 00 b0 0')]='R 00 f0 0'
+        elif name.startswith('irq-mask-'):
+            zero_samples=[j for j,row in enumerate(adjusted) if row=='S 0 0']
+            if len(zero_samples)!=2: raise RuntimeError('Historical mask fixture changed')
+            adjusted[zero_samples[1]]='S 1 0'
+        else:
+            adjusted=['R 06 fb 0' if row=='R 06 fa 0' else row for row in adjusted]
+        compare(a,adjusted)
+        differences.append({'case':name,'status':'EXPECTED_DIFFERENCE','reason':declared[name],
+                            'rtl_events':len(a),'mame_events':len(b)})
+    return differences
+
+
 def main() -> int:
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir",type=Path,default=ROOT/"build/c64-reu-tests")
     args=parser.parse_args();build=args.build_dir.resolve()
-    if not build.is_relative_to(ROOT/"build"):parser.error("build dir must be under build/")
+    if build==(ROOT/"build").resolve() or not build.is_relative_to((ROOT/"build").resolve()):parser.error("build dir must be a dedicated build/ child")
     build.mkdir(parents=True,exist_ok=True);receipt=build/"validation.json";receipt.unlink(missing_ok=True)
     paths=[Path(__file__),REFERENCE,ROOT/"tests/c64_mame/reu_harness.cpp",ROOT/"hdl/sim/tb_c64_reu.sv",
            ROOT/"hdl/core/c64/multitini_c64_reu.sv",ROOT/"hdl/sim/tb_c64_reu_transport.sv",ROOT/"scripts/run_native_tool.py"]
     hashes={p.relative_to(ROOT).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
     result={"schema":1,"status":"FAIL","reference_commit":PIN,"source_sha256":hashes,
-            "limits":["MAME comparison uses its unchanged 19-bit 512 KiB controller; 16 MiB addressing is a separately tested extension.",
-                      "Ordered accepted transfers/registers/IRQ are compared; machine scheduling, native transfer throughput and physical PSRAM require separate validation."]}
+            "limits":["Historical MAME comparison retains unchanged reference output and explicitly gates four named expected VICE disagreements; test_c64_vice_reu.py is authoritative.",
+                      "16 MiB synthetic expectations use the 512 KiB REC window and write-only upper bank latch; unchanged VICE methods separately verify both capacity profiles.",
+                      "Ordered accepted transfers/registers/IRQ are compared; machine scheduling, native transfer throughput and physical DDR require separate validation."]}
     try:
         if hashlib.sha256(REFERENCE.read_bytes()).hexdigest()!=REFERENCE_SHA:raise RuntimeError("Pinned REU source changed")
         src=REFERENCE.read_text();constants=src[src.index("namespace {"):src.index("} // anonymous namespace")+len("} // anonymous namespace")]
@@ -194,11 +242,14 @@ def main() -> int:
                                          ROOT/"hdl/core/c64/multitini_c64_reu.sv",ROOT/"hdl/sim/tb_c64_reu.sv"])
             out=run(f"simulate-{bits}",guard+[vv,exe,"+STIMULI="+fixture.as_posix(),"+TRACE="+actualpath.as_posix()],600)
             if "PASS: C64 REU" not in out:raise RuntimeError("Missing simulation pass marker")
-            actual=actualpath.read_text().splitlines();compare(actual,expected)
+            actual=actualpath.read_text().splitlines()
+            historical=compare_historical_mame(actual,expected,vectors.cases) if bits==19 else []
+            if bits!=19: compare(actual,expected)
             checks.append({"address_bits":bits,"status":"PASS","cases":vectors.cases,"case_count":len(vectors.cases),"trace_events":len(actual),
                            "fixture_sha256":hashlib.sha256(fixture.read_bytes()).hexdigest(),"trace_sha256":hashlib.sha256(actualpath.read_bytes()).hexdigest(),
-                           "expected_sha256":hashlib.sha256(expectedpath.read_bytes()).hexdigest()})
-            print(f"PASS: REU {bits}-bit {len(vectors.cases)} cases, {len(actual)} exact trace events",flush=True)
+                           "expected_sha256":hashlib.sha256(expectedpath.read_bytes()).hexdigest(),
+                           "expected_historical_differences":historical})
+            print(f"PASS: REU {bits}-bit {len(vectors.cases)} cases, {len(actual)} trace events, {len(historical)} declared MAME disagreements",flush=True)
         transport=build/"transport.vvp"
         run("compile-transport",guard+[iv,"-g2012","-s","tb_c64_reu_transport","-o",transport,
                                        ROOT/"hdl/core/c64/multitini_c64_reu.sv",ROOT/"hdl/sim/tb_c64_reu_transport.sv"])

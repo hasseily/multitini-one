@@ -6,7 +6,7 @@ module tb_c64_reu_transport;
     logic [4:0] io_addr=0;
     logic [7:0] io_wdata=0;
     wire [7:0] io_rdata;
-    wire dma_req,dma_valid,dma_write;
+    wire dma_req,dma_valid,dma_write,dma_idle,dma_peek,dma_last_write;
     wire [15:0] dma_addr;
     wire [7:0] dma_wdata;
     logic dma_ack=0;

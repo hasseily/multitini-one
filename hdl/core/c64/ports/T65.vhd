@@ -3,9 +3,9 @@
 -- 62fc697e3c9b5982c9dc76aa8cd03db545d20803.
 -- Preserve NMOS taken-branch dummy-read addresses: read the next PC before
 -- applying the displacement, then read the uncorrected page on a crossing.
--- Sample NMOS IRQ/NMI on the current accepted bus cycle, including an NMI
--- edge on the BRK status push that selects the interrupt vector. Architectural
--- PC updates and non-NMOS interrupt-sampling paths retain upstream behavior.
+-- Match VICE 3.10 NMOS IRQ/NMI polling and pending-edge consumption, including
+-- stolen reads, CLI/SEI, branch polling and BRK vector selection. Non-NMOS
+-- interrupt-sampling paths retain upstream behavior.
 -- ****
 -- T65(b) core. In an effort to merge and maintain bug fixes ....
 --
@@ -140,6 +140,7 @@ library IEEE;
   use work.T65_Pack.all;
 
 entity T65 is
+  -- Retained for wrapper compatibility; interrupt decisions use Enable only.
   generic (SeparateBusStart : boolean := false);
   port(
     Mode    : in  std_logic_vector(1 downto 0);      -- "00" => 6502, "01" => 65C02, "10" => 65C816
@@ -212,14 +213,12 @@ architecture rtl of T65 is
 
   signal SO_n_o             : std_logic;
   signal IRQ_n_o            : std_logic;
+  signal IRQ_n_oo           : std_logic;
+  signal read_was_held      : std_logic;
+  signal nmi_dispatch_seen  : std_logic;
   signal NMI_n_o            : std_logic;
   signal NMIAct             : std_logic;
-  signal nmi_pending_now    : std_logic;
   signal nmi_clear_pending  : std_logic;
-  signal nmi_prefetch_window : std_logic;
-  signal nmi_late_takeover   : std_logic;
-  signal nmi_fetch_req       : std_logic;
-  signal bus_start_i         : std_logic;
 
   signal Break              : std_logic;
 
@@ -269,28 +268,16 @@ architecture rtl of T65 is
   signal NMI_entered    : std_logic;
 
 begin
-  bus_start_i <= BusStart when SeparateBusStart else Enable;
-  -- The pending latch and a newly arriving edge are both visible to the NMOS
-  -- interrupt sample on this enabled clock. Waiting for NMIAct's registered
-  -- update adds a guest cycle and misses the last BRK vector-selection edge.
-  nmi_pending_now <= NMIAct or (NMI_n_o and not NMI_n) when Mode = "00" else NMIAct;
-
-  -- MAME retains its sampled-NMI bit across the two noirq vector reads.
-  -- A new edge after the pending clear can discard the first handler opcode
-  -- at prefetch_end. Prepare the replacement before the next bus issue, then
-  -- latch either decision at BusStart so an in-flight address cannot change.
-  nmi_late_takeover <= '1' when Mode = "00" and nmi_prefetch_window = '1' and
-    MCycle = "001" and NMICycle = '0' and IRQCycle = '0' and nmi_pending_now = '1' else '0';
-  IR <= x"00" when nmi_late_takeover = '1' else instruction_reg;
-  nmi_fetch_req <= NMIReq or (nmi_prefetch_window and nmi_pending_now and not nmi_clear_pending)
-    when Mode = "00" else NMIReq;
+  -- VICE polls the registered pending edge. The first handler instruction
+  -- executes before another NMI; there is no post-vector opcode takeover.
+  IR <= instruction_reg;
 
   -- NMI_ack pulses one cycle during stack push so that an external cartridge that
   -- watches it (e.g. a SIMCRT freezer state machine) can switch into ULTIMAX mode
   -- in time for the $FFFA vector fetch at MCycle="101". Kept decoupled from the
   -- internal NMI_entered signal so that the BAL elsif below can preserve the NMOS
   -- 6502 "BRK / NMI hijack" quirk by keeping NMI_entered's assertion at MCycle="100".
-  NMI_ack <= '1' when (NMIAct = '1' and MCycle = "001") else '0';
+  NMI_ack <= '1' when ((NMIAct = '1' or (Mode = "00" and NMICycle = '1')) and MCycle = "001") else '0';
 
   -- gate Rdy with read/write to make an "OK, it's really OK to stop the processor 
   really_rdy <= Rdy or not(WRn_i);
@@ -422,11 +409,11 @@ begin
             Mode_r <= Mode;
             BCD_en_r <= BCD_en;
 
-            if IRQReq = '0' and nmi_fetch_req = '0' then
+            if IRQReq = '0' and NMIReq = '0' then
               PC <= PC + 1;
             end if;
 
-            if IRQReq = '1' or nmi_fetch_req = '1' then
+            if IRQReq = '1' or NMIReq = '1' then
               instruction_reg <= "00000000";
             else
               instruction_reg <= DI;
@@ -434,7 +421,7 @@ begin
 
             IRQCycle <= '0';
             NMICycle <= '0';
-            if nmi_fetch_req = '1' then
+            if NMIReq = '1' then
               NMICycle <= '1';
             elsif IRQReq = '1' then
               IRQCycle <= '1';
@@ -460,7 +447,7 @@ begin
             S <= S - 1;
           end if;
 
-          if IR = "00000000" and MCycle = "001" and IRQCycle = '0' and NMICycle = '0' and nmi_late_takeover = '0' then
+          if IR = "00000000" and MCycle = "001" and IRQCycle = '0' and NMICycle = '0' then
             PC <= PC + 1;
           end if;
           --
@@ -486,14 +473,6 @@ begin
             when others => null;
           end case;
         end if;
-      end if;
-      if bus_start_i = '1' and nmi_late_takeover = '1' then
-        -- The first opcode was prefetched but never executes. This also runs
-        -- for an RDY-held first attempt, before any subsequent bus retirement.
-        instruction_reg <= x"00";
-        NMICycle <= '1';
-        IRQCycle <= '0';
-        PC <= PC - 1;
       end if;
     end if;
   end process;
@@ -640,11 +619,11 @@ begin
             BAH <= (others => '1');
             if RstCycle = '1' then
               BAL(2 downto 0) <= "100";
-            -- MAME snapshots live pending NMI immediately before the status
-            -- push. Include an edge on that clock, select $FFFA/$FFFB, and
-            -- preserve the original BRK/IRQ decision for the stacked B bit.
+            -- A BRK/IRQ may be redirected only by an edge already pending
+            -- before the status push (VICE's two-cycle NMI delay).
+            -- Preserve the original BRK/IRQ decision for the stacked B bit.
             -- See NMI_ack above for the early cart-visible ack used by SIMCRT freezers.
-            elsif NMICycle = '1' or (nmi_pending_now = '1' and MCycle="100") or NMI_entered='1' then
+            elsif NMICycle = '1' or (NMIAct = '1' and MCycle="100") or NMI_entered='1' then
               BAL(2 downto 0) <= "010";
               if MCycle="100" then
                 NMI_entered <= '1';
@@ -697,8 +676,7 @@ begin
   -- that value must not leak onto the first dummy read. For a page crossing
   -- the following dummy read still uses the old high byte. A stalled cycle
   -- holds these addresses because the saved value changes only on Enable.
-  pc_bus_addr <= PC - 1 when nmi_late_takeover = '1'
-    else PC when Mode = "00" and IR(4 downto 0) = "10000" and MCycle = "010"
+  pc_bus_addr <= PC when Mode = "00" and IR(4 downto 0) = "10000" and MCycle = "010"
     else branch_dummy_addr when Mode = "00" and IR(4 downto 0) = "10000" and MCycle = "011"
     else PC(15 downto 8) & PCAdder(7 downto 0);
 
@@ -746,25 +724,24 @@ begin
       IRQReq <= '0';
       NMIReq <= '0';
       nmi_clear_pending <= '0';
-      nmi_prefetch_window <= '0';
+      nmi_dispatch_seen <= '0';
+      read_was_held <= '0';
+      IRQ_n_oo <= '1';
     elsif Clk'event and Clk = '1' then
-      if bus_start_i = '1' and MCycle = "001" then
-        -- Freeze both outcomes on the first attempt, including an RDY hold.
-        nmi_prefetch_window <= '0';
-        if nmi_late_takeover = '1' then
-          NMIAct <= '1';
-        end if;
-      end if;
       if (Enable = '1') then
         nmi_clear_pending <= '0';
+        if MCycle = "000" then
+          nmi_dispatch_seen <= '1';
+        else
+          nmi_dispatch_seen <= '0';
+        end if;
+        read_was_held <= not really_rdy;
         if (really_rdy = '1') then
-          -- MAME finishes the selected NMI after its high vector byte, before
-          -- attempting the handler's first opcode read. Defer this clear to
-          -- the next CPU clock, even if that first opcode is held by RDY.
-          if Mode = "00" and IR = x"00" and MCycle = "110" and
-             RstCycle = '0' and BAL(2 downto 0) = "011" then
+          -- VICE consumes a redirected BRK/IRQ before its first vector
+          -- read, including an RDY hold on that read. Consume only once.
+          if Mode = "00" and IR = x"00" and MCycle = "100" and
+             RstCycle = '0' and NMICycle = '0' and NMIAct = '1' then
             nmi_clear_pending <= '1';
-            nmi_prefetch_window <= '1';
           end if;
           if MCycle = LCycle or Break = '1' then
             MCycle <= "000";
@@ -774,15 +751,17 @@ begin
           end if;
 
           if (IR(4 downto 0)/="10000" or Jump/="11") then -- taken branches delay the interrupts
-            if nmi_pending_now = '1' and IR/=x"00" then
+            if NMIAct = '1' and IR/=x"00" then
               NMIReq <= '1';
             else
               NMIReq <= '0';
             end if;
-            -- NMOS interrupt polling samples the input on this accepted bus
-            -- cycle. The existing P value preserves CLI/SEI/PLP's delayed I
-            -- update; RTI restores P before its final polling opportunity.
-            if ((Mode = "00" and IRQ_n = '0') or (Mode /= "00" and IRQ_n_o = '0')) and P(Flag_I) = '0' then
+            -- VICE's cycle-exact 6510 requires two CPU clocks from a newly
+            -- asserted IRQ to dispatch. Poll the prior clock's pin sample;
+            -- a live sample here enters one cycle early in a NOP train.
+            -- Existing P ordering preserves CLI/SEI/PLP's delayed I update.
+            if (IRQ_n_o = '0' or (Mode = "00" and IRQ_n_oo = '0')) and
+               (P(Flag_I) = '0' or (Mode = "00" and IR = x"58" and read_was_held = '1')) then
               IRQReq <= '1';
             else
               IRQReq <= '0';
@@ -790,16 +769,28 @@ begin
           end if;
         end if;
 
-        IRQ_n_o <= IRQ_n;
+        -- A stolen SEI read does not advance IRQ recognition in x64sc.
+        if really_rdy = '1' or Mode /= "00" or IR /= x"78" then
+          -- An inactive pulse is discarded at an instruction boundary if
+          -- it was too recent to dispatch. Within a longer instruction,
+          -- retain the extra sample for VICE's pending-IRQ release window.
+          if Mode = "00" and MCycle = "000" then
+            IRQ_n_oo <= '1';
+          else
+            IRQ_n_oo <= IRQ_n_o;
+          end if;
+          IRQ_n_o <= IRQ_n;
+        end if;
         NMI_n_o <= NMI_n;
 
         --detect NMI even if not rdy    
         if NMI_n_o = '1' and NMI_n = '0' then
           NMIAct <= '1';
         end if;
-        -- A selected NMI consumes any edge through completion of its vector.
-        -- Keep the legacy consume point for the other CPU modes.
-        if (Mode = "00" and nmi_clear_pending = '1') or
+        -- A normal NMI is consumed on dispatch; a redirected BRK/IRQ is
+        -- consumed just before its low vector read. Later edges survive.
+        if (Mode = "00" and (nmi_clear_pending = '1' or
+            (MCycle = "000" and NMIReq = '1' and nmi_dispatch_seen = '0'))) or
            (Mode /= "00" and NMI_entered = '1') then
           NMIAct <= '0';
         end if;

@@ -234,12 +234,16 @@ module tb_c64_machine_interrupts;
         check(nmi_sent&&late_second_sent&&first_body_issued,"both NMI edges and body request exercised");
         check(nmi_vectors==2&&nmi_vector_highs==2&&irq_entries==0,"exactly two complete NMI vector pairs");
         check(nmi_rti==2&&memory_i.ram[16'h2201]===2&&nmi_resume,"two complete handlers/RTIs resumed main loop");
-        check(first_body_address== (after_issue?16'h0b01:16'h0b00),"first body dummy read respects issue-time choice");
-        frame_index=after_issue?4:3;
-        check(second_stack_count==(after_issue?7:6),"canceled PHA has no stack side effect; issued PHA executes once");
-        check(stack_address[frame_index]==(after_issue?16'h01fb:16'h01fc)&&stack_data[frame_index]==8'h0b,
+        // VICE executes the first handler opcode before a second NMI.
+        // The same edge before/after fabric issue belongs to the same CPU
+        // clock attempt; it cannot cancel an already fetched PHA.
+        // The actual VICE CPU matrix covers this as nmi-double-normal-+10.
+        check(first_body_address==16'h0b01,"first handler PHA dummy read keeps its normal address");
+        frame_index=4;
+        check(second_stack_count==7,"first PHA executes exactly once before second NMI frame");
+        check(stack_address[frame_index]==16'h01fb&&stack_data[frame_index]==8'h0b,
             "second NMI pushes expected PC high byte and stack position");
-        check(stack_data[frame_index+1]==(after_issue?8'h01:8'h00),"second NMI pushes issue-qualified return PC");
+        check(stack_data[frame_index+1]==8'h01,"second NMI returns after the first handler PHA");
         check(stack_data[frame_index+2][4]===1'b0,"second hardware NMI stacks clear B flag");
         check(pending_checks>50,"request-to-retirement pipeline stability exercised");
         $display("LATE_NMI_SUMMARY dense=%0d after_issue=%0d first_body=%04h stack_before_second_vector=%0d vectors=%0d rti=%0d counter=%0d pending_checks=%0d clocks=%0d",

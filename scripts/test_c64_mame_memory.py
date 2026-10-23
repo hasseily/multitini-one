@@ -162,7 +162,7 @@ def main() -> int:
     assignments=re.findall(r"\bramDout\s*<=.*?;",source,re.S)
     if len(assignments)!=1:raise RuntimeError("production ramDout assignment not unique")
     helper=build/"memory_write_data.vhd"
-    helper.write_text("library ieee;use ieee.std_logic_1164.all;use ieee.numeric_std.all;\nentity c64_memory_write_data is port(systemWe:in std_logic;systemAddr:in unsigned(15 downto 0);lastVicDi,cpuDo:in unsigned(7 downto 0);ramDout:out unsigned(7 downto 0));end;\narchitecture rtl of c64_memory_write_data is begin\n"+assignments[0]+"\nend;\n",encoding="utf-8")
+    helper.write_text("library ieee;use ieee.std_logic_1164.all;use ieee.numeric_std.all;\nentity c64_memory_write_data is port(systemWe:in std_logic;systemAddr:in unsigned(15 downto 0);lastVicDi,cpuDo:in unsigned(7 downto 0);ramDout:out unsigned(7 downto 0));end;\narchitecture rtl of c64_memory_write_data is signal dma_active:std_logic:=\'0\';begin\n"+assignments[0]+"\nend;\n",encoding="utf-8")
     rows=fixtures()
     fields=("address","vic","bank","game","exrom","ba","floating","data","mode")
     stimulus="".join(f"{r['id']} {r['owner']} {r['write']} "+" ".join(f"{r[k]:x}" for k in fields)+"\n" for r in rows)

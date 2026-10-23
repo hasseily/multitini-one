@@ -2,23 +2,32 @@
 
 ## Reference and scope
 
-MAME is the behavioral reference for the C64. The reference is pinned to
+VICE 3.10's cycle-exact `x64sc` is the behavioral reference for the C64.
+The source pin is `VICE-Team/svn-mirror` commit
+`4d283a2e7dd59b7e378524878e81ecc7826b700c` (tag `3.10.0`, SVN r45923).
+This replaces MAME as the acceptance reference following the dev4 Expand
+board test. The [VICE comparison report](C64_VICE310_COMPARISON.md) distinguishes the
+dev4 diagnosis from dev5 corrections, qualification and the user-confirmed Expand
+board pass on 2026-10-23. Historical MAME passes
+do not establish VICE conformance.
+
+The retained secondary MAME comparison is pinned to
 `mamedev/mame` commit `122719e8d13e2fdb7dd33886455484207de59fc8`.
 Exact test-only source files and SHA-256 hashes are listed in
 `third_party/mame_reference/import_manifest.json`; the source pin, import lock
 and per-file license ledger also record them. No system ROMs are imported.
 
 Stock mode must retain the native NMOS 6510 bus sequence and C64 device
-timing. Accelerated execution is an explicit extension to MAME's stock C64:
+timing. Accelerated execution is an explicit extension to the stock C64:
 the CPU may complete extra local-memory transactions, but VIC, CIA, SID and
 drive clocks must not accelerate. Do not fold dummy accesses or NMOS
 read/modify/write cycles. A passing CPU trace is not a claim that the complete
-machine, every peripheral or every software title conforms to MAME.
+machine, every peripheral or every software title conforms to VICE.
 
-This checkpoint changes local RAM, CPU transaction scheduling, the existing
-Smart 2x mode connection and CPU bus discrepancies exposed by MAME tests.
-It does not add REU, expose new SID settings, change
-the machine clock or advertise a new maximum MHz.
+The original local-RAM checkpoint changed CPU scheduling, Smart 2x mode
+connection and CPU bus discrepancies exposed by MAME tests. Later releases
+added dual SID and DDR-backed REU. Dev5 corrects the demonstrated VICE timing
+and register differences without changing the machine clock or CPU speed options.
 
 ## Local memory
 
@@ -78,18 +87,14 @@ low byte on the original page before fetching from the corrected address.
 Architectural PC updates and other CPU modes retain their upstream behavior.
 The unchanged imported T65 remains available for provenance.
 
-NMOS interrupt polling uses the current IRQ level and pending NMI edge at
-accepted CPU bus accesses. The existing status-register update order preserves
-CLI/SEI/PLP interrupt-mask behavior. BRK snapshots pending NMI at the status
-push to select the NMI vector while preserving the stacked B flag.
-
-Selected NMI consumption follows MAME's vector-completion boundary, including
-RDY holds and a second edge. A fresh edge can also discard the first handler
-opcode under MAME's retained interrupt sample. The production wrapper supplies
-an explicit bus-start strobe so that this decision is fixed when the scheduler
-issues the transaction. Later changes cannot alter its address or opcode
-effects between issue and retirement. Standalone CPU tests retain a combined
-issue/retire clock by default. No new clock or clock-domain crossing is added.
+Dev5 interrupt polling is checked against the unchanged VICE 3.10 CPU core.
+The previous accepted-cycle samples, edge retention, BRK vector selection,
+CLI/SEI/PLP mask ordering and RDY holds are compared through observable bus
+accesses. The former MAME-specific first-handler takeover behavior is not the
+VICE acceptance rule. Keep the CPU matrix receipt with the exact selected
+T65 source; its finite boundary matrix is not exhaustive NMOS conformance.
+The scheduler continues to keep each issued address, direction and write data
+stable through retirement. No new clock or clock-domain crossing is added.
 
 The processor port is separate from backing RAM. MAME resets its direction,
 data and retained-drive registers to `$FF`. CPU reads use external pins and
@@ -101,7 +106,9 @@ memory waits stop it with the rest of the machine.
 
 CPU writes to `$0000/$0001` still update the internal direction/data registers,
 but the RAM beneath those addresses receives the last VIC bus byte, as in
-MAME's C64 memory-write handler. DMA uses that same backing-memory rule.
+MAME's C64 memory-write handler. Dev5 DMA writes the transferred byte to
+backing RAM at `$0000/$0001`, independently of the processor-port pins, matching
+VICE. The former use of the VIC bus byte for DMA is corrected.
 
 The local RGB palette compatibility port only adds coverage for VHDL
 metavalues so the real VIC/color path can participate in strict simulation.
@@ -155,7 +162,7 @@ Required evidence is separate for RAM function, RAM inference, actual CPU bus
 traces, native peripheral cadence, memory mapping, complete-image timing and
 physical-board behavior. Retain exact source hashes with each test/build.
 
-## Expanded MAME comparisons
+## Historical MAME comparisons
 
 Run the complete bounded differential suite with:
 
@@ -201,8 +208,9 @@ checks MAME's PLA input packing only; inactive VIC address fallback and RTL
 BA/AEC arbitration are outside this test. Peripheral write addresses, data
 and register effects are also outside the memory bench's observation scope.
 
-### Corrected comparison results
+### Historical dev1/dev2 comparison results
 
+These results describe the earlier MAME-targeted checkpoint, not dev5.
 The first expanded run exposed 22 failing CPU boundary runs and eight failing
 NTSC sprite scenarios. Its receipts and traces remain in
 `build/c64-mame-comparisons/`. The local CPU and VIC corrections above address

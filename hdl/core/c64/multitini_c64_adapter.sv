@@ -239,6 +239,7 @@ module multitini_c64_adapter #(
     logic [7:0] reu_request_wstrb;
     logic reu_fault_latched;
     logic reu_dma_req, reu_dma_valid, reu_dma_ack, reu_dma_write;
+    logic reu_dma_idle, reu_dma_peek, reu_dma_last_write;
     logic [15:0] reu_dma_addr, cpu_bus_addr;
     logic [7:0] reu_dma_wdata, reu_dma_rdata, cpu_bus_wdata, reu_io_rdata;
     logic cpu_bus_valid, cpu_bus_write;
@@ -437,6 +438,7 @@ module multitini_c64_adapter #(
         .io_write(cpu_bus_write), .io_wdata(cpu_bus_wdata), .io_rdata(reu_io_rdata),
         .ff00_write(cpu_bus_valid && cpu_bus_write && cpu_bus_addr == 16'hff00),
         .dma_req(reu_dma_req), .dma_valid(reu_dma_valid), .dma_addr(reu_dma_addr),
+        .dma_idle(reu_dma_idle), .dma_peek(reu_dma_peek), .dma_last_write(reu_dma_last_write),
         .dma_wdata(reu_dma_wdata), .dma_write(reu_dma_write), .dma_ack(reu_dma_ack),
         .dma_rdata(reu_dma_rdata), .irq(reu_irq), .busy(reu_busy), .fault(reu_fault),
         .memory_addr(reu_request_addr), .memory_write(reu_request_write),
@@ -524,6 +526,7 @@ module multitini_c64_adapter #(
         .tape_play(), .tape_rew(),
         .tape_stop(), .tape_ff(), .tape_reset_counter(),
         .dma_req(reu_dma_req), .dma_valid(reu_dma_valid), .dma_ack(reu_dma_ack),
+        .dma_idle(reu_dma_idle), .dma_peek(reu_dma_peek), .dma_last_write(reu_dma_last_write),
         .cpu_bus_valid(cpu_bus_valid), .cpu_bus_addr(cpu_bus_addr),
         .cpu_bus_wdata(cpu_bus_wdata), .cpu_bus_write(cpu_bus_write),
         .dma_cycle(), .dma_addr(reu_dma_addr),

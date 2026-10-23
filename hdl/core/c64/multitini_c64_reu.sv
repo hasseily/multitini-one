@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns / 1ps
 
-// MOS 8726 register/transfer behavior follows the pinned MAME reference.
-// Reference: mamedev/mame 122719e8d13e2fdb7dd33886455484207de59fc8,
-// src/devices/machine/mos8726.cpp, BSD-3-Clause, copyright-holders: Curt Coder.
-// Original notices and license are retained in third_party/mame_reference/.
-// ADDRESS_BITS=19 is the 1750 reference profile; 24 extends its bank register
-// and address wrap to 16 MiB. Storage latency does not stop machine clocks.
+// MOS 8726 behavior follows VICE 3.10 reu.c, commit
+// 4d283a2e7dd59b7e378524878e81ecc7826b700c (GPL-2.0-or-later).
+// VICE authors: Andreas Boose, Spiro Trikaliotis, Jouko Valta,
+// Richard Hable, Ettore Perazzoli; hardware-test additions Wolfgang Moser.
+// Earlier implementation used MAME mos8726.cpp (BSD-3-Clause, Curt Coder).
+// Original notices are retained in third_party/{vice,mame}_reference/.
+// ADDRESS_BITS=24 adds a write-only upper bank latch. The REC increments
+// only its low 19 address bits within each selected 512 KiB window.
 module multitini_c64_reu #(
     parameter integer ADDRESS_BITS = 24
 ) (
@@ -25,6 +27,12 @@ module multitini_c64_reu #(
     output logic [15:0] dma_addr,
     output logic [7:0]  dma_wdata,
     output logic        dma_write,
+    // A read-like ownership cycle with no C64 memory or IO side effect.
+    output logic        dma_idle,
+    // VICE's final comparison after a penultimate error does not advance
+    // native time. The wrapper serves it before the next CPU native slot.
+    output logic        dma_peek,
+    output logic        dma_last_write,
     input  logic        dma_ack,
     input  logic [7:0]  dma_rdata,
 
@@ -45,19 +53,18 @@ module multitini_c64_reu #(
 );
     localparam logic [23:0] ADDRESS_MASK =
         ADDRESS_BITS == 19 ? 24'h07ffff : 24'hffffff;
-    localparam logic [7:0] BANK_UNUSED =
-        ADDRESS_BITS == 19 ? 8'hf8 : 8'h00;
     typedef enum logic [3:0] {
         IDLE, BEGIN_BYTE, C64_READ, RAM_READ_REQUEST, RAM_READ_WAIT,
         C64_WRITE, RAM_WRITE_REQUEST, RAM_WRITE_WAIT, FINISH_BYTE,
-        TAIL_READ_REQUEST, TAIL_READ_WAIT, COMPLETE
+        TAIL_READ_REQUEST, TAIL_READ_WAIT, VERIFY_PAUSE, COMPLETE
     } state_t;
     state_t state = IDLE;
     logic [7:0] status, command, interrupt_mask, address_control;
     logic [15:0] c64_address, c64_shadow, length, length_shadow;
     logic [23:0] reu_address, reu_shadow;
     logic [7:0] c64_byte, reu_byte;
-    logic verify_fault;
+    logic verify_fault, verify_tail, ff00_armed;
+    logic [1:0] completion_flags;
     logic active;
     // This transport flag is deliberately drained across soft reset/disable:
     // an old response must not complete a new transaction after re-enabling.
@@ -67,7 +74,10 @@ module multitini_c64_reu #(
 
     assign run = enable && !reset && !fault && !memory_fault;
     assign dma_req = active && run;
-    assign dma_valid = run && (state == C64_READ || state == C64_WRITE);
+    assign dma_valid = run && (state == C64_READ || state == C64_WRITE || state == VERIFY_PAUSE);
+    assign dma_idle = state == VERIFY_PAUSE;
+    assign dma_peek = state == C64_READ && verify_tail;
+    assign dma_last_write = state == C64_WRITE && length == 1;
     assign dma_addr = c64_address;
     assign dma_write = state == C64_WRITE;
     assign dma_wdata = reu_byte;
@@ -100,7 +110,7 @@ module multitini_c64_reu #(
                 3: io_rdata = c64_address[15:8];
                 4: io_rdata = reu_address[7:0];
                 5: io_rdata = reu_address[15:8];
-                6: io_rdata = reu_address[23:16] | BANK_UNUSED;
+                6: io_rdata = reu_address[23:16] | 8'hf8;
                 7: io_rdata = length[7:0];
                 8: io_rdata = length[15:8];
                 9: io_rdata = interrupt_mask | 8'h1f;
@@ -131,6 +141,9 @@ module multitini_c64_reu #(
             c64_byte <= 8'd0;
             reu_byte <= 8'd0;
             verify_fault <= 1'b0;
+            verify_tail <= 1'b0;
+            ff00_armed <= 1'b0;
+            completion_flags <= 2'b00;
             fault <= 1'b0;
         end else if (memory_fault) begin
             state <= IDLE;
@@ -146,8 +159,12 @@ module multitini_c64_reu #(
                     case (io_addr)
                         1: begin
                             command <= io_wdata;
+                            if (io_wdata[7] && !io_wdata[4]) ff00_armed <= 1'b1;
                             if ((io_wdata & 8'h90) == 8'h90) begin
                                 command <= (io_wdata & 8'h7f) | 8'h10;
+                                ff00_armed <= 1'b0;
+                                completion_flags <= 2'b00;
+                                verify_tail <= 1'b0;
                                 active <= 1'b1;
                                 state <= BEGIN_BYTE;
                             end
@@ -161,15 +178,15 @@ module multitini_c64_reu #(
                             c64_shadow[15:8] <= io_wdata;
                         end
                         4: begin
-                            reu_address <= {reu_shadow[23:8], io_wdata};
+                            reu_address <= {reu_address[23:16], reu_shadow[15:8], io_wdata};
                             reu_shadow[7:0] <= io_wdata;
                         end
                         5: begin
-                            reu_address <= {reu_shadow[23:16], io_wdata, reu_shadow[7:0]};
+                            reu_address <= {reu_address[23:16], io_wdata, reu_shadow[7:0]};
                             reu_shadow[15:8] <= io_wdata;
                         end
                         6: begin
-                            reu_address <= {io_wdata & ADDRESS_MASK[23:16], reu_shadow[15:0]};
+                            reu_address <= {io_wdata & ADDRESS_MASK[23:16], reu_address[15:0]};
                             reu_shadow[23:16] <= io_wdata & ADDRESS_MASK[23:16];
                         end
                         7: begin
@@ -180,15 +197,24 @@ module multitini_c64_reu #(
                             length <= {io_wdata, length_shadow[7:0]};
                             length_shadow[15:8] <= io_wdata;
                         end
-                        9: interrupt_mask <= io_wdata & 8'he0;
+                        9: begin
+                            interrupt_mask <= io_wdata & 8'he0;
+                            // Enabling a mask after completion raises an IRQ;
+                            // disabling a mask does not acknowledge a pending IRQ.
+                            if (io_wdata[7] && |(io_wdata[6:5] & status[6:5]))
+                                status[7] <= 1'b1;
+                        end
                        10: address_control <= io_wdata & 8'hc0;
                         default: ;
                     endcase
                 end
             end
 
-            if (ff00_write && !active && (command & 8'h90) == 8'h80) begin
+            if (ff00_write && !active && ff00_armed) begin
                 command <= (command & 8'h7f) | 8'h10;
+                ff00_armed <= 1'b0;
+                completion_flags <= 2'b00;
+                verify_tail <= 1'b0;
                 active <= 1'b1;
                 state <= BEGIN_BYTE;
             end
@@ -209,14 +235,26 @@ module multitini_c64_reu #(
                     if (memory_rvalid) begin
                         reu_byte <= response_byte;
                         verify_fault <= command[1:0] == 3 && c64_byte != response_byte;
-                        if (command[1:0] == 3) state <= FINISH_BYTE;
+                        if (verify_tail) begin
+                            if (c64_byte == response_byte) begin
+                                status[6] <= 1'b1;
+                                completion_flags[1] <= 1'b1;
+                            end
+                            state <= COMPLETE;
+                        end else if (command[1:0] == 3) state <= FINISH_BYTE;
                         else state <= C64_WRITE;
                     end else state <= RAM_READ_WAIT;
                 end
                 RAM_READ_WAIT: if (memory_response) begin
                     reu_byte <= response_byte;
                     verify_fault <= command[1:0] == 3 && c64_byte != response_byte;
-                    if (command[1:0] == 3) state <= FINISH_BYTE;
+                    if (verify_tail) begin
+                        if (c64_byte == response_byte) begin
+                            status[6] <= 1'b1;
+                            completion_flags[1] <= 1'b1;
+                        end
+                        state <= COMPLETE;
+                    end else if (command[1:0] == 3) state <= FINISH_BYTE;
                     else state <= C64_WRITE;
                 end
                 C64_WRITE: if (dma_ack) begin
@@ -230,32 +268,51 @@ module multitini_c64_reu #(
                 RAM_WRITE_WAIT: if (memory_response) state <= FINISH_BYTE;
                 FINISH_BYTE: begin
                     if (!address_control[7]) c64_address <= c64_address + 16'd1;
-                    if (!address_control[6]) reu_address <= (reu_address + 24'd1) & ADDRESS_MASK;
+                    if (!address_control[6])
+                        reu_address <= {reu_address[23:19], reu_address[18:0] + 19'd1};
                     // A terminal transfer leaves length=1. Length=0 means
                     // 65536 bytes; an early verify failure decrements it.
-                    if (length == 1) status[6] <= 1'b1;
+                    if (length == 1) begin
+                        status[6] <= 1'b1;
+                        completion_flags[1] <= 1'b1;
+                    end
                     else length <= length - 16'd1;
-                    if (verify_fault) status[5] <= 1'b1;
+                    if (verify_fault) begin
+                        status[5] <= 1'b1;
+                        completion_flags[0] <= 1'b1;
+                    end
                     if (length == 1 || verify_fault) begin
-                        if (command[1:0] == 1) state <= TAIL_READ_REQUEST;
+                        // A penultimate verify mismatch peeks the last byte,
+                        // without advancing the saved addresses or length.
+                        if (verify_fault && length != 1) begin
+                            verify_tail <= length == 2;
+                            state <= VERIFY_PAUSE;
+                        end else if (command[1:0] == 1) state <= TAIL_READ_REQUEST;
                         else state <= COMPLETE;
                     end
                     else state <= BEGIN_BYTE;
                 end
-                // MAME fetch performs one final REU read at the incremented
-                // address before autoload. Retain that observable access.
+                // VICE retains the final prefetched REU byte on its floating
+                // data latch. Preserve the read at the incremented address.
                 TAIL_READ_REQUEST: if (memory_accept) begin
                     if (memory_rvalid) state <= COMPLETE;
                     else state <= TAIL_READ_WAIT;
                 end
                 TAIL_READ_WAIT: if (memory_response) state <= COMPLETE;
+                // Failed verify consumes an additional native cycle except
+                // on its final byte. The penultimate case then peeks the last
+                // byte without incrementing the saved address/length again.
+                VERIFY_PAUSE: if (dma_ack) begin
+                    if (verify_tail) state <= C64_READ;
+                    else state <= COMPLETE;
+                end
                 COMPLETE: begin
                     if (command[5]) begin
                         c64_address <= c64_shadow;
                         reu_address <= reu_shadow;
                         length <= length_shadow;
                     end
-                    if (interrupt_mask[7] && |(interrupt_mask[6:5] & status[6:5]))
+                    if (interrupt_mask[7] && |(interrupt_mask[6:5] & completion_flags))
                         status[7] <= 1'b1;
                     active <= 1'b0;
                     state <= IDLE;

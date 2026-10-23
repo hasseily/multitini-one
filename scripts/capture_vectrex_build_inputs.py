@@ -39,6 +39,7 @@ def inputs(machine: str) -> list[Path]:
     if machine == "C64":
         paths.add(ROOT / "docs/C64_RAM_CPU.md")
         paths.add(ROOT / "docs/C64_EXPANSIONS.md")
+        paths.add(ROOT / "docs/C64_VICE310_COMPARISON.md")
         paths.add(ROOT / "third_party/c64/import_manifest.json")
         # Retain the exact originals alongside the local conformance ports.
         paths.update(ROOT / "third_party/c64/upstream/rtl" / name for name in (
@@ -48,6 +49,10 @@ def inputs(machine: str) -> list[Path]:
                      if path.is_file() and "__pycache__" not in path.parts)
         paths.update(path for path in (ROOT / "tests/c64_mame").rglob("*")
                      if path.is_file() and "__pycache__" not in path.parts)
+        paths.update(path for base in ("third_party/vice_reference", "tests/c64_vice")
+                     for path in (ROOT / base).rglob("*")
+                     if path.is_file() and "__pycache__" not in path.parts)
+        paths.update((ROOT / "scripts").glob("*c64_vice*.py"))
         paths.update(ROOT / "scripts" / name for name in (
             "c64_mame_oracle.py", "test_c64_acceleration.py",
             "test_c64_reu.py", "test_c64_reu_machine.py",

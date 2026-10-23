@@ -62,13 +62,17 @@ The C64's 16 MiB REU belongs in DDR, not PSRAM. Its reserved DDR aperture is
 `0x25000000-0x25FFFFFF`; cached reads, read-ahead and buffered writes must
 preserve native DMA timing without stopping VIC, CIA or SID time.
 
-MAME is the C64 behavioral reference. Pin the reference source and compare
-observable CPU bus transactions and memory mapping against it. Stock mode
+VICE 3.10's cycle-exact `x64sc` is the C64 behavioral reference, pinned to
+`VICE-Team/svn-mirror` commit `4d283a2e7dd59b7e378524878e81ecc7826b700c`
+(release `3.10.0`, SVN r45923). Compare observable CPU bus transactions,
+memory mapping, REU arbitration and dynamic VIC behavior against it. Stock mode
 must preserve native machine timing. CPU acceleration is an explicit extension;
 it must preserve NMOS 6510 instruction and bus semantics while VIC, CIA, SID
 and drive timing remain native. Keep local-RAM inference, scheduler tests,
-MAME differential coverage, routed timing and board acceptance as separate
-gates. See [C64 RAM and CPU scheduling](docs/C64_RAM_CPU.md).
+VICE differential coverage, routed timing and board acceptance as separate
+gates. Retain the pinned MAME suite as historical and secondary regression
+evidence; a MAME pass does not resolve a disagreement with VICE. See
+[C64 RAM and CPU scheduling](docs/C64_RAM_CPU.md).
 
 The IIgs uses a coherent DDR cache, posted writes and a fast DMA path. Its
 65816 runs at selectable stock or accelerated rates up to the image's

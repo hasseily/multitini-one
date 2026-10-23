@@ -103,7 +103,7 @@ def main() -> int:
         output=result.stdout+result.stderr;(build/(name+".log")).write_text(output)
         if result.returncode or re.search(r"\b(?:ERROR|FAIL|FATAL)\s*:|\bFatal\b",output,re.I):
             receipt.write_text(json.dumps({"status":"FAIL","phase":name,"source_sha256":initial,
-                "diagnostic":output[-12000:],"scope":"Production machine integration, not a MAME differential"},indent=2)+"\n")
+                "diagnostic":output[-12000:],"scope":"Production machine integration, not a whole-machine reference differential"},indent=2)+"\n")
             raise RuntimeError(f"{name} failed ({result.returncode}):\n{output[-12000:]}")
         return output
     suffix=".bat" if os.name=="nt" else "";top="tb_c64_machine_interrupts"
@@ -124,7 +124,7 @@ def main() -> int:
         "observation_sha256":{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in (observed,observed_wrapper)},
         "scope":"Actual production CPU, VIC, scheduler and RAM; IRQ/NMI during real BA-low reads and late NMI before/after bus issue",
         "limits":["PAL/NTSC stock and dense CPU modes; synthetic program and ROMs only.",
-                  "Independent integration assertions, not an executable whole-machine MAME comparison.",
+                  "Independent integration assertions, not an executable whole-machine VICE comparison; late-NMI stack expectations follow the VICE CPU boundary oracle.",
                   "Does not establish all raster-write timing, all interrupt edges, routed FPGA timing or physical hardware acceptance."]},indent=2)+"\n")
     if not okay:raise RuntimeError("missing eight integration cases/pass marker or changed source inputs")
     print("\n".join(summaries+late_summaries+passed));return 0

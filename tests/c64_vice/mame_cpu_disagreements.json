@@ -1,0 +1,266 @@
+{
+  "schema": 1,
+  "mame_reference_commit": "122719e8d13e2fdb7dd33886455484207de59fc8",
+  "vice_reference_commit": "4d283a2e7dd59b7e378524878e81ecc7826b700c",
+  "case_count": 188,
+  "exact_mame_matches": 124,
+  "disagreements": {
+    "irq-sei--1": {
+      "mame_trace_sha256": "43d361281d6bf23f6ae882631fc92c320f229a2f0f1ec13fe640b50f2a87c2cd",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-sei-+1": {
+      "mame_trace_sha256": "b1180c2a35381483900b0d796fd1f685dfd4e21f12ef681c7f5b58c1feb5c173",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-plp--1": {
+      "mame_trace_sha256": "6c46d7bf10b18cd7c0c780ead55291c7e6ac48477e2e71f629fd3eb377addbba",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-branch--1": {
+      "mame_trace_sha256": "dc6b1216a85bc6b163eac93ec55c0ec23ea8e77fa120e202bfc08ac9fd6fdd14",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "nmi-cli-+1": {
+      "mame_trace_sha256": "3d1bebb8f9a7e474966e293d832639e5aa61c0959d42ce5136a480b3f4e3dabc",
+      "reason": "VICE applies registered NMI edge qualification and two-clock BRK hijack eligibility."
+    },
+    "nmi-cli-+3": {
+      "mame_trace_sha256": "2f5ef9a06e8a32b7f47a2af3d0caeb75172cfa3384f5fe2f3b2a13e373a1ac8e",
+      "reason": "VICE applies registered NMI edge qualification and two-clock BRK hijack eligibility."
+    },
+    "nmi-cli-+5": {
+      "mame_trace_sha256": "14842f87872871cd2f48aeffd341c7873892bfa656ef0da2509cbc05e188d985",
+      "reason": "VICE applies registered NMI edge qualification and two-clock BRK hijack eligibility."
+    },
+    "nmi-brk-+4": {
+      "mame_trace_sha256": "0424d6d79e8967b304490ca688413e1d210948ea8a00d7d0be62528e3834a872",
+      "reason": "VICE applies registered NMI edge qualification and two-clock BRK hijack eligibility."
+    },
+    "nmi-rti-+5": {
+      "mame_trace_sha256": "839b650aebf9f0706e51be8a600f81f3d1c9012b22ef64b376988a79dfa6db16",
+      "reason": "VICE applies registered NMI edge qualification and two-clock BRK hijack eligibility."
+    },
+    "nmi-branch-+3": {
+      "mame_trace_sha256": "7218216b3fc05bdd8091c11e5788158295c33eb9d6f5bb6b19723e59736776b5",
+      "reason": "VICE applies registered NMI edge qualification and two-clock BRK hijack eligibility."
+    },
+    "nmi-branch-+5": {
+      "mame_trace_sha256": "e5a544194f6bd26d510e99a38631ac9f8aa38068a262dbc9bd84d31e1c15facc",
+      "reason": "VICE applies registered NMI edge qualification and two-clock BRK hijack eligibility."
+    },
+    "irq-during-rdy-cli": {
+      "mame_trace_sha256": "107c436724f11bdfad778ad67be75e41d12bcb6fed664140d48b266e96c4e6b3",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-during-rdy-sei": {
+      "mame_trace_sha256": "804628b2bd6221e17a0f4fc84bb43b824754460182e320ff372054d6b7103c8a",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-cli-+2": {
+      "mame_trace_sha256": "edeb99c34676cd5de8aa397fe58e4a77859412e7fb674c9afc15a4e35b135a90",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-cli-+3": {
+      "mame_trace_sha256": "175fa7eb41039409ffe3c9a59070a897e46a9f18c9570a84dafb35c70eefd2d4",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-cli-+4": {
+      "mame_trace_sha256": "edeb99c34676cd5de8aa397fe58e4a77859412e7fb674c9afc15a4e35b135a90",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-cli-+5": {
+      "mame_trace_sha256": "43d361281d6bf23f6ae882631fc92c320f229a2f0f1ec13fe640b50f2a87c2cd",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-sei-+0": {
+      "mame_trace_sha256": "edeb99c34676cd5de8aa397fe58e4a77859412e7fb674c9afc15a4e35b135a90",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-sei-+1": {
+      "mame_trace_sha256": "b1180c2a35381483900b0d796fd1f685dfd4e21f12ef681c7f5b58c1feb5c173",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-plp-+4": {
+      "mame_trace_sha256": "edeb99c34676cd5de8aa397fe58e4a77859412e7fb674c9afc15a4e35b135a90",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-plp-+5": {
+      "mame_trace_sha256": "f15f1addc3fb345e7630598f737dedbef2672433c3b3bb4496f5a15304764c50",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-branch-+1": {
+      "mame_trace_sha256": "edeb99c34676cd5de8aa397fe58e4a77859412e7fb674c9afc15a4e35b135a90",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-branch-+2": {
+      "mame_trace_sha256": "edeb99c34676cd5de8aa397fe58e4a77859412e7fb674c9afc15a4e35b135a90",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-branch-+3": {
+      "mame_trace_sha256": "19bcf6b8b0e2d2ef6004fe58b1e108d5a96dc4dba0fea6965d75b72c7a631ba3",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-branch-+4": {
+      "mame_trace_sha256": "edeb99c34676cd5de8aa397fe58e4a77859412e7fb674c9afc15a4e35b135a90",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-branch-+5": {
+      "mame_trace_sha256": "bff3a5ed2d2354a38ba5db06897c654d0272eea0aea4cf8d1ba5a1fe1f9a71a5",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "nmi-double-brk-vector-+6": {
+      "mame_trace_sha256": "0424d6d79e8967b304490ca688413e1d210948ea8a00d7d0be62528e3834a872",
+      "reason": "VICE consumes normal NMI at dispatch and BRK-hijacking NMI before vector-low; later pending edges execute the first handler opcode before redispatch."
+    },
+    "nmi-double-brk-vector-+7": {
+      "mame_trace_sha256": "0424d6d79e8967b304490ca688413e1d210948ea8a00d7d0be62528e3834a872",
+      "reason": "VICE consumes normal NMI at dispatch and BRK-hijacking NMI before vector-low; later pending edges execute the first handler opcode before redispatch."
+    },
+    "nmi-double-brk-vector-+8": {
+      "mame_trace_sha256": "514bb0488bf23749569584f9df3d034f5a30bfc1788b34af119eaa5f5691fc54",
+      "reason": "VICE consumes normal NMI at dispatch and BRK-hijacking NMI before vector-low; later pending edges execute the first handler opcode before redispatch."
+    },
+    "nmi-double-brk-vector-+9": {
+      "mame_trace_sha256": "3ab279f7aefd279ce1b223289d3451a3f38ac14275e6998469f05c783242510c",
+      "reason": "VICE consumes normal NMI at dispatch and BRK-hijacking NMI before vector-low; later pending edges execute the first handler opcode before redispatch."
+    },
+    "nmi-double-rdy-brk-vector-high": {
+      "mame_trace_sha256": "cc85beecf91c5c22a65d9ca9f730c8946dad6fffb7017154bec62e5f583fec5f",
+      "reason": "VICE consumes normal NMI at dispatch and BRK-hijacking NMI before vector-low; later pending edges execute the first handler opcode before redispatch."
+    },
+    "nmi-double-rdy-handler-fetch": {
+      "mame_trace_sha256": "464a4764da989488ec524d6033e6348a8b1c9a43d4f7e03a79f767a9a80e80de",
+      "reason": "VICE consumes normal NMI at dispatch and BRK-hijacking NMI before vector-low; later pending edges execute the first handler opcode before redispatch."
+    },
+    "irq-sei--1-ce2": {
+      "mame_trace_sha256": "43d361281d6bf23f6ae882631fc92c320f229a2f0f1ec13fe640b50f2a87c2cd",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-sei-+1-ce2": {
+      "mame_trace_sha256": "b1180c2a35381483900b0d796fd1f685dfd4e21f12ef681c7f5b58c1feb5c173",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-plp--1-ce2": {
+      "mame_trace_sha256": "6c46d7bf10b18cd7c0c780ead55291c7e6ac48477e2e71f629fd3eb377addbba",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-branch--1-ce2": {
+      "mame_trace_sha256": "dc6b1216a85bc6b163eac93ec55c0ec23ea8e77fa120e202bfc08ac9fd6fdd14",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "nmi-cli-+1-ce4": {
+      "mame_trace_sha256": "3d1bebb8f9a7e474966e293d832639e5aa61c0959d42ce5136a480b3f4e3dabc",
+      "reason": "VICE applies registered NMI edge qualification and two-clock BRK hijack eligibility."
+    },
+    "nmi-cli-+3-ce4": {
+      "mame_trace_sha256": "2f5ef9a06e8a32b7f47a2af3d0caeb75172cfa3384f5fe2f3b2a13e373a1ac8e",
+      "reason": "VICE applies registered NMI edge qualification and two-clock BRK hijack eligibility."
+    },
+    "nmi-cli-+5-ce4": {
+      "mame_trace_sha256": "14842f87872871cd2f48aeffd341c7873892bfa656ef0da2509cbc05e188d985",
+      "reason": "VICE applies registered NMI edge qualification and two-clock BRK hijack eligibility."
+    },
+    "nmi-brk-+4-ce4": {
+      "mame_trace_sha256": "0424d6d79e8967b304490ca688413e1d210948ea8a00d7d0be62528e3834a872",
+      "reason": "VICE applies registered NMI edge qualification and two-clock BRK hijack eligibility."
+    },
+    "nmi-rti-+5-ce4": {
+      "mame_trace_sha256": "839b650aebf9f0706e51be8a600f81f3d1c9012b22ef64b376988a79dfa6db16",
+      "reason": "VICE applies registered NMI edge qualification and two-clock BRK hijack eligibility."
+    },
+    "nmi-branch-+3-ce4": {
+      "mame_trace_sha256": "7218216b3fc05bdd8091c11e5788158295c33eb9d6f5bb6b19723e59736776b5",
+      "reason": "VICE applies registered NMI edge qualification and two-clock BRK hijack eligibility."
+    },
+    "nmi-branch-+5-ce4": {
+      "mame_trace_sha256": "e5a544194f6bd26d510e99a38631ac9f8aa38068a262dbc9bd84d31e1c15facc",
+      "reason": "VICE applies registered NMI edge qualification and two-clock BRK hijack eligibility."
+    },
+    "irq-during-rdy-cli-ce2": {
+      "mame_trace_sha256": "107c436724f11bdfad778ad67be75e41d12bcb6fed664140d48b266e96c4e6b3",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-during-rdy-sei-ce2": {
+      "mame_trace_sha256": "804628b2bd6221e17a0f4fc84bb43b824754460182e320ff372054d6b7103c8a",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-cli-+2-ce2": {
+      "mame_trace_sha256": "edeb99c34676cd5de8aa397fe58e4a77859412e7fb674c9afc15a4e35b135a90",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-cli-+3-ce2": {
+      "mame_trace_sha256": "175fa7eb41039409ffe3c9a59070a897e46a9f18c9570a84dafb35c70eefd2d4",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-cli-+4-ce2": {
+      "mame_trace_sha256": "edeb99c34676cd5de8aa397fe58e4a77859412e7fb674c9afc15a4e35b135a90",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-cli-+5-ce2": {
+      "mame_trace_sha256": "43d361281d6bf23f6ae882631fc92c320f229a2f0f1ec13fe640b50f2a87c2cd",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-sei-+0-ce2": {
+      "mame_trace_sha256": "edeb99c34676cd5de8aa397fe58e4a77859412e7fb674c9afc15a4e35b135a90",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-sei-+1-ce2": {
+      "mame_trace_sha256": "b1180c2a35381483900b0d796fd1f685dfd4e21f12ef681c7f5b58c1feb5c173",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-plp-+4-ce2": {
+      "mame_trace_sha256": "edeb99c34676cd5de8aa397fe58e4a77859412e7fb674c9afc15a4e35b135a90",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-plp-+5-ce2": {
+      "mame_trace_sha256": "f15f1addc3fb345e7630598f737dedbef2672433c3b3bb4496f5a15304764c50",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-branch-+1-ce2": {
+      "mame_trace_sha256": "edeb99c34676cd5de8aa397fe58e4a77859412e7fb674c9afc15a4e35b135a90",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-branch-+2-ce2": {
+      "mame_trace_sha256": "edeb99c34676cd5de8aa397fe58e4a77859412e7fb674c9afc15a4e35b135a90",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-branch-+3-ce2": {
+      "mame_trace_sha256": "19bcf6b8b0e2d2ef6004fe58b1e108d5a96dc4dba0fea6965d75b72c7a631ba3",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-branch-+4-ce2": {
+      "mame_trace_sha256": "edeb99c34676cd5de8aa397fe58e4a77859412e7fb674c9afc15a4e35b135a90",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "irq-pulse-branch-+5-ce2": {
+      "mame_trace_sha256": "bff3a5ed2d2354a38ba5db06897c654d0272eea0aea4cf8d1ba5a1fe1f9a71a5",
+      "reason": "VICE applies two-clock IRQ qualification, branch polling and stolen-read/pending-release rules."
+    },
+    "nmi-double-brk-vector-+6-ce2": {
+      "mame_trace_sha256": "0424d6d79e8967b304490ca688413e1d210948ea8a00d7d0be62528e3834a872",
+      "reason": "VICE consumes normal NMI at dispatch and BRK-hijacking NMI before vector-low; later pending edges execute the first handler opcode before redispatch."
+    },
+    "nmi-double-brk-vector-+7-ce2": {
+      "mame_trace_sha256": "0424d6d79e8967b304490ca688413e1d210948ea8a00d7d0be62528e3834a872",
+      "reason": "VICE consumes normal NMI at dispatch and BRK-hijacking NMI before vector-low; later pending edges execute the first handler opcode before redispatch."
+    },
+    "nmi-double-brk-vector-+8-ce2": {
+      "mame_trace_sha256": "514bb0488bf23749569584f9df3d034f5a30bfc1788b34af119eaa5f5691fc54",
+      "reason": "VICE consumes normal NMI at dispatch and BRK-hijacking NMI before vector-low; later pending edges execute the first handler opcode before redispatch."
+    },
+    "nmi-double-brk-vector-+9-ce2": {
+      "mame_trace_sha256": "3ab279f7aefd279ce1b223289d3451a3f38ac14275e6998469f05c783242510c",
+      "reason": "VICE consumes normal NMI at dispatch and BRK-hijacking NMI before vector-low; later pending edges execute the first handler opcode before redispatch."
+    },
+    "nmi-double-rdy-brk-vector-high-ce2": {
+      "mame_trace_sha256": "cc85beecf91c5c22a65d9ca9f730c8946dad6fffb7017154bec62e5f583fec5f",
+      "reason": "VICE consumes normal NMI at dispatch and BRK-hijacking NMI before vector-low; later pending edges execute the first handler opcode before redispatch."
+    },
+    "nmi-double-rdy-handler-fetch-ce2": {
+      "mame_trace_sha256": "464a4764da989488ec524d6033e6348a8b1c9a43d4f7e03a79f767a9a80e80de",
+      "reason": "VICE consumes normal NMI at dispatch and BRK-hijacking NMI before vector-low; later pending edges execute the first handler opcode before redispatch."
+    }
+  },
+  "qualification": "Every named MAME disagreement must retain this exact normalized MAME trace and match fresh unchanged VICE execution on identical memory and pin controls. Unexpected differences fail."
+}

@@ -34,7 +34,6 @@ module multitini_c64_reu_cache #(
     output wire busy,
     output reg fault
 );
-    localparam [23:0] ADDRESS_MASK = ADDRESS_BITS == 19 ? 24'h07ffff : 24'hffffff;
     localparam [1:0] IDLE=0, SEND=1, WAIT=2;
     reg [1:0] state;
     // Small independent word registers allow a returning fill and an unrelated
@@ -57,7 +56,9 @@ module multitini_c64_reu_cache #(
     wire fill_beat = response && !memory_write;
     wire [23:0] fill_addr = {memory_addr[23:5],beat,3'b000};
     wire update_line = hit || (filling && memory_addr[23:5] == request_addr[23:5]);
-    wire [23:0] next_hint = ((hint_addr & 24'hffffe0) + 24'd32) & ADDRESS_MASK;
+    // The modified REU's upper bank latch is not part of the REC counter.
+    // Read ahead wraps inside its selected 512 KiB window, even with 16 MiB.
+    wire [23:0] next_hint = {hint_addr[23:19], hint_addr[18:5] + 14'd1, 5'b00000};
     reg need_read;
     reg [23:0] read_addr;
     reg [63:0] fill_data;

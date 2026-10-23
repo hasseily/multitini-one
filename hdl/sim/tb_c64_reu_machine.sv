@@ -13,6 +13,7 @@ module tb_c64_reu_machine;
     logic [7:0] rom_data = 0, loader_data = 0;
     logic [15:0] loader_addr = 0;
     wire dma_req, dma_we, dma_valid, dma_ack, cpu_bus_valid, cpu_bus_write, iof, reu_irq, reu_fault;
+    wire dma_idle, dma_peek, dma_last_write;
     wire [15:0] cpu_bus_addr;
     wire [7:0] cpu_bus_wdata, reu_io_data;
     wire [15:0] dma_addr;
@@ -27,7 +28,7 @@ module tb_c64_reu_machine;
     wire [7:0] dbg_cpu_di, dbg_cpu_do, dbg_cpu_port, dbg_vic_bus;
     wire dbg_cpu_we, dbg_request, dbg_retire, dbg_reset, dbg_hold;
     wire dbg_rdy, dbg_cpu_owned, dbg_dma;
-    wire dbg_aec, dbg_ram_select;
+    wire dbg_aec, dbg_ram_select, dbg_reu_ba, dbg_cia1_irq;
     wire [15:0] dbg_vic_addr;
     wire [5:0] dbg_native_ce;
     wire [4:0] dbg_io_cs;
@@ -71,6 +72,7 @@ module tb_c64_reu_machine;
         .IOE(), .IOF(iof), .freeze_key(), .mod_key(), .tape_play(), .tape_rew(),
         .tape_stop(), .tape_ff(), .tape_reset_counter(),
         .dma_req(dma_req), .dma_valid(dma_valid), .dma_ack(dma_ack),
+        .dma_idle(dma_idle), .dma_peek(dma_peek), .dma_last_write(dma_last_write),
         .cpu_bus_valid(cpu_bus_valid), .cpu_bus_addr(cpu_bus_addr),
         .cpu_bus_wdata(cpu_bus_wdata), .cpu_bus_write(cpu_bus_write), .dma_cycle(dma_cycle), .dma_addr(dma_addr),
         .dma_dout(dma_data), .dma_din(dma_result), .dma_we(dma_we), .irq_ext_n(!reu_irq),
@@ -90,7 +92,8 @@ module tb_c64_reu_machine;
         .dbg_cpu_port(dbg_cpu_port), .dbg_vic_bus(dbg_vic_bus),
         .dbg_retire(dbg_retire), .dbg_reset(dbg_reset), .dbg_hold(dbg_hold),
         .dbg_rdy(dbg_rdy), .dbg_cpu_owned(dbg_cpu_owned), .dbg_dma(dbg_dma),
-        .dbg_aec(dbg_aec), .dbg_ram_select(dbg_ram_select), .dbg_vic_addr(dbg_vic_addr),
+        .dbg_aec(dbg_aec), .dbg_ram_select(dbg_ram_select), .dbg_reu_ba(dbg_reu_ba), .dbg_vic_addr(dbg_vic_addr),
+        .dbg_cia1_irq(dbg_cia1_irq),
         .dbg_native_ce(dbg_native_ce), .dbg_io_cs(dbg_io_cs), .dbg_io_write(dbg_io_write)
     );
 
@@ -134,6 +137,7 @@ module tb_c64_reu_machine;
     integer character_reads = 0, under_rom_writes = 0, delayed_triggers = 0;
     logic delayed_armed = 0;
     integer vic_wait_reads = 0, vic_wait_data_checks = 0;
+    integer cia_peeks = 0, verify_holds = 0;
     logic vic_wait_read_pending = 0;
     logic [7:0] vic_wait_expected;
 
@@ -143,6 +147,7 @@ module tb_c64_reu_machine;
         .io_write(cpu_bus_write), .io_wdata(cpu_bus_wdata), .io_rdata(reu_io_data),
         .ff00_write(cpu_bus_valid && cpu_bus_write && cpu_bus_addr == 16'hff00),
         .dma_req(dma_req), .dma_valid(dma_valid), .dma_addr(dma_addr),
+        .dma_idle(dma_idle), .dma_peek(dma_peek), .dma_last_write(dma_last_write),
         .dma_wdata(dma_data), .dma_write(dma_we), .dma_ack(dma_ack), .dma_rdata(dma_result),
         .memory_addr(reu_addr), .memory_write(reu_write), .memory_wdata(reu_wdata),
         .memory_wstrb(reu_wstrb), .memory_valid(reu_valid), .memory_ready(reu_ready),
@@ -160,8 +165,8 @@ module tb_c64_reu_machine;
         .memory_rvalid(memory_rvalid), .memory_fault(1'b0)
     );
 
-    // Model a one-outstanding 64-bit PSRAM service with independent request
-    // backpressure and response delay. Actual native slots must absorb this.
+    // Abstract one-outstanding memory service with independent request
+    // backpressure and response delay. DDR/cache timing is tested separately.
     always @(posedge clk) begin
         if (!reset_n) begin
             pending <= 0; memory_rvalid <= 0; memory_ready <= 0;
@@ -225,8 +230,16 @@ module tb_c64_reu_machine;
                 if (!dbg_rdy) dma_checks++;
             end
             if (dma_ack) begin
-                check(dbg_rdy, "REU waits for raw VIC BA as in MAME");
+                // Writes may use VICE's first-low BA grace. The independent
+                // bus differential checks that history and terminal cycle.
+                if (!dma_we && !dma_peek) check(dbg_reu_ba, "REU reads wait for VIC REU BA");
                 dma_acks++;
+                if (dma_idle) verify_holds++;
+                if (dma_peek) begin
+                    check(!dma_we && dma_addr==16'hdc0d && dma_result==8'h81,
+                          "Early mapped CIA ICR peek returns pending Timer A IRQ");
+                    cia_peeks++;
+                end
                 if (dma_addr >= 16'hd7f0 && dma_addr < 16'hd9f0) begin
                     check(dbg_cpu_port[2:0] === 3'b011, "DMA retains character-ROM bank pins");
                     if (dma_we) begin
@@ -288,6 +301,7 @@ module tb_c64_reu_machine;
         dma_acks=0; sid_dma_writes=0; blocked_clocks=0; dma_checks=0; irq_assertions=0; last_irq=0; floating_reads=0;
         character_reads=0; under_rom_writes=0; delayed_triggers=0; delayed_armed=0;
         vic_wait_reads=0; vic_wait_data_checks=0; vic_wait_read_pending=0;
+        cia_peeks=0; verify_holds=0;
         native_ticks=0; cia_p_ticks=0; cia_n_ticks=0; vic_ticks=0; pixel_ticks=0;
         active_ticks=0; last_sid_tick=-1; finished=0; run_clocks=0;
         reset_n=1; pause=0; running=1;
@@ -296,19 +310,23 @@ module tb_c64_reu_machine;
             if (!dbg_reset && dbg_phase==0) count_native=1;
         end
         check(finished, "CPU finishes actual REU register command program");
-        check(dma_acks==4128, $sformatf("exact accepted DMA transactions expected4128 got%0d",dma_acks));
-        check(sid_dma_writes==16, "PSRAM stalls never duplicate DMA SID writes");
-        check(blocked_clocks>10000 && dma_checks>0, "delayed PSRAM and real VIC bus steals exercised");
+        check(dma_acks==4133, $sformatf("exact accepted DMA transactions and hold expected4133 got%0d",dma_acks));
+        check(sid_dma_writes==16, "Memory stalls never duplicate DMA SID writes");
+        check(blocked_clocks>10000 && dma_checks>0, "Delayed memory and real VIC bus steals exercised");
         check(vic_wait_reads>0 && vic_wait_data_checks==vic_wait_reads,
               "VIC phi2 RAM reads and data checked while REU waits");
-        check(irq_assertions==9 && floating_reads==16, "REU completion IRQs and floating-bus aperture reads");
+        check(irq_assertions==11 && floating_reads==16, "REU completion IRQs and floating-bus aperture reads");
         check(character_reads==1024 && under_rom_writes==512 && delayed_triggers==3 && !delayed_armed,
               "Character-ROM/under-ROM/FF00 coverage completed");
-        for(integer i=0;i<9;i++) check(memory_i.ram[16'h2100+i]===8'hd0,"CPU reads MAME completion/IRQ status");
+        for(integer i=0;i<10;i++) check(memory_i.ram[16'h2100+i]===8'hd0,"CPU reads REC completion/IRQ status");
+        check(memory_i.ram[16'h210a]===8'hb0 && cia_peeks==1 && verify_holds==1,
+              "Penultimate mismatch reports verify error and performs one mapped peek");
+        check(memory_i.ram[16'h2110]===8'h00 && !memory_i.ram[16'h2111][0] && dbg_cia1_irq,
+              "Mapped ICR peek clears CIA IRQ and one-shot timer stays stopped");
         for(integer i=0;i<768;i++) begin
             check(memory_i.ram[16'h4800+i]===initial_ram[16'h4000+i], "REU high-bank round-trip data");
-            check(expansion_ram[(24'hfffe80+i)&24'hffffff]===
-                  (i<16 ? dma_floating[i] : initial_ram[16'h4000+i]),"24-bit REU wrap and floating-bus data");
+            check(expansion_ram[24'hf80000|((24'h07fe80+i)&24'h07ffff)]===
+                  (i<16 ? dma_floating[i] : initial_ram[16'h4000+i]),"Selected 512KiB REU window wrap and floating-bus data");
         end
         for(integer i=0;i<512;i++) begin
             check(expansion_ram[24'h802120+i]===character_byte(12'h7f0+i) &&
@@ -322,8 +340,8 @@ module tb_c64_reu_machine;
               cia_n_ticks>=native_ticks-1 && cia_n_ticks<=native_ticks+1,"native CIA cadence");
         check(vic_ticks>=native_ticks*2-2 && vic_ticks<=native_ticks*2+2 &&
               pixel_ticks>=native_ticks*8-8 && pixel_ticks<=native_ticks*8+8,"native VIC data/pixel cadence");
-        $display("REU_MACHINE_SUMMARY ntsc=%0d mode=%0d dma=%0d waits=%0d vic_held=%0d sid_writes=%0d char_reads=%0d under_rom_writes=%0d ff00=%0d vic_wait_reads=%0d clocks=%0d",
-                 ntsc,mode,dma_acks,blocked_clocks,dma_checks,sid_dma_writes,character_reads,under_rom_writes,delayed_triggers,vic_wait_data_checks,run_clocks);
+        $display("REU_MACHINE_SUMMARY ntsc=%0d mode=%0d dma=%0d waits=%0d vic_held=%0d sid_writes=%0d char_reads=%0d under_rom_writes=%0d ff00=%0d vic_wait_reads=%0d cia_peeks=%0d verify_holds=%0d clocks=%0d",
+                 ntsc,mode,dma_acks,blocked_clocks,dma_checks,sid_dma_writes,character_reads,under_rom_writes,delayed_triggers,vic_wait_data_checks,cia_peeks,verify_holds,run_clocks);
         running=0; count_native=0;
     endtask
     initial begin

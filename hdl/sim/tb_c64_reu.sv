@@ -9,7 +9,7 @@ module tb_c64_reu #(
     logic io_valid = 0, io_write = 0, ff00_write = 0;
     logic [4:0] io_addr = 0;
     logic [7:0] io_wdata = 0, io_rdata;
-    wire dma_req, dma_valid, dma_write, dma_ack;
+    wire dma_req, dma_valid, dma_write, dma_ack, dma_idle, dma_peek, dma_last_write;
     wire [15:0] dma_addr;
     wire [7:0] dma_wdata;
     logic [7:0] dma_rdata;
@@ -80,7 +80,7 @@ module tb_c64_reu #(
         prior_dma_bus <= {dma_write,dma_addr,dma_wdata};
         prior_memory_hold <= memory_valid && !memory_ready && !reset && enable;
         prior_memory_bus <= {memory_write,memory_addr,memory_wdata,memory_wstrb};
-        if (dma_ack) begin
+        if (dma_ack && !dma_idle) begin
             if (!dma_req) $fatal(1, "DMA transaction without ownership");
             accepted_c64 = accepted_c64 + 1;
             $fwrite(trace_fd,"C %s %06x %02x\n", dma_write ? "W" : "R", {8'd0,dma_addr}, dma_write ? dma_wdata : dma_rdata);
@@ -160,6 +160,7 @@ module tb_c64_reu #(
                 4: begin drain(); $fwrite(trace_fd,"S %0x %0x\n",irq,dma_req);end
                 5: begin c64_mem[a]=b;c64_epoch[a]=epoch;end
                 6: begin reu_mem[a]=b;reu_epoch[a]=epoch;end
+                7: $fwrite(trace_fd,"Q %06x %02x\n",a[23:0],reu_read(a));
                 default: $fatal(1,"Unknown stimulus %0d",op);
             endcase
         end

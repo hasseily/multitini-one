@@ -12,7 +12,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-PIN = '122719e8d13e2fdb7dd33886455484207de59fc8'
+from c64_vice_oracle import COMMIT as PIN, verify_reference
 
 
 def main() -> int:
@@ -31,18 +31,18 @@ def main() -> int:
                ROOT/'hdl/core/c64/multitini_c64_reu_cache.sv',
                ROOT/'hdl/core/c64/multitini_c64_ddr_path.sv',
                ROOT/'hdl/sim/tb_c64_reu_native.sv']
-    reference = ROOT/'third_party/mame_reference/upstream/src/devices/machine/mos8726.cpp'
-    inputs = [Path(__file__).resolve(), ROOT/'scripts/run_native_tool.py', reference, *sources]
+    reference = ROOT/'third_party/vice_reference/upstream/vice/src/c64/cart/reu.c'
+    inputs = [Path(__file__).resolve(), ROOT/'scripts/run_native_tool.py', ROOT/'scripts/c64_vice_oracle.py', reference, *sources]
     sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
     hashes = lambda: {p.relative_to(ROOT).as_posix(): sha(p) for p in inputs}
     before = hashes()
     result = {'schema': 1, 'status': 'FAIL', 'reference_commit': PIN,
               'source_sha256': before, 'checks': [],
               'limits': ['Production REU/cache/DDR bridge with independent bounded AXI RAM; no physical DDR latency or board proof.',
-                         'MAME supplies the native one-cycle stash/fetch/verify and two-cycle swap contract; this test is not a new MAME trace comparison.',
+                         'VICE supplies one native cycle for stash/fetch/verify and two for swap; this backend test does not compare VIC BA or verify-tail release.',
                          'Four native cycles between register writes permit normal address-hint prefetch. The qualified modeled backend budget is64 core clocks per accepted request through its last response.',
                          'The longer90-95 clock profile is outside that qualified budget and must retain its real cold-first-byte failure; unbounded DDR stalls do not preserve every native slot.',
-                         'A synthetic native phase/BA driver is used here; actual VIC fetch and memory mapping remain in the separate production-machine regression.']}
+                         'A synthetic native slot-availability driver is used here; VICE BA arbitration/release is qualified by test_c64_vice_bus.py and actual VIC/memory mapping by the production-machine regression.']}
     runtime = Path(os.environ.get('MULTITINI_UCRT_BIN', 'C:/msys64/ucrt64/bin'))
     iv = runtime/'iverilog.exe' if os.name == 'nt' else 'iverilog'
     vv = runtime/'vvp.exe' if os.name == 'nt' else 'vvp'
@@ -63,8 +63,7 @@ def main() -> int:
         return output, failed
 
     try:
-        if sha(reference) != 'f95f408b4bca5986df531138cbbb5cc9c5a61e29ee643882d483182de3068e35':
-            raise RuntimeError('Pinned MAME MOS8726 source changed')
+        verify_reference()
         profiles = [(24, 0)] if args.single else [(19, 0), (19, 1), (24, 0), (24, 1)]
         for bits, ntsc in profiles:
             directory = build/f'{bits}-{ntsc}'

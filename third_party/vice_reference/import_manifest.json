@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "repository": "https://github.com/VICE-Team/svn-mirror",
+  "commit": "4d283a2e7dd59b7e378524878e81ecc7826b700c",
+  "tag": "3.10.0",
+  "svn_revision": 45923,
+  "scope": "Test-only cycle-exact CPU, C64 memory, REU and VIC reference. No binary, ROM, disk or game; excluded from FPGA and ARM builds.",
+  "files": [
+    {
+      "path": "vice/COPYING",
+      "sha256": "b8a2f73f743dc1a51aff23f1aacbca4b868564db52496fa3c0caba755bfd1eaf",
+      "license": "GPL-2.0 license text"
+    },
+    {
+      "path": "vice/README",
+      "sha256": "0e3cda6c5fddb2a8a945bac5907f581a01dc990b8c9d2a0e331518aad7c60995",
+      "license": "GPL-2.0-or-later"
+    },
+    {
+      "path": "vice/src/6510core.h",
+      "sha256": "94e1b49830dd9f3a68c6266a43c754f5a1b6429a496ef54e595e142d342c8f0d",
+      "license": "GPL-2.0-or-later"
+    },
+    {
+      "path": "vice/src/6510dtvcore.c",
+      "sha256": "40b9eea851ddb2853abf04c91ae16117a4a92789b18a5c2ae627ec90f9a454f8",
+      "license": "GPL-2.0-or-later"
+    },
+    {
+      "path": "vice/src/c64/c64cpusc.c",
+      "sha256": "14e00fe7abab8f2161173fdd176404dc5bac0ee282166ad29f0c59bce1206fd0",
+      "license": "GPL-2.0-or-later"
+    },
+    {
+      "path": "vice/src/c64/c64memsc.c",
+      "sha256": "85a08ea194e27735da0c7a8282772b97e6efb6e109f3b683c780ee0f2a37f2db",
+      "license": "GPL-2.0-or-later"
+    },
+    {
+      "path": "vice/src/c64/cart/reu.c",
+      "sha256": "a6abf7e617bb1c0e83669a93532e403c7b381e8671b95358d18f8ff57a7f329a",
+      "license": "GPL-2.0-or-later"
+    },
+    {
+      "path": "vice/src/interrupt.h",
+      "sha256": "0b52238faf1fccd37793d6c06381ce89f0af1e06f0c1a0f89a52905061a12bad",
+      "license": "GPL-2.0-or-later"
+    },
+    {
+      "path": "vice/src/mainc64cpu.c",
+      "sha256": "2b96dd04a1eaf30f19c3cc5940ec433ac4c454f1a45681f0a04ad0c98f3a7f3b",
+      "license": "GPL-2.0-or-later"
+    },
+    {
+      "path": "vice/src/viciisc/vicii-chip-model.c",
+      "sha256": "95ea3ef61e59a1c850ff516c1a827ae849521dce3199307586e061af97db639d",
+      "license": "GPL-2.0-or-later"
+    },
+    {
+      "path": "vice/src/viciisc/vicii-cycle.c",
+      "sha256": "561876187fde8bfe8636e64593543aa77a5e0855ebbd9fe56d9da4fa6eb564ba",
+      "license": "GPL-2.0-or-later"
+    },
+    {
+      "path": "vice/src/viciisc/vicii-fetch.c",
+      "sha256": "83fe621bfd6c3f9aadfe7c725f02392ba04db70c36248cdfea88d79883bb21d0",
+      "license": "GPL-2.0-or-later"
+    },
+    {
+      "path": "vice/src/viciisc/vicii-irq.c",
+      "sha256": "527433a575005fc89a4f6fce9c9c0681db95b65468de8bd9929f8f5a66a38d39",
+      "license": "GPL-2.0-or-later"
+    },
+    {
+      "path": "vice/src/viciisc/vicii-mem.c",
+      "sha256": "f8e2bdd30fbe8abf60a7e77647723f4615834e5b414f2695698ed28b31857edf",
+      "license": "GPL-2.0-or-later"
+    },
+    {
+      "path": "vice/src/viciisc/viciitypes.h",
+      "sha256": "c6178cc2e026dcd85640a3ab4b9cd6609713731560e0bbbe4b1a7d8764588493",
+      "license": "GPL-2.0-or-later"
+    }
+  ]
+}

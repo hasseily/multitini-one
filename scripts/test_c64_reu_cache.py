@@ -42,7 +42,7 @@ def main() -> int:
                     'oldest-to-newest queued fill forwarding and same-edge write',
                     'write to an already returned word before fill completes',
                     'full queue backpressure and merge while full',
-                    'read-after-write including dirty eviction', '16 MiB prefetch wrap',
+                    'read-after-write including dirty eviction', '512 KiB prefetch wrap within 16 MiB upper bank windows',
                     'zero-latency read/write completion',
                     'write fault blocks clean quiescence and hard-reset recovery',
                     'faulted fill stays unreadable', 'hard reset during request backpressure']}

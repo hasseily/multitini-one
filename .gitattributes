@@ -26,12 +26,16 @@ licenses/third_party/CiderPress2/LICENSE -text
 licenses/third_party/CiderPress2/NOTICE -text
 third_party/c64/upstream/** -text -whitespace
 third_party/mame_reference/upstream/** -text -whitespace
+third_party/vice_reference/upstream/** -text -whitespace
 third_party/gameboy/upstream/** -text -whitespace
 third_party/genesis/upstream/** -text -whitespace
 third_party/nes/upstream/** -text -whitespace
 third_party/gsbasic/** -text -whitespace
 third_party/vectrex/** -text -whitespace
 third_party/vectrex32/** -text -whitespace
+
+# Keep the VICE comparison harness bytes stable across Windows checkouts.
+tests/c64_vice/*.cpp text eol=lf
 
 # Preserve the exact hashes recorded for these imported USB source ports.
 firmware/platform/xilinx/usb_storage_service.c -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

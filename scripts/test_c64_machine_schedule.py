@@ -135,6 +135,8 @@ def main() -> int:
 
     def run(name: str, command: list[object]) -> str:
         argv = [arg.as_posix() if isinstance(arg, Path) else str(arg) for arg in command]
+        if os.name == "nt":
+            argv = [sys.executable, str(ROOT / "scripts/run_native_tool.py"), "--", *argv]
         result = subprocess.run(argv, cwd=build, env=environment, capture_output=True,
                                 text=True, errors="replace", timeout=600,
                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Compare production NMOS CPU interrupt/RDY boundaries with actual pinned MAME."""
+"""Retain MAME CPU evidence and explicitly qualify reviewed differences against VICE 3.10."""
 from __future__ import annotations
 
 import argparse
@@ -12,6 +12,10 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import shutil
+
+from c64_vice_oracle import COMMIT as VICE_COMMIT, REFERENCE as VICE_REFERENCE, verify_reference
+from c64_vice_cpu_oracle import prepare
 
 ROOT = Path(__file__).resolve().parents[1]
 REFERENCE_COMMIT = "122719e8d13e2fdb7dd33886455484207de59fc8"
@@ -71,9 +75,11 @@ def main() -> int:
                         default=Path(os.environ.get("XILINX_VIVADO", "C:/Xilinx/2025.2/Vivado")) / "bin")
     args = parser.parse_args()
     build = args.build_dir.resolve()
-    if not build.is_relative_to((ROOT / "build").resolve()):
+    if build == (ROOT / "build").resolve() or not build.is_relative_to((ROOT / "build").resolve()):
         parser.error("Build directory must remain inside this checkout's ignored build/")
-    build.mkdir(parents=True, exist_ok=True)
+    if build.exists():
+        parser.error("Use a fresh build directory to preserve earlier evidence")
+    build.mkdir(parents=True)
     receipt_path = build / "validation.json"
     receipt_path.unlink(missing_ok=True)
     environment = {key: value for key, value in os.environ.items() if key.upper() != "PATH"}
@@ -86,7 +92,15 @@ def main() -> int:
     vhdl += [ROOT / "hdl/core/c64/ports/T65.vhd", ROOT / "hdl/core/c64/multitini_c64_6510_port.vhd"]
     wrapper = ROOT / "hdl/core/c64/ports/cpu_6510.vhd"
     bench = ROOT / "hdl/sim/tb_c64_6510_boundaries.sv"
-    tracked = [Path(__file__).resolve(), bench, wrapper, *vhdl, manifest_path,
+    vice_manifest = verify_reference()
+    declarations_path = ROOT / "tests/c64_vice/mame_cpu_disagreements.json"
+    declarations = json.loads(declarations_path.read_text())
+    if declarations["mame_reference_commit"] != REFERENCE_COMMIT or declarations["vice_reference_commit"] != VICE_COMMIT:
+        raise RuntimeError("Historical disagreement reference pins changed")
+    tracked = [declarations_path, ROOT / "scripts/c64_vice_oracle.py", ROOT / "scripts/c64_vice_cpu_oracle.py",
+               ROOT / "tests/c64_vice/cpu_harness.c", VICE_REFERENCE / "import_manifest.json",
+               *[VICE_REFERENCE / "upstream" / entry["path"] for entry in vice_manifest["files"]],
+               Path(__file__).resolve(), bench, wrapper, *vhdl, manifest_path,
                ROOT / "scripts/c64_mame_oracle.py", ROOT / "scripts/run_native_tool.py",
                ROOT / "tests/c64_mame/oracle_harness.cpp", ROOT / "tests/c64_mame/memory_harness.cpp",
                *[ROOT / "third_party/mame_reference/upstream" / entry["path"] for entry in manifest["files"]]]
@@ -95,6 +109,7 @@ def main() -> int:
         return {path.relative_to(ROOT).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in tracked}
 
     before = hashes()
+    receipt_path.write_text(json.dumps({"status": "FAIL", "phase": "started", "source_sha256": before}, indent=2) + "\n")
 
     def run(name: str, command: list[object], *, allow_failure: bool = False) -> tuple[str, int]:
         argv = [item.as_posix() if isinstance(item, Path) else str(item) for item in command]
@@ -198,6 +213,15 @@ def main() -> int:
                      "0800", "0204", "a5", "a0", "2048", build / (stem + ".events")], allow_failure=True)
         case["oracle_returncode"] = code
 
+    vice_sources = prepare(build)
+    shutil.copyfile(ROOT / "tests/c64_vice/cpu_harness.c", build / "cpu_harness.c")
+    vice_oracle = build / ("vice6510_oracle.exe" if os.name == "nt" else "vice6510_oracle")
+    compiler = Path("C:/msys64/ucrt64/bin/gcc.exe") if os.name == "nt" else Path("gcc")
+    run("vice-oracle-build", [*guard, compiler, "-std=c11", "-O1", build / "cpu_harness.c", "-o", vice_oracle])
+    for case in cases:
+        stem = str(case["stem"])
+        run(stem + "-vice-oracle", [*guard, vice_oracle, build / "memory.bin", build / (stem + ".hex"), build / (stem + "-vice.csv")])
+
     source = wrapper.read_text()
     declaration = "\t\tdoIO    : out unsigned(7 downto 0)"
     ports = ";\n\t\ttest_data : out unsigned(7 downto 0);\n\t\ttest_sync : out std_logic"
@@ -213,10 +237,10 @@ def main() -> int:
     observed_path = build / "cpu_6510_observed.vhd"
     observed_path.write_text(observed)
     top = "tb_c64_6510_boundaries"
-    run("xvlog", [args.vivado_bin / ("xvlog" + suffix), "--nolog", "--sv", bench])
-    run("xvhdl", [args.vivado_bin / ("xvhdl" + suffix), "--nolog", "--2008", *vhdl, observed_path])
-    run("xelab", [args.vivado_bin / ("xelab" + suffix), "--nolog", "--timescale", "1ns/1ps", "--snapshot", top + "_sim", top])
-    output, _ = run("simulate", [args.vivado_bin / ("xsim" + suffix), "--nolog", top + "_sim", "--runall"])
+    run("xvlog", [*guard, args.vivado_bin / ("xvlog" + suffix), "--nolog", "--sv", bench])
+    run("xvhdl", [*guard, args.vivado_bin / ("xvhdl" + suffix), "--nolog", "--2008", *vhdl, observed_path])
+    run("xelab", [*guard, args.vivado_bin / ("xelab" + suffix), "--nolog", "--timescale", "1ns/1ps", "--snapshot", top + "_sim", top])
+    output, _ = run("simulate", [*guard, args.vivado_bin / ("xsim" + suffix), "--nolog", top + "_sim", "--runall"])
     traces: dict[int, list[dict[str, object]]] = {int(case["id"]): [] for case in cases}
     for match in re.finditer(r"^BOUNDARY_BUS,(\d+),(\d+),(\d+),([0-9a-f]+),([RW]),([0-9a-f]+),([01])$", output, re.M | re.I):
         case_id, sequence, tick, address, rw, data, sync = match.groups()
@@ -227,18 +251,32 @@ def main() -> int:
     summaries = {int(match[0]): [int(value) for value in match[1:]] for match in re.findall(
         r"^BOUNDARY_SUMMARY,(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)$", output, re.M)}
     failures = []
+    disagreements = []
+    exact_matches = 0
     for case in cases:
         index = int(case["id"])
         expected = read_reference(build / (str(case["stem"]) + ".csv"))
         actual = traces[index]
         result = compare(actual, expected)
         summary = summaries.get(index, [])
-        case.update(result, rtl_summary=summary, status="PASS" if result["equal"] and
-                    case["oracle_returncode"] == 0 and summary and summary[0] == 1 else "FAIL")
+        vice = read_reference(build / (str(case["stem"]) + "-vice.csv"))
+        qualified = actual == vice and case["oracle_returncode"] == 0 and bool(summary) and summary[0] == 1
+        name = str(case["name"])
+        declaration = declarations["disagreements"].get(name)
+        if declaration:
+            signature = hashlib.sha256(json.dumps(expected, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            qualified = qualified and not result["equal"] and signature == declaration["mame_trace_sha256"]
+            disagreements.append(name)
+        else:
+            qualified = qualified and result["equal"]
+            if result["equal"]: exact_matches += 1
+        case.update(result, rtl_summary=summary, vice_equal=actual == vice,
+                    historical_disagreement=declaration,
+                    status="PASS" if qualified else "FAIL")
         (build / (str(case["stem"]) + "-rtl.json")).write_text(json.dumps(actual, indent=2) + "\n")
         case["artifact_sha256"] = {extension: hashlib.sha256(
             (build / (str(case["stem"]) + extension)).read_bytes()).hexdigest()
-            for extension in (".csv", ".events", ".hex", "-rtl.json")}
+            for extension in (".csv", "-vice.csv", ".events", ".hex", "-rtl.json")}
         if case["status"] != "PASS":
             failures.append(case["name"])
             print(f"FAIL: {case['name']} {json.dumps(result)}", flush=True)
@@ -250,21 +288,28 @@ def main() -> int:
     negative = compare(corrupted, read_reference(build / (str(cases[0]["stem"]) + ".csv")))
     if negative["equal"]:
         raise RuntimeError("Deliberate BRK vector corruption was not rejected")
+    if (set(disagreements) != set(declarations["disagreements"]) or
+            len(cases) != declarations["case_count"] or exact_matches != declarations["exact_mame_matches"]):
+        failures.append("historical-declaration-set-changed")
     after = hashes()
     stable = before == after
     receipt = {"schema": 1, "status": "PASS" if not failures and stable else "FAIL",
                "reference_commit": REFERENCE_COMMIT, "source_sha256": before,
+               "qualification": "Historical MAME with exact declared disagreements verified against fresh VICE execution",
+               "raw_mame_status": "FAIL" if disagreements else "PASS",
+               "exact_mame_matches": exact_matches, "expected_disagreement_count": len(disagreements),
+               "vice_reference_commit": VICE_COMMIT, "vice_oracle_sources": vice_sources,
                "memory_sha256": hashlib.sha256(memory).hexdigest(),
                "sources_unchanged": stable, "case_count": len(cases), "passed": len(cases) - len(failures),
                "failed": failures, "cases": cases, "negative_control": {"status": "PASS", "corruption":
                    "BRK vector low read address FFFE changed to FFFA", "comparison": negative},
                "observation_wrapper_sha256": hashlib.sha256(observed_path.read_bytes()).hexdigest(),
-               "limits": ["Flat-memory CPU comparison with production RTL; no whole-C64 device equivalence.",
+               "limits": ["MAME reference traces remain unchanged; status PASS qualifies exact declared disagreements against fresh VICE, not full MAME conformance.",
                    "Stimulus uses CPU clock attempts relative to first opcode fetch; CE gaps are not CPU clocks.",
                    "All accepted accesses compare address, direction, data, SYNC and relative CPU tick.",
                    "Directed boundary matrix is not exhaustive NMOS opcode/interrupt conformance or board proof."]}
     receipt_path.write_text(json.dumps(receipt, indent=2) + "\n")
-    print(f"{receipt['status']}: MAME CPU boundaries {receipt['passed']}/{len(cases)}; negative control rejected; sources_unchanged={stable}")
+    print(f"{receipt['status']}: historical CPU qualification {receipt['passed']}/{len(cases)}, MAME exact={exact_matches}, VICE disagreements={len(disagreements)}; negative control rejected; sources_unchanged={stable}")
     return 0 if receipt["status"] == "PASS" else 1
 
 

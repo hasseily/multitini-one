@@ -94,8 +94,13 @@ module tb_c64_machine_schedule;
     always @(posedge clk) begin
         if (running && !dbg_reset) begin
             if (ram_ce && ram_we && ram_addr < 2) begin
-                check(ram_data === dbg_vic_bus, "RAM beneath 6510 port receives VIC bus byte");
-                ram_port_expected[ram_addr] = dbg_vic_bus;
+                if (dbg_dma) begin
+                    check(ram_data === dma_data, "DMA preserves payload beneath the CPU port");
+                    ram_port_expected[ram_addr] = dma_data;
+                end else begin
+                    check(ram_data === dbg_vic_bus, "CPU port backing receives VIC bus byte");
+                    ram_port_expected[ram_addr] = dbg_vic_bus;
+                end
                 port_backing_writes++;
             end
             if (dbg_hold) begin

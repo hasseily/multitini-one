@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Exercise the production CPU/VIC/DMA path with a 16MB REU and delayed PSRAM."""
+"""Exercise production CPU/VIC/DMA with a 16MiB REU and delayed memory model."""
 from __future__ import annotations
 
 import argparse
@@ -56,11 +56,21 @@ def synthetic_memory() -> bytes:
     transfer(0xD7F0, 512, 0x81, 0x2107, reu_address=0x900120, character_bank=True)
     # Read chargen again after the underlying RAM write: ROM must be unchanged.
     transfer(0xD7F0, 512, 0x80, 0x2108, reu_address=0xA00120, character_bank=True)
+    # A penultimate verify mismatch peeks the next mapped register without
+    # consuming another native cycle. CIA ICR must return and clear its IRQ.
+    transfer(0x5F00, 2, 0x90, 0x2109, reu_address=0xB00000)
+    for address, value in ((0xDC04, 1), (0xDC05, 0), (0xDC0D, 0x81), (0xDC0E, 0x19)):
+        store(address, value)
+    program.extend([0xEA] * 12)
+    transfer(0xDC0C, 2, 0x93, 0x210A, reu_address=0xB00000)
+    program.extend([0xAD, 0x0D, 0xDC, 0x8D, 0x10, 0x21,
+                    0xAD, 0x0E, 0xDC, 0x8D, 0x11, 0x21])
     store(0x210F, 0xA5)
     stop = 0x0800 + len(program)
     program.extend([0x4C, stop & 255, stop >> 8])
     memory[0x0800:0x0800 + len(program)] = program
     for offset in range(768): memory[0x4000 + offset] = ((offset * 37) ^ (offset >> 8) ^ 0xA6) & 255
+    memory[0x5F00:0x5F02] = bytes((1, 0))
     return bytes(memory)
 
 
@@ -72,7 +82,7 @@ def instrument(source: str) -> str:
     dbg_cpu_di, dbg_cpu_do, dbg_cpu_port, dbg_vic_bus : out std_logic_vector(7 downto 0);
     dbg_cpu_we, dbg_request, dbg_retire, dbg_reset, dbg_hold : out std_logic;
     dbg_rdy, dbg_cpu_owned, dbg_dma : out std_logic;
-    dbg_aec, dbg_ram_select : out std_logic;
+    dbg_aec, dbg_ram_select, dbg_reu_ba, dbg_cia1_irq : out std_logic;
     dbg_vic_addr : out std_logic_vector(15 downto 0);
     dbg_native_ce : out std_logic_vector(5 downto 0);
     dbg_io_cs : out std_logic_vector(4 downto 0);
@@ -94,6 +104,8 @@ def instrument(source: str) -> str:
     dbg_cpu_owned <= cpuHasBus;
     dbg_dma <= dma_active;
     dbg_aec <= aec;
+    dbg_reu_ba <= ba_reu;
+    dbg_cia1_irq <= irq_cia1;
     dbg_ram_select <= cs_ram;
     dbg_vic_addr <= std_logic_vector(vicAddr);
     dbg_native_ce <= '0' & (enablePixel and not memory_wait_q) &
@@ -173,6 +185,8 @@ def main() -> int:
 
     def run(name: str, command: list[object]) -> str:
         argv = [arg.as_posix() if isinstance(arg, Path) else str(arg) for arg in command]
+        if os.name == "nt":
+            argv = [sys.executable, str(ROOT / "scripts/run_native_tool.py"), "--", *argv]
         result = subprocess.run(argv, cwd=build, env=environment, capture_output=True,
                                 text=True, errors="replace", timeout=600,
                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
@@ -211,7 +225,7 @@ def main() -> int:
         "observation_only_copy_sha256": hashlib.sha256(observed.read_bytes()).hexdigest(),
         "observation_only_wrapper_sha256": hashlib.sha256(observed_wrapper.read_bytes()).hexdigest(),
         "checks": summaries, "summary": passes[0],
-        "limits": "Real machine RTL simulation with synthetic program; bounded MAME behavior checks are separate, and full MAME/game compatibility and physical timing are not established."}, indent=2) + "\n")
+        "limits": "Real machine RTL simulation with synthetic program and abstract delayed memory; VICE comparisons and DDR/cache qualification are separate. No whole-emulator, game or physical-board equivalence claim."}, indent=2) + "\n")
     print("\n".join(summaries + passes))
     return 0
 

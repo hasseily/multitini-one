@@ -226,13 +226,19 @@ module tb_c64_reu_cache;
         wr(24'h000600,64'hdeadbeef,8'h0f);rd(24'h000600);
         wr(24'h000600,64'h7654321000000000,8'hf0);rd(24'h000680);rd(24'h000600);drain();
 
-        // Next-line prefetch wraps at the full 16 MiB boundary.
+        // The REC wraps inside a 512 KiB window; the upper bank latch stays.
         hint_addr=24'hffffe0;hint_read=1;
         timeout=0;before_reads=reads;
         while((reads<before_reads+2 || active) && timeout<300)begin @(negedge clk);timeout=timeout+1;end
         hint_read=0;check(timeout<300,"last line and wrapped next line prefetched");
-        before_reads=reads;rd(24'hfffff8);rd(24'h000000);
+        before_reads=reads;rd(24'hfffff8);rd(24'hf80000);
         check(reads==before_reads,"wrapped prefetch serves both hits");
+        hint_addr=24'h87ffe0;hint_read=1;
+        timeout=0;before_reads=reads;
+        while((reads<before_reads+2 || active) && timeout<300)begin @(negedge clk);timeout=timeout+1;end
+        hint_read=0;check(timeout<300,"middle window boundary prefetched");
+        before_reads=reads;rd(24'h87fff8);rd(24'h800000);
+        check(reads==before_reads,"middle window preserves upper bank bits");
 
         // Zero-cycle completion exercises SEND+ready+rvalid, followed by the
         // other three beats. Directed traffic also includes fixed REU words.

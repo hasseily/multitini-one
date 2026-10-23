@@ -2,8 +2,9 @@
 `timescale 1ns/1ps
 // Native-slot regression for the production REU, cache and HP2 DDR bridge.
 // The AXI slave is an independent 16 MiB store with bounded delayed replies.
-// MAME charges one native cycle for stash/fetch/verify, two for swap, and
-// pauses while BA is low. No real DDR service-time or board claim is made.
+// VICE charges one native cycle for stash/fetch/verify and two for swap.
+// This fixture prescribes slot availability; production BA grace and release
+// have a separate VICE comparison. No physical DDR or board claim is made.
 module tb_c64_reu_native #(
     parameter integer ADDRESS_BITS=24,
     parameter integer NTSC=0,
@@ -16,7 +17,7 @@ module tb_c64_reu_native #(
     reg io_valid=0,io_write=0,ff00_write=0;
     reg [4:0] io_addr=0; reg [7:0] io_wdata=0;
     wire [7:0] io_rdata;
-    wire dma_req,dma_valid,dma_write,irq,busy,fault;
+    wire dma_req,dma_valid,dma_write,dma_idle,dma_peek,dma_last_write,irq,busy,fault;
     wire [15:0] dma_addr; wire [7:0] dma_wdata;
     wire [23:0] memory_addr,memory_hint_addr;
     wire memory_write,memory_valid,memory_hint_read,memory_ready,memory_rvalid;
@@ -185,7 +186,7 @@ module tb_c64_reu_native #(
                 if(!dma_ack)$fatal(1,"native slot missing case=%s frame=%0d accepted=%0d phase15_valid=%0d current_valid=%0d state=%0d max_ddr_clocks=%0d",case_name,frames-first_frame,accepted,slot_valid,dma_valid,reu.state,max_latency);
                 index=op==2 ? accepted/2 : accepted;
                 ca=c64_start+(fixed_c64 ? 0 : index);
-                ra=(reu_start+(fixed_reu ? 0 : index))&MASK;
+                ra={reu_start[23:19], (reu_start[18:0]+(fixed_reu ? 19'd0 : index[18:0]))} & MASK;
                 should_write=op==1 || (op==2&&accepted%2==1);
                 if(dma_addr!==ca||dma_write!==should_write)$fatal(1,"DMA address/direction case=%s index=%0d got=%h/%b expected=%h/%b",case_name,index,dma_addr,dma_write,ca,should_write);
                 if(should_write)begin
@@ -237,7 +238,7 @@ module tb_c64_reu_native #(
         begin
             case_name=name;op=operation;c64_start=ca;reu_start=ra&MASK;
             fixed_c64=(acr&128)!=0;fixed_reu=(acr&64)!=0;count_bytes=length;
-            if(operation==3)for(j=0;j<length;j=j+1)c64[(ca+(fixed_c64?0:j))&65535]=reference_byte((ra+(fixed_reu?0:j))&MASK);
+            if(operation==3)for(j=0;j<length;j=j+1)c64[(ca+(fixed_c64?0:j))&65535]=reference_byte({ra[23:19], (ra[18:0]+(fixed_reu ? 19'd0 : j[18:0]))} & MASK);
             wr(2,ca&255);wr(3,ca>>8);
             if(!bank_last)begin wr(4,ra&255);wr(5,(ra>>8)&255);wr(6,ra>>16);end
             wr(7,length&255);wr(8,length>>8);wr(9,8'he0);wr(10,acr);
@@ -261,7 +262,7 @@ module tb_c64_reu_native #(
             end
             drain();
             if(operation==0||operation==2)for(j=0;j<length;j=j+1)begin
-                address=(ra+(fixed_reu?0:j))&MASK;word_value=ddr_word(address);
+                address={ra[23:19], (ra[18:0]+(fixed_reu ? 19'd0 : j[18:0]))} & MASK;word_value=ddr_word(address);
                 if(word_value[address[2:0]*8+:8]!==reference_byte(address))
                     $fatal(1,"DDR backing byte case=%s address=%h got=%h expected=%h",name,address,word_value[address[2:0]*8+:8],reference_byte(address));
             end

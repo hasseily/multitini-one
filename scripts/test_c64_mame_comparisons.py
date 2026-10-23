@@ -43,10 +43,11 @@ def source_snapshot() -> dict[str, str]:
     """Capture immutable references plus test and C64 implementation sources."""
     paths = set()
     for folder in ("hdl/core/c64", "third_party/c64/upstream",
-                   "third_party/mame_reference", "tests/c64_mame"):
+                   "third_party/mame_reference", "tests/c64_mame",
+                   "third_party/vice_reference", "tests/c64_vice"):
         paths.update(path for path in (ROOT / folder).rglob("*")
                      if path.is_file() and "__pycache__" not in path.parts)
-    for pattern in ("test_c64*.py", "c64_mame*.py"):
+    for pattern in ("test_c64*.py", "c64_mame*.py", "c64_vice*.py"):
         paths.update((ROOT / "scripts").glob(pattern))
     paths.update((ROOT / "hdl/sim").glob("tb_c64*.sv"))
     paths.update(ROOT / path for path in (
@@ -125,9 +126,10 @@ def main() -> int:
     for name in selected:
         script, extra, scope = SUITES[name]
         directory = build / name
-        directory.mkdir(exist_ok=True)
         child_receipt = directory / "validation.json"
-        child_receipt.unlink(missing_ok=True)
+        if name != "cpu-boundaries":
+            directory.mkdir(exist_ok=True)
+            child_receipt.unlink(missing_ok=True)
         command = [sys.executable, str(ROOT / "scripts" / script),
                    "--build-dir", str(directory), *extra]
         if args.vivado_bin and name != "reu":

@@ -112,6 +112,10 @@ port(
 	-- A memory-backed DMA master may own the CPU while waiting for its store.
 	-- Only valid slots touch the machine bus; native device clocks keep running.
 	dma_valid   : in  std_logic := '1';
+	-- A REC verify hold consumes native time without a C64 memory access.
+	dma_idle    : in  std_logic := '0';
+	dma_peek    : in  std_logic := '0';
+	dma_last_write : in std_logic := '0';
 	dma_ack     : out std_logic;
 	cpu_bus_valid : out std_logic;
 	cpu_bus_addr : out unsigned(15 downto 0);
@@ -212,6 +216,18 @@ signal rfsh_cycle   : unsigned(1 downto 0) := (others => '0');
 
 signal dma_active   : std_logic;
 signal dma_slot_valid : std_logic := '0';
+signal dma_slot_idle : std_logic := '0';
+signal dma_slot_peek : std_logic := '0';
+signal dma_peek_done : std_logic := '0';
+signal dma_peek_issue, dma_peek_retire, dma_peek_io : std_logic;
+signal dma_slot_last_write : std_logic := '0';
+signal dma_post_pending : std_logic := '0';
+signal dma_post_write : std_logic := '0';
+signal dma_post_last_write : std_logic := '0';
+signal dma_write_delay : std_logic := '0';
+signal dma_wait_vic : std_logic := '0';
+signal dma_terminal_extra : std_logic := '0';
+signal dma_started : std_logic := '0';
 signal bus_access_valid : std_logic;
 
 signal phi0_cpu     : std_logic;
@@ -219,9 +235,11 @@ signal cpuHasBus    : std_logic;
 
 signal baLoc        : std_logic;
 signal ba_dma       : std_logic;
+signal ba_reu       : std_logic;
 signal aec          : std_logic;
 
 signal enableCpu    : std_logic;
+signal scheduledCpuRequest, scheduledCpuRetire : std_logic;
 signal enableVic    : std_logic;
 signal enablePixel  : std_logic;
 signal enableSid    : std_logic;
@@ -423,17 +441,116 @@ end process;
 
 -- PHI0/2-clock emulation
 process(clk32)
+variable blocked : std_logic;
 begin
 	if rising_edge(clk32) then
-		if memory_wait_q = '0' then
+		if reset = '1' then
+			phi0_cpu <= '0';
+			cpuHasBus <= '0';
+			dma_active <= '0';
+			dma_slot_valid <= '0';
+			dma_slot_idle <= '0';
+			dma_slot_peek <= '0';
+			dma_peek_done <= '0';
+			dma_slot_last_write <= '0';
+			dma_post_pending <= '0';
+			dma_post_write <= '0';
+			dma_post_last_write <= '0';
+			dma_write_delay <= '0';
+			dma_wait_vic <= '0';
+			dma_terminal_extra <= '0';
+			dma_started <= '0';
+		elsif memory_wait_q = '0' then
+			-- Keep the CPU held until the final access's post-cycle BA check.
+			if sysCycle = CYCLE_EXT1 or sysCycle = CYCLE_EXT5 then
+				dma_active <= dma_req or dma_post_pending or dma_wait_vic;
+			end if;
 			if sysCycle = sysCycleDef'pred(CYCLE_CPU0) then
 				phi0_cpu <= '1';
 				dma_slot_valid <= dma_valid;
-				-- MAME's MOS8726 waits whenever VIC BA is low. Do not use
-				-- upstream's early ba_dma grant during badline refresh.
-				if baLoc = '1' or (cpuWe = '1' and dma_active = '0') then
-					cpuHasBus <= '1';
+				dma_slot_idle <= dma_idle;
+				dma_slot_peek <= dma_peek;
+				dma_slot_last_write <= dma_last_write;
+				blocked := '0';
+				-- VICE reu_clk_inc_post_write/read check the next native
+				-- cycle after an accepted access. Writes get one BA check
+				-- of grace; reads wait immediately. A read does not reset
+				-- the write-delay latch (important for swap).
+				if dma_wait_vic = '1' then
+					if ba_reu = '0' then
+						blocked := '1';
+					else
+						dma_wait_vic <= '0';
+						if dma_terminal_extra = '1' then
+							-- A final write that caused a BA steal has one
+							-- additional read-like clock before CPU release.
+							blocked := '1';
+							dma_terminal_extra <= '0';
+							dma_post_pending <= '1';
+							dma_post_write <= '0';
+						end if;
+					end if;
+				elsif dma_post_pending = '1' then
+					dma_post_pending <= '0';
+					if dma_post_write = '1' then
+						if ba_reu = '1' then
+							dma_write_delay <= '0';
+						elsif dma_write_delay = '0' then
+							dma_write_delay <= '1';
+						else
+							blocked := '1';
+							dma_write_delay <= '0';
+							dma_wait_vic <= '1';
+							dma_terminal_extra <= dma_post_last_write;
+						end if;
+					elsif ba_reu = '0' then
+						blocked := '1';
+						dma_wait_vic <= '1';
+					end if;
+				elsif dma_req = '1' and
+					((dma_started = '0' and baLoc = '0') or
+					 (dma_started = '1' and ba_reu = '0')) then
+					-- Initial CPU takeover honors normal VIC BA. A backend
+					-- gap cannot manufacture another write-grace cycle.
+					blocked := '1';
+					dma_wait_vic <= '1';
 				end if;
+				cpuHasBus <= '0';
+				if blocked = '1' then
+					dma_active <= '1';
+				elsif dma_req = '1' then
+					dma_active <= '1';
+					dma_started <= '1';
+					cpuHasBus <= '1';
+				else
+					dma_active <= '0';
+					dma_started <= '0';
+					dma_write_delay <= '0';
+					dma_peek_done <= '0';
+					if baLoc = '1' or cpuWe_pre = '1' then
+						cpuHasBus <= '1';
+					end if;
+				end if;
+			end if;
+			if enableCpu = '1' and dma_active = '1' and dma_slot_peek = '0' and
+				dma_slot_valid = '1' and cpuHasBus = '1' then
+				dma_post_pending <= '1';
+				dma_post_write <= dma_we;
+				dma_post_last_write <= dma_slot_last_write;
+			end if;
+			if dma_peek_retire = '1' then
+				dma_peek_done <= '1';
+			end if;
+			-- The penultimate-error comparison is unclocked in VICE. Serve
+			-- it in the first quarter of this half-frame, then give the CPU
+			-- its normal CPUC/CPUF slot after comparison/status complete.
+			if dma_peek_done = '1' and dma_req = '0' and
+				sysCycle >= CYCLE_CPU0 and sysCycle < CYCLE_CPUC then
+				dma_active <= '0';
+				dma_started <= '0';
+				dma_peek_done <= '0';
+				dma_write_delay <= '0';
+				cpuHasBus <= baLoc or cpuWe_pre;
 			end if;
 			if sysCycle = sysCycleDef'high then
 				phi0_cpu <= '0';
@@ -597,6 +714,8 @@ port map (
 	baSync => '0',
 	ba => baLoc,
 	ba_dma => ba_dma,
+	ba_reu => ba_reu,
+	char_rom_bank => not (vicAddr(14) or (exrom and not game)),
 
 	mode6569 => (not ntscMode),
 	mode6567old => '0',
@@ -608,6 +727,8 @@ port map (
 	turbo_state => turbo_state,
 
 	cs => cs_vic,
+	read_early_active => dma_active and dma_slot_peek,
+	read_early => dma_peek_io and not memory_wait_q,
 	we => cpuWe,
 	lp_n => cia1_pbi(4),
 
@@ -747,7 +868,7 @@ port map (
 	clk => clk32,
 	mode => cia_mode,
 	phi2_p => enableCia_p and not memory_wait_q,
-	phi2_n => enableCia_n and not memory_wait_q,
+	phi2_n => (enableCia_n or dma_peek_io) and not memory_wait_q,
 	res_n => not reset,
 	cs_n => not cs_cia1,
 	rw => not cpuWe,
@@ -777,7 +898,7 @@ port map (
 	clk => clk32,
 	mode => cia_mode,
 	phi2_p => enableCia_p and not memory_wait_q,
-	phi2_n => enableCia_n and not memory_wait_q,
+	phi2_n => (enableCia_n or dma_peek_io) and not memory_wait_q,
 	res_n => not reset,
 	cs_n => not cs_cia2,
 	rw => not cpuWe,
@@ -889,11 +1010,9 @@ port map (
 cass_motor <= cpuIO(5);
 cass_write <= cpuIO(3);
 
--- Match MAME c64_state::write_memory: writes beneath the internal 6510
--- port put the VIC floating-bus byte into external RAM. The CPU wrapper
--- still receives its original DDR/latch write data through cpuDo_pre.
--- MAME applies the same board-memory rule to expansion DMA writes.
-ramDout <= lastVicDi when systemWe = '1' and systemAddr(15 downto 1) = 0
+-- CPU port writes put the VIC floating bus byte into backing RAM. VICE's
+-- zero_store_dma instead stores the DMA payload without touching port pins.
+ramDout <= lastVicDi when systemWe = '1' and systemAddr(15 downto 1) = 0 and dma_active = '0'
 	else cpuDo;
 ramAddr <= systemAddr;
 ramWE   <= systemWe when sysCycle >= CYCLE_CPU0 else '0';
@@ -903,8 +1022,18 @@ ramCE   <= cs_ram and not memory_wait_q when
 				sysCycle = CYCLE_VIC0 or
 				(cpu_cyc = '1' and (cpuHasBus = '0' or bus_access_valid = '1')) else '0';
 
-bus_access_valid <= not dma_active or dma_slot_valid;
-dma_ack <= enableCpu and dma_active and dma_slot_valid and cpuHasBus and not memory_wait_q;
+bus_access_valid <= not dma_active or (dma_slot_valid and not dma_slot_idle and not dma_peek_done);
+dma_ack <= enableCpu and dma_active and dma_slot_valid and cpuHasBus and not memory_wait_q and not dma_peek_done;
+-- Only a final verify peek uses this extra slot. It must never issue a
+-- write, or advance CPU, VIC, CIA timer or SID native clocks.
+dma_peek_issue <= '1' when sysCycle = CYCLE_CPU0 and dma_active = '1' and
+	dma_slot_valid = '1' and dma_slot_peek = '1' and dma_peek_done = '0' and cpuHasBus = '1' else '0';
+dma_peek_io <= '1' when sysCycle = CYCLE_CPU1 and dma_active = '1' and
+	dma_slot_valid = '1' and dma_slot_peek = '1' and dma_peek_done = '0' and cpuHasBus = '1' else '0';
+dma_peek_retire <= '1' when sysCycle = CYCLE_CPU3 and dma_active = '1' and
+	dma_slot_valid = '1' and dma_slot_peek = '1' and dma_peek_done = '0' and cpuHasBus = '1' else '0';
+cpu_cyc <= scheduledCpuRequest or dma_peek_issue;
+enableCpu <= scheduledCpuRetire or dma_peek_retire;
 -- Register side effects occur once on the completed CPU transaction. DMA
 -- accesses cannot retrigger the REU's own command or delayed $FF00 trigger.
 cpu_bus_valid <= enableCpu and not dma_active and cpuHasBus and not memory_wait_q;
@@ -929,15 +1058,15 @@ port map (
 	extra_mask => turbo_m,
 	dense_mode => turbo_dense,
 	extra_allowed => cpu_extra_allowed,
-	request => cpu_cyc,
-	retire => enableCpu
+	request => scheduledCpuRequest,
+	retire => scheduledCpuRetire
 );
 
 process(clk32)
 begin
 	if rising_edge(clk32) then
 		if memory_wait_q = '0' then
-			io_enable <= io_enable and not enableCpu;
+			io_enable <= io_enable and not scheduledCpuRetire;
 
 			if sysCycle = CYCLE_EXT0 then
 				io_enable <= '1';
@@ -945,7 +1074,6 @@ begin
 
 			-- 2 points to register DMA request before CPU cycles.
 			if sysCycle = CYCLE_EXT1 or sysCycle = CYCLE_EXT5 then
-				dma_active <= dma_req;
 				turbo_en <= turbo_mode(0);
 				turbo_m <= "000";
 				turbo_dense <= '0';
