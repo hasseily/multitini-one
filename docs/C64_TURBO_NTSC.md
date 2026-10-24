@@ -224,6 +224,8 @@ A lower non-2:1 NTSC multiple is rejected.
 - With round-half-even or round-down, c64 = 30.552 = 2 × 15.276: exact, expandable.
 - With round-half-up, c64 = 30.553: unexpandable, and every crossing fails visibly.
 - **Every exact NTSC plan gives the same tie.** The modelled period depends only on the frequency ratio (D·Oc/M = 4.5833), not on the plan. Changing plans cannot avoid it without leaving 0 ppm.
+- The tie may also be decided by Vivado's internal floating-point arithmetic rather than a stated rounding rule: in IEEE double, 6.666 × 5 × 22 / 24 lands just below 30.5525 ns and 6.666 × 22 × 5 / 24 just above it. Only E2-NTSC can show which way it falls; the fix ladder covers both.
+- **ps-exact rule.** Each period is rounded to 1 ps on its own, so round(c64) = 2 × round(fast) under every tie rule exactly when frac(fast period in ps) is below 0.25 or above 0.75. `ntsc_plans.py` requires below 0.23 or above 0.77 (0.02 ps margin). Having no tie is not enough: N5 (frac 0.540) has none, but models as 30.551 vs 2 × 15.276 ns. N4 (frac 0.987) is the only ps-exact plan the search finds within ±60 ppm. `plan_ps.py` checks the rounded pair directly and agrees (C64_TURBO_MODELS.md (ntsc_plans.py), (plan_ps.py)).
 
 **Alternatives:**
 
@@ -232,8 +234,8 @@ A lower non-2:1 NTSC multiple is rejected.
 | N1 | 5 / 24 / 720 / 30 | 22 / 11 | 0 ppm | Adopted. Highest PFD of the exact plans |
 | N2 | 5 / 48 / 1440 / 30 | 44 / 22 | 0 ppm | Even divides (no EDGE bit). VCO exactly at the -2 limit, no margin. Higher VCO may lower jitter [I]. Same ps tie |
 | N3 | 11 / 48 / 654.5 / 13.6 | 20 / 10 | 0 ppm | Even divides. Low PFD and low VCO (more jitter likely [I]). Same tie |
-| N4 | 6 / 47.125 / 1178.1 / 25 | 36 / 18 | −48.2 ppm | Fractional M. ps-robust (fast 15,276.99 ps). Ladder step 3 |
-| N5 | 7 / 48.875 / 1047.3 / 21.4 | 32 / 16 | +46.5 ppm | Fractional M. ps-robust. Alternative step 3 |
+| N4 | 6 / 47.125 / 1178.1 / 25 | 36 / 18 | −48.2 ppm | Fractional M. ps-exact: 30,554 = 2 × 15,277 ps under every tie rule (fast 15,276.99 ps). Ladder step 3 |
+| N5 | 7 / 48.875 / 1047.3 / 21.4 | 32 / 16 | +46.5 ppm | Fractional M. Tie-free but not ps-exact (models 30.551 vs 2 × 15.276 ns); rejected |
 | Fast on fractional CLKOUT0 /16.5 | 5 / 36 / 1080 | 33 / 16.5 | 0 ppm | Rejected: fractional output divider on the half-period clock (duty and jitter) [I] |
 
 **Fix ladder** (the baseline's, applied to NTSC):
@@ -243,6 +245,7 @@ A lower non-2:1 NTSC multiple is rejected.
    - `report_clock_interaction`: the pair is timed;
    - a fast→c64 probe path has a requirement of 15.276 ns;
    - record DJ and uncertainty for N1 and N2.
+   - 1 ps model check: also generate N4 and N5 and read their clocks back. Expect N4 at c64 30.554 = 2 × fast 15.277 ns, the pair timed, and a probe requirement of 15.277 ns. Expect N5 at c64 30.551 vs fast 15.276 ns, not 2:1, with `check_timing` reporting the pair as unexpandable [I]. Any other result means the model in `ntsc_plans.py` is wrong; fix it and recheck N4 before step 3 relies on it.
 2. If the tie resolves to 30.553: redefine the c64 clock under its own name on CLKOUT0 from CLKIN1, `-edges {1 2 3}`, with shifts from the derived fast clock: {0, 11.943, 23.886}, period 30.552. This is a 0.5 ps model change. The Tcl computes the shifts from `get_property PERIOD`, so one script serves both standards.
 3. If step 2 is refused: N4. This needs a recheck of TOD/audio drift (−48 ppm, under 0.2 s/hour) and of the video bridge, which already tolerates any source rate.
 
@@ -423,7 +426,7 @@ Notes:
 | gist874 `cpu_rate.tas` | exact to index 13; 47.00 at 14; 63.03 at 15 [M C64U] | same within quantisation. F6 image: 32.00 at indices 12-15 |
 | Amiga64 CIA clock | 17,095.0 ticks/frame at 1 and 48 MHz; TOD 41-42 tenths per 250 frames [M U64E] | same at indices 0 and 15 |
 | Amiga64 M5 per-read (φ2 ticks) | RAM 4.30 at Off, 0.064 at index 15; `$D419`/`$D41A`/`$D012` 0.080-0.085; `$DC01`/`$DE00` 1.040-1.045 [M C64U] | strict for RAM and CIA/I/O1. VIC/SID at turbo rate (M6, Q1) about 0.08 |
-| gist839 `meas_c` | RAM N per φ2; io turbo rate (U64E 48 MHz: 1765 ticks per 16384 reads); cart 1 φ2, 2 at 2-4 MHz unrolled [M U64E] | strict for RAM and cart; io near the U64E value after M6 |
+| gist839 `meas_c` | RAM N per φ2; io turbo rate (U64E 48 MHz: 1765 ticks per 16384 reads); cart 1 φ2 at 6 MHz and above, 2 at 3-5 MHz unrolled [M U64E] | strict for RAM and cart (cart: 2 φ2 at 2-4 MHz, the 2 MHz value from the model only; 4 φ2 at index 0 with badline timing disabled, C64_TURBO_DESIGN.md §2.7); io near the U64E value after M6 |
 | #874 VIC-on, index 0 | 0.94 [M] | 0.937 (stock exact; 6.29% badline share) |
 | xahmol `speed_probe` | PAL: 16 / 21 / 92 lines [M] | NTSC scaled by 63/65: about 15-16 / 20-21 / 89 lines [I] |
 | #203 `$D020` at 48 MHz, #665 `$8F` digi | PAL [M] | qualitative on both standards |
@@ -456,4 +459,4 @@ Notes:
 4. **Q-N4.** 6567R56A (old NTSC, 64 cycles × 262 lines; the VIC has `mode6567old`) stays out of scope. It would need new video_sync/bridge geometry.
 5. **Q-N5.** What is the board's PS_CLK oscillator tolerance? It bounds the absolute rate of every image.
 6. **Q-N6.** Keep `MT_C64_NTSC_HZ` = 32,727,266 (+0.2 ppm vs the plan) or change it to 32,727,273? The recommendation is to keep it, to avoid churn in TOD, audio, 1541 and gates.
-7. **[O] E2-NTSC.** Does Vivado round the c64 period to 30.552 or 30.553? Does N2 (VCO 1440) show lower DJ than N1 enough to adopt it?
+7. **[O] E2-NTSC.** Does Vivado round the c64 period to 30.552 or 30.553? Does N2 (VCO 1440) show lower DJ than N1 enough to adopt it? The tie may be decided by Vivado's floating-point arithmetic rather than a rounding rule (section 3.3), so only the read-back settles it. Do N4 and N5 read back as the 1 ps model predicts (30.554 = 2 × 15.277 ns; 30.551 vs 15.276 ns)?

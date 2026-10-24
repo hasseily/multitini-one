@@ -210,6 +210,20 @@ def verify_hardware_source_archive(directory, files):
                     "FPGA build configuration changed after source capture: " + name)
 
 
+def verify_c64_release_settings(source):
+    """Reject marked diagnostic images and debug-on power-up defaults."""
+    if "MT_C64_CPU_CAPS2_RELEASE" not in source:
+        return  # Retained pre-turbo cores have no diagnostic image facility.
+    values = {}
+    for name in ("CAPS2_RELEASE", "CONFIG_DEFAULT", "CONFIG_DEBUG_MASK"):
+        matches = re.findall(r"\bMT_C64_CPU_" + name + r"\s*=\s*32'h([0-9a-fA-F]{8})\s*;", source)
+        require(len(matches) == 1, "Missing or ambiguous C64 release setting: " + name)
+        values[name] = int(matches[0], 16)
+    require(not values["CAPS2_RELEASE"] & (1 << 14), "C64 diagnostic image cannot be packaged for release")
+    require(not values["CONFIG_DEFAULT"] & values["CONFIG_DEBUG_MASK"],
+            "C64 debug settings must be off at power-up")
+
+
 def verify_hardware(directory, machine, *, ntsc=False, build_id=None, genesis_pal=False,
                     gbc_psram=True, reuse=False):
     expected_build_id = BUILD_ID if build_id is None else build_id
@@ -228,6 +242,9 @@ def verify_hardware(directory, machine, *, ntsc=False, build_id=None, genesis_pa
         require(set(record["files"]) == {p.relative_to(ROOT).as_posix() for p in hardware_inputs.inputs(machine)},
                 "Incomplete FPGA source capture")
     verify_hardware_source_archive(directory, record["files"])
+    if machine == "C64":
+        with zipfile.ZipFile(directory / "source-inputs.zip") as archive:
+            verify_c64_release_settings(archive.read("hdl/generated/multitini_regs_pkg.sv").decode("utf-8"))
     identity = core_artifacts.audit_source_archives(directory, record)
     original_build_id = core_artifacts.archived_build_id(directory, machine)
     if reuse:

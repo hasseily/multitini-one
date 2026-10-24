@@ -1384,6 +1384,66 @@
       "source_path": "vice/src/viciisc/viciitypes.h",
       "commit": "4d283a2e7dd59b7e378524878e81ecc7826b700c",
       "sha256": "c6178cc2e026dcd85640a3ab4b9cd6609713731560e0bbbe4b1a7d8764588493"
+    },
+    {
+      "path": "third_party/ultimate_reference/upstream/fpga/io/sampler/vhdl_source/sampler2.vhd",
+      "source": "Ultimate Audio sampler reference",
+      "source_path": "fpga/io/sampler/vhdl_source/sampler2.vhd",
+      "sha256": "33aeb47b0618bbc04be7a3b1678ecd8f8a5d8962bdeb3f8e31acfcfc151748f9"
+    },
+    {
+      "path": "third_party/ultimate_reference/upstream/fpga/io/sampler/vhdl_source/sampler_regs.vhd",
+      "source": "Ultimate Audio sampler reference",
+      "source_path": "fpga/io/sampler/vhdl_source/sampler_regs.vhd",
+      "sha256": "6a0b6f94b0ac5382d7fdd5bc4ef3e6d47a371b244ffc00e59e75f92172211280"
+    },
+    {
+      "path": "third_party/ultimate_reference/upstream/fpga/io/sampler/vhdl_source/sampler_pkg.vhd",
+      "source": "Ultimate Audio sampler reference",
+      "source_path": "fpga/io/sampler/vhdl_source/sampler_pkg.vhd",
+      "sha256": "ccf8da7f2f58162a68033cbcc9293c9d193d561b77be783ba4d1ff6fa30d3bbb"
+    },
+    {
+      "path": "third_party/ultimate_reference/upstream/fpga/io/sampler/vhdl_source/sampler_accu.vhd",
+      "source": "Ultimate Audio sampler reference",
+      "source_path": "fpga/io/sampler/vhdl_source/sampler_accu.vhd",
+      "sha256": "5666389a2f52e6c59a4e230981e48607021fb5c123e5f54b884d4f15e50af7b3"
+    },
+    {
+      "path": "third_party/ultimate_reference/upstream/fpga/io/sigma_delta_dac/vhdl_source/my_math_pkg.vhd",
+      "source": "Ultimate Audio sampler reference",
+      "source_path": "fpga/io/sigma_delta_dac/vhdl_source/my_math_pkg.vhd",
+      "sha256": "fba11c20cb4772653704e7efa2c3084dc0ac1dd78f1395e6405abc2863119320"
+    },
+    {
+      "path": "third_party/ultimate_reference/upstream/fpga/ip/srl_fifo/vhdl_source/srl_fifo-generic.vhd",
+      "source": "Ultimate Audio sampler reference",
+      "source_path": "fpga/ip/srl_fifo/vhdl_source/srl_fifo-generic.vhd",
+      "sha256": "b572ce9bb8056826b35c5143645d1f43787a5b25dc868d3bc318cf3a1bde02b4"
+    },
+    {
+      "path": "third_party/ultimate_reference/upstream/fpga/ip/sync_fifo/vhdl_source/sync_fifo.vhd",
+      "source": "Ultimate Audio sampler reference",
+      "source_path": "fpga/ip/sync_fifo/vhdl_source/sync_fifo.vhd",
+      "sha256": "f04dc18f06ff49ee09275935db6f2695a857e83194285d930dd1eecf1f800bf6"
+    },
+    {
+      "path": "third_party/ultimate_reference/upstream/fpga/ip/busses/vhdl_source/io_bus_pkg.vhd",
+      "source": "Ultimate Audio sampler reference",
+      "source_path": "fpga/ip/busses/vhdl_source/io_bus_pkg.vhd",
+      "sha256": "6e4bf2ea5fe65fad792d93b060482694420c6b7429448d7699f0bc8763f741f0"
+    },
+    {
+      "path": "third_party/ultimate_reference/upstream/fpga/ip/busses/vhdl_source/mem_bus_pkg.vhd",
+      "source": "Ultimate Audio sampler reference",
+      "source_path": "fpga/ip/busses/vhdl_source/mem_bus_pkg.vhd",
+      "sha256": "ea14cbb24ef6d4a230e6d5847125407b9cf0904a1a7db5f0a4fb1d0cd8460e8c"
+    },
+    {
+      "path": "third_party/ultimate_reference/upstream/LICENSE.txt",
+      "source": "Ultimate Audio sampler reference",
+      "source_path": "LICENSE.txt",
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
     }
   ]
 }

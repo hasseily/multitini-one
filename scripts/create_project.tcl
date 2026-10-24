@@ -161,6 +161,7 @@ proc add_manifest_sources {repo_root machine} {
             if {[file tail $source] in {
                     "multitini_timing.xdc" "multitini_psram_timing.xdc"
                     "multitini_vectrex_psram_timing.xdc"
+                    "multitini_c64_turbo_timing.xdc"
                     "multitini_genesis_timing.xdc" "multitini_apple_iigs_timing.xdc"}} {
                 set_property USED_IN_SYNTHESIS false [get_files $source]
                 set_property PROCESSING_ORDER LATE [get_files $source]
@@ -398,6 +399,7 @@ set idelay_ref_clk [create_bd_port -dir O -type clk idelay_ref_clk]
 set video_clk [create_bd_port -dir O -type clk video_clk]
 set c64_clk [create_bd_port -dir O -type clk c64_clk]
 set c64_capture_clk [create_bd_port -dir O -type clk c64_capture_clk]
+set c64_cpu_clk [create_bd_port -dir O -type clk c64_cpu_clk]
 set control_aresetn [create_bd_port -dir O -type rst control_aresetn]
 set idelay_aresetn [create_bd_port -dir O -type rst idelay_aresetn]
 set video_aresetn [create_bd_port -dir O -type rst video_aresetn]
@@ -408,7 +410,12 @@ set_property CONFIG.POLARITY ACTIVE_LOW $video_aresetn
 set_property CONFIG.POLARITY ACTIVE_LOW $c64_aresetn
 # HP2 follows its ACLK: the machine clock and reset for C64 REU and IIgs RAM,
 # the control clock and reset in every other image.
-if {$machine in {C64 APPLE_IIGS}} {
+if {$machine eq "C64"} {
+    set_property -dict [list CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0_0:S_AXI_HP0_0:S_AXI_HP1_0} \
+        CONFIG.ASSOCIATED_RESET {control_aresetn}] $control_clk
+    set_property -dict [list CONFIG.ASSOCIATED_BUSIF {S_AXI_HP2_0:S_AXI_HP3_0} \
+        CONFIG.ASSOCIATED_RESET {c64_aresetn}] $c64_clk
+} elseif {$machine eq "APPLE_IIGS"} {
     set_property -dict [list CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0_0:S_AXI_HP0_0:S_AXI_HP1_0:S_AXI_HP3_0} \
         CONFIG.ASSOCIATED_RESET {control_aresetn}] $control_clk
     set_property -dict [list CONFIG.ASSOCIATED_BUSIF {S_AXI_HP2_0} \
@@ -479,13 +486,29 @@ connect_bd_net $pixel_clock_resetn [get_bd_pins $video_wiz/s_axi_aresetn]
 # churn. Vivado must report the achieved MMCM frequency and timing before use.
 set c64_wiz [create_bd_cell -type ip \
     -vlnv xilinx.com:ip:clk_wiz:6.0 clk_wiz_c64]
+if {$machine eq "C64"} {
+    # The primary PAL pair rounds inconsistently in Vivado's 1 ps clock
+    # model, and redefining its waveform fails TIMING-1. Use the reviewed
+    # ps-exact fallback (-102 ppm); NTSC uses the exact primary plan.
+    set c64_clock_mhz [expr {$c64_ntsc_mode ? 32.727273 : 31.524725}]
+}
 set_property -dict [list \
     CONFIG.CLKOUT1_REQUESTED_OUT_FREQ $c64_clock_mhz \
     CONFIG.PRIM_IN_FREQ {150.000} \
     CONFIG.PRIM_SOURCE {No_buffer} \
     CONFIG.RESET_PORT {resetn} \
     CONFIG.RESET_TYPE {ACTIVE_LOW}] $c64_wiz
-if {$machine eq "VECTREX"} {
+if {$machine eq "C64"} {
+    set_property -dict [list CONFIG.NUM_OUT_CLKS {2} CONFIG.CLKOUT2_USED {true} \
+        CONFIG.CLKOUT2_REQUESTED_OUT_FREQ [expr {2*$c64_clock_mhz}] \
+        CONFIG.CLKOUT2_REQUESTED_PHASE {0.000}] $c64_wiz
+    if {$c64_ntsc_mode} {set c64_mmcm_plan {5 24.0 22.0 11}} \
+    else {set c64_mmcm_plan {7 38.25 26.0 13}}
+    lassign $c64_mmcm_plan c64_d c64_m c64_o0 c64_o1
+    set_property -dict [list CONFIG.OVERRIDE_MMCM {true} \
+        CONFIG.MMCM_DIVCLK_DIVIDE $c64_d CONFIG.MMCM_CLKFBOUT_MULT_F $c64_m \
+        CONFIG.MMCM_CLKOUT0_DIVIDE_F $c64_o0 CONFIG.MMCM_CLKOUT1_DIVIDE $c64_o1] $c64_wiz
+} elseif {$machine eq "VECTREX"} {
     # A phase-related input clock centers PSRAM sampling in its routed
     # round-trip data window. Only the eight input IOB registers use it.
     set_property -dict [list CONFIG.NUM_OUT_CLKS {2} \
@@ -516,7 +539,14 @@ connect_bd_net [get_bd_pins $ps/FCLK_CLK0] \
     [get_bd_pins $idelay_wiz/clk_in1] [get_bd_pins $video_wiz/s_axi_aclk] $control_clk \
     [get_bd_pins $control_reset/slowest_sync_clk] \
     [get_bd_pins $ps/M_AXI_GP0_ACLK] [get_bd_pins $ps/S_AXI_HP0_ACLK] \
-    [get_bd_pins $ps/S_AXI_HP1_ACLK] [get_bd_pins $ps/S_AXI_HP3_ACLK]
+    [get_bd_pins $ps/S_AXI_HP1_ACLK]
+if {$machine eq "C64"} {
+    connect_bd_net [get_bd_pins $c64_wiz/clk_out1] [get_bd_pins $ps/S_AXI_HP3_ACLK]
+    connect_bd_net [get_bd_pins $c64_wiz/clk_out2] $c64_cpu_clk
+} else {
+    connect_bd_net [get_bd_pins $ps/FCLK_CLK0] [get_bd_pins $ps/S_AXI_HP3_ACLK]
+    connect_bd_net [get_bd_pins $c64_wiz/clk_out1] $c64_cpu_clk
+}
 connect_bd_net [get_bd_pins $ps/FCLK_CLK2] \
     [get_bd_pins $video_wiz/clk_in1] [get_bd_pins $c64_wiz/clk_in1]
 connect_bd_net [get_bd_pins $ps/FCLK_RESET0_N] \
@@ -604,8 +634,9 @@ if {[info exists ::env(MULTITINI_BUILD_ID)]} {
         error "MULTITINI_BUILD_ID must contain exactly eight hexadecimal digits"
     }
 }
+set c64_turbo_revision [expr {$machine eq "C64" && !$c64_ntsc_mode ? 2 : 1}]
 set_property generic \
-    "SHELL_BUILD_ID=32'h${git_id} C64_NTSC_MODE=1'b${c64_ntsc_mode} ACTIVE_MACHINE=${active_machine} ENABLE_GBC_PSRAM=1'b${enable_gbc_psram} GENESIS_PAL_MODE=1'b${genesis_pal_mode}" \
+    "SHELL_BUILD_ID=32'h${git_id} C64_NTSC_MODE=1'b${c64_ntsc_mode} C64_TURBO_TIMING_REVISION=${c64_turbo_revision} ACTIVE_MACHINE=${active_machine} ENABLE_GBC_PSRAM=1'b${enable_gbc_psram} GENESIS_PAL_MODE=1'b${genesis_pal_mode}" \
     [get_filesets sources_1]
 update_compile_order -fileset sources_1
 source [file join $script_dir configure_vivado_run_profile.tcl]

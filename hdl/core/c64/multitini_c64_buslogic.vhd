@@ -32,6 +32,7 @@ entity fpga64_buslogic is
 		reset       : in std_logic;
 		bios        : in std_logic_vector(1 downto 0);
 
+		cpuIoOwn    : in std_logic := '0';
 		cpuHasBus   : in std_logic;
 		aec         : in std_logic;
 
@@ -99,6 +100,7 @@ architecture rtl of fpga64_buslogic is
 	signal cs_romLoc      : std_logic;
 	signal vicCharLoc     : std_logic;
 
+	signal vicRamLoc      : std_logic;
 	signal cs_ramLoc      : std_logic;
 	signal cs_vicLoc      : std_logic;
 	signal cs_sidLoc      : std_logic;
@@ -194,7 +196,7 @@ begin
 
 	ultimax <= exrom and (not game);
 
-	process(cpuHasBus, cpuAddr, ultimax, cpuWe, bankSwitch, exrom, game, aec, vicAddr)
+	process(cpuHasBus, cpuIoOwn, cpuAddr, ultimax, cpuWe, bankSwitch, exrom, game, aec, vicAddr)
 	begin
 		currentAddr <= (others => '1');
 		systemWe <= '0';
@@ -202,6 +204,7 @@ begin
 		cs_CharLoc <= '0';
 		cs_romLoc <= '0';
 		cs_ramLoc <= '0';
+		vicRamLoc <= '0';
 		cs_vicLoc <= '0';
 		cs_sidLoc <= '0';
 		cs_colorLoc <= '0';
@@ -309,12 +312,26 @@ begin
 				-- ultimax mode changes vic addressing - LCA
 				cs_UMAXromHLoc <= '1';
 			else
-				cs_ramLoc <= '1';
+				if cpuIoOwn = '1' then vicRamLoc <= '1'; else cs_ramLoc <= '1'; end if;
+			end if;
+			-- Internal register ownership does not take the VIC memory address,
+			-- colour address, write enable, or character-ROM fetch path.
+			if cpuIoOwn = '1' and ultimax = '0' and cpuAddr(15 downto 12) = x"D"
+			and bankSwitch(2) = '1' and (bankSwitch(1) = '1' or bankSwitch(0) = '1') then
+				case cpuAddr(11 downto 8) is
+				when x"0" | x"1" | x"2" | x"3" => cs_vicLoc <= '1';
+				when x"4" | x"5" | x"6" | x"7" => cs_sidLoc <= '1';
+				when x"C" => cs_cia1Loc <= '1';
+				when x"D" => cs_cia2Loc <= '1';
+				when x"E" => cs_ioELoc <= '1';
+				when x"F" => cs_ioFLoc <= '1';
+				when others => null;
+				end case;
 			end if;
 		end if;
 	end process;
 
-	cs_ram <= cs_ramLoc or cs_romLLoc or cs_romHLoc or cs_UMAXromHLoc or cs_UMAXnomapLoc or cs_CharLoc or cs_romLoc;
+	cs_ram <= vicRamLoc or cs_ramLoc or cs_romLLoc or cs_romHLoc or cs_UMAXromHLoc or cs_UMAXnomapLoc or cs_CharLoc or cs_romLoc;
 	cs_vic <= cs_vicLoc and io_enable;
 	cs_sid <= cs_sidLoc and io_enable;
 	cs_color <= cs_colorLoc and io_enable;

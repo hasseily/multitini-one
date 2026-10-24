@@ -6,6 +6,8 @@
 // 1541.
 module multitini_c64_adapter #(
     parameter bit NTSC_MODE = 1'b0,
+    parameter integer CORE_CLOCK_HZ = NTSC_MODE ?
+        multitini_c64_defs_pkg::MT_C64_NTSC_HZ : multitini_c64_defs_pkg::MT_C64_PAL_HZ,
     parameter integer AUDIO_SAMPLE_HZ = 48000,
     // Early and most classic C64 software targets the MOS 6581. Keep the
     // MiSTer core's power-on model at 6581 unless a build explicitly selects
@@ -13,6 +15,17 @@ module multitini_c64_adapter #(
     parameter logic [1:0] SID_VERSION = 2'b00
 ) (
     input  logic        core_clk,
+    input  logic        cpu_clk,
+    input  logic [31:0] cpu_config,
+    output logic [31:0] cpu_status,
+    input  logic ua_enable, debug_enable,
+    input  logic [31:0] peek_word, reu_host_word,
+    output logic [31:0] peek_status, reu_host_status,
+    output logic [31:0] ua_status, ua_fetches, reu_misses,
+    output logic [23:0] ua_memory_addr,
+    output logic ua_memory_valid, ua_memory_busy,
+    input  logic ua_memory_ready, ua_memory_rvalid, ua_memory_fault,
+    input  logic [63:0] ua_memory_rdata,
     input  logic        reset,
     input  logic        core_reset_request,
     input  logic        pause_request,
@@ -115,7 +128,6 @@ module multitini_c64_adapter #(
 );
     import multitini_c64_defs_pkg::*;
 
-    localparam integer CORE_CLOCK_HZ = NTSC_MODE ? MT_C64_NTSC_HZ : MT_C64_PAL_HZ;
 
     logic        rom_wr;
     logic        rom_bank;
@@ -244,6 +256,69 @@ module multitini_c64_adapter #(
     logic [7:0] reu_dma_wdata, reu_dma_rdata, cpu_bus_wdata, reu_io_rdata;
     logic cpu_bus_valid, cpu_bus_write;
     logic reu_io_select;
+    logic ua_active, ua_io_select, ua_irq, ua_held;
+    logic [7:0] ua_io_rdata;
+    logic signed [17:0] ua_audio_l, ua_audio_r;
+    logic [83:0] cache_pending_addr;
+    logic [3:0] cache_pending_valid;
+    logic [20:0] cache_inflight_write_addr, cache_write_done_addr, cache_write_snoop_addr;
+    logic cache_inflight_write_valid, cache_write_done, cache_write_snoop_valid;
+    logic cache_invalidate, cache_invalidate_done;
+    logic peek_request, peek_valid;
+    logic [15:0] peek_address;
+    logic [7:0] peek_data;
+    logic reu_memory_waiting, reu_sample_slot, diagnostics_was_armed;
+    logic [15:0] reu_miss_count;
+    // The CPU island and the native machine have related clocks. The proxy
+    // owns every native request until its retire edge; local accesses use
+    // the independent falling-edge BRAM port.
+    localparam integer FIO_DEPTH = 4;
+    localparam integer FIO_PTR_WIDTH = $clog2(FIO_DEPTH) + 1;
+    logic ext_reset, ext_cpu_enable, ext_irq_n, ext_nmi_n, ext_rdy;
+    logic ext_port_tick, ext_frame_run, ext_cpu_bus_valid, ext_cs_vic;
+    logic ext_cpu_ioown, ext_dma_hold, ext_cpu_we, ext_cpu_ioonly, ext_nmi_ack;
+    logic [15:0] ext_cpu_addr, isl_x_req_addr;
+    logic [7:0] ext_cpu_do, ext_cpu_io, ext_cpu_di, ext_last_vic_di;
+    logic [4:0] ext_phase;
+    logic [9:0] ext_color_addr;
+    logic ext_color_we;
+    logic [3:0] ext_color_do, ext_color_di;
+    logic [7:0] isl_x_req_wdata, isl_x_req_port;
+    logic isl_x_req_we, isl_x_req_exact, isl_x_req_ioonly, isl_x_req_seq, isl_x_req_valid;
+    logic [7:0] b0_data;
+    logic b0_irq_n, b0_nmi_n, b0_rdy, b0_toggle, b0_exact, b0_seq;
+    logic b1_toggle, b1_dma_hold, b1_turbo, b1_badline, b1_pause, b1_c64u_top;
+    logic [3:0] b1_index;
+    logic port_tick_toggle, irq_safe_toggle;
+    logic cpu_mem_ce, cpu_mem_ram_we, cpu_mem_colour_we;
+    logic [15:0] cpu_mem_addr;
+    logic [7:0] cpu_mem_wdata, ram_low_q, ram_high_q, rom_q, char_q;
+    logic [3:0] colour_q;
+    logic [FIO_DEPTH*22-1:0] fio_entries;
+    logic [FIO_PTR_WIDTH-1:0] fio_wp, fio_done;
+    logic [9:0] fio_rd_addr, fio_u64_a;
+    logic fio_rd_sid, fio_vic_busy, fio_u64_wr;
+    logic [7:0] fio_rd_data, fio_u64_d, island_fio_data, proxy_native_data;
+    logic policy_turbo, policy_blocked, policy_badline, policy_c64u_top;
+    logic [3:0] policy_index, island_active_index;
+    logic island_turbo, island_badline, island_c64u_top;
+    logic guard_request, guard_static_release;
+    logic [1:0] guard_holdoff, guard_cause;
+    logic native_rd_override, fast_rd_override;
+    logic [7:0] native_rd_data, fast_rd_data;
+    logic diag_deadline_miss, diag_nmi_used;
+    wire ua_audio_tick = core_reset_n && audio_phase + AUDIO_SAMPLE_HZ >= CORE_CLOCK_HZ;
+    wire signed [24:0] board_sum_l =
+        $signed({raw_audio_l, 6'b000000}) + $signed({ua_audio_l, 6'b000000});
+    wire signed [24:0] board_sum_r =
+        $signed({raw_audio_r, 6'b000000}) + $signed({ua_audio_r, 6'b000000});
+    wire board_clip = ua_audio_tick &&
+        (board_sum_l[24] != board_sum_l[23] || board_sum_r[24] != board_sum_r[23]);
+    function automatic logic signed [23:0] sat24(input logic signed [24:0] value);
+        if (value > 25'sd8388607) return 24'sh7FFFFF;
+        if (value < -25'sd8388608) return -24'sh800000;
+        return value[23:0];
+    endfunction
 
     logic        raw_hsync;
     logic        raw_vsync;
@@ -384,14 +459,97 @@ module multitini_c64_adapter #(
             core_enable <= 1'b1;
     end
 
-    multitini_c64_local_ram main_ram_i (
-        .clk(core_clk),
+    multitini_c64_island_memory main_ram_i (
+        .clk_cpu(cpu_clk), .clk_native(core_clk),
+        .cpu_ce(cpu_mem_ce), .cpu_ram_we(cpu_mem_ram_we),
+        .cpu_colour_we(cpu_mem_colour_we), .cpu_addr(cpu_mem_addr),
+        .cpu_wdata(cpu_mem_wdata), .ram_low_q(ram_low_q), .ram_high_q(ram_high_q),
+        .rom_q(rom_q), .char_q(char_q), .colour_q(colour_q),
         .loader_we(prg_ram_wr), .loader_addr(prg_ram_addr),
         .loader_data(prg_ram_data),
         .machine_ce(ram_ce), .machine_we(ram_we),
         .machine_store(cart_mem_we && !cart_external_select),
         .machine_addr(ram_addr), .machine_data(ram_dout),
-        .machine_q(main_ram_din)
+        .machine_q(main_ram_din),
+        .peek_request(peek_request && debug_enable), .machine_paused(core_paused),
+        .peek_addr(peek_address), .peek_valid(peek_valid), .peek_data(peek_data),
+        .native_colour_addr(ext_color_addr), .native_colour_we(ext_color_we),
+        .native_colour_data(ext_color_do), .native_colour_q(ext_color_di),
+        .rom_load_addr(rom_addr), .rom_load_data(rom_data),
+        .rom_load_basic_kernal(rom_wr && !rom_bank), .rom_load_char(rom_wr && rom_bank)
+    );
+
+    assign proxy_native_data = ext_cs_vic && native_rd_override ? native_rd_data : ext_cpu_di;
+    assign island_fio_data = !fio_rd_sid && fast_rd_override ? fast_rd_data : fio_rd_data;
+    multitini_c64_cpu_island #(.FIO_DEPTH(FIO_DEPTH)) cpu_island_i (
+        .clk_cpu(cpu_clk), .c64_aresetn(!reset), .ext_reset(ext_reset),
+        .ext_phase(ext_phase), .ext_frame_run(ext_frame_run),
+        .ext_irq_n(ext_irq_n), .ext_nmi_n(ext_nmi_n), .ext_rdy(ext_rdy),
+        .ext_dma_hold(ext_dma_hold), .pause_request(prg_install_pause || pause_request),
+        .ext_last_vic_di(ext_last_vic_di), .external_port_input(8'h17),
+        .b0_data(b0_data), .b0_irq_n(b0_irq_n), .b0_nmi_n(b0_nmi_n),
+        .b0_rdy(b0_rdy), .b0_toggle(b0_toggle), .b0_exact(b0_exact), .b0_seq(b0_seq),
+        .b1_toggle(b1_toggle), .b1_dma_hold(b1_dma_hold), .b1_turbo(b1_turbo),
+        .b1_badline(b1_badline), .b1_pause(b1_pause), .b1_c64u_top(b1_c64u_top),
+        .b1_index(b1_index), .port_tick_toggle(port_tick_toggle), .irq_safe_toggle(irq_safe_toggle),
+        .isl_x_req_addr(isl_x_req_addr), .isl_x_req_wdata(isl_x_req_wdata),
+        .isl_x_req_port(isl_x_req_port), .isl_x_req_we(isl_x_req_we),
+        .isl_x_req_exact(isl_x_req_exact), .isl_x_req_ioonly(isl_x_req_ioonly),
+        .isl_x_req_seq(isl_x_req_seq), .isl_x_req_valid(isl_x_req_valid),
+        .cpu_mem_ce(cpu_mem_ce), .cpu_mem_ram_we(cpu_mem_ram_we),
+        .cpu_mem_colour_we(cpu_mem_colour_we), .cpu_mem_addr(cpu_mem_addr),
+        .cpu_mem_wdata(cpu_mem_wdata), .ram_low_q(ram_low_q), .ram_high_q(ram_high_q),
+        .rom_q(rom_q), .char_q(char_q), .colour_q(colour_q),
+        .fio_rd_addr(fio_rd_addr), .fio_rd_sid(fio_rd_sid), .fio_rd_data(island_fio_data),
+        .fio_vic_busy(fio_vic_busy), .fio_done(fio_done), .fio_entries(fio_entries), .fio_wp(fio_wp),
+        .nmi_ack(ext_nmi_ack), .cpu_address(), .cpu_wdata(), .cpu_port(),
+        .cpu_write(), .cpu_enable(), .turbo_active(island_turbo),
+        .active_index(island_active_index), .active_badline(island_badline),
+        .active_c64u_top(island_c64u_top), .fast_slot(),
+        .diag_armed(cpu_config[19]), .diag_nmi_used(diag_nmi_used)
+    );
+    multitini_c64_cpu_proxy cpu_proxy_i (
+        .clk_native(core_clk), .reset(ext_reset), .ext_phase(ext_phase),
+        .ext_frame_run(ext_frame_run), .ext_cpu_enable(ext_cpu_enable),
+        .ext_cpu_bus_valid(ext_cpu_bus_valid), .ext_cpu_di(proxy_native_data),
+        .ext_irq_n(ext_irq_n), .ext_nmi_n(ext_nmi_n), .ext_rdy(ext_rdy),
+        .ext_port_tick(ext_port_tick), .ext_dma_hold(ext_dma_hold),
+        .policy_turbo(policy_turbo), .policy_blocked(policy_blocked),
+        .policy_badline(policy_badline), .policy_c64u_top(policy_c64u_top), .policy_index(policy_index),
+        .pause_request(prg_install_pause || pause_request), .cart_present(cart_loaded),
+        .isl_x_req_addr(isl_x_req_addr), .isl_x_req_wdata(isl_x_req_wdata), .isl_x_req_port(isl_x_req_port),
+        .isl_x_req_we(isl_x_req_we), .isl_x_req_exact(isl_x_req_exact),
+        .isl_x_req_ioonly(isl_x_req_ioonly), .isl_x_req_seq(isl_x_req_seq), .isl_x_req_valid(isl_x_req_valid),
+        .ext_cpu_addr(ext_cpu_addr), .ext_cpu_do(ext_cpu_do), .ext_cpu_io(ext_cpu_io),
+        .ext_cpu_we(ext_cpu_we), .ext_cpu_ioonly(ext_cpu_ioonly),
+        .b0_data(b0_data), .b0_irq_n(b0_irq_n), .b0_nmi_n(b0_nmi_n), .b0_rdy(b0_rdy),
+        .b0_toggle(b0_toggle), .b0_exact(b0_exact), .b0_seq(b0_seq),
+        .b1_toggle(b1_toggle), .b1_dma_hold(b1_dma_hold), .b1_turbo(b1_turbo),
+        .b1_badline(b1_badline), .b1_pause(b1_pause), .b1_c64u_top(b1_c64u_top), .b1_index(b1_index),
+        .port_tick_toggle(port_tick_toggle), .irq_safe_toggle(irq_safe_toggle),
+        .frame_valid(), .frame_exact(), .done_seq(), .diag_deadline_miss(diag_deadline_miss)
+    );
+    multitini_c64_turbo_regs #(.CORE_CLOCK_HZ(CORE_CLOCK_HZ)) turbo_regs_i (
+        .clk_native(core_clk), .reset(ext_reset), .config_valid(1'b1), .config_word(cpu_config),
+        .legacy_turbo_request(cpu_turbo_enable), .native_tick(ext_port_tick),
+        .cart_present(cart_loaded), .loader_active(content_load_active || rom_load_active || cart_loading),
+        // STATUS must acknowledge the boundary-safe pause, not merely its
+        // request: UART peek/preload waits for this before touching memory.
+        .pause_request(core_paused), .guard_active(cpu_turbo_active),
+        .guard_cause(guard_cause),
+        .native_wr(cpu_bus_valid && ext_cs_vic && cpu_bus_write),
+        .native_addr(cpu_bus_addr[9:0]), .native_data(cpu_bus_wdata),
+        .fio_wr(fio_u64_wr), .fio_addr(fio_u64_a), .fio_data(fio_u64_d),
+        .native_rd_addr(ext_cpu_addr[9:0]), .fast_rd_addr(fio_rd_addr),
+        .active_turbo(island_turbo), .active_index(island_active_index), .active_c64u_top(island_c64u_top),
+        .diag_deadline_miss(diag_deadline_miss),
+        .diag_ioonly_done(ext_cpu_bus_valid && ext_cpu_ioown), .diag_nmi_used(diag_nmi_used),
+        .native_rd_override(native_rd_override), .native_rd_data(native_rd_data),
+        .fast_rd_override(fast_rd_override), .fast_rd_data(fast_rd_data),
+        .policy_turbo(policy_turbo), .policy_blocked(policy_blocked), .policy_badline(policy_badline),
+        .policy_c64u_top(policy_c64u_top), .policy_index(policy_index),
+        .guard_request(guard_request), .guard_holdoff(guard_holdoff),
+        .guard_static_release(guard_static_release), .status(cpu_status), .live_d031()
     );
 
     assign cart_external_select = cart_loaded && cart_mem_ce &&
@@ -427,7 +585,10 @@ module multitini_c64_adapter #(
     assign reu_active = reu_enable && !cart_loaded && !cart_loading;
     // MAME releases the REU register aperture during its own DMA. A transfer
     // reading $DFxx observes the machine's floating bus, not REU status.
-    assign reu_io_select = reu_active && !reu_dma_req && cart_iof;
+    assign ua_active = ua_enable && reu_active && !reu_host_word[13];
+    assign ua_io_select = ua_active && !reu_dma_req && cart_iof && cpu_bus_addr[7:5] != 0;
+    assign reu_io_select = reu_active && !reu_dma_req && cart_iof &&
+                           (!ua_active || cpu_bus_addr[7:5] == 0);
     always_ff @(posedge core_clk) begin
         if (reset || clear_load_error) reu_fault_latched <= 1'b0;
         else if (reu_fault || reu_cache_fault) reu_fault_latched <= 1'b1;
@@ -446,7 +607,7 @@ module multitini_c64_adapter #(
         .memory_valid(reu_request_valid), .memory_ready(reu_request_ready),
         .memory_hint_addr(reu_hint_addr), .memory_hint_read(reu_hint_read),
         .memory_rdata(reu_response_rdata), .memory_rvalid(reu_response_valid),
-        .memory_fault(reu_cache_fault)
+        .memory_fault(reu_cache_fault), .memory_waiting(reu_memory_waiting)
     );
     // Guest reset/disable stops speculation, but accepted writes survive and
     // drain before the shell reports DDR quiescence for PCAP or storage handoff.
@@ -462,8 +623,44 @@ module multitini_c64_adapter #(
         .memory_burst(reu_memory_burst), .memory_valid(reu_memory_valid),
         .memory_ready(reu_memory_ready), .memory_rdata(reu_memory_rdata),
         .memory_rvalid(reu_memory_rvalid), .memory_fault(reu_memory_fault),
-        .busy(reu_cache_busy), .fault(reu_cache_fault)
+        .busy(reu_cache_busy), .fault(reu_cache_fault),
+        .invalidate(cache_invalidate), .invalidate_done(cache_invalidate_done),
+        .pending_addr(cache_pending_addr), .pending_valid(cache_pending_valid),
+        .inflight_write_addr(cache_inflight_write_addr), .inflight_write_valid(cache_inflight_write_valid),
+        .write_done(cache_write_done), .write_done_addr(cache_write_done_addr),
+        .write_snoop_valid(cache_write_snoop_valid), .write_snoop_addr(cache_write_snoop_addr)
     );
+    multitini_c64_host host_i (
+        .clk(core_clk), .reset(reset), .peek_word(peek_word), .reu_word(reu_host_word),
+        .debug_enable(debug_enable), .paused(core_paused), .loader_write(prg_ram_wr),
+        .peek_request(peek_request), .peek_address(peek_address),
+        .peek_valid(peek_valid), .peek_data(peek_data), .peek_status(peek_status),
+        .invalidate(cache_invalidate), .invalidate_done(cache_invalidate_done),
+        .reu_busy(reu_memory_busy), .ua_held(ua_held), .reu_status(reu_host_status)
+    );
+    multitini_c64_ua #(.CORE_CLOCK_HZ(CORE_CLOCK_HZ)) ua_i (
+        .clk(core_clk), .hard_reset(reset), .guest_reset(!core_reset_n),
+        .enable(ua_active), .paused(core_paused), .hold(reu_host_word[13]),
+        .reg_write(cpu_bus_valid && cpu_bus_write && ua_io_select),
+        .reg_addr(cpu_bus_addr[7:0]), .reg_wdata(cpu_bus_wdata), .reg_rdata(ua_io_rdata),
+        .diagnostics_armed(cpu_config[19]), .audio_tick(ua_audio_tick), .board_clip(board_clip),
+        .cache_pending_addr(cache_pending_addr), .cache_pending_valid(cache_pending_valid),
+        .cache_inflight_write_addr(cache_inflight_write_addr), .cache_inflight_write_valid(cache_inflight_write_valid),
+        .cache_write_done(cache_write_done), .cache_write_done_addr(cache_write_done_addr),
+        .cache_write_snoop_valid(cache_write_snoop_valid), .cache_write_snoop_addr(cache_write_snoop_addr),
+        .reu_memory_busy(reu_memory_busy), .irq(ua_irq), .held(ua_held), .status(ua_status),
+        .fetch_count(ua_fetches), .audio_l(ua_audio_l), .audio_r(ua_audio_r),
+        .memory_addr(ua_memory_addr), .memory_valid(ua_memory_valid), .memory_busy(ua_memory_busy),
+        .memory_ready(ua_memory_ready), .memory_rdata(ua_memory_rdata),
+        .memory_rvalid(ua_memory_rvalid), .memory_fault(ua_memory_fault)
+    );
+    assign reu_misses = cpu_config[19] ? {16'd0,reu_miss_count} : 32'd0;
+    always_ff @(posedge core_clk) begin
+        diagnostics_was_armed <= cpu_config[19];
+        if (reset || !cpu_config[19] || !diagnostics_was_armed) reu_miss_count <= 0;
+        else if (reu_sample_slot && reu_dma_req && !reu_dma_valid && reu_memory_waiting &&
+                 reu_miss_count != 16'hFFFF) reu_miss_count <= reu_miss_count + 16'd1;
+    end
     assign memory_addr = cart_memory_addr;
     assign memory_write = cart_memory_write;
     assign memory_wdata = cart_memory_wdata;
@@ -494,7 +691,19 @@ module multitini_c64_adapter #(
         .mod_key(1'b0), .nmi(cart_nmi), .nmi_ack(cart_nmi_ack)
     );
 
-    fpga64_sid_iec core_i (
+    fpga64_sid_iec #(.EXTERNAL_CPU(1), .FAST_IO(1), .FIO_DEPTH(FIO_DEPTH)) core_i (
+        .ext_cpu_addr(ext_cpu_addr), .ext_cpu_do(ext_cpu_do), .ext_cpu_we(ext_cpu_we),
+        .ext_cpu_io(ext_cpu_io), .ext_cpu_ioonly(ext_cpu_ioonly), .ext_nmi_ack(ext_nmi_ack),
+        .ext_reset(ext_reset), .ext_cpu_enable(ext_cpu_enable), .ext_cpu_di(ext_cpu_di),
+        .ext_irq_n(ext_irq_n), .ext_nmi_n(ext_nmi_n), .ext_rdy(ext_rdy), .ext_port_tick(ext_port_tick),
+        .ext_phase(ext_phase), .ext_frame_run(ext_frame_run), .ext_cpu_bus_valid(ext_cpu_bus_valid),
+        .ext_cs_vic(ext_cs_vic), .ext_last_vic_di(ext_last_vic_di),
+        .ext_cpu_ioown(ext_cpu_ioown), .ext_dma_hold(ext_dma_hold),
+        .ext_color_addr(ext_color_addr), .ext_color_we(ext_color_we),
+        .ext_color_do(ext_color_do), .ext_color_di(ext_color_di),
+        .fio_entries(fio_entries), .fio_wp(fio_wp), .fio_done(fio_done),
+        .fio_rd_addr(fio_rd_addr), .fio_rd_sid(fio_rd_sid), .fio_rd_data(fio_rd_data),
+        .fio_vic_busy(fio_vic_busy), .fio_u64_wr(fio_u64_wr), .fio_u64_a(fio_u64_a), .fio_u64_d(fio_u64_d),
         .clk32(core_clk), .reset_n(core_reset_n),
         .bios({1'b0, rom_bank}),
         // Menu visibility and PRG installation use FPGA64's boundary-safe
@@ -507,18 +716,17 @@ module multitini_c64_adapter #(
         .ramAddr(ram_addr), .ramDin(core_ram_din), .ramDout(ram_dout),
         .ramCE(ram_ce), .ramWE(ram_we),
         .io_cycle(cart_mem_cycle), .ext_cycle(), .refresh(),
-        // FPGA64 Smart turbo adds CPU RAM/ROM cycles while CIA/IEC and VIC
-        // remain at 1x. The independent setting is automatically suspended
-        // around IEC traffic, matching the pinned upstream integration.
-        .cia_mode(1'b0), .turbo_mode({cpu_turbo_active, 1'b0}),
+        // All acceleration belongs to the external island. Native timing
+        // never uses the upstream Smart/C128 extra-cycle scheduler.
+        .cia_mode(1'b0), .turbo_mode(2'b00),
         .turbo_speed(2'b00),
-        .local_turbo_allowed(!cart_loaded),
+        .local_turbo_allowed(1'b0),
         .vic_variant(2'b00), .ntscMode(NTSC_MODE),
         .hsync(raw_hsync), .vsync(raw_vsync), .palette(3'b000),
         .r(raw_r), .g(raw_g), .b(raw_b),
         .game(cart_game), .exrom(cart_exrom), .io_rom(cart_io_rom),
-        .io_ext(cart_io_read || reu_io_select),
-        .io_data(reu_io_select ? reu_io_rdata : cart_io_data), .irq_n(1'b1),
+        .io_ext(cart_io_read || reu_io_select || ua_io_select),
+        .io_data(ua_io_select ? ua_io_rdata : reu_io_select ? reu_io_rdata : cart_io_data), .irq_n(1'b1),
         .nmi_n(!cart_nmi), .nmi_ack(cart_nmi_ack),
         .romL(cart_rom_l), .romH(cart_rom_h),
         .UMAXromH(cart_umax_rom_h), .IOE(cart_ioe), .IOF(cart_iof),
@@ -526,12 +734,13 @@ module multitini_c64_adapter #(
         .tape_play(), .tape_rew(),
         .tape_stop(), .tape_ff(), .tape_reset_counter(),
         .dma_req(reu_dma_req), .dma_valid(reu_dma_valid), .dma_ack(reu_dma_ack),
+        .dma_ready_slot(reu_sample_slot),
         .dma_idle(reu_dma_idle), .dma_peek(reu_dma_peek), .dma_last_write(reu_dma_last_write),
         .cpu_bus_valid(cpu_bus_valid), .cpu_bus_addr(cpu_bus_addr),
         .cpu_bus_wdata(cpu_bus_wdata), .cpu_bus_write(cpu_bus_write),
         .dma_cycle(), .dma_addr(reu_dma_addr),
         .dma_dout(reu_dma_wdata), .dma_din(reu_dma_rdata),
-        .dma_we(reu_dma_write), .irq_ext_n(!reu_irq),
+        .dma_we(reu_dma_write), .irq_ext_n(!(reu_irq || ua_irq)),
         .joyA(joy_a), .joyB(joy_b),
         .pot1(8'hFF), .pot2(8'hFF), .pot3(8'hFF), .pot4(8'hFF),
         .audio_l(raw_audio_l), .audio_r(raw_audio_r),
@@ -556,7 +765,9 @@ module multitini_c64_adapter #(
     multitini_c64_cpu_turbo_guard #(.CORE_CLOCK_HZ(CORE_CLOCK_HZ))
         cpu_turbo_guard_i (
             .clk(core_clk), .reset(reset),
-            .turbo_request(cpu_turbo_enable),
+            .turbo_request(guard_request),
+            .holdoff_select(guard_holdoff), .static_hold_release(guard_static_release),
+            .block_cause(guard_cause),
             .c64_iec_atn(c64_iec_atn), .c64_iec_data(c64_iec_data),
             .c64_iec_clk(c64_iec_clk), .drive_iec_data(drive_iec_data),
             .drive_iec_clk(drive_iec_clk),
@@ -664,8 +875,8 @@ module multitini_c64_adapter #(
             audio_phase <= audio_phase + AUDIO_SAMPLE_HZ - CORE_CLOCK_HZ;
             // MiSTer consumes bits 17:2 as signed 16-bit PCM. Preserve that
             // full-scale convention at the common 24-bit boundary.
-            audio_l <= $signed({raw_audio_l, 6'b000000});
-            audio_r <= $signed({raw_audio_r, 6'b000000});
+            audio_l <= sat24(board_sum_l);
+            audio_r <= sat24(board_sum_r);
             audio_valid <= 1'b1;
         end else begin
             audio_phase <= audio_phase + AUDIO_SAMPLE_HZ;

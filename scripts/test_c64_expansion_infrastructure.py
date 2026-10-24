@@ -54,7 +54,8 @@ def main():
             ('arbiter','tb_c64_memory_arbiter',[],'PASS: C64 memory arbiter '),
             ('config','tb_c64_expansion_config',[],'PASS: C64 expansion config '),
             ('registers-no-caps','tb_control_regs',[],'PASS: control registers'),
-            ('registers-c64-caps','tb_control_regs_c64_caps',[],'PASS: control registers')):
+            ('registers-c64-caps','tb_control_regs_c64_caps',[],'PASS: control registers'),
+            ('registers-c64-turbo','tb_control_regs_c64_turbo',[],'PASS: control registers')):
             snapshot=label.replace('-','_')+'_sim'
             run(label+'-elaborate',[vendor('xelab'),'--nolog','--timescale','1ns/1ps',
                 '--snapshot',snapshot,*parameters,top,'glbl'])

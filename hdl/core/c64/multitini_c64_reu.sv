@@ -49,7 +49,9 @@ module multitini_c64_reu #(
     input  logic        memory_fault,
     output logic        irq,
     output logic        busy,
-    output logic        fault
+    output logic        fault,
+    // Read-only diagnostic: a logical REU memory access is waiting for DDR.
+    output logic        memory_waiting
 );
     localparam logic [23:0] ADDRESS_MASK =
         ADDRESS_BITS == 19 ? 24'h07ffff : 24'hffffff;
@@ -83,6 +85,7 @@ module multitini_c64_reu #(
     assign dma_wdata = reu_byte;
     assign irq = status[7] && run;
     assign busy = active || memory_pending;
+    assign memory_waiting = memory_pending || (memory_valid && !memory_ready);
 
     assign memory_addr = {reu_address[23:3], 3'b000};
     // Prepare the first line while software programs the registers, and

@@ -13,6 +13,9 @@ module tb_c64_cpu_turbo_guard;
     logic c64_par_stb = 1'b1;
     logic drive_par_stb = 1'b1;
     logic turbo_active;
+    logic [1:0] holdoff_select = 2'b00;
+    logic static_hold_release = 1'b0;
+    wire [1:0] block_cause;
 
     always #5 clk = !clk;
 

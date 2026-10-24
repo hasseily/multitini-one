@@ -18,7 +18,9 @@ module tb_c64_reu_cache;
     wire [7:0] memory_wstrb;
     wire memory_ready,memory_rvalid,memory_fault;
     wire [63:0] memory_rdata;
-    multitini_c64_reu_cache dut(.*);
+    multitini_c64_reu_cache dut(.invalidate(1'b0),.invalidate_done(),
+        .pending_addr(),.pending_valid(),.inflight_write_addr(),.inflight_write_valid(),
+        .write_done(),.write_done_addr(),.write_snoop_valid(),.write_snoop_addr(),.*);
 
     localparam integer WORDS=8192;
     reg [63:0] ram[0:WORDS-1];

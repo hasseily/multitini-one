@@ -2,7 +2,8 @@
 `timescale 1ns / 1ps
 
 module tb_control_regs #(parameter logic [31:0] ACCEL_CAPS=0,
-                         parameter logic [31:0] C64_CAPS=0);
+                         parameter logic [31:0] C64_CAPS=0,
+                         parameter bit TURBO=0);
     import multitini_regs_pkg::*;
 
     logic clk = 1'b0;
@@ -74,11 +75,21 @@ module tb_control_regs #(parameter logic [31:0] ACCEL_CAPS=0,
     logic ui_visible;
     logic ui_bank;
     logic ui_dense;
+    wire [31:0] cpu_config, debug_control, peek_request, reu_request;
+    wire capture_pop;
 
     always #5 clk = !clk;
 
     multitini_control_regs #(.SHELL_BUILD_ID(32'h12345678),.IIGS_ACCEL_CAPS(ACCEL_CAPS),
-        .C64_EXPANSION_CAPS(C64_CAPS)) dut (
+        .C64_EXPANSION_CAPS(C64_CAPS),
+        .C64_CPU_CAPS(TURBO ? MT_C64_CPU_CAPS_RELEASE : 0),
+        .C64_CPU_CAPS2(TURBO ? MT_C64_CPU_CAPS2_RELEASE : 0)) dut (
+        .c64_cpu_config(cpu_config), .c64_cpu_status(32'h12345678),
+        .debug_control(debug_control), .debug_status(32'h1234),
+        .audio_capture_data(32'h87654321), .audio_capture_pop(capture_pop),
+        .c64_ram_peek_request(peek_request), .c64_ram_peek_status(32'h001A00CC),
+        .c64_reu_host_request(reu_request), .c64_reu_host_status(32'h00005B00),
+        .c64_ua_status(32'h123), .c64_ua_fetches(32'h456), .c64_reu_misses(32'h789),
         .effect_busy(effect_busy),.effect_active_valid(effect_active_valid),.effect_rejected(effect_rejected),
         .effect_active_sequence(effect_active_sequence),.effect_write(effect_write),.effect_commit(effect_commit),
         .effect_address(effect_address),.effect_data(effect_data),.effect_commit_sequence(effect_commit_sequence),
@@ -169,11 +180,12 @@ module tb_control_regs #(parameter logic [31:0] ACCEL_CAPS=0,
         expect_read(MT_REG_IIGS_ACCEL_CAPS,ACCEL_CAPS,"installed IIgs speed capability");
         expect_read(MT_REG_C64_EXPANSION_CAPS,C64_CAPS,"installed C64 expansion capability");
         expect_read(MT_REG_C64_EXPANSION_CONFIG,C64_CAPS[31]?32'hb:32'd0,"C64 expansion reset configuration");
-        for(integer expansion=0;expansion<16;expansion++)begin
+        for(integer expansion=0;expansion<32;expansion++)begin
             logic[31:0] expected_config;
             expected_config=(expansion&8)|((expansion&7)==2?2:((expansion&7)==3?3:0));
+            if(C64_CAPS[3] && (expansion&8)!=0) expected_config|=expansion&16;
             if(!C64_CAPS[31])expected_config=0;
-            write_reg(MT_REG_C64_EXPANSION_CONFIG,32'hfffffff0|expansion,4'hf);
+            write_reg(MT_REG_C64_EXPANSION_CONFIG,32'hffffffe0|expansion,4'hf);
             expect_read(MT_REG_C64_EXPANSION_CONFIG,expected_config,"C64 reserved bits/modes sanitized");
             write_reg(MT_REG_C64_EXPANSION_CONFIG,32'h12345678,4'he);
             expect_read(MT_REG_C64_EXPANSION_CONFIG,expected_config,"C64 upper-byte strobes preserve config");
@@ -664,6 +676,30 @@ module tb_control_regs #(parameter logic [31:0] ACCEL_CAPS=0,
         expect_read(MT_REG_ERROR,MT_ERROR_BAD_WRITE,"effect malformed writes are reported");
         write_reg(MT_REG_IIGS_ACCEL_CAPS,0,4'hF);
         expect_read(MT_REG_IIGS_ACCEL_CAPS,ACCEL_CAPS,"speed capability is read-only");
+        expect_read(MT_REG_C64_CPU_CONFIG,TURBO ? MT_C64_CPU_CONFIG_DEFAULT : 0,"turbo reset config");
+        expect_read(MT_REG_C64_CPU_CAPS,TURBO ? MT_C64_CPU_CAPS_RELEASE : 0,"turbo caps");
+        expect_read(MT_REG_C64_CPU_STATUS,TURBO ? 32'h12345678 : 0,"turbo status gate");
+        write_reg(MT_REG_C64_CPU_CONFIG,32'hffffffff,4'hf);
+        expect_read(MT_REG_C64_CPU_CONFIG,TURBO ?
+            (MT_C64_CPU_CONFIG_MASK & ~32'h00040200) : 0,"unsupported turbo fields sanitized");
+        expect_read(MT_REG_C64_UA_FETCHES,C64_CAPS[3] ? 32'h456 : 0,"UA capability gate");
+        expect_read(MT_REG_C64_REU_MISSES,C64_CAPS[3] ? 32'h789 : 0,"REU counter gate");
+        expect_read(MT_REG_AUDIO_CAPTURE_DATA,0,"debug-off capture is zero");
+        rd_addr=MT_REG_AUDIO_CAPTURE_DATA;rd_en=1;#1;
+        check_value(!capture_pop,"debug-off capture read never pops");rd_en=0;
+        write_reg(MT_REG_DEBUG_CONTROL,7,4'hf);
+        expect_read(MT_REG_DEBUG_CONTROL,3,"clear pulse is not read back");
+        repeat(2) @(negedge clk);
+        check_value(debug_control==3,"capture clear self-clears");
+        expect_read(MT_REG_AUDIO_CAPTURE_DATA,32'h87654321,"capture data read");
+        rd_en=1;#1;check_value(capture_pop,"capture pop on enabled read");rd_en=0;
+        write_reg(MT_REG_C64_RAM_PEEK,32'hffffffff,4'hf);
+        check_value(peek_request== (TURBO ? 32'hfffff : 0),"peek request mask and gate");
+        expect_read(MT_REG_C64_RAM_PEEK,TURBO ? 32'h1a00cc : 0,"peek response gate");
+        write_reg(MT_REG_C64_REU_HOST,32'hffffffff,4'hf);
+        expect_read(MT_REG_C64_REU_HOST,C64_CAPS[4] ? 32'h7b0f : 0,"host hold and counters");
+        write_reg(MT_REG_DEBUG_CONTROL,0,4'hf);
+        expect_read(MT_REG_AUDIO_CAPTURE_DATA,0,"debug-off restores zero");
         $display("PASS: control registers");
         $finish;
     end
@@ -672,4 +708,7 @@ endmodule
 // Explicit top avoids Windows batch argument rewriting of xelab generic values.
 module tb_control_regs_c64_caps;
     tb_control_regs #(.C64_CAPS(32'h80000003)) test_i();
+endmodule
+module tb_control_regs_c64_turbo;
+    tb_control_regs #(.C64_CAPS(32'h8000001f),.TURBO(1)) test_i();
 endmodule

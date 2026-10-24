@@ -20,7 +20,7 @@ module tb_c64_reu_transport;
     logic memory_ready=0,memory_rvalid=0,memory_fault=0;
     logic [63:0] memory_rdata=0;
     wire irq,busy,fault;
-    multitini_c64_reu dut(.*);
+    multitini_c64_reu dut(.memory_waiting(),.*);
     integer checks=0,accepts=0,writes=0,cycles=0;
     always @(posedge clk) begin
         cycles<=cycles+1;

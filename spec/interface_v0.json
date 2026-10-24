@@ -2,7 +2,7 @@
   "schema_version": 1,
   "abi": {
     "major": 0,
-    "minor": 23
+    "minor": 24
   },
   "magic": "0x4D543031",
   "shell_id": "0x4D544F4E",
@@ -269,14 +269,98 @@
       "offset": "0x0D0",
       "access": "rw",
       "reset": "0x0000000B",
-      "description": "C64 expansion configuration: SID mode[2:0] 0 same address, 2 dual D420, 3 dual D500; REU16MB enable[3]. Other SID modes become 0 and reserved bits read zero. Coherent machine-clock transfer. Requires ABI0.23 and advertised capabilities. REU and CRT storage are mutually exclusive."
+      "description": "C64 expansion configuration: SID mode[2:0] 0 same address, 2 dual D420, 3 dual D500; REU16MB enable[3]. Other SID modes become 0 and reserved bits read zero. Coherent machine-clock transfer. Requires ABI0.23 and advertised capabilities. REU and CRT storage are mutually exclusive. ABI0.24 adds Ultimate Audio enable[4], clamped off unless REU[3] and UA capability are set."
     },
     {
       "name": "C64_EXPANSION_CAPS",
       "offset": "0x0D4",
       "access": "ro",
       "reset": "parameter",
-      "description": "C64 expansion capabilities: valid[31], dual SID[0], 16MB REU[1]. Zero on other cores. Requires ABI0.23."
+      "description": "C64 expansion capabilities: valid[31], dual SID[0], 16MB REU[1], DDR REU[2]. ABI0.24 adds Ultimate Audio[3] and host REU preload[4]. Zero on other cores."
+    },
+    {
+      "name": "C64_CPU_CONFIG",
+      "offset": "0x0D8",
+      "access": "rw",
+      "reset": "0x00000151",
+      "description": "C64 turbo configuration; speed[3:0], mode[5:4], badline[6], C64U rows[7], disk auto-slow[8], cart-native[9], authoritative[10], static-release[11], apply counter[15:12], IEC holdoff[17:16], Follow CPU[18], diagnostics[19]. Reserved and unsupported fields read zero."
+    },
+    {
+      "name": "C64_CPU_CAPS",
+      "offset": "0x0DC",
+      "access": "ro",
+      "reset": "parameter",
+      "description": "C64 turbo index mask[15:0], feature bits[23:16], clock multiple[27:24], BA-low IO[28], FF00 snoop[29], local port writes[30], valid[31]."
+    },
+    {
+      "name": "C64_CPU_STATUS",
+      "offset": "0x0E0",
+      "access": "ro",
+      "reset": "0x00000000",
+      "description": "C64 effective speed and native blockers, software speed hints and armed-only diagnostic sticky flags."
+    },
+    {
+      "name": "C64_CPU_CAPS2",
+      "offset": "0x0E4",
+      "access": "ro",
+      "reset": "parameter",
+      "description": "C64 timing revision[7:0], programmable IEC holdoff[8], IEC reason[9], static-release[10], NMI hold/rearm[11], Follow CPU[12], RAM peek[13], diagnostic image[14], valid[31]."
+    },
+    {
+      "name": "C64_UA_STATUS",
+      "offset": "0x0F0",
+      "access": "ro",
+      "reset": "0x00000000",
+      "description": "Ultimate Audio persistent fault[0]; armed-only underrun[1], clip[2], defer[3], playing voices[14:8] and saturating underrun count[31:16]."
+    },
+    {
+      "name": "C64_UA_FETCHES",
+      "offset": "0x0F4",
+      "access": "ro",
+      "reset": "0x00000000",
+      "description": "Armed-only wrapping count of Ultimate Audio HP3 reads."
+    },
+    {
+      "name": "C64_REU_MISSES",
+      "offset": "0x0F8",
+      "access": "ro",
+      "reset": "0x00000000",
+      "description": "Armed-only saturating REU readiness miss count[15:0]; excludes BA steals."
+    },
+    {
+      "name": "DEBUG_CONTROL",
+      "offset": "0x100",
+      "access": "rw",
+      "reset": "0x00000000",
+      "description": "UART debug session[0], audio capture run[1], FIFO clear[2] self-clearing. Reserved bits read zero."
+    },
+    {
+      "name": "DEBUG_STATUS",
+      "offset": "0x104",
+      "access": "ro",
+      "reset": "0x00000000",
+      "description": "Audio FIFO level[9:0], overflow[10], debug echo[11], audio capture present[12]."
+    },
+    {
+      "name": "AUDIO_CAPTURE_DATA",
+      "offset": "0x108",
+      "access": "ro",
+      "reset": "0x00000000",
+      "description": "48kHz stereo sample left[31:16],right[15:0]; pops only while debug enabled and nonempty."
+    },
+    {
+      "name": "C64_RAM_PEEK",
+      "offset": "0x10C",
+      "access": "rw",
+      "reset": "0x00000000",
+      "description": "Write address[15:0] and request counter[19:16]; read data[7:0], done counter[19:16], refused[20]. Debug-only and paused; loader has priority."
+    },
+    {
+      "name": "C64_REU_HOST",
+      "offset": "0x110",
+      "access": "rw",
+      "reset": "0x00000000",
+      "description": "Write invalidate request counter[3:0] and UA hold[13]; read these plus done counter[11:8], REU idle[12] and UA held[14]."
     },
     {
       "name": "VIDEO_EFFECT_ADDRESS",
@@ -494,6 +578,79 @@
     "STREAM_STATUS": {
       "READY": 0,
       "DRAINED": 1
+    },
+    "C64_CPU_CONFIG": {
+      "BADLINES": 6,
+      "C64U_TOP": 7,
+      "DISK_AUTOSLOW": 8,
+      "CARTRIDGE_NATIVE": 9,
+      "AUTHORITATIVE": 10,
+      "STATIC_RELEASE": 11,
+      "FOLLOW_CPU": 18,
+      "DIAGNOSTICS": 19
+    },
+    "C64_CPU_CAPS": {
+      "REGISTERS": 16,
+      "TURBO_ENABLE": 17,
+      "BADLINES": 18,
+      "C64U_TOP": 19,
+      "DISK_AUTOSLOW": 20,
+      "CARTRIDGE_TURBO": 21,
+      "FAST_COLOUR": 22,
+      "FAST_IO": 23,
+      "BA_LOW_IO": 28,
+      "FF00_SNOOP": 29,
+      "LOCAL_PORT_WRITES": 30,
+      "VALID": 31
+    },
+    "C64_CPU_CAPS2": {
+      "IEC_HOLDOFF": 8,
+      "IEC_CAUSE": 9,
+      "STATIC_RELEASE": 10,
+      "NMI_REARM": 11,
+      "FOLLOW_CPU": 12,
+      "RAM_PEEK": 13,
+      "DIAGNOSTIC_IMAGE": 14,
+      "VALID": 31
+    },
+    "C64_CPU_STATUS": {
+      "FAST": 4,
+      "C64U_TOP": 5,
+      "CARTRIDGE": 16,
+      "DISK": 17,
+      "LOADER": 18,
+      "RESET_WINDOW": 19,
+      "PAUSE": 20,
+      "SOFTWARE_SPEED": 21,
+      "REGISTER_REQUEST": 22,
+      "TURBO_ENABLE_REQUEST": 23,
+      "DEADLINE_MISS": 24,
+      "IO_ONLY": 25,
+      "NMI_REARM": 26
+    },
+    "C64_UA_STATUS": {
+      "FAULT": 0,
+      "UNDERRUN": 1,
+      "CLIP": 2,
+      "DEFER": 3
+    },
+    "DEBUG_CONTROL": {
+      "ENABLE": 0,
+      "AUDIO_RUN": 1,
+      "AUDIO_CLEAR": 2
+    },
+    "DEBUG_STATUS": {
+      "OVERFLOW": 10,
+      "ENABLED": 11,
+      "AUDIO_PRESENT": 12
+    },
+    "C64_RAM_PEEK": {
+      "REFUSED": 20
+    },
+    "C64_REU_HOST": {
+      "IDLE": 12,
+      "UA_HOLD": 13,
+      "UA_HELD": 14
     }
   },
   "constants": {
@@ -557,7 +714,7 @@
     "C64_EXPANSION_CAPS_DUAL_SID": "0x00000001",
     "C64_EXPANSION_CAPS_REU_16MB": "0x00000002",
     "C64_EXPANSION_CAPS_REU_DDR": "0x00000004",
-    "C64_EXPANSION_CONFIG_MASK": "0x0000000F",
+    "C64_EXPANSION_CONFIG_MASK": "0x1F",
     "C64_EXPANSION_CONFIG_DEFAULT": "0x0000000B",
     "C64_EXPANSION_SID_MODE_MASK": "0x00000007",
     "C64_EXPANSION_REU_ENABLE": "0x00000008",
@@ -588,7 +745,40 @@
     "VIDEO_FRAME_AUTONOMOUS_ENABLE": "0x00000004",
     "VIDEO_FRAME_STATUS_AUTONOMOUS_SUPPORTED": "0x00000020",
     "VIDEO_FRAME_STATUS_ENGINE_BUSY": "0x00000040",
-    "VIDEO_FRAME_STATUS_SCHEDULER_FAULT": "0x00000080"
+    "VIDEO_FRAME_STATUS_SCHEDULER_FAULT": "0x00000080",
+    "C64_TURBO_MIN_ABI_MINOR": 24,
+    "C64_ULTIMATE_AUDIO_MIN_ABI_MINOR": 24,
+    "C64_REU_HOST_MIN_ABI_MINOR": 24,
+    "DEBUG_MIN_ABI_MINOR": 24,
+    "C64_EXPANSION_ULTIMATE_AUDIO_ENABLE": "0x10",
+    "C64_EXPANSION_CAPS_ULTIMATE_AUDIO": "0x08",
+    "C64_EXPANSION_CAPS_REU_HOST_LOAD": "0x10",
+    "C64_CPU_CONFIG_DEFAULT": "0x151",
+    "C64_CPU_CONFIG_MASK": "0x000FFFFF",
+    "C64_CPU_CONFIG_SPEED_MASK": "0xF",
+    "C64_CPU_CONFIG_MODE_MASK": "0x30",
+    "C64_CPU_CONFIG_APPLY_MASK": "0xF000",
+    "C64_CPU_CONFIG_HOLDOFF_MASK": "0x30000",
+    "C64_CPU_CONFIG_DEBUG_MASK": "0xB0880",
+    "C64_CPU_CAPS_INDEX_MASK": "0xFFFF",
+    "C64_CPU_CAPS_CLOCK_MASK": "0x0F000000",
+    "C64_CPU_CAPS_RELEASE": "0xF2DFFFFF",
+    "C64_CPU_CAPS2_RELEASE": "0x80002F01",
+    "C64_CPU_STATUS_INDEX_MASK": "0xF",
+    "C64_CPU_STATUS_IEC_CAUSE_MASK": "0xC0",
+    "C64_CPU_STATUS_LIVE_MASK": "0xFF00",
+    "C64_CPU_STATUS_APPLY_MASK": "0xF0000000",
+    "C64_CPU_STATUS_DIAGNOSTIC_MASK": "0x07000000",
+    "C64_CPU_CAPS2_REVISION_MASK": "0xFF",
+    "DEBUG_CONTROL_MASK": "0x7",
+    "DEBUG_STATUS_LEVEL_MASK": "0x3FF",
+    "C64_RAM_PEEK_ADDRESS_MASK": "0xFFFF",
+    "C64_RAM_PEEK_COUNTER_MASK": "0xF0000",
+    "C64_REU_HOST_WRITE_MASK": "0x200F",
+    "C64_REU_HOST_REQUEST_MASK": "0xF",
+    "C64_REU_HOST_DONE_MASK": "0xF00",
+    "C64_REU_DDR_BASE": "0x25000000",
+    "C64_REU_DDR_SIZE": "0x01000000"
   },
   "commands": {
     "PING": 0,

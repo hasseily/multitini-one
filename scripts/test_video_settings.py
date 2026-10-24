@@ -13,7 +13,8 @@ UCRT = Path(os.environ.get("MULTITINI_UCRT_BIN", "C:/msys64/ucrt64/bin"))
 IVERILOG = str(UCRT / "iverilog.exe") if os.name == "nt" else "iverilog"
 VVP = str(UCRT / "vvp.exe") if os.name == "nt" else "vvp"
 GUARD = [sys.executable, "-u", str(ROOT / "scripts/run_native_tool.py"), "--"]
-SOURCES = ["hdl/generated/multitini_regs_pkg.sv", "hdl/sim/xilinx_primitives.sv",
+SOURCES = ["hdl/generated/multitini_regs_pkg.sv", "hdl/common/multitini_display_pkg.sv",
+           "hdl/common/multitini_display_geometry.sv", "hdl/sim/xilinx_primitives.sv",
            "third_party/appletini/hdl/cdc_bit_sync.sv",
            "hdl/common/multitini_async_mailbox.sv", "hdl/common/multitini_border_config.sv",
            "hdl/common/multitini_control_regs.sv", "hdl/board/multitini_video_test.sv",

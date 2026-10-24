@@ -17,8 +17,11 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dynamic-display", action="store_true")
     parser.add_argument("--case", action="append", help="Run a named geometry case only")
+    parser.add_argument("--build-dir", type=Path, help="New evidence directory under build/")
     args=parser.parse_args()
-    build = ROOT / "build/video-frame-reader-tests" / ("dynamic-display" if args.dynamic_display else "static")
+    build = args.build_dir.resolve() if args.build_dir else ROOT / "build/video-frame-reader-tests" / ("dynamic-display" if args.dynamic_display else "static")
+    if args.build_dir and (build.exists() or not build.is_relative_to(ROOT / "build")):
+        parser.error("Use a new evidence directory under build/")
     build.mkdir(parents=True, exist_ok=True)
     runtime = Path(os.environ.get("MULTITINI_UCRT_BIN", "C:/msys64/ucrt64/bin"))
     compiler = str(runtime / "iverilog.exe") if os.name == "nt" else "iverilog"

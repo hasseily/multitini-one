@@ -60,6 +60,17 @@ class AudioPathTests(unittest.TestCase):
         self.assertIn("source_test_bclk <= test_tone_bclk", output)
         self.assertIn("mute_bclk || !live_enable_bclk", output)
 
+    def test_c64_ua_adds_with_saturation_and_is_silent_when_inactive(self):
+        adapter = (ROOT / "hdl/core/c64/multitini_c64_adapter.sv").read_text()
+        ua = (ROOT / "hdl/core/c64/multitini_c64_ua.sv").read_text()
+        for channel in ("l", "r"):
+            self.assertIn(f"wire signed [24:0] board_sum_{channel}", adapter)
+            self.assertIn(f"audio_{channel} <= sat24(board_sum_{channel})", adapter)
+            self.assertIn(f"assign audio_{channel}=(reset || fault) ? 18'sd0 : mixed_{channel}", ua)
+        self.assertIn("guest_reset || !enable || hold", ua)
+        self.assertIn("if (value > 25'sd8388607) return 24'sh7FFFFF", adapter)
+        self.assertIn("if (value < -25'sd8388608) return -24'sh800000", adapter)
+
     def test_spdif_rate_matches_control_clock(self):
         transmitter = (
             ROOT / "hdl/board/multitini_audio_spdif_pcm_tx.sv"

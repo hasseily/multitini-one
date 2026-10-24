@@ -1,0 +1,17 @@
+; SPDX-License-Identifier: GPL-3.0-only
+!source "boot.inc"
+    jsr start_audio
+    bcs failed
+    lda #<playing_message
+    ldy #>playing_message
+    jsr print
+    rts
+failed:
+    lda #<failed_message
+    ldy #>failed_message
+    jsr print
+    rts
+playing_message: !pet "7 AUDIO VOICES RUNNING - RETURNED TO BASIC",13,0
+failed_message: !pet "ENABLE 16MB REU AND ULTIMATE AUDIO",13,0
+!source "console.inc"
+!source "voices.inc"

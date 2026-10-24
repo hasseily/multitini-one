@@ -1,0 +1,8 @@
+{
+  "repository": "https://github.com/hasseily/multitini-one",
+  "commit": "534181278ee46da97999d660544973d5ca604c4d",
+  "source": "firmware/platform/xilinx/supervisor_settings.c",
+  "sha256": "2029f800e76a4916eb5f89398f55926c15b534afe981394e528e65de6e9ac04b",
+  "license": "GPL-3.0-only",
+  "purpose": "Exact pre-extension schema-10 settings codec for downgrade verification."
+}

@@ -1,0 +1,54 @@
+; SPDX-License-Identifier: GPL-3.0-only
+; Original implementation of the common 128-status-read behavioral probe.
+; Credits: Freshness detectaudio and xahmol uii_audio_detect descriptions.
+; No source, disassembly, or binary bytes were copied from either program.
+!source "boot.inc"
+    lda #$ff
+    sta $df3f
+    ldx #0
+decode_loop:
+    lda $df20
+    bne absent
+    lda $df21
+    cmp #$10
+    bne absent
+    dex
+    bne decode_loop
+    lda #0
+    sta $df20
+    sta $df2e
+    sta $df29
+    lda #1
+    sta $df2a
+    sta $df2f
+    ; $DF2B is intentionally untouched to expose the stale-low-byte case.
+    lda #5
+    sta $df20
+    ldx #128
+poll:
+    lda $df20
+    and #1
+    bne found
+    dex
+    bne poll
+absent:
+    lda #0
+    sta $df20
+    lda #$ff
+    sta $df3f
+    lda #<missing
+    ldy #>missing
+    jsr print
+    rts
+found:
+    lda #0
+    sta $df20
+    lda #$ff
+    sta $df3f
+    lda #<present
+    ldy #>present
+    jsr print
+    rts
+present: !pet "ULTIMATE AUDIO DETECTED",13,0
+missing: !pet "NO AUDIO OR PROBE TIMED OUT",13,0
+!source "console.inc"

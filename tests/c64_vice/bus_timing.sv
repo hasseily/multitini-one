@@ -11,7 +11,7 @@ module bus_timing;
   wire dma_req,dma_valid,dma_write,dma_idle,dma_peek,dma_last_write,dma_ack;
   wire [15:0] dma_addr; wire [7:0] dma_wdata,dma_rdata;
   wire [23:0] memory_addr,memory_hint_addr;
-  wire memory_write,memory_valid,memory_hint_read;
+  wire memory_write,memory_valid,memory_hint_read,memory_waiting;
   wire [63:0] memory_wdata,memory_rdata;wire [7:0] memory_wstrb;
   reg slow_tail=0,tail_seen=0,response_held=0;integer response_delay=0;
   wire memory_ready=!response_held;

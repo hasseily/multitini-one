@@ -22,7 +22,7 @@ module tb_c64_reu #(
     wire [7:0] memory_wstrb;
     logic memory_fault = 0;
     wire irq, busy, fault;
-    multitini_c64_reu #(.ADDRESS_BITS(ADDRESS_BITS)) dut (.*);
+    multitini_c64_reu #(.ADDRESS_BITS(ADDRESS_BITS)) dut (.memory_waiting(),.*);
 
     byte unsigned c64_mem [0:65535];
     byte unsigned reu_mem [0:(1 << ADDRESS_BITS)-1];

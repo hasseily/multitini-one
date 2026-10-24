@@ -292,6 +292,8 @@ static uint32_t Xil_In32(uintptr_t address) {
         MT_REG_STATUS, MT_REG_ERROR, MT_REG_COMMAND_OPCODE,
         MT_REG_RESPONSE_STATUS, MT_REG_COUNT_BAD_WRITE, MT_REG_COUNT_BAD_READ,
         MT_REG_STREAM_STATUS, MT_REG_CORE_VARIANT_INDEX,
+        MT_REG_MEDIA_REQUEST_ID, MT_REG_MEDIA_REQUEST, MT_REG_MEDIA_REQUEST_LBA,
+        MT_REG_MEDIA_REQUEST_BLOCK_COUNT, MT_REG_MEDIA_REQUEST_GENERATION, MT_REG_MEDIA_STATE,
         MT_REG_VIDEO_EFFECT_STATUS, MT_REG_VIDEO_EFFECT_SEQUENCE,
         MT_REG_VIDEO_FRAME_CONTROL, MT_REG_VIDEO_FRAME_OPTIONS, MT_REG_VIDEO_FRAME_STATUS,
         MT_REG_VIDEO_FRAME_GEOMETRY, MT_REG_VIDEO_FRAME_STRIDE,
@@ -322,7 +324,7 @@ int main(void) {
         print_read_only_diagnostics(scenario ? "command" : "before CPU1 release");
         unsigned expected = 19U;
         if (scenario == 2) {
-            if (MT_ABI_MINOR >= 8U) expected += 2U;
+            if (MT_ABI_MINOR >= 8U) expected += 10U;
             if (MT_ABI_MINOR >= MT_VIDEO_PHOSPHOR_MIN_ABI_MINOR) expected += 18U;
             if (MT_ABI_MINOR >= MT_DISPLAY_MIN_ABI_MINOR) expected += 2U;
         }

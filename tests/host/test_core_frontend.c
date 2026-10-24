@@ -159,6 +159,33 @@ static void test_c64_capabilities(void)
     state.c64_expansion_caps = MT_C64_EXPANSION_CAPS_DUAL_SID | MT_C64_EXPANSION_CAPS_REU_16MB;
     mt_core_frontend_apply(&frontend, &state, &view);
     check(view.core_option_count == 2U, "capability valid bit is required");
+    state.abi_minor = 24;
+    state.c64_expansion_caps = 0x8000001fU;
+    state.c64_cpu_caps = MT_C64_CPU_CAPS_RELEASE;
+    state.c64_cpu_caps2 = MT_C64_CPU_CAPS2_RELEASE;
+    state.c64_turbo_available = true;
+    state.c64_ua_available = true;
+    state.c64_reu_host_available = true;
+    state.c64_turbo_detail = 0x4f;
+    state.c64_cpu_config = 0x55f;
+    state.c64_cpu_status = 0x10000;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    const unsigned expected_arguments[] = {0,1,9,4,5,6,2,3,8};
+    check(view.core_option_count == 9, "release has exactly nine semantic C64 option rows");
+    for (size_t i=0; i<9; ++i)
+        check(view.core_options[i].argument == expected_arguments[i], "turbo option semantic order");
+    check(view.media_item_count == 5 && view.media_items[4].action == MT_MENU_ACTION_BROWSE_REU,
+        "REU image browser is a capability-gated user feature");
+    state.cartridge_attached = true;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(!view.core_options[8].enabled && !view.media_items[4].enabled,
+        "attached cartridge blocks UA and REU preload");
+    state.cartridge_attached = false; state.c64_ua_fault = true;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(!view.core_options[8].enabled, "UA memory fault requests core reload");
+    check(mt_core_frontend_accepts_content(MT_C64_CORE_ID,MT_MENU_BROWSER_REU,MT_CONTENT_C64_REU) &&
+        !mt_core_frontend_accepts_content(MT_GBC_CORE_ID,MT_MENU_BROWSER_REU,MT_CONTENT_C64_REU),
+        "REU browser accepts only C64 REU images");
 }
 
 static void test_gameboy_saves_and_input(void)

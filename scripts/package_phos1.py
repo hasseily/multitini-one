@@ -82,7 +82,8 @@ def verify_image_set(args, cpu):
     builds = {}
     for name, (machine, psram, pal) in MATRIX.items():
         build = package.verify_hardware(directories[name], machine, build_id=build_ids[name],
-                                        gbc_psram=psram, genesis_pal=pal, reuse=name in reuse)
+                                        gbc_psram=psram, genesis_pal=pal, ntsc=name == "c64-ntsc",
+                                        reuse=name in reuse)
         build["source_tar"] = verify_source_tar(directories[name], build["record"])
         core_artifacts.require_runtime_abi(build["identity"], 0, args.abi_minor)
         if machine == "APPLE_IIGS":
@@ -162,6 +163,7 @@ def main():
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--include-apple-iigs", action="store_true", help="Include the GS source/machine and runtime HDD boot ROM")
     parser.add_argument("--include-nes", action="store_true", help="Include the NES machine and empty cartridge directory")
+    parser.add_argument("--include-c64-ntsc", action="store_true", help="Include independently timed PAL and NTSC C64 variants")
     parser.add_argument("--reuse-image", action="append", default=[], metavar="NAME=DIR",
                         help="Reuse an explicitly selected audited FPGA build with its original identity and sources")
     parser.add_argument("--selection-manifest", type=Path,
@@ -175,6 +177,8 @@ def main():
         MATRIX['apple-iigs']=('APPLE_IIGS',False,False)
     if args.include_nes:
         MATRIX['nes']=('NES',False,False)
+    if args.include_c64_ntsc:
+        MATRIX['c64-ntsc']=('C64',False,False)
     if not re.fullmatch(r"[0-9A-Fa-f]{8}", args.build_id):
         parser.error("--build-id must contain exactly eight hexadecimal digits")
     if not 0 <= args.abi_minor <= 65535:
@@ -261,7 +265,10 @@ def main():
     package.run([ROOT / "scripts/make_firmware_bin.bat", out / firmware_name, out / "inputs/fsbl.elf",
                  out / "inputs/supervisor.bit", out / "inputs/diagnostic.elf"], vitis=vitis)
     package.stage_firmware(out, out / firmware_name)
-    core_specs = (("c64", "Commodore 64", "0x43363420", [("pal", "PAL", "c64-pal")]),
+    c64_variants = [("pal", "PAL", "c64-pal")]
+    if args.include_c64_ntsc:
+        c64_variants.append(("ntsc", "NTSC", "c64-ntsc"))
+    core_specs = (("c64", "Commodore 64", "0x43363420", c64_variants),
                   ("gbc", "Game Boy Color", "0x47424320", [("native", "Game Boy / Game Boy Color", "gbc")]),
                   ("vectrex", "Vectrex", "0x56454358", [("native", "Vectrex / Vectrex32", "vectrex")]),
                   ("genesis", "Genesis / Mega Drive", "0x4D442020", [("ntsc", "NTSC", "genesis-ntsc"), ("pal", "PAL", "genesis-pal")]))
@@ -346,7 +353,7 @@ def main():
         "Copy sd/ contents to the SD card, preserving media and settings.\n"
         f"{firmware_name} is identical to sd/{firmware_name}; copy it to the SD root.\n"
         "Use the existing golden updater, then reload cores. Packaging does not install firmware.\n"
-        "Selected cores: C64 PAL, PSRAM GBC, Vectrex, Genesis NTSC/PAL.\n"
+        f"Selected cores: C64 {'PAL/NTSC' if args.include_c64_ntsc else 'PAL'}, PSRAM GBC, Vectrex, Genesis NTSC/PAL.\n"
         + ("NES adds iNES cartridge loading through the shared PSRAM service.\n"
            "No NES BIOS or cartridges are included; see docs/NES_PLAN.md.\n" if args.include_nes else "") +
         "This is a private local delivery with validated user-supplied boot ROMs in sd/*/roms.\n"

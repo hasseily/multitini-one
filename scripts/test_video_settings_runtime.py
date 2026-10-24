@@ -37,6 +37,9 @@ def main() -> int:
         "firmware/common/display.c",
         "firmware/common/gamepad.c",
         "firmware/common/controls.c",
+        "firmware/common/c64_features.c",
+        "firmware/common/c64_debug.c",
+        "firmware/common/c64_reu_host.c",
         "-Wl,--gc-sections", "-lm", "-o", str(binary),
     ]
     for command in (compile_command, [str(binary)]):

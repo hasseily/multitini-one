@@ -204,7 +204,8 @@ def main() -> int:
             path.startswith("third_party/gameboy/upstream/") or
             path.startswith("third_party/genesis/upstream/") or
             path.startswith("third_party/apple-iigs/upstream/") or
-            path.startswith("third_party/nes/upstream/")
+            path.startswith("third_party/nes/upstream/") or
+            path.startswith("third_party/ultimate_reference/upstream/")
         }
         if tracked_imports != import_paths:
             for path in sorted(tracked_imports - import_paths):

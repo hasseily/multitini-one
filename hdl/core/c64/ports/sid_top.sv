@@ -6,7 +6,9 @@
 module sid_top
 #(
 	parameter MULTI_FILTERS = 1,
-	parameter DUAL = 1
+	parameter DUAL = 1,
+	parameter FAST_PORT = 0,
+	parameter EDGE_STAGE = 1
 )
 (
 	input         reset,
@@ -19,6 +21,16 @@ module sid_top
 	input   [4:0] addr,
 	input   [7:0] data_in,
 	output  [7:0] data_out,
+
+	input [(DUAL ? 2 : 1)-1:0] fio_cs,
+	input         fio_we,
+	input         fio_latch,
+	input [(DUAL ? 2 : 1)-1:0] fio_latch_src,
+	input   [4:0] fio_addr,
+	input   [7:0] fio_wdata,
+	input [(DUAL ? 2 : 1)-1:0] fast_rd_cs,
+	input   [4:0] fast_rd_addr,
+	output logic [7:0] fast_rd_data,
 
 	input  [12:0] fc_offset_l,
 	input   [7:0] pot_x_l,
@@ -104,6 +116,13 @@ generate
 	genvar i;
 
 	for(i=0; i<N; i=i+1) begin :chip
+		reg [7:0] ctrl_stage[3];
+		reg [2:0] ctrl_pending, ctrl_seen;
+		wire fast_write = FAST_PORT && fio_cs[i] && fio_we && !cs[i];
+		wire [7:0] fast_live = fio_addr == 5'h19 ? (i ? pot_x_r : pot_x_l) :
+		                       fio_addr == 5'h1a ? (i ? pot_y_r : pot_y_l) :
+		                       fio_addr == 5'h1b ? Misc_Osc3[i] :
+		                       fio_addr == 5'h1c ? Misc_Env3[i] : bus_data[i];
 		sid_voice v1
 		(
 			.clock(clk),
@@ -236,10 +255,150 @@ generate
 						5'h1c: bus_data[i] = Misc_Env3[i];
 					endcase
 				end
+			end else if (FAST_PORT && fio_cs[i]) begin
+				if (fio_we) begin
+					bus_data[i] <= (fio_addr >= 5'h19 && fio_addr <= 5'h1c) ? fast_live : fio_wdata;
+					case (fio_addr)
+						5'h00: Voice_1_Freq[i][7:0] <= fio_wdata;
+						5'h01: Voice_1_Freq[i][15:8]<= fio_wdata;
+						5'h02: Voice_1_Pw[i][7:0]   <= fio_wdata;
+						5'h03: Voice_1_Pw[i][11:8]  <= fio_wdata[3:0];
+						5'h04: if (!EDGE_STAGE) Voice_1_Control[i]   <= fio_wdata;
+						5'h05: Voice_1_Att_dec[i]   <= fio_wdata;
+						5'h06: Voice_1_Sus_Rel[i]   <= fio_wdata;
+						5'h07: Voice_2_Freq[i][7:0] <= fio_wdata;
+						5'h08: Voice_2_Freq[i][15:8]<= fio_wdata;
+						5'h09: Voice_2_Pw[i][7:0]   <= fio_wdata;
+						5'h0a: Voice_2_Pw[i][11:8]  <= fio_wdata[3:0];
+						5'h0b: if (!EDGE_STAGE) Voice_2_Control[i]   <= fio_wdata;
+						5'h0c: Voice_2_Att_dec[i]   <= fio_wdata;
+						5'h0d: Voice_2_Sus_Rel[i]   <= fio_wdata;
+						5'h0e: Voice_3_Freq[i][7:0] <= fio_wdata;
+						5'h0f: Voice_3_Freq[i][15:8]<= fio_wdata;
+						5'h10: Voice_3_Pw[i][7:0]   <= fio_wdata;
+						5'h11: Voice_3_Pw[i][11:8]  <= fio_wdata[3:0];
+						5'h12: if (!EDGE_STAGE) Voice_3_Control[i]   <= fio_wdata;
+						5'h13: Voice_3_Att_dec[i]   <= fio_wdata;
+						5'h14: Voice_3_Sus_Rel[i]   <= fio_wdata;
+						5'h15: Filter_Fc[i][2:0]    <= fio_wdata[2:0];
+						5'h16: Filter_Fc[i][10:3]   <= fio_wdata;
+						5'h17: Filter_Res_Filt[i]   <= fio_wdata;
+						5'h18: Filter_Mode_Vol[i]   <= fio_wdata;
+					endcase
+				end else if (fio_latch) begin
+					bus_data[i] <= fio_latch_src[i] ? fio_wdata : fast_live;
+				end
+			end
+
+			if (FAST_PORT && EDGE_STAGE) begin
+				if (reset || (cs[i] && we && addr == 5'h04)) begin
+					ctrl_pending[0] <= 0;
+					ctrl_seen[0] <= 0;
+				end else if (ce_1m) begin
+					if (ctrl_pending[0]) begin
+						Voice_1_Control[i] <= ctrl_stage[0];
+						ctrl_seen[0] <= 1;
+						ctrl_pending[0] <= fast_write && fio_addr == 5'h04;
+						if (fast_write && fio_addr == 5'h04) ctrl_stage[0] <= fio_wdata;
+					end else if (fast_write && fio_addr == 5'h04) begin
+						Voice_1_Control[i] <= fio_wdata;
+						ctrl_pending[0] <= 0;
+						ctrl_seen[0] <= 1;
+					end else begin
+						ctrl_pending[0] <= 0;
+						ctrl_seen[0] <= 0;
+					end
+				end else if (fast_write && fio_addr == 5'h04) begin
+					if (ctrl_seen[0]) begin
+						ctrl_stage[0] <= fio_wdata;
+						ctrl_pending[0] <= 1;
+					end else begin
+						Voice_1_Control[i] <= fio_wdata;
+						ctrl_seen[0] <= 1;
+					end
+				end
+			end
+
+			if (FAST_PORT && EDGE_STAGE) begin
+				if (reset || (cs[i] && we && addr == 5'h0b)) begin
+					ctrl_pending[1] <= 0;
+					ctrl_seen[1] <= 0;
+				end else if (ce_1m) begin
+					if (ctrl_pending[1]) begin
+						Voice_2_Control[i] <= ctrl_stage[1];
+						ctrl_seen[1] <= 1;
+						ctrl_pending[1] <= fast_write && fio_addr == 5'h0b;
+						if (fast_write && fio_addr == 5'h0b) ctrl_stage[1] <= fio_wdata;
+					end else if (fast_write && fio_addr == 5'h0b) begin
+						Voice_2_Control[i] <= fio_wdata;
+						ctrl_pending[1] <= 0;
+						ctrl_seen[1] <= 1;
+					end else begin
+						ctrl_pending[1] <= 0;
+						ctrl_seen[1] <= 0;
+					end
+				end else if (fast_write && fio_addr == 5'h0b) begin
+					if (ctrl_seen[1]) begin
+						ctrl_stage[1] <= fio_wdata;
+						ctrl_pending[1] <= 1;
+					end else begin
+						Voice_2_Control[i] <= fio_wdata;
+						ctrl_seen[1] <= 1;
+					end
+				end
+			end
+
+			if (FAST_PORT && EDGE_STAGE) begin
+				if (reset || (cs[i] && we && addr == 5'h12)) begin
+					ctrl_pending[2] <= 0;
+					ctrl_seen[2] <= 0;
+				end else if (ce_1m) begin
+					if (ctrl_pending[2]) begin
+						Voice_3_Control[i] <= ctrl_stage[2];
+						ctrl_seen[2] <= 1;
+						ctrl_pending[2] <= fast_write && fio_addr == 5'h12;
+						if (fast_write && fio_addr == 5'h12) ctrl_stage[2] <= fio_wdata;
+					end else if (fast_write && fio_addr == 5'h12) begin
+						Voice_3_Control[i] <= fio_wdata;
+						ctrl_pending[2] <= 0;
+						ctrl_seen[2] <= 1;
+					end else begin
+						ctrl_pending[2] <= 0;
+						ctrl_seen[2] <= 0;
+					end
+				end else if (fast_write && fio_addr == 5'h12) begin
+					if (ctrl_seen[2]) begin
+						ctrl_stage[2] <= fio_wdata;
+						ctrl_pending[2] <= 1;
+					end else begin
+						Voice_3_Control[i] <= fio_wdata;
+						ctrl_seen[2] <= 1;
+					end
+				end
 			end
 		end
 	end
 endgenerate
+
+// Independent side-effect-free sampling. Native reads keep their original latch path.
+integer fast_index;
+always_comb begin
+	fast_rd_data = 8'hff;
+	if (FAST_PORT) begin
+		for (fast_index = N-1; fast_index >= 0; fast_index = fast_index-1) begin
+			if (fast_rd_cs[fast_index]) begin
+				case (fast_rd_addr)
+				5'h19: fast_rd_data = fast_index ? pot_x_r : pot_x_l;
+				5'h1a: fast_rd_data = fast_index ? pot_y_r : pot_y_l;
+				5'h1b: fast_rd_data = Misc_Osc3[fast_index];
+				5'h1c: fast_rd_data = Misc_Env3[fast_index];
+				default: fast_rd_data = bus_data[fast_index];
+				endcase
+			end
+		end
+	end
+end
+
 
 wire [15:0] F0;
 wire n = DUAL && state[3];

@@ -28,6 +28,9 @@ add_library(multitini_common STATIC
     firmware/common/core_frontend.c
     firmware/common/core_package.c
     firmware/common/core_link.c
+    firmware/common/c64_features.c
+    firmware/common/c64_reu_host.c
+    firmware/common/c64_debug.c
     firmware/common/fatfs_time.c
     firmware/common/gamepad.c
     firmware/common/gameboy_boot.c
@@ -102,6 +105,16 @@ add_test(NAME gamepad COMMAND test_gamepad)
 add_executable(test_controls tests/host/test_controls.c)
 target_link_libraries(test_controls PRIVATE multitini_common)
 add_test(NAME controls COMMAND test_controls)
+
+add_executable(test_c64_features tests/host/test_c64_features.c)
+target_link_libraries(test_c64_features PRIVATE multitini_common)
+add_test(NAME c64_features COMMAND test_c64_features)
+add_executable(test_c64_reu_host tests/host/test_c64_reu_host.c)
+target_link_libraries(test_c64_reu_host PRIVATE multitini_common)
+add_test(NAME c64_reu_host COMMAND test_c64_reu_host)
+add_executable(test_c64_debug tests/host/test_c64_debug.c)
+target_link_libraries(test_c64_debug PRIVATE multitini_common)
+add_test(NAME c64_debug COMMAND test_c64_debug)
 
 add_executable(test_screenshot tests/host/test_screenshot.c)
 target_link_libraries(test_screenshot PRIVATE multitini_common)
@@ -358,6 +371,9 @@ if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
     add_test(NAME c64_expansion_runtime
         COMMAND "${CMAKE_COMMAND}" -E env "CC=${CMAKE_C_COMPILER}"
             "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/test_c64_expansion_runtime.py")
+    add_test(NAME c64_turbo_runtime
+        COMMAND "${CMAKE_COMMAND}" -E env "CC=${CMAKE_C_COMPILER}"
+            "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/test_c64_turbo_runtime.py")
 endif()
 
 add_executable(test_core_frontend tests/host/test_core_frontend.c)
@@ -522,6 +538,7 @@ add_test(NAME persistent_save COMMAND test_persistent_save)
 
 add_executable(test_supervisor_settings
     tests/host/test_supervisor_settings.c
+    tests/host/settings_schema10_fixture.c
 )
 target_link_libraries(test_supervisor_settings PRIVATE
     xilinx_supervisor_settings_host

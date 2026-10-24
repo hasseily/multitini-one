@@ -1,0 +1,105 @@
+; SPDX-License-Identifier: GPL-3.0-only
+; Measure one-sample end IRQ with CIA2 timer B, chaining the previous KERNAL
+; IRQ vector. Raw ticks include IRQ delivery and I/O access latency.
+!source "boot.inc"
+    sei
+    lda $0314
+    sta old_irq
+    lda $0315
+    sta old_irq+1
+    lda #<audio_irq
+    sta $0314
+    lda #>audio_irq
+    sta $0315
+    lda #0
+    sta $df20
+    sta $df29
+    sta $df2a
+    sta $df35
+    sta $df36
+    sta $df37
+    lda #1+(MODE/16)
+    sta $df2b
+    lda #$ff
+    sta $df3f
+    ldx #0
+next_rate:
+    stx selected_rate
+    lda #0
+    sta $df20
+    sta complete
+    sta $dd0f
+    lda rate_high,x
+    sta $df2e
+    lda rate_low,x
+    sta $df2f
+    lda #$ff
+    sta $dd06
+    sta $dd07
+    lda #$11
+    sta $dd0f
+    lda #5|MODE
+    sta $df20
+    cli
+    ldy #0
+    ldx #0
+wait_irq:
+    lda complete
+    bne report
+    dex
+    bne wait_irq
+    dey
+    bne wait_irq
+    lda #<timeout
+    ldy #>timeout
+    jsr print
+    jmp restore
+report:
+    lda ticks_hi
+    jsr hex_byte
+    lda ticks_lo
+    jsr hex_byte
+    lda #13
+    jsr $ffd2
+    sei
+    ldx selected_rate
+    inx
+    cpx #6
+    bne next_rate
+restore:
+    sei
+    lda #0
+    sta $df20
+    sta $dd0f
+    lda #$ff
+    sta $df3f
+    lda old_irq
+    sta $0314
+    lda old_irq+1
+    sta $0315
+    cli
+    rts
+audio_irq:
+    lda $df20
+    and #1
+    beq chain
+    lda $dd06
+    eor #$ff
+    sta ticks_lo
+    lda $dd07
+    eor #$ff
+    sta ticks_hi
+    lda #1
+    sta $df3f
+    sta complete
+chain:
+    jmp (old_irq)
+old_irq: !word 0
+complete: !byte 0
+selected_rate: !byte 0
+ticks_lo: !byte 0
+ticks_hi: !byte 0
+rate_low: !byte 1,130,<281,<283,<781,$ff
+rate_high: !byte 0,0,>281,>283,>781,$ff
+timeout: !pet "AUDIO IRQ TIMEOUT",13,0
+!source "console.inc"

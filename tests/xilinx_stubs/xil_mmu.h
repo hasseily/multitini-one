@@ -3,5 +3,6 @@
 #define TEST_XILINX_XIL_MMU_H
 #include <stdint.h>
 #define DEVICE_MEMORY UINT32_C(0xC02)
+#define NORM_NONCACHE UINT32_C(0x11DE2)
 void Xil_SetTlbAttributes(uintptr_t address, uint32_t attributes);
 #endif

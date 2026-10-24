@@ -55,6 +55,7 @@ mt_content_type_t mt_content_classify(const char *path)
     }
     if (extension_is(extension, "rom")) return MT_CONTENT_SYSTEM_ROM;
     if (extension_is(extension, "prg")) return MT_CONTENT_PRG;
+    if (extension_is(extension, "reu")) return MT_CONTENT_C64_REU;
     if (extension_is(extension, "d64")) return MT_CONTENT_D64;
     if (extension_is(extension, "g64")) return MT_CONTENT_G64;
     if (extension_is(extension, "crt")) return MT_CONTENT_CRT;
@@ -110,6 +111,7 @@ bool mt_content_may_write_first_release(mt_content_type_t type)
 const char *mt_content_type_name(mt_content_type_t type)
 {
     switch (type) {
+    case MT_CONTENT_C64_REU: return "C64 REU image";
     case MT_CONTENT_SYSTEM_ROM: return "system ROM";
     case MT_CONTENT_PRG: return "PRG";
     case MT_CONTENT_D64: return "D64";

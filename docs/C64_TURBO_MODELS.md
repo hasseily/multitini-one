@@ -2,15 +2,17 @@
 
 Throwaway arithmetic written on 2026-10-23 for [C64_TURBO_DESIGN.md](C64_TURBO_DESIGN.md) and its sub-designs, against commit 5341812 (branch c64-turbo). These are models, not measurements: every figure they produce is tagged [I] where it is used. Nothing here is board-tested.
 
-**How to run.** Save every script below under its heading's name in one folder and run it from that folder with `python <name>.py` (Python 3, standard library only). `final.py` and `rot.py` import `perf.py`; `final_model.py`, `top_rows_model.py`, `rev_fastio_latch.py` and `rev_collision_alias.py` load sibling models from their own folder. `python -I` drops the script's folder from the import path, so `final.py` and `rot.py` fail under it. Random draws use fixed seeds, so the output is repeatable. The outputs shown were regenerated on 2026-10-23 with Python 3.12.0; `top_rows_model.py` and `ntsc_plans.py` match their design-stage runs.
+**How to run.** Save every script below under its heading's name in one folder and run it from that folder with `python <name>.py` (Python 3, standard library only). `final.py` and `rot.py` import `perf.py`; `final_model.py`, `top_rows_model.py`, `rev_fastio_latch.py` and `rev_collision_alias.py` load sibling models from their own folder. `python -I` drops the script's folder from the import path, so `final.py` and `rot.py` fail under it. Random draws use fixed seeds, so the output is repeatable. The outputs shown were regenerated on 2026-10-23 with Python 3.12.0; `top_rows_model.py` matches its design-stage run. `ntsc_plans.py` and its output were replaced on 2026-10-24 (design section 14.4, finding 6): the search hits and constants are unchanged, the N5 verdicts and the labels changed, and check lines were added.
+
+The last six scripts in the table were added on 2026-10-24 with the fixes of design section 14.4. `governor_credit.py` loads `perf.py` and `final.py` by path from its own folder, so it runs under `python -I`; it takes about 40 s because of its exhaustive pattern search. The other five are standalone.
 
 Script comments that name FINAL_DESIGN_v2 mean the v2 draft of the design, which is not kept; the section they cite, 2.13.4, has the same number in C64_TURBO_DESIGN.md. In the table below, FAST_VIC, FAST_SID, BA_LOW_IO and NTSC mean the C64_TURBO_*.md sub-designs of those names.
 
 | Script | Cited by | What it computes |
 |---|---|---|
 | [perf.py](#perfpy) | design §7 | First performance model: grant table, forward cutoff, Amdahl I/O share, scaling beyond 64x. |
-| [final.py](#finalpy) | design §8 | Performance model with rotated grants. Imports `perf.py`. |
-| [rot.py](#rotpy) | design (model list) | Grant-rotation check on the `perf.py` grant table. Imports `perf.py`. |
+| [final.py](#finalpy) | design §8 | Performance model with rotated grants. Imports `perf.py`. Its N = 1 values predate the completion credit of design §2.7 (see governor_credit.py). |
+| [rot.py](#rotpy) | design (model list) | Grant-rotation check on the `perf.py` grant table. Imports `perf.py`. Its N = 1 values predate the completion credit of design §2.7. |
 | [sim.py](#simpy) | design §8 | Reviewer's independent model, including the IRQ-mask starvation check behind the late-acknowledge rule. |
 | [plan_ps.py](#plan_pspy) | design §3.1 | PAL MMCM plan search under Vivado's 1 ps period rounding. |
 | [vicread_model.py](#vicread_modelpy) | design §2.13.2, §2.13.4; FAST_VIC §3.3 | Fast VIC read cost per speed index against the C64U and U64E measurements. |
@@ -22,7 +24,13 @@ Script comments that name FINAL_DESIGN_v2 mean the v2 draft of the design, which
 | [rev_fastio_latch.py](#rev_fastio_latchpy) | design §14.1 finding 1 | Reviewer model that found finding 1 of design section 14.1. Loads `lead_model.py`. |
 | [rev_collision_alias.py](#rev_collision_aliaspy) | design §2.13.4, §14.1 finding 2 | Reviewer model that found finding 2 of design section 14.1. Loads `lead_model.py`. |
 | [balow_calc.py](#balow_calcpy) | design §2.13.8, §8; BA_LOW_IO §3.3, §3.10 | BA-low exposure and #665 arithmetic. |
-| [ntsc_plans.py](#ntsc_planspy) | design §3.1, §13.3, §13.7; NTSC §3.3, §5 | NTSC MMCM plan search and constants. |
+| [ntsc_plans.py](#ntsc_planspy) | design §3.1, §13.3, §13.7; NTSC §3.3, §5 | NTSC MMCM plan search with a ps-exact 2:1 test, and constants. |
+| [governor_credit.py](#governor_creditpy) | design §1.7, §2.7, §10.2 | Forward-completion credit against the old rule and the rejected own-grant rule: I/O loops at N = 1-64, the `meas_c` cart column, the exhaustive periodic-pattern maximum and the governor invariants. Loads `perf.py` and `final.py`. |
+| [nmi_rearm.py](#nmi_rearmpy) | design §2.9, §9 (R35) | NMI hold and rearm compared with no latch, the old set/clear latch and stock, and turbo → exact switch rules (the carry against the wait it replaced): directed cases S0-S12 and fixed-seed fuzz turbo only, with exact/turbo switches, and with a forced switch after pulses on any clock. |
+| [vic_t2_sticky.py](#vic_t2_stickypy) | design §2.13.6, §10.2 (T2); FAST_VIC §3.7, §6 (T2) | T2 sticky-state check: DUT vs collapsed reference vs per-event scoreboard vs stock with separate-cycle writes. |
+| [sid_edge_stage.py](#sid_edge_stagepy) | design §2.13.7, §10.2; FAST_SID §3.4, §6.1 | Literal edge-stage model: kept and merged gate/test pulse cases with expected engine samples. |
+| [svf_persistence.py](#svf_persistencepy) | design §10.2; FAST_SID §6.1 | How long a one-cycle F0, routing or resonance difference lasts in the SID filter integrators. |
+| [preload_cache.py](#preload_cachepy) | design §6.4 (a), §10.2 (X-PRELOAD) | REU image preload against a write-back PS data cache: old flush-after-copy rule, aligned pre-invalidate and non-cacheable mapping. |
 
 
 ## perf.py
@@ -174,7 +182,7 @@ I/O 5.0%: 63x->15.4  80x->16.2  96x->16.8
 
 ## final.py
 
-Performance model with rotated grants. Imports `perf.py`.
+Performance model with rotated grants. Imports `perf.py`. Its N = 1 values in the loop table (index 0 with badline timing disabled) predate the completion credit of design §2.7. With the credit, `governor_credit.py` gives 1:9.00 for `lda $dc01,x/dex/bne`, 1:10.00 for `sta $d020,x/dex/bne`, 1:9.00 for `sta $d020/dex/bne`, 1:4.00 for `unrolled lda $de80` and 1:15.00 for the colour-forwarded fill. The N ≥ 2 values do not change.
 
 ```python
 import random, perf
@@ -264,7 +272,7 @@ I/O 10.0%: N=63 9.4x  N=47 8.9x  N=16 6.5x  N=4 3.2x
 
 ## rot.py
 
-Grant-rotation check on the `perf.py` grant table. Imports `perf.py`.
+Grant-rotation check on the `perf.py` grant table. Imports `perf.py`. Its N = 1 values (`1:3.00` for LLLI, `1:8.00` for the two loops) predate the completion credit of design §2.7, which gives 4.00 and 9.00 (`governor_credit.py`). The N ≥ 2 values do not change.
 
 ```python
 import perf
@@ -1805,13 +1813,16 @@ NTSC: badline repetition 1966.8 Hz (every 8th raster line)
 
 ## ntsc_plans.py
 
-NTSC MMCM plan search and constants.
+NTSC MMCM plan search with a ps-exact 2:1 test, and constants.
 
 ```python
 # NTSC MMCM plan check and search for the C64 CPU island (design-stage arithmetic).
 # c64_clk = VCO/Oc, c64_cpu_clk = VCO/Of with Oc = 2*Of (integer divides only).
 # Physical input: FCLK2 = 33.333333 MHz * 36 / 4 / 2 = 150 MHz (PS7 xci).
 # Vivado model: master clk_fpga_2 = 6.666 ns, generated periods rounded to 1 ps.
+# ps-exact: round(c64) == 2 * round(fast) when each period is rounded on its own.
+# That holds under every tie rule iff frac(fast ps) < 1/4 or > 3/4; the test below
+# keeps 0.02 ps of margin on the fast period (0.04 ps on the c64 period).
 from fractions import Fraction as F
 import math
 
@@ -1834,6 +1845,20 @@ def ps_model(D, M, O):
 def frac(x):
     return x - math.floor(x)
 
+MODES = ("half-even", "half-up", "half-down")
+
+def rnd(x, mode):
+    fl = math.floor(x); d = x - fl
+    if d > F(1, 2): return fl + 1
+    if d < F(1, 2): return fl
+    return {"half-even": fl + (fl % 2), "half-up": fl + 1, "half-down": fl}[mode]
+
+def ps_exact(fr):
+    return fr < F(23, 100) or fr > F(77, 100)
+
+def exact_all_modes(pf):
+    return all(rnd(2 * pf, m) == 2 * rnd(pf, m) for m in MODES)
+
 def report(D, M, Oc, Of, label):
     vco = FIN * M / D
     fc, ff = vco / Oc, vco / Of
@@ -1842,18 +1867,17 @@ def report(D, M, Oc, Of, label):
     print(f"   c64 {float(fc)/1e6:.6f} MHz ({ppm(fc, IDEAL):+.3f} ppm vs 360/11 MHz, {ppm(fc, CONST):+.3f} ppm vs 32.727266)")
     print(f"   fast {float(ff)/1e6:.6f} MHz, period {1e9/float(ff):.4f} ns, half {0.5e9/float(ff):.4f} ns")
     print(f"   vivado model: c64 {float(pc):.4f} ps, fast {float(pf):.4f} ps, frac(fast)={float(frac(pf)):.4f}"
-          f"  -> 2:1 robust={not (F(1,4) - F(1,50) <= frac(pf) <= F(1,4) + F(1,50) or F(3,4) - F(1,50) <= frac(pf) <= F(3,4) + F(1,50))}")
-    for mode in ("half-even", "half-up", "half-down"):
-        def r(x):
-            fl = math.floor(x); d = x - fl
-            if d > F(1, 2): return fl + 1
-            if d < F(1, 2): return fl
-            return {"half-even": fl + (fl % 2), "half-up": fl + 1, "half-down": fl}[mode]
-        print(f"      rounding {mode:9s}: c64 {r(pc)} ps, fast {r(pf)} ps, exact 2:1 = {r(pc) == 2 * r(pf)}")
+          f"  -> ps-exact={ps_exact(frac(pf))}")
+    for mode in MODES:
+        print(f"      rounding {mode:9s}: c64 {rnd(pc, mode)} ps, fast {rnd(pf, mode)} ps, exact 2:1 = {rnd(pc, mode) == 2 * rnd(pf, mode)}")
     return vco
 
 print("== Baseline NTSC plan ==")
 report(5, F(24), 22, 11, "baseline")
+for expr, v in (("6.666*5*22/24", 6.666 * 5 * 22 / 24), ("6.666*22*5/24", 6.666 * 22 * 5 / 24)):
+    d = F(v) - F(305525, 10000)
+    side = "below" if d < 0 else "above"
+    print(f"   IEEE double {expr} = {v!r} ns: {float(d):+.1e} ns, {side} the 30.5525 ns tie")
 print("== Baseline PAL plan (for comparison) ==")
 pal_ideal = F(17_734_475) * 16 / 9      # 4.43361875 MHz x 4 = 17.734475 MHz; x16/9 = 31.527955 MHz
 vco = FIN * F(227, 4) / 9
@@ -1880,18 +1904,31 @@ for D in range(1, 16):
                 continue
             pf = ps_model(D, M, Of)
             fr = frac(pf)
-            robust = not (F(23, 100) <= fr <= F(27, 100) or F(73, 100) <= fr <= F(77, 100))
+            robust = ps_exact(fr)
+            assert ps_model(D, M, Oc) == 2 * pf
+            assert not robust or exact_all_modes(pf)
             hits.append((abs(e), e, D, float(M), Oc, Of, float(vco) / 1e6, float(pf), float(fr), robust,
                          M.denominator != 1, float(vco) >= 1439e6))
 hits.sort()
 for h in hits[:30]:
-    print("  ppm %+8.3f D=%2d M=%7.3f Oc=%3d Of=%2d VCO=%9.3f fast=%.3fps frac=%.3f robust2:1=%s fracM=%s atVCOmax=%s" % h[1:])
-print("  robust (no ps tie), integer M:")
+    print("  ppm %+8.3f D=%2d M=%7.3f Oc=%3d Of=%2d VCO=%9.3f fast=%.3fps frac=%.3f ps-exact=%s fracM=%s atVCOmax=%s" % h[1:])
+print("  ps-exact (margin 0.02 ps), integer M:")
 for h in [h for h in hits if h[9] and not h[10]][:8]:
-    print("  ppm %+8.3f D=%2d M=%7.3f Oc=%3d Of=%2d VCO=%9.3f fast=%.3fps frac=%.3f robust2:1=%s fracM=%s atVCOmax=%s" % h[1:])
-print("  robust (no ps tie), any M:")
+    print("  ppm %+8.3f D=%2d M=%7.3f Oc=%3d Of=%2d VCO=%9.3f fast=%.3fps frac=%.3f ps-exact=%s fracM=%s atVCOmax=%s" % h[1:])
+print("  ps-exact (margin 0.02 ps), any M:")
 for h in [h for h in hits if h[9]][:8]:
-    print("  ppm %+8.3f D=%2d M=%7.3f Oc=%3d Of=%2d VCO=%9.3f fast=%.3fps frac=%.3f robust2:1=%s fracM=%s atVCOmax=%s" % h[1:])
+    print("  ppm %+8.3f D=%2d M=%7.3f Oc=%3d Of=%2d VCO=%9.3f fast=%.3fps frac=%.3f ps-exact=%s fracM=%s atVCOmax=%s" % h[1:])
+
+for h in hits:
+    if h[2] in (7, 8) and h[3] == 48.875:
+        pf = ps_model(h[2], F(391, 8), h[5])
+        rf, rc = rnd(pf, "half-up"), rnd(2 * pf, "half-up")
+        assert all(rnd(pf, m) == rf and rnd(2 * pf, m) == rc for m in MODES)
+        print("  D=%d M=48.875: fast %d ps, c64 %d ps under every tie rule; 2 x fast = %d; tie-free but not ps-exact"
+              % (h[2], rf, rc, 2 * rf))
+grid = [F(k, 1000) for k in range(1000) if F(k, 1000) not in (F(1, 4), F(3, 4))]
+mism = [f for f in grid if (f < F(1, 4) or f > F(3, 4)) != exact_all_modes(15276 + f)]
+print(f"  rule check on a 1/1000 frac grid (ties excluded): exact 2:1 under all modes iff frac < 1/4 or > 3/4; mismatches {len(mism)}")
 
 print("\n== NTSC frame and timing constants ==")
 phi2 = IDEAL / 32
@@ -1914,28 +1951,31 @@ Output:
 baseline: D=5 M=24.0 VCO=720.0000 MHz PFD=30.000 MHz
    c64 32.727273 MHz (+0.000 ppm vs 360/11 MHz, +0.206 ppm vs 32.727266)
    fast 65.454545 MHz, period 15.2778 ns, half 7.6389 ns
-   vivado model: c64 30552.5000 ps, fast 15276.2500 ps, frac(fast)=0.2500  -> 2:1 robust=False
+   vivado model: c64 30552.5000 ps, fast 15276.2500 ps, frac(fast)=0.2500  -> ps-exact=False
       rounding half-even: c64 30552 ps, fast 15276 ps, exact 2:1 = True
       rounding half-up  : c64 30553 ps, fast 15276 ps, exact 2:1 = False
       rounding half-down: c64 30552 ps, fast 15276 ps, exact 2:1 = True
+   IEEE double 6.666*5*22/24 = 30.5525 ns: -1.6e-15 ns, below the 30.5525 ns tie
+   IEEE double 6.666*22*5/24 = 30.552500000000006 ns: +5.5e-15 ns, above the 30.5525 ns tie
 == Baseline PAL plan (for comparison) ==
    PAL c64 31.527778 MHz, -5.64 ppm vs 17.734475x16/9
 
 == NTSC search: integer Of, Oc = 2 Of, |ppm vs 360/11| <= 60 ==
-  ppm   +0.000 D= 5 M= 24.000 Oc= 22 Of=11 VCO=  720.000 fast=15276.250ps frac=0.250 robust2:1=False fracM=False atVCOmax=False
-  ppm   +0.000 D= 5 M= 48.000 Oc= 44 Of=22 VCO= 1440.000 fast=15276.250ps frac=0.250 robust2:1=False fracM=False atVCOmax=True
-  ppm   +0.000 D=10 M= 48.000 Oc= 22 Of=11 VCO=  720.000 fast=15276.250ps frac=0.250 robust2:1=False fracM=False atVCOmax=False
-  ppm   +0.000 D=11 M= 48.000 Oc= 20 Of=10 VCO=  654.545 fast=15276.250ps frac=0.250 robust2:1=False fracM=False atVCOmax=False
-  ppm  +46.503 D= 7 M= 48.875 Oc= 32 Of=16 VCO= 1047.321 fast=15275.540ps frac=0.540 robust2:1=True fracM=True atVCOmax=False
-  ppm  +46.503 D= 8 M= 48.875 Oc= 28 Of=14 VCO=  916.406 fast=15275.540ps frac=0.540 robust2:1=True fracM=True atVCOmax=False
-  ppm  -48.225 D= 6 M= 47.125 Oc= 36 Of=18 VCO= 1178.125 fast=15276.987ps frac=0.987 robust2:1=True fracM=True atVCOmax=False
-  ppm  -48.225 D= 9 M= 47.125 Oc= 24 Of=12 VCO=  785.417 fast=15276.987ps frac=0.987 robust2:1=True fracM=True atVCOmax=False
-  robust (no ps tie), integer M:
-  robust (no ps tie), any M:
-  ppm  +46.503 D= 7 M= 48.875 Oc= 32 Of=16 VCO= 1047.321 fast=15275.540ps frac=0.540 robust2:1=True fracM=True atVCOmax=False
-  ppm  +46.503 D= 8 M= 48.875 Oc= 28 Of=14 VCO=  916.406 fast=15275.540ps frac=0.540 robust2:1=True fracM=True atVCOmax=False
-  ppm  -48.225 D= 6 M= 47.125 Oc= 36 Of=18 VCO= 1178.125 fast=15276.987ps frac=0.987 robust2:1=True fracM=True atVCOmax=False
-  ppm  -48.225 D= 9 M= 47.125 Oc= 24 Of=12 VCO=  785.417 fast=15276.987ps frac=0.987 robust2:1=True fracM=True atVCOmax=False
+  ppm   +0.000 D= 5 M= 24.000 Oc= 22 Of=11 VCO=  720.000 fast=15276.250ps frac=0.250 ps-exact=False fracM=False atVCOmax=False
+  ppm   +0.000 D= 5 M= 48.000 Oc= 44 Of=22 VCO= 1440.000 fast=15276.250ps frac=0.250 ps-exact=False fracM=False atVCOmax=True
+  ppm   +0.000 D=10 M= 48.000 Oc= 22 Of=11 VCO=  720.000 fast=15276.250ps frac=0.250 ps-exact=False fracM=False atVCOmax=False
+  ppm   +0.000 D=11 M= 48.000 Oc= 20 Of=10 VCO=  654.545 fast=15276.250ps frac=0.250 ps-exact=False fracM=False atVCOmax=False
+  ppm  +46.503 D= 7 M= 48.875 Oc= 32 Of=16 VCO= 1047.321 fast=15275.540ps frac=0.540 ps-exact=False fracM=True atVCOmax=False
+  ppm  +46.503 D= 8 M= 48.875 Oc= 28 Of=14 VCO=  916.406 fast=15275.540ps frac=0.540 ps-exact=False fracM=True atVCOmax=False
+  ppm  -48.225 D= 6 M= 47.125 Oc= 36 Of=18 VCO= 1178.125 fast=15276.987ps frac=0.987 ps-exact=True fracM=True atVCOmax=False
+  ppm  -48.225 D= 9 M= 47.125 Oc= 24 Of=12 VCO=  785.417 fast=15276.987ps frac=0.987 ps-exact=True fracM=True atVCOmax=False
+  ps-exact (margin 0.02 ps), integer M:
+  ps-exact (margin 0.02 ps), any M:
+  ppm  -48.225 D= 6 M= 47.125 Oc= 36 Of=18 VCO= 1178.125 fast=15276.987ps frac=0.987 ps-exact=True fracM=True atVCOmax=False
+  ppm  -48.225 D= 9 M= 47.125 Oc= 24 Of=12 VCO=  785.417 fast=15276.987ps frac=0.987 ps-exact=True fracM=True atVCOmax=False
+  D=7 M=48.875: fast 15276 ps, c64 30551 ps under every tie rule; 2 x fast = 30552; tie-free but not ps-exact
+  D=8 M=48.875: fast 15276 ps, c64 30551 ps under every tie rule; 2 x fast = 30552; tie-free but not ps-exact
+  rule check on a 1/1000 frac grid (ties excluded): exact 2:1 under all modes iff frac < 1/4 or > 3/4; mismatches 0
 
 == NTSC frame and timing constants ==
   phi2 1022727.273 Hz; line 65 cycles = 63.556 us; frame 65x263 = 17095 cycles = 59.8261 Hz
@@ -1948,4 +1988,1454 @@ baseline: D=5 M=24.0 VCO=720.0000 MHz PFD=30.000 MHz
   xahmol probe scaled to NTSC lines (63/65): 92 -> 89.2, 21 -> 20.4, 16 -> 15.5
   fast clocks per native cycle: 64.000000
   IIgs fast clock 57.272728 MHz period 17.460 ns vs NTSC island 15.278 ns
+```
+
+## governor_credit.py
+
+Forward-completion credit against the old rule and the rejected own-grant rule: I/O loops at N = 1-64, the `meas_c` cart column, the exhaustive periodic-pattern maximum and the governor invariants. Loads `perf.py` and `final.py`.
+
+```python
+# Completion credit in the speed governor (design section 2.7), design stage [I].
+# Loads final.py's grant table (gr) and forward rule; final.py imports perf.py.
+# Both are copied verbatim from C64_TURBO_MODELS.md into this script's folder and
+# loaded by path from here, with their own printed output discarded, so this
+# script also runs under python -I.
+#
+# Rules (64 fast clocks per phi2, f = 0..63; as final.py):
+#  L  granted local cycle: enable at the end of the first granted clock at or
+#     after the ready clock; the next cycle is ready one clock later.
+#  F  phi2 forward requested at the ready clock f_r: it runs in this native
+#     cycle if f_r <= 30, else in the next; its completion enable is at end
+#     f = 4 of the following frame, and the next cycle is ready at f = 5.
+# Completion enable variants:
+#  design  no grant term (final.py as written).
+#  credit  needs fwd_credit_q | grant_q. The credit is set by any grant in
+#          [f_r, completion clock]; without it the enable waits for the next grant.
+#  naive   waits for the first grant at or after f = 4 (rejected).
+# Not modelled: ACKWAIT/DMA_WAIT exits (later than f = 4, so the credit is set
+# at every N), and the credit clear on a mode change (single mode here).
+import contextlib, importlib.util, io, itertools, os, sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def load(name):
+    spec = importlib.util.spec_from_file_location(name, os.path.join(HERE, name + '.py'))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    with contextlib.redirect_stdout(io.StringIO()):
+        spec.loader.exec_module(mod)
+    return mod
+
+
+perf = load('perf')
+final = load('final')
+CUT, RES = 30, 5
+_tables = {}
+
+
+def grants(N):
+    if N not in _tables:
+        _tables[N] = final.gr(N)
+    return _tables[N]
+
+
+def run(seq, N, mode='design', t=RES, enables=None):
+    """Return the ready clock after seq; append each enable clock to enables."""
+    m = grants(N)
+    for c in seq:
+        if c == 'L':
+            while not m[t % 64]:
+                t += 1
+            en = t
+        else:
+            req = t
+            f = t % 64
+            b = t - f
+            en = (b + 64 if f <= CUT else b + 128) + RES - 1   # end f = 4
+            if mode == 'credit':
+                if not any(m[x % 64] for x in range(req, en + 1)):
+                    while not m[en % 64]:
+                        en += 1
+            elif mode == 'naive':
+                while not m[en % 64]:
+                    en += 1
+        if enables is not None:
+            enables.append(en)
+        t = en + 1
+    return t
+
+
+def phi2_per(seq, N, mode, reps=300):
+    """phi2 per repetition, computed as final.py prints it."""
+    return run(list(seq) * reps, N, mode) / reps / 64.0
+
+
+def steady_rate(pat, N, mode):
+    """Exact long-run CPU cycles per phi2 of a repeated pattern (cycle detection)."""
+    seen = {}
+    t = RES
+    k = 0
+    while True:
+        key = t % 64
+        if key in seen:
+            k0, t0 = seen[key]
+            return len(pat) * (k - k0) * 64.0 / (t - t0)
+        seen[key] = (k, t)
+        t = run(pat, N, mode, t)
+        k += 1
+
+
+def window_and_prefix(pat, N, mode, ops=1536):
+    """Max enables in any 64-clock window, and the largest excess of enables over grants so far."""
+    reps = max(1, ops // len(pat))
+    ens = []
+    run(list(pat) * reps, N, mode, RES, ens)
+    m = grants(N)
+    wmax = 0
+    j = 0
+    for i, e in enumerate(ens):
+        while ens[j] < e - 63:
+            j += 1
+        wmax = max(wmax, i - j + 1)
+    cum = list(itertools.accumulate(1 if x else 0 for x in m))   # grants in 0..s
+    excess = 0
+    for i, e in enumerate(ens):
+        g = (e // 64) * sum(m) + cum[e % 64]                        # grants in clocks 0..e
+        excess = max(excess, i + 1 - g)
+    return wmax, excess
+
+
+NS = [1, 2, 3, 6, 16, 32, 48, 64]
+MODES = ('design', 'credit', 'naive')
+ROWS = [('unrolled lda $de80 (LLLF)', 'LLLF'),
+        ('lda $dc01,x / dex / bne', 'LLLFLLLLL'),
+        ('sta $de00,x / dex / bne', 'LLLFFLLLLL'),
+        ('FF (two back-to-back forwards)', 'FF'),
+        ('inc $de00 (RMW on I/O, LLLFFF)', 'LLLFFF'),
+        ('RAM lda abs,x / dex / bne', 'LLLLLLLLL')]
+
+print('== Check: design mode reproduces final.run for every row and N ==')
+ok = all(run(list(v) * 300, N, 'design') == final.run(list(v) * 300, N)
+         for _, v in ROWS for N in NS + list(final.TABLE))
+print('identical:', ok)
+
+print('\n== phi2 per iteration (per pair for FF) ==')
+for name, v in ROWS:
+    print(name)
+    for mode in MODES:
+        print('  %-7s' % mode, ' '.join('%d:%.2f' % (N, phi2_per(v, N, mode)) for N in NS))
+
+print('\n== meas_c cart column (unrolled lda $de80), phi2 per access, N = 1..8 ==')
+print('U64E reference [M, gist839 meas_c]: 2 at 3-5 MHz, 1 at 6 MHz and above; no 2 MHz figure, none at 1 MHz with badline timing disabled')
+for mode in MODES:
+    print('  %-7s' % mode, ' '.join('%d:%.2f' % (N, phi2_per('LLLF', N, mode)) for N in (1, 2, 3, 4, 6, 8)))
+
+print('\n== N = 1 trace, unrolled lda $de80 (op, frame, f of the enable) ==')
+for mode in ('design', 'credit'):
+    ens = []
+    run(list('LLLF') * 2, 1, mode, RES, ens)
+    print('%-7s' % mode, [(op, e // 64, e % 64) for op, e in zip('LLLF' * 2, ens)])
+
+print('\n== N = 1 (index 0, badline timing disabled): long-run CPU cycles per phi2, stock = 1.000 ==')
+for name, v in ROWS[:3] + [('lda ($fb),y from I/O (LLLLF)', 'LLLLF'),
+                           ('lda $dc0d / and # / bne poll', 'LLLFLLLL')] + ROWS[4:]:
+    if v == 'FF':
+        continue
+    print('%-32s' % name, '  '.join('%s %.3f' % (md, steady_rate(v, 1, md)) for md in MODES))
+
+print('\n== final.py loops at N = 1: design (as final.py prints) -> credit ==')
+for name, v in final.loops.items():
+    print('%-34s 1:%.2f -> 1:%.2f' % (name, phi2_per(v, 1, 'design'), phi2_per(v, 1, 'credit')))
+same = all(phi2_per(v, N, 'credit') == phi2_per(v, N, 'design')
+           for v in final.loops.values() for N in list(final.TABLE)[1:] + [48, 64])
+print('credit equals design for every final.py loop at every N >= 2 (final.TABLE, 48, 64):', same)
+
+print('\n== Credit always set at N >= 2: every forward window [f_r, completion] holds a grant ==')
+always = []
+for N in range(1, 65):
+    m = grants(N)
+    miss = [fr for fr in range(64)
+            if not any(m[x % 64] for x in range(fr, (64 if fr <= CUT else 128) + RES))]
+    if N == 1:
+        print('N = 1: no grant in the window for f_r =', '%d..%d' % (miss[0], miss[-1]))
+    else:
+        always.append(not miss)
+print('N = 2..64: always set:', all(always))
+
+print('\n== Max long-run CPU cycles per phi2 over periodic L/F patterns, length 1..10 ==')
+pats = [''.join(p) for n in range(1, 11) for p in itertools.product('LF', repeat=n)]
+for N in [1, 2, 3, 4, 6, 8, 12, 16, 32, 48, 64]:
+    out = []
+    for mode in ('design', 'credit'):
+        best, arg = 0.0, ''
+        for p in pats:
+            r = steady_rate(p, N, mode)
+            if r > best + 1e-9:
+                best, arg = r, p
+        out.append('%s %.3f (%s)' % (mode, best, arg))
+    print('N=%2d  ' % N + '  '.join(out))
+
+print('\n== Governor invariants over the same patterns (about 1536 bus cycles each; excess = enables minus grants since start) ==')
+for N in [1, 2, 3, 6, 16, 64]:
+    out = []
+    for mode in ('design', 'credit'):
+        w, x = 0, 0
+        for p in pats:
+            wm, ex = window_and_prefix(p, N, mode)
+            w = max(w, wm)
+            x = max(x, ex)
+        out.append('%s: window max %d (limit N+1 = %d), enables ahead of grants %d'
+                   % (mode, w, N + 1, x))
+    print('N=%2d  ' % N + ' | '.join(out))
+```
+
+Output:
+
+```text
+== Check: design mode reproduces final.run for every row and N ==
+identical: True
+
+== phi2 per iteration (per pair for FF) ==
+unrolled lda $de80 (LLLF)
+  design  1:3.00 2:2.00 3:2.00 6:1.00 16:1.00 32:1.00 48:1.00 64:1.00
+  credit  1:4.00 2:2.00 3:2.00 6:1.00 16:1.00 32:1.00 48:1.00 64:1.00
+  naive   1:4.00 2:3.00 3:2.00 6:2.00 16:1.00 32:1.00 48:1.00 64:1.00
+lda $dc01,x / dex / bne
+  design  1:8.00 2:5.00 3:3.00 6:2.00 16:2.00 32:1.00 48:1.00 64:1.00
+  credit  1:9.00 2:5.00 3:3.00 6:2.00 16:2.00 32:1.00 48:1.00 64:1.00
+  naive   1:9.00 2:5.00 3:4.00 6:2.00 16:2.00 32:1.00 48:1.00 64:1.00
+sta $de00,x / dex / bne
+  design  1:9.00 2:6.00 3:4.00 6:3.00 16:3.00 32:2.00 48:2.00 64:2.00
+  credit  1:10.00 2:6.00 3:4.00 6:3.00 16:3.00 32:2.00 48:2.00 64:2.00
+  naive   1:10.00 2:6.00 3:5.00 6:3.00 16:3.00 32:2.00 48:2.00 64:2.00
+FF (two back-to-back forwards)
+  design  1:2.00 2:2.00 3:2.00 6:2.00 16:2.00 32:2.00 48:2.00 64:2.00
+  credit  1:2.00 2:2.00 3:2.00 6:2.00 16:2.00 32:2.00 48:2.00 64:2.00
+  naive   1:2.00 2:2.00 3:2.00 6:2.00 16:2.00 32:2.00 48:2.00 64:2.00
+inc $de00 (RMW on I/O, LLLFFF)
+  design  1:5.00 2:4.00 3:4.00 6:3.00 16:3.00 32:3.00 48:3.00 64:3.00
+  credit  1:6.00 2:4.00 3:4.00 6:3.00 16:3.00 32:3.00 48:3.00 64:3.00
+  naive   1:6.00 2:5.00 3:4.00 6:4.00 16:3.00 32:3.00 48:3.00 64:3.00
+RAM lda abs,x / dex / bne
+  design  1:9.00 2:4.50 3:3.00 6:1.50 16:0.56 32:0.28 48:0.19 64:0.14
+  credit  1:9.00 2:4.50 3:3.00 6:1.50 16:0.56 32:0.28 48:0.19 64:0.14
+  naive   1:9.00 2:4.50 3:3.00 6:1.50 16:0.56 32:0.28 48:0.19 64:0.14
+
+== meas_c cart column (unrolled lda $de80), phi2 per access, N = 1..8 ==
+U64E reference [M, gist839 meas_c]: 2 at 3-5 MHz, 1 at 6 MHz and above; no 2 MHz figure, none at 1 MHz with badline timing disabled
+  design  1:3.00 2:2.00 3:2.00 4:2.00 6:1.00 8:1.00
+  credit  1:4.00 2:2.00 3:2.00 4:2.00 6:1.00 8:1.00
+  naive   1:4.00 2:3.00 3:2.00 4:2.00 6:2.00 8:1.00
+
+== N = 1 trace, unrolled lda $de80 (op, frame, f of the enable) ==
+design  [('L', 0, 5), ('L', 1, 5), ('L', 2, 5), ('F', 3, 4), ('L', 3, 5), ('L', 4, 5), ('L', 5, 5), ('F', 6, 4)]
+credit  [('L', 0, 5), ('L', 1, 5), ('L', 2, 5), ('F', 3, 5), ('L', 4, 5), ('L', 5, 5), ('L', 6, 5), ('F', 7, 5)]
+
+== N = 1 (index 0, badline timing disabled): long-run CPU cycles per phi2, stock = 1.000 ==
+unrolled lda $de80 (LLLF)        design 1.333  credit 1.000  naive 1.000
+lda $dc01,x / dex / bne          design 1.125  credit 1.000  naive 1.000
+sta $de00,x / dex / bne          design 1.111  credit 1.000  naive 1.000
+lda ($fb),y from I/O (LLLLF)     design 1.250  credit 1.000  naive 1.000
+lda $dc0d / and # / bne poll     design 1.143  credit 1.000  naive 1.000
+inc $de00 (RMW on I/O, LLLFFF)   design 1.200  credit 1.000  naive 1.000
+RAM lda abs,x / dex / bne        design 1.000  credit 1.000  naive 1.000
+
+== final.py loops at N = 1: design (as final.py prints) -> credit ==
+RAM lda abs,x/dex/bne              1:9.00 -> 1:9.00
+lda $dc01,x/dex/bne                1:8.00 -> 1:9.00
+sta $d020,x/dex/bne                1:9.00 -> 1:10.00
+sta $d020/dex/bne                  1:8.00 -> 1:9.00
+unrolled lda $de80                 1:3.00 -> 1:4.00
+fill $0400,x+$d800,x colour fwd    1:14.00 -> 1:15.00
+fill colour local                  1:15.00 -> 1:15.00
+credit equals design for every final.py loop at every N >= 2 (final.TABLE, 48, 64): True
+
+== Credit always set at N >= 2: every forward window [f_r, completion] holds a grant ==
+N = 1: no grant in the window for f_r = 6..30
+N = 2..64: always set: True
+
+== Max long-run CPU cycles per phi2 over periodic L/F patterns, length 1..10 ==
+N= 1  design 2.000 (LF)  credit 1.000 (L)
+N= 2  design 2.000 (L)  credit 2.000 (L)
+N= 3  design 3.000 (L)  credit 3.000 (L)
+N= 4  design 4.000 (L)  credit 4.000 (L)
+N= 6  design 6.000 (L)  credit 6.000 (L)
+N= 8  design 8.000 (L)  credit 8.000 (L)
+N=12  design 12.000 (L)  credit 12.000 (L)
+N=16  design 16.000 (L)  credit 16.000 (L)
+N=32  design 32.000 (L)  credit 32.000 (L)
+N=48  design 48.000 (L)  credit 48.000 (L)
+N=64  design 64.000 (L)  credit 64.000 (L)
+
+== Governor invariants over the same patterns (about 1536 bus cycles each; excess = enables minus grants since start) ==
+N= 1  design: window max 2 (limit N+1 = 2), enables ahead of grants 768 | credit: window max 2 (limit N+1 = 2), enables ahead of grants 0
+N= 2  design: window max 3 (limit N+1 = 3), enables ahead of grants 0 | credit: window max 3 (limit N+1 = 3), enables ahead of grants 0
+N= 3  design: window max 4 (limit N+1 = 4), enables ahead of grants 0 | credit: window max 4 (limit N+1 = 4), enables ahead of grants 0
+N= 6  design: window max 7 (limit N+1 = 7), enables ahead of grants 0 | credit: window max 7 (limit N+1 = 7), enables ahead of grants 0
+N=16  design: window max 16 (limit N+1 = 17), enables ahead of grants 0 | credit: window max 16 (limit N+1 = 17), enables ahead of grants 0
+N=64  design: window max 64 (limit N+1 = 65), enables ahead of grants 0 | credit: window max 64 (limit N+1 = 65), enables ahead of grants 0
+```
+
+## nmi_rearm.py
+
+NMI hold and rearm compared with no latch, the old set/clear latch and stock, and turbo → exact switch rules (the carry against the wait it replaced): directed cases S0-S12 and fixed-seed fuzz turbo only, with exact/turbo switches, and with a forced switch after pulses on any clock.
+
+```python
+# nmi_rearm.py: NMI edges across turbo stalls (C64_TURBO_DESIGN.md section 2.9).
+# Compares no latch, the v3 draft's set/clear latch, the hold-and-rearm rule
+# and stock (6510 / MiSTer exact mode) on directed cases and fixed-seed fuzz,
+# and compares turbo->exact switch rules.
+#
+# Time base: fast clock t, 64 per native cycle, f = t % 64. CIA irq_n changes
+# at e_0 (end f=1), so a native change is visible from t = 64*c + 2. The island
+# registers the native term with a 2-clock lag (design section 5.9).
+# T65 NMI detector (T65.vhd:784-789): on each Enable, an edge if the previous
+# sample was 1 and the shown value is 0; the shown value becomes the previous
+# sample. Only one previous sample is kept.
+# Stock samples once per native cycle at R (end f=63), RDY-held cycles
+# included (multitini_c64_cpu_scheduler.vhd:40-43). NMIAct is one flag, so
+# edges while the CPU is halted with an NMI pending merge into one NMI.
+# Exact mode in the island: one enable at end f=0 with B0 = the native term at
+# the previous R.
+import bisect
+import random
+
+F = 64
+LAG = 2
+
+
+class Island:
+    """NMI path from the registered native term to the T65.
+
+    variant: 'none'      live registered term at every enable;
+             'latch'     v3 draft: a fall sets hold; while hold = 1 the T65
+                         sees 0; hold clears after an enable that showed 0;
+             'rearm'     design rule (nmi_seen_q, fell_q, force_q); an enable
+                         counts a fall on its own clock and its clear wins;
+             'setwins'   ablation: an enable ignores a fall on its own clock,
+                         and that fall survives the enable's clear;
+             'clearwins' ablation: an enable ignores a fall on its own clock,
+                         and the enable's clear drops it.
+    switch:  'carry'  design rule: turbo->exact at the first turbo enable
+                      boundary, for every cause; fell_q and force_q are kept,
+                      and the first exact enables show the rule instead of
+                      B0 (0 if force_q; else 0 if fell_q and nmi_seen_q = 1;
+                      else 1 and set force_q if fell_q; else B0) until one
+                      shows B0 and leaves force_q = 0; then both are held at
+                      0. Exact->turbo keeps nmi_seen_q, and fell_q and
+                      force_q pass to the turbo rule unchanged;
+             'two'    ablation: as 'carry', but the rule stops after at most
+                      two exact enables (the second only to show the forced
+                      0), whatever B0 shows;
+             'tclear' ablation: as 'carry', but exact->turbo clears fell_q
+                      and force_q;
+             'wait'   ablation (the rule the carry replaced): turbo->exact only
+                      at a turbo enable that showed the live registered term
+                      and left force_q = 0;
+             'force0' ablation: turbo->exact at any enable with force_q = 0
+                      after it (a held 0 may be the last turbo sample);
+             'nowait' ablation: turbo->exact at once, force_q and fell_q
+                      dropped, B0 from the first exact enable;
+             'seen1'  ablation: as 'carry', but exact->turbo starts with
+                      nmi_seen_q = 1.
+    """
+
+    def __init__(self, variant, last0, switch='carry'):
+        self.v = variant
+        self.sw = switch
+        self.t65 = last0   # T65 NMI_n_o
+        self.seen = last0  # nmi_seen_q
+        self.fell = 0      # fell_q
+        self.force = 0     # force_q
+        self.hold = 0      # v3 nmi_hold_q
+        self.carry = False  # exact enables still finish fell_q / force_q
+        self.carry_n = 0    # exact enables taken from the rule, this carry
+        self.carry_max = 0
+        self.live = True   # the last turbo enable showed the live term
+        self.due = False   # a turbo->exact switch is due
+        self.edges = []
+
+    def shown_turbo(self, fall, live):
+        v = self.v
+        self.live = True
+        if v == 'none':
+            return live
+        if v == 'latch':
+            self.live = not self.hold
+            p = 0 if self.hold else live
+            self.hold = 1 if fall else (0 if p == 0 else self.hold)
+            return p
+        fell = self.fell or (fall and v == 'rearm')
+        if self.force:
+            p, self.force = 0, 0
+        elif fell and self.seen:
+            p = 0
+        elif fell:
+            p, self.force = 1, 1
+        else:
+            p = live
+        self.live = p == live and not self.force
+        self.fell = 1 if (fall and v == 'setwins') else 0
+        return p
+
+    def shown_exact(self, fall, b0):
+        """The carry: exact enables after turbo->exact show the rule until one
+        shows B0 and leaves force_q = 0 ('two': at most two enables)."""
+        if not self.carry:
+            return b0
+        fell = self.fell or fall
+        if self.force:
+            p, self.force = 0, 0
+        elif fell and self.seen:
+            p = 0
+        elif fell:
+            p, self.force = 1, 1
+        else:
+            p = b0
+        self.fell = 0
+        self.carry_n += 1
+        self.carry_max = max(self.carry_max, self.carry_n)
+        if self.sw == 'two':
+            self.carry = bool(self.force)
+        else:
+            self.carry = bool(self.force) or p != b0
+        return p
+
+    def idle(self, fall):
+        if fall:
+            self.fell = 1
+            self.hold = 1
+
+    def sample(self, t, p):
+        if self.t65 == 1 and p == 0:
+            self.edges.append(t)
+        self.t65 = p
+        self.seen = p
+
+
+def wave(changes, init, T):
+    ch, v, out = dict(changes), init, []
+    for t in range(T):
+        v = ch.get(t, v)
+        out.append(v)
+    return out
+
+
+def registered(native, init):
+    return [init] * LAG + native[:-LAG]
+
+
+def e0(c):
+    return c * F + 2
+
+
+def run(island, native, init, turbo_en, requests=None, mode0='turbo'):
+    """Returns (T65 edge times, enable times, late). turbo_en(t): grant/stall
+    pattern in turbo. requests: {t: mode} requested from clock t on.
+    late: turbo enables that ran while a turbo->exact switch was due."""
+    requests = requests or {}
+    reg = registered(native, init)
+    mode = want = mode0
+    start = F if mode0 == 'exact' else 0
+    ens, late = [], 0
+    sw = island.sw
+    for t in range(len(native)):
+        want = requests.get(t, want)
+        fall = t > 0 and reg[t - 1] == 1 and reg[t] == 0
+        if mode == 'turbo':
+            if t >= start and turbo_en(t):
+                if want == 'exact' and island.due:
+                    late += 1
+                island.sample(t, island.shown_turbo(fall, reg[t]))
+                ens.append(t)
+                ok = {'nowait': True, 'carry': True, 'two': True, 'seen1': True,
+                      'tclear': True, 'force0': island.force == 0}.get(sw, island.live)
+                island.due = want == 'exact'
+                if want == 'exact' and ok:
+                    mode = 'exact'
+                    island.due = False
+                    island.hold = 0
+                    if sw in ('carry', 'two', 'seen1', 'tclear'):
+                        island.carry = True
+                        island.carry_n = 0
+                    else:
+                        island.fell = island.force = 0
+                    c = t // F
+                    start = (c + 1) * F if t % F < 28 else (c + 2) * F
+            else:
+                island.idle(fall)
+        elif t >= start and t % F == 0:
+            island.sample(t, island.shown_exact(fall, native[t - 1]))  # B0 at R
+            ens.append(t)
+            if want == 'turbo':
+                mode = 'turbo'
+                island.carry = False
+                if sw not in ('carry', 'two', 'seen1'):
+                    island.fell = island.force = 0
+                island.hold = 0
+                if sw == 'seen1':
+                    island.seen = 1
+                start = t + 5
+        elif island.carry:
+            island.idle(fall)
+        else:
+            island.fell = island.force = 0
+    return island.edges, ens, late
+
+
+
+def stock(native, halted, last0):
+    """NMIs a 6510 / exact mode takes: one sample per native cycle at R.
+    halted(c): RDY holds the CPU in cycle c; a second edge merges."""
+    last, pend, taken = last0, 0, 0
+    for c in range(len(native) // F):
+        v = native[c * F + F - 1]
+        if last == 1 and v == 0 and not pend:
+            taken += 1
+            pend = 1
+        last = v
+        if not halted(c):
+            pend = 0
+    return taken
+
+
+def stall_en(lo, hi):
+    return lambda t: not (lo < t < hi)
+
+
+def stall_halt(lo, hi):
+    return lambda c: lo < c * F and (c + 1) * F <= hi
+
+
+def case(name, changes, init, cols, turbo_en, halted, T=80 * F,
+         requests=None, mode0='turbo'):
+    native = wave(changes, init, T)
+    out = []
+    for label, v, sw in cols:
+        isl = Island(v, init, sw)
+        edges, _, late = run(isl, native, init, turbo_en, requests, mode0)
+        out.append(f"{label}={len(edges)}" + (f" L{late}" if requests else ''))
+    out.append(f"stock={stock(native, halted, init)}")
+    print(f"{name:50s} " + ' '.join(out))
+
+
+BASE = (('none', 'none', 'wait'), ('latch', 'latch', 'wait'),
+        ('rearm', 'rearm', 'carry'))
+
+print("NMIs taken (T65 edges). none = no latch, latch = v3 draft set/clear latch,")
+print("rearm = design rule, stock = 6510 / exact mode with halt merging.")
+print("Switch rules: carry = design rule, wait = the rule it replaced.")
+print("L = turbo enables that ran while a turbo->exact switch was due.")
+print()
+print("Directed cases")
+H = (10 * F, 50 * F)  # 40-cycle BA halt
+case("S0 1-cycle pulse in halt, last sample high",
+     [(e0(20), 0), (e0(21), 1)], 1, BASE, stall_en(*H), stall_halt(*H))
+case("S1 last low; rise, fall in halt",
+     [(e0(20), 1), (e0(30), 0)], 0, BASE, stall_en(*H), stall_halt(*H))
+case("S1b last low; rise, 1-cycle low, rise in halt",
+     [(e0(20), 1), (e0(30), 0), (e0(31), 1)], 0, BASE, stall_en(*H), stall_halt(*H))
+
+# CIA2: the handler's LDA $DD0D loads at e_15 of cycle X (BA high) and retires
+# at R(X). CIA2 releases irq_n at e_0(X+1) (mos6526.v:518-526); a refresh-cycle
+# badline drops BA at the same edge, so halt_q withholds the completion enable
+# until BA is high again about 40 cycles later. Badline timing off: ACKWAIT
+# exit at about end f=13 of X+1.
+X = 10
+LAST = X * F + 20                 # last enable before the forward
+ON = (X + 41) * F + 5             # completion after the BA halt
+OFF = (X + 1) * F + 13            # completion after ACKWAIT
+cia2 = [(e0(X + 1), 1), (e0(31), 0)]   # second CIA2 source fires in cycle 30
+uf = [(e0(X + 1), 1), (e0(X + 2), 0)]  # underflow on the acknowledge edge
+case("S2 CIA2 ack, BA halt, second event (timing on)",
+     cia2, 0, BASE, stall_en(LAST, ON), stall_halt(X * F + F, ON))
+case("S2' same, badline timing off",
+     cia2, 0, BASE, stall_en(LAST, OFF), stall_halt(LAST, OFF))
+case("S2c underflow on the ack edge (timing on)",
+     uf, 0, BASE, stall_en(LAST, ON), stall_halt(X * F + F, ON))
+case("S2c' same, badline timing off",
+     uf, 0, BASE, stall_en(LAST, OFF), stall_halt(LAST, OFF))
+case("S3 two 1-cycle pulses in one halt",
+     [(e0(20), 0), (e0(21), 1), (e0(25), 0), (e0(26), 1)], 1, BASE,
+     stall_en(*H), stall_halt(*H))
+case("S4 plain fall, no stall", [(e0(20), 0)], 1, BASE,
+     stall_en(0, 0), stall_halt(0, 0))
+
+SAME = (('rearm', 'rearm', 'carry'), ('setwins', 'setwins', 'carry'),
+        ('clearwins', 'clearwins', 'carry'), ('latch', 'latch', 'wait'))
+case("S5a fall on an enable's clock, last high",
+     [(e0(20), 0)], 1, SAME, stall_en(0, 0), stall_halt(0, 0))
+TF = e0(40) + LAG                 # registered fall lands on the first enable
+case("S5b last low; rise in halt; fall on resume clock",
+     [(e0(20), 1), (e0(40), 0)], 0, SAME, stall_en(10 * F, TF), stall_halt(10 * F, TF))
+
+SW = (('carry', 'rearm', 'carry'), ('two', 'rearm', 'two'),
+      ('wait', 'rearm', 'wait'), ('force0', 'rearm', 'force0'),
+      ('nowait', 'rearm', 'nowait'))
+case("S6 rearm pending at turbo->exact (pulses)",
+     [(e0(15), 1), (e0(30), 0), (e0(31), 1)], 0, SW, stall_en(*H), stall_halt(*H),
+     requests={20 * F: 'exact'})
+SW7 = (('carry', 'rearm', 'carry'), ('seen1', 'rearm', 'seen1'))
+case("S7 exact->turbo with B0 low, then S2",
+     cia2, 0, SW7, stall_en(X * F, ON), stall_halt(X * F + F, ON),
+     requests={X * F: 'turbo'}, mode0='exact')
+case("S8 held 0 at turbo->exact, new fall before B0",
+     [(e0(20), 0), (e0(21), 1), (e0(51), 0)], 1, SW,
+     stall_en(10 * F, 50 * F + 40), stall_halt(10 * F, 50 * F + 40),
+     requests={30 * F: 'exact'})
+
+# Guard trip: the last enable before a forwarded $DD00 write (LAST) sampled
+# the line low. During the forward a non-CIA2 source (RESTORE once wired, a
+# cartridge) releases the line for half a cycle and pulls it low again. The
+# write trips the disk guard; B1 captures it at e_1 of the completion cycle,
+# so the switch to exact is due at the completion enable (CMP, end f=4).
+CMP = (X + 1) * F + 5
+NOHALT = stall_halt(0, 0)
+case("S9 guard trip, completion enable is case 3",
+     [(X * F + 30, 1), ((X + 1) * F, 0)], 0, SW, stall_en(LAST, CMP), NOHALT,
+     requests={(X + 1) * F + 3: 'exact'})
+case("S9b guard trip, completion is case 2, line high",
+     [(X * F + 30, 0), ((X + 1) * F, 1)], 1, SW, stall_en(LAST, CMP), NOHALT,
+     requests={(X + 1) * F + 3: 'exact'})
+# Forced-exact cause (cartridge attach, loader start) while force_q = 1: S6's
+# line; the halt ends with a case-3 enable at 50*F, a forward follows, and the
+# cause arrives during that forward. Its completion enable is case 1.
+CMP2 = 52 * F + 5
+case("S10 forced cause while force_q = 1, line high",
+     [(e0(15), 1), (e0(30), 0), (e0(31), 1)], 0, SW,
+     lambda t: stall_en(*H)(t) and stall_en(50 * F, CMP2)(t), stall_halt(*H),
+     requests={51 * F: 'exact'})
+# S6's line plus a fall in the first exact cycle: the forced 0 of the carry is
+# shown while the line is high again, so the next fall needs a further rearm.
+case("S11 S6, then a fall in the first exact cycle",
+     [(e0(15), 1), (e0(30), 0), (e0(31), 1), (e0(51), 0)], 0, SW,
+     stall_en(*H), stall_halt(*H), requests={20 * F: 'exact'})
+# S8's line, a 1-cycle rise after the new fall, and exact->turbo requested at
+# the first exact enable, while the carry's force_q = 1.
+case("S12 S8, exact->turbo while force_q = 1",
+     [(e0(20), 0), (e0(21), 1), (e0(51), 0), (e0(52), 1)], 1,
+     (('carry', 'rearm', 'carry'), ('tclear', 'rearm', 'tclear'),
+      ('wait', 'rearm', 'wait')),
+     stall_en(10 * F, 50 * F + 40), stall_halt(10 * F, 50 * F + 40),
+     requests={30 * F: 'exact', 52 * F: 'turbo'})
+
+
+def check(edges, ens, reg):
+    """Every fall of the registered term must be taken by a T65 edge at the
+    first or second enable at or after it; one edge takes every open fall up
+    to it (merging). An edge with no open fall is an extra NMI."""
+    falls = [t for t in range(1, len(reg)) if reg[t - 1] == 1 and reg[t] == 0]
+    idx = {e: i for i, e in enumerate(ens)}
+    open_, missed, extra, later = falls, 0, 0, 0
+    for e in edges:
+        got = [f for f in open_ if f <= e]
+        if not got:
+            extra += 1
+            continue
+        for f in got:
+            d = idx[e] - bisect.bisect_left(ens, f)
+            missed += d > 1
+            later += d == 1
+        open_ = [f for f in open_ if f > e]
+    for f in open_:
+        if bisect.bisect_left(ens, f) + 1 < len(ens):
+            missed += 1
+    return missed, extra, later, len(falls)
+
+
+def random_enables(rng, T):
+    en, t = set(), 0
+    while t < T:
+        en.add(t)
+        t += 1 if rng.random() < 0.7 else rng.randint(2, 6 * F)
+    return en
+
+
+def fuzz_turbo(variant, n=3000, seed=1):
+    """Turbo only; native changes on random c64 edges (any even clock)."""
+    rng = random.Random(seed)
+    tot = [0, 0, 0, 0]
+    for _ in range(n):
+        T = 40 * F
+        init = rng.randint(0, 1)
+        ts = sorted(rng.sample(range(2, T - 4 * F, 2), rng.randint(1, 6)))
+        ch, v = [], init
+        for t in ts:
+            v ^= 1
+            ch.append((t, v))
+        native = wave(ch, init, T)
+        en = random_enables(rng, T)
+        edges, ens, _ = run(Island(variant, init), native, init, en.__contains__)
+        for i, x in enumerate(check(edges, ens, registered(native, init))):
+            tot[i] += x
+    return tot
+
+
+def fuzz_modes(variant, switch, n=2000, seed=2):
+    """Random exact/turbo switches; native changes at e_0, at most one per
+    native cycle (as CIA2), so exact mode alone never misses a fall."""
+    rng = random.Random(seed)
+    tot = [0, 0, 0, 0, 0, 0]
+    for _ in range(n):
+        T = 60 * F
+        init = rng.randint(0, 1)
+        cyc = sorted(rng.sample(range(1, 55), rng.randint(1, 8)))
+        ch, v = [], init
+        for c in cyc:
+            v ^= 1
+            ch.append((e0(c), v))
+        native = wave(ch, init, T)
+        mode0 = rng.choice(('exact', 'turbo'))
+        req, m = {}, mode0
+        for t in sorted(rng.sample(range(F, T - 4 * F), rng.randint(1, 4))):
+            m = 'turbo' if m == 'exact' else 'exact'
+            req[t] = m
+        en = random_enables(rng, T)
+        isl = Island(variant, init, switch)
+        edges, ens, late = run(isl, native, init, en.__contains__, req, mode0)
+        for i, x in enumerate(check(edges, ens, registered(native, init))):
+            tot[i] += x
+        tot[4] += late
+        tot[5] = max(tot[5], isl.carry_max)
+    return tot
+
+
+def fuzz_trip(switch, n=3000, seed=3):
+    """One forced turbo->exact switch due at a random clock r. Before r - 4
+    the line changes on random even clocks (RESTORE, cartridge pulses); from r
+    on, at e_0 at most once per native cycle, so exact mode alone never misses
+    a fall."""
+    rng = random.Random(seed)
+    tot = [0, 0, 0, 0, 0, 0]
+    for _ in range(n):
+        T = 40 * F
+        init = rng.randint(0, 1)
+        r = rng.randrange(8 * F, 30 * F)
+        ts = sorted(rng.sample(range(2, r - 4, 2), rng.randint(0, 6)))
+        ts += [e0(c) for c in sorted(rng.sample(range(r // F + 1, T // F - 2),
+                                                rng.randint(0, 4)))]
+        ch, v = [], init
+        for t in ts:
+            v ^= 1
+            ch.append((t, v))
+        native = wave(ch, init, T)
+        en = random_enables(rng, T)
+        isl = Island('rearm', init, switch)
+        edges, ens, late = run(isl, native, init, en.__contains__, {r: 'exact'})
+        for i, x in enumerate(check(edges, ens, registered(native, init))):
+            tot[i] += x
+        tot[4] += late
+        tot[5] = max(tot[5], isl.carry_max)
+    return tot
+
+
+print()
+print("Fuzz, turbo only: 3000 runs, seed 1 (missed = fall not taken within two")
+print("enables; extra = NMI with no fall; later = taken one enable later)")
+for v in ('none', 'latch', 'rearm', 'setwins', 'clearwins'):
+    m, x, l, nf = fuzz_turbo(v)
+    print(f"  {v:10s} falls={nf} missed={m} extra={x} later={l}")
+print()
+print("Fuzz, exact/turbo switches: 2000 runs, seed 2 (L = turbo enables that")
+print("ran while a turbo->exact switch was due; C = most exact enables that")
+print("one carry took from the rule)")
+for label, v, sw in (('latch', 'latch', 'wait'), ('carry', 'rearm', 'carry'),
+                     ('two', 'rearm', 'two'), ('wait', 'rearm', 'wait'),
+                     ('force0', 'rearm', 'force0'), ('nowait', 'rearm', 'nowait'),
+                     ('seen1', 'rearm', 'seen1')):
+    m, x, l, nf, late, cmax = fuzz_modes(v, sw)
+    print(f"  {label:10s} falls={nf} missed={m} extra={x} later={l} L={late} C={cmax}")
+print()
+print("Fuzz, forced switch after any-clock pulses: 3000 runs, seed 3")
+for sw in ('carry', 'two', 'wait', 'force0', 'nowait'):
+    m, x, l, nf, late, cmax = fuzz_trip(sw)
+    print(f"  {sw:10s} falls={nf} missed={m} extra={x} later={l} L={late} C={cmax}")
+```
+
+Output:
+
+```text
+NMIs taken (T65 edges). none = no latch, latch = v3 draft set/clear latch,
+rearm = design rule, stock = 6510 / exact mode with halt merging.
+Switch rules: carry = design rule, wait = the rule it replaced.
+L = turbo enables that ran while a turbo->exact switch was due.
+
+Directed cases
+S0 1-cycle pulse in halt, last sample high         none=0 latch=1 rearm=1 stock=1
+S1 last low; rise, fall in halt                    none=0 latch=0 rearm=1 stock=1
+S1b last low; rise, 1-cycle low, rise in halt      none=0 latch=0 rearm=1 stock=1
+S2 CIA2 ack, BA halt, second event (timing on)     none=0 latch=0 rearm=1 stock=1
+S2' same, badline timing off                       none=1 latch=1 rearm=1 stock=1
+S2c underflow on the ack edge (timing on)          none=0 latch=0 rearm=1 stock=1
+S2c' same, badline timing off                      none=1 latch=1 rearm=1 stock=1
+S3 two 1-cycle pulses in one halt                  none=0 latch=1 rearm=1 stock=1
+S4 plain fall, no stall                            none=1 latch=1 rearm=1 stock=1
+S5a fall on an enable's clock, last high           rearm=1 setwins=2 clearwins=1 latch=1 stock=1
+S5b last low; rise in halt; fall on resume clock   rearm=1 setwins=1 clearwins=0 latch=0 stock=1
+S6 rearm pending at turbo->exact (pulses)          carry=1 L0 two=1 L0 wait=1 L2 force0=1 L1 nowait=0 L0 stock=1
+S7 exact->turbo with B0 low, then S2               carry=1 L0 seen1=0 L0 stock=1
+S8 held 0 at turbo->exact, new fall before B0      carry=2 L0 two=2 L0 wait=2 L1 force0=1 L0 nowait=1 L0 stock=2
+S9 guard trip, completion enable is case 3         carry=1 L0 two=1 L0 wait=1 L1 force0=1 L1 nowait=1 L0 stock=1
+S9b guard trip, completion is case 2, line high    carry=1 L0 two=1 L0 wait=1 L1 force0=1 L0 nowait=1 L0 stock=1
+S10 forced cause while force_q = 1, line high      carry=1 L0 two=1 L0 wait=1 L1 force0=1 L0 nowait=1 L0 stock=1
+S11 S6, then a fall in the first exact cycle       carry=2 L0 two=1 L0 wait=2 L2 force0=2 L1 nowait=1 L0 stock=2
+S12 S8, exact->turbo while force_q = 1             carry=2 L0 tclear=1 L0 wait=2 L1 stock=2
+
+Fuzz, turbo only: 3000 runs, seed 1 (missed = fall not taken within two
+enables; extra = NMI with no fall; later = taken one enable later)
+  none       falls=5239 missed=1269 extra=0 later=53
+  latch      falls=5239 missed=737 extra=0 later=0
+  rearm      falls=5239 missed=0 extra=0 later=733
+  setwins    falls=5239 missed=6 extra=82 later=725
+  clearwins  falls=5239 missed=6 extra=0 later=727
+
+Fuzz, exact/turbo switches: 2000 runs, seed 2 (L = turbo enables that
+ran while a turbo->exact switch was due; C = most exact enables that
+one carry took from the rule)
+  latch      falls=4573 missed=287 extra=0 later=0 L=349 C=0
+  carry      falls=4573 missed=0 extra=0 later=284 L=0 C=2
+  two        falls=4573 missed=0 extra=0 later=284 L=0 C=2
+  wait       falls=4573 missed=0 extra=0 later=285 L=110 C=0
+  force0     falls=4573 missed=2 extra=0 later=281 L=49 C=0
+  nowait     falls=4573 missed=6 extra=0 later=277 L=0 C=0
+  seen1      falls=4573 missed=19 extra=0 later=265 L=0 C=2
+
+Fuzz, forced switch after any-clock pulses: 3000 runs, seed 3
+  carry      falls=7541 missed=0 extra=0 later=1236 L=0 C=3
+  two        falls=7541 missed=4 extra=0 later=1232 L=0 C=2
+  wait       falls=7541 missed=0 extra=0 later=1236 L=457 C=0
+  force0     falls=7541 missed=18 extra=0 later=1218 L=214 C=0
+  nowait     falls=7541 missed=74 extra=0 later=1158 L=0 C=0
+```
+
+## vic_t2_sticky.py
+
+T2 sticky-state check: DUT vs collapsed reference vs per-event scoreboard vs stock with separate-cycle writes.
+
+```python
+# T2 reference check for the VIC's sticky state (design stage only).
+# Rules from hdl/core/c64/ports/video_vicII_656x.vhd, evaluated on every
+# c64_clk edge with pre-edge register values:
+#   rasterEnable (617-623): rasterY = 48 and DEN = 1 -> 1; rasterY = 248 -> 0
+#   IRST / rasterIrqDone (899-907): ack pulse -> IRST := 0; then
+#       rasterY /= rasterCmp -> done := 0
+#       elif done = 0        -> done := 1, IRST := 1   (set wins over the ack)
+#   $D019 write (1584, 1692): resetRasterIrq := di(0) for one clock (a pulse)
+#   $D019 read (1799): IRQ & "111" & ILP & IMMC & IMBC & IRST, so with only
+#       IRST pending an RMW reads $F1 and its dummy write is $F1.
+# Edge numbering: E = 32 * cycle + q, where e_q ends phase q of that cycle.
+# A landing at edge E changes the register at E; the rules first see it at E+1.
+#
+# DUT:   every fast landing at its own edge (landing rule 1).
+# REF:   the collapsed T2 reference. A landing at e_q of cycle k maps to stock
+#        cycle k-1 if q <= 14, else k; the last value per register per mapped
+#        cycle wins. Stock strobes: $D011/$D012 land at e_3 of the next cycle
+#        (myWr_b), $D019 at e_31 of the write cycle (myWr_a).
+# SB:    the per-event scoreboard. Each landed value, in landing order, is
+#        seen by the rules once (DEN and rasterCmp values; $D019 ack masks).
+# STOCK: a stock C64 issuing the same writes in separate cycles: the first in
+#        the mapped cycle of the first landing, each later one a cycle later.
+# The whole run stays on raster line 48 (rasterY fixed).
+
+RASTER_Y = 48
+CYCLES = 20
+K = 10  # native cycle that holds the fast landings
+
+
+def rules(st, pulse):
+    """One c64 edge of the sticky rules on pre-edge state st; returns new bits."""
+    ren = st['ren']
+    if RASTER_Y == 48 and st['den']:
+        ren = 1
+    if RASTER_Y == 248:
+        ren = 0
+    irst, done = st['irst'], st['done']
+    if pulse:
+        irst = 0
+    if RASTER_Y != st['cmp']:
+        done = 0
+    elif not st['done']:
+        done, irst = 1, 1
+    return ren, irst, done
+
+
+def run_edges(landings, init):
+    """landings: {edge: (reg, value)}; reg in DEN, CMP, ACK. Returns the final
+    (rasterEnable, IRST) and the first cycle whose e_15 shows each bit changed
+    from its initial value."""
+    st = dict(init)
+    pulse = 0
+    first = {'ren': None, 'irst': None}
+    for e in range(32 * CYCLES):
+        ren, irst, done = rules(st, pulse)
+        pulse = 0
+        if e in landings:
+            reg, val = landings[e]
+            if reg == 'DEN':
+                st['den'] = val
+            elif reg == 'CMP':
+                st['cmp'] = val
+            else:
+                pulse = val & 1
+        st['ren'], st['irst'], st['done'] = ren, irst, done
+        if e % 32 == 15:
+            for b in ('ren', 'irst'):
+                if st[b] != init[b] and first[b] is None:
+                    first[b] = e // 32
+    return (st['ren'], st['irst']), first
+
+
+def stock_edge(cycle, reg):
+    return 32 * cycle + 31 if reg == 'ACK' else 32 * (cycle + 1) + 3
+
+
+def mapped_cycle(edge):
+    k, q = divmod(edge, 32)
+    return k - 1 if q <= 14 else k
+
+
+def ref_collapse(fast):
+    last = {}
+    for e, reg, val in fast:
+        last[(mapped_cycle(e), reg)] = val
+    return {stock_edge(j, reg): (reg, val) for (j, reg), val in last.items()}
+
+
+def stock_separate(fast):
+    j0 = mapped_cycle(fast[0][0])
+    return {stock_edge(j0 + i, reg): (reg, val)
+            for i, (e, reg, val) in enumerate(fast)}
+
+
+def scoreboard(fast, init):
+    st = dict(init)
+    ren, irst, done = rules(st, 0)
+    st['ren'], st['irst'], st['done'] = ren, irst, done
+    for e, reg, val in sorted(fast):
+        pulse = 0
+        if reg == 'DEN':
+            st['den'] = val
+        elif reg == 'CMP':
+            st['cmp'] = val
+        else:
+            pulse = val & 1
+        ren, irst, done = rules(st, pulse)
+        st['ren'], st['irst'], st['done'] = ren, irst, done
+    ren, irst, done = rules(st, 0)
+    return (ren, irst)
+
+
+def case(name, fast, **kw):
+    init = dict(den=0, cmp=100, done=0, irst=0, ren=0)
+    init.update(kw)
+    dut, f_dut = run_edges({e: (r, v) for e, r, v in fast}, init)
+    ref, f_ref = run_edges(ref_collapse(fast), init)
+    stk, f_stk = run_edges(stock_separate(fast), init)
+    sb = scoreboard(fast, init)
+    print(name)
+    print("  final (rasterEnable, IRST):    DUT %s  REF %s  SB %s  STOCK %s"
+          % (dut, ref, sb, stk))
+    print("  first e_15 change (ren, irst): DUT %s  REF %s  STOCK %s"
+          % ((f_dut['ren'], f_dut['irst']), (f_ref['ren'], f_ref['irst']),
+             (f_stk['ren'], f_stk['irst'])))
+    print("  REF vs DUT %s; SB vs DUT %s; DUT vs STOCK %s"
+          % ("match" if ref == dut else "MISMATCH",
+             "match" if sb == dut else "MISMATCH",
+             "match" if dut == stk else "MISMATCH"))
+
+
+E = 32 * K
+print("All runs on raster line 48; landings in native cycle %d; e_15 compare." % K)
+case("A  DEN pulse: $D011 DEN=1 at e_2, DEN=0 at e_3",
+     [(E + 2, 'DEN', 1), (E + 3, 'DEN', 0)])
+case("A2 DEN pulse: $D011 DEN=1 at e_2, DEN=0 at e_5",
+     [(E + 2, 'DEN', 1), (E + 5, 'DEN', 0)])
+case("B  temporary match: $D012=48 at e_2, $D012=100 at e_3",
+     [(E + 2, 'CMP', 48), (E + 3, 'CMP', 100)])
+case("C  INC $D012 (read 48): dummy 48 at e_4, final 49 at e_5",
+     [(E + 4, 'CMP', 48), (E + 5, 'CMP', 49)])
+case("D  re-arm: compare 48 matched and acked; $D012=49 at e_2, 48 at e_3",
+     [(E + 2, 'CMP', 49), (E + 3, 'CMP', 48)], cmp=48, done=1)
+case("E  DEC $D019, IRST pending: $F1 at e_2, $F0 at e_7",
+     [(E + 2, 'ACK', 0xF1), (E + 7, 'ACK', 0xF0)], cmp=48, done=1, irst=1)
+case("F  LSR $D019, IRST pending: $F1 at e_2, $78 at e_7",
+     [(E + 2, 'ACK', 0xF1), (E + 7, 'ACK', 0x78)], cmp=48, done=1, irst=1)
+case("G  ASL $D019, IRST pending: $F1 at e_2, $E2 at e_7",
+     [(E + 2, 'ACK', 0xF1), (E + 7, 'ACK', 0xE2)], cmp=48, done=1, irst=1)
+case("H  control: one $D011 DEN=1 landing at e_2",
+     [(E + 2, 'DEN', 1)])
+case("I  control: one $D012=48 landing at e_2",
+     [(E + 2, 'CMP', 48)])
+case("J  control: one STA $D019 #$01 landing at e_2, IRST pending",
+     [(E + 2, 'ACK', 0x01)], cmp=48, done=1, irst=1)
+```
+
+Output:
+
+```text
+All runs on raster line 48; landings in native cycle 10; e_15 compare.
+A  DEN pulse: $D011 DEN=1 at e_2, DEN=0 at e_3
+  final (rasterEnable, IRST):    DUT (1, 0)  REF (0, 0)  SB (1, 0)  STOCK (1, 0)
+  first e_15 change (ren, irst): DUT (10, None)  REF (None, None)  STOCK (10, None)
+  REF vs DUT MISMATCH; SB vs DUT match; DUT vs STOCK match
+A2 DEN pulse: $D011 DEN=1 at e_2, DEN=0 at e_5
+  final (rasterEnable, IRST):    DUT (1, 0)  REF (0, 0)  SB (1, 0)  STOCK (1, 0)
+  first e_15 change (ren, irst): DUT (10, None)  REF (None, None)  STOCK (10, None)
+  REF vs DUT MISMATCH; SB vs DUT match; DUT vs STOCK match
+B  temporary match: $D012=48 at e_2, $D012=100 at e_3
+  final (rasterEnable, IRST):    DUT (0, 1)  REF (0, 0)  SB (0, 1)  STOCK (0, 1)
+  first e_15 change (ren, irst): DUT (None, 10)  REF (None, None)  STOCK (None, 10)
+  REF vs DUT MISMATCH; SB vs DUT match; DUT vs STOCK match
+C  INC $D012 (read 48): dummy 48 at e_4, final 49 at e_5
+  final (rasterEnable, IRST):    DUT (0, 1)  REF (0, 0)  SB (0, 1)  STOCK (0, 1)
+  first e_15 change (ren, irst): DUT (None, 10)  REF (None, None)  STOCK (None, 10)
+  REF vs DUT MISMATCH; SB vs DUT match; DUT vs STOCK match
+D  re-arm: compare 48 matched and acked; $D012=49 at e_2, 48 at e_3
+  final (rasterEnable, IRST):    DUT (0, 1)  REF (0, 0)  SB (0, 1)  STOCK (0, 1)
+  first e_15 change (ren, irst): DUT (None, 10)  REF (None, None)  STOCK (None, 11)
+  REF vs DUT MISMATCH; SB vs DUT match; DUT vs STOCK match
+E  DEC $D019, IRST pending: $F1 at e_2, $F0 at e_7
+  final (rasterEnable, IRST):    DUT (0, 0)  REF (0, 1)  SB (0, 0)  STOCK (0, 0)
+  first e_15 change (ren, irst): DUT (None, 10)  REF (None, None)  STOCK (None, 10)
+  REF vs DUT MISMATCH; SB vs DUT match; DUT vs STOCK match
+F  LSR $D019, IRST pending: $F1 at e_2, $78 at e_7
+  final (rasterEnable, IRST):    DUT (0, 0)  REF (0, 1)  SB (0, 0)  STOCK (0, 0)
+  first e_15 change (ren, irst): DUT (None, 10)  REF (None, None)  STOCK (None, 10)
+  REF vs DUT MISMATCH; SB vs DUT match; DUT vs STOCK match
+G  ASL $D019, IRST pending: $F1 at e_2, $E2 at e_7
+  final (rasterEnable, IRST):    DUT (0, 0)  REF (0, 1)  SB (0, 0)  STOCK (0, 0)
+  first e_15 change (ren, irst): DUT (None, 10)  REF (None, None)  STOCK (None, 10)
+  REF vs DUT MISMATCH; SB vs DUT match; DUT vs STOCK match
+H  control: one $D011 DEN=1 landing at e_2
+  final (rasterEnable, IRST):    DUT (1, 0)  REF (1, 0)  SB (1, 0)  STOCK (1, 0)
+  first e_15 change (ren, irst): DUT (10, None)  REF (10, None)  STOCK (10, None)
+  REF vs DUT match; SB vs DUT match; DUT vs STOCK match
+I  control: one $D012=48 landing at e_2
+  final (rasterEnable, IRST):    DUT (0, 1)  REF (0, 1)  SB (0, 1)  STOCK (0, 1)
+  first e_15 change (ren, irst): DUT (None, 10)  REF (None, 10)  STOCK (None, 10)
+  REF vs DUT match; SB vs DUT match; DUT vs STOCK match
+J  control: one STA $D019 #$01 landing at e_2, IRST pending
+  final (rasterEnable, IRST):    DUT (0, 0)  REF (0, 0)  SB (0, 0)  STOCK (0, 0)
+  first e_15 change (ren, irst): DUT (None, 10)  REF (None, 10)  STOCK (None, 10)
+  REF vs DUT match; SB vs DUT match; DUT vs STOCK match
+```
+
+## sid_edge_stage.py
+
+Literal edge-stage model: kept and merged gate/test pulse cases with expected engine samples.
+
+```python
+# SID edge stage: literal model of the EDGE_STAGE pseudocode in
+# C64_TURBO_DESIGN.md 2.13.7 (same text as C64_TURBO_FAST_SID.md 3.4).
+# One voice control register r ($x04/$x0B/$x12) of one chip.
+#
+# Events, one per c64 edge, in order:
+#   CE          ce_1m edge with no fast write
+#   ('ce', d)   ce_1m edge with a fast write of d landing on it
+#   ('w', d)    fast write of d landing inside the window (not on ce_1m)
+#   ('nat', d)  native write (exact mode or REU DMA); the stock branch writes r
+#   ('rst',)    reset (the stock reset also clears r, sid_top.sv:180-199)
+# At each ce_1m edge the engine samples r BEFORE the edge updates it.
+# The printed line lists those engine samples in order: the gate bit
+# (bit 0) or, for byte cases, the whole register.
+
+CE = ('ce',)
+
+
+class EdgeStage:
+    def __init__(self, r0, enabled=True):
+        self.r, self.stage, self.pend, self.flag = r0, 0, 0, 0
+        self.enabled = enabled
+        self.samples = []
+
+    def edge(self, ev):
+        kind = ev[0]
+        w = ev[1] if (kind == 'w' or (kind == 'ce' and len(ev) == 2)) else None
+        if kind == 'ce':
+            self.samples.append(self.r)          # engine samples the old r
+        if not self.enabled:                     # EDGE_STAGE = 0: level sampling
+            if kind == 'rst':
+                self.r = 0
+            elif kind in ('w', 'nat') or w is not None:
+                self.r = ev[1]
+            return
+        if kind == 'rst':
+            self.pend, self.flag = 0, 0
+            self.r = 0
+        elif kind == 'nat':
+            self.pend, self.flag = 0, 0
+            self.r = ev[1]
+        elif kind == 'ce':
+            if self.pend and w is not None:
+                self.r, self.stage, self.pend, self.flag = self.stage, w, 1, 1
+            elif self.pend:
+                self.r, self.pend, self.flag = self.stage, 0, 1
+            elif w is not None:
+                self.r, self.pend, self.flag = w, 0, 1
+            else:
+                self.pend, self.flag = 0, 0
+        elif kind == 'w':
+            if self.flag:
+                self.stage, self.pend = w, 1
+            else:
+                self.r, self.flag = w, 1
+
+
+def run(name, r0, events, byte=False, enabled=True):
+    s = EdgeStage(r0, enabled)
+    for ev in events:
+        s.edge(ev)
+    fmt = (lambda v: '$%02X' % v) if byte else (lambda v: str(v & 1))
+    print('%-58s %s' % (name, ' '.join(fmt(v) for v in s.samples)))
+
+
+ON, OFF = 0x41, 0x40          # pulse waveform, gate on / off
+T1, T0 = 0x49, 0x41           # test bit (bit 3) set / clear, gate on
+
+print('Engine samples at successive ce_1m edges (first = edge before the first write)')
+print()
+print('Kept (window starts without applying a stage):')
+run('K1 one window 1->0->1', ON,
+    [CE, ('w', OFF), ('w', ON), CE, CE, CE])
+run('K2 one window 0->1->0', OFF,
+    [CE, ('w', ON), ('w', OFF), CE, CE, CE])
+run('K3 one window test 0->1->0', T0,
+    [CE, ('w', T1), ('w', T0), CE, CE, CE], byte=True)
+run('K4 one window $41,$40,$21 (three writes)', OFF,
+    [CE, ('w', 0x41), ('w', 0x40), ('w', 0x21), CE, CE, CE], byte=True)
+run('K5 pulse window, then a window with one write ($40)', ON,
+    [CE, ('w', OFF), ('w', ON), CE, ('w', OFF), CE, CE, CE])
+run('K6 pulse window, then $40 on the ce_1m edge alone', ON,
+    [CE, ('w', OFF), ('w', ON), ('ce', OFF), CE, CE, CE])
+run('K7 two pulse windows with an empty window between', ON,
+    [CE, ('w', OFF), ('w', ON), CE, CE, ('w', OFF), ('w', ON), CE, CE, CE])
+print()
+print('Merged (window starts by applying a stage; latest write wins):')
+run('M1 two consecutive windows, each 1->0->1', ON,
+    [CE, ('w', OFF), ('w', ON), CE, ('w', OFF), ('w', ON), CE, CE, CE])
+run('M2 two consecutive windows, each test 0->1->0', T0,
+    [CE, ('w', T1), ('w', T0), CE, ('w', T1), ('w', T0), CE, CE, CE], byte=True)
+run('M3 pulse window, then $40 on the ce_1m edge, then $41', ON,
+    [CE, ('w', OFF), ('w', ON), ('ce', OFF), ('w', ON), CE, CE, CE])
+run('M4 pulse window, one-write window, then a 0->1->0 window', ON,
+    [CE, ('w', OFF), ('w', ON), CE, ('w', OFF), CE, ('w', ON), ('w', OFF), CE, CE, CE])
+print()
+print('Cancel, reset and EDGE_STAGE = 0:')
+run('C1 pulse window, then a native write $40 before ce_1m', ON,
+    [CE, ('w', OFF), ('w', ON), ('nat', OFF), CE, CE, CE], byte=True)
+run('C2 pulse window, then reset before ce_1m', ON,
+    [CE, ('w', OFF), ('w', ON), ('rst',), CE, CE, CE], byte=True)
+run('C3 EDGE_STAGE = 0, one window 1->0->1', ON,
+    [CE, ('w', OFF), ('w', ON), CE, CE, CE], enabled=False)
+print()
+print('Reference, 1 MHz code (one native write per cycle, lands at e_29):')
+run('R1 1->0->1->0->1', ON,
+    [CE, ('nat', OFF), CE, ('nat', ON), CE, ('nat', OFF), CE, ('nat', ON), CE, CE])
+```
+
+Output:
+
+```text
+Engine samples at successive ce_1m edges (first = edge before the first write)
+
+Kept (window starts without applying a stage):
+K1 one window 1->0->1                                      1 0 1 1
+K2 one window 0->1->0                                      0 1 0 0
+K3 one window test 0->1->0                                 $41 $49 $41 $41
+K4 one window $41,$40,$21 (three writes)                   $40 $41 $21 $21
+K5 pulse window, then a window with one write ($40)        1 0 1 0 0
+K6 pulse window, then $40 on the ce_1m edge alone          1 0 1 0 0
+K7 two pulse windows with an empty window between          1 0 1 0 1 1
+
+Merged (window starts by applying a stage; latest write wins):
+M1 two consecutive windows, each 1->0->1                   1 0 1 1 1
+M2 two consecutive windows, each test 0->1->0              $41 $49 $41 $41 $41
+M3 pulse window, then $40 on the ce_1m edge, then $41      1 0 1 1 1
+M4 pulse window, one-write window, then a 0->1->0 window   1 0 1 0 0 0
+
+Cancel, reset and EDGE_STAGE = 0:
+C1 pulse window, then a native write $40 before ce_1m      $41 $40 $40 $40
+C2 pulse window, then reset before ce_1m                   $41 $00 $00 $00
+C3 EDGE_STAGE = 0, one window 1->0->1                      1 1 1 1
+
+Reference, 1 MHz code (one native write per cycle, lands at e_29):
+R1 1->0->1->0->1                                           1 0 1 0 1 1
+```
+
+## svf_persistence.py
+
+How long a one-cycle F0, routing or resonance difference lasts in the SID filter integrators.
+
+```python
+# How long a one-cycle filter difference lasts in the SID filter.
+# Fixed-point model of the state-variable filter in
+# hdl/core/c64/ports/sid_filter.sv, states 2-5 (one step per native cycle):
+#   vlp = clamp18(vlp - (F0*vbp >> 17))
+#   vbp = clamp18(vbp - (F0*vhp >> 17))
+#   vhp = clamp18((1/Q<<10 * vbp - ((vlp + vi) << 10)) >> 10)
+# with 18-bit integrators vlp/vbp/vhp (sid_filter.sv:91-93), F0 = w0*T << 17
+# and 1/Q << 10 from the 6581 table (sid_filter.sv:70-74).
+# Two runs differ only during ONE native cycle: a filter register write that
+# the filter samples one cycle earlier (or later) than stock. The input is a
+# square wave of about 440 Hz on one routed voice.
+# For each case the script prints, over four start points:
+#   big  = last native cycle (after the difference) at which some integrator
+#          differs by more than 4 state LSB (1 LSB of the 16-bit tap output);
+#   zero = native cycles until the states are equal again ("never" if they
+#          are still unequal after LIMIT cycles: a fixed-point limit cycle
+#          keeps a residue of a few LSB).
+# Once the states are equal they stay equal, because both runs see the same
+# input from then on.
+import math
+
+Q_RES0, Q_RES15 = 1448, 600          # 6581 1/Q<<10 at resonance 0 and 15
+LO, HI = -(1 << 17), (1 << 17) - 1
+LIMIT = 100000
+SMALL = 4
+
+
+def clamp18(x):
+    return LO if x < LO else HI if x > HI else x
+
+
+def step(st, f0, q, vi):
+    vlp, vbp, vhp = st
+    vlp = clamp18(vlp + ((-(f0 * vbp)) >> 17))
+    vbp = clamp18(vbp + ((-(f0 * vhp)) >> 17))
+    vhp = clamp18(((-(vlp + vi)) * 1024 + q * vbp) >> 10)
+    return (vlp, vbp, vhp)
+
+
+def voice(t):                        # about 440 Hz square, wide 18-bit scale
+    return 20000 if (t // 1136) % 2 == 0 else -20000
+
+
+def f0_of(fc):
+    return int(2 * math.pi * fc / 1e6 * (1 << 17))
+
+
+def persistence(fc, kind, t0):
+    f0 = f0_of(fc)
+    st = (0, 0, 0)
+    for t in range(t0):              # settle on the input
+        st = step(st, f0, Q_RES0, voice(t))
+    a = b = st
+    big = 0
+    for t in range(t0, t0 + LIMIT):
+        fa, qa, route_a = f0, Q_RES0, True
+        if t == t0:                  # run A differs for this one cycle
+            if kind == 'F0':
+                fa = f0 + 200
+            elif kind == 'route':
+                route_a = False
+            elif kind == '1/Q':
+                qa = Q_RES15
+        a = step(a, fa, qa, voice(t) if route_a else 0)
+        b = step(b, f0, Q_RES0, voice(t))
+        if a == b:
+            return big, t - t0
+        if max(abs(x - y) for x, y in zip(a, b)) > SMALL:
+            big = t - t0
+    return big, None
+
+
+T0S = (50000, 50568, 51136, 51704)    # four start points over one input period
+print('One-cycle difference in one filter input; four start points per row')
+print('%-40s %-15s %s' % ('case', 'big (min-max)', 'zero'))
+for fc in (200, 1000, 4000):
+    for kind, label in (('F0', 'F0 +200'), ('route', 'routing bit'),
+                        ('1/Q', 'resonance 0 -> 15')):
+        r = [persistence(fc, kind, t0) for t0 in T0S]
+        bigs = [x[0] for x in r]
+        zeros = ' '.join('never' if x[1] is None else str(x[1]) for x in r)
+        name = 'Fc ~%d Hz (F0 %d), %s' % (fc, f0_of(fc), label)
+        print('%-40s %6d - %-6d %s' % (name, min(bigs), max(bigs), zeros))
+print('Mode_Vol ($18) feeds only the tap mix, the direct path and the volume')
+print('(sid_filter.sv:116-125, 155-160, 210), never vlp/vbp/vhp, so a $18')
+print('difference changes one output sample only.')
+```
+
+Output:
+
+```text
+One-cycle difference in one filter input; four start points per row
+case                                     big (min-max)   zero
+Fc ~200 Hz (F0 164), F0 +200               4227 - 5194   never never never never
+Fc ~200 Hz (F0 164), routing bit           2651 - 3659   5492 never never never
+Fc ~200 Hz (F0 164), resonance 0 -> 15      855 - 3659   6005 never never 3184
+Fc ~1000 Hz (F0 823), F0 +200               184 - 752    1439 871 1584 1016
+Fc ~1000 Hz (F0 823), routing bit           803 - 1130   1652 1756 925 2152
+Fc ~1000 Hz (F0 823), resonance 0 -> 15     200 - 739    1652 1084 1487 1016
+Fc ~4000 Hz (F0 3294), F0 +200                0 - 204    269 0 269 569
+Fc ~4000 Hz (F0 3294), routing bit          263 - 637    359 737 421 927
+Fc ~4000 Hz (F0 3294), resonance 0 -> 15      0 - 254    398 1 288 1
+Mode_Vol ($18) feeds only the tap mix, the direct path and the volume
+(sid_filter.sv:116-125, 155-160, 210), never vlp/vbp/vhp, so a $18
+difference changes one output sample only.
+```
+
+## preload_cache.py
+
+REU image preload against a write-back PS data cache: old flush-after-copy rule, aligned pre-invalidate and non-cacheable mapping.
+
+```python
+# REU image preload and the PS data cache (design section 6.4 (a), (b)).
+# Design-stage model, standard library only, deterministic.
+#
+# Models a PS write-back, write-allocate data cache with 32-byte lines over
+# the REU DDR aperture, which REU DMA writes directly through HP2 (the HP
+# ports do not snoop the PS caches). Dirty state is kept per line, so the
+# stale-byte counts are an upper bound: a cache that tracks dirty state at a
+# finer grain writes back fewer bytes.
+#
+# Rules compared:
+#   old      cacheable aperture; :reudump invalidates, then reads (lines stay
+#            resident); the preload writes each block, then flushes it
+#            (Xil_DCacheFlushRange = clean + invalidate of covering lines).
+#   preinval cacheable aperture; as "old", plus an invalidate (no clean) of
+#            the 32-byte-aligned covering range before the copy (fallback).
+#   noncache aperture mapped Normal non-cacheable: every PS read and write
+#            goes to DDR; only the bytes written change. No cache maintenance.
+
+LINE = 32
+BLOCK = 4096
+
+
+class Aperture:
+    def __init__(self, size, rule):
+        self.ddr = bytearray(size)
+        self.lines = {}            # line base -> [bytearray, dirty]
+        self.rule = rule
+
+    def _line(self, a):
+        b = a - a % LINE
+        if b not in self.lines:
+            self.lines[b] = [bytearray(self.ddr[b:b + LINE]), False]
+        return self.lines[b]
+
+    def cpu_read(self, a):
+        if self.rule == "noncache":
+            return self.ddr[a]
+        return self._line(a)[0][a % LINE]
+
+    def cpu_write(self, a, v):
+        if self.rule == "noncache":
+            self.ddr[a] = v
+            return
+        ln = self._line(a)
+        ln[0][a % LINE] = v
+        ln[1] = True
+
+    def flush(self, a, n):         # clean + invalidate covering lines
+        for b in range(a - a % LINE, a + n, LINE):
+            ln = self.lines.pop(b, None)
+            if ln and ln[1]:
+                self.ddr[b:b + LINE] = ln[0]
+
+    def invalidate(self, a, n):    # aligned bounds: drop, no write-back
+        for b in range(a - a % LINE, a + n, LINE):
+            self.lines.pop(b, None)
+
+    def dma_write(self, a, data):  # REU stash through HP2, straight to DDR
+        self.ddr[a:a + len(data)] = data
+
+
+def reudump(ap, a, n):
+    if ap.rule != "noncache":
+        ap.invalidate(a, n)        # old rule: invalidate before the read only
+    return bytes(ap.cpu_read(x) for x in range(a, a + n))
+
+
+def preload(ap, off, data):
+    if ap.rule == "preinval":
+        lo = off - off % LINE
+        hi = -(-(off + len(data)) // LINE) * LINE
+        ap.invalidate(lo, hi - lo)
+    for i in range(0, len(data), BLOCK):
+        chunk = data[i:i + BLOCK]
+        for j, v in enumerate(chunk):
+            ap.cpu_write(off + i + j, v)
+        if ap.rule != "noncache":
+            ap.flush(off + i, len(chunk))
+
+
+def file_bytes(n):
+    return bytes((7 * i + 3) & 0xFF for i in range(n))
+
+
+def case(rule, size, area, off, n, dump=True):
+    """Fill area with 0x11, optionally :reudump it, stash 0xAA over it with
+    REU DMA, then preload n bytes at off. Returns stale bytes before and
+    after the loaded range, and whether the loaded range is correct."""
+    lo, hi = area
+    ap = Aperture(size, rule)
+    ap.dma_write(lo, bytes([0x11]) * (hi - lo))
+    if dump:
+        reudump(ap, lo, hi - lo)
+    ap.dma_write(lo, bytes([0xAA]) * (hi - lo))
+    data = file_bytes(n)
+    preload(ap, off, data)
+    before = [a for a in range(lo, off) if ap.ddr[a] != 0xAA]
+    after = [a for a in range(off + n, hi) if ap.ddr[a] != 0xAA]
+    loaded_ok = bytes(ap.ddr[off:off + n]) == data
+    return before, after, loaded_ok
+
+
+def span(addrs):
+    if not addrs:
+        return "none"
+    return "%d (0x%06X-0x%06X)" % (len(addrs), addrs[0], addrs[-1])
+
+
+print("Case A: reviewer reproduction. Dump 0x100-0x1FF, stash, 48-byte preload at 0x1F0")
+for rule in ("old", "preinval", "noncache"):
+    b, a, ok = case(rule, 0x400, (0x100, 0x200), 0x1F0, 48)
+    print("  %-8s stale before %s; stale after %s; loaded range correct %s"
+          % (rule, span(b), span(a), ok))
+
+print("Case B: X-PRELOAD adjacent-byte case. REU 0x010000-0x011FFF filled with $11,")
+print("        :reudump, stashed with $AA, then 4097-byte file at offset 0x010111")
+for rule in ("old", "preinval", "noncache"):
+    b, a, ok = case(rule, 0x20000, (0x010000, 0x012000), 0x010111, 4097)
+    print("  %-8s stale before %s; stale after %s; loaded range correct %s"
+          % (rule, span(b), span(a), ok))
+b, a, ok = case("old", 0x20000, (0x010000, 0x012000), 0x010111, 4097, dump=False)
+print("  old, no :reudump first: stale before %s; stale after %s; loaded range correct %s"
+      % (span(b), span(a), ok))
+
+print("Case C: bound over offsets 0x200-0x23F and lengths 1-96, all lines stale")
+worst = {}
+for rule in ("old", "preinval", "noncache"):
+    mb = ma = 0
+    aligned_bad = 0
+    for off in range(0x200, 0x240):
+        for n in range(1, 97):
+            b, a, ok = case(rule, 0x400, (0x100, 0x380), off, n)
+            assert ok
+            mb = max(mb, len(b))
+            ma = max(ma, len(a))
+            if off % LINE == 0 and n % LINE == 0:
+                aligned_bad += len(b) + len(a)
+    print("  %-8s max stale before %d; max stale after %d; stale with aligned offset"
+          " and length a multiple of 32: %d" % (rule, mb, ma, aligned_bad))
+```
+
+Output:
+
+```text
+Case A: reviewer reproduction. Dump 0x100-0x1FF, stash, 48-byte preload at 0x1F0
+  old      stale before 16 (0x0001E0-0x0001EF); stale after none; loaded range correct True
+  preinval stale before none; stale after none; loaded range correct True
+  noncache stale before none; stale after none; loaded range correct True
+Case B: X-PRELOAD adjacent-byte case. REU 0x010000-0x011FFF filled with $11,
+        :reudump, stashed with $AA, then 4097-byte file at offset 0x010111
+  old      stale before 17 (0x010100-0x010110); stale after 14 (0x011112-0x01111F); loaded range correct True
+  preinval stale before none; stale after none; loaded range correct True
+  noncache stale before none; stale after none; loaded range correct True
+  old, no :reudump first: stale before none; stale after none; loaded range correct True
+Case C: bound over offsets 0x200-0x23F and lengths 1-96, all lines stale
+  old      max stale before 31; max stale after 31; stale with aligned offset and length a multiple of 32: 0
+  preinval max stale before 0; max stale after 0; stale with aligned offset and length a multiple of 32: 0
+  noncache max stale before 0; max stale after 0; stale with aligned offset and length a multiple of 32: 0
 ```

@@ -37,11 +37,47 @@ library IEEE;
 use IEEE.STD_LOGIC_1164.ALL;
 use IEEE.std_logic_unsigned.ALL;
 use IEEE.numeric_std.all;
+use IEEE.math_real.all;
 
 -- -----------------------------------------------------------------------
 
 entity fpga64_sid_iec is
+generic (
+    EXTERNAL_CPU : boolean := false;
+    FAST_IO : boolean := false;
+    EDGE_STAGE : boolean := true;
+    FIO_DEPTH : positive := 4;
+    FIO_ACK_EDGES : positive := 2;
+    FIO_PTR_WIDTH : positive := integer(ceil(log2(real(FIO_DEPTH)))) + 1
+);
 port(
+    ext_cpu_addr : in unsigned(15 downto 0) := (others => '0');
+    ext_cpu_do : in unsigned(7 downto 0) := (others => '0');
+    ext_cpu_we : in std_logic := '0';
+    ext_cpu_io : in unsigned(7 downto 0) := (others => '0');
+    ext_cpu_ioonly : in std_logic := '0';
+    ext_nmi_ack : in std_logic := '0';
+    ext_reset, ext_cpu_enable : out std_logic;
+    ext_cpu_di : out unsigned(7 downto 0);
+    ext_irq_n, ext_nmi_n, ext_rdy, ext_port_tick : out std_logic;
+    ext_phase : out unsigned(4 downto 0);
+    ext_frame_run, ext_cpu_bus_valid, ext_cs_vic : out std_logic;
+    ext_last_vic_di : out unsigned(7 downto 0);
+    ext_cpu_ioown, ext_dma_hold : out std_logic;
+    ext_color_addr : out unsigned(9 downto 0);
+    ext_color_we : out std_logic;
+    ext_color_do : out unsigned(3 downto 0);
+    ext_color_di : in unsigned(3 downto 0) := (others => '0');
+    fio_entries : in std_logic_vector(FIO_DEPTH*22-1 downto 0) := (others => '0');
+    fio_wp : in std_logic_vector(FIO_PTR_WIDTH-1 downto 0) := (others => '0');
+    fio_done : out std_logic_vector(FIO_PTR_WIDTH-1 downto 0);
+    fio_rd_addr : in unsigned(9 downto 0) := (others => '0');
+    fio_rd_sid : in std_logic := '0';
+    fio_rd_data : out unsigned(7 downto 0);
+    fio_vic_busy : out std_logic;
+    fio_u64_wr : out std_logic;
+    fio_u64_a : out unsigned(9 downto 0);
+    fio_u64_d : out unsigned(7 downto 0);
 	clk32       : in  std_logic;
 	reset_n     : in  std_logic;
 	bios        : in  std_logic_vector(1 downto 0);
@@ -117,6 +153,9 @@ port(
 	dma_peek    : in  std_logic := '0';
 	dma_last_write : in std_logic := '0';
 	dma_ack     : out std_logic;
+	-- Read-only phase-15 opportunity, before backend readiness is sampled.
+	-- BA steals and terminal release delays are excluded from miss counts.
+	dma_ready_slot : out std_logic;
 	cpu_bus_valid : out std_logic;
 	cpu_bus_addr : out unsigned(15 downto 0);
 	cpu_bus_wdata : out unsigned(7 downto 0);
@@ -320,7 +359,43 @@ signal pot_y1       : std_logic_vector(7 downto 0);
 signal pot_x2       : std_logic_vector(7 downto 0);
 signal pot_y2       : std_logic_vector(7 downto 0);
 
+
+signal cpuIoOwn : std_logic := '0';
+signal fastVicWr, fastVicClrM2M, fastVicClrM2D : std_logic;
+signal fastVicWa : unsigned(5 downto 0);
+signal fastVicWd, fastVicRead, fastSidRead : unsigned(7 downto 0);
+signal fastVicHoldD011, fastVicHoldSpr, fastVicBusy : std_logic;
+signal fastSidWr, fastSidLatch : std_logic;
+signal fastSidA : unsigned(9 downto 0);
+signal fastSidD : unsigned(7 downto 0);
+signal fastSidSelect, fastSidReadSelect, fastSidLatchSource : std_logic_vector(1 downto 0);
+function fast_sid_select(a : unsigned(9 downto 0); m : unsigned(2 downto 0)) return std_logic_vector is
+    variable sel : std_logic_vector(1 downto 0);
+    begin
+    sel := "01";
+    if m = 0 then sel := "11";
+    elsif m = 2 then sel := std_logic_vector'(a(5) & not a(5));
+    elsif m = 3 then sel := std_logic_vector'(a(8) & not a(8));
+    end if;
+    return sel;
+end function;
+component multitini_c64_fio_port
+generic (FIO_DEPTH : integer := 4; FIO_ACK_EDGES : integer := 2; PTR_W : integer := 3);
+port (
+    clk, reset : in std_logic;
+    fio_entries : in std_logic_vector(FIO_DEPTH*22-1 downto 0);
+    fio_wp : in std_logic_vector(PTR_W-1 downto 0);
+    fio_done : out std_logic_vector(PTR_W-1 downto 0);
+    vic_busy, vic_hold_d011, vic_hold_spr : in std_logic;
+    vic_wr, vic_clr_m2m, vic_clr_m2d : out std_logic;
+    vic_wa : out unsigned(5 downto 0); vic_wd : out unsigned(7 downto 0);
+    sid_wr, sid_latch : out std_logic; sid_a : out unsigned(9 downto 0); sid_d : out unsigned(7 downto 0);
+    u64_wr : out std_logic; u64_a : out unsigned(9 downto 0); u64_d : out unsigned(7 downto 0)
+);
+end component;
+
 component sid_top
+	generic (FAST_PORT : integer := 0; EDGE_STAGE : integer := 1);
 	port (
 		reset         : in  std_logic;
 		clk           : in  std_logic;
@@ -331,6 +406,11 @@ component sid_top
 		addr          : in  unsigned(4 downto 0);
 		data_in       : in  unsigned(7 downto 0);
 		data_out      : out unsigned(7 downto 0);
+        fio_cs, fio_latch_src, fast_rd_cs : in std_logic_vector(1 downto 0);
+        fio_we, fio_latch : in std_logic;
+        fio_addr, fast_rd_addr : in unsigned(4 downto 0);
+        fio_wdata : in unsigned(7 downto 0);
+        fast_rd_data : out unsigned(7 downto 0);
 
 		pot_x_l       : in  std_logic_vector(7 downto 0) := (others => '0');
 		pot_y_l       : in  std_logic_vector(7 downto 0) := (others => '0');
@@ -387,6 +467,87 @@ component mos6526
 end component;
 
 begin
+
+ext_reset <= reset;
+ext_cpu_enable <= enableCpu and not dma_active and not memory_wait_q;
+ext_cpu_di <= cpuDi;
+ext_irq_n <= irq_cia1 and irq_vic and irq_n and irq_ext_n;
+ext_nmi_n <= irq_cia2 and nmi_n;
+ext_rdy <= baLoc;
+ext_port_tick <= enableSid and not memory_wait_q;
+ext_phase <= to_unsigned(sysCycleDef'pos(sysCycle), 5);
+ext_frame_run <= sysEnable and not memory_wait_q;
+ext_cpu_bus_valid <= enableCpu and not dma_active and (cpuHasBus or cpuIoOwn) and not memory_wait_q;
+ext_cs_vic <= cs_vic;
+ext_last_vic_di <= lastVicDi;
+ext_cpu_ioown <= cpuIoOwn;
+ext_dma_hold <= dma_req or dma_active or dma_post_pending or dma_wait_vic;
+ext_color_addr <= systemAddr(9 downto 0);
+ext_color_we <= cs_color and pulseWr_io;
+ext_color_do <= cpuDo(3 downto 0);
+
+process(all)
+    variable blocked : std_logic;
+begin
+    blocked := '0';
+    -- This is an observation of the ownership decision below. It deliberately
+    -- ignores dma_valid: a missing backend byte is what the adapter counts.
+    if dma_wait_vic = '1' then
+        blocked := not ba_reu or dma_terminal_extra;
+    elsif dma_post_pending = '1' then
+        if dma_post_write = '1' then
+            blocked := not ba_reu and dma_write_delay;
+        else
+            blocked := not ba_reu;
+        end if;
+    elsif (dma_started = '0' and baLoc = '0') or
+          (dma_started = '1' and ba_reu = '0') then
+        blocked := '1';
+    end if;
+    dma_ready_slot <= '0';
+    if reset = '0' and memory_wait_q = '0' and sysEnable = '1' and
+       sysCycle = CYCLE_VIC3 and dma_req = '1' and blocked = '0' then
+        dma_ready_slot <= '1';
+    end if;
+end process;
+
+process(clk32)
+begin
+    if rising_edge(clk32) then
+        if reset = '1' then cpuIoOwn <= '0';
+        elsif memory_wait_q = '0' then
+            if sysCycle = CYCLE_CPUF then cpuIoOwn <= '0';
+            elsif sysCycle = CYCLE_CPU0 then
+                cpuIoOwn <= '0';
+                if EXTERNAL_CPU and FAST_IO and phi0_cpu = '1' and cpuHasBus = '0'
+                and dma_active = '0' and ext_cpu_ioonly = '1' then cpuIoOwn <= '1'; end if;
+            end if;
+        end if;
+    end if;
+end process;
+
+fast_io_enabled: if FAST_IO generate
+    consumer: multitini_c64_fio_port
+    generic map (FIO_DEPTH => FIO_DEPTH, FIO_ACK_EDGES => FIO_ACK_EDGES, PTR_W => FIO_PTR_WIDTH)
+    port map (
+        clk => clk32, reset => reset, fio_entries => fio_entries, fio_wp => fio_wp, fio_done => fio_done,
+        vic_busy => fastVicBusy, vic_hold_d011 => fastVicHoldD011, vic_hold_spr => fastVicHoldSpr,
+        vic_wr => fastVicWr, vic_clr_m2m => fastVicClrM2M, vic_clr_m2d => fastVicClrM2D,
+        vic_wa => fastVicWa, vic_wd => fastVicWd,
+        sid_wr => fastSidWr, sid_latch => fastSidLatch, sid_a => fastSidA, sid_d => fastSidD,
+        u64_wr => fio_u64_wr, u64_a => fio_u64_a, u64_d => fio_u64_d
+    );
+end generate;
+fast_io_disabled: if not FAST_IO generate
+    fio_done <= (others => '0'); fio_u64_wr <= '0'; fio_u64_a <= (others => '0'); fio_u64_d <= (others => '0');
+    fastVicWr <= '0'; fastVicClrM2M <= '0'; fastVicClrM2D <= '0'; fastVicWa <= (others => '0'); fastVicWd <= (others => '0');
+    fastSidWr <= '0'; fastSidLatch <= '0'; fastSidA <= (others => '0'); fastSidD <= (others => '0');
+end generate;
+fastSidSelect <= fast_sid_select(fastSidA, sid_mode) when fastSidWr = '1' or fastSidLatch = '1' else "00";
+fastSidReadSelect <= fast_sid_select(fio_rd_addr, sid_mode) when fio_rd_sid = '1' else "00";
+fastSidLatchSource <= "01" when fastSidSelect(0) = '1' else "10";
+fio_rd_data <= fastSidRead when fio_rd_sid = '1' else fastVicRead;
+fio_vic_busy <= fastVicBusy;
 
 -- -----------------------------------------------------------------------
 -- Local signal to outside world
@@ -589,6 +750,7 @@ end process;
 -- -----------------------------------------------------------------------
 -- Color RAM
 -- -----------------------------------------------------------------------
+internal_colour: if not EXTERNAL_CPU generate
 colorram: entity work.spram
 generic map (
 	DATA_WIDTH => 4,
@@ -602,6 +764,11 @@ port map (
 	q => colorData
 );
 
+end generate;
+external_colour: if EXTERNAL_CPU generate
+    colorData <= ext_color_di;
+end generate;
+
 -- -----------------------------------------------------------------------
 -- PLA and bus-switches
 -- -----------------------------------------------------------------------
@@ -612,6 +779,7 @@ port map (
 	bios => bios,
 
 	cpuHasBus => cpuHasBus,
+	cpuIoOwn => cpuIoOwn,
 	aec => aec,
 
 	bankSwitch => cpuIO(2 downto 0),
@@ -699,6 +867,7 @@ colorDataAec <= cpuDi(3 downto 0) when aec = '0' else colorData;
 
 vic: entity work.video_vicii_656x
 generic map (
+	FAST_PORT => FAST_IO,
 	registeredAddress => true,
 	emulateRefresh => true,
 	emulateLightpen => true,
@@ -711,6 +880,11 @@ port map (
 	enaData => enableVic and not memory_wait_q,
 	phi => phi0_cpu,
 
+    fast_phase => to_unsigned(sysCycleDef'pos(sysCycle), 5),
+    fast_rd_addr => fio_rd_addr(5 downto 0), fast_rd_data => fastVicRead,
+    fast_wr => fastVicWr, fast_wa => fastVicWa, fast_wd => fastVicWd,
+    fast_clr_m2m => fastVicClrM2M, fast_clr_m2d => fastVicClrM2D,
+    fast_hold_d011 => fastVicHoldD011, fast_hold_spr => fastVicHoldSpr, fast_native_busy => fastVicBusy,
 	baSync => '0',
 	ba => baLoc,
 	ba_dma => ba_dma,
@@ -822,7 +996,11 @@ pot_x2 <= (others => '1' ) when cia1_pao(7) = '0' else not pot3;
 pot_y2 <= (others => '1' ) when cia1_pao(7) = '0' else not pot4;
 
 sid : sid_top
+generic map (FAST_PORT => boolean'pos(FAST_IO), EDGE_STAGE => boolean'pos(EDGE_STAGE))
 port map (
+    fio_cs => fastSidSelect, fio_we => fastSidWr, fio_latch => fastSidLatch,
+    fio_latch_src => fastSidLatchSource, fio_addr => fastSidA(4 downto 0), fio_wdata => fastSidD,
+    fast_rd_cs => fastSidReadSelect, fast_rd_addr => fio_rd_addr(4 downto 0), fast_rd_data => fastSidRead,
 	reset => reset,
 	clk => clk32,
 	ce_1m => enableSid and not memory_wait_q,
@@ -981,6 +1159,7 @@ end process;
 -- -----------------------------------------------------------------------
 -- 6510 CPU / DMA
 -- -----------------------------------------------------------------------
+internal_cpu: if not EXTERNAL_CPU generate
 cpu: entity work.cpu_6510
 generic map (SEPARATE_BUS_START => true)
 port map (
@@ -1006,6 +1185,14 @@ port map (
 	port_tick => enableSid and not memory_wait_q,
 	doIO => cpuIO
 );
+end generate;
+external_cpu_pins: if EXTERNAL_CPU generate
+    cpuAddr_pre <= ext_cpu_addr;
+    cpuDo_pre <= ext_cpu_do;
+    cpuWe_pre <= ext_cpu_we;
+    cpuIO <= ext_cpu_io;
+    nmi_ack <= ext_nmi_ack;
+end generate;
 
 cass_motor <= cpuIO(5);
 cass_write <= cpuIO(3);
@@ -1036,7 +1223,7 @@ cpu_cyc <= scheduledCpuRequest or dma_peek_issue;
 enableCpu <= scheduledCpuRetire or dma_peek_retire;
 -- Register side effects occur once on the completed CPU transaction. DMA
 -- accesses cannot retrigger the REU's own command or delayed $FF00 trigger.
-cpu_bus_valid <= enableCpu and not dma_active and cpuHasBus and not memory_wait_q;
+cpu_bus_valid <= enableCpu and not dma_active and (cpuHasBus or cpuIoOwn) and not memory_wait_q;
 cpu_bus_addr <= cpuAddr_pre;
 cpu_bus_wdata <= cpuDo_pre;
 cpu_bus_write <= cpuWe_pre;

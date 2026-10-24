@@ -25,12 +25,24 @@ use IEEE.numeric_std.ALL;
 
 entity video_vicii_656x is
 	generic (
+		FAST_PORT : boolean := false;
 		registeredAddress : boolean;
 		emulateRefresh : boolean := false;
 		emulateLightpen : boolean := false;
 		emulateGraphics : boolean := true
 	);
 	port (
+		fast_phase : in unsigned(4 downto 0) := (others => '0');
+		fast_rd_addr : in unsigned(5 downto 0) := (others => '0');
+		fast_rd_data : out unsigned(7 downto 0);
+		fast_wr : in std_logic := '0';
+		fast_wa : in unsigned(5 downto 0) := (others => '0');
+		fast_wd : in unsigned(7 downto 0) := (others => '0');
+		fast_clr_m2m : in std_logic := '0';
+		fast_clr_m2d : in std_logic := '0';
+		fast_hold_d011 : out std_logic;
+		fast_hold_spr : out std_logic;
+		fast_native_busy : out std_logic;
 		clk: in std_logic;
 		-- phi = 0 is VIC cycle
 		-- phi = 1 is CPU cycle (only used by VIC when BA is low)
@@ -1489,6 +1501,7 @@ collisionClearFlag: process(clk)
 -- Sprite to sprite collision
 -- -----------------------------------------------------------------------
 spriteSpriteCollision: process(clk)
+	variable fast_next : unsigned(7 downto 0);
 	begin
 		if rising_edge(clk) then
 			if resetIMMC = '1' then
@@ -1527,6 +1540,17 @@ spriteSpriteCollision: process(clk)
 					M2Mhit <= '0';
 				end if;
 			end if;
+			if FAST_PORT and fast_clr_m2m = '1' then
+				fast_next := M2M;
+				if enaPixel = '1' then
+					if collision /= 0 and (collision and (collision - 1)) /= 0 then
+						fast_next := fast_next or collision;
+					end if;
+					if M2MClr = '1' then fast_next := (others => '0'); end if;
+				end if;
+				M2M <= fast_next and not fast_wd;
+				M2Mhit <= '0';
+			end if;
 		end if;
 	end process;
 
@@ -1534,6 +1558,7 @@ spriteSpriteCollision: process(clk)
 -- Sprite to background collision
 -- -----------------------------------------------------------------------
 spriteBackgroundCollision: process(clk)
+	variable fast_next, fast_delay : unsigned(7 downto 0);
 	begin
 		if rising_edge(clk) then			
 			if resetIMBC = '1' then
@@ -1562,6 +1587,24 @@ spriteBackgroundCollision: process(clk)
 			and	(aRegisters = "011111") then
 				M2D <= (others => '0');
 				M2DDelay <= (others => '0');
+				M2Dhit <= '0';
+			end if;
+			if FAST_PORT and fast_clr_m2d = '1' then
+				fast_next := M2D;
+				fast_delay := M2DDelay;
+				if enaPixel = '1' then
+					fast_next := M2DDelay;
+					for i in 0 to 7 loop
+						if ((MC(i) = '0' and MCurrentPixel(i)(1) = '1') or
+						    (MC(i) = '1' and MCurrentPixel(i) /= "00"))
+						and pixelBgFlag = '1' and TBBorder = '0' then fast_delay(i) := '1'; end if;
+					end loop;
+				end if;
+				if myRd = '1' and aRegisters = "011111" then
+					fast_next := (others => '0'); fast_delay := (others => '0');
+				end if;
+				M2D <= fast_next and not fast_wd;
+				M2DDelay <= fast_delay and not fast_wd;
 				M2Dhit <= '0';
 			end if;
 		end if;
@@ -1757,6 +1800,121 @@ writeRegisters: process(clk)
 					when others => null;
 					end case;
 				end if;
+				if FAST_PORT and fast_wr = '1' then
+					case fast_wa is
+					when "000000" =>
+						MX(0)(7 downto 0) <= fast_wd;
+					when "000001" =>
+						MY(0) <= fast_wd;
+					when "000010" =>
+						MX(1)(7 downto 0) <= fast_wd;
+					when "000011" =>
+						MY(1) <= fast_wd;
+					when "000100" =>
+						MX(2)(7 downto 0) <= fast_wd;
+					when "000101" =>
+						MY(2) <= fast_wd;
+					when "000110" =>
+						MX(3)(7 downto 0) <= fast_wd;
+					when "000111" =>
+						MY(3) <= fast_wd;
+					when "001000" =>
+						MX(4)(7 downto 0) <= fast_wd;
+					when "001001" =>
+						MY(4) <= fast_wd;
+					when "001010" =>
+						MX(5)(7 downto 0) <= fast_wd;
+					when "001011" =>
+						MY(5) <= fast_wd;
+					when "001100" =>
+						MX(6)(7 downto 0) <= fast_wd;
+					when "001101" =>
+						MY(6) <= fast_wd;
+					when "001110" =>
+						MX(7)(7 downto 0) <= fast_wd;
+					when "001111" =>
+						MY(7) <= fast_wd;
+					when "010000" =>
+						MX(0)(8) <= fast_wd(0);
+						MX(1)(8) <= fast_wd(1);
+						MX(2)(8) <= fast_wd(2);
+						MX(3)(8) <= fast_wd(3);
+						MX(4)(8) <= fast_wd(4);
+						MX(5)(8) <= fast_wd(5);
+						MX(6)(8) <= fast_wd(6);
+						MX(7)(8) <= fast_wd(7);
+					when "010001" =>
+						RSEL <= fast_wd(3);
+						rasterCmp(8) <= fast_wd(7);
+						ECM <= fast_wd(6);
+						BMM <= fast_wd(5);
+						DEN <= fast_wd(4);
+						yscroll <= fast_wd(2 downto 0);
+					when "010010" =>
+						rasterCmp(7 downto 0) <= fast_wd;
+					when "010101" =>
+						ME <= fast_wd;
+					when "010110" =>
+						RES <= fast_wd(5);
+						MCM <= fast_wd(4);
+						CSEL <= fast_wd(3);
+						xscroll <= fast_wd(2 downto 0);
+					when "010111" =>
+						MYE <= fast_wd;
+					when "011000" =>
+						VM <= fast_wd(7 downto 4);
+						CB <= fast_wd(3 downto 1);
+					when "011001" =>
+						resetLightPenIrq <= fast_wd(3);
+						resetIMMC <= fast_wd(2);
+						resetIMBC <= fast_wd(1);
+						resetRasterIrq <= fast_wd(0);
+					when "011010" =>
+						ELP <= fast_wd(3);
+						EMMC <= fast_wd(2);
+						EMBC <= fast_wd(1);
+						ERST <= fast_wd(0);
+					when "011011" =>
+						MPRIO <= fast_wd;
+					when "011100" =>
+						MCDelay <= fast_wd; -- !!! Krestage 3 hack
+					when "011101" =>
+						MXE <= fast_wd;
+					when "100000" =>
+						EC <= fast_wd(3 downto 0);
+					when "100001" =>
+						B0C <= fast_wd(3 downto 0);
+					when "100010" =>
+						B1C <= fast_wd(3 downto 0);
+					when "100011" =>
+						B2C <= fast_wd(3 downto 0);
+					when "100100" =>
+						B3C <= fast_wd(3 downto 0);
+					when "100101" =>
+						MM0 <= fast_wd(3 downto 0);
+					when "100110" =>
+						MM1 <= fast_wd(3 downto 0);
+					when "100111" =>
+						spriteColors(0) <= fast_wd(3 downto 0);
+					when "101000" =>
+						spriteColors(1) <= fast_wd(3 downto 0);
+					when "101001" =>
+						spriteColors(2) <= fast_wd(3 downto 0);
+					when "101010" =>
+						spriteColors(3) <= fast_wd(3 downto 0);
+					when "101011" =>
+						spriteColors(4) <= fast_wd(3 downto 0);
+					when "101100" =>
+						spriteColors(5) <= fast_wd(3 downto 0);
+					when "101101" =>
+						spriteColors(6) <= fast_wd(3 downto 0);
+					when "101110" =>
+						spriteColors(7) <= fast_wd(3 downto 0);
+					when "110000" =>
+						turbo_reg <= fast_wd(0);
+					when others => null;
+					end case;
+				end if;
 			end if;
 		end if;
 	end process;
@@ -1824,4 +1982,70 @@ readRegisters: process(clk)
 			end if;
 		end if;
 	end process;
+
+-- Acceptance-time hazards include the registered pop-to-landing edge.
+fast_hold_d011 <= '1' when FAST_PORT and fast_phase >= 10 and fast_phase <= 13 else '0';
+fast_hold_spr <= '1' when FAST_PORT and
+    ((vicCycle = cycleSpriteA and sprite = 0 and fast_phase >= 14 and fast_phase <= 29)
+     or (vicCycle = cycleCalcSprites and fast_phase = 13)) else '0';
+fast_native_busy <= we_r when FAST_PORT else '0';
+fastReadRegisters: process(all)
+begin
+    fast_rd_data <= (others => '1');
+    if FAST_PORT then
+        case fast_rd_addr is
+			when "000000" => fast_rd_data <= MX(0)(7 downto 0);
+			when "000001" => fast_rd_data <= MY(0);
+			when "000010" => fast_rd_data <= MX(1)(7 downto 0);
+			when "000011" => fast_rd_data <= MY(1);
+			when "000100" => fast_rd_data <= MX(2)(7 downto 0);
+			when "000101" => fast_rd_data <= MY(2);
+			when "000110" => fast_rd_data <= MX(3)(7 downto 0);
+			when "000111" => fast_rd_data <= MY(3);
+			when "001000" => fast_rd_data <= MX(4)(7 downto 0);
+			when "001001" => fast_rd_data <= MY(4);
+			when "001010" => fast_rd_data <= MX(5)(7 downto 0);
+			when "001011" => fast_rd_data <= MY(5);
+			when "001100" => fast_rd_data <= MX(6)(7 downto 0);
+			when "001101" => fast_rd_data <= MY(6);
+			when "001110" => fast_rd_data <= MX(7)(7 downto 0);
+			when "001111" => fast_rd_data <= MY(7);
+			when "010000" =>
+				fast_rd_data <= MX(7)(8) & MX(6)(8) & MX(5)(8) & MX(4)(8)
+				& MX(3)(8) & MX(2)(8) & MX(1)(8) & MX(0)(8);
+			when "010001" => fast_rd_data <= rasterY(8) & ECM & BMM & DEN & RSEL & yscroll;
+			when "010010" => fast_rd_data <= rasterY(7 downto 0);
+			when "010011" => fast_rd_data <= lpX;
+			when "010100" => fast_rd_data <= lpY;
+			when "010101" => fast_rd_data <= ME;
+			when "010110" => fast_rd_data <= "11" & RES & MCM & CSEL & xscroll;
+			when "010111" => fast_rd_data <= MYE;
+			when "011000" => fast_rd_data <= VM & CB & '1';
+			when "011001" => fast_rd_data <= IRQ & "111" & ILP & IMMC & IMBC & IRST;
+			when "011010" => fast_rd_data <= "1111" & ELP & EMMC & EMBC & ERST;
+			when "011011" => fast_rd_data <= MPRIO;
+			when "011100" => fast_rd_data <= MCDelay;
+			when "011101" => fast_rd_data <= MXE;
+			when "011110" => fast_rd_data <= M2M;
+			when "011111" => fast_rd_data <= M2D;
+			when "100000" => fast_rd_data <= "1111" & EC;
+			when "100001" => fast_rd_data <= "1111" & B0C;
+			when "100010" => fast_rd_data <= "1111" & B1C;
+			when "100011" => fast_rd_data <= "1111" & B2C;
+			when "100100" => fast_rd_data <= "1111" & B3C;
+			when "100101" => fast_rd_data <= "1111" & MM0;
+			when "100110" => fast_rd_data <= "1111" & MM1;
+			when "100111" => fast_rd_data <= "1111" & spriteColors(0);
+			when "101000" => fast_rd_data <= "1111" & spriteColors(1);
+			when "101001" => fast_rd_data <= "1111" & spriteColors(2);
+			when "101010" => fast_rd_data <= "1111" & spriteColors(3);
+			when "101011" => fast_rd_data <= "1111" & spriteColors(4);
+			when "101100" => fast_rd_data <= "1111" & spriteColors(5);
+			when "101101" => fast_rd_data <= "1111" & spriteColors(6);
+			when "101110" => fast_rd_data <= "1111" & spriteColors(7);
+			when "110000" => fast_rd_data <= "1111111" & (turbo_reg or not turbo_en);
+			when others => fast_rd_data <= (others => '1');
+        end case;
+    end if;
+end process;
 end architecture;

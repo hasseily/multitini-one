@@ -171,7 +171,7 @@ class BuildInputTests(unittest.TestCase):
             "enaData => enableVic and not memory_wait_q", source
         )
         self.assertIn(
-            "phi2_n => enableCia_n and not memory_wait_q", source
+            "phi2_n => (enableCia_n or dma_peek_io) and not memory_wait_q", source
         )
         self.assertIn("ce_1m => enableSid and not memory_wait_q", source)
 
@@ -195,7 +195,7 @@ class BuildInputTests(unittest.TestCase):
             "(media_eject && !media_request_write_control)", top
         )
 
-    def test_c64_cpu_turbo_uses_smart_mode_without_drive_warp_path(self):
+    def test_c64_cpu_island_keeps_the_drive_at_native_speed(self):
         adapter = (
             ROOT / "hdl" / "core" / "c64" /
             "multitini_c64_adapter.sv"
@@ -214,19 +214,16 @@ class BuildInputTests(unittest.TestCase):
             ROOT / "hdl" / "core" / "c64" / "ports" /
             "fpga64_sid_iec.vhd"
         ).read_text(encoding="utf-8")
-        self.assertIn(
-            ".turbo_mode({cpu_turbo_active, 1'b0})", adapter
-        )
-        self.assertNotIn(
-            ".turbo_mode({1'b0, cpu_turbo_active})", adapter
-        )
+        self.assertIn(".EXTERNAL_CPU(1), .FAST_IO(1)", adapter)
+        self.assertIn("multitini_c64_cpu_island", adapter)
+        self.assertIn(".turbo_mode(2'b00)", adapter)
         self.assertIn("turbo_en <= turbo_mode(0);", fpga64)
         self.assertIn(
             "(turbo_mode(0) and turbo_state) = '1' or "
             "turbo_mode(1) = '1'",
             fpga64,
         )
-        self.assertIn(".turbo_request(cpu_turbo_enable)", adapter)
+        self.assertIn(".turbo_request(guard_request)", adapter)
         self.assertNotIn("warp", adapter.lower())
         self.assertNotIn("warp", drive.lower())
         self.assertNotIn("C64_WARP_ENABLE", top)
@@ -383,9 +380,13 @@ class BuildInputTests(unittest.TestCase):
     def test_c64_and_apple_iigs_hp2_use_the_machine_clock(self):
         script = (ROOT / "scripts" / "create_project.tcl").read_text()
         associations = script.split(
-            'if {$machine in {C64 APPLE_IIGS}} {\n    set_property -dict [list CONFIG.ASSOCIATED_BUSIF', 1
+            'if {$machine eq "C64"} {\n    set_property -dict [list CONFIG.ASSOCIATED_BUSIF', 1
         )[1].split("\n}\n", 1)[0]
-        iigs, other = associations.split("\n} else {\n", 1)
+        c64, rest = associations.split('\n} elseif {$machine eq "APPLE_IIGS"} {\n', 1)
+        iigs, other = rest.split("\n} else {\n", 1)
+        self.assertIn("{M_AXI_GP0_0:S_AXI_HP0_0:S_AXI_HP1_0}", c64)
+        self.assertIn("CONFIG.ASSOCIATED_BUSIF {S_AXI_HP2_0:S_AXI_HP3_0}", c64)
+        self.assertIn("CONFIG.ASSOCIATED_RESET {c64_aresetn}] $c64_clk", c64)
         self.assertIn(
             " {M_AXI_GP0_0:S_AXI_HP0_0:S_AXI_HP1_0:S_AXI_HP3_0} \\\n"
             "        CONFIG.ASSOCIATED_RESET {control_aresetn}] $control_clk", iigs)
@@ -407,7 +408,11 @@ class BuildInputTests(unittest.TestCase):
         fclk_net = script.split(
             "connect_bd_net [get_bd_pins $ps/FCLK_CLK0]", 1
         )[1].split("\n\n", 1)[0]
-        self.assertIn("[get_bd_pins $ps/S_AXI_HP3_ACLK]", fclk_net)
+        self.assertIn('if {$machine eq "C64"} {\n'
+                      '    connect_bd_net [get_bd_pins $c64_wiz/clk_out1] [get_bd_pins $ps/S_AXI_HP3_ACLK]\n'
+                      '    connect_bd_net [get_bd_pins $c64_wiz/clk_out2] $c64_cpu_clk\n'
+                      '} else {\n'
+                      '    connect_bd_net [get_bd_pins $ps/FCLK_CLK0] [get_bd_pins $ps/S_AXI_HP3_ACLK]', script)
         self.assertNotIn("S_AXI_HP2_ACLK", fclk_net.split("connect_bd_net", 1)[0])
         self.assertEqual(script.count("S_AXI_HP2_ACLK"), 2)
 
@@ -433,12 +438,13 @@ class BuildInputTests(unittest.TestCase):
                        ".core_reset_request(c64_core_reset_request)",
                        ".core_memory_burst(reu_memory_burst)",
                        ".core_memory_busy(reu_memory_busy)",
-                       ".quiescent(c64_reu_memory_quiescent)",
+                       ".quiescent(reu_quiescent)",
                        ".araddr(hp2_araddr)"):
             self.assertIn(marker, c64_ddr)
         self.assertIn("multitini_gameboy_psram_path psram_path_i", c64_block)
         self.assertIn(".core_memory_addr(c64_memory_addr)", c64_block)
         self.assertIn("!c64_reu_memory_quiescent", top)
+        self.assertIn("assign c64_reu_memory_quiescent = reu_quiescent && ua_quiescent", top)
 
         path = (ROOT / "hdl/core/apple_iigs/multitini_apple_iigs_ddr_path.sv").read_text()
         self.assertNotIn("multitini_memory_cdc", path)
@@ -824,7 +830,14 @@ class BuildInputTests(unittest.TestCase):
         dispatch = dispatch.split("static void initialize_supervisor_menu", 1)[0]
         self.assertLess(dispatch.index("hide_menu_for_core_action()"),
                         dispatch.index("handle_menu_action(action)"))
-        self.assertNotRegex(dispatch, r"supervisor_menu\.visible\s*=")
+        # A failed REU preload must keep the menu visible until a new core load.
+        # It must never hide the overlay or let the held CPU resume here.
+        recovery = ('if (c64_debug.reu_host.reload_required) {\n'
+                    '        supervisor_menu.visible = true;\n'
+                    '        supervisor_menu_dirty = true;\n'
+                    '    }')
+        self.assertIn(recovery, dispatch)
+        self.assertNotRegex(dispatch.replace(recovery, ""), r"supervisor_menu\.visible\s*=")
         self.assertNotIn("supervisor_status_color ==", dispatch)
         runtime = main.split("static void service_runtime(void)", 1)[1]
         runtime = runtime.split("static void print_status", 1)[0]

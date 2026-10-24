@@ -84,7 +84,8 @@ class ExfatSupportTests(unittest.TestCase):
                   "sd_storage.c").read_text(encoding="utf-8")
         self.assertIn("fsize_to_size_saturated", source)
         self.assertIn("backend_size > (FSIZE_t)capacity", source)
-        self.assertIn("info.fsize > (FSIZE_t)SIZE_MAX", source)
+        self.assertIn("fsize_to_size_saturated(info.fsize)", source)
+        self.assertIn("value > (FSIZE_t)SIZE_MAX ? SIZE_MAX : (size_t)value", source)
         self.assertNotIn("result(MT_SD_TOO_LARGE, FR_OK, (size_t)backend_size)",
                          source)
         self.assertIn(

@@ -23,7 +23,9 @@ module multitini_audio_test (
     output logic               i2s_lrck,
     output logic               i2s_sdata,
     output logic               i2s_bclk,
-    output logic               spdif_out
+    output logic               spdif_out,
+    output logic               capture_tick,
+    output logic signed [23:0] capture_l, capture_r
 );
     logic [1:0] audio_bclk_div = 2'b00;
     logic audio_mclk_resetn;
@@ -135,6 +137,9 @@ module multitini_audio_test (
     assign live_enable_bclk = machine_ready_bclk && machine_audio_bclk[48];
     assign live_enable_control =
         machine_ready_control && machine_audio_control[48];
+    assign capture_tick = sample_tick_next[32];
+    assign capture_l = live_enable_control ? machine_audio_control[47:24] : 24'sd0;
+    assign capture_r = live_enable_control ? machine_audio_control[23:0] : 24'sd0;
 
     // Both serializers free-run from the same reset and BCLK. Select only at
     // the I2S frame boundary, where both SDATA streams carry the required

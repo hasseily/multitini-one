@@ -30,6 +30,10 @@ typedef struct {
     uint32_t c64_expansion_caps;
     uint8_t c64_sid_mode;
     bool c64_reu_enabled;
+    bool c64_turbo_available, c64_ua_available, c64_ua_enabled, c64_ua_fault;
+    bool c64_reu_host_available;
+    uint8_t c64_turbo_detail, c64_turbo_flags;
+    uint32_t c64_cpu_caps, c64_cpu_caps2, c64_cpu_config, c64_cpu_status;
     uint8_t genesis_three_button_mask;
     const char *iigs_drive_name[MT_IIGS_DRIVE_COUNT];
     mt_iigs_config_t iigs_config;
@@ -43,6 +47,7 @@ typedef struct {
     mt_menu_item_t media_items[MT_MENU_MAX_ITEMS];
     mt_menu_item_t input_items[MT_MENU_MAX_ITEMS];
     mt_menu_core_option_t core_options[MT_MENU_MAX_CORE_OPTIONS];
+    char c64_turbo_text[96], c64_turbo_help[192], c64_speed_text[80];
 } mt_core_frontend_t;
 
 /* Replace only the profile-owned view fields. The caller retains ownership of

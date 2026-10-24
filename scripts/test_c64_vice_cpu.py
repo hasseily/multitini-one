@@ -71,6 +71,8 @@ def compare(actual: list[dict[str, object]], expected: list[dict[str, object]]) 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", type=Path, default=ROOT / "build/c64-vice-cpu")
+    parser.add_argument("--reference-only", action="store_true",
+                        help="Generate the unchanged pinned VICE matrix for another production CPU harness")
     parser.add_argument("--vivado-bin", type=Path,
                         default=Path(os.environ.get("XILINX_VIVADO", "C:/Xilinx/2025.2/Vivado")) / "bin")
     args = parser.parse_args()
@@ -222,6 +224,21 @@ def main() -> int:
         stem = str(case["stem"])
         _, code = run(stem + "-oracle", [*guard, oracle, build / "memory.bin", build / (stem + ".hex"), build / (stem + ".csv")], allow_failure=True)
         case["oracle_returncode"] = code
+
+    if args.reference_only:
+        for case in cases:
+            case["artifact_sha256"] = {extension: hashlib.sha256(
+                (build / (str(case["stem"]) + extension)).read_bytes()).hexdigest()
+                for extension in (".csv", ".events", ".hex")}
+        stable = before == hashes()
+        ok = stable and all(case["oracle_returncode"] == 0 for case in cases)
+        receipt_path.write_text(json.dumps({"schema": 1, "status": "PASS" if ok else "FAIL",
+            "scope": "Pinned VICE stimulus and reference generation only; no RTL comparison",
+            "reference_commit": REFERENCE_COMMIT, "source_sha256": before,
+            "sources_unchanged": stable, "cases": cases, "case_count": len(cases),
+            "memory_sha256": hashlib.sha256(memory).hexdigest(), "oracle_sources": oracle_sources}, indent=2) + "\n")
+        print(f"{'PASS' if ok else 'FAIL'}: VICE reference generation {len(cases)} cases")
+        return 0 if ok else 1
 
     source = wrapper.read_text()
     declaration = "\t\tdoIO    : out unsigned(7 downto 0)"

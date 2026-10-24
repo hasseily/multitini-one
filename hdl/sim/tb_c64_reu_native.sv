@@ -33,12 +33,13 @@ module tb_c64_reu_native #(
         !(negative_gap && active_case && accepted==3);
     reg [7:0] c64[0:65535];
     wire [7:0] dma_rdata=c64[dma_addr];
-    multitini_c64_reu #(.ADDRESS_BITS(ADDRESS_BITS)) reu(.*);
+    multitini_c64_reu #(.ADDRESS_BITS(ADDRESS_BITS)) reu(.memory_waiting(),.*);
 
     wire [23:0] ddr_addr; wire ddr_write,ddr_valid,ddr_burst,ddr_busy;
     wire [63:0] ddr_wdata,ddr_rdata; wire [7:0] ddr_wstrb;
     wire ddr_ready,ddr_rvalid,ddr_fault,cache_fault,quiescent;
     multitini_c64_reu_cache #(.ADDRESS_BITS(ADDRESS_BITS)) cache(
+        .invalidate(1'b0),
         .clk(clk),.reset(hard_reset),.enable(enable&&!reset),.flush(!busy||reset||!enable),
         .hint_addr(memory_hint_addr),.hint_read(memory_hint_read),
         .request_addr(memory_addr),.request_write(memory_write),.request_wdata(memory_wdata),

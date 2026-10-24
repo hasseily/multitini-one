@@ -32,7 +32,20 @@ module multitini_c64_reu_cache #(
     input wire [63:0] memory_rdata,
     input wire memory_rvalid, memory_fault,
     output wire busy,
-    output reg fault
+    output reg fault,
+    // Host preload invalidation is accepted as a pulse, drains old work, and
+    // acknowledges only after all four read lines have become inaccessible.
+    input wire invalidate,
+    output reg invalidate_done,
+    // Read-only coherence view. Addresses are aligned 64-bit DDR word tags.
+    output wire [83:0] pending_addr,
+    output wire [3:0] pending_valid,
+    output wire [20:0] inflight_write_addr,
+    output wire inflight_write_valid,
+    output wire write_done,
+    output wire [20:0] write_done_addr,
+    output wire write_snoop_valid,
+    output wire [20:0] write_snoop_addr
 );
     localparam [1:0] IDLE=0, SEND=1, WAIT=2;
     reg [1:0] state;
@@ -47,6 +60,7 @@ module multitini_c64_reu_cache #(
     reg [7:0] wb_strb [0:3];
     reg [1:0] head, tail;
     reg [2:0] count;
+    reg invalidate_pending;
     wire [1:0] young = tail - 2'd1;
     wire hit = valid[request_addr[6:5]] && tags[request_addr[6:5]] == request_addr[23:7];
     wire merge = count != 0 && wb_addr[young] == request_addr[23:3];
@@ -100,7 +114,7 @@ module multitini_c64_reu_cache #(
             fill_data=merge_bytes(fill_data,request_wdata,request_wstrb);
     end
 
-    assign request_ready=!reset && !fault && !memory_fault &&
+    assign request_ready=!reset && !fault && !memory_fault && !invalidate_pending &&
         (request_write ? (count<4 || merge) : hit);
     // A cache hit is a logical memory completion on the acceptance edge.
     // The REU FSM still compares its ordered logical memory accesses to MAME;
@@ -110,15 +124,29 @@ module multitini_c64_reu_cache #(
     assign memory_valid=state==SEND && !reset && !fault && !memory_fault;
     // A failed posted write cannot be declared safely drained, even after
     // its error response retired the only in-flight transaction.
-    assign busy=fault || memory_fault || state!=IDLE || count!=0 || request_valid;
+    assign busy=fault || memory_fault || state!=IDLE || count!=0 || request_valid || invalidate_pending;
+    genvar observer;
+    generate for(observer=0;observer<4;observer=observer+1) begin: write_observers
+        assign pending_addr[observer*21+:21]=wb_addr[observer];
+        assign pending_valid[observer]=((observer+4-head)%4)<count;
+    end endgenerate
+    assign inflight_write_valid=state!=IDLE && memory_write;
+    assign inflight_write_addr=memory_addr[23:3];
+    assign write_done=response && memory_write && !reset && !fault && !memory_fault;
+    assign write_done_addr=memory_addr[23:3];
+    assign write_snoop_valid=accept_write;
+    assign write_snoop_addr=request_addr[23:3];
 
     integer i;
     always @(posedge clk) begin
         if(reset) begin
             state<=IDLE; valid<=0; head<=0; tail<=0; count<=0; beat<=0; fault<=0;
+            invalidate_pending<=0;invalidate_done<=0;
             memory_addr<=0; memory_write<=0; memory_wdata<=0; memory_wstrb<=0; memory_burst<=0;
             for(i=0;i<4;i=i+1) begin tags[i]<=0;wb_addr[i]<=0;wb_data[i]<=0;wb_strb[i]<=0;end
         end else begin
+            invalidate_done<=0;
+            if(invalidate) invalidate_pending<=1;
             if(memory_fault) fault<=1;
             // Retain dirty data on faults. Quiescence must not report success
             // if accepted guest writes have not reached DDR.
@@ -139,12 +167,14 @@ module multitini_c64_reu_cache #(
                 // queue to empty can starve a swap stream when DDR writes take
                 // longer than its two native cycles. Queued bytes overlay the
                 // fill, while an already-issued write completed before IDLE.
-                if(need_read) begin
+                if(invalidate_pending && count==0 && !request_valid) begin
+                    valid<=0;invalidate_pending<=0;invalidate_done<=1;
+                end else if(need_read && !invalidate_pending) begin
                     memory_addr<={read_addr[23:5],5'b00000};memory_write<=0;
                     memory_wdata<=0;memory_wstrb<=0;memory_burst<=1;beat<=0;
                     tags[read_addr[6:5]]<=read_addr[23:7];valid[read_addr[6:5]]<=0;
                     state<=SEND;
-                end else if(count!=0 && (wb_strb[head]==8'hff || count>1 || flush || !enable)) begin
+                end else if(count!=0 && (wb_strb[head]==8'hff || count>1 || flush || !enable || invalidate_pending)) begin
                     // Combine a partial youngest word while streaming. Full
                     // words, older words and command completion drain it.
                     memory_addr<={wb_addr[head],3'b000};memory_write<=1;

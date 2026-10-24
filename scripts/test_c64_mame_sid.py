@@ -60,6 +60,13 @@ entity c64_sid_socket_observed is port(
     audio_l, audio_r : out std_logic_vector(17 downto 0));
 end entity;
 architecture observed of c64_sid_socket_observed is
+constant FAST_IO : boolean := false;
+constant EDGE_STAGE : boolean := true;
+signal fastSidSelect,fastSidReadSelect,fastSidLatchSource : std_logic_vector(1 downto 0) := "00";
+signal fastSidWr,fastSidLatch : std_logic := '0';
+signal fastSidA,fio_rd_addr : unsigned(9 downto 0) := (others=>'0');
+signal fastSidD : unsigned(7 downto 0) := (others=>'0');
+signal fastSidRead : unsigned(7 downto 0);
 signal pot_x1,pot_y1,pot_x2,pot_y2 : std_logic_vector(7 downto 0);
 signal pot1 : std_logic_vector(7 downto 0) := x"ED";
 signal pot2 : std_logic_vector(7 downto 0) := x"CB";

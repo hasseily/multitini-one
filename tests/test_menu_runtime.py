@@ -28,6 +28,7 @@ PREAMBLE = r'''
 #include "multitini_menu.h"
 #include "multitini_c64_hid_input.h"
 #include "multitini_c64_interface.h"
+#include "multitini_c64_debug.h"
 #include "multitini_gameboy_interface.h"
 #include "multitini_genesis_interface.h"
 #include "multitini_iigs_interface.h"
@@ -42,6 +43,7 @@ PREAMBLE = r'''
 #define MT_MENU_HIDE_TIMEOUT_MS UINT64_C(1000)
 #define MT_SUPERVISOR_CORE_ID UINT32_C(0)
 static mt_menu_t supervisor_menu;
+static mt_c64_debug_t c64_debug;
 static mt_ui_frame_t supervisor_frame;
 static mt_ui_presenter_t supervisor_presenter;
 static mt_supervisor_t supervisor;
@@ -86,6 +88,8 @@ static const mt_ui_frame_t *screenshot_ui;
 static const char *screenshot_status;
 static char reported_status[192], screenshot_core_name[MT_CORE_PACKAGE_ID_MAX];
 static uint8_t settings_wire[MT_SETTINGS_WIRE_SIZE];
+static uint8_t turbo_wire[MT_TURBO_CONTROLS_WIRE_SIZE];
+static bool stored_turbo;
 bool usb_hid_service_controller_device(uint8_t slot, mt_controller_device_t *device) {
     *device = devices[slot]; return device->connected != 0U;
 }
@@ -126,11 +130,24 @@ mt_sd_result_t mt_sd_storage_journal_recover(const char *path, const char *journ
     mt_sd_result_t result = {0}; return result;
 }
 mt_sd_result_t mt_sd_storage_read_file_optional_exact(const char *path, uint8_t *dst, size_t size, bool *found) {
+    if (strcmp(path, MT_TURBO_CONTROLS_PATH) == 0) {
+        assert(size == sizeof(turbo_wire)); *found = stored_turbo;
+        if (*found) memcpy(dst, turbo_wire, size);
+        mt_sd_result_t result = {0}; result.size = *found ? size : 0U; return result;
+    }
     (void)path; assert(size == sizeof(settings_wire)); *found = stored_settings;
     if (*found) memcpy(dst, settings_wire, size);
     mt_sd_result_t result = {0}; result.size = *found ? size : 0U; return result;
 }
 mt_sd_result_t mt_sd_storage_journal_replace(const char *path, const char *journal, const uint8_t *src, size_t size) {
+    if (strcmp(path, MT_TURBO_CONTROLS_PATH) == 0) {
+        assert(strcmp(journal, MT_TURBO_CONTROLS_JOURNAL_PATH) == 0);
+        assert(size == sizeof(turbo_wire));
+        mt_sd_result_t result = {0};
+        if (save_sd_fail) result.status = MT_SD_WRITE_FAILED;
+        else { memcpy(turbo_wire, src, size); stored_turbo = true; }
+        return result;
+    }
     (void)path; (void)journal; ++settings_writes;
     mt_sd_result_t result = {0};
     if (save_sd_fail) result.status = MT_SD_WRITE_FAILED;
@@ -272,7 +289,7 @@ static void reset_fixture(bool visible) {
     }
     mt_supervisor_settings_defaults(&persistent_settings);
     screenshot_requests = output_screenshot_requests = config_applies = settings_writes = 0U;
-    gamepad_preview = save_sd_fail = stored_settings = false;
+    gamepad_preview = save_sd_fail = stored_settings = stored_turbo = false;
     screenshot_busy = screenshot_finish = screenshot_ui_visible = borders_supported = false;
     screenshot_polls = screenshot_logs = 0U; screenshot_core_id = screenshot_border = 0U;
     display_status = 0x12U; border_config = 0x1234U; screenshot_display_mode = 0U;

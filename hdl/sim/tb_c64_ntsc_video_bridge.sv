@@ -5,11 +5,15 @@
 // source is slightly slower than 60 Hz, so the output-side checks also prove
 // that an empty 60 Hz interval repeats the owned frame without releasing it.
 module tb_c64_ntsc_video_bridge;
+    parameter bit DYNAMIC_DISPLAY = 0;
+    parameter integer MODE = 0;
     localparam int NTSC_WIDTH = 404;
     localparam int NTSC_HEIGHT = 250;
-    localparam int NTSC_X_OFFSET = 152;
-    localparam int NTSC_Y_OFFSET = 40;
-    localparam int OUTPUT_SCALE = 4;
+    localparam int OUTPUT_SCALE = MODE==0 ? 4 : MODE==3 || MODE==5 ? 3 : 2;
+    localparam int SCREEN_WIDTH = MODE==0 ? 1920 : MODE==1 ? 1024 : MODE==2 ? 1200 : MODE==3 ? 1280 : MODE==4 ? 1360 : 1680;
+    localparam int SCREEN_HEIGHT = MODE==0 ? 1080 : MODE==1 || MODE==4 ? 768 : MODE==2 ? 800 : MODE==3 ? 1024 : 1050;
+    localparam int NTSC_X_OFFSET = (SCREEN_WIDTH-NTSC_WIDTH*OUTPUT_SCALE)/2;
+    localparam int NTSC_Y_OFFSET = (SCREEN_HEIGHT-NTSC_HEIGHT*OUTPUT_SCALE)/2;
     localparam int FRAME_PIXELS = NTSC_WIDTH * NTSC_HEIGHT;
 
     logic source_clk = 1'b0;
@@ -35,7 +39,23 @@ module tb_c64_ntsc_video_bridge;
     always #5 source_clk = !source_clk;
     always #3 pixel_clk = !pixel_clk;
 
-    multitini_c64_video_bridge #(.NTSC_MODE(1'b1)) dut (
+    wire [11:0] capture_x,capture_y,capture_width,capture_height;
+    wire [3:0] capture_num,capture_den;
+    multitini_display_geometry #(.MACHINE(0),.WIDTH(NTSC_WIDTH),.HEIGHT(NTSC_HEIGHT)) capture_geometry(
+        .mode(4'(MODE)),.multiplier(3'd0),.view_x(capture_x),.view_y(capture_y),
+        .view_width(capture_width),.view_height(capture_height),.scale_num(capture_num),.scale_den(capture_den));
+    reg [2:0] multiplier=0;
+    wire [11:0] display_x,display_y,display_width,display_height;
+    wire [9:0] source_x0,source_y0;
+    wire [3:0] phase_x0,phase_y0,display_num,display_den;
+    multitini_display_geometry #(.ENABLE_MULTIPLIER(1),.MACHINE(0),.WIDTH(NTSC_WIDTH),.HEIGHT(NTSC_HEIGHT)) display_geometry(
+        .mode(4'(MODE)),.multiplier(multiplier),.view_x(display_x),.view_y(display_y),
+        .view_width(display_width),.view_height(display_height),.scale_num(display_num),.scale_den(display_den),
+        .source_x0(source_x0),.source_y0(source_y0),.phase_x0(phase_x0),.phase_y0(phase_y0));
+    multitini_c64_video_bridge #(.NTSC_MODE(1'b1),.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY)) dut (
+        .display_view_x(capture_x),.display_view_y(capture_y),
+        .display_view_width(capture_width),.display_view_height(capture_height),
+        .display_scale_num(capture_num),.display_scale_den(capture_den),
         .source_clk(source_clk), .source_resetn(source_resetn),
         .source_ready(source_ready),
         .source_r(source_r), .source_g(source_g), .source_b(source_b),
@@ -209,6 +229,7 @@ module tb_c64_ntsc_video_bridge;
     initial begin
         logic [2:0] held_acquire;
         logic [2:0] held_release;
+        integer size,scaled_w,scaled_h,left,top,crop_x,crop_y;
 
         fork
             begin
@@ -222,9 +243,10 @@ module tb_c64_ntsc_video_bridge;
                     "NTSC default capture width is 404");
         check_value(dut.SOURCE_HEIGHT == NTSC_HEIGHT,
                     "NTSC default capture height is 250");
-        check_value(dut.OUTPUT_X_OFFSET == NTSC_X_OFFSET &&
-                    dut.OUTPUT_Y_OFFSET == NTSC_Y_OFFSET,
-                    "NTSC 4x scan is centered in 1080p");
+        if (!DYNAMIC_DISPLAY)
+            check_value(dut.OUTPUT_X_OFFSET == NTSC_X_OFFSET &&
+                        dut.OUTPUT_Y_OFFSET == NTSC_Y_OFFSET,
+                        "NTSC fixed scan is centered in 1080p");
         check_value(dut.FRAME_PIXELS == FRAME_PIXELS,
                     "NTSC bank contains exactly one active raster");
 
@@ -256,6 +278,30 @@ module tb_c64_ntsc_video_bridge;
         check_value(dut.frame_bank_0.memory[FRAME_PIXELS - 1] ==
                     pattern_index(NTSC_WIDTH - 1, NTSC_HEIGHT - 1, 2),
                     "NTSC last active pixel stored");
+        for(integer pixel=0;pixel<FRAME_PIXELS;pixel=pixel+1)
+            check_value(dut.frame_bank_0.memory[pixel] == pattern_index(pixel%NTSC_WIDTH,pixel/NTSC_WIDTH,2),
+                        "complete native NTSC raster retained");
+        // Production sends Auto geometry to the capture bridge and applies
+        // user magnification only at DDR scanout. Verify that contract for
+        // all sizes, including signed clipping and source start/phase.
+        for(size=0;size<=4;size=size+1)begin
+            multiplier=3'(size);#1;
+            scaled_w=NTSC_WIDTH*(size==0 ? OUTPUT_SCALE : size);
+            scaled_h=NTSC_HEIGHT*(size==0 ? OUTPUT_SCALE : size);
+            left=(SCREEN_WIDTH-scaled_w)>>>1;top=(SCREEN_HEIGHT-scaled_h)>>>1;
+            crop_x=left<0 ? -left : 0;crop_y=top<0 ? -top : 0;
+            check_value(display_width==scaled_w && display_height==scaled_h &&
+                $signed(display_x)==left && $signed(display_y)==top && display_den==1,
+                "requested multiplier is centered with signed viewport");
+            if(size==0)check_value(crop_x==0 && crop_y==0 && source_x0==0 && source_y0==0,
+                "Auto never crops NTSC raster");
+            else check_value(source_x0==crop_x/size && source_y0==crop_y/size &&
+                phase_x0==crop_x%size && phase_y0==crop_y%size && display_num==size,
+                "oversized multipliers clip at the correct native pixel and phase");
+            check_value(capture_x==NTSC_X_OFFSET && capture_y==NTSC_Y_OFFSET &&
+                capture_width==NTSC_WIDTH*OUTPUT_SCALE && capture_height==NTSC_HEIGHT*OUTPUT_SCALE,
+                "user multiplier never crops capture");
+        end
 
         diagnostic_request = 1'b0;
         repeat (5) @(posedge pixel_clk);
@@ -316,7 +362,7 @@ module tb_c64_ntsc_video_bridge;
             $fatal(1, "%0d production NTSC bridge checks failed",
                    failure_count);
         else begin
-            $display("PASS: 404x250 NTSC capture, centered 4x scan, 59.8-to-60 Hz repeat, and vblank ownership");
+            $display("PASS: 404x250 NTSC capture, mode %0d dynamic %0d, centered Auto, five scanout sizes, frame repeat and vblank ownership",MODE,DYNAMIC_DISPLAY);
             $finish;
         end
     end

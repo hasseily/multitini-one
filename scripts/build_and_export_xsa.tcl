@@ -36,14 +36,14 @@ proc require_one_object {description objects} {
 }
 
 proc require_c64_local_ram {stage} {
-    set cells [get_cells -hierarchical -quiet -filter {NAME =~ *g_c64_machine*machine_adapter*main_ram_i*}]
-    set bram36 [filter $cells {REF_NAME =~ RAMB36*}]
-    set bram18 [filter $cells {REF_NAME =~ RAMB18*}]
-    set distributed [filter $cells {REF_NAME =~ RAMD* || REF_NAME =~ RAMS* || REF_NAME =~ RAM32* || REF_NAME =~ RAM64* || REF_NAME =~ RAM128* || REF_NAME =~ RAM256*}]
-    if {[expr {2 * [llength $bram36] + [llength $bram18]}] != 32 || [llength $distributed] != 0} {
-        error "C64 $stage: 64 KiB local RAM must use 16 RAMB36 equivalents and no distributed RAM"
+    check_c64_turbo_memory $stage
+    set capture [get_cells -hierarchical -quiet -filter {NAME =~ *audio_capture_i/*}]
+    set bram [filter $capture {REF_NAME =~ RAMB*}]
+    set distributed [filter $capture {REF_NAME =~ RAMD* || REF_NAME =~ RAMS* || REF_NAME =~ RAM32* || REF_NAME =~ RAM64* || REF_NAME =~ RAM128* || REF_NAME =~ RAM256*}]
+    if {[llength $bram] != 1 || [get_property REF_NAME $bram] ne "RAMB18E1" || [llength $distributed] != 0} {
+        error "C64 $stage: audio capture must retain one RAMB18 and no distributed RAM"
     }
-    puts "PASS: C64 $stage local RAM uses 16 RAMB36 equivalents and no distributed RAM"
+    puts "C64_AUDIO_CAPTURE_MEMORY_PASS stage=$stage bram18=1 lutram=0"
 }
 
 proc require_nes_save_ram {stage} {
@@ -154,6 +154,9 @@ set psram_active [expr {
     [string match "*ACTIVE_MACHINE=6*" $build_generics] ||
     [string match "*ENABLE_GBC_PSRAM=1'b1*" $build_generics]
 }]
+if {$image_kind eq "C64"} {
+    source [file join $script_dir check_c64_turbo_synthesis.tcl]
+}
 
 # Capture dirty source bytes as well as the commit before launching workers.
 # A second check before export detects edits during the implementation run.
@@ -199,6 +202,23 @@ open_run impl_1
 
 if {$image_kind eq "C64"} {
     require_c64_local_ram implementation
+    set native_clock [get_clocks -quiet -filter {NAME =~ *clk_out1*zynq_ps_bd_clk_wiz_c64*}]
+    set cpu_clock [get_clocks -quiet -filter {NAME =~ *clk_out2*zynq_ps_bd_clk_wiz_c64*}]
+    check_c64_turbo_timing implementation $cpu_clock $native_clock 0.100 1
+    set c64_mmcm [get_cells -hierarchical -quiet -filter \
+        {REF_NAME == MMCME2_ADV && NAME =~ *clk_wiz_c64*}]
+    require_one_object "C64 related clock MMCM" $c64_mmcm
+    if {[string match {*C64_NTSC_MODE=1'b1*} $build_generics]} {
+        set c64_clock_plan {CLKFBOUT_MULT_F 24 DIVCLK_DIVIDE 5 CLKOUT0_DIVIDE_F 22 CLKOUT1_DIVIDE 11}
+    } else {
+        set c64_clock_plan {CLKFBOUT_MULT_F 38.25 DIVCLK_DIVIDE 7 CLKOUT0_DIVIDE_F 26 CLKOUT1_DIVIDE 13}
+    }
+    foreach {property expected} [concat $c64_clock_plan {CLKOUT0_PHASE 0 CLKOUT1_PHASE 0 CLKOUT0_DUTY_CYCLE 0.5 CLKOUT1_DUTY_CYCLE 0.5}] {
+        if {abs([get_property $property $c64_mmcm] - $expected) > 0.000001} {
+            error "C64 MMCM $property differs from the reviewed value $expected"
+        }
+    }
+    puts "C64_MMCM_PLAN_PASS $c64_clock_plan"
 }
 
 
@@ -570,6 +590,19 @@ if {[regexp -nocase {VIOLATED} $bus_skew_text]} {
 }
 report_drc -file [file join $report_dir drc.rpt]
 report_methodology -file [file join $report_dir methodology.rpt]
+if {$image_kind eq "C64"} {
+    set methodology [report_methodology -return_string]
+    if {[regexp {TIMING-1([^0-9]|$)[^\n]*Critical Warning} $methodology]} {
+        error "C64 clock redefinition or invalid generated clock; see methodology.rpt"
+    }
+    set pulse_width [report_pulse_width -return_string]
+    set pulse_file [open [file join $report_dir pulse_width.rpt] w]
+    puts -nonewline $pulse_file $pulse_width
+    close $pulse_file
+    if {[regexp -nocase {VIOLATED} $pulse_width]} {
+        error "C64 pulse-width timing failed; see pulse_width.rpt"
+    }
+}
 report_route_status -file [file join $report_dir route_status.rpt]
 report_utilization -hierarchical -file [file join $report_dir utilization.rpt]
 report_power -file [file join $report_dir power.rpt]

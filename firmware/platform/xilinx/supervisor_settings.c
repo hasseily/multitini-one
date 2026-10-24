@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "supervisor_settings.h"
+#include "multitini_c64_interface.h"
 
 #include <string.h>
 
@@ -54,6 +55,8 @@ static const uint8_t settings_magic[8] = {
 };
 static uint8_t settings_wire[MT_SETTINGS_WIRE_SIZE];
 static mt_supervisor_settings_t settings_decode_candidate;
+static uint8_t turbo_controls_wire[MT_TURBO_CONTROLS_WIRE_SIZE];
+static const uint8_t turbo_controls_magic[8] = {'M','T','T','U','R','B','O','1'};
 
 static mt_sd_result_t empty_sd_result(void)
 {
@@ -576,6 +579,9 @@ static bool encode_settings(const mt_supervisor_settings_t *settings)
     store_u32_le(settings_wire + 12U, MT_SETTINGS_WIRE_SIZE);
     settings_wire[24U] = settings->auto_boot ? 1U : 0U;
     settings_wire[25U] = settings->display_mode;
+    settings_wire[26U] = (settings->c64_turbo_flags & 3U) |
+                        (settings->c64_ultimate_audio ? 4U : 0U);
+    settings_wire[27U] = settings->c64_turbo_detail;
     memcpy(settings_wire + 28U, settings->selected_core_id,
            strlen(settings->selected_core_id));
     store_u32_le(settings_wire + 52U, (uint32_t)settings->profile_count);
@@ -695,6 +701,9 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
         }
     }
     mt_supervisor_settings_defaults(&settings_decode_candidate);
+    settings_decode_candidate.c64_turbo_flags = settings_wire[26U] & 3U;
+    settings_decode_candidate.c64_ultimate_audio = (settings_wire[26U] & 4U) != 0U;
+    settings_decode_candidate.c64_turbo_detail = settings_wire[27U];
     if (schema == MT_SETTINGS_SCHEMA) {
         for (index = 0U; index < MT_SETTINGS_MAX_PROFILES; ++index) {
             const uint8_t config = settings_wire[MT_SETTINGS_V9_WIRE_SIZE + index];
@@ -880,4 +889,75 @@ const char *mt_settings_status_name(mt_settings_status_t status)
     case MT_SETTINGS_WRITE_FAILED: return "write failed";
     }
     return "unknown settings status";
+}
+
+bool mt_supervisor_turbo_controls_save(const mt_supervisor_settings_t *settings)
+{
+    if (!settings_valid(settings)) return false;
+    memset(turbo_controls_wire, 0, sizeof(turbo_controls_wire));
+    memcpy(turbo_controls_wire, turbo_controls_magic, 8);
+    store_u32_le(turbo_controls_wire + 8, 1);
+    unsigned count = 0;
+    for (size_t i = 0; i < settings->controller_profile_count; ++i) {
+        const mt_controller_settings_profile_t *p = &settings->controller_profiles[i];
+        if (p->core_id != MT_C64_CORE_ID) continue;
+        uint8_t encoded[MT_SETTINGS_CONTROLLER_SIZE] = {0};
+        encode_controller(encoded, p);
+        uint8_t *record = turbo_controls_wire + 24U + count * 30U;
+        memcpy(record, encoded, 24);
+        for (unsigned n = 0; n < 3; ++n) store_u16_le(record + 24U + 2U*n, p->config.extra_binding[n]);
+        ++count;
+    }
+    store_u32_le(turbo_controls_wire + 12, count);
+    const uint32_t crc = crc32_bytes(turbo_controls_wire + 24, sizeof(turbo_controls_wire)-24);
+    store_u32_le(turbo_controls_wire + 16, crc);
+    store_u32_le(turbo_controls_wire + 20, ~crc);
+    return mt_sd_storage_journal_replace(MT_TURBO_CONTROLS_PATH, MT_TURBO_CONTROLS_JOURNAL_PATH,
+        turbo_controls_wire, sizeof(turbo_controls_wire)).status == MT_SD_OK;
+}
+
+bool mt_supervisor_turbo_controls_load(mt_supervisor_settings_t *settings)
+{
+    if (settings == NULL || settings->controller_profile_count > MT_SETTINGS_MAX_CONTROLLER_PROFILES) return false;
+    for (size_t i = 0; i < settings->controller_profile_count; ++i)
+        memset(settings->controller_profiles[i].config.extra_binding, 0,
+            sizeof(settings->controller_profiles[i].config.extra_binding));
+    if (mt_sd_storage_journal_recover(MT_TURBO_CONTROLS_PATH, MT_TURBO_CONTROLS_JOURNAL_PATH,
+        turbo_controls_wire, sizeof(turbo_controls_wire)).status != MT_SD_OK) return false;
+    bool found = false;
+    if (mt_sd_storage_read_file_optional_exact(MT_TURBO_CONTROLS_PATH, turbo_controls_wire,
+        sizeof(turbo_controls_wire), &found).status != MT_SD_OK) return false;
+    if (!found) return true;
+    const uint32_t count = load_u32_le(turbo_controls_wire + 12);
+    const uint32_t crc = load_u32_le(turbo_controls_wire + 16);
+    if (memcmp(turbo_controls_wire, turbo_controls_magic, 8) != 0 ||
+        load_u32_le(turbo_controls_wire + 8) != 1 || count > MT_SETTINGS_MAX_CONTROLLER_PROFILES ||
+        load_u32_le(turbo_controls_wire + 20) != ~crc ||
+        crc32_bytes(turbo_controls_wire + 24, sizeof(turbo_controls_wire)-24) != crc) return false;
+    /* Unused records must be zero. This also protects the count in the header:
+     * a damaged smaller count must not silently hide otherwise valid bindings. */
+    for (size_t i = 24U + (size_t)count * 30U; i < sizeof turbo_controls_wire; ++i)
+        if (turbo_controls_wire[i] != 0U) return false;
+    /* Validate the whole file before applying any binding. */
+    for (uint32_t i = 0; i < count; ++i) {
+        const uint8_t *r = turbo_controls_wire + 24U + i*30U;
+        if (load_u32_le(r) != MT_C64_CORE_ID || r[20] > MT_CONTROLLER_TRANSPORT_PS4 || r[22] || r[23]) return false;
+        for (unsigned n = 0; n < 3; ++n) {
+            const uint16_t source = load_u16_le(r + 24U + 2U*n);
+            if (source >= MT_CONTROL_SOURCE_COUNT || mt_controls_source_is_analog(source)) return false;
+        }
+    }
+    for (uint32_t i = 0; i < count; ++i) {
+        const uint8_t *r = turbo_controls_wire + 24U + i*30U;
+        const mt_controller_identity_t id = {
+            .vendor_id=load_u16_le(r+4), .product_id=load_u16_le(r+6),
+            .descriptor_hash=load_u32_le(r+8), .serial_hash=load_u32_le(r+12),
+            .port_path=load_u32_le(r+16), .transport=r[20], .interface_id=r[21]};
+        for (size_t n = 0; n < settings->controller_profile_count; ++n) {
+            mt_controller_settings_profile_t *p = &settings->controller_profiles[n];
+            if (p->core_id == MT_C64_CORE_ID && mt_controls_identity_equal(&p->identity, &id))
+                for (unsigned a = 0; a < 3; ++a) p->config.extra_binding[a] = load_u16_le(r+24U+2U*a);
+        }
+    }
+    return true;
 }

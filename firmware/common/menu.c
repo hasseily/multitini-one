@@ -344,6 +344,7 @@ static mt_menu_action_t activate(const mt_menu_t *menu, const mt_menu_view_t *vi
             return action;
         action.kind = directory_row(view, menu->row) ? MT_MENU_ACTION_OPEN_DIRECTORY :
             (view->files[menu->row].cookie & MT_MENU_FILE_TEXT) != 0U ? MT_MENU_ACTION_OPEN_TEXT :
+            menu->browser == MT_MENU_BROWSER_REU ? MT_MENU_ACTION_LOAD_REU :
             menu->browser == MT_MENU_BROWSER_DRIVE8 ?
             MT_MENU_ACTION_MOUNT_DRIVE8 :
             (menu->browser == MT_MENU_BROWSER_DISK_PROGRAM ?
@@ -384,7 +385,7 @@ static unsigned gamepad_action_count(const mt_menu_view_t *view)
 {
     unsigned count = 0U;
     const uint32_t mask = mt_controls_action_mask(view->gamepad_core_id);
-    for (unsigned index = 0U; index < MT_CONTROL_COUNT; ++index)
+    for (unsigned index = 0U; index < MT_CONTROL_ACTION_COUNT; ++index)
         if ((mask & (1U << index)) != 0U) ++count;
     return count;
 }
@@ -392,7 +393,7 @@ static unsigned gamepad_action_count(const mt_menu_view_t *view)
 static unsigned gamepad_action_at(const mt_menu_view_t *view, unsigned row)
 {
     const uint32_t mask = mt_controls_action_mask(view->gamepad_core_id);
-    for (unsigned index = 0U; index < MT_CONTROL_COUNT; ++index) {
+    for (unsigned index = 0U; index < MT_CONTROL_ACTION_COUNT; ++index) {
         if ((mask & (1U << index)) == 0U) continue;
         if (row-- == 0U) return index;
     }
@@ -484,11 +485,11 @@ static void gamepad_assign(mt_menu_t *menu, const mt_menu_view_t *view, uint16_t
     mt_controller_config_t *config = &menu->gamepad_config[menu->gamepad_slot];
     if (source != 0U) {
         const uint32_t mask = mt_controls_action_mask(view->gamepad_core_id);
-        for (unsigned index = 0U; index < MT_CONTROL_COUNT; ++index)
-            if ((mask & (1U << index)) != 0U && index != menu->gamepad_control && gamepad_sources_overlap(config, config->binding[index], source))
-                config->binding[index] = 0U;
+        for (unsigned index = 0U; index < MT_CONTROL_ACTION_COUNT; ++index)
+            if ((mask & (1U << index)) != 0U && index != menu->gamepad_control && gamepad_sources_overlap(config, mt_controls_binding(config, index), source))
+                mt_controls_bind(config, index, 0U);
     }
-    config->binding[menu->gamepad_control] = source;
+    mt_controls_bind(config, menu->gamepad_control, source);
     gamepad_next_capture(menu, view);
 }
 
@@ -546,8 +547,8 @@ bool mt_menu_gamepad_update(mt_menu_t *menu, const mt_menu_view_t *view)
             source = (uint16_t)(MT_CONTROL_SOURCE_AXIS_NEG + (direction ^ 1U));
     }
     const uint32_t mask = mt_controls_action_mask(view->gamepad_core_id);
-    for (unsigned index = 0U; index < MT_CONTROL_COUNT; ++index) {
-        if ((mask & (1U << index)) == 0U || index == menu->gamepad_control || !gamepad_sources_overlap(config, config->binding[index], source)) continue;
+    for (unsigned index = 0U; index < MT_CONTROL_ACTION_COUNT; ++index) {
+        if ((mask & (1U << index)) == 0U || index == menu->gamepad_control || !gamepad_sources_overlap(config, mt_controls_binding(config, index), source)) continue;
         menu->gamepad_pending_source = source;
         menu->gamepad_conflict = true;
         (void)snprintf(menu->gamepad_notice, sizeof(menu->gamepad_notice),
@@ -634,7 +635,7 @@ static mt_menu_action_t gamepad_key(mt_menu_t *menu, const mt_menu_view_t *view,
     } else if (menu->gamepad_field >= 2U && menu->gamepad_field < commands) {
         const unsigned control = gamepad_action_at(view, (unsigned)menu->gamepad_field - 2U);
         if (key == MT_MENU_HID_ENTER) { menu->gamepad_wizard = false; gamepad_start_capture(menu, view, control); }
-        else if (key == MT_MENU_HID_DELETE) config->binding[control] = 0U;
+        else if (key == MT_MENU_HID_DELETE) mt_controls_bind(config, control, 0U);
     } else if (key == MT_MENU_HID_ENTER) {
         const unsigned command = (unsigned)menu->gamepad_field - commands;
         if (command < 4U && !view->gamepad_devices[menu->gamepad_slot].connected) return action;
@@ -891,6 +892,8 @@ static const char *browser_title(mt_menu_browser_t browser)
         return "Load overlay";
     case MT_MENU_BROWSER_DOCUMENTS:
         return "Read documents";
+    case MT_MENU_BROWSER_REU:
+        return "Load into REU";
     default:
         return "Load program";
     }
@@ -1350,7 +1353,7 @@ static void render_gamepad(const mt_menu_t *menu, const mt_menu_view_t *view,
         mt_controls_output_t mapped;
         mt_controls_evaluate(view->gamepad_core_id, config, &view->gamepad_preview, 0U, &mapped);
         size_t used = (size_t)snprintf(text, sizeof(text), "Assigned actions:");
-        for (unsigned index = 0U; index < MT_CONTROL_COUNT && used < sizeof(text); ++index) {
+        for (unsigned index = 0U; index < MT_CONTROL_ACTION_COUNT && used < sizeof(text); ++index) {
             if ((mapped.actions & (UINT32_C(1) << index)) != 0U)
                 used += (size_t)snprintf(text + used, sizeof(text) - used, " %s;", mt_controls_action_name(view->gamepad_core_id, index));
         }
@@ -1396,7 +1399,7 @@ static void render_gamepad(const mt_menu_t *menu, const mt_menu_view_t *view,
         } else if (index < command_start) {
             const unsigned control = gamepad_action_at(view, index - 2U);
             label = mt_controls_action_name(view->gamepad_core_id, control);
-            mt_controls_source_name(device, config->binding[control], value, sizeof(value));
+            mt_controls_source_name(device, mt_controls_binding(config, control), value, sizeof(value));
             enabled = device->connected != 0U;
         } else {
             const unsigned command = index - command_start;

@@ -112,7 +112,9 @@ def observed_source() -> str:
  observe_rc <= rowCounter;
  observe_code <= nextChar(7 downto 0);
 """
-    if original.count("\tport (\n") != 1 or original.count("\nbegin\n") != 1:
+    # The architecture's first begin remains the observation point. Later
+    # unindented process bodies (such as the fast read mux) are legitimate.
+    if original.count("\tport (\n") != 1 or "\nbegin\n" not in original:
         raise ValueError("VIC observation anchors changed")
     result = original.replace("\tport (\n", "\tport (\n" + ports, 1).replace("\nbegin\n", "\nbegin\n" + assignments, 1)
     if result.replace(ports, "", 1).replace(assignments, "", 1) != original:

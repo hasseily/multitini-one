@@ -4,7 +4,9 @@
 module multitini_control_regs #(
     parameter logic [31:0] SHELL_BUILD_ID = 32'h00000000,
     parameter logic [31:0] IIGS_ACCEL_CAPS = 32'd0,
-    parameter logic [31:0] C64_EXPANSION_CAPS = 32'd0
+    parameter logic [31:0] C64_EXPANSION_CAPS = 32'd0,
+    parameter logic [31:0] C64_CPU_CAPS = 32'd0,
+    parameter logic [31:0] C64_CPU_CAPS2 = 32'd0
 ) (
     input  logic         clk,
     input  logic         resetn,
@@ -47,6 +49,14 @@ module multitini_control_regs #(
     output logic [31:0]  border_config,
     output logic [31:0]  vectrex_video_config,
     output logic [31:0]  c64_expansion_config,
+    output logic [31:0]  c64_cpu_config,
+    input  logic [31:0]  c64_cpu_status,
+    input  logic [31:0]  c64_ua_status, c64_ua_fetches, c64_reu_misses,
+    output logic [31:0]  debug_control,
+    input  logic [31:0]  debug_status, audio_capture_data,
+    output logic         audio_capture_pop,
+    output logic [31:0]  c64_ram_peek_request, c64_reu_host_request,
+    input  logic [31:0]  c64_ram_peek_status, c64_reu_host_status,
     output logic         effect_write, effect_commit,
     output logic [9:0]   effect_address,
     output logic [31:0]  effect_data, effect_commit_sequence,
@@ -221,8 +231,36 @@ module multitini_control_regs #(
         logic [31:0] result;
         result = value & MT_C64_EXPANSION_CONFIG_MASK;
         if (value[2:0] != 3'd2 && value[2:0] != 3'd3) result[2:0] = 3'd0;
+        if (!C64_EXPANSION_CAPS[0]) result[2:0] = 0;
+        if (!C64_EXPANSION_CAPS[1]) result[3] = 0;
+        if (!C64_EXPANSION_CAPS[3] || !result[3]) result[4] = 1'b0;
         return C64_EXPANSION_CAPS[31] ? result : 32'd0;
     endfunction
+
+    function automatic logic [31:0] clamp_c64_cpu(input logic [31:0] value);
+        logic [31:0] result;
+        logic [3:0] index;
+        result = value & MT_C64_CPU_CONFIG_MASK;
+        index = 0;
+        for (int i = 15; i >= 0; i--)
+            if (C64_CPU_CAPS[i]) index = 4'(i);
+        for (int i = 0; i < 16; i++)
+            if (C64_CPU_CAPS[i] && i <= value[3:0]) index = 4'(i);
+        result[3:0] = index;
+        if (result[5:4] == 2 && !C64_CPU_CAPS[16]) result[5:4] = 1;
+        if (result[5:4] == 3 && !C64_CPU_CAPS[17]) result[5:4] = 1;
+        if (!C64_CPU_CAPS[18]) result[6] = 1;
+        if (!C64_CPU_CAPS[19]) result[7] = 0;
+        if (!C64_CPU_CAPS[20]) result[8] = 1;
+        if (!C64_CPU_CAPS[21]) result[9] = 0;
+        if (!C64_CPU_CAPS2[10]) result[11] = 0;
+        if (!C64_CPU_CAPS2[8]) result[17:16] = 0;
+        if (!C64_CPU_CAPS2[12]) result[18] = 0;
+        return C64_CPU_CAPS[31] ? result : 32'd0;
+    endfunction
+
+    assign audio_capture_pop = rd_en && rd_addr == MT_REG_AUDIO_CAPTURE_DATA &&
+                               debug_control[0];
 
     always_comb begin
         rd_known = 1'b1;
@@ -236,6 +274,19 @@ module multitini_control_regs #(
             MT_REG_IIGS_ACCEL_CAPS:   rd_data = IIGS_ACCEL_CAPS;
             MT_REG_C64_EXPANSION_CAPS: rd_data = C64_EXPANSION_CAPS;
             MT_REG_C64_EXPANSION_CONFIG: rd_data = c64_expansion_config;
+            MT_REG_C64_CPU_CONFIG: rd_data = c64_cpu_config;
+            MT_REG_C64_CPU_CAPS: rd_data = C64_CPU_CAPS;
+            MT_REG_C64_CPU_CAPS2: rd_data = C64_CPU_CAPS2;
+            MT_REG_C64_CPU_STATUS: rd_data = C64_CPU_CAPS[31] ? c64_cpu_status : 0;
+            MT_REG_C64_UA_STATUS: rd_data = C64_EXPANSION_CAPS[3] ? c64_ua_status : 0;
+            MT_REG_C64_UA_FETCHES: rd_data = C64_EXPANSION_CAPS[3] ? c64_ua_fetches : 0;
+            MT_REG_C64_REU_MISSES: rd_data = C64_EXPANSION_CAPS[3] ? c64_reu_misses : 0;
+            MT_REG_DEBUG_CONTROL: rd_data = debug_control & 32'h3;
+            MT_REG_DEBUG_STATUS: rd_data = debug_status;
+            MT_REG_AUDIO_CAPTURE_DATA: rd_data = debug_control[0] ? audio_capture_data : 0;
+            MT_REG_C64_RAM_PEEK: rd_data = C64_CPU_CAPS2[13] ? c64_ram_peek_status : 0;
+            MT_REG_C64_REU_HOST: rd_data = C64_EXPANSION_CAPS[4] ?
+                ((c64_reu_host_status & 32'h5F00) | c64_reu_host_request) : 0;
             MT_REG_STATUS:           rd_data = status_word;
             MT_REG_ERROR:            rd_data = error_flags;
             MT_REG_CONTROL:          rd_data = control;
@@ -336,6 +387,10 @@ module multitini_control_regs #(
             MT_REG_BORDER_CONFIG,
             MT_REG_VECTREX_VIDEO_CONFIG,
             MT_REG_C64_EXPANSION_CONFIG,
+            MT_REG_C64_CPU_CONFIG,
+            MT_REG_DEBUG_CONTROL,
+            MT_REG_C64_RAM_PEEK,
+            MT_REG_C64_REU_HOST,
             MT_REG_IRQ_ENABLE,
             MT_REG_SCRATCH,
             MT_REG_COMMAND_SEQ,
@@ -355,6 +410,10 @@ module multitini_control_regs #(
             border_config   <= MT_BORDER_CONFIG_DEFAULT;
             vectrex_video_config <= MT_VECTREX_VIDEO_CONFIG_DEFAULT;
             c64_expansion_config <= clamp_c64_expansion(MT_C64_EXPANSION_CONFIG_DEFAULT);
+            c64_cpu_config <= clamp_c64_cpu(MT_C64_CPU_CONFIG_DEFAULT);
+            debug_control <= 0;
+            c64_ram_peek_request <= 0;
+            c64_reu_host_request <= 0;
             effect_write <= 0;
             effect_commit <= 0;
             effect_address <= 0;
@@ -439,6 +498,7 @@ module multitini_control_regs #(
             ui_submit <= 1'b0;
             effect_write <= 1'b0;
             effect_commit <= 1'b0;
+            debug_control[2] <= 1'b0;
             error_flags <= (error_flags & ~error_clear_mask) | error_set_mask;
             irq_status <= (irq_status & ~irq_clear_mask) |
                           ((|error_set_mask) ? 32'd1 : 32'd0);
@@ -516,6 +576,19 @@ module multitini_control_regs #(
                     MT_REG_C64_EXPANSION_CONFIG:
                         c64_expansion_config <= clamp_c64_expansion(
                             merge_strobes(c64_expansion_config, wr_data, wr_strb));
+                    MT_REG_C64_CPU_CONFIG:
+                        c64_cpu_config <= clamp_c64_cpu(
+                            merge_strobes(c64_cpu_config, wr_data, wr_strb));
+                    MT_REG_DEBUG_CONTROL:
+                        debug_control <= merge_strobes(debug_control, wr_data, wr_strb) & 32'h7;
+                    MT_REG_C64_RAM_PEEK:
+                        if (C64_CPU_CAPS2[13])
+                            c64_ram_peek_request <= merge_strobes(c64_ram_peek_request,
+                                wr_data, wr_strb) & 32'h000FFFFF;
+                    MT_REG_C64_REU_HOST:
+                        if (C64_EXPANSION_CAPS[4])
+                            c64_reu_host_request <= merge_strobes(c64_reu_host_request,
+                                wr_data, wr_strb) & MT_C64_REU_HOST_WRITE_MASK;
                     MT_REG_VIDEO_EFFECT_ADDRESS:
                         if (wr_strb == 4'hF && wr_data[31:10] == 0)
                             effect_address <= wr_data[9:0];

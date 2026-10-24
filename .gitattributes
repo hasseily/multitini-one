@@ -27,6 +27,7 @@ licenses/third_party/CiderPress2/NOTICE -text
 third_party/c64/upstream/** -text -whitespace
 third_party/mame_reference/upstream/** -text -whitespace
 third_party/vice_reference/upstream/** -text -whitespace
+third_party/ultimate_reference/upstream/** -text -whitespace
 third_party/gameboy/upstream/** -text -whitespace
 third_party/genesis/upstream/** -text -whitespace
 third_party/nes/upstream/** -text -whitespace

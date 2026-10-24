@@ -7,6 +7,7 @@ Baseline: the v1 turbo design, an earlier draft of C64_TURBO_DESIGN.md that is n
 Models (Python arithmetic only), kept with their outputs in [C64_TURBO_MODELS.md](C64_TURBO_MODELS.md):
 - `vicread_model.py`: read cost per speed index against the C64U and U64E measurements.
 - `vicpath_model.py`: loop costs with posted writes, barriers, and the #203 pixel pattern.
+- `vic_t2_sticky.py` (added with the fixes of C64_TURBO_DESIGN.md section 14.4): the T2 reference check for the sticky flags (sections 3.7 (c) and 6, T2).
 
 Tags: **[V]** verified (file:line or URL). **[M]** measured by a third party on U64/C64U hardware. **[I]** inference or design choice. **[O]** open, with the experiment that settles it.
 
@@ -329,17 +330,18 @@ The VIC is fully synchronous on c64_clk. A multi-bit register update at one edge
 **(a) Pixel consumers.**
 - Covers colours, MX, `$D010`, XSCROLL, MCM, CSEL, RSEL, MPRIO, MC, MXE, and display mode delays.
 - They see the new value from the first pixel edge after landing. This is the intended turbo behaviour (section 3.8).
-- These elements are shift registers and comparators. Stock writes already move them at 8-pixel granularity, for example side-border and sprite-stretch tricks, so no hidden state can get stuck.
+- These elements are shift registers and comparators. Stock writes already move them at 8-pixel granularity, for example side-border and sprite-stretch tricks, so their control state cannot get stuck.
+- Exception: the collision latches (M2M/M2D, IMMC/IMBC) are sticky and set from pixel data (VIC:1498-1529, 1543-1559) [V]. A single landing during sprite display can create or remove a collision that a stock write in the mapped cycle would not, and the latch keeps it. That is turbo behaviour by design. T2 does not compare these latches strictly at those times (section 6).
 
 **(b) Once-per-cycle state consumers.**
 - Covers e_15 samples and phi0 chains whose last sample is e_15: MDMA, MCBase, MCnt, MYE_ff, RC/VC/idle, `fetchBMM`, MPtr, `baChars`/`baSprite`/`reuSprite0Grace`.
 - A landing anywhere in (e_15(k−1), e_14(k)] gives the same state at e_15(k) as a stock write in cycle k−1, which lands at e_31(k−1), e_3(k) or e_7(k).
 - A landing at e_15(k) or later gives the same state as a stock write in cycle k.
-- With several fast writes in one window, only the last matters to these consumers. A BA chain set low earlier in phi0 (sticky `baSprite04`) ends in a state stock also reaches.
+- With several fast writes in one window, only the last matters to these once-per-cycle consumers; this does not hold for the sticky flags in (c). A BA chain set low earlier in phi0 (sticky `baSprite04`) ends in a state stock also reaches.
 
 **(c) Every-clock consumers.**
 - **Fetch address** (p11 and p27) has no stored state. Each fetch uses a legal register value. A `$D018` change between p11 and p27 makes the c/g pair at the switch cleaner than stock. That is data, not control state.
-- **Flags.** The raster-compare flags (IRST, `rasterIrqDone`) and `rasterEnable` are set or cleared at the first edge after their condition. Their timing can move by up to one cycle relative to the mapped stock write, but they reach the same state. A raster IRQ can therefore be raised in mid-cycle.
+- **Flags.** The raster-compare flags (IRST, `rasterIrqDone`) and `rasterEnable` are set or cleared at the first edge after their condition (VIC:617-623, 899-907) [V]. They are sticky and see every landed value for at least one edge, so several landings in one window do not collapse to the last one: a DEN = 1 that lasts one edge on line 48 sets `rasterEnable`; a `$D012` value that matches for one edge sets IRST; one that mismatches for one edge re-arms the compare. `$D019` acknowledges are one-clock pulses (VIC:1584, 1692) [V], so every landed mask acts; DEC/LSR/ASL `$D019` acknowledge with their dummy write `$F1`, as on stock. The result equals a stock C64 issuing the same writes in separate cycles, with timing moved by up to one cycle [I, C64_TURBO_MODELS.md (vic_t2_sticky.py)]. If the raster line changes within that cycle, the landing acts on the earlier line (C64_TURBO_DESIGN.md 2.13.6 (c)). These sticky effects are expected. A raster IRQ can therefore be raised in mid-cycle. A pulse shorter than one cycle may be missed by a real 6569 or the U64 VIC (C64_TURBO_DESIGN.md, T-i in section 2.13.12).
 
 **(d) One register feeding two state elements, sampled at different phases of one cycle, with a stock invariant:**
 
@@ -351,8 +353,9 @@ The VIC is fully synchronous on c64_clk. A multi-bit register update at one edge
 No other register has two state consumers in one cycle (section 2.5).
 
 **Conclusion** [I, to be proven by test T2]. Under the rule:
-- the VIC control state at every e_15 equals that of a stock VIC fed with a mapped stock write sequence (the IRQ flags within one cycle);
-- non-stock behaviour exists only in pixel-level and fetch-address data paths, which is what a turbo CPU should cause.
+- the VIC's once-per-cycle control state at every e_15 equals that of a stock VIC fed with a mapped stock write sequence (last write per register per window), with `rasterEnable` from the sticky rule;
+- the sticky flags of 3.7(c) equal those of a stock C64 issuing the same writes in separate cycles (within one cycle);
+- non-stock behaviour exists only in pixel-level and fetch-address data paths and in the collision latches they feed, which is what a turbo CPU should cause.
 
 **Per register**
 
@@ -607,17 +610,19 @@ All benches use one process for both clocks (baseline T7). PAL and NTSC (6567R8)
 
 **T2 `tb_c64_vic_fast_equivalence`** (proof of section 3.7)
 - DUT: a VIC driven by random fast writes, at random edges, through fio_port with the holds.
-- REF: a VIC driven by the mapped stock writes. A landing at e_q of cycle k becomes a stock write in cycle k−1 if q ≤ 14, else in cycle k, with the last write per register per window winning.
+- REF: a VIC driven by the mapped stock writes. A landing at e_q of cycle k becomes a stock write in cycle k−1 if q ≤ 14, else in cycle k, with the last write per register per window winning. This collapse is valid only for once-per-cycle state (3.7(b)).
+- SB: a per-event scoreboard, the primary check for the sticky flags (3.7(c)): `rasterEnable` = OR of every DEN = 1 present on line 48, every landed one included; IRST set and `rasterIrqDone` re-armed from every landed `rasterCmp`/RST8 value; the `$D019` acknowledge = OR of every landed mask. Its `rasterEnable` is forced into REF at the stock landing edge of the mapped cycle, so REF's badlines and BA stay comparable. C64_TURBO_DESIGN.md section 10.2 (T2) has the full rule.
 - Compare strictly at every e_15:
   - vicCycle, sprite, rasterX/Y;
-  - VC, VCBASE, RC, idle, `rasterEnable`;
+  - VC, VCBASE, RC, idle, `rasterEnable` (reference from SB);
   - MDMA, MCBase, MCnt, MYE_ff, MActive, MPtr;
   - `fetchBMM`/`fetchECM`, `baLoc`, `ba_reu`.
-- Compare IRST, IMMC, IMBC and ILP with a one-cycle tolerance after a `$D011`/`$D012`/`$D019`/`$D01A` landing.
+- Compare IRST and ILP against SB with a one-cycle tolerance after a `$D011`/`$D012`/`$D019`/`$D01A` landing. Compare IMMC, IMBC and M2M/M2D the same way only while no pixel-level register lands during sprite display (3.7(a)); otherwise leave them out, or check them against a pixel-accurate reference.
 - Compare the p11 fetch address and the p27 c-access address of every cycle. Two data-path differences are allowed by 3.7(c):
   - the p11 fetch of cycle k after a `$D018` landing at e_11..e_14 of cycle k;
   - the p27 c-access of cycle k after a `$D018` landing at e_15..e_26 of cycle k.
-- Coverage: badlines, sprites, sprite multiplexing and `$D011`/`$D015`/MY storms.
+- Coverage: badlines, sprites, sprite multiplexing and `$D011`/`$D015`/MY storms. Storms put several landings in one window, which is why SB is needed.
+- Directed sticky cases, each expected to equal a stock C64 issuing the same writes in separate cycles, and each a mismatch with REF alone: a DEN pulse on line 48 (`rasterEnable` set); a temporary `$D012` match (IRST set); re-arm by a temporary mismatch (IRST set again); INC `$D012` on a line that the compare does not match (the dummy write stores the current line; IRST set); DEC, LSR and ASL `$D019` with only IRST pending (IRST cleared by the dummy write `$F1`; the final write does not acknowledge).
 - **Negative controls.** H1 off must give a `fetchBMM` mismatch. H2 off must give an MPtr/MActive mismatch.
 
 **T3 `tb_c64_machine_island`, FIO additions**

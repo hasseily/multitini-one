@@ -11,11 +11,24 @@
 
 #define BIT(n) (UINT32_C(1) << (n))
 
+uint16_t mt_controls_binding(const mt_controller_config_t *config, unsigned action)
+{
+    if (config == NULL || action >= MT_CONTROL_ACTION_COUNT) return 0;
+    return action < MT_CONTROL_COUNT ? config->binding[action] : config->extra_binding[action - MT_CONTROL_COUNT];
+}
+void mt_controls_bind(mt_controller_config_t *config, unsigned action, uint16_t source)
+{
+    if (config == NULL || action >= MT_CONTROL_ACTION_COUNT) return;
+    if (action < MT_CONTROL_COUNT) config->binding[action] = source;
+    else config->extra_binding[action - MT_CONTROL_COUNT] = source;
+}
+
 uint32_t mt_controls_action_mask(uint32_t core)
 {
     const uint32_t directions = 15U, menu = BIT(MT_CONTROL_MENU) | BIT(MT_CONTROL_SCREENSHOT) | BIT(MT_CONTROL_SCREENSHOT_OUTPUT);
     switch (core) {
-    case MT_C64_CORE_ID: return directions | BIT(MT_CONTROL_A) | BIT(MT_CONTROL_B) | BIT(MT_CONTROL_C) | menu;
+    case MT_C64_CORE_ID: return directions | BIT(MT_CONTROL_A) | BIT(MT_CONTROL_B) | BIT(MT_CONTROL_C) | menu |
+        BIT(MT_CONTROL_TURBO_TOGGLE) | BIT(MT_CONTROL_CPU_FASTER) | BIT(MT_CONTROL_CPU_SLOWER);
     case MT_NES_CORE_ID:
     case MT_GBC_CORE_ID: return directions | BIT(MT_CONTROL_A) | BIT(MT_CONTROL_B) | BIT(MT_CONTROL_START) | BIT(MT_CONTROL_SELECT) | menu;
     case MT_GENESIS_CORE_ID: return UINT16_C(0x0fff) | menu;
@@ -27,12 +40,12 @@ uint32_t mt_controls_action_mask(uint32_t core)
 
 const char *mt_controls_action_name(uint32_t core, unsigned action)
 {
-    static const char *const names[MT_CONTROL_COUNT] = {
+    static const char *const names[MT_CONTROL_ACTION_COUNT] = {
         "Up", "Down", "Left", "Right", "A", "B", "C", "X", "Y", "Z",
         "Start", "Select", "Stick horizontal", "Stick vertical", "Open Multitini menu",
-        "Screenshot: filtered video", "Screenshot: full screen"
+        "Screenshot: filtered video", "Screenshot: full screen", "Turbo on/off", "CPU faster", "CPU slower"
     };
-    if (action >= MT_CONTROL_COUNT) return "Unknown";
+    if (action >= MT_CONTROL_ACTION_COUNT) return "Unknown";
     if (core == MT_C64_CORE_ID && action >= MT_CONTROL_A && action <= MT_CONTROL_C) {
         static const char *const c64[] = { "Fire", "Space", "Control" };
         return c64[action - MT_CONTROL_A];
@@ -162,8 +175,8 @@ bool mt_controls_config_valid(uint32_t core, const mt_controller_config_t *confi
     if (config == NULL || config->assignment > MT_CONTROLLER_OFF || mt_controls_action_mask(core) == 0U ||
         ((core == MT_GBC_CORE_ID || core == MT_IIGS_CORE_ID) && config->assignment == MT_CONTROLLER_PORT2)) return false;
     const uint32_t actions = mt_controls_action_mask(core);
-    for (unsigned i = 0U; i < MT_CONTROL_COUNT; ++i) {
-        const unsigned source = config->binding[i];
+    for (unsigned i = 0U; i < MT_CONTROL_ACTION_COUNT; ++i) {
+        const unsigned source = mt_controls_binding(config, i);
         const bool analog = i == MT_CONTROL_AXIS_X || i == MT_CONTROL_AXIS_Y;
         if (source >= MT_CONTROL_SOURCE_COUNT || ((actions & BIT(i)) == 0U && source != 0U)) return false;
         if (source != 0U && (analog != mt_controls_source_is_analog((uint16_t)source))) return false;
@@ -276,8 +289,8 @@ void mt_controls_evaluate(uint32_t core, const mt_controller_config_t *config,
     memset(out, 0, sizeof(*out));
     if (raw == NULL || !raw->connected || !mt_controls_config_valid(core, config)) return;
     const uint32_t mask = mt_controls_action_mask(core);
-    for (unsigned action = 0U; action < MT_CONTROL_COUNT; ++action)
-        if ((mask & BIT(action)) != 0U && source_pressed(config->binding[action], config, raw, (previous & BIT(action)) != 0U))
+    for (unsigned action = 0U; action < MT_CONTROL_ACTION_COUNT; ++action)
+        if ((mask & BIT(action)) != 0U && source_pressed(mt_controls_binding(config, action), config, raw, (previous & BIT(action)) != 0U))
             out->actions |= BIT(action);
     if ((out->actions & 3U) == 3U) out->actions &= ~UINT32_C(3);
     if ((out->actions & 12U) == 12U) out->actions &= ~UINT32_C(12);
@@ -292,7 +305,8 @@ void mt_controls_evaluate(uint32_t core, const mt_controller_config_t *config,
     if ((out->actions & 12U) != 0U) out->x = (out->actions & 4U) != 0U ? INT16_MIN : INT16_MAX;
     if ((out->actions & 3U) != 0U) out->y = (out->actions & 1U) != 0U ? INT16_MAX : INT16_MIN;
     /* A dedicated menu shortcut is consumed before gameplay routing. */
-    const uint32_t system_actions = BIT(MT_CONTROL_MENU) | BIT(MT_CONTROL_SCREENSHOT) | BIT(MT_CONTROL_SCREENSHOT_OUTPUT);
+    const uint32_t system_actions = BIT(MT_CONTROL_MENU) | BIT(MT_CONTROL_SCREENSHOT) | BIT(MT_CONTROL_SCREENSHOT_OUTPUT) |
+        BIT(MT_CONTROL_TURBO_TOGGLE) | BIT(MT_CONTROL_CPU_FASTER) | BIT(MT_CONTROL_CPU_SLOWER);
     if ((out->actions & system_actions) != 0U) {
         out->actions &= system_actions; out->x = 0; out->y = 0;
     }

@@ -1,0 +1,138 @@
+; SPDX-License-Identifier: GPL-3.0-only
+; Seven background voices plus 256 rounds of stash/fetch/swap/verify, then
+; fixed-REU-address stash/fetch. Uses RAM $2000-$21FF and REU $E00000-$E000FF.
+!source "boot.inc"
+    jsr start_audio
+    bcc begin_stress
+    jmp failed
+begin_stress:
+    lda #0
+    sta round
+next_round:
+    ldx #0
+fill_source:
+    txa
+    eor round
+    sta $2000,x
+    inx
+    bne fill_source
+    lda #0
+    sta fixed
+    lda #$20
+    sta source_hi
+    lda #$90
+    jsr command
+    lda #$21
+    sta source_hi
+    lda #$91
+    jsr command
+    ldx #0
+check_fetch:
+    lda $2000,x
+    cmp $2100,x
+    beq +
+    jmp failed
++   inx
+    bne check_fetch
+    lda #$20
+    sta source_hi
+    lda #$93
+    jsr command
+    ldx #0
+invert:
+    lda $2000,x
+    eor #$ff
+    sta $2000,x
+    inx
+    bne invert
+    lda #$92
+    jsr command
+    ldx #0
+check_swap:
+    txa
+    eor round
+    cmp $2000,x
+    beq +
+    jmp failed
++   inx
+    bne check_swap
+    lda #$21
+    sta source_hi
+    lda #$91
+    jsr command
+    ldx #0
+check_other_swap:
+    txa
+    eor round
+    eor #$ff
+    cmp $2100,x
+    beq +
+    jmp failed
++   inx
+    bne check_other_swap
+    lda #$40
+    sta fixed
+    lda #$20
+    sta source_hi
+    lda #$90
+    jsr command
+    lda #$21
+    sta source_hi
+    lda #$91
+    jsr command
+    ldx #0
+check_fixed:
+    lda $20ff
+    cmp $2100,x
+    beq +
+    jmp failed
++   inx
+    bne check_fixed
+    inc round
+    beq passed
+    jmp next_round
+passed:
+    lda #<pass_message
+    ldy #>pass_message
+    jsr print
+    rts
+failed:
+    lda #<fail_message
+    ldy #>fail_message
+    jsr print
+    rts
+command:
+    pha
+    lda #0
+    sta $df02
+    sta $df04
+    sta $df05
+    sta $df07
+    sta $df09
+    lda source_hi
+    sta $df03
+    lda #$e0
+    sta $df06
+    lda #1
+    sta $df08
+    lda fixed
+    sta $df0a
+    pla
+    sta $df01
+    lda $df00
+    and #$60
+    cmp #$40
+    beq +
+    ; Discard this call's return and exit through the main error path.
+    pla
+    pla
+    jmp failed
++   rts
+round: !byte 0
+fixed: !byte 0
+source_hi: !byte $20
+pass_message: !pet "REU STRESS PASS - 7 VOICES STILL PLAYING",13,0
+fail_message: !pet "REU STRESS FAILED OR AUDIO UNAVAILABLE",13,0
+!source "console.inc"
+!if * >= $2000 { !error "Stress program overlaps transfer RAM" }
+!source "voices.inc"

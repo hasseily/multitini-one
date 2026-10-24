@@ -21,6 +21,7 @@ def production_function(source: str, signature: str) -> str:
 PREAMBLE = r'''
 #include "multitini_supervisor.h"
 #include "multitini_c64_interface.h"
+#include "multitini_c64_features.h"
 #include "multitini_regs.h"
 #include "supervisor_settings.h"
 #include <assert.h>
@@ -29,15 +30,26 @@ PREAMBLE = r'''
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
 static mt_supervisor_t supervisor;
 static mt_supervisor_settings_t persistent_settings, settings_before_update, saved_settings;
-static uint32_t caps, config;
+static uint32_t caps, config, ua_fault;
 static unsigned cap_reads, config_reads, writes, saves;
 static bool attached, save_fail, supervisor_menu_dirty;
 static char message[128];
 static uint32_t c64_content_service_expansion_caps(void) { ++cap_reads; return caps; }
 static bool c64_content_service_crt_attached(void) { return attached; }
 static uint32_t shell_read(uint32_t reg) {
+    if(reg == MT_REG_C64_UA_STATUS) return ua_fault;
     assert(reg == MT_REG_C64_EXPANSION_CONFIG); ++config_reads; return config;
 }
+static uint32_t feature_read(void *context,uint32_t reg) {
+    (void)context;
+    if(reg==MT_REG_ABI_VERSION)return 24U;
+    if(reg==MT_REG_C64_EXPANSION_CAPS)return c64_content_service_expansion_caps();
+    if(reg==MT_REG_C64_CPU_CAPS)return MT_C64_CPU_CAPS_RELEASE;
+    if(reg==MT_REG_C64_CPU_CAPS2)return MT_C64_CPU_CAPS2_RELEASE;
+    if(reg==MT_REG_DEBUG_STATUS)return MT_DEBUG_STATUS_AUDIO_PRESENT;
+    assert(0);return 0;
+}
+static mt_core_link_t shell_link={.read32=feature_read};
 static void Xil_Out32(uint32_t address, uint32_t value) {
     assert(address == MT_SHELL_BASE_ADDRESS + MT_REG_C64_EXPANSION_CONFIG);
     ++writes; config = value;
@@ -70,6 +82,7 @@ static void reset_fixture(void) {
     strcpy(supervisor.active.package.variants[0].id,"pal");
     caps=MT_C64_EXPANSION_CAPS_VALID|MT_C64_EXPANSION_CAPS_DUAL_SID|MT_C64_EXPANSION_CAPS_REU_16MB;
     config=MT_C64_EXPANSION_CONFIG_DEFAULT;
+    ua_fault=0U;
     cap_reads=config_reads=writes=saves=0U;attached=save_fail=supervisor_menu_dirty=false;
     message[0]='\0';mt_supervisor_settings_defaults(&persistent_settings);
 }
@@ -135,6 +148,17 @@ int main(int argc,char **argv) {
         caps=MT_C64_EXPANSION_CAPS_VALID|MT_C64_EXPANSION_CAPS_DUAL_SID;config=3U;
         change_c64_expansion(3U);assert(writes==1U && saves==1U);
         change_c64_expansion(2U);assert(config==0U && saved_settings.profiles[0].c64_reu_enabled);
+    } else if(strcmp(argv[1],"ua")==0) {
+        supervisor.active.package.abi_minor=24U;caps|=MT_C64_EXPANSION_CAPS_ULTIMATE_AUDIO;
+        config=3U;change_c64_expansion(8U);
+        assert(config==27U && writes==1U && saves==1U && saved_settings.c64_ultimate_audio);
+        assert(saved_settings.profiles[0].c64_reu_enabled);
+        change_c64_expansion(3U);assert(config==3U && !saved_settings.c64_ultimate_audio);
+        assert(!saved_settings.profiles[0].c64_reu_enabled);
+        attached=true;change_c64_expansion(8U);assert(config==3U && writes==2U);
+        attached=false;ua_fault=1U;change_c64_expansion(8U);assert(config==3U && writes==2U);
+        ua_fault=0U;save_fail=true;change_c64_expansion(8U);assert(config==3U && writes==2U);
+        assert(!persistent_settings.c64_ultimate_audio);
     } else assert(0);
     printf("PASS: C64 expansion %s\n",argv[1]);return 0;
 }
@@ -155,6 +179,7 @@ class C64ExpansionRuntimeTests(unittest.TestCase):
         signatures = (
             "static bool ensure_active_settings_profile(void)",
             "static uint32_t selection_c64_expansion_caps(",
+            "static mt_c64_capabilities_t selection_c64_features(",
             "static void configure_c64_expansion(",
             "static void change_c64_expansion(",
         )
@@ -166,7 +191,7 @@ class C64ExpansionRuntimeTests(unittest.TestCase):
                    "-I", str(ROOT / "firmware/include"), "-I", str(ROOT / "firmware/platform/xilinx"),
                    str(harness), str(ROOT / "firmware/platform/xilinx/supervisor_settings.c"),
                    *[str(ROOT / "firmware/common" / name) for name in
-                     ("gamepad.c", "controls.c", "video_effects.c")], "-lm", "-o", str(cls.executable)]
+                     ("gamepad.c", "controls.c", "video_effects.c", "c64_features.c")], "-lm", "-o", str(cls.executable)]
         result = subprocess.run(command, text=True, capture_output=True, timeout=60)
         if result.returncode:
             raise AssertionError(result.stdout + result.stderr)
@@ -183,6 +208,7 @@ class C64ExpansionRuntimeTests(unittest.TestCase):
     def test_cartridge_conflict_precedes_writes(self): self.run_scenario("conflict")
     def test_save_failure_preserves_hardware_and_settings(self): self.run_scenario("save-failure")
     def test_partial_capability_preserves_other_saved_preferences(self): self.run_scenario("partial")
+    def test_ua_atomic_apply_and_refusals(self): self.run_scenario("ua")
 
 
 if __name__ == "__main__":

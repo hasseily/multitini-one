@@ -33,6 +33,9 @@ static size_t stored_size;
 static unsigned read_calls;
 static bool disappear_on_retry;
 static mt_sd_status_t retry_status;
+static uint8_t turbo_file[MT_TURBO_CONTROLS_WIRE_SIZE];
+static bool turbo_exists;
+bool mt_schema10_roundtrip(const uint8_t *input, uint8_t *output);
 
 static void store_u32_le(uint8_t *destination, uint32_t value)
 {
@@ -99,6 +102,11 @@ mt_sd_result_t mt_sd_storage_journal_recover(const char *path,
                                              uint8_t *recovery_buffer,
                                              size_t capacity)
 {
+    if (strcmp(path, MT_TURBO_CONTROLS_PATH) == 0) {
+        assert(strcmp(journal_path, MT_TURBO_CONTROLS_JOURNAL_PATH) == 0);
+        assert(capacity == sizeof turbo_file);
+        return sd_result(recover_status, 0U);
+    }
     assert(strcmp(path, MT_SETTINGS_PATH) == 0);
     assert(strcmp(journal_path, MT_SETTINGS_JOURNAL_PATH) == 0);
     assert(recovery_buffer != NULL);
@@ -110,6 +118,12 @@ mt_sd_result_t mt_sd_storage_read_file_optional_exact(
     const char *path, uint8_t *destination, size_t expected_size,
     bool *found)
 {
+    if (strcmp(path, MT_TURBO_CONTROLS_PATH) == 0) {
+        assert(expected_size == sizeof turbo_file);
+        *found = turbo_exists;
+        if (turbo_exists) memcpy(destination, turbo_file, sizeof turbo_file);
+        return sd_result(read_status, turbo_exists ? sizeof turbo_file : 0U);
+    }
     assert(strcmp(path, MT_SETTINGS_PATH) == 0);
     assert(destination != NULL && found != NULL);
     assert(expected_size == MT_SETTINGS_WIRE_SIZE || expected_size == LEGACY_WIRE_SIZE ||
@@ -133,6 +147,13 @@ mt_sd_result_t mt_sd_storage_journal_replace(const char *path,
                                              const uint8_t *source,
                                              size_t size)
 {
+    if (strcmp(path, MT_TURBO_CONTROLS_PATH) == 0) {
+        assert(strcmp(journal_path, MT_TURBO_CONTROLS_JOURNAL_PATH) == 0);
+        assert(size == sizeof turbo_file);
+        if (write_status != MT_SD_OK) return sd_result(write_status, 0U);
+        memcpy(turbo_file, source, size); turbo_exists = true;
+        return sd_result(MT_SD_OK, size);
+    }
     assert(strcmp(path, MT_SETTINGS_PATH) == 0);
     assert(strcmp(journal_path, MT_SETTINGS_JOURNAL_PATH) == 0);
     assert(source != NULL && size == MT_SETTINGS_WIRE_SIZE);
@@ -896,6 +917,78 @@ static void test_extended_axis_profile_wire(void)
     assert(memcmp(&loaded, &settings, sizeof(settings)) == 0);
 }
 
+static void assert_schema10_downgrade(void)
+{
+    uint8_t expected[MT_SETTINGS_WIRE_SIZE];
+    uint8_t decoded[MT_SETTINGS_WIRE_SIZE];
+    memcpy(expected, stored_file, sizeof(expected));
+    assert(mt_schema10_roundtrip(stored_file, decoded));
+    /* The old firmware drops only the newly allocated global bytes. Every
+     * legacy field, including controller records and profile 243, survives. */
+    expected[26] = expected[27] = 0;
+    const uint32_t crc = crc32_bytes(expected + 24, sizeof(expected) - 24);
+    store_u32_le(expected + 16, crc);
+    store_u32_le(expected + 20, ~crc);
+    assert(memcmp(expected, decoded, sizeof(expected)) == 0);
+    expected[100] ^= 1;
+    assert(!mt_schema10_roundtrip(expected, decoded));
+}
+
+static void test_c64_turbo_storage(void)
+{
+    mt_supervisor_settings_t settings, loaded;
+    reset_fake();
+    mt_supervisor_settings_defaults(&settings);
+    assert(mt_supervisor_settings_remember_core(&settings, "c64", "pal"));
+    for (unsigned detail = 0; detail < 256; ++detail) {
+        settings.c64_turbo_detail = (uint8_t)detail;
+        settings.c64_turbo_flags = (uint8_t)(detail & 3U);
+        settings.c64_ultimate_audio = (detail & 4U) != 0;
+        assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
+        assert(stored_file[26] == (detail & 7U) && stored_file[27] == detail);
+        /* Future flags remain downgrade-safe rather than rejecting settings. */
+        stored_file[26] |= 0xF8U; update_stored_crc();
+        assert_schema10_downgrade();
+        assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
+        assert(loaded.c64_turbo_detail == detail && loaded.c64_turbo_flags == (detail & 3U));
+        assert(loaded.c64_ultimate_audio == settings.c64_ultimate_audio);
+        assert(loaded.profiles[0].c64_reu_enabled);
+    }
+    const mt_controller_device_t pad = controller_device(1U, 43U);
+    settings.controller_profile_count = 1;
+    settings.controller_profiles[0].core_id = MT_C64_CORE_ID;
+    settings.controller_profiles[0].identity = pad.identity;
+    mt_controls_default(MT_C64_CORE_ID, &pad, &settings.controller_profiles[0].config);
+    settings.controller_profiles[0].config.extra_binding[0] = 23;
+    settings.controller_profiles[0].config.extra_binding[1] = 24;
+    settings.controller_profiles[0].config.extra_binding[2] = 25;
+    assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
+    assert(mt_supervisor_turbo_controls_save(&settings));
+    assert_schema10_downgrade();
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
+    assert(loaded.controller_profiles[0].config.extra_binding[0] == 0);
+    assert(mt_supervisor_turbo_controls_load(&loaded));
+    assert(memcmp(loaded.controller_profiles[0].config.extra_binding,
+        settings.controller_profiles[0].config.extra_binding, 6) == 0);
+    loaded.controller_profiles[0].identity.port_path ^= 1U;
+    /* Serial identity follows the controller across physical USB ports. */
+    assert(mt_supervisor_turbo_controls_load(&loaded));
+    assert(loaded.controller_profiles[0].config.extra_binding[0] == 23);
+    loaded.controller_profiles[0].identity.serial_hash ^= 1U;
+    assert(mt_supervisor_turbo_controls_load(&loaded));
+    assert(loaded.controller_profiles[0].config.extra_binding[0] == 0);
+    loaded = settings;
+    for (size_t i = 0; i < sizeof turbo_file; ++i) {
+        turbo_file[i] ^= 1U;
+        assert(!mt_supervisor_turbo_controls_load(&loaded));
+        assert(loaded.controller_profiles[0].config.extra_binding[0] == 0);
+        turbo_file[i] ^= 1U;
+    }
+    turbo_exists = false;
+    assert(mt_supervisor_turbo_controls_load(&loaded));
+    assert(loaded.controller_profiles[0].config.extra_binding[1] == 0);
+}
+
 int main(void)
 {
     test_extended_axis_profile_wire();
@@ -1029,5 +1122,6 @@ int main(void)
     test_video_effects_settings();
     test_video_multiplier();
     test_c64_expansion_settings();
+    test_c64_turbo_storage();
     return 0;
 }

@@ -18,6 +18,17 @@ import package_cpu1_video_test as package
 
 
 class PackageTests(unittest.TestCase):
+    def test_c64_diagnostic_images_and_debug_defaults_are_not_releasable(self):
+        source = (ROOT / "hdl/generated/multitini_regs_pkg.sv").read_text()
+        package.verify_c64_release_settings(source)
+        package.verify_c64_release_settings("// Retained pre-turbo core")
+        with self.assertRaisesRegex(ValueError, "diagnostic image"):
+            package.verify_c64_release_settings(source.replace("32'h80002F01", "32'h80006F01"))
+        with self.assertRaisesRegex(ValueError, "power-up"):
+            package.verify_c64_release_settings(source.replace("32'h00000151", "32'h00080151"))
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            package.verify_c64_release_settings(source.replace("MT_C64_CPU_CONFIG_DEBUG_MASK", "OMITTED_MASK"))
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

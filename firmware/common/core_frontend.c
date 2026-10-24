@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "multitini_core_frontend.h"
+#include "multitini_c64_features.h"
 
 #include "multitini_c64_interface.h"
 #include "multitini_gameboy_interface.h"
@@ -10,6 +11,7 @@
 #include "multitini_regs.h"
 
 #include <string.h>
+#include <stdio.h>
 
 typedef void (*build_profile_fn)(mt_core_frontend_t *frontend,
                                   const mt_core_frontend_state_t *state,
@@ -98,6 +100,11 @@ static void build_c64(mt_core_frontend_t *frontend,
     frontend->media_items[view->media_item_count++] = item(
         "Program", "Choose file...", "Load a PRG file into the C64.",
         MT_MENU_ACTION_BROWSE_PROGRAM, 0U, true, MT_UI_COLOR_BLUE);
+    if (state->c64_reu_host_available)
+        frontend->media_items[view->media_item_count++] = item(
+            "Load into REU", "Choose image...",
+            "Load a raw .reu image into expansion memory without resetting the C64.",
+            MT_MENU_ACTION_BROWSE_REU, 0U, !state->cartridge_attached, MT_UI_COLOR_BLUE);
     frontend->input_items[view->input_item_count++] = item(
         "Keyboard", state->symbolic_keyboard ? "US symbolic" :
                                                 "MiSTer positional",
@@ -124,6 +131,56 @@ static void build_c64(mt_core_frontend_t *frontend,
         frontend->core_options[0].control_value = state->fast_roms_active ? 1U : 0U;
         frontend->core_options[1].control = MT_MENU_CONTROL_CHECKBOX;
         frontend->core_options[1].control_value = state->cpu_turbo_enabled ? 1U : 0U;
+        if (state->c64_turbo_available) {
+            static const char *const modes[] = {"Off", "Manual", "U64 registers", "TurboEnable bit"};
+            const uint8_t detail = mt_c64_turbo_detail(state->c64_turbo_detail);
+            const unsigned index = mt_c64_clamp_speed(detail & 15U, (uint16_t)state->c64_cpu_caps);
+            const unsigned requested = mt_c64_speed_mhz(index);
+            const unsigned effective = mt_c64_speed_mhz(state->c64_cpu_status & 15U);
+            const unsigned mode = state->cpu_turbo_enabled ? detail >> 6 : 0U;
+            const uint32_t status = state->c64_cpu_status;
+            const char *reason = mt_c64_turbo_reason(status);
+            (void)snprintf(frontend->c64_turbo_text, sizeof(frontend->c64_turbo_text),
+                "%s: %u MHz, live $%02X, now %u MHz (%s)", modes[mode], requested,
+                (unsigned)((status >> 8) & 255U), effective, reason);
+            const char *hint = (status & MT_C64_CPU_STATUS_REGISTER_REQUEST) ?
+                "Software tried to set the CPU speed; select U64 registers" :
+                (status & MT_C64_CPU_STATUS_TURBO_ENABLE_REQUEST) ?
+                "Software tried to use the C128 turbo bit; select TurboEnable bit" :
+                (status & MT_C64_CPU_STATUS_SOFTWARE_SPEED) ? "Speed set by software" :
+                mode == 3 ? "For C128-aware games; try CPU speed 2 MHz for C128 border timing." :
+                "Choose Off, Manual, U64 registers or TurboEnable bit.";
+            (void)snprintf(frontend->c64_turbo_help, sizeof(frontend->c64_turbo_help), "%s", hint);
+            frontend->core_options[1] = item("CPU turbo", frontend->c64_turbo_text,
+                frontend->c64_turbo_help, MT_MENU_ACTION_TOGGLE_CORE_OPTION, 1U, true, MT_UI_COLOR_BLUE);
+            frontend->core_options[view->core_option_count++] = item("Turbo on/off",
+                state->cpu_turbo_enabled ? "On" : "Off", "Switch turbo off or back to the stored mode and speed.",
+                MT_MENU_ACTION_TOGGLE_CORE_OPTION, 9U, true, MT_UI_COLOR_BLUE);
+            if (index == 0 && (detail & 0x20U))
+                (void)snprintf(frontend->c64_speed_text, sizeof(frontend->c64_speed_text),
+                    "1 MHz, badlines off (not cycle-exact)");
+            else (void)snprintf(frontend->c64_speed_text, sizeof(frontend->c64_speed_text), "%u MHz%s",
+                    requested, index != (detail & 15U) ? " (image limit)" : "");
+            frontend->core_options[view->core_option_count++] = item("CPU speed", frontend->c64_speed_text,
+                "Speed in multiples of the C64 clock; 48 and 64 MHz give 48x and 64x.",
+                MT_MENU_ACTION_TOGGLE_CORE_OPTION, 4U, true, MT_UI_COLOR_BLUE);
+            frontend->core_options[view->core_option_count++] = item("Badline timing",
+                (detail & 0x20U) ? "Disabled" : "Enabled",
+                "Disabled: the CPU and internal I/O ignore badlines, like the Ultimate 64. Timing-sensitive code may break.",
+                MT_MENU_ACTION_TOGGLE_CORE_OPTION, 5U, true, MT_UI_COLOR_BLUE);
+            frontend->core_options[view->core_option_count++] = item("Disk auto-slow",
+                (state->c64_turbo_flags & 1U) ? "Off" : "On",
+                "Off: fast loaders, JiffyDOS and GEOS may crash, and disk writes can be corrupted.",
+                MT_MENU_ACTION_TOGGLE_CORE_OPTION, 6U, true, MT_UI_COLOR_BLUE);
+            if (state->c64_cpu_caps & MT_C64_CPU_CAPS_CARTRIDGE_TURBO)
+                frontend->core_options[view->core_option_count++] = item("Cartridge turbo",
+                    (state->c64_turbo_flags & 2U) ? "Forces 1 MHz" : "Allowed", "Choose cartridge speed policy.",
+                    MT_MENU_ACTION_TOGGLE_CORE_OPTION, 7U, true, MT_UI_COLOR_BLUE);
+            if (state->c64_cpu_caps2 & MT_C64_CPU_CAPS2_FOLLOW_CPU)
+                frontend->core_options[view->core_option_count++] = item("Expansion memory speed",
+                    (detail & 0x10U) ? "Follow CPU" : "C64U (1 byte per cycle)", "Choose REU transfer timing.",
+                    MT_MENU_ACTION_TOGGLE_CORE_OPTION, 10U, true, MT_UI_COLOR_BLUE);
+        }
     }
     if (expansion_valid && (state->c64_expansion_caps & MT_C64_EXPANSION_CAPS_DUAL_SID) != 0U) {
         frontend->core_options[view->core_option_count++] = item(
@@ -142,6 +199,16 @@ static void build_c64(mt_core_frontend_t *frontend,
             MT_MENU_ACTION_TOGGLE_CORE_OPTION, 3U, true, MT_UI_COLOR_BLUE);
         frontend->core_options[index].control = MT_MENU_CONTROL_CHECKBOX;
         frontend->core_options[index].control_value = state->c64_reu_enabled ? 1U : 0U;
+    }
+    if (state->c64_ua_available) {
+        frontend->core_options[view->core_option_count++] = item("Ultimate Audio $DF20-$DFFF",
+            state->c64_ua_fault ? "Fault" : state->c64_ua_enabled ? "On" :
+                state->cartridge_attached ? "Eject cartridge first" : "Off",
+            state->c64_ua_fault ? "Reload the C64 core to clear the memory fault." :
+                "Seven sample voices in REU memory. On also enables the 16 MB REU; Expand needs this off.",
+            MT_MENU_ACTION_TOGGLE_CORE_OPTION, 8U,
+            !state->c64_ua_fault && (state->c64_ua_enabled || !state->cartridge_attached),
+            state->c64_ua_fault ? MT_UI_COLOR_WARNING : MT_UI_COLOR_BLUE);
     }
 }
 
@@ -384,6 +451,7 @@ void mt_core_frontend_apply(mt_core_frontend_t *frontend,
 bool mt_core_frontend_browser_supported(uint32_t core_id,
                                         mt_menu_browser_t browser)
 {
+    if (browser == MT_MENU_BROWSER_REU) return core_id == MT_C64_CORE_ID;
     const core_profile_t *const profile = find_profile(core_id);
     if (profile == NULL || (unsigned)browser > MT_MENU_BROWSER_OVERLAY)
         return false;
@@ -395,6 +463,8 @@ bool mt_core_frontend_accepts_content(uint32_t core_id,
                                       mt_menu_browser_t browser,
                                       mt_content_type_t type)
 {
+    if (browser == MT_MENU_BROWSER_REU)
+        return core_id == MT_C64_CORE_ID && type == MT_CONTENT_C64_REU;
     const core_profile_t *const profile = find_profile(core_id);
     if (profile == NULL || (unsigned)browser > MT_MENU_BROWSER_OVERLAY ||
         (unsigned)type >= 32U) return false;
@@ -404,6 +474,7 @@ bool mt_core_frontend_accepts_content(uint32_t core_id,
 bool mt_core_frontend_browser_folders(uint32_t core_id, mt_menu_browser_t browser)
 {
     return browser==MT_MENU_BROWSER_DOCUMENTS ||
+        (core_id==MT_C64_CORE_ID && browser==MT_MENU_BROWSER_REU) ||
         ((core_id==MT_VECTREX_CORE_ID || core_id==MT_IIGS_CORE_ID) &&
          mt_core_frontend_browser_supported(core_id,browser));
 }

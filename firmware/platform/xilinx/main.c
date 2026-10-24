@@ -10,6 +10,8 @@
 #include "vectrex32_service.h"
 #include "multitini_ak4493.h"
 #include "multitini_c64_boot.h"
+#include "multitini_c64_features.h"
+#include "multitini_c64_debug.h"
 #include "multitini_c64_hid_input.h"
 #include "multitini_c64_interface.h"
 #include "multitini_c64_native_load.h"
@@ -99,6 +101,13 @@
 
 static XIicPs i2c_instance;
 static mt_core_link_t shell_link;
+static mt_c64_debug_t c64_debug;
+static mt_sd_file_t *c64_debug_file;
+static bool c64_debug_pause_active, c64_debug_was_visible;
+static bool c64_debug_restoring;
+static void initialize_c64_debug(void);
+static bool dispatch_c64_debug(const char *line);
+static void change_c64_turbo(size_t option);
 static mt_ak4493_bus_t dac_bus;
 static bool i2c_ready;
 static bool dac_ready;
@@ -1752,6 +1761,10 @@ static void handle_extended_command(bool recovery_only)
         change_display_mode((size_t)(extended[8]-'0'));
     } else if (strcmp(extended, "diag") == 0) {
         print_read_only_diagnostics("command");
+    } else if (!recovery_only && dispatch_c64_debug(extended)) {
+        /* Commands qualify the image before accessing the new registers. */
+    } else if (!recovery_only && c64_debug.reu_host.reload_required) {
+        xil_printf("REU cache did not clear; reload the C64 core\r\n");
     } else if (!recovery_only && strcmp(extended, "hid") == 0) {
         usb_hid_service_dump_descriptors();
     } else if(iigs_active && (strcmp(extended,"disk")==0 || strcmp(extended,"dir")==0)) {
@@ -2268,17 +2281,40 @@ static uint32_t selection_c64_expansion_caps(const mt_core_selection_t *selectio
     return c64_content_service_expansion_caps();
 }
 
+static mt_c64_capabilities_t selection_c64_features(const mt_core_selection_t *selection)
+{
+    if (selection == NULL) return (mt_c64_capabilities_t){0};
+    return mt_c64_probe_capabilities(&shell_link, selection->package.core_id,
+        selection->package.abi_major, selection->package.abi_minor);
+}
+
+static void configure_c64_turbo(const mt_core_selection_t *selection,
+    const mt_core_settings_profile_t *profile, bool apply)
+{
+    const mt_c64_capabilities_t caps = selection_c64_features(selection);
+    const bool enabled = profile != NULL && profile->c64_cpu_turbo;
+    if (caps.turbo) {
+        const uint32_t previous = shell_read(MT_REG_C64_CPU_CONFIG);
+        const uint32_t stored = mt_c64_turbo_config(persistent_settings.c64_turbo_detail,
+            persistent_settings.c64_turbo_flags, enabled, &caps, previous, false);
+        const uint32_t config = mt_c64_debug_effective_overlay(&c64_debug,
+            stored, previous, apply);
+        Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_C64_CPU_CONFIG, config);
+    }
+    set_c64_cpu_turbo(selection->package.abi_minor >= 8U && enabled);
+}
+
 static void configure_c64_expansion(const mt_core_selection_t *selection,
                                      const mt_core_settings_profile_t *profile)
 {
     const uint32_t caps = selection_c64_expansion_caps(selection);
     if ((caps & (MT_C64_EXPANSION_CAPS_DUAL_SID | MT_C64_EXPANSION_CAPS_REU_16MB)) == 0U) return;
-    uint32_t config = 0U;
-    if ((caps & MT_C64_EXPANSION_CAPS_DUAL_SID) != 0U)
-        config |= profile != NULL ? profile->c64_sid_mode : MT_SETTINGS_C64_SID_MODE_DEFAULT;
-    if ((caps & MT_C64_EXPANSION_CAPS_REU_16MB) != 0U &&
-        (profile != NULL ? profile->c64_reu_enabled : MT_SETTINGS_C64_REU_DEFAULT))
-        config |= MT_C64_EXPANSION_REU_ENABLE;
+    const mt_c64_capabilities_t features = selection_c64_features(selection);
+    const bool reu = profile != NULL ? profile->c64_reu_enabled : MT_SETTINGS_C64_REU_DEFAULT;
+    const bool cart_pending = profile != NULL && profile->cartridge_name[0] != '\0' && !reu;
+    const uint32_t config = mt_c64_expansion_restore(
+        profile != NULL ? profile->c64_sid_mode : MT_SETTINGS_C64_SID_MODE_DEFAULT,
+        reu, persistent_settings.c64_ultimate_audio, cart_pending, &features);
     Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_C64_EXPANSION_CONFIG, config);
 }
 
@@ -2309,9 +2345,9 @@ static bool restore_selection_settings(
                   profile_vectrex_video_config(profile));
     }
     if (selection->package.core_id == MT_C64_CORE_ID) {
+        mt_c64_debug_clear_override(&c64_debug);
         configure_c64_expansion(selection, profile);
-        set_c64_cpu_turbo(selection->package.abi_minor >= 8U &&
-                          profile != NULL && profile->c64_cpu_turbo);
+        configure_c64_turbo(selection, profile, false);
         if (profile != NULL) {
             if (usb_hid_service_set_symbolic_keyboard(
                     profile->symbolic_keyboard) != 0 ||
@@ -2471,15 +2507,33 @@ static mt_menu_view_t supervisor_menu_view(void)
         state.cartridge_attached = c64_content_service_crt_attached();
         state.cartridge_name = c64_content_service_crt_name();
         state.c64_expansion_caps = selection_c64_expansion_caps(&supervisor.active);
+        const mt_c64_capabilities_t features = selection_c64_features(&supervisor.active);
+        state.c64_turbo_available = features.turbo;
+        state.c64_ua_available = features.ultimate_audio;
+        state.c64_reu_host_available = features.reu_host;
+        state.c64_cpu_caps = features.cpu;
+        state.c64_cpu_caps2 = features.cpu2;
+        state.c64_turbo_detail = persistent_settings.c64_turbo_detail;
+        state.c64_turbo_flags = persistent_settings.c64_turbo_flags;
+        if (features.turbo) {
+            state.c64_cpu_config = shell_read(MT_REG_C64_CPU_CONFIG);
+            state.c64_cpu_status = shell_read(MT_REG_C64_CPU_STATUS);
+        }
+        if (features.ultimate_audio)
+            state.c64_ua_fault = (shell_read(MT_REG_C64_UA_STATUS) & MT_C64_UA_STATUS_FAULT) != 0U;
         if (state.c64_expansion_caps != 0U) {
             const uint32_t config = shell_read(MT_REG_C64_EXPANSION_CONFIG);
             state.c64_sid_mode = (uint8_t)(config & MT_C64_EXPANSION_SID_MODE_MASK);
             state.c64_reu_enabled = (config & MT_C64_EXPANSION_REU_ENABLE) != 0U;
+            state.c64_ua_enabled = features.ultimate_audio &&
+                (config & MT_C64_EXPANSION_ULTIMATE_AUDIO_ENABLE) != 0U;
         }
         state.fast_roms_active = c64_fast_roms_active;
         state.fast_roms_fallback = c64_fast_roms_fallback;
-        state.cpu_turbo_enabled = (shell_read(MT_REG_CONTROL) &
-                                  MT_CONTROL_C64_CPU_TURBO_ENABLE) != 0U;
+        const mt_core_settings_profile_t *const c64_profile =
+            mt_supervisor_settings_find(&persistent_settings, supervisor.active.package.id);
+        state.cpu_turbo_enabled = features.turbo ? (c64_profile != NULL && c64_profile->c64_cpu_turbo) :
+            (shell_read(MT_REG_CONTROL) & MT_CONTROL_C64_CPU_TURBO_ENABLE) != 0U;
         state.symbolic_keyboard = usb_hid_service_symbolic_keyboard();
         state.joystick_port = usb_hid_service_joystick_port();
     } else if (supervisor.has_active &&
@@ -2888,6 +2942,8 @@ static int supervisor_quiesce(void *context)
     const uint32_t control = shell_read(MT_REG_CONTROL);
     (void)context;
     if (!mt_screenshot_service_cancel()) return -1;
+    mt_c64_debug_deactivate(&c64_debug);
+    c64_debug_pause_active = false;
     if (set_core_reset_request(true) != 0) return -1;
     set_audio(true, (control & MT_CONTROL_AUDIO_TEST_ENABLE) != 0U);
     usb_hid_service_set_core_ready(false);
@@ -3162,6 +3218,10 @@ static int supervisor_activate(void *context,
     usb_hid_service_set_core_ready(
         (shell_read(MT_REG_STATUS) & MT_STATUS_CORE_READY) != 0U);
     if (dac_ready) set_audio(false, false);
+    const mt_c64_capabilities_t caps = selection_c64_features(selection);
+    c64_debug_restoring = true;
+    mt_c64_debug_activate(&c64_debug, &caps, (unsigned)selection->variant_index);
+    c64_debug_restoring = false;
     last_settings_restore_ok = restore_selection_settings(selection);
     return 0;
 }
@@ -3255,6 +3315,13 @@ static void supervisor_controller_action(void *context, unsigned action)
     }
     if (action == MT_CONTROL_SCREENSHOT || action == MT_CONTROL_SCREENSHOT_OUTPUT)
         (void)mt_screenshot_service_request(action == MT_CONTROL_SCREENSHOT_OUTPUT);
+    if (action >= MT_CONTROL_TURBO_TOGGLE && action <= MT_CONTROL_CPU_SLOWER &&
+        supervisor.has_active && supervisor.active.package.core_id == MT_C64_CORE_ID &&
+        pending_menu_action.kind == MT_MENU_ACTION_NONE) {
+        pending_menu_action = (mt_menu_action_t){.kind = MT_MENU_ACTION_TOGGLE_CORE_OPTION,
+            .file_index = action == MT_CONTROL_TURBO_TOGGLE ? 9U :
+                action == MT_CONTROL_CPU_FASTER ? 12U : 13U};
+    }
 }
 
 static bool supervisor_controller_config(void *context, uint32_t core_id, uint8_t slot,
@@ -3340,6 +3407,8 @@ static int usb_sd_restart(void *context)
     usb_sd_restart_failed=false;
     mt_core_catalog_sd_scan(&core_catalog);
     const mt_settings_result_t settings=mt_supervisor_settings_load(&persistent_settings);
+    if (!mt_supervisor_turbo_controls_load(&persistent_settings))
+        xil_printf("[settings] turbo bindings unavailable; left unassigned\r\n");
     settings_faulted=settings.status!=MT_SETTINGS_OK && settings.status!=MT_SETTINGS_MISSING;
     supervisor_menu_file_count=supervisor_d64_prg_count=0U;
     mt_menu_close_browser(&supervisor_menu);
@@ -3864,12 +3933,156 @@ static void document_read_progress(void *context)
     usb_hid_service_poll_deferred();
 }
 
+static uint32_t c64_debug_read(void *context, uint32_t reg)
+{ (void)context; return shell_read(reg); }
+static void c64_debug_write(void *context, uint32_t reg, uint32_t value)
+{ (void)context; Xil_Out32(MT_SHELL_BASE_ADDRESS + reg, value); }
+static void c64_debug_output(void *context, const char *text)
+{
+    (void)context;
+    xil_printf("%s\r\n", text);
+    set_supervisor_status(text);
+}
+static void c64_debug_pause(void *context, bool pause)
+{
+    (void)context;
+    if (pause) {
+        if (!c64_debug_pause_active) c64_debug_was_visible = supervisor_menu.visible;
+        c64_debug_pause_active = true;
+        show_handoff_progress("C64 memory operation; please wait");
+    } else if (c64_debug_pause_active && !c64_debug.reu_host.reload_required) {
+        c64_debug_pause_active = false;
+        supervisor_menu.visible = c64_debug_was_visible;
+        if (!c64_debug_was_visible) (void)hide_menu_for_core_action();
+        supervisor_menu_dirty = true;
+    }
+}
+static bool c64_debug_paused(void *context)
+{
+    (void)context;
+    /* A future host-only image must expose a qualified pause acknowledgement. */
+    return c64_debug.caps.turbo &&
+        (shell_read(MT_REG_C64_CPU_STATUS) & MT_C64_CPU_STATUS_PAUSE) != 0U;
+}
+static void c64_debug_apply(void *context, bool change)
+{
+    (void)context;
+    if (!c64_debug_restoring && supervisor.has_active &&
+        supervisor.active.package.core_id == MT_C64_CORE_ID)
+        configure_c64_turbo(&supervisor.active, mt_supervisor_settings_find(
+            &persistent_settings, supervisor.active.package.id), change);
+}
+static bool c64_debug_cartridge(void *context)
+{ (void)context; return c64_content_service_crt_attached(); }
+static bool c64_debug_content_busy(void *context)
+{
+    (void)context;
+    return c64_core_reset_active || usb_sd_modal ||
+        (shell_read(MT_REG_STATUS) & MT_STATUS_STREAM_ACTIVE) != 0U;
+}
+static bool c64_debug_reu_enabled(void *context)
+{ (void)context; return c64_content_service_reu_enabled(); }
+static bool c64_debug_open(void *context, const char *name, size_t *size)
+{
+    char path[640];
+    (void)context;
+    if (c64_debug_file != NULL) return false;
+    const int length = snprintf(path, sizeof path, "%s%s%s",
+        strchr(name, ':') != NULL ? "" : supervisor.active.package.content_root,
+        strchr(name, ':') != NULL ? "" : "/", name);
+    if (length < 0 || (size_t)length >= sizeof path ||
+        mt_sd_file_open(path, "rb", &c64_debug_file).status != MT_SD_OK) return false;
+    bool ok = mt_sd_file_seek(c64_debug_file, 0, SEEK_END).status == MT_SD_OK;
+    const int64_t bytes = mt_sd_file_tell(c64_debug_file);
+    ok = ok && bytes >= 0 && (uint64_t)bytes <= SIZE_MAX &&
+        mt_sd_file_seek(c64_debug_file, 0, SEEK_SET).status == MT_SD_OK;
+    if (!ok) { (void)mt_sd_file_close(c64_debug_file); c64_debug_file = NULL; return false; }
+    *size = (size_t)bytes;
+    return true;
+}
+static bool c64_debug_file_read(void *context, size_t offset, void *data, size_t size)
+{
+    (void)context;
+    if (c64_debug_file == NULL ||
+        mt_sd_file_seek(c64_debug_file, (int64_t)offset, SEEK_SET).status != MT_SD_OK) return false;
+    const mt_sd_result_t result = mt_sd_file_read(c64_debug_file, data, size);
+    return result.status == MT_SD_OK && result.size == size;
+}
+static void c64_debug_close(void *context)
+{
+    (void)context;
+    if (c64_debug_file != NULL) (void)mt_sd_file_close(c64_debug_file);
+    c64_debug_file = NULL;
+}
+static bool c64_debug_file_write(void *context, const char *path, const void *data, size_t size)
+{
+    mt_sd_file_t *file = NULL;
+    (void)context;
+    if (mt_sd_storage_ensure_directory("0:/multitini/capture").status != MT_SD_OK ||
+        mt_sd_file_open(path, "wb", &file).status != MT_SD_OK) return false;
+    const mt_sd_result_t result = mt_sd_file_write(file, data, size);
+    const mt_sd_result_t closed = mt_sd_file_close(file);
+    return result.status == MT_SD_OK && result.size == size && closed.status == MT_SD_OK;
+}
+static bool c64_debug_reu_read(void *context, uint32_t offset, void *data, size_t size)
+{
+    (void)context;
+    if (offset > MT_C64_REU_DDR_SIZE || size > MT_C64_REU_DDR_SIZE - offset) return false;
+    memcpy(data, (const void *)(uintptr_t)(MT_C64_REU_DDR_BASE + offset), size);
+    return true;
+}
+static bool c64_debug_reu_write(void *context, uint32_t offset, const void *data, size_t size)
+{
+    (void)context;
+    if (offset > MT_C64_REU_DDR_SIZE || size > MT_C64_REU_DDR_SIZE - offset) return false;
+    memcpy((void *)(uintptr_t)(MT_C64_REU_DDR_BASE + offset), data, size);
+    return true;
+}
+static void c64_debug_drain(void *context)
+{
+    (void)context;
+    /* PL310 Cache Sync drains early-BRESP buffers without touching cache lines. */
+    DATA_SYNC;
+    Xil_Out32(UINT32_C(0xF8F02730), 0U);
+    DATA_SYNC;
+}
+static void *c64_debug_allocate(void *context, size_t size)
+{ (void)context; return malloc(size); }
+static void c64_debug_release(void *context, void *data)
+{ (void)context; free(data); }
+static void initialize_c64_debug(void)
+{
+    const mt_c64_debug_ops_t ops = {
+        .read32=c64_debug_read, .write32=c64_debug_write, .milliseconds=monotonic_ms,
+        .progress=document_read_progress, .pause=c64_debug_pause, .paused=c64_debug_paused,
+        .output=c64_debug_output, .apply_turbo=c64_debug_apply, .cartridge=c64_debug_cartridge,
+        .content_busy=c64_debug_content_busy, .reu_enabled=c64_debug_reu_enabled,
+        .file_open=c64_debug_open, .file_read=c64_debug_file_read, .file_close=c64_debug_close,
+        .file_write=c64_debug_file_write, .reu_read=c64_debug_reu_read, .reu_write=c64_debug_reu_write,
+        .drain_writes=c64_debug_drain, .allocate=c64_debug_allocate, .release=c64_debug_release
+    };
+    mt_c64_debug_init(&c64_debug, &ops, false);
+}
+static bool dispatch_c64_debug(const char *line)
+{
+    const bool handled = mt_c64_debug_command(&c64_debug, line);
+    if (c64_debug_pause_active && !c64_debug.reu_host.reload_required)
+        c64_debug_pause(NULL, false);
+    if (c64_debug.reu_host.reload_required) {
+        supervisor_menu.visible = true;
+        set_supervisor_error("REU cache did not clear; reload the C64 core");
+    }
+    return handled;
+}
+
 static void change_c64_expansion(size_t option)
 {
-    const uint32_t caps = supervisor.has_active ?
-        selection_c64_expansion_caps(&supervisor.active) : 0U;
+    const mt_c64_capabilities_t features = selection_c64_features(
+        supervisor.has_active ? &supervisor.active : NULL);
+    const uint32_t caps = features.expansion;
     const uint32_t required = option == 2U ? MT_C64_EXPANSION_CAPS_DUAL_SID :
-        option == 3U ? MT_C64_EXPANSION_CAPS_REU_16MB : 0U;
+        option == 3U ? MT_C64_EXPANSION_CAPS_REU_16MB :
+        option == 8U && features.ultimate_audio ? MT_C64_EXPANSION_CAPS_ULTIMATE_AUDIO : 0U;
     if (required == 0U || (caps & required) == 0U) {
         set_supervisor_warning("Core option unavailable");
         return;
@@ -3877,36 +4090,126 @@ static void change_c64_expansion(size_t option)
     const uint32_t old_config = shell_read(MT_REG_C64_EXPANSION_CONFIG);
     uint8_t sid = (uint8_t)(old_config & MT_C64_EXPANSION_SID_MODE_MASK);
     bool reu = (old_config & MT_C64_EXPANSION_REU_ENABLE) != 0U;
+    const bool old_ua = features.ultimate_audio &&
+        (old_config & MT_C64_EXPANSION_ULTIMATE_AUDIO_ENABLE) != 0U;
+    bool ua = old_ua;
     if (option == 2U) sid = sid == 0U ? 2U : sid == 2U ? 3U : 0U;
-    else reu = !reu;
-    if (option == 3U && reu && c64_content_service_crt_attached()) {
-        set_supervisor_warning("Eject the cartridge before enabling REU");
+    else if (option == 3U) { reu = !reu; if (!reu) ua = false; }
+    else { ua = !ua; if (ua) reu = true; }
+    if (((option == 3U && reu) || (option == 8U && ua)) && c64_content_service_crt_attached()) {
+        set_supervisor_warning(option == 8U ?
+            "Eject the cartridge before enabling Ultimate Audio" : "Eject the cartridge before enabling REU");
+        return;
+    }
+    if (option == 8U && (shell_read(MT_REG_C64_UA_STATUS) & MT_C64_UA_STATUS_FAULT)) {
+        set_supervisor_warning("Reload the C64 core to clear the memory fault");
         return;
     }
     settings_before_update = persistent_settings;
     bool valid = ensure_active_settings_profile();
     if (valid) {
-        const mt_core_settings_profile_t *const profile =
-            mt_supervisor_settings_find(&persistent_settings, supervisor.active.package.id);
+        const mt_core_settings_profile_t *saved = mt_supervisor_settings_find(
+            &persistent_settings, supervisor.active.package.id);
+        const uint8_t stored_sid = (caps & MT_C64_EXPANSION_CAPS_DUAL_SID) ? sid : saved->c64_sid_mode;
+        const bool stored_reu = (caps & MT_C64_EXPANSION_CAPS_REU_16MB) ? reu : saved->c64_reu_enabled;
         valid = mt_supervisor_settings_remember_c64_expansion(&persistent_settings,
-            supervisor.active.package.id, option == 2U ? sid : profile->c64_sid_mode,
-            option == 3U ? reu : profile->c64_reu_enabled);
+            supervisor.active.package.id, stored_sid, stored_reu);
+        if (features.ultimate_audio && ua != old_ua) persistent_settings.c64_ultimate_audio = ua;
     }
     if (!valid || !save_persistent_settings()) {
         persistent_settings = settings_before_update;
         set_supervisor_warning("Expansion setting not saved");
         return;
     }
-    const uint32_t mask = option == 2U ? MT_C64_EXPANSION_SID_MODE_MASK : MT_C64_EXPANSION_REU_ENABLE;
-    const uint32_t value = option == 2U ? sid : reu ? MT_C64_EXPANSION_REU_ENABLE : 0U;
-    Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_C64_EXPANSION_CONFIG, (old_config & ~mask) | value);
+    const uint32_t value = sid | (reu ? MT_C64_EXPANSION_REU_ENABLE : 0U) |
+        (ua ? MT_C64_EXPANSION_ULTIMATE_AUDIO_ENABLE : 0U);
+    Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_C64_EXPANSION_CONFIG,
+        (old_config & ~MT_C64_EXPANSION_CONFIG_MASK) | value);
     supervisor_menu_dirty = true;
     set_supervisor_status(option == 2U ? "SID audio setting saved" :
-        reu ? "16 MB REU enabled" : "REU disabled; cartridges available");
+        option == 8U ? (ua ? ((old_config & MT_C64_EXPANSION_REU_ENABLE) ?
+            "Ultimate Audio enabled" : "Ultimate Audio and 16 MB REU enabled") :
+            "Ultimate Audio disabled; REU stays on") :
+        reu ? "16 MB REU enabled" : old_ua ? "REU and Ultimate Audio disabled; cartridges available" :
+            "REU disabled; cartridges available");
+}
+
+static void change_c64_turbo(size_t option)
+{
+    const mt_c64_capabilities_t caps = selection_c64_features(
+        supervisor.has_active ? &supervisor.active : NULL);
+    if (!caps.turbo) { set_supervisor_warning("Core option unavailable"); return; }
+    if (option != 1U && option != 4U && option != 5U && option != 6U &&
+        option != 7U && option != 9U && option != 10U && option != 12U && option != 13U)
+        return;
+    if (option == 7U && !(caps.cpu & MT_C64_CPU_CAPS_CARTRIDGE_TURBO)) return;
+    if (option == 10U && !(caps.cpu2 & MT_C64_CPU_CAPS2_FOLLOW_CPU)) return;
+    const bool had_override = c64_debug.override_active;
+    mt_c64_debug_clear_override(&c64_debug);
+    const mt_core_settings_profile_t *profile = mt_supervisor_settings_find(
+        &persistent_settings, supervisor.active.package.id);
+    bool enabled = profile != NULL && profile->c64_cpu_turbo;
+    uint8_t detail = mt_c64_turbo_detail(persistent_settings.c64_turbo_detail);
+    uint8_t flags = persistent_settings.c64_turbo_flags;
+    switch (option) {
+    case 1U:
+        if (!enabled) { enabled = true; detail = (detail & 0x3FU) | 0x40U; }
+        else if ((detail >> 6) == 3U) enabled = false;
+        else detail = (uint8_t)(detail + 0x40U);
+        break;
+    case 9U: enabled = !enabled; break;
+    case 4U: detail = (uint8_t)((detail & 0xF0U) | mt_c64_next_speed(detail & 15U, (uint16_t)caps.cpu)); break;
+    case 5U: detail ^= 0x20U; break;
+    case 6U: flags ^= 1U; break;
+    case 7U: flags ^= 2U; break;
+    case 10U: detail ^= 0x10U; break;
+    case 12U: /* Controller action: CPU faster. */
+        if (!enabled) { enabled = true; detail = (detail & 0x3FU) | 0x40U; }
+        detail = (uint8_t)((detail & 0xF0U) | mt_c64_step_speed(detail & 15U, (uint16_t)caps.cpu, true));
+        break;
+    case 13U: /* Controller action: CPU slower. */
+        if (!enabled) {
+            if (had_override) configure_c64_turbo(&supervisor.active, profile, true);
+            set_supervisor_status("Turbo is off");
+            return;
+        }
+        detail = (uint8_t)((detail & 0xF0U) | mt_c64_step_speed(detail & 15U, (uint16_t)caps.cpu, false));
+        break;
+    default: return;
+    }
+    settings_before_update = persistent_settings;
+    bool valid = ensure_active_settings_profile();
+    if (valid) valid = mt_supervisor_settings_remember_c64_cpu_turbo(
+        &persistent_settings, supervisor.active.package.id, enabled);
+    persistent_settings.c64_turbo_detail = detail;
+    persistent_settings.c64_turbo_flags = flags;
+    if (!valid || !save_persistent_settings()) {
+        persistent_settings = settings_before_update;
+        if (had_override) {
+            profile = mt_supervisor_settings_find(&persistent_settings, supervisor.active.package.id);
+            configure_c64_turbo(&supervisor.active, profile, true);
+        }
+        set_supervisor_warning("CPU turbo setting not saved");
+        return;
+    }
+    profile = mt_supervisor_settings_find(&persistent_settings, supervisor.active.package.id);
+    configure_c64_turbo(&supervisor.active, profile, true);
+    supervisor_menu_dirty = true;
+    char message[128];
+    const uint32_t status = shell_read(MT_REG_C64_CPU_STATUS);
+    (void)snprintf(message, sizeof(message), "%s: %u MHz saved, now %u MHz (%s)",
+        enabled ? "CPU turbo" : "Turbo off", mt_c64_speed_mhz(detail & 15U),
+        mt_c64_speed_mhz(status & 15U), mt_c64_turbo_reason(status));
+    set_supervisor_status(message);
 }
 
 static void handle_menu_action(mt_menu_action_t action)
 {
+    if (c64_debug.reu_host.reload_required && menu_action_needs_core_progress(action) &&
+        action.kind != MT_MENU_ACTION_SWITCH_CORE && action.kind != MT_MENU_ACTION_REBOOT_GOLDEN) {
+        set_supervisor_error("REU cache did not clear; reload the C64 core");
+        return;
+    }
     if (golden_update_worker_held && action.kind != MT_MENU_ACTION_UPDATE_GOLDEN &&
         action.kind != MT_MENU_ACTION_REBOOT_GOLDEN &&
         action.kind != MT_MENU_ACTION_SWITCH_FIRMWARE) {
@@ -3980,6 +4283,21 @@ static void handle_menu_action(mt_menu_action_t action)
         open_menu_browser(MT_MENU_BROWSER_CARTRIDGE);
     } else if (action.kind == MT_MENU_ACTION_BROWSE_PROGRAM) {
         open_menu_browser(MT_MENU_BROWSER_PROGRAM);
+    } else if (action.kind == MT_MENU_ACTION_BROWSE_REU) {
+        if (c64_debug.active && c64_debug.caps.reu_host)
+            open_menu_browser(MT_MENU_BROWSER_REU);
+    } else if (action.kind == MT_MENU_ACTION_LOAD_REU) {
+        char path[640];
+        if (action.file_index >= supervisor_menu_file_count ||
+            !c64_debug.active || !c64_debug.caps.reu_host) return;
+        const int length = snprintf(path, sizeof path, "%s/%s", vectrex_browser_path,
+            supervisor_menu_files[action.file_index].name);
+        if (length < 0 || (size_t)length >= sizeof path) {
+            set_supervisor_error("REU image path is too long"); return;
+        }
+        const mt_c64_reu_load_result_t loaded = mt_c64_debug_load_reu(&c64_debug, path, 0U);
+        if (loaded == MT_REU_LOAD_OK) mt_menu_close_browser(&supervisor_menu);
+        else set_supervisor_error(mt_c64_reu_load_message(loaded));
     } else if (action.kind == MT_MENU_ACTION_BROWSE_DOCUMENTS) {
         open_menu_browser(MT_MENU_BROWSER_DOCUMENTS);
     } else if (action.kind == MT_MENU_ACTION_OPEN_TEXT) {
@@ -4050,7 +4368,7 @@ static void handle_menu_action(mt_menu_action_t action)
                 return;
             }
         }
-        if (save_persistent_settings()) {
+        if (save_persistent_settings() && mt_supervisor_turbo_controls_save(&persistent_settings)) {
             (void)usb_hid_service_set_controller_configs(configs);
             mt_menu_gamepad_saved(&supervisor_menu);
             supervisor_menu.gamepad_edit = false;
@@ -4503,6 +4821,14 @@ static void handle_menu_action(mt_menu_action_t action)
             return;
         }
         if (supervisor.has_active && supervisor.active.package.core_id == MT_C64_CORE_ID &&
+            (action.file_index == 4U || action.file_index == 5U || action.file_index == 6U ||
+             action.file_index == 7U || action.file_index == 9U || action.file_index == 10U ||
+             action.file_index == 12U || action.file_index == 13U ||
+             (action.file_index == 1U && selection_c64_features(&supervisor.active).turbo))) {
+            change_c64_turbo(action.file_index);
+            return;
+        }
+        if (supervisor.has_active && supervisor.active.package.core_id == MT_C64_CORE_ID &&
             action.file_index >= 2U) {
             change_c64_expansion(action.file_index);
             return;
@@ -4698,11 +5024,15 @@ static void service_supervisor_menu(void)
     };
     mt_menu_view_t view;
     if (!supervisor_menu_ready) return;
+    if (c64_debug.reu_host.reload_required) {
+        supervisor_menu.visible = true;
+        supervisor_menu_dirty = true;
+    }
     if (pending_menu_action.kind != MT_MENU_ACTION_NONE) {
         const mt_menu_action_t action = pending_menu_action;
         pending_menu_action.kind = MT_MENU_ACTION_NONE;
         supervisor_menu_action_active = true;
-        if (menu_action_needs_core_progress(action)) {
+        if (menu_action_needs_core_progress(action) && !c64_debug.reu_host.reload_required) {
             if (hide_menu_for_core_action()) {
                 set_supervisor_status("Applying selection...");
                 handle_menu_action(action);
@@ -4763,6 +5093,8 @@ static void initialize_supervisor_menu(void)
                standby_ready ? 1U : 0U);
 
     load_result = mt_supervisor_settings_load(&persistent_settings);
+    if (!mt_supervisor_turbo_controls_load(&persistent_settings))
+        xil_printf("[settings] turbo bindings unavailable; left unassigned\r\n");
     settings_missing_on_boot = load_result.status == MT_SETTINGS_MISSING;
     settings_faulted = load_result.status != MT_SETTINGS_OK &&
                        load_result.status != MT_SETTINGS_MISSING;
@@ -5057,6 +5389,11 @@ int main(void)
                (unsigned int)MT_FIRMWARE_BUILD_ID);
     xil_printf(MB_MULTITINI_MARKER "\r\n");
     Xil_SetTlbAttributes(MT_SHELL_BASE_ADDRESS, DEVICE_MEMORY);
+    /* CPU1 is still stopped. No cacheable alias may survive REU DMA writes.
+     * Normal memory permits the unaligned first/last bytes of raw .reu loads. */
+    for (uintptr_t section = MT_C64_REU_DDR_BASE;
+         section < MT_C64_REU_DDR_BASE + MT_C64_REU_DDR_SIZE; section += UINT32_C(0x100000))
+        Xil_SetTlbAttributes(section, NORM_NONCACHE);
     mt_core_link_init_mmio(&shell_link,
         (volatile void *)(uintptr_t)MT_SHELL_BASE_ADDRESS);
     print_read_only_diagnostics("before CPU1 release");
@@ -5122,6 +5459,7 @@ int main(void)
     c64_d64_service_init(&shell_link, NULL, NULL);
     c64_content_service_init(&shell_link, NULL, NULL, monotonic_ms, NULL);
     c64_services_initialized = true;
+    initialize_c64_debug();
     initialize_supervisor_menu();
     service_supervisor_menu();
     /* The first screen is now available. Warm the verified Golden cache
@@ -5136,8 +5474,14 @@ int main(void)
         service_system_page();
         service_supervisor_menu();
         service_screenshots();
+        mt_c64_debug_tick(&c64_debug);
         if (uart0_try_read_byte(&byte) == 0) continue;
         input = (char)byte;
+        if (c64_debug.reu_host.reload_required && input != ':' && input != 'h' &&
+            input != 'o' && input != 's' && input != '\r' && input != '\n') {
+            xil_printf("REU cache did not clear; reload the C64 core\r\n");
+            continue;
+        }
         if (golden_update_worker_held && input != ':' && input != 'h' &&
             input != 'o' && input != 's' && input != 'u' &&
             input != '\r' && input != '\n') {

@@ -12,9 +12,12 @@
 #include "gameboy_content_service.h"
 #include "iigs_content_service.h"
 #include "multitini_c64_interface.h"
+#include "multitini_c64_debug.h"
 #include "multitini_gameboy_interface.h"
 #define MT_EXTENDED_COMMAND_CAPACITY 256U
 static bool golden_update_worker_held;
+static mt_c64_debug_t c64_debug;
+static bool dispatch_c64_debug(const char *line) { (void)line; return false; }
 static const char *test_command;
 static unsigned forbidden,retries,warnings,statuses;
 static unsigned unknown_commands;

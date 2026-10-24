@@ -655,3 +655,123 @@ tests/c64_vice/reu_harness.cpp,Multitini One,,GPL-3.0-only,source-reviewed,Origi
 tests/c64_vice/vic_ba_reference.cpp,Multitini One,,GPL-3.0-only,source-reviewed,Original VICE 3.10 differential scaffold or synthetic regression; unchanged reference fragments retain their own notices
 tests/c64_vice/vic_fetch_reference.cpp,Multitini One,,GPL-3.0-only,source-reviewed,Original VICE 3.10 differential scaffold or synthetic regression; unchanged reference fragments retain their own notices
 tests/c64_vice/vic_irq_reference.cpp,Multitini One,,GPL-3.0-only,source-reviewed,Original VICE 3.10 differential scaffold or synthetic regression; unchanged reference fragments retain their own notices
+firmware/common/c64_debug.c,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+firmware/common/c64_features.c,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+firmware/common/c64_reu_host.c,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+firmware/include/multitini_c64_debug.h,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+firmware/include/multitini_c64_features.h,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+firmware/include/multitini_c64_reu_host.h,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/board/multitini_c64_turbo_timing.xdc,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/common/multitini_audio_capture.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/common/multitini_word_mailbox.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/core/c64/multitini_c64_cpu_island.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/core/c64/multitini_c64_cpu_proxy.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/core/c64/multitini_c64_fio_port.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/core/c64/multitini_c64_host.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/core/c64/multitini_c64_island_governor.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/core/c64/multitini_c64_island_map.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/core/c64/multitini_c64_island_memory.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/core/c64/multitini_c64_nmi_delivery.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/core/c64/multitini_c64_turbo_regs.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/core/c64/multitini_c64_ua.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/core/c64/multitini_c64_ua_fetch.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/core/c64/multitini_c64_ua_mix.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/core/c64/multitini_c64_ua_voice.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/c64_ua_upstream_bridge.vhd,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_host.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_island_cpu.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_island_governor.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_island_guard.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_island_map.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_island_memory.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_island_nmi.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_island_proxy.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_island_regs.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_turbo_exact.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_turbo_fio.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_turbo_sid_edges.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_turbo_sid_fast.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_turbo_sid_native.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_turbo_vic_fast.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_turbo_vic_native.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_ua_cache.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_ua_fetch.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_ua_mix.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_ua_top.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_ua_upstream_ref.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_ua_voice.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_multitini_audio_capture.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_multitini_word_mailbox.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/check_c64_audio_capture_synthesis.tcl,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/check_c64_turbo_synthesis.tcl,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_cpu_island.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_cpu_island_components.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_host_support.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_turbo_exact.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_turbo_fast_ports.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_turbo_native_ports.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_ua_rtl.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_ultimate_audio.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/ua_model.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+tests/host/test_c64_debug.c,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+tests/host/test_c64_features.c,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+tests/host/test_c64_reu_host.c,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+tests/test_c64_ua_model.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+third_party/ultimate_reference/NOTICE.md,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+third_party/ultimate_reference/import_manifest.json,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+third_party/ultimate_reference/upstream/LICENSE.txt,GideonZ/1541ultimate,fea2798c217674cf0e6eddb121792f3a214ddd9f,GPL-3.0,source-reviewed,Unmodified test-only Ultimate Audio reference; excluded from product builds
+third_party/ultimate_reference/upstream/fpga/io/sampler/vhdl_source/sampler2.vhd,GideonZ/1541ultimate,fea2798c217674cf0e6eddb121792f3a214ddd9f,GPL-3.0,source-reviewed,Unmodified test-only Ultimate Audio reference; excluded from product builds
+third_party/ultimate_reference/upstream/fpga/io/sampler/vhdl_source/sampler_accu.vhd,GideonZ/1541ultimate,fea2798c217674cf0e6eddb121792f3a214ddd9f,GPL-3.0,source-reviewed,Unmodified test-only Ultimate Audio reference; excluded from product builds
+third_party/ultimate_reference/upstream/fpga/io/sampler/vhdl_source/sampler_pkg.vhd,GideonZ/1541ultimate,fea2798c217674cf0e6eddb121792f3a214ddd9f,GPL-3.0,source-reviewed,Unmodified test-only Ultimate Audio reference; excluded from product builds
+third_party/ultimate_reference/upstream/fpga/io/sampler/vhdl_source/sampler_regs.vhd,GideonZ/1541ultimate,fea2798c217674cf0e6eddb121792f3a214ddd9f,GPL-3.0,source-reviewed,Unmodified test-only Ultimate Audio reference; excluded from product builds
+third_party/ultimate_reference/upstream/fpga/io/sigma_delta_dac/vhdl_source/my_math_pkg.vhd,GideonZ/1541ultimate,fea2798c217674cf0e6eddb121792f3a214ddd9f,GPL-3.0,source-reviewed,Unmodified test-only Ultimate Audio reference; excluded from product builds
+third_party/ultimate_reference/upstream/fpga/ip/busses/vhdl_source/io_bus_pkg.vhd,GideonZ/1541ultimate,fea2798c217674cf0e6eddb121792f3a214ddd9f,GPL-3.0,source-reviewed,Unmodified test-only Ultimate Audio reference; excluded from product builds
+third_party/ultimate_reference/upstream/fpga/ip/busses/vhdl_source/mem_bus_pkg.vhd,GideonZ/1541ultimate,fea2798c217674cf0e6eddb121792f3a214ddd9f,GPL-3.0,source-reviewed,Unmodified test-only Ultimate Audio reference; excluded from product builds
+third_party/ultimate_reference/upstream/fpga/ip/srl_fifo/vhdl_source/srl_fifo-generic.vhd,GideonZ/1541ultimate,fea2798c217674cf0e6eddb121792f3a214ddd9f,GPL-3.0,source-reviewed,Unmodified test-only Ultimate Audio reference; excluded from product builds
+third_party/ultimate_reference/upstream/fpga/ip/sync_fifo/vhdl_source/sync_fifo.vhd,GideonZ/1541ultimate,fea2798c217674cf0e6eddb121792f3a214ddd9f,GPL-3.0,source-reviewed,Unmodified test-only Ultimate Audio reference; excluded from product builds
+hdl/sim/tb_c64_island_interrupts.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_island_window.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_turbo_ordering.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_ua_period.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_cpu_island_interrupts.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+c64ua/README.md,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+c64ua/background.a,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+c64ua/boot.inc,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+c64ua/build.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+c64ua/console.inc,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+c64ua/detect.a,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+c64ua/period.a,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+c64ua/stress.a,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+c64ua/voices.inc,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/c64_ua_reu_contention.inc,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_island_nmi_pipeline.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_vic_fast_equivalence.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_island_nmi_pipeline.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_ntsc_display.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_turbo_ordering.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_ua_contention.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_vic_fast_equivalence.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+tests/c64_turbo/nmi_reference.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+tests/test_c64_turbo_runtime.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_island_vice.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_turbo_io2.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_ua_mix_stream.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_ua_spectral.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_island_vice.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_ua_spectral.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+tests/host/fixtures/settings_schema10_accept.c,Multitini One,534181278ee46da97999d660544973d5ca604c4d,GPL-3.0-only,source-reviewed,Exact pre-extension schema-10 codec from firmware/platform/xilinx/supervisor_settings.c; downgrade test reference only
+tests/host/fixtures/settings_schema10_reference.json,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+tests/host/settings_schema10_fixture.c,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+tests/test_c64ua.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_turbo_digi.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_turbo_digi.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_turbo_rates.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_ua_irq.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_turbo_pixels.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_turbo_rates.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_ua_irq.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_vic_badline_pulse.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_turbo_seams.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_turbo_seams.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+hdl/sim/tb_c64_turbo_dma.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+scripts/test_c64_turbo_dma.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation

@@ -1,6 +1,6 @@
 # Multitini One C64 turbo: fast SID register path (v2 sub-design)
 
-Sub-design written on 2026-10-23 for the v2 draft of [C64_TURBO_DESIGN.md](C64_TURBO_DESIGN.md), against commit 5341812 (branch c64-turbo). The current design (v3) merges it; where the two differ, C64_TURBO_DESIGN.md wins. Design stage only: no HDL, firmware, script or build file was changed for it, no build or simulation was run, and nothing here is board-tested. Paths to throwaway session files were removed. `issueN.txt` means a downloaded copy of GideonZ/1541ultimate issue #N with its comments; other bare file names that are not in this repository also name downloaded copies read during the design. Those copies are not kept. The model is `sid_fio_model.py` in [C64_TURBO_MODELS.md](C64_TURBO_MODELS.md); the Doom sources it cites were downloaded copies (data only, never run).
+Sub-design written on 2026-10-23 for the v2 draft of [C64_TURBO_DESIGN.md](C64_TURBO_DESIGN.md), against commit 5341812 (branch c64-turbo). The current design (v3) merges it; where the two differ, C64_TURBO_DESIGN.md wins. Design stage only: no HDL, firmware, script or build file was changed for it, no build or simulation was run, and nothing here is board-tested. Paths to throwaway session files were removed. `issueN.txt` means a downloaded copy of GideonZ/1541ultimate issue #N with its comments; other bare file names that are not in this repository also name downloaded copies read during the design. Those copies are not kept. The models are `sid_fio_model.py` and, for the edge stage and the audio-identity bench, `sid_edge_stage.py` and `svf_persistence.py`, all in [C64_TURBO_MODELS.md](C64_TURBO_MODELS.md); the Doom sources that `sid_fio_model.py` cites were downloaded copies (data only, never run).
 
 Tags: **[V]** verified (file:line or URL); **[M]** measured by a third party; **[I]** inference or design choice; **[O]** open, with the experiment that settles it. Nothing here has run on the board, and no hardware support is claimed.
 
@@ -12,7 +12,7 @@ Baseline: the v1 turbo design, an earlier draft of C64_TURBO_DESIGN.md that is n
 
 - **What changes.** In turbo mode, a CPU access to `$D400-$D7FF` (I/O visible) no longer uses the native φ2 slot. The island sends it through the shared fast-I/O (FIO) request to the c64 domain. The SID executes it at the first `c64_clk` edge after the request, with no stall. The island retires the bus cycle one fast clock later. A SID read or write costs 3 or 4 fast clocks instead of one φ2. This retires D1 and D5 for the SID.
 - **Reads.** The read value is computed at the execute edge from the same sources as stock: POTX/POTY, OSC3, ENV3, or the per-chip "last value" latch. It is loaded into the proxy's B0 data register and given to the T65 one fast clock later. Reads have no side effect on the SID engine. The only state they touch is the per-chip bus latch, which they update exactly as stock does.
-- **Writes.** Writes are not posted and not queued. Each write lands directly in the existing register file at its execute edge. The engine samples registers at fixed edges, once per native cycle, so several writes inside one µs collapse to the value present at the sample edge. One addition (generic `EDGE_STAGE`, default 1): a second write to a voice **control** register (`$x04/$x0B/$x12`) inside one engine sample window is held and applied at the next engine step. Gate and test pulses, and RMW double writes, are therefore seen by the engine as they would be at 1 MHz.
+- **Writes.** Writes are not posted and not queued. Each write lands directly in the existing register file at its execute edge. The engine samples registers at fixed edges, once per native cycle, so several writes inside one µs collapse to the value present at the sample edge. One addition (generic `EDGE_STAGE`, default 1): a second write to a voice **control** register (`$x04/$x0B/$x12`) inside one engine sample window is held and applied at the next engine step. Isolated gate and test pulses (at most one per register per 2 µs) and isolated RMW double writes are therefore seen by the engine as they would be at 1 MHz. Denser sequences are compressed (3.4).
 - **Second SID at `$DE00`/`$DF00`** (HDL modes 1 and 4, not offered by the firmware menu): stays a φ2-paced I/O1/I/O2 forward, like every other I/O1/I/O2 access and like the U64's measured I/O1 timing.
 - **Ordering.** One island access is in flight at a time, and every FIO access completes before the next bus cycle. Program order with RAM, VIC, CIA, I/O1/I/O2 and REU DMA follows without a queue or barriers.
 - **Cost.** About 180 LUT and 65 FF, all in the c64 domain. No BRAM, no new clock, no new XDC. The new paths are single-fast-period paths of the existing X1/X2 kind.
@@ -34,9 +34,9 @@ Baseline: the v1 turbo design, an earlier draft of C64_TURBO_DESIGN.md that is n
 | F6 | Oscillator, test, sync, waveform, OSC3 (`wave_out`) and DCA update only under `ce_1m` | [V] sid_voice.sv:66-74, 82-131, 175, 179-195 |
 | F7 | The envelope samples `gate` only under `ce_1m` and detects edges against the previous sample (`gate_edge`) | [V] sid_envelope.sv:69-106 (100-105) |
 | F8 | Shared filter scheduler: `state` resets to 0 at `ce_1m`, counts to 15 and holds. Chip 0 uses states 0-7 and chip 1 uses states 8-15 (`n = state[3]`) | [V] sid_top.sv:245, 268-299 |
-| F9 | Filter register sample edges. Chip 0: `Res_Filt`, `Mode_Vol[7]` and F0 at e_3 (state 2); `Mode_Vol[6:4]` at e_6 (state 5); `Mode_Vol[3:0]` at e_8 (state 7). Chip 1: e_11, e_14, then every edge e_16..e_0 while `state` holds at 15 | [V] sid_filter.sv:136-215; sid_top.sv:274, 303-318 |
+| F9 | Filter register sample edges. Chip 0: `Res_Filt`, `Mode_Vol[7]` and F0 at e_3 (state 2); `Mode_Vol[6:4]` at e_6 (state 5); `Mode_Vol[3:0]` at e_8 (state 7). Chip 1: e_11, e_14, then every edge e_16..e_0 while `state` holds at 15. Chip 1 publishes its sample one edge later, so the sample left at e_0 carries `Mode_Vol[3:0]` as sampled at e_31: a chip-1 volume write landing at e_31 is heard one native cycle later than a stock e_29 write | [V] sid_filter.sv:136-215 (210); sid_top.sv:274, 303-318, 334-340 |
 | F10 | `Fc` reaches F0 through one register stage (`f0`, every clock). F0 is combinational from `f0` because `Fc_offset` = 0 and the model is 6581 | [V] sid_tables.sv:783, 1315; adapter:538-541 |
-| F11 | Combined-waveform lookups sample `acc_t` (oscillator, control bits 5 and 2) at states 1-11. The waveform select (control 7:4) is applied at `ce_1m` | [V] sid_top.sv:277-297; sid_tables.sv:693-726; sid_voice.sv:76, 138-154, 175 |
+| F11 | Combined-waveform lookups sample `acc_t` (oscillator, control bits 5 and 2) at states 1-11. The waveform select (control 7:4) is applied at `ce_1m` for `comb`, the waveform-on test and OSC3. The single-waveform output reaches `dac_out` through `norm_dac`, which registers it on every clock, so `dac_out` uses control 7:4 from one edge before `ce_1m`: a write landing at e_31 misses one `dac_out` step | [V] sid_top.sv:277-297; sid_tables.sv:693-726; sid_voice.sv:76, 138-154, 163-164, 175, 184-187 |
 | F12 | Audio leaves the core point-sampled at 48 kHz | [V] adapter:655-673 |
 
 ### 2.2 How CPU accesses reach the SID today (stock)
@@ -192,7 +192,8 @@ This equals fpga64:815-816 for every address in `$D400-$D7FF` with `ioe_i` = `io
    - The sample window runs from one `ce_1m` edge to the next. A fast write executing on a `ce_1m` edge belongs to the new window.
    - The first fast write to the register in a window applies at E.
    - Any later write in the same window goes to a one-byte stage instead; the latest write wins. The stage is applied at the next `ce_1m` edge and counts as that window's first write.
-   - The engine therefore sees the first and the last value written in every window, each for at least one engine step.
+   - A window that starts by applying a stage therefore sends all its own writes to the stage (latest wins), and the engine sees only its last value. In a window that starts without applying a stage, the engine sees the first and the last value, each for at least one engine step. A window starts with a stage when the window before it ended with one pending; one window with no write to the register ends the chain.
+   - Contract: isolated pulses are kept, that is at most one gate or test pulse per register per 2 µs, with no other write to that register in the µs after the pulse (precisely: a pulse whose writes fall in one window is kept when that window starts without applying a stage; a pulse split across two windows is kept when each of its writes is the last write in its window). Denser sequences are compressed: two consecutive windows that each write gate 1→0→1 give engine gate samples 1 0 1 1 1, where four 1 MHz writes give 1 0 1 0 1 [I C64_TURBO_MODELS.md (sid_edge_stage.py)].
 4. A native write (exact mode or REU DMA) to a control register cancels a pending stage for it, because the native write is later in program order. Reset clears all stages.
 5. Native accesses keep the unchanged stock path. Native and fast accesses never meet in one edge (3.6). An assertion checks this, and RTL priority goes to native.
 
@@ -217,15 +218,17 @@ elif w:
   - Voice registers are read at e_0 (`ce_1m`).
   - Filter registers are read at the state-2/5/7 edges, plus the chip-1 state-15 hold.
   - Fc passes through a single register stage (F10). A write landing mid-pipeline gives the old or the new F0, never a mixture.
-- No consumer combines two samples of the same register taken at different edges, apart from two cases:
+- No consumer combines two samples of the same register taken at different edges, apart from three cases:
   - **Combined waveforms** (F11). The lookup uses the control bits from states 1-11, and the select uses bit 7:4 at e_0. Stock already mixes these on every control write: writes land at e_29, after every lookup. A turbo write landing before the lookup is consistent.
   - **Filter routing vs volume** (chip 0). A `$D418` write between e_3 and e_8 gives one µs with new volume and old routing. That µs has a 1-in-21 chance of being the one picked by the 48 kHz point sample (F12). Inaudible [I].
+  - **Waveform DAC** (F11). `dac_out` takes the single-waveform output from `norm_dac` (control 7:4 from one edge before `ce_1m`) and `comb` and the waveform-on test from the live control. A fast control write landing at e_31 gives one engine step that mixes old and new; stock e_29 writes never do. One µs; inaudible [I].
 - The 16-bit freq and pw pairs and the 11-bit Fc pair are not written atomically in stock either.
 - No illegal state is reachable. The envelope's states change only on `ce_1m` from the sampled gate level (F7). The oscillator and noise LFSR react to levels at `ce_1m` (F6).
-- **Lasting effects.** The only lasting effect of turbo landing is a lost sub-µs gate or test pulse. A lost pulse changes the envelope state, the oscillator phase or the LFSR for the rest of the note. The edge stage removes that case:
+- **Lasting effects.** The only lasting effect of turbo landing is a lost sub-µs gate or test pulse. A lost pulse changes the envelope state, the oscillator phase or the LFSR for the rest of the note. The edge stage keeps isolated pulses (at most one per register per 2 µs) and compresses denser sequences (3.4):
   - A gate 1→0→1 inside one µs becomes one sample of release, then attack. That is the same envelope path as the 4-µs pulse that `sta`/`sta` gives at 1 MHz, including the rate-counter behaviour behind the ADSR delay bug.
-  - An RMW double write to a control register (old value, then new value) becomes one sample of each. That is sample for sample what stock does, where the two writes land one native cycle apart.
-- **Stage latency.** The stage delays a write by at most one µs, and only when two or more writes hit the same control register inside one µs. Software written for 1 MHz cannot do that. In exact mode the stage never triggers, because native writes land at most once per window.
+  - An isolated RMW double write to a control register (old value, then new value) becomes one sample of each. That is sample for sample what stock does, where the two writes land one native cycle apart.
+  - Denser sequences: a pulse can still be merged. Of two consecutive pulse windows, the second pulse is lost. The U64 most likely drops every sub-µs pulse (U5; E7-S), so this is no worse than the reference [I].
+- **Stage latency.** The stage delays a write by at most one µs, and only when another write to the same control register landed less than 2 µs before. In exact mode the stage never triggers, because native writes cancel stages and never stage. Stock SID behaviour, stock REU DMA writes to the SID and the Expand gate (G-REU0 of C64_TURBO_DESIGN.md) are unchanged.
 
 **Digi playback** [I unless marked]:
 - **4-bit `$D418` digis** (timer or NMI driven, one write per sample at 4-22 kHz):
@@ -238,11 +241,12 @@ elif w:
 - **Badline timing enabled.** The island halts for BA, as on a stock C64 and on the U64 [V turbo_mode.rst:164-176 via C64_TURBO_U64_SPEC.md D2].
 - **REU fixed-address digis** (DMA to `$D418`): native path, 1 byte per φ2, unchanged (F19).
 - **Mahoney-style 8-bit digis.** Voice set-up through test bits is a one-time step; playback is `$D418` writes. Both are covered.
-- **Test-bit pulse DAC techniques.** The edge stage keeps the pulse.
+- **Test-bit pulse DAC techniques.** The edge stage keeps an isolated test pulse (at most one per voice per 2 µs, 3.4). A denser sequence is compressed: two consecutive pulse windows give one oscillator reset instead of two.
 - **Lost value.** A level-register value overwritten inside the same µs is lost, for example the first write of `inc $d418`. At 1 MHz it would have lasted one µs, and the point sample at 48 kHz cannot resolve it.
 
 **Rejected alternatives:**
 - **Paced queue (one write per µs).** Stalls the CPU (25 µs per player burst), diverges from the untimed U64 writes, and moves t = 0 in sidtest.
+- **Keep every gate/test pulse.** Needs backpressure. In the merged design SID and VIC writes share one FIFO (C64_TURBO_DESIGN.md 2.13.5), so a hold that keeps a control write at the FIFO head while that register's stage is pending also delays the VIC writes queued behind it, by up to 1 µs per held write, and a burst stalls the island on `full_q`. That is a partial paced queue (above). The narrower contract of 3.4 is kept instead.
 - **Posted writes or a depth-4 queue.** Saves about 1 µs per 25-write burst at index 15. It adds ordering hazards for the latch, read-after-write, mode switches and DMA.
 - **Island-side read shadow (2-slot reads).** Needs a half-period path from SID flops into the island, which is the R2 risk area.
 - **Fast-clocked register file.** Changes the stock path.
@@ -255,7 +259,7 @@ elif w:
 | SID FIO vs VIC FIO | Same request register, one at a time |
 | FIO vs φ2 forward (CIA, I/O1/I/O2, `$FF00`, `$DE00` SID) | A forward loads at e_15 and completes at R, always after the preceding FIO's E. Example: `sta $d418 / lda $dc0d` |
 | FIO vs REU DMA | DMA starts only after a forwarded trigger. The island is in DMA_WAIT and issues no FIO. DMA SID writes are native; they cancel stages for the registers they write |
-| FIO vs IRQ/NMI | The SID raises no interrupt, and SID accesses are not in the IRQ-acknowledge class. The completion enable samples live IRQ/NMI as any enable does |
+| FIO vs IRQ/NMI | The SID raises no interrupt, and SID accesses are not in the IRQ-acknowledge class. The completion enable samples live IRQ, and NMI through the hold-and-rearm rule of C64_TURBO_DESIGN.md §2.9, as any enable does |
 | FIO vs exact/turbo switch | The island switches only at an enable boundary with no access in flight. FIO is non-posted, so the boundary is clean. A pending stage is internal SID timing: it applies at the next `ce_1m`, or a later native write cancels it |
 | FIO vs pause, menu, loader | The SID executes at E regardless. Completion waits for grants, which stop while the frame is paused. The loader forces exact mode. Stages wait for `ce_1m`, which stops with the frame |
 | Native and fast in one edge | Impossible. In turbo, the native slot carries the dummy (`$0000`), forwards (never `$D4xx`) or DMA (island halted). A simulation assertion and native-first priority back this up |
@@ -364,22 +368,32 @@ All tests are small benches before any full build (AGENTS.md).
 - **a. Register file.** For each offset `$00-$1F`, each select pattern and a set of values: write through the fast port into DUT A, and the same write through the stock timing into a twin B (32-phase frame driver as in tb_c64_sid_socket.sv, `cs` in phases 16-31, `we` in phase 29). After every access, compare all register fields and both latches.
 - **b. Latch table.** Random read/write sequences over `$00-$1F` (section 3.3). Returned bytes and latches equal twin B, including S3 after writes to `$19-$1C`.
 - **c. Select.** Exhaustive over `sid_mode` 0-7 × A11:A0 (A11:A10 = 01): `fio_sel_l/r` equal fpga64:815-816 with `ioe_i` = `iof_i` = 0.
-- **d. Edge stage**, each case checked on envelope state, ENV3, OSC3 and LFSR:
-  - gate 0→1→0 inside a window gives one ATTACK sample, then RELEASE;
-  - gate 1→0→1 gives one RELEASE sample, then ATTACK with `hold_zero` cleared;
-  - a test pulse gives oscillator 0 for at least one sample;
-  - three writes in a window show the first and last values;
-  - a write on the `ce_1m` edge, with and without a pending stage;
-  - a native write cancels the stage;
-  - reset clears the stage;
-  - a `memory_wait`-stretched window;
-  - `EDGE_STAGE` = 0 shows the loss, which documents the U64-like behaviour.
-- **e. Audio identity.** Replay a register trace (a synthetic 50 Hz player stream; a VICE-dumped stream optional), with at most one write per register per native cycle, so the stage stays idle. Run it once stock (e_29) and once fast, at random phases in the same native cycle. Compare `audio_l/r` once per native cycle at phase 15.
+- **d. Edge stage**, each case checked on envelope state, ENV3, OSC3 and LFSR. The expected engine samples (gate bit, or the whole register, at successive `ce_1m` edges, the first being the edge before the first write) are the literal results of C64_TURBO_MODELS.md (sid_edge_stage.py):
+  - kept, gate 0→1→0 inside a window: one ATTACK sample, then RELEASE (0 1 0 0);
+  - kept, gate 1→0→1: one RELEASE sample, then ATTACK with `hold_zero` cleared (1 0 1 1);
+  - kept, a test pulse `$41`→`$49`→`$41`: oscillator 0 for at least one sample (`$41 $49 $41 $41`);
+  - kept, three writes `$41`, `$40`, `$21` in a window, from `$40`: first and last only (`$40 $41 $21 $21`);
+  - kept, a pulse window, then a window with one write `$40`: 1 0 1 0 0; with `$40` alone on the `ce_1m` edge instead: 1 0 1 0 0;
+  - kept, two pulse windows with an empty window between: 1 0 1 0 1 1;
+  - merged, two consecutive windows, each 1→0→1: 1 0 1 1 1 (the second pulse is merged; four 1 MHz writes give 1 0 1 0 1);
+  - merged, two consecutive windows, each test 0→1→0: `$41 $49 $41 $41 $41` (one oscillator reset instead of two);
+  - merged, a pulse window, then `$40` on the `ce_1m` edge and `$41` later in that window: 1 0 1 1 1;
+  - merged, a pulse window, a one-write window (`$40`), then a 0→1→0 window: 1 0 1 0 0 0 (the third window's pulse is merged);
+  - a native write `$40` after a pulse window cancels the stage: `$41 $40 $40 $40` (the native value wins);
+  - reset clears the stage: `$41 $00 $00 $00`;
+  - a `memory_wait`-stretched window: the same samples as without the stretch;
+  - `EDGE_STAGE` = 0, one window 1→0→1: 1 1 1 1 (the pulse is lost), which documents the U64-like behaviour.
+- **e. Audio identity.** Replay a register trace (a synthetic 50 Hz player stream; a VICE-dumped stream optional), with at most one write per register per native cycle, so the stage stays idle. Run it once stock (e_29) and once fast, at random phases in the same native cycle; phase p means the fast write lands at e_p. Compare `audio_l/r` once per native cycle at phase 15.
   - These placements must give **bit-identical** results:
-    - voice registers at any phase if the trace uses single waveforms, otherwise at phases 15-31 (F11);
+    - voice control bits 7:4 at phases 0-30 with single waveforms, otherwise at phases 15-30. Not phase 31: `dac_out` takes the single-waveform output from `norm_dac`, registered one edge before `ce_1m` (F11);
+    - other voice registers at any phase if the trace uses single waveforms, otherwise at phases 15-31 (F11);
     - chip-0 `$15-$18` at phases 9-31 (F9);
-    - chip-1 `$15-$18` at phases 15-31 (F9).
-  - Earlier filter or control writes: differences must stay inside one native cycle per write.
+    - chip-1 `$15-$17`, and `$18` bits 7:4, at phases 15-31 (F9);
+    - chip-1 `$18` bits 3:0 at phases 15-30. Not phase 31: the sample published at e_0 carries the volume sampled at e_31 (F9).
+  - Other placements:
+    - Every other `$15-$17` placement: compare against a stock twin whose write the filter first samples at the same edge (F9, F10): the e_29 run if the fast write lands after that edge, otherwise the stock write one native cycle earlier. Expected: bit-identical. No cycle bound applies: the SVF integrators (sid_filter.sv:91-93, 162-192) carry a one-cycle difference in F0, routing or resonance for hundreds to thousands of native cycles (above one output LSB for up to about 5,200 native cycles at a 200 Hz cutoff and about 1,100 at 1 kHz), and at a low cutoff a residue of a few LSB can stay [I C64_TURBO_MODELS.md (svf_persistence.py)].
+    - A `$18` write: the difference stays inside one compare sample per write, because `Mode_Vol` never reaches the integrators (sid_filter.sv:116-125, 155-160, 210).
+    - Documented, expected differences: control bits 7:4 landing at e_31 and voice writes at phases 0-14 with combined waveforms (F11): at most one compare sample differs when the voice is not routed through the filter; on a filter-routed voice the difference decays as above, and the bench logs it and does not fail. Chip-1 `$18` bits 3:0 landing at e_31 (F9): exactly one compare sample differs, whatever the routing.
 
 ### 6.2 Regressions with the fast port idle
 
@@ -453,7 +467,7 @@ The same program in exact mode and at index 15 must give identical final SID reg
 
 ## 8. Open questions
 
-1. **Q-S1.** Default of `EDGE_STAGE`: 1 (keep 1-MHz gate/test sequences; RMW double writes match stock) or 0 (strict level sampling, which is probably the U64 behaviour)? Design default 1; revisit after E7-S.
+1. **Q-S1.** Default of `EDGE_STAGE`: 1 (keep isolated gate/test pulses, at most one per register per 2 µs, and isolated RMW double writes as at 1 MHz; denser sequences are compressed, 3.4) or 0 (strict level sampling, which is probably the U64 behaviour)? Design default 1; revisit after E7-S.
 2. **Q-S2.** Does V-C close at NTSC with margin (E1)? If not, V-R stays.
 3. **Q-S3.** Does the VIC fast target execute without stalls, so that one static FIO schedule serves both? This is settled by the VIC sub-design.
 4. **Q-S4.** U64 behaviour for an UltiSID at `$DE00`/`$DF00`, and for reads of write-only registers (E7-S c, d). It matters only if firmware later offers modes 1 and 4.

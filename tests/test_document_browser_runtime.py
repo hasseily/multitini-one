@@ -259,6 +259,7 @@ class DocumentBrowserRuntimeTests(unittest.TestCase):
             "-Wall", "-Wextra", "-Werror", "-Wpedantic", "-Wconversion",
             "-Wshadow", "-Wstrict-prototypes", "-I", str(ROOT / "firmware/include"),
             str(harness), str(ROOT / "firmware/common/core_frontend.c"),
+            str(ROOT / "firmware/common/c64_features.c"),
             str(ROOT / "firmware/common/content_type.c"),
             str(ROOT / "firmware/common/genesis_content.c"),
             str(ROOT / "firmware/common/nes_content.c"),

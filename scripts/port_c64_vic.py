@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +32,104 @@ def replace_once(text: str, old: str, new: str) -> str:
     if text.count(old) != 1:
         raise ValueError("Pinned VIC port anchor changed: " + old.splitlines()[0])
     return text.replace(old, new, 1)
+
+
+def fast_port(s):
+    s = replace_once(s, '\t\tregisteredAddress : boolean;', '\t\tFAST_PORT : boolean := false;\n\t\tregisteredAddress : boolean;')
+    s = replace_once(s, '\t\tclk: in std_logic;', '''\t\tfast_phase : in unsigned(4 downto 0) := (others => '0');
+\t\tfast_rd_addr : in unsigned(5 downto 0) := (others => '0');
+\t\tfast_rd_data : out unsigned(7 downto 0);
+\t\tfast_wr : in std_logic := '0';
+\t\tfast_wa : in unsigned(5 downto 0) := (others => '0');
+\t\tfast_wd : in unsigned(7 downto 0) := (others => '0');
+\t\tfast_clr_m2m : in std_logic := '0';
+\t\tfast_clr_m2d : in std_logic := '0';
+\t\tfast_hold_d011 : out std_logic;
+\t\tfast_hold_spr : out std_logic;
+\t\tfast_native_busy : out std_logic;
+\t\tclk: in std_logic;''')
+    wr_start = s.index('writeRegisters: process(clk)')
+    rd_start = s.index('readRegisters: process(clk)')
+    wr = s[wr_start:rd_start]
+    cases = re.findall(r'case (?:aRegisters|addr_r) is\n(.*?)end case;', wr, re.S)
+    if len(cases) != 5:
+        raise ValueError("Pinned VIC write-register case structure changed")
+    mapping = {}
+    for body in cases[1:]: # Omit native HMOS transient FF writes.
+        for addr, statements in re.findall(r'when "([01]{6})" =>(.*?)(?=\s*when |\Z)', body, re.S):
+            lines = [x.strip().replace('diRegisters', 'fast_wd').replace('di_r', 'fast_wd')
+                     for x in statements.strip().splitlines() if not x.strip().startswith('--')]
+            mapping.setdefault(addr, []).extend(lines)
+    fast_wr = '\t\t\t\tif FAST_PORT and fast_wr = \'1\' then\n\t\t\t\t\tcase fast_wa is\n'
+    for a, lines in sorted(mapping.items()):
+        fast_wr += f'\t\t\t\t\twhen "{a}" =>\n' + ''.join('\t\t\t\t\t\t' + line + '\n' for line in lines)
+    fast_wr += '\t\t\t\t\twhen others => null;\n\t\t\t\t\tend case;\n\t\t\t\tend if;\n'
+    anchor = '\t\t\tend if;\n\t\tend if;\n\tend process;'
+    wr_new = replace_once(wr, anchor, fast_wr + anchor)
+    s = s[:wr_start] + wr_new + s[rd_start:]
+    readcase = s.split('readRegisters: process(clk)', 1)[1].split('case aRegisters is\n', 1)[1].split('\t\t\tend case;', 1)[0]
+    readcase = readcase.replace('do <=', 'fast_rd_data <=').replace('fast_rd_data <= MC;', 'fast_rd_data <= MCDelay;')
+    fast_read = '''
+-- Acceptance-time hazards include the registered pop-to-landing edge.
+fast_hold_d011 <= '1' when FAST_PORT and fast_phase >= 10 and fast_phase <= 13 else '0';
+fast_hold_spr <= '1' when FAST_PORT and
+    ((vicCycle = cycleSpriteA and sprite = 0 and fast_phase >= 14 and fast_phase <= 29)
+     or (vicCycle = cycleCalcSprites and fast_phase = 13)) else '0';
+fast_native_busy <= we_r when FAST_PORT else '0';
+fastReadRegisters: process(all)
+begin
+    fast_rd_data <= (others => '1');
+    if FAST_PORT then
+        case fast_rd_addr is
+''' + readcase + '''        end case;
+    end if;
+end process;
+'''
+    s = replace_once(s, 'end architecture;', fast_read + 'end architecture;')
+    # Append masked clears after stock updates, retaining stock set/clear priority.
+    a = s.index('spriteSpriteCollision: process(clk)')
+    b = s.index('spriteBackgroundCollision: process(clk)')
+    part = s[a:b]
+    part = replace_once(part, 'process(clk)\n', 'process(clk)\n\tvariable fast_next : unsigned(7 downto 0);\n')
+    clear = '''\t\t\tif FAST_PORT and fast_clr_m2m = '1' then
+\t\t\t\tfast_next := M2M;
+\t\t\t\tif enaPixel = '1' then
+\t\t\t\t\tif collision /= 0 and (collision and (collision - 1)) /= 0 then
+\t\t\t\t\t\tfast_next := fast_next or collision;
+\t\t\t\t\tend if;
+\t\t\t\t\tif M2MClr = '1' then fast_next := (others => '0'); end if;
+\t\t\t\tend if;
+\t\t\t\tM2M <= fast_next and not fast_wd;
+\t\t\t\tM2Mhit <= '0';
+\t\t\tend if;
+'''
+    part = replace_once(part, '\t\tend if;\n\tend process;', clear + '\t\tend if;\n\tend process;')
+    s = s[:a] + part + s[b:]
+    a = s.index('spriteBackgroundCollision: process(clk)')
+    b = s.index('-- Generate IRQ signal', a)
+    part = s[a:b]
+    part = replace_once(part, 'process(clk)\n', 'process(clk)\n\tvariable fast_next, fast_delay : unsigned(7 downto 0);\n')
+    clear = '''\t\t\tif FAST_PORT and fast_clr_m2d = '1' then
+\t\t\t\tfast_next := M2D;
+\t\t\t\tfast_delay := M2DDelay;
+\t\t\t\tif enaPixel = '1' then
+\t\t\t\t\tfast_next := M2DDelay;
+\t\t\t\t\tfor i in 0 to 7 loop
+\t\t\t\t\t\tif ((MC(i) = '0' and MCurrentPixel(i)(1) = '1') or
+\t\t\t\t\t\t    (MC(i) = '1' and MCurrentPixel(i) /= "00"))
+\t\t\t\t\t\tand pixelBgFlag = '1' and TBBorder = '0' then fast_delay(i) := '1'; end if;
+\t\t\t\t\tend loop;
+\t\t\t\tend if;
+\t\t\t\tif myRd = '1' and aRegisters = "011111" then
+\t\t\t\t\tfast_next := (others => '0'); fast_delay := (others => '0');
+\t\t\t\tend if;
+\t\t\t\tM2D <= fast_next and not fast_wd;
+\t\t\t\tM2DDelay <= fast_delay and not fast_wd;
+\t\t\t\tM2Dhit <= '0';
+\t\t\tend if;
+'''
+    part = replace_once(part, '\t\tend if;\n\tend process;', clear + '\t\tend if;\n\tend process;')
+    return s[:a] + part + s[b:]
 
 
 def port(source: str) -> str:
@@ -193,6 +292,7 @@ def port(source: str) -> str:
         "\t\t\t\t\tIRST <= '1';\n"
         "\t\t\t\tend if;\n"
         "\t\t\tend if;")
+    source = fast_port(source)
     return ("-- Generated by scripts/port_c64_vic.py; do not edit directly.\n"
             "-- Source: MiSTer C64 " + COMMIT + ".\n"
             "-- Local changes: 6567R8 slots/wrap, comparator rearm, NMOS fetch, REU BA/peek.\n"

@@ -11,6 +11,9 @@ enum { MT_CONTROL_UP, MT_CONTROL_DOWN, MT_CONTROL_LEFT, MT_CONTROL_RIGHT,
        MT_CONTROL_Z, MT_CONTROL_START, MT_CONTROL_SELECT, MT_CONTROL_AXIS_X,
        MT_CONTROL_AXIS_Y, MT_CONTROL_MENU, MT_CONTROL_SCREENSHOT,
        MT_CONTROL_SCREENSHOT_OUTPUT, MT_CONTROL_COUNT };
+/* Schema-10 retains its 17 entries. C64-only additions have a separate store. */
+enum { MT_CONTROL_TURBO_TOGGLE = MT_CONTROL_COUNT, MT_CONTROL_CPU_FASTER,
+       MT_CONTROL_CPU_SLOWER, MT_CONTROL_ACTION_COUNT };
 enum { MT_CONTROLLER_AUTO, MT_CONTROLLER_PORT1, MT_CONTROLLER_PORT2,
        MT_CONTROLLER_OFF };
 enum { MT_CONTROL_SOURCE_NONE = 0, MT_CONTROL_SOURCE_BUTTON = 1,
@@ -33,6 +36,7 @@ typedef struct {
 } mt_controller_device_t;
 typedef struct {
     uint16_t binding[MT_CONTROL_COUNT];
+    uint16_t extra_binding[3];
     /* Tuning belongs to each physical axis. Bindings select the source. */
     mt_gamepad_axis_config_t axis[MT_GAMEPAD_AXIS_COUNT];
     uint8_t assignment;
@@ -43,6 +47,8 @@ typedef struct {
 } mt_controls_output_t;
 
 uint32_t mt_controls_action_mask(uint32_t core_id);
+uint16_t mt_controls_binding(const mt_controller_config_t *config, unsigned action);
+void mt_controls_bind(mt_controller_config_t *config, unsigned action, uint16_t source);
 const char *mt_controls_action_name(uint32_t core_id, unsigned action);
 void mt_controls_source_name(const mt_controller_device_t *device,
                             uint16_t source, char *text, size_t capacity);

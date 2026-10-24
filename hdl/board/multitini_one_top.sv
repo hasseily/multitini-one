@@ -5,6 +5,7 @@
 module multitini_one_top #(
     parameter logic [31:0] SHELL_BUILD_ID = 32'h00000000,
     parameter bit C64_NTSC_MODE = 1'b0,
+    parameter logic [7:0] C64_TURBO_TIMING_REVISION = 8'd1,
     parameter bit GENESIS_PAL_MODE = 1'b0,
     // 0 = C64, 1 = GBC, 2 = supervisor, 3 = Vectrex, 4 = Genesis, 5 = Apple IIgs, 6 = NES.
     parameter integer ACTIVE_MACHINE = 2,
@@ -100,6 +101,7 @@ module multitini_one_top #(
     logic video_clk;
     logic c64_clk;
     logic c64_capture_clk;
+    logic c64_cpu_clk;
     logic control_aresetn;
     logic idelay_aresetn;
     logic video_aresetn;
@@ -109,6 +111,13 @@ module multitini_one_top #(
     logic [31:0] border_config;
     logic [31:0] vectrex_video_config;
     logic [31:0] c64_expansion_config;
+    logic [31:0] c64_cpu_config, c64_cpu_status;
+    logic [31:0] c64_ua_status, c64_ua_fetches, c64_reu_misses;
+    logic [31:0] debug_control, debug_status, audio_capture_data;
+    logic audio_capture_pop, capture_tick;
+    logic signed [23:0] capture_l, capture_r;
+    logic [31:0] c64_ram_peek_request, c64_ram_peek_status;
+    logic [31:0] c64_reu_host_request, c64_reu_host_status;
     wire effect_write, effect_commit, effect_busy, effect_active_valid, effect_rejected;
     wire [9:0] effect_address;
     wire [31:0] effect_data, effect_commit_sequence, effect_active_sequence;
@@ -566,6 +575,7 @@ module multitini_one_top #(
         .control_clk(control_clk), .idelay_ref_clk(idelay_ref_clk),
         .video_clk(video_clk), .c64_clk(c64_clk),
         .c64_capture_clk(c64_capture_clk),
+        .c64_cpu_clk(c64_cpu_clk),
         .control_aresetn(control_aresetn),
         .idelay_aresetn(idelay_aresetn),
         .video_aresetn(video_clock_aresetn), .c64_aresetn(c64_aresetn),
@@ -733,7 +743,10 @@ module multitini_one_top #(
 
     multitini_control_regs #(.SHELL_BUILD_ID(SHELL_BUILD_ID),
         .IIGS_ACCEL_CAPS(ACTIVE_MACHINE==5 ? 32'h8000037f : 32'd0),
-        .C64_EXPANSION_CAPS(ACTIVE_MACHINE==0 ? 32'h80000007 : 32'd0)) control_regs (
+        .C64_EXPANSION_CAPS(ACTIVE_MACHINE==0 ? 32'h8000001F : 32'd0),
+        .C64_CPU_CAPS(ACTIVE_MACHINE==0 ? MT_C64_CPU_CAPS_RELEASE : 32'd0),
+        .C64_CPU_CAPS2(ACTIVE_MACHINE==0 ?
+            {MT_C64_CPU_CAPS2_RELEASE[31:8],C64_TURBO_TIMING_REVISION} : 32'd0)) control_regs (
         .clk(control_clk), .resetn(control_aresetn),
         .core_id(c64_core_id),
         .core_variant_index((ACTIVE_MACHINE == 0 && C64_NTSC_MODE) ||
@@ -769,6 +782,13 @@ module multitini_one_top #(
         .border_config(border_config),
         .vectrex_video_config(vectrex_video_config),
         .c64_expansion_config(c64_expansion_config),
+        .c64_cpu_config(c64_cpu_config), .c64_cpu_status(c64_cpu_status),
+        .c64_ua_status(c64_ua_status), .c64_ua_fetches(c64_ua_fetches),
+        .c64_reu_misses(c64_reu_misses),
+        .debug_control(debug_control), .debug_status(debug_status),
+        .audio_capture_data(audio_capture_data), .audio_capture_pop(audio_capture_pop),
+        .c64_ram_peek_request(c64_ram_peek_request), .c64_ram_peek_status(c64_ram_peek_status),
+        .c64_reu_host_request(c64_reu_host_request), .c64_reu_host_status(c64_reu_host_status),
         .effect_write(effect_write),.effect_address(effect_address),.effect_data(effect_data),
         .effect_commit(effect_commit),.effect_commit_sequence(effect_commit_sequence),
         .effect_busy(effect_busy),.effect_active_valid(effect_active_valid),
@@ -1184,20 +1204,52 @@ module multitini_one_top #(
             wire [7:0] reu_memory_wstrb;
             wire reu_memory_write, reu_memory_valid, reu_memory_ready;
             wire reu_memory_rvalid, reu_memory_fault, reu_memory_burst, reu_memory_busy;
-            wire [3:0] expansion_config;
-            multitini_c64_expansion_config expansion_config_i (
-                .control_clk(control_clk), .control_resetn(control_aresetn),
-                .requested_config(c64_expansion_config),
-                .core_clk(c64_clk), .core_resetn(c64_aresetn),
-                .config_value(expansion_config)
-            );
+            wire [4:0] expansion_config;
+            wire [31:0] cpu_config, cpu_status, ua_status, ua_fetches, reu_misses;
+            wire [31:0] peek_request, peek_status, reu_host_request, reu_host_status;
+            wire debug_enable;
+            wire [23:0] ua_memory_addr;
+            wire [63:0] ua_memory_rdata;
+            wire ua_memory_valid, ua_memory_busy, ua_memory_ready, ua_memory_rvalid, ua_memory_fault;
+            wire reu_quiescent, ua_quiescent;
+            assign c64_reu_memory_quiescent = reu_quiescent && ua_quiescent;
+            // One snapshot in each direction also gives each remote reset a
+            // single synchronizer. Independent synchronizers for the same
+            // reset could release related command channels on different cycles.
+            multitini_word_mailbox #(.WIDTH(102),
+                .RESET_VALUE({MT_C64_CPU_CONFIG_DEFAULT,
+                              MT_C64_EXPANSION_CONFIG_DEFAULT[4:0],65'd0})) controls_i (
+                .src_clk(control_clk), .src_resetn(control_aresetn),
+                .value({c64_cpu_config,c64_expansion_config[4:0],debug_control[0],
+                        c64_ram_peek_request,c64_reu_host_request}),
+                .dst_clk(c64_clk), .dst_resetn(c64_aresetn),
+                .snapshot({cpu_config,expansion_config,debug_enable,peek_request,reu_host_request}));
+            multitini_word_mailbox #(.WIDTH(192)) status_i (
+                .src_clk(c64_clk), .src_resetn(c64_aresetn),
+                .value({cpu_status,ua_status,ua_fetches,reu_misses,peek_status,reu_host_status}),
+                .dst_clk(control_clk), .dst_resetn(control_aresetn),
+                .snapshot({c64_cpu_status,c64_ua_status,c64_ua_fetches,c64_reu_misses,
+                           c64_ram_peek_status,c64_reu_host_status}));
             assign gbc_cart_size = 32'd0;
             assign gbc_cart_loaded = 1'b0;
             assign gbc_memory_fault = 1'b0;
             (* DONT_TOUCH = "yes" *) multitini_c64_adapter #(
-                .NTSC_MODE(C64_NTSC_MODE)
+                .NTSC_MODE(C64_NTSC_MODE),
+                // Match the physical MMCM plan, including the PAL revision-2
+                // fallback. The UA timebase and 48 kHz output use this value.
+                .CORE_CLOCK_HZ(C64_NTSC_MODE ? 32727273 :
+                               C64_TURBO_TIMING_REVISION == 2 ? 31524725 : 31527954)
             ) machine_adapter (
                 .core_clk(c64_clk), .reset(!c64_aresetn),
+                .cpu_clk(c64_cpu_clk), .cpu_config(cpu_config), .cpu_status(cpu_status),
+                .ua_enable(expansion_config[4]), .ua_status(ua_status),
+                .ua_fetches(ua_fetches), .reu_misses(reu_misses),
+                .debug_enable(debug_enable), .peek_word(peek_request), .peek_status(peek_status),
+                .reu_host_word(reu_host_request), .reu_host_status(reu_host_status),
+                .ua_memory_addr(ua_memory_addr), .ua_memory_valid(ua_memory_valid),
+                .ua_memory_busy(ua_memory_busy), .ua_memory_ready(ua_memory_ready),
+                .ua_memory_rdata(ua_memory_rdata), .ua_memory_rvalid(ua_memory_rvalid),
+                .ua_memory_fault(ua_memory_fault),
                 .core_reset_request(c64_core_reset_request),
                 .pause_request(core_menu_pause),
                 .cpu_turbo_enable(c64_cpu_turbo_enable),
@@ -1319,7 +1371,7 @@ module multitini_one_top #(
                 .core_memory_valid(reu_memory_valid), .core_memory_burst(reu_memory_burst),
                 .core_memory_busy(reu_memory_busy), .core_memory_ready(reu_memory_ready),
                 .core_memory_rdata(reu_memory_rdata), .core_memory_rvalid(reu_memory_rvalid),
-                .core_memory_fault(reu_memory_fault), .quiescent(c64_reu_memory_quiescent),
+                .core_memory_fault(reu_memory_fault), .quiescent(reu_quiescent),
                 .araddr(hp2_araddr), .arlen(hp2_arlen), .arsize(hp2_arsize), .arburst(hp2_arburst),
                 .arvalid(hp2_arvalid), .arready(hp2_arready),
                 .rdata(hp2_rdata), .rresp(hp2_rresp), .rlast(hp2_rlast), .rvalid(hp2_rvalid), .rready(hp2_rready),
@@ -1327,6 +1379,25 @@ module multitini_one_top #(
                 .awvalid(hp2_awvalid), .awready(hp2_awready),
                 .wdata(hp2_wdata), .wstrb(hp2_wstrb), .wlast(hp2_wlast), .wvalid(hp2_wvalid), .wready(hp2_wready),
                 .bresp(hp2_bresp), .bvalid(hp2_bvalid), .bready(hp2_bready)
+            );
+            multitini_c64_ddr_path ua_ddr_path_i (
+                .core_clk(c64_clk), .core_resetn(c64_aresetn),
+                .control_clk(control_clk), .control_resetn(control_aresetn),
+                .control_reset_request(|(shell_control & MT_CONTROL_CORE_RESET_REQUEST)),
+                .core_reset_request(c64_core_reset_request),
+                .core_memory_addr(ua_memory_addr), .core_memory_write(1'b0),
+                .core_memory_wdata(64'd0), .core_memory_wstrb(8'd0),
+                .core_memory_valid(ua_memory_valid), .core_memory_burst(1'b0),
+                .core_memory_busy(ua_memory_busy), .core_memory_ready(ua_memory_ready),
+                .core_memory_rdata(ua_memory_rdata), .core_memory_rvalid(ua_memory_rvalid),
+                .core_memory_fault(ua_memory_fault), .quiescent(ua_quiescent),
+                .araddr(hp3_araddr), .arlen(hp3_arlen), .arsize(hp3_arsize), .arburst(hp3_arburst),
+                .arvalid(hp3_arvalid), .arready(hp3_arready),
+                .rdata(hp3_rdata), .rresp(hp3_rresp), .rlast(hp3_rlast), .rvalid(hp3_rvalid), .rready(hp3_rready),
+                .awaddr(hp3_awaddr), .awlen(hp3_awlen), .awsize(hp3_awsize), .awburst(hp3_awburst),
+                .awvalid(hp3_awvalid), .awready(hp3_awready),
+                .wdata(hp3_wdata), .wstrb(hp3_wstrb), .wlast(hp3_wlast), .wvalid(hp3_wvalid), .wready(hp3_wready),
+                .bresp(hp3_bresp), .bvalid(hp3_bvalid), .bready(hp3_bready)
             );
         end else if (ACTIVE_MACHINE == 1) begin : g_gameboy_machine
             assign c64_rom_loaded = {2'd0, gbc_cart_loaded};
@@ -1994,6 +2065,8 @@ module multitini_one_top #(
     end endgenerate
     generate if(ACTIVE_MACHINE!=0)begin : g_no_c64_ddr
         assign c64_reu_memory_quiescent=1'b1;
+        assign c64_cpu_status=0, c64_ua_status=0, c64_ua_fetches=0, c64_reu_misses=0;
+        assign c64_ram_peek_status=0, c64_reu_host_status=0;
     end endgenerate
     generate if(ACTIVE_MACHINE!=0 && ACTIVE_MACHINE!=4 && ACTIVE_MACHINE!=5 && ACTIVE_MACHINE!=6)begin : g_no_machine_ddr
         assign hp2_araddr=0,hp2_arlen=0,hp2_arsize=3'd3,hp2_arburst=2'd1,hp2_arvalid=0,hp2_rready=1;
@@ -2003,6 +2076,8 @@ module multitini_one_top #(
 
     generate if(ACTIVE_MACHINE!=5)begin : g_no_apple_iigs_ddr
         assign gs_memory_quiescent=1'b1;
+    end endgenerate
+    generate if(ACTIVE_MACHINE!=5 && ACTIVE_MACHINE!=0)begin : g_no_hp3_ddr
         assign hp3_araddr=0,hp3_arlen=0,hp3_arsize=3'd3,hp3_arburst=2'd1,hp3_arvalid=0,hp3_rready=1;
         assign hp3_awaddr=0,hp3_awlen=0,hp3_awsize=3'd3,hp3_awburst=2'd1,hp3_awvalid=0;
         assign hp3_wdata=0,hp3_wstrb=0,hp3_wlast=0,hp3_wvalid=0,hp3_bready=1;
@@ -2180,8 +2255,20 @@ module multitini_one_top #(
                            multitini_regs_pkg::MT_CONTROL_AUDIO_TEST_ENABLE)),
         .mute_async(ui_audio_mute),
         .i2s_lrck(audio_i2s_lrck), .i2s_sdata(audio_i2s_sdata),
-        .i2s_bclk(audio_i2s_bick), .spdif_out(audio_spdif_out)
+        .i2s_bclk(audio_i2s_bick), .spdif_out(audio_spdif_out),
+        .capture_tick(capture_tick), .capture_l(capture_l), .capture_r(capture_r)
     );
+
+    generate if (ACTIVE_MACHINE == 0) begin : g_audio_capture
+        multitini_audio_capture audio_capture_i (
+            .clk(control_clk), .resetn(control_aresetn),
+            .debug_enable(debug_control[0]), .run(debug_control[1]), .clear(debug_control[2]),
+            .sample_tick(capture_tick), .sample_l(capture_l), .sample_r(capture_r),
+            .pop(audio_capture_pop), .data(audio_capture_data), .status(debug_status));
+    end else begin : g_no_audio_capture
+        assign audio_capture_data = 0;
+        assign debug_status = {20'd0,debug_control[0],11'd0};
+    end endgenerate
 
     // Stand-alone safety state. These constants must be inspected again after
     // synthesis and measured before an image is called hardware-safe.

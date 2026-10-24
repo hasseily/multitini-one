@@ -20,6 +20,7 @@ FIXTURE = r'''
 #include "supervisor_settings.h"
 #include "multitini_supervisor.h"
 #include "multitini_c64_interface.h"
+#include "multitini_c64_debug.h"
 #include "multitini_gameboy_interface.h"
 #include "multitini_vectrex_interface.h"
 #include "multitini_nes_interface.h"
@@ -33,6 +34,9 @@ static uint32_t current_core, control, status;
 static bool genesis_service_initialized, gameboy_service_initialized;
 static bool nes_service_initialized, iigs_service_initialized;
 static bool c64_services_initialized, c64_core_reset_active;
+static mt_c64_debug_t c64_debug;
+static bool c64_debug_pause_active;
+void mt_c64_debug_deactivate(mt_c64_debug_t *debug) { assert(debug == &c64_debug); }
 static bool hide_allowed, prepare_fail, resume_fail, command_fail, save_fail;
 static bool input_ready, attached;
 static bool screenshot_cancel_allowed;

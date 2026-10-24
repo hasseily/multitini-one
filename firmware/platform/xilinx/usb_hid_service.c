@@ -787,6 +787,8 @@ static void process_shared_report(uint8_t index, const mt_gamepad_report_t *repo
             g_action_handler(g_action_handler_context, MT_CONTROL_SCREENSHOT);
         if (edges & (UINT32_C(1) << MT_CONTROL_SCREENSHOT_OUTPUT))
             g_action_handler(g_action_handler_context, MT_CONTROL_SCREENSHOT_OUTPUT);
+        for (unsigned action = MT_CONTROL_TURBO_TOGGLE; action < MT_CONTROL_ACTION_COUNT; ++action)
+            if (edges & (UINT32_C(1) << action)) g_action_handler(g_action_handler_context, action);
     }
     controller_navigation(index);
     deliver_controllers();

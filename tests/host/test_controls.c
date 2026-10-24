@@ -374,6 +374,19 @@ static void test_extended_axis_controls(void)
 
 int main(void)
 {
+    mt_controller_config_t turbo = empty_config(MT_C64_CORE_ID);
+    mt_gamepad_state_t raw = neutral();
+    mt_controls_output_t output;
+    for (unsigned action = MT_CONTROL_TURBO_TOGGLE; action < MT_CONTROL_ACTION_COUNT; ++action) {
+        check(mt_controls_binding(&turbo, action) == 0, "turbo actions start unbound");
+        mt_controls_bind(&turbo, action, 1);
+        turbo.binding[MT_CONTROL_A] = 1;
+        raw.buttons = 1;
+        mt_controls_evaluate(MT_C64_CORE_ID, &turbo, &raw, 0, &output);
+        check(output.actions == BIT(action), "turbo shortcuts consume the gameplay button");
+        check(!mt_controls_config_valid(MT_GBC_CORE_ID, &turbo), "turbo actions are C64-only");
+        mt_controls_bind(&turbo, action, 0);
+    }
     test_defaults_and_validation();
     test_independent_buttons_and_shortcuts();
     test_direction_hysteresis_and_analog();

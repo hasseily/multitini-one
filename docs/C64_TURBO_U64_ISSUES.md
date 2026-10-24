@@ -73,7 +73,7 @@ It also uses 69 per-item assessments.
 9. **SuperCPU registers** (§1.2, D10, M8):
    - `$D0BC` is visible at any speed, with value $01 unless E7 measures something else;
    - add `$D0B8`/`$D0B9`, with the same gate as `$D0BC`.
-10. **NMI** (§2.9): latch NMI edges that arrive during island holds.
+10. **NMI** (§2.9): latch NMI edges that arrive during island holds. The design implements this as a hold and rearm, because a plain latch misses a high-then-low after a low sample (C64_TURBO_DESIGN.md §2.9, §14.4).
 11. **Unmapped I/O** (§2.5, 2.13, M7): no fast or local path may answer an unmapped address.
 12. **Timing revision** (§6.1): report a versioned "turbo timing revision" in CAPS.
 13. **Gates** (§10): new gates, listed under each item below.
@@ -344,12 +344,13 @@ It also uses 69 per-item assessments.
    - In the c64 domain, latch any NMI_n falling edge that occurs while the island has no enable (forward wait, BA halt, DMA_WAIT, pause).
    - Present it at the next enable, then clear it.
    - Exact mode is unchanged. Bench: a 1-cycle NMI pulse during a BA halt and during DMA_WAIT.
+   - Design note (C64_TURBO_DESIGN.md §2.9, §14.4): a plain latch shows the T65 0 at the next enable, so it misses a high-then-low when the T65's last sample was low, for example a CIA2 acknowledge followed by a BA halt and a second CIA2 event. The design holds the fall and, in that case, re-arms it (shows 1, then 0). Its benches add that case, a fall on an enable's clock and mode switches.
 6. **Turbo timing revision** (CSDb 243862: turbo demos broke between U64 firmware versions).
    - Version the grant table, cutoff, resume phases and FIO constants, and report the revision in CAPS (not visible to the C64).
    - A regression pins delivered slots and phases, and fails on any change that does not bump the revision.
    - User docs say that turbo is not cycle-exact to the U64.
 7. **SID edge stage** (#650; v2 Q-S1).
-   - Keep `EDGE_STAGE` = 1 even if E7-S shows that the U64 drops sub-µs gate/test pulses. Under the user rule, dropping them is a U64 imperfection.
+   - Keep `EDGE_STAGE` = 1 even if E7-S shows that the U64 drops sub-µs gate/test pulses. Under the user rule, dropping them is a U64 imperfection. The stage keeps isolated pulses (at most one per control register per 2 µs); denser sequences are compressed (C64_TURBO_DESIGN.md §2.13.7).
    - Switch to 0 only if U64-targeted software is found that depends on the drop.
    - Add a gate: an OSC3 read followed by a `$D418` write less than 1 µs later, at index 15, behaves as at 1 MHz.
 8. **RMW and indirect speed** (C64U Freescape about 8x claim, unverified).
@@ -409,7 +410,7 @@ It also uses 69 per-item assessments.
 - [#609](https://github.com/GideonZ/1541ultimate/issues/609): GeoRAM at full speed. No GeoRAM (d).
 - [#154](https://github.com/GideonZ/1541ultimate/issues/154), commit 2ce7bb2b: write-snooping BI-80 and the Quiet bus mode. No physical port. M7 snoop rule (g1).
 - [#334](https://github.com/GideonZ/1541ultimate/issues/334): BB9 toggles GAME on I/O1 reads; φ2-gated carts. M7 rule (g1).
-- [#650](https://github.com/GideonZ/1541ultimate/issues/650): OSC3 read less than 1 µs before a `$D418` write. v2 edge stage covers it; one gate (g7).
+- [#650](https://github.com/GideonZ/1541ultimate/issues/650): OSC3 read less than 1 µs before a `$D418` write. The edge stage does not cover it (it acts only on the voice control registers); the mechanism is still to be named [O]; one gate (g7).
 - Freescape about 8x on the C64U (dreisechzig): unverified and probably confounded by bus mode. Tests only (g8).
 - C128-aware games glitch at a fixed speed (Lemon64 t=75247): help text only (g10).
 - Turbo demos break between firmware versions (CSDb 243862): timing revision (g6). No claim of U64 cycle parity.

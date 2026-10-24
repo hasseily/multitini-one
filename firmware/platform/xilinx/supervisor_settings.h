@@ -14,6 +14,9 @@
 
 #define MT_SETTINGS_PATH "0:/multitini/settings.bin"
 #define MT_SETTINGS_JOURNAL_PATH "0:/multitini/settings.bin.mtj"
+#define MT_TURBO_CONTROLS_PATH "0:/multitini/turbo_controls.bin"
+#define MT_TURBO_CONTROLS_JOURNAL_PATH "0:/multitini/turbo_controls.bin.mtj"
+#define MT_TURBO_CONTROLS_WIRE_SIZE (24U + MT_SETTINGS_MAX_CONTROLLER_PROFILES * 30U)
 #define MT_SETTINGS_MAX_PROFILES 16U
 #define MT_SETTINGS_MEDIA_NAME_MAX 96U
 #define MT_SETTINGS_MAX_CONTROLLER_PROFILES 64U
@@ -58,6 +61,9 @@ typedef struct {
 typedef struct {
     bool auto_boot;
     uint8_t display_mode;
+    uint8_t c64_turbo_flags; /* Byte 26 bits 0-1; no session diagnostics. */
+    uint8_t c64_turbo_detail; /* Byte 27; zero is the legacy Manual 2 MHz default. */
+    bool c64_ultimate_audio; /* Byte 26 bit 2, never in a profile expansion byte. */
     mt_gamepad_config_t gamepads[MT_GAMEPAD_SLOTS];
     char selected_core_id[MT_CORE_PACKAGE_ID_MAX];
     size_t profile_count;
@@ -135,6 +141,9 @@ mt_settings_result_t mt_supervisor_settings_load(
     mt_supervisor_settings_t *settings);
 mt_settings_result_t mt_supervisor_settings_save(
     const mt_supervisor_settings_t *settings);
+/* Separate journal: old schema-10 firmware ignores these new bindings. */
+bool mt_supervisor_turbo_controls_load(mt_supervisor_settings_t *settings);
+bool mt_supervisor_turbo_controls_save(const mt_supervisor_settings_t *settings);
 const char *mt_settings_status_name(mt_settings_status_t status);
 
 #endif

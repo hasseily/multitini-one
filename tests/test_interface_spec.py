@@ -22,6 +22,27 @@ class InterfaceSpecTests(unittest.TestCase):
         self.assertEqual(self.spec["abi"]["major"], 0)
         self.assertGreaterEqual(self.spec["abi"]["minor"], 1)
 
+    def test_c64_combined_features_have_independent_abi_gates(self):
+        self.assertGreaterEqual(self.spec["abi"]["minor"], 24)
+        constants = self.spec["constants"]
+        for name in ("C64_TURBO_MIN_ABI_MINOR", "C64_ULTIMATE_AUDIO_MIN_ABI_MINOR",
+                     "C64_REU_HOST_MIN_ABI_MINOR"):
+            self.assertEqual(constants[name], 24)
+        self.assertEqual(constants["C64_EXPANSION_MIN_ABI_MINOR"], 23)
+        for name, expected in (("C64_EXPANSION_CAPS_ULTIMATE_AUDIO", 8),
+                               ("C64_EXPANSION_CAPS_REU_HOST_LOAD", 16),
+                               ("C64_EXPANSION_CONFIG_MASK", 31)):
+            self.assertEqual(int(constants[name], 0), expected)
+        offsets = {item["name"]: int(item["offset"], 0) for item in self.spec["registers"]}
+        for name, expected in (("C64_CPU_CONFIG", 0xD8), ("C64_CPU_CAPS2", 0xE4),
+                               ("C64_UA_STATUS", 0xF0), ("C64_UA_FETCHES", 0xF4),
+                               ("C64_REU_MISSES", 0xF8), ("C64_RAM_PEEK", 0x10C),
+                               ("C64_REU_HOST", 0x110)):
+            self.assertEqual(offsets[name], expected)
+        self.assertNotIn(0xFC, offsets.values())
+        self.assertEqual(int(constants["C64_CPU_CAPS2_RELEASE"], 0) & (1 << 14), 0)
+        self.assertEqual(int(constants["C64_EXPANSION_CONFIG_DEFAULT"], 0) & 16, 0)
+
     def test_control_defaults_keep_diagnostics_visible_and_core_reset(self):
         control = next(reg for reg in self.spec["registers"] if reg["name"] == "CONTROL")
         reset = int(control["reset"], 0)

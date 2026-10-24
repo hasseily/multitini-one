@@ -140,6 +140,13 @@
       "commit": "4d283a2e7dd59b7e378524878e81ecc7826b700c",
       "license": "GPL-2.0-or-later; original headers and COPYING retained",
       "use": "Primary test-only reference: cycle-exact x64sc CPU, memory, REU and VIC behavior. Excluded from FPGA and ARM builds. No ROMs, demo images or emulator executable. Exact subset and hashes in third_party/vice_reference/import_manifest.json."
+    },
+    {
+      "name": "Ultimate Audio sampler reference",
+      "url": "https://github.com/GideonZ/1541ultimate.git",
+      "commit": "fea2798c217674cf0e6eddb121792f3a214ddd9f",
+      "license": "GPL-3.0",
+      "use": "Unmodified test-only Ultimate Audio sampler reference. Excluded from FPGA and ARM product builds. No filters, ROMs, audio assets or software binaries."
     }
   ]
 }
