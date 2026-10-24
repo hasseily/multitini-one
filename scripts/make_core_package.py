@@ -16,7 +16,7 @@ from pathlib import Path
 
 BITSTREAM_MIN = 1024 * 1024
 BITSTREAM_MAX = 8 * 1024 * 1024
-DEFAULT_ABI_MINOR = 24
+DEFAULT_ABI_MINOR = 25
 
 
 @dataclass(frozen=True)

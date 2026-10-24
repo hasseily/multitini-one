@@ -7,6 +7,8 @@
 #include <string.h>
 #include "c64_d64_service.h"
 #include "c64_content_service.h"
+#include "c64_iec_service.h"
+#include "supervisor_settings.h"
 #include "genesis_content_service.h"
 #include "multitini_nes_interface.h"
 #include "gameboy_content_service.h"
@@ -16,6 +18,7 @@
 #include "multitini_gameboy_interface.h"
 #define MT_EXTENDED_COMMAND_CAPACITY 256U
 static bool golden_update_worker_held;
+static bool c64_iec_initialized;
 static mt_c64_debug_t c64_debug;
 static bool dispatch_c64_debug(const char *line) { (void)line; return false; }
 static const char *test_command;
@@ -63,6 +66,13 @@ int c64_d64_service_retry(void) { ++forbidden;return 0; }
 int c64_d64_service_resume_after_reset(void) { ++forbidden;return 0; }
 int c64_d64_service_eject(void) { ++forbidden;return 0; }
 int c64_d64_service_mount(const char *name) { (void)name;++forbidden;return 0; }
+static int mount_c64_disk(const char *name) { return c64_d64_service_mount(name); }
+bool c64_iec_service_active(void) { ++forbidden;return false; }
+bool c64_iec_service_available(void) { ++forbidden;return false; }
+const char *c64_iec_service_cwd(void) { ++forbidden;return ""; }
+const char *c64_iec_service_status(void) { ++forbidden;return ""; }
+int c64_iec_service_reset(void) { ++forbidden;return 0; }
+static int resume_c64_directory(void) { ++forbidden;return 0; }
 bool c64_content_service_prg_staged(void) { ++forbidden;return true; }
 mt_c64_content_service_result_t c64_content_service_run_staged_prg(void)
 { mt_c64_content_service_result_t r={0};++forbidden;return r; }

@@ -474,7 +474,9 @@ bool mt_core_frontend_accepts_content(uint32_t core_id,
 bool mt_core_frontend_browser_folders(uint32_t core_id, mt_menu_browser_t browser)
 {
     return browser==MT_MENU_BROWSER_DOCUMENTS ||
-        (core_id==MT_C64_CORE_ID && browser==MT_MENU_BROWSER_REU) ||
+        (core_id==MT_C64_CORE_ID &&
+         (browser==MT_MENU_BROWSER_REU || browser==MT_MENU_BROWSER_PROGRAM ||
+          browser==MT_MENU_BROWSER_CARTRIDGE || browser==MT_MENU_BROWSER_DRIVE8)) ||
         ((core_id==MT_VECTREX_CORE_ID || core_id==MT_IIGS_CORE_ID) &&
          mt_core_frontend_browser_supported(core_id,browser));
 }

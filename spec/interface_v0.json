@@ -2,7 +2,7 @@
   "schema_version": 1,
   "abi": {
     "major": 0,
-    "minor": 24
+    "minor": 25
   },
   "magic": "0x4D543031",
   "shell_id": "0x4D544F4E",
@@ -363,6 +363,36 @@
       "description": "Write invalidate request counter[3:0] and UA hold[13]; read these plus done counter[11:8], REU idle[12] and UA held[14]."
     },
     {
+      "name": "C64_IEC_CAPS",
+      "offset": "0x114",
+      "access": "ro",
+      "reset": "parameter"
+    },
+    {
+      "name": "C64_IEC_CONTROL",
+      "offset": "0x118",
+      "access": "rw",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "C64_IEC_STATUS",
+      "offset": "0x11C",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "C64_IEC_RX",
+      "offset": "0x120",
+      "access": "ro",
+      "reset": "0x00000000"
+    },
+    {
+      "name": "C64_IEC_TX",
+      "offset": "0x124",
+      "access": "wo",
+      "reset": "0x00000000"
+    },
+    {
       "name": "VIDEO_EFFECT_ADDRESS",
       "offset": "0x140",
       "access": "rw",
@@ -651,6 +681,22 @@
       "IDLE": 12,
       "UA_HOLD": 13,
       "UA_HELD": 14
+    },
+    "C64_IEC_CONTROL": {
+      "ENABLE": 0,
+      "QUIESCE": 1
+    },
+    "C64_IEC_STATUS": {
+      "RX_VALID": 0,
+      "TX_READY": 1,
+      "ENABLED": 2,
+      "BUSY": 3,
+      "FAULT": 4,
+      "QUIESCENT": 5
+    },
+    "C64_IEC_TX": {
+      "EOI": 8,
+      "ERROR": 9
     }
   },
   "constants": {
@@ -778,7 +824,20 @@
     "C64_REU_HOST_REQUEST_MASK": "0xF",
     "C64_REU_HOST_DONE_MASK": "0xF00",
     "C64_REU_DDR_BASE": "0x25000000",
-    "C64_REU_DDR_SIZE": "0x01000000"
+    "C64_REU_DDR_SIZE": "0x01000000",
+    "C64_IEC_MIN_ABI": "0x00000019",
+    "C64_IEC_CAPS_DEVICE9": "0x80000009",
+    "C64_IEC_EVENT_RESET": 0,
+    "C64_IEC_EVENT_OPEN": 1,
+    "C64_IEC_EVENT_CLOSE": 2,
+    "C64_IEC_EVENT_DATA": 3,
+    "C64_IEC_EVENT_DATA_EOI": 4,
+    "C64_IEC_EVENT_UNLISTEN": 5,
+    "C64_IEC_EVENT_TALK": 6,
+    "C64_IEC_EVENT_UNTALK": 7,
+    "C64_IEC_EVENT_LISTEN": 8,
+    "C64_IEC_EVENT_READ": 9,
+    "C64_IEC_EVENT_TX_ACK": 10
   },
   "commands": {
     "PING": 0,

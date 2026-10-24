@@ -14,7 +14,7 @@ static void test_nested_browser(void)
     char relative[MT_IIGS_MEDIA_NAME_MAX+1U], full[256];
     assert(mt_core_frontend_browser_folders(MT_IIGS_CORE_ID,MT_MENU_BROWSER_DRIVE8));
     assert(mt_core_frontend_browser_folders(0U,MT_MENU_BROWSER_DOCUMENTS));
-    assert(!mt_core_frontend_browser_folders(MT_C64_CORE_ID,MT_MENU_BROWSER_DRIVE8));
+    assert(mt_core_frontend_browser_folders(MT_C64_CORE_ID,MT_MENU_BROWSER_DRIVE8));
     assert(mt_media_browser_init(&browser,"0:/multitini/cores/apple-iigs/media"));
     assert(mt_media_browser_enter(&browser,"Operating Systems"));
     assert(mt_media_browser_enter(&browser,"GS OS"));

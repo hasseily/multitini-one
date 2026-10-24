@@ -151,7 +151,7 @@ static bool valid_cartridge_name(const char *core_id, const char *text)
 {
     size_t index;
     size_t component_start = 0U;
-    if (core_id == NULL || strcmp(core_id, "vectrex") != 0)
+    if (core_id == NULL || (strcmp(core_id, "vectrex") != 0 && strcmp(core_id, "c64") != 0))
         return valid_file_name(text);
     if (text == NULL) return false;
     if (text[0] == '\0') return true;
@@ -172,6 +172,12 @@ static bool valid_cartridge_name(const char *core_id, const char *text)
         }
     }
     return false;
+}
+
+static bool valid_drive8_name(const char *core_id, const char *text)
+{
+    return core_id != NULL && strcmp(core_id, "c64") == 0 ?
+        valid_cartridge_name(core_id, text) : valid_file_name(text);
 }
 
 static bool copy_string(char *destination, size_t capacity,
@@ -276,7 +282,7 @@ bool mt_supervisor_settings_remember_drive8(
 {
     mt_core_settings_profile_t *profile;
     const char *const name = file_name == NULL ? "" : file_name;
-    if (!valid_file_name(name)) return false;
+    if (!valid_drive8_name(core_id, name)) return false;
     profile = find_profile(settings, core_id, true);
     return profile != NULL &&
            copy_string(profile->drive8_name, sizeof(profile->drive8_name),
@@ -488,7 +494,7 @@ static bool settings_valid(const mt_supervisor_settings_t *settings)
         if (!valid_id(profile->core_id, sizeof(profile->core_id), false) ||
             !valid_id(profile->variant_id, sizeof(profile->variant_id),
                       false) ||
-            !valid_file_name(profile->drive8_name) ||
+            !valid_drive8_name(profile->core_id, profile->drive8_name) ||
             !valid_cartridge_name(profile->core_id, profile->cartridge_name) ||
             !borders_valid(profile->border_style, profile->border_color,
                             profile->border_padding) ||

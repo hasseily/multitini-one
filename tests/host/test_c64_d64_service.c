@@ -61,10 +61,11 @@ typedef struct {
     mt_sd_status_t replace_status;
     uint32_t recover_count;
     uint32_t replace_count;
-    char recovered_path[256U];
-    char recovered_journal[264U];
-    char replaced_path[256U];
-    char replaced_journal[264U];
+    char recovered_path[512U];
+    char recovered_journal[516U];
+    char replaced_path[512U];
+    char replaced_journal[516U];
+    char read_path[512U];
     size_t replaced_size;
     uint8_t replaced_first_byte;
 } fake_sd_t;
@@ -321,7 +322,9 @@ mt_sd_result_t mt_sd_storage_read_file_max(const char *path, uint8_t *dst,
 {
     mt_sd_result_t result = {MT_SD_OK, 0U, 0U};
     assert(dst != NULL);
-    if (strcmp(path, "0:/multitini/cores/c64/media/drive8.d64") == 0) {
+    strcpy(fake_sd.read_path, path);
+    if (strcmp(path, "0:/multitini/cores/c64/media/drive8.d64") == 0 ||
+        strcmp(path, "0:/library/c64/Games/Sub/disk.d64") == 0) {
         result.size = TEST_D64_SIZE;
         assert(capacity >= result.size);
         make_d64_program(dst, result.size);
@@ -329,7 +332,8 @@ mt_sd_result_t mt_sd_storage_read_file_max(const char *path, uint8_t *dst,
         result.size = TEST_D64_ERROR_SIZE;
         assert(capacity >= result.size);
         memset(dst, 0U, result.size);
-    } else if (strcmp(path, "0:/multitini/cores/c64/media/disk.g64") == 0) {
+    } else if (strcmp(path, "0:/multitini/cores/c64/media/disk.g64") == 0 ||
+               strcmp(path, "0:/library/c64/Games/Sub/disk.g64") == 0) {
         result.size = TEST_G64_SIZE;
         assert(capacity >= result.size);
         make_g64(dst, result.size);
@@ -737,8 +741,62 @@ static void test_failed_reset_remount_can_be_retried(void)
             MT_MEDIA_STATE_MOUNTED) != 0U);
 }
 
+static void test_nested_package_paths(void)
+{
+    static const char *const bad[] = {"../x.d64", "Games/../x.d64", "/x.d64",
+        "0:/x.d64", "Games//x.d64", "Games/./x.d64", "Games\\x.d64", "Games/x.d64/"};
+    fake_shell_t shell;
+    mt_core_link_t link;
+    size_t i;
+    setup(&shell, &link);
+    assert(c64_d64_service_set_media_root("0:/library/c64/") == 0);
+    assert(c64_d64_service_set_media_root("0:/library/../escape") != 0);
+    for (i = 0U; i < sizeof(bad) / sizeof(bad[0]); ++i)
+        assert(c64_d64_service_mount(bad[i]) != 0);
+    assert(fake_sd.recover_count == 0U && shell.mount_attempts == 0U);
+    assert(c64_d64_service_mount("Games/Sub/disk.d64") == 0);
+    assert(strcmp(c64_d64_service_mounted_name(), "Games/Sub/disk.d64") == 0);
+    assert(strcmp(fake_sd.read_path, "0:/library/c64/Games/Sub/disk.d64") == 0);
+    assert(strcmp(fake_sd.recovered_journal, "0:/library/c64/Games/Sub/disk.d64.mtj") == 0);
+    assert(c64_d64_service_set_media_root("0:/library/c64/") == 0);
+    assert(c64_d64_service_set_media_root("0:/other") != 0);
+    assert(c64_d64_service_path_protected("0:/LIBRARY/C64/games/sub/DISK.D64"));
+    assert(c64_d64_service_path_protected("0:/library/c64/Games/Sub/disk.d64.mtj"));
+    assert(c64_d64_service_path_protected("0:/library/c64/Games"));
+    assert(c64_d64_service_path_protected("0:/"));
+    assert(!c64_d64_service_path_protected("0:/library/c64/Game"));
+    assert(!c64_d64_service_path_protected("0:/library/c64/Games/Sub/disk.d64.other"));
+    assert(!c64_d64_service_path_protected("0:/library/c64/Games/Sub/other.d64"));
+    assert(!c64_d64_service_path_protected(NULL));
+    shell.registers[register_index(MT_REG_MEDIA_STATE)] =
+        MT_MEDIA_STATE_MOUNTED | MT_MEDIA_STATE_DIRTY;
+    shell.auto_write_on_eject = true;
+    assert(c64_d64_service_prepare_reset() == 0);
+    assert(fake_sd.replace_count == 1U);
+    assert(strcmp(fake_sd.replaced_path, "0:/library/c64/Games/Sub/disk.d64") == 0);
+    assert(strcmp(fake_sd.replaced_journal, "0:/library/c64/Games/Sub/disk.d64.mtj") == 0);
+    assert(c64_d64_service_path_protected("0:/library/c64/Games/Sub/disk.d64"));
+    assert(c64_d64_service_path_protected("0:/library/c64/Games/Sub/disk.d64.mtj"));
+    assert(c64_d64_service_set_media_root("0:/other") != 0);
+    assert(c64_d64_service_mount("../invalid.d64") != 0);
+    c64_d64_service_notify_core_reset();
+    assert(c64_d64_service_resume_after_reset() == 0);
+    assert(strcmp(c64_d64_service_mounted_name(), "Games/Sub/disk.d64") == 0);
+    assert(c64_d64_service_ensure_mounted("Games/Sub/disk.d64") == 0);
+    assert(shell.mount_attempts == 2U);
+    shell.auto_write_on_eject = false;
+    assert(c64_d64_service_eject() == 0);
+    assert(!c64_d64_service_path_protected("0:/library/c64/Games/Sub/disk.d64"));
+    assert(c64_d64_service_mount("Games/Sub/disk.g64") == 0);
+    assert(strcmp(fake_sd.read_path, "0:/library/c64/Games/Sub/disk.g64") == 0);
+    assert(c64_d64_service_path_protected("0:/library/c64/Games/Sub/disk.g64"));
+    assert(c64_d64_service_eject() == 0);
+    assert(c64_d64_service_set_media_root("0:/other") == 0);
+}
+
 int main(void)
 {
+    test_nested_package_paths();
     test_mounted_d64_program_access();
     test_d64_mount_read_and_write();
     test_invalid_journal_blocks_mount();

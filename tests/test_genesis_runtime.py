@@ -34,6 +34,7 @@ static uint32_t current_core, control, status;
 static bool genesis_service_initialized, gameboy_service_initialized;
 static bool nes_service_initialized, iigs_service_initialized;
 static bool c64_services_initialized, c64_core_reset_active;
+static bool c64_iec_initialized;
 static mt_c64_debug_t c64_debug;
 static bool c64_debug_pause_active;
 void mt_c64_debug_deactivate(mt_c64_debug_t *debug) { assert(debug == &c64_debug); }
@@ -72,6 +73,9 @@ static int xil_printf(const char *format, ...) {(void)format; return 0;}
 static int c64_d64_service_prepare_reset(void) {assert(0); return -1;}
 static int c64_d64_service_resume_after_reset(void) {assert(0); return -1;}
 static void c64_d64_service_notify_core_reset(void) {assert(0);}
+static int quiesce_c64_directory(void) {assert(0); return -1;}
+static int resume_c64_directory(void) {assert(0); return -1;}
+static int c64_iec_service_reset(void) {assert(0); return -1;}
 static int gameboy_content_service_prepare_reset(void) {assert(0); return -1;}
 static int gameboy_content_service_resume_after_reset(void) {assert(0); return -1;}
 static int nes_content_service_prepare_reset(void) {assert(0); return -1;}

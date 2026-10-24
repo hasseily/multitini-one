@@ -28,6 +28,15 @@ module multitini_c64_adapter #(
     input  logic [63:0] ua_memory_rdata,
     input  logic        reset,
     input  logic        core_reset_request,
+    input  logic        iec9_run, iec9_quiesce,
+    output logic        iec9_guest_reset, iec9_busy, iec9_quiescent,
+    output logic [15:0] iec9_token,
+    output logic [31:0] iec9_event_data,
+    output logic        iec9_event_valid,
+    input  logic        iec9_event_ready,
+    input  logic [31:0] iec9_reply_data,
+    input  logic        iec9_reply_valid,
+    output logic        iec9_reply_ready,
     input  logic        pause_request,
     input  logic        cpu_turbo_enable,
     input  logic        drive_parallel_enable,
@@ -190,6 +199,20 @@ module multitini_c64_adapter #(
     logic        c64_iec_atn;
     logic        drive_iec_data;
     logic        drive_iec_clk;
+    wire iec9_data, iec9_clk;
+    wire peripheral_iec_data=drive_iec_data && iec9_data;
+    wire peripheral_iec_clk=drive_iec_clk && iec9_clk;
+    assign iec9_guest_reset=!core_reset_n;
+    multitini_c64_iec9 #(.CLOCK_HZ(CORE_CLOCK_HZ)) iec9_i(
+        .clk(core_clk),.hard_reset(reset),
+        .run((iec9_run===1'b1) && core_reset_n),.quiesce(iec9_quiesce===1'b1),
+        .atn(c64_iec_atn),.bus_clk(c64_iec_clk && peripheral_iec_clk),
+        .bus_data(c64_iec_data && peripheral_iec_data),
+        .data_o(iec9_data),.clk_o(iec9_clk),
+        .event_data(iec9_event_data),.event_valid(iec9_event_valid),
+        .event_ready(iec9_event_ready),.reply_data(iec9_reply_data),
+        .reply_valid(iec9_reply_valid),.reply_ready(iec9_reply_ready),
+        .busy(iec9_busy),.quiescent(iec9_quiescent),.token(iec9_token));
     logic        drive_mounted;
     logic        drive_led;
     logic        cpu_turbo_active;
@@ -755,8 +778,8 @@ module multitini_c64_adapter #(
         .flag2_n_i(drive_par_stb_out), .sp2_i(1'b1), .sp2_o(),
         .sp1_i(1'b1), .sp1_o(), .cnt2_i(1'b1), .cnt2_o(),
         .cnt1_i(1'b1), .cnt1_o(),
-        .iec_data_o(c64_iec_data), .iec_data_i(drive_iec_data),
-        .iec_clk_o(c64_iec_clk), .iec_clk_i(drive_iec_clk),
+        .iec_data_o(c64_iec_data), .iec_data_i(peripheral_iec_data),
+        .iec_clk_o(c64_iec_clk), .iec_clk_i(peripheral_iec_clk),
         .iec_atn_o(c64_iec_atn),
         .c64rom_addr(rom_addr), .c64rom_data(rom_data), .c64rom_wr(rom_wr),
         .cass_motor(), .cass_write(), .cass_sense(1'b1), .cass_read(1'b1)
@@ -769,8 +792,8 @@ module multitini_c64_adapter #(
             .holdoff_select(guard_holdoff), .static_hold_release(guard_static_release),
             .block_cause(guard_cause),
             .c64_iec_atn(c64_iec_atn), .c64_iec_data(c64_iec_data),
-            .c64_iec_clk(c64_iec_clk), .drive_iec_data(drive_iec_data),
-            .drive_iec_clk(drive_iec_clk),
+            .c64_iec_clk(c64_iec_clk), .drive_iec_data(peripheral_iec_data),
+            .drive_iec_clk(peripheral_iec_clk),
             // Cable strobes count as drive traffic only while the cable is
             // connected; the drive side already idles high otherwise.
             .c64_par_stb(c64_pc2_n || !drive_parallel_enable),
@@ -786,8 +809,8 @@ module multitini_c64_adapter #(
         .drive_rom_address(drive_rom_addr),
         .drive_rom_write_data(drive_rom_data),
         .drive_rom_loaded(drive_rom_loaded),
-        .c64_iec_atn(c64_iec_atn), .c64_iec_data(c64_iec_data),
-        .c64_iec_clk(c64_iec_clk), .drive_iec_data(drive_iec_data),
+        .c64_iec_atn(c64_iec_atn), .c64_iec_data(c64_iec_data && peripheral_iec_data),
+        .c64_iec_clk(c64_iec_clk && peripheral_iec_clk), .drive_iec_data(drive_iec_data),
         .drive_iec_clk(drive_iec_clk),
         .parallel_enable(drive_parallel_enable),
         // A user-port line reads high unless the C64 drives it low as an

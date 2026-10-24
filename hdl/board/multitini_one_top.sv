@@ -118,6 +118,9 @@ module multitini_one_top #(
     logic signed [23:0] capture_l, capture_r;
     logic [31:0] c64_ram_peek_request, c64_ram_peek_status;
     logic [31:0] c64_reu_host_request, c64_reu_host_status;
+    wire [1:0] c64_iec_control;
+    wire [31:0] c64_iec_status,c64_iec_rx,c64_iec_tx;
+    wire c64_iec_rx_pop,c64_iec_tx_push;
     wire effect_write, effect_commit, effect_busy, effect_active_valid, effect_rejected;
     wire [9:0] effect_address;
     wire [31:0] effect_data, effect_commit_sequence, effect_active_sequence;
@@ -745,6 +748,7 @@ module multitini_one_top #(
         .IIGS_ACCEL_CAPS(ACTIVE_MACHINE==5 ? 32'h8000037f : 32'd0),
         .C64_EXPANSION_CAPS(ACTIVE_MACHINE==0 ? 32'h8000001F : 32'd0),
         .C64_CPU_CAPS(ACTIVE_MACHINE==0 ? MT_C64_CPU_CAPS_RELEASE : 32'd0),
+        .C64_IEC_CAPS(ACTIVE_MACHINE==0 ? MT_C64_IEC_CAPS_DEVICE9 : 32'd0),
         .C64_CPU_CAPS2(ACTIVE_MACHINE==0 ?
             {MT_C64_CPU_CAPS2_RELEASE[31:8],C64_TURBO_TIMING_REVISION} : 32'd0)) control_regs (
         .clk(control_clk), .resetn(control_aresetn),
@@ -789,6 +793,9 @@ module multitini_one_top #(
         .audio_capture_data(audio_capture_data), .audio_capture_pop(audio_capture_pop),
         .c64_ram_peek_request(c64_ram_peek_request), .c64_ram_peek_status(c64_ram_peek_status),
         .c64_reu_host_request(c64_reu_host_request), .c64_reu_host_status(c64_reu_host_status),
+        .c64_iec_control(c64_iec_control),.c64_iec_status(c64_iec_status),
+        .c64_iec_rx(c64_iec_rx),.c64_iec_rx_pop(c64_iec_rx_pop),
+        .c64_iec_tx(c64_iec_tx),.c64_iec_tx_push(c64_iec_tx_push),
         .effect_write(effect_write),.effect_address(effect_address),.effect_data(effect_data),
         .effect_commit(effect_commit),.effect_commit_sequence(effect_commit_sequence),
         .effect_busy(effect_busy),.effect_active_valid(effect_active_valid),
@@ -1199,6 +1206,24 @@ module multitini_one_top #(
     // and centers the shorter NTSC raster in the 1920x1080 active area.
     generate
         if (ACTIVE_MACHINE == 0) begin : g_c64_machine
+            wire iec9_run,iec9_quiesce,iec9_guest_reset,iec9_busy,iec9_quiescent;
+            wire [15:0] iec9_token;
+            wire [31:0] iec9_event_data,iec9_reply_data;
+            wire [17:0] iec9_control_value,iec9_control_snapshot;
+            wire [35:0] iec9_status_value,iec9_status_snapshot;
+            wire iec9_event_valid,iec9_event_ready,iec9_reply_valid,iec9_reply_ready;
+            multitini_c64_iec_transport iec_transport_i(
+                .host_clk(control_clk),.host_resetn(control_aresetn),
+                .control(c64_iec_control),.status(c64_iec_status),
+                .control_value(iec9_control_value),.control_snapshot(iec9_control_snapshot),
+                .status_value(iec9_status_value),.status_snapshot(iec9_status_snapshot),
+                .rx_data(c64_iec_rx),.rx_pop(c64_iec_rx_pop),
+                .tx_data(c64_iec_tx),.tx_push(c64_iec_tx_push),
+                .core_clk(c64_clk),.core_resetn(c64_aresetn),.guest_reset(iec9_guest_reset),
+                .run(iec9_run),.quiesce(iec9_quiesce),.endpoint_busy(iec9_busy),
+                .endpoint_quiescent(iec9_quiescent),.endpoint_token(iec9_token),
+                .event_data(iec9_event_data),.event_valid(iec9_event_valid),.event_ready(iec9_event_ready),
+                .reply_data(iec9_reply_data),.reply_valid(iec9_reply_valid),.reply_ready(iec9_reply_ready));
             wire [23:0] reu_memory_addr;
             wire [63:0] reu_memory_wdata, reu_memory_rdata;
             wire [7:0] reu_memory_wstrb;
@@ -1216,19 +1241,19 @@ module multitini_one_top #(
             // One snapshot in each direction also gives each remote reset a
             // single synchronizer. Independent synchronizers for the same
             // reset could release related command channels on different cycles.
-            multitini_word_mailbox #(.WIDTH(102),
-                .RESET_VALUE({MT_C64_CPU_CONFIG_DEFAULT,
+            multitini_word_mailbox #(.WIDTH(120),
+                .RESET_VALUE({18'd0,MT_C64_CPU_CONFIG_DEFAULT,
                               MT_C64_EXPANSION_CONFIG_DEFAULT[4:0],65'd0})) controls_i (
                 .src_clk(control_clk), .src_resetn(control_aresetn),
-                .value({c64_cpu_config,c64_expansion_config[4:0],debug_control[0],
+                .value({iec9_control_value,c64_cpu_config,c64_expansion_config[4:0],debug_control[0],
                         c64_ram_peek_request,c64_reu_host_request}),
                 .dst_clk(c64_clk), .dst_resetn(c64_aresetn),
-                .snapshot({cpu_config,expansion_config,debug_enable,peek_request,reu_host_request}));
-            multitini_word_mailbox #(.WIDTH(192)) status_i (
+                .snapshot({iec9_control_snapshot,cpu_config,expansion_config,debug_enable,peek_request,reu_host_request}));
+            multitini_word_mailbox #(.WIDTH(228)) status_i (
                 .src_clk(c64_clk), .src_resetn(c64_aresetn),
-                .value({cpu_status,ua_status,ua_fetches,reu_misses,peek_status,reu_host_status}),
+                .value({iec9_status_value,cpu_status,ua_status,ua_fetches,reu_misses,peek_status,reu_host_status}),
                 .dst_clk(control_clk), .dst_resetn(control_aresetn),
-                .snapshot({c64_cpu_status,c64_ua_status,c64_ua_fetches,c64_reu_misses,
+                .snapshot({iec9_status_snapshot,c64_cpu_status,c64_ua_status,c64_ua_fetches,c64_reu_misses,
                            c64_ram_peek_status,c64_reu_host_status}));
             assign gbc_cart_size = 32'd0;
             assign gbc_cart_loaded = 1'b0;
@@ -1251,6 +1276,11 @@ module multitini_one_top #(
                 .ua_memory_rdata(ua_memory_rdata), .ua_memory_rvalid(ua_memory_rvalid),
                 .ua_memory_fault(ua_memory_fault),
                 .core_reset_request(c64_core_reset_request),
+                .iec9_run(iec9_run),.iec9_quiesce(iec9_quiesce),
+                .iec9_guest_reset(iec9_guest_reset),.iec9_busy(iec9_busy),.iec9_quiescent(iec9_quiescent),
+                .iec9_token(iec9_token),.iec9_event_data(iec9_event_data),
+                .iec9_event_valid(iec9_event_valid),.iec9_event_ready(iec9_event_ready),
+                .iec9_reply_data(iec9_reply_data),.iec9_reply_valid(iec9_reply_valid),.iec9_reply_ready(iec9_reply_ready),
                 .pause_request(core_menu_pause),
                 .cpu_turbo_enable(c64_cpu_turbo_enable),
                 .drive_parallel_enable(c64_drive_parallel_enable),
@@ -2067,6 +2097,7 @@ module multitini_one_top #(
         assign c64_reu_memory_quiescent=1'b1;
         assign c64_cpu_status=0, c64_ua_status=0, c64_ua_fetches=0, c64_reu_misses=0;
         assign c64_ram_peek_status=0, c64_reu_host_status=0;
+        assign c64_iec_status=0,c64_iec_rx=0;
     end endgenerate
     generate if(ACTIVE_MACHINE!=0 && ACTIVE_MACHINE!=4 && ACTIVE_MACHINE!=5 && ACTIVE_MACHINE!=6)begin : g_no_machine_ddr
         assign hp2_araddr=0,hp2_arlen=0,hp2_arsize=3'd3,hp2_arburst=2'd1,hp2_arvalid=0,hp2_rready=1;

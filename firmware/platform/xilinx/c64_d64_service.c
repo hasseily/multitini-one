@@ -5,6 +5,7 @@
 #include "multitini_c64_g64.h"
 #include "multitini_c64_interface.h"
 #include "multitini_content.h"
+#include "multitini_media_browser.h"
 #include "multitini_regs.h"
 #include "sd_storage.h"
 
@@ -16,8 +17,8 @@
 #include "xil_printf.h"
 
 #define MT_C64_MEDIA_SLOT_DRIVE8 UINT32_C(0)
-#define MT_C64_MEDIA_PATH_CAPACITY 256U
-#define MT_C64_MEDIA_JOURNAL_PATH_CAPACITY 264U
+#define MT_C64_MEDIA_PATH_CAPACITY (2U * MT_MEDIA_BROWSER_PATH_MAX + 2U)
+#define MT_C64_MEDIA_JOURNAL_PATH_CAPACITY (MT_C64_MEDIA_PATH_CAPACITY + 4U)
 #define MT_C64_MEDIA_IMAGE_CAPACITY ((size_t)1048576)
 #define MT_C64_MEDIA_BUSY_RETRIES UINT32_C(16)
 #define MT_C64_MEDIA_DATA_IDLE_POLLS UINT32_C(100000)
@@ -64,10 +65,11 @@ static bool completion_pending;
 static bool eject_pending;
 static bool eject_command_sent;
 static bool reset_resume_pending;
-static char mounted_name[MT_C64_MEDIA_PATH_CAPACITY];
+static char media_root[MT_MEDIA_BROWSER_PATH_MAX + 1U] = MT_C64_MEDIA_DIRECTORY;
+static char mounted_name[MT_MEDIA_BROWSER_PATH_MAX + 1U];
 static char mounted_path[MT_C64_MEDIA_PATH_CAPACITY];
 static char mounted_journal_path[MT_C64_MEDIA_JOURNAL_PATH_CAPACITY];
-static char reset_resume_name[MT_C64_MEDIA_PATH_CAPACITY];
+static char reset_resume_name[MT_MEDIA_BROWSER_PATH_MAX + 1U];
 
 static void service_progress(void)
 {
@@ -105,33 +107,29 @@ static mt_link_result_t media_command(uint32_t opcode,
 static int media_path(const char *file_name, char *path, size_t capacity,
                       mt_content_type_t *content_type)
 {
-    const size_t directory_length = strlen(MT_C64_MEDIA_DIRECTORY);
     mt_content_type_t type;
-    size_t name_length;
-    size_t index;
-
-    if (file_name == NULL || path == NULL || content_type == NULL ||
-        *file_name == '\0') {
-        return -1;
-    }
-    name_length = strlen(file_name);
-    if (directory_length + 1U + name_length + 1U > capacity) return -1;
-    if (strcmp(file_name, ".") == 0 || strcmp(file_name, "..") == 0) {
-        return -1;
-    }
-    for (index = 0U; index < name_length; ++index) {
-        if (file_name[index] == '/' || file_name[index] == '\\' ||
-            file_name[index] == ':') {
-            return -1;
-        }
-    }
+    if (content_type == NULL ||
+        !mt_media_browser_join(media_root, file_name, path, capacity)) return -1;
     type = mt_content_classify(file_name);
     if (type != MT_CONTENT_D64 && type != MT_CONTENT_G64) return -1;
+    /* The recovery journal adds four bytes to the final FAT component. */
+    if (type == MT_CONTENT_D64) {
+        const char *leaf = strrchr(file_name, '/');
+        if (strlen(leaf == NULL ? file_name : leaf + 1) + 4U >
+            MT_MEDIA_BROWSER_PATH_MAX) return -1;
+    }
 
-    memcpy(path, MT_C64_MEDIA_DIRECTORY, directory_length);
-    path[directory_length] = '/';
-    memcpy(path + directory_length + 1U, file_name, name_length + 1U);
     *content_type = type;
+    return 0;
+}
+
+int c64_d64_service_set_media_root(const char *root)
+{
+    mt_media_browser_t browser;
+    if (!mt_media_browser_init(&browser, root) ||
+        ((mounted || eject_pending || reset_resume_pending) &&
+         strcmp(media_root, browser.root) != 0)) return -1;
+    memcpy(media_root, browser.root, strlen(browser.root) + 1U);
     return 0;
 }
 
@@ -143,6 +141,38 @@ static int make_journal_path(const char *path, char *result, size_t capacity)
     memcpy(result, path, path_length);
     memcpy(result + path_length, suffix, sizeof(suffix));
     return 0;
+}
+
+static unsigned char path_fold(unsigned char ch)
+{
+    return ch >= 'A' && ch <= 'Z' ? (unsigned char)(ch + ('a' - 'A')) : ch;
+}
+
+static bool path_is_same_or_parent(const char *candidate, const char *protected)
+{
+    size_t i;
+    if (candidate == NULL || candidate[0] == '\0' || protected[0] == '\0') return false;
+    for (i = 0U; candidate[i] != '\0'; ++i) {
+        if (path_fold((unsigned char)candidate[i]) !=
+            path_fold((unsigned char)protected[i])) return false;
+    }
+    return protected[i] == '\0' || protected[i] == '/' || candidate[i - 1U] == '/';
+}
+
+bool c64_d64_service_path_protected(const char *absolute_path)
+{
+    char path[MT_C64_MEDIA_PATH_CAPACITY];
+    char journal[MT_C64_MEDIA_JOURNAL_PATH_CAPACITY];
+    mt_content_type_t type;
+    if ((mounted || eject_pending) &&
+        (path_is_same_or_parent(absolute_path, mounted_path) ||
+         path_is_same_or_parent(absolute_path, mounted_journal_path))) return true;
+    if (!reset_resume_pending ||
+        media_path(reset_resume_name, path, sizeof(path), &type) != 0) return false;
+    if (path_is_same_or_parent(absolute_path, path)) return true;
+    return type == MT_CONTENT_D64 &&
+        make_journal_path(path, journal, sizeof(journal)) == 0 &&
+        path_is_same_or_parent(absolute_path, journal);
 }
 
 static bool d64_has_error_tail(size_t size)
@@ -455,6 +485,7 @@ void c64_d64_service_init(mt_core_link_t *link,
     mounted_path[0] = '\0';
     mounted_journal_path[0] = '\0';
     reset_resume_name[0] = '\0';
+    memcpy(media_root, MT_C64_MEDIA_DIRECTORY, sizeof(MT_C64_MEDIA_DIRECTORY));
     memset(&g64_image, 0, sizeof(g64_image));
 }
 
@@ -625,7 +656,7 @@ static int mount_image(const char *file_name)
 
     if (media_path(file_name, path, sizeof(path), &content_type) != 0) {
         xil_printf("[C64] drive8 mount requires a .d64 or .g64 file name "
-                   "under %s\r\n", MT_C64_MEDIA_DIRECTORY);
+                   "under %s\r\n", media_root);
         return -1;
     }
     if ((mounted || eject_pending) && c64_d64_service_eject() != 0) {
@@ -727,6 +758,9 @@ static int mount_image(const char *file_name)
 
 int c64_d64_service_mount(const char *file_name)
 {
+    char path[MT_C64_MEDIA_PATH_CAPACITY];
+    mt_content_type_t type;
+    if (media_path(file_name, path, sizeof(path), &type) != 0) return -1;
     reset_resume_pending = false;
     reset_resume_name[0] = '\0';
     return mount_image(file_name);
@@ -823,9 +857,9 @@ void c64_d64_service_list(void)
 {
     mt_sd_result_t result;
     xil_printf("[C64] D64/G64/PRG/CRT files in %s:\r\n",
-               MT_C64_MEDIA_DIRECTORY);
+               media_root);
     result = mt_sd_storage_list(
-        MT_C64_MEDIA_DIRECTORY, print_media_entry, NULL);
+        media_root, print_media_entry, NULL);
     if (result.status != MT_SD_OK) {
         xil_printf("  list failed: %s (%u)\r\n",
                    mt_sd_status_name(result.status), result.backend_status);

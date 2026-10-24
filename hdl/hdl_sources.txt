@@ -50,6 +50,8 @@ core/c64/multitini_c64_d64_track.sv
 core/c64/multitini_c64_g64_track.sv
 core/c64/multitini_c64_1541.sv
 core/c64/multitini_c64_cpu_turbo_guard.sv
+core/c64/multitini_c64_iec9.sv
+core/c64/multitini_c64_iec_transport.sv
 core/c64/multitini_c64_cpu_island.sv
 core/c64/multitini_c64_cpu_proxy.sv
 core/c64/multitini_c64_island_governor.sv

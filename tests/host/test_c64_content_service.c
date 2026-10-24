@@ -29,7 +29,7 @@ typedef struct {
     uint32_t expansion_reads;
 } shell_t;
 
-static char requested_path[256];
+static char requested_path[512];
 static int fail_read;
 static uint64_t fake_time_ms;
 static uint32_t fake_time_calls;
@@ -332,6 +332,34 @@ static void test_run_refuses_existing_core_fault(void)
     assert(shell.media_request_active && shell.media_request_cancellations == 0U);
 }
 
+static void test_nested_package_paths(void)
+{
+    static const char *const bad[] = {"../x.prg", "Games/../x.prg", "/x.prg",
+        "0:/x.prg", "Games//x.prg", "Games/./x.prg", "Games\\x.prg", "Games/x.prg/"};
+    shell_t shell = {0};
+    mt_core_link_t link;
+    size_t i;
+    uint32_t reads, writes;
+    mt_core_link_init(&link, &shell, read32, write32);
+    shell.registers[MT_REG_STATUS / 4U] = MT_STATUS_CORE_READY;
+    c64_content_service_init(&link, respond, &shell, NULL, NULL);
+    assert(c64_content_service_set_media_root("0:/library/c64/") == 0);
+    assert(c64_content_service_set_media_root("0:/library/../escape") != 0);
+    assert(c64_content_service_load("Games/Sub/demo.crt").status == MT_C64_CONTENT_SERVICE_OK);
+    assert(strcmp(requested_path, "0:/library/c64/Games/Sub/demo.crt") == 0);
+    assert(strcmp(c64_content_service_crt_name(), "Games/Sub/demo.crt") == 0);
+    assert(c64_content_service_set_media_root("0:/library/c64") == 0);
+    assert(c64_content_service_set_media_root("0:/other") != 0);
+    assert(c64_content_service_load("Programs/hello.prg").status == MT_C64_CONTENT_SERVICE_OK);
+    assert(strcmp(requested_path, "0:/library/c64/Programs/hello.prg") == 0);
+    assert(!c64_content_service_crt_attached());
+    reads = sd_reads; writes = shell.writes;
+    for (i = 0U; i < sizeof(bad) / sizeof(bad[0]); ++i)
+        assert(c64_content_service_load(bad[i]).status == MT_C64_CONTENT_SERVICE_INVALID_ARGUMENT);
+    assert(sd_reads == reads && shell.writes == writes);
+    assert(c64_content_service_set_media_root("0:/other") == 0);
+}
+
 int main(void)
 {
     shell_t shell = {0};
@@ -344,6 +372,7 @@ int main(void)
     test_reu_excludes_cartridges();
     test_run_preserves_pending_media_request();
     test_run_refuses_existing_core_fault();
+    test_nested_package_paths();
 
     mt_core_link_init(&link, &shell, read32, write32);
     shell.registers[MT_REG_STATUS / 4U] = MT_STATUS_CORE_READY;

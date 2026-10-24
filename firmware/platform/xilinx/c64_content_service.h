@@ -35,6 +35,10 @@ void c64_content_service_init(mt_core_link_t *link,
                               void *progress_context,
                               mt_c64_content_time_ms_fn time_ms,
                               void *time_context);
+/* Configure the package content root before loading. A different root is
+ * refused while a cartridge is attached. init restores the default SD root. */
+int c64_content_service_set_media_root(const char *root);
+/* file_name is a validated path relative to the configured media root. */
 mt_c64_content_service_result_t c64_content_service_load(
     const char *file_name);
 /* Stage an already-extracted PRG without typing RUN, then launch it after its

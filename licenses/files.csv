@@ -775,3 +775,21 @@ hdl/sim/tb_c64_turbo_seams.sv,Multitini One,,GPL-3.0-only,source-reviewed,Origin
 scripts/test_c64_turbo_seams.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
 hdl/sim/tb_c64_turbo_dma.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
 scripts/test_c64_turbo_dma.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 acceleration and Ultimate Audio implementation or synthetic validation
+firmware/common/c64_iec_dos.c,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 directory-backed IEC device 9 implementation or validation
+firmware/include/multitini_c64_iec_dos.h,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 directory-backed IEC device 9 implementation or validation
+firmware/platform/xilinx/c64_iec_service.c,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 directory-backed IEC device 9 implementation or validation
+firmware/platform/xilinx/c64_iec_service.h,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 directory-backed IEC device 9 implementation or validation
+hdl/core/c64/multitini_c64_iec9.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 directory-backed IEC device 9 implementation or validation
+hdl/core/c64/multitini_c64_iec_transport.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 directory-backed IEC device 9 implementation or validation
+hdl/sim/tb_c64_iec9.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 directory-backed IEC device 9 implementation or validation
+hdl/sim/tb_c64_iec9_rpc.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 directory-backed IEC device 9 implementation or validation
+hdl/sim/tb_c64_iec_transport.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 directory-backed IEC device 9 implementation or validation
+scripts/test_c64_iec9.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 directory-backed IEC device 9 implementation or validation
+scripts/test_c64_iec_kernal.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 directory-backed IEC device 9 implementation or validation
+tests/host/c64_iec_fixture.h,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 directory-backed IEC device 9 implementation or validation
+tests/host/c64_iec_kernal_backend.c,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 directory-backed IEC device 9 implementation or validation
+tests/host/test_c64_iec_dos.c,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 directory-backed IEC device 9 implementation or validation
+hdl/sim/tb_c64_iec_wiring.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 directory-backed IEC device 9 implementation or validation
+scripts/test_c64_iec_lifecycle.py,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 directory-backed IEC device 9 implementation or validation
+tests/host/test_c64_iec_lifecycle.c,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 directory-backed IEC device 9 implementation or validation
+tests/host/test_c64_iec_service.c,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 directory-backed IEC device 9 implementation or validation

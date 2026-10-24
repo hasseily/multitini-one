@@ -3,7 +3,7 @@
 `timescale 1ns / 1ps
 package multitini_regs_pkg;
     localparam logic [15:0] MT_ABI_MAJOR = 16'd0;
-    localparam logic [15:0] MT_ABI_MINOR = 16'd24;
+    localparam logic [15:0] MT_ABI_MINOR = 16'd25;
     localparam logic [31:0] MT_ABI_VERSION = {MT_ABI_MAJOR, MT_ABI_MINOR};
     localparam logic [31:0] MT_MAGIC = 32'h4D543031;
     localparam logic [31:0] MT_SHELL_ID = 32'h4D544F4E;
@@ -65,6 +65,11 @@ package multitini_regs_pkg;
     localparam logic [11:0] MT_REG_AUDIO_CAPTURE_DATA = 12'h108;
     localparam logic [11:0] MT_REG_C64_RAM_PEEK = 12'h10C;
     localparam logic [11:0] MT_REG_C64_REU_HOST = 12'h110;
+    localparam logic [11:0] MT_REG_C64_IEC_CAPS = 12'h114;
+    localparam logic [11:0] MT_REG_C64_IEC_CONTROL = 12'h118;
+    localparam logic [11:0] MT_REG_C64_IEC_STATUS = 12'h11C;
+    localparam logic [11:0] MT_REG_C64_IEC_RX = 12'h120;
+    localparam logic [11:0] MT_REG_C64_IEC_TX = 12'h124;
     localparam logic [11:0] MT_REG_VIDEO_EFFECT_ADDRESS = 12'h140;
     localparam logic [11:0] MT_REG_VIDEO_EFFECT_DATA = 12'h144;
     localparam logic [11:0] MT_REG_VIDEO_EFFECT_COMMIT = 12'h148;
@@ -204,6 +209,19 @@ package multitini_regs_pkg;
     localparam logic [31:0] MT_C64_REU_HOST_UA_HOLD = 32'h00002000;
     localparam logic [31:0] MT_C64_REU_HOST_UA_HELD = 32'h00004000;
 
+    localparam logic [31:0] MT_C64_IEC_CONTROL_ENABLE = 32'h00000001;
+    localparam logic [31:0] MT_C64_IEC_CONTROL_QUIESCE = 32'h00000002;
+
+    localparam logic [31:0] MT_C64_IEC_STATUS_RX_VALID = 32'h00000001;
+    localparam logic [31:0] MT_C64_IEC_STATUS_TX_READY = 32'h00000002;
+    localparam logic [31:0] MT_C64_IEC_STATUS_ENABLED = 32'h00000004;
+    localparam logic [31:0] MT_C64_IEC_STATUS_BUSY = 32'h00000008;
+    localparam logic [31:0] MT_C64_IEC_STATUS_FAULT = 32'h00000010;
+    localparam logic [31:0] MT_C64_IEC_STATUS_QUIESCENT = 32'h00000020;
+
+    localparam logic [31:0] MT_C64_IEC_TX_EOI = 32'h00000100;
+    localparam logic [31:0] MT_C64_IEC_TX_ERROR = 32'h00000200;
+
     localparam logic [31:0] MT_MEDIA_BLOCK_BYTES = 32'h00000100;
     localparam logic [31:0] MT_MEDIA_SLOT_MASK = 32'h000000FF;
     localparam logic [31:0] MT_MEDIA_KIND_SHIFT = 32'h00000008;
@@ -329,6 +347,19 @@ package multitini_regs_pkg;
     localparam logic [31:0] MT_C64_REU_HOST_DONE_MASK = 32'h00000F00;
     localparam logic [31:0] MT_C64_REU_DDR_BASE = 32'h25000000;
     localparam logic [31:0] MT_C64_REU_DDR_SIZE = 32'h01000000;
+    localparam logic [31:0] MT_C64_IEC_MIN_ABI = 32'h00000019;
+    localparam logic [31:0] MT_C64_IEC_CAPS_DEVICE9 = 32'h80000009;
+    localparam logic [31:0] MT_C64_IEC_EVENT_RESET = 32'h00000000;
+    localparam logic [31:0] MT_C64_IEC_EVENT_OPEN = 32'h00000001;
+    localparam logic [31:0] MT_C64_IEC_EVENT_CLOSE = 32'h00000002;
+    localparam logic [31:0] MT_C64_IEC_EVENT_DATA = 32'h00000003;
+    localparam logic [31:0] MT_C64_IEC_EVENT_DATA_EOI = 32'h00000004;
+    localparam logic [31:0] MT_C64_IEC_EVENT_UNLISTEN = 32'h00000005;
+    localparam logic [31:0] MT_C64_IEC_EVENT_TALK = 32'h00000006;
+    localparam logic [31:0] MT_C64_IEC_EVENT_UNTALK = 32'h00000007;
+    localparam logic [31:0] MT_C64_IEC_EVENT_LISTEN = 32'h00000008;
+    localparam logic [31:0] MT_C64_IEC_EVENT_READ = 32'h00000009;
+    localparam logic [31:0] MT_C64_IEC_EVENT_TX_ACK = 32'h0000000A;
 
     localparam logic [31:0] MT_COMMAND_PING = 32'h00000000;
     localparam logic [31:0] MT_COMMAND_GET_STATUS = 32'h00000001;

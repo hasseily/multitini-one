@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "c64_d64_service.h"
 #include "c64_content_service.h"
+#include "c64_iec_service.h"
 #include "core_catalog_sd.h"
 #include "gameboy_content_service.h"
 #include "genesis_content_service.h"
@@ -114,6 +115,8 @@ static bool dac_ready;
 static bool c64_drive_ready;
 static bool c64_core_reset_active;
 static bool c64_services_initialized;
+static bool c64_iec_initialized;
+static bool c64_iec_fault_displayed;
 static bool genesis_service_initialized;
 static bool nes_service_initialized;
 static bool nes_save_dirty_displayed;
@@ -439,6 +442,32 @@ static void service_usb_input(void)
     usb_hid_service_poll();
 }
 
+static bool c64_iec_path_protected(void *context, const char *path)
+{
+    (void)context;
+    return c64_d64_service_path_protected(path);
+}
+
+static int quiesce_c64_directory(void)
+{
+    if (!c64_iec_initialized || !c64_iec_service_available()) return 0;
+    const int result = c64_iec_service_quiesce();
+    if (result != 0)
+        xil_printf("[C64] drive9 could not close safely: %s\r\n",
+                   c64_iec_service_status());
+    return result;
+}
+
+static int resume_c64_directory(void)
+{
+    if (!c64_iec_initialized || !c64_iec_service_available()) return 0;
+    const int result = c64_iec_service_enable(true);
+    if (result != 0)
+        xil_printf("[C64] drive9 could not resume: %s\r\n",
+                   c64_iec_service_status());
+    return result;
+}
+
 static void service_runtime(void)
 {
     const uint32_t control = shell_read(MT_REG_CONTROL);
@@ -461,6 +490,9 @@ static void service_runtime(void)
         if (c64_active && c64_services_initialized &&
             !c64_core_reset_active) {
             c64_d64_service_notify_core_reset();
+            if (c64_iec_initialized && c64_iec_service_reset() != 0)
+                xil_printf("[C64] drive9 reset recovery failed: %s\r\n",
+                           c64_iec_service_status());
         }
         c64_core_reset_active = true;
         return;
@@ -470,8 +502,18 @@ static void service_runtime(void)
         xil_printf("[C64] drive8 remount after reset failed; retry with "
                    ":diskretry\r\n");
     }
+    if (c64_active && c64_core_reset_active) (void)resume_c64_directory();
     c64_core_reset_active = false;
-    if (c64_active && c64_services_initialized) c64_d64_service_poll();
+    if (c64_active && c64_services_initialized) {
+        c64_d64_service_poll();
+        if (c64_iec_initialized && c64_iec_service_available()) {
+            const bool faulted = c64_iec_service_poll(32U) < 0;
+            if (faulted && !c64_iec_fault_displayed)
+                xil_printf("[C64] drive9 transport error: %s\r\n",
+                           c64_iec_service_status());
+            c64_iec_fault_displayed = faulted;
+        }
+    }
     if(shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID && iigs_service_initialized) {
         iigs_content_service_poll();
         if(iigs_fault_displayed!=iigs_content_service_faulted()) {
@@ -733,9 +775,12 @@ static int set_core_reset_request(bool asserted)
 
     if (!hide_menu_for_core_action()) return -1;
     if (asserted && !currently_asserted && c64_active &&
+        quiesce_c64_directory() != 0) return -1;
+    if (asserted && !currently_asserted && c64_active &&
         c64_services_initialized &&
         c64_d64_service_prepare_reset() != 0) {
         xil_printf("[C64] reset refused; drive8 could not flush/eject safely\r\n");
+        (void)resume_c64_directory();
         return -1;
     }
     if (asserted && !currently_asserted && gameboy_active &&
@@ -789,6 +834,7 @@ static int set_core_reset_request(bool asserted)
     if (result != 0 && asserted && !currently_asserted &&
         c64_active && c64_services_initialized) {
         (void)c64_d64_service_resume_after_reset();
+        (void)resume_c64_directory();
     } else if(result!=0 && asserted && !currently_asserted &&
         shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID && iigs_service_initialized) {
         (void)iigs_content_service_resume_after_reset();
@@ -807,8 +853,11 @@ static int set_core_reset_request(bool asserted)
          * complete assert/load/release sequence without calling
          * service_runtime() while the reset level is high. */
         c64_d64_service_notify_core_reset();
+        if (c64_iec_initialized && c64_iec_service_reset() != 0) return -1;
         c64_core_reset_active = true;
     }
+    if (result == 0 && !asserted && c64_active &&
+        resume_c64_directory() != 0) return -1;
     return result;
 }
 
@@ -959,7 +1008,7 @@ static bool stream_c64_rom_profile(const uint8_t *system_bundle,
                    (unsigned int)(core_status == NULL ? 0U : *core_status));
         return false;
     }
-    return true;
+    return resume_c64_directory() == 0;
 }
 
 static void remember_active_c64_rom_profile(bool fast, bool drive_available)
@@ -1238,6 +1287,7 @@ static void print_help(void)
     xil_printf("extended: :load FILE.prg|FILE.crt, :cartoff, ");
     xil_printf(":mount FILE.d64|FILE.g64, :eject, :dir, :disk, ");
     xil_printf(":diskretry, :saveretry\r\n");
+    xil_printf("C64 directory drive: :disk9 status, :disk9retry retry storage and return home\r\n");
     xil_printf("Genesis: :load FILE.md|FILE.gen|FILE.bin|FILE.smd, :cartoff\r\n");
     xil_printf("NES: :load FILE.nes, :cartoff, :saveretry\r\n");
     xil_printf("recovery: :c64rx 20480 0xCRC32, :reboot to golden\r\n");
@@ -1286,9 +1336,11 @@ static bool prepare_c64_content_change(void)
         return false;
     }
     if (!hide_menu_for_core_action()) return false;
+    if (quiesce_c64_directory() != 0) return false;
     if (c64_d64_service_prepare_reset() != 0) {
         xil_printf("[C64] content change refused; drive8 could not "
                    "flush/eject safely\r\n");
+        (void)resume_c64_directory();
         return false;
     }
     return true;
@@ -1296,12 +1348,22 @@ static bool prepare_c64_content_change(void)
 
 static bool finish_c64_content_change(void)
 {
+    if (c64_iec_initialized && c64_iec_service_reset() != 0) return false;
+    const bool directory_ready = resume_c64_directory() == 0;
     if (c64_d64_service_resume_after_reset() != 0) {
         xil_printf("[C64] content change completed, but drive8 remount "
                    "failed; retry with :diskretry\r\n");
         return false;
     }
-    return true;
+    return directory_ready;
+}
+
+static int mount_c64_disk(const char *name)
+{
+    if (quiesce_c64_directory() != 0) return -1;
+    const int result = c64_d64_service_mount(name);
+    const int resumed = resume_c64_directory();
+    return result != 0 ? result : resumed;
 }
 
 static void handle_c64_content_load(const char *file_name)
@@ -1317,9 +1379,12 @@ static void handle_c64_content_load(const char *file_name)
     print_c64_content_result("load", file_name, &result);
     finish_c64_content_change();
     if (result.status == MT_C64_CONTENT_SERVICE_OK) {
-        (void)remember_active_cartridge(
-            mt_content_classify(file_name) == MT_CONTENT_CRT ?
-            file_name : NULL);
+        const bool cartridge = mt_content_classify(file_name) == MT_CONTENT_CRT;
+        const bool too_long = cartridge && strlen(file_name) >= MT_SETTINGS_MEDIA_NAME_MAX;
+        if (!remember_active_cartridge(cartridge && !too_long ? file_name : NULL))
+            set_supervisor_error("Content loaded; settings write failed");
+        else if (too_long)
+            set_supervisor_warning("Cartridge loaded; long path cannot be remembered");
     }
 }
 
@@ -1787,6 +1852,21 @@ static void handle_extended_command(bool recovery_only)
         c64_d64_service_list();
     } else if (!recovery_only && strcmp(extended, "disk") == 0) {
         c64_d64_service_dump_status();
+    } else if (!recovery_only && shell_is_c64() &&
+               strcmp(extended, "disk9") == 0) {
+        xil_printf("[C64] drive9 %s cwd=%s status=%s\r\n",
+                   c64_iec_service_active() ? "active" : "inactive",
+                   c64_iec_service_cwd(), c64_iec_service_status());
+    } else if (!recovery_only && shell_is_c64() &&
+               strcmp(extended, "disk9retry") == 0) {
+        if (!hide_menu_for_core_action()) return;
+        const bool recovered = c64_iec_initialized &&
+            c64_iec_service_available() && c64_iec_service_reset() == 0 &&
+            resume_c64_directory() == 0;
+        set_supervisor_outcome(recovered, "Directory drive ready at media root",
+                               "Directory drive retry failed; check SD card");
+        xil_printf("[C64] drive9 retry %s: %s\r\n",
+                   recovered ? "completed" : "failed", c64_iec_service_status());
     } else if (!recovery_only && strcmp(extended, "saveretry") == 0) {
         if (!hide_menu_for_core_action()) return;
         const int status = shell_read(MT_REG_CORE_ID) == MT_NES_CORE_ID ?
@@ -1860,8 +1940,13 @@ static void handle_extended_command(bool recovery_only)
                        MT_C64_SD_1541_PATH);
         } else {
             if (!hide_menu_for_core_action()) return;
-            if (c64_d64_service_mount(argument) == 0)
-                (void)remember_active_drive8(argument);
+            if (mount_c64_disk(argument) == 0) {
+                const bool too_long = strlen(argument) >= MT_SETTINGS_MEDIA_NAME_MAX;
+                if (!remember_active_drive8(too_long ? NULL : argument))
+                    set_supervisor_error("Drive mounted; settings write failed");
+                else if (too_long)
+                    set_supervisor_warning("Drive mounted; long path cannot be remembered");
+            }
         }
     } else {
         xil_printf("unknown extended command ':%s'\r\n", extended);
@@ -3205,6 +3290,20 @@ static int supervisor_activate(void *context,
     }
     c64_core_reset_active = true;
     c64_content_service_init(&shell_link, NULL, NULL, monotonic_ms, NULL);
+    /* Activation follows successful quiesce and full PL replacement. The
+     * previous disk has been flushed/ejected; restore this selection from its
+     * saved settings below instead of carrying a path from another root. */
+    c64_d64_service_init(&shell_link, NULL, NULL);
+    c64_services_initialized = true;
+    if (c64_content_service_set_media_root(selection->package.content_root) != 0 ||
+        c64_d64_service_set_media_root(selection->package.content_root) != 0) {
+        xil_printf("[C64] invalid or busy media root\r\n");
+        return -1;
+    }
+    if (c64_iec_service_init(&shell_link, selection->package.content_root,
+                            c64_iec_path_protected, NULL) != 0) return -1;
+    c64_iec_initialized = true;
+    c64_iec_fault_displayed = false;
     profile = mt_supervisor_settings_find(&persistent_settings,
                                           selection->package.id);
     request_fast_roms = selection->package.abi_minor >= 8U &&
@@ -3215,6 +3314,7 @@ static int supervisor_activate(void *context,
         return -3;
     }
     c64_core_reset_active = false;
+    if (resume_c64_directory() != 0) return -3;
     usb_hid_service_set_core_ready(
         (shell_read(MT_REG_STATUS) & MT_STATUS_CORE_READY) != 0U);
     if (dac_ready) set_audio(false, false);
@@ -4412,6 +4512,7 @@ static void handle_menu_action(mt_menu_action_t action)
         list_vectrex_browser(supervisor_menu.browser, &directory);
     } else if (action.kind == MT_MENU_ACTION_MOUNT_DRIVE8) {
         int status;
+        char c64_relative[MT_MEDIA_BROWSER_PATH_MAX + 1U];
         if(shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID) {
             char relative[MT_IIGS_MEDIA_NAME_MAX+1U];
             if(action.file_index>=supervisor_menu_file_count)return;
@@ -4431,13 +4532,25 @@ static void handle_menu_action(mt_menu_action_t action)
             set_supervisor_warning("Drive 8 is unavailable");
             return;
         }
-        status = c64_d64_service_mount(
-            supervisor_menu_files[action.file_index].name);
+        if ((supervisor_menu_files[action.file_index].cookie &
+                (MT_MENU_FILE_DIRECTORY | MT_MENU_FILE_TEXT)) != 0U ||
+            !mt_media_browser_resolve(&vectrex_media_browser,
+                supervisor_menu_files[action.file_index].name,
+                c64_relative, sizeof(c64_relative))) {
+            set_supervisor_error("Disk path is too long or invalid");
+            return;
+        }
+        status = mount_c64_disk(c64_relative);
         if (status == 0) mt_menu_close_browser(&supervisor_menu);
         if (status != 0)
             set_supervisor_error("Drive 8 mount failed");
-        else if (!remember_active_drive8(
-                     supervisor_menu_files[action.file_index].name))
+        else if (strlen(c64_relative) >= MT_SETTINGS_MEDIA_NAME_MAX) {
+            if (remember_active_drive8(NULL))
+                set_supervisor_warning("Drive mounted; long path cannot be remembered");
+            else
+                set_supervisor_error("Mounted; could not clear previous drive setting");
+        }
+        else if (!remember_active_drive8(c64_relative))
             set_supervisor_error("Drive mounted; settings write failed");
         else
             set_supervisor_status("Drive 8 mounted");
@@ -4649,7 +4762,16 @@ static void handle_menu_action(mt_menu_action_t action)
         } else {
             mt_c64_content_service_result_t result;
             bool remounted;
-            if (mt_content_classify(supervisor_menu_files[action.file_index].name) == MT_CONTENT_CRT &&
+            char relative[MT_MEDIA_BROWSER_PATH_MAX + 1U];
+            if ((supervisor_menu_files[action.file_index].cookie &
+                    (MT_MENU_FILE_DIRECTORY | MT_MENU_FILE_TEXT)) != 0U ||
+                !mt_media_browser_resolve(&vectrex_media_browser,
+                    supervisor_menu_files[action.file_index].name,
+                    relative, sizeof(relative))) {
+                set_supervisor_error("Content path is too long or invalid");
+                return;
+            }
+            if (mt_content_classify(relative) == MT_CONTENT_CRT &&
                 c64_content_service_reu_enabled()) {
                 set_supervisor_warning("Turn REU off before loading a cartridge");
                 return;
@@ -4658,23 +4780,25 @@ static void handle_menu_action(mt_menu_action_t action)
                 set_supervisor_error("Content load could not start");
                 return;
             }
-            result = c64_content_service_load(
-                supervisor_menu_files[action.file_index].name);
-            print_c64_content_result(
-                "load", supervisor_menu_files[action.file_index].name,
-                &result);
+            result = c64_content_service_load(relative);
+            print_c64_content_result("load", relative, &result);
             remounted = finish_c64_content_change();
             if (result.status == MT_C64_CONTENT_SERVICE_OK)
                 mt_menu_close_browser(&supervisor_menu);
             if (result.status != MT_C64_CONTENT_SERVICE_OK) {
                 set_supervisor_error(remounted ? "Content load failed" :
                     "Content load and drive remount failed");
+            } else if (mt_content_classify(relative) == MT_CONTENT_CRT &&
+                       strlen(relative) >= MT_SETTINGS_MEDIA_NAME_MAX) {
+                if (!remember_active_cartridge(NULL))
+                    set_supervisor_error("Loaded; could not clear previous cartridge setting");
+                else if (!remounted)
+                    set_supervisor_error("Content loaded; drive remount failed");
+                else
+                    set_supervisor_warning("Cartridge loaded; long path cannot be remembered");
             } else if (!remember_active_cartridge(
-                           mt_content_classify(
-                               supervisor_menu_files[action.file_index].name) ==
-                                   MT_CONTENT_CRT ?
-                           supervisor_menu_files[action.file_index].name :
-                           NULL)) {
+                           mt_content_classify(relative) == MT_CONTENT_CRT ?
+                           relative : NULL)) {
                 set_supervisor_error(remounted ?
                     "Content loaded; settings write failed" :
                     "Content loaded; drive remount and settings write failed");
@@ -4947,6 +5071,14 @@ static void handle_menu_action(mt_menu_action_t action)
             else
                 set_supervisor_error(restarted.status == MT_VECTREX_CONTENT_BASIC_FAILED ?
                     vectrex32_service_error() : "BASIC restart failed; check source file");
+            return;
+        }
+        /* A user-requested reset is also an explicit retry of a failed
+         * directory-drive commit. Automatic storage handoffs never clear it. */
+        if (supervisor.active.package.core_id == MT_C64_CORE_ID &&
+            c64_iec_initialized && c64_iec_service_available() &&
+            c64_iec_service_reset() != 0) {
+            set_supervisor_error("Directory drive retry failed; check SD card");
             return;
         }
         const int asserted = set_core_reset_request(true);

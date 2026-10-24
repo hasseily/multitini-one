@@ -17,6 +17,7 @@ add_library(multitini_common STATIC
     firmware/common/c64_content.c
     firmware/common/c64_native_load.c
     firmware/common/c64_d64.c
+    firmware/common/c64_iec_dos.c
     firmware/common/c64_g64.c
     firmware/common/c64_rom_files.c
     firmware/common/c64_hid_input.c
@@ -374,6 +375,9 @@ if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
     add_test(NAME c64_turbo_runtime
         COMMAND "${CMAKE_COMMAND}" -E env "CC=${CMAKE_C_COMPILER}"
             "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/test_c64_turbo_runtime.py")
+    add_test(NAME c64_iec_lifecycle COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/scripts/test_c64_iec_lifecycle.py" --cc "${CMAKE_C_COMPILER}"
+        --build-dir "${CMAKE_BINARY_DIR}/c64-iec-lifecycle")
 endif()
 
 add_executable(test_core_frontend tests/host/test_core_frontend.c)
@@ -431,6 +435,28 @@ target_include_directories(test_c64_d64_service PRIVATE
 )
 target_link_libraries(test_c64_d64_service PRIVATE multitini_common)
 add_test(NAME c64_d64_service COMMAND test_c64_d64_service)
+
+add_executable(test_c64_iec_dos tests/host/test_c64_iec_dos.c)
+target_link_libraries(test_c64_iec_dos PRIVATE multitini_common)
+add_test(NAME c64_iec_dos COMMAND test_c64_iec_dos)
+
+add_executable(test_c64_iec_service
+    tests/host/test_c64_iec_service.c
+    firmware/platform/xilinx/c64_iec_service.c
+)
+target_include_directories(test_c64_iec_service PRIVATE
+    firmware/platform/xilinx
+    tests/xilinx_stubs
+)
+target_link_libraries(test_c64_iec_service PRIVATE multitini_common)
+add_test(NAME c64_iec_service COMMAND test_c64_iec_service)
+if(MULTITINI_SANITIZE AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    foreach(target test_c64_iec_dos test_c64_iec_service)
+        target_compile_options(${target} PRIVATE
+            -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all)
+        target_link_options(${target} PRIVATE -fsanitize=address,undefined)
+    endforeach()
+endif()
 
 add_executable(test_c64_hid_input tests/host/test_c64_hid_input.c)
 target_link_libraries(test_c64_hid_input PRIVATE multitini_common)

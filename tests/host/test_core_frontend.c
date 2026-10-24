@@ -355,6 +355,12 @@ static void test_iigs_drive_formats(void)
     }
     check(mt_core_frontend_browser_folders(MT_IIGS_CORE_ID,MT_MENU_BROWSER_DRIVE8),
           "all IIgs drive choosers retain folder navigation");
+    check(mt_core_frontend_browser_folders(MT_C64_CORE_ID,MT_MENU_BROWSER_DRIVE8) &&
+          mt_core_frontend_browser_folders(MT_C64_CORE_ID,MT_MENU_BROWSER_PROGRAM) &&
+          mt_core_frontend_browser_folders(MT_C64_CORE_ID,MT_MENU_BROWSER_CARTRIDGE) &&
+          mt_core_frontend_browser_folders(MT_C64_CORE_ID,MT_MENU_BROWSER_REU) &&
+          !mt_core_frontend_browser_folders(MT_C64_CORE_ID,MT_MENU_BROWSER_DISK_PROGRAM),
+          "C64 host media browsers navigate folders, disk directory stays a PRG list");
 }
 
 static void test_iigs_card_speed(void)

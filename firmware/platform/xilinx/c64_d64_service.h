@@ -16,6 +16,14 @@
 void c64_d64_service_init(mt_core_link_t *link,
                           mt_link_progress_fn progress,
                           void *progress_context);
+/* Paths supplied to mount/ensure_mounted are relative to this package root.
+ * init restores the default. Root changes require no mounted or reset-held
+ * selection; setting the same normalized root remains valid. */
+int c64_d64_service_set_media_root(const char *root);
+/* The caller supplies a normalized absolute path. Protect active image,
+ * journal and their parent directories, including a reset-remount selection,
+ * against another storage client's overwrite, delete or rename. */
+bool c64_d64_service_path_protected(const char *absolute_path);
 /*
  * Flush and eject mounted media before asserting core reset.  On success the
  * file name is retained for c64_d64_service_resume_after_reset().  The caller

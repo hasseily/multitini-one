@@ -189,7 +189,7 @@ static void test_vectrex_cartridge_paths(void)
         "games/<game.vec", "games/>game.vec", "games/|game.vec",
         "games/\x1f" "game.vec", "games/\x7f" "game.vec"
     };
-    static const char *const flat_cores[] = {"c64", "gbc"};
+    static const char *const flat_cores[] = {"gbc"};
     const char *const nested = "Classics/Arcade Games/Star Castle.vec";
     mt_supervisor_settings_t settings;
     mt_supervisor_settings_t loaded;
@@ -280,6 +280,52 @@ static void test_vectrex_cartridge_paths(void)
         store_u32_le(stored_file + 20U, ~crc);
         assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
     }
+}
+
+static void test_c64_relative_media_settings(void)
+{
+    static const char *const invalid[] = {"../x.d64", "sub/../x.d64", "/x.d64",
+        "0:/x.d64", "sub//x.d64", "sub/./x.d64", "sub\\x.d64", "sub./x.d64"};
+    mt_supervisor_settings_t settings, loaded, preserved;
+    uint8_t valid_wire[MT_SETTINGS_WIRE_SIZE];
+    char maximum[MT_SETTINGS_MEDIA_NAME_MAX], oversized[MT_SETTINGS_MEDIA_NAME_MAX + 1U];
+    size_t i, field;
+    reset_fake();
+    mt_supervisor_settings_defaults(&settings);
+    assert(mt_supervisor_settings_remember_core(&settings, "c64", "pal"));
+    assert(mt_supervisor_settings_remember_drive8(&settings, "c64", "Demos/Part 2/disk.d64"));
+    assert(mt_supervisor_settings_remember_cartridge(&settings, "c64", "Games/Sub/cart.crt"));
+    assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
+    assert(strcmp(loaded.profiles[0].drive8_name, "Demos/Part 2/disk.d64") == 0);
+    assert(strcmp(loaded.profiles[0].cartridge_name, "Games/Sub/cart.crt") == 0);
+    preserved = settings;
+    memcpy(valid_wire, stored_file, sizeof(valid_wire));
+    for (i = 0U; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        assert(!mt_supervisor_settings_remember_drive8(&settings, "c64", invalid[i]));
+        assert(!mt_supervisor_settings_remember_cartridge(&settings, "c64", invalid[i]));
+        assert(memcmp(&settings, &preserved, sizeof(settings)) == 0);
+        for (field = 0U; field < 2U; ++field) {
+            const size_t offset = 24U + 32U + (field == 0U ? 48U : 144U);
+            uint32_t crc;
+            memcpy(stored_file, valid_wire, sizeof(valid_wire));
+            memset(stored_file + offset, 0, MT_SETTINGS_MEDIA_NAME_MAX);
+            memcpy(stored_file + offset, invalid[i], strlen(invalid[i]));
+            crc = crc32_bytes(stored_file + 24U, stored_size - 24U);
+            store_u32_le(stored_file + 16U, crc); store_u32_le(stored_file + 20U, ~crc);
+            assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
+        }
+    }
+    memset(maximum, 'a', sizeof(maximum) - 1U); maximum[1] = '/'; maximum[95] = '\0';
+    memset(oversized, 'a', sizeof(oversized) - 1U); oversized[1] = '/'; oversized[96] = '\0';
+    assert(mt_supervisor_settings_remember_drive8(&settings, "c64", maximum));
+    assert(mt_supervisor_settings_remember_cartridge(&settings, "c64", maximum));
+    assert(!mt_supervisor_settings_remember_drive8(&settings, "c64", oversized));
+    assert(!mt_supervisor_settings_remember_cartridge(&settings, "c64", oversized));
+    assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
+    assert(strcmp(loaded.profiles[0].drive8_name, maximum) == 0);
+    assert(strcmp(loaded.profiles[0].cartridge_name, maximum) == 0);
 }
 
 static void assert_default_borders(const mt_core_settings_profile_t *profile)
@@ -991,6 +1037,7 @@ static void test_c64_turbo_storage(void)
 
 int main(void)
 {
+    test_c64_relative_media_settings();
     test_extended_axis_profile_wire();
     test_controller_profiles();
     test_gamepad_settings();

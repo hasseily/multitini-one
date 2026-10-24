@@ -4,12 +4,13 @@
 #include "multitini_c64_interface.h"
 #include "multitini_c64_rom_files.h"
 #include "multitini_content.h"
+#include "multitini_media_browser.h"
 
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
-#define MT_C64_CONTENT_PATH_CAPACITY 256U
+#define MT_C64_CONTENT_PATH_CAPACITY (2U * MT_MEDIA_BROWSER_PATH_MAX + 2U)
 #define MT_C64_CONTENT_POLLS UINT32_C(100000)
 #define MT_C64_PRG_STREAM_POLLS UINT32_MAX
 #define MT_C64_PRG_BOOT_TIMEOUT_MS UINT32_C(5000)
@@ -28,7 +29,8 @@ static void *content_time_context;
 static uint8_t content_buffer[MT_SIZE_C64_CRT_MAX];
 static bool crt_attached;
 static bool prg_staged;
-static char crt_name[MT_C64_CONTENT_PATH_CAPACITY];
+static char crt_name[MT_MEDIA_BROWSER_PATH_MAX + 1U];
+static char media_root[MT_MEDIA_BROWSER_PATH_MAX + 1U] = MT_C64_SD_MEDIA_ROOT;
 
 uint32_t c64_content_service_expansion_caps(void)
 {
@@ -142,32 +144,23 @@ static mt_c64_content_service_result_t service_result(
 static int content_path(const char *file_name, char *path, size_t capacity,
                         mt_content_type_t *type)
 {
-    const size_t directory_length = strlen(MT_C64_SD_MEDIA_ROOT);
-    size_t name_length;
-    size_t index;
     mt_content_type_t classified;
-
-    if (file_name == NULL || path == NULL || type == NULL ||
-        file_name[0] == '\0' || strcmp(file_name, ".") == 0 ||
-        strcmp(file_name, "..") == 0) {
-        return -1;
-    }
-    name_length = strlen(file_name);
-    if (directory_length + 1U + name_length + 1U > capacity) return -1;
-    for (index = 0U; index < name_length; ++index) {
-        if (file_name[index] == '/' || file_name[index] == '\\' ||
-            file_name[index] == ':') {
-            return -1;
-        }
-    }
+    if (type == NULL ||
+        !mt_media_browser_join(media_root, file_name, path, capacity)) return -1;
     classified = mt_content_classify(file_name);
     if (classified != MT_CONTENT_PRG && classified != MT_CONTENT_CRT) {
         return -1;
     }
-    memcpy(path, MT_C64_SD_MEDIA_ROOT, directory_length);
-    path[directory_length] = '/';
-    memcpy(path + directory_length + 1U, file_name, name_length + 1U);
     *type = classified;
+    return 0;
+}
+
+int c64_content_service_set_media_root(const char *root)
+{
+    mt_media_browser_t browser;
+    if (!mt_media_browser_init(&browser, root) ||
+        (crt_attached && strcmp(media_root, browser.root) != 0)) return -1;
+    memcpy(media_root, browser.root, strlen(browser.root) + 1U);
     return 0;
 }
 
@@ -279,6 +272,7 @@ void c64_content_service_init(mt_core_link_t *link,
     crt_attached = false;
     prg_staged = false;
     crt_name[0] = '\0';
+    memcpy(media_root, MT_C64_SD_MEDIA_ROOT, sizeof(MT_C64_SD_MEDIA_ROOT));
 }
 
 mt_c64_content_service_result_t c64_content_service_detach_crt(void)

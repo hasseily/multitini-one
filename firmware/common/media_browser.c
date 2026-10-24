@@ -99,6 +99,18 @@ bool mt_media_browser_path(const mt_media_browser_t *browser,
     return true;
 }
 
+bool mt_media_browser_join(const char *root, const char *relative,
+                           char *output, size_t capacity)
+{
+    mt_media_browser_t browser;
+    const size_t length = path_length(relative);
+    if (length == 0U || length == SIZE_MAX ||
+        !valid_components(relative, 0U, length) ||
+        !mt_media_browser_init(&browser, root)) return false;
+    memcpy(browser.relative, relative, length + 1U);
+    return mt_media_browser_path(&browser, output, capacity);
+}
+
 bool mt_media_browser_resolve(const mt_media_browser_t *browser, const char *child,
                               char *output, size_t capacity)
 {

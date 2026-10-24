@@ -6,7 +6,8 @@ module multitini_control_regs #(
     parameter logic [31:0] IIGS_ACCEL_CAPS = 32'd0,
     parameter logic [31:0] C64_EXPANSION_CAPS = 32'd0,
     parameter logic [31:0] C64_CPU_CAPS = 32'd0,
-    parameter logic [31:0] C64_CPU_CAPS2 = 32'd0
+    parameter logic [31:0] C64_CPU_CAPS2 = 32'd0,
+    parameter logic [31:0] C64_IEC_CAPS = 32'd0
 ) (
     input  logic         clk,
     input  logic         resetn,
@@ -57,6 +58,10 @@ module multitini_control_regs #(
     output logic         audio_capture_pop,
     output logic [31:0]  c64_ram_peek_request, c64_reu_host_request,
     input  logic [31:0]  c64_ram_peek_status, c64_reu_host_status,
+    output logic [1:0]   c64_iec_control,
+    input  logic [31:0]  c64_iec_status, c64_iec_rx,
+    output logic        c64_iec_rx_pop, c64_iec_tx_push,
+    output logic [31:0] c64_iec_tx,
     output logic         effect_write, effect_commit,
     output logic [9:0]   effect_address,
     output logic [31:0]  effect_data, effect_commit_sequence,
@@ -261,6 +266,11 @@ module multitini_control_regs #(
 
     assign audio_capture_pop = rd_en && rd_addr == MT_REG_AUDIO_CAPTURE_DATA &&
                                debug_control[0];
+    assign c64_iec_rx_pop = C64_IEC_CAPS[31] && rd_en &&
+        rd_addr==MT_REG_C64_IEC_RX && c64_iec_status[0];
+    assign c64_iec_tx_push = C64_IEC_CAPS[31] && wr_en &&
+        wr_addr==MT_REG_C64_IEC_TX && wr_strb==4'hf;
+    assign c64_iec_tx = wr_data;
 
     always_comb begin
         rd_known = 1'b1;
@@ -287,6 +297,10 @@ module multitini_control_regs #(
             MT_REG_C64_RAM_PEEK: rd_data = C64_CPU_CAPS2[13] ? c64_ram_peek_status : 0;
             MT_REG_C64_REU_HOST: rd_data = C64_EXPANSION_CAPS[4] ?
                 ((c64_reu_host_status & 32'h5F00) | c64_reu_host_request) : 0;
+            MT_REG_C64_IEC_CAPS: rd_data=C64_IEC_CAPS;
+            MT_REG_C64_IEC_CONTROL: rd_data={30'd0,c64_iec_control};
+            MT_REG_C64_IEC_STATUS: rd_data=C64_IEC_CAPS[31]?c64_iec_status:0;
+            MT_REG_C64_IEC_RX: rd_data=C64_IEC_CAPS[31] && c64_iec_status[0]?c64_iec_rx:0;
             MT_REG_STATUS:           rd_data = status_word;
             MT_REG_ERROR:            rd_data = error_flags;
             MT_REG_CONTROL:          rd_data = control;
@@ -383,6 +397,9 @@ module multitini_control_regs #(
             MT_REG_VIDEO_EFFECT_DATA, MT_REG_VIDEO_EFFECT_COMMIT:
                 if (wr_strb != 4'hF || effect_busy)
                     error_set_mask |= MT_ERROR_BAD_WRITE;
+            MT_REG_C64_IEC_TX:
+                if(!C64_IEC_CAPS[31] || wr_strb!=4'hf || !c64_iec_status[1])
+                    error_set_mask |= MT_ERROR_BAD_WRITE;
             MT_REG_CONTROL,
             MT_REG_BORDER_CONFIG,
             MT_REG_VECTREX_VIDEO_CONFIG,
@@ -391,6 +408,7 @@ module multitini_control_regs #(
             MT_REG_DEBUG_CONTROL,
             MT_REG_C64_RAM_PEEK,
             MT_REG_C64_REU_HOST,
+            MT_REG_C64_IEC_CONTROL,
             MT_REG_IRQ_ENABLE,
             MT_REG_SCRATCH,
             MT_REG_COMMAND_SEQ,
@@ -414,6 +432,7 @@ module multitini_control_regs #(
             debug_control <= 0;
             c64_ram_peek_request <= 0;
             c64_reu_host_request <= 0;
+            c64_iec_control <= 0;
             effect_write <= 0;
             effect_commit <= 0;
             effect_address <= 0;
@@ -589,6 +608,8 @@ module multitini_control_regs #(
                         if (C64_EXPANSION_CAPS[4])
                             c64_reu_host_request <= merge_strobes(c64_reu_host_request,
                                 wr_data, wr_strb) & MT_C64_REU_HOST_WRITE_MASK;
+                    MT_REG_C64_IEC_CONTROL:
+                        if(C64_IEC_CAPS[31] && wr_strb[0]) c64_iec_control<=wr_data[1:0];
                     MT_REG_VIDEO_EFFECT_ADDRESS:
                         if (wr_strb == 4'hF && wr_data[31:10] == 0)
                             effect_address <= wr_data[9:0];

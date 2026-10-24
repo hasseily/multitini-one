@@ -41,6 +41,22 @@ def inputs(machine: str) -> list[Path]:
         paths.update((ROOT / "scripts").glob("test_c64_*.py"))
         paths.update((ROOT / "scripts").glob("check_c64_*.tcl"))
         paths.add(ROOT / "scripts/ua_model.py")
+        # The real-KERNAL IEC test loads private ROMs at runtime; capture only
+        # its simulator, portable DOS engine and host scaffolding dependencies.
+        paths.update((ROOT / "scripts/c64sim").glob("*.py"))
+        paths.add(ROOT / "scripts/c64sim/README.md")
+        paths.add(ROOT / "scripts/private_core_roms.py")
+        paths.update(ROOT / name for name in (
+            "tests/host/c64_iec_kernal_backend.c", "tests/host/c64_iec_fixture.h",
+            "firmware/common/c64_iec_dos.c", "firmware/include/multitini_c64_iec_dos.h",
+            "firmware/platform/xilinx/c64_iec_service.c",
+            "firmware/platform/xilinx/c64_iec_service.h",
+            "firmware/platform/xilinx/main.c",
+            "firmware/platform/xilinx/sd_storage.h",
+            "firmware/include/multitini_core_link.h",
+            "firmware/include/multitini_regs.h", "firmware/include/multitini_c64_interface.h"))
+        paths.update((ROOT / "firmware/include").glob("multitini_*_interface.h"))
+        paths.update(path for path in (ROOT / "tests/xilinx_stubs").glob("*.h"))
         paths.add(ROOT / "hdl/sim/c64_ua_upstream_bridge.vhd")
         paths.add(ROOT / "hdl/sim/c64_ua_reu_contention.inc")
         paths.add(ROOT / "hdl/sim/tb_multitini_audio_capture.sv")

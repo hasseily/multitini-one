@@ -108,6 +108,31 @@ static void test_lengths(void)
           "up remains available at length limit");
 }
 
+static void test_relative_join(void)
+{
+    static const char *const bad[] = {"", ".", "..", "../escape.prg",
+        "Games/../escape.prg", "Games/./x.prg", "Games//x.prg", "/x.prg",
+        "0:/x.prg", "Games\\x.prg", "Games/x.prg/", "Games./x.prg",
+        "Games /x.prg", "Games/wild*.prg", "Games/x.prg:stream"};
+    char output[512], maximum[256], too_long[257];
+    size_t i;
+    check(mt_media_browser_join("0:/library/c64/", "Games/Demos/demo.prg", output, sizeof(output)) &&
+          strcmp(output, "0:/library/c64/Games/Demos/demo.prg") == 0, "join nested package path");
+    for (i = 0U; i < sizeof(bad) / sizeof(bad[0]); ++i) {
+        strcpy(output, "unchanged");
+        check(!mt_media_browser_join("0:/library/c64", bad[i], output, sizeof(output)) &&
+              strcmp(output, "unchanged") == 0, "relative join rejects escape and preserves output");
+    }
+    memset(maximum, 'a', 255U); maximum[255] = '\0';
+    memset(too_long, 'a', 256U); too_long[256] = '\0';
+    check(mt_media_browser_join(maximum, maximum, output, sizeof(output)) && strlen(output) == 511U,
+          "join maximum root and relative path");
+    check(!mt_media_browser_join(maximum, maximum, output, sizeof(output) - 1U) &&
+          !mt_media_browser_join(maximum, too_long, output, sizeof(output)) &&
+          !mt_media_browser_join("0:/a/../b", "x.prg", output, sizeof(output)) &&
+          !mt_media_browser_join("0:/a", NULL, output, sizeof(output)), "join bounds and nulls");
+}
+
 int main(void)
 {
     check(!mt_media_browser_visible_component("._Mine Storm.vec") &&
@@ -117,6 +142,7 @@ int main(void)
     test_navigation();
     test_rejection();
     test_lengths();
+    test_relative_join();
     puts("PASS: rooted media navigation, relative file paths, bounds and no escape");
     return 0;
 }
