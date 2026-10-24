@@ -213,7 +213,8 @@ static mt_link_result_t stream_until_prefix(
     mt_core_link_t *link, uint8_t kind, const uint8_t *data, size_t size,
     const uint8_t *prefix, size_t prefix_size,
     uint32_t max_polls, mt_link_progress_fn progress, void *progress_context,
-    mt_link_continue_fn continue_wait, void *continue_context)
+    mt_link_continue_fn continue_wait, void *continue_context,
+    mt_link_handoff_fn first_accepted, void *handoff_context)
 {
     uint32_t args[4] = {0U, 0U, 0U, 0U};
     mt_command_response_t response;
@@ -232,6 +233,9 @@ static mt_link_result_t stream_until_prefix(
 #endif
 
     abi_version = link->read32(link->context, MT_REG_ABI_VERSION);
+    if (first_accepted != NULL &&
+        ((uint16_t)(abi_version >> 16U) != MT_ABI_MAJOR || (uint16_t)abi_version < 8U))
+        return MT_LINK_ABI_MISMATCH;
 
     args[0] = kind;
     args[1] = (uint32_t)size;
@@ -244,9 +248,37 @@ static mt_link_result_t stream_until_prefix(
         return result;
     }
 
+    /* A command response means queued, not consumed. Drain the single-byte
+     * mailbox before the handoff: the receiver must have accepted the byte. */
+    size_t first_offset = 0U;
+    if (first_accepted != NULL) {
+        args[0] = prefix_size != 0U ? prefix[0] : data[0];
+        args[1] = 0U;
+        result = command_retry_busy_until(link, MT_COMMAND_STREAM_DATA, args,
+            max_polls, progress, progress_context, continue_wait, continue_context);
+        if (result == MT_LINK_OK) {
+            uint32_t poll;
+            for (poll = 0U; poll < max_polls; ++poll) {
+                if ((link->read32(link->context, MT_REG_STREAM_STATUS) &
+                     MT_STREAM_STATUS_DRAINED) != 0U) break;
+                if (progress != NULL) progress(progress_context);
+                if (!wait_may_continue(continue_wait, continue_context)) break;
+            }
+            if ((link->read32(link->context, MT_REG_STREAM_STATUS) &
+                 MT_STREAM_STATUS_DRAINED) == 0U) result = MT_LINK_TIMEOUT;
+        }
+        if (result == MT_LINK_OK && first_accepted(handoff_context) != 0)
+            result = MT_LINK_REMOTE_ERROR;
+        if (result != MT_LINK_OK) {
+            (void)mt_core_link_abort_stream(link, max_polls, progress, progress_context);
+            return result;
+        }
+        first_offset = 1U;
+    }
+
     if ((uint16_t)(abi_version >> 16U) == MT_ABI_MAJOR &&
         (uint16_t)abi_version >= 8U) {
-        for (offset = 0U; offset < size;) {
+        for (offset = first_offset; offset < size;) {
             uint32_t word = 0U;
             uint32_t poll;
             size_t lane;
@@ -306,7 +338,7 @@ static mt_link_result_t stream_until_prefix(
     }
 
     args[1] = 0U;
-    for (offset = 0U; offset < size; ++offset) {
+    for (offset = first_offset; offset < size; ++offset) {
         args[0] = offset < prefix_size ? prefix[offset] : data[offset];
         result = command_retry_busy_until(
             link, MT_COMMAND_STREAM_DATA, args, max_polls,
@@ -335,7 +367,18 @@ mt_link_result_t mt_core_link_stream_until(
     mt_link_continue_fn continue_wait, void *continue_context)
 {
     return stream_until_prefix(link, kind, data, size, NULL, 0U, max_polls,
-        progress, progress_context, continue_wait, continue_context);
+        progress, progress_context, continue_wait, continue_context, NULL, NULL);
+}
+
+mt_link_result_t mt_core_link_stream_handoff(
+    mt_core_link_t *link, uint8_t kind, const uint8_t *data, size_t size,
+    uint32_t max_polls, mt_link_progress_fn progress, void *progress_context,
+    mt_link_continue_fn continue_wait, void *continue_context,
+    mt_link_handoff_fn first_accepted, void *handoff_context)
+{
+    return stream_until_prefix(link, kind, data, size, NULL, 0U, max_polls,
+        progress, progress_context, continue_wait, continue_context,
+        first_accepted, handoff_context);
 }
 
 mt_link_result_t mt_core_link_stream_with_prefix(
@@ -344,7 +387,7 @@ mt_link_result_t mt_core_link_stream_with_prefix(
     mt_link_progress_fn progress, void *progress_context)
 {
     return stream_until_prefix(link, kind, data, size, prefix, prefix_size,
-        max_polls, progress, progress_context, NULL, NULL);
+        max_polls, progress, progress_context, NULL, NULL, NULL, NULL);
 }
 
 mt_link_result_t mt_core_link_stream(mt_core_link_t *link, uint8_t kind,

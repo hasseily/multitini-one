@@ -61,12 +61,97 @@ static void cartridge_item(mt_core_frontend_t *frontend,
                                              MT_UI_COLOR_BLUE);
 }
 
+static void build_c64_sid(mt_core_frontend_t *frontend, const mt_core_frontend_state_t *state,
+                          mt_menu_view_t *view)
+{
+    static const char *const labels[] = {"Layout",
+                                         "SIDs",
+                                         "Address mirroring",
+                                         "Select SID",
+                                         "Address",
+                                         "Volume",
+                                         "Pan",
+                                         "Model",
+                                         "Master volume",
+                                         "Headroom",
+                                         "DC removal",
+                                         "Resampling",
+                                         "Reset SID setup"};
+    const mt_c64_sid_model_t *m = &state->c64_sid;
+    const unsigned count = ((state->c64_expansion_caps >> 8) & 7) + 1;
+    const unsigned n = state->c64_selected_sid < count ? state->c64_selected_sid : 0;
+    mt_c64_sid_table_t table;
+    (void)mt_c64_sid_build(
+        m, count, (state->c64_expansion_caps & MT_C64_EXPANSION_CAPS_SID_MODEL_8580) != 0, &table);
+    uint64_t owned = state->c64_sid_owned;
+    for (unsigned i = 0; i < 8; ++i) {
+        unsigned b = 25 + 4 * i;
+        if (state->c64_sid_classes & 1)
+            owned |= UINT64_C(1) << b;
+        if (state->c64_sid_classes & 4)
+            owned |= UINT64_C(1) << (b + 1);
+        if (state->c64_sid_classes & 2)
+            owned |= UINT64_C(3) << (b + 2);
+    }
+    const unsigned b = 25 + 4 * n;
+    const uint64_t masks[] = {UINT64_MAX,
+                              0,
+                              UINT64_C(1) << 3,
+                              0,
+                              UINT64_C(1) << b,
+                              UINT64_C(1) << (b + 2),
+                              UINT64_C(1) << (b + 3),
+                              UINT64_C(1) << (b + 1),
+                              UINT64_C(1) << 24,
+                              UINT64_C(1) << 57,
+                              UINT64_C(1) << 58,
+                              UINT64_C(1) << 59,
+                              UINT64_MAX};
+    view->core_option_count = 13;
+    for (unsigned i = 0; i < 13; ++i)
+        frontend->core_options[i] = item(labels[i], frontend->c64_option_text[i],
+                                         "Left/Right changes this item. Title-owned values stay "
+                                         "temporary until Save. Escape returns to Options.",
+                                         MT_MENU_ACTION_SID_SETUP, i, i != 1, MT_UI_COLOR_BLUE);
+#define SID_TEXT(i, ...)                                                                           \
+    (void)snprintf(frontend->c64_option_text[i], sizeof(frontend->c64_option_text[i]), __VA_ARGS__)
+    SID_TEXT(0, "%s", mt_c64_sid_preset_name(mt_c64_sid_preset_id(m)));
+    SID_TEXT(1, "%u mapped / %u available%s", table.mapped, count,
+             table.dropped ? "; some addresses unavailable" : "");
+    SID_TEXT(2, "%s", m->mirror ? "On" : "Off");
+    SID_TEXT(3, "SID %u of %u", n + 1, count);
+    if (m->sid_address[n] == 255)
+        SID_TEXT(4, "Follow ($%04X)", table.base[n]);
+    else if (!m->sid_address[n])
+        SID_TEXT(4, "Unmapped");
+    else
+        SID_TEXT(4, "$%04X", mt_c64_sid_address_value(m->sid_address[n]));
+    SID_TEXT(5, "%s",
+             m->sid_volume[n] == 255 ? "Follow group" : mt_c64_sid_volume_name(m->sid_volume[n]));
+    SID_TEXT(6, "%s", m->sid_pan[n] == 255 ? "Follow group" : mt_c64_sid_pan_name(m->sid_pan[n]));
+    SID_TEXT(7, "%s", m->sid_model[n] == 255 ? "Follow group" : m->sid_model[n] ? "8580" : "6581");
+    SID_TEXT(8, "%s", mt_c64_sid_volume_name(m->master));
+    static const char *const headroom[] = {"Auto", "0 dB", "-6 dB", "-12 dB"};
+    static const char *const dc[] = {"Auto", "On", "Off"};
+    SID_TEXT(9, "%s", headroom[m->headroom]);
+    SID_TEXT(10, "%s", dc[m->dc_remove]);
+    SID_TEXT(11, "%s", m->resample ? "Average" : "Point");
+    SID_TEXT(12, "Dual $D500 defaults");
+    for (unsigned i = 0; i < 13; ++i)
+        if (masks[i] & owned) {
+            size_t len = strlen(frontend->c64_option_text[i]);
+            (void)snprintf(frontend->c64_option_text[i] + len,
+                           sizeof(frontend->c64_option_text[i]) - len, " (title)");
+        }
+#undef SID_TEXT
+}
 static void build_c64(mt_core_frontend_t *frontend,
                        const mt_core_frontend_state_t *state,
                        mt_menu_view_t *view)
 {
     const bool expansion_valid = state->abi_minor >= MT_C64_EXPANSION_MIN_ABI_MINOR &&
         (state->c64_expansion_caps & MT_C64_EXPANSION_CAPS_VALID) != 0U;
+    const bool extended = expansion_valid && state->abi_minor >= 26U;
     const bool reu_supported = expansion_valid &&
         (state->c64_expansion_caps & MT_C64_EXPANSION_CAPS_REU_16MB) != 0U;
     frontend->media_items[view->media_item_count++] = item(
@@ -90,16 +175,14 @@ static void build_c64(mt_core_frontend_t *frontend,
                 MT_UI_COLOR_BLUE : MT_UI_COLOR_MUTED);
     }
     cartridge_item(frontend, state, view, "Load a CRT cartridge image.");
-    if (reu_supported && state->c64_reu_enabled && !state->cartridge_attached) {
-        mt_menu_item_t *const cartridge = &frontend->media_items[view->media_item_count - 1U];
-        cartridge->value = "Turn REU off first";
-        cartridge->help = "Cartridges can conflict with REU I/O; turn REU off in Core options.";
-        cartridge->enabled = false;
-        cartridge->value_color = MT_UI_COLOR_MUTED;
-    }
     frontend->media_items[view->media_item_count++] = item(
         "Program", "Choose file...", "Load a PRG file into the C64.",
         MT_MENU_ACTION_BROWSE_PROGRAM, 0U, true, MT_UI_COLOR_BLUE);
+    frontend->media_items[view->media_item_count++] =
+        item("Apply configuration", "Choose .cfg file...",
+             "Apply a configuration to the running session, including .cfg/.reu pairs. Automatic "
+             "files Off does not disable this action.",
+             MT_MENU_ACTION_BROWSE_CONFIG, 0U, true, MT_UI_COLOR_BLUE);
     if (state->c64_reu_host_available)
         frontend->media_items[view->media_item_count++] = item(
             "Load into REU", "Choose image...",
@@ -111,8 +194,9 @@ static void build_c64(mt_core_frontend_t *frontend,
         "Enter changes between symbolic US keys and C64 key positions.",
         MT_MENU_ACTION_TOGGLE_KEYBOARD_MAP, 0U, true, MT_UI_COLOR_BLUE);
     frontend->input_items[view->input_item_count++] = item(
-        "Keyboard joystick", state->joystick_port == 1U ? "Joystick port 1" :
-                                                 "Joystick port 2",
+        "Keyboard joystick", state->c64_title_owned & MT_TITLE_JOYSTICK ?
+            (state->joystick_port == 1U ? "Joystick port 1 (title)" : "Joystick port 2 (title)") :
+            (state->joystick_port == 1U ? "Joystick port 1" : "Joystick port 2"),
         "Choose the C64 joystick port used by keyboard joystick controls.",
         MT_MENU_ACTION_SWAP_JOYSTICK_PORT, 0U, true, MT_UI_COLOR_BLUE);
     if (state->abi_minor >= 8U) {
@@ -189,6 +273,15 @@ static void build_c64(mt_core_frontend_t *frontend,
             "Cycle single SID or dual 6581 stereo at $D420 or $D500.",
             MT_MENU_ACTION_TOGGLE_CORE_OPTION, 2U, true, MT_UI_COLOR_BLUE);
     }
+    if (extended && (state->c64_expansion_caps & MT_C64_EXPANSION_CAPS_MULTI_SID)) {
+        for (size_t i = 0; i < view->core_option_count; ++i)
+            if (frontend->core_options[i].argument == 2) {
+                frontend->core_options[i].value =
+                    mt_c64_sid_preset_name(mt_c64_sid_preset_id(&state->c64_sid));
+                frontend->core_options[i].help =
+                    "Choose a SID layout; SID setup edits individual addresses, pan and volume.";
+            }
+    }
     if (reu_supported) {
         const size_t index = view->core_option_count++;
         frontend->core_options[index] = item(
@@ -210,6 +303,71 @@ static void build_c64(mt_core_frontend_t *frontend,
             !state->c64_ua_fault && (state->c64_ua_enabled || !state->cartridge_attached),
             state->c64_ua_fault ? MT_UI_COLOR_WARNING : MT_UI_COLOR_BLUE);
     }
+    if (state->abi_minor >= 26U && state->c64_turbo_available &&
+        (state->c64_cpu_caps2 & MT_C64_CPU_CAPS2_SCPU_DETECT))
+        frontend->core_options[view->core_option_count++] =
+            item("SuperCPU Detect", state->c64_turbo_flags & 8 ? "On" : "Off",
+                 "Only enables detection registers; this is still an NMOS 6510. Turn off or Revert "
+                 "title settings before GEOS.",
+                 MT_MENU_ACTION_TOGGLE_CORE_OPTION, 14, true, MT_UI_COLOR_BLUE);
+    if (extended && (state->c64_expansion_caps & MT_C64_EXPANSION_CAPS_UCI))
+        frontend->core_options[view->core_option_count++] =
+            item("Command Interface", state->c64_uci_enabled ? "On" : "Off",
+                 "Allow C64 programs to access the rooted command interface.",
+                 MT_MENU_ACTION_TOGGLE_CORE_OPTION, 15, true, MT_UI_COLOR_BLUE);
+    if (extended && (state->c64_expansion_caps & MT_C64_EXPANSION_CAPS_MULTI_SID))
+        frontend->core_options[view->core_option_count++] =
+            item("SID setup...", "Addresses, pan and volume",
+                 "Edit all SID channels and output settings. Escape returns to Options.",
+                 MT_MENU_ACTION_TOGGLE_CORE_OPTION, 16, true, MT_UI_COLOR_BLUE);
+    frontend->core_options[view->core_option_count++] =
+        item("Title .cfg files", state->c64_title_automatic ? "On" : "Off",
+             "Automatic sidecars on launch; manual Apply remains available when Off.",
+             MT_MENU_ACTION_TOGGLE_CORE_OPTION, 17, true, MT_UI_COLOR_BLUE);
+    frontend->core_options[view->core_option_count++] =
+        item("Revert title settings",
+             state->c64_title_source && *state->c64_title_source ? state->c64_title_source
+                                                                 : "No title overrides",
+             "Restore saved defaults and end every title override, including settings loaded "
+             "through UCI.",
+             MT_MENU_ACTION_TOGGLE_CORE_OPTION, 18, state->c64_title_owned != 0, MT_UI_COLOR_BLUE);
+    frontend->core_options[view->core_option_count++] =
+        item("Save settings for this title",
+             state->c64_title_session ? "Write title .cfg" : "Launch or Apply first",
+             "Journal current requested settings beside this title, preserving unsupported items "
+             "and comments.",
+             MT_MENU_ACTION_TOGGLE_CORE_OPTION, 19, state->c64_title_session, MT_UI_COLOR_BLUE);
+    static const uint32_t group[20] = {0,
+                                       MT_TITLE_TURBO,
+                                       MT_TITLE_SID,
+                                       MT_TITLE_MEMORY,
+                                       MT_TITLE_SPEED,
+                                       MT_TITLE_BADLINE,
+                                       MT_TITLE_AUTOSLOW,
+                                       MT_TITLE_CART,
+                                       MT_TITLE_MEMORY,
+                                       MT_TITLE_TURBO,
+                                       MT_TITLE_FOLLOW,
+                                       0,
+                                       MT_TITLE_TURBO | MT_TITLE_SPEED,
+                                       MT_TITLE_TURBO | MT_TITLE_SPEED,
+                                       MT_TITLE_SCPU,
+                                       MT_TITLE_UCI,
+                                       MT_TITLE_SID,
+                                       0,
+                                       0,
+                                       0};
+    for (size_t i = 0; i < view->core_option_count; ++i) {
+        mt_menu_item_t *row = &frontend->core_options[i];
+        if (row->argument < 20 && (group[row->argument] & state->c64_title_owned)) {
+            (void)snprintf(frontend->c64_option_text[i], sizeof(frontend->c64_option_text[i]),
+                           "%.80s (title)", row->value);
+            row->value = frontend->c64_option_text[i];
+        }
+    }
+    if (extended && state->c64_sid_setup &&
+        (state->c64_expansion_caps & MT_C64_EXPANSION_CAPS_MULTI_SID))
+        build_c64_sid(frontend, state, view);
 }
 
 static void build_gameboy(mt_core_frontend_t *frontend,
@@ -451,7 +609,8 @@ void mt_core_frontend_apply(mt_core_frontend_t *frontend,
 bool mt_core_frontend_browser_supported(uint32_t core_id,
                                         mt_menu_browser_t browser)
 {
-    if (browser == MT_MENU_BROWSER_REU) return core_id == MT_C64_CORE_ID;
+    if (browser == MT_MENU_BROWSER_REU || browser == MT_MENU_BROWSER_CONFIG)
+        return core_id == MT_C64_CORE_ID;
     const core_profile_t *const profile = find_profile(core_id);
     if (profile == NULL || (unsigned)browser > MT_MENU_BROWSER_OVERLAY)
         return false;
@@ -473,12 +632,13 @@ bool mt_core_frontend_accepts_content(uint32_t core_id,
 
 bool mt_core_frontend_browser_folders(uint32_t core_id, mt_menu_browser_t browser)
 {
-    return browser==MT_MENU_BROWSER_DOCUMENTS ||
-        (core_id==MT_C64_CORE_ID &&
-         (browser==MT_MENU_BROWSER_REU || browser==MT_MENU_BROWSER_PROGRAM ||
-          browser==MT_MENU_BROWSER_CARTRIDGE || browser==MT_MENU_BROWSER_DRIVE8)) ||
-        ((core_id==MT_VECTREX_CORE_ID || core_id==MT_IIGS_CORE_ID) &&
-         mt_core_frontend_browser_supported(core_id,browser));
+    return browser == MT_MENU_BROWSER_DOCUMENTS ||
+           (core_id == MT_C64_CORE_ID &&
+            (browser == MT_MENU_BROWSER_REU || browser == MT_MENU_BROWSER_CONFIG ||
+             browser == MT_MENU_BROWSER_PROGRAM || browser == MT_MENU_BROWSER_CARTRIDGE ||
+             browser == MT_MENU_BROWSER_DRIVE8)) ||
+           ((core_id == MT_VECTREX_CORE_ID || core_id == MT_IIGS_CORE_ID) &&
+            mt_core_frontend_browser_supported(core_id, browser));
 }
 
 bool mt_core_frontend_accepts_drive_content(uint32_t core_id, mt_menu_browser_t browser,

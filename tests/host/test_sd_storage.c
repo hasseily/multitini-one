@@ -24,6 +24,7 @@ static FRESULT dir_read_status;
 static FRESULT dir_close_status;
 static FRESULT mkdir_status;
 static unsigned mount_calls;
+static unsigned stat_calls;
 static unsigned unmount_calls;
 static unsigned open_calls;
 static unsigned read_calls;
@@ -250,6 +251,20 @@ FRESULT f_opendir(DIR *directory, const char *path)
     return dir_open_status;
 }
 
+FRESULT f_stat(const char *path, FILINFO *info)
+{
+    assert(path && info);
+    ++stat_calls;
+    if(open_status!=FR_OK)return open_status;
+    memset(info,0,sizeof *info);
+    const char *base=strrchr(path,'/');strcpy(info->fname,base?base+1:path);
+    if (!strcmp(info->fname, "LONGDI~1")) strcpy(info->fname, "Long Directory");
+    if (!strcmp(info->fname, "MOUNTE~1.D64")) strcpy(info->fname, "Mounted Disk.d64");
+    if (!strcmp(info->fname, "new.prg")) return FR_NO_FILE;
+    info->fsize=fake_file_size;info->fdate=0x5d18;info->ftime=0x6322;info->fattrib=AM_RDO;
+    return FR_OK;
+}
+
 FRESULT f_readdir(DIR *directory, FILINFO *info)
 {
     const unsigned index = directory->placeholder++;
@@ -263,6 +278,7 @@ FRESULT f_readdir(DIR *directory, FILINFO *info)
     strcpy(info->fname, dir_names[index]);
     info->fsize = dir_sizes[index];
     info->fattrib = dir_attributes[index];
+    info->fdate=0x5d18;info->ftime=0x6322;
     return FR_OK;
 }
 
@@ -628,6 +644,77 @@ static void test_capture_file_creation(void)
     seek_status=FR_OK;sync_status=FR_DISK_ERR;
     assert(mt_sd_file_close(file).status == MT_SD_SYNC_FAILED);
     assert(mt_sd_file_tell(file) < 0 && sync_calls == 1U);
+}
+
+static void test_uci_storage(void)
+{
+    reset_fake();mt_sd_info_t info;
+    fake_file_size=UINT64_C(5)*1024U*1024U*1024U;
+    assert(mt_sd_file_stat("0:/wide.reu",&info).status==MT_SD_OK);
+    assert(info.size==fake_file_size && info.date==0x5d18 && info.time==0x6322 && info.attributes==AM_RDO);
+    assert(strcmp(info.name,"wide.reu")==0);
+    dir_entry_count=1;dir_names[0]="first.prg";dir_sizes[0]=1234;dir_attributes[0]=0;
+    mt_sd_directory_t *directories[5];
+    for(unsigned i=0;i<4;i++)assert(mt_sd_directory_open("0:/media",&directories[i]).status==MT_SD_OK);
+    assert(mt_sd_directory_open("0:/media",&directories[4]).status==MT_SD_FILE_LIMIT && directories[4]==NULL);
+    assert(mt_sd_storage_external_acquire().status==MT_SD_FILE_BUSY);
+    assert(mt_sd_storage_unmount().status==MT_SD_FILE_BUSY);
+    assert(mt_sd_directory_next(directories[0],&info).status==MT_SD_OK && !strcmp(info.name,"first.prg") && info.size==1234);
+    assert(info.date==0x5d18 && info.time==0x6322);
+    assert(mt_sd_directory_next(directories[0],&info).status==MT_SD_OK && !info.name[0]);
+    dir_close_status=FR_DISK_ERR;
+    assert(mt_sd_directory_close(directories[0]).status==MT_SD_DIR_CLOSE_FAILED);
+    assert(mt_sd_storage_unmount().status==MT_SD_FILE_BUSY);
+    dir_close_status=FR_OK;
+    for(unsigned i=0;i<4;i++)assert(mt_sd_directory_close(directories[i]).status==MT_SD_OK);
+    assert(mt_sd_storage_unmount().status==MT_SD_OK);
+    mt_sd_file_t *file=NULL;
+    assert(mt_sd_file_open_flags("0:/flags",FA_READ|FA_WRITE|FA_OPEN_ALWAYS,&file).status==MT_SD_OK);
+    assert(mt_sd_file_tell(file)==0 && mt_sd_file_path_busy("0:/flags",true));
+    assert(mt_sd_file_close(file).status==MT_SD_OK);
+    assert(mt_sd_file_open_flags("0:/flags",0,&file).status==MT_SD_INVALID_ARGUMENT);
+    assert(mt_sd_file_open_flags("0:/flags",0xff,&file).status==MT_SD_INVALID_ARGUMENT);
+}
+
+static void test_fat_path_identity(void)
+{
+    reset_fake();
+    char path[512] = "unchanged";
+    assert(mt_sd_file_canonical_path("0:/LONGDI~1/MOUNTE~1.D64", path, sizeof path).status == MT_SD_OK);
+    assert(!strcmp(path, "0:/Long Directory/Mounted Disk.d64"));
+    assert(mt_sd_file_canonical_path("0:/LONGDI~1/new.prg", path, sizeof path).status == MT_SD_OK);
+    assert(!strcmp(path, "0:/Long Directory/new.prg"));
+    assert(mt_sd_file_canonical_path(path, path, sizeof path).status == MT_SD_OK);
+    assert(!strcmp(path, "0:/Long Directory/new.prg"));
+    static const char *const invalid[] = {"0:/disk.d64.", "0:/disk.d64 ",
+        "0:/DIR./new.prg", "0:/DIR /new.prg", "0:/../escape", "0:/./x", "0:/a//b",
+        "0:/existing/leaf.", "0:/existing/leaf ", "0:/existing/a\\b", "0:/existing/a:b",
+        "0:/existing/a?b", "0:/existing/a*b", "0:/existing/a|b", "0:/existing/a<b",
+        "0:/existing/a>b", "0:/existing/a\"b", "0:/existing/a\x01"};
+    for (unsigned i = 0; i < sizeof invalid / sizeof invalid[0]; i++) {
+        strcpy(path, "unchanged");
+        unsigned queried = stat_calls, mounted = mount_calls;
+        assert(mt_sd_file_canonical_path(invalid[i], path, sizeof path).status == MT_SD_INVALID_ARGUMENT);
+        assert(!strcmp(path, "unchanged"));
+        assert(stat_calls == queried && mount_calls == mounted);
+    }
+    assert(mt_sd_file_canonical_path("0:/LONGDI~1/new.prg", path, 8).status == MT_SD_INVALID_ARGUMENT);
+    open_status = FR_DISK_ERR;
+    assert(mt_sd_file_canonical_path("0:/LONGDI~1/new.prg", path, sizeof path).backend_status == FR_DISK_ERR);
+    open_status = FR_OK;
+    for (unsigned reverse = 0; reverse < 2; reverse++) {
+        const char *long_path = "0:/Long Directory/Mounted Disk.d64";
+        const char *short_path = "0:/LONGDI~1/MOUNTE~1.D64";
+        mt_sd_file_t *file, *other;
+        assert(mt_sd_file_open(reverse ? short_path : long_path, "rb", &file).status == MT_SD_OK);
+        const char *alias = reverse ? long_path : short_path;
+        unsigned before = open_calls;
+        assert(mt_sd_file_path_busy(alias, true));
+        assert(!mt_sd_file_path_busy(alias, false));
+        assert(mt_sd_file_open_flags(alias, FA_WRITE | FA_CREATE_ALWAYS, &other).status == MT_SD_FILE_BUSY);
+        assert(open_calls == before);
+        assert(mt_sd_file_close(file).status == MT_SD_OK);
+    }
 }
 
 static void settings_store_u32(uint8_t *data, uint32_t value)
@@ -1050,5 +1137,7 @@ int main(void)
     test_managed_files();
     test_settings_journal_migration();
     test_external_storage_lease();
+    test_uci_storage();
+    test_fat_path_identity();
     return 0;
 }

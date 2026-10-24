@@ -37,8 +37,12 @@ core/c64/ports/sid_dac.sv
 core/c64/ports/sid_filter.sv
 ../third_party/c64/upstream/rtl/sid/sid_envelope.sv
 core/c64/ports/sid_tables.sv
-../third_party/c64/upstream/rtl/sid/sid_voice.sv
+core/c64/ports/sid_voice.sv
 core/c64/ports/sid_top.sv
+core/c64/multitini_c64_sid_array.sv
+core/c64/multitini_c64_sid_map.sv
+core/c64/multitini_c64_sid_transport.sv
+core/c64/multitini_c64_sid_mix.sv
 core/c64/ports/c1541_logic.sv
 core/c64/ports/c1541_gcr.sv
 ../third_party/c64/upstream/rtl/iec_drive/lfsr.v
@@ -52,6 +56,11 @@ core/c64/multitini_c64_1541.sv
 core/c64/multitini_c64_cpu_turbo_guard.sv
 core/c64/multitini_c64_iec9.sv
 core/c64/multitini_c64_iec_transport.sv
+core/c64/multitini_c64_uci.sv
+core/c64/multitini_c64_uci_ram.sv
+core/c64/multitini_c64_uci_transport.sv
+board/multitini_w5100s_bridge.sv
+board/multitini_w5100s_timing.xdc
 core/c64/multitini_c64_cpu_island.sv
 core/c64/multitini_c64_cpu_proxy.sv
 core/c64/multitini_c64_island_governor.sv

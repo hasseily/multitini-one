@@ -71,6 +71,8 @@ module multitini_c64_island_map #(
                 forward_ioonly=(addr[11:10] != 2'b10);
                 forward_ack=(!write && addr[11:9]==3'b110 && addr[3:0]==4'hd) ||
                     (!write && addr[11:8]==4'hf && addr[4:0]==0) ||
+                    (write && addr[11:0]==12'hf1c) ||
+                    (!write && addr[11:1]==11'h78f) ||
                     (write && addr[11:8]==4'hf && addr[4:0]==5'h1f && addr[7:5]!=0) ||
                     (write && addr[11:10]==0 && (addr[5:0]==6'h19 || addr[5:0]==6'h1a));
             end

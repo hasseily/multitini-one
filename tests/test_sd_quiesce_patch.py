@@ -39,6 +39,7 @@ class PatchTests(unittest.TestCase):
         self.assertEqual(first,(self.source.read_bytes(),self.header.read_bytes()))
         text=self.source.read_text()
         self.assertIn((ROOT/'firmware/platform/xilinx/sd_quiesce_diskio.inc').read_text(),text)
+        self.assertIn('if (cmd == MMC_GET_CID) return MultitiniSdCardIdentity(pdrv, buff);',text)
         self.assertEqual(text.count('MultitiniSdFault[pdrv] = 1U;'),3)
         self.assertLess(text.index('if (cmd == MT_SD_CTRL_QUIESCE)'),
                         text.index('if ((disk_status(pdrv) & STA_NOINIT)'))

@@ -26,14 +26,18 @@ static bool suffix(const char *s, const char *tail)
     size_t n = strlen(s), t = strlen(tail);
     return n >= t && compare(s + n - t, tail) == 0;
 }
-static bool hidden(const char *s)
+bool mt_iec_dos_recovery_name(const char *s)
 {
     const char *prefix = ".MTIEC-";
     bool same = strlen(s) >= 7;
     for (unsigned i = 0; i < 7 && same; ++i)
         if (fold((uint8_t)s[i]) != (unsigned)prefix[i])
             same = false;
-    return same || suffix(s, ".mtiec");
+    return same || suffix(s, ".mtiec") || suffix(s, ".mtj");
+}
+static bool hidden(const char *s)
+{
+    return mt_iec_dos_recovery_name(s);
 }
 static bool component(const char *s, bool wildcard)
 {
@@ -77,6 +81,7 @@ static bool match(const char *pattern, const char *s)
 }
 void mt_iec_dos_error(mt_iec_dos_t *d, int code)
 {
+    ++d->status_generation;
     const char *s = "DRIVE NOT READY";
     switch (code)
     {
@@ -607,7 +612,7 @@ static int open_channel(mt_iec_dos_t *d, unsigned ch, const uint8_t *name, size_
     for (unsigned attempt = 0; attempt < 32; ++attempt)
     {
         char temp[40];
-        (void)snprintf(temp, sizeof temp, ".mtiec-%08X-%02u.tmp", ++d->serial, ch);
+        (void)snprintf(temp, sizeof temp, ".mtiec-%08X-%02u.tmp", (unsigned)++d->serial, ch);
         if (!join(c->temporary, parent, temp))
             return result(d, 33);
         if (protected_path(d, c->temporary))
@@ -709,6 +714,211 @@ void mt_iec_dos_begin_talk(mt_iec_dos_t *d, unsigned ch)
     /* GET# may UNTALK after every byte. Preserve each channel's cursor. */
     (void)d;
     (void)ch;
+}
+int mt_iec_dos_peek_many(mt_iec_dos_t *d, unsigned ch, uint8_t *out, size_t capacity, size_t *size,
+                         bool *eof)
+{
+    *size = 0;
+    *eof = false;
+    if (capacity > MT_IEC_BUFFER || (!out && capacity))
+        return 70;
+    if (ch == 15) {
+        size_t n = strlen(d->status) - d->status_cursor;
+        *size = n < capacity ? n : capacity;
+        if (*size)
+            memcpy(out, d->status + d->status_cursor, *size);
+        *eof = *size == n;
+        return 0;
+    }
+    if (ch >= 15)
+        return result(d, 70);
+    mt_iec_channel_t *c = &d->channels[ch];
+    if (c->kind != 1 && c->kind != 3)
+        return result(d, c->error ? c->error : 70);
+    if (c->error)
+        return result(d, c->error);
+    size_t remaining = c->size - c->position;
+    size_t need = remaining < capacity ? remaining : capacity;
+    if (c->kind == 3) {
+        if (need)
+            memcpy(out, d->directory + c->position, need);
+    } else {
+        size_t buffered = c->used - c->cursor;
+        if (buffered < need) {
+            memmove(c->buffer, c->buffer + c->cursor, buffered);
+            c->used = buffered;
+            c->cursor = 0;
+            size_t fill = remaining < MT_IEC_BUFFER ? remaining : MT_IEC_BUFFER;
+            size_t got = 0;
+            int rc =
+                d->fs.read(d->fs.context, c->handle, c->buffer + buffered, fill - buffered, &got);
+            c->used += got;
+            if (rc || got != fill - buffered) {
+                c->error = rc ? rc : 23;
+                return result(d, c->error);
+            }
+        }
+        if (need)
+            memcpy(out, c->buffer + c->cursor, need);
+    }
+    *size = need;
+    *eof = need == remaining;
+    return 0;
+}
+int mt_iec_dos_consume_many(mt_iec_dos_t *d, unsigned ch, size_t count)
+{
+    if (ch == 15) {
+        size_t n = strlen(d->status) - d->status_cursor;
+        if (count > n)
+            return 70;
+        d->status_cursor += count;
+        if (count && d->status_cursor == strlen(d->status))
+            mt_iec_dos_error(d, 0);
+        return 0;
+    }
+    if (ch >= 15)
+        return 70;
+    mt_iec_channel_t *c = &d->channels[ch];
+    if ((c->kind != 1 && c->kind != 3) || count > c->size - c->position ||
+        (c->kind == 1 && count > c->used - c->cursor))
+        return 70;
+    c->position += count;
+    if (c->kind == 1)
+        c->cursor += count;
+    return 0;
+}
+int mt_iec_dos_abort_channel(mt_iec_dos_t *d, unsigned ch)
+{
+    return ch < 15 ? close_channel(d, ch, true) : 0;
+}
+int mt_iec_dos_resolve_name(mt_iec_dos_t *d, unsigned ch, const uint8_t *name, size_t size,
+                            char path[MT_IEC_PATH])
+{
+    char text[MT_IEC_NAME];
+    int rc = text_name(name, size, text);
+    if (rc || ch > 15)
+        return rc ? rc : 70;
+    if (text[0] == '$') {
+        strcpy(path, d->cwd);
+        return 0;
+    }
+    if (text[0] == '#') {
+        strcpy(path, "/buffer");
+        return 0;
+    }
+    char *p = text;
+    if (*p == '@')
+        ++p;
+    if (p[0] == '0' && p[1] == ':')
+        p += 2;
+    else if (*p == ':')
+        ++p;
+    char mode = ch == 1 ? 'W' : 'R', type = 0;
+    char *opt = strchr(p, ',');
+    if (opt)
+        *opt++ = 0;
+    while (opt && *opt) {
+        char *next = strchr(opt, ',');
+        if (next)
+            *next++ = 0;
+        if (strlen(opt) != 1)
+            return 30;
+        if (*opt == 'P' || *opt == 'S')
+            type = *opt;
+        else if (*opt == 'R' || *opt == 'W' || *opt == 'A')
+            mode = *opt;
+        else
+            return 30;
+        opt = next;
+    }
+    char parent[MT_IEC_PATH], leaf[MT_IEC_NAME];
+    rc = resolve(d, p, parent, leaf);
+    if (rc || !*leaf || !strcmp(leaf, ".") || !strcmp(leaf, ".."))
+        return rc ? rc : 33;
+    mt_iec_entry_t e;
+    rc = lookup(d, parent, leaf, mode == 'R', 0, &e);
+    if (!rc)
+        return join(path, parent, e.name) ? 0 : 33;
+    if (rc != 62 || !component(leaf, false))
+        return rc;
+    if (!suffix(leaf, ".prg") && !suffix(leaf, ".seq")) {
+        size_t n = strlen(leaf);
+        if (n + 4 >= sizeof leaf)
+            return 33;
+        strcat(leaf, type == 'S' ? ".seq" : ".prg");
+    }
+    return join(path, parent, leaf) ? 0 : 33;
+}
+int mt_iec_dos_iec_name(mt_iec_dos_t *d, const char *path, char alias[17], uint8_t *type)
+{
+    char parent[MT_IEC_PATH];
+    const char *name = strrchr(path, '/');
+    if (name) {
+        size_t n = (size_t)(name - path);
+        if (n >= sizeof parent)
+            return 33;
+        memcpy(parent, path, n);
+        parent[n] = 0;
+        ++name;
+        size_t root = strlen(d->root);
+        if (strlen(parent) < root || strncmp(parent, d->root, root) ||
+            (parent[root] && parent[root] != '/'))
+            return 26;
+    } else {
+        name = path;
+        strcpy(parent, d->cwd);
+    }
+    if (!component(name, false))
+        return 33;
+    int rc = listing(d, parent);
+    if (rc)
+        return rc;
+    for (size_t i = 0; i < d->entry_count; ++i)
+        if (!compare(name, d->entries[i].name)) {
+            strcpy(alias, d->entries[i].alias);
+            *type = d->entries[i].directory ? 5 : d->entries[i].type == 'S' ? 2 : 1;
+            return 0;
+        }
+    /* A hypothetical name uses the same deterministic alias function as a
+     * real entry; compute it in the existing sorted directory context. */
+    if (d->entry_count == MT_IEC_ENTRIES)
+        return 71;
+    size_t n = strlen(name);
+    if (suffix(name, ".prg") || suffix(name, ".seq"))
+        n -= 4;
+    bool plain = n > 0 && n <= 16;
+    uint32_t hash = 2166136261U;
+    for (size_t i = 0; name[i]; ++i)
+        hash = (hash ^ (uint8_t)name[i]) * 16777619U;
+    for (size_t i = 0; i < n; ++i)
+        if (!alias_char(fold((uint8_t)name[i])))
+            plain = false;
+    if (plain) {
+        for (size_t i = 0; i < n; ++i)
+            alias[i] = (char)fold((uint8_t)name[i]);
+        alias[n] = 0;
+        for (size_t i = 0; i < d->entry_count; ++i)
+            if (!compare(alias, d->entries[i].alias))
+                plain = false;
+    }
+    if (!plain) {
+        char prefix[10];
+        for (size_t i = 0; i < 9; ++i)
+            prefix[i] =
+                i < n && alias_char(fold((uint8_t)name[i])) ? (char)fold((uint8_t)name[i]) : '_';
+        prefix[9] = 0;
+        for (unsigned salt = 0;; ++salt) {
+            (void)snprintf(alias, 17, "%s~%06X", prefix, (unsigned)((hash + salt) & 0xffffffU));
+            bool collision = false;
+            for (size_t i = 0; i < d->entry_count; ++i)
+                if (!compare(alias, d->entries[i].alias))
+                    collision = true;
+            if (!collision)
+                break;
+        }
+    }
+    *type = suffix(name, ".seq") ? 2 : suffix(name, ".prg") ? 1 : 0;
+    return 0;
 }
 int mt_iec_dos_peek(mt_iec_dos_t *d, unsigned ch, uint8_t *byte, bool *eoi, bool *available)
 {

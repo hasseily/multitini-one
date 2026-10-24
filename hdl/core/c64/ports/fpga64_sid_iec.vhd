@@ -43,6 +43,7 @@ use IEEE.math_real.all;
 
 entity fpga64_sid_iec is
 generic (
+    SID_COUNT : positive := 2;
     EXTERNAL_CPU : boolean := false;
     FAST_IO : boolean := false;
     EDGE_STAGE : boolean := true;
@@ -51,6 +52,16 @@ generic (
     FIO_PTR_WIDTH : positive := integer(ceil(log2(real(FIO_DEPTH)))) + 1
 );
 port(
+    sid_map_enable : in std_logic := '0';
+    sid_slot_masks : in std_logic_vector(255 downto 0) := (others=>'0');
+    sid_write_inhibit : in std_logic_vector(31 downto 0) := (others=>'0');
+    sid_owners : in std_logic_vector(95 downto 0) := (others=>'0');
+    sid_io_masks : in std_logic_vector(127 downto 0) := (others=>'0');
+    sid_io_select : in std_logic := '0';
+    sid_params : in std_logic_vector(255 downto 0) := (others=>'0');
+    sid_audio : out std_logic_vector(143 downto 0);
+    sid_ce_1m : out std_logic;
+    sid_io_data : out unsigned(7 downto 0);
     ext_cpu_addr : in unsigned(15 downto 0) := (others => '0');
     ext_cpu_do : in unsigned(7 downto 0) := (others => '0');
     ext_cpu_we : in std_logic := '0';
@@ -394,8 +405,8 @@ port (
 );
 end component;
 
-component sid_top
-	generic (FAST_PORT : integer := 0; EDGE_STAGE : integer := 1);
+component multitini_c64_sid_array
+	generic (SID_COUNT : integer := 2; FAST_PORT : integer := 0; EDGE_STAGE : integer := 1);
 	port (
 		reset         : in  std_logic;
 		clk           : in  std_logic;
@@ -403,12 +414,12 @@ component sid_top
 
 		cs            : in  std_logic_vector(1 downto 0);
 		we            : in  std_logic;
-		addr          : in  unsigned(4 downto 0);
+		addr          : in  unsigned(11 downto 0);
 		data_in       : in  unsigned(7 downto 0);
 		data_out      : out unsigned(7 downto 0);
         fio_cs, fio_latch_src, fast_rd_cs : in std_logic_vector(1 downto 0);
         fio_we, fio_latch : in std_logic;
-        fio_addr, fast_rd_addr : in unsigned(4 downto 0);
+        fio_addr, fast_rd_addr : in unsigned(9 downto 0);
         fio_wdata : in unsigned(7 downto 0);
         fast_rd_data : out unsigned(7 downto 0);
 
@@ -433,7 +444,13 @@ component sid_top
 		ld_clk        : in  std_logic;
 		ld_addr       : in  std_logic_vector(11 downto 0);
 		ld_data       : in  std_logic_vector(15 downto 0);
-		ld_wr         : in  std_logic
+		ld_wr         : in  std_logic;
+        map_enable,io_select : in std_logic;
+        slot_masks,chip_params : in std_logic_vector(255 downto 0);
+        write_inhibit : in std_logic_vector(31 downto 0);
+        owners : in std_logic_vector(95 downto 0);
+        io_masks : in std_logic_vector(127 downto 0);
+        chip_audio : out std_logic_vector(143 downto 0)
   );
 end component;
 
@@ -995,18 +1012,20 @@ pot_y1 <= (others => '1' ) when cia1_pao(6) = '0' else not pot2;
 pot_x2 <= (others => '1' ) when cia1_pao(7) = '0' else not pot3;
 pot_y2 <= (others => '1' ) when cia1_pao(7) = '0' else not pot4;
 
-sid : sid_top
-generic map (FAST_PORT => boolean'pos(FAST_IO), EDGE_STAGE => boolean'pos(EDGE_STAGE))
+sid_ce_1m <= enableSid and not memory_wait_q;
+sid_io_data <= sid_do;
+sid : multitini_c64_sid_array
+generic map (SID_COUNT => SID_COUNT, FAST_PORT => boolean'pos(FAST_IO), EDGE_STAGE => boolean'pos(EDGE_STAGE))
 port map (
     fio_cs => fastSidSelect, fio_we => fastSidWr, fio_latch => fastSidLatch,
-    fio_latch_src => fastSidLatchSource, fio_addr => fastSidA(4 downto 0), fio_wdata => fastSidD,
-    fast_rd_cs => fastSidReadSelect, fast_rd_addr => fio_rd_addr(4 downto 0), fast_rd_data => fastSidRead,
+    fio_latch_src => fastSidLatchSource, fio_addr => fastSidA, fio_wdata => fastSidD,
+    fast_rd_cs => fastSidReadSelect, fast_rd_addr => fio_rd_addr, fast_rd_data => fastSidRead,
 	reset => reset,
 	clk => clk32,
 	ce_1m => enableSid and not memory_wait_q,
 	we => pulseWr_io,
 	cs => sid_sel_r & sid_sel_l,
-	addr => cpuAddr(4 downto 0),
+	addr => cpuAddr(11 downto 0),
 	data_in => cpuDo,
 	data_out => sid_do,
 	pot_x_l => pot_x1 and pot_x2,
@@ -1035,7 +1054,11 @@ port map (
 	ld_clk  => sid_ld_clk,
 	ld_addr => sid_ld_addr,
 	ld_data => sid_ld_data,
-	ld_wr   => sid_ld_wr
+	ld_wr   => sid_ld_wr,
+    map_enable => sid_map_enable, io_select => sid_io_select,
+    slot_masks => sid_slot_masks, write_inhibit => sid_write_inhibit,
+    owners => sid_owners, io_masks => sid_io_masks, chip_params => sid_params,
+    chip_audio => sid_audio
 );
 
 -- -----------------------------------------------------------------------

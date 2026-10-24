@@ -23,6 +23,8 @@ typedef struct {
     bool dac_ready, audio_muted;
     bool multiboot_ready, appletini_present, multitini_present;
     uint32_t startup_product;
+    bool network_available;
+    const char *network_status;
 } mt_system_snapshot_t;
 
 typedef struct {

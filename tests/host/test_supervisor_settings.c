@@ -988,16 +988,20 @@ static void test_c64_turbo_storage(void)
     assert(mt_supervisor_settings_remember_core(&settings, "c64", "pal"));
     for (unsigned detail = 0; detail < 256; ++detail) {
         settings.c64_turbo_detail = (uint8_t)detail;
-        settings.c64_turbo_flags = (uint8_t)(detail & 3U);
+        settings.c64_turbo_flags = (uint8_t)(detail & 11U);
         settings.c64_ultimate_audio = (detail & 4U) != 0;
+        settings.c64_command_interface = (detail & 16U) != 0;
+        settings.c64_title_cfg_off = (detail & 32U) != 0;
         assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
-        assert(stored_file[26] == (detail & 7U) && stored_file[27] == detail);
+        assert(stored_file[26] == (detail & 63U) && stored_file[27] == detail);
         /* Future flags remain downgrade-safe rather than rejecting settings. */
-        stored_file[26] |= 0xF8U; update_stored_crc();
+        stored_file[26] |= 0xC0U; update_stored_crc();
         assert_schema10_downgrade();
         assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
-        assert(loaded.c64_turbo_detail == detail && loaded.c64_turbo_flags == (detail & 3U));
+        assert(loaded.c64_turbo_detail == detail && loaded.c64_turbo_flags == (detail & 11U));
         assert(loaded.c64_ultimate_audio == settings.c64_ultimate_audio);
+        assert(loaded.c64_command_interface == settings.c64_command_interface);
+        assert(loaded.c64_title_cfg_off == settings.c64_title_cfg_off);
         assert(loaded.profiles[0].c64_reu_enabled);
     }
     const mt_controller_device_t pad = controller_device(1U, 43U);

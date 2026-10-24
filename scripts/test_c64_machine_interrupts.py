@@ -89,8 +89,8 @@ def main() -> int:
             if path.suffix==".vhd":vhdl.append(path)
     sv=[ROOT/p for p in ("third_party/c64/upstream/rtl/mos6526.v","hdl/core/c64/ports/sid_dac.sv",
         "hdl/core/c64/ports/sid_filter.sv","third_party/c64/upstream/rtl/sid/sid_envelope.sv",
-        "hdl/core/c64/ports/sid_tables.sv","third_party/c64/upstream/rtl/sid/sid_voice.sv",
-        "hdl/core/c64/ports/sid_top.sv","hdl/core/c64/multitini_c64_local_ram.sv","hdl/sim/tb_c64_machine_interrupts.sv")]
+        "hdl/core/c64/ports/sid_tables.sv","hdl/core/c64/ports/sid_voice.sv",
+        "hdl/core/c64/ports/sid_top.sv", "hdl/core/c64/multitini_c64_sid_array.sv","hdl/core/c64/multitini_c64_local_ram.sv","hdl/sim/tb_c64_machine_interrupts.sv")]
     tracked=[Path(__file__).resolve(),ROOT/"scripts/test_c64_machine_schedule.py",ROOT/"hdl/hdl_sources.txt",*vhdl,*sv]
     def hashes() -> dict[str,str]:return {p.relative_to(ROOT).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in tracked}
     initial=hashes();vhdl=[observed if p==production else observed_wrapper if p==wrapper else p for p in vhdl]

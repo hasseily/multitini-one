@@ -346,7 +346,7 @@ Mirroring cost is why these modes exist.
 10. **Software interface.**
     - Implement the U64 $D031 speed index (and optionally $D030 TurboEnable) so C64 Ultimate turbo software (Doom C64U, the c64-https crypto) runs. Use Doom C64U and the U64 e2e test ideas as acceptance tests.
     - Keep C128 $D030 bit 0 as a true 2x, not full turbo.
-    - Do not expose SuperCPU detect ($D0BC). SuperCPU software expects 65816 opcodes.
+    - Do not expose SuperCPU detect ($D0BC). SuperCPU software expects 65816 opcodes. Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: reversed by the user (Q21); planned as an option, default Disabled, with a GEOS/GDOS64 warning.
     - Consider per-title speed profiles.
 11. **Measurement method.** CIA timers and video frames count native φ2 regardless of CPU speed. Copy the #874 method: three instruction mixes with equal cycle counts, null-run subtraction, and a frame-count timebase check to verify the delivered multiple.
 

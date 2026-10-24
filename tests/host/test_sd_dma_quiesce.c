@@ -9,7 +9,7 @@ typedef uintptr_t UINTPTR;
 typedef u8 BYTE;
 typedef u8 DSTATUS;
 typedef enum { RES_OK,RES_ERROR,RES_NOTRDY,RES_PARERR } DRESULT;
-typedef struct { struct { UINTPTR BaseAddress; } Config;u32 IsBusy,IsReady; } XSdPs;
+typedef struct { struct { UINTPTR BaseAddress; } Config;u32 IsBusy,IsReady,CardID[4]; } XSdPs;
 #define FILE_SYSTEM_INTERFACE_SD 1
 #define XPAR_XSDPS_NUM_INSTANCES 1
 #define XSDPS_NUM_INSTANCES 2U
@@ -56,6 +56,17 @@ static void clear(void)
 int main(void)
 {
     BYTE recovered=99U;
+    BYTE identity[16];
+    clear();
+    SdInstance[0].CardID[0]=0x01234567U;SdInstance[0].CardID[1]=0x89abcdefU;
+    SdInstance[0].CardID[2]=0xfedcba98U;SdInstance[0].CardID[3]=0x76543210U;
+    present=XSDPS_PSR_DAT_ACTIVE_MASK;
+    assert(MultitiniSdCardIdentity(0U,identity)==RES_OK && resets==0U);
+    assert(!memcmp(identity,"\x01\x23\x45\x67\x89\xab\xcd\xef\xfe\xdc\xba\x98\x76\x54\x32\x10",16));
+    assert(present==XSDPS_PSR_DAT_ACTIVE_MASK && SdInstance[0].IsBusy==1U);
+    Stat[0]=STA_NOINIT;assert(MultitiniSdCardIdentity(0U,identity)==RES_NOTRDY);
+    assert(MultitiniSdCardIdentity(2U,identity)==RES_PARERR);
+    assert(MultitiniSdCardIdentity(0U,NULL)==RES_PARERR);
     clear();assert(MultitiniSdQuiesce(0U,&recovered)==RES_OK && recovered==0U && resets==0U);
     assert(Stat[0]==0U && SdInstance[0].IsReady==1U);
     const u32 flags[]={1U,2U,4U,0x100U,0x200U};

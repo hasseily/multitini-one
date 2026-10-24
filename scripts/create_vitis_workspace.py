@@ -412,7 +412,8 @@ def verify_fatfs_exfat_configuration(domain_bsp: Path) -> None:
                    "multitini_fatfs_get_fattime (void)",
                    "return multitini_fatfs_get_fattime();",
                    "/* Multitini shared SD quiesce reset-v1 */",
-                   "if (cmd == MT_SD_CTRL_QUIESCE) return MultitiniSdQuiesce(pdrv, buff);"):
+                   "if (cmd == MT_SD_CTRL_QUIESCE) return MultitiniSdQuiesce(pdrv, buff);",
+                   "if (cmd == MMC_GET_CID) return MultitiniSdCardIdentity(pdrv, buff);"):
         if marker not in diskio_source:
             raise RuntimeError(f"Missing FatFs RTC timestamp hook "
                                f"{marker!r} in {diskio_path}")
@@ -583,6 +584,7 @@ def patch_fatfs_sd_quiesce(domain_bsp: Path) -> None:
             raise RuntimeError(f"Missing disk_ioctl pre-initialization anchor: {path}")
         early = ("#if defined(FILE_SYSTEM_INTERFACE_SD) && defined(XPAR_XSDPS_NUM_INSTANCES)\n"
                  "\tif (cmd == MT_SD_CTRL_QUIESCE) return MultitiniSdQuiesce(pdrv, buff);\n"
+                 "\tif (cmd == MMC_GET_CID) return MultitiniSdCardIdentity(pdrv, buff);\n"
                  "#endif\n\n")
         text = text.replace(anchor, early + anchor, 1)
     # Repeated application is allowed only when the exact implementation is present.

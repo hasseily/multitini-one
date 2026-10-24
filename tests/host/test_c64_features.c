@@ -68,5 +68,19 @@ int main(void) {
     assert(mt_c64_expansion_restore(3,false,true,true,&c)==3);
     assert(mt_c64_expansion_restore(3,false,true,false,&c)==0x1b);
     assert(mt_c64_expansion_restore(7,true,false,false,&c)==8);
+    reads = 0;
+    live_abi = 26;
+    expansion = UINT32_MAX;
+    c = mt_c64_probe_capabilities(&link, MT_C64_CORE_ID, 0, 25);
+    assert(!(c.expansion &
+             (MT_C64_EXPANSION_CAPS_UCI | MT_C64_EXPANSION_CAPS_MULTI_SID |
+              MT_C64_EXPANSION_CAPS_SID_COUNT_MASK | MT_C64_EXPANSION_CAPS_SID_IO_SLOTS)));
+    assert(!(c.cpu2 & MT_C64_CPU_CAPS2_SCPU_DETECT));
+    reads = 0;
+    c = mt_c64_probe_capabilities(&link, MT_C64_CORE_ID, 0, 26);
+    assert(c.cpu2 & MT_C64_CPU_CAPS2_SCPU_DETECT);
+    const uint32_t plain = mt_c64_turbo_config(0x4f, 0, true, &c, 0x9000, false);
+    assert(mt_c64_turbo_config(0x4f, 8, true, &c, plain, true) ==
+           (plain | MT_C64_CPU_CONFIG_SCPU_DETECT));
     puts("PASS C64 firmware capability order, all preferences, apply counter and masks");
 }

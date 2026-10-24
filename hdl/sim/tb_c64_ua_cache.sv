@@ -13,7 +13,7 @@ module tb_c64_ua_cache;
     wire cache_inflight_write_valid,cache_write_done,cache_write_snoop_valid,reu_memory_busy;
     wire [23:0] memory_addr;wire memory_valid,busy,fault,accepted,deferred;
     reg memory_ready=1;reg [63:0] memory_rdata=0;reg memory_rvalid=0,memory_fault=0;
-    multitini_c64_ua_fetch ua(.*);
+    multitini_c64_ua_fetch ua(.invalidate(1'b0),.invalidate_done(),.*);
     reg flush=0,invalidate=0,request_write=0,request_valid=0;
     reg [23:0] request_addr=0;reg [63:0] request_wdata=0;reg [7:0] request_wstrb=0;
     wire request_ready,response_valid;wire [63:0] response_rdata;

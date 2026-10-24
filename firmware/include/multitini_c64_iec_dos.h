@@ -62,6 +62,7 @@ typedef struct
     size_t directory_size;
     int directory_owner;
     uint32_t serial;
+    uint32_t status_generation;
 } mt_iec_dos_t;
 
 int mt_iec_dos_init(mt_iec_dos_t *, const mt_iec_fs_t *, const char *root);
@@ -78,6 +79,20 @@ void mt_iec_dos_begin_talk(mt_iec_dos_t *, unsigned channel);
  * byte. A canceled transport request can safely discard its peeked result. */
 int mt_iec_dos_peek(mt_iec_dos_t *, unsigned channel, uint8_t *, bool *eoi, bool *available);
 void mt_iec_dos_consume(mt_iec_dos_t *, unsigned channel);
+/* Transactional UCI window. Reading can prefetch storage, but never advances
+ * the guest cursor; commit only the number actually consumed by the guest.
+ * Maximum window is MT_IEC_BUFFER. EOF is true when the window reaches EOF. */
+int mt_iec_dos_peek_many(mt_iec_dos_t *, unsigned channel, uint8_t *, size_t capacity, size_t *size,
+                         bool *eof);
+int mt_iec_dos_consume_many(mt_iec_dos_t *, unsigned channel, size_t count);
+int mt_iec_dos_abort_channel(mt_iec_dos_t *, unsigned channel);
+/* Resolve without opening or creating a file, including a not-yet-existing
+ * final name. The returned name is rooted; no raw guest path reaches FatFs. */
+int mt_iec_dos_resolve_name(mt_iec_dos_t *, unsigned channel, const uint8_t *, size_t,
+                            char path[MT_IEC_PATH]);
+int mt_iec_dos_iec_name(mt_iec_dos_t *, const char *path, char alias[17], uint8_t *type);
 void mt_iec_dos_error(mt_iec_dos_t *, int code);
 bool mt_iec_dos_has_channels(const mt_iec_dos_t *);
+/* Shared reserved recovery namespace, case insensitive. */
+bool mt_iec_dos_recovery_name(const char *basename);
 #endif

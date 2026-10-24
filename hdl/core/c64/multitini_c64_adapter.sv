@@ -9,6 +9,8 @@ module multitini_c64_adapter #(
     parameter integer CORE_CLOCK_HZ = NTSC_MODE ?
         multitini_c64_defs_pkg::MT_C64_NTSC_HZ : multitini_c64_defs_pkg::MT_C64_PAL_HZ,
     parameter integer AUDIO_SAMPLE_HZ = 48000,
+    parameter bit ENABLE_EXTENSIONS = 1'b0,
+    parameter integer SID_COUNT = 2,
     // Early and most classic C64 software targets the MOS 6581. Keep the
     // MiSTer core's power-on model at 6581 unless a build explicitly selects
     // another model for both emulated SID instances.
@@ -19,6 +21,22 @@ module multitini_c64_adapter #(
     input  logic [31:0] cpu_config,
     output logic [31:0] cpu_status,
     input  logic ua_enable, debug_enable,
+    input  logic uci_enable,
+    input  logic [10:0] uci_control,
+    input  logic [31:0] uci_op,uci_ram_request,
+    input  logic uci_op_valid,
+    output wire uci_op_ready,
+    output wire [31:0] uci_status,uci_status2,
+    output wire [10:0] uci_buffer_addr,
+    output wire uci_buffer_write,
+    output wire [7:0] uci_buffer_wdata,
+    input  logic [7:0] uci_buffer_rdata,
+    input  logic sid_map_enable,
+    input  logic [255:0] sid_slot_masks,sid_params,
+    input  logic [31:0] sid_write_inhibit,sid_output_config,
+    input  logic [95:0] sid_owners,
+    input  logic [127:0] sid_io_masks,
+    output wire sid_ce_1m,sid_paused,
     input  logic [31:0] peek_word, reu_host_word,
     output logic [31:0] peek_status, reu_host_status,
     output logic [31:0] ua_status, ua_fetches, reu_misses,
@@ -287,6 +305,35 @@ module multitini_c64_adapter #(
     logic [20:0] cache_inflight_write_addr, cache_write_done_addr, cache_write_snoop_addr;
     logic cache_inflight_write_valid, cache_write_done, cache_write_snoop_valid;
     logic cache_invalidate, cache_invalidate_done;
+    wire reu_invalidate_done,ua_invalidate_done;
+    reg reu_invalidated=0,ua_invalidated=0,invalidate_pending=0;
+    wire map_enabled=ENABLE_EXTENSIONS && sid_map_enable;
+    // Generic CRT type 0 maps ROM only; it never claims IO1 or IO2. Other
+    // cartridges may own these registers and suspend the command endpoint.
+    wire uci_suspended=cart_loading || (cart_loaded && loader_cart_id!=0);
+    wire uci_active=ENABLE_EXTENSIONS && uci_enable && !uci_suspended;
+    wire uci_hold=ENABLE_EXTENSIONS && uci_control[10];
+    wire uci_freeze,uci_irq,uci_io_select;
+    wire [7:0] uci_rdata,sid_io_data;
+    wire sid_io_select;
+    wire [143:0] sid_chip_audio;
+    wire signed [23:0] sid_mixed_l,sid_mixed_r;
+    wire sid_clip;
+    wire uci_load_valid=ENABLE_EXTENSIONS && load_valid && load_kind==8'd17;
+    wire uci_load_ready,uci_load_error,uci_ram_write,uci_peek_request,uci_buffer_owned;
+    wire [15:0] uci_ram_address,uci_peek_address;
+    wire [7:0] uci_ram_data;
+    wire [3:0] uci_read_done;
+    wire [10:0] endpoint_buffer_addr,dma_buffer_addr;
+    wire endpoint_buffer_write,dma_buffer_write;
+    wire [7:0] endpoint_buffer_wdata,dma_buffer_wdata;
+    // An FF00 write can start both REU DMA and a deferred UCI freeze. Drain
+    // the DMA before stopping the native scheduler so neither waits forever.
+    wire extension_pause=(uci_hold || uci_freeze) && !reu_busy;
+    assign sid_paused=core_paused || !core_reset_n;
+    assign uci_buffer_addr=uci_buffer_owned?dma_buffer_addr:endpoint_buffer_addr;
+    assign uci_buffer_write=uci_buffer_owned?dma_buffer_write:endpoint_buffer_write;
+    assign uci_buffer_wdata=uci_buffer_owned?dma_buffer_wdata:endpoint_buffer_wdata;
     logic peek_request, peek_valid;
     logic [15:0] peek_address;
     logic [7:0] peek_data;
@@ -335,7 +382,7 @@ module multitini_c64_adapter #(
         $signed({raw_audio_l, 6'b000000}) + $signed({ua_audio_l, 6'b000000});
     wire signed [24:0] board_sum_r =
         $signed({raw_audio_r, 6'b000000}) + $signed({ua_audio_r, 6'b000000});
-    wire board_clip = ua_audio_tick &&
+    wire board_clip = map_enabled ? sid_clip : ua_audio_tick &&
         (board_sum_l[24] != board_sum_l[23] || board_sum_r[24] != board_sum_r[23]);
     function automatic logic signed [23:0] sat24(input logic signed [24:0] value);
         if (value > 25'sd8388607) return 24'sh7FFFFF;
@@ -382,6 +429,7 @@ module multitini_c64_adapter #(
     // ROM object whose kind selects the ordinary loader instead.
     always_comb begin
         case (load_kind)
+            8'd17: load_ready=ENABLE_EXTENSIONS && uci_load_ready;
             MT_LOAD_C64_D64: load_ready = d64_load_ready;
             MT_LOAD_C64_G64: load_ready = g64_load_ready;
             MT_LOAD_C64_PRG,
@@ -393,7 +441,7 @@ module multitini_c64_adapter #(
         endcase
     end
     assign load_error = rom_load_error || content_load_error ||
-                        drive_media_error || cart_memory_fault || reu_fault_latched;
+                        drive_media_error || cart_memory_fault || reu_fault_latched || uci_load_error;
     assign fatal_load_error = rom_load_error || content_load_error ||
                               cart_memory_fault || reu_fault_latched;
     assign ready = core_enable && !reset && !core_reset_request &&
@@ -488,14 +536,14 @@ module multitini_c64_adapter #(
         .cpu_colour_we(cpu_mem_colour_we), .cpu_addr(cpu_mem_addr),
         .cpu_wdata(cpu_mem_wdata), .ram_low_q(ram_low_q), .ram_high_q(ram_high_q),
         .rom_q(rom_q), .char_q(char_q), .colour_q(colour_q),
-        .loader_we(prg_ram_wr), .loader_addr(prg_ram_addr),
-        .loader_data(prg_ram_data),
+        .loader_we(prg_ram_wr || uci_ram_write), .loader_addr(uci_ram_write?uci_ram_address:prg_ram_addr),
+        .loader_data(uci_ram_write?uci_ram_data:prg_ram_data),
         .machine_ce(ram_ce), .machine_we(ram_we),
         .machine_store(cart_mem_we && !cart_external_select),
         .machine_addr(ram_addr), .machine_data(ram_dout),
         .machine_q(main_ram_din),
-        .peek_request(peek_request && debug_enable), .machine_paused(core_paused),
-        .peek_addr(peek_address), .peek_valid(peek_valid), .peek_data(peek_data),
+        .peek_request(uci_buffer_owned?uci_peek_request:peek_request && debug_enable), .machine_paused(core_paused),
+        .peek_addr(uci_buffer_owned?uci_peek_address:peek_address), .peek_valid(peek_valid), .peek_data(peek_data),
         .native_colour_addr(ext_color_addr), .native_colour_we(ext_color_we),
         .native_colour_data(ext_color_do), .native_colour_q(ext_color_di),
         .rom_load_addr(rom_addr), .rom_load_data(rom_data),
@@ -508,7 +556,7 @@ module multitini_c64_adapter #(
         .clk_cpu(cpu_clk), .c64_aresetn(!reset), .ext_reset(ext_reset),
         .ext_phase(ext_phase), .ext_frame_run(ext_frame_run),
         .ext_irq_n(ext_irq_n), .ext_nmi_n(ext_nmi_n), .ext_rdy(ext_rdy),
-        .ext_dma_hold(ext_dma_hold), .pause_request(prg_install_pause || pause_request),
+        .ext_dma_hold(ext_dma_hold), .pause_request(prg_install_pause || pause_request || extension_pause),
         .ext_last_vic_di(ext_last_vic_di), .external_port_input(8'h17),
         .b0_data(b0_data), .b0_irq_n(b0_irq_n), .b0_nmi_n(b0_nmi_n),
         .b0_rdy(b0_rdy), .b0_toggle(b0_toggle), .b0_exact(b0_exact), .b0_seq(b0_seq),
@@ -539,7 +587,7 @@ module multitini_c64_adapter #(
         .ext_port_tick(ext_port_tick), .ext_dma_hold(ext_dma_hold),
         .policy_turbo(policy_turbo), .policy_blocked(policy_blocked),
         .policy_badline(policy_badline), .policy_c64u_top(policy_c64u_top), .policy_index(policy_index),
-        .pause_request(prg_install_pause || pause_request), .cart_present(cart_loaded),
+        .pause_request(prg_install_pause || pause_request || extension_pause), .cart_present(cart_loaded),
         .isl_x_req_addr(isl_x_req_addr), .isl_x_req_wdata(isl_x_req_wdata), .isl_x_req_port(isl_x_req_port),
         .isl_x_req_we(isl_x_req_we), .isl_x_req_exact(isl_x_req_exact),
         .isl_x_req_ioonly(isl_x_req_ioonly), .isl_x_req_seq(isl_x_req_seq), .isl_x_req_valid(isl_x_req_valid),
@@ -609,9 +657,41 @@ module multitini_c64_adapter #(
     // MAME releases the REU register aperture during its own DMA. A transfer
     // reading $DFxx observes the machine's floating bus, not REU status.
     assign ua_active = ua_enable && reu_active && !reu_host_word[13];
+    assign uci_io_select=uci_active && !reu_dma_req && cart_iof && cpu_bus_addr[7:3]==5'b00011;
     assign ua_io_select = ua_active && !reu_dma_req && cart_iof && cpu_bus_addr[7:5] != 0;
     assign reu_io_select = reu_active && !reu_dma_req && cart_iof &&
-                           (!ua_active || cpu_bus_addr[7:5] == 0);
+                           !uci_io_select && (!ua_active || cpu_bus_addr[7:5] == 0);
+    assign sid_io_select=map_enabled && !cart_loaded && !cart_loading && !reu_dma_req &&
+        (cart_ioe || cart_iof) && !reu_io_select && !ua_io_select && !uci_io_select;
+    multitini_c64_uci uci_i(
+        .clk(core_clk),.hard_reset(reset),.block_reset(!core_reset_n || !ENABLE_EXTENSIONS || !uci_enable || uci_suspended),
+        .enabled(uci_active),.suspended(uci_suspended),
+        .bus_valid(cpu_bus_valid && uci_io_select),.bus_write(cpu_bus_write),
+        .ff00_write(uci_active && cpu_bus_valid && cpu_bus_write && !reu_dma_req && cpu_bus_addr==16'hff00),
+        .bus_addr(cpu_bus_addr[2:0]),.bus_wdata(cpu_bus_wdata),.rdata(uci_rdata),
+        .bus_id(uci_control[4:0]),.freeze_allowed(ENABLE_EXTENSIONS && uci_control[8]),
+        .irq_allowed(ENABLE_EXTENSIONS && uci_control[9]),
+        .op_data(uci_op),.op_valid(ENABLE_EXTENSIONS && uci_op_valid),.op_ready(uci_op_ready),
+        .status(uci_status),.status2(uci_status2),.ram_addr(endpoint_buffer_addr),
+        .ram_we(endpoint_buffer_write),.ram_wdata(endpoint_buffer_wdata),.ram_rdata(uci_buffer_rdata),
+        .ram_read_done(uci_read_done),.freeze(uci_freeze),.irq(uci_irq));
+    multitini_c64_uci_ram uci_ram_i(
+        .clk(core_clk),.reset(reset || !core_reset_n),.hold(uci_hold),.paused(core_paused),
+        .reu_idle(!reu_memory_busy),.load_valid(uci_load_valid),
+        .load_first(load_first),.load_last(load_last),.load_abort(load_abort),
+        .clear_error(clear_load_error),.load_data(load_data),.load_offset(load_offset),.load_total(load_total),
+        .load_ready(uci_load_ready),.load_error(uci_load_error),
+        .ram_write(uci_ram_write),.ram_address(uci_ram_address),.ram_data(uci_ram_data),
+        .read_request(ENABLE_EXTENSIONS?uci_ram_request:32'd0),.read_done(uci_read_done),
+        .peek_request(uci_peek_request),.peek_address(uci_peek_address),
+        .peek_valid(peek_valid && uci_buffer_owned),.peek_data(peek_data),
+        .buffer_owned(uci_buffer_owned),.buffer_write(dma_buffer_write),
+        .buffer_address(dma_buffer_addr),.buffer_data(dma_buffer_wdata));
+    multitini_c64_sid_mix sid_mix_i(
+        .clk(core_clk),.reset(!core_reset_n),.ce_1m(sid_ce_1m),.sample_tick(ua_audio_tick),
+        .map_enable(map_enabled),.chip_audio(sid_chip_audio),.chip_params(sid_params),
+        .output_config(sid_output_config),.ua_audio_l(ua_audio_l),.ua_audio_r(ua_audio_r),
+        .audio_l(sid_mixed_l),.audio_r(sid_mixed_r),.clip(sid_clip));
     always_ff @(posedge core_clk) begin
         if (reset || clear_load_error) reu_fault_latched <= 1'b0;
         else if (reu_fault || reu_cache_fault) reu_fault_latched <= 1'b1;
@@ -647,7 +727,7 @@ module multitini_c64_adapter #(
         .memory_ready(reu_memory_ready), .memory_rdata(reu_memory_rdata),
         .memory_rvalid(reu_memory_rvalid), .memory_fault(reu_memory_fault),
         .busy(reu_cache_busy), .fault(reu_cache_fault),
-        .invalidate(cache_invalidate), .invalidate_done(cache_invalidate_done),
+        .invalidate(cache_invalidate), .invalidate_done(reu_invalidate_done),
         .pending_addr(cache_pending_addr), .pending_valid(cache_pending_valid),
         .inflight_write_addr(cache_inflight_write_addr), .inflight_write_valid(cache_inflight_write_valid),
         .write_done(cache_write_done), .write_done_addr(cache_write_done_addr),
@@ -655,15 +735,16 @@ module multitini_c64_adapter #(
     );
     multitini_c64_host host_i (
         .clk(core_clk), .reset(reset), .peek_word(peek_word), .reu_word(reu_host_word),
-        .debug_enable(debug_enable), .paused(core_paused), .loader_write(prg_ram_wr),
+        .debug_enable(debug_enable && !uci_buffer_owned), .paused(core_paused), .loader_write(prg_ram_wr || uci_ram_write),
         .peek_request(peek_request), .peek_address(peek_address),
-        .peek_valid(peek_valid), .peek_data(peek_data), .peek_status(peek_status),
+        .peek_valid(peek_valid && !uci_buffer_owned), .peek_data(peek_data), .peek_status(peek_status),
         .invalidate(cache_invalidate), .invalidate_done(cache_invalidate_done),
         .reu_busy(reu_memory_busy), .ua_held(ua_held), .reu_status(reu_host_status)
     );
     multitini_c64_ua #(.CORE_CLOCK_HZ(CORE_CLOCK_HZ)) ua_i (
         .clk(core_clk), .hard_reset(reset), .guest_reset(!core_reset_n),
         .enable(ua_active), .paused(core_paused), .hold(reu_host_word[13]),
+        .invalidate(cache_invalidate),.invalidate_done(ua_invalidate_done),
         .reg_write(cpu_bus_valid && cpu_bus_write && ua_io_select),
         .reg_addr(cpu_bus_addr[7:0]), .reg_wdata(cpu_bus_wdata), .reg_rdata(ua_io_rdata),
         .diagnostics_armed(cpu_config[19]), .audio_tick(ua_audio_tick), .board_clip(board_clip),
@@ -678,6 +759,21 @@ module multitini_c64_adapter #(
         .memory_rvalid(ua_memory_rvalid), .memory_fault(ua_memory_fault)
     );
     assign reu_misses = cpu_config[19] ? {16'd0,reu_miss_count} : 32'd0;
+    always @(posedge core_clk) begin
+        cache_invalidate_done<=0;
+        if(reset)begin reu_invalidated<=0;ua_invalidated<=0;invalidate_pending<=0;end
+        else begin
+            if(cache_invalidate)begin
+                reu_invalidated<=0;ua_invalidated<=0;invalidate_pending<=1;
+            end else if(invalidate_pending)begin
+                if(reu_invalidate_done)reu_invalidated<=1;
+                if(ua_invalidate_done)ua_invalidated<=1;
+                if((reu_invalidated || reu_invalidate_done) && (ua_invalidated || ua_invalidate_done))begin
+                    cache_invalidate_done<=1;invalidate_pending<=0;
+                end
+            end
+        end
+    end
     always_ff @(posedge core_clk) begin
         diagnostics_was_armed <= cpu_config[19];
         if (reset || !cpu_config[19] || !diagnostics_was_armed) reu_miss_count <= 0;
@@ -714,7 +810,7 @@ module multitini_c64_adapter #(
         .mod_key(1'b0), .nmi(cart_nmi), .nmi_ack(cart_nmi_ack)
     );
 
-    fpga64_sid_iec #(.EXTERNAL_CPU(1), .FAST_IO(1), .FIO_DEPTH(FIO_DEPTH)) core_i (
+    fpga64_sid_iec #(.EXTERNAL_CPU(1), .FAST_IO(1), .FIO_DEPTH(FIO_DEPTH),.SID_COUNT(SID_COUNT)) core_i (
         .ext_cpu_addr(ext_cpu_addr), .ext_cpu_do(ext_cpu_do), .ext_cpu_we(ext_cpu_we),
         .ext_cpu_io(ext_cpu_io), .ext_cpu_ioonly(ext_cpu_ioonly), .ext_nmi_ack(ext_nmi_ack),
         .ext_reset(ext_reset), .ext_cpu_enable(ext_cpu_enable), .ext_cpu_di(ext_cpu_di),
@@ -733,7 +829,7 @@ module multitini_c64_adapter #(
         // whole-core pause. The acknowledged pause also stops the drive.
         // Cartridge PSRAM misses instead stretch the active VIC/CPU bus phase
         // until the requested cache line is present.
-        .pause(prg_install_pause || pause_request), .memory_wait(cart_stall),
+        .pause(prg_install_pause || pause_request || extension_pause), .memory_wait(cart_stall),
         .pause_out(core_paused),
         .ps2_key(ps2_key), .kbd_reset(!core_reset_n), .shift_mod(2'b11),
         .ramAddr(ram_addr), .ramDin(core_ram_din), .ramDout(ram_dout),
@@ -748,8 +844,9 @@ module multitini_c64_adapter #(
         .hsync(raw_hsync), .vsync(raw_vsync), .palette(3'b000),
         .r(raw_r), .g(raw_g), .b(raw_b),
         .game(cart_game), .exrom(cart_exrom), .io_rom(cart_io_rom),
-        .io_ext(cart_io_read || reu_io_select || ua_io_select),
-        .io_data(ua_io_select ? ua_io_rdata : reu_io_select ? reu_io_rdata : cart_io_data), .irq_n(1'b1),
+        .io_ext(cart_io_read || reu_io_select || ua_io_select || uci_io_select || sid_io_select),
+        .io_data(uci_io_select?uci_rdata:ua_io_select?ua_io_rdata:reu_io_select?reu_io_rdata:
+                 sid_io_select?sid_io_data:cart_io_data), .irq_n(1'b1),
         .nmi_n(!cart_nmi), .nmi_ack(cart_nmi_ack),
         .romL(cart_rom_l), .romH(cart_rom_h),
         .UMAXromH(cart_umax_rom_h), .IOE(cart_ioe), .IOF(cart_iof),
@@ -763,11 +860,14 @@ module multitini_c64_adapter #(
         .cpu_bus_wdata(cpu_bus_wdata), .cpu_bus_write(cpu_bus_write),
         .dma_cycle(), .dma_addr(reu_dma_addr),
         .dma_dout(reu_dma_wdata), .dma_din(reu_dma_rdata),
-        .dma_we(reu_dma_write), .irq_ext_n(!(reu_irq || ua_irq)),
+        .dma_we(reu_dma_write), .irq_ext_n(!(reu_irq || ua_irq || uci_irq)),
         .joyA(joy_a), .joyB(joy_b),
         .pot1(8'hFF), .pot2(8'hFF), .pot3(8'hFF), .pot4(8'hFF),
         .audio_l(raw_audio_l), .audio_r(raw_audio_r),
         .sid_filter(2'b11), .sid_ver(SID_VERSION), .sid_mode(sid_mode),
+        .sid_map_enable(map_enabled),.sid_slot_masks(sid_slot_masks),.sid_write_inhibit(sid_write_inhibit),
+        .sid_owners(sid_owners),.sid_io_masks(sid_io_masks),.sid_io_select(sid_io_select),
+        .sid_params(sid_params),.sid_audio(sid_chip_audio),.sid_ce_1m(sid_ce_1m),.sid_io_data(sid_io_data),
         .sid_cfg(4'b0000), .sid_fc_off_l(13'd0), .sid_fc_off_r(13'd0),
         .sid_ld_clk(core_clk), .sid_ld_addr(12'd0), .sid_ld_data(16'd0),
         .sid_ld_wr(1'b0), .sid_digifix(1'b0),
@@ -898,8 +998,8 @@ module multitini_c64_adapter #(
             audio_phase <= audio_phase + AUDIO_SAMPLE_HZ - CORE_CLOCK_HZ;
             // MiSTer consumes bits 17:2 as signed 16-bit PCM. Preserve that
             // full-scale convention at the common 24-bit boundary.
-            audio_l <= sat24(board_sum_l);
-            audio_r <= sat24(board_sum_r);
+            audio_l <= map_enabled?sid_mixed_l:sat24(board_sum_l);
+            audio_r <= map_enabled?sid_mixed_r:sat24(board_sum_r);
             audio_valid <= 1'b1;
         end else begin
             audio_phase <= audio_phase + AUDIO_SAMPLE_HZ;

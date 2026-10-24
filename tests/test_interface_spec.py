@@ -31,7 +31,7 @@ class InterfaceSpecTests(unittest.TestCase):
         self.assertEqual(constants["C64_EXPANSION_MIN_ABI_MINOR"], 23)
         for name, expected in (("C64_EXPANSION_CAPS_ULTIMATE_AUDIO", 8),
                                ("C64_EXPANSION_CAPS_REU_HOST_LOAD", 16),
-                               ("C64_EXPANSION_CONFIG_MASK", 31)):
+                               ("C64_EXPANSION_CONFIG_MASK", 127)):
             self.assertEqual(int(constants[name], 0), expected)
         offsets = {item["name"]: int(item["offset"], 0) for item in self.spec["registers"]}
         for name, expected in (("C64_CPU_CONFIG", 0xD8), ("C64_CPU_CAPS2", 0xE4),
@@ -42,6 +42,21 @@ class InterfaceSpecTests(unittest.TestCase):
         self.assertNotIn(0xFC, offsets.values())
         self.assertEqual(int(constants["C64_CPU_CAPS2_RELEASE"], 0) & (1 << 14), 0)
         self.assertEqual(int(constants["C64_EXPANSION_CONFIG_DEFAULT"], 0) & 16, 0)
+
+    def test_ultimate_extensions_have_separate_versioned_registers(self):
+        self.assertGreaterEqual(self.spec["abi"]["minor"], 26)
+        offsets = {item["name"]: int(item["offset"], 0) for item in self.spec["registers"]}
+        expected = {"NET_CAPS": 0x02c, "NET_CONTROL": 0x030,
+                    "NET_ACCESS": 0x034, "NET_STATUS": 0x038,
+                    "C64_UCI_STATUS": 0x128, "C64_UCI_HANDSHAKE": 0x12c,
+                    "C64_UCI_CONTROL": 0x130, "C64_UCI_STATUS2": 0x134,
+                    "C64_UCI_RAM_READ": 0x138, "C64_SID_INDEX": 0x154,
+                    "C64_SID_DATA": 0x158, "C64_SID_COMMIT": 0x15c,
+                    "C64_SID_STATUS": 0x160}
+        for name, address in expected.items():
+            self.assertEqual(offsets[name], address)
+        self.assertEqual(self.spec["bitfields"]["C64_CPU_CONFIG"]["SCPU_DETECT"], 20)
+        self.assertEqual(self.spec["bitfields"]["C64_CPU_CAPS2"]["SCPU_DETECT"], 15)
 
     def test_control_defaults_keep_diagnostics_visible_and_core_reset(self):
         control = next(reg for reg in self.spec["registers"] if reg["name"] == "CONTROL")

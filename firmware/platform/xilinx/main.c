@@ -1,52 +1,55 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#include "c64_d64_service.h"
+#include "../../golden/lib/golden_self_update.h"
+#include "../../golden/lib/multiboot_platform.h"
 #include "c64_content_service.h"
+#include "c64_d64_service.h"
 #include "c64_iec_service.h"
+#include "c64_title_service.h"
+#include "c64_uci_service.h"
 #include "core_catalog_sd.h"
 #include "gameboy_content_service.h"
 #include "genesis_content_service.h"
-#include "nes_content_service.h"
 #include "iigs_content_service.h"
-#include "vectrex_content_service.h"
-#include "vectrex32_service.h"
 #include "multitini_ak4493.h"
 #include "multitini_c64_boot.h"
-#include "multitini_c64_features.h"
 #include "multitini_c64_debug.h"
+#include "multitini_c64_features.h"
 #include "multitini_c64_hid_input.h"
 #include "multitini_c64_interface.h"
 #include "multitini_c64_native_load.h"
 #include "multitini_c64_rom_files.h"
 #include "multitini_content.h"
-#include "multitini_display.h"
 #include "multitini_core_frontend.h"
 #include "multitini_core_link.h"
+#include "multitini_display.h"
 #include "multitini_fatfs_time.h"
 #include "multitini_gameboy_interface.h"
 #include "multitini_genesis_interface.h"
 #include "multitini_iigs_hid_input.h"
-#include "multitini_nes_interface.h"
-#include "multitini_vectrex_interface.h"
-#include "multitini_menu.h"
 #include "multitini_media_browser.h"
+#include "multitini_menu.h"
+#include "multitini_nes_interface.h"
 #include "multitini_regs.h"
 #include "multitini_supervisor.h"
 #include "multitini_system.h"
 #include "multitini_tmp102.h"
 #include "multitini_ui.h"
-#include "multitini_xmodem.h"
+#include "multitini_usb_storage_mode.h"
+#include "multitini_vectrex_interface.h"
 #include "multitini_version.h"
-#include "../../golden/lib/golden_self_update.h"
-#include "../../golden/lib/multiboot_platform.h"
+#include "multitini_video_effects_frontend.h"
+#include "multitini_xmodem.h"
+#include "nes_content_service.h"
+#include "net_service.h"
 #include "pl_loader.h"
-#include "sd_storage.h"
 #include "screenshot_service.h"
+#include "sd_storage.h"
 #include "supervisor_settings.h"
 #include "text_document.h"
 #include "usb_hid_service.h"
 #include "usb_storage_service.h"
-#include "multitini_usb_storage_mode.h"
-#include "multitini_video_effects_frontend.h"
+#include "vectrex32_service.h"
+#include "vectrex_content_service.h"
 #include "video_effect_service.h"
 #include "video_worker.h"
 
@@ -109,6 +112,23 @@ static bool c64_debug_restoring;
 static void initialize_c64_debug(void);
 static bool dispatch_c64_debug(const char *line);
 static void change_c64_turbo(size_t option);
+static void c64_debug_pause(void *context, bool pause);
+static void refresh_c64_title(const mt_core_selection_t *selection);
+static int quiesce_c64_uci(void);
+static void service_c64_uci_action(void);
+static bool dispatch_c64_title(const char *line);
+static void network_console(void *context, const char *text);
+static uint8_t stored_c64_joystick(void);
+static mt_c64_sid_model_t c64_stored_sid;
+static mt_c64_sid_table_t c64_live_sid_table;
+static mt_c64_capabilities_t c64_title_caps;
+static bool c64_legacy_turbo_available;
+static bool c64_sid_commit_fault;
+static bool c64_title_initialized, c64_uci_initialized, c64_title_foreground;
+static bool c64_uci_freeze_pending;
+static mt_core_selection_t c64_extension_selection;
+static char c64_launch_disk_name[256];
+static uint8_t c64_selected_sid;
 static mt_ak4493_bus_t dac_bus;
 static bool i2c_ready;
 static bool dac_ready;
@@ -490,6 +510,9 @@ static void service_runtime(void)
         if (c64_active && c64_services_initialized &&
             !c64_core_reset_active) {
             c64_d64_service_notify_core_reset();
+            if (c64_uci_initialized)
+                c64_uci_service_reset();
+            mt_net_service_guest_reset();
             if (c64_iec_initialized && c64_iec_service_reset() != 0)
                 xil_printf("[C64] drive9 reset recovery failed: %s\r\n",
                            c64_iec_service_status());
@@ -512,6 +535,11 @@ static void service_runtime(void)
                 xil_printf("[C64] drive9 transport error: %s\r\n",
                            c64_iec_service_status());
             c64_iec_fault_displayed = faulted;
+        }
+        if (!c64_title_foreground && c64_uci_initialized) {
+            mt_net_service_poll();
+            (void)c64_uci_service_poll(32U);
+            service_c64_uci_action();
         }
     }
     if(shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID && iigs_service_initialized) {
@@ -774,6 +802,8 @@ static int set_core_reset_request(bool asserted)
     int result;
 
     if (!hide_menu_for_core_action()) return -1;
+    if (asserted && !currently_asserted && c64_active && quiesce_c64_uci() != 0)
+        return -1;
     if (asserted && !currently_asserted && c64_active &&
         quiesce_c64_directory() != 0) return -1;
     if (asserted && !currently_asserted && c64_active &&
@@ -854,6 +884,9 @@ static int set_core_reset_request(bool asserted)
          * service_runtime() while the reset level is high. */
         c64_d64_service_notify_core_reset();
         if (c64_iec_initialized && c64_iec_service_reset() != 0) return -1;
+        if (c64_uci_initialized)
+            c64_uci_service_reset();
+        mt_net_service_guest_reset();
         c64_core_reset_active = true;
     }
     if (result == 0 && !asserted && c64_active &&
@@ -1331,10 +1364,14 @@ static void print_c64_content_result(
 
 static bool prepare_c64_content_change(void)
 {
+    const char *disk = c64_d64_service_mounted_name();
+    (void)snprintf(c64_launch_disk_name, sizeof(c64_launch_disk_name), "%s", disk ? disk : "");
     if (shell_read(MT_REG_CORE_ID) != MT_C64_CORE_ID) {
         xil_printf("[C64] content commands require the C64 core\r\n");
         return false;
     }
+    if (quiesce_c64_uci() != 0)
+        return false;
     if (!hide_menu_for_core_action()) return false;
     if (quiesce_c64_directory() != 0) return false;
     if (c64_d64_service_prepare_reset() != 0) {
@@ -1343,11 +1380,13 @@ static bool prepare_c64_content_change(void)
         (void)resume_c64_directory();
         return false;
     }
+    c64_title_foreground = true;
     return true;
 }
 
 static bool finish_c64_content_change(void)
 {
+    c64_title_foreground = false;
     if (c64_iec_initialized && c64_iec_service_reset() != 0) return false;
     const bool directory_ready = resume_c64_directory() == 0;
     if (c64_d64_service_resume_after_reset() != 0) {
@@ -1360,22 +1399,205 @@ static bool finish_c64_content_change(void)
 
 static int mount_c64_disk(const char *name)
 {
+    if (quiesce_c64_uci() != 0)
+        return -1;
     if (quiesce_c64_directory() != 0) return -1;
     const int result = c64_d64_service_mount(name);
     const int resumed = resume_c64_directory();
     return result != 0 ? result : resumed;
 }
+static void service_c64_uci_action(void)
+{
+    static bool executing;
+    if (executing || c64_title_foreground)
+        return;
+    if (c64_uci_freeze_pending) {
+        if (!supervisor_menu.visible) {
+            c64_uci_freeze_pending = false;
+            c64_uci_service_action_done(0);
+        }
+        return;
+    }
+    c64_uci_action_t action;
+    char path[512];
+    unsigned device;
+    if (!c64_uci_service_action(&action, path, sizeof(path), &device))
+        return;
+    executing = true;
+    c64_title_foreground = true;
+    int status = 0;
+    if (action == C64_UCI_ACTION_FREEZE) {
+        supervisor_menu.visible = true;
+        supervisor_menu_dirty = true;
+        c64_uci_freeze_pending = true;
+    } else if (action == C64_UCI_ACTION_REBOOT) {
+        /* Retire the posted action before reset quiesces its own UCI target.
+         * Guest reset naturally discards any unacknowledged reply. */
+        c64_uci_service_action_done(0);
+        const int asserted = set_core_reset_request(true);
+        if (asserted == 0)
+            usleep(1000U);
+        status = asserted == 0 ? set_core_reset_request(false) : -1;
+        if (status)
+            xil_printf("[UCI] reboot refused: media could not quiesce\r\n");
+        /* UCI reboot retains the running title settings and mounted medium. */
+    } else if (action == C64_UCI_ACTION_MOUNT) {
+        const char *root = c64_extension_selection.package.content_root;
+        size_t n = strlen(root);
+        if (device != 8 || strncmp(path, root, n) || path[n] != '/')
+            status = -1;
+        else if (quiesce_c64_directory() != 0)
+            status = -1;
+        else {
+            status = c64_d64_service_mount(path + n + 1);
+            if (resume_c64_directory() != 0)
+                status = -1;
+        }
+    } else if (action == C64_UCI_ACTION_UNMOUNT) {
+        if (device != 8 || quiesce_c64_directory() != 0)
+            status = -1;
+        else {
+            status = c64_d64_service_eject();
+            if (resume_c64_directory() != 0)
+                status = -1;
+        }
+    } else
+        status = -1;
+    c64_title_foreground = false;
+    executing = false;
+    if (!c64_uci_freeze_pending)
+        c64_uci_service_action_done(status == 0 ? 0 : 74);
+}
+static void network_console(void *context, const char *text)
+{
+    (void)context;
+    xil_printf("%s\r\n", text);
+}
+static bool dispatch_c64_title(const char *line)
+{
+    if (shell_is_c64() && !strcmp(line, "sidstat")) {
+        if (!c64_debug.session) {
+            xil_printf("[SID] :debug on is required\r\n");
+            return true;
+        }
+        const mt_c64_title_overlay_t *o = c64_title_service_overlay();
+        xil_printf(
+            "[SID] commit=%08x mapped=%u dropped=%u unavailable-models=%u owned=%08x%08x\r\n",
+            shell_read(MT_REG_C64_SID_STATUS), c64_live_sid_table.mapped,
+            c64_live_sid_table.dropped, c64_live_sid_table.unsupported_models,
+            (unsigned)(o->sid_fields >> 32), (unsigned)o->sid_fields);
+        for (unsigned i = 0; i < 8; ++i)
+            xil_printf("[SID] chip%u base=$%04x params=%08x\r\n", i + 1, c64_live_sid_table.base[i],
+                       c64_live_sid_table.words[48 + i]);
+        for (unsigned i = 0; i < 48; ++i)
+            if (c64_live_sid_table.words[i])
+                xil_printf("[SID] slot%u owners=%08x\r\n", i, c64_live_sid_table.words[i]);
+        xil_printf("[SID] output=%08x; clip counters unavailable in this image\r\n",
+                   c64_live_sid_table.words[56]);
+        return true;
+    }
+    if (!shell_is_c64() || !c64_title_initialized || strncmp(line, "cfg", 3) ||
+        (line[3] && line[3] != ' '))
+        return false;
+    const char *arg = line + 3;
+    while (*arg == ' ')
+        ++arg;
+    if (!*arg) {
+        mt_c64_title_values_t requested, applied;
+        refresh_c64_title(&c64_extension_selection);
+        c64_title_service_effective(&requested, &applied, c64_content_service_crt_attached());
+        xil_printf("[cfg] auto=%s session=%s source=%s owned=%08x CPU=%uMHz REU=%u UA=%u UCI=%u "
+                   "SCPU=%u\r\n",
+                   persistent_settings.c64_title_cfg_off ? "off" : "on",
+                   c64_title_service_session(), c64_title_service_overlay()->source,
+                   (unsigned)c64_title_service_overlay()->owned,
+                   mt_c64_speed_mhz(requested.detail & 15), requested.reu, requested.ua,
+                   requested.uci, (requested.flags & 8) != 0);
+        return true;
+    }
+    if (!strncmp(arg, "test ", 5)) {
+        char report[2048];
+        refresh_c64_title(&c64_extension_selection);
+        (void)c64_title_service_test(arg + 5, report, sizeof report);
+        xil_printf("%s", report);
+        return true;
+    }
+    if (quiesce_c64_uci() != 0) {
+        xil_printf("[cfg] command interface is busy\r\n");
+        return true;
+    }
+    c64_title_foreground = true;
+    int result = -1;
+    char report[2048];
+    if (!strcmp(arg, "save"))
+        result = c64_title_service_save();
+    else if (!strcmp(arg, "revert"))
+        result = c64_title_service_revert();
+    else if (!strncmp(arg, "apply ", 6)) {
+        result = c64_title_service_apply(arg + 6, false, report, sizeof(report));
+        xil_printf("%s", report);
+    } else
+        xil_printf("Usage: :cfg [test relative.cfg|apply relative.cfg|save|revert]\r\n");
+    c64_title_foreground = false;
+    supervisor_menu_dirty = true;
+    set_supervisor_outcome(result == 0, c64_title_service_status(), c64_title_service_status());
+    return true;
+}
+
+static void c64_title_launched(mt_c64_content_service_status_t result)
+{
+    c64_title_service_finish(result);
+    if (result == MT_C64_CONTENT_SERVICE_OK && c64_uci_initialized) {
+        char directory[512];
+        if (mt_media_browser_join(c64_extension_selection.package.content_root,
+                                  c64_title_service_session(), directory, sizeof(directory))) {
+            char *slash = strrchr(directory, '/');
+            if (slash)
+                *slash = 0;
+            c64_uci_service_set_home(directory);
+        }
+    }
+    if (*c64_title_service_status())
+        xil_printf("[C64] %s\r\n", c64_title_service_status());
+}
+static mt_c64_content_service_result_t c64_title_load(const char *path, bool event)
+{
+    refresh_c64_title(&c64_extension_selection);
+    const mt_c64_launch_hook_t *hook = c64_title_service_prepare(
+        path, mt_content_classify(path) == MT_CONTENT_CRT ? MT_TITLE_CRT : MT_TITLE_PRG, event);
+    if (!c64_title_service_launch_allowed())
+        return (mt_c64_content_service_result_t){.status = MT_C64_CONTENT_SERVICE_CONFIG_FAILED};
+    const mt_c64_content_service_result_t r = c64_content_service_load_hooked(path, hook);
+    c64_title_launched(r.status);
+    return r;
+}
+static mt_c64_content_service_result_t c64_title_disk(const uint8_t *data, size_t size)
+{
+    refresh_c64_title(&c64_extension_selection);
+    const mt_c64_launch_hook_t *hook =
+        c64_title_service_prepare(c64_launch_disk_name, MT_TITLE_DISK, true);
+    if (!c64_title_service_launch_allowed())
+        return (mt_c64_content_service_result_t){.status = MT_C64_CONTENT_SERVICE_CONFIG_FAILED};
+    const mt_c64_content_service_result_t r =
+        data ? c64_content_service_stage_prg_image_hooked(data, size, hook)
+             : c64_content_service_prepare_disk_load_hooked(hook);
+    c64_title_launched(r.status);
+    return r;
+}
+static mt_c64_content_service_result_t c64_title_detach(void)
+{
+    refresh_c64_title(&c64_extension_selection);
+    const mt_c64_content_service_result_t r =
+        c64_content_service_detach_crt_hooked(c64_title_service_prepare_detach());
+    c64_title_launched(r.status);
+    return r;
+}
 
 static void handle_c64_content_load(const char *file_name)
 {
     mt_c64_content_service_result_t result;
-    if (mt_content_classify(file_name) == MT_CONTENT_CRT && c64_content_service_reu_enabled()) {
-        set_supervisor_warning("Turn REU off before loading a cartridge");
-        xil_printf("[C64] turn REU off before loading a cartridge\r\n");
-        return;
-    }
     if (!prepare_c64_content_change()) return;
-    result = c64_content_service_load(file_name);
+    result = c64_title_load(file_name, true);
     print_c64_content_result("load", file_name, &result);
     finish_c64_content_change();
     if (result.status == MT_C64_CONTENT_SERVICE_OK) {
@@ -1392,7 +1614,7 @@ static void handle_c64_cart_detach(void)
 {
     mt_c64_content_service_result_t result;
     if (!prepare_c64_content_change()) return;
-    result = c64_content_service_detach_crt();
+    result = c64_title_detach();
     print_c64_content_result("cartridge detach", NULL, &result);
     finish_c64_content_change();
     if (result.status == MT_C64_CONTENT_SERVICE_OK)
@@ -1826,39 +2048,38 @@ static void handle_extended_command(bool recovery_only)
         change_display_mode((size_t)(extended[8]-'0'));
     } else if (strcmp(extended, "diag") == 0) {
         print_read_only_diagnostics("command");
+    } else if (!recovery_only && mt_net_service_command(extended, network_console, NULL)) {
+    } else if (!recovery_only && dispatch_c64_title(extended)) {
     } else if (!recovery_only && dispatch_c64_debug(extended)) {
         /* Commands qualify the image before accessing the new registers. */
     } else if (!recovery_only && c64_debug.reu_host.reload_required) {
         xil_printf("REU cache did not clear; reload the C64 core\r\n");
     } else if (!recovery_only && strcmp(extended, "hid") == 0) {
         usb_hid_service_dump_descriptors();
-    } else if(iigs_active && (strcmp(extended,"disk")==0 || strcmp(extended,"dir")==0)) {
+    } else if (iigs_active && (strcmp(extended, "disk") == 0 || strcmp(extended, "dir") == 0)) {
         print_iigs_media_status();
-    } else if(iigs_active && (strcmp(extended,"diskretry")==0 || strcmp(extended,"saveretry")==0)) {
+    } else if (iigs_active &&
+               (strcmp(extended, "diskretry") == 0 || strcmp(extended, "saveretry") == 0)) {
         if(!hide_menu_for_core_action())return;
         const int result=iigs_content_service_retry();
         if(result!=0)set_supervisor_error(iigs_content_service_error());
         else set_supervisor_status("Apple IIgs media retry completed");
         print_iigs_media_status();
-    } else if(iigs_active && legacy_c64_media_command(extended)) {
+    } else if (iigs_active && legacy_c64_media_command(extended)) {
         xil_printf("[IIgs] C64 command unavailable; use the Apple IIgs Media menu\r\n");
         set_supervisor_warning("Use the Apple IIgs Media menu");
-    } else if (!recovery_only &&
-               strncmp(extended, "c64rx", 5U) == 0 &&
-               (extended[5] == '\0' || extended[5] == ' ' ||
-                extended[5] == '\t')) {
+    } else if (!recovery_only && strncmp(extended, "c64rx", 5U) == 0 &&
+               (extended[5] == '\0' || extended[5] == ' ' || extended[5] == '\t')) {
         handle_c64_rx_command(extended);
     } else if (!recovery_only && strcmp(extended, "dir") == 0) {
         c64_d64_service_list();
     } else if (!recovery_only && strcmp(extended, "disk") == 0) {
         c64_d64_service_dump_status();
-    } else if (!recovery_only && shell_is_c64() &&
-               strcmp(extended, "disk9") == 0) {
+    } else if (!recovery_only && shell_is_c64() && strcmp(extended, "disk9") == 0) {
         xil_printf("[C64] drive9 %s cwd=%s status=%s\r\n",
                    c64_iec_service_active() ? "active" : "inactive",
                    c64_iec_service_cwd(), c64_iec_service_status());
-    } else if (!recovery_only && shell_is_c64() &&
-               strcmp(extended, "disk9retry") == 0) {
+    } else if (!recovery_only && shell_is_c64() && strcmp(extended, "disk9retry") == 0) {
         if (!hide_menu_for_core_action()) return;
         const bool recovered = c64_iec_initialized &&
             c64_iec_service_available() && c64_iec_service_reset() == 0 &&
@@ -2301,10 +2522,9 @@ static bool remember_c64_input_settings(void)
 {
     const char *const core_id = active_settings_core_id();
     return core_id != NULL && ensure_active_settings_profile() &&
-           mt_supervisor_settings_remember_c64_input(
-               &persistent_settings, core_id,
-               usb_hid_service_symbolic_keyboard(),
-               usb_hid_service_joystick_port()) &&
+           mt_supervisor_settings_remember_c64_input(&persistent_settings, core_id,
+                                                     usb_hid_service_symbolic_keyboard(),
+                                                     stored_c64_joystick()) &&
            save_persistent_settings();
 }
 
@@ -2317,10 +2537,9 @@ static bool remember_manual_selection(const mt_core_selection_t *selection)
         return false;
     }
     if (selection->package.core_id == MT_C64_CORE_ID &&
-        !mt_supervisor_settings_remember_c64_input(
-            &persistent_settings, selection->package.id,
-            usb_hid_service_symbolic_keyboard(),
-            usb_hid_service_joystick_port())) {
+        !mt_supervisor_settings_remember_c64_input(&persistent_settings, selection->package.id,
+                                                   usb_hid_service_symbolic_keyboard(),
+                                                   stored_c64_joystick())) {
         return false;
     }
     return save_persistent_settings();
@@ -2373,15 +2592,253 @@ static mt_c64_capabilities_t selection_c64_features(const mt_core_selection_t *s
         selection->package.abi_major, selection->package.abi_minor);
 }
 
+static mt_c64_title_values_t c64_stored_values(const mt_core_selection_t *selection)
+{
+    mt_c64_title_values_t v;
+    mt_c64_title_defaults(&v);
+    const mt_core_settings_profile_t *p =
+        selection ? mt_supervisor_settings_find(&persistent_settings, selection->package.id) : NULL;
+    v.detail = persistent_settings.c64_turbo_detail;
+    v.flags = persistent_settings.c64_turbo_flags;
+    v.ua = persistent_settings.c64_ultimate_audio;
+    v.uci = persistent_settings.c64_command_interface;
+    v.turbo = p && p->c64_cpu_turbo;
+    v.reu = p ? p->c64_reu_enabled : MT_SETTINGS_C64_REU_DEFAULT;
+    v.sid_mode = p ? p->c64_sid_mode : MT_SETTINGS_C64_SID_MODE_DEFAULT;
+    v.joystick = p ? p->joystick_port : 2;
+    v.sid = c64_stored_sid;
+    mt_c64_sid_table_t table;
+    v.sid_custom = mt_c64_sid_build(&v.sid, 8, true, &table) && table.legacy_mode == 255;
+    return v;
+}
+static uint8_t stored_c64_joystick(void)
+{
+    return c64_title_initialized
+               ? c64_stored_values(supervisor.has_active ? &supervisor.active : NULL).joystick
+               : usb_hid_service_joystick_port();
+}
+static void refresh_c64_title(const mt_core_selection_t *selection)
+{
+    if (!c64_title_initialized || !selection)
+        return;
+    const mt_c64_title_values_t v = c64_stored_values(selection);
+    const mt_c64_capabilities_t caps = selection_c64_features(selection);
+    c64_title_caps = caps;
+    c64_legacy_turbo_available = selection->package.abi_minor >= 8U;
+    const bool ntsc =
+        strstr(selection->package.variants[selection->variant_index].id, "ntsc") != NULL;
+    c64_title_service_refresh(&v, &caps, ntsc, !persistent_settings.c64_title_cfg_off);
+}
+static mt_c64_title_values_t c64_requested_values(const mt_core_selection_t *selection,
+                                                  bool cartridge)
+{
+    mt_c64_title_values_t requested = c64_stored_values(selection), applied;
+    refresh_c64_title(selection);
+    if (c64_title_initialized)
+        c64_title_service_effective(&requested, &applied, cartridge);
+    return requested;
+}
+static int quiesce_c64_uci(void)
+{
+    if (!c64_uci_initialized)
+        return 0;
+    const uint64_t start = monotonic_ms(NULL);
+    for (;;) {
+        int r = c64_uci_service_quiesce();
+        if (r <= 0)
+            return r;
+        service_usb_input();
+        if (monotonic_ms(NULL) - start >= 1000U)
+            return -1;
+    }
+}
+static int apply_c64_title(void *context, const mt_c64_title_values_t *v, bool live, bool event)
+{
+    (void)context;
+    if (c64_sid_commit_fault)
+        return -1;
+    const mt_c64_capabilities_t caps = c64_title_caps;
+    if (mt_c64_title_io_conflict(v, &caps, c64_content_service_crt_attached()))
+        return -1;
+    const bool map = (caps.expansion & MT_C64_EXPANSION_CAPS_MULTI_SID) != 0;
+    mt_c64_sid_table_t table;
+    if (!mt_c64_sid_build(&v->sid, map ? ((caps.expansion >> 8) & 7) + 1 : 2,
+                          (caps.expansion & MT_C64_EXPANSION_CAPS_SID_MODEL_8580) != 0, &table))
+        return -1;
+    if (!map && table.legacy_mode == 255)
+        return -1;
+    bool held = false, menu_hold = false;
+    if (live) {
+        const uint64_t start = monotonic_ms(NULL);
+        if (c64_uci_initialized && c64_uci_service_available()) {
+            for (;;) {
+                int r = c64_uci_service_hold_begin();
+                if (r == 0) {
+                    held = true;
+                    break;
+                }
+                if (r < 0 || monotonic_ms(NULL) - start >= 1000U) {
+                    c64_uci_service_hold_end();
+                    return -1;
+                }
+                service_usb_input();
+            }
+        } else {
+            c64_debug_pause(NULL, true);
+            menu_hold = true;
+            while (caps.turbo && !(shell_read(MT_REG_C64_CPU_STATUS) & MT_C64_CPU_STATUS_PAUSE)) {
+                service_usb_input();
+                if (monotonic_ms(NULL) - start >= 1000U) {
+                    c64_debug_pause(NULL, false);
+                    return -1;
+                }
+            }
+        }
+    }
+    int result = 0;
+    if (map && table.legacy_mode == 255) {
+        const uint32_t old = shell_read(MT_REG_C64_SID_STATUS);
+        if (old & MT_C64_SID_STATUS_BUSY) {
+            result = -1;
+            goto done;
+        }
+        const uint8_t sequence = (uint8_t)(old + 1U);
+        for (unsigned i = 0; i < MT_C64_SID_WORDS; ++i) {
+            Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_C64_SID_INDEX, i);
+            Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_C64_SID_DATA, table.words[i]);
+        }
+        Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_C64_SID_COMMIT, sequence);
+        const uint64_t start = monotonic_ms(NULL);
+        for (;;) {
+            const uint32_t s = shell_read(MT_REG_C64_SID_STATUS);
+            if ((s & MT_C64_SID_STATUS_VALID) && !(s & MT_C64_SID_STATUS_BUSY) &&
+                (uint8_t)s == sequence)
+                break;
+            if (s & MT_C64_SID_STATUS_REJECTED) {
+                result = -1;
+                goto done;
+            }
+            if (monotonic_ms(NULL) - start >= 1000U) {
+                /* An accepted bank can still become active after a delayed ACK.
+                 * Preserve HOLD; only reloading the FPGA cancels this ambiguity. */
+                c64_sid_commit_fault = true;
+                c64_uci_service_hold_fault();
+                xil_printf(
+                    "[C64] SID commit timed out; core remains held. Reload the C64 core.\r\n");
+                result = -1;
+                goto done;
+            }
+            service_usb_input();
+        }
+    }
+    {
+        uint32_t expansion =
+            mt_c64_expansion_restore(table.legacy_mode == 255 ? v->sid_mode : table.legacy_mode,
+                                     v->reu, v->ua, false, &caps);
+        if (v->uci && (caps.expansion & MT_C64_EXPANSION_CAPS_UCI))
+            expansion |= MT_C64_EXPANSION_UCI_ENABLE;
+        if (map && table.legacy_mode == 255)
+            expansion |= MT_C64_EXPANSION_SID_MAP_ENABLE;
+        if (caps.expansion & MT_C64_EXPANSION_CAPS_VALID)
+            Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_C64_EXPANSION_CONFIG, expansion);
+        if (caps.turbo) {
+            const uint32_t previous = shell_read(MT_REG_C64_CPU_CONFIG);
+            const uint32_t config =
+                mt_c64_turbo_config(v->detail, v->flags, v->turbo, &caps, previous, false);
+            Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_C64_CPU_CONFIG,
+                      mt_c64_debug_effective_overlay(&c64_debug, config, previous, event));
+        }
+        set_c64_cpu_turbo(c64_legacy_turbo_available && v->turbo);
+        (void)usb_hid_service_set_joystick_port(v->joystick);
+        c64_live_sid_table = table;
+    }
+done:
+    if (!c64_sid_commit_fault) {
+        if (held)
+            c64_uci_service_hold_end();
+        if (menu_hold)
+            c64_debug_pause(NULL, false);
+    }
+    return result;
+}
+static uint64_t uci_microseconds(void *context)
+{
+    (void)context;
+    return monotonic_ms(NULL) * 1000U;
+}
+static bool uci_get_time(void *context, mt_clock_time_t *value)
+{
+    (void)context;
+    if (service_fatfs_time() != 0 || !board_clock_valid)
+        return false;
+    *value = board_clock;
+    return true;
+}
+static bool uci_set_time(void *context, const mt_clock_time_t *value)
+{
+    (void)context;
+    return set_board_clock(value);
+}
+static int uci_apply_config(void *context, const char *path, char *report, size_t capacity)
+{
+    (void)context;
+    refresh_c64_title(supervisor.has_active ? &supervisor.active : NULL);
+    return c64_title_service_apply(path, true, report, capacity);
+}
+static size_t uci_sid_info(void *context, unsigned command, uint8_t *data, size_t capacity)
+{
+    (void)context;
+    return mt_c64_sid_hwinfo(&c64_live_sid_table, command, data, capacity);
+}
+static int initialize_c64_extensions(const mt_core_selection_t *selection)
+{
+    c64_extension_selection = *selection;
+    c64_sid_commit_fault = false;
+    const mt_core_settings_profile_t *profile =
+        mt_supervisor_settings_find(&persistent_settings, selection->package.id);
+    if (!mt_supervisor_sid_map_load(
+            selection->package.id,
+            profile ? profile->c64_sid_mode : MT_SETTINGS_C64_SID_MODE_DEFAULT, &c64_stored_sid))
+        xil_printf("[C64] SID companion unavailable; legacy preset retained\r\n");
+    if (!(selection_c64_features(selection).expansion & MT_C64_EXPANSION_CAPS_MULTI_SID)) {
+        const unsigned legacy = profile ? profile->c64_sid_mode : MT_SETTINGS_C64_SID_MODE_DEFAULT;
+        (void)mt_c64_sid_preset(&c64_stored_sid, legacy == 0   ? MT_SID_SINGLE
+                                                 : legacy == 2 ? MT_SID_DUAL420
+                                                               : MT_SID_DUAL500);
+        /* Keep the companion file intact for the next capable image. */
+    }
+    const c64_title_callbacks_t title_callbacks = {NULL, apply_c64_title};
+    if (c64_title_service_init(selection->package.content_root, &title_callbacks) != 0)
+        return -1;
+    c64_title_initialized = true;
+    c64_title_foreground = false;
+    refresh_c64_title(selection);
+    const c64_uci_callbacks_t uci_callbacks = {
+        NULL,         uci_microseconds, c64_iec_path_protected,
+        uci_get_time, uci_set_time,     uci_apply_config,
+        uci_sid_info};
+    if (c64_uci_service_init(&shell_link, selection->package.content_root, &uci_callbacks) != 0)
+        return -1;
+    c64_uci_initialized = true;
+    uint8_t card_identity[16];
+    if (mt_sd_storage_card_identity(card_identity))
+        mt_net_service_seed(card_identity, sizeof(card_identity));
+    mt_net_service_init(&shell_link);
+    return 0;
+}
+
 static void configure_c64_turbo(const mt_core_selection_t *selection,
     const mt_core_settings_profile_t *profile, bool apply)
 {
     const mt_c64_capabilities_t caps = selection_c64_features(selection);
-    const bool enabled = profile != NULL && profile->c64_cpu_turbo;
+    (void)profile;
+    const mt_c64_title_values_t values =
+        c64_requested_values(selection, c64_content_service_crt_attached());
+    const bool enabled = values.turbo;
     if (caps.turbo) {
         const uint32_t previous = shell_read(MT_REG_C64_CPU_CONFIG);
-        const uint32_t stored = mt_c64_turbo_config(persistent_settings.c64_turbo_detail,
-            persistent_settings.c64_turbo_flags, enabled, &caps, previous, false);
+        const uint32_t stored =
+            mt_c64_turbo_config(values.detail, values.flags, enabled, &caps, previous, false);
         const uint32_t config = mt_c64_debug_effective_overlay(&c64_debug,
             stored, previous, apply);
         Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_C64_CPU_CONFIG, config);
@@ -2392,15 +2849,12 @@ static void configure_c64_turbo(const mt_core_selection_t *selection,
 static void configure_c64_expansion(const mt_core_selection_t *selection,
                                      const mt_core_settings_profile_t *profile)
 {
-    const uint32_t caps = selection_c64_expansion_caps(selection);
-    if ((caps & (MT_C64_EXPANSION_CAPS_DUAL_SID | MT_C64_EXPANSION_CAPS_REU_16MB)) == 0U) return;
-    const mt_c64_capabilities_t features = selection_c64_features(selection);
-    const bool reu = profile != NULL ? profile->c64_reu_enabled : MT_SETTINGS_C64_REU_DEFAULT;
-    const bool cart_pending = profile != NULL && profile->cartridge_name[0] != '\0' && !reu;
-    const uint32_t config = mt_c64_expansion_restore(
-        profile != NULL ? profile->c64_sid_mode : MT_SETTINGS_C64_SID_MODE_DEFAULT,
-        reu, persistent_settings.c64_ultimate_audio, cart_pending, &features);
-    Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_C64_EXPANSION_CONFIG, config);
+    (void)profile;
+    refresh_c64_title(selection);
+    mt_c64_title_values_t requested, applied;
+    c64_title_service_effective(&requested, &applied, c64_content_service_crt_attached());
+    if (apply_c64_title(NULL, &applied, false, false) != 0)
+        xil_printf("[C64] expansion configuration was not applied\r\n");
 }
 
 static bool restore_selection_settings(
@@ -2434,23 +2888,19 @@ static bool restore_selection_settings(
         configure_c64_expansion(selection, profile);
         configure_c64_turbo(selection, profile, false);
         if (profile != NULL) {
-            if (usb_hid_service_set_symbolic_keyboard(
-                    profile->symbolic_keyboard) != 0 ||
+            if (usb_hid_service_set_symbolic_keyboard(profile->symbolic_keyboard) != 0 ||
                 usb_hid_service_set_joystick_port(
-                    profile->joystick_port) != 0) {
+                    c64_requested_values(selection, c64_content_service_crt_attached()).joystick) !=
+                    0) {
                 xil_printf("[settings] C64 input restore failed\r\n");
                 ok = false;
             }
             if (profile->cartridge_name[0] != '\0') {
                 mt_c64_content_service_result_t content;
-                if (c64_content_service_reu_enabled()) {
-                    xil_printf("[settings] cartridge restore skipped; turn REU off first\r\n");
-                    ok = false;
-                } else if (!prepare_c64_content_change()) {
+                if (!prepare_c64_content_change()) {
                     ok = false;
                 } else {
-                    content = c64_content_service_load(
-                        profile->cartridge_name);
+                    content = c64_title_load(profile->cartridge_name, false);
                     print_c64_content_result(
                         "settings restore", profile->cartridge_name,
                         &content);
@@ -2621,6 +3071,24 @@ static mt_menu_view_t supervisor_menu_view(void)
             (shell_read(MT_REG_CONTROL) & MT_CONTROL_C64_CPU_TURBO_ENABLE) != 0U;
         state.symbolic_keyboard = usb_hid_service_symbolic_keyboard();
         state.joystick_port = usb_hid_service_joystick_port();
+        const mt_c64_title_values_t values =
+            c64_requested_values(&supervisor.active, state.cartridge_attached);
+        state.c64_turbo_detail = values.detail;
+        state.c64_turbo_flags = values.flags;
+        state.cpu_turbo_enabled = values.turbo;
+        state.c64_reu_enabled = values.reu;
+        state.c64_ua_enabled = values.ua;
+        state.c64_sid_mode = values.sid_mode;
+        state.c64_sid = values.sid;
+        state.c64_uci_enabled = values.uci;
+        state.c64_title_automatic = !persistent_settings.c64_title_cfg_off;
+        state.c64_title_session = *c64_title_service_session() != 0;
+        state.c64_title_source = c64_title_service_overlay()->source;
+        state.c64_title_owned = c64_title_service_overlay()->owned;
+        state.c64_sid_owned = c64_title_service_overlay()->sid_fields;
+        state.c64_sid_classes = c64_title_service_overlay()->sid_classes;
+        state.c64_sid_setup = supervisor_menu.core_subpage;
+        state.c64_selected_sid = c64_selected_sid;
     } else if (supervisor.has_active &&
                supervisor.active.package.core_id == MT_GBC_CORE_ID &&
                gameboy_service_initialized) {
@@ -2780,6 +3248,10 @@ static mt_menu_view_t supervisor_menu_view(void)
         snapshot.clock_available = board_clock_available;
         snapshot.clock_valid = board_clock_valid;
         snapshot.clock = board_clock;
+        static char network_status[96];
+        mt_net_service_status(network_status, sizeof(network_status));
+        snapshot.network_available = c64_uci_initialized && shell_is_c64();
+        snapshot.network_status = network_status;
         snapshot.usb_started = usb.started != 0U;
         snapshot.keyboards = usb.keyboards;
         snapshot.gamepads = usb.gamepads;
@@ -2845,10 +3317,19 @@ static int collect_menu_file(void *context, const char *name, size_t size,
     const bool folders = mt_core_frontend_browser_folders(
         supervisor.has_active ? supervisor.active.package.core_id:0U,browser);
     if (!mt_media_browser_visible_component(name)) return 0;
-    accepted = is_directory ? folders :
-        document || (supervisor.has_active && browser != MT_MENU_BROWSER_DOCUMENTS &&
-            mt_core_frontend_accepts_drive_content(supervisor.active.package.core_id, browser,
-                iigs_browser_drive,type));
+    const char *extension = strrchr(name, '.');
+    const bool config = extension && strlen(extension) == 4 &&
+                        (extension[1] == 'c' || extension[1] == 'C') &&
+                        (extension[2] == 'f' || extension[2] == 'F') &&
+                        (extension[3] == 'g' || extension[3] == 'G');
+    accepted =
+        is_directory ? folders
+        : browser == MT_MENU_BROWSER_CONFIG
+            ? config
+            : document ||
+                  (supervisor.has_active && browser != MT_MENU_BROWSER_DOCUMENTS &&
+                   mt_core_frontend_accepts_drive_content(supervisor.active.package.core_id,
+                                                          browser, iigs_browser_drive, type));
     if (!accepted) return 0;
     name_size = strlen(name);
     if (name_size == 0U || name_size >= MT_MENU_FILE_NAME_MAX) return 0;
@@ -3030,6 +3511,17 @@ static int supervisor_quiesce(void *context)
     mt_c64_debug_deactivate(&c64_debug);
     c64_debug_pause_active = false;
     if (set_core_reset_request(true) != 0) return -1;
+    if (c64_uci_initialized)
+        c64_uci_service_reset();
+    /* USB export can still be refused by the DDR drain or SD ownership gate.
+     * Keep the live session until acquire succeeds so cancellation can resume
+     * its title overlay and effective network configuration unchanged. */
+    if (!usb_sd_modal) {
+        mt_net_service_shutdown();
+        c64_title_service_clear();
+        c64_title_initialized = false;
+        c64_uci_initialized = false;
+    }
     set_audio(true, (control & MT_CONTROL_AUDIO_TEST_ENABLE) != 0U);
     usb_hid_service_set_core_ready(false);
     return 0;
@@ -3304,6 +3796,8 @@ static int supervisor_activate(void *context,
                             c64_iec_path_protected, NULL) != 0) return -1;
     c64_iec_initialized = true;
     c64_iec_fault_displayed = false;
+    if (initialize_c64_extensions(selection) != 0)
+        return -1;
     profile = mt_supervisor_settings_find(&persistent_settings,
                                           selection->package.id);
     request_fast_roms = selection->package.abi_minor >= 8U &&
@@ -3487,7 +3981,16 @@ static void usb_sd_cancel_quiesce(void *context)
     usb_hid_service_set_core_ready((shell_read(MT_REG_CONTROL)&MT_CONTROL_CORE_RESET_REQUEST)==0U);
 }
 static int usb_sd_acquire(void *context)
-{ (void)context;return mt_sd_storage_external_acquire().status==MT_SD_OK ? 0:-1; }
+{
+    (void)context;
+    if (mt_sd_storage_external_acquire().status != MT_SD_OK)
+        return -1;
+    mt_net_service_shutdown();
+    c64_title_service_clear();
+    c64_title_initialized = false;
+    c64_uci_initialized = false;
+    return 0;
+}
 static int usb_sd_connect(void *context)
 {
     (void)context;
@@ -3998,7 +4501,7 @@ static void launch_disk_program_native(uint32_t cookie)
         set_supervisor_error("Disk load could not start");
         return;
     }
-    result = c64_content_service_prepare_disk_load();
+    result = c64_title_disk(NULL, 0);
     print_c64_content_result("native load prepare", entry->display_name,
                              &result);
     remounted = finish_c64_content_change();
@@ -4175,132 +4678,333 @@ static bool dispatch_c64_debug(const char *line)
     return handled;
 }
 
+static bool commit_c64_edit(const mt_c64_title_values_t *value, uint32_t groups,
+                            uint64_t sid_fields, uint8_t sid_classes)
+{
+    const mt_c64_title_values_t previous =
+        c64_requested_values(&supervisor.active, c64_content_service_crt_attached());
+    mt_c64_title_values_t applied = *value;
+    if (c64_content_service_crt_attached()) {
+        applied.reu = false;
+        applied.ua = false;
+    }
+    const char *conflict =
+        mt_c64_title_io_conflict(&applied, &c64_title_caps, c64_content_service_crt_attached());
+    if (conflict) {
+        set_supervisor_warning(conflict);
+        return false;
+    }
+    const bool transient = (groups == MT_TITLE_SID)
+                               ? c64_title_service_sid_owned(sid_fields)
+                               : (c64_title_service_overlay()->owned & groups) != 0;
+    if (apply_c64_title(NULL, &applied, true, true) != 0) {
+        set_supervisor_warning("Settings could not reach a safe apply point");
+        return false;
+    }
+    if (transient) {
+        if (groups == MT_TITLE_SID)
+            c64_title_service_edit_sid(&value->sid, sid_fields, sid_classes);
+        else
+            (void)c64_title_service_edit(groups, value);
+        set_supervisor_status("Changed for this title; Save makes it permanent");
+        supervisor_menu_dirty = true;
+        return true;
+    }
+    const mt_c64_title_values_t saved = c64_stored_values(&supervisor.active);
+    mt_c64_title_overlay_t edit = {0};
+    edit.values = *value;
+    edit.owned = groups;
+    edit.sid_fields = sid_fields;
+    edit.sid_classes = sid_classes;
+    mt_c64_title_values_t next, unused;
+    mt_c64_title_effective(&next, &unused, &saved, &edit, false);
+    settings_before_update = persistent_settings;
+    const mt_c64_sid_model_t old_sid = c64_stored_sid;
+    bool valid = ensure_active_settings_profile();
+    if (valid && (groups & MT_TITLE_TURBO))
+        valid = mt_supervisor_settings_remember_c64_cpu_turbo(
+            &persistent_settings, supervisor.active.package.id, next.turbo);
+    if (valid && (groups & (MT_TITLE_SID | MT_TITLE_MEMORY))) {
+        uint8_t legacy = next.sid_mode;
+        if (groups & MT_TITLE_SID) {
+            uint8_t record[128];
+            valid = mt_c64_sid_encode(&next.sid, supervisor.active.package.id, record);
+            if (valid) {
+                legacy = record[24];
+                valid = mt_supervisor_sid_map_save(supervisor.active.package.id, &next.sid);
+            }
+            if (valid)
+                c64_stored_sid = next.sid;
+        }
+        if (valid)
+            valid = mt_supervisor_settings_remember_c64_expansion(
+                &persistent_settings, supervisor.active.package.id, legacy, next.reu);
+    }
+    if (valid && (groups & MT_TITLE_JOYSTICK))
+        valid = mt_supervisor_settings_remember_c64_input(
+            &persistent_settings, supervisor.active.package.id, usb_hid_service_symbolic_keyboard(),
+            next.joystick);
+    persistent_settings.c64_turbo_detail = next.detail;
+    persistent_settings.c64_turbo_flags = next.flags;
+    persistent_settings.c64_ultimate_audio = next.ua;
+    persistent_settings.c64_command_interface = next.uci;
+    if (!valid || !save_persistent_settings()) {
+        persistent_settings = settings_before_update;
+        bool map_restored = true;
+        if (groups & MT_TITLE_SID) {
+            map_restored = mt_supervisor_sid_map_save(supervisor.active.package.id, &old_sid);
+            c64_stored_sid = old_sid;
+        }
+        mt_c64_title_values_t rollback = previous;
+        if (c64_content_service_crt_attached()) {
+            rollback.reu = false;
+            rollback.ua = false;
+        }
+        const bool restored = apply_c64_title(NULL, &rollback, true, false) == 0;
+        set_supervisor_warning(
+            !map_restored ? "SID settings recovery failed; retry Save before reloading"
+            : restored    ? "Setting was not saved; previous value restored"
+                          : "Setting was not saved; hardware restore failed. Reset the core.");
+        return false;
+    }
+    refresh_c64_title(&supervisor.active);
+    supervisor_menu_dirty = true;
+    set_supervisor_status("Setting saved");
+    return true;
+}
 static void change_c64_expansion(size_t option)
 {
-    const mt_c64_capabilities_t features = selection_c64_features(
-        supervisor.has_active ? &supervisor.active : NULL);
-    const uint32_t caps = features.expansion;
-    const uint32_t required = option == 2U ? MT_C64_EXPANSION_CAPS_DUAL_SID :
-        option == 3U ? MT_C64_EXPANSION_CAPS_REU_16MB :
-        option == 8U && features.ultimate_audio ? MT_C64_EXPANSION_CAPS_ULTIMATE_AUDIO : 0U;
-    if (required == 0U || (caps & required) == 0U) {
+    const mt_c64_capabilities_t caps =
+        selection_c64_features(supervisor.has_active ? &supervisor.active : NULL);
+    if (!supervisor.has_active ||
+        (option == 2 && !(caps.expansion & MT_C64_EXPANSION_CAPS_DUAL_SID)) ||
+        (option == 3 && !(caps.expansion & MT_C64_EXPANSION_CAPS_REU_16MB))) {
         set_supervisor_warning("Core option unavailable");
         return;
     }
-    const uint32_t old_config = shell_read(MT_REG_C64_EXPANSION_CONFIG);
-    uint8_t sid = (uint8_t)(old_config & MT_C64_EXPANSION_SID_MODE_MASK);
-    bool reu = (old_config & MT_C64_EXPANSION_REU_ENABLE) != 0U;
-    const bool old_ua = features.ultimate_audio &&
-        (old_config & MT_C64_EXPANSION_ULTIMATE_AUDIO_ENABLE) != 0U;
-    bool ua = old_ua;
-    if (option == 2U) sid = sid == 0U ? 2U : sid == 2U ? 3U : 0U;
-    else if (option == 3U) { reu = !reu; if (!reu) ua = false; }
-    else { ua = !ua; if (ua) reu = true; }
-    if (((option == 3U && reu) || (option == 8U && ua)) && c64_content_service_crt_attached()) {
-        set_supervisor_warning(option == 8U ?
-            "Eject the cartridge before enabling Ultimate Audio" : "Eject the cartridge before enabling REU");
+    mt_c64_title_values_t value =
+        c64_requested_values(&supervisor.active, c64_content_service_crt_attached());
+    uint32_t group = MT_TITLE_MEMORY;
+    if (option == 2) {
+        unsigned id = mt_c64_sid_preset_id(&value.sid);
+        unsigned maximum =
+            (caps.expansion & MT_C64_EXPANSION_CAPS_MULTI_SID) ? MT_SID_EIGHT : MT_SID_DUAL500;
+        id = id < 1 || id >= maximum ? 1 : id + 1;
+        (void)mt_c64_sid_preset(&value.sid, id);
+        group = MT_TITLE_SID;
+    } else if (option == 3) {
+        value.reu = !value.reu;
+        if (!value.reu)
+            value.ua = false;
+    } else if (option == 8 && caps.ultimate_audio) {
+        value.ua = !value.ua;
+        if (value.ua)
+            value.reu = true;
+    } else if (option == 14 && (caps.cpu2 & MT_C64_CPU_CAPS2_SCPU_DETECT)) {
+        value.flags ^= 8;
+        group = MT_TITLE_SCPU;
+    } else if (option == 15 && (caps.expansion & MT_C64_EXPANSION_CAPS_UCI)) {
+        value.uci = !value.uci;
+        group = MT_TITLE_UCI;
+    } else
+        return;
+    if (group == MT_TITLE_MEMORY && value.reu && c64_content_service_crt_attached()) {
+        set_supervisor_warning("Eject the cartridge before enabling expansion memory");
         return;
     }
-    if (option == 8U && (shell_read(MT_REG_C64_UA_STATUS) & MT_C64_UA_STATUS_FAULT)) {
+    if (group == MT_TITLE_MEMORY && caps.ultimate_audio &&
+        (shell_read(MT_REG_C64_UA_STATUS) & MT_C64_UA_STATUS_FAULT)) {
         set_supervisor_warning("Reload the C64 core to clear the memory fault");
         return;
     }
-    settings_before_update = persistent_settings;
-    bool valid = ensure_active_settings_profile();
-    if (valid) {
-        const mt_core_settings_profile_t *saved = mt_supervisor_settings_find(
-            &persistent_settings, supervisor.active.package.id);
-        const uint8_t stored_sid = (caps & MT_C64_EXPANSION_CAPS_DUAL_SID) ? sid : saved->c64_sid_mode;
-        const bool stored_reu = (caps & MT_C64_EXPANSION_CAPS_REU_16MB) ? reu : saved->c64_reu_enabled;
-        valid = mt_supervisor_settings_remember_c64_expansion(&persistent_settings,
-            supervisor.active.package.id, stored_sid, stored_reu);
-        if (features.ultimate_audio && ua != old_ua) persistent_settings.c64_ultimate_audio = ua;
-    }
-    if (!valid || !save_persistent_settings()) {
-        persistent_settings = settings_before_update;
-        set_supervisor_warning("Expansion setting not saved");
-        return;
-    }
-    const uint32_t value = sid | (reu ? MT_C64_EXPANSION_REU_ENABLE : 0U) |
-        (ua ? MT_C64_EXPANSION_ULTIMATE_AUDIO_ENABLE : 0U);
-    Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_C64_EXPANSION_CONFIG,
-        (old_config & ~MT_C64_EXPANSION_CONFIG_MASK) | value);
-    supervisor_menu_dirty = true;
-    set_supervisor_status(option == 2U ? "SID audio setting saved" :
-        option == 8U ? (ua ? ((old_config & MT_C64_EXPANSION_REU_ENABLE) ?
-            "Ultimate Audio enabled" : "Ultimate Audio and 16 MB REU enabled") :
-            "Ultimate Audio disabled; REU stays on") :
-        reu ? "16 MB REU enabled" : old_ua ? "REU and Ultimate Audio disabled; cartridges available" :
-            "REU disabled; cartridges available");
+    (void)commit_c64_edit(&value, group, UINT64_MAX, 7);
 }
-
 static void change_c64_turbo(size_t option)
 {
-    const mt_c64_capabilities_t caps = selection_c64_features(
-        supervisor.has_active ? &supervisor.active : NULL);
-    if (!caps.turbo) { set_supervisor_warning("Core option unavailable"); return; }
-    if (option != 1U && option != 4U && option != 5U && option != 6U &&
-        option != 7U && option != 9U && option != 10U && option != 12U && option != 13U)
+    const mt_c64_capabilities_t caps =
+        selection_c64_features(supervisor.has_active ? &supervisor.active : NULL);
+    if (!caps.turbo) {
+        set_supervisor_warning("Core option unavailable");
         return;
-    if (option == 7U && !(caps.cpu & MT_C64_CPU_CAPS_CARTRIDGE_TURBO)) return;
-    if (option == 10U && !(caps.cpu2 & MT_C64_CPU_CAPS2_FOLLOW_CPU)) return;
-    const bool had_override = c64_debug.override_active;
-    mt_c64_debug_clear_override(&c64_debug);
-    const mt_core_settings_profile_t *profile = mt_supervisor_settings_find(
-        &persistent_settings, supervisor.active.package.id);
-    bool enabled = profile != NULL && profile->c64_cpu_turbo;
-    uint8_t detail = mt_c64_turbo_detail(persistent_settings.c64_turbo_detail);
-    uint8_t flags = persistent_settings.c64_turbo_flags;
+    }
+    if (option == 7 && !(caps.cpu & MT_C64_CPU_CAPS_CARTRIDGE_TURBO))
+        return;
+    if (option == 10 && !(caps.cpu2 & MT_C64_CPU_CAPS2_FOLLOW_CPU))
+        return;
+    mt_c64_title_values_t value =
+        c64_requested_values(&supervisor.active, c64_content_service_crt_attached());
+    uint32_t group = MT_TITLE_TURBO;
     switch (option) {
-    case 1U:
-        if (!enabled) { enabled = true; detail = (detail & 0x3FU) | 0x40U; }
-        else if ((detail >> 6) == 3U) enabled = false;
-        else detail = (uint8_t)(detail + 0x40U);
+    case 1:
+        if (!value.turbo) {
+            value.turbo = true;
+            value.detail = (value.detail & 0x3f) | 0x40;
+        } else if ((value.detail >> 6) == 3)
+            value.turbo = false;
+        else
+            value.detail += 0x40;
         break;
-    case 9U: enabled = !enabled; break;
-    case 4U: detail = (uint8_t)((detail & 0xF0U) | mt_c64_next_speed(detail & 15U, (uint16_t)caps.cpu)); break;
-    case 5U: detail ^= 0x20U; break;
-    case 6U: flags ^= 1U; break;
-    case 7U: flags ^= 2U; break;
-    case 10U: detail ^= 0x10U; break;
-    case 12U: /* Controller action: CPU faster. */
-        if (!enabled) { enabled = true; detail = (detail & 0x3FU) | 0x40U; }
-        detail = (uint8_t)((detail & 0xF0U) | mt_c64_step_speed(detail & 15U, (uint16_t)caps.cpu, true));
+    case 9:
+        value.turbo = !value.turbo;
         break;
-    case 13U: /* Controller action: CPU slower. */
-        if (!enabled) {
-            if (had_override) configure_c64_turbo(&supervisor.active, profile, true);
+    case 4:
+        value.detail = (uint8_t)((value.detail & 0xf0) |
+                                 mt_c64_next_speed(value.detail & 15, (uint16_t)caps.cpu));
+        group = MT_TITLE_SPEED;
+        break;
+    case 5:
+        value.detail ^= 0x20;
+        group = MT_TITLE_BADLINE;
+        break;
+    case 6:
+        value.flags ^= 1;
+        group = MT_TITLE_AUTOSLOW;
+        break;
+    case 7:
+        value.flags ^= 2;
+        group = MT_TITLE_CART;
+        break;
+    case 10:
+        value.detail ^= 0x10;
+        group = MT_TITLE_FOLLOW;
+        break;
+    case 12:
+    case 13:
+        if (option == 13 && !value.turbo) {
+            /* A slower action also ends a temporary :speed session when the
+             * stored/title mode is Off. Apply that mode without saving a no-op.
+             * A failed HOLD leaves both the live configuration and override. */
+            if (c64_debug.override_active) {
+                mt_c64_debug_clear_override(&c64_debug);
+                if (apply_c64_title(NULL, &value, true, true) != 0) {
+                    c64_debug.override_active = true;
+                    set_supervisor_warning("Settings could not reach a safe apply point");
+                    return;
+                }
+            }
             set_supervisor_status("Turbo is off");
             return;
         }
-        detail = (uint8_t)((detail & 0xF0U) | mt_c64_step_speed(detail & 15U, (uint16_t)caps.cpu, false));
-        break;
-    default: return;
-    }
-    settings_before_update = persistent_settings;
-    bool valid = ensure_active_settings_profile();
-    if (valid) valid = mt_supervisor_settings_remember_c64_cpu_turbo(
-        &persistent_settings, supervisor.active.package.id, enabled);
-    persistent_settings.c64_turbo_detail = detail;
-    persistent_settings.c64_turbo_flags = flags;
-    if (!valid || !save_persistent_settings()) {
-        persistent_settings = settings_before_update;
-        if (had_override) {
-            profile = mt_supervisor_settings_find(&persistent_settings, supervisor.active.package.id);
-            configure_c64_turbo(&supervisor.active, profile, true);
+        if (!value.turbo) {
+            value.turbo = true;
+            value.detail = (value.detail & 0x3f) | 0x40;
         }
-        set_supervisor_warning("CPU turbo setting not saved");
+        value.detail =
+            (uint8_t)((value.detail & 0xf0) |
+                      mt_c64_step_speed(value.detail & 15, (uint16_t)caps.cpu, option == 12));
+        group = MT_TITLE_TURBO | MT_TITLE_SPEED;
+        break;
+    default:
         return;
     }
-    profile = mt_supervisor_settings_find(&persistent_settings, supervisor.active.package.id);
-    configure_c64_turbo(&supervisor.active, profile, true);
-    supervisor_menu_dirty = true;
-    char message[128];
-    const uint32_t status = shell_read(MT_REG_C64_CPU_STATUS);
-    (void)snprintf(message, sizeof(message), "%s: %u MHz saved, now %u MHz (%s)",
-        enabled ? "CPU turbo" : "Turbo off", mt_c64_speed_mhz(detail & 15U),
-        mt_c64_speed_mhz(status & 15U), mt_c64_turbo_reason(status));
-    set_supervisor_status(message);
+    const bool had_override = c64_debug.override_active;
+    const uint32_t before = shell_read(MT_REG_C64_CPU_CONFIG);
+    mt_c64_debug_clear_override(&c64_debug);
+    const bool committed = commit_c64_edit(&value, group, 0, 0);
+    if (!committed && had_override && shell_read(MT_REG_C64_CPU_CONFIG) == before) {
+        /* Nothing reached the hardware (for example, HOLD failed). Keep the
+         * session description consistent with the still-running override. */
+        c64_debug.override_active = true;
+    } else if (committed) {
+        const uint32_t live = shell_read(MT_REG_C64_CPU_STATUS);
+        const unsigned requested = value.turbo
+            ? mt_c64_speed_mhz(mt_c64_clamp_speed(value.detail & 15U, (uint16_t)caps.cpu)) : 1U;
+        char text[128];
+        (void)snprintf(text, sizeof text, "%u MHz %s; now %u MHz (%s)", requested,
+                       (c64_title_service_overlay()->owned & group) ? "for this title" : "saved",
+                       mt_c64_speed_mhz(live & 15U), mt_c64_turbo_reason(live));
+        set_supervisor_status(text);
+    }
+}
+static unsigned cycle_setting(unsigned value, unsigned maximum, int delta)
+{
+    return (value + maximum + 1U + (unsigned)(delta < 0 ? -1 : 1)) % (maximum + 1U);
+}
+static void change_c64_sid_setup(unsigned item, int delta)
+{
+    const mt_c64_capabilities_t caps = selection_c64_features(&supervisor.active);
+    if (!(caps.expansion & MT_C64_EXPANSION_CAPS_MULTI_SID))
+        return;
+    const unsigned count = ((caps.expansion >> 8) & 7) + 1;
+    if (item == 3) {
+        c64_selected_sid = (uint8_t)cycle_setting(c64_selected_sid, count - 1, delta);
+        supervisor_menu_dirty = true;
+        return;
+    }
+    mt_c64_title_values_t value =
+        c64_requested_values(&supervisor.active, c64_content_service_crt_attached());
+    mt_c64_sid_model_t *m = &value.sid;
+    uint64_t fields = 0;
+    uint8_t classes = 0;
+    unsigned n = c64_selected_sid;
+    if (n >= count)
+        n = 0;
+    unsigned base = 25 + 4 * n;
+    uint8_t *field = NULL;
+    unsigned maximum = 0;
+    switch (item) {
+    case 0: {
+        unsigned id = mt_c64_sid_preset_id(m);
+        id = delta < 0 ? (id <= 1 ? MT_SID_EIGHT : id - 1) : (id >= MT_SID_EIGHT ? 1 : id + 1);
+        (void)mt_c64_sid_preset(m, id);
+        fields = UINT64_MAX;
+        classes = 7;
+        break;
+    }
+    case 2:
+        m->mirror ^= 1;
+        fields = UINT64_C(1) << 3;
+        break;
+    case 4:
+        field = &m->sid_address[n];
+        maximum = (caps.expansion & MT_C64_EXPANSION_CAPS_SID_IO_SLOTS) ? 48 : 32;
+        fields = UINT64_C(1) << base;
+        break;
+    case 5:
+        field = &m->sid_volume[n];
+        maximum = 30;
+        fields = UINT64_C(1) << (base + 2);
+        break;
+    case 6:
+        field = &m->sid_pan[n];
+        maximum = 10;
+        fields = UINT64_C(1) << (base + 3);
+        break;
+    case 7:
+        field = &m->sid_model[n];
+        maximum = (caps.expansion & MT_C64_EXPANSION_CAPS_SID_MODEL_8580) ? 1 : 0;
+        fields = UINT64_C(1) << (base + 1);
+        break;
+    case 8:
+        m->master = (uint8_t)cycle_setting(m->master, 30, delta);
+        fields = UINT64_C(1) << 24;
+        break;
+    case 9:
+        m->headroom = (uint8_t)cycle_setting(m->headroom, 3, delta);
+        fields = UINT64_C(1) << 57;
+        break;
+    case 10:
+        m->dc_remove = (uint8_t)cycle_setting(m->dc_remove, 2, delta);
+        fields = UINT64_C(1) << 58;
+        break;
+    case 11:
+        m->resample ^= 1;
+        fields = UINT64_C(1) << 59;
+        break;
+    case 12:
+        (void)mt_c64_sid_preset(m, MT_SID_DUAL500);
+        fields = UINT64_MAX;
+        classes = 7;
+        break;
+    default:
+        return;
+    }
+    if (field) {
+        unsigned index = *field == 255 ? maximum + 1 : *field;
+        index = cycle_setting(index, maximum + 1, delta);
+        *field = index > maximum ? 255 : (uint8_t)index;
+    }
+    (void)commit_c64_edit(&value, MT_TITLE_SID, fields, classes);
 }
 
 static void handle_menu_action(mt_menu_action_t action)
@@ -4376,11 +5080,29 @@ static void handle_menu_action(mt_menu_action_t action)
     } else if (action.kind == MT_MENU_ACTION_BROWSE_DISK_PROGRAM) {
         open_menu_browser(MT_MENU_BROWSER_DISK_PROGRAM);
     } else if (action.kind == MT_MENU_ACTION_BROWSE_CARTRIDGE) {
-        if (shell_read(MT_REG_CORE_ID) == MT_C64_CORE_ID && c64_content_service_reu_enabled()) {
-            set_supervisor_warning("Turn REU off before loading a cartridge");
+        open_menu_browser(MT_MENU_BROWSER_CARTRIDGE);
+    } else if (action.kind == MT_MENU_ACTION_BROWSE_CONFIG) {
+        if (shell_is_c64())
+            open_menu_browser(MT_MENU_BROWSER_CONFIG);
+    } else if (action.kind == MT_MENU_ACTION_APPLY_CONFIG) {
+        char relative[256], report[2048];
+        if (!shell_is_c64() || action.file_index >= supervisor_menu_file_count ||
+            !mt_media_browser_resolve(&vectrex_media_browser,
+                                      supervisor_menu_files[action.file_index].name, relative,
+                                      sizeof(relative)))
+            return;
+        if (quiesce_c64_uci() != 0) {
+            set_supervisor_warning("Command interface is busy");
             return;
         }
-        open_menu_browser(MT_MENU_BROWSER_CARTRIDGE);
+        c64_title_foreground = true;
+        refresh_c64_title(&supervisor.active);
+        int result = c64_title_service_apply(relative, false, report, sizeof(report));
+        c64_title_foreground = false;
+        xil_printf("%s", report);
+        if (result == 0)
+            mt_menu_close_browser(&supervisor_menu);
+        set_supervisor_outcome(result == 0, c64_title_service_status(), c64_title_service_status());
     } else if (action.kind == MT_MENU_ACTION_BROWSE_PROGRAM) {
         open_menu_browser(MT_MENU_BROWSER_PROGRAM);
     } else if (action.kind == MT_MENU_ACTION_BROWSE_REU) {
@@ -4396,8 +5118,12 @@ static void handle_menu_action(mt_menu_action_t action)
             set_supervisor_error("REU image path is too long"); return;
         }
         const mt_c64_reu_load_result_t loaded = mt_c64_debug_load_reu(&c64_debug, path, 0U);
-        if (loaded == MT_REU_LOAD_OK) mt_menu_close_browser(&supervisor_menu);
-        else set_supervisor_error(mt_c64_reu_load_message(loaded));
+        if (loaded == MT_REU_LOAD_OK) {
+            mt_menu_close_browser(&supervisor_menu);
+            if (c64_uci_initialized)
+                c64_uci_service_set_reu_image(path);
+        } else
+            set_supervisor_error(mt_c64_reu_load_message(loaded));
     } else if (action.kind == MT_MENU_ACTION_BROWSE_DOCUMENTS) {
         open_menu_browser(MT_MENU_BROWSER_DOCUMENTS);
     } else if (action.kind == MT_MENU_ACTION_OPEN_TEXT) {
@@ -4482,7 +5208,7 @@ static void handle_menu_action(mt_menu_action_t action)
             supervisor_menu.clock_edit = false;
             set_supervisor_status("Board clock saved");
         } else set_supervisor_error("Clock write or verification failed; retry Save time");
-    } else if(action.kind==MT_MENU_ACTION_USB_SD) {
+    } else if (action.kind == MT_MENU_ACTION_USB_SD) {
         mount_sd_over_usb();
     } else if (action.kind == MT_MENU_ACTION_RESTART_USB) {
         int status = usb_hid_service_stop();
@@ -4633,8 +5359,7 @@ static void handle_menu_action(mt_menu_action_t action)
             set_supervisor_error("Mount & Run could not start");
             return;
         }
-        result = c64_content_service_stage_prg_image(
-            supervisor_disk_prg_buffer, extracted_size);
+        result = c64_title_disk(supervisor_disk_prg_buffer, extracted_size);
         print_c64_content_result(
             drive_load ? "disk LOAD launcher stage" : "direct stage",
             supervisor_menu_files[action.file_index].name,
@@ -4771,16 +5496,11 @@ static void handle_menu_action(mt_menu_action_t action)
                 set_supervisor_error("Content path is too long or invalid");
                 return;
             }
-            if (mt_content_classify(relative) == MT_CONTENT_CRT &&
-                c64_content_service_reu_enabled()) {
-                set_supervisor_warning("Turn REU off before loading a cartridge");
-                return;
-            }
             if (!prepare_c64_content_change()) {
                 set_supervisor_error("Content load could not start");
                 return;
             }
-            result = c64_content_service_load(relative);
+            result = c64_title_load(relative, true);
             print_c64_content_result("load", relative, &result);
             remounted = finish_c64_content_change();
             if (result.status == MT_C64_CONTENT_SERVICE_OK)
@@ -4854,7 +5574,7 @@ static void handle_menu_action(mt_menu_action_t action)
                 set_supervisor_error("Cartridge detach could not start");
                 return;
             }
-            result = c64_content_service_detach_crt();
+            result = c64_title_detach();
             remounted = finish_c64_content_change();
             if (result.status == MT_C64_CONTENT_SERVICE_OK) {
                 const bool settings_saved = remember_active_cartridge(NULL);
@@ -4899,14 +5619,54 @@ static void handle_menu_action(mt_menu_action_t action)
         else
             set_supervisor_status("Keyboard map changed");
     } else if (action.kind == MT_MENU_ACTION_SWAP_JOYSTICK_PORT) {
-        const uint8_t port = usb_hid_service_joystick_port() == 2U ? 1U : 2U;
-        if (usb_hid_service_set_joystick_port(port) != 0)
-            set_supervisor_error("Gamepad port change failed");
-        else if (!remember_c64_input_settings())
-            set_supervisor_error("Gamepad changed; settings write failed");
-        else
-            set_supervisor_status("Gamepad port changed");
+        mt_c64_title_values_t value =
+            c64_requested_values(&supervisor.active, c64_content_service_crt_attached());
+        value.joystick = value.joystick == 2 ? 1 : 2;
+        (void)commit_c64_edit(&value, MT_TITLE_JOYSTICK, 0, 0);
+    } else if (action.kind == MT_MENU_ACTION_SID_SETUP) {
+        if (shell_is_c64())
+            change_c64_sid_setup((unsigned)action.file_index, action.variant_index == 1 ? -1 : 1);
+    } else if (action.kind == MT_MENU_ACTION_NETWORK_MODE) {
+        set_supervisor_outcome(mt_net_service_cycle_mode(), "Network mode saved",
+                               "Network mode could not be saved");
+    } else if (action.kind == MT_MENU_ACTION_NETWORK_RENEW) {
+        mt_net_service_renew();
+        set_supervisor_status("Network renewal requested");
     } else if (action.kind == MT_MENU_ACTION_TOGGLE_CORE_OPTION) {
+        if (shell_is_c64() && action.file_index >= 16 && action.file_index <= 19) {
+            if (action.file_index == 16) {
+                supervisor_menu.core_subpage = true;
+                supervisor_menu.row = 0;
+                supervisor_menu.first_row = 0;
+                return;
+            }
+            if (action.file_index == 17) {
+                settings_before_update = persistent_settings;
+                persistent_settings.c64_title_cfg_off = !persistent_settings.c64_title_cfg_off;
+                if (!save_persistent_settings()) {
+                    persistent_settings = settings_before_update;
+                    set_supervisor_warning("Automatic title setting not saved");
+                } else {
+                    refresh_c64_title(&supervisor.active);
+                    set_supervisor_status(
+                        persistent_settings.c64_title_cfg_off
+                            ? "Automatic title files off; manual Apply remains available"
+                            : "Automatic title files on");
+                }
+                return;
+            }
+            if (quiesce_c64_uci() != 0) {
+                set_supervisor_warning("Command interface is busy");
+                return;
+            }
+            c64_title_foreground = true;
+            int result =
+                action.file_index == 18 ? c64_title_service_revert() : c64_title_service_save();
+            c64_title_foreground = false;
+            set_supervisor_outcome(result == 0, c64_title_service_status(),
+                                   c64_title_service_status());
+            return;
+        }
         if(supervisor.has_active && supervisor.active.package.core_id==MT_IIGS_CORE_ID) {
             if(action.file_index==9U) {
                 const uint16_t next=mt_iigs_mouse_next_sensitivity(iigs_content_service_mouse_sensitivity());
@@ -5036,6 +5796,11 @@ static void handle_menu_action(mt_menu_action_t action)
                 remember_active_c64_rom_profile(enabled, true);
             }
             c64_fast_roms_fallback = false;
+            if (enabled != previous_active) {
+                c64_title_service_reset(c64_content_service_crt_attached(),
+                                        c64_d64_service_mounted());
+                (void)restore_selection_settings(&supervisor.active);
+            }
             set_supervisor_status(enabled ?
                 "Fast ROM pair active" : "Stock ROMs active");
             return;
@@ -5081,10 +5846,15 @@ static void handle_menu_action(mt_menu_action_t action)
             set_supervisor_error("Directory drive retry failed; check SD card");
             return;
         }
+        const bool title_disk_present = c64_d64_service_mounted();
         const int asserted = set_core_reset_request(true);
         int released = -1;
         bool restored = true;
-        if (asserted == 0) usleep(1000U);
+        if (asserted == 0) {
+            if (shell_is_c64())
+                c64_title_service_reset(c64_content_service_crt_attached(), title_disk_present);
+            usleep(1000U);
+        }
         if (asserted == 0) released = set_core_reset_request(false);
         if (released == 0 &&
             supervisor.active.package.core_id == MT_C64_CORE_ID) {
@@ -5117,8 +5887,7 @@ static void handle_menu_action(mt_menu_action_t action)
                              MT_C64_CORE_ID) {
                 valid = mt_supervisor_settings_remember_c64_input(
                     &persistent_settings, supervisor.active.package.id,
-                    usb_hid_service_symbolic_keyboard(),
-                    usb_hid_service_joystick_port());
+                    usb_hid_service_symbolic_keyboard(), stored_c64_joystick());
             }
         }
         if (!valid) {
@@ -5674,15 +6443,11 @@ int main(void)
             if(shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID) {
                 xil_printf("[IIgs] controller settings are in the Input menu\r\n");break;
             }
-            const uint8_t port =
-                usb_hid_service_joystick_port() == 2U ? 1U : 2U;
-            if (usb_hid_service_set_joystick_port(port) == 0) {
-                xil_printf("USB gamepad mapped to C64 joystick port %u\r\n",
-                           (unsigned int)port);
-                if (!remember_c64_input_settings())
-                    xil_printf("[settings] gamepad port was not saved\r\n");
-            } else {
-                xil_printf("USB gamepad port swap failed\r\n");
+            if (shell_is_c64() && supervisor.has_active) {
+                mt_c64_title_values_t value =
+                    c64_requested_values(&supervisor.active, c64_content_service_crt_attached());
+                value.joystick = value.joystick == 2 ? 1 : 2;
+                (void)commit_c64_edit(&value, MT_TITLE_JOYSTICK, 0, 0);
             }
             break;
         }

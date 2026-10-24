@@ -8,6 +8,8 @@ module multitini_c64_ua_fetch #(
     parameter integer POST_B_HOLD=16
 ) (
     input wire clk, hard_reset, reset, paused,
+    input wire invalidate,
+    output reg invalidate_done=0,
     input wire [6:0] fetch, playing, sixteen_bit, predict_valid,
     input wire [167:0] fetch_address, predict_address,
     input wire [125:0] deadlines,
@@ -55,16 +57,20 @@ module multitini_c64_ua_fetch #(
     reg [20:0] chosen_tag;
     reg [3:0] chosen_entry;
     reg [2:0] chosen_voice;
-    integer gap;
+    localparam integer GAP_BITS=MIN_ISSUE_GAP>1 ? $clog2(MIN_ISSUE_GAP) : 1; reg [GAP_BITS-1:0] gap;
+    reg invalidating=0,invalidate_seen=0;
+    // Unconnected legacy bench ports are inactive; physical logic is a bit.
+    wire invalidate_level=(invalidate===1'b1);
+    wire fenced=invalidate_level || invalidating;
     assign accepted=memory_valid && memory_ready;
-    assign busy=memory_valid || owed;
+    assign busy=memory_valid || owed || invalidating;
     // The DDR path becomes ready on the response edge. Issue the next selected
     // word on that edge, retiring the old owner before installing the new one.
     // If transport is backpressured, retain the offered payload as usual.
     wire turn_request=owed && memory_rvalid && !request_valid_q && !reset && !paused &&
-        !fault && !memory_fault && gap==0 && chosen && !fetch[chosen_voice] &&
+        !fenced && !fault && !memory_fault && gap==0 && chosen && !fetch[chosen_voice] &&
         (!YIELD_TO_REU || !reu_memory_busy);
-    assign memory_valid=request_valid_q || turn_request;
+    assign memory_valid=!fenced && (request_valid_q || turn_request);
     assign memory_addr=turn_request ? {chosen_tag,3'b0} : request_addr_q;
 
     function automatic blocked(input [20:0] tag);
@@ -96,7 +102,7 @@ module multitini_c64_ua_fetch #(
         begin reserved=owed && owner_valid && !owner_stale && owner_entry[3:1]==voice && owner_tag==tag;end
     endfunction
     wire return_fresh=memory_rvalid && owed && owner_valid && !owner_stale &&
-        !(snoop_valid && snoop_tag==owner_tag) && !reset && !fault && !memory_fault;
+        !(snoop_valid && snoop_tag==owner_tag) && !reset && !fenced && !fault && !memory_fault;
     function automatic available(input integer voice, input [20:0] tag);
         begin available=resident(voice,tag) ||
             (return_fresh && owner_entry[3:1]==voice && owner_tag==tag);end
@@ -123,11 +129,12 @@ module multitini_c64_ua_fetch #(
                available(r,return_tag) && (!demand_sixteen[r] || return_addr[2:0]!=7 || available(r,return_tag+21'd1)))begin
                 return_first=available_word(r,return_tag);return_second=available_word(r,return_tag+21'd1);
                 return_low=return_first[return_addr[2:0]*8+:8];
-                return_high=return_addr[2:0]==7 ? return_second[7:0] : return_first[(return_addr[2:0]+1)*8+:8];
+                return_high=return_addr[2:0]==7 ? return_second[7:0] : return_first[(return_addr[2:0]+3'd1)*8+:8];
                 samples[r*16+:16]=demand_sixteen[r] ? {return_high,return_low} : {return_low,8'b0};
                 sample_ready[r]=1;
             end
         end
+        if(fenced)begin samples=0;sample_ready=0;end
     end
 
     reg [48:0] candidates[0:7], first_pair[0:3], second_pair[0:1], winner;
@@ -205,7 +212,9 @@ module multitini_c64_ua_fetch #(
     reg [63:0] first_word, second_word;
     reg [7:0] low_byte, high_byte;
     always @(posedge clk) begin
+        invalidate_done<=0;
         if(hard_reset) begin
+            invalidating<=0;invalidate_seen<=0;
             word_valid<=0;sample_ready_q<=0;samples_q<=0;demand_sixteen<=0;
             prediction_q<=0;prediction_valid_q<=0;prediction_wide_q<=0;
             recent_valid<=0;snoop_valid<=0;snoop_tag<=0;owed<=0;owner_valid<=0;owner_stale<=0;
@@ -214,6 +223,11 @@ module multitini_c64_ua_fetch #(
             for(i=0;i<14;i=i+1) begin word_tag[i]<=0;word_data[i]<=0;end
             for(i=0;i<HOLD_SLOTS;i=i+1) recent_tag[i]<=0;
         end else begin
+            invalidate_seen<=invalidate_level;
+            if(invalidate_level && !invalidate_seen) invalidating<=1;
+            if(invalidating && (!owed || memory_rvalid))begin
+                invalidating<=0;invalidate_done<=1;
+            end
             snoop_valid<=cache_write_snoop_valid;snoop_tag<=cache_write_snoop_addr;
             recent_valid[0]<=POST_B_HOLD>0 && cache_write_done;
             recent_tag[0]<=cache_write_done_addr;
@@ -232,7 +246,7 @@ module multitini_c64_ua_fetch #(
             if(memory_rvalid && (owed || accepted)) begin
                 owed<=0;
                 if(owner_valid && !owner_stale && !(snoop_valid && snoop_tag==owner_tag) &&
-                   !reset && !fault && !memory_fault) begin
+                   !reset && !fenced && !fault && !memory_fault) begin
                     word_data[owner_entry]<=memory_rdata;word_tag[owner_entry]<=owner_tag;word_valid[owner_entry]<=1;
                 end
                 owner_valid<=0;
@@ -242,7 +256,7 @@ module multitini_c64_ua_fetch #(
                 owner_valid<=1;owner_stale<=0;owner_tag<=chosen_tag;owner_entry<=chosen_entry;
                 word_valid[chosen_entry]<=0;
             end
-            if(reset || fault || memory_fault) begin
+            if(reset || fault || memory_fault || fenced) begin
                 word_valid<=0;sample_ready_q<=0;samples_q<=0;owner_valid<=0;request_valid_q<=0;
                 prediction_valid_q<=0;
                 // An accepted request is still owed across every soft reset.
@@ -260,7 +274,7 @@ module multitini_c64_ua_fetch #(
                         if(available(i,sample_tag) && (!sample_wide || sample_addr[2:0]!=7 || available(i,sample_tag+21'd1))) begin
                             first_word=available_word(i,sample_tag);second_word=available_word(i,sample_tag+21'd1);
                             low_byte=first_word[sample_addr[2:0]*8+:8];
-                            high_byte=sample_addr[2:0]==7 ? second_word[7:0] : first_word[(sample_addr[2:0]+1)*8+:8];
+                            high_byte=sample_addr[2:0]==7 ? second_word[7:0] : first_word[(sample_addr[2:0]+3'd1)*8+:8];
                             samples_q[i*16+:16]<=sample_wide ? {high_byte,low_byte} : {low_byte,8'b0};
                             sample_ready_q[i]<=1;
                         end

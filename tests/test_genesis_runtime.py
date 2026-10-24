@@ -4,6 +4,7 @@ from pathlib import Path
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -35,6 +36,7 @@ static bool genesis_service_initialized, gameboy_service_initialized;
 static bool nes_service_initialized, iigs_service_initialized;
 static bool c64_services_initialized, c64_core_reset_active;
 static bool c64_iec_initialized;
+static bool c64_uci_initialized, c64_title_initialized, usb_sd_modal;
 static mt_c64_debug_t c64_debug;
 static bool c64_debug_pause_active;
 void mt_c64_debug_deactivate(mt_c64_debug_t *debug) { assert(debug == &c64_debug); }
@@ -76,6 +78,11 @@ static void c64_d64_service_notify_core_reset(void) {assert(0);}
 static int quiesce_c64_directory(void) {assert(0); return -1;}
 static int resume_c64_directory(void) {assert(0); return -1;}
 static int c64_iec_service_reset(void) {assert(0); return -1;}
+static int quiesce_c64_uci(void) {assert(0); return -1;}
+static void c64_uci_service_reset(void) {assert(0);}
+static void mt_net_service_guest_reset(void) {assert(0);}
+static void mt_net_service_shutdown(void) {}
+static void c64_title_service_clear(void) {}
 static int gameboy_content_service_prepare_reset(void) {assert(0); return -1;}
 static int gameboy_content_service_resume_after_reset(void) {assert(0); return -1;}
 static int nes_content_service_prepare_reset(void) {assert(0); return -1;}
@@ -225,16 +232,23 @@ class GenesisRuntimeTests(unittest.TestCase):
             "static mt_genesis_content_service_result_t load_genesis_content_with_input(const char *name)",
             "static void change_genesis_controller(size_t player)",
         ]
-        with tempfile.TemporaryDirectory(prefix="genesis-runtime-") as directory:
+        (ROOT / "build").mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="genesis-runtime-", dir=ROOT / "build") as directory:
             c_file = Path(directory) / "runtime.c"
             binary = Path(directory) / "runtime"
             c_file.write_text(FIXTURE + "\n".join(function(source, s) for s in signatures) + CHECKS)
-            compiled = subprocess.run([compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
+            env = {key: value for key, value in os.environ.items() if key.upper() != "PATH"}
+            env["PATH"] = str(Path(compiler).resolve().parent) + os.pathsep + os.environ.get(
+                "PATH", os.environ.get("Path", ""))
+            env["TEMP"] = env["TMP"] = directory
+            guard = [sys.executable, str(ROOT / "scripts/run_native_tool.py"), "--"]
+            compiled = subprocess.run(guard + [compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
                 "-Ifirmware/include", "-Ifirmware/platform/xilinx", str(c_file), "-o", str(binary)],
-                cwd=ROOT, capture_output=True, text=True)
+                cwd=ROOT, env=env, capture_output=True, text=True)
             self.assertEqual(compiled.returncode, 0,
                              f"Runtime fixture compilation failed:\n{compiled.stdout}{compiled.stderr}")
-            executed = subprocess.run([str(binary)], capture_output=True, text=True)
+            executed = subprocess.run(guard + [str(binary)], cwd=ROOT, env=env,
+                                      capture_output=True, text=True)
             self.assertEqual(executed.returncode, 0,
                              f"Runtime fixture failed:\n{executed.stdout}{executed.stderr}")
 

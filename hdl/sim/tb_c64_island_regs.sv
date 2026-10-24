@@ -74,7 +74,7 @@ module tb_island_regs;
         check(live_d031==4 && policy_c64u_top && guard_static_release && guard_holdoff==3,"debug knobs no apply");
         for(a=0;a<1024;a++)begin
             native_rd_addr=a;fast_rd_addr=a;#0.01;
-            check(native_rd_override==(a==48 || a==49) && fast_rd_override==native_rd_override,"exact read decode");
+            check(native_rd_override==(a==48 || a==49 || a==184 || a==185) && fast_rd_override==native_rd_override,"exact read decode");
             if(a==49)check(native_rd_data==4 && fast_rd_data==4,"live readback");
         end
         @(negedge clk_native);cart_present=1;step();check(policy_blocked && !policy_turbo && live_d031==4 && status[16],"cart forces exact retains live");
@@ -86,6 +86,23 @@ module tb_island_regs;
         @(negedge clk_native);config_word[19]=0;step();check(status[26:24]==0,"disarm clears");
         boot(1);config_word[10]=0;end_window();check(!policy_turbo,"legacy CONTROL off");
         legacy_turbo_request=1;#0.01;check(policy_turbo,"legacy CONTROL on");
+        legacy_turbo_request=0;
+        for(m=0;m<4;m++)begin
+            boot(m);end_window();
+            for(s=0;s<2;s++)begin
+                config_word[20]=s;
+                for(a=0;a<1024;a++)begin
+                    native_rd_addr=a;fast_rd_addr=a;#0.01;
+                    check(native_rd_override==(a==48||a==49||(m>=2&&(a==184||a==185))||(m!=0&&s&&a==188)),"SuperCPU exact decode and enable gate");
+                    check(fast_rd_override==native_rd_override&&fast_rd_data==native_rd_data,"native/fast detection equivalent");
+                    if(a==188&&m!=0&&s)check(native_rd_data==1,"D0BC feature read");
+                    if((a==184||a==185)&&m>=2)check(native_rd_data==(live_d031[3:0]==0?8'hc1:8'h01),"B8/B9 live speed read");
+                end
+                before_mirror=live_d031;
+                write_reg(0,10'h0bc,8'hff);write_reg(1,10'h0b8,8'hff);
+                check(live_d031==before_mirror,"detection writes are inert");
+            end
+        end
         $display("REGS PASS checks=%0d",checks);$finish;
     end
 endmodule

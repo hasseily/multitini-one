@@ -216,6 +216,23 @@ module multitini_one_top #(
     logic        reg_rd_en;
     logic [15:0] reg_rd_addr;
     logic [31:0] reg_rd_data;
+    wire reg_rd_early_en;
+    wire [15:0] reg_rd_early_addr;
+    wire uci_buffer_rd_select=ACTIVE_MACHINE==0 && reg_rd_addr>=16'hc000 && reg_rd_addr<16'hc800;
+    wire uci_buffer_wr_select=ACTIVE_MACHINE==0 && reg_wr_addr>=16'hc000 && reg_wr_addr<16'hc800;
+    wire [31:0] uci_buffer_data;
+    // The host BRAM port is shared by reads and byte-strobed writes. Stall a
+    // new AXI read address while an already accepted buffer write uses it.
+    wire axi_arready;
+    wire uci_read_port_free=!(reg_wr_en && uci_buffer_wr_select);
+    assign m_axi_arready=axi_arready && uci_read_port_free;
+    wire [31:0] net_status,net_access_word,c64_uci_status,c64_uci_status2;
+    wire net_run,net_access_valid,net_access_error,c64_uci_op_ready,c64_uci_op_valid;
+    wire [31:0] c64_uci_op,c64_uci_ram_request,c64_sid_data,c64_sid_status;
+    wire [10:0] c64_uci_control;
+    wire [5:0] c64_sid_index;
+    wire [7:0] c64_sid_sequence;
+    wire c64_sid_write,c64_sid_commit;
     wire framebuffer_wr_select=reg_wr_addr>=16'h0180 && reg_wr_addr<16'h01c8;
     wire framebuffer_rd_select=reg_rd_addr>=16'h0180 && reg_rd_addr<16'h01c8;
     logic [31:0] control_rd_data;
@@ -734,19 +751,21 @@ module multitini_one_top #(
         .s_axi_arsize(m_axi_arsize), .s_axi_arburst(m_axi_arburst),
         .s_axi_arlock(m_axi_arlock), .s_axi_arcache(m_axi_arcache),
         .s_axi_arprot(m_axi_arprot), .s_axi_arqos(m_axi_arqos),
-        .s_axi_arvalid(m_axi_arvalid), .s_axi_arready(m_axi_arready),
+        .s_axi_arvalid(m_axi_arvalid && uci_read_port_free), .s_axi_arready(axi_arready),
         .s_axi_rid(m_axi_rid), .s_axi_rdata(m_axi_rdata),
         .s_axi_rresp(m_axi_rresp), .s_axi_rlast(m_axi_rlast),
         .s_axi_rvalid(m_axi_rvalid), .s_axi_rready(m_axi_rready),
         .reg_wr_en(reg_wr_en), .reg_wr_addr(reg_wr_addr),
         .reg_wr_data(reg_wr_data), .reg_wr_strb(reg_wr_strb),
         .reg_rd_en(reg_rd_en), .reg_rd_addr(reg_rd_addr),
+        .reg_rd_early_en(reg_rd_early_en),.reg_rd_early_addr(reg_rd_early_addr),
         .reg_rd_data(reg_rd_data)
     );
 
     multitini_control_regs #(.SHELL_BUILD_ID(SHELL_BUILD_ID),
         .IIGS_ACCEL_CAPS(ACTIVE_MACHINE==5 ? 32'h8000037f : 32'd0),
-        .C64_EXPANSION_CAPS(ACTIVE_MACHINE==0 ? 32'h8000001F : 32'd0),
+        .C64_EXPANSION_CAPS(ACTIVE_MACHINE==0 ? 32'h80007F7F : 32'd0),
+        .NET_CAPS(ACTIVE_MACHINE==0 ? MT_NET_CAPS_W5100S : 32'd0),
         .C64_CPU_CAPS(ACTIVE_MACHINE==0 ? MT_C64_CPU_CAPS_RELEASE : 32'd0),
         .C64_IEC_CAPS(ACTIVE_MACHINE==0 ? MT_C64_IEC_CAPS_DEVICE9 : 32'd0),
         .C64_CPU_CAPS2(ACTIVE_MACHINE==0 ?
@@ -796,6 +815,15 @@ module multitini_one_top #(
         .c64_iec_control(c64_iec_control),.c64_iec_status(c64_iec_status),
         .c64_iec_rx(c64_iec_rx),.c64_iec_rx_pop(c64_iec_rx_pop),
         .c64_iec_tx(c64_iec_tx),.c64_iec_tx_push(c64_iec_tx_push),
+        .net_status(net_status),.net_access_error(net_access_error),
+        .net_run(net_run),.net_access_valid(net_access_valid),.net_access_word(net_access_word),
+        .c64_uci_status(c64_uci_status),.c64_uci_status2(c64_uci_status2),
+        .c64_uci_op_ready(c64_uci_op_ready),.c64_uci_op_valid(c64_uci_op_valid),
+        .c64_uci_op(c64_uci_op),.c64_uci_control(c64_uci_control),
+        .c64_uci_ram_request(c64_uci_ram_request),
+        .c64_sid_index(c64_sid_index),.c64_sid_data(c64_sid_data),
+        .c64_sid_write(c64_sid_write),.c64_sid_commit(c64_sid_commit),
+        .c64_sid_sequence(c64_sid_sequence),.c64_sid_status(c64_sid_status),
         .effect_write(effect_write),.effect_address(effect_address),.effect_data(effect_data),
         .effect_commit(effect_commit),.effect_commit_sequence(effect_commit_sequence),
         .effect_busy(effect_busy),.effect_active_valid(effect_active_valid),
@@ -839,7 +867,7 @@ module multitini_one_top #(
              (reg_wr_addr >= MT_UI_LEGACY_VRAM_BANK1_OFFSET &&
               reg_wr_addr < MT_UI_LEGACY_VRAM_BANK1_OFFSET +
                             MT_UI_LEGACY_VRAM_BANK_BYTES));
-        reg_rd_data = display_rd_select ? display_rd_data : framebuffer_rd_select ? framebuffer_rd_data :
+        reg_rd_data = uci_buffer_rd_select ? uci_buffer_data : display_rd_select ? display_rd_data : framebuffer_rd_select ? framebuffer_rd_data :
                       reg_rd_addr < 16'h1000 ? control_rd_data : 32'd0;
         // Firmware holds the machine reset before PCAP. Its shared DMA
         // quiescence read also drains autonomous source rings, IIgs RAM and
@@ -1206,6 +1234,34 @@ module multitini_one_top #(
     // and centers the shorter NTSC raster in the 1920x1080 active area.
     generate
         if (ACTIVE_MACHINE == 0) begin : g_c64_machine
+            wire [31:0] uci_status,uci_status2,uci_op,uci_ram_request;
+            wire [10:0] uci_control,uci_buffer_addr;
+            wire uci_op_valid,uci_op_ready,uci_buffer_write;
+            wire [7:0] uci_buffer_wdata,uci_buffer_rdata;
+            wire sid_ce_1m,sid_paused,sid_active_valid,c64_running_host;
+            wire [255:0] sid_slot_masks,sid_params;
+            wire [31:0] sid_write_inhibit,sid_output_config;
+            wire [95:0] sid_owners;
+            wire [127:0] sid_io_masks;
+            multitini_c64_sid_transport #(.SHARED_CORE_RUNNING(1'b1)) sid_transport_i(
+                .host_clk(control_clk),.host_resetn(control_aresetn),
+                .host_index(c64_sid_index),.host_data(c64_sid_data),.host_write(c64_sid_write),
+                .host_commit(c64_sid_commit),.host_sequence(c64_sid_sequence),.host_status(c64_sid_status),
+                .core_clk(c64_clk),.core_resetn(c64_aresetn),.ce_1m(sid_ce_1m),.paused(sid_paused),
+                .core_running_host(c64_running_host),
+                .active_valid(sid_active_valid),.slot_masks(sid_slot_masks),.chip_params(sid_params),
+                .write_inhibit(sid_write_inhibit),.output_config(sid_output_config),
+                .owners(sid_owners),.io_slot_masks(sid_io_masks));
+            multitini_c64_uci_transport uci_transport_i(
+                .host_clk(control_clk),.host_resetn(control_aresetn),
+                .host_op(c64_uci_op),.host_op_valid(c64_uci_op_valid),.host_op_ready(c64_uci_op_ready),
+                .host_read_addr(reg_rd_early_en?reg_rd_early_addr[10:2]:reg_rd_addr[10:2]),
+                .host_write_addr(reg_wr_addr[10:2]),.host_write_data(reg_wr_data),
+                .host_write_strobe(reg_wr_en && uci_buffer_wr_select ? reg_wr_strb:4'd0),
+                .host_read_data(uci_buffer_data),.core_clk(c64_clk),.core_resetn(c64_aresetn),
+                .core_op(uci_op),.core_op_valid(uci_op_valid),.core_op_ready(uci_op_ready),
+                .core_addr(uci_buffer_addr),.core_write(uci_buffer_write),
+                .core_write_data(uci_buffer_wdata),.core_read_data(uci_buffer_rdata));
             wire iec9_run,iec9_quiesce,iec9_guest_reset,iec9_busy,iec9_quiescent;
             wire [15:0] iec9_token;
             wire [31:0] iec9_event_data,iec9_reply_data;
@@ -1229,7 +1285,7 @@ module multitini_one_top #(
             wire [7:0] reu_memory_wstrb;
             wire reu_memory_write, reu_memory_valid, reu_memory_ready;
             wire reu_memory_rvalid, reu_memory_fault, reu_memory_burst, reu_memory_busy;
-            wire [4:0] expansion_config;
+            wire [6:0] expansion_config;
             wire [31:0] cpu_config, cpu_status, ua_status, ua_fetches, reu_misses;
             wire [31:0] peek_request, peek_status, reu_host_request, reu_host_status;
             wire debug_enable;
@@ -1241,25 +1297,27 @@ module multitini_one_top #(
             // One snapshot in each direction also gives each remote reset a
             // single synchronizer. Independent synchronizers for the same
             // reset could release related command channels on different cycles.
-            multitini_word_mailbox #(.WIDTH(120),
-                .RESET_VALUE({18'd0,MT_C64_CPU_CONFIG_DEFAULT,
-                              MT_C64_EXPANSION_CONFIG_DEFAULT[4:0],65'd0})) controls_i (
+            multitini_word_mailbox #(.WIDTH(165),
+                .RESET_VALUE({32'd0,11'h01f,18'd0,MT_C64_CPU_CONFIG_DEFAULT,
+                              MT_C64_EXPANSION_CONFIG_DEFAULT[6:0],65'd0})) controls_i (
                 .src_clk(control_clk), .src_resetn(control_aresetn),
-                .value({iec9_control_value,c64_cpu_config,c64_expansion_config[4:0],debug_control[0],
+                .value({c64_uci_ram_request,c64_uci_control,iec9_control_value,c64_cpu_config,c64_expansion_config[6:0],debug_control[0],
                         c64_ram_peek_request,c64_reu_host_request}),
                 .dst_clk(c64_clk), .dst_resetn(c64_aresetn),
-                .snapshot({iec9_control_snapshot,cpu_config,expansion_config,debug_enable,peek_request,reu_host_request}));
-            multitini_word_mailbox #(.WIDTH(228)) status_i (
+                .destination_running(c64_running_host),
+                .snapshot({uci_ram_request,uci_control,iec9_control_snapshot,cpu_config,expansion_config,debug_enable,peek_request,reu_host_request}));
+            multitini_word_mailbox #(.WIDTH(292)) status_i (
                 .src_clk(c64_clk), .src_resetn(c64_aresetn),
-                .value({iec9_status_value,cpu_status,ua_status,ua_fetches,reu_misses,peek_status,reu_host_status}),
+                .value({uci_status,uci_status2,iec9_status_value,cpu_status,ua_status,ua_fetches,reu_misses,peek_status,reu_host_status}),
                 .dst_clk(control_clk), .dst_resetn(control_aresetn),
-                .snapshot({iec9_status_snapshot,c64_cpu_status,c64_ua_status,c64_ua_fetches,c64_reu_misses,
+                .snapshot({c64_uci_status,c64_uci_status2,iec9_status_snapshot,c64_cpu_status,c64_ua_status,c64_ua_fetches,c64_reu_misses,
                            c64_ram_peek_status,c64_reu_host_status}));
             assign gbc_cart_size = 32'd0;
             assign gbc_cart_loaded = 1'b0;
             assign gbc_memory_fault = 1'b0;
             (* DONT_TOUCH = "yes" *) multitini_c64_adapter #(
                 .NTSC_MODE(C64_NTSC_MODE),
+                .SID_COUNT(8),.ENABLE_EXTENSIONS(1'b1),
                 // Match the physical MMCM plan, including the PAL revision-2
                 // fallback. The UA timebase and 48 kHz output use this value.
                 .CORE_CLOCK_HZ(C64_NTSC_MODE ? 32727273 :
@@ -1268,6 +1326,16 @@ module multitini_one_top #(
                 .core_clk(c64_clk), .reset(!c64_aresetn),
                 .cpu_clk(c64_cpu_clk), .cpu_config(cpu_config), .cpu_status(cpu_status),
                 .ua_enable(expansion_config[4]), .ua_status(ua_status),
+                .uci_enable(expansion_config[5]),.uci_control(uci_control),
+                .uci_status(uci_status),.uci_status2(uci_status2),
+                .uci_op(uci_op),.uci_op_valid(uci_op_valid),.uci_op_ready(uci_op_ready),
+                .uci_ram_request(uci_ram_request),.uci_buffer_addr(uci_buffer_addr),
+                .uci_buffer_write(uci_buffer_write),.uci_buffer_wdata(uci_buffer_wdata),
+                .uci_buffer_rdata(uci_buffer_rdata),
+                .sid_map_enable(expansion_config[6] && sid_active_valid),
+                .sid_slot_masks(sid_slot_masks),.sid_write_inhibit(sid_write_inhibit),
+                .sid_owners(sid_owners),.sid_io_masks(sid_io_masks),.sid_params(sid_params),
+                .sid_output_config(sid_output_config),.sid_ce_1m(sid_ce_1m),.sid_paused(sid_paused),
                 .ua_fetches(ua_fetches), .reu_misses(reu_misses),
                 .debug_enable(debug_enable), .peek_word(peek_request), .peek_status(peek_status),
                 .reu_host_word(reu_host_request), .reu_host_status(reu_host_status),
@@ -2326,12 +2394,25 @@ module multitini_one_top #(
     assign dvi_scl = 1'bz;
     assign dvi_sda = 1'bz;
 
-    assign eth_d     = 8'hzz;
-    assign eth_a     = 2'b00;
-    assign eth_rd_n  = 1'b1;
-    assign eth_wr_n  = 1'b1;
-    assign eth_cs_n  = 1'b1;
-    assign eth_rst_n = 1'b0;
+    generate if(ACTIVE_MACHINE==0)begin:g_w5100s
+        wire [7:0] eth_d_o,eth_d_oe;
+        for(genvar i=0;i<8;i=i+1)begin:g_data
+            IOBUF data_i(.I(eth_d_o[i]),.O(eth_d_i[i]),.T(!eth_d_oe[i]),.IO(eth_d[i]));
+        end
+        wire [7:0] eth_d_i;
+        multitini_w5100s_bridge w5100s_bridge_i(
+            .clk(control_clk),.resetn(control_aresetn),.run(net_run),
+            .access_valid(net_access_valid),.access_word(net_access_word),
+            .status(net_status),.access_error(net_access_error),
+            .eth_a(eth_a),.eth_rd_n(eth_rd_n),.eth_wr_n(eth_wr_n),
+            .eth_cs_n(eth_cs_n),.eth_rst_n(eth_rst_n),
+            .eth_d_o(eth_d_o),.eth_d_oe(eth_d_oe),.eth_d_i(eth_d_i),.eth_int_n(eth_int_n));
+    end else begin:g_no_w5100s
+        assign eth_d=8'hzz;assign eth_a=0;assign eth_rd_n=1;assign eth_wr_n=1;
+        assign eth_cs_n=1;assign eth_rst_n=0;assign net_status=0;assign net_access_error=0;
+        assign c64_uci_status=0;assign c64_uci_status2=0;assign c64_uci_op_ready=0;
+        assign c64_sid_status=0;assign uci_buffer_data=0;
+    end endgenerate
 
     wire unused_inputs = ^{idelay_ref_clk, idelay_aresetn,
                            a2fpga_clk, a2fpga_7m, a2fpga_q3,

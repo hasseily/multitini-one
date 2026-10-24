@@ -7,7 +7,8 @@ module multitini_control_regs #(
     parameter logic [31:0] C64_EXPANSION_CAPS = 32'd0,
     parameter logic [31:0] C64_CPU_CAPS = 32'd0,
     parameter logic [31:0] C64_CPU_CAPS2 = 32'd0,
-    parameter logic [31:0] C64_IEC_CAPS = 32'd0
+    parameter logic [31:0] C64_IEC_CAPS = 32'd0,
+    parameter logic [31:0] NET_CAPS = 32'd0
 ) (
     input  logic         clk,
     input  logic         resetn,
@@ -62,6 +63,19 @@ module multitini_control_regs #(
     input  logic [31:0]  c64_iec_status, c64_iec_rx,
     output logic        c64_iec_rx_pop, c64_iec_tx_push,
     output logic [31:0] c64_iec_tx,
+    input  logic [31:0] net_status,
+    input  logic net_access_error,
+    output logic net_run,net_access_valid,
+    output logic [31:0] net_access_word,
+    input  logic [31:0] c64_uci_status,c64_uci_status2,c64_sid_status,
+    input  logic c64_uci_op_ready,
+    output logic c64_uci_op_valid,
+    output logic [31:0] c64_uci_op,c64_uci_ram_request,
+    output logic [10:0] c64_uci_control,
+    output logic [5:0] c64_sid_index,
+    output logic c64_sid_write,c64_sid_commit,
+    output logic [31:0] c64_sid_data,
+    output logic [7:0] c64_sid_sequence,
     output logic         effect_write, effect_commit,
     output logic [9:0]   effect_address,
     output logic [31:0]  effect_data, effect_commit_sequence,
@@ -102,6 +116,12 @@ module multitini_control_regs #(
     import multitini_regs_pkg::*;
 
     logic [31:0] error_flags;
+    logic [31:0] c64_uci_status2_snapshot;
+    wire uci_op_good=C64_EXPANSION_CAPS[5] && wr_strb==4'hf &&
+        c64_uci_op_ready && wr_data[15:14]==0 && !wr_data[24] &&
+        (wr_data[3:0]==1 || wr_data[3:0]==2 || wr_data[3:0]==3 ||
+         wr_data[3:0]==4 || wr_data[3:0]==5 || wr_data[3:0]==6 || wr_data[3:0]==15) &&
+        wr_data[13:4]<=896;
     logic [31:0] irq_status;
     logic [31:0] irq_enable;
     logic [31:0] scratch;
@@ -239,6 +259,8 @@ module multitini_control_regs #(
         if (!C64_EXPANSION_CAPS[0]) result[2:0] = 0;
         if (!C64_EXPANSION_CAPS[1]) result[3] = 0;
         if (!C64_EXPANSION_CAPS[3] || !result[3]) result[4] = 1'b0;
+        if (!C64_EXPANSION_CAPS[5]) result[5]=0;
+        if (!C64_EXPANSION_CAPS[6]) result[6]=0;
         return C64_EXPANSION_CAPS[31] ? result : 32'd0;
     endfunction
 
@@ -261,6 +283,7 @@ module multitini_control_regs #(
         if (!C64_CPU_CAPS2[10]) result[11] = 0;
         if (!C64_CPU_CAPS2[8]) result[17:16] = 0;
         if (!C64_CPU_CAPS2[12]) result[18] = 0;
+        if (!C64_CPU_CAPS2[15]) result[20] = 0;
         return C64_CPU_CAPS[31] ? result : 32'd0;
     endfunction
 
@@ -298,6 +321,15 @@ module multitini_control_regs #(
             MT_REG_C64_REU_HOST: rd_data = C64_EXPANSION_CAPS[4] ?
                 ((c64_reu_host_status & 32'h5F00) | c64_reu_host_request) : 0;
             MT_REG_C64_IEC_CAPS: rd_data=C64_IEC_CAPS;
+            MT_REG_NET_CAPS: rd_data=NET_CAPS;
+            MT_REG_NET_CONTROL: rd_data={31'd0,net_run};
+            MT_REG_NET_STATUS: rd_data=NET_CAPS[31]?net_status:0;
+            MT_REG_C64_UCI_STATUS: rd_data=C64_EXPANSION_CAPS[5]?
+                (c64_uci_status | (c64_uci_op_ready?32'd0:32'h10000000)):0;
+            MT_REG_C64_UCI_STATUS2: rd_data=C64_EXPANSION_CAPS[5]?c64_uci_status2_snapshot:0;
+            MT_REG_C64_UCI_CONTROL: rd_data={21'd0,c64_uci_control};
+            MT_REG_C64_SID_INDEX: rd_data={26'd0,c64_sid_index};
+            MT_REG_C64_SID_STATUS: rd_data=C64_EXPANSION_CAPS[6]?c64_sid_status:0;
             MT_REG_C64_IEC_CONTROL: rd_data={30'd0,c64_iec_control};
             MT_REG_C64_IEC_STATUS: rd_data=C64_IEC_CAPS[31]?c64_iec_status:0;
             MT_REG_C64_IEC_RX: rd_data=C64_IEC_CAPS[31] && c64_iec_status[0]?c64_iec_rx:0;
@@ -356,6 +388,7 @@ module multitini_control_regs #(
         irq_clear_mask = 32'd0;
         if (core_load_error)
             error_set_mask |= MT_ERROR_CORE_LOAD;
+        if (NET_CAPS[31] && net_access_error)error_set_mask|=MT_ERROR_BAD_WRITE;
         if (rd_en && !rd_known)
             error_set_mask |= MT_ERROR_BAD_READ;
         if (wr_en) begin
@@ -400,6 +433,21 @@ module multitini_control_regs #(
             MT_REG_C64_IEC_TX:
                 if(!C64_IEC_CAPS[31] || wr_strb!=4'hf || !c64_iec_status[1])
                     error_set_mask |= MT_ERROR_BAD_WRITE;
+            MT_REG_NET_ACCESS:
+                if(!NET_CAPS[31] || wr_strb!=4'hf)error_set_mask|=MT_ERROR_BAD_WRITE;
+            MT_REG_C64_UCI_HANDSHAKE:
+                if(!uci_op_good)error_set_mask|=MT_ERROR_BAD_WRITE;
+            MT_REG_C64_UCI_RAM_READ:
+                if(!C64_EXPANSION_CAPS[13] || wr_strb!=4'hf ||
+                   wr_data[31:27]!=0 || wr_data[26:16]>=896)
+                    error_set_mask|=MT_ERROR_BAD_WRITE;
+            MT_REG_C64_SID_INDEX:
+                if(!C64_EXPANSION_CAPS[6] || wr_strb!=4'hf || wr_data>56)
+                    error_set_mask|=MT_ERROR_BAD_WRITE;
+            MT_REG_C64_SID_DATA,MT_REG_C64_SID_COMMIT:
+                if(!C64_EXPANSION_CAPS[6] || wr_strb!=4'hf || c64_sid_status[8])
+                    error_set_mask|=MT_ERROR_BAD_WRITE;
+            MT_REG_NET_CONTROL,MT_REG_C64_UCI_CONTROL: ;
             MT_REG_CONTROL,
             MT_REG_BORDER_CONFIG,
             MT_REG_VECTREX_VIDEO_CONFIG,
@@ -433,6 +481,11 @@ module multitini_control_regs #(
             c64_ram_peek_request <= 0;
             c64_reu_host_request <= 0;
             c64_iec_control <= 0;
+            net_run<=0;net_access_valid<=0;net_access_word<=0;
+            c64_uci_control<=11'h01f;c64_uci_op<=0;c64_uci_op_valid<=0;
+            c64_uci_ram_request<=0;c64_uci_status2_snapshot<=0;
+            c64_sid_index<=0;c64_sid_write<=0;c64_sid_commit<=0;
+            c64_sid_data<=0;c64_sid_sequence<=0;
             effect_write <= 0;
             effect_commit <= 0;
             effect_address <= 0;
@@ -518,6 +571,10 @@ module multitini_control_regs #(
             effect_write <= 1'b0;
             effect_commit <= 1'b0;
             debug_control[2] <= 1'b0;
+            net_access_valid<=0;c64_uci_op_valid<=0;
+            c64_sid_write<=0;c64_sid_commit<=0;
+            if(rd_en && rd_addr==MT_REG_C64_UCI_STATUS)
+                c64_uci_status2_snapshot<=c64_uci_status2;
             error_flags <= (error_flags & ~error_clear_mask) | error_set_mask;
             irq_status <= (irq_status & ~irq_clear_mask) |
                           ((|error_set_mask) ? 32'd1 : 32'd0);
@@ -610,6 +667,32 @@ module multitini_control_regs #(
                                 wr_data, wr_strb) & MT_C64_REU_HOST_WRITE_MASK;
                     MT_REG_C64_IEC_CONTROL:
                         if(C64_IEC_CAPS[31] && wr_strb[0]) c64_iec_control<=wr_data[1:0];
+                    MT_REG_NET_CONTROL:
+                        if(NET_CAPS[31] && wr_strb[0])net_run<=wr_data[0];
+                    MT_REG_NET_ACCESS:
+                        if(NET_CAPS[31] && wr_strb==4'hf)begin
+                            net_access_word<=wr_data;net_access_valid<=1;
+                        end
+                    MT_REG_C64_UCI_CONTROL:
+                        if(C64_EXPANSION_CAPS[5])
+                            c64_uci_control<=11'(merge_strobes({21'd0,c64_uci_control},wr_data,wr_strb)) & 11'h71f;
+                    MT_REG_C64_UCI_HANDSHAKE:
+                        if(uci_op_good)begin c64_uci_op<=wr_data;c64_uci_op_valid<=1;end
+                    MT_REG_C64_UCI_RAM_READ:
+                        if(C64_EXPANSION_CAPS[13] && wr_strb==4'hf &&
+                           wr_data[31:27]==0 && wr_data[26:16]<896)
+                            c64_uci_ram_request<={c64_uci_ram_request[31:28]+4'd1,1'b1,wr_data[26:0]};
+                    MT_REG_C64_SID_INDEX:
+                        if(C64_EXPANSION_CAPS[6] && wr_strb==4'hf && wr_data<=56)
+                            c64_sid_index<=wr_data[5:0];
+                    MT_REG_C64_SID_DATA:
+                        if(C64_EXPANSION_CAPS[6] && wr_strb==4'hf && !c64_sid_status[8])begin
+                            c64_sid_data<=wr_data;c64_sid_write<=1;
+                        end
+                    MT_REG_C64_SID_COMMIT:
+                        if(C64_EXPANSION_CAPS[6] && wr_strb==4'hf && !c64_sid_status[8])begin
+                            c64_sid_sequence<=wr_data[7:0];c64_sid_commit<=1;
+                        end
                     MT_REG_VIDEO_EFFECT_ADDRESS:
                         if (wr_strb == 4'hF && wr_data[31:10] == 0)
                             effect_address <= wr_data[9:0];

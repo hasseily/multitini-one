@@ -6,6 +6,7 @@
 #include "multitini_video_effects.h"
 #include "multitini_gamepad.h"
 #include "multitini_controls.h"
+#include "multitini_c64_sid.h"
 #include "sd_storage.h"
 
 #include <stdbool.h>
@@ -61,9 +62,11 @@ typedef struct {
 typedef struct {
     bool auto_boot;
     uint8_t display_mode;
-    uint8_t c64_turbo_flags; /* Byte 26 bits 0-1; no session diagnostics. */
+    uint8_t c64_turbo_flags; /* Byte 26 bits 0-1 and 3 (SuperCPU detect). */
     uint8_t c64_turbo_detail; /* Byte 27; zero is the legacy Manual 2 MHz default. */
     bool c64_ultimate_audio; /* Byte 26 bit 2, never in a profile expansion byte. */
+    bool c64_command_interface; /* Byte 26 bit 4. */
+    bool c64_title_cfg_off; /* Byte 26 bit 5: automatic sidecars only. */
     mt_gamepad_config_t gamepads[MT_GAMEPAD_SLOTS];
     char selected_core_id[MT_CORE_PACKAGE_ID_MAX];
     size_t profile_count;
@@ -144,6 +147,12 @@ mt_settings_result_t mt_supervisor_settings_save(
 /* Separate journal: old schema-10 firmware ignores these new bindings. */
 bool mt_supervisor_turbo_controls_load(mt_supervisor_settings_t *settings);
 bool mt_supervisor_turbo_controls_save(const mt_supervisor_settings_t *settings);
+/* Missing/stale companion records use the legacy preset without changing
+ * settings.bin. A malformed companion returns false and is never overwritten. */
+bool mt_supervisor_sid_map_load(const char *core_id, uint8_t legacy_mode,
+                                mt_c64_sid_model_t *model);
+bool mt_supervisor_sid_map_save(const char *core_id,
+                                const mt_c64_sid_model_t *model);
 const char *mt_settings_status_name(mt_settings_status_t status);
 
 #endif

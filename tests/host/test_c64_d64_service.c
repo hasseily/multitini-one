@@ -71,6 +71,26 @@ typedef struct {
 } fake_sd_t;
 
 static fake_sd_t fake_sd;
+mt_sd_result_t mt_sd_file_canonical_path(const char *path, char *out, size_t capacity)
+{
+    char result[512];
+    const char *alias = strstr(path, "/GAMES~1/");
+    if (alias) {
+        size_t prefix = (size_t)(alias - path);
+        assert(prefix + strlen(alias + 9) + 8 < sizeof result);
+        memcpy(result, path, prefix);
+        strcpy(result + prefix, "/Games/");
+        strcat(result, alias + 9);
+    } else {
+        assert(strlen(path) < sizeof result);
+        strcpy(result, path);
+    }
+    char *leaf = strrchr(result, '/');
+    if (leaf && !strcmp(leaf, "/DISK~1.D64")) strcpy(leaf, "/disk.d64");
+    if (strlen(result) >= capacity) return (mt_sd_result_t){MT_SD_INVALID_ARGUMENT, 6, 0};
+    memmove(out, result, strlen(result) + 1);
+    return (mt_sd_result_t){MT_SD_OK, 0, 0};
+}
 
 static uint32_t register_index(uint32_t offset)
 {
@@ -324,6 +344,7 @@ mt_sd_result_t mt_sd_storage_read_file_max(const char *path, uint8_t *dst,
     assert(dst != NULL);
     strcpy(fake_sd.read_path, path);
     if (strcmp(path, "0:/multitini/cores/c64/media/drive8.d64") == 0 ||
+        strcmp(path, "0:/library/c64/GAMES~1/Sub/DISK~1.D64") == 0 ||
         strcmp(path, "0:/library/c64/Games/Sub/disk.d64") == 0) {
         result.size = TEST_D64_SIZE;
         assert(capacity >= result.size);
@@ -762,6 +783,7 @@ static void test_nested_package_paths(void)
     assert(c64_d64_service_set_media_root("0:/other") != 0);
     assert(c64_d64_service_path_protected("0:/LIBRARY/C64/games/sub/DISK.D64"));
     assert(c64_d64_service_path_protected("0:/library/c64/Games/Sub/disk.d64.mtj"));
+    assert(c64_d64_service_path_protected("0:/library/c64/GAMES~1/Sub/DISK~1.D64"));
     assert(c64_d64_service_path_protected("0:/library/c64/Games"));
     assert(c64_d64_service_path_protected("0:/"));
     assert(!c64_d64_service_path_protected("0:/library/c64/Game"));
@@ -792,6 +814,12 @@ static void test_nested_package_paths(void)
     assert(c64_d64_service_path_protected("0:/library/c64/Games/Sub/disk.g64"));
     assert(c64_d64_service_eject() == 0);
     assert(c64_d64_service_set_media_root("0:/other") == 0);
+    assert(c64_d64_service_set_media_root("0:/library/c64") == 0);
+    assert(c64_d64_service_mount("GAMES~1/Sub/DISK~1.D64") == 0);
+    assert(c64_d64_service_path_protected("0:/library/c64/Games/Sub/disk.d64"));
+    assert(c64_d64_service_path_protected("0:/library/c64/Games"));
+    assert(!c64_d64_service_path_protected("0:/library/c64/Games/Sub/other.d64"));
+    assert(c64_d64_service_eject() == 0);
 }
 
 int main(void)

@@ -6,6 +6,8 @@
 -- Match VICE 3.10 NMOS IRQ/NMI polling and pending-edge consumption, including
 -- stolen reads, CLI/SEI, branch polling and BRK vector selection. Non-NMOS
 -- interrupt-sampling paths retain upstream behavior.
+-- Export a combinational lower-address port indication for NMOS stores so
+-- the island RAM write-data path does not depend on the PC read-address mux.
 -- ****
 -- T65(b) core. In an effort to merge and maintain bug fixes ....
 --
@@ -156,6 +158,7 @@ entity T65 is
     NMI_n   : in  std_logic := '1';
     SO_n    : in  std_logic := '1';
     R_W_n   : out std_logic;
+    Store_Port : out std_logic;
     Sync    : out std_logic;
     EF      : out std_logic;
     MF      : out std_logic;
@@ -289,6 +292,14 @@ begin
   ML_n <= '0' when IR(7 downto 6) /= "10" and IR(2 downto 1) = "11" and MCycle(2 downto 1) /= "00" else '1';
   VP_n <= '0' when IRQCycle = '1' and (MCycle = "101" or MCycle = "110") else '1';
   VDA <= '1' when Set_Addr_To_r /= Set_Addr_To_PBR else '0';
+  -- Valid only for NMOS stores: indicates lower16-bit address $0000/$0001.
+  -- Ignore this output during reads and in other CPU modes. Every NMOS store
+  -- uses SP, ZPG or BA; SP is always $01xx and DBR is above the low16 bits.
+  -- This observes existing registers without changing state or bus timing.
+  Store_Port <= '1' when
+      (Set_Addr_To_r = Set_Addr_To_ZPG and AD(7 downto 1) = "0000000") or
+      (Set_Addr_To_r = Set_Addr_To_BA and BAH = x"00" and BAL(7 downto 1) = "0000000")
+    else '0';
   VPA <= '1' when Jump(1) = '0' else '0';
 
   -- debugging signals

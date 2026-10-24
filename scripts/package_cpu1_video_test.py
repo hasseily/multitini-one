@@ -108,6 +108,38 @@ def verify_sources(files):
         require(sha(source_path(name)) == expected, "Build source changed: " + name)
 
 
+def ethernet_partial_input_timing(reports, machine, coverage):
+    """Match the routed Tcl gate; no other partial input exception is allowed."""
+    records = list(re.finditer(
+        r"There (?:are|is) (\d+) input ports with partial input delay specified[^\n]*(?:\n|$)",
+        coverage, re.IGNORECASE))
+    if not any(int(record[1]) for record in records):
+        return None
+    require(machine == "C64" and len(records) == 1 and int(records[0][1]) == 8,
+            "Unqualified partial input timing constraints")
+    ports = []
+    for line in coverage[records[0].end():].splitlines():
+        if not line.strip():
+            if ports:
+                break
+            continue
+        ports.append(line.strip())
+    require(sorted(ports) == [f"eth_d[{bit}]" for bit in range(8)],
+            "Unexpected partially constrained input ports")
+    report = reports / "w5100s_timing.rpt"
+    require(report.is_file(), "Missing routed W5100S timing evidence")
+    match = re.fullmatch(
+        r"present true output_paths 22 input_paths 8 output_max_ns ([\d.eE+-]+) input_max_ns ([\d.eE+-]+)",
+        report.read_text().strip())
+    require(match is not None, "Invalid routed W5100S timing evidence")
+    output_max, input_max = map(float, match.groups())
+    require(math.isfinite(output_max) and 0 <= output_max <= 4 and
+            math.isfinite(input_max) and 0 <= input_max <= 9,
+            "W5100S external timing bounds failed")
+    return {"output_paths": 22, "input_paths": 8,
+            "output_max_ns": output_max, "input_max_ns": input_max}
+
+
 def timing(directory, machine, psram):
     reports = directory / "reports"
     require(REQUIRED_REPORTS <= {p.name for p in reports.iterdir()}, "Missing timing signoff reports")
@@ -146,9 +178,9 @@ def timing(directory, machine, psram):
         r"There (?:are|is) [1-9]\d* pins that are not constrained for maximum delay",
         r"There (?:are|is) [1-9]\d* input ports with no input delay specified",
         r"There (?:are|is) [1-9]\d* ports with no output delay specified\. \(HIGH\)",
-        r"There (?:are|is) [1-9]\d* input ports with partial input delay specified",
         r"There (?:are|is) [1-9]\d* ports with partial output delay specified")
     require(not any(re.search(p, coverage) for p in failures), "Unconstrained timing objects")
+    ethernet = ethernet_partial_input_timing(reports, machine, coverage)
     route = (reports / "route_status.rpt").read_text()
     count = lambda label: re.search(re.escape(label) + r"\.+\s*:\s*(\d+)\s*:", route)
     logical, full, errors = (count(label) for label in
@@ -177,9 +209,12 @@ def timing(directory, machine, psram):
             require("VIOLATED" not in report, "Vectrex PSRAM input timing failed")
             found = set(re.findall(r"^\s*Source:\s*(psram_[ab]_io\[[0-3]\])\s*$", report, re.MULTILINE))
             require(found == pins, "Missing Vectrex PSRAM input timing paths")
-    return {"timing_ns": slacks, "minimum_bus_skew_ns": min(skew_slacks),
+    result = {"timing_ns": slacks, "minimum_bus_skew_ns": min(skew_slacks),
             "critical_cdc_rows": summary, "external_psram_waivers": expected,
             "routed_nets": int(full[1])}
+    if ethernet is not None:
+        result["w5100s_external_timing"] = ethernet
+    return result
 
 
 def video_xsa(path):

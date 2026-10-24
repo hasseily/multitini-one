@@ -10,7 +10,7 @@ v3 applies the user decisions of 2026-10-23 (section 0.6, Q6-Q16) and the items 
 - the menu shows requested and effective speed with the reason; the speed rows stay editable while Off; three bindable turbo actions and a one-step Turbo on/off row;
 - an NMI edge hold and rearm (section 14.4), an unmapped-address rule and a turbo timing revision in the caps;
 - an opt-in "Expansion memory speed: Follow CPU" REU milestone (M9) that leaves the stock REU untouched;
-- all SuperCPU detection removed; `$D07A`/`$D07B`/`$D079` stay as U64 turbo switch registers;
+- all SuperCPU detection removed; `$D07A`/`$D07B`/`$D079` stay as U64 turbo switch registers (superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: SuperCPU Detect at `$D0BC` is planned for XM3, Q21);
 - the Ultimate Audio sampler's I/O2 window and menu argument aligned with docs/C64_ULTIMATE_AUDIO_DESIGN.md. Ultimate Audio ships in the same release, and one ABI step, 0.24, covers turbo, Ultimate Audio, REU image preload and the debug registers;
 - N0 (a stock NTSC build and board test) is the first implementation step; NTSC ships only when it closes at 64x (listed release timing fallbacks allowed), and F6 is a diagnostic build only;
 - three host features in the first release: REU image preload (a user feature), C64 RAM readback and audio capture (debug features);
@@ -73,7 +73,7 @@ Notation (used throughout): one native CPU cycle has 32 phases p = 0..31 (EXT0 =
 - `$D030`: bit 0 is TurboEnable.
 - `$D07A`/`$D07B`/`$D079`: the U64 turbo switch registers (normal/turbo writes).
 - All of them read `$FF` when they are not live.
-- Nothing else is decoded: there is no SuperCPU detect register and no other SuperCPU register (Q11).
+- Nothing else is decoded: there is no SuperCPU detect register and no other SuperCPU register (Q11). Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: `$D0BC` is planned to read `$01` behind the SuperCPU Detect option (default Disabled, XM3, Q21).
 
 **Turbo Control** (menu) has four modes: Off, Manual, U64 Turbo Registers, TurboEnable Bit. The default is Off.
 
@@ -168,8 +168,8 @@ These decisions also close the earlier drafts' open questions on the same topics
 | Q7 | standing rule | 3 | "If users are opening issues for U64 that really matter then we should implement the solution and not blindly follow U64." | none | The sweep (C64_TURBO_U64_ISSUES.md) applies it; Q9 lists what the user adopted. DL6 (`EDGE_STAGE` default 1; formerly question 9, Q-S1) follows the sweep's recommendation under this rule |
 | Q8 | standing rule | 4 | The REU is fully correct at stock today (Expand by Bonzai runs flawlessly). Nothing may change stock REU behaviour. Expand disks 1 and 2 are a hard regression gate at stock and with turbo configured but forced exact | none | 0.1, 1.8, 6.4, gate G-REU0 (10.2: M2, M5, M9), 12 |
 | Q9 | 2026-10-23 | 5 | Adopt from the sweep: (a) full 48x/64x at indices 14/15, with a hidden firmware-only bit restoring 47/63; (b) disk auto-slow corrections: a stricter form of the U64's own IEC slowdown, Off labelled as risky, block-cause status, a programmable holdoff with experiment E-IEC, a static-hold release designed but shipped disabled; (c) forced exact overrides `$D031` bit 7; (d) a TurboEnable apply raises live only if live ≠ 0, and the apply counter changes only on real value changes; (e) menu visibility: requested/effective speed and reason, sticky status bits, speed rows editable while Off; (f) supervisor actions "Turbo on/off", "CPU faster", "CPU slower" bindable in Controls, plus a one-step Turbo on/off menu row; (g) an opt-in "Expansion memory speed: Follow CPU" REU DMA as a post-first-release milestone (default stays 1 byte per φ2; stock path untouched); (h) an NMI edge latch; (i) no fast or local path answers an unmapped address; (j) a turbo timing revision in CAPS; (k) the sweep's gates for these items | Earlier draft: indices 14/15 delivered 47/63 and "Max 64: no"; disk auto-slow Off described as U64 parity; every TurboEnable apply raised live; the speed rows disabled while Off; D16 provisional (see the note below) | 0.1-0.4, 1.2-1.12, 2.5, 2.7, 2.9, 2.11, 2.13.4, 2.13.6, 3, 4.3, 5.8, 6, 7, 8, 9, 10, 11, 12 |
-| Q10 | 2026-10-23 | 6 | Do not adopt from the sweep: per-title sidecar `.cfg` settings and "Save turbo settings for this title"; moving cartridge turbo (M7) earlier. M7 stays where v2 has it, cartridges force exact mode until then, and only the status display "(cartridge: 1 MHz)" is taken | none | 1.10, 6.2, 6.3, 10.2 |
-| Q11 | 2026-10-23 | 7 | Disregard the SuperCPU: no `$D0BC` detect, no `$D0B8`/`$D0B9`, no SuperCPU Detect option and no config, caps or settings bits for it; deviation D10 and milestone M8's SuperCPU content are removed; no SuperCPU naming in the menu. **Interpretation [I]:** `$D07A`/`$D07B`/`$D079` stay, live in the register modes as on the U64, because U64-targeted software (Image BBS style) uses them; this document describes them as U64 turbo switch registers, not as SuperCPU support. Design decision DL4 keeps them; the user can still ask to drop them | Earlier draft: a `$D0BC` SuperCPU detect register with a SuperCPU Detect option (default Disabled), deviation D10, CONFIG bit 7, CAPS bit 19, settings byte 27 bit 4 and M8's `$D0BC` content | 0.1, 1.1, 1.2, 1.4, 1.5, 1.12, 6.1, 6.3, 10, 11 |
+| Q10 | 2026-10-23 | 6 | Do not adopt from the sweep: per-title sidecar `.cfg` settings and "Save turbo settings for this title"; moving cartridge turbo (M7) earlier. M7 stays where v2 has it, cartridges force exact mode until then, and only the status display "(cartridge: 1 MHz)" is taken. Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: same-name `.cfg` files and "Save settings for this title" are planned (Q22, XM2); the M7 part stands | none | 1.10, 6.2, 6.3, 10.2 |
+| Q11 | 2026-10-23 | 7 | Disregard the SuperCPU: no `$D0BC` detect, no `$D0B8`/`$D0B9`, no SuperCPU Detect option and no config, caps or settings bits for it; deviation D10 and milestone M8's SuperCPU content are removed; no SuperCPU naming in the menu. **Interpretation [I]:** `$D07A`/`$D07B`/`$D079` stay, live in the register modes as on the U64, because U64-targeted software (Image BBS style) uses them; this document describes them as U64 turbo switch registers, not as SuperCPU support. Design decision DL4 keeps them; the user can still ask to drop them. Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: reversed for `$D0BC` only; SuperCPU Detect (D0BC) is planned for XM3 (Q21: CONFIG bit 20, CAPS2 bit 15, settings byte 26 bit 3); `$D0B8`/`$D0B9` await a user decision | Earlier draft: a `$D0BC` SuperCPU detect register with a SuperCPU Detect option (default Disabled), deviation D10, CONFIG bit 7, CAPS bit 19, settings byte 27 bit 4 and M8's `$D0BC` content | 0.1, 1.1, 1.2, 1.4, 1.5, 1.12, 6.1, 6.3, 10, 11 |
 | Q12 | 2026-10-23 | 8 | The U64 "Ultimate Audio $DF20-$DFFF" sampler becomes an option in the C64 Options tab, and turning it on enables the REU. It is designed in docs/C64_ULTIMATE_AUDIO_DESIGN.md. In this design: when it is on, `$DF20-$DFFF` belongs to it (REU registers stay at `$DF00-$DF1F`; their mirrors above `$DF1F` disappear); its registers are I/O2-class accesses under turbo (one access per φ2, as on the U64), and its acknowledge writes join the IRQ-acknowledge class, as that design states; the turbo rows keep explicit Options-tab argument numbers (1, 4-7, 9, 10) and Ultimate Audio takes argument 8; the two features share one ABI step (0.24) and one offset map (section 6.0) | none | 0.1, 1.7, 1.8, 2.5, 2.13.3, 2.13.8, 5.8, 6.0, 6.2, 6.3, 10.2, 10.3, 11, 12, 14.3 |
 | Q13 | 2026-10-23 | 9 (Q-N2) | N0 runs **first**, before any turbo work, as the first step of implementation: one Vivado build of today's tree as a stock NTSC image, packaged with the `pal` and `ntsc` variants, plus a board test. Nothing is built now | Earlier draft: "N0: M0 if Q-N2 allows, else M1" | 0.5, 10.1, 10.2, 11, 13.6 |
 | Q14 | 2026-10-23 | 9 (Q-N1) | **Hold NTSC until it closes at 64x.** No NTSC image capped at 32x (F6) ships. PAL may ship alone. F6 stays only as a diagnostic or experiment build option | Earlier draft: an NTSC image that missed 64x shipped as F6 (32x cap, caps mask `0x1FFF`) with matching menu clamp text, as Q-N1 in C64_TURBO_NTSC.md recommended | 0.5, 1.3, 3.1, 4.3, 6.1, 6.2, 9 (R2, R26), 10, 11, 13 |
@@ -218,7 +218,7 @@ Source: C64_TURBO_U64_SPEC.md §B; u64_config.cc:325-326, 387-394, 1625-1636 [V]
 - "Ignored" means the write still reaches the VIC, where it has no effect.
 - FPGA64's C128 turbo path stays off, because `turbo_en` = 0: `turbo_mode` is tied to "00" (fpga64:1077; VIC:1756, 1821) [V].
 - Liveness depends only on Turbo Control. Conditions that force exact mode never change liveness or readback (section 1.11).
-- No SuperCPU register is decoded in any mode (Q11): `$D0BC`, `$D0B8`/`$D0B9` and the rest read the VIC's `$FF`.
+- No SuperCPU register is decoded in any mode (Q11): `$D0BC`, `$D0B8`/`$D0B9` and the rest read the VIC's `$FF`. Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: with SuperCPU Detect Enabled and Turbo Control not Off, `$D0BC` is planned to read `$01` in every mode and through forced exact (XM3).
 
 ### 1.2 Registers
 
@@ -255,13 +255,13 @@ Source: C64_TURBO_U64_SPEC.md §B; u64_config.cc:325-326, 387-394, 1625-1636 [V]
 - Reads return the VIC's `$FF`.
 - U64-targeted software such as Image BBS uses them (C64_TURBO_U64_ISSUES.md §1.2). They are kept as U64 turbo switch registers, not as SuperCPU support (Q11; DL4).
 
-**No SuperCPU registers** (Q11). `$D0BC`, `$D0B8`/`$D0B9` and every other SuperCPU register are not decoded and read the VIC's `$FF`. There is no SuperCPU Detect option. Software that looks for a SuperCPU through `$D0BC` finds none, as on a U64 with SuperCPU Detect at its default, Disabled [V u64_config.cc:394].
+**No SuperCPU registers** (Q11). `$D0BC`, `$D0B8`/`$D0B9` and every other SuperCPU register are not decoded and read the VIC's `$FF`. There is no SuperCPU Detect option. Software that looks for a SuperCPU through `$D0BC` finds none, as on a U64 with SuperCPU Detect at its default, Disabled [V u64_config.cc:394]. Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: a SuperCPU Detect (D0BC) option is planned, default Disabled (XM3, Q21).
 
 **Live and preference** [V #153; u64_config.cc:1603-1637]:
 - The preference is {menu index, menu badline setting}.
 - Live is cleared to `$00` on every C64 reset.
 - An apply event (section 1.5) sets live := preference at once in Registers mode. In TurboEnable mode it does so only if live ≠ `$00`, and entering TurboEnable from another mode sets live := `$00` (Q9; D18; the #153 residual, C64_TURBO_U64_ISSUES.md §3(e)).
-- The U64's `SPEED_UPDATE` hooks fire for Turbo Control, CPU Speed, Badline Timing and SCPU Detect (u64_config.cc:923-926 [V]). Multitini has no SCPU Detect setting, and its apply event fires only when one of the other three changes value (section 6.1).
+- The U64's `SPEED_UPDATE` hooks fire for Turbo Control, CPU Speed, Badline Timing and SCPU Detect (u64_config.cc:923-926 [V]). Multitini has no SCPU Detect setting, and its apply event fires only when one of the other three changes value (section 6.1). Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: the setting is planned (XM3); it is never an apply event (D21).
 - Whether the U64 FPGA applies `SPEED_UPDATE` in TurboEnable mode is [O] (E7).
 
 ### 1.3 Speed table
@@ -457,7 +457,7 @@ The grant pattern is rotated so the first granted slot of each frame is at fast 
 | D7 | The FLI colour nibble in turbo comes from the idle dummy read (fpga64:698), not from opcode bytes. With badline timing disabled it can also come from the low nibble of a forwarded I/O read that lands in BA-low cycles 1-3 of a mid-line badline | permanent; cosmetic |
 | D8 | Forwarded-request cutoff at fast clock 30 vs about 32-36 on the U64. With rotation, the measured `meas_c` boundary still matches | permanent |
 | D9 | Speed-switch latency is the next φ2 (U64: about 14-20 φ2) | permanent |
-| D10 | Removed (Q11). No SuperCPU register is decoded; on the U64 this matches SuperCPU Detect at its default (Disabled). The number is not reused | — |
+| D10 | Removed (Q11). No SuperCPU register is decoded; on the U64 this matches SuperCPU Detect at its default (Disabled). The number is not reused. Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: D10 stays unused; the planned SuperCPU Detect deviations are D20 and D21 | — |
 | D11 | Only with build fallback `FORWARD_PORT_WRITES=1`: `$00/$01` writes cost one φ2 each. This hurts code that flips `$01` per access, e.g. Doom's REU transfers | fallback only (Q3) |
 | D12 | RESTORE gives no NMI. `freeze_key` is unconnected (adapter:525; fpga64:1121) and the cartridge gets `freeze_key` = 0 (adapter:493) [V]. Pre-existing, not caused by turbo | until RESTORE is wired; then model it as a held level |
 | D13 | IRQ-acknowledge accesses complete later: forwarded CIA ICR and `$DF00` reads and Ultimate Audio acknowledge writes about 9 fast clocks (0.14 µs) after other φ2 accesses; fast `$D019`/`$D01A` writes block the next enable for about 9 fast clocks (section 5.8) | permanent; timing only |
@@ -1723,7 +1723,7 @@ Firmware never reads or writes an F register before steps 1 and 2 pass. An unava
 
 **Development images.** The spec edit lands once. A C64 image whose RTL lacks a feature reports that feature's caps as 0, so firmware hides it. No release ships until both features report their caps.
 
-**Offset map.** Offsets 0x0D8-0x13C are free today [V spec/interface_v0.json; C64_TURBO_FIRMWARE_PATH.md §2]. No offset or bit below overlaps another. Firmware never accesses a reserved or free offset.
+**Offset map.** Offsets 0x0D8-0x13C are free today [V spec/interface_v0.json; C64_TURBO_FIRMWARE_PATH.md §2]. Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: 0x114-0x124 are drive 9 (ABI 0.25) and 0x128-0x138 are planned for the UCI (ABI 0.26). No offset or bit below overlaps another. Firmware never accesses a reserved or free offset.
 
 | Offset | Name | Access | Owner | Class |
 |---|---|---|---|---|
@@ -1743,7 +1743,7 @@ Firmware never reads or writes an F register before steps 1 and 2 pass. An unava
 | 0x108 | `AUDIO_CAPTURE_DATA` | ro, pop on read | section 6.1 | debug |
 | 0x10C | `C64_RAM_PEEK` | rw | section 6.1 | debug |
 | 0x110 | `C64_REU_HOST` | rw | section 6.1 | user (preload) |
-| 0x114-0x13C | free | — | — | not decoded |
+| 0x114-0x13C | free | — | — | not decoded. Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: 0x114-0x124 drive 9 (0.25); 0x128-0x138 UCI (planned, 0.26) |
 
 - The meaning of the Ultimate Audio registers and status bits is in docs/C64_ULTIMATE_AUDIO_DESIGN.md §1.2-1.3 and §6.1. Their debug fields count only while `C64_CPU_CONFIG` bit 19 is armed (section 6.1).
 - This map closes question 22, which kept it open until both documents matched (section 11).
@@ -1766,7 +1766,7 @@ Firmware never reads or writes an F register before steps 1 and 2 pass. An unava
 | [17:16] | IEC holdoff: 0 = 500 ms (default), 1 = 100 ms, 2 = 50 ms, 3 = 20 ms. Set only by a UART debug command until E-IEC adopts a shorter default (section 1.9) |
 | [18] | Expansion memory speed: 1 = Follow CPU (reads 0 unless CAPS2 bit 12; M9) |
 | [19] | C64 diagnostics armed (shared with Ultimate Audio; Q19). One level gates every diagnostic counter and test-only status bit of both features: the sticky diagnostic bits 24-26 of `C64_CPU_STATUS` and the debug fields of `C64_UA_STATUS`, `C64_UA_FETCHES` and `C64_REU_MISSES` (docs/C64_ULTIMATE_AUDIO_DESIGN.md §6.1). They count only while it is 1, and hold and read 0 while it is 0; its rising edge clears them. It is not an apply event and changes no behaviour. Set only by `:c64diag on` inside a UART debug session (section 6.5); never persisted |
-| [31:20] | reserved |
+| [31:20] | reserved. Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: bit 20 `SCPU_DETECT` is planned (ABI 0.26); [31:21] stay reserved |
 
 - Reset value: `0x0000_0151` (unchanged from v2).
 - **Apply counter** (Q9).
@@ -1832,7 +1832,7 @@ The first release sets bits 16-20, 22, 23, 28-31. A fallback build reports what 
 | 12 | Expansion memory speed: Follow CPU (M9) |
 | 13 | C64 RAM peek (`C64_RAM_PEEK`) |
 | 14 | diagnostic build: a diagnostic setting of section 2.13.2 is present, for example `C64_ISLAND_CYCLE` = 2 (F6) or Ultimate Audio's `UA_COHERENCE_PROBE` = 1 |
-| [30:15] | reserved |
+| [30:15] | reserved. Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: bit 15 `SCPU_DETECT` is planned (ABI 0.26); [30:16] stay reserved |
 | 31 | valid |
 
 The first release sets bits 8-11, 13 and 31. An image with release defaults reports revision 1. An image built with a release fallback that changes the timing (section 2.13.2) reports the next free revision number, and the release notes map each revision to its images.
@@ -1914,10 +1914,10 @@ The first release sets bits 8-11, 13 and 31. An image with release defaults repo
 
 - "Turbo available" means the turbo feature passes the gating rule of section 6.0.
 - The turbo rows keep explicit numbers: v2's turbo rows took 4-7, Ultimate Audio takes 8, the two new turbo rows take 9 and 10, and the optional UA level row takes 11.
-- The first release shows 9 rows (orders 1-6 and 9-11). With M7 and M9 it shows 11. With the UA level row as well it shows 12, which equals `MT_MENU_MAX_CORE_OPTIONS` [V firmware/include/multitini_menu.h:18]. If the level row is ever added, its storage comes from the reserved bits of byte 26 (section 6.3); until then those bits stay reserved and ignored.
+- The first release shows 9 rows (orders 1-6 and 9-11). With M7 and M9 it shows 11. With the UA level row as well it shows 12, which equals `MT_MENU_MAX_CORE_OPTIONS` [V firmware/include/multitini_menu.h:18]. Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: the limit is planned to rise to 20 (XM1), with new arguments 14-19. If the level row is ever added, its storage comes from the reserved bits of byte 26 (section 6.3); until then those bits stay reserved and ignored.
 - Routing in `handle_menu_action` (C64 core): arguments 4, 5, 6, 7, 9 and 10 go to the turbo handler, placed before today's `file_index >= 2` expansion branch (main.c:4505-4508 [V]). Arguments 2, 3, 8 and 11 go to `change_c64_expansion()`. Argument 0 keeps today's path; it restarts the C64 and is the only option that does (main.c:3551-3558 [V]). Argument 1 keeps today's CPU turbo path, extended by this section.
 - A change of argument 2, 3 or 8 makes one settings save, then one `C64_EXPANSION_CONFIG` write that carries bits [4:0], so the REU and UA bits change on the same `c64_clk` edge. docs/C64_ULTIMATE_AUDIO_DESIGN.md §6.2-6.4 owns the apply table, the restore rule and the UA row states and texts (Q18).
-- Removed (Q10, Q11): no per-title settings action and no SuperCPU row.
+- Removed (Q10, Q11): no per-title settings action and no SuperCPU row. Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: rows 14 (SuperCPU Detect), 17-19 (title `.cfg` files, revert, save) are planned.
 
 **Visibility** (Q9; the Bus Operation Mode lesson, C64_TURBO_U64_ISSUES.md §3(e)):
 - The CPU turbo row value and the status line when the menu opens show the requested speed, the live `$D031`, the effective speed and the reason. Examples: "64 MHz, live $8F"; "64 MHz, now 1 MHz: disk"; "(disk: line held)"; "(disk: cable held)"; "(cartridge: 1 MHz)"; "reset window"; "(max 32 MHz on this image)" (diagnostic F6 images only).
@@ -1966,7 +1966,7 @@ The first release sets bits 8-11, 13 and 31. An image with release defaults repo
 | 0 | disk auto-slow Off | this design | On |
 | 1 | cartridge forces 1 MHz (written 0 until `C64_CPU_CAPS` bit 21) | this design (M7) | Off |
 | 2 | Ultimate Audio on | docs/C64_ULTIMATE_AUDIO_DESIGN.md §6.4 (DL1) | Off |
-| 3-7 | reserved: written 0; **ignored on decode, never rejected**, so later flags stay downgrade-safe | — | — |
+| 3-7 | reserved: written 0; **ignored on decode, never rejected**, so later flags stay downgrade-safe. Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: bit 3 SuperCPU Detect, bit 4 Command Interface and bit 5 title `.cfg` files Off are planned; bits 6-7 stay reserved for the UA level row | — | — |
 
 **Per-profile expansion byte** (at `MT_SETTINGS_V9_WIRE_SIZE` + profile index): [2:0] SID mode, [3] REU [V supervisor_settings.c:608-609]. Bits 7:4 must stay 0, because a schema-10 decoder rejects the whole file otherwise [V supervisor_settings.c:699-703]. Ultimate Audio is never stored there. The per-profile REU default stays On [V firmware/platform/xilinx/supervisor_settings.h:22].
 
@@ -1986,7 +1986,7 @@ The first release sets bits 8-11, 13 and 31. An image with release defaults repo
 - The chosen variant is already saved per profile; a package holds up to 8 variants (main.c:2213-2262) [V].
 - Turbo action bindings live in the companion file `0:/multitini/turbo_controls.bin` (section 6.2; DL2). It has its own magic, version and CRC, is journalled like `settings.bin` and is keyed by core id and controller identity. A missing or bad file means unbound. Schema-10 firmware never reads it.
 - **Never persisted:** the debug session, the C64 diagnostics armed flag, `c64u_top`, the IEC holdoff and static-release fields, a `:speed` override, audio capture state, RAM peek state, the UA hold and every Ultimate Audio debug field (section 6.5). These live outside `mt_supervisor_settings_t`, so every save writes only stored values.
-- **No per-title settings** (Q10): no sidecar `.cfg` is read, and there is no "Save turbo settings for this title" action.
+- **No per-title settings** (Q10): no sidecar `.cfg` is read, and there is no "Save turbo settings for this title" action. Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: same-name `.cfg` files are planned as a RAM-only title overlay that is never saved to `settings.bin` (XM2, Q22).
 
 ### 6.4 Host features (first release; Q15)
 
@@ -2438,7 +2438,7 @@ Also on the board, both standards:
 - the unmapped-address rule for Ultimax-unmapped ranges (section 1.7);
 - cartridge suites and board tests.
 
-**M8 (optional):** slot-32 modelling (D6). Its SuperCPU content (`$D0BC`) is removed (Q11).
+**M8 (optional):** slot-32 modelling (D6). Its SuperCPU content (`$D0BC`) is removed (Q11). Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: `$D0BC` is planned as milestone XM3 of that plan, not as part of M8.
 
 **M9: Expansion memory speed: Follow CPU** (after the first release; Q9(g); D19; C64_TURBO_U64_ISSUES.md §3(c)).
 - Menu row argument 10: "C64U (1 byte per cycle)" (default) or "Follow CPU". Stored in global byte 27 bit 4 (section 6.3); `C64_CPU_CONFIG` bit 18; CAPS2 bit 12. No `$D031` bit is claimed, because the U64 may assign bits 6-4 later (#911).
@@ -2527,7 +2527,7 @@ Step 1 comes first because turbo edits `fpga64_sid_iec.vhd` and the adapter, so 
 
 ## 11. Open questions
 
-Closed by the user (section 0.6): Q1 (fast VIC/SID and BA-low internal I/O), Q2 (NTSC in scope), Q3 (local `$00/$01` writes), Q4 and Q6 (disk auto-slow default On), Q5 (global bytes 26-27), Q9-Q12 (sweep adoptions and rejections, SuperCPU, Ultimate Audio), Q13 (Q-N2: N0 runs first), Q14 (Q-N1: hold NTSC until it closes at 64x), Q15 (host features are in scope), Q16 (debug off by default), Q17 (one release and one ABI step with Ultimate Audio), Q18 (turning Ultimate Audio on turns the REU on), Q19 (the debug facilities of both features off by default, UART only), Q20 (the Expand gate runs with Ultimate Audio off).
+Closed by the user (section 0.6): Q1 (fast VIC/SID and BA-low internal I/O), Q2 (NTSC in scope), Q3 (local `$00/$01` writes), Q4 and Q6 (disk auto-slow default On), Q5 (global bytes 26-27), Q9-Q12 (sweep adoptions and rejections, SuperCPU, Ultimate Audio), Q13 (Q-N2: N0 runs first), Q14 (Q-N1: hold NTSC until it closes at 64x), Q15 (host features are in scope), Q16 (debug off by default), Q17 (one release and one ABI step with Ultimate Audio), Q18 (turning Ultimate Audio on turns the REU on), Q19 (the debug facilities of both features off by default, UART only), Q20 (the Expand gate runs with Ultimate Audio off). Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: Q10 and Q11 are reversed in part by Q22 (title `.cfg` files) and Q21 (`$D0BC`).
 
 Decided by the design lead on 2026-10-23; the user may override each (section 0.6): DL1 (one global UA flag), DL2 (question 18), DL3 (question 25), DL4 (question 19), DL5 (questions 20 and 24), DL6 (question 9). Q17 closes question 21, and the reconciliation with docs/C64_ULTIMATE_AUDIO_DESIGN.md (section 14.3) closes question 22.
 
@@ -2894,8 +2894,8 @@ v3 changes the v2 design only where the user decisions of 2026-10-23 require it.
 | No fast or local path answers an unmapped address | Q9(i) | 0.1, 1.7, 1.10, 2.5, 10.2 (M3, M5, M7) |
 | Turbo timing revision in CAPS2 | Q9(j) | 2.7, 6.1, 10.2 (M4-FW), 12 |
 | Sweep gates: G-REU0 (three configured-but-exact states, strict on both images), `reutiming` (including the reset window), the E5 cases and start-offset assertion, E-BA3 trigger cycles and transfer matrix, G-IEC, PAL/NTSC detect after reset, floating bus, RMW loops, `c64u_top` A/B, OSC3 then `$D418`, the index-0 lockstep cases | Q9(k), Q8 | 1.8, 10.2 |
-| No per-title settings; M7 stays after the first release; "(cartridge: 1 MHz)" status | Q10 | 1.4, 1.10, 6.2, 6.3, 10.2 (M7) |
-| SuperCPU removed; `$D07x` kept as U64 turbo switch registers; freed bits reclaimed (CONFIG bit 7, CAPS bit 19, byte 27 bit 4); D10 removed; M8 trimmed | Q11 | 0.1, 1.1, 1.2, 1.4, 1.12, 6.1, 6.3, 10.1 (E7), 10.2 (M8), 11 (question 19) |
+| No per-title settings; M7 stays after the first release; "(cartridge: 1 MHz)" status. Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: per-title `.cfg` files planned (Q22) | Q10 | 1.4, 1.10, 6.2, 6.3, 10.2 (M7) |
+| SuperCPU removed; `$D07x` kept as U64 turbo switch registers; freed bits reclaimed (CONFIG bit 7, CAPS bit 19, byte 27 bit 4); D10 removed; M8 trimmed. Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: `$D0BC` planned with new bits (CONFIG bit 20, CAPS2 bit 15, byte 26 bit 3; Q21) | Q11 | 0.1, 1.1, 1.2, 1.4, 1.12, 6.1, 6.3, 10.1 (E7), 10.2 (M8), 11 (question 19) |
 | Ultimate Audio: the `$DF20-$DFFF` I/O2 window, acknowledge writes (also in E4), the one-φ2 check at all indices, argument 8, byte 26 bit 2, expansion caps bits 3 and 4, the shared offset map (UA at 0x0F0-0x0F8), the UA hold for preload, the ABI step (one step since Q17) | Q12 | 0.1, 1.7, 1.8, 2.5, 2.13.3, 2.13.8, 5.8, 6.0-6.5, 9 (R4, R32), 10.2, 11 (questions 21, 22), 12 |
 | N0 is the first implementation step | Q13 | 0.5, 10, 13.6 |
 | NTSC held until it closes at 64x; F6 a diagnostic build only; release fallbacks (`VIC_READ_GAP` = 3, F7) may ship, with a per-image timing revision; F2 in the NTSC ladder; RTL steps before a hold | Q14 | 0.1, 0.5, 1.3, 3.1, 3.4 (TR4), 4.2, 4.3, 6.1, 6.2, 9 (R2, R26), 10.2, 13.2, 13.4-13.7 |

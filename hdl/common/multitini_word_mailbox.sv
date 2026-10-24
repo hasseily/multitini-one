@@ -10,11 +10,11 @@ module multitini_word_mailbox #(
     input logic src_clk, src_resetn,
     input logic [WIDTH-1:0] value,
     input logic dst_clk, dst_resetn,
-    output logic [WIDTH-1:0] snapshot
+    output logic [WIDTH-1:0] snapshot,
+    output wire destination_running
 );
     logic [WIDTH-1:0] sent, destination;
     logic ready, valid, force_send;
-    wire destination_running;
     wire changed = (force_send || value != sent) && destination_running;
     cdc_bit_sync destination_reset_sync (
         .clk(src_clk), .resetn(src_resetn), .din(dst_resetn),

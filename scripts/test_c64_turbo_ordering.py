@@ -44,6 +44,7 @@ def make_lane(io2=False):
         .memory_hint_read(),.memory_hint_addr(),.memory_waiting(),.irq(test_reu_irq),.busy(),.fault());
     multitini_c64_ua #(.CORE_CLOCK_HZ(32000000)) test_ua(
         .clk(clk),.hard_reset(!reset_n),.guest_reset(ext_reset),.enable(test_ua_enable),.paused(paused),.hold(1'b0),
+        .invalidate(1'b0),.invalidate_done(),
         .reg_write(ext_cpu_bus_valid&&test_we&&test_ua_select),.reg_addr(test_addr[7:0]),.reg_wdata(test_wdata),.reg_rdata(test_ua_data),
         .diagnostics_armed(1'b0),.audio_tick(1'b0),.board_clip(1'b0),
         .cache_pending_addr(84'd0),.cache_pending_valid(4'd0),.cache_inflight_write_addr(21'd0),.cache_inflight_write_valid(1'b0),
@@ -121,7 +122,7 @@ def main():
                 if p.name=='fpga64_sid_iec.vhd':p=out/'fpga64_sid_iec_observed.vhd'
                 elif p.name=='cpu_6510.vhd':p=out/'cpu_6510_observed.vhd'
                 vhdl.append(p)
-    sv=[ROOT/p for p in ('third_party/c64/upstream/rtl/mos6526.v','hdl/core/c64/ports/sid_dac.sv','hdl/core/c64/ports/sid_filter.sv','third_party/c64/upstream/rtl/sid/sid_envelope.sv','hdl/core/c64/ports/sid_tables.sv','third_party/c64/upstream/rtl/sid/sid_voice.sv','hdl/core/c64/ports/sid_top.sv','hdl/core/c64/multitini_c64_local_ram.sv','hdl/core/c64/multitini_c64_fio_port.sv','hdl/sim/tb_c64_turbo_ordering.sv')]
+    sv=[ROOT/p for p in ('third_party/c64/upstream/rtl/mos6526.v','hdl/core/c64/ports/sid_dac.sv','hdl/core/c64/ports/sid_filter.sv','third_party/c64/upstream/rtl/sid/sid_envelope.sv','hdl/core/c64/ports/sid_tables.sv','hdl/core/c64/ports/sid_voice.sv','hdl/core/c64/ports/sid_top.sv', 'hdl/core/c64/multitini_c64_sid_array.sv','hdl/core/c64/multitini_c64_local_ram.sv','hdl/core/c64/multitini_c64_fio_port.sv','hdl/sim/tb_c64_turbo_ordering.sv')]
     sv += [cp/name for name in ('multitini_c64_cpu_proxy.sv','multitini_c64_island_governor.sv','multitini_c64_island_map.sv','multitini_c64_island_memory.sv','multitini_c64_nmi_delivery.sv','multitini_c64_turbo_regs.sv')]
     sv += [out/'island_observed.sv',out/'c64_turbo_exact_lane.sv']
     if io2:

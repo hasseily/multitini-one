@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns/1ps
 module tb_c64_ua_top #(parameter integer STRESS=0, YIELD=0);
+    reg invalidate=0;wire invalidate_done;
     reg clk=0;always #5 clk=~clk;
     reg hard_reset=1,guest_reset=0,enable=1,paused=0,hold=0,reg_write=0;
     reg [7:0] reg_addr=0,reg_wdata=0;wire [7:0] reg_rdata;
@@ -202,6 +203,14 @@ module tb_c64_ua_top #(parameter integer STRESS=0, YIELD=0);
             if(rate_value==61 && mid_total>(latency==64?2:3))begin $fclose(shared_log);$fatal(1,"Shared defer exceeds model latency%0d count%0d",latency,mid_total);end
             shared_trace=0;
         end
+        // A host buffer fence must not reset voice register programming.
+        paused=1;while(memory_busy)step();
+        invalidate=1;while(!invalidate_done)step();
+        for(v=0;v<7;v=v+1)begin
+            if(dut.control[v]!=3 || dut.start_address[v]!=24'h3000 || dut.rate[v]!=rate_value)
+                $fatal(1,"UA invalidation reset voice registers");
+        end
+        invalidate=0;paused=0;step();
         // Hold applies reset immediately and discards old reads after release.
         hold=1;step();if(!held || dut.playing || irq || audio_l || audio_r)$fatal(1,"Hold not applied");
         while(memory_busy)step();hold=0;step();if(held || dut.playing)$fatal(1,"Hold release restarted voices");

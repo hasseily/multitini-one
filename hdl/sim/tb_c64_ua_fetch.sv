@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns/1ps
 module tb_c64_ua_fetch;
+    reg invalidate=0;wire invalidate_done;
     reg clk=0;always #5 clk=~clk;
     reg hard_reset=1,reset=1,paused=0;
     reg [6:0] fetch=0,playing=0,sixteen_bit=0,predict_valid=0;
@@ -112,10 +113,25 @@ module tb_c64_ua_fetch;
         step();fetch=0;while(!accepted)step();
         if(memory_addr!=24'h2000)$fatal(1,"EDF tie class ordering failed");
         expect_sample(6,{byte_at(24'h2000),8'b0});expect_sample(0,{byte_at(24'h1000),8'b0});
+        // Host DMA invalidation preserves demand/playing, but no old resident
+        // sample or accepted response may repopulate the cache after its ACK.
+        fresh();request(0,24'h400,0);expect_sample(0,{byte_at(24'h400),8'b0});
+        override_enable=1;override_tag=21'h80;override_data=64'h11111111111111ab;
+        invalidate=1;step();if(sample_ready || memory_valid)$fatal(1,"Invalidate exposes old samples or new request");
+        while(!invalidate_done)step();invalidate=0;step();expect_sample(0,16'hab00);
+        fresh();memory_ready=0;request(0,24'h800,0);while(!memory_valid)step();start_issues=issues;
+        invalidate=1;memory_ready=1;step();while(!invalidate_done)step();
+        if(issues!=start_issues || busy)$fatal(1,"Unaccepted invalidation request was not cancelled");
+        invalidate=0;step();expect_sample(0,{byte_at(24'h800),8'b0});
+        fresh();latency=40;request(0,24'h400,0);while(!backend_owed)step();
+        override_enable=1;override_tag=21'h80;override_data=64'h11111111111111cd;invalidate=1;
+        repeat(10)begin step();if(invalidate_done || sample_ready)$fatal(1,"Invalidate ACK before old response drain");end
+        while(!invalidate_done)step();if(busy || sample_ready)$fatal(1,"Old reply survived invalidate");
+        invalidate=0;step();expect_sample(0,16'hcd00);latency=6;
         // Fault lifetime is hard reset only, and faults remain local.
         memory_fault=1;step();memory_fault=0;reset=1;step();reset=0;repeat(50)step();
         if(!fault || memory_valid)$fatal(1,"Fault was not sticky or issued again");
-        $display("PASS: UA fetch coherence=10 offsets=8 issues=%0d",issues);$finish;
+        $display("PASS: UA fetch coherence=10 invalidation=3 offsets=8 issues=%0d",issues);$finish;
     end
     initial begin #1000000;$fatal(1,"UA fetch timeout");end
 endmodule

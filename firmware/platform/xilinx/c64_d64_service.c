@@ -159,20 +159,34 @@ static bool path_is_same_or_parent(const char *candidate, const char *protected)
     return protected[i] == '\0' || protected[i] == '/' || candidate[i - 1U] == '/';
 }
 
+static bool protected_identity(const char *candidate, const char *protected)
+{
+    char canonical_candidate[MT_C64_MEDIA_JOURNAL_PATH_CAPACITY];
+    char canonical_protected[MT_C64_MEDIA_JOURNAL_PATH_CAPACITY];
+    if (!candidate || !candidate[0] || !protected[0]) return false;
+    if (path_is_same_or_parent(candidate, protected)) return true;
+    /* A mount selected through an 8.3 alias and a UCI long-name path must
+     * retain the same owner. An unreadable identity cannot authorize access. */
+    if (mt_sd_file_canonical_path(candidate, canonical_candidate, sizeof canonical_candidate).status != MT_SD_OK ||
+        mt_sd_file_canonical_path(protected, canonical_protected, sizeof canonical_protected).status != MT_SD_OK)
+        return true;
+    return path_is_same_or_parent(canonical_candidate, canonical_protected);
+}
+
 bool c64_d64_service_path_protected(const char *absolute_path)
 {
     char path[MT_C64_MEDIA_PATH_CAPACITY];
     char journal[MT_C64_MEDIA_JOURNAL_PATH_CAPACITY];
     mt_content_type_t type;
     if ((mounted || eject_pending) &&
-        (path_is_same_or_parent(absolute_path, mounted_path) ||
-         path_is_same_or_parent(absolute_path, mounted_journal_path))) return true;
+        (protected_identity(absolute_path, mounted_path) ||
+         protected_identity(absolute_path, mounted_journal_path))) return true;
     if (!reset_resume_pending ||
         media_path(reset_resume_name, path, sizeof(path), &type) != 0) return false;
-    if (path_is_same_or_parent(absolute_path, path)) return true;
+    if (protected_identity(absolute_path, path)) return true;
     return type == MT_CONTENT_D64 &&
         make_journal_path(path, journal, sizeof(journal)) == 0 &&
-        path_is_same_or_parent(absolute_path, journal);
+        protected_identity(absolute_path, journal);
 }
 
 static bool d64_has_error_tail(size_t size)

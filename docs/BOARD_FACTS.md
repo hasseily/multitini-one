@@ -39,6 +39,12 @@ into Multitini.
   auxiliary Apple control lanes.
 - The dedicated Apple RESET assertion circuit is inactive when `A2CTRL_RST#`
   is high.
+- A WIZnet W5100S 10/100 Ethernet controller with hardware TCP/IP sits on the
+  PL-facing 8-bit parallel MCU interface (`eth_d[7:0]`, `eth_a[1:0]`, RD#,
+  WR#, CS#, RST#, INT#), Bank 35, LVCMOS33. Source: Appletini commit
+  `73de6fe`, `scripts/create_project.tcl` and
+  `hdl/constraints/appletini_yarz.xdc`. Multitini holds these pins idle, with
+  RST# low, in every image today.
 
 ## Open questions requiring a board or manufacturing record
 

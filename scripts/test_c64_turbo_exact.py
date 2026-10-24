@@ -10,6 +10,14 @@ def make_lane() -> str:
     adapter=(ROOT/'hdl/core/c64/multitini_c64_adapter.sv').read_text()
     old=(ROOT/'hdl/sim/tb_c64_machine_schedule.sv').read_text()
     decl=adapter[adapter.index('    localparam integer FIO_DEPTH'):adapter.index('    wire ua_audio_tick')]
+    # These stock/turbo comparisons instantiate the CPU/memory links without
+    # the UCI service. Keep its newly shared loader/peek/pause inputs inactive;
+    # test_c64_uci_machine exercises the complete live extension separately.
+    decl+='''
+    wire uci_ram_write=0,uci_buffer_owned=0,uci_peek_request=0,extension_pause=0;
+    wire [15:0] uci_ram_address=0,uci_peek_address=0,peek_address=0;
+    wire [7:0] uci_ram_data=0;
+'''
     memory=adapter[adapter.index('    multitini_c64_island_memory main_ram_i'):adapter.index('    assign proxy_native_data')]
     links=adapter[adapter.index('    assign proxy_native_data'):adapter.index('    multitini_c64_turbo_regs #')]
     links=links.replace('.diag_armed(cpu_config[19])','.diag_armed(1\'b0)')
@@ -107,7 +115,7 @@ def main() -> int:
                 if p.name=='fpga64_sid_iec.vhd':p=OUT/'fpga64_sid_iec_observed.vhd'
                 elif p.name=='cpu_6510.vhd':p=OUT/'cpu_6510_observed.vhd'
                 vhdl.append(p)
-    sv=[ROOT/p for p in ('third_party/c64/upstream/rtl/mos6526.v','hdl/core/c64/ports/sid_dac.sv','hdl/core/c64/ports/sid_filter.sv','third_party/c64/upstream/rtl/sid/sid_envelope.sv','hdl/core/c64/ports/sid_tables.sv','third_party/c64/upstream/rtl/sid/sid_voice.sv','hdl/core/c64/ports/sid_top.sv','hdl/core/c64/multitini_c64_local_ram.sv','hdl/core/c64/multitini_c64_fio_port.sv','hdl/sim/tb_c64_turbo_exact.sv')]
+    sv=[ROOT/p for p in ('third_party/c64/upstream/rtl/mos6526.v','hdl/core/c64/ports/sid_dac.sv','hdl/core/c64/ports/sid_filter.sv','third_party/c64/upstream/rtl/sid/sid_envelope.sv','hdl/core/c64/ports/sid_tables.sv','hdl/core/c64/ports/sid_voice.sv','hdl/core/c64/ports/sid_top.sv', 'hdl/core/c64/multitini_c64_sid_array.sv','hdl/core/c64/multitini_c64_local_ram.sv','hdl/core/c64/multitini_c64_fio_port.sv','hdl/sim/tb_c64_turbo_exact.sv')]
     sv += [CP/name for name in ('multitini_c64_cpu_island.sv','multitini_c64_cpu_proxy.sv','multitini_c64_island_governor.sv','multitini_c64_island_map.sv','multitini_c64_island_memory.sv','multitini_c64_nmi_delivery.sv')]
     sv += [PREP/'c64_turbo_exact_lane.sv']
     sources=[*sv,*vhdl,Path(__file__).resolve(),ROOT/'scripts/test_c64_machine_schedule.py',ROOT/'scripts/run_native_tool.py',ROOT/'hdl/core/c64/ports/fpga64_sid_iec.vhd',ROOT/'hdl/core/c64/multitini_c64_adapter.sv']

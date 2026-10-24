@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns/1ps
 module tb_multitini_word_mailbox #(parameter integer WIDTH=32);
+    wire destination_running;
     reg src_clk=0,dst_clk=0,src_resetn=0,dst_resetn=0;
     always #3.5 src_clk=~src_clk;
     always #5.5 dst_clk=~dst_clk;
@@ -12,7 +13,7 @@ module tb_multitini_word_mailbox #(parameter integer WIDTH=32);
     wire[WIDTH-1:0]snapshot;
     localparam[WIDTH-1:0]RESET_VALUE=pattern(16'h2468);
     multitini_word_mailbox #(.WIDTH(WIDTH),.RESET_VALUE(RESET_VALUE))dut(.*);
-    reg[WIDTH-1:0]sent[0:4095];integer sent_count=0,checks=0,settled=0;
+    reg[WIDTH-1:0]sent[0:4095];integer sent_count=0,checks=0,settled=0,running_checks=0;
     reg reset_sampled=1;
     always @(posedge dst_clk)reset_sampled<=!dst_resetn;
     always @(posedge src_clk)if(src_resetn&&dut.changed&&dut.ready)begin
@@ -31,25 +32,35 @@ module tb_multitini_word_mailbox #(parameter integer WIDTH=32);
     end
     task latest;
         integer limit;limit=0;
-        while(snapshot!==value && limit<500)begin @(negedge dst_clk);limit++;end
+        while((snapshot!==value || destination_running!==1'b1) && limit<500)begin @(negedge dst_clk);limit++;end
         if(snapshot!==value)$fatal(1,"latest snapshot failed after reset/drain");
+        if(destination_running!==1'b1)$fatal(1,"published snapshot without running destination");
+        running_checks++;
         settled++;
     endtask
+    task running_low;
+        // Hold reset beyond the synchronizer's settling time. Other host-side
+        // consumers must see the same low level that fences mailbox sends.
+        repeat(4)@(negedge src_clk);
+        if(destination_running!==1'b0||dut.changed!==1'b0)
+            $fatal(1,"shared running level failed to fence destination reset");
+        running_checks++;
+    endtask
     initial begin
-        repeat(10)@(negedge src_clk);src_resetn=1;dst_resetn=1;latest();
+        repeat(10)@(negedge src_clk);running_low();src_resetn=1;dst_resetn=1;latest();
         for(integer k=0;k<20;k++)begin
             for(integer n=0;n<50;n++)begin
                 @(negedge src_clk);value=pattern(16'(k*50+n));
             end
             // Destination-only reset interrupts an occupied XPM handshake;
             // unchanged source values must be resent after recovery.
-            #2;dst_resetn=0;repeat(7+k%5)@(negedge dst_clk);dst_resetn=1;latest();
+            #2;dst_resetn=0;repeat(7+k%5)@(negedge dst_clk);running_low();dst_resetn=1;latest();
             @(negedge src_clk);src_resetn=0;
-            repeat(4+k%3)@(negedge src_clk);src_resetn=1;latest();
+            repeat(4+k%3)@(negedge src_clk);running_low();src_resetn=1;latest();
             value=pattern(16'(k+2000));latest();
         end
-        if(settled!=61||sent_count<40)$fatal(1,"mailbox coverage");
-        $display("PASS word_mailbox width=%0d checks=%0d accepted=%0d latest=%0d",WIDTH,checks,sent_count,settled);$finish;
+        if(settled!=61||sent_count<40||running_checks!=102)$fatal(1,"mailbox coverage");
+        $display("PASS word_mailbox width=%0d checks=%0d accepted=%0d latest=%0d running=%0d",WIDTH,checks,sent_count,settled,running_checks);$finish;
     end
     initial begin #2000000;$fatal(1,"mailbox timeout");end
 endmodule

@@ -345,6 +345,7 @@ static mt_menu_action_t activate(const mt_menu_t *menu, const mt_menu_view_t *vi
         action.kind = directory_row(view, menu->row) ? MT_MENU_ACTION_OPEN_DIRECTORY :
             (view->files[menu->row].cookie & MT_MENU_FILE_TEXT) != 0U ? MT_MENU_ACTION_OPEN_TEXT :
             menu->browser == MT_MENU_BROWSER_REU ? MT_MENU_ACTION_LOAD_REU :
+            menu->browser == MT_MENU_BROWSER_CONFIG ? MT_MENU_ACTION_APPLY_CONFIG :
             menu->browser == MT_MENU_BROWSER_DRIVE8 ?
             MT_MENU_ACTION_MOUNT_DRIVE8 :
             (menu->browser == MT_MENU_BROWSER_DISK_PROGRAM ?
@@ -740,11 +741,13 @@ mt_menu_action_t mt_menu_key_with_modifiers(mt_menu_t *menu,
     }
     if (hid_usage == MT_MENU_HID_ESCAPE) {
         if (menu->browser != MT_MENU_BROWSER_NONE) mt_menu_close_browser(menu);
+        else if(menu->core_subpage){menu->core_subpage=false;menu->row=0;menu->first_row=0;}
         else menu->visible = false;
         normalize(menu, view);
         return action;
     }
     if (hid_usage == MT_MENU_HID_TAB && menu->browser == MT_MENU_BROWSER_NONE) {
+        menu->core_subpage=false;
         menu->page_row[menu->page] = menu->row;
         const unsigned step = (modifiers & UINT8_C(0x22)) != 0U ?
             (unsigned)MT_MENU_PAGE_COUNT - 1U : 1U;
@@ -800,7 +803,7 @@ mt_menu_action_t mt_menu_key_with_modifiers(mt_menu_t *menu,
                 change_variant(menu, view, active_core(view), true);
             else if (menu->page == MT_MENU_PAGE_VIDEO)
                 action = change_video(menu, view, hid_usage);
-            else if (menu->page == MT_MENU_PAGE_EFFECTS) {
+            else if (menu->page == MT_MENU_PAGE_EFFECTS || menu->core_subpage) {
                 action = activate(menu, view);
                 action.variant_index = 1U; /* decrease */
             }
@@ -821,7 +824,7 @@ mt_menu_action_t mt_menu_key_with_modifiers(mt_menu_t *menu,
                 change_variant(menu, view, active_core(view), false);
             else if (menu->page == MT_MENU_PAGE_VIDEO)
                 action = change_video(menu, view, hid_usage);
-            else if (menu->page == MT_MENU_PAGE_EFFECTS) {
+            else if (menu->page == MT_MENU_PAGE_EFFECTS || menu->core_subpage) {
                 action = activate(menu, view);
                 action.variant_index = 2U; /* increase */
             }
@@ -882,6 +885,8 @@ static const char *page_caption(mt_menu_page_t page)
 static const char *browser_title(mt_menu_browser_t browser)
 {
     switch (browser) {
+    case MT_MENU_BROWSER_CONFIG:
+        return "Apply configuration";
     case MT_MENU_BROWSER_DRIVE8:
         return "Load disk";
     case MT_MENU_BROWSER_DISK_PROGRAM:

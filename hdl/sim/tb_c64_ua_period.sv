@@ -11,6 +11,7 @@ module c64_ua_period_case #(parameter integer CORE_CLOCK_HZ=31527954);
     wire signed [17:0] audio_l,audio_r;wire [23:0] memory_addr;
     multitini_c64_ua #(.CORE_CLOCK_HZ(CORE_CLOCK_HZ)) dut(
         .clk(clk),.hard_reset(hard_reset),.guest_reset(guest_reset),.enable(enable),.paused(paused),.hold(hold),
+        .invalidate(1'b0),.invalidate_done(),
         .reg_write(reg_write),.reg_addr(reg_addr),.reg_wdata(reg_wdata),.reg_rdata(reg_rdata),
         .diagnostics_armed(1'b0),.audio_tick(1'b0),.board_clip(1'b0),
         .cache_pending_addr(84'b0),.cache_pending_valid(4'b0),.cache_inflight_write_addr(21'b0),.cache_inflight_write_valid(1'b0),

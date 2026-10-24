@@ -4,6 +4,22 @@
 #if defined(FILE_SYSTEM_INTERFACE_SD) && defined(XPAR_XSDPS_NUM_INSTANCES)
 static u8 MultitiniSdFault[XSDPS_NUM_INSTANCES];
 
+/* Cached identification only. Do not issue CMD2 or touch a busy controller. */
+static DRESULT MultitiniSdCardIdentity(BYTE pdrv, void *buff)
+{
+    unsigned word, byte;
+    BYTE *out = (BYTE *)buff;
+    if (buff == NULL || pdrv >= XSDPS_NUM_INSTANCES) return RES_PARERR;
+    if ((Stat[pdrv] & STA_NOINIT) != 0U ||
+        SdInstance[pdrv].IsReady == 0U || MultitiniSdFault[pdrv] != 0U)
+        return RES_NOTRDY;
+    for (word = 0; word < 4U; ++word)
+        for (byte = 0; byte < 4U; ++byte)
+            out[word * 4U + byte] =
+                (BYTE)(SdInstance[pdrv].CardID[word] >> (24U - 8U * byte));
+    return RES_OK;
+}
+
 static DRESULT MultitiniSdQuiesce(BYTE pdrv, void *buff)
 {
     const u32 active = XSDPS_PSR_INHIBIT_CMD_MASK | XSDPS_PSR_INHIBIT_DAT_MASK |

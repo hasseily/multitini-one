@@ -253,7 +253,7 @@ It also uses 69 per-item assessments.
 - Registers mode is unchanged: apply sets live := preference ("uses settings from U64", turbo_mode.rst).
 
 **Change 2: apply counter (#787).**
-- It increments only when Turbo Control, CPU Speed, Badline Timing or SCPU Detect actually changes value. The source does not matter: menu, toggle, hotkey, profile switch (byte 243) or sidecar.
+- It increments only when Turbo Control, CPU Speed, Badline Timing or SCPU Detect actually changes value. The source does not matter: menu, toggle, hotkey, profile switch (byte 243) or sidecar. Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: a SuperCPU Detect change is never an apply event (TD section 1.2, deviation D21).
 - It never increments for:
   - boot restore, migration or CRC repair;
   - re-selecting the same value;
@@ -429,14 +429,14 @@ It also uses 69 per-item assessments.
 - [#203](https://github.com/GideonZ/1541ultimate/issues/203): pixel pattern at 48 MHz. Explained (VIC slot) and cosmetic. Becomes regular at N = 48.
 - [#279](https://github.com/GideonZ/1541ultimate/issues/279), [#39](https://github.com/GideonZ/1541ultimate/issues/39), [#431](https://github.com/GideonZ/1541ultimate/issues/431), changes_3.11 Issue-279: C128 2 MHz with UII+ cartridges. No C128; EasyFlash rejected [V C64_IMPORT.md:190].
 - [#38](https://github.com/GideonZ/1541ultimate/issues/38): C128 freeze at 2 MHz. No freezers. The Multitini pause is an internal halt, not a bus-pattern freeze.
-- [#242](https://github.com/GideonZ/1541ultimate/issues/242): IP parameters at 48 MHz. A UCI software wait bug; no UCI.
+- [#242](https://github.com/GideonZ/1541ultimate/issues/242): IP parameters at 48 MHz. A UCI software wait bug; no UCI. Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: the UCI is planned (XM5), with a 64x board test for this case.
 - [#710](https://github.com/GideonZ/1541ultimate/issues/710): host DMA halts the CPU. No host streaming. Note: dual-port RAM could make host writes transparent later.
 - [#230](https://github.com/GideonZ/1541ultimate/issues/230): fake VIC alias registers. Not turbo, and it conflicts with exact decode.
 - [#626](https://github.com/GideonZ/1541ultimate/issues/626): Image BBS Swiftlink. No ACIA. The turbo point is handled through (f).
 - [#193](https://github.com/GideonZ/1541ultimate/issues/193): HOME works only at 2 MHz or more. Not reproduced upstream.
 - [ultimate_releases#61](https://github.com/GideonZ/ultimate_releases/issues/61): bus trace at turbo. No trace stream. Its 47.0x figure is consistent with the MK1 table.
 - [#152](https://github.com/GideonZ/1541ultimate/issues/152): Little Computer People. The cause was an RTC failure.
-- [#653](https://github.com/GideonZ/1541ultimate/issues/653): UCI Hyperspeed throughput. No UCI.
+- [#653](https://github.com/GideonZ/1541ultimate/issues/653): UCI Hyperspeed throughput. No UCI. Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: the UCI is planned (XM5; the SoftIEC target in XM5b).
 
 ### 4.3 Excluded after reading (turbo incidental or ruled out)
 

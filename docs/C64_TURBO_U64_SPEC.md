@@ -76,7 +76,7 @@ The hardware model [V GideonZ #153; `u64_config.cc:1603-1637`; commit 6bdccc3a]:
 - [O] The value the U64 returns is not published.
 - The SuperCPU convention is bit 7 = 0 means present: VICE returns DOS-ext<<7 | RAMLink<<6 | optimisation bits (`scpu64mem.c:675-679`), and cc65 tests bit 7 only after it has confirmed a 65816 CPU.
 - [M] #654 reports that detection worked only in Manual mode with a speed above 1 MHz.
-- **Multitini: $00 when enabled. Do not implement it in the first release.**
+- **Multitini: $00 when enabled. Do not implement it in the first release.** Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: planned value `$01` (it passes GNW64's `cmp #$01`), visible in every turbo mode, milestone XM3.
 
 ### Address decode
 - [I] The U64 has to decode at least A7-A0 to tell `$D07A/B` and `$D0BC` apart from VIC mirrors. Whether `$D031` also appears at `$D071`, `$D0B1` or `$D131` is [O].
@@ -177,7 +177,7 @@ U64 [V]:
 | 2 | `$D031` bits 6-4 and bit 7 readback | Store bits 7 and 3-0; bit 7 reads as "disabled" | One consistent polarity; a stray `$FF` write reads $8F, not "absent" |
 | 3 | `$D030` read bits 7-1, meaning of "on" | $FE \| (index ≠ 0) | Matches MiSTer and the doc's bit 0 |
 | 4 | Target of `$D07A`/`$D07B` | 0 / preference | Same as `$D030`; "turbo" means the user's speed |
-| 5 | Value of `$D0BC` | $00, feature deferred | SuperCPU convention; off by default anyway |
+| 5 | Value of `$D0BC` | $00, feature deferred. Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: `$01`, planned for XM3 | SuperCPU convention; off by default anyway |
 | 6 | Switch latency | Next φ2 boundary | No software can depend on about 20 µs |
 | 7 | Writes in the reset window; TurboEnable at boot | Latch; TurboEnable boots off | Fixes #153/#287-type crashes; known software works either way |
 | 8 | VIC/SID fast path | Required to match; φ2 allowed as a documented phase-1 deviation | Function is unchanged; only timing differs |

@@ -11,6 +11,7 @@
     wire [7:0] ua_reg_data;wire ua_irq,ua_held;wire signed [17:0] ua_left,ua_right;
     multitini_c64_ua #(.CORE_CLOCK_HZ(NTSC ? 32727266 : 31527954)) ua(
         .clk(clk),.hard_reset(hard_reset),.guest_reset(reset),.enable(UA_TRAFFIC!=0),.paused(1'b0),.hold(1'b0),
+        .invalidate(1'b0),.invalidate_done(),
         .reg_write(1'b0),.reg_addr(8'b0),.reg_wdata(8'b0),.reg_rdata(ua_reg_data),
         .diagnostics_armed(1'b1),.audio_tick(1'b0),.board_clip(1'b0),
         .cache_pending_addr(ua_pending_addr),.cache_pending_valid(ua_pending_valid),

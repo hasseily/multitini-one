@@ -162,6 +162,7 @@ proc add_manifest_sources {repo_root machine} {
                     "multitini_timing.xdc" "multitini_psram_timing.xdc"
                     "multitini_vectrex_psram_timing.xdc"
                     "multitini_c64_turbo_timing.xdc"
+                    "multitini_w5100s_timing.xdc"
                     "multitini_genesis_timing.xdc" "multitini_apple_iigs_timing.xdc"}} {
                 set_property USED_IN_SYNTHESIS false [get_files $source]
                 set_property PROCESSING_ORDER LATE [get_files $source]

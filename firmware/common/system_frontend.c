@@ -139,6 +139,25 @@ void mt_system_frontend_apply(mt_system_frontend_t *frontend,
     view->system_items = frontend->items;
     view->system_item_count = sizeof(labels) / sizeof(labels[0]) - MT_MENU_MAX_ABOUT_ITEMS -
         (snapshot->golden_update_present ? 0U : 1U);
+    if (snapshot->network_available) {
+        size_t n = view->system_item_count;
+        frontend->items[n++] = (mt_menu_item_t){
+            .label = "Network",
+            .value = snapshot->network_status ? snapshot->network_status : "Off",
+            .help =
+                "Cycle Off, DHCP and saved static configuration. Changes are saved to network.ini.",
+            .action = MT_MENU_ACTION_NETWORK_MODE,
+            .enabled = true,
+            .value_color = MT_UI_COLOR_BLUE};
+        frontend->items[n++] =
+            (mt_menu_item_t){.label = "Renew network",
+                             .value = "Restart DHCP lease",
+                             .help = "Request a new DHCP lease without changing saved mode.",
+                             .action = MT_MENU_ACTION_NETWORK_RENEW,
+                             .enabled = true,
+                             .value_color = MT_UI_COLOR_BLUE};
+        view->system_item_count = n;
+    }
     view->about_items = frontend->about_items;
     view->about_item_count = MT_MENU_MAX_ABOUT_ITEMS;
     view->clock_available = snapshot->clock_available;

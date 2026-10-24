@@ -443,7 +443,7 @@ Stock lands `$D011` RSEL (e_31) and `$D016` XSCROLL (e_7) separately from the ot
 - **Reads.**
   - `u64_hit` overrides the VIC byte only for exact `$D031` (Registers/TurboEnable live) and `$D030` (TurboEnable live).
   - `$D071`, `$D131` and similar addresses read the VIC (`$FF`).
-  - `$D07A`/`$D07B`/`$D0BC` read VIC mirrors (`$FF`). `$D0BC` stays deferred (baseline D10).
+  - `$D07A`/`$D07B`/`$D0BC` read VIC mirrors (`$FF`). `$D0BC` stays deferred (baseline D10). Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: `$D0BC` is planned to read `$01` behind SuperCPU Detect (Q21, XM3), on the native and fast read paths.
 - **Read after write.** A `$D031` read after a `$D031` write sees the new value, because the RAW barrier waits for C3.
 - **Speed change** still takes effect at the next φ2 boundary through B1 (baseline D9).
 

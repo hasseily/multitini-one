@@ -154,6 +154,12 @@ set psram_active [expr {
     [string match "*ACTIVE_MACHINE=6*" $build_generics] ||
     [string match "*ENABLE_GBC_PSRAM=1'b1*" $build_generics]
 }]
+set c64_requested_timing_policy default
+if {[info exists ::env(MULTITINI_C64_TIMING_POLICY)]} {
+    set c64_requested_timing_policy $::env(MULTITINI_C64_TIMING_POLICY)
+}
+source [file join $script_dir c64_timing_policy.tcl]
+set c64_timing_policy [c64_resolve_timing_policy $image_kind $build_generics $c64_requested_timing_policy]
 if {$image_kind eq "C64"} {
     source [file join $script_dir check_c64_turbo_synthesis.tcl]
 }
@@ -173,6 +179,9 @@ set capture_command [concat $python [list [file join $script_dir capture_vectrex
     --machine $image_kind --output $inputs_file]]
 if {[string match {*C64_NTSC_MODE=1'b1*} $build_generics]} {
     lappend capture_command --c64-video-standard NTSC
+}
+if {$image_kind eq "C64"} {
+    lappend capture_command --c64-timing-policy [dict get $c64_timing_policy policy]
 }
 if {$image_kind eq "GBC" && $psram_active} {lappend capture_command --gbc-psram}
 if {$image_kind eq "GENESIS" && [string match {*GENESIS_PAL_MODE=1'b1*} $build_generics]} {
@@ -204,7 +213,10 @@ if {$image_kind eq "C64"} {
     require_c64_local_ram implementation
     set native_clock [get_clocks -quiet -filter {NAME =~ *clk_out1*zynq_ps_bd_clk_wiz_c64*}]
     set cpu_clock [get_clocks -quiet -filter {NAME =~ *clk_out2*zynq_ps_bd_clk_wiz_c64*}]
-    check_c64_turbo_timing implementation $cpu_clock $native_clock 0.100 1
+    set c64_setup_paths [check_c64_turbo_timing implementation $cpu_clock $native_clock \
+        [dict get $c64_timing_policy minimum_setup_ns] 1 0.200 \
+        [dict get $c64_timing_policy minimum_exclusive]]
+    c64_write_timing_policy [file join $report_dir c64_timing_policy.json] $c64_timing_policy $c64_setup_paths
     set c64_mmcm [get_cells -hierarchical -quiet -filter \
         {REF_NAME == MMCME2_ADV && NAME =~ *clk_wiz_c64*}]
     require_one_object "C64 related clock MMCM" $c64_mmcm
@@ -618,19 +630,18 @@ set coverage_checks [check_timing -verbose -return_string -override_defaults \
 set coverage_stream [open [file join $report_dir timing_coverage_gate.rpt] w]
 puts -nonewline $coverage_stream $coverage_checks
 close $coverage_stream
-set coverage_failures {
-    {There (are|is) [1-9][0-9]* register/latch pins with no clock}
-    {There (are|is) [1-9][0-9]* pins that are not constrained for maximum delay}
-    {There (are|is) [1-9][0-9]* input ports with no input delay specified}
-    {There (are|is) [1-9][0-9]* ports with no output delay specified\. \(HIGH\)}
-    {There (are|is) [1-9][0-9]* input ports with partial input delay specified}
-    {There (are|is) [1-9][0-9]* ports with partial output delay specified}
+set ethernet_checked false
+if {$image_kind eq "C64"} {
+    source [file join $script_dir check_w5100s_constraints.tcl]
+    set ethernet_timing [check_w5100s_constraints]
+    set ethernet_checked [dict get $ethernet_timing present]
+    if {!$ethernet_checked} {error "C64 W5100S bridge is absent from the routed design"}
+    set ethernet_stream [open [file join $report_dir w5100s_timing.rpt] w]
+    puts $ethernet_stream $ethernet_timing
+    close $ethernet_stream
 }
-foreach pattern $coverage_failures {
-    if {[regexp -nocase $pattern $coverage_checks]} {
-        error "Timing coverage gate found one or more unconstrained objects"
-    }
-}
+source [file join $script_dir check_timing_coverage.tcl]
+check_multitini_timing_coverage $coverage_checks $ethernet_checked
 
 foreach delay_type {max min} {
     set path [get_timing_paths -quiet -delay_type $delay_type -max_paths 1]
@@ -672,6 +683,11 @@ puts $manifest "max_threads=[get_param general.maxThreads]"
 puts $manifest "jobs=$jobs"
 puts $manifest "inputs=build_inputs.json"
 puts $manifest "sources=build_inputs.sources.tar.gz"
+if {$image_kind eq "C64"} {
+    foreach key {policy minimum_setup_ns minimum_exclusive duty_user_minimum_ns} {
+        puts $manifest "c64_timing_$key=[dict get $c64_timing_policy $key]"
+    }
+}
 foreach run_name {synth_1 impl_1} {
     set run [get_runs $run_name]
     foreach property [lsort [list_property $run]] {

@@ -357,3 +357,103 @@ errors, and missed deadlines set the error status and stop new autonomous jobs.
 There is no latest-frame selection or tolerated performance drop count.
 See `docs/CPU1_VIDEO_EFFECTS.md` for
 processing order, DDR ownership, and the fault fallback contract.
+
+## C64 Ultimate-compatible extensions (ABI 0.26)
+
+Firmware checks the package ABI and live capabilities before using this range.
+The extension registers are present only on the C64 image; absent capabilities
+read zero and reject unsupported data operations. These additions retain the
+stock VICE-compatible CPU/VIC/REU timing path.
+
+| Register | Offset | Meaning |
+| --- | --- | --- |
+| NET_CAPS | 0x02c | Valid bit31; revision1 in bits3:0; W5100S byte bridge bit4 |
+| NET_CONTROL | 0x030 | Run bit0; clear asserts Ethernet reset |
+| NET_ACCESS | 0x034 | Address14:0, data23:16, write24; full word only |
+| NET_STATUS | 0x038 | Ready0, busy1, done2, error3, reset done4, interrupt5; read byte15:8, completion sequence23:16, valid31 |
+| C64_UCI_STATUS | 0x128 | Native endpoint snapshot; also snapshots STATUS2 |
+| C64_UCI_HANDSHAKE | 0x12c | Tagged host operation |
+| C64_UCI_CONTROL | 0x130 | Bus ID4:0; freeze8, IRQ9, HOLD10 |
+| C64_UCI_STATUS2 | 0x134 | Consumption counters and completion tokens |
+| C64_UCI_RAM_READ | 0x138 | Physical RAM address15:0 and length-minus-one26:16 |
+| C64_SID_INDEX | 0x154 | Explicit shadow table index0..56 |
+| C64_SID_DATA | 0x158 | Full-word shadow table data |
+| C64_SID_COMMIT | 0x15c | Low-byte sequence; atomically commit a complete table |
+| C64_SID_STATUS | 0x160 | Active sequence7:0; busy8; rejected9; reason14:10; index21:16; valid31 |
+
+`C64_EXPANSION_CONFIG` bit5 enables UCI and bit6 selects the uploaded SID map.
+Bits0..4 retain their earlier REU/dual-SID meaning. Expansion capabilities add
+UCI5, SID table6, chip count minus one10:8, 8580 support11, SID IO slots12,
+physical RAM DMA13 and UCI IRQ14. The production image supplies eight chips.
+`C64_CPU_CONFIG` bit20 enables the optional SuperCPU detection shim; matching
+`C64_CPU_CAPS2` bit15 advertises it. This is a software detection interface,
+not a 65816 CPU or SuperCPU memory implementation.
+
+The SID table has 57 words. Words0..31 select chip write masks for each 32-byte
+slot in D400..D7FF; bit8 inhibits writes. Reads use the lowest selected chip.
+Words32..47 select masks for the eight IO1 and eight IO2 slots. Words48..55
+hold each chip's resolved left coefficient7:0, right coefficient15:8,
+model16 and digi correction17. The firmware resolves gain/pan into these
+coefficients. Word56 holds the Ultimate Audio left coefficient7:0, right
+coefficient15:8, averaging16, DC removal17 and output attenuation19:18.
+Reserved bits must be zero. Each main SID slot requires a nonzero
+mask; an inhibited slot requires a single owner. IO masks may be zero.
+
+Every upload writes all 57 words with an explicit INDEX write before DATA.
+There is no auto-increment. DATA and COMMIT are rejected while busy. A complete
+valid table moves through an immutable committed bank and becomes active at
+the native SID boundary, or immediately while the machine is paused. The
+previous active table remains in use until adoption. Firmware waits for the
+matching sequence and valid flag before releasing HOLD. An ambiguous timeout
+retains HOLD and requires recovery. Reject reasons are missing word1, empty
+main slot2, unavailable chip3, unsupported IO4, reserved/invalid field5,
+busy commit6 and ambiguous inhibited owner7.
+
+UCI occupies exactly DF18..DF1F when enabled and permitted by cartridge
+mapping. Generic ROM-only cartridge type0 permits it; other cartridge types
+and cartridge loading suspend it. Its native registers retain the Ultimate command handshake and byte
+queues. The host buffer at shell offset C000..C7FF is a 2 KiB dual-clock RAM:
+commands C000..C37F, responses C380..C6FF and status text C700..C7FF. Host
+accesses are aligned, single-word AXI transactions. Sub-word writes use byte
+strobes; unaligned and burst transactions are rejected. The native port owns
+command bytes; the host owns reply bytes until its publish operation completes.
+DF1D returns C9 with no IRQ and49 while IRQ is asserted. Reading either reply
+queue, including an empty read, clears IRQ; DATA_ACC also clears it. A PUSH
+with TRIGGER arms a deferred freeze on the next accepted CPU write to FF00.
+Publishing a reply cancels both immediate and deferred freeze. If the same
+FF00 write starts REU DMA, DMA drains before the C64 scheduler pauses.
+
+STATUS bits are state1:0, abort2, DATA_ACC3, error4, freeze5, trigger6, IRQ7,
+command length17:8, sequence21:18, epoch25:22, suspended26, enabled27,
+host operation busy28, idle-abort29 and valid31. STATUS2 has response bytes
+consumed9:0, status bytes consumed18:10, operation acknowledgment20:19,
+dropped operation21, busy-write22, overflow23, RAM completion token27:24,
+CMD_BUSY30 and valid31. Read STATUS before STATUS2 to obtain one snapshot.
+Consumed counts survive LAST-to-next-command handoff until the next reply is
+published, so a partial SoftIEC read advances only bytes actually consumed.
+
+HANDSHAKE packs opcode3:0, response length13:4 (0..896), status length23:16
+(0..255), sequence28:25 and low three epoch bits31:29. Bits15:14 and24 must
+be zero. Operations are ACCEPT1, NEXT2, ABORT_DONE3, LAST4, MORE5,
+IDLE_ABORT_DONE6 and RESET15. Every accepted or stale operation advances the
+acknowledgment; stale tags cannot change the new command. The native endpoint
+can count 256 status bytes, but the host ABI limits text to255 for client
+terminator compatibility. Data transport supports896, including DOS ECHO.
+
+HOLD pauses the whole C64 and accelerated CPU after active REU DMA drains.
+Physical RAM writes use stream kind17: two little-endian address bytes followed
+by at most256 data bytes. Physical RAM reads use RAM_READ with length1..896;
+firmware waits for the modulo16 completion token before using the reply area.
+Accepted reads must drain even during cancellation. REU transfers use the
+16 MiB DDR allocation at25000000 and finish with the REU/Ultimate Audio cache
+invalidation acknowledgment before releasing HOLD. Neither transfer resets the
+CPU or Ultimate Audio playback registers.
+
+UCI target IDs are DOS1, independent DOS2, network3, control4, SoftIEC5 and
+HTTP/JSON6. CPU0 owns SD access and the W5100S byte bridge. Network targets use
+the controller's hardware sockets, bounded foreground polling, DHCP/DNS and
+plain HTTP. HTTPS returns an explicit unsupported result before opening a
+socket. Missing Ultimate-specific physical devices return the protocol's
+unsupported-command status. The filesystem is rooted at the selected C64
+media directory; SD and Usb0..2 aliases refer to that root. Temp is a separate
+volatile sibling directory cleared in bounded foreground passes at core start.

@@ -4,6 +4,8 @@
 -- entity instantiation so standards-based VHDL tools do not require a missing
 -- component declaration. The local port models MAME C64 reset, pullups,
 -- retained input charge and native-time decay independently of CPU turbo.
+-- Forward T65's NMOS-store port indication to the island RAM data mux;
+-- the processor-port address decoding and write enables remain unchanged.
 -- BEGIN PINNED SOURCE BODY
 -- -----------------------------------------------------------------------
 --
@@ -36,6 +38,7 @@ entity cpu_6510 is
 		FALLOFF_TICKS : positive := 350000
 	);
 	port (
+        store_port : out std_logic;
 		clk     : in  std_logic;
 		enable  : in  std_logic;
 		bus_start : in std_logic := '0';
@@ -86,6 +89,7 @@ begin
 		A       => localA,
 		DI      => localDi,
 		DO      => localDo,
+        Store_Port => store_port,
 		NMI_ack => nmi_ack
 	);
 

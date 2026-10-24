@@ -14,155 +14,21 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def production_function(source: str, signature: str) -> str:
-    start = source.index(signature)
-    return source[start:source.index("\n}", start) + 2]
-
-
-PREAMBLE = r'''
-#include "multitini_supervisor.h"
-#include "multitini_c64_interface.h"
-#include "multitini_c64_features.h"
-#include "multitini_regs.h"
-#include "supervisor_settings.h"
-#include <assert.h>
-#include <stdio.h>
-#include <string.h>
-#define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
-static mt_supervisor_t supervisor;
-static mt_supervisor_settings_t persistent_settings, settings_before_update, saved_settings;
-static uint32_t caps, config, ua_fault;
-static unsigned cap_reads, config_reads, writes, saves;
-static bool attached, save_fail, supervisor_menu_dirty;
-static char message[128];
-static uint32_t c64_content_service_expansion_caps(void) { ++cap_reads; return caps; }
-static bool c64_content_service_crt_attached(void) { return attached; }
-static uint32_t shell_read(uint32_t reg) {
-    if(reg == MT_REG_C64_UA_STATUS) return ua_fault;
-    assert(reg == MT_REG_C64_EXPANSION_CONFIG); ++config_reads; return config;
-}
-static uint32_t feature_read(void *context,uint32_t reg) {
-    (void)context;
-    if(reg==MT_REG_ABI_VERSION)return 24U;
-    if(reg==MT_REG_C64_EXPANSION_CAPS)return c64_content_service_expansion_caps();
-    if(reg==MT_REG_C64_CPU_CAPS)return MT_C64_CPU_CAPS_RELEASE;
-    if(reg==MT_REG_C64_CPU_CAPS2)return MT_C64_CPU_CAPS2_RELEASE;
-    if(reg==MT_REG_DEBUG_STATUS)return MT_DEBUG_STATUS_AUDIO_PRESENT;
-    assert(0);return 0;
-}
-static mt_core_link_t shell_link={.read32=feature_read};
-static void Xil_Out32(uint32_t address, uint32_t value) {
-    assert(address == MT_SHELL_BASE_ADDRESS + MT_REG_C64_EXPANSION_CONFIG);
-    ++writes; config = value;
-}
-static void set_supervisor_warning(const char *text) { snprintf(message,sizeof(message),"%s",text); }
-static void set_supervisor_status(const char *text) { set_supervisor_warning(text); }
-static bool save_persistent_settings(void) {
-    ++saves;
-    if (save_fail) return false;
-    saved_settings = persistent_settings;
-    return true;
-}
-mt_sd_result_t mt_sd_storage_journal_recover(const char *p,const char *j,uint8_t *b,size_t n) {
-    (void)p;(void)j;(void)b;(void)n; mt_sd_result_t r={MT_SD_OK,0U,0U};return r;
-}
-mt_sd_result_t mt_sd_storage_read_file_optional_exact(const char *p,uint8_t *b,size_t n,bool *f) {
-    (void)p;(void)b;(void)n;*f=false;mt_sd_result_t r={MT_SD_OK,0U,0U};return r;
-}
-mt_sd_result_t mt_sd_storage_journal_replace(const char *p,const char *j,const uint8_t *b,size_t n) {
-    (void)p;(void)j;(void)b;(void)n;mt_sd_result_t r={MT_SD_OK,0U,0U};return r;
-}
-'''
-
-SCENARIOS = r'''
-static void reset_fixture(void) {
-    memset(&supervisor,0,sizeof(supervisor));
-    supervisor.has_active=true;supervisor.active.package.core_id=MT_C64_CORE_ID;
-    supervisor.active.package.abi_minor=23U;
-    strcpy(supervisor.active.package.id,"c64");
-    strcpy(supervisor.active.package.variants[0].id,"pal");
-    caps=MT_C64_EXPANSION_CAPS_VALID|MT_C64_EXPANSION_CAPS_DUAL_SID|MT_C64_EXPANSION_CAPS_REU_16MB;
-    config=MT_C64_EXPANSION_CONFIG_DEFAULT;
-    ua_fault=0U;
-    cap_reads=config_reads=writes=saves=0U;attached=save_fail=supervisor_menu_dirty=false;
-    message[0]='\0';mt_supervisor_settings_defaults(&persistent_settings);
-}
-int main(int argc,char **argv) {
-    assert(argc==2);reset_fixture();
-    if(strcmp(argv[1],"defaults")==0) {
-        configure_c64_expansion(&supervisor.active,NULL);
-        assert(config==11U && writes==1U && saves==0U);
-        assert(ensure_active_settings_profile());
-        assert(mt_supervisor_settings_remember_c64_expansion(&persistent_settings,"c64",2U,false));
-        configure_c64_expansion(&supervisor.active,&persistent_settings.profiles[0]);
-        assert(config==2U && writes==2U);
-        caps=MT_C64_EXPANSION_CAPS_VALID|MT_C64_EXPANSION_CAPS_REU_16MB;
-        configure_c64_expansion(&supervisor.active,NULL);assert(config==8U);
-        caps=MT_C64_EXPANSION_CAPS_VALID|MT_C64_EXPANSION_CAPS_DUAL_SID;
-        configure_c64_expansion(&supervisor.active,NULL);assert(config==3U);
-    } else if(strcmp(argv[1],"gates")==0) {
-        for(unsigned abi=0U;abi<23U;++abi) {
-            supervisor.active.package.abi_minor=(uint16_t)abi;
-            configure_c64_expansion(&supervisor.active,NULL);change_c64_expansion(2U);change_c64_expansion(3U);
-        }
-        assert(cap_reads==0U && config_reads==0U && writes==0U && saves==0U);
-        supervisor.active.package.abi_minor=23U;supervisor.active.package.core_id=0U;
-        change_c64_expansion(2U);assert(cap_reads==0U);
-        supervisor.active.package.core_id=MT_C64_CORE_ID;supervisor.active.package.abi_major=1U;
-        change_c64_expansion(3U);assert(cap_reads==0U);
-        supervisor.active.package.abi_major=0U;caps=0U;
-        configure_c64_expansion(&supervisor.active,NULL);change_c64_expansion(2U);change_c64_expansion(3U);
-        assert(config_reads==0U && writes==0U && saves==0U);
-        supervisor.has_active=false;change_c64_expansion(2U);assert(writes==0U);
-    } else if(strcmp(argv[1],"cycle")==0) {
-        const uint32_t expected[]={8U,10U,11U};
-        for(unsigned i=0U;i<3U;++i) {
-            change_c64_expansion(2U);assert(config==expected[i] && writes==i+1U && saves==i+1U);
-            assert(saved_settings.profiles[0].c64_sid_mode==(expected[i]&7U));
-            assert(saved_settings.profiles[0].c64_reu_enabled && supervisor_menu_dirty);
-        }
-        change_c64_expansion(3U);assert(config==3U && !saved_settings.profiles[0].c64_reu_enabled);
-        change_c64_expansion(3U);assert(config==11U && saved_settings.profiles[0].c64_reu_enabled);
-        assert(strcmp(message,"16 MB REU enabled")==0);
-        change_c64_expansion(99U);assert(writes==5U && saves==5U);
-    } else if(strcmp(argv[1],"conflict")==0) {
-        config=3U;attached=true;change_c64_expansion(3U);
-        assert(config==3U && writes==0U && saves==0U && persistent_settings.profile_count==0U);
-        assert(strstr(message,"Eject the cartridge")!=NULL);
-        change_c64_expansion(2U);assert(config==0U && writes==1U);
-        attached=false;change_c64_expansion(3U);assert(config==8U && writes==2U);
-    } else if(strcmp(argv[1],"save-failure")==0) {
-        save_fail=true;change_c64_expansion(2U);
-        assert(config==11U && writes==0U && saves==1U && persistent_settings.profile_count==0U);
-        assert(strstr(message,"not saved")!=NULL);
-        assert(ensure_active_settings_profile());
-        assert(mt_supervisor_settings_remember_c64_expansion(&persistent_settings,"c64",2U,false));
-        const mt_supervisor_settings_t before=persistent_settings;
-        change_c64_expansion(3U);
-        assert(config==11U && writes==0U && memcmp(&persistent_settings,&before,sizeof(before))==0);
-    } else if(strcmp(argv[1],"partial")==0) {
-        assert(ensure_active_settings_profile());
-        assert(mt_supervisor_settings_remember_c64_expansion(&persistent_settings,"c64",2U,false));
-        caps=MT_C64_EXPANSION_CAPS_VALID|MT_C64_EXPANSION_CAPS_REU_16MB;config=0U;
-        change_c64_expansion(2U);assert(writes==0U && saves==0U);
-        change_c64_expansion(3U);assert(config==8U && saved_settings.profiles[0].c64_sid_mode==2U);
-        caps=MT_C64_EXPANSION_CAPS_VALID|MT_C64_EXPANSION_CAPS_DUAL_SID;config=3U;
-        change_c64_expansion(3U);assert(writes==1U && saves==1U);
-        change_c64_expansion(2U);assert(config==0U && saved_settings.profiles[0].c64_reu_enabled);
-    } else if(strcmp(argv[1],"ua")==0) {
-        supervisor.active.package.abi_minor=24U;caps|=MT_C64_EXPANSION_CAPS_ULTIMATE_AUDIO;
-        config=3U;change_c64_expansion(8U);
-        assert(config==27U && writes==1U && saves==1U && saved_settings.c64_ultimate_audio);
-        assert(saved_settings.profiles[0].c64_reu_enabled);
-        change_c64_expansion(3U);assert(config==3U && !saved_settings.c64_ultimate_audio);
-        assert(!saved_settings.profiles[0].c64_reu_enabled);
-        attached=true;change_c64_expansion(8U);assert(config==3U && writes==2U);
-        attached=false;ua_fault=1U;change_c64_expansion(8U);assert(config==3U && writes==2U);
-        ua_fault=0U;save_fail=true;change_c64_expansion(8U);assert(config==3U && writes==2U);
-        assert(!persistent_settings.c64_ultimate_audio);
-    } else assert(0);
-    printf("PASS: C64 expansion %s\n",argv[1]);return 0;
-}
-'''
+    """Extract a definition, skipping forward declarations and quoted braces."""
+    import re
+    for match in re.finditer(re.escape(signature), source):
+        start = match.start()
+        opening = source.index("{", start)
+        if ";" in source[start:opening]:
+            continue
+        tokens = re.compile(r'''/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[{}]''', re.S)
+        depth = 0
+        for token in tokens.finditer(source, opening):
+            if token.group() == "{": depth += 1
+            elif token.group() == "}":
+                depth -= 1
+                if depth == 0: return source[start:token.end()]
+    raise AssertionError(f"Definition not found: {signature}")
 
 
 class C64ExpansionRuntimeTests(unittest.TestCase):
@@ -178,20 +44,31 @@ class C64ExpansionRuntimeTests(unittest.TestCase):
         source = (ROOT / "firmware/platform/xilinx/main.c").read_text()
         signatures = (
             "static bool ensure_active_settings_profile(void)",
-            "static uint32_t selection_c64_expansion_caps(",
             "static mt_c64_capabilities_t selection_c64_features(",
+            "static mt_c64_title_values_t c64_stored_values(",
+            "static void refresh_c64_title(",
+            "static mt_c64_title_values_t c64_requested_values(",
+            "static int apply_c64_title(",
             "static void configure_c64_expansion(",
+            "static bool commit_c64_edit(",
             "static void change_c64_expansion(",
+            "static void change_c64_turbo(",
+            "static unsigned cycle_setting(",
+            "static void change_c64_sid_setup(",
         )
         harness = folder / "runtime.c"
-        harness.write_text(PREAMBLE + "\n".join(production_function(source, s) for s in signatures) + SCENARIOS)
+        fixture = (ROOT / "tests/host/c64_title_runtime.inc").read_text()
+        harness.write_text(fixture.replace("/* PRODUCTION_FUNCTIONS */",
+            "\n".join(production_function(source, s) for s in signatures)))
         cls.executable = folder / ("runtime.exe" if os.name == "nt" else "runtime")
         command = [sys.executable, str(ROOT / "scripts/run_native_tool.py"), "--", compiler,
                    "-std=c11", "-Wall", "-Wextra", "-Wpedantic", "-Werror",
                    "-I", str(ROOT / "firmware/include"), "-I", str(ROOT / "firmware/platform/xilinx"),
                    str(harness), str(ROOT / "firmware/platform/xilinx/supervisor_settings.c"),
+                   str(ROOT / "firmware/platform/xilinx/c64_title_service.c"),
                    *[str(ROOT / "firmware/common" / name) for name in
-                     ("gamepad.c", "controls.c", "video_effects.c", "c64_features.c")], "-lm", "-o", str(cls.executable)]
+                     ("gamepad.c", "controls.c", "video_effects.c", "c64_features.c",
+                      "c64_sid.c", "c64_title.c", "media_browser.c")], "-lm", "-o", str(cls.executable)]
         result = subprocess.run(command, text=True, capture_output=True, timeout=60)
         if result.returncode:
             raise AssertionError(result.stdout + result.stderr)
@@ -209,6 +86,13 @@ class C64ExpansionRuntimeTests(unittest.TestCase):
     def test_save_failure_preserves_hardware_and_settings(self): self.run_scenario("save-failure")
     def test_partial_capability_preserves_other_saved_preferences(self): self.run_scenario("partial")
     def test_ua_atomic_apply_and_refusals(self): self.run_scenario("ua")
+
+    def test_title_owned_edits_remain_transient(self): self.run_scenario("title")
+    def test_first_sid_table_commit_from_invalid_reset(self): self.run_scenario("sid-first")
+    def test_failed_hold_does_not_apply(self): self.run_scenario("hold-failure")
+    def test_rejected_sid_table_leaves_old_settings(self): self.run_scenario("sid-reject")
+    def test_ambiguous_sid_ack_preserves_hold(self): self.run_scenario("sid-timeout")
+    def test_sid_io_ownership_excludes_live_devices(self): self.run_scenario("io-owner")
 
 
 if __name__ == "__main__":

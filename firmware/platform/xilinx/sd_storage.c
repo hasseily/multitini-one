@@ -30,6 +30,8 @@ struct mt_sd_file {
     bool active, append, eof;
 };
 static mt_sd_file_t open_files[MT_SD_OPEN_FILES];
+struct mt_sd_directory { DIR native; bool active; };
+static mt_sd_directory_t open_directories[4];
 static mt_sd_result_t result(mt_sd_status_t status, FRESULT backend_status,
                              size_t size)
 {
@@ -499,6 +501,8 @@ mt_sd_result_t mt_sd_storage_unmount(void)
     unsigned index;
     for (index = 0U; index < MT_SD_OPEN_FILES; ++index)
         if (open_files[index].active) return result(MT_SD_FILE_BUSY, FR_OK, 0U);
+    for(index=0;index<4;index++)
+        if(open_directories[index].active)return result(MT_SD_FILE_BUSY,FR_OK,0);
     if (!sd_mounted) return result(MT_SD_OK, FR_OK, 0U);
 
     /* A NULL filesystem unregisters the volume. opt=1 then tries to mount
@@ -571,10 +575,146 @@ static bool managed_file_valid(const mt_sd_file_t *file)
 static bool file_path_busy(const char *path, bool writing)
 {
     unsigned index;
+    char candidate[512], owner[512];
+    bool resolved = false;
     for (index = 0U; index < MT_SD_OPEN_FILES; ++index)
-        if (open_files[index].active && paths_equal(path, open_files[index].path) &&
-            (writing || (open_files[index].access & FA_WRITE) != 0U)) return true;
+        if (open_files[index].active &&
+            (writing || (open_files[index].access & FA_WRITE) != 0U)) {
+            if (paths_equal(path, open_files[index].path)) return true;
+            /* A long name and its FAT 8.3 alias name the same owner. Fail
+             * closed if metadata cannot establish their distinct identities. */
+            if (!resolved) {
+                if (mt_sd_file_canonical_path(path, candidate, sizeof candidate).status != MT_SD_OK)
+                    return true;
+                resolved = true;
+            }
+            if (mt_sd_file_canonical_path(open_files[index].path, owner, sizeof owner).status != MT_SD_OK ||
+                paths_equal(candidate, owner)) return true;
+        }
     return false;
+}
+
+bool mt_sd_file_path_busy(const char *path, bool exclusive)
+{
+    return path != NULL && file_path_busy(path, exclusive);
+}
+
+static void copy_info(mt_sd_info_t *out,const FILINFO *in)
+{
+    memset(out,0,sizeof(*out));
+    size_t n=strlen(in->fname);
+    if(n>=sizeof(out->name))n=sizeof(out->name)-1;
+    memcpy(out->name,in->fname,n);
+    out->size=in->fsize;out->date=in->fdate;out->time=in->ftime;out->attributes=in->fattrib;
+}
+mt_sd_result_t mt_sd_file_stat(const char *path,mt_sd_info_t *info)
+{
+    if(!path || !info)return result(MT_SD_INVALID_ARGUMENT,FR_INVALID_PARAMETER,0);
+    mt_sd_result_t m=mt_sd_storage_mount();if(m.status!=MT_SD_OK)return m;
+    FILINFO native;memset(&native,0,sizeof(native));
+    FRESULT r=f_stat(path,&native);
+    if(r==FR_OK)copy_info(info,&native);
+    return result(r==FR_OK?MT_SD_OK:MT_SD_OPEN_FAILED,r,0);
+}
+mt_sd_result_t mt_sd_file_canonical_path(const char *path, char *output, size_t capacity)
+{
+    char input[512], resolved[512];
+    if (!path || !output || strlen(path) >= sizeof input || strlen(path) < 3 ||
+        path[1] != ':' || path[2] != '/' || capacity < 4)
+        return result(MT_SD_INVALID_ARGUMENT, FR_INVALID_NAME, 0);
+    strcpy(input, path);
+    /* Validate every component before querying FatFs: its permissive name
+     * normalization must never change the identity checked by the caller. */
+    const char *scan = input + 3;
+    while (*scan) {
+        size_t count = strcspn(scan, "/");
+        if (!count || count > 255 || scan[count - 1] == '.' || scan[count - 1] == ' ')
+            return result(MT_SD_INVALID_ARGUMENT, FR_INVALID_NAME, 0);
+        for (size_t i = 0; i < count; ++i) {
+            if ((unsigned char)scan[i] < 32 || strchr("<>:\\|?*\"", scan[i]))
+                return result(MT_SD_INVALID_ARGUMENT, FR_INVALID_NAME, 0);
+        }
+        scan += count;
+        if (*scan) ++scan;
+    }
+    memcpy(resolved, input, 3);
+    resolved[3] = 0;
+    size_t used = 3;
+    const char *next = input + 3;
+    while (*next) {
+        size_t count = strcspn(next, "/");
+        size_t start = used;
+        if (start > 3) resolved[start++] = '/';
+        if (start + count >= sizeof resolved)
+            return result(MT_SD_INVALID_ARGUMENT, FR_INVALID_NAME, 0);
+        memcpy(resolved + start, next, count);
+        resolved[start + count] = 0;
+        mt_sd_info_t info;
+        mt_sd_result_t stat = mt_sd_file_stat(resolved, &info);
+        if (stat.status == MT_SD_OK) {
+            size_t actual = strlen(info.name);
+            if (!actual || actual > 255 || start + actual >= sizeof resolved ||
+                strpbrk(info.name, "/\\:") || info.name[actual - 1] == '.' || info.name[actual - 1] == ' ')
+                return result(MT_SD_INVALID_ARGUMENT, FR_INVALID_NAME, 0);
+            memcpy(resolved + start, info.name, actual + 1);
+            used = start + actual;
+        } else if (stat.status == MT_SD_OPEN_FAILED &&
+                   (stat.backend_status == FR_NO_FILE || stat.backend_status == FR_NO_PATH)) {
+            used = start + count;
+        } else return stat;
+        next += count;
+        if (*next) ++next;
+    }
+    if (used >= capacity) return result(MT_SD_INVALID_ARGUMENT, FR_INVALID_NAME, 0);
+    memcpy(output, resolved, used + 1);
+    return result(MT_SD_OK, FR_OK, used);
+}
+mt_sd_result_t mt_sd_directory_open(const char *path,mt_sd_directory_t **directory)
+{
+    if(directory)*directory=NULL;
+    if(!path || !directory)return result(MT_SD_INVALID_ARGUMENT,FR_INVALID_PARAMETER,0);
+    mt_sd_result_t m=mt_sd_storage_mount();if(m.status!=MT_SD_OK)return m;
+    unsigned i;for(i=0;i<4 && open_directories[i].active;i++){}
+    if(i==4)return result(MT_SD_FILE_LIMIT,FR_OK,0);
+    FRESULT r=f_opendir(&open_directories[i].native,path);
+    if(r==FR_OK){open_directories[i].active=true;*directory=&open_directories[i];}
+    return result(r==FR_OK?MT_SD_OK:MT_SD_DIR_OPEN_FAILED,r,0);
+}
+static bool directory_active(mt_sd_directory_t *d)
+{
+    for(unsigned i=0;i<4;i++)if(d==&open_directories[i])return d->active;
+    return false;
+}
+mt_sd_result_t mt_sd_directory_next(mt_sd_directory_t *d,mt_sd_info_t *info)
+{
+    if(!directory_active(d) || !info)return result(MT_SD_INVALID_ARGUMENT,FR_INVALID_PARAMETER,0);
+    if(sd_external_owned || sd_callback_depth)return result(MT_SD_EXTERNAL_ACCESS,FR_OK,0);
+    FILINFO native;memset(&native,0,sizeof(native));
+    FRESULT r=f_readdir(&d->native,&native);
+    if(r==FR_OK)copy_info(info,&native);
+    return result(r==FR_OK?MT_SD_OK:MT_SD_DIR_READ_FAILED,r,0);
+}
+mt_sd_result_t mt_sd_directory_close(mt_sd_directory_t *d)
+{
+    if(!directory_active(d))return result(MT_SD_INVALID_ARGUMENT,FR_INVALID_PARAMETER,0);
+    FRESULT r=f_closedir(&d->native);if(r==FR_OK)d->active=false;
+    return result(r==FR_OK?MT_SD_OK:MT_SD_DIR_CLOSE_FAILED,r,0);
+}
+mt_sd_result_t mt_sd_file_open_flags(const char *path,uint8_t flags,mt_sd_file_t **file)
+{
+    if(file)*file=NULL;
+    if(!file || !path || !path[0] || strlen(path)>=512 || !(flags&3) || (flags&~31U))
+        return result(MT_SD_INVALID_ARGUMENT,FR_INVALID_PARAMETER,0);
+    if(file_path_busy(path,(flags&FA_WRITE)!=0))return result(MT_SD_FILE_BUSY,FR_OK,0);
+    unsigned i;for(i=0;i<MT_SD_OPEN_FILES && open_files[i].active;i++){}
+    if(i==MT_SD_OPEN_FILES)return result(MT_SD_FILE_LIMIT,FR_OK,0);
+    mt_sd_result_t m=mt_sd_storage_mount();if(m.status!=MT_SD_OK)return m;
+    memset(&open_files[i],0,sizeof(open_files[i]));
+    FRESULT r=f_open(&open_files[i].native,path,flags);
+    if(r!=FR_OK)return result(r==FR_EXIST?MT_SD_FILE_EXISTS:MT_SD_OPEN_FAILED,r,0);
+    open_files[i].active=true;open_files[i].access=flags&3;
+    memcpy(open_files[i].path,path,strlen(path)+1);*file=&open_files[i];
+    return result(MT_SD_OK,FR_OK,0);
 }
 
 mt_sd_result_t mt_sd_file_open(const char *path, const char *mode, mt_sd_file_t **file)
@@ -757,4 +897,23 @@ mt_sd_result_t mt_sd_storage_ensure_directory(const char *path)
         return result(status == FR_OK ? MT_SD_OK : MT_SD_DIR_CLOSE_FAILED,status,0U);
     }
     return result(status == FR_OK ? MT_SD_OK : MT_SD_CREATE_DIR_FAILED,status,0U);
+}
+
+/* The installed xilffs header declares MMC_GET_CID. Minimal host fixtures
+ * without a card controller intentionally report no identity. */
+#include "diskio.h"
+bool mt_sd_storage_card_identity(uint8_t identity[16])
+{
+#if defined(MMC_GET_CID)
+    uint8_t aggregate = 0U;
+    unsigned i;
+    if (identity == NULL || sd_external_owned || sd_callback_depth != 0U ||
+        mt_sd_storage_mount().status != MT_SD_OK) return false;
+    if (disk_ioctl(0U, MMC_GET_CID, identity) != RES_OK) return false;
+    for (i = 0U; i < 16U; ++i) aggregate |= identity[i];
+    return aggregate != 0U;
+#else
+    (void)identity;
+    return false;
+#endif
 }

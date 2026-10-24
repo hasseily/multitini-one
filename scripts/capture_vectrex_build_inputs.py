@@ -28,8 +28,12 @@ def inputs(machine: str) -> list[Path]:
         ROOT / "scripts/run_native_tool.py",
         *[ROOT / "scripts" / name for name in (
             "configure_vivado_run_profile.tcl", "vivado_run_threads.tcl",
+            "optimize_c64_control_sets.tcl",
+            "c64_timing_policy.tcl",
+            "finish_c64_timing.tcl", "optimize_c64_cpu_margin.tcl",
             "apply_fabric_timing_margin.tcl", "clear_fabric_timing_margin.tcl",
-            "finish_video_timing.tcl", "check_video_bus_constraints.tcl")],
+            "finish_video_timing.tcl", "check_video_bus_constraints.tcl",
+            "check_timing_coverage.tcl", "check_w5100s_constraints.tcl")],
         Path(__file__).resolve(),
     }
     # Redistributable build snapshots include the rules and source credits.
@@ -37,6 +41,22 @@ def inputs(machine: str) -> list[Path]:
                  for path in (ROOT / base).rglob("*") if path.is_file())
     paths.update((ROOT / "LICENSE", ROOT / "MULTITINI_ONE_PLAN.md"))
     if machine == "C64":
+        # Retain complete firmware dependencies of extension, network and
+        # integration tests rather than a partial list of transitive headers.
+        paths.update(path for path in (ROOT / "firmware").rglob("*")
+                     if path.is_file() and path.suffix in {".c", ".h", ".inc"})
+        paths.update(ROOT / name for name in (
+            "CMakeLists.txt", "scripts/test_network.py", "scripts/test_w5100s_bridge.py",
+            "scripts/port_c64_sid.py", "tests/test_timing_coverage.py",
+            "hdl/sim/tb_multitini_w5100s_bridge.sv",
+            "tests/host/net_model.h", "tests/host/test_net.c", "tests/host/test_net_service.c",
+            "tests/host/test_net_uci_http.c", "tests/host/c64_uci_storage_fixture.h",
+            "tests/host/c64_sid_ultimate_oracle.cpp", "tests/host/c64_title_runtime.inc",
+            "tests/host/c64_uci_quiesce_cases.inc",
+            "third_party/c64/upstream/rtl/sid/sid_top.sv",
+            "third_party/c64/upstream/rtl/sid/sid_voice.sv"))
+        paths.update(path for base in ("third_party/ultimate_firmware_reference", "third_party/c64/patches")
+                     for path in (ROOT / base).rglob("*") if path.is_file())
         paths.update((ROOT / "docs").glob("C64_*.md"))
         paths.update((ROOT / "scripts").glob("test_c64_*.py"))
         paths.update((ROOT / "scripts").glob("check_c64_*.tcl"))
@@ -58,6 +78,7 @@ def inputs(machine: str) -> list[Path]:
         paths.update((ROOT / "firmware/include").glob("multitini_*_interface.h"))
         paths.update(path for path in (ROOT / "tests/xilinx_stubs").glob("*.h"))
         paths.add(ROOT / "hdl/sim/c64_ua_upstream_bridge.vhd")
+        paths.add(ROOT / "hdl/sim/c64_uci_upstream_bridge.vhd")
         paths.add(ROOT / "hdl/sim/c64_ua_reu_contention.inc")
         paths.add(ROOT / "hdl/sim/tb_multitini_audio_capture.sv")
         paths.add(ROOT / "hdl/sim/tb_multitini_word_mailbox.sv")
@@ -184,6 +205,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--machine", choices=("C64", "GBC", "VECTREX", "GENESIS", "APPLE_IIGS", "NES", "SUPERVISOR"))
     parser.add_argument("--c64-video-standard", choices=("PAL", "NTSC"), default="PAL")
+    parser.add_argument("--c64-timing-policy", choices=("default", "dev8-over-0.050"), default="default")
     parser.add_argument("--gbc-psram", action="store_true")
     parser.add_argument("--genesis-pal", action="store_true")
     parser.add_argument("--output", required=True, type=Path)
@@ -213,6 +235,8 @@ def main() -> int:
         parser.error("--gbc-psram requires --machine GBC")
     if args.genesis_pal and args.machine != "GENESIS":
         parser.error("--genesis-pal requires --machine GENESIS")
+    if args.c64_timing_policy != "default" and args.machine != "C64":
+        parser.error("--c64-timing-policy requires --machine C64")
     record = {
         "schema": 1,
         "machine": args.machine,
@@ -227,6 +251,8 @@ def main() -> int:
                   for path in inputs(args.machine)},
         "note": "Source bytes, not a clean-commit assertion; retain the matching source archive with the image.",
     }
+    if args.machine == "C64":
+        record["configuration"]["c64_timing_policy"] = args.c64_timing_policy
     output.parent.mkdir(parents=True, exist_ok=True)
     archive_inputs(output, record)
     output.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")

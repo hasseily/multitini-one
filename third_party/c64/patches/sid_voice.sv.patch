@@ -1,0 +1,38 @@
+--- a/rtl/sid/sid_voice.sv
++++ b/hdl/core/c64/ports/sid_voice.sv
+@@ -1,3 +1,8 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// Multitini synthesis port of MiSTer C64 commit
++// 62fc697e3c9b5982c9dc76aa8cd03db545d20803. DSP attributes map the
++// unchanged phase accumulator and noise/held-wave counters into DSP48 slices.
++// No arithmetic, clock-enable, reset, waveform, or cycle behavior is changed.
+ 
+ // altera message_off 10030
+ module sid_voice
+@@ -61,7 +66,7 @@
+ );
+ 
+ // Phase Accumulating Oscillator
+-reg  [23:0] oscillator;
++(* use_dsp="yes" *) reg  [23:0] oscillator;
+ reg         osc_msb_in_prv;
+ always @(posedge clock) begin
+ 	reg test_delay;
+@@ -82,7 +87,7 @@
+ always @(posedge clock) begin
+ 	reg clk, clk_d;
+ 	reg osc_edge;
+-	reg [23:0] noise_age;
++	(* use_dsp="yes" *) reg [23:0] noise_age;
+ 	reg [22:0] lfsr_noise;
+ 
+ 	if (reset) begin
+@@ -177,7 +182,7 @@
+ // DAC with floating input simulation
+ reg signed [21:0] dca_out;
+ always @(posedge clock) begin
+-	reg        [23:0] keep_cnt;
++	(* use_dsp="yes" *) reg        [23:0] keep_cnt;
+ 	reg signed  [8:0] env_dac;
+ 	reg signed [12:0] dac_out;
+ 

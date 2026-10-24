@@ -16,7 +16,8 @@ typedef enum {
     MT_C64_CONTENT_SERVICE_READ_FAILED,
     MT_C64_CONTENT_SERVICE_REJECTED,
     MT_C64_CONTENT_SERVICE_TRANSFER_FAILED,
-    MT_C64_CONTENT_SERVICE_REU_CONFLICT
+    MT_C64_CONTENT_SERVICE_REU_CONFLICT,
+    MT_C64_CONTENT_SERVICE_CONFIG_FAILED
 } mt_c64_content_service_status_t;
 
 typedef struct {
@@ -25,6 +26,18 @@ typedef struct {
     mt_c64_content_result_t content;
     mt_link_result_t link;
 } mt_c64_content_service_result_t;
+
+/* An optional title transaction. commit runs after validation, while reset is
+ * acknowledged when hold_reset is true. A failed hold never calls commit.
+ * The hold is retained across cartridge detach and transferred only after the
+ * new loader accepts its first byte. The caller owns rollback after a later
+ * transfer failure. A NULL hook preserves the legacy command trace. */
+typedef struct {
+    bool reu_requested;
+    bool hold_reset;
+    int (*commit)(void *context);
+    void *context;
+} mt_c64_launch_hook_t;
 
 /* Monotonic milliseconds used to bound the C64 reset-to-KERNAL and RUN
  * injector waits by elapsed time. */
@@ -41,18 +54,26 @@ int c64_content_service_set_media_root(const char *root);
 /* file_name is a validated path relative to the configured media root. */
 mt_c64_content_service_result_t c64_content_service_load(
     const char *file_name);
+mt_c64_content_service_result_t c64_content_service_load_hooked(
+    const char *file_name, const mt_c64_launch_hook_t *hook);
 /* Stage an already-extracted PRG without typing RUN, then launch it after its
  * parent disk has been remounted. */
 mt_c64_content_service_result_t c64_content_service_stage_prg_image(
     const uint8_t *data, size_t size);
+mt_c64_content_service_result_t c64_content_service_stage_prg_image_hooked(
+    const uint8_t *data, size_t size, const mt_c64_launch_hook_t *hook);
 /* Reset to a ready, empty BASIC session for a subsequent native disk LOAD.
  * No deferred RUN is armed: a disk-remount retry must not run the empty stub. */
 mt_c64_content_service_result_t c64_content_service_prepare_disk_load(void);
+mt_c64_content_service_result_t c64_content_service_prepare_disk_load_hooked(
+    const mt_c64_launch_hook_t *hook);
 /* Start without clearing shared load/media errors after remount. An existing
  * core load fault is returned with the staged program available for recovery. */
 mt_c64_content_service_result_t c64_content_service_run_staged_prg(void);
 bool c64_content_service_prg_staged(void);
 mt_c64_content_service_result_t c64_content_service_detach_crt(void);
+mt_c64_content_service_result_t c64_content_service_detach_crt_hooked(
+    const mt_c64_launch_hook_t *hook);
 bool c64_content_service_crt_attached(void);
 /* Read the expansion registers only after a matching C64 ABI has been verified. */
 uint32_t c64_content_service_expansion_caps(void);

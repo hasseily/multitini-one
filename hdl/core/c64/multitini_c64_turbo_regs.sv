@@ -64,11 +64,19 @@ module multitini_c64_turbo_regs #(
         case(address)
             10'h031: read_value=registers_live ? live_d031 : 8'hff;
             10'h030: read_value=c128_live ? {7'h7f,(live_d031!=0)} : 8'hff;
+            // Compatibility detection only: this remains an NMOS 6510.
+            10'h0bc: read_value=(config_word[20] && mode!=0) ? 8'h01 : 8'hff;
+            10'h0b8,10'h0b9: read_value=registers_live ? (live_d031[3:0]==0 ? 8'hc1 : 8'h01) : 8'hff;
             default: read_value=8'hff;
         endcase
     endfunction
-    assign native_rd_override=native_rd_addr==10'h030 || native_rd_addr==10'h031;
-    assign fast_rd_override=fast_rd_addr==10'h030 || fast_rd_addr==10'h031;
+    function automatic decode_override(input [9:0] address);
+        decode_override=address==10'h030 || address==10'h031 ||
+            (registers_live && (address==10'h0b8 || address==10'h0b9)) ||
+            (config_word[20] && mode!=0 && address==10'h0bc);
+    endfunction
+    assign native_rd_override=decode_override(native_rd_addr);
+    assign fast_rd_override=decode_override(fast_rd_addr);
     assign native_rd_data=read_value(native_rd_addr);
     assign fast_rd_data=read_value(fast_rd_addr);
     wire [3:0] requested_index=mode==1 ? config_word[3:0] : live_d031[3:0];

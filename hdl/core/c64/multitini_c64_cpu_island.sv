@@ -147,7 +147,9 @@ module multitini_c64_cpu_island #(
         if(reset_q || !diag_armed) diag_nmi_used<=0;
         else if(nmi_used) diag_nmi_used<=1;
     end
+    wire cpu_store_port;
     cpu_6510 cpu_i (
+        .store_port(cpu_store_port),
         .clk(clk_cpu),.enable(cpu_enable),.bus_start(1'b0),.reset(reset_q),
         .nmi_n(t65_nmi_n),.nmi_ack(nmi_ack),.irq_n(turbo_active?irq_q:b0_irq_n),
         .rdy(turbo_active?1'b1:b0_rdy),.port_tick(port_tick_toggle!=tick_seen && !reset_q),
@@ -161,7 +163,10 @@ module multitini_c64_cpu_island #(
     assign cpu_mem_ram_we=cpu_mem_ce && map_ok && fetch_done_q && ram_store && !ff00_stored;
     assign cpu_mem_colour_we=cpu_mem_ce && map_ok && fetch_done_q && colour_store;
     assign cpu_mem_addr=cpu_address;
-    assign cpu_mem_wdata=port_write?last_vic_q:cpu_wdata;
+    // Both memory store enables imply a CPU write. The helper is valid for
+    // NMOS stores and avoids the unused PC read-address cone in this mux.
+    // Writes to $0000/$0001 still place the last VIC byte in underlying RAM.
+    assign cpu_mem_wdata=cpu_store_port?last_vic_q:cpu_wdata;
     assign fio_rd_addr=cpu_address[9:0];
     assign fio_rd_sid=cpu_address[10];
     always @(negedge clk_cpu) begin

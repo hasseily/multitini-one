@@ -5,6 +5,7 @@ from __future__ import annotations
 import binascii
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 import tempfile
@@ -22,8 +23,12 @@ class PackageTests(unittest.TestCase):
         source = (ROOT / "hdl/generated/multitini_regs_pkg.sv").read_text()
         package.verify_c64_release_settings(source)
         package.verify_c64_release_settings("// Retained pre-turbo core")
+        diagnostic, count = re.subn(
+            r"(MT_C64_CPU_CAPS2_RELEASE\s*=\s*32'h)([0-9a-fA-F]{8})",
+            lambda match: match[1] + f"{int(match[2], 16) | (1 << 14):08X}", source)
+        self.assertEqual(count, 1)
         with self.assertRaisesRegex(ValueError, "diagnostic image"):
-            package.verify_c64_release_settings(source.replace("32'h80002F01", "32'h80006F01"))
+            package.verify_c64_release_settings(diagnostic)
         with self.assertRaisesRegex(ValueError, "power-up"):
             package.verify_c64_release_settings(source.replace("32'h00000151", "32'h00080151"))
         with self.assertRaisesRegex(ValueError, "ambiguous"):
@@ -116,6 +121,35 @@ class PackageTests(unittest.TestCase):
             for name in ("../escape.c", "/absolute.c", "a\\b.c"):
                 with self.assertRaisesRegex(ValueError, "Unsafe source"):
                     package.source_path(name)
+
+    def test_ethernet_partial_inputs_require_exact_pins_and_routed_bounds(self):
+        coverage = self.reports / "timing_coverage_gate.rpt"
+        base = coverage.read_text()
+        partial = "\nThere are 8 input ports with partial input delay specified. (HIGH)\n\n" + \
+            "\n".join(f"eth_d[{bit}]" for bit in range(8)) + "\n\n"
+        evidence = self.reports / "w5100s_timing.rpt"
+        valid = "present true output_paths 22 input_paths 8 output_max_ns 3.337 input_max_ns 7.684\n"
+        coverage.write_text(base + partial)
+        with self.assertRaisesRegex(ValueError, "Missing routed"):
+            package.timing(self.root, "C64", False)
+        evidence.write_text(valid)
+        result = package.timing(self.root, "C64", False)
+        self.assertEqual(result["w5100s_external_timing"]["input_paths"], 8)
+        with self.assertRaisesRegex(ValueError, "Unqualified partial"):
+            package.timing(self.root, "SUPERVISOR", False)
+        for broken in (partial.replace("eth_d[7]", "unrelated_pin"),
+                       partial.replace("eth_d[7]", "eth_d[0]"),
+                       partial.replace("are 8", "are 7"), partial + partial):
+            coverage.write_text(base + broken)
+            with self.assertRaises(ValueError):
+                package.timing(self.root, "C64", False)
+        coverage.write_text(base + partial)
+        for broken in (valid.replace("22", "21"), valid.replace("true", "false"),
+                       valid.replace("3.337", "4.001"), valid.replace("7.684", "9.001"),
+                       valid.replace("3.337", "1e999"), valid + "extra evidence\n"):
+            evidence.write_text(broken)
+            with self.assertRaises(ValueError):
+                package.timing(self.root, "C64", False)
 
     def test_gbc_package_rejects_psram_disabled_image(self):
         (self.root / "source-inputs.json").write_text(json.dumps({

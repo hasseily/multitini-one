@@ -83,8 +83,8 @@ def main() -> int:
         'third_party/c64/upstream/rtl/mos6526.v',
         'hdl/core/c64/ports/sid_dac.sv', 'hdl/core/c64/ports/sid_filter.sv',
         'third_party/c64/upstream/rtl/sid/sid_envelope.sv',
-        'hdl/core/c64/ports/sid_tables.sv', 'third_party/c64/upstream/rtl/sid/sid_voice.sv',
-        'hdl/core/c64/ports/sid_top.sv', 'hdl/core/c64/multitini_c64_local_ram.sv',
+        'hdl/core/c64/ports/sid_tables.sv', 'hdl/core/c64/ports/sid_voice.sv',
+        'hdl/core/c64/ports/sid_top.sv', 'hdl/core/c64/multitini_c64_sid_array.sv', 'hdl/core/c64/multitini_c64_local_ram.sv',
         'hdl/core/c64/multitini_c64_reu.sv', 'hdl/core/c64/multitini_c64_memory_arbiter.sv',
         'hdl/sim/tb_c64_reu_machine.sv', 'hdl/sim/tb_c64_ua_stock_bus.sv')]
     inputs = [Path(__file__).resolve(), ROOT/'scripts/test_c64_reu_machine.py',

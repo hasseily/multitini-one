@@ -46,7 +46,7 @@ proc check_c64_turbo_memory {stage {strict_rom 1} {island_cycle 1}} {
     puts "C64_ISLAND_MEMORY_PASS stage=$stage main36=[llength $main] rom36=[llength $rom] colour18=[llength $colour] lutram=0"
 }
 
-proc check_c64_turbo_timing {stage cpu_clock native_clock {minimum_slack 0.100} {island_cycle 1} {duty_user_minimum 0.200}} {
+proc check_c64_turbo_timing {stage cpu_clock native_clock {minimum_slack 0.100} {island_cycle 1} {duty_user_minimum 0.200} {minimum_exclusive false}} {
     set fast [get_clocks -quiet $cpu_clock]
     set native [get_clocks -quiet $native_clock]
     c64_turbo_require {[llength $fast]==1 && [llength $native]==1} "$stage missing or ambiguous clock pair"
@@ -74,17 +74,22 @@ proc check_c64_turbo_timing {stage cpu_clock native_clock {minimum_slack 0.100} 
     c64_turbo_require {$fast_ports>=22} "$stage not all island RAM CPU ports retain a timed clock"
     set forbidden [get_timing_paths -quiet -rise_from $native -fall_to $fast -max_paths 1]
     c64_turbo_require {[llength $forbidden]==0} "$stage a native-rise to CPU-fall data path exists"
+    set setup_paths {}
     foreach pair [list [list $fast $fast] [list $native $fast] [list $fast $native]] {
         lassign $pair source destination
         set path [get_timing_paths -from $source -to $destination -max_paths 1]
         c64_turbo_require {[llength $path]==1} "$stage missing timed path $pair"
         set slack [get_property SLACK $path]
-        c64_turbo_require {$slack>=$minimum_slack} "$stage island setup slack $slack below $minimum_slack on $pair"
+        c64_turbo_require {($minimum_exclusive && $slack>$minimum_slack) ||
+            (!$minimum_exclusive && $slack>=$minimum_slack)} \
+            "$stage island setup slack $slack fails minimum $minimum_slack (exclusive=$minimum_exclusive) on $pair"
         if {$source ne $destination} {
             set requirement [get_property REQUIREMENT $path]
             c64_turbo_require {abs($requirement-$fp)<0.001} "$stage cross-clock requirement $requirement is not one fast period $fp"
         }
         puts "C64_ISLAND_TIMING stage=$stage from=$source to=$destination slack_ns=$slack requirement_ns=[get_property REQUIREMENT $path]"
+        lappend setup_paths [dict create from $source to $destination slack_ns $slack \
+            requirement_ns [get_property REQUIREMENT $path]]
     }
     if {$island_cycle==1} {
         set half [get_timing_paths -from $fast -to $fast_address_pins -max_paths 1]
@@ -97,4 +102,5 @@ proc check_c64_turbo_timing {stage cpu_clock native_clock {minimum_slack 0.100} 
         puts "C64_ISLAND_HALF_PERIOD_PASS stage=$stage requirement_ns=$requirement reported_uncertainty_ns=$uncertainty user_uncertainty_ns=$user_uncertainty"
     }
     puts "C64_CLOCK_PAIR_PASS stage=$stage fast=$fast native=$native period_ps=[expr {round($fp*1000)}]"
+    return $setup_paths
 }

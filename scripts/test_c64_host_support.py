@@ -53,7 +53,7 @@ def main():
         tool=lambda name:args.vivado/'bin'/(name+('.bat' if os.name=='nt' else ''))
         run('xvlog-vendor',[tool('xvlog'),'--nolog','--sv',xpm,glbl])
         run('xvlog-mailbox',[tool('xvlog'),'--nolog','--sv',*[ROOT/files[i] for i in (1,2,3,7)]])
-        for width in (32,102,192):
+        for width in (32,102,165,192,292):
             label='mailbox_'+str(width)
             wrapper=build/(label+'.sv')
             wrapper.write_text(f'module {label}; tb_multitini_word_mailbox #(.WIDTH({width})) dut(); endmodule\n')

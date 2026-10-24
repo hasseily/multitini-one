@@ -144,7 +144,8 @@ proc get_runs {args} {
     if {[lindex $args 0] eq "-filter"} {return ooc_synth}
     return [lindex $args 0]
 }
-proc list_property {run} {return {STEPS.ROUTE_DESIGN.TCL.POST STEPS.SYNTH_DESIGN.TCL.PRE}}
+proc get_filesets {name} {return $name}
+proc list_property {run} {return {STEPS.ROUTE_DESIGN.TCL.POST STEPS.SYNTH_DESIGN.TCL.PRE STEPS.OPT_DESIGN.TCL.POST}}
 proc get_property {property run} {
     set key "$run/$property"
     if {[dict exists $::properties $key]} {return [dict get $::properties $key]}
@@ -161,6 +162,30 @@ if {$initial == 0 || $writes != $initial || $thread_count != 8} {exit 1}
 if {![string match *vivado_run_threads.tcl [get_property STEPS.SYNTH_DESIGN.TCL.PRE ooc_synth]]} {exit 2}
 if {[get_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED impl_1] != 0} {exit 3}
 if {![string match *finish_video_timing.tcl [get_property STEPS.ROUTE_DESIGN.TCL.POST impl_1]]} {exit 4}
+'''
+        script += f'''
+dict set ::properties sources_1/GENERIC {{BUILD_ID=32'h4D00C708 ACTIVE_MACHINE=0 C64_VIDEO_STANDARD=0}}
+source {{{path}}}
+if {{[get_property STEPS.OPT_DESIGN.ARGS.DIRECTIVE impl_1] ne "ExploreSequentialArea"}} {{exit 5}}
+if {{[get_property STEPS.PLACE_DESIGN.ARGS.DIRECTIVE impl_1] ne "Explore"}} {{exit 6}}
+if {{![string match *finish_c64_timing.tcl [get_property STEPS.ROUTE_DESIGN.TCL.POST impl_1]]}} {{exit 14}}
+set merge_hook [get_property STEPS.OPT_DESIGN.TCL.POST impl_1]
+if {{![string match *optimize_c64_control_sets.tcl $merge_hook]}} {{exit 7}}
+set ::merge_calls 0
+proc opt_design {{args}} {{if {{$args ne "-control_set_merge"}} {{exit 8}}; incr ::merge_calls}}
+source $merge_hook
+if {{$::merge_calls != 1}} {{exit 9}}
+set initial $writes
+source {{{path}}}
+if {{$writes != $initial}} {{exit 10}}
+foreach machine {{1 2 3 4 5 6 7 10}} {{
+    dict set ::properties sources_1/GENERIC "ACTIVE_MACHINE=$machine"
+    source {{{path}}}
+    if {{[get_property STEPS.OPT_DESIGN.ARGS.DIRECTIVE impl_1] ne "Explore"}} {{exit 11}}
+    if {{[get_property STEPS.PLACE_DESIGN.ARGS.DIRECTIVE impl_1] ne "Default"}} {{exit 12}}
+    if {{[get_property STEPS.OPT_DESIGN.TCL.POST impl_1] ne ""}} {{exit 13}}
+    if {{![string match *finish_video_timing.tcl [get_property STEPS.ROUTE_DESIGN.TCL.POST impl_1]]}} {{exit 15}}
+}}
 '''
         result = self.run_tcl(script)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

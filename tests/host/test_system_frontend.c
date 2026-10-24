@@ -440,6 +440,21 @@ int main(void)
     test_multiboot_availability();
     test_golden_update_confirmation();
     test_about_move_and_navigation();
+    mt_system_frontend_t frontend;
+    mt_system_snapshot_t snapshot = {.network_available = true, .network_status = "DHCP 192.0.2.5"};
+    mt_menu_view_t view = {0};
+    mt_system_frontend_apply(&frontend, &snapshot, &view);
+    expect_value(&view, "Network", "DHCP 192.0.2.5");
+    mt_menu_t menu = focus_item(&view, "Network");
+    check(mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true).kind == MT_MENU_ACTION_NETWORK_MODE,
+          "Network dispatches the persistent mode action");
+    menu = focus_item(&view, "Renew network");
+    check(mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true).kind == MT_MENU_ACTION_NETWORK_RENEW,
+          "Renew dispatches without modifying the selected mode");
+    size_t with_network = view.system_item_count;
+    snapshot.network_available = false;
+    mt_system_frontend_apply(&frontend, &snapshot, &view);
+    check(view.system_item_count + 2 == with_network, "Older FPGA images hide network actions");
     puts("PASS: System actions, About status move, live values, contextual help and rendered navigation");
     return 0;
 }

@@ -20,6 +20,7 @@ typedef struct {
     int stream_open;
     int stream_blocked;
     int inject_busy;
+    unsigned drain_delay, handoffs;
     uint32_t input_code;
     uint32_t input_value;
 } mock_shell_t;
@@ -30,8 +31,7 @@ static uint32_t mock_read(void *context, uint32_t offset)
     assert(offset < MT_REGISTER_SPAN && (offset & 3U) == 0U);
     if (offset == MT_REG_STREAM_STATUS && shell->stream_open) {
         if (shell->stream_blocked != 0) return 0U;
-        return shell->stream_data_size == shell->stream_size ?
-               MT_STREAM_STATUS_DRAINED : MT_STREAM_STATUS_READY;
+        return MT_STREAM_STATUS_READY | (shell->drain_delay ? 0U : MT_STREAM_STATUS_DRAINED);
     }
     return shell->registers[offset / sizeof(uint32_t)];
 }
@@ -73,6 +73,7 @@ static void respond_to_stream(void *context)
     const uint32_t sequence = shell->registers[MT_REG_COMMAND_SEQ / 4U];
     const uint32_t opcode = shell->registers[MT_REG_COMMAND_OPCODE / 4U];
     uint32_t status = MT_RESPONSE_OK;
+    if (shell->drain_delay) --shell->drain_delay;
 
     if (sequence == shell->observed_sequence) {
         return;
@@ -106,6 +107,15 @@ static void respond_to_stream(void *context)
     shell->registers[MT_REG_RESPONSE_ARG0 / 4U] = 0U;
     shell->registers[MT_REG_RESPONSE_ARG1 / 4U] = 0U;
     shell->registers[MT_REG_RESPONSE_SEQ / 4U] = sequence;
+}
+
+static int handoff(void *context)
+{
+    mock_shell_t *shell=context;
+    assert(shell->stream_data_size==1U);
+    assert(shell->drain_delay==0U);
+    ++shell->handoffs;
+    return 0;
 }
 
 static int continue_twice(void *context)
@@ -232,5 +242,15 @@ int main(void)
                                (size_t)UINT32_MAX + 1U, 1U,
                                NULL, NULL) == MT_LINK_BAD_ARGUMENT);
 #endif
+    shell.stream_data_size=0U;shell.drain_delay=5U;
+    shell.registers[MT_REG_ABI_VERSION/4U]=MT_ABI_VERSION;
+    assert(mt_core_link_stream_handoff(&link,8U,stream_data,sizeof(stream_data),
+        12U,respond_to_stream,&shell,NULL,NULL,handoff,&shell)==MT_LINK_OK);
+    assert(shell.handoffs==1U&&shell.stream_data_size==sizeof(stream_data));
+    assert(memcmp(shell.stream_data,stream_data,sizeof(stream_data))==0);
+    shell.stream_data_size=0U;shell.drain_delay=100U;
+    assert(mt_core_link_stream_handoff(&link,8U,stream_data,sizeof(stream_data),
+        4U,respond_to_stream,&shell,NULL,NULL,handoff,&shell)==MT_LINK_TIMEOUT);
+    assert(shell.handoffs==1U&&!shell.stream_open);
     return 0;
 }

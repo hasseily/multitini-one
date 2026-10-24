@@ -25,7 +25,7 @@ BASELINE = "a0bf372718bba99a49e2a7fcf8199b9c2267b5b9"
 VIC = "hdl/core/c64/ports/video_vicII_656x.vhd"
 SID = (
     "third_party/c64/upstream/rtl/sid/sid_envelope.sv",
-    "third_party/c64/upstream/rtl/sid/sid_voice.sv",
+    "hdl/core/c64/ports/sid_voice.sv",
     "hdl/core/c64/ports/sid_dac.sv",
     "hdl/core/c64/ports/sid_filter.sv",
     "hdl/core/c64/ports/sid_tables.sv",

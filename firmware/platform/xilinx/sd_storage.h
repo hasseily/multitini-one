@@ -99,6 +99,31 @@ mt_sd_result_t mt_sd_storage_ensure_directory(const char *path);
  * x (optionally b) creates a new file and never truncates an existing file.
  * Writes sync before returning; they are not journaled atomic replacements. */
 typedef struct mt_sd_file mt_sd_file_t;
+typedef struct mt_sd_directory mt_sd_directory_t;
+typedef struct {
+    char name[256];
+    uint64_t size;
+    uint16_t date,time;
+    uint8_t attributes;
+} mt_sd_info_t;
+/* Bounded directory iteration shares the storage lease with managed files.
+ * next returns an empty name at EOF. Callers must close before USB handoff. */
+mt_sd_result_t mt_sd_directory_open(const char *,mt_sd_directory_t **);
+mt_sd_result_t mt_sd_directory_next(mt_sd_directory_t *,mt_sd_info_t *);
+mt_sd_result_t mt_sd_directory_close(mt_sd_directory_t *);
+mt_sd_result_t mt_sd_file_stat(const char *,mt_sd_info_t *);
+/* Resolve existing FAT long/short-name aliases component by component.
+ * Input is an absolute one-volume path without dot components. Missing
+ * components retain their spelling for creation; I/O failures remain errors.
+ * Trailing spaces/dots are rejected before FatFs can silently normalize them.
+ * Does not open files or acquire another storage owner. Output may alias input. */
+mt_sd_result_t mt_sd_file_canonical_path(const char *,char *,size_t);
+/* FatFs-compatible low-five-bit open mode, preserving OPEN_ALWAYS without
+ * stdio append semantics. Same ownership/limit checks as ordinary open. */
+mt_sd_result_t mt_sd_file_open_flags(const char *,uint8_t,mt_sd_file_t **);
+/* Read-only ownership query. exclusive=true detects any managed handle;
+ * false detects writers. It neither opens nor modifies the target. */
+bool mt_sd_file_path_busy(const char *path, bool exclusive);
 mt_sd_result_t mt_sd_file_open(const char *path, const char *mode, mt_sd_file_t **file);
 mt_sd_result_t mt_sd_file_read(mt_sd_file_t *file, void *data, size_t capacity);
 mt_sd_result_t mt_sd_file_write(mt_sd_file_t *file, const void *data, size_t size);
@@ -114,5 +139,9 @@ mt_sd_result_t mt_sd_file_remove(const char *path);
 mt_sd_result_t mt_sd_file_rename(const char *old_path, const char *new_path);
 
 const char *mt_sd_status_name(mt_sd_status_t status);
+
+/* Read the initialized shared SD driver's cached CID; no card command and
+ * no second controller instance. Refused during external ownership. */
+bool mt_sd_storage_card_identity(uint8_t identity[16]);
 
 #endif

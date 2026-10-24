@@ -17,6 +17,12 @@ mt_c64_capabilities_t mt_c64_probe_capabilities(mt_core_link_t *link,
     c.expansion = link->read32(link->context, MT_REG_C64_EXPANSION_CAPS);
     if (!(c.expansion & MT_C64_EXPANSION_CAPS_VALID)) c.expansion = 0;
     const unsigned minor = package_minor < (uint16_t)abi ? package_minor : (uint16_t)abi;
+    if (minor < MT_C64_UCI_MIN_ABI_MINOR)
+        c.expansion &= ~(MT_C64_EXPANSION_CAPS_UCI | MT_C64_EXPANSION_CAPS_UCI_RAM_DMA |
+                         MT_C64_EXPANSION_CAPS_UCI_C64_IRQ);
+    if (minor < MT_C64_SID_MIN_ABI_MINOR)
+        c.expansion &= ~(MT_C64_EXPANSION_CAPS_MULTI_SID | MT_C64_EXPANSION_CAPS_SID_COUNT_MASK |
+                         MT_C64_EXPANSION_CAPS_SID_MODEL_8580 | MT_C64_EXPANSION_CAPS_SID_IO_SLOTS);
     if (minor < MT_C64_ULTIMATE_AUDIO_MIN_ABI_MINOR)
         c.expansion &= ~MT_C64_EXPANSION_CAPS_ULTIMATE_AUDIO;
     if (minor < MT_C64_REU_HOST_MIN_ABI_MINOR)
@@ -31,6 +37,8 @@ mt_c64_capabilities_t mt_c64_probe_capabilities(mt_core_link_t *link,
         c.cpu2 = link->read32(link->context, MT_REG_C64_CPU_CAPS2);
         if (!(c.cpu & MT_C64_CPU_CAPS_VALID)) c.cpu = 0;
         if (!(c.cpu2 & MT_C64_CPU_CAPS2_VALID)) c.cpu2 = 0;
+        if (minor < MT_C64_SCPU_MIN_ABI_MINOR)
+            c.cpu2 &= ~MT_C64_CPU_CAPS2_SCPU_DETECT;
         c.turbo = (c.cpu & MT_C64_CPU_CAPS_INDEX_MASK) != 0 && c.cpu2 != 0;
     }
     if (minor >= MT_DEBUG_MIN_ABI_MINOR) {
@@ -104,6 +112,8 @@ uint32_t mt_c64_turbo_config(uint8_t detail, uint8_t flags, bool enabled,
         config |= MT_C64_CPU_CONFIG_CARTRIDGE_NATIVE;
     if ((detail & 0x10U) && (caps->cpu2 & MT_C64_CPU_CAPS2_FOLLOW_CPU))
         config |= MT_C64_CPU_CONFIG_FOLLOW_CPU;
+    if ((flags & 8U) && (caps->cpu2 & MT_C64_CPU_CAPS2_SCPU_DETECT))
+        config |= MT_C64_CPU_CONFIG_SCPU_DETECT;
     config |= previous & MT_C64_CPU_CONFIG_DEBUG_MASK;
     unsigned counter = (previous >> 12) & 15U;
     if (apply_change && ((config ^ previous) & 0x7FU)) counter = (counter + 1U) & 15U;

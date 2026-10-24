@@ -585,8 +585,10 @@ static bool encode_settings(const mt_supervisor_settings_t *settings)
     store_u32_le(settings_wire + 12U, MT_SETTINGS_WIRE_SIZE);
     settings_wire[24U] = settings->auto_boot ? 1U : 0U;
     settings_wire[25U] = settings->display_mode;
-    settings_wire[26U] = (settings->c64_turbo_flags & 3U) |
-                        (settings->c64_ultimate_audio ? 4U : 0U);
+    settings_wire[26U] = (settings->c64_turbo_flags & 11U) |
+                        (settings->c64_ultimate_audio ? 4U : 0U) |
+                        (settings->c64_command_interface ? 16U : 0U) |
+                        (settings->c64_title_cfg_off ? 32U : 0U);
     settings_wire[27U] = settings->c64_turbo_detail;
     memcpy(settings_wire + 28U, settings->selected_core_id,
            strlen(settings->selected_core_id));
@@ -707,8 +709,10 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
         }
     }
     mt_supervisor_settings_defaults(&settings_decode_candidate);
-    settings_decode_candidate.c64_turbo_flags = settings_wire[26U] & 3U;
+    settings_decode_candidate.c64_turbo_flags = settings_wire[26U] & 11U;
     settings_decode_candidate.c64_ultimate_audio = (settings_wire[26U] & 4U) != 0U;
+    settings_decode_candidate.c64_command_interface = (settings_wire[26U] & 16U) != 0U;
+    settings_decode_candidate.c64_title_cfg_off = (settings_wire[26U] & 32U) != 0U;
     settings_decode_candidate.c64_turbo_detail = settings_wire[27U];
     if (schema == MT_SETTINGS_SCHEMA) {
         for (index = 0U; index < MT_SETTINGS_MAX_PROFILES; ++index) {

@@ -33,6 +33,8 @@ enum
     EV_TX_ACK = MT_C64_IEC_EVENT_TX_ACK
 };
 static mt_iec_dos_t dos;
+static uint16_t uci_channels;
+
 static mt_core_link_t *link;
 static c64_iec_protected_fn protected_callback;
 static void *protected_context;
@@ -55,6 +57,30 @@ static uint8_t commit_buffer[MT_IEC_MAX_FILE];
 static char journals[MT_IEC_ENTRIES][MT_IEC_NAME];
 static size_t journal_count;
 static int list_error;
+
+mt_iec_dos_t *c64_iec_service_dos(void)
+{
+    return initialized && !storage_failure ? &dos : NULL;
+}
+void c64_iec_service_channel_release(unsigned channel)
+{
+    if (channel < 16)
+        uci_channels &= (uint16_t)~(1U << channel);
+}
+void c64_iec_service_write_failure(int code)
+{
+    if (code)
+        storage_failure = code;
+}
+bool c64_iec_service_channel_acquire(unsigned channel)
+{
+    if (!initialized || storage_failure || channel >= 16 || (uci_channels & (1U << channel)) ||
+        ((offered || tx_pending) && offered_channel == channel) ||
+        ((opening || command_size) && input_channel == channel))
+        return false;
+    uci_channels |= (uint16_t)(1U << channel);
+    return true;
+}
 
 static int sd_code(mt_sd_result_t r, bool writing)
 {
@@ -355,6 +381,7 @@ int c64_iec_service_init(mt_core_link_t *new_link, const char *root, c64_iec_pro
     enabled = false;
     quiescing = false;
     storage_failure = 0;
+    uci_channels = 0;
     failed_target_count = 0;
     transport_reset();
     if (c64_iec_service_available())
@@ -386,6 +413,13 @@ int c64_iec_service_enable(bool on)
 }
 static int finish_input(void)
 {
+    if ((uci_channels & (1U << input_channel)) || (input_channel == 15 && uci_channels)) {
+        command_size = 0;
+        opening = false;
+        input_error = false;
+        mt_iec_dos_error(&dos, 70);
+        return 70;
+    }
     int rc = 0;
     if (input_error)
     {
@@ -414,7 +448,9 @@ static void request_byte(unsigned channel, uint16_t token, bool next)
         mt_iec_dos_begin_talk(&dos, channel);
     uint8_t byte = 0;
     bool eoi = false, available = false;
-    int rc = mt_iec_dos_peek(&dos, channel, &byte, &eoi, &available);
+    int rc = (uci_channels & (1U << channel))
+                 ? 70
+                 : mt_iec_dos_peek(&dos, channel, &byte, &eoi, &available);
     tx_word = (uint32_t)token << 16;
     if (rc || !available)
         tx_word |= 1U << 9;
@@ -432,6 +468,9 @@ static int event(uint32_t value)
     unsigned type = (value >> 12) & 15, channel = (value >> 8) & 15;
     uint8_t byte = (uint8_t)value;
     int rc = 0;
+    bool uci_blocked =
+        ((type == EV_DATA || type == EV_DATA_EOI) && (uci_channels & (1U << input_channel))) ||
+        (type == EV_CLOSE && ((uci_channels & (1U << channel)) || (channel == 15 && uci_channels)));
     bool mutating = ((type == EV_DATA || type == EV_DATA_EOI) && !opening && input_channel < 15 &&
                      dos.channels[input_channel].kind == 2) ||
                     (type == EV_CLOSE && channel < 15 && dos.channels[channel].kind == 2);
@@ -461,14 +500,18 @@ static int event(uint32_t value)
         }
         else
         {
-            rc = mt_iec_dos_write(&dos, input_channel, &byte, 1, type == EV_DATA_EOI);
+            rc = (uci_channels & (1U << input_channel))
+                     ? 70
+                     : mt_iec_dos_write(&dos, input_channel, &byte, 1, type == EV_DATA_EOI);
         }
         break;
     case EV_UNLISTEN:
         rc = finish_input();
         break;
     case EV_CLOSE:
-        rc = mt_iec_dos_close(&dos, channel);
+        rc = ((uci_channels & (1U << channel)) || (channel == 15 && uci_channels))
+                 ? 70
+                 : mt_iec_dos_close(&dos, channel);
         if (offered_channel == channel)
             offered = false;
         break;
@@ -494,7 +537,7 @@ static int event(uint32_t value)
         mt_iec_dos_error(&dos, rc);
         break;
     }
-    if (rc && mutating)
+    if (rc && mutating && !uci_blocked)
         storage_failure = rc;
     return rc;
 }
@@ -542,6 +585,8 @@ int c64_iec_service_poll(unsigned budget)
 }
 int c64_iec_service_quiesce(void)
 {
+    if (uci_channels)
+        return 70; /* Caller must quiesce UCI before device9. */
     if (!initialized)
         return 0;
     if (enabled && c64_iec_service_available())

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Adapted from Appletini ONE be2ea4fee3c5ebc239b8b20aad9738bee89f8ff0.
-# One fixed profile for create_project and build_and_export_xsa.
+# Shared profiles for create_project and build_and_export_xsa.
 # Apply the fabric margin before placement and run one routed repair.
 namespace eval multitini_run_profile {
     # Preserve completed runs when their settings already match the profile.
@@ -45,7 +45,26 @@ namespace eval multitini_run_profile {
         STEPS.INIT_DESIGN.TCL.PRE $threads_hook \
         STEPS.OPT_DESIGN.TCL.PRE $margin_apply \
         STEPS.ROUTE_DESIGN.TCL.POST $route_finish]
-    # The route hook runs one AggressiveExplore pass and clears both temporary margins.
+    # Read the selected design, not a possibly stale process environment.
+    # C64's eight SID engines need the measured sequential-area packing pass.
+    # Other machines retain the shared defaults above.
+    set source_sets [get_filesets sources_1]
+    if {[llength $source_sets] != 1} {error "Expected one top-level source fileset"}
+    set c64_profile [regexp {(^|[[:space:]])ACTIVE_MACHINE=0($|[[:space:]])} \
+        [get_property GENERIC $source_sets]]
+    if {$c64_profile} {
+        set control_merge [file join $helper_dir optimize_c64_control_sets.tcl]
+        if {![file isfile $control_merge]} {error "Missing C64 run hook: $control_merge"}
+        dict set impl_settings STEPS.OPT_DESIGN.ARGS.DIRECTIVE ExploreSequentialArea
+        dict set impl_settings STEPS.OPT_DESIGN.TCL.POST $control_merge
+        dict set impl_settings STEPS.PLACE_DESIGN.ARGS.DIRECTIVE Explore
+        set cpu_finish [file join $helper_dir finish_c64_timing.tcl]
+        foreach hook [list $cpu_finish [file join $helper_dir optimize_c64_cpu_margin.tcl]] {
+            if {![file isfile $hook]} {error "Missing C64 timing hook: $hook"}
+        }
+        dict set impl_settings STEPS.ROUTE_DESIGN.TCL.POST $cpu_finish
+    }
+    # Other cores keep one shared pass; C64 also targets the CPU half cycles.
     foreach run [list $synth $impl] settings [list $synth_settings $impl_settings] {
         # Clear stale hooks/options without clearing a desired hook first.
         foreach property [list_property $run] {
@@ -66,5 +85,5 @@ namespace eval multitini_run_profile {
     foreach run [get_runs -filter {IS_SYNTHESIS && SRCSET != sources_1}] {
         set_if_changed $run STEPS.SYNTH_DESIGN.TCL.PRE $threads_hook
     }
-    puts "Vivado profile: automatic checkpoints enabled, OPT Explore, PLACE Default, PHYS Explore, ROUTE Explore, routed PHYS AggressiveExplore"
+    puts "Vivado profile: automatic checkpoints enabled, OPT [dict get $impl_settings STEPS.OPT_DESIGN.ARGS.DIRECTIVE], PLACE [dict get $impl_settings STEPS.PLACE_DESIGN.ARGS.DIRECTIVE], PHYS Explore, ROUTE Explore, routed PHYS AggressiveExplore"
 }

@@ -8,10 +8,12 @@ module sid_top
 	parameter MULTI_FILTERS = 1,
 	parameter DUAL = 1,
 	parameter FAST_PORT = 0,
-	parameter EDGE_STAGE = 1
+	parameter EDGE_STAGE = 1,
+    parameter SEPARATE_RESETS = 0
 )
 (
 	input         reset,
+    input         engine_reset,
 
 	input         clk,
 	input         ce_1m,
@@ -31,6 +33,7 @@ module sid_top
 	input [(DUAL ? 2 : 1)-1:0] fast_rd_cs,
 	input   [4:0] fast_rd_addr,
 	output logic [7:0] fast_rd_data,
+	output wire [(DUAL ? 2 : 1)*40-1:0] fast_candidates,
 
 	input  [12:0] fc_offset_l,
 	input   [7:0] pot_x_l,
@@ -55,6 +58,7 @@ module sid_top
 );
 
 localparam N = DUAL ? 2 : 1;
+wire time_reset = SEPARATE_RESETS ? engine_reset : reset;
 
 // Internal Signals
 reg  [15:0] Voice_1_Freq[N];
@@ -99,6 +103,12 @@ wire [11:0] acc_t[N*3];
 reg  [17:0] audio[N];
 
 reg   [7:0] bus_data[N];
+for (genvar candidate=0; candidate<N; candidate=candidate+1) begin : candidates
+    assign fast_candidates[candidate*40+:40] = {
+        candidate==0 ? pot_x_l : pot_x_r,
+        candidate==0 ? pot_y_l : pot_y_r,
+        Misc_Osc3[candidate], Misc_Env3[candidate], bus_data[candidate]};
+end
 reg  [12:0] Fc_offset[N];
 
 wire  [7:0] f__st_out;
@@ -127,7 +137,7 @@ generate
 		(
 			.clock(clk),
 			.ce_1m(ce_1m),
-			.reset(reset),
+			.reset(time_reset),
 			.mode(mode[i]),
 			.freq(Voice_1_Freq[i]),
 			.pw(Voice_1_Pw[i]),
@@ -150,7 +160,7 @@ generate
 		(
 			.clock(clk),
 			.ce_1m(ce_1m),
-			.reset(reset),
+			.reset(time_reset),
 			.mode(mode[i]),
 			.freq(Voice_2_Freq[i]),
 			.pw(Voice_2_Pw[i]),
@@ -173,7 +183,7 @@ generate
 		(
 			.clock(clk),
 			.ce_1m(ce_1m),
-			.reset(reset),
+			.reset(time_reset),
 			.mode(mode[i]),
 			.freq(Voice_3_Freq[i]),
 			.pw(Voice_3_Pw[i]),
@@ -425,7 +435,7 @@ sid_tables #(MULTI_FILTERS) sid_tables
 );
 
 always @(posedge clk) begin
-	if (reset) begin
+	if (time_reset) begin
 		state <= 0;
 		f_acc_t <= 0;
 		v <= 0;
@@ -477,7 +487,7 @@ sid_filter sid_filter
 );
 
 always @(posedge clk) begin
-	if (reset) begin
+	if (time_reset) begin
 		audio0 <= 0;
 		state15_seen <= 0;
 		for (audio_index = 0; audio_index < N; audio_index = audio_index + 1)

@@ -67,6 +67,12 @@ static mt_link_result_t release_stale_core_reset(void)
     return set_core_reset(false);
 }
 
+static int release_launch_hold(void *unused)
+{
+    (void)unused;
+    return set_core_reset(false) == MT_LINK_OK ? 0 : -1;
+}
+
 static void pulse_core_reset(void)
 {
     (void)set_core_reset(true);
@@ -166,7 +172,7 @@ int c64_content_service_set_media_root(const char *root)
 
 static mt_c64_content_service_result_t load_image(
     mt_content_type_t type, const uint8_t *data, size_t size,
-    const char *file_name, bool stage_prg)
+    const char *file_name, bool stage_prg, const mt_c64_launch_hook_t *hook)
 {
     mt_c64_content_service_result_t result =
         service_result(MT_C64_CONTENT_SERVICE_OK);
@@ -191,14 +197,28 @@ static mt_c64_content_service_result_t load_image(
         return result;
     }
 
-    result.link = release_stale_core_reset();
+    const bool held = hook != NULL && hook->hold_reset;
+    result.link = held ? set_core_reset(true) : release_stale_core_reset();
     if (result.link != MT_LINK_OK) {
-        result.status = MT_C64_CONTENT_SERVICE_TRANSFER_FAILED;
+        result.status = held ? MT_C64_CONTENT_SERVICE_CONFIG_FAILED :
+                               MT_C64_CONTENT_SERVICE_TRANSFER_FAILED;
+        return result;
+    }
+    if (hook != NULL && hook->commit != NULL && hook->commit(hook->context) != 0) {
+        if (held) (void)set_core_reset(false);
+        result.status = MT_C64_CONTENT_SERVICE_CONFIG_FAILED;
         return result;
     }
 
     if (type == MT_CONTENT_PRG && crt_attached) {
-        result = c64_content_service_detach_crt();
+        if (held) {
+            result.link = mt_c64_detach_crt(content_link, MT_C64_CONTENT_POLLS,
+                                           content_progress, content_progress_context);
+            if (result.link != MT_LINK_OK) {
+                (void)set_core_reset(false);
+                result.status = MT_C64_CONTENT_SERVICE_TRANSFER_FAILED;
+            } else { crt_attached = false; crt_name[0] = '\0'; }
+        } else result = c64_content_service_detach_crt();
         if (result.status != MT_C64_CONTENT_SERVICE_OK) return result;
     }
     prg_staged = false;
@@ -208,16 +228,18 @@ static mt_c64_content_service_result_t load_image(
         const uint32_t polls = content_time_ms == NULL ?
                                MT_C64_CONTENT_POLLS :
                                MT_C64_PRG_STREAM_POLLS;
-        result.link = mt_core_link_stream_until(
+        result.link = mt_core_link_stream_handoff(
             content_link,
             stage_prg ? MT_LOAD_C64_PRG_STAGE : MT_LOAD_C64_PRG,
             image.data, image.size, polls,
             content_progress, content_progress_context,
-            before_deadline, &deadline);
+            before_deadline, &deadline, held ? release_launch_hold : NULL, NULL);
     } else {
-        result.link = mt_c64_load_crt(
-            content_link, &image, MT_C64_CONTENT_POLLS,
-            content_progress, content_progress_context);
+        result.link = held ? mt_core_link_stream_handoff(content_link,
+            MT_LOAD_C64_CRT, image.data, image.size, MT_C64_CONTENT_POLLS,
+            content_progress, content_progress_context, NULL, NULL,
+            release_launch_hold, NULL) : mt_c64_load_crt(content_link, &image,
+            MT_C64_CONTENT_POLLS, content_progress, content_progress_context);
     }
     if (result.link != MT_LINK_OK) {
         if (type == MT_CONTENT_PRG) {
@@ -309,8 +331,45 @@ mt_c64_content_service_result_t c64_content_service_detach_crt(void)
     return result;
 }
 
+mt_c64_content_service_result_t c64_content_service_detach_crt_hooked(
+    const mt_c64_launch_hook_t *hook)
+{
+    if (hook == NULL) return c64_content_service_detach_crt();
+    mt_c64_content_service_result_t result = service_result(MT_C64_CONTENT_SERVICE_OK);
+    if (content_link == NULL || content_link->read32 == NULL || content_link->write32 == NULL)
+        return service_result(MT_C64_CONTENT_SERVICE_INVALID_ARGUMENT);
+    result.link = set_core_reset(true);
+    if (result.link != MT_LINK_OK) {
+        result.status = MT_C64_CONTENT_SERVICE_CONFIG_FAILED;
+        return result;
+    }
+    clear_core_load_error();
+    result.link = mt_c64_detach_crt(content_link, MT_C64_CONTENT_POLLS,
+        content_progress, content_progress_context);
+    if (result.link == MT_LINK_OK) {
+        crt_attached = false;
+        prg_staged = false;
+        crt_name[0] = '\0';
+        if (hook->commit != NULL && hook->commit(hook->context) != 0)
+            result.status = MT_C64_CONTENT_SERVICE_CONFIG_FAILED;
+    } else result.status = MT_C64_CONTENT_SERVICE_TRANSFER_FAILED;
+    const mt_link_result_t released = set_core_reset(false);
+    if (result.status == MT_C64_CONTENT_SERVICE_OK) {
+        result.link = released;
+        if (result.link == MT_LINK_OK) result.link = wait_for_core_result(NULL);
+        if (result.link != MT_LINK_OK) result.status = MT_C64_CONTENT_SERVICE_TRANSFER_FAILED;
+    }
+    return result;
+}
+
 mt_c64_content_service_result_t c64_content_service_load(
     const char *file_name)
+{
+    return c64_content_service_load_hooked(file_name, NULL);
+}
+
+mt_c64_content_service_result_t c64_content_service_load_hooked(
+    const char *file_name, const mt_c64_launch_hook_t *hook)
 {
     mt_c64_content_service_result_t result =
         service_result(MT_C64_CONTENT_SERVICE_OK);
@@ -325,7 +384,8 @@ mt_c64_content_service_result_t c64_content_service_load(
         result.link = MT_LINK_BAD_ARGUMENT;
         return result;
     }
-    if (type == MT_CONTENT_CRT && c64_content_service_reu_enabled()) {
+    if (type == MT_CONTENT_CRT && (hook != NULL ? hook->reu_requested :
+                                 c64_content_service_reu_enabled())) {
         result.status = MT_C64_CONTENT_SERVICE_REU_CONFLICT;
         return result;
     }
@@ -341,7 +401,7 @@ mt_c64_content_service_result_t c64_content_service_load(
     image.size = result.sd.size;
     {
         const mt_sd_result_t storage_result = result.sd;
-        result = load_image(type, image.data, image.size, file_name, false);
+        result = load_image(type, image.data, image.size, file_name, false, hook);
         result.sd = storage_result;
     }
     return result;
@@ -350,14 +410,26 @@ mt_c64_content_service_result_t c64_content_service_load(
 mt_c64_content_service_result_t c64_content_service_stage_prg_image(
     const uint8_t *data, size_t size)
 {
-    return load_image(MT_CONTENT_PRG, data, size, NULL, true);
+    return c64_content_service_stage_prg_image_hooked(data, size, NULL);
+}
+
+mt_c64_content_service_result_t c64_content_service_stage_prg_image_hooked(
+    const uint8_t *data, size_t size, const mt_c64_launch_hook_t *hook)
+{
+    return load_image(MT_CONTENT_PRG, data, size, NULL, true, hook);
 }
 
 mt_c64_content_service_result_t c64_content_service_prepare_disk_load(void)
 {
+    return c64_content_service_prepare_disk_load_hooked(NULL);
+}
+
+mt_c64_content_service_result_t c64_content_service_prepare_disk_load_hooked(
+    const mt_c64_launch_hook_t *hook)
+{
     static const uint8_t empty_basic[] = {0x01U, 0x08U, 0U, 0U};
     const mt_c64_content_service_result_t result =
-        c64_content_service_stage_prg_image(empty_basic, sizeof(empty_basic));
+        c64_content_service_stage_prg_image_hooked(empty_basic, sizeof(empty_basic), hook);
     prg_staged = false;
     return result;
 }
@@ -443,6 +515,7 @@ const char *c64_content_service_status_name(
     case MT_C64_CONTENT_SERVICE_REJECTED: return "content rejected";
     case MT_C64_CONTENT_SERVICE_TRANSFER_FAILED: return "transfer failed";
     case MT_C64_CONTENT_SERVICE_REU_CONFLICT: return "turn REU off before loading a cartridge";
+    case MT_C64_CONTENT_SERVICE_CONFIG_FAILED: return "title settings could not be applied";
     }
     return "unknown C64 content service status";
 }

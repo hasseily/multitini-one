@@ -9,12 +9,22 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AudioPathTests(unittest.TestCase):
+    def test_sid_voice_resource_mapping_preserves_upstream_behavior(self):
+        upstream = (ROOT / "third_party/c64/upstream/rtl/sid/sid_voice.sv").read_text()
+        port = (ROOT / "hdl/core/c64/ports/sid_voice.sv").read_text()
+        body = "\n".join(port.splitlines()[5:]) + "\n"
+        self.assertEqual(body.count('(* use_dsp="yes" *) '), 3)
+        self.assertEqual(body.replace('(* use_dsp="yes" *) ', ""), upstream)
+        sources = (ROOT / "hdl/hdl_sources.txt").read_text().splitlines()
+        self.assertEqual(sources.count("core/c64/ports/sid_voice.sv"), 1)
+        self.assertNotIn("../third_party/c64/upstream/rtl/sid/sid_voice.sv", sources)
+
     def test_c64_defaults_to_the_6581_sid_model(self):
         adapter = (
             ROOT / "hdl/core/c64/multitini_c64_adapter.sv"
         ).read_text()
         voice = (
-            ROOT / "third_party/c64/upstream/rtl/sid/sid_voice.sv"
+            ROOT / "hdl/core/c64/ports/sid_voice.sv"
         ).read_text()
 
         self.assertIn("SID_VERSION = 2'b00", adapter)
@@ -63,10 +73,32 @@ class AudioPathTests(unittest.TestCase):
     def test_c64_ua_adds_with_saturation_and_is_silent_when_inactive(self):
         adapter = (ROOT / "hdl/core/c64/multitini_c64_adapter.sv").read_text()
         ua = (ROOT / "hdl/core/c64/multitini_c64_ua.sv").read_text()
+        mixer = (ROOT / "hdl/core/c64/multitini_c64_sid_mix.sv").read_text()
         for channel in ("l", "r"):
             self.assertIn(f"wire signed [24:0] board_sum_{channel}", adapter)
-            self.assertIn(f"audio_{channel} <= sat24(board_sum_{channel})", adapter)
+            self.assertIn(
+                f"$signed({{raw_audio_{channel}, 6'b000000}}) + "
+                f"$signed({{ua_audio_{channel}, 6'b000000}})", adapter
+            )
+            self.assertIn(
+                f"audio_{channel} <= map_enabled?sid_mixed_{channel}:"
+                f"sat24(board_sum_{channel})", adapter
+            )
+            self.assertIn(f".ua_audio_{channel}(ua_audio_{channel})", adapter)
+            self.assertIn(f".audio_{channel}(sid_mixed_{channel})", adapter)
+            self.assertIn(f"sum_{channel}=ua_{channel}", mixer)
+            self.assertIn(f"sum_{channel}=sum_{channel}+prod_{channel}[k]", mixer)
+            self.assertIn(
+                f"assign audio_{channel}=output_config[16] ? average_{channel} : "
+                f"clamp24(scaled_{channel})", mixer
+            )
+            self.assertIn(f"average_{channel}<=clamp24(result_{channel})", mixer)
             self.assertIn(f"assign audio_{channel}=(reset || fault) ? 18'sd0 : mixed_{channel}", ua)
+        self.assertIn(".map_enable(map_enabled)", adapter)
+        self.assertIn("wire board_clip = map_enabled ? sid_clip", adapter)
+        self.assertIn("reg signed [31:0] sum_l,sum_r", mixer)
+        self.assertIn("if(x>8388607) clamp24=24'sh7fffff", mixer)
+        self.assertIn("else if(x< -8388608) clamp24=24'sh800000", mixer)
         self.assertIn("guest_reset || !enable || hold", ua)
         self.assertIn("if (value > 25'sd8388607) return 24'sh7FFFFF", adapter)
         self.assertIn("if (value < -25'sd8388608) return -24'sh800000", adapter)

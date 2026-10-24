@@ -42,8 +42,8 @@ static void test_profile_lifecycle(void)
           "uninitialized services expose no live actions");
     state.services_ready = true;
     mt_core_frontend_apply(&frontend, &state, &view);
-    check(view.media_item_count == 4U && view.input_item_count == 2U &&
-          view.core_option_count == 2U, "C64 profile builds supported controls");
+    check(view.media_item_count == 5U && view.input_item_count == 2U &&
+          view.core_option_count == 5U, "C64 profile builds supported controls");
 
     state.core_id = MT_GBC_CORE_ID;
     state.save_faulted = true;
@@ -73,7 +73,7 @@ static void test_c64_capabilities(void)
     state.abi_minor = 7U;
     state.services_ready = true;
     mt_core_frontend_apply(&frontend, &state, &view);
-    check(view.media_item_count == 3U && view.core_option_count == 0U,
+    check(view.media_item_count == 4U && view.core_option_count == 3U,
           "old C64 ABI omits newer launch and option actions");
     check(!view.media_items[0].enabled,
           "drive without its ROM explains why mounting is unavailable");
@@ -83,7 +83,7 @@ static void test_c64_capabilities(void)
     state.abi_minor = 8U;
     state.fast_roms_fallback = true;
     mt_core_frontend_apply(&frontend, &state, &view);
-    check(view.core_option_count == 2U && view.media_item_count == 3U &&
+    check(view.core_option_count == 5U && view.media_item_count == 4U &&
           view.core_options[0].argument == 0U &&
           view.core_options[1].argument == 1U &&
           view.core_options[0].action == MT_MENU_ACTION_TOGGLE_CORE_OPTION &&
@@ -127,10 +127,10 @@ static void test_c64_capabilities(void)
     state.c64_reu_enabled = true;
     state.abi_minor = 22U;
     mt_core_frontend_apply(&frontend, &state, &view);
-    check(view.core_option_count == 2U, "older ABI cannot expose expansion controls even with stale capability bits");
+    check(view.core_option_count == 5U, "older ABI cannot expose expansion controls even with stale capability bits");
     state.abi_minor = 23U;
     mt_core_frontend_apply(&frontend, &state, &view);
-    check(view.core_option_count == 4U && view.core_options[2].argument == 2U &&
+    check(view.core_option_count == 7U && view.core_options[2].argument == 2U &&
           strcmp(view.core_options[2].value, "Dual $D500") == 0 && view.core_options[3].argument == 3U &&
           strcmp(view.core_options[3].value, "16 MB REU") == 0,
           "capable C64 exposes SID and REU with stable action arguments");
@@ -138,15 +138,14 @@ static void test_c64_capabilities(void)
           "attached cartridge can always be ejected");
     state.cartridge_attached = false;
     mt_core_frontend_apply(&frontend, &state, &view);
-    check(!view.media_items[2].enabled && strcmp(view.media_items[2].value, "Turn REU off first") == 0,
-          "REU ownership explains why cartridge attachment is disabled");
-    check(strstr(view.media_items[2].help, "I/O") != NULL &&
-          strstr(view.core_options[3].help, "DDR") == NULL,
+    check(view.media_items[2].enabled,
+          "cartridge browser remains available so a sidecar can disable REU atomically");
+    check(strstr(view.core_options[3].help, "DDR") == NULL,
           "legacy image keeps its REU description while cartridge exclusion identifies I/O conflicts");
     state.c64_expansion_caps |= MT_C64_EXPANSION_CAPS_REU_DDR;
     mt_core_frontend_apply(&frontend, &state, &view);
-    check(strstr(view.core_options[3].help, "DDR REU") != NULL && !view.media_items[2].enabled,
-          "DDR capability describes the new backing store without allowing conflicting cartridges");
+    check(strstr(view.core_options[3].help, "DDR REU") != NULL && view.media_items[2].enabled,
+          "DDR capability describes the new backing store with conflict checked by the launch transaction");
     state.c64_reu_enabled = false;
     state.c64_sid_mode = 2U;
     mt_core_frontend_apply(&frontend, &state, &view);
@@ -154,11 +153,11 @@ static void test_c64_capabilities(void)
           "disabled REU restores cartridge attachment");
     state.c64_expansion_caps = MT_C64_EXPANSION_CAPS_VALID | MT_C64_EXPANSION_CAPS_REU_16MB;
     mt_core_frontend_apply(&frontend, &state, &view);
-    check(view.core_option_count == 3U && view.core_options[2].argument == 3U,
+    check(view.core_option_count == 6U && view.core_options[2].argument == 3U,
           "REU-only capability preserves semantic option argument");
     state.c64_expansion_caps = MT_C64_EXPANSION_CAPS_DUAL_SID | MT_C64_EXPANSION_CAPS_REU_16MB;
     mt_core_frontend_apply(&frontend, &state, &view);
-    check(view.core_option_count == 2U, "capability valid bit is required");
+    check(view.core_option_count == 5U, "capability valid bit is required");
     state.abi_minor = 24;
     state.c64_expansion_caps = 0x8000001fU;
     state.c64_cpu_caps = MT_C64_CPU_CAPS_RELEASE;
@@ -171,14 +170,14 @@ static void test_c64_capabilities(void)
     state.c64_cpu_status = 0x10000;
     mt_core_frontend_apply(&frontend, &state, &view);
     const unsigned expected_arguments[] = {0,1,9,4,5,6,2,3,8};
-    check(view.core_option_count == 9, "release has exactly nine semantic C64 option rows");
+    check(view.core_option_count == 12, "release has nine hardware rows and three title actions");
     for (size_t i=0; i<9; ++i)
         check(view.core_options[i].argument == expected_arguments[i], "turbo option semantic order");
-    check(view.media_item_count == 5 && view.media_items[4].action == MT_MENU_ACTION_BROWSE_REU,
+    check(view.media_item_count == 6 && view.media_items[5].action == MT_MENU_ACTION_BROWSE_REU,
         "REU image browser is a capability-gated user feature");
     state.cartridge_attached = true;
     mt_core_frontend_apply(&frontend, &state, &view);
-    check(!view.core_options[8].enabled && !view.media_items[4].enabled,
+    check(!view.core_options[8].enabled && !view.media_items[5].enabled,
         "attached cartridge blocks UA and REU preload");
     state.cartridge_attached = false; state.c64_ua_fault = true;
     mt_core_frontend_apply(&frontend, &state, &view);
@@ -391,10 +390,59 @@ static void test_iigs_card_speed(void)
           "returning to ZipGS permits speed selection from stock");
 }
 
+static void test_c64_title_and_sid(void)
+{
+    mt_core_frontend_t frontend;
+    mt_core_frontend_state_t state = {0};
+    mt_menu_view_t view = {0};
+    state.core_id=MT_C64_CORE_ID; state.services_ready=true; state.abi_minor=26;
+    state.c64_turbo_available=true;
+    state.c64_cpu_caps=MT_C64_CPU_CAPS_RELEASE;
+    state.c64_cpu_caps2=MT_C64_CPU_CAPS2_RELEASE;
+    state.c64_expansion_caps=MT_C64_EXPANSION_CAPS_VALID|MT_C64_EXPANSION_CAPS_MULTI_SID|
+        MT_C64_EXPANSION_CAPS_DUAL_SID|MT_C64_EXPANSION_CAPS_REU_16MB|MT_C64_EXPANSION_CAPS_UCI|0x700U;
+    state.c64_title_session=true;state.c64_title_automatic=false;
+    state.c64_title_owned=MT_TITLE_SPEED|MT_TITLE_SID|MT_TITLE_JOYSTICK;
+    state.c64_title_source="Game.cfg";
+    state.c64_turbo_detail=0x4f;
+    check(mt_c64_sid_preset(&state.c64_sid,MT_SID_EIGHT),"eight SID fixture valid");
+    mt_core_frontend_apply(&frontend,&state,&view);
+    check(strstr(view.input_items[1].value,"(title)")!=NULL,"title-owned joystick port visible");
+    bool found[20]={false};
+    for(size_t i=0;i<view.core_option_count;++i){
+        const mt_menu_item_t *row=&view.core_options[i];
+        check(row->argument<20,"all C64 semantic arguments fit registry");found[row->argument]=true;
+        if(row->argument==4)check(strstr(row->value,"(title)")!=NULL,"title-owned speed visible");
+        if(row->argument==17)check(!strcmp(row->value,"Off"),"automatic-off is visible");
+        if(row->argument==18||row->argument==19)check(row->enabled,"running title can save/revert");
+    }
+    check(found[14]&&found[15]&&found[16]&&found[17]&&found[18]&&found[19],"complete extension and title rows");
+    bool manual=false;
+    for(size_t i=0;i<view.media_item_count;++i)
+        if(view.media_items[i].action==MT_MENU_ACTION_BROWSE_CONFIG)manual=view.media_items[i].enabled;
+    check(manual,"manual Apply remains available with automatic files Off");
+    state.c64_sid_setup=true;state.c64_selected_sid=7;state.c64_sid_classes=1;
+    state.c64_sid_owned=UINT64_C(1)<<24;
+    mt_core_frontend_apply(&frontend,&state,&view);
+    check(view.core_option_count==13&&!view.core_options[1].enabled,"SID subpage has bounded rows and read-only summary");
+    check(strstr(view.core_options[3].value,"SID 8 of 8")!=NULL,"all physical SID slots selectable");
+    check(strstr(view.core_options[4].value,"(title)")&&strstr(view.core_options[8].value,"(title)"),"group ownership propagates to address and explicit master field");
+    check(!strstr(view.core_options[5].value,"(title)"),"unowned mix field remains stored");
+    mt_menu_t menu;mt_menu_init(&menu,&view);menu.visible=true;menu.page=MT_MENU_PAGE_CORE_CONFIG;menu.core_subpage=true;menu.row=4;
+    mt_menu_action_t action=mt_menu_key(&menu,&view,MT_MENU_HID_RIGHT,true);
+    check(action.kind==MT_MENU_ACTION_SID_SETUP&&action.file_index==4&&action.variant_index==2,"right selects positive SID edit");
+    (void)mt_menu_key(&menu,&view,MT_MENU_HID_ESCAPE,true);
+    check(menu.visible&&!menu.core_subpage&&menu.row==0,"Escape returns from SID page without closing menu");
+    state.abi_minor=25;mt_core_frontend_apply(&frontend,&state,&view);
+    for(size_t i=0;i<view.core_option_count;++i)
+        check(view.core_options[i].argument<14||view.core_options[i].argument>16,"stale extension bits cannot expose ABI26 actions");
+}
+
 int main(void)
 {
     test_profile_lifecycle();
     test_c64_capabilities();
+    test_c64_title_and_sid();
     test_gameboy_saves_and_input();
     test_browser_filters();
     test_genesis_profile();

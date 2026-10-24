@@ -40,10 +40,10 @@ def method(source: str, name: str) -> str:
     return source[match.start():cursor]
 
 def subsystem(source: str) -> tuple[str, str]:
-    start = source.index("component sid_top\n")
+    start = source.index("component multitini_c64_sid_array\n")
     component = source[start:source.index("end component;", start) + len("end component;")]
     start = source.index("--\tRight SID Port:")
-    instance = source.index("sid : sid_top\n", start)
+    instance = source.index("sid : multitini_c64_sid_array\n", start)
     body = source[start:source.index("\n);", instance) + 3]
     wrapper = """library IEEE;
 use IEEE.STD_LOGIC_1164.ALL;
@@ -60,6 +60,15 @@ entity c64_sid_socket_observed is port(
     audio_l, audio_r : out std_logic_vector(17 downto 0));
 end entity;
 architecture observed of c64_sid_socket_observed is
+constant SID_COUNT : integer := 2;
+signal sid_map_enable,sid_io_select : std_logic := '0';
+signal sid_slot_masks,sid_params : std_logic_vector(255 downto 0) := (others=>'0');
+signal sid_owners : std_logic_vector(95 downto 0) := (others=>'0');
+signal sid_write_inhibit : std_logic_vector(31 downto 0) := (others=>'0');
+signal sid_io_masks : std_logic_vector(127 downto 0) := (others=>'0');
+signal sid_audio : std_logic_vector(143 downto 0);
+signal sid_ce_1m : std_logic;
+signal sid_io_data : unsigned(7 downto 0);
 constant FAST_IO : boolean := false;
 constant EDGE_STAGE : boolean := true;
 signal fastSidSelect,fastSidReadSelect,fastSidLatchSource : std_logic_vector(1 downto 0) := "00";
@@ -100,9 +109,9 @@ def main() -> int:
     harness = ROOT / "tests/c64_mame/sid_socket_harness.cpp"
     leaves = [ROOT / name for name in (
         "third_party/c64/upstream/rtl/sid/sid_envelope.sv",
-        "third_party/c64/upstream/rtl/sid/sid_voice.sv",
+        "hdl/core/c64/ports/sid_voice.sv",
         "hdl/core/c64/ports/sid_dac.sv", "hdl/core/c64/ports/sid_filter.sv",
-        "hdl/core/c64/ports/sid_tables.sv", "hdl/core/c64/ports/sid_top.sv",
+        "hdl/core/c64/ports/sid_tables.sv", "hdl/core/c64/ports/sid_top.sv", "hdl/core/c64/multitini_c64_sid_array.sv",
         "hdl/sim/tb_c64_sid_socket.sv")]
     tracked = [Path(__file__).resolve(), production, harness, *leaves, *[UPSTREAM / name for name in PINNED]]
     hashes = lambda: {p.relative_to(ROOT).as_posix(): digest(p) for p in tracked}

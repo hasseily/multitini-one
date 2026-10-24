@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef MULTITINI_C64_IEC_SERVICE_H
 #define MULTITINI_C64_IEC_SERVICE_H
+#include "multitini_c64_iec_dos.h"
 #include "multitini_core_link.h"
 #include <stdbool.h>
 #include <stddef.h>
@@ -30,4 +31,11 @@ int c64_iec_service_reset(void);
 bool c64_iec_service_active(void);
 const char *c64_iec_service_cwd(void);
 const char *c64_iec_service_status(void);
+/* UCI uses the same DOS channels on the same foreground storage owner.
+ * A lease prevents native IEC from consuming/mutating that channel while a
+ * non-consuming UCI reply is in flight. Reset the target before quiesce. */
+mt_iec_dos_t *c64_iec_service_dos(void);
+bool c64_iec_service_channel_acquire(unsigned channel);
+void c64_iec_service_channel_release(unsigned channel);
+void c64_iec_service_write_failure(int code);
 #endif

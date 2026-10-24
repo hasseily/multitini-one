@@ -120,7 +120,7 @@ def main():
                 if p.name=='fpga64_sid_iec.vhd':p=out/'fpga64_observed.vhd'
                 elif p.name=='cpu_6510.vhd':p=out/'cpu_observed.vhd'
                 vhdl.append(p)
-    sv=[ROOT/p for p in ('third_party/c64/upstream/rtl/mos6526.v','hdl/core/c64/ports/sid_dac.sv','hdl/core/c64/ports/sid_filter.sv','third_party/c64/upstream/rtl/sid/sid_envelope.sv','hdl/core/c64/ports/sid_tables.sv','third_party/c64/upstream/rtl/sid/sid_voice.sv','hdl/core/c64/ports/sid_top.sv','hdl/core/c64/multitini_c64_local_ram.sv','hdl/core/c64/multitini_c64_fio_port.sv')]
+    sv=[ROOT/p for p in ('third_party/c64/upstream/rtl/mos6526.v','hdl/core/c64/ports/sid_dac.sv','hdl/core/c64/ports/sid_filter.sv','third_party/c64/upstream/rtl/sid/sid_envelope.sv','hdl/core/c64/ports/sid_tables.sv','hdl/core/c64/ports/sid_voice.sv','hdl/core/c64/ports/sid_top.sv', 'hdl/core/c64/multitini_c64_sid_array.sv','hdl/core/c64/multitini_c64_local_ram.sv','hdl/core/c64/multitini_c64_fio_port.sv')]
     sv += [cp/name for name in ('multitini_c64_cpu_island.sv','multitini_c64_cpu_proxy.sv','multitini_c64_island_governor.sv','multitini_c64_island_map.sv','multitini_c64_island_memory.sv','multitini_c64_nmi_delivery.sv','multitini_c64_turbo_regs.sv')]
     sv += [out/'lane.sv',out/'bench.sv']
     paths=[*sv,*vhdl,Path(__file__).resolve(),ROOT/'scripts/test_c64_turbo_ordering.py',ROOT/'scripts/test_c64_turbo_exact.py',ROOT/'scripts/test_c64_machine_schedule.py',ROOT/'scripts/run_native_tool.py',ROOT/'hdl/sim/tb_c64_turbo_ordering.sv',cp/'multitini_c64_adapter.sv',cp/'ports/fpga64_sid_iec.vhd',cp/'ports/cpu_6510.vhd']

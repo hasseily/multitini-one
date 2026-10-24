@@ -5,8 +5,12 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#ifndef F_CAP
 #define F_CAP 300
+#endif
+#ifndef F_BYTES
 #define F_BYTES 16384
+#endif
 typedef struct
 {
     char path[512];

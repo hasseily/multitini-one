@@ -3,7 +3,9 @@
 // Capture all seven contributions on every native clock. A saturated pipeline
 // preserves voice order and aligns each contribution to the same input clock.
 // The boxcar integrates every resulting mix; no eight-clock resampling jitter.
-module multitini_c64_ua_mix (
+// Preserve the exact arithmetic/pipeline while using the spare DSP48 fabric
+// for the pan products and accumulated mix, leaving slices for eight SIDs.
+(* use_dsp="yes" *) module multitini_c64_ua_mix (
     input wire clk, reset, audio_tick,
     input wire [111:0] samples,
     input wire [41:0] volumes,

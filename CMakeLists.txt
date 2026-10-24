@@ -30,6 +30,15 @@ add_library(multitini_common STATIC
     firmware/common/core_package.c
     firmware/common/core_link.c
     firmware/common/c64_features.c
+    firmware/common/c64_sid.c
+    firmware/common/c64_title.c
+    firmware/common/c64_uci.c
+    firmware/common/net_config.c
+    firmware/common/net_w5100s.c
+    firmware/common/net_protocol.c
+    firmware/common/net_uci.c
+    firmware/common/http_json.c
+    firmware/common/http_uci.c
     firmware/common/c64_reu_host.c
     firmware/common/c64_debug.c
     firmware/common/fatfs_time.c
@@ -66,6 +75,49 @@ if(NOT MSVC AND NOT CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
 endif()
 
 enable_testing()
+foreach(component net net_uci_http c64_uci)
+    add_executable(test_${component} tests/host/test_${component}.c)
+    target_link_libraries(test_${component} PRIVATE multitini_common)
+    add_test(NAME ${component} COMMAND test_${component})
+endforeach()
+add_executable(test_net_service tests/host/test_net_service.c firmware/platform/xilinx/net_service.c)
+target_include_directories(test_net_service PRIVATE tests/xilinx_stubs firmware/platform/xilinx)
+target_link_libraries(test_net_service PRIVATE multitini_common)
+add_test(NAME net_service COMMAND test_net_service)
+add_executable(test_c64_sid_settings tests/host/test_c64_sid_settings.c firmware/platform/xilinx/c64_sid_settings.c)
+target_include_directories(test_c64_sid_settings PRIVATE firmware/platform/xilinx)
+target_link_libraries(test_c64_sid_settings PRIVATE multitini_common)
+add_test(NAME c64_sid_settings COMMAND test_c64_sid_settings)
+add_executable(test_c64_uci_service tests/host/test_c64_uci_service.c
+    firmware/platform/xilinx/c64_uci_service.c firmware/platform/xilinx/c64_uci_dos.c
+    firmware/platform/xilinx/c64_uci_control.c firmware/platform/xilinx/c64_uci_geos.c)
+target_include_directories(test_c64_uci_service PRIVATE firmware/platform/xilinx)
+target_link_libraries(test_c64_uci_service PRIVATE multitini_common)
+add_test(NAME c64_uci_service COMMAND test_c64_uci_service)
+add_executable(test_c64_uci_softiec tests/host/test_c64_uci_softiec.c firmware/platform/xilinx/c64_uci_softiec.c)
+target_include_directories(test_c64_uci_softiec PRIVATE firmware/platform/xilinx)
+target_link_libraries(test_c64_uci_softiec PRIVATE multitini_common)
+add_test(NAME c64_uci_softiec COMMAND test_c64_uci_softiec)
+add_executable(test_c64_uci_geos tests/host/test_c64_uci_geos.c firmware/platform/xilinx/c64_uci_geos.c)
+target_include_directories(test_c64_uci_geos PRIVATE firmware/platform/xilinx)
+target_link_libraries(test_c64_uci_geos PRIVATE multitini_common)
+add_test(NAME c64_uci_geos COMMAND test_c64_uci_geos)
+if(MULTITINI_SANITIZE AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    foreach(target test_c64_uci_service test_c64_uci_softiec test_c64_uci_geos test_net_service test_c64_sid_settings)
+        target_compile_options(${target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all)
+        target_link_options(${target} PRIVATE -fsanitize=address,undefined)
+    endforeach()
+endif()
+add_executable(test_c64_sid tests/host/test_c64_sid.c)
+target_link_libraries(test_c64_sid PRIVATE multitini_common)
+add_test(NAME c64_sid COMMAND test_c64_sid)
+add_executable(test_c64_title tests/host/test_c64_title.c)
+target_link_libraries(test_c64_title PRIVATE multitini_common)
+add_test(NAME c64_title COMMAND test_c64_title)
+add_executable(test_c64_title_service tests/host/test_c64_title_service.c firmware/platform/xilinx/c64_title_service.c)
+target_include_directories(test_c64_title_service PRIVATE firmware/platform/xilinx)
+target_link_libraries(test_c64_title_service PRIVATE multitini_common)
+add_test(NAME c64_title_service COMMAND test_c64_title_service)
 add_executable(test_usb_storage_mode tests/host/test_usb_storage_mode.c)
 target_link_libraries(test_usb_storage_mode PRIVATE multitini_common)
 add_test(NAME usb_storage_mode COMMAND test_usb_storage_mode)

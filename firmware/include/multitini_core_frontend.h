@@ -5,6 +5,7 @@
 #include "multitini_content.h"
 #include "multitini_menu.h"
 #include "multitini_iigs_interface.h"
+#include "multitini_c64_title.h"
 
 /* A snapshot of services already owned by the runtime. Building a menu never
  * performs I/O or changes core, media, input, or save state. String storage must
@@ -34,6 +35,12 @@ typedef struct {
     bool c64_reu_host_available;
     uint8_t c64_turbo_detail, c64_turbo_flags;
     uint32_t c64_cpu_caps, c64_cpu_caps2, c64_cpu_config, c64_cpu_status;
+    bool c64_uci_enabled,c64_title_automatic,c64_title_session,c64_sid_setup;
+    uint32_t c64_title_owned;
+    uint64_t c64_sid_owned;
+    uint8_t c64_sid_classes,c64_selected_sid;
+    const char *c64_title_source;
+    mt_c64_sid_model_t c64_sid;
     uint8_t genesis_three_button_mask;
     const char *iigs_drive_name[MT_IIGS_DRIVE_COUNT];
     mt_iigs_config_t iigs_config;
@@ -48,6 +55,7 @@ typedef struct {
     mt_menu_item_t input_items[MT_MENU_MAX_ITEMS];
     mt_menu_core_option_t core_options[MT_MENU_MAX_CORE_OPTIONS];
     char c64_turbo_text[96], c64_turbo_help[192], c64_speed_text[80];
+    char c64_option_text[MT_MENU_MAX_CORE_OPTIONS][96];
 } mt_core_frontend_t;
 
 /* Replace only the profile-owned view fields. The caller retains ownership of

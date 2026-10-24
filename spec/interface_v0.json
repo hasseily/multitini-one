@@ -2,7 +2,7 @@
   "schema_version": 1,
   "abi": {
     "major": 0,
-    "minor": 25
+    "minor": 26
   },
   "magic": "0x4D543031",
   "shell_id": "0x4D544F4E",
@@ -73,6 +73,30 @@
       "offset": "0x028",
       "access": "rw",
       "reset": "0x00000000"
+    },
+    {
+      "name": "NET_CAPS",
+      "offset": "0x02C",
+      "access": "ro",
+      "reset": "parameter"
+    },
+    {
+      "name": "NET_CONTROL",
+      "offset": "0x030",
+      "access": "rw",
+      "reset": "0"
+    },
+    {
+      "name": "NET_ACCESS",
+      "offset": "0x034",
+      "access": "wo",
+      "reset": "0"
+    },
+    {
+      "name": "NET_STATUS",
+      "offset": "0x038",
+      "access": "ro",
+      "reset": "0"
     },
     {
       "name": "COMMAND_SEQ",
@@ -269,14 +293,14 @@
       "offset": "0x0D0",
       "access": "rw",
       "reset": "0x0000000B",
-      "description": "C64 expansion configuration: SID mode[2:0] 0 same address, 2 dual D420, 3 dual D500; REU16MB enable[3]. Other SID modes become 0 and reserved bits read zero. Coherent machine-clock transfer. Requires ABI0.23 and advertised capabilities. REU and CRT storage are mutually exclusive. ABI0.24 adds Ultimate Audio enable[4], clamped off unless REU[3] and UA capability are set."
+      "description": "Legacy dual-SID mode bits2:0 (0 mono, 2 or 3 dual); 16MiB REU bit3; Ultimate Audio bit4; UCI bit5; atomic SID table decode bit6. Capability-gated."
     },
     {
       "name": "C64_EXPANSION_CAPS",
       "offset": "0x0D4",
       "access": "ro",
       "reset": "parameter",
-      "description": "C64 expansion capabilities: valid[31], dual SID[0], 16MB REU[1], DDR REU[2]. ABI0.24 adds Ultimate Audio[3] and host REU preload[4]. Zero on other cores."
+      "description": "Existing REU/SID capability bits0:4; UCI bit5; SID table bit6; SID count minus one bits10:8; 8580 bit11; SID IO slots bit12; physical RAM DMA bit13; UCI IRQ bit14; valid bit31."
     },
     {
       "name": "C64_CPU_CONFIG",
@@ -393,6 +417,41 @@
       "reset": "0x00000000"
     },
     {
+      "name": "C64_UCI_STATUS",
+      "offset": "0x128",
+      "access": "ro",
+      "reset": "0",
+      "description": "Native UCI snapshot. Reading also latches STATUS2. State1:0, abort2, accepted3, error4, freeze5, trigger6, IRQ7, command length17:8, sequence21:18, epoch25:22, suspended26, enabled27, host mailbox busy28, idle-abort29, valid31."
+    },
+    {
+      "name": "C64_UCI_HANDSHAKE",
+      "offset": "0x12C",
+      "access": "wo",
+      "reset": "0",
+      "description": "Full-word tagged operation: opcode3:0, data length13:4, reserved15:14 zero, status length23:16 (0..255), reserved24 zero, sequence28:25, epoch31:29. Opcodes1,2,3,4,5,6,15; data maximum896."
+    },
+    {
+      "name": "C64_UCI_CONTROL",
+      "offset": "0x130",
+      "access": "rw",
+      "reset": "0x1F",
+      "description": "Bus identifier4:0, freeze permission8, IRQ permission9, whole-machine HOLD10; other bits zero. Guest UCI enable comes from expansion configuration."
+    },
+    {
+      "name": "C64_UCI_STATUS2",
+      "offset": "0x134",
+      "access": "ro",
+      "reset": "0",
+      "description": "Latched with STATUS. Response bytes read9:0, status bytes read18:10, operation acknowledgment20:19, dropped21, busy write22, overflow23, RAM completion token27:24, command busy30, valid31."
+    },
+    {
+      "name": "C64_UCI_RAM_READ",
+      "offset": "0x138",
+      "access": "wo",
+      "reset": "0",
+      "description": "Full-word read request under HOLD: physical C64 address15:0 and length minus one26:16 (0..895); bits31:27 zero. Completion token advances modulo16 in STATUS2."
+    },
+    {
       "name": "VIDEO_EFFECT_ADDRESS",
       "offset": "0x140",
       "access": "rw",
@@ -421,6 +480,34 @@
       "offset": "0x150",
       "access": "ro",
       "reset": "0x00000000"
+    },
+    {
+      "name": "C64_SID_INDEX",
+      "offset": "0x154",
+      "access": "rw",
+      "reset": "0",
+      "description": "Explicit table word index0..56. No auto-increment."
+    },
+    {
+      "name": "C64_SID_DATA",
+      "offset": "0x158",
+      "access": "wo",
+      "reset": "0",
+      "description": "Full-word shadow table write at selected index. Refused while commit is busy."
+    },
+    {
+      "name": "C64_SID_COMMIT",
+      "offset": "0x15C",
+      "access": "wo",
+      "reset": "0",
+      "description": "Commit complete validated table with low-byte sequence different from last acknowledged sequence; adoption at SID boundary or while paused."
+    },
+    {
+      "name": "C64_SID_STATUS",
+      "offset": "0x160",
+      "access": "ro",
+      "reset": "0",
+      "description": "Acknowledged sequence7:0, busy8, rejected9, reject reason14:10, reserved15, reject index21:16, reserved30:22, active valid31."
     },
     {
       "name": "VIDEO_FRAME_CONTROL",
@@ -617,7 +704,8 @@
       "AUTHORITATIVE": 10,
       "STATIC_RELEASE": 11,
       "FOLLOW_CPU": 18,
-      "DIAGNOSTICS": 19
+      "DIAGNOSTICS": 19,
+      "SCPU_DETECT": 20
     },
     "C64_CPU_CAPS": {
       "REGISTERS": 16,
@@ -641,7 +729,8 @@
       "FOLLOW_CPU": 12,
       "RAM_PEEK": 13,
       "DIAGNOSTIC_IMAGE": 14,
-      "VALID": 31
+      "VALID": 31,
+      "SCPU_DETECT": 15
     },
     "C64_CPU_STATUS": {
       "FAST": 4,
@@ -760,7 +849,7 @@
     "C64_EXPANSION_CAPS_DUAL_SID": "0x00000001",
     "C64_EXPANSION_CAPS_REU_16MB": "0x00000002",
     "C64_EXPANSION_CAPS_REU_DDR": "0x00000004",
-    "C64_EXPANSION_CONFIG_MASK": "0x1F",
+    "C64_EXPANSION_CONFIG_MASK": "0x7F",
     "C64_EXPANSION_CONFIG_DEFAULT": "0x0000000B",
     "C64_EXPANSION_SID_MODE_MASK": "0x00000007",
     "C64_EXPANSION_REU_ENABLE": "0x00000008",
@@ -800,7 +889,7 @@
     "C64_EXPANSION_CAPS_ULTIMATE_AUDIO": "0x08",
     "C64_EXPANSION_CAPS_REU_HOST_LOAD": "0x10",
     "C64_CPU_CONFIG_DEFAULT": "0x151",
-    "C64_CPU_CONFIG_MASK": "0x000FFFFF",
+    "C64_CPU_CONFIG_MASK": "0x001FFFFF",
     "C64_CPU_CONFIG_SPEED_MASK": "0xF",
     "C64_CPU_CONFIG_MODE_MASK": "0x30",
     "C64_CPU_CONFIG_APPLY_MASK": "0xF000",
@@ -809,7 +898,7 @@
     "C64_CPU_CAPS_INDEX_MASK": "0xFFFF",
     "C64_CPU_CAPS_CLOCK_MASK": "0x0F000000",
     "C64_CPU_CAPS_RELEASE": "0xF2DFFFFF",
-    "C64_CPU_CAPS2_RELEASE": "0x80002F01",
+    "C64_CPU_CAPS2_RELEASE": "0x8000AF01",
     "C64_CPU_STATUS_INDEX_MASK": "0xF",
     "C64_CPU_STATUS_IEC_CAUSE_MASK": "0xC0",
     "C64_CPU_STATUS_LIVE_MASK": "0xFF00",
@@ -837,7 +926,58 @@
     "C64_IEC_EVENT_UNTALK": 7,
     "C64_IEC_EVENT_LISTEN": 8,
     "C64_IEC_EVENT_READ": 9,
-    "C64_IEC_EVENT_TX_ACK": 10
+    "C64_IEC_EVENT_TX_ACK": 10,
+    "NET_MIN_ABI_MINOR": 26,
+    "NET_CAPS_W5100S": "0x80000011",
+    "NET_CONTROL_RUN": "0x1",
+    "NET_ACCESS_WRITE": "0x01000000",
+    "NET_STATUS_READY": "0x1",
+    "NET_STATUS_BUSY": "0x2",
+    "NET_STATUS_DONE": "0x4",
+    "NET_STATUS_ERROR": "0x8",
+    "NET_STATUS_RESET_DONE": "0x10",
+    "NET_STATUS_INT": "0x20",
+    "NET_STATUS_VALID": "0x80000000",
+    "C64_UCI_MIN_ABI_MINOR": 26,
+    "C64_SID_MIN_ABI_MINOR": 26,
+    "C64_SCPU_MIN_ABI_MINOR": 26,
+    "C64_EXPANSION_UCI_ENABLE": "0x20",
+    "C64_EXPANSION_SID_MAP_ENABLE": "0x40",
+    "C64_EXPANSION_CAPS_UCI": "0x20",
+    "C64_EXPANSION_CAPS_MULTI_SID": "0x40",
+    "C64_EXPANSION_CAPS_SID_COUNT_MASK": "0x700",
+    "C64_EXPANSION_CAPS_SID_MODEL_8580": "0x800",
+    "C64_EXPANSION_CAPS_SID_IO_SLOTS": "0x1000",
+    "C64_EXPANSION_CAPS_UCI_RAM_DMA": "0x2000",
+    "C64_EXPANSION_CAPS_UCI_C64_IRQ": "0x4000",
+    "C64_UCI_BUFFER_OFFSET": "0xC000",
+    "C64_UCI_BUFFER_BYTES": "0x800",
+    "C64_UCI_REPLY_OFFSET": "0x380",
+    "C64_UCI_TEXT_OFFSET": "0x700",
+    "C64_UCI_CONTROL_DEFAULT": "0x1F",
+    "C64_UCI_CONTROL_FREEZE": "0x100",
+    "C64_UCI_CONTROL_IRQ": "0x200",
+    "C64_UCI_CONTROL_HOLD": "0x400",
+    "C64_UCI_STATUS_ENABLED": "0x08000000",
+    "C64_UCI_STATUS_SUSPENDED": "0x04000000",
+    "C64_UCI_STATUS_HANDSHAKE_BUSY": "0x10000000",
+    "C64_UCI_STATUS_IDLE_ABORT": "0x20000000",
+    "C64_UCI_STATUS_VALID": "0x80000000",
+    "C64_UCI_STATUS2_CMD_BUSY": "0x40000000",
+    "C64_UCI_OP_ACCEPT": 1,
+    "C64_UCI_OP_NEXT": 2,
+    "C64_UCI_OP_ABORT_DONE": 3,
+    "C64_UCI_OP_LAST": 4,
+    "C64_UCI_OP_MORE": 5,
+    "C64_UCI_OP_IDLE_ABORT_DONE": 6,
+    "C64_UCI_OP_RESET": 15,
+    "C64_UCI_LOAD_KIND": "0x17",
+    "C64_SID_TABLE_WORDS": 57,
+    "C64_SID_STATUS_VALID": "0x80000000",
+    "C64_SID_STATUS_BUSY": "0x100",
+    "C64_SID_STATUS_REJECTED": "0x200",
+    "C64_SID_STATUS_REJECT_REASON_MASK": "0x00007C00",
+    "C64_SID_STATUS_REJECT_INDEX_MASK": "0x003F0000"
   },
   "commands": {
     "PING": 0,
@@ -890,5 +1030,11 @@
       }
     },
     "state": "MEDIA_STATE reports the synchronized core mount, dirty, and deferred-eject state"
+  },
+  "uci_contract": {
+    "buffer": "2048 bytes; command[0:895], response[896:1791], status[1792:2047]; aligned little-endian AXI single words only",
+    "idle_abort": "STATUS[29] is sticky until tagged op6; a simultaneous new abort wins acknowledgment. STATUS2[30] is CMD_BUSY. STATUS2[29:28] reserved. No wrapping idle-abort counter.",
+    "ordering": "Read STATUS then latched STATUS2. Drain buffer writes before sending a tagged operation; wait for op_ack before another operation.",
+    "ram": "Kind0x17 transfers little-endian address then data with no guest reset, under acknowledged whole-machine HOLD; RAM_READ request uses the same hold and returns data at buffer reply offset."
   }
 }

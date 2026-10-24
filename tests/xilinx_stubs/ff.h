@@ -13,6 +13,7 @@ typedef enum {
     FR_DISK_ERR = 1,
     FR_NO_FILE = 4,
     FR_NO_PATH = 5,
+    FR_INVALID_NAME = 6,
     FR_EXIST = 8,
     FR_DENIED = 7,
     FR_WRITE_PROTECTED = 10,
@@ -35,6 +36,7 @@ typedef struct {
 
 typedef struct {
     FSIZE_t fsize;
+    uint16_t fdate,ftime;
     BYTE fattrib;
     char fname[256];
 } FILINFO;

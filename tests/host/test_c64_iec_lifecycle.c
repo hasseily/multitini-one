@@ -15,6 +15,16 @@ static uint32_t core_id = MT_C64_CORE_ID, control;
 static bool c64_iec_initialized = true, c64_services_initialized = true, c64_core_reset_active;
 static bool gameboy_service_initialized, genesis_service_initialized, nes_service_initialized, iigs_service_initialized;
 static bool c64_debug_pause_active, usb_sd_core_stopped, usb_sd_previously_reset;
+static bool c64_uci_initialized, c64_title_initialized, c64_title_foreground, usb_sd_modal;
+static char c64_launch_disk_name[256];
+/* This older fixture isolates IEC/reset orchestration. UCI/native transaction
+ * cleanup and USB cancellation have their own production service fixtures. */
+static int quiesce_c64_uci(void) {return 0;}
+static void c64_uci_service_reset(void) {}
+static void mt_net_service_guest_reset(void) {}
+static void mt_net_service_shutdown(void) {}
+static void c64_title_service_clear(void) {}
+static const char *c64_d64_service_mounted_name(void) {return "mounted.d64";}
 static int c64_debug, document_reader;
 static int directory_error, drive_error, command_error, reset_error, mount_error;
 static bool available = true, menu_ok = true;

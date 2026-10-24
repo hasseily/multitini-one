@@ -58,6 +58,8 @@ module multitini_axi3_regs (
     output logic [3:0]   reg_wr_strb,
     output logic         reg_rd_en,
     output logic [15:0]  reg_rd_addr,
+    output wire          reg_rd_early_en,
+    output wire [15:0]   reg_rd_early_addr,
     input  logic [31:0]  reg_rd_data
 );
 
@@ -102,6 +104,8 @@ module multitini_axi3_regs (
     // Neither a changed live ARADDR nor a stalled response can repeat or
     // redirect a register side effect after its address was accepted.
     assign reg_rd_en = aresetn && ar_pending && ar_word_q;
+    assign reg_rd_early_en = aresetn && ar_take && s_axi_arlen==0 && s_axi_arsize==3'b010 && s_axi_araddr[1:0]==0;
+    assign reg_rd_early_addr = s_axi_araddr[15:0];
 
     // Attributes are intentionally accepted but have no effect in this
     // device-register slave.
@@ -166,7 +170,7 @@ module multitini_axi3_regs (
                 w_hold       <= 1'b0;
                 s_axi_bid    <= selected_awid;
                 s_axi_bvalid <= 1'b1;
-                if (selected_awlen == 4'd0 && selected_awsize == 3'b010 &&
+                if (selected_awlen == 4'd0 && selected_awsize == 3'b010 && selected_awaddr[1:0]==0 &&
                     selected_wlast && selected_awid == selected_wid) begin
                     s_axi_bresp <= AXI_OKAY;
                     reg_wr_en   <= 1'b1;
@@ -182,7 +186,7 @@ module multitini_axi3_regs (
                 ar_pending <= 1'b1;
                 arid_q     <= s_axi_arid;
                 araddr_q   <= s_axi_araddr[15:0];
-                ar_word_q  <= s_axi_arlen == 4'd0 && s_axi_arsize == 3'b010;
+                ar_word_q  <= s_axi_arlen == 4'd0 && s_axi_arsize == 3'b010 && s_axi_araddr[1:0]==0;
             end
 
             if (ar_pending) begin

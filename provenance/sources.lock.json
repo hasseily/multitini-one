@@ -147,6 +147,13 @@
       "commit": "fea2798c217674cf0e6eddb121792f3a214ddd9f",
       "license": "GPL-3.0",
       "use": "Unmodified test-only Ultimate Audio sampler reference. Excluded from FPGA and ARM product builds. No filters, ROMs, audio assets or software binaries."
+    },
+    {
+      "name": "Ultimate firmware extensions reference",
+      "url": "https://github.com/GideonZ/1541ultimate.git",
+      "commit": "d43546fe25b26cb332f43f00219d33153dfe44f8",
+      "license": "GPL-3.0",
+      "use": "Pinned reference for SID address resolution and UCI/DOS/SoftIEC/REU and Network/HTTP wire behavior. Excluded from product firmware and FPGA synthesis; selected reference function is compiled only by the host differential oracle. No UltiSID HDL or private media."
     }
   ]
 }

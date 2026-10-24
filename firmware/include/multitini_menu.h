@@ -15,9 +15,9 @@
 
 #define MT_MENU_MAX_CORES 16U
 #define MT_MENU_FILE_NAME_MAX 96U
-#define MT_MENU_MAX_CORE_OPTIONS 12U
+#define MT_MENU_MAX_CORE_OPTIONS 20U
 #define MT_MENU_MAX_ITEMS 20U
-#define MT_MENU_MAX_SYSTEM_ITEMS 21U
+#define MT_MENU_MAX_SYSTEM_ITEMS 23U
 #define MT_MENU_MAX_ABOUT_ITEMS 11U
 #define MT_MENU_MAX_EFFECT_ITEMS 32U
 /* Reserved cookie flags; ordinary file and D64 cookies retain their values. */
@@ -85,7 +85,12 @@ typedef enum {
     MT_MENU_ACTION_IIGS_RELOAD,
     MT_MENU_ACTION_USB_SD,
     MT_MENU_ACTION_BROWSE_REU,
-    MT_MENU_ACTION_LOAD_REU
+    MT_MENU_ACTION_LOAD_REU,
+    MT_MENU_ACTION_BROWSE_CONFIG,
+    MT_MENU_ACTION_APPLY_CONFIG,
+    MT_MENU_ACTION_SID_SETUP,
+    MT_MENU_ACTION_NETWORK_MODE,
+    MT_MENU_ACTION_NETWORK_RENEW
 } mt_menu_action_kind_t;
 
 typedef enum {
@@ -96,7 +101,8 @@ typedef enum {
     MT_MENU_BROWSER_PROGRAM,
     MT_MENU_BROWSER_OVERLAY,
     MT_MENU_BROWSER_DOCUMENTS,
-    MT_MENU_BROWSER_REU
+    MT_MENU_BROWSER_REU,
+    MT_MENU_BROWSER_CONFIG
 } mt_menu_browser_t;
 
 typedef struct {
@@ -196,6 +202,7 @@ typedef struct {
     mt_menu_page_t page;
     size_t row;
     mt_menu_browser_t browser;
+    bool core_subpage;
     size_t selected_variant[MT_MENU_MAX_CORES];
     size_t page_row[MT_MENU_PAGE_COUNT];
     size_t first_row;

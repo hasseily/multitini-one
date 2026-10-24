@@ -795,7 +795,14 @@ class BuildInputTests(unittest.TestCase):
         )[1].split(
             "} else if (action.kind == MT_MENU_ACTION_LOAD_CONTENT)", 1
         )[0]
-        stage = flow.index("c64_content_service_stage_prg_image")
+        stage = flow.index("c64_title_disk(supervisor_disk_prg_buffer, extracted_size)")
+        title_flow = main.split("static mt_c64_content_service_result_t c64_title_disk(", 1)[1].split(
+            "static mt_c64_content_service_result_t c64_title_detach(", 1)[0]
+        prepare = title_flow.index("c64_title_service_prepare")
+        allowed = title_flow.index("c64_title_service_launch_allowed")
+        hooked_stage = title_flow.index("c64_content_service_stage_prg_image_hooked(data, size, hook)")
+        self.assertLess(prepare, allowed)
+        self.assertLess(allowed, hooked_stage)
         remount = flow.index("finish_c64_content_change")
         run = flow.index("c64_content_service_run_staged_prg")
 

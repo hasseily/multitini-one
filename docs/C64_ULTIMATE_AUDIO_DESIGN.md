@@ -400,7 +400,7 @@ irq_ext_n     = !(reu_irq || ua_irq);   // ua_irq = |ua_flags
 
 - With `ua_active = 0` every term reduces to today's expression [V adapter:430, 520-521, 534]. Test T2 confirms this with a trace comparison.
 - `ua_io_select` also excludes `reu_dma_req`, so REU DMA never sees UA (section 1.1).
-- The SID-mode clamp already rejects MiSTer mode 4 (second SID at `$DF00`) [V hdl/common/multitini_control_regs.sv:220-225]. Keep it. A future `$DF00`/`$DE00` SID must be mutually exclusive with UA (the same conflict with an ARM2SID at `$DF00` was reported upstream [M 1541ultimate issue #124]).
+- The SID-mode clamp already rejects MiSTer mode 4 (second SID at `$DF00`) [V hdl/common/multitini_control_regs.sv:220-225]. Keep it. A future `$DF00`/`$DE00` SID must be mutually exclusive with UA (the same conflict with an ARM2SID at `$DF00` was reported upstream [M 1541ultimate issue #124]). Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: such a SID slot is also exclusive with the REU, the UCI and cartridges (rule B5, XM8).
 - Registers are flip-flops: 7 voices x about 130 bits. The engines read them in parallel.
 
 ### 2.3 Voice engine
@@ -837,7 +837,7 @@ write C64_EXPANSION_CONFIG = sid | reu_eff<<3 | ua_eff<<4
 ### 6.7 MOD player out of scope; REU image preload in this release
 
 - The U64 built-in "Play MOD" is the Freshness `module.bin` without source in that tree [V upstream software/ModPlayer_16k/module.bin; software/filetypes/filetype_reu.cc:96-98, 149-160]. It cannot ship in a GPL-3.0 image, and it stays out.
-- Every third-party UA program we found, except the self-contained tests, needs its samples preloaded into the REU or loaded through UCI, which Multitini lacks [I, from the program survey; for Doom: V Doom docs/intro.md, "REU delivery"].
+- Every third-party UA program we found, except the self-contained tests, needs its samples preloaded into the REU or loaded through UCI, which Multitini lacks [I, from the program survey; for Doom: V Doom docs/intro.md, "REU delivery"]. Superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: the UCI, including its REU load commands, is planned (XM5).
 - **REU image preload ships in this release** (TD §6.4 (a), a user feature that needs no debug session): "Load into REU" in the C64 media file browser loads a `.reu` file at REU offset 0, and `:reuload FILE.reu [OFFSET]` does the same with an optional offset. The C64 is not reset.
 - For UA, the preload pauses the machine, holds UA (`C64_REU_HOST` bit 13) and waits for UA held (bit 14), waits for REU idle, copies through the aperture's non-cacheable mapping, invalidates the REU cache, then releases the hold and resumes. If the invalidate still times out after one retry, it keeps UA held and the machine paused and asks for a C64 core reload (TD §6.4 (a); sections 1.8, 2.5).
 - With that feature, users can run the Freshness `module.prg` from CSDb with their own MOD files, and Doom C64U can load its `assets.reu`.
@@ -891,7 +891,7 @@ Kept on purpose (working software depends on it, or the change is not worth the 
 | R5 | Placement change perturbs the tightest domains: the 148.5 MHz video clock (+0.133 ns) and `control_clk` (+0.446 ns) [V c705r2 timing_summary.rpt:202, 207; docs/C64_VICE310_COMPARISON.md:51]. The combined image adds the turbo island to the UA logic and HP3 (section 4.1) | TD M1 builds include the UA RTL and HP3 once UA-M2 passes, so placement is judged with both features (TD §10.3); the one combined full build (TD M5 = UA-M4) with timing signoff at the sealed path; record per-domain WNS/WHS before and after | Floorplan or netlist-reuse plus reroute repair as used for the IIgs images; temporary margins cleared before signoff |
 | R6 | Boxcar resampling quality is poorer than the U64's filtered chain | T13 records the alias levels; listening tests; a U64 capture of the same tones would give the comparison | Add a polyphase FIR later (DSP, no BRAM) |
 | R7 | UA/SID loudness balance (O3) | U64 recording at default mixer: full-scale SID square against a UA square at vol 63, pan 0 | Constant gain, or a later level row |
-| R8 | An improvement (I1, I2, I4) breaks an unknown program | Corpus run: Doom intro, Freshness MOD player and synth, Pastebin example, `ua_972_check`; later the xahmol programs if UCI ever exists | Each change is local and can be parameterised |
+| R8 | An improvement (I1, I2, I4) breaks an unknown program | Corpus run: Doom intro, Freshness MOD player and synth, Pastebin example, `ua_972_check`; later the xahmol programs if UCI ever exists (superseded 2026-10-24 by docs/C64_U64_EXTENSIONS_PLAN.md: the UCI is planned for XM5) | Each change is local and can be parameterised |
 | R9 | **Retired.** No third-party content could load samples without a REU loader | - | REU image preload ships in this release (section 6.7; TD §6.4 (a)); G8 and X-PRELOAD test it |
 | R10 | **Resolved.** Settings coordination with turbo on byte 26 | Host test of all byte 26 flags, reserved bits ignored, and downgrade decode (T10b, X-T7) | Byte 26 is defined in this release with the reserved-ignored rule (section 6.4) |
 | R11 | The interaction of turbo's IRQ-acknowledge class with UA `$1F` writes is wrong | TD E4/T7 (TD §9 R4, §10.1 E4), which include the UA `$1F` writes, normal and I/O-only, with UA on and off (X-T2) | Address-only decode (section 1.10) |

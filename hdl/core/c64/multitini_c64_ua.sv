@@ -10,6 +10,8 @@ module multitini_c64_ua #(
     parameter integer UA_PERIOD_OFFSET_HALF_TICKS=3
 ) (
     input wire clk, hard_reset, guest_reset, enable, paused, hold,
+    input wire invalidate,
+    output wire invalidate_done,
     input wire reg_write,
     input wire [7:0] reg_addr, reg_wdata,
     output wire [7:0] reg_rdata,
@@ -78,6 +80,7 @@ module multitini_c64_ua #(
     end endgenerate
     multitini_c64_ua_fetch #(.MIN_ISSUE_GAP(UA_MIN_ISSUE_GAP),.YIELD_TO_REU(UA_YIELD_TO_REU),.POST_B_HOLD(UA_POST_B_HOLD)) fetcher (
         .clk(clk),.hard_reset(hard_reset),.reset(reset),.paused(paused),
+        .invalidate(invalidate),.invalidate_done(invalidate_done),
         .fetch(fetch),.playing(playing),.sixteen_bit(sixteen_bit),.predict_valid(predict_valid),
         .fetch_address(fetch_address),.predict_address(predict_address),.deadlines(deadlines),
         .samples(next_samples),.sample_ready(sample_ready),

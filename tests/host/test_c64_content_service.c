@@ -27,6 +27,8 @@ typedef struct {
     bool media_request_active;
     uint32_t media_request_cancellations;
     uint32_t expansion_reads;
+    unsigned drain_delay, drain_polls, commits;
+    bool require_handoff, fail_reset, fail_commit;
 } shell_t;
 
 static char requested_path[512];
@@ -38,6 +40,12 @@ static uint32_t sd_reads;
 static uint32_t read32(void *context, uint32_t offset)
 {
     shell_t *const shell = context;
+    if (offset == MT_REG_STREAM_STATUS && shell->drain_delay) {
+        assert(shell->registers[MT_REG_CONTROL / 4U] & MT_CONTROL_CORE_RESET_REQUEST);
+        ++shell->drain_polls;
+        if (--shell->drain_delay == 0)
+            shell->registers[MT_REG_STREAM_STATUS / 4U] |= MT_STREAM_STATUS_DRAINED;
+    }
     if (offset == MT_REG_C64_EXPANSION_CONFIG || offset == MT_REG_C64_EXPANSION_CAPS)
         ++shell->expansion_reads;
     return shell->registers[offset / sizeof(uint32_t)];
@@ -91,6 +99,12 @@ static void respond(void *context)
             return;
         }
         ++shell->active_offset;
+        if (shell->require_handoff && shell->active_offset == 1) {
+            assert(shell->commits == 1);
+            assert(shell->registers[MT_REG_CONTROL / 4U] & MT_CONTROL_CORE_RESET_REQUEST);
+            shell->registers[MT_REG_STREAM_STATUS / 4U] &= ~MT_STREAM_STATUS_DRAINED;
+            shell->drain_delay = 7;
+        }
         break;
     case MT_COMMAND_STREAM_END:
         assert(shell->active_offset == shell->active_size);
@@ -107,11 +121,20 @@ static void respond(void *context)
         shell->active_size = 0U;
         break;
     case MT_COMMAND_CORE_RESET:
+        if (shell->fail_reset) {
+            shell->registers[MT_REG_RESPONSE_STATUS / 4U] = MT_RESPONSE_IO_ERROR;
+            shell->registers[MT_REG_RESPONSE_SEQ / 4U] = sequence;
+            return;
+        }
         if (shell->registers[MT_REG_COMMAND_ARG0 / 4U] != 0U) {
             ++shell->reset_asserts;
             shell->registers[MT_REG_CONTROL / 4U] |=
                 MT_CONTROL_CORE_RESET_REQUEST;
         } else {
+            if (shell->require_handoff && !shell->fail_commit) {
+                assert(shell->active_offset >= 1 && shell->drain_delay == 0 &&
+                       shell->drain_polls >= 7);
+            }
             ++shell->reset_releases;
             shell->registers[MT_REG_CONTROL / 4U] &=
                 ~MT_CONTROL_CORE_RESET_REQUEST;
@@ -360,6 +383,54 @@ static void test_nested_package_paths(void)
     assert(c64_content_service_set_media_root("0:/other") == 0);
 }
 
+static int title_commit(void *context)
+{
+    shell_t *shell = context;
+    assert(shell->registers[MT_REG_CONTROL / 4U] & MT_CONTROL_CORE_RESET_REQUEST);
+    assert(shell->active_offset == 0);
+    ++shell->commits;
+    return shell->fail_commit ? -1 : 0;
+}
+static void test_title_handoff(void)
+{
+    shell_t shell = {0};
+    mt_core_link_t link;
+    mt_core_link_init(&link, &shell, read32, write32);
+    c64_content_service_init(&link, respond, &shell, NULL, NULL);
+    shell.registers[MT_REG_CORE_ID / 4U] = MT_C64_CORE_ID;
+    shell.registers[MT_REG_ABI_VERSION / 4U] = 26;
+    shell.registers[MT_REG_STATUS / 4U] = MT_STATUS_CORE_READY;
+    shell.registers[MT_REG_STREAM_STATUS / 4U] = MT_STREAM_STATUS_READY | MT_STREAM_STATUS_DRAINED;
+    mt_c64_launch_hook_t hook = {false, true, title_commit, &shell};
+    shell.require_handoff = true;
+    shell.fail_reset = true;
+    assert(c64_content_service_load_hooked("title.prg", &hook).status ==
+           MT_C64_CONTENT_SERVICE_CONFIG_FAILED);
+    assert(!shell.commits && !shell.active_offset);
+    shell.fail_reset = false;
+    shell.fail_commit = true;
+    assert(c64_content_service_load_hooked("title.prg", &hook).status ==
+           MT_C64_CONTENT_SERVICE_CONFIG_FAILED);
+    assert(shell.commits == 1 && !shell.active_offset && !shell.completed_count);
+    shell.commits = 0;
+    shell.fail_commit = false;
+    assert(c64_content_service_load_hooked("title.prg", &hook).status == MT_C64_CONTENT_SERVICE_OK);
+    assert(shell.commits == 1 && shell.completed_count == 1 && shell.drain_polls == 7);
+    assert(!(shell.registers[MT_REG_CONTROL / 4U] & MT_CONTROL_CORE_RESET_REQUEST));
+    shell.active_offset = 0;
+    shell.commits = 0;
+    shell.drain_polls = 0;
+    assert(c64_content_service_load_hooked("title.crt", &hook).status == MT_C64_CONTENT_SERVICE_OK);
+    assert(c64_content_service_crt_attached() && shell.commits == 1 && shell.drain_polls == 7);
+    shell.active_offset = 0;
+    shell.commits = 0;
+    shell.drain_polls = 0;
+    /* Cart detach is a separate zero-byte transaction before PRG bytes. */
+    shell.require_handoff = false;
+    assert(c64_content_service_load_hooked("title.prg", &hook).status == MT_C64_CONTENT_SERVICE_OK);
+    assert(!c64_content_service_crt_attached() && shell.commits == 1);
+}
+
 int main(void)
 {
     shell_t shell = {0};
@@ -369,6 +440,7 @@ int main(void)
         0x01U, 0x08U, 0x0bU, 0x08U, 0x01U, 0x00U
     };
 
+    test_title_handoff();
     test_reu_excludes_cartridges();
     test_run_preserves_pending_media_request();
     test_run_refuses_existing_core_fault();

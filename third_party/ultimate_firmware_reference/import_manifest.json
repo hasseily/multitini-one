@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "repository": "https://github.com/GideonZ/1541ultimate",
+  "commit": "d43546fe25b26cb332f43f00219d33153dfe44f8",
+  "scope": "Pinned reference for SID address resolution and UCI/DOS/SoftIEC/REU and Network/HTTP wire behavior. Excluded from product firmware and FPGA synthesis; selected reference function is compiled only by the host differential oracle. No UltiSID HDL or private media.",
+  "files": [
+    {
+      "path": "LICENSE.txt",
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+      "git_blob_sha1": "94a9ed024d3859793618152ea559a168bbcbb5e2",
+      "license": "GPL-3.0 repository license; retained file-local notices",
+      "transform": "Line endings normalized to LF; content verified against pinned GitHub file"
+    },
+    {
+      "path": "software/filemanager/dos.cc",
+      "sha256": "b1bc0c5ba9398e7a77ed94ffac4e53eafd4743799b783cda81ca66ebd9072f7f",
+      "git_blob_sha1": "28de4fb848b7956f55923f0a140e542d44687a81",
+      "license": "GPL-3.0 repository license; retained file-local notices",
+      "transform": "Exact pinned source bytes; Git blob SHA-1 verified from raw base64 bytes."
+    },
+    {
+      "path": "software/filesystem/file_system.cc",
+      "sha256": "e530726c65d87e2f231fa4ba07d0b0320258649fe76d98e711625c3b2f88b78c",
+      "git_blob_sha1": "4cf9aacf00b12fd8b35403d33e111d144846137b",
+      "license": "GPL-3.0 repository license; retained file-local notices",
+      "transform": "Line endings normalized to LF; content verified against pinned GitHub file"
+    },
+    {
+      "path": "software/io/c64/reu_preloader.cc",
+      "sha256": "4025e83accf9d9d3e8a469da62a74fa88c5a297ca933e19d7feab7d385307df9",
+      "git_blob_sha1": "e8f732eb8a816e5c8c172d4740c23d5b672d5130",
+      "license": "GPL-3.0 repository license; retained file-local notices",
+      "transform": "Line endings normalized to LF; content verified against pinned GitHub file"
+    },
+    {
+      "path": "software/io/command_interface/control_target.cc",
+      "sha256": "a5f0faaa9cc51920c4163ecf0db2097eb634c35b793dca712d976405ea2b5239",
+      "git_blob_sha1": "7cfee80c5ef5765058744cfbd1bdc11f216d40f4",
+      "license": "GPL-3.0 repository license; retained file-local notices",
+      "transform": "Line endings normalized to LF; content verified against pinned GitHub file"
+    },
+    {
+      "path": "software/io/command_interface/softiec_target.cc",
+      "sha256": "094eaa54d787b464609adae50d9549a16a142058c8d642383e9aa090a76f7264",
+      "git_blob_sha1": "14abae851ed0b4713a7b4caeb3b8d0b99406f504",
+      "license": "GPL-3.0 repository license; retained file-local notices",
+      "transform": "Line endings normalized to LF; content verified against pinned GitHub file"
+    },
+    {
+      "path": "software/io/command_interface/softiec_target.h",
+      "sha256": "72828657e3b4eb997b25c17e8454c5101416c66fa609fa0a640a162ec7c088ff",
+      "git_blob_sha1": "dd6137e08810a99f2778bc97fcabe338425379d2",
+      "license": "GPL-3.0 repository license; retained file-local notices",
+      "transform": "Line endings normalized to LF; content verified against pinned GitHub file"
+    },
+    {
+      "path": "software/io/iec/cbmdos_parser.h",
+      "sha256": "a319d1d99db688293ce530d0b3bd370ce053e56d194f793c595b755d6067cf0f",
+      "git_blob_sha1": "e41ae7b4d79aac8163be176abba192620179d532",
+      "license": "GPL-3.0 repository license; retained file-local notices",
+      "transform": "Line endings normalized to LF; content verified against pinned GitHub file"
+    },
+    {
+      "path": "software/io/iec/iec_channel.h",
+      "sha256": "a73f71daa54e6242411efb50d12e2af642ae714f53355fc943dbbb06592478ce",
+      "git_blob_sha1": "f35615a2d6b98199d187005d66a15d06e7f54be4",
+      "license": "GPL-3.0 repository license; retained file-local notices",
+      "transform": "Line endings normalized to LF; content verified against pinned GitHub file"
+    },
+    {
+      "path": "software/u64/u64_config.cc",
+      "sha256": "07fb46dec3a58d81a511a7ca55b31cb2a8dc493e1725f109116c513732a87313",
+      "git_blob_sha1": "d4edec4a7f29c3a1517446ed2b10551ba33ce4d9",
+      "license": "GPL-3.0 repository license; retained file-local notices",
+      "transform": "Line endings normalized to LF; content verified against pinned GitHub file"
+    },
+    {
+      "path": "fpga/io/command_interface/vhdl_source/command_if_pkg.vhd",
+      "sha256": "cda3814335e04666d693d48780d09bac1a82cb5ca9e07a8e837e703c54f6881b",
+      "git_blob_sha1": "89e947930557144377a2daac2e07ae6bd285eb99",
+      "license": "GPL-3.0 repository license; retained file-local notices",
+      "transform": "Line endings normalized to LF; content verified against pinned GitHub file"
+    },
+    {
+      "path": "fpga/io/command_interface/vhdl_source/command_protocol.vhd",
+      "sha256": "9ca991ffe32ce1887552bcefb5c347baa075555b80c69e778ba4bc57288499f9",
+      "git_blob_sha1": "419fa52ab466302620656ae953da00aada9089a2",
+      "license": "GPL-3.0 repository license; retained file-local notices",
+      "transform": "Line endings normalized to LF; content verified against pinned GitHub file"
+    },
+    {
+      "path": "fpga/ip/busses/vhdl_source/io_bus_pkg.vhd",
+      "sha256": "7570beec33ffc8450fc733f6a404a241eee4a2aad74bd3d450196e21472710b1",
+      "git_blob_sha1": "e76cd43f2efa77855ecf33f3ef25484393d0d395",
+      "license": "GPL-3.0 repository license; retained file-local notices",
+      "transform": "Line endings normalized to LF; content verified against pinned GitHub file"
+    },
+    {
+      "path": "fpga/ip/busses/vhdl_source/slot_bus_pkg.vhd",
+      "sha256": "487bd0e8f5dedf5f50021db8beadff4ca9dc746071034220508b61f4227d59ee",
+      "git_blob_sha1": "a38f52ba95e94abd5245b85615e8b62bc6697caa",
+      "license": "GPL-3.0 repository license; retained file-local notices",
+      "transform": "Line endings normalized to LF; content verified against pinned GitHub file"
+    },
+    {
+      "path": "software/io/network/network_target.cc",
+      "sha256": "94d979420489347fc0c8d1fa3899a96ce3dae895b8850aacc091f29ff96e96b8",
+      "git_blob_sha1": "fff843e6e0d32dba2301cd0e6372640a0f993883",
+      "license": "GPL-3.0 repository license; retained file-local notices",
+      "transform": "Line endings normalized to LF; content verified against pinned GitHub file"
+    },
+    {
+      "path": "software/io/network/network_target.h",
+      "sha256": "95099f555d374b6213b6268f56169b86742da9ef11ce8c0f6627d03c8dd1d60e",
+      "git_blob_sha1": "85da8e844e11a1c2811c34f3bafd349357555bb4",
+      "license": "GPL-3.0 repository license; retained file-local notices",
+      "transform": "Line endings normalized to LF; content verified against pinned GitHub file"
+    },
+    {
+      "path": "software/io/command_interface/http_target.cc",
+      "sha256": "b25334be281b4831927d04293da1a90e0db3f1885db36212d1e4463c22aa8f49",
+      "git_blob_sha1": "2af0140bd1ad28ba8d2e6638fe01a1563493ed8a",
+      "license": "GPL-3.0 repository license; retained file-local notices",
+      "transform": "Line endings normalized to LF; content verified against pinned GitHub file"
+    },
+    {
+      "path": "software/io/command_interface/http_target.h",
+      "sha256": "c7ba7a791aab911c2d2012722522f8c76262c519f34cb4792c136f43925c41c2",
+      "git_blob_sha1": "b2f6cf127f7a4682e841cc848d7bc8e7f47c9fe0",
+      "license": "GPL-3.0 repository license; retained file-local notices",
+      "transform": "Line endings normalized to LF; content verified against pinned GitHub file"
+    },
+    {
+      "path": "software/io/command_interface/test_http_target.cc",
+      "sha256": "8f97b99f738742dea3e11f918e8a25f91fc6a2bdcb7b2232f13955b5e12f1046",
+      "git_blob_sha1": "5a9dee50d8caf770bc71867b3bd0b33776331360",
+      "license": "GPL-3.0 repository license; retained file-local notices",
+      "transform": "Line endings normalized to LF; content verified against pinned GitHub file"
+    }
+  ]
+}

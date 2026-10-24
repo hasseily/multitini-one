@@ -3,7 +3,7 @@
 
 module tb_control_regs #(parameter logic [31:0] ACCEL_CAPS=0,
                          parameter logic [31:0] C64_CAPS=0,
-                         parameter bit TURBO=0);
+                         parameter bit TURBO=0, EXTENSIONS=0);
     import multitini_regs_pkg::*;
 
     logic clk = 1'b0;
@@ -77,11 +77,19 @@ module tb_control_regs #(parameter logic [31:0] ACCEL_CAPS=0,
     logic ui_dense;
     wire [31:0] cpu_config, debug_control, peek_request, reu_request;
     wire capture_pop;
+    logic [31:0] uci_status=32'h88000001,uci_status2=32'hc1234567,sid_status=0;
+    logic uci_op_ready=1;
+    wire uci_op_valid,sid_write,sid_commit,net_run,net_access_valid;
+    wire [31:0] uci_op,uci_ram_request,sid_data,net_access_word;
+    wire [10:0] uci_control;
+    wire [5:0] sid_index;
+    wire [7:0] sid_sequence;
 
     always #5 clk = !clk;
 
     multitini_control_regs #(.SHELL_BUILD_ID(32'h12345678),.IIGS_ACCEL_CAPS(ACCEL_CAPS),
         .C64_EXPANSION_CAPS(C64_CAPS),
+        .NET_CAPS(EXTENSIONS ? MT_NET_CAPS_W5100S : 0),
         .C64_CPU_CAPS(TURBO ? MT_C64_CPU_CAPS_RELEASE : 0),
         .C64_CPU_CAPS2(TURBO ? MT_C64_CPU_CAPS2_RELEASE : 0)) dut (
         .c64_cpu_config(cpu_config), .c64_cpu_status(32'h12345678),
@@ -89,6 +97,13 @@ module tb_control_regs #(parameter logic [31:0] ACCEL_CAPS=0,
         .audio_capture_data(32'h87654321), .audio_capture_pop(capture_pop),
         .c64_ram_peek_request(peek_request), .c64_ram_peek_status(32'h001A00CC),
         .c64_reu_host_request(reu_request), .c64_reu_host_status(32'h00005B00),
+        .c64_uci_status(uci_status),.c64_uci_status2(uci_status2),.c64_sid_status(sid_status),
+        .c64_uci_op_ready(uci_op_ready),.c64_uci_op_valid(uci_op_valid),.c64_uci_op(uci_op),
+        .c64_uci_ram_request(uci_ram_request),.c64_uci_control(uci_control),
+        .c64_sid_index(sid_index),.c64_sid_data(sid_data),.c64_sid_write(sid_write),
+        .c64_sid_commit(sid_commit),.c64_sid_sequence(sid_sequence),
+        .net_status(32'h8012ab15),.net_access_error(1'b0),.net_run(net_run),
+        .net_access_valid(net_access_valid),.net_access_word(net_access_word),
         .c64_ua_status(32'h123), .c64_ua_fetches(32'h456), .c64_reu_misses(32'h789),
         .effect_busy(effect_busy),.effect_active_valid(effect_active_valid),.effect_rejected(effect_rejected),
         .effect_active_sequence(effect_active_sequence),.effect_write(effect_write),.effect_commit(effect_commit),
@@ -184,6 +199,8 @@ module tb_control_regs #(parameter logic [31:0] ACCEL_CAPS=0,
             logic[31:0] expected_config;
             expected_config=(expansion&8)|((expansion&7)==2?2:((expansion&7)==3?3:0));
             if(C64_CAPS[3] && (expansion&8)!=0) expected_config|=expansion&16;
+            if(C64_CAPS[5]) expected_config|=32'h20;
+            if(C64_CAPS[6]) expected_config|=32'h40;
             if(!C64_CAPS[31])expected_config=0;
             write_reg(MT_REG_C64_EXPANSION_CONFIG,32'hffffffe0|expansion,4'hf);
             expect_read(MT_REG_C64_EXPANSION_CONFIG,expected_config,"C64 reserved bits/modes sanitized");
@@ -700,6 +717,49 @@ module tb_control_regs #(parameter logic [31:0] ACCEL_CAPS=0,
         expect_read(MT_REG_C64_REU_HOST,C64_CAPS[4] ? 32'h7b0f : 0,"host hold and counters");
         write_reg(MT_REG_DEBUG_CONTROL,0,4'hf);
         expect_read(MT_REG_AUDIO_CAPTURE_DATA,0,"debug-off restores zero");
+        expect_read(MT_REG_NET_CAPS,EXTENSIONS ? MT_NET_CAPS_W5100S : 0,"network capability");
+        expect_read(MT_REG_NET_STATUS,EXTENSIONS ? 32'h8012ab15 : 0,"network status capability gate");
+        write_reg(MT_REG_NET_CONTROL,1,4'h1);
+        check_value(net_run==EXTENSIONS,"network run capability gate");
+        write_reg(MT_REG_NET_ACCESS,32'h015a1234,4'hf);
+        check_value(net_access_valid==EXTENSIONS,"network byte operation pulse");
+        if(EXTENSIONS)check_value(net_access_word==32'h015a1234,"network operation exact word");
+        write_reg(MT_REG_NET_ACCESS,0,4'h7);
+        check_value(!net_access_valid,"network partial operation rejected");
+        write_reg(MT_REG_C64_UCI_CONTROL,32'hffffffff,4'hf);
+        check_value(uci_control==(C64_CAPS[5]?11'h71f:11'h01f),"UCI reserved control bits and capability gate");
+        @(negedge clk);rd_addr=MT_REG_C64_UCI_STATUS;rd_en=1;
+        @(negedge clk);rd_en=0;uci_status2=32'hffffffff;
+        expect_read(MT_REG_C64_UCI_STATUS2,C64_CAPS[5]?32'hc1234567:0,"UCI STATUS2 coherent snapshot");
+        write_reg(MT_REG_C64_UCI_HANDSHAKE,32'haafe3804,4'hf);
+        check_value(uci_op_valid==C64_CAPS[5],"UCI complete maximum data tagged publish");
+        if(C64_CAPS[5])check_value(uci_op==32'haafe3804,"UCI complete operation payload");
+        uci_op_ready=0;write_reg(MT_REG_C64_UCI_HANDSHAKE,1,4'hf);
+        check_value(!uci_op_valid,"UCI mailbox backpressure rejects overwrite");uci_op_ready=1;
+        write_reg(MT_REG_C64_UCI_HANDSHAKE,32'h01000004,4'hf);
+        check_value(!uci_op_valid,"UCI reserved status length bit rejected");
+        write_reg(MT_REG_C64_UCI_HANDSHAKE,32'h00003814,4'hf);
+        check_value(!uci_op_valid,"UCI oversized data length rejected");
+        write_reg(MT_REG_C64_UCI_HANDSHAKE,7,4'hf);
+        check_value(!uci_op_valid,"UCI unknown operation rejected");
+        write_reg(MT_REG_C64_UCI_RAM_READ,32'h037fffff,4'hf);
+        check_value(uci_ram_request==(C64_CAPS[13]?32'h1b7fffff:0),"UCI RAM maximum length and token");
+        write_reg(MT_REG_C64_UCI_RAM_READ,32'h03800000,4'hf);
+        check_value(uci_ram_request==(C64_CAPS[13]?32'h1b7fffff:0),"UCI RAM oversized request rejected");
+        write_reg(MT_REG_C64_SID_INDEX,56,4'hf);
+        check_value(sid_index==(C64_CAPS[6]?56:0),"SID explicit index");
+        write_reg(MT_REG_C64_SID_INDEX,57,4'hf);
+        check_value(sid_index==(C64_CAPS[6]?56:0),"SID out-of-range index rejected");
+        write_reg(MT_REG_C64_SID_DATA,32'h12345678,4'hf);
+        check_value(sid_write==C64_CAPS[6],"SID data capability gate");
+        if(C64_CAPS[6])check_value(sid_data==32'h12345678 && sid_index==56,"SID data and no auto increment");
+        write_reg(MT_REG_C64_SID_COMMIT,32'h42,4'hf);
+        check_value(sid_commit==C64_CAPS[6],"SID commit capability gate");
+        if(C64_CAPS[6])check_value(sid_sequence==8'h42,"SID commit sequence");
+        sid_status=32'h100;write_reg(MT_REG_C64_SID_DATA,0,4'hf);
+        check_value(!sid_write,"SID busy prevents upload bank mutation");
+        write_reg(MT_REG_C64_SID_COMMIT,43,4'hf);
+        check_value(!sid_commit,"SID busy prevents commit overwrite");
         $display("PASS: control registers");
         $finish;
     end
@@ -711,4 +771,7 @@ module tb_control_regs_c64_caps;
 endmodule
 module tb_control_regs_c64_turbo;
     tb_control_regs #(.C64_CAPS(32'h8000001f),.TURBO(1)) test_i();
+endmodule
+module tb_control_regs_c64_extensions;
+    tb_control_regs #(.C64_CAPS(32'h80007f7f),.TURBO(1),.EXTENSIONS(1)) test_i();
 endmodule

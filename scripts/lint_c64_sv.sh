@@ -25,7 +25,7 @@ verilator $lint_common --top-module sid_top \
     "$repo_root/hdl/core/c64/ports/sid_filter.sv" \
     "$repo_root/third_party/c64/upstream/rtl/sid/sid_envelope.sv" \
     "$repo_root/hdl/core/c64/ports/sid_tables.sv" \
-    "$repo_root/third_party/c64/upstream/rtl/sid/sid_voice.sv" \
+    "$repo_root/hdl/core/c64/ports/sid_voice.sv" \
     "$repo_root/hdl/core/c64/ports/sid_top.sv"
 
 # shellcheck disable=SC2086
