@@ -99,6 +99,28 @@ static void output(void *context, const char *line) {
     printed++;
     snprintf(last_line, sizeof(last_line), "%s", line);
 }
+static void http_session_lifetime(mt_core_link_t *link) {
+    mt_uci_target_t ht = mt_net_service_http_target();
+    mt_uci_reply_t reply;
+    const uint8_t create[] = {6, 0x21, 2};
+    uint8_t add[] = {6, 0x23, 0, 1, 'n', 42}, query[] = {6, 0x2a, 0, 'n'};
+    assert(ht.begin(ht.context, create, sizeof(create), &reply) == MT_UCI_REPLY);
+    add[2] = query[2] = reply.data[0];
+    assert(ht.begin(ht.context, add, sizeof(add), &reply) == MT_UCI_REPLY);
+    mt_net_service_guest_reset();
+    assert(ht.begin(ht.context, query, sizeof(query), &reply) == MT_UCI_REPLY &&
+           reply.data_length == 5 && reply.data[1] == 42);
+    /* Disabling networking closes jobs; offline JSON handles remain useful. */
+    assert(mt_net_service_set_mode(MT_NET_OFF));
+    assert(ht.begin(ht.context, query, sizeof(query), &reply) == MT_UCI_REPLY &&
+           reply.data_length == 5 && reply.data[1] == 42);
+    mt_net_service_shutdown();
+    mt_net_service_init(link);
+    ht = mt_net_service_http_target();
+    assert(ht.begin(ht.context, query, sizeof(query), &reply) == MT_UCI_REPLY &&
+           reply.data_length == 0 && reply.status_length == strlen("400 BAD REQUEST") &&
+           !memcmp(reply.status, "400 BAD REQUEST", reply.status_length));
+}
 static void console_dns(mt_core_link_t *link) {
     mt_uci_engine_t engine;
     mt_uci_target_t nt = mt_net_service_network_target(), ht = mt_net_service_http_target();
@@ -212,6 +234,7 @@ int main(void) {
     assert(!mt_net_service_command(":network", output, NULL));
     assert(mt_net_service_command(":net set ip 999.1.2.3", output, NULL) &&
            !strcmp(last_line, "Invalid network key or value"));
+    http_session_lifetime(&link);
     console_dns(&link);
     mt_net_service_shutdown();
     puts("PASS platform network ABI gates, atomic settings, USB-export refusal, stable CID/MAC "

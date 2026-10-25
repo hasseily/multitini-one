@@ -16,5 +16,8 @@ typedef struct {
     unsigned chunk_state,trailers_size;
 } mt_http_t;
 void mt_http_init(mt_http_t *,mt_net_t *);
+/* End the HTTP session and release all object handles. A UCI target reset only
+ * cancels its active exchange: Ultimate keeps these handles across C64 reset. */
+void mt_http_shutdown(mt_http_t *);
 mt_uci_target_t mt_http_uci_target(mt_http_t *);
 #endif

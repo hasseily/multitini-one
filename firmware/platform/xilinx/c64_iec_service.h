@@ -17,6 +17,9 @@ typedef bool (*c64_iec_protected_fn)(void *context, const char *absolute_path);
 int c64_iec_service_init(mt_core_link_t *link, const char *root, c64_iec_protected_fn protected_path, void *context);
 int c64_iec_service_configure_root(const char *root);
 bool c64_iec_service_available(void);
+unsigned c64_iec_service_device_number(void);
+/* Temporary IEC address, applied without disrupting the active command. */
+int c64_iec_service_set_device_number(unsigned device);
 int c64_iec_service_enable(bool enabled);
 /* Process at most budget received events, with one foreground storage owner.
  * Returns processed count, or -1 for an unavailable/faulted transport. Guest

@@ -17,6 +17,7 @@ typedef struct
     uint8_t bytes[F_BYTES];
     size_t size;
     bool directory, exists;
+    mt_iec_metadata_t metadata;
 } fixture_file;
 typedef struct
 {
@@ -29,7 +30,8 @@ typedef struct
     fixture_file files[F_CAP];
     fixture_handle handles[16];
     unsigned reads, writes, closes, commits, removes;
-    int fail_read, fail_write, fail_close, fail_commit;
+    int fail_read, fail_write, fail_close, fail_commit, fail_device;
+    unsigned device;
     bool keep_handle, short_read, short_write;
     char protected_name[512];
 } fixture_fs;
@@ -221,6 +223,15 @@ static inline int fixture_rename(void *ctx, const char *from, const char *to)
         return 62;
     if (fixture_find(to))
         return 63;
+    size_t old = strlen(from), replacement = strlen(to);
+    if (f->directory) for (unsigned i = 0; i < F_CAP; ++i) {
+        fixture_file *child = &fixture.files[i];
+        if (child->exists && !strncmp(child->path, from, old) && child->path[old] == '/') {
+            assert(replacement + strlen(child->path + old) < sizeof child->path);
+            memmove(child->path + replacement, child->path + old, strlen(child->path + old) + 1);
+            memcpy(child->path, to, replacement);
+        }
+    }
     strcpy(f->path, to);
     return 0;
 }
@@ -251,10 +262,35 @@ static inline bool fixture_protected(void *ctx, const char *path)
     (void)ctx;
     return fixture.protected_name[0] && fixture_equal(fixture.protected_name, path);
 }
+static inline int fixture_seek(void *ctx, void *handle, size_t offset)
+{
+    (void)ctx;
+    fixture_handle *h = handle;
+    if (!h || !h->used || offset > h->file->size) return 23;
+    h->cursor = offset;
+    return 0;
+}
+static inline int fixture_metadata(void *context,const char *path,mt_iec_metadata_t *metadata)
+{
+    (void)context;fixture_file *f=fixture_find(path);if(!f)return 62;
+    *metadata=f->metadata;return 0;
+}
+static inline int fixture_attributes(void *context,const char *path,uint8_t attributes,uint8_t mask)
+{
+    (void)context;fixture_file *f=fixture_find(path);if(!f)return 62;
+    f->metadata.attributes=(f->metadata.attributes & ~mask) | (attributes & mask);return 0;
+}
+static inline int fixture_device_number(void *context,unsigned device)
+{
+    (void)context;
+    if (fixture.fail_device) return fixture.fail_device;
+    fixture.device=device;return 0;
+}
 static inline mt_iec_fs_t fixture_api(void)
 {
     mt_iec_fs_t fs = {NULL,           fixture_list,   fixture_open,  fixture_read,   fixture_write,    fixture_close,
-                      fixture_remove, fixture_rename, fixture_mkdir, fixture_commit, fixture_protected};
+                      fixture_remove, fixture_rename, fixture_mkdir, fixture_commit, fixture_protected,
+                      fixture_seek, NULL, NULL, fixture_metadata, fixture_attributes, NULL, NULL, NULL, fixture_device_number};
     return fs;
 }
 #endif

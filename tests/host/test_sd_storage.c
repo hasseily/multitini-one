@@ -25,6 +25,8 @@ static FRESULT dir_close_status;
 static FRESULT mkdir_status;
 static unsigned mount_calls;
 static unsigned stat_calls;
+static unsigned attribute_calls;
+static BYTE last_attributes, last_attribute_mask;
 static unsigned unmount_calls;
 static unsigned open_calls;
 static unsigned read_calls;
@@ -79,6 +81,8 @@ FRESULT f_mount(FATFS *file_system, const char *path, BYTE option)
     assert(option == 1U);
     ++mount_calls;
     backend_registered = mount_status == FR_OK;
+    file_system->n_fatent = 0x100002;
+    file_system->csize = 64;
     return mount_status;
 }
 
@@ -261,8 +265,15 @@ FRESULT f_stat(const char *path, FILINFO *info)
     if (!strcmp(info->fname, "LONGDI~1")) strcpy(info->fname, "Long Directory");
     if (!strcmp(info->fname, "MOUNTE~1.D64")) strcpy(info->fname, "Mounted Disk.d64");
     if (!strcmp(info->fname, "new.prg")) return FR_NO_FILE;
-    info->fsize=fake_file_size;info->fdate=0x5d18;info->ftime=0x6322;info->fattrib=AM_RDO;
+    info->fsize=fake_file_size;info->fdate=0x5d18;info->ftime=0x6322;
+    info->fattrib=!strcmp(path,"0:/capacity-dir") ? AM_DIR : AM_RDO;
     return FR_OK;
+}
+FRESULT f_chmod(const char *path, BYTE attributes, BYTE mask)
+{
+    assert(path && backend_registered);
+    ++attribute_calls; last_attributes = attributes; last_attribute_mask = mask;
+    return write_status;
 }
 
 FRESULT f_readdir(DIR *directory, FILINFO *info)
@@ -855,6 +866,9 @@ static int reject_export_in_callback(void *context,const char *name,size_t size,
     (void)context;(void)name;(void)size;(void)directory;
     assert(mt_sd_storage_external_acquire().status==MT_SD_FILE_BUSY);
     assert(!mt_sd_storage_external_active() && backend_registered);
+    uint64_t bytes = 123;
+    assert(mt_sd_storage_capacity("0:/", &bytes).status == MT_SD_EXTERNAL_ACCESS && !bytes);
+    assert(mt_sd_file_attributes("0:/file",1,1).status == MT_SD_EXTERNAL_ACCESS);
     return 0;
 }
 static void reject_export_in_progress(void *context)
@@ -878,6 +892,9 @@ static void test_external_storage_lease(void)
     const unsigned opened=open_calls, mounted=mount_calls;
     uint8_t data[32]={0};bool found=false;
     assert(mt_sd_storage_mount().status==MT_SD_EXTERNAL_ACCESS);
+    uint64_t capacity = 123;
+    assert(mt_sd_storage_capacity("0:/", &capacity).status==MT_SD_EXTERNAL_ACCESS && !capacity);
+    assert(mt_sd_file_attributes("0:/file",1,1).status==MT_SD_EXTERNAL_ACCESS);
     assert(mt_sd_storage_read_file_exact("0:/data",data,sizeof(data)).status==MT_SD_EXTERNAL_ACCESS);
     assert(mt_sd_storage_read_file_optional_max("0:/data",data,sizeof(data),&found).status==MT_SD_EXTERNAL_ACCESS);
     assert(mt_sd_storage_journal_replace(JOURNAL_TARGET,JOURNAL_PATH,data,sizeof(data)).status==MT_SD_EXTERNAL_ACCESS);
@@ -902,10 +919,41 @@ static void test_external_storage_lease(void)
     assert(data[0]==0x55U && !truncated && !mt_sd_storage_external_active());
 }
 
+static void test_volume_capacity(void)
+{
+    reset_fake();
+    uint64_t bytes = 123;
+    assert(mt_sd_storage_capacity("0:/", &bytes).status == MT_SD_OK);
+    assert(bytes == UINT64_C(32) * 1024 * 1024 * 1024);
+    assert(mt_sd_storage_capacity("0:/capacity-dir", &bytes).status == MT_SD_OK);
+    assert(bytes == UINT64_C(32) * 1024 * 1024 * 1024);
+    assert(mt_sd_storage_capacity("0:/file.prg", &bytes).status == MT_SD_DIR_OPEN_FAILED && !bytes);
+    assert(mt_sd_storage_capacity("0:/new.prg", &bytes).status == MT_SD_OPEN_FAILED && !bytes);
+    assert(mt_sd_storage_capacity("1:/", &bytes).status == MT_SD_INVALID_ARGUMENT && !bytes);
+    assert(mt_sd_storage_capacity("0:/../escape", &bytes).status == MT_SD_INVALID_ARGUMENT && !bytes);
+    assert(mt_sd_storage_capacity(NULL, &bytes).status == MT_SD_INVALID_ARGUMENT && !bytes);
+    assert(mt_sd_storage_capacity("0:/", NULL).status == MT_SD_INVALID_ARGUMENT);
+    assert(mt_sd_file_attributes("0:/file",0x23,0x23).status==MT_SD_OK);
+    assert(attribute_calls && last_attributes==0x23 && last_attribute_mask==0x23);
+    mt_sd_file_t *file=NULL;
+    assert(mt_sd_file_open("0:/file","r",&file).status==MT_SD_OK);
+    assert(mt_sd_file_attributes("0:/file",0,1).status==MT_SD_FILE_BUSY);
+    assert(mt_sd_file_close(file).status==MT_SD_OK);
+    assert(mt_sd_file_attributes("0:/file",0,0x80).status==MT_SD_INVALID_ARGUMENT);
+    assert(mt_sd_file_attributes("1:/file",0,1).status==MT_SD_INVALID_ARGUMENT);
+    write_status=FR_WRITE_PROTECTED;
+    assert(mt_sd_file_attributes("0:/file",0,1).status==MT_SD_WRITE_FAILED);
+    write_status=FR_OK;
+    assert(mt_sd_storage_unmount().status == MT_SD_OK);
+    mount_status = FR_DISK_ERR;
+    assert(mt_sd_storage_capacity("0:/", &bytes).status == MT_SD_MOUNT_FAILED && !bytes);
+    mount_status = FR_OK;
+}
 int main(void)
 {
     test_unmount_lifecycle();
     test_capture_file_creation();
+    test_volume_capacity();
     static const uint8_t data[] = {1U, 2U, 3U, 4U, 5U, 6U};
     uint8_t destination[sizeof(data)] = {0U};
     mt_sd_result_t result;

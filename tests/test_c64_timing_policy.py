@@ -132,6 +132,69 @@ c64_write_timing_policy {{{path}}} $policy $paths
                 self.assertEqual(record['configuration']['c64_timing_policy'], 'dev8-over-0.050')
                 self.assertEqual(record['git_head'], 'frozen-head')
 
+    def test_placement_margin_applies_and_restores_exact_values(self):
+        stub = r'''
+set u [dict create fabric 0.200 pixel {} rf 0.200 fr 0.200]
+proc get_clocks {args} {
+    if {[lsearch -exact $args -filter]>=0} {return pixel}
+    switch -- [lindex $args end] {clk_fpga_0 {return fabric} clk_out2_zynq_ps_bd_clk_wiz_c64_0 {return fast}}
+    error "Unexpected clock query: $args"
+}
+proc get_timing_paths {args} {
+    if {[lsearch -exact $args -rise_from]>=0 && [lsearch -exact $args -fall_to]>=0} {return rf}
+    if {[lsearch -exact $args -fall_from]>=0 && [lsearch -exact $args -rise_to]>=0} {return fr}
+    set src [lindex $args [expr {[lsearch -exact $args -from]+1}]]
+    if {$src ne [lindex $args [expr {[lsearch -exact $args -to]+1}]]} {error "Unexpected path query: $args"}
+    return $src
+}
+proc get_property {key path} {
+    if {$key ne "USER_UNCERTAINTY"} {error "Unexpected property $key"}
+    return [dict get $::u $path]
+}
+proc set_clock_uncertainty {args} {
+    if {[lindex $args 0] ne "-setup"} {error "Unexpected clock constraint mutation"}
+    set value [lindex $args 1]
+    if {[llength $args]==3 && [lindex $args 2] eq "pixel"} {dict set ::u pixel $value; return}
+    if {[lrange $args 2 end] eq {-rise_from fast -fall_to fast}} {dict set ::u rf $value; return}
+    if {[lrange $args 2 end] eq {-fall_from fast -rise_to fast}} {dict set ::u fr $value; return}
+    error "Unexpected setup relation: $args"
+}
+proc show {} {return "fabric=[dict get $::u fabric] pixel=[dict get $::u pixel] rf=[dict get $::u rf] fr=[dict get $::u fr]"}
+'''
+        apply = (ROOT / 'scripts/apply_c64_placement_margin.tcl').as_posix()
+        cases = {
+            'pass': ('', f'source {{{apply}}}\nputs "APPLIED [show]"\nc64_placement_margin::restore\n',
+                     'fabric=0.200 pixel=0.000 rf=0.200 fr=0.200'),
+            'pixel-already-set': ('dict set u pixel 0.200\n', f'source {{{apply}}}\n', None),
+            'fabric-missing': ('dict set u fabric 0.000\n', f'source {{{apply}}}\n', None),
+            'cpu-not-nominal': ('dict set u fr 0.300\n', f'source {{{apply}}}\n', None),
+            'double-apply': ('', f'source {{{apply}}}\nsource {{{apply}}}\n', None),
+            'restore-without-apply': ('', f'source {{{(ROOT / "scripts/c64_placement_margin.tcl").as_posix()}}}\n'
+                                          'c64_placement_margin::restore\n', None),
+        }
+        for name, (setup, body, final) in cases.items():
+            with self.subTest(case=name):
+                script = (stub + setup + 'set before [show]\nset failed [catch {\n' + body +
+                          '} message]\nputs "FAILED=$failed FINAL [show] BEFORE $before"\n')
+                result = subprocess.run([TCL], input=script, text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                if final:
+                    self.assertIn('APPLIED fabric=0.200 pixel=0.300 rf=0.300 fr=0.300', result.stdout)
+                    self.assertIn('C64_PLACEMENT_MARGIN_RESTORED', result.stdout)
+                    self.assertIn('FAILED=0 FINAL ' + final, result.stdout)
+                else:
+                    self.assertIn('FAILED=1', result.stdout)
+                    if name != 'double-apply':
+                        # A rejected precondition never leaves a partial mutation.
+                        line = next(l for l in result.stdout.splitlines() if l.startswith('FAILED='))
+                        self.assertEqual(line.split(' FINAL ')[1].split(' BEFORE ')[0],
+                                         line.split(' BEFORE ')[1])
+        # The route finish restores the margin before the shared finish passes.
+        finish = (ROOT / 'scripts/finish_c64_timing.tcl').read_text()
+        order = [finish.index(text) for text in ('c64_placement_margin::restore', 'finish_video_timing.tcl',
+                                                 'optimize_c64_cpu_margin.tcl')]
+        self.assertEqual(order, sorted(order))
+
     def test_cpu_pressure_restores_exact_constraints_even_on_error(self):
         stub = r'''
 set rf 0.200; set fr 0.200; set other 0.0; set changed_clock 0; set calls 0

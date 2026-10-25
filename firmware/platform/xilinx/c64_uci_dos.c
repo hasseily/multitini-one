@@ -1,9 +1,11 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "c64_uci_geos.h"
+#include "c64_uci_image.h"
 #include "c64_uci_internal.h"
 #include "multitini_c64_iec_dos.h"
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef enum
@@ -20,13 +22,16 @@ typedef enum
     DOS_ACTION,
     DOS_GEOS
 } dos_state_t;
+typedef struct { mt_sd_file_t *sd; c64_uci_image_file_t *image; } dos_file_t;
 typedef struct
 {
     char cwd[C64_UCI_PATH], filename[C64_UCI_PATH], copy_path[C64_UCI_PATH];
-    mt_sd_file_t *file, *copy, *copy_destination;
+    dos_file_t file, copy, copy_destination;
+    c64_uci_image_file_t *image_directory;
     mt_sd_directory_t *directory;
-    uint8_t entries[65536];
-    uint16_t offsets[4096];
+    uint8_t *entries;
+    size_t *offsets;
+    size_t entries_capacity, offsets_capacity;
     size_t entries_used, count, index, remaining, transferred, staged, memory_offset;
     uint32_t reu_address;
     dos_state_t state;
@@ -81,24 +86,67 @@ static bool same_or_child(const char *parent, const char *path)
     }
     return !*parent && (!*path || *path == '/');
 }
-static void close_file(mt_sd_file_t **file, const char **failure)
+static bool opened(const dos_file_t *file) { return file->sd || file->image; }
+static mt_sd_result_t open_flags(const char *name, uint8_t flags, dos_file_t *file)
 {
-    if (*file) {
-        mt_sd_result_t s = mt_sd_file_close(*file);
-        if (s.status == MT_SD_OK || mt_sd_file_tell(*file) < 0)
-            *file = NULL;
+    char image[C64_UCI_PATH]; const char *member;
+    if (c64_uci_image_path(name, image, &member) && *member)
+        return c64_uci_image_open(name, flags, &file->image);
+    return mt_sd_file_open_flags(name, flags, &file->sd);
+}
+static mt_sd_result_t file_read(dos_file_t *f, void *p, size_t n)
+{
+    return f->image ? c64_uci_image_read(f->image, p, n) : mt_sd_file_read(f->sd, p, n);
+}
+static mt_sd_result_t file_write(dos_file_t *f, const void *p, size_t n)
+{
+    return f->image ? c64_uci_image_write(f->image, p, n) : mt_sd_file_write(f->sd, p, n);
+}
+static mt_sd_result_t file_stat(const char *name, mt_sd_info_t *info)
+{
+    char image[C64_UCI_PATH]; const char *member;
+    if (c64_uci_image_path(name, image, &member) && *member)
+        return c64_uci_image_stat(name, info);
+    return mt_sd_file_stat(name, info);
+}
+static void close_file(dos_file_t *file, const char **failure)
+{
+    if (file->image) {
+        mt_sd_result_t s = c64_uci_image_close(&file->image);
         if (s.status != MT_SD_OK) {
-            c64_uci_environment.fault = true;
-            if (!*failure)
-                *failure = c64_uci_sd_status(s);
+            if (file->image) c64_uci_environment.fault = true;
+            if (!*failure) *failure = c64_uci_sd_status(s);
         }
     }
+    if (file->sd) {
+        mt_sd_result_t s = mt_sd_file_close(file->sd);
+        if (s.status == MT_SD_OK || mt_sd_file_tell(file->sd) < 0)
+            file->sd = NULL;
+        if (s.status != MT_SD_OK) {
+            c64_uci_environment.fault = true;
+            if (!*failure) *failure = c64_uci_sd_status(s);
+        }
+    }
+}
+static mt_sd_result_t directory_close(dos_t *d)
+{
+    if (d->image_directory) return c64_uci_image_close(&d->image_directory);
+    mt_sd_result_t s = mt_sd_directory_close(d->directory);
+    if (s.status == MT_SD_OK) d->directory = NULL;
+    return s;
+}
+static mt_sd_result_t directory_open(dos_t *d)
+{
+    char image[C64_UCI_PATH]; const char *member;
+    if (c64_uci_image_path(d->cwd, image, &member))
+        return c64_uci_image_directory(d->cwd, &d->image_directory);
+    return mt_sd_directory_open(d->cwd, &d->directory);
 }
 static mt_uci_result_t read_block(dos_t *d, mt_uci_reply_t *r)
 {
     mt_uci_reply_clear(r);
     size_t n = d->remaining > 512 ? 512 : d->remaining;
-    mt_sd_result_t s = mt_sd_file_read(d->file, r->data, n);
+    mt_sd_result_t s = file_read(&d->file, r->data, n);
     d->remaining -= s.size;
     r->data_length = s.size;
     r->more = s.status == MT_SD_OK && s.size == n && d->remaining != 0;
@@ -106,6 +154,58 @@ static mt_uci_result_t read_block(dos_t *d, mt_uci_reply_t *r)
         d->state = DOS_IDLE;
     if (s.status != MT_SD_OK)
         mt_uci_reply_status(r, c64_uci_sd_status(s));
+    return MT_UCI_REPLY;
+}
+static void clear_directory(dos_t *d)
+{
+    free(d->entries);
+    free(d->offsets);
+    d->entries = NULL;
+    d->offsets = NULL;
+    d->entries_used = d->count = d->index = 0;
+    d->entries_capacity = d->offsets_capacity = 0;
+}
+static bool append_directory(dos_t *d, const mt_sd_info_t *info)
+{
+    size_t bytes = strlen(info->name) + 2;
+    if (bytes > SIZE_MAX - d->entries_used || d->count == SIZE_MAX)
+        return false;
+    if (d->count == d->offsets_capacity) {
+        size_t capacity = d->offsets_capacity ? d->offsets_capacity * 2 : 64;
+        if (capacity < d->offsets_capacity || capacity > SIZE_MAX / sizeof(size_t))
+            return false;
+        size_t *offsets = realloc(d->offsets, capacity * sizeof(size_t));
+        if (!offsets)
+            return false;
+        d->offsets = offsets;
+        d->offsets_capacity = capacity;
+    }
+    if (bytes > d->entries_capacity - d->entries_used) {
+        size_t capacity = d->entries_capacity ? d->entries_capacity * 2 : 4096;
+        if (capacity < d->entries_capacity)
+            return false;
+        if (capacity < d->entries_used + bytes)
+            capacity = d->entries_used + bytes;
+        uint8_t *entries = realloc(d->entries, capacity);
+        if (!entries)
+            return false;
+        d->entries = entries;
+        d->entries_capacity = capacity;
+    }
+    d->offsets[d->count++] = d->entries_used;
+    d->entries[d->entries_used++] = info->attributes;
+    memcpy(d->entries + d->entries_used, info->name, bytes - 1);
+    d->entries_used += bytes - 1;
+    return true;
+}
+static mt_uci_result_t current_path(dos_t *d, mt_uci_reply_t *r)
+{
+    const char *relative = d->cwd + strlen(c64_uci_environment.root);
+    if (same_or_child(c64_uci_environment.temporary, d->cwd))
+        relative = d->cwd + strlen(c64_uci_environment.temporary);
+    char text[C64_UCI_PATH];
+    snprintf(text, sizeof text, "%s/", relative);
+    mt_uci_reply_text(r, text, "00,OK");
     return MT_UCI_REPLY;
 }
 static mt_uci_result_t directory_block(dos_t *d, mt_uci_reply_t *r)
@@ -176,49 +276,45 @@ static mt_uci_result_t poll(void *context, mt_uci_reply_t *r)
     if (d->state == DOS_SCAN) {
         for (unsigned step = 0; step < 8; step++) {
             mt_sd_info_t info;
-            mt_sd_result_t s = mt_sd_directory_next(d->directory, &info);
+            mt_sd_result_t s = (d->image_directory ? c64_uci_image_next(d->image_directory, &info) : mt_sd_directory_next(d->directory, &info));
             if (s.status != MT_SD_OK || !info.name[0]) {
-                mt_sd_result_t closed = mt_sd_directory_close(d->directory);
+                mt_sd_result_t closed = directory_close(d);
                 if (closed.status != MT_SD_OK) {
                     c64_uci_environment.fault = true;
                     return MT_UCI_FAILED;
                 }
                 d->directory = NULL;
                 d->state = DOS_IDLE;
-                if (s.status != MT_SD_OK || closed.status != MT_SD_OK)
+                if (s.status != MT_SD_OK || closed.status != MT_SD_OK) {
+                    clear_directory(d);
                     return answer(r, "86,CAN'T READ DIRECTORY");
-                return answer(r, d->truncated ? "02,REQUEST TRUNCATED" : "00,OK");
+                }
+                return answer(r, d->count ? "00,OK" : "01,DIRECTORY EMPTY");
             }
             if (info.name[0] == '.' && (!info.name[1] || (info.name[1] == '.' && !info.name[2])))
                 continue;
             if (mt_iec_dos_recovery_name(info.name))
                 continue;
-            size_t bytes = strlen(info.name) + 2;
-            if (d->count == 4096 || bytes > sizeof(d->entries) - d->entries_used) {
-                d->truncated = true;
-                mt_sd_result_t closed = mt_sd_directory_close(d->directory);
+            if (!append_directory(d, &info)) {
+                mt_sd_result_t closed = directory_close(d);
                 if (closed.status != MT_SD_OK) {
                     c64_uci_environment.fault = true;
                     return MT_UCI_FAILED;
                 }
                 d->directory = NULL;
                 d->state = DOS_IDLE;
-                return answer(r, closed.status == MT_SD_OK ? "02,REQUEST TRUNCATED"
-                                                           : "86,CAN'T READ DIRECTORY");
+                clear_directory(d);
+                return answer(r, "OUT OF MEMORY");
             }
-            d->offsets[d->count++] = (uint16_t)d->entries_used;
-            d->entries[d->entries_used++] = (info.attributes & 16) ? 16 : 32;
-            memcpy(d->entries + d->entries_used, info.name, bytes - 1);
-            d->entries_used += bytes - 1;
         }
         return MT_UCI_WAIT;
     }
     if (d->state == DOS_COPY) {
-        mt_sd_result_t s = mt_sd_file_read(d->copy, transfer, sizeof transfer);
+        mt_sd_result_t s = file_read(&d->copy, transfer, sizeof transfer);
         if (s.status != MT_SD_OK)
             d->failure = c64_uci_sd_status(s);
         if (!d->failure && s.size) {
-            mt_sd_result_t w = mt_sd_file_write(d->copy_destination, transfer, s.size);
+            mt_sd_result_t w = file_write(&d->copy_destination, transfer, s.size);
             if (w.status != MT_SD_OK || w.size != s.size)
                 d->failure = w.status == MT_SD_OK ? "DISK IS FULL" : c64_uci_sd_status(w);
         }
@@ -278,10 +374,10 @@ static mt_uci_result_t poll(void *context, mt_uci_reply_t *r)
         mt_sd_result_t s = {MT_SD_OK, 0, 0};
         if (d->save) {
             if (n)
-                s = mt_sd_file_write(d->file, reu_staging + d->transferred, n);
+                s = file_write(&d->file, reu_staging + d->transferred, n);
         } else {
             if (n)
-                s = mt_sd_file_read(d->file, reu_staging + d->transferred, n);
+                s = file_read(&d->file, reu_staging + d->transferred, n);
         }
         d->transferred += s.size;
         d->remaining -= s.size;
@@ -327,6 +423,7 @@ static mt_uci_result_t abort_target(void *context, size_t consumed)
 {
     dos_t *d = context;
     (void)consumed;
+    if (c64_uci_image_retry() != 0) return MT_UCI_FAILED;
     if (d->state == DOS_GEOS) {
         mt_uci_result_t result = c64_uci_geos_abort();
         if (result != MT_UCI_REPLY)
@@ -342,8 +439,8 @@ static mt_uci_result_t abort_target(void *context, size_t consumed)
             return MT_UCI_FAILED;
         d->changed = false;
     }
-    if (d->directory) {
-        mt_sd_result_t s = mt_sd_directory_close(d->directory);
+    if (d->directory || d->image_directory) {
+        mt_sd_result_t s = directory_close(d);
         if (s.status != MT_SD_OK) {
             c64_uci_environment.fault = true;
             return MT_UCI_FAILED;
@@ -374,12 +471,12 @@ static void reset_target(void *context)
     if (failure)
         c64_uci_environment.fault = true;
     strcpy(d->cwd, c64_uci_environment.root);
-    d->count = d->entries_used = d->index = 0;
+    clear_directory(d);
 }
-static mt_uci_result_t information(const char *filename, mt_uci_reply_t *r)
+static mt_uci_result_t information(const char *filename, c64_uci_image_file_t *image, mt_uci_reply_t *r)
 {
     mt_sd_info_t info;
-    if (mt_sd_file_stat(filename, &info).status != MT_SD_OK)
+    if ((image ? c64_uci_image_info(image, &info) : file_stat(filename, &info)).status != MT_SD_OK)
         return answer(r, "82,FILE NOT FOUND");
     mt_uci_reply_clear(r);
     put32(r->data, (uint32_t)info.size);
@@ -458,46 +555,51 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
             return answer(r, "82,FILE NOT FOUND");
         if (c64_uci_protected(name, (command[2] & 2) != 0))
             return answer(r, "98,FUNCTION PROHIBITED");
-        s = mt_sd_file_open_flags(name, command[2], &d->file);
+        s = open_flags(name, command[2], &d->file);
         if (s.status == MT_SD_OK)
             strcpy(d->filename, name);
         return answer(r, c64_uci_sd_status(s));
     case 3:
-        if (!d->file)
+        if (!opened(&d->file))
             return answer(r, "84,NO FILE TO CLOSE");
         close_file(&d->file, &d->failure);
         return answer(r, d->failure ? d->failure : "00,OK");
     case 4:
-        if (!d->file)
+        if (!opened(&d->file))
             return answer(r, "85,NO FILE OPEN");
         d->remaining = command[2] | ((size_t)command[3] << 8);
         d->state = DOS_READ;
         return read_block(d, r);
     case 5:
-        if (!d->file)
+        if (!opened(&d->file))
             return answer(r, "85,NO FILE OPEN");
         if (length < 4)
             return answer(r, "21,UNKNOWN COMMAND");
-        s = mt_sd_file_write(d->file, command + 4, length - 4);
+        s = file_write(&d->file, command + 4, length - 4);
         return answer(r, c64_uci_sd_status(s));
     case 6:
-        if (!d->file)
+        if (!opened(&d->file))
             return answer(r, "85,NO FILE OPEN");
-        return answer(r, c64_uci_sd_status(mt_sd_file_seek(d->file, le32(command + 2), SEEK_SET)));
+        return answer(r, c64_uci_sd_status((d->file.image ? c64_uci_image_seek(d->file.image, le32(command + 2)) : mt_sd_file_seek(d->file.sd, le32(command + 2), SEEK_SET))));
     case 7:
-        if (!d->file)
+        if (!opened(&d->file))
             return answer(r, "85,NO FILE OPEN");
-        return information(d->filename, r);
+        return information(d->filename, d->file.image, r);
     case 8:
         if (!path(d, command, length, 2, name) || c64_uci_metadata_protected(name))
             return answer(r, "82,FILE NOT FOUND");
-        return information(name, r);
+        return information(name, NULL, r);
     case 9:
         if (!path(d, command, length, 2, name))
             return answer(r, "82,FILE NOT FOUND");
         if (c64_uci_protected(name, true))
             return answer(r, "98,FUNCTION PROHIBITED");
-        return answer(r, c64_uci_sd_status(mt_sd_file_remove(name)));
+        {
+            char image[C64_UCI_PATH]; const char *member;
+            s = c64_uci_image_path(name, image, &member) && *member ?
+                c64_uci_image_remove(name) : mt_sd_file_remove(name);
+            return answer(r, c64_uci_sd_status(s));
+        }
     case 10:
     case 11: {
         size_t split = 2;
@@ -513,7 +615,7 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
          * canonical identities before it creates the new directory entry. */
         if (command[1] == 10 && same_or_child(name, other))
             return answer(r, "98,FUNCTION PROHIBITED");
-        if (command[1] == 11 && mt_sd_file_stat(other, &info).status == MT_SD_OK &&
+        if (command[1] == 11 && file_stat(other, &info).status == MT_SD_OK &&
             (info.attributes & 16)) {
             const char *base = strrchr(name, '/');
             base = base ? base + 1 : name;
@@ -525,14 +627,24 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
             if (c64_uci_protected(other, true))
                 return answer(r, "98,FUNCTION PROHIBITED");
         }
-        if (command[1] == 10)
-            return answer(r, c64_uci_sd_status(mt_sd_file_rename(name, other)));
-        if (mt_sd_file_stat(other, &info).status == MT_SD_OK)
+        if (command[1] == 10) {
+            char image[C64_UCI_PATH]; const char *member;
+            s = c64_uci_image_path(name, image, &member) && *member ?
+                c64_uci_image_rename(name, other) : mt_sd_file_rename(name, other);
+            return answer(r, c64_uci_sd_status(s));
+        }
+        if (file_stat(other, &info).status == MT_SD_OK)
             return answer(r, "FILE EXISTS");
-        s = mt_sd_file_open(name, "rb", &d->copy);
+        char source_image[C64_UCI_PATH], destination_image[C64_UCI_PATH];
+        const char *source_member, *destination_member;
+        if (c64_uci_image_path(name, source_image, &source_member) && *source_member &&
+            c64_uci_image_path(other, destination_image, &destination_member) && *destination_member &&
+            equal(source_image, destination_image))
+            return answer(r, c64_uci_sd_status(c64_uci_image_copy(name, other)));
+        s = open_flags(name, 1, &d->copy);
         if (s.status != MT_SD_OK)
             return answer(r, c64_uci_sd_status(s));
-        s = mt_sd_file_open(other, "xb", &d->copy_destination);
+        s = open_flags(other, 6, &d->copy_destination);
         if (s.status != MT_SD_OK) {
             close_file(&d->copy, &d->failure);
             return answer(r, c64_uci_sd_status(s));
@@ -543,35 +655,35 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
     }
     case 0x11: {
         mt_sd_info_t info;
-        if (!path(d, command, length, 2, name) || c64_uci_protected(name, false) ||
-            mt_sd_file_stat(name, &info).status != MT_SD_OK || !(info.attributes & 16))
+        if (!path(d, command, length, 2, name) || c64_uci_protected(name, false))
+            return answer(r, "83,NO SUCH DIRECTORY");
+        char image[C64_UCI_PATH]; const char *member;
+        if (c64_uci_image_path(name, image, &member)) {
+            c64_uci_image_file_t *probe = NULL;
+            s = c64_uci_image_directory(name, &probe);
+            mt_sd_result_t closed = c64_uci_image_close(&probe);
+            if (closed.status != MT_SD_OK) { c64_uci_environment.fault = true; return MT_UCI_FAILED; }
+            if (s.status != MT_SD_OK) return answer(r, "83,NO SUCH DIRECTORY");
+        } else if (mt_sd_file_stat(name, &info).status != MT_SD_OK || !(info.attributes & 16))
             return answer(r, "83,NO SUCH DIRECTORY");
         strcpy(d->cwd, name);
         return answer(r, "00,OK");
     }
-    case 0x12: {
-        const char *relative = d->cwd + strlen(c64_uci_environment.root);
-        if (strncmp(d->cwd, c64_uci_environment.temporary, strlen(c64_uci_environment.temporary)) ==
-            0)
-            relative = d->cwd + strlen(c64_uci_environment.temporary);
-        char text[C64_UCI_PATH];
-        snprintf(text, sizeof text, "%s/", relative);
-        mt_uci_reply_text(r, text, "00,OK");
-        return MT_UCI_REPLY;
-    }
+    case 0x12:
+        return current_path(d, r);
     case 0x13:
-        if (d->directory) {
-            s = mt_sd_directory_close(d->directory);
+        if (d->directory || d->image_directory) {
+            s = directory_close(d);
             if (s.status != MT_SD_OK) {
                 c64_uci_environment.fault = true;
                 return MT_UCI_FAILED;
             }
             d->directory = NULL;
         }
-        s = mt_sd_directory_open(d->cwd, &d->directory);
+        clear_directory(d);
+        s = directory_open(d);
         if (s.status != MT_SD_OK)
             return answer(r, "86,CAN'T READ DIRECTORY");
-        d->entries_used = d->count = d->index = 0;
         d->truncated = false;
         d->state = DOS_SCAN;
         return MT_UCI_WAIT;
@@ -584,7 +696,12 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
             return answer(r, "INVALID NAME");
         if (c64_uci_protected(name, true))
             return answer(r, "98,FUNCTION PROHIBITED");
-        return answer(r, c64_uci_sd_status(mt_sd_storage_ensure_directory(name)));
+        {
+            char image[C64_UCI_PATH]; const char *member;
+            s = c64_uci_image_path(name, image, &member) && *member ?
+                c64_uci_image_mkdir(name) : mt_sd_storage_ensure_directory(name);
+            return answer(r, c64_uci_sd_status(s));
+        }
     case 0x17: {
         mt_sd_info_t info;
         if (c64_uci_protected(c64_uci_environment.home, false) ||
@@ -592,11 +709,11 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
             !(info.attributes & 16))
             return answer(r, "83,NO SUCH DIRECTORY");
         strcpy(d->cwd, c64_uci_environment.home);
-        return answer(r, "00,OK");
+        return current_path(d, r);
     }
     case 0x21:
     case 0x22:
-        if (!d->file)
+        if (!opened(&d->file))
             return answer(r, "85,NO FILE OPEN");
         if (!(c64_uci_read(MT_REG_C64_EXPANSION_CONFIG) & MT_C64_EXPANSION_REU_ENABLE))
             return answer(r, "98,FUNCTION PROHIBITED");
@@ -612,7 +729,7 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
         d->state = d->save ? DOS_REU_HOLD : DOS_REU_COPY;
         return MT_UCI_WAIT;
     case 0x23: {
-        if (command[2] != 0 && command[2] != 8)
+        if (command[2] != 0 && command[2] != c64_uci_service_drive_address())
             return answer(r, "90,DRIVE NOT PRESENT");
         if (!path(d, command, length, 3, name))
             return answer(r, "82,FILE NOT FOUND");
@@ -632,9 +749,16 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
         return MT_UCI_WAIT;
     }
     case 0x24:
-        if (command[2] != 0 && command[2] != 8)
+        if (command[2] != 0 && command[2] != c64_uci_service_drive_address())
             return answer(r, "90,DRIVE NOT PRESENT");
         if (!c64_uci_post(C64_UCI_ACTION_UNMOUNT, "", 8))
+            return answer(r, "87,INTERNAL ERROR");
+        d->state = DOS_ACTION;
+        return MT_UCI_WAIT;
+    case 0x25:
+        if (command[2] != 0 && command[2] != c64_uci_service_drive_address())
+            return answer(r, "90,DRIVE NOT PRESENT");
+        if (!c64_uci_post(C64_UCI_ACTION_SWAP, "", 8))
             return answer(r, "87,INTERNAL ERROR");
         d->state = DOS_ACTION;
         return MT_UCI_WAIT;
@@ -656,7 +780,6 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
         return result;
     }
     case 0x15:
-    case 0x25:
         return answer(r, "99,FUNCTION NOT IMPLEMENTED");
     default:
         return answer(r, "21,UNKNOWN COMMAND");
@@ -667,6 +790,7 @@ mt_uci_target_t c64_uci_dos_target(unsigned instance)
     if (instance > 1)
         instance = 1;
     dos_t *d = &instances[instance];
+    clear_directory(d);
     memset(d, 0, sizeof *d);
     strcpy(d->cwd, c64_uci_environment.root);
     return (mt_uci_target_t){d, begin, poll, next, abort_target, reset_target};
@@ -674,7 +798,7 @@ mt_uci_target_t c64_uci_dos_target(unsigned instance)
 mt_uci_result_t c64_uci_named_reu_begin(bool save, mt_uci_reply_t *r)
 {
     dos_t *d = &instances[2];
-    if (d->file || d->state != DOS_IDLE) {
+    if (opened(&d->file) || d->state != DOS_IDLE) {
         c64_uci_environment.fault = true;
         return MT_UCI_FAILED;
     }
@@ -721,7 +845,7 @@ mt_uci_result_t c64_uci_named_reu_begin(bool save, mt_uci_reply_t *r)
         d->remaining = info.size > 0x1000000 ? 0x1000000 : (size_t)info.size;
         d->truncated = info.size > 0x1000000;
     }
-    mt_sd_result_t s = mt_sd_file_open(name, save ? "xb" : "rb", &d->file);
+    mt_sd_result_t s = open_flags(name, save ? 6 : 1, &d->file);
     if (s.status != MT_SD_OK) {
         return named_error(r, "85,REU FILE CANNOT BE OPENED", -1);
     }

@@ -12,6 +12,7 @@ module multitini_c64_1541 #(
     input  logic        clk,
     input  logic        reset,
     input  logic        soft_reset,
+    input  tri0         power_off,
     input  logic        pause_request,
     input  logic        clear_error,
 
@@ -25,6 +26,7 @@ module multitini_c64_1541 #(
     input  logic        c64_iec_clk,
     output logic        drive_iec_data,
     output logic        drive_iec_clk,
+    output wire [4:0]   effective_iec_address,
 
     // User-port cable. Every line idles high; a strobe is an active-low pulse.
     input  logic        parallel_enable,
@@ -156,7 +158,7 @@ module multitini_c64_1541 #(
     logic        media_dirty_d64;
     logic        media_eject_pending_d64;
 
-    assign drive_reset = reset || soft_reset || !drive_rom_loaded ||
+    assign drive_reset = reset || soft_reset || power_off || !drive_rom_loaded ||
                          drive_rom_write || drive_rom_write_delayed;
     assign drive_iec_data = drive_reset ? 1'b1 : drive_logic_iec_data;
     assign drive_iec_clk  = drive_reset ? 1'b1 : drive_logic_iec_clk;
@@ -218,7 +220,7 @@ module multitini_c64_1541 #(
         drive_ce <= 1'b0;
         if (reset) begin
             drive_phase <= 32'd0;
-        end else if (!pause_request) begin
+        end else if (!pause_request && !power_off) begin
             if (drive_phase + 32'd16000000 >= CORE_CLOCK_HZ) begin
                 drive_phase <= drive_phase + 32'd16000000 - CORE_CLOCK_HZ;
                 drive_ce    <= 1'b1;
@@ -277,7 +279,7 @@ module multitini_c64_1541 #(
         .sync_n(sync_n), .byte_n(byte_ready_n),
         .wps_n(mounted && !mounted_read_only),
         .tr00_sense_n(|head_half_track),
-        .act(drive_activity)
+        .act(drive_activity), .effective_iec_address(effective_iec_address)
     );
 
     // D64 sector bytes are converted to the bitstream seen by the emulated

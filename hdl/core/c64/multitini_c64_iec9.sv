@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns / 1ps
 
-// Standard Commodore serial bus device 9. All pin values are electrical
+// Standard Commodore serial bus device, address9 at reset. All pin values are electrical
 // levels: one releases the open collector, zero pulls it low. Timing follows
 // Commodore's C64 Programmer's Reference Guide, Figure 6-4 (pp.364-365).
 // DOS and storage live on the ARM; this block never interprets file contents.
@@ -9,6 +9,7 @@ module multitini_c64_iec9 #(
     parameter integer CLOCK_HZ = 31524725
 ) (
     input logic clk, hard_reset, run, quiesce,
+    input tri0 [4:0] device_address,
     input logic atn, bus_clk, bus_data,
     output logic data_o, clk_o,
     output logic [31:0] event_data,
@@ -43,6 +44,9 @@ module multitini_c64_iec9 #(
     logic [3:0] received_event;
     logic received_publish;
     wire atn_start = previous_atn && !atn;
+    wire [4:0] address = device_address>=8 && device_address<=30 ? device_address : 5'd9;
+    wire [7:0] listen_command = {3'b001,address};
+    wire [7:0] talk_command = {3'b010,address};
     assign event_data = pending_data;
     assign event_valid = pending && run;
     // Consume obsolete responses even during ATN/idle. Only TX_WAIT and the
@@ -136,8 +140,8 @@ module multitini_c64_iec9 #(
                     else begin bit_index<=bit_index+1'b1;state<=RX_LOW;end
                 end
                 RX_COMMIT: if(!pending) begin
-                    if(!atn && command_primary==0 && shift!=8'h29 &&
-                       shift!=8'h49 && shift!=8'h3f && shift!=8'h5f) begin
+                    if(!atn && command_primary==0 && shift!=listen_command &&
+                       shift!=talk_command && shift!=8'h3f && shift!=8'h5f) begin
                         // All devices acknowledge ATN, but only the addressed
                         // device acknowledges its primary frame. Otherwise a
                         // missing device would falsely appear present.
@@ -151,8 +155,8 @@ module multitini_c64_iec9 #(
                             (!atn && (shift[7:4]==6 || shift[7:4]==14 || shift[7:4]==15))?shift[3:0]:channel,shift};
                     end
                     if(!atn) begin
-                        if(shift==8'h29) begin listening<=1;talking<=0;end
-                        if(shift[7:5]==3'b010) talking<=shift==8'h49;
+                        if(shift==listen_command) begin listening<=1;talking<=0;end
+                        if(shift[7:5]==3'b010) talking<=shift==talk_command;
                         if(shift==8'h3f) listening<=0;
                         if(shift==8'h5f) talking<=0;
                         if((listening || talking) &&

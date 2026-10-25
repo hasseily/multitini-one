@@ -71,6 +71,7 @@ typedef struct {
 } fake_sd_t;
 
 static fake_sd_t fake_sd;
+static bool swap_listing;
 mt_sd_result_t mt_sd_file_canonical_path(const char *path, char *out, size_t capacity)
 {
     char result[512];
@@ -345,7 +346,9 @@ mt_sd_result_t mt_sd_storage_read_file_max(const char *path, uint8_t *dst,
     strcpy(fake_sd.read_path, path);
     if (strcmp(path, "0:/multitini/cores/c64/media/drive8.d64") == 0 ||
         strcmp(path, "0:/library/c64/GAMES~1/Sub/DISK~1.D64") == 0 ||
-        strcmp(path, "0:/library/c64/Games/Sub/disk.d64") == 0) {
+        strcmp(path, "0:/library/c64/Games/Sub/disk.d64") == 0 ||
+        strstr(path, "/disk 1.d64") || strstr(path, "/disk 3.d64") ||
+        strstr(path, "/disk A.d64") || strstr(path, "/disk Z.d64")) {
         result.size = TEST_D64_SIZE;
         assert(capacity >= result.size);
         make_d64_program(dst, result.size);
@@ -399,8 +402,17 @@ mt_sd_result_t mt_sd_storage_list(const char *path, mt_sd_list_fn callback,
                                   void *context)
 {
     mt_sd_result_t result = {MT_SD_OK, 0U, 0U};
-    assert(strcmp(path, "0:/multitini/cores/c64/media") == 0);
     assert(callback != NULL);
+    if (swap_listing) {
+        assert(strcmp(path, "0:/multitini/cores/c64/media/Sub") == 0);
+        (void)callback(context, "disk 1.d64", TEST_D64_SIZE, false);
+        (void)callback(context, "disk 2.d64", 0, true);
+        (void)callback(context, "disk 3.d64", TEST_D64_SIZE, false);
+        (void)callback(context, "disk A.d64", TEST_D64_SIZE, false);
+        (void)callback(context, "disk Z.d64", TEST_D64_SIZE, false);
+        return result;
+    }
+    assert(strcmp(path, "0:/multitini/cores/c64/media") == 0);
     (void)callback(context, "drive8.d64", TEST_D64_SIZE, false);
     (void)callback(context, "disk.g64", TEST_G64_SIZE, false);
     return result;
@@ -822,8 +834,27 @@ static void test_nested_package_paths(void)
     assert(c64_d64_service_eject() == 0);
 }
 
+static void test_ultimate_disk_swap(void)
+{
+    fake_shell_t shell;
+    mt_core_link_t link;
+    setup(&shell, &link);
+    swap_listing = true;
+    assert(c64_d64_service_swap() == 0); /* no mounted disk */
+    assert(c64_d64_service_mount("Sub/disk 1.d64") == 0);
+    assert(c64_d64_service_swap() == 0);
+    assert(!strcmp(c64_d64_service_mounted_name(), "Sub/disk 3.d64"));
+    assert(c64_d64_service_swap() == 0);
+    assert(!strcmp(c64_d64_service_mounted_name(), "Sub/disk 1.d64"));
+    assert(c64_d64_service_mount("Sub/disk Z.d64") == 0);
+    assert(c64_d64_service_swap() == 0);
+    assert(!strcmp(c64_d64_service_mounted_name(), "Sub/disk A.d64"));
+    swap_listing = false;
+    assert(c64_d64_service_eject() == 0);
+}
 int main(void)
 {
+    test_ultimate_disk_swap();
     test_nested_package_paths();
     test_mounted_d64_program_access();
     test_d64_mount_read_and_write();

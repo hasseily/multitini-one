@@ -479,6 +479,59 @@ static void test_title_handoff_timeout_recovery(void)
     assert(shell.completed_count == 1U && shell.commits == 1U && shell.drain_polls == 7U);
 }
 
+static int reboot_settings(void *context)
+{
+    shell_t *shell = context;
+    assert(!c64_content_service_crt_attached());
+    assert(!c64_content_service_prg_staged());
+    assert(shell->completed[shell->completed_count - 1] == MT_LOAD_C64_CRT_DETACH);
+    assert(shell->registers[MT_REG_CONTROL / 4U] & MT_CONTROL_CORE_RESET_REQUEST);
+    ++shell->commits;
+    return shell->fail_commit ? -1 : 0;
+}
+
+static void test_reboot_default_cartridge(void)
+{
+    for (unsigned scenario = 0; scenario < 6; ++scenario) {
+        shell_t shell = {0};
+        mt_core_link_t link;
+        mt_core_link_init(&link, &shell, read32, write32);
+        c64_content_service_init(&link, respond, &shell, NULL, NULL);
+        shell.registers[MT_REG_CORE_ID / 4U] = MT_C64_CORE_ID;
+        shell.registers[MT_REG_ABI_VERSION / 4U] = 27;
+        shell.registers[MT_REG_STATUS / 4U] = MT_STATUS_CORE_READY;
+        assert(c64_content_service_load("transient.crt").status == MT_C64_CONTENT_SERVICE_OK);
+        const uint32_t releases = shell.reset_releases;
+        shell.require_handoff = true;
+        shell.fail_commit = scenario == 2;
+        fail_read = scenario == 3;
+        shell.fail_reset = scenario == 5;
+        const char *default_cart = scenario == 0 ? NULL : scenario == 4 ? "bad.prg" : "saved/default.crt";
+        const mt_c64_content_service_result_t result = c64_content_service_reboot(
+            default_cart, reboot_settings, &shell);
+        fail_read = 0;
+        if (scenario == 5) {
+            assert(result.status == MT_C64_CONTENT_SERVICE_TRANSFER_FAILED);
+            assert(!shell.commits && c64_content_service_crt_attached());
+            continue;
+        }
+        assert(shell.commits == 1 && shell.completed[1] == MT_LOAD_C64_CRT_DETACH);
+        if (scenario >= 2) {
+            assert(result.status != MT_C64_CONTENT_SERVICE_OK);
+            assert(shell.registers[MT_REG_CONTROL / 4U] & MT_CONTROL_CORE_RESET_REQUEST);
+            assert(!c64_content_service_crt_attached() && shell.reset_releases == releases);
+        } else {
+            assert(result.status == MT_C64_CONTENT_SERVICE_OK);
+            assert(!(shell.registers[MT_REG_CONTROL / 4U] & MT_CONTROL_CORE_RESET_REQUEST));
+            assert(c64_content_service_crt_attached() == (scenario == 1));
+            if (scenario == 1) {
+                assert(shell.completed[2] == MT_LOAD_C64_CRT && shell.drain_polls == 7);
+                assert(strcmp(c64_content_service_crt_name(), "saved/default.crt") == 0);
+            }
+        }
+    }
+}
+
 int main(void)
 {
     shell_t shell = {0};
@@ -490,6 +543,7 @@ int main(void)
 
     test_title_handoff();
     test_title_handoff_timeout_recovery();
+    test_reboot_default_cartridge();
     test_reu_excludes_cartridges();
     test_run_preserves_pending_media_request();
     test_run_refuses_existing_core_fault();

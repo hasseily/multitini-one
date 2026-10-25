@@ -50,6 +50,7 @@ class C64ExpansionRuntimeTests(unittest.TestCase):
             "static void refresh_c64_title(",
             "static mt_c64_title_values_t c64_requested_values(",
             "static int apply_c64_title(",
+            "static int uci_apply_config(",
             "static void configure_c64_expansion(",
             "static bool commit_c64_edit(",
             "static void change_c64_expansion(",
@@ -113,6 +114,7 @@ class C64ExpansionRuntimeTests(unittest.TestCase):
     def test_default_reu_cartridge_refusal_reaches_uart_and_menu(self): self.run_scenario("launch-refusal")
     def test_disk_launch_refusal_reaches_uart_and_menu(self): self.run_scenario("disk-refusal")
     def test_allowed_title_launches_still_reach_loader_and_set_home(self): self.run_scenario("launch-allowed")
+    def test_uci_load_config_preserves_software_unlock(self): self.run_scenario("uci-unlock-config")
 
 
 if __name__ == "__main__":

@@ -22,6 +22,8 @@ typedef enum {
 
 typedef struct {
     unsigned placeholder;
+    uint32_t n_fatent;
+    unsigned csize;
 } FATFS;
 
 typedef struct {
@@ -51,6 +53,7 @@ typedef struct {
 #define AM_RDO UINT32_C(0x01)
 
 FRESULT f_stat(const char *path, FILINFO *info);
+FRESULT f_chmod(const char *path, BYTE attributes, BYTE mask);
 FRESULT f_mkdir(const char *path);
 FRESULT f_mount(FATFS *file_system, const char *path, BYTE option);
 FRESULT f_open(FIL *file, const char *path, BYTE mode);

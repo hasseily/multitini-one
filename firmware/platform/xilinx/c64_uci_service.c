@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "c64_uci_internal.h"
+#include "c64_uci_image.h"
 #include "c64_iec_service.h"
 #include "multitini_c64_iec_dos.h"
 #include "multitini_c64_interface.h"
@@ -10,7 +11,7 @@
 
 c64_uci_environment_t c64_uci_environment;
 static mt_uci_engine_t engine;
-static bool hold_active, hold_previous, fence_active, ram_active;
+static bool hold_active, hold_previous, fence_active, ram_active, reboot_hold;
 static bool quiesce_active, quiesce_op_pending, reset_pending;
 static uint8_t quiesce_ack;
 static uint64_t quiesce_start;
@@ -26,6 +27,7 @@ static bool temporary_pending;
 static bool temporary_failed, hardware_fault;
 static mt_sd_directory_t *temporary_directory;
 static mt_sd_directory_t *path_directory;
+static c64_uci_image_file_t *path_image_directory;
 static bool reload_only;
 enum { FAULT_UNKNOWN, FAULT_RAM, FAULT_FENCE, FAULT_NATIVE };
 static unsigned hardware_fault_kind;
@@ -93,6 +95,10 @@ static bool protected_access(const char *path, bool writing, bool metadata)
     }
     if (metadata)
         return false;
+    char image[C64_UCI_PATH];
+    const char *member;
+    if (c64_uci_image_path(path, image, &member) && *member)
+        return protected_access(image, writing, false);
     /* Mounted-file ownership protects destructive ancestor operations, but
      * inspecting or entering that ancestor does not access the disk image. */
     mt_sd_info_t info;
@@ -235,20 +241,34 @@ bool c64_uci_path(const char *cwd, const uint8_t *bytes, size_t length, char out
                 return false;
         if (strpbrk(part, "*?")) {
             mt_sd_directory_t *dir = NULL;
+            c64_uci_image_file_t *image_dir = NULL;
             mt_sd_info_t info;
             bool found = false;
-            if (mt_sd_directory_open(out, &dir).status != MT_SD_OK)
+            char image[C64_UCI_PATH];
+            const char *member;
+            const bool virtual_dir = c64_uci_image_path(out, image, &member);
+            mt_sd_result_t opened = virtual_dir ? c64_uci_image_directory(out, &image_dir) :
+                                                  mt_sd_directory_open(out, &dir);
+            if (opened.status != MT_SD_OK) {
+                if (image_dir && c64_uci_image_close(&image_dir).status != MT_SD_OK) {
+                    path_image_directory = image_dir;
+                    c64_uci_environment.fault = true;
+                }
                 return false;
-            while (mt_sd_directory_next(dir, &info).status == MT_SD_OK && info.name[0]) {
+            }
+            while ((virtual_dir ? c64_uci_image_next(image_dir, &info) :
+                                  mt_sd_directory_next(dir, &info)).status == MT_SD_OK && info.name[0]) {
                 if (!mt_iec_dos_recovery_name(info.name) && wildcard(part, info.name)) {
                     memcpy(part, info.name, strlen(info.name) + 1);
                     found = true;
                     break;
                 }
             }
-            bool closed = mt_sd_directory_close(dir).status == MT_SD_OK;
+            bool closed = (virtual_dir ? c64_uci_image_close(&image_dir) :
+                                        mt_sd_directory_close(dir)).status == MT_SD_OK;
             if (!closed) {
                 path_directory = dir;
+                path_image_directory = image_dir;
                 c64_uci_environment.fault = true;
             }
             if (!found || !closed)
@@ -395,7 +415,7 @@ int c64_uci_service_hold_begin(void)
 }
 void c64_uci_service_hold_end(void)
 {
-    if (hold_active && !reload_only && !quiesce_active && !ram_active && !fence_active &&
+    if (hold_active && !reload_only && !reboot_hold && !quiesce_active && !ram_active && !fence_active &&
         !c64_uci_environment.fault) {
         uint32_t c = c64_uci_read(MT_REG_C64_UCI_CONTROL);
         if (!hold_previous)
@@ -528,10 +548,15 @@ bool c64_uci_service_action(c64_uci_action_t *action, char *path, size_t cap, un
     *device = action_device;
     memcpy(path, action_path, strlen(action_path) + 1);
     action_result = 2;
+    if (pending_action == C64_UCI_ACTION_REBOOT) reboot_hold = true;
     return true;
 }
 void c64_uci_service_action_done(int status)
 {
+    if (status && reboot_hold) {
+        reboot_hold = false;
+        c64_uci_service_hold_end();
+    }
     if (pending_action != C64_UCI_ACTION_NONE) {
         action_result = status ? -1 : 0;
         pending_action = C64_UCI_ACTION_NONE;
@@ -573,9 +598,10 @@ int c64_uci_service_init(mt_core_link_t *link, const char *root,
                          const c64_uci_callbacks_t *callbacks)
 {
     memset(&c64_uci_environment, 0, sizeof c64_uci_environment);
-    hold_active = fence_active = ram_active = false;
+    hold_active = fence_active = ram_active = reboot_hold = false;
     hardware_fault = temporary_failed = false;
     temporary_directory = path_directory = NULL;
+    path_image_directory = NULL;
     reload_only = false;
     hardware_fault_kind = FAULT_UNKNOWN;
     quiesce_active = quiesce_op_pending = reset_pending = false;
@@ -610,14 +636,19 @@ int c64_uci_service_init(mt_core_link_t *link, const char *root,
     c64_uci_service_refresh_control();
     return 0;
 }
+static bool uci_enabled(void)
+{
+    return (c64_uci_read(MT_REG_C64_EXPANSION_CONFIG) & MT_C64_EXPANSION_UCI_ENABLE) ||
+           (c64_uci_read(MT_REG_C64_UCI_STATUS) & MT_C64_UCI_STATUS_ENABLED);
+}
 void c64_uci_service_refresh_control(void)
 {
     if (!c64_uci_environment.available)
         return;
     uint32_t caps = c64_uci_read(MT_REG_C64_EXPANSION_CAPS);
     uint32_t desired = engine.targets[5].begin && c64_iec_service_active()
-                           ? 9U : MT_C64_UCI_CONTROL_DEFAULT;
-    if (c64_uci_read(MT_REG_C64_EXPANSION_CONFIG) & MT_C64_EXPANSION_UCI_ENABLE) {
+                           ? c64_iec_service_device_number() : MT_C64_UCI_CONTROL_DEFAULT;
+    if (uci_enabled()) {
         if (caps & MT_C64_EXPANSION_CAPS_UCI_RAM_DMA)
             desired |= MT_C64_UCI_CONTROL_FREEZE;
         if (caps & MT_C64_EXPANSION_CAPS_UCI_C64_IRQ)
@@ -647,12 +678,21 @@ bool c64_uci_service_available(void)
 {
     return c64_uci_environment.available;
 }
+unsigned c64_uci_service_drive_address(void)
+{
+    if (!c64_uci_environment.available ||
+        (c64_uci_read(MT_REG_ABI_VERSION) & 0xffff) < MT_C64_UCI315_MIN_ABI_MINOR ||
+        !(c64_uci_read(MT_REG_C64_EXPANSION_CAPS) & MT_C64_EXPANSION_CAPS_DRIVE_POWER) ||
+        (c64_uci_read(MT_REG_C64_PERIPHERAL_CONTROL) & MT_C64_PERIPHERAL_DRIVE_A_OFF))
+        return 8;
+    const uint32_t status = c64_uci_read(MT_REG_C64_DRIVE_STATUS);
+    return status & 0x80000000U ? status & 31 : 8;
+}
 bool c64_uci_service_active(void)
 {
     return c64_uci_environment.available &&
            (engine.active || quiesce_active || reset_pending ||
-            (temporary_pending && (c64_uci_read(MT_REG_C64_EXPANSION_CONFIG) &
-                                   MT_C64_EXPANSION_UCI_ENABLE)));
+            (temporary_pending && uci_enabled()));
 }
 int c64_uci_service_poll(unsigned budget)
 {
@@ -665,8 +705,7 @@ int c64_uci_service_poll(unsigned budget)
         return -1;
     if (quiesce_active)
         return c64_uci_service_quiesce();
-    if (temporary_pending && (c64_uci_read(MT_REG_C64_EXPANSION_CONFIG) &
-                              MT_C64_EXPANSION_UCI_ENABLE)) {
+    if (temporary_pending && uci_enabled()) {
         if (clean_temporary() < 0) {
             temporary_pending = false;
             temporary_failed = true;
@@ -694,6 +733,10 @@ static void finish_reset(void)
     action_result = 0;
     ram_active = false;
     reset_pending = false;
+    if (c64_uci_read(MT_REG_CONTROL) & MT_CONTROL_CORE_RESET_REQUEST) {
+        reboot_hold = false;
+        c64_uci_service_hold_end();
+    }
     mt_net_service_guest_reset();
 }
 int c64_uci_service_quiesce(void)
@@ -792,6 +835,9 @@ int c64_uci_service_retry(void)
         if (!completed) return -1;
         hardware_fault = false;
     }
+    if (path_image_directory && c64_uci_image_close(&path_image_directory).status != MT_SD_OK)
+        return -1;
+    if (c64_uci_image_retry() != 0) return -1;
     if (path_directory) {
         if (mt_sd_directory_close(path_directory).status != MT_SD_OK)
             return -1;
@@ -829,15 +875,23 @@ int c64_uci_service_prepare_reload(void)
         !(c64_uci_read(MT_REG_VIDEO_FRAME_STATUS) & MT_VIDEO_FRAME_STATUS_QUIESCENT) ||
         !(c64_uci_read(MT_REG_C64_REU_HOST) & MT_C64_REU_HOST_IDLE))
         return 1;
+    if ((c64_uci_read(MT_REG_C64_EXPANSION_CAPS) & MT_C64_EXPANSION_CAPS_CART_ERASE) &&
+        (c64_uci_read(MT_REG_C64_CART_ERASE_STATUS) & MT_C64_CART_ERASE_BUSY))
+        return 1;
     reload_only = true;
     c64_uci_write(MT_REG_C64_UCI_CONTROL,
                   c64_uci_read(MT_REG_C64_UCI_CONTROL) | MT_C64_UCI_CONTROL_HOLD);
     hold_active = true;
     ram_active = fence_active = quiesce_op_pending = false;
     hardware_fault = c64_uci_environment.fault = engine.faulted = false;
+    reboot_hold = false;
+    c64_uci_control_prepare_reload();
     quiesce_active = false;
     pending_action = C64_UCI_ACTION_NONE;
     action_result = 0;
+    if (path_image_directory && c64_uci_image_close(&path_image_directory).status != MT_SD_OK)
+        return -1;
+    if (c64_uci_image_retry() != 0) return -1;
     if (path_directory) {
         if (mt_sd_directory_close(path_directory).status != MT_SD_OK) return -1;
         path_directory = NULL;

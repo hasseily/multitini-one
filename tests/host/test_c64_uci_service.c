@@ -16,7 +16,13 @@ static unsigned native_pending, native_delay, native_ops, guest_resets;
 static uint32_t native_op;
 static bool native_stall, native_drop;
 static bool watch_storage, iec_active = true;
+static unsigned iec_address = 9;
 static unsigned observed_storage;
+static bool acknowledge_erase = true;
+static uint8_t erase_token;
+static bool emulate_ram_stream, fail_ram_stream;
+static uint8_t ram_stream[258];
+static size_t ram_stream_size, ram_stream_used;
 static void observe_storage(void)
 {
     if (watch_storage) {
@@ -68,7 +74,27 @@ static void write32(void *context, uint32_t offset, uint32_t value)
     (void)context;
     writes++;
     regs[offset / 4] = value;
-    if (offset == MT_REG_C64_UCI_HANDSHAKE) {
+    if (emulate_ram_stream && offset == MT_REG_COMMAND_DOORBELL) {
+        const uint32_t op = regs[MT_REG_COMMAND_OPCODE / 4];
+        regs[MT_REG_RESPONSE_SEQ / 4] = value;
+        regs[MT_REG_RESPONSE_STATUS / 4] = fail_ram_stream ? MT_RESPONSE_IO_ERROR : MT_RESPONSE_OK;
+        if (op == MT_COMMAND_STREAM_BEGIN) {
+            assert(regs[MT_REG_COMMAND_ARG0 / 4] == MT_C64_UCI_LOAD_KIND);
+            assert(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD);
+            assert(!(regs[MT_REG_CONTROL / 4] & MT_CONTROL_CORE_RESET_REQUEST));
+            ram_stream_size = regs[MT_REG_COMMAND_ARG1 / 4]; ram_stream_used = 0;
+            assert(ram_stream_size <= sizeof ram_stream);
+            regs[MT_REG_STREAM_STATUS / 4] = MT_STREAM_STATUS_READY;
+        } else if (op == MT_COMMAND_STREAM_END) {
+            assert(!fail_ram_stream && ram_stream_used == ram_stream_size && ram_stream_size >= 3);
+            uint16_t address = (uint16_t)(ram_stream[0] | ((unsigned)ram_stream[1] << 8));
+            memcpy(ram + address, ram_stream + 2, ram_stream_size - 2);
+        } else assert(op == MT_COMMAND_STREAM_ABORT);
+    } else if (emulate_ram_stream && offset == MT_REG_STREAM_DATA_BURST) {
+        for (unsigned i = 0; i < 4 && ram_stream_used < ram_stream_size; i++)
+            ram_stream[ram_stream_used++] = (uint8_t)(value >> (i * 8));
+        if (ram_stream_used == ram_stream_size) regs[MT_REG_STREAM_STATUS / 4] = MT_STREAM_STATUS_DRAINED;
+    } else if (offset == MT_REG_C64_UCI_HANDSHAKE) {
         assert(!native_pending);
         native_ops++;
         native_op = value;
@@ -77,6 +103,12 @@ static void write32(void *context, uint32_t offset, uint32_t value)
     } else if (offset == MT_REG_C64_UCI_CONTROL) {
         regs[MT_REG_C64_CPU_STATUS / 4] =
             (value & MT_C64_UCI_CONTROL_HOLD) ? MT_C64_CPU_STATUS_PAUSE : 0;
+    } else if (offset == MT_REG_C64_CART_ERASE) {
+        assert(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD);
+        erase_token = (uint8_t)((regs[MT_REG_C64_CART_ERASE_STATUS / 4] + 1) & 15);
+        if (acknowledge_erase)
+            regs[MT_REG_C64_CART_ERASE_STATUS / 4] = MT_C64_CART_ERASE_VALID | erase_token;
+        else regs[MT_REG_C64_CART_ERASE_STATUS / 4] |= MT_C64_CART_ERASE_BUSY;
     } else if (offset == MT_REG_C64_REU_HOST) {
         regs[offset / 4] |= MT_C64_REU_HOST_IDLE;
         if (acknowledge_fence)
@@ -131,6 +163,7 @@ mt_uci_target_t c64_uci_softiec_target(void)
 {
     return (mt_uci_target_t){.begin=softiec_present};
 }
+unsigned c64_iec_service_device_number(void) { return iec_address; }
 bool c64_iec_service_active(void)
 {
     return iec_active;
@@ -149,11 +182,13 @@ static void setup(void)
     usec = 0;
     watch_storage = false;
     iec_active = true;
+    iec_address = 9;
     observed_storage = 0;
     drains = 0;
     native_pending = native_delay = native_ops = guest_resets = 0;
     ram_request_token = 0;
     native_stall = native_drop = false;
+    emulate_ram_stream = fail_ram_stream = false;
     acknowledge_fence = acknowledge_ram = true;
     regs[MT_REG_ABI_VERSION / 4] = (MT_ABI_MAJOR << 16) | 26;
     regs[MT_REG_CORE_ID / 4] = MT_C64_CORE_ID;
@@ -186,6 +221,193 @@ static void status(const char *text)
                 (int)reply.status_length, reply.status, c64_uci_environment.reu_image);
     assert(reply.status_length == strlen(text));
     assert(!memcmp(reply.status, text, strlen(text)));
+}
+static void palette_and_drive_control(void)
+{
+    setup();
+    mt_uci_target_t control = c64_uci_control_target();
+    finish(&control, start(&control, 0x51, NULL, 0));
+    status("99,FUNCTION NOT IMPLEMENTED");
+    regs[MT_REG_ABI_VERSION / 4] = 27;
+    regs[MT_REG_C64_EXPANSION_CAPS / 4] |= MT_C64_EXPANSION_CAPS_PALETTE |
+        MT_C64_EXPANSION_CAPS_DRIVE_POWER;
+    regs[MT_REG_C64_PALETTE_STATUS / 4] = MT_C64_PALETTE_STATUS_VALID;
+    finish(&control, start(&control, 0x51, NULL, 0));
+    status("00,OK");
+    uint8_t defaults[48], colors[48];
+    assert(reply.data_length == 48);
+    memcpy(defaults, reply.data, sizeof defaults);
+    for (unsigned i = 0; i < sizeof colors; i++) colors[i] = (uint8_t)(i * 5 + 3);
+    assert(start(&control, 0x52, colors, sizeof colors) == MT_UCI_WAIT);
+    assert(control.poll(control.context, &reply) == MT_UCI_WAIT);
+    assert(regs[MT_REG_C64_PALETTE_DATA / 4] == 0x03080d);
+    regs[MT_REG_C64_PALETTE_STATUS / 4] |= MT_C64_PALETTE_STATUS_BUSY;
+    unsigned before = writes;
+    assert(control.poll(control.context, &reply) == MT_UCI_WAIT && writes == before);
+    regs[MT_REG_C64_PALETTE_STATUS / 4] &= ~MT_C64_PALETTE_STATUS_BUSY;
+    finish(&control, MT_UCI_WAIT);
+    status("00,OK");
+    finish(&control, start(&control, 0x51, NULL, 0));
+    assert(reply.data_length == 48 && !memcmp(reply.data, colors, sizeof colors));
+    uint8_t single[] = {15, 255, 0, 128};
+    finish(&control, start(&control, 0x53, single, sizeof single));
+    assert(regs[MT_REG_C64_PALETTE_DATA / 4] == 0x0fff0080);
+    single[0] = 16;
+    finish(&control, start(&control, 0x53, single, sizeof single));
+    status("81,INVALID PARAMS");
+    finish(&control, start(&control, 0x52, colors, 47));
+    status("81,INVALID PARAMS");
+    finish(&control, start(&control, 0x54, NULL, 0));
+    finish(&control, start(&control, 0x51, NULL, 0));
+    assert(!memcmp(reply.data, defaults, 48));
+    single[0] = 15;
+    assert(start(&control, 0x53, single, sizeof single) == MT_UCI_WAIT);
+    assert(control.poll(control.context, &reply) == MT_UCI_WAIT);
+    regs[MT_REG_C64_PALETTE_STATUS / 4] |= MT_C64_PALETTE_STATUS_BUSY;
+    usec += 1000000;
+    assert(control.poll(control.context, &reply) == MT_UCI_REPLY);
+    status("87,INTERNAL ERROR");
+    before = writes;
+    finish(&control, start(&control, 0x54, NULL, 0));
+    status("87,INTERNAL ERROR");
+    assert(writes == before && control.abort(control.context, 0) == MT_UCI_WAIT);
+    regs[MT_REG_C64_PALETTE_STATUS / 4] &= ~MT_C64_PALETTE_STATUS_BUSY;
+    finish(&control, start(&control, 0x51, NULL, 0));
+    assert(!memcmp(reply.data + 45, single + 1, 3));
+    finish(&control, start(&control, 0x31, NULL, 0));
+    status("00,OK");
+    finish(&control, start(&control, 0x34, NULL, 0));
+    assert(reply.data_length == 3 && !memcmp(reply.data, "off", 3));
+    finish(&control, start(&control, 0x29, NULL, 0));
+    assert(reply.data[3] == 0);
+    finish(&control, start(&control, 0x30, NULL, 0));
+    regs[MT_REG_C64_DRIVE_STATUS / 4] = 0x8000000a;
+    iec_address = 30;
+    finish(&control, start(&control, 0x29, NULL, 0));
+    assert(reply.data_length == 7 && reply.data[0] == 2 && reply.data[2] == 10 &&
+           reply.data[4] == 15 && reply.data[5] == 30 && reply.data[6] == 1);
+    uint8_t effective = 1;
+    finish(&control, start(&control, 0x29, &effective, 1));
+    assert(reply.data[2] == 10 && reply.data[5] == 30);
+    uint8_t configured = 0;
+    finish(&control, start(&control, 0x29, &configured, 1));
+    /* Ultimate's selector applies only to the emulated drives. SoftwareIEC
+     * always reports the live bus address, including after U0>/S-/M-W. */
+    assert(reply.data[2] == 8 && reply.data[5] == 30);
+    iec_address = 13;
+    c64_uci_service_refresh_control();
+    assert((regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_DEFAULT) == 13);
+    finish(&control, start(&control, 0x29, NULL, 0));
+    assert(reply.data[5] == 13);
+    iec_address = 9;
+    c64_uci_service_refresh_control();
+    finish(&control, start(&control, 0x31, NULL, 0));
+    finish(&control, start(&control, 0x29, NULL, 0));
+    assert(reply.data[2] == 8 && reply.data[3] == 0);
+    finish(&control, start(&control, 0x30, NULL, 0));
+    finish(&control, start(&control, 0x34, NULL, 0));
+    assert(reply.data_length == 3 && !memcmp(reply.data, "on ", 3));
+    finish(&control, start(&control, 0x32, NULL, 0));
+    finish(&control, start(&control, 0x35, NULL, 0));
+    assert(reply.data_length == 3 && !memcmp(reply.data, "off", 3));
+    finish(&control, start(&control, 3, NULL, 0));
+    status("00,OK");
+    uint8_t sector[] = {0, 0xff, 0xa0};
+    finish(&control, start(&control, 0x20, sector, sizeof sector));
+    status("99,FUNCTION NOT IMPLEMENTED");
+    regs[MT_REG_C64_EXPANSION_CAPS / 4] |= MT_C64_EXPANSION_CAPS_CART_ERASE;
+    regs[MT_REG_C64_CART_ERASE_STATUS / 4] = MT_C64_CART_ERASE_VALID;
+    finish(&control, start(&control, 0x20, sector, sizeof sector));
+    status("00,OK");
+    assert(regs[MT_REG_C64_CART_ERASE / 4] == 0x78);
+    assert(!(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD));
+    acknowledge_erase = false;
+    assert(start(&control, 0x20, sector, sizeof sector) == MT_UCI_WAIT);
+    assert(control.poll(control.context, &reply) == MT_UCI_WAIT);
+    assert(control.abort(control.context, 0) == MT_UCI_WAIT);
+    assert(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD);
+    regs[MT_REG_C64_CART_ERASE_STATUS / 4] = MT_C64_CART_ERASE_VALID | erase_token;
+    assert(control.abort(control.context, 0) == MT_UCI_REPLY);
+    assert(!(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD));
+    acknowledge_erase = true;
+    assert(start(&control, 0x20, sector, sizeof sector) == MT_UCI_WAIT);
+    assert(control.poll(control.context, &reply) == MT_UCI_WAIT);
+    regs[MT_REG_C64_CART_ERASE_STATUS / 4] |= MT_C64_CART_ERASE_FAULT;
+    assert(control.poll(control.context, &reply) == MT_UCI_FAILED);
+    assert(c64_uci_service_reload_required());
+    assert(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD);
+}
+static void erase_abort_fault_retention(void)
+{
+    setup();
+    mt_uci_target_t control = c64_uci_control_target();
+    regs[MT_REG_ABI_VERSION / 4] = 27;
+    regs[MT_REG_C64_EXPANSION_CAPS / 4] |= MT_C64_EXPANSION_CAPS_CART_ERASE;
+    regs[MT_REG_C64_CART_ERASE_STATUS / 4] = MT_C64_CART_ERASE_VALID;
+    uint8_t sector[] = {0, 0, 0x80};
+    acknowledge_erase = false;
+    assert(start(&control, 0x20, sector, sizeof sector) == MT_UCI_WAIT);
+    assert(control.poll(control.context, &reply) == MT_UCI_WAIT);
+    regs[MT_REG_C64_CART_ERASE_STATUS / 4] =
+        MT_C64_CART_ERASE_VALID | MT_C64_CART_ERASE_FAULT | erase_token;
+    assert(control.abort(control.context, 0) == MT_UCI_FAILED);
+    assert(c64_uci_service_reload_required() && c64_uci_environment.fault);
+    assert(c64_uci_service_retry() == -1);
+    assert(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD);
+    /* Explicit PL replacement can discard a completed native error, but only
+     * with reset asserted and every external master drained. */
+    assert(c64_uci_service_prepare_reload() == 1);
+    regs[MT_REG_CONTROL / 4] = MT_CONTROL_CORE_RESET_REQUEST;
+    assert(c64_uci_service_prepare_reload() == 1);
+    regs[MT_REG_VIDEO_FRAME_STATUS / 4] = MT_VIDEO_FRAME_STATUS_QUIESCENT;
+    regs[MT_REG_C64_REU_HOST / 4] &= ~MT_C64_REU_HOST_IDLE;
+    assert(c64_uci_service_prepare_reload() == 1);
+    regs[MT_REG_C64_REU_HOST / 4] |= MT_C64_REU_HOST_IDLE;
+    regs[MT_REG_C64_CART_ERASE_STATUS / 4] |= MT_C64_CART_ERASE_BUSY;
+    assert(c64_uci_service_prepare_reload() == 1 && c64_uci_environment.fault);
+    regs[MT_REG_C64_CART_ERASE_STATUS / 4] &= ~MT_C64_CART_ERASE_BUSY;
+    assert(c64_uci_service_prepare_reload() == 0 && !c64_uci_environment.fault);
+    assert(c64_uci_service_reload_required());
+    assert(c64_uci_service_poll(1) == -1 && c64_uci_service_retry() == -1);
+    assert(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD);
+    acknowledge_erase = true;
+}
+static void reboot_signature_and_hold(void)
+{
+    setup();
+    emulate_ram_stream = true;
+    mt_uci_target_t control = c64_uci_control_target();
+    c64_uci_action_t action; char path[512]; unsigned device;
+    ram[0x8004] = 0xa4; ram[0x8005] = 0xc3; ram[0x8006] = 0xa6;
+    assert(start(&control, 6, NULL, 0) == MT_UCI_WAIT);
+    assert(!c64_uci_service_action(&action, path, sizeof path, &device));
+    assert(control.poll(control.context, &reply) == MT_UCI_WAIT);
+    assert(ram[0x8004] == 0xa4 && ram[0x8005] == 0 && ram[0x8006] == 0xa6);
+    assert(c64_uci_service_action(&action, path, sizeof path, &device) && action == C64_UCI_ACTION_REBOOT);
+    c64_uci_service_action_done(0);
+    assert(c64_uci_service_quiesce() == 0);
+    assert(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD);
+    regs[MT_REG_CONTROL / 4] |= MT_CONTROL_CORE_RESET_REQUEST;
+    c64_uci_service_reset();
+    assert(!(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD));
+    /* A failed foreground reset unwinds its claimed hold; an ordinary abort
+     * before the action is claimed does so without touching a reset register. */
+    setup(); emulate_ram_stream = true; control = c64_uci_control_target();
+    assert(start(&control, 6, NULL, 0) == MT_UCI_WAIT);
+    assert(control.poll(control.context, &reply) == MT_UCI_WAIT);
+    assert(control.abort(control.context, 0) == MT_UCI_REPLY);
+    assert(!(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD));
+    assert(start(&control, 6, NULL, 0) == MT_UCI_WAIT);
+    assert(control.poll(control.context, &reply) == MT_UCI_WAIT);
+    assert(c64_uci_service_action(&action, path, sizeof path, &device));
+    c64_uci_service_action_done(74);
+    assert(!(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD));
+    setup(); emulate_ram_stream = true; fail_ram_stream = true; control = c64_uci_control_target();
+    ram[0x8005] = 0xc3;
+    assert(start(&control, 6, NULL, 0) == MT_UCI_WAIT);
+    assert(control.poll(control.context, &reply) == MT_UCI_FAILED);
+    assert(ram[0x8005] == 0xc3 && !c64_uci_service_action(&action, path, sizeof path, &device));
+    assert(c64_uci_service_reload_required() && (regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD));
 }
 static void open_file(mt_uci_target_t *t, const char *path, uint8_t mode)
 {
@@ -675,6 +897,9 @@ static void wrapper_failure_recovery(void)
 }
 int main(void)
 {
+    palette_and_drive_control();
+    erase_abort_fault_retention();
+    reboot_signature_and_hold();
     wrapper_failure_recovery();
     reviewer_regressions();
     quiesce_cases();

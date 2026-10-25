@@ -5,6 +5,9 @@ module tb_c64_cart_memory;
     logic clk = 1'b0;
     logic reset = 1'b1;
     logic loader_active = 1'b0;
+    logic [31:0] erase_request = 0;
+    logic erase_allowed = 0;
+    wire [31:0] erase_status;
     logic [23:0] loader_addr = 24'd0;
     logic loader_write = 1'b0;
     logic [63:0] loader_wdata = 64'd0;
@@ -39,6 +42,37 @@ module tb_c64_cart_memory;
             $display("FAIL: %s", message);
             $fatal(1);
         end
+    endtask
+
+    task automatic erase_sector(input [3:0] token,input [5:0] bank,input bit high_rom);
+        integer waited;
+        reg [23:0] expected;
+        @(negedge clk);
+        erase_request={token,1'b1,20'd0,high_rom,bank};
+        @(negedge clk);
+        check(erase_status[16]&&!erase_status[17],"erase starts while safely paused");
+        for(integer word_index=0;word_index<8192;word_index++)begin
+            waited=0;
+            while(!memory_valid&&waited<16)begin @(negedge clk);waited++;end
+            check(waited<16,"next erase write issued");
+            expected=24'h200000+((bank&6'h38)+word_index/1024)*16384+
+                     (high_rom?8192:0)+(word_index%1024)*8;
+            check(memory_write&&memory_addr==expected&&memory_wstrb==8'hff&&
+                  memory_wdata==64'hffffffffffffffff,"erase geometry and FF write payload");
+            check(!loader_busy,"erase must not assert content-loader reset");
+            repeat(word_index%3)begin
+                @(negedge clk);
+                check(memory_valid&&memory_addr==expected,"erase request stable under backpressure");
+            end
+            memory_ready=1;@(negedge clk);memory_ready=0;
+            check(erase_status[16],"erase waits for write completion");
+            repeat(word_index%4)@(negedge clk);
+            memory_rvalid=1;@(negedge clk);memory_rvalid=0;
+        end
+        check(!erase_status[16]&&!erase_status[17]&&erase_status[3:0]==token,
+              "completion token follows all 8192 acknowledged writes");
+        repeat(8)@(negedge clk);
+        check(!memory_valid&&!busy,"held request is not replayed");
     endtask
 
     initial begin
@@ -115,7 +149,32 @@ module tb_c64_cart_memory;
         @(negedge clk);
         clear_fault = 1'b0;
         check(!fault, "fault clears explicitly");
-        $display("PASS: C64 cartridge memory bridge");
+        memory_ready=0;
+        erase_request=32'h08000000; // token zero is a real first request when VALID is set
+        @(negedge clk);
+        check(erase_status==32'h80020000&&!memory_valid,"unsafe erase rejected without a write");
+        erase_allowed=1;
+        // Seed a runtime cache line, then prove erase invalidates it.
+        core_addr=24'h200003;core_request=1;
+        repeat(2)@(negedge clk);memory_ready=1;@(negedge clk);memory_ready=0;
+        memory_rvalid=1;@(negedge clk);memory_rvalid=0;core_request=0;
+        @(negedge clk);check(core_rdata==8'h33,"runtime cache seeded before erase");
+        erase_sector(4'hf,6'h07,0); // low three bank bits are ignored
+        core_request=1;repeat(2)@(negedge clk);
+        check(core_stall&&memory_valid&&!memory_write,"erase invalidates cached ROM data");
+        memory_ready=1;@(negedge clk);memory_ready=0;
+        memory_rdata=64'hffffffffffffffff;memory_rvalid=1;@(negedge clk);memory_rvalid=0;
+        check(core_rdata==8'hff&&!core_stall,"runtime sees erased contents");core_request=0;
+        erase_sector(4'h0,6'h3f,1); // sequence wrap and top high-ROM sector
+        @(negedge clk);loader_active=1;erase_request=32'h18000000;@(negedge clk);
+        check(erase_status==32'h80020001&&!memory_valid,"loader owns backing memory exclusively");
+        loader_active=0;erase_request=32'h28000080;@(negedge clk);
+        check(erase_status==32'h80020002&&!memory_valid,"reserved request bits rejected");
+        erase_request=32'h38000000;@(negedge clk);check(erase_status[16],"fault test starts");
+        memory_ready=1;@(negedge clk);memory_ready=0;
+        memory_fault=1;@(negedge clk);memory_fault=0;
+        check(erase_status==32'h80020003&&fault&&!memory_valid,"backend fault terminates with error token");
+        $display("PASS: C64 cartridge memory bridge and acknowledged EasyFlash sectors");
         $finish;
     end
 endmodule

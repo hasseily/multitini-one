@@ -41,7 +41,8 @@ module tb_c64_uci_machine #(parameter integer NTSC=0);
         .ENABLE_EXTENSIONS(1),.SID_COUNT(8)) dut(
         .core_clk(clk),.cpu_clk(fastclk),.reset(reset),.core_reset_request(1'b0),
         .cpu_config(config_word),.cpu_status(cpu_status),.cpu_turbo_enable(1'b0),
-        .ua_enable(1'b0),.debug_enable(1'b0),.uci_enable(1'b1),.uci_control(control),
+        .ua_enable(1'b0),.debug_enable(1'b0),.uci_enable(1'b1),.uci_config_epoch(1'b0),.uci_control(control),
+        .cart_erase_request(32'd0),.cart_erase_status(),
         .uci_op(op),.uci_op_valid(op_valid),.uci_op_ready(),.uci_ram_request(32'd0),
         .uci_status(uci_status),.uci_status2(uci_status2),
         .uci_buffer_addr(buffer_addr),.uci_buffer_write(buffer_we),
@@ -52,7 +53,7 @@ module tb_c64_uci_machine #(parameter integer NTSC=0);
         .ua_memory_ready(1'b1),.ua_memory_rvalid(1'b0),.ua_memory_fault(1'b0),.ua_memory_rdata(64'd0),
         .iec9_run(1'b0),.iec9_quiesce(1'b0),.iec9_event_ready(1'b1),
         .iec9_reply_data(32'd0),.iec9_reply_valid(1'b0),
-        .pause_request(pause_request),.drive_parallel_enable(1'b0),.sid_mode(3'd0),.reu_enable(1'b1),
+        .pause_request(pause_request),.drive_parallel_enable(1'b0),.drive_power_off(1'b0),.sid_mode(3'd0),.reu_enable(1'b1),
         .load_abort(1'b0),.load_abort_epoch(1'b0),.clear_load_error(1'b0),
         .input_code(16'd0),.input_value(16'd0),.input_valid(1'b0),
         .load_data(load_data),.load_valid(load_valid),.load_ready(load_ready),
@@ -207,8 +208,9 @@ module tb_c64_uci_machine #(parameter integer NTSC=0);
             force dut.cart_loaded=1;repeat(4)@(negedge clk);
             if(!dut.uci_active||!dut.uci_io_select||dut.uci_suspended||dut.cart_io_read||uci_status[25:22]!=prior_epoch)
                 $fatal(1,"UCI generic-cart IO2 ownership");
-            force dut.cpu_bus_addr=16'hdf20;#1;if(dut.uci_io_select)$fatal(1,"UCI escaped DF18..DF1F");
-            force dut.cpu_bus_addr=16'hdf18;#1;if(!dut.uci_io_select)$fatal(1,"UCI DF18 boundary missing");
+            force dut.cpu_bus_addr=16'hdf20;#1;if(dut.uci_io_select)$fatal(1,"UCI escaped DF1B..DF1F");
+            force dut.cpu_bus_addr=16'hdf1a;#1;if(dut.uci_io_select)$fatal(1,"UCI owns cartridge DF1A");
+            force dut.cpu_bus_addr=16'hdf1b;#1;if(!dut.uci_io_select)$fatal(1,"UCI DF1B boundary missing");
             force dut.reu_dma_req=1;#1;if(dut.uci_io_select||!dut.uci_active)$fatal(1,"DMA must release UCI IO2 without resetting endpoint");
             force dut.reu_dma_req=0;
             force dut.loader_cart_id=1;repeat(4)@(negedge clk);

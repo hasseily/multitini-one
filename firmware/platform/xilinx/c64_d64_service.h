@@ -45,6 +45,9 @@ int c64_d64_service_retry(void);
 /* Forget only in-flight request de-duplication after reset was asserted. */
 void c64_d64_service_notify_core_reset(void);
 int c64_d64_service_mount(const char *file_name);
+/* Ultimate SWAP_DISK cycles the final disk-number/side-letter in the mounted
+ * basename. Missing alternatives are a successful no-op. */
+int c64_d64_service_swap(void);
 /* Restore a selection only after confirming the FPGA still owns the mount. */
 int c64_d64_service_ensure_mounted(const char *file_name);
 int c64_d64_service_mount_default(void);

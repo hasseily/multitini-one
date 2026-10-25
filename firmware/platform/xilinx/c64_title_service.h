@@ -31,6 +31,8 @@ int c64_title_service_save(void);
 int c64_title_service_revert(void);
 void c64_title_service_clear(void);
 void c64_title_service_reset(bool cartridge, bool disk_present);
+/* UCI reboot caller holds guest reset; clear title overrides only after apply. */
+int c64_title_service_reboot(bool default_cartridge);
 void c64_title_service_effective(mt_c64_title_values_t *requested, mt_c64_title_values_t *applied,
                                  bool cartridge);
 const mt_c64_title_overlay_t *c64_title_service_overlay(void);

@@ -48,11 +48,18 @@ def main():
             text=run(folder,'positive',[v/'xsim.bat','--nolog','adapter_sim','--runall'])
             match=re.findall(r'PASS ADAPTER LOAD SID checks=(\d+) CRTbytes=8192 UCIbytes=4 slots=16 NTSC='+str(ntsc),text)
             if len(match)!=1:raise RuntimeError('Missing exact positive marker')
-            receipt['cases'].append({'ntsc':ntsc,'checks':int(match[0]),'crt_bytes':8192,'uci_bytes':4,'io_slots':16,'sid_count':8})
+            if text.count('UCI_UNLOCK PASS native/FIO/wrong-key/mirror/cartridge/reset/config-epoch/5-byte-aperture NTSC='+str(ntsc))!=1:
+                raise RuntimeError('Missing UCI unlock coverage marker')
+            if text.count('UCI_ERASE PASS words=8192 held-without-reset NTSC='+str(ntsc))!=1:
+                raise RuntimeError('Missing UCI erase coverage marker')
+            if text.count('UCI_DRIVE PASS power/address NTSC='+str(ntsc))!=1:
+                raise RuntimeError('Missing UCI drive coverage marker')
+            receipt['cases'].append({'ntsc':ntsc,'checks':int(match[0]),'crt_bytes':8192,'uci_bytes':4,'io_slots':16,'sid_count':8,'uci_unlock':True,'erase_words':8192})
         folder=out/'0';adapter=snap(ROOT/'hdl/core/c64/multitini_c64_adapter.sv');original=adapter.read_text()
         for name,old,new,failure in (
             ('wrong_kind','multitini_regs_pkg::MT_C64_UCI_LOAD_KIND[7:0]',"8'd17",'ADAPTER LOAD SID loader handshake bounded'),
-            ('empty_slot',' && (|sid_io_masks[cpu_bus_addr[8:5]*8 +: 8])','', 'ADAPTER LOAD SID unmapped SID slot does not own IO')):
+            ('empty_slot',' && (|sid_io_masks[cpu_bus_addr[8:5]*8 +: 8])','', 'ADAPTER LOAD SID unmapped SID slot does not own IO'),
+            ('no_unlock',"uci_unlock_key && uci_key_data == 8'hcd","1'b0",'ADAPTER LOAD SID native unlock identification')):
             if old not in original:raise RuntimeError('Mutation anchor missing')
             mutant=folder/(name+'.sv');mutant.write_text(original.replace(old,new))
             run(folder,name+'-compile',[v/'xvlog.bat','--nolog','--sv',mutant])

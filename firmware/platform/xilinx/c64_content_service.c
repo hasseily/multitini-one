@@ -368,6 +368,47 @@ mt_c64_content_service_result_t c64_content_service_load(
     return c64_content_service_load_hooked(file_name, NULL);
 }
 
+mt_c64_content_service_result_t c64_content_service_reboot(
+    const char *default_cartridge, int (*restore_settings)(void *), void *context)
+{
+    mt_c64_content_service_result_t result = service_result(MT_C64_CONTENT_SERVICE_OK);
+    if (content_link == NULL || content_link->read32 == NULL || content_link->write32 == NULL)
+        return service_result(MT_C64_CONTENT_SERVICE_INVALID_ARGUMENT);
+    result.link = set_core_reset(true);
+    if (result.link != MT_LINK_OK) {
+        result.status = MT_C64_CONTENT_SERVICE_TRANSFER_FAILED;
+        return result;
+    }
+    clear_core_load_error();
+    result.link = mt_c64_detach_crt(content_link, MT_C64_CONTENT_POLLS,
+                                   content_progress, content_progress_context);
+    if (result.link != MT_LINK_OK) {
+        result.status = MT_C64_CONTENT_SERVICE_TRANSFER_FAILED;
+        return result;
+    }
+    crt_attached = prg_staged = false;
+    crt_name[0] = '\0';
+    if (restore_settings != NULL && restore_settings(context) != 0)
+        return service_result(MT_C64_CONTENT_SERVICE_CONFIG_FAILED);
+    if (default_cartridge != NULL && default_cartridge[0] != '\0') {
+        if (mt_content_classify(default_cartridge) != MT_CONTENT_CRT)
+            return service_result(MT_C64_CONTENT_SERVICE_INVALID_ARGUMENT);
+        const mt_c64_launch_hook_t hook = {
+            .reu_requested = c64_content_service_reu_enabled(), .hold_reset = true};
+        result = c64_content_service_load_hooked(default_cartridge, &hook);
+        if (result.status != MT_C64_CONTENT_SERVICE_OK)
+            (void)set_core_reset(true);
+        return result;
+    }
+    result.link = set_core_reset(false);
+    if (result.link == MT_LINK_OK) result.link = wait_for_core_result(NULL);
+    if (result.link != MT_LINK_OK) {
+        result.status = MT_C64_CONTENT_SERVICE_TRANSFER_FAILED;
+        (void)set_core_reset(true);
+    }
+    return result;
+}
+
 mt_c64_content_service_result_t c64_content_service_load_hooked(
     const char *file_name, const mt_c64_launch_hook_t *hook)
 {

@@ -27,9 +27,6 @@ static uint32_t status_generation;
 static uint8_t block[256], memory[256];
 static uint8_t snapshot[65536];
 static size_t snapshot_size, snapshot_cursor;
-/* Partition zero follows the shared device9 cwd. Explicit 1..255 mappings
- * remain rooted and are cleared on target reset, not persisted to the card. */
-static char partitions[256][MT_IEC_PATH];
 
 static mt_uci_result_t binary(mt_uci_reply_t *r, unsigned code)
 {
@@ -82,43 +79,10 @@ static bool text(const uint8_t *in, size_t length, char *out, size_t capacity)
     out[length] = 0;
     return true;
 }
-/* Translate an explicit partition prefix by temporarily selecting its cwd.
- * This is a synchronous foreground operation; every caller restores cwd
- * before returning to native IEC or the UCI engine. */
-static int partition_name(mt_iec_dos_t *d, const uint8_t *in, size_t length, char name[MT_IEC_NAME],
-                          char oldcwd[MT_IEC_PATH])
-{
-    strcpy(oldcwd, d->cwd);
-    if (!text(in, length, name, MT_IEC_NAME))
-        return 7;
-    char *p = name;
-    if (*p == '@')
-        ++p;
-    char *digits = p;
-    unsigned number = 0;
-    while (*p >= '0' && *p <= '9') {
-        number = number * 10U + (unsigned)(*p - '0');
-        if (number > 255)
-            return 8;
-        ++p;
-    }
-    if (p != digits && *p == ':') {
-        if (number && !partitions[number][0])
-            return 8;
-        if (number)
-            strcpy(d->cwd, partitions[number]);
-        memmove(digits, p + 1, strlen(p + 1) + 1);
-    }
-    return 0;
-}
 static int open_name(mt_iec_dos_t *d, unsigned ch, const uint8_t *name, size_t length)
 {
-    char translated[MT_IEC_NAME], oldcwd[MT_IEC_PATH];
-    int rc = partition_name(d, name, length, translated, oldcwd);
-    if (!rc)
-        rc = mt_iec_dos_open(d, ch, (const uint8_t *)translated, strlen(translated));
-    strcpy(d->cwd, oldcwd);
-    return rc;
+    if (length && !name[length - 1]) --length;
+    return mt_iec_dos_open(d, ch, name, length);
 }
 static int commit_input(mt_iec_dos_t *d, size_t consumed)
 {
@@ -299,7 +263,7 @@ static void reset_target(void *context)
     load_ready = false;
     state = IDLE;
     prepared = 0;
-    memset(partitions, 0, sizeof partitions);
+    /* Partitions belong to the shared IEC drive, not to a UCI transaction. */
 }
 static mt_uci_result_t next(void *context, size_t consumed, mt_uci_reply_t *r)
 {
@@ -405,9 +369,10 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
         }
         int rc = 0;
         if (op == 0x14 || (op == 0x16 && (command[2] & 0xf0) == 0xe0)) {
-            bool writing = ch < 15 && d->channels[ch].kind == 2;
+            bool writing = ch < 15 && (d->channels[ch].kind == 2 ||
+                                       (d->channels[ch].kind == 5 && d->channels[ch].writable));
             rc = mt_iec_dos_close(d, ch);
-            if (writing && rc)
+            if (writing && (rc == 23 || rc == 25 || rc == 72 || rc == 74))
                 c64_iec_service_write_failure(rc);
             if (ch == 0)
                 load_ready = false;
@@ -416,9 +381,10 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
         } else if (ch == 15)
             rc = mt_iec_dos_command(d, command + 4, length - 4);
         else {
-            bool writing = d->channels[ch].kind == 2;
+            bool writing = d->channels[ch].kind == 2 ||
+                           (d->channels[ch].kind == 5 && d->channels[ch].writable);
             rc = mt_iec_dos_write(d, ch, command + 4, length - 4, true);
-            if (writing && rc)
+            if (writing && (rc == 23 || rc == 25 || rc == 72 || rc == 74))
                 c64_iec_service_write_failure(rc);
         }
         release_channel();
@@ -442,30 +408,23 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
         char path[C64_UCI_PATH];
         if (!c64_uci_path(d->cwd, (const uint8_t *)colon + 1, strlen(colon + 1), path))
             return binary(r, 9);
-        mt_sd_info_t info;
-        mt_sd_result_t rc = mt_sd_file_stat(path, &info);
-        if (rc.status != MT_SD_OK || !(info.attributes & 0x10))
-            return binary(r, 9);
-        strcpy(partitions[command[2]], path);
-        return binary(r, 0);
+        *colon = 0;
+        return binary(r, mt_iec_dos_partition_add(d, command[2], path, value) ? 9 : 0);
     }
     if (op == 0x21) {
         if (length != 3 || !command[2])
             return binary(r, 6);
-        partitions[command[2]][0] = 0;
-        return binary(r, 0);
+        return binary(r, mt_iec_dos_partition_remove(d, command[2]) ? 8 : 0);
     }
     if (op == 0x22) {
         if (length < 4)
             return binary(r, 6);
-        char translated[MT_IEC_NAME], oldcwd[MT_IEC_PATH], path[MT_IEC_PATH];
-        int rc = partition_name(d, command + 3, length - 3, translated, oldcwd);
-        if (!rc)
-            rc = mt_iec_dos_resolve_name(d, ch, (const uint8_t *)translated, strlen(translated),
-                                         path);
-        strcpy(d->cwd, oldcwd);
+        char path[MT_IEC_PATH];
+        size_t name_length = length - 3;
+        if (name_length && !command[length - 1]) --name_length;
+        int rc = mt_iec_dos_resolve_name(d, ch, command + 3, name_length, path);
         if (rc)
-            return binary(r, rc == 8 ? 8 : rc == 33 || rc == 30 ? 7 : 9);
+            return binary(r, rc == 77 ? 8 : rc == 33 || rc == 30 ? 7 : 9);
         binary(r, 0);
         const size_t root_length = strlen(d->root);
         const char *relative = path;

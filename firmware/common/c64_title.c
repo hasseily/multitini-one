@@ -240,8 +240,14 @@ static void line_value(mt_c64_title_overlay_t *o, mt_c64_title_report_t *r,
     const uint8_t before_classes = o->sid_classes;
     if (!g) {
         if (same(sec, "U64 Specific Settings") && same(key, "System Mode")) {
-            if (!(same(val, "PAL") || same(val, "NTSC")) || same(val, "NTSC") != c->ntsc) {
+            if (!(same(val, "PAL") || same(val, "NTSC"))) {
+                ++r->errors;
                 ++r->skipped;
+                note(r, line, key, "invalid video system");
+            } else if (same(val, "NTSC") != c->ntsc) {
+                ++r->skipped;
+                if (c->origin == MT_TITLE_UCI_FILE)
+                    ++r->errors;
                 note(r, line, key, "different video image required");
             }
         } else if (same(sec, "C64 and Cartridge Settings") && same(key, "REU Size")) {
@@ -257,7 +263,9 @@ static void line_value(mt_c64_title_overlay_t *o, mt_c64_title_report_t *r,
             }
         } else if (same(sec, "C64 and Cartridge Settings") &&
                    (strstr(key, "ROM") || strstr(key, "Cartridge") || strstr(key, "REU Preload") ||
-                    strstr(key, "Bus ") || strstr(key, "DMA "))) { /* content paths never applied */
+                    strstr(key, "Bus ") || strstr(key, "DMA "))) {
+            ++r->skipped;
+            note(r, line, key, "not supported by title settings");
         } else {
             ++r->skipped;
             note(r, line, key, "unknown item; ignored");
@@ -485,10 +493,20 @@ bool mt_c64_title_parse(const uint8_t *data, size_t size, const mt_c64_title_par
             (void)snprintf(section, sizeof(section), "%s", section_name(s));
             if (known_section(section))
                 ++r->known_sections;
+            else {
+                ++r->skipped;
+                note(r, lineno, section, "unknown section; ignored");
+            }
             continue;
         }
-        if (!known_section(section))
+        if (!known_section(section)) {
+            if (!section[0]) {
+                ++r->errors;
+                ++r->skipped;
+                note(r, lineno, "line", "not inside a configuration section");
+            }
             continue;
+        }
         char *eq = strchr(s, '=');
         if (!eq || (size_t)(eq - s) > 40) {
             ++r->errors;

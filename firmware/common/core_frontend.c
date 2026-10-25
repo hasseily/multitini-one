@@ -237,9 +237,6 @@ static void build_c64(mt_core_frontend_t *frontend,
             (void)snprintf(frontend->c64_turbo_help, sizeof(frontend->c64_turbo_help), "%s", hint);
             frontend->core_options[1] = item("CPU turbo", frontend->c64_turbo_text,
                 frontend->c64_turbo_help, MT_MENU_ACTION_TOGGLE_CORE_OPTION, 1U, true, MT_UI_COLOR_BLUE);
-            frontend->core_options[view->core_option_count++] = item("Turbo on/off",
-                state->cpu_turbo_enabled ? "On" : "Off", "Switch turbo off or back to the stored mode and speed.",
-                MT_MENU_ACTION_TOGGLE_CORE_OPTION, 9U, true, MT_UI_COLOR_BLUE);
             if (index == 0 && (detail & 0x20U))
                 (void)snprintf(frontend->c64_speed_text, sizeof(frontend->c64_speed_text),
                     "1 MHz, badlines off (not cycle-exact)");

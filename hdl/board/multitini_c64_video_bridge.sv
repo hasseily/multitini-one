@@ -44,6 +44,7 @@ endmodule
 
 module multitini_c64_video_bridge #(
     parameter bit DYNAMIC_DISPLAY=1'b0,
+    parameter bit PROGRAMMABLE_PALETTE=1'b0,
     parameter bit     NTSC_MODE        = 1'b0,
     parameter integer SOURCE_WIDTH    = NTSC_MODE ? 404 : 382,
     parameter integer SOURCE_HEIGHT   = NTSC_MODE ? 250 : 270,
@@ -65,6 +66,9 @@ module multitini_c64_video_bridge #(
 
     input  logic        pixel_clk,
     input  logic        pixel_resetn,
+    input  logic        palette_clk, palette_resetn, palette_valid,
+    input  logic [28:0] palette_data,
+    output wire         palette_ready,
     input  logic        diagnostic_request,
     output logic [11:0] viewport_x, viewport_y, viewport_width, viewport_height,
     input  logic [11:0] scan_x,
@@ -142,6 +146,7 @@ module multitini_c64_video_bridge #(
     logic [3:0] bank_read_data_3;
     logic [3:0] selected_bank_read_data;
     logic [3:0] selected_palette_index;
+    wire [15:0] display_palette_color;
 
     function automatic logic [4:0] encode_palette(
         input logic [7:0] red,
@@ -195,6 +200,50 @@ module multitini_c64_video_bridge #(
             endcase
         end
     endfunction
+
+    // Capture retains the VIC's fixed RGB-to-index mapping. Only final display
+    // expansion changes, so arbitrary colors (including duplicates) cannot
+    // corrupt frame geometry or lose captured pixels.
+    generate if (PROGRAMMABLE_PALETTE) begin : g_palette
+        wire [28:0] update_word;
+        wire update_valid;
+        reg [4:0] initializing = 0;
+        reg reset_command = 0;
+        wire palette_resetn_pixel;
+        // Display mode changes reset the frame reader, not the active palette.
+        // If the video clock stops, acknowledgement waits until it resumes.
+        // Use the reviewed two-flop level sampler: only its first D pin is
+        // excluded from cross-clock timing, while stage-to-stage timing stays
+        // constrained. Its zero initialization matches the palette startup.
+        cdc_bit_sync palette_reset_sync (
+            .clk(pixel_clk), .resetn(1'b1), .din(palette_resetn),
+            .dout(palette_resetn_pixel)
+        );
+        (* ram_style = "distributed" *) reg [15:0] colors [0:15];
+        multitini_async_mailbox #(.WIDTH(29),.DRAIN_ON_RESET(1'b1)) updates (
+            .src_clk(palette_clk),.src_resetn(palette_resetn),
+            .src_valid(palette_valid),.src_ready(palette_ready),.src_data(palette_data),
+            .dst_clk(pixel_clk),.dst_resetn(palette_resetn_pixel),
+            .dst_valid(update_valid),
+            .dst_ready(initializing[4] && (!update_word[28] || reset_command)),.dst_data(update_word));
+        always_ff @(posedge pixel_clk) begin
+            if (!palette_resetn_pixel) begin initializing<=0;reset_command<=0;end
+            else if (!initializing[4]) begin
+                colors[initializing[3:0]]<=palette_rgb565(initializing[3:0]);
+                initializing<=initializing+1'b1;
+            end else if (update_valid) begin
+                if (update_word[28] && !reset_command) begin
+                    initializing<=0;reset_command<=1;
+                end
+                else if (!update_word[28]) colors[update_word[27:24]]<=
+                    {update_word[23:19],update_word[15:10],update_word[7:3]};
+            end else reset_command<=0;
+        end
+        assign display_palette_color=initializing[4] ? colors[selected_palette_index] : 16'd0;
+    end else begin : g_fixed_palette
+        assign palette_ready=1'b0;
+        assign display_palette_color=palette_rgb565(selected_palette_index);
+    end endgenerate
 
     assign source_palette_code =
         encode_palette(source_r, source_g, source_b);
@@ -557,7 +606,7 @@ module multitini_c64_video_bridge #(
         // final visible coordinate consumes the registered index even though
         // no further RAM request is needed there.
         machine_rgb565 = machine_active && display_valid && output_active ?
-                         palette_rgb565(selected_palette_index) : 16'h0000;
+                         display_palette_color : 16'h0000;
     end
 
     always_ff @(posedge pixel_clk) begin

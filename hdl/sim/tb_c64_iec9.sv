@@ -5,6 +5,7 @@ module tb_c64_iec9;
     logic clk=0;
     always #(500000000.0/CLOCK_HZ) clk=~clk;
     logic reset=1,run=0,quiesce=0,atn=1,host_clk=1,host_data=1;
+    logic [4:0] device_address=0;
     wire dev_clk,dev_data;
     wire bus_clk=host_clk&&dev_clk;
     wire bus_data=host_data&&dev_data;
@@ -17,6 +18,7 @@ module tb_c64_iec9;
     integer count=0;
     multitini_c64_iec9 #(.CLOCK_HZ(CLOCK_HZ)) dut(
         .clk(clk),.hard_reset(reset),.run(run),.quiesce(quiesce),.atn(atn),
+        .device_address(device_address),
         .bus_clk(bus_clk),.bus_data(bus_data),.clk_o(dev_clk),.data_o(dev_data),
         .event_data(event_data),.event_valid(event_valid),.event_ready(event_ready),
         .reply_data(reply_data),.reply_valid(reply_valid),.reply_ready(reply_ready),
@@ -64,7 +66,7 @@ module tb_c64_iec9;
         atn=1;us(40);
     endtask
     task automatic talk_start(input logic [3:0] channel);
-        command_start();send_byte(8'h49,0,1);send_byte(8'h60|channel,0,1);
+        command_start();send_byte(8'h40 | (device_address==0?8'd9:{3'b000,device_address}),0,1);send_byte(8'h60|channel,0,1);
         host_data=0;atn=1;host_clk=1;wait_clock(0);us(1);
     endtask
     task automatic post_reply(input logic [15:0] tag,input logic [7:0] data,input bit eoi,input bit error);
@@ -159,6 +161,25 @@ module tb_c64_iec9;
         if(token==old_token)$fatal(1,"restart reused token");
         post_reply(old_token,8'hff,0,0);us(10);
         if(!dev_clk||!dev_data)$fatal(1,"restart accepted stale reply");
+        // Address changes do not reset open channels or the current transfer.
+        // Only the next primary address chooses the new listener/talker.
+        device_address=12;us(5);
+        command_start();send_byte(8'h29,0,0);command_end();
+        n=count;
+        command_start();send_byte(8'h2c,0,1);send_byte(8'hf3,0,1);command_end();
+        device_address=30;send_byte(8'h42,1,1);
+        command_start();send_byte(8'h3f,0,1);command_end();
+        expect_event(n,1,3,8'hf3);expect_event(n+1,4,3,8'h42);
+        command_start();send_byte(8'h2c,0,0);command_end();
+        n=count;talk_start(3);us(5);expect_event(n,6,3,0);
+        fork
+            begin post_reply(token,8'hac,1,0);end
+            begin receive_byte(got,got_eoi);if(got!=8'hac||!got_eoi)$fatal(1,"renumbered talk wrong");end
+        join
+        command_start();send_byte(8'h5f,0,1);command_end();
+        device_address=0;us(5);
+        command_start();send_byte(8'h3e,0,0);command_end();
+        command_start();send_byte(8'h29,0,1);send_byte(8'h3f,0,1);command_end();
         $display("PASS IEC9 protocol CLOCK_HZ=%0d events=%0d",CLOCK_HZ,count);$finish;
     end
     initial begin #300000000;$fatal(1,"overall timeout");end

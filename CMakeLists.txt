@@ -33,6 +33,7 @@ add_library(multitini_common STATIC
     firmware/common/c64_sid.c
     firmware/common/c64_title.c
     firmware/common/c64_uci.c
+    firmware/common/c64_uci_cvt.c
     firmware/common/net_config.c
     firmware/common/net_w5100s.c
     firmware/common/net_protocol.c
@@ -75,7 +76,7 @@ if(NOT MSVC AND NOT CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
 endif()
 
 enable_testing()
-foreach(component net net_edges net_uci_http c64_uci)
+foreach(component net net_edges net_uci_http c64_uci c64_uci_cvt)
     add_executable(test_${component} tests/host/test_${component}.c)
     target_link_libraries(test_${component} PRIVATE multitini_common)
     add_test(NAME ${component} COMMAND test_${component})
@@ -93,10 +94,30 @@ target_link_libraries(test_c64_sid_settings PRIVATE multitini_common)
 add_test(NAME c64_sid_settings COMMAND test_c64_sid_settings)
 add_executable(test_c64_uci_service tests/host/test_c64_uci_service.c
     firmware/platform/xilinx/c64_uci_service.c firmware/platform/xilinx/c64_uci_dos.c
-    firmware/platform/xilinx/c64_uci_control.c firmware/platform/xilinx/c64_uci_geos.c)
+    firmware/platform/xilinx/c64_uci_control.c firmware/platform/xilinx/c64_uci_geos.c
+    firmware/platform/xilinx/c64_uci_image.c)
 target_include_directories(test_c64_uci_service PRIVATE firmware/platform/xilinx)
 target_link_libraries(test_c64_uci_service PRIVATE multitini_common)
 add_test(NAME c64_uci_service COMMAND test_c64_uci_service)
+add_executable(test_c64_uci_dos tests/host/test_c64_uci_dos.c
+    firmware/platform/xilinx/c64_uci_service.c firmware/platform/xilinx/c64_uci_dos.c
+    firmware/platform/xilinx/c64_uci_control.c firmware/platform/xilinx/c64_uci_geos.c
+    firmware/platform/xilinx/c64_uci_image.c)
+target_include_directories(test_c64_uci_dos PRIVATE firmware/platform/xilinx)
+target_link_libraries(test_c64_uci_dos PRIVATE multitini_common)
+add_test(NAME c64_uci_dos COMMAND test_c64_uci_dos)
+add_executable(test_c64_uci_dos_image tests/host/test_c64_uci_dos_image.c
+    firmware/platform/xilinx/c64_uci_service.c firmware/platform/xilinx/c64_uci_dos.c
+    firmware/platform/xilinx/c64_uci_control.c firmware/platform/xilinx/c64_uci_geos.c
+    firmware/platform/xilinx/c64_uci_image.c)
+target_include_directories(test_c64_uci_dos_image PRIVATE firmware/platform/xilinx)
+target_link_libraries(test_c64_uci_dos_image PRIVATE multitini_common)
+add_test(NAME c64_uci_dos_image COMMAND test_c64_uci_dos_image)
+add_executable(test_c64_uci_image tests/host/test_c64_uci_image.c firmware/platform/xilinx/c64_uci_image.c)
+target_link_libraries(test_c64_uci_image PRIVATE multitini_common)
+target_include_directories(test_c64_uci_image PRIVATE firmware/platform/xilinx firmware/include tests/host)
+add_test(NAME c64_uci_image COMMAND test_c64_uci_image)
+
 add_executable(test_c64_uci_softiec tests/host/test_c64_uci_softiec.c firmware/platform/xilinx/c64_uci_softiec.c)
 target_include_directories(test_c64_uci_softiec PRIVATE firmware/platform/xilinx)
 target_link_libraries(test_c64_uci_softiec PRIVATE multitini_common)
@@ -106,7 +127,7 @@ target_include_directories(test_c64_uci_geos PRIVATE firmware/platform/xilinx)
 target_link_libraries(test_c64_uci_geos PRIVATE multitini_common)
 add_test(NAME c64_uci_geos COMMAND test_c64_uci_geos)
 if(MULTITINI_SANITIZE AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-    foreach(target test_c64_uci_service test_c64_uci_softiec test_c64_uci_geos test_net_service test_c64_sid_settings test_http_json_alloc)
+    foreach(target test_c64_uci_service test_c64_uci_dos test_c64_uci_dos_image test_c64_uci_image test_c64_uci_softiec test_c64_uci_geos test_net_service test_c64_sid_settings test_http_json_alloc)
         target_compile_options(${target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all)
         target_link_options(${target} PRIVATE -fsanitize=address,undefined)
     endforeach()
@@ -239,6 +260,8 @@ add_test(NAME text_document COMMAND test_text_document)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_test(NAME sd_quiesce_bsp_patch COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_SOURCE_DIR}/tests/test_sd_quiesce_patch.py)
+add_test(NAME fatfs_chmod COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/test_fatfs_chmod.py)
 add_test(NAME core_artifacts COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_SOURCE_DIR}/scripts/test_core_artifacts.py
     --build-dir ${CMAKE_BINARY_DIR}/core-artifact-checks)
@@ -498,6 +521,7 @@ add_test(NAME c64_iec_dos COMMAND test_c64_iec_dos)
 add_executable(test_c64_iec_service
     tests/host/test_c64_iec_service.c
     firmware/platform/xilinx/c64_iec_service.c
+    firmware/platform/xilinx/c64_uci_image.c
 )
 target_include_directories(test_c64_iec_service PRIVATE
     firmware/platform/xilinx

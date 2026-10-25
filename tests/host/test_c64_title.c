@@ -50,6 +50,19 @@ int main(void)
     assert(parse("[unknown]\nCPU Speed=64\n[U64 Specific Settings]\n#comment\nCPU Speed=8\n", true,
                  MT_TITLE_PRG));
     assert(report.applied == 1 && mt_c64_speed_mhz(overlay.values.detail & 15) == 8);
+    assert(report.skipped == 1 && strstr(report.message[0], "unknown section"));
+    assert(parse("[C64 and Cartridge Settings]\nCustom Kernal ROM=custom.rom\n"
+                 "REU Preload Image=game.reu\n", true, MT_TITLE_UCI_FILE));
+    assert(!overlay.owned && !report.applied && report.skipped == 2 && report.entries == 2);
+    assert(strstr(report.message[0], "not supported by title settings"));
+    assert(!parse("CPU Speed=16\n", true, MT_TITLE_UCI_FILE));
+    assert(report.errors && !overlay.owned);
+    assert(!parse("[U64 Specific Settings]\nSystem Mode=wrong\n", true, MT_TITLE_UCI_FILE));
+    assert(!parse("[U64 Specific Settings]\nSystem Mode=NTSC\n", true, MT_TITLE_UCI_FILE));
+    assert(strstr(report.message[0], "different video image required"));
+    assert(parse("[U64 Specific Settings]\nSystem Mode=NTSC\nCPU Speed=16\n", false,
+                 MT_TITLE_PRG));
+    assert(report.skipped == 1 && report.errors == 0 && (overlay.owned & MT_TITLE_SPEED));
     char path[256];
     assert(mt_c64_title_sidecar(path, sizeof(path), "Nested/Some title.PRG", ".cfg"));
     assert(strcmp(path, "Nested/Some title.cfg") == 0);

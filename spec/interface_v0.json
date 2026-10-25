@@ -2,7 +2,7 @@
   "schema_version": 1,
   "abi": {
     "major": 0,
-    "minor": 26
+    "minor": 27
   },
   "magic": "0x4D543031",
   "shell_id": "0x4D544F4E",
@@ -510,6 +510,48 @@
       "description": "Acknowledged sequence7:0, busy8, rejected9, reject reason14:10, reserved15, reject index21:16, reserved30:22, active valid31."
     },
     {
+      "name": "C64_PALETTE_DATA",
+      "offset": "0x164",
+      "access": "wo",
+      "reset": "0",
+      "description": "RGB888 bits23:0, color index27:24, bit28 reset all colors; full-word write only when PALETTE_STATUS busy is clear."
+    },
+    {
+      "name": "C64_PALETTE_STATUS",
+      "offset": "0x168",
+      "access": "ro",
+      "reset": "0",
+      "description": "Valid31, busy0 until display-clock palette write is acknowledged."
+    },
+    {
+      "name": "C64_PERIPHERAL_CONTROL",
+      "offset": "0x16C",
+      "access": "rw",
+      "reset": "0",
+      "description": "Bit0 disables drive A, preserving mounted media. Bit1 toggles to revoke software UCI unlock after explicit configuration apply. Bits12:8 select SoftIEC address8..30; zero uses default9. Other bits reserved."
+    },
+    {
+      "name": "C64_CART_ERASE",
+      "offset": "0x170",
+      "access": "wo",
+      "reset": "0",
+      "description": "Erase canonical EasyFlash sector: bank bits5:3, high-ROM bit6. Full-word write when status idle increments request token."
+    },
+    {
+      "name": "C64_CART_ERASE_STATUS",
+      "offset": "0x174",
+      "access": "ro",
+      "reset": "0",
+      "description": "Valid31, busy16, fault17, completed token3:0. Completion follows PSRAM write responses."
+    },
+    {
+      "name": "C64_DRIVE_STATUS",
+      "offset": "0x178",
+      "access": "ro",
+      "reset": "0",
+      "description": "Valid31; drive A effective IEC address4:0, observed from drive RAM $78. Available with drive-power capability."
+    },
+    {
       "name": "VIDEO_FRAME_CONTROL",
       "offset": "0x180",
       "access": "rw",
@@ -916,6 +958,9 @@
     "C64_REU_DDR_SIZE": "0x01000000",
     "C64_IEC_MIN_ABI": "0x00000019",
     "C64_IEC_CAPS_DEVICE9": "0x80000009",
+    "C64_IEC_CAPS_ADDRESS": "0x00000100",
+    "C64_PERIPHERAL_IEC_ADDRESS_MASK": "0x00001F00",
+    "C64_PERIPHERAL_IEC_ADDRESS_SHIFT": 8,
     "C64_IEC_EVENT_RESET": 0,
     "C64_IEC_EVENT_OPEN": 1,
     "C64_IEC_EVENT_CLOSE": 2,
@@ -977,7 +1022,20 @@
     "C64_SID_STATUS_BUSY": "0x100",
     "C64_SID_STATUS_REJECTED": "0x200",
     "C64_SID_STATUS_REJECT_REASON_MASK": "0x00007C00",
-    "C64_SID_STATUS_REJECT_INDEX_MASK": "0x003F0000"
+    "C64_SID_STATUS_REJECT_INDEX_MASK": "0x003F0000",
+    "C64_UCI315_MIN_ABI_MINOR": 27,
+    "C64_EXPANSION_CAPS_PALETTE": "0x8000",
+    "C64_EXPANSION_CAPS_UCI_UNLOCK": "0x10000",
+    "C64_EXPANSION_CAPS_DRIVE_POWER": "0x20000",
+    "C64_PALETTE_STATUS_VALID": "0x80000000",
+    "C64_PALETTE_STATUS_BUSY": 1,
+    "C64_PALETTE_RESET": "0x10000000",
+    "C64_PERIPHERAL_DRIVE_A_OFF": 1,
+    "C64_PERIPHERAL_UCI_CONFIG_EPOCH": 2,
+    "C64_EXPANSION_CAPS_CART_ERASE": "0x40000",
+    "C64_CART_ERASE_BUSY": "0x10000",
+    "C64_CART_ERASE_FAULT": "0x20000",
+    "C64_CART_ERASE_VALID": "0x80000000"
   },
   "commands": {
     "PING": 0,

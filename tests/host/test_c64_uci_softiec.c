@@ -164,6 +164,12 @@ int main(void)
     active = false;
     CHECK(start(1, 0, NULL, 0, 2) == MT_UCI_REPLY && reply.status[0] == 5);
     active = true;
+    const uint8_t move_address[]={'M','-','W',0x77,0,1,12};
+    CHECK(start(0x13,15,move_address,sizeof move_address,4)==MT_UCI_REPLY && dos.current_device==12 && fixture.device==12);
+    CHECK(start(0x13,15,(const uint8_t *)"M-E",3,4)==MT_UCI_REPLY);
+    CHECK(start(0x15,15,NULL,0,3)==MT_UCI_REPLY && reply.data_length==27 && !memcmp(reply.data,"98,UNKNOWN DRIVECODE,00,00\r",27));
+    ack(reply.data_length);
+    CHECK(start(0x13,15,(const uint8_t *)"S-D",3,4)==MT_UCI_REPLY && dos.current_device==9);
     open_name(2, "DATA");
     CHECK(start(0x15, 2, NULL, 0, 3) == MT_UCI_REPLY && reply.data_length == 32 && reply.more &&
           leases == (1U << 2));
@@ -242,15 +248,29 @@ int main(void)
           !memcmp(reply.data, "/NEW.seq", reply.data_length));
     CHECK(!fixture_find("0:/media/NEW.seq"));
     CHECK(start(0x22, 3, (const uint8_t *)"NEWDEFAULT,W", 12, 3) == MT_UCI_REPLY);
-    CHECK(reply.data_length == strlen("/NEWDEFAULT.prg") &&
-          !memcmp(reply.data, "/NEWDEFAULT.prg", reply.data_length));
+    CHECK(reply.data_length == strlen("/NEWDEFAULT.seq") &&
+          !memcmp(reply.data, "/NEWDEFAULT.seq", reply.data_length));
     open_name(3, "NEWDEFAULT,W");
     CHECK(start(0x16, 3, (const uint8_t *)"x", 1, 4) == MT_UCI_REPLY);
-    CHECK(start(0x14, 3, NULL, 0, 3) == MT_UCI_REPLY && fixture_find("0:/media/NEWDEFAULT.prg"));
+    CHECK(start(0x14, 3, NULL, 0, 3) == MT_UCI_REPLY && fixture_find("0:/media/NEWDEFAULT.seq"));
     CHECK(start(0x23, 0, (const uint8_t *)"data.prg", 8, 2) == MT_UCI_REPLY &&
           reply.status[0] == 0 && reply.data[0] == 1 && !memcmp(reply.data + 1, "DATA", 4));
     CHECK(start(0x20, 7, (const uint8_t *)"TITLE:/sub", 10, 3) == MT_UCI_REPLY &&
           reply.status[0] == 0);
+    CHECK(!strcmp(dos.partitions[7].name, "TITLE"));
+    CHECK(start(0x22, 4, (const uint8_t *)"$7/", 3, 3) == MT_UCI_REPLY && reply.status[0] == 0);
+    CHECK(reply.data_length == 4 && !memcmp(reply.data, "/sub", 4));
+    CHECK(start(0x22, 4, (const uint8_t *)"$=P", 3, 3) == MT_UCI_REPLY && reply.status[0] == 0);
+    CHECK(reply.data_length == 11 && !memcmp(reply.data, "/partitions", 11));
+    CHECK(start(0x16, 15, (const uint8_t *)"CP:7", 4, 4) == MT_UCI_REPLY);
+    CHECK(dos.current_partition == 7 && !strcmp(dos.cwd, "0:/media/sub"));
+    open_name(4, "NESTED");
+    CHECK(dos.channels[4].kind == 1);
+    CHECK(start(0x14, 4, NULL, 0, 3) == MT_UCI_REPLY);
+    CHECK(start(0x16, 15, (const uint8_t *)"CD:..", 5, 4) == MT_UCI_REPLY);
+    CHECK(!strncmp(dos.status, "26,", 3) && !strcmp(dos.cwd, "0:/media/sub"));
+    CHECK(start(0x16, 15, (const uint8_t *)"CP:1", 4, 4) == MT_UCI_REPLY);
+    CHECK(dos.current_partition == 1 && !strcmp(dos.cwd, "0:/media"));
     open_name(4, "7:NESTED");
     CHECK(dos.channels[4].kind == 1 && !strcmp(dos.cwd, "0:/media"));
     CHECK(start(0x14, 4, NULL, 0, 3) == MT_UCI_REPLY);

@@ -50,6 +50,10 @@ typedef int (*mt_sd_list_fn)(void *context, const char *name, size_t size,
  * interrupted commit can replay the new complete file on the next mount.
  */
 mt_sd_result_t mt_sd_storage_mount(void);
+/* Total usable FAT volume bytes, using the existing mounted owner. The path
+ * must be an existing directory on volume 0. Refused during USB ownership or
+ * from storage callbacks; this does not scan the free-cluster bitmap. */
+mt_sd_result_t mt_sd_storage_capacity(const char *path, uint64_t *bytes);
 mt_sd_result_t mt_sd_storage_read_file_max(const char *path, uint8_t *dst,
                                            size_t capacity);
 /* Read at most capacity bytes, setting truncated when the file is larger.
@@ -112,6 +116,8 @@ mt_sd_result_t mt_sd_directory_open(const char *,mt_sd_directory_t **);
 mt_sd_result_t mt_sd_directory_next(mt_sd_directory_t *,mt_sd_info_t *);
 mt_sd_result_t mt_sd_directory_close(mt_sd_directory_t *);
 mt_sd_result_t mt_sd_file_stat(const char *,mt_sd_info_t *);
+/* Change FAT read-only/hidden/archive flags through the managed owner. */
+mt_sd_result_t mt_sd_file_attributes(const char *, uint8_t attributes, uint8_t mask);
 /* Resolve existing FAT long/short-name aliases component by component.
  * Input is an absolute one-volume path without dot components. Missing
  * components retain their spelling for creation; I/O failures remain errors.

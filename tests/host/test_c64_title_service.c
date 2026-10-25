@@ -130,6 +130,32 @@ int main(void)
     assert(c64_title_service_apply("0:/elsewhere/Game.cfg", true, NULL, 0) == 88);
     assert(c64_title_service_apply("../Game.cfg", false, NULL, 0) == 88);
     assert(c64_title_service_apply("0:/package/media/Game.cfg", true, NULL, 0) == 0);
+    {
+        char log[1024];
+        set_file("[U64 Specific Settings]\nCPU Speed=16\n");
+        memset(log, 0xcc, sizeof(log));
+        assert(c64_title_service_apply("0:/package/media/Game.cfg", true, log, sizeof(log)) == 0);
+        assert(!log[0]); /* Ultimate returns no parse log on full success. */
+        assert(strstr(c64_title_service_status(), "Title settings:"));
+        set_file("[Other Hardware]\nFuture Option=Enabled\n"
+                 "[C64 and Cartridge Settings]\nCustom Kernal ROM=other.rom\n");
+        assert(c64_title_service_apply("0:/package/media/Game.cfg", true, log, sizeof(log)) == 0);
+        assert(strstr(log, "unknown section") && strstr(log, "Custom Kernal ROM"));
+        assert(!strstr(log, "Title settings:"));
+        set_file("[U64 Specific Settings]\nCPU Speed=16\nSystem Mode=NTSC\n");
+        before = applied_count;
+        assert(c64_title_service_apply("0:/package/media/Game.cfg", true, log, sizeof(log)) == 89);
+        assert(strstr(log, "different video image required") && applied_count == before);
+        set_file("[U64 Specific Settings]\n");
+        for (unsigned n = 0; n < 16; ++n) {
+            const char unknown[] = "Unknown setting with a long name=foo\n";
+            memcpy(file + file_size, unknown, sizeof(unknown) - 1);
+            file_size += sizeof(unknown) - 1;
+        }
+        memset(log, 0xcc, sizeof(log));
+        assert(c64_title_service_apply("0:/package/media/Game.cfg", true, log, sizeof(log)) == 0);
+        assert(strlen(log) == 511 && (unsigned char)log[512] == 0xcc);
+    }
     set_file("[U64 Specific Settings]\nCPU Speed=oops\n");
     before = applied_count;
     assert(c64_title_service_apply("Game.cfg", false, NULL, 0) == 89);
@@ -190,6 +216,16 @@ int main(void)
     assert(hook && hook->commit(hook->context) == 0);
     c64_title_service_finish(MT_C64_CONTENT_SERVICE_OK);
     assert(memcmp(&hardware.sid, &expected_sid, sizeof(expected_sid)) == 0);
-    puts("C64 title launch/apply/failed-hold/save/revert/busy-file/root isolation service PASS");
+    fail_apply = true;
+    assert(c64_title_service_reboot(false) < 0);
+    assert(*c64_title_service_session() && c64_title_service_overlay()->owned);
+    fail_apply = false;
+    assert(c64_title_service_reboot(false) == 0);
+    assert(!*c64_title_service_session() && !c64_title_service_overlay()->owned);
+    assert(memcmp(&hardware.sid, &stored.sid, sizeof stored.sid) == 0);
+    assert(hardware.reu == stored.reu);
+    assert(c64_title_service_reboot(true) == 0);
+    assert(!hardware.reu && !hardware.ua);
+    puts("C64 title launch/apply/failed-hold/save/revert/reboot/busy-file/root isolation service PASS");
     return 0;
 }

@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "multitini_clock.h"
 
 #define MT_IEC_PATH 512
 #define MT_IEC_NAME 256
@@ -17,6 +18,11 @@
  * clears *handle iff it actually closed, including on a failed sync. commit
  * must preserve a complete recovery copy until target data is durable. */
 typedef int (*mt_iec_list_fn)(void *, const char *, size_t, bool);
+typedef struct {
+    uint16_t date, time; uint8_t attributes;
+    bool sectors;
+    char label[17], id[6]; /* Optional CBM directory header. */
+} mt_iec_metadata_t;
 typedef struct
 {
     void *context;
@@ -30,6 +36,22 @@ typedef struct
     int (*mkdir)(void *, const char *);
     int (*commit)(void *, const char *, const char *, bool);
     bool (*protected_path)(void *, const char *);
+    /* Optional random access for REL files. Writable temporary handles must
+     * also permit reads; a failed seek must leave ownership with the caller. */
+    int (*seek)(void *, void *, size_t);
+    /* 0 read, 1 write, 2 allocate, 3 free. A directory with no sector medium
+     * returns a DOS error. Allocate can return the next free track/sector. */
+    int (*sector)(void *, const char *, unsigned, unsigned *, unsigned *, uint8_t[256]);
+    /* Total partition bytes (host volume or enclosing disk image). */
+    int (*capacity)(void *, const char *, uint64_t *);
+    int (*metadata)(void *, const char *, mt_iec_metadata_t *);
+    int (*attributes)(void *, const char *, uint8_t, uint8_t);
+    int (*format)(void *, const char *directory, const char *name, const char *id);
+    int (*header)(void *, const char *directory, const char *name, const char *id);
+    bool (*clock)(void *, mt_clock_time_t *);
+    /* Change the serial address for subsequent transactions. Failure must
+     * leave the previously active address in place. */
+    int (*device_number)(void *, unsigned);
 } mt_iec_fs_t;
 
 typedef struct
@@ -38,6 +60,8 @@ typedef struct
     size_t size;
     bool directory;
     char type;
+    uint8_t data_offset, record_size;
+    mt_iec_metadata_t metadata;
 } mt_iec_entry_t;
 typedef struct
 {
@@ -46,15 +70,22 @@ typedef struct
     char target[MT_IEC_PATH], temporary[MT_IEC_PATH];
     uint8_t buffer[MT_IEC_BUFFER];
     size_t size, position, used, cursor;
-    unsigned kind; /* 0 closed, 1 read, 2 write, 3 directory */
+    unsigned kind; /* 0 closed, 1 read, 2 write, 3 directory, 4 buffer, 5 REL */
     int error;
     bool replace, complete;
+    bool writable, record_dirty, record_missing;
+    uint8_t record_size, data_offset;
+    size_t record_offset;
 } mt_iec_channel_t;
 typedef struct
 {
+    char root[MT_IEC_PATH], cwd[MT_IEC_PATH], name[17];
+} mt_iec_partition_t;
+typedef struct
+{
     mt_iec_fs_t fs;
-    char root[MT_IEC_PATH], cwd[MT_IEC_PATH], status[80];
-    size_t status_cursor;
+    char root[MT_IEC_PATH], cwd[MT_IEC_PATH], status[257];
+    size_t status_cursor, status_size;
     mt_iec_channel_t channels[15];
     mt_iec_entry_t entries[MT_IEC_ENTRIES];
     size_t entry_count;
@@ -63,6 +94,12 @@ typedef struct
     int directory_owner;
     uint32_t serial;
     uint32_t status_generation;
+    mt_iec_partition_t partitions[256];
+    unsigned current_partition, active_partition;
+    unsigned current_device, configured_device;
+    void *probe_handle;
+    int64_t clock_offset;
+    bool write_protect;
 } mt_iec_dos_t;
 
 int mt_iec_dos_init(mt_iec_dos_t *, const mt_iec_fs_t *, const char *root);
@@ -91,6 +128,8 @@ int mt_iec_dos_abort_channel(mt_iec_dos_t *, unsigned channel);
 int mt_iec_dos_resolve_name(mt_iec_dos_t *, unsigned channel, const uint8_t *, size_t,
                             char path[MT_IEC_PATH]);
 int mt_iec_dos_iec_name(mt_iec_dos_t *, const char *path, char alias[17], uint8_t *type);
+int mt_iec_dos_partition_add(mt_iec_dos_t *, unsigned, const char *, const char *);
+int mt_iec_dos_partition_remove(mt_iec_dos_t *, unsigned);
 void mt_iec_dos_error(mt_iec_dos_t *, int code);
 bool mt_iec_dos_has_channels(const mt_iec_dos_t *);
 /* Shared reserved recovery namespace, case insensitive. */

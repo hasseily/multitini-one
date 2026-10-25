@@ -45,9 +45,11 @@ module multitini_c64_run_injector #(
             // Clear any held code without changing the event toggle.
             ps2_key <= {host_ps2_key[10], 10'd0};
         end else if (busy) begin
-            // Menu pause must retain the pending key and its remaining delay;
-            // otherwise RUN could be typed while the C64 cannot consume it.
-            if (!pause_request) begin
+            // Retain pending presses during pause. Once Return is pressed the
+            // program can immediately request a UCI DMA freeze. Its final key
+            // release must complete so ARM can leave the synchronous launcher
+            // and service that command. Keyboard release needs no CPU cycle.
+            if (!pause_request || phase == 4'd8) begin
                 if (counter == EVENT_DELAY_CYCLES - 1) begin
                     counter <= '0;
                     toggle <= ~toggle;

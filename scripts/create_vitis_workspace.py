@@ -37,7 +37,7 @@ CPU1_READY_DESCRIPTION = "video-worker-abi=1 USE_AMP=1 entry=0x20000000 bytes=0x
 XILFFS_VERSION = "xilffs_v5_5"
 XILFFS_READY_STAMP = ".multitini-xilffs-ready"
 XILFFS_READY_DESCRIPTION = (
-    "xilffs_v5_5 lfn=1 exfat=1 media-validation=r0.16-patch2 "
+    "xilffs_v5_5 lfn=1 exfat=1 chmod=1 media-validation=r0.16-patch2 "
     "fat-time-hook=rtc-cache no-card=bounded sd-quiesce=reset-v1\n"
 )
 
@@ -284,6 +284,24 @@ def enable_fatfs_exfat(domain_bsp: Path) -> None:
         if updated != original:
             path.write_text(updated, encoding="utf-8")
             print(f"Patched FatFs exFAT: {path}")
+
+
+def enable_fatfs_chmod(domain_bsp: Path) -> None:
+    """Enable SD attribute changes in both generated build and export configs."""
+    generated = Path("libsrc/build_configs/gen_bsp")
+    for relative in (Path("include/xilffs_config.h"), generated / "include/xilffs_config.h",
+                     generated / "CMakeCache.txt", generated / "cmake_lib_configs.txt"):
+        path = require(domain_bsp / relative, f"generated {relative}")
+        old, new = (("/* #undef FILE_SYSTEM_USE_CHMOD */", "#define FILE_SYSTEM_USE_CHMOD")
+                    if path.suffix == ".h" else
+                    ("XILFFS_use_chmod:BOOL=OFF", "XILFFS_use_chmod:BOOL=ON"))
+        original = path.read_text(encoding="utf-8")
+        updated = original.replace(old, new)
+        if new not in updated:
+            raise RuntimeError(f"Could not enable FatFs CHMOD in {path}")
+        if updated != original:
+            path.write_text(updated, encoding="utf-8")
+            print(f"Patched FatFs CHMOD: {path}")
 
 
 def patch_fatfs_media_validation(domain_bsp: Path) -> None:
@@ -609,11 +627,14 @@ def configure_xilffs(platform: object) -> None:
     domain.set_lib(lib_name="xilffs", path=str(xilffs))
     domain.set_config(option="lib", param="XILFFS_enable_exfat",
                       value="true", lib_name="xilffs")
+    domain.set_config(option="lib", param="XILFFS_use_chmod",
+                      value="true", lib_name="xilffs")
     domain.regenerate()
     domain_bsp = (WORKSPACE / PLATFORM_NAME / "ps7_cortexa9_0" /
                   DOMAIN_NAME / "bsp")
     enable_fatfs_exfat(domain_bsp)
     enable_fatfs_lfn(domain_bsp)
+    enable_fatfs_chmod(domain_bsp)
     patch_fatfs_media_validation(domain_bsp)
     enable_fatfs_timestamp_hook(domain_bsp)
     patch_fatfs_no_card_hang(domain_bsp)
@@ -640,7 +661,7 @@ def validate_reused_xilffs(xpfm: Path) -> None:
                      "reused platform xilffs config")
     config_text = config.read_text(encoding="utf-8")
     for marker in ("#define FILE_SYSTEM_USE_LFN 1",
-                   "#define FILE_SYSTEM_FS_EXFAT"):
+                   "#define FILE_SYSTEM_FS_EXFAT", "#define FILE_SYSTEM_USE_CHMOD"):
         if marker not in config_text:
             raise RuntimeError(
                 f"Reused platform lacks {marker}: {config}")

@@ -84,11 +84,17 @@ module tb_control_regs #(parameter logic [31:0] ACCEL_CAPS=0,
     wire [10:0] uci_control;
     wire [5:0] sid_index;
     wire [7:0] sid_sequence;
+    logic palette_ready=1;
+    wire palette_valid;
+    wire [28:0] palette_data;
+    wire [31:0] peripheral_control,erase_request;
+    logic [31:0] erase_status=32'h80000000;
 
     always #5 clk = !clk;
 
     multitini_control_regs #(.SHELL_BUILD_ID(32'h12345678),.IIGS_ACCEL_CAPS(ACCEL_CAPS),
         .C64_EXPANSION_CAPS(C64_CAPS),
+        .C64_IEC_CAPS(EXTENSIONS ? (MT_C64_IEC_CAPS_DEVICE9 | MT_C64_IEC_CAPS_ADDRESS) : 0),
         .NET_CAPS(EXTENSIONS ? MT_NET_CAPS_W5100S : 0),
         .C64_CPU_CAPS(TURBO ? MT_C64_CPU_CAPS_RELEASE : 0),
         .C64_CPU_CAPS2(TURBO ? MT_C64_CPU_CAPS2_RELEASE : 0)) dut (
@@ -100,6 +106,9 @@ module tb_control_regs #(parameter logic [31:0] ACCEL_CAPS=0,
         .c64_uci_status(uci_status),.c64_uci_status2(uci_status2),.c64_sid_status(sid_status),
         .c64_uci_op_ready(uci_op_ready),.c64_uci_op_valid(uci_op_valid),.c64_uci_op(uci_op),
         .c64_uci_ram_request(uci_ram_request),.c64_uci_control(uci_control),
+        .c64_palette_ready(palette_ready),.c64_palette_valid(palette_valid),.c64_palette_data(palette_data),
+        .c64_peripheral_control(peripheral_control),.c64_cart_erase_request(erase_request),
+        .c64_cart_erase_status(erase_status),.c64_drive_status(32'h8000000a),
         .c64_sid_index(sid_index),.c64_sid_data(sid_data),.c64_sid_write(sid_write),
         .c64_sid_commit(sid_commit),.c64_sid_sequence(sid_sequence),
         .net_status(32'h8012ab15),.net_access_error(1'b0),.net_run(net_run),
@@ -760,6 +769,44 @@ module tb_control_regs #(parameter logic [31:0] ACCEL_CAPS=0,
         check_value(!sid_write,"SID busy prevents upload bank mutation");
         write_reg(MT_REG_C64_SID_COMMIT,43,4'hf);
         check_value(!sid_commit,"SID busy prevents commit overwrite");
+        expect_read(MT_REG_C64_DRIVE_STATUS,C64_CAPS[17]?32'h8000000a:0,"drive address capability gate");
+        write_reg(MT_REG_C64_PERIPHERAL_CONTROL,3,4'hf);
+        expect_read(MT_REG_C64_PERIPHERAL_CONTROL,C64_CAPS[17]?3:0,"power and config epoch");
+        write_reg(MT_REG_C64_PERIPHERAL_CONTROL,4,4'hf);
+        expect_read(MT_REG_C64_PERIPHERAL_CONTROL,C64_CAPS[17]?3:0,"reserved peripheral bits rejected");
+        write_reg(MT_REG_C64_PERIPHERAL_CONTROL,32'h1e03,4'hf);
+        expect_read(MT_REG_C64_PERIPHERAL_CONTROL,C64_CAPS[17]?(EXTENSIONS?32'h1e03:3):0,"SoftIEC address capability gate");
+        write_reg(MT_REG_C64_PERIPHERAL_CONTROL,32'h1f03,4'hf);
+        expect_read(MT_REG_C64_PERIPHERAL_CONTROL,C64_CAPS[17]?(EXTENSIONS?32'h1e03:3):0,"reserved address31 rejected");
+        write_reg(MT_REG_C64_PERIPHERAL_CONTROL,32'h0703,4'hf);
+        expect_read(MT_REG_C64_PERIPHERAL_CONTROL,C64_CAPS[17]?(EXTENSIONS?32'h1e03:3):0,"address below8 rejected");
+        write_reg(MT_REG_C64_PERIPHERAL_CONTROL,3,4'hf);
+        write_reg(MT_REG_C64_PALETTE_DATA,32'h0f123456,4'hf);
+        check_value(palette_valid==C64_CAPS[15],"palette capability gate");
+        if(C64_CAPS[15])begin
+            check_value(palette_data==29'h0f123456,"palette word preserved");
+            expect_read(MT_REG_C64_PALETTE_STATUS,32'h80000001,"accepted palette write busy immediately");
+            palette_ready=0;
+            write_reg(MT_REG_C64_PALETTE_DATA,32'h01556677,4'hf);
+            check_value(!palette_valid&&palette_data==29'h0f123456,"busy palette write rejected");
+            palette_ready=1;
+            expect_read(MT_REG_C64_PALETTE_STATUS,32'h80000000,"palette acknowledgment clears busy");
+            write_reg(MT_REG_C64_PALETTE_DATA,32'h10000000,4'h7);
+            check_value(!palette_valid,"partial palette word rejected");
+        end
+        write_reg(MT_REG_C64_CART_ERASE,32'h78,4'hf);
+        check_value(erase_request==(C64_CAPS[18]?32'h18000078:0),"erase request token and bank");
+        if(C64_CAPS[18])begin
+            expect_read(MT_REG_C64_CART_ERASE_STATUS,32'h80010000,"erase busy before native CDC receives request");
+            write_reg(MT_REG_C64_CART_ERASE,0,4'hf);
+            check_value(erase_request==32'h18000078,"pending erase request cannot be overwritten");
+            erase_status=32'h80000001;
+            expect_read(MT_REG_C64_CART_ERASE_STATUS,32'h80000001,"erase completion token");
+            write_reg(MT_REG_C64_CART_ERASE,1,4'hf);
+            check_value(erase_request==32'h18000078,"malformed erase request rejected");
+            write_reg(MT_REG_C64_CART_ERASE,0,4'hf);
+            check_value(erase_request==32'h28000000,"next erase request after completion");
+        end
         $display("PASS: control registers");
         $finish;
     end
@@ -773,5 +820,5 @@ module tb_control_regs_c64_turbo;
     tb_control_regs #(.C64_CAPS(32'h8000001f),.TURBO(1)) test_i();
 endmodule
 module tb_control_regs_c64_extensions;
-    tb_control_regs #(.C64_CAPS(32'h80007f7f),.TURBO(1),.EXTENSIONS(1)) test_i();
+    tb_control_regs #(.C64_CAPS(32'h8007ff7f),.TURBO(1),.EXTENSIONS(1)) test_i();
 endmodule

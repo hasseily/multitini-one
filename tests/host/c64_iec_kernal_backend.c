@@ -84,7 +84,9 @@ static bool fs_protected(void *ctx,const char *path){(void)ctx;(void)path;return
 
 EXPORT int test_iec_init(const char *root)
 {
-    mt_iec_fs_t fs={NULL,fs_list,fs_open,fs_read,fs_write,fs_close,fs_remove,fs_rename,fs_mkdir,fs_commit,fs_protected};
+    mt_iec_fs_t fs={.context=NULL,.list=fs_list,.open=fs_open,.read=fs_read,
+        .write=fs_write,.close=fs_close,.remove=fs_remove,.rename=fs_rename,
+        .mkdir=fs_mkdir,.commit=fs_commit,.protected_path=fs_protected};
     if(!root || strlen(root)>=sizeof(backing))return -1;
     strcpy(backing,root);memset(opening,0,sizeof(opening));memset(sent,0,sizeof(sent));
     memset(lengths,0,sizeof(lengths));return mt_iec_dos_init(&dos,&fs,"0:/media");

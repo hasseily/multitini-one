@@ -209,6 +209,7 @@ void mt_net_service_shutdown(void) {
     if (!initialized)
         return;
     mt_net_service_guest_reset();
+    mt_http_shutdown(&http_target);
     mt_net_shutdown(&network);
     lookup[0] = 0;
     lookup_output = NULL;

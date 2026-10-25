@@ -74,6 +74,11 @@ bool c64_content_service_prg_staged(void);
 mt_c64_content_service_result_t c64_content_service_detach_crt(void);
 mt_c64_content_service_result_t c64_content_service_detach_crt_hooked(
     const mt_c64_launch_hook_t *hook);
+/* Reboot after the caller quiesces media and clears RAM $8005. Detach the
+ * transient cartridge before restoring saved settings, then reload the saved
+ * CRT without its title sidecar. A failure retains reset for recovery. */
+mt_c64_content_service_result_t c64_content_service_reboot(
+    const char *default_cartridge, int (*restore_settings)(void *), void *context);
 bool c64_content_service_crt_attached(void);
 /* Read the expansion registers only after a matching C64 ABI has been verified. */
 uint32_t c64_content_service_expansion_caps(void);

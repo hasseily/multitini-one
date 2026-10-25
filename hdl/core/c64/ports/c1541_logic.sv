@@ -2,7 +2,8 @@
 // Multitini strict-tool compatibility port of MiSTer C64 commit
 // 62fc697e3c9b5982c9dc76aa8cd03db545d20803. Early-referenced net declarations,
 // including cpu_a and extram_cs, are placed before first use for strict Vivado
-// parsing. Logic is otherwise unchanged.
+// parsing. A passive RAM $78 write observer exposes the drive's effective IEC
+// address; it does not alter the CPU, RAM or serial-bus behavior.
 // BEGIN PINNED SOURCE BODY
 //-------------------------------------------------------------------------------
 //
@@ -51,7 +52,8 @@ module c1541_logic
 	input        byte_n,		   // byte ready
 	input        wps_n,		   // write-protect sense
 	input        tr00_sense_n,	// track 0 sense
-	output       act			   // activity LED
+	output       act,			   // activity LED
+	output reg [4:0] effective_iec_address
 );
 
 wire [23:0] cpu_a;
@@ -74,6 +76,12 @@ wire ram_cs     = ls42 == 0 || ls42 == 1;
 wire uc1_cs     = ls42 == 6;
 wire uc3_cs     = ls42 == 7;
 wire rom_cs     = cpu_a[15];
+
+always @(posedge clk) begin
+	if (reset) effective_iec_address <= 5'd8 + {3'd0,ds};
+	else if (ph2_r && !cpu_rw && ram_cs && cpu_a[10:0] == 11'h078)
+		effective_iec_address <= cpu_do[4:0];
+end
 
 wire  [7:0] cpu_di =
 	!cpu_rw    ? cpu_do :

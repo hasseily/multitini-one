@@ -169,19 +169,19 @@ static void test_c64_capabilities(void)
     state.c64_cpu_config = 0x55f;
     state.c64_cpu_status = 0x10000;
     mt_core_frontend_apply(&frontend, &state, &view);
-    const unsigned expected_arguments[] = {0,1,9,4,5,6,2,3,8};
-    check(view.core_option_count == 12, "release has nine hardware rows and three title actions");
-    for (size_t i=0; i<9; ++i)
+    const unsigned expected_arguments[] = {0,1,4,5,6,2,3,8};
+    check(view.core_option_count == 11, "release has eight hardware rows and three title actions");
+    for (size_t i=0; i<8; ++i)
         check(view.core_options[i].argument == expected_arguments[i], "turbo option semantic order");
     check(view.media_item_count == 6 && view.media_items[5].action == MT_MENU_ACTION_BROWSE_REU,
         "REU image browser is a capability-gated user feature");
     state.cartridge_attached = true;
     mt_core_frontend_apply(&frontend, &state, &view);
-    check(!view.core_options[8].enabled && !view.media_items[5].enabled,
+    check(!view.core_options[7].enabled && !view.media_items[5].enabled,
         "attached cartridge blocks UA and REU preload");
     state.cartridge_attached = false; state.c64_ua_fault = true;
     mt_core_frontend_apply(&frontend, &state, &view);
-    check(!view.core_options[8].enabled, "UA memory fault requests core reload");
+    check(!view.core_options[7].enabled, "UA memory fault requests core reload");
     check(mt_core_frontend_accepts_content(MT_C64_CORE_ID,MT_MENU_BROWSER_REU,MT_CONTENT_C64_REU) &&
         !mt_core_frontend_accepts_content(MT_GBC_CORE_ID,MT_MENU_BROWSER_REU,MT_CONTENT_C64_REU),
         "REU browser accepts only C64 REU images");

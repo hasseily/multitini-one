@@ -1,8 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #ifndef C64_UCI_STORAGE_FIXTURE_H
 #define C64_UCI_STORAGE_FIXTURE_H
+#ifndef F_CAP
 #define F_CAP 64
+#endif
+#ifndef F_BYTES
 #define F_BYTES 65536
+#endif
 #include "c64_iec_fixture.h"
 #include "sd_storage.h"
 #ifndef UCI_STORAGE_OBSERVE
@@ -232,4 +236,22 @@ mt_sd_result_t mt_sd_directory_close(mt_sd_directory_t *dir)
     dir->used = false;
     return sd_result(0, 0);
 }
+#ifndef UCI_STORAGE_CUSTOM_JOURNAL
+mt_sd_result_t mt_sd_storage_journal_replace(const char *path, const char *journal,
+                                             const uint8_t *data, size_t size)
+{
+    (void)journal;
+    fixture_file *f = fixture_find(path);
+    if (!f || size > F_BYTES) return sd_result(25, 0);
+    memcpy(f->bytes, data, size);
+    f->size = size;
+    return sd_result(0, size);
+}
+mt_sd_result_t mt_sd_storage_journal_recover(const char *path, const char *journal,
+                                             uint8_t *data, size_t size)
+{
+    (void)path; (void)journal; (void)data; (void)size;
+    return (mt_sd_result_t){MT_SD_JOURNAL_INVALID, 1, 0};
+}
+#endif
 #endif

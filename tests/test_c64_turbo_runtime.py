@@ -78,7 +78,7 @@ class TurboRuntime(unittest.TestCase):
             signatures=('static bool ensure_active_settings_profile(void)',
                 'static mt_c64_capabilities_t selection_c64_features(', 'static mt_c64_title_values_t c64_stored_values(',
                 'static void refresh_c64_title(', 'static mt_c64_title_values_t c64_requested_values(',
-                'static int apply_c64_title(', 'static void configure_c64_turbo(', 'static void configure_c64_expansion(',
+                'static int apply_c64_title(', 'static int uci_apply_config(', 'static void configure_c64_turbo(', 'static void configure_c64_expansion(',
                 'static bool commit_c64_edit(', 'static void change_c64_expansion(', 'static void change_c64_turbo(',
                 'static unsigned cycle_setting(', 'static void change_c64_sid_setup(',
                 'static void c64_title_launched(', 'static mt_c64_content_service_result_t c64_title_load(',

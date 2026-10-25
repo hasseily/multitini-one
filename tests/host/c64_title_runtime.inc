@@ -38,6 +38,8 @@ static mt_c64_capabilities_t c64_title_caps;
 static mt_c64_debug_t c64_debug;
 static bool c64_title_initialized, c64_uci_initialized, c64_sid_commit_fault,
     c64_legacy_turbo_available;
+static bool c64_uci_applying_config;
+static uint32_t peripheral_control;
 static bool attached, save_fail, map_save_fail, supervisor_menu_dirty, held, hold_fail;
 static bool legacy_enabled;
 static uint32_t expansion_caps, config, cpu_config, sid_status, ua_fault, index_register;
@@ -49,6 +51,8 @@ static char message[160];
 static const char *cfg_text;
 static uint32_t shell_read(uint32_t reg)
 {
+    if (reg == MT_REG_ABI_VERSION) return supervisor.active.package.abi_minor;
+    if (reg == MT_REG_C64_PERIPHERAL_CONTROL) return peripheral_control;
     if (reg == MT_REG_C64_EXPANSION_CONFIG)
         return config;
     if (reg == MT_REG_C64_CPU_CONFIG)
@@ -82,6 +86,7 @@ static mt_core_link_t shell_link = {.read32 = feature_read};
 static void Xil_Out32(uint32_t address, uint32_t value)
 {
     uint32_t reg = address - MT_SHELL_BASE_ADDRESS;
+    if (reg == MT_REG_C64_PERIPHERAL_CONTROL) {peripheral_control = value; return;}
     if (reg == MT_REG_C64_EXPANSION_CONFIG) {
         config = value;
         ++writes;
@@ -301,7 +306,19 @@ int main(int argc, char **argv)
 {
     assert(argc == 2);
     initialize();
-    if (!strcmp(argv[1], "defaults")) {
+    if (!strcmp(argv[1], "uci-unlock-config")) {
+        supervisor.active.package.abi_minor = 27;
+        expansion_caps |= MT_C64_EXPANSION_CAPS_UCI_UNLOCK;
+        cfg_text = "[U64 Specific Settings]\nCPU Speed=32\n";
+        char report[512];
+        assert(uci_apply_config(NULL, "0:/media/Game.cfg", report, sizeof report) == 0);
+        assert(!peripheral_control && !c64_uci_applying_config);
+        cfg_text = "[U64 Specific Settings]\nCPU Speed=invalid\n";
+        assert(uci_apply_config(NULL, "0:/media/Game.cfg", report, sizeof report) == 89);
+        assert(!peripheral_control && !c64_uci_applying_config);
+        configure_c64_expansion(&supervisor.active, NULL);
+        assert(peripheral_control == MT_C64_PERIPHERAL_UCI_CONFIG_EPOCH);
+    } else if (!strcmp(argv[1], "defaults")) {
         configure_c64_expansion(&supervisor.active, NULL);
         assert(config == 11 && !saves);
         assert(ensure_active_settings_profile());

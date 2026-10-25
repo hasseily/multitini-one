@@ -274,9 +274,18 @@ int c64_title_service_apply(const char *path, bool uci, char *report, size_t cap
     summary(&last_report);
 done:
     if (report && capacity) {
-        size_t used = (size_t)snprintf(report, capacity, "%s\n", notice);
-        if (used >= capacity)
-            used = capacity - 1;
+        /* UCI LOAD_CONFIG returns the parser log, empty on clean success.
+         * Keep the GUI summary out of the wire reply; errors without parser
+         * diagnostics still need an actionable explanation. */
+        size_t used = 0;
+        report[0] = 0;
+        if (uci && capacity > 512)
+            capacity = 512;
+        if (!uci || (result && (result != 89 || !last_report.entries))) {
+            used = (size_t)snprintf(report, capacity, "%s\n", notice);
+            if (used >= capacity)
+                used = capacity - 1;
+        }
         for (unsigned i = 0; i < last_report.entries && used < capacity - 1; ++i) {
             int n = snprintf(report + used, capacity - used, "%s\n", last_report.message[i]);
             if (n < 0)
@@ -405,6 +414,21 @@ void c64_title_service_reset(bool cartridge, bool disk_present)
     if (!cartridge && session_origin == MT_TITLE_DISK && disk_present)
         return;
     c64_title_service_clear();
+}
+int c64_title_service_reboot(bool default_cartridge)
+{
+    mt_c64_title_overlay_t none = {0};
+    mt_c64_title_values_t requested, applied;
+    mt_c64_title_effective(&requested, &applied, &stored, &none, default_cartridge);
+    const char *conflict = mt_c64_title_io_conflict(&applied, &caps, default_cartridge);
+    if (conflict) {
+        status(conflict);
+        return -1;
+    }
+    if (callbacks.apply(callbacks.context, &applied, false, true) != 0)
+        return -1;
+    c64_title_service_clear();
+    return 0;
 }
 const mt_c64_title_overlay_t *c64_title_service_overlay(void)
 {

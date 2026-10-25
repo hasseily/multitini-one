@@ -22,6 +22,11 @@ module multitini_c64_adapter #(
     output logic [31:0] cpu_status,
     input  logic ua_enable, debug_enable,
     input  logic uci_enable,
+    input  logic uci_config_epoch,
+    input  logic [31:0] cart_erase_request,
+    output wire [31:0] cart_erase_status,
+    input  logic drive_power_off,
+    output wire [31:0] drive_status,
     input  logic [10:0] uci_control,
     input  logic [31:0] uci_op,uci_ram_request,
     input  logic uci_op_valid,
@@ -47,6 +52,7 @@ module multitini_c64_adapter #(
     input  logic        reset,
     input  logic        core_reset_request,
     input  logic        iec9_run, iec9_quiesce,
+    input  tri0 [4:0]    iec9_address,
     output logic        iec9_guest_reset, iec9_busy, iec9_quiescent,
     output logic [15:0] iec9_token,
     output logic [31:0] iec9_event_data,
@@ -154,6 +160,7 @@ module multitini_c64_adapter #(
     output logic               audio_valid
 );
     import multitini_c64_defs_pkg::*;
+    assign drive_status[31:5] = {1'b1,26'd0};
 
 
     logic        rom_wr;
@@ -223,6 +230,7 @@ module multitini_c64_adapter #(
     assign iec9_guest_reset=!core_reset_n;
     multitini_c64_iec9 #(.CLOCK_HZ(CORE_CLOCK_HZ)) iec9_i(
         .clk(core_clk),.hard_reset(reset),
+        .device_address(iec9_address),
         .run((iec9_run===1'b1) && core_reset_n),.quiesce(iec9_quiesce===1'b1),
         .atn(c64_iec_atn),.bus_clk(c64_iec_clk && peripheral_iec_clk),
         .bus_data(c64_iec_data && peripheral_iec_data),
@@ -308,10 +316,14 @@ module multitini_c64_adapter #(
     wire reu_invalidate_done,ua_invalidate_done;
     reg reu_invalidated=0,ua_invalidated=0,invalidate_pending=0;
     wire map_enabled=ENABLE_EXTENSIONS && sid_map_enable;
-    // Generic CRT type 0 maps ROM only; it never claims IO1 or IO2. Other
-    // cartridges may own these registers and suspend the command endpoint.
-    wire uci_suspended=cart_loading || (cart_loaded && loader_cart_id!=0);
-    wire uci_active=ENABLE_EXTENSIONS && uci_enable && !uci_suspended;
+    // Ultimate 3.15 cartridge software can explicitly claim the UCI aperture
+    // with $D038=$AB, then $D036=$CD. Keep the runtime claim across a warm
+    // guest reset, like Ultimate's host-owned CMD_IF_SLOT_ENABLE register.
+    // Starting new content or reloading the FPGA restores configured policy.
+    logic uci_unlock_key, uci_unlocked, uci_config_epoch_seen;
+    wire uci_suspended=cart_loading ||
+                       (cart_loaded && loader_cart_id!=0 && !uci_unlocked);
+    wire uci_active=ENABLE_EXTENSIONS && (uci_enable || uci_unlocked) && !uci_suspended;
     wire uci_hold=ENABLE_EXTENSIONS && uci_control[10];
     wire uci_freeze,uci_irq,uci_io_select;
     wire [7:0] uci_rdata,sid_io_data;
@@ -329,7 +341,7 @@ module multitini_c64_adapter #(
     wire [7:0] endpoint_buffer_wdata,dma_buffer_wdata;
     // An FF00 write can start both REU DMA and a deferred UCI freeze. Drain
     // the DMA before stopping the native scheduler so neither waits forever.
-    wire extension_pause=(uci_hold || uci_freeze) && !reu_busy;
+    wire extension_pause=(uci_hold || uci_freeze || cart_erase_status[16]) && !reu_busy;
     assign sid_paused=core_paused || !core_reset_n;
     assign uci_buffer_addr=uci_buffer_owned?dma_buffer_addr:endpoint_buffer_addr;
     assign uci_buffer_write=uci_buffer_owned?dma_buffer_write:endpoint_buffer_write;
@@ -623,6 +635,30 @@ module multitini_c64_adapter #(
         .guard_static_release(guard_static_release), .status(cpu_status), .live_d031()
     );
 
+    wire uci_key_write = fio_u64_wr || (cpu_bus_valid && ext_cs_vic && cpu_bus_write);
+    wire [9:0] uci_key_address = fio_u64_wr ? fio_u64_a : cpu_bus_addr[9:0];
+    wire [7:0] uci_key_data = fio_u64_wr ? fio_u64_d : cpu_bus_wdata;
+    always_ff @(posedge core_clk) begin
+        uci_config_epoch_seen <= uci_config_epoch;
+        if (reset || !ENABLE_EXTENSIONS || rom_load_active || content_load_active || cart_loading ||
+            uci_config_epoch_seen != uci_config_epoch) begin
+            uci_unlock_key <= 0;
+            uci_unlocked <= 0;
+        end else if (!core_reset_n) begin
+            // A reset must not splice together two halves of a key sequence.
+            uci_unlock_key <= 0;
+        end else if (uci_key_write) begin
+            if (uci_key_address == 10'h038)
+                uci_unlock_key <= uci_key_data == 8'hab;
+            else if (uci_key_address == 10'h036) begin
+                if (uci_unlock_key && uci_key_data == 8'hcd)
+                    uci_unlocked <= 1;
+                uci_unlock_key <= 0;
+            end else
+                uci_unlock_key <= 0;
+        end
+    end
+
     assign cart_external_select = cart_loaded && cart_mem_ce &&
                                   cart_mem_addr[24:16] != 9'd0;
     assign cart_runtime_request = core_reset_n && cart_external_select;
@@ -632,6 +668,9 @@ module multitini_c64_adapter #(
 
     multitini_c64_cart_memory cart_memory_i (
         .clk(core_clk), .reset(reset), .loader_active(cart_loading),
+        .erase_request(ENABLE_EXTENSIONS ? cart_erase_request : 32'd0),
+        .erase_allowed(uci_hold && core_paused && !cart_loading && !content_load_active),
+        .erase_status(cart_erase_status),
         .loader_addr(loader_memory_addr),
         .loader_write(loader_memory_write),
         .loader_wdata(loader_memory_wdata),
@@ -657,7 +696,8 @@ module multitini_c64_adapter #(
     // MAME releases the REU register aperture during its own DMA. A transfer
     // reading $DFxx observes the machine's floating bus, not REU status.
     assign ua_active = ua_enable && reu_active && !reu_host_word[13];
-    assign uci_io_select=uci_active && !reu_dma_req && cart_iof && cpu_bus_addr[7:3]==5'b00011;
+    assign uci_io_select=uci_active && !reu_dma_req && cart_iof &&
+                         cpu_bus_addr[7:3]==5'b00011 && cpu_bus_addr[2:0]>=3;
     assign ua_io_select = ua_active && !reu_dma_req && cart_iof && cpu_bus_addr[7:5] != 0;
     assign reu_io_select = reu_active && !reu_dma_req && cart_iof &&
                            !uci_io_select && (!ua_active || cpu_bus_addr[7:5] == 0);
@@ -665,7 +705,7 @@ module multitini_c64_adapter #(
         (cart_ioe || cart_iof) && (|sid_io_masks[cpu_bus_addr[8:5]*8 +: 8]) &&
         !reu_io_select && !ua_io_select && !uci_io_select;
     multitini_c64_uci uci_i(
-        .clk(core_clk),.hard_reset(reset),.block_reset(!core_reset_n || !ENABLE_EXTENSIONS || !uci_enable || uci_suspended),
+        .clk(core_clk),.hard_reset(reset),.block_reset(!core_reset_n || !uci_active),
         .enabled(uci_active),.suspended(uci_suspended),
         .bus_valid(cpu_bus_valid && uci_io_select),.bus_write(cpu_bus_write),
         .ff00_write(uci_active && cpu_bus_valid && cpu_bus_write && !reu_dma_req && cpu_bus_addr==16'hff00),
@@ -800,7 +840,7 @@ module multitini_c64_adapter #(
         .cart_bank_wr(cart_bank_wr), .cart_boot(1'b1),
         .exrom(cart_exrom), .game(cart_game), .romL(cart_rom_l),
         .romH(cart_rom_h), .UMAXromH(cart_umax_rom_h),
-        .IOE(cart_ioe), .IOF(cart_iof), .mem_write(ram_we),
+        .IOE(cart_ioe), .IOF(cart_iof && !uci_io_select), .mem_write(ram_we),
         .mem_ce(ram_ce), .mem_ce_out(cart_mem_ce),
         .mem_write_out(cart_mem_we), .mem_in(cart_mem_in),
         .mem_out(cart_mem_out), .mem_addr(cart_mem_addr),
@@ -904,6 +944,8 @@ module multitini_c64_adapter #(
 
     multitini_c64_1541 #(.CORE_CLOCK_HZ(CORE_CLOCK_HZ)) drive_i (
         .clk(core_clk), .reset(reset), .soft_reset(drive_soft_reset),
+        .power_off(ENABLE_EXTENSIONS && drive_power_off),
+        .effective_iec_address(drive_status[4:0]),
         .pause_request(core_paused),
         .clear_error(clear_load_error),
         .drive_rom_write(drive_rom_wr),

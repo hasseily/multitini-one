@@ -127,6 +127,7 @@ static bool c64_legacy_turbo_available;
 static bool c64_sid_commit_fault;
 static bool c64_title_initialized, c64_uci_initialized, c64_title_foreground;
 static bool c64_uci_freeze_pending;
+static bool c64_uci_applying_config;
 static mt_core_selection_t c64_extension_selection;
 static char c64_launch_disk_name[256];
 static uint8_t c64_selected_sid;
@@ -1424,6 +1425,10 @@ static int mount_c64_disk(const char *name)
     const int resumed = resume_c64_directory();
     return result != 0 ? result : resumed;
 }
+static int restore_c64_reboot_settings(void *context)
+{
+    return c64_title_service_reboot(*(const bool *)context);
+}
 static void service_c64_uci_action(void)
 {
     static bool executing;
@@ -1453,12 +1458,21 @@ static void service_c64_uci_action(void)
          * Guest reset naturally discards any unacknowledged reply. */
         c64_uci_service_action_done(0);
         const int asserted = set_core_reset_request(true);
-        if (asserted == 0)
+        if (asserted == 0) {
+            refresh_c64_title(&c64_extension_selection);
+            const mt_core_settings_profile_t *profile = mt_supervisor_settings_find(
+                &persistent_settings, c64_extension_selection.package.id);
+            const bool default_cartridge = profile && profile->cartridge_name[0];
+            const mt_c64_content_service_result_t reboot = c64_content_service_reboot(
+                profile ? profile->cartridge_name : NULL, restore_c64_reboot_settings,
+                (void *)&default_cartridge);
+            status = reboot.status == MT_C64_CONTENT_SERVICE_OK ? 0 : -1;
+            if (status) print_c64_content_result("reboot", NULL, &reboot);
             usleep(1000U);
-        status = asserted == 0 ? set_core_reset_request(false) : -1;
+        }
+        status = asserted == 0 && status == 0 ? set_core_reset_request(false) : -1;
         if (status)
-            xil_printf("[UCI] reboot refused: media could not quiesce\r\n");
-        /* UCI reboot retains the running title settings and mounted medium. */
+            xil_printf("[UCI] reboot failed; check media and saved settings\r\n");
     } else if (action == C64_UCI_ACTION_MOUNT) {
         const char *root = c64_extension_selection.package.content_root;
         size_t n = strlen(root);
@@ -1470,6 +1484,13 @@ static void service_c64_uci_action(void)
             status = c64_d64_service_mount(path + n + 1);
             if (resume_c64_directory() != 0)
                 status = -1;
+        }
+    } else if (action == C64_UCI_ACTION_SWAP) {
+        if (device != 8 || quiesce_c64_directory() != 0)
+            status = -1;
+        else {
+            status = c64_d64_service_swap();
+            if (resume_c64_directory() != 0) status = -1;
         }
     } else if (action == C64_UCI_ACTION_UNMOUNT) {
         if (device != 8 || quiesce_c64_directory() != 0)
@@ -2800,6 +2821,10 @@ static int apply_c64_title(void *context, const mt_c64_title_values_t *v, bool l
             expansion |= MT_C64_EXPANSION_SID_MAP_ENABLE;
         if (caps.expansion & MT_C64_EXPANSION_CAPS_VALID)
             Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_C64_EXPANSION_CONFIG, expansion);
+        if (!c64_uci_applying_config && (caps.expansion & MT_C64_EXPANSION_CAPS_UCI_UNLOCK) &&
+            (shell_read(MT_REG_ABI_VERSION) & 0xffff) >= MT_C64_UCI315_MIN_ABI_MINOR)
+            Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_C64_PERIPHERAL_CONTROL,
+                shell_read(MT_REG_C64_PERIPHERAL_CONTROL) ^ MT_C64_PERIPHERAL_UCI_CONFIG_EPOCH);
         if (c64_uci_initialized) c64_uci_service_refresh_control();
         if (caps.turbo) {
             const uint32_t previous = shell_read(MT_REG_C64_CPU_CONFIG);
@@ -2843,7 +2868,12 @@ static int uci_apply_config(void *context, const char *path, char *report, size_
 {
     (void)context;
     refresh_c64_title(supervisor.has_active ? &supervisor.active : NULL);
-    return c64_title_service_apply(path, true, report, capacity);
+    /* A software-unlocked interface must survive its own LOAD_CONFIG reply.
+     * Explicit menu/title changes still revoke the unlock through the epoch. */
+    c64_uci_applying_config = true;
+    const int result = c64_title_service_apply(path, true, report, capacity);
+    c64_uci_applying_config = false;
+    return result;
 }
 static size_t uci_sid_info(void *context, unsigned command, uint8_t *data, size_t capacity)
 {

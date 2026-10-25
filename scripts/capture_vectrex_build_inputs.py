@@ -31,6 +31,7 @@ def inputs(machine: str) -> list[Path]:
             "optimize_c64_control_sets.tcl",
             "c64_timing_policy.tcl",
             "finish_c64_timing.tcl", "optimize_c64_cpu_margin.tcl",
+            "c64_placement_margin.tcl", "apply_c64_placement_margin.tcl",
             "apply_fabric_timing_margin.tcl", "clear_fabric_timing_margin.tcl",
             "finish_video_timing.tcl", "check_video_bus_constraints.tcl",
             "check_timing_coverage.tcl", "check_w5100s_constraints.tcl")],

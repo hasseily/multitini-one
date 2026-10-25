@@ -13,6 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <ctype.h>
 
 #include "xil_printf.h"
 
@@ -778,6 +779,68 @@ int c64_d64_service_mount(const char *file_name)
     reset_resume_pending = false;
     reset_resume_name[0] = '\0';
     return mount_image(file_name);
+}
+
+typedef struct {
+    const char *name;
+    size_t index;
+    unsigned top, range, current, distance;
+    char next[MT_MEDIA_BROWSER_PATH_MAX + 1U];
+} swap_search_t;
+static int swap_candidate(void *context, const char *name, size_t size, bool directory)
+{
+    (void)size;
+    swap_search_t *search = context;
+    if (directory || strlen(name) != strlen(search->name)) return 0;
+    for (size_t i = 0; name[i]; i++)
+        if (i != search->index && toupper((unsigned char)name[i]) !=
+                                 toupper((unsigned char)search->name[i])) return 0;
+    unsigned c = (unsigned)toupper((unsigned char)name[search->index]);
+    if (c < search->top || c >= search->top + search->range) return 0;
+    unsigned distance = (c + search->range - search->current) % search->range;
+    if (distance && distance < search->distance) {
+        search->distance = distance;
+        strcpy(search->next, name);
+    }
+    return 0;
+}
+int c64_d64_service_swap(void)
+{
+    if (!mounted) return 0;
+    const char *base = strrchr(mounted_name, '/');
+    base = base ? base + 1 : mounted_name;
+    size_t length = strlen(base);
+    if (length < 5) return 0;
+    size_t index = length - 4;
+    bool found = false;
+    while (index) {
+        index--;
+        unsigned char c = (unsigned char)base[index];
+        if ((isdigit(c) && !isdigit((unsigned char)base[index + 1])) ||
+            (isalpha(c) && !isalpha((unsigned char)base[index + 1]) &&
+             (!index || !isalpha((unsigned char)base[index - 1])))) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) return 0;
+    swap_search_t search = {.name=base,.index=index,.distance=256};
+    search.current = (unsigned)toupper((unsigned char)base[index]);
+    search.top = isdigit((unsigned char)base[index]) ? '0' : 'A';
+    search.range = search.top == '0' ? 10 : 26;
+    char directory[MT_C64_MEDIA_PATH_CAPACITY], next[MT_MEDIA_BROWSER_PATH_MAX + 1U];
+    size_t prefix = (size_t)(base - mounted_name);
+    if (strlen(media_root) + prefix + 1 >= sizeof directory) return -1;
+    strcpy(directory, media_root);
+    if (prefix) {
+        strcat(directory, "/");
+        strncat(directory, mounted_name, prefix - 1);
+    }
+    if (mt_sd_storage_list(directory, swap_candidate, &search).status != MT_SD_OK) return -1;
+    if (search.distance == 256) return 0;
+    memcpy(next, mounted_name, prefix);
+    strcpy(next + prefix, search.next);
+    return c64_d64_service_mount(next);
 }
 
 int c64_d64_service_ensure_mounted(const char *file_name)

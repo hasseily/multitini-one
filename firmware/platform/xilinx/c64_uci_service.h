@@ -6,7 +6,7 @@
 
 typedef enum {
     C64_UCI_ACTION_NONE=0, C64_UCI_ACTION_FREEZE, C64_UCI_ACTION_REBOOT,
-    C64_UCI_ACTION_MOUNT, C64_UCI_ACTION_UNMOUNT
+    C64_UCI_ACTION_MOUNT, C64_UCI_ACTION_UNMOUNT, C64_UCI_ACTION_SWAP
 } c64_uci_action_t;
 typedef struct {
     void *context;
@@ -27,6 +27,8 @@ void c64_uci_service_set_home(const char *absolute_directory);
 void c64_uci_service_set_reu_image(const char *absolute_path);
 bool c64_uci_service_available(void);
 bool c64_uci_service_active(void);
+/* Drive A may change its device number through DOS M-W. Configured number is8. */
+unsigned c64_uci_service_drive_address(void);
 /* Refresh device9 identity and capability-gated Freeze/IRQ policy while
  * preserving HOLD. Call after expansion or device9 enable changes. */
 void c64_uci_service_refresh_control(void);

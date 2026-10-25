@@ -74,12 +74,16 @@ module tb_c64_run_injector;
             end
         end
         pause_request = 1'b0;
+        wait(event_count == 7);
+        #1;pause_request = 1'b1;
         wait (!busy);
         @(negedge clk);
         @(posedge clk); #1;
         check(event_count == 8, "RUN generated eight key transitions");
         check(ps2_key == host_ps2_key, "host input restored");
+        check(pause_request, "final release completes under guest UCI freeze");
         $display("PASS: C64 PRG RUN injector");
         $finish;
     end
+    initial begin #10000;$fatal(1,"RUN injector deadlocked during pause");end
 endmodule

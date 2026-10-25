@@ -255,6 +255,24 @@ int main(void) {
         uint8_t c[] = {6, 0x24, output[1], 1, 'y', 1};
         assert(issue(ht, c, sizeof(c)) == MT_UCI_REPLY && status_is("000 OK"));
     }
+    /* HTTP handles and JSON cursors are cartridge resources, not C64 RAM.
+     * A guest reset must retain both request and completed-response objects. */
+    {
+        const unsigned response_header = output[0], response_body = output[1];
+        uint8_t query_header[] = {6, 0x14, (uint8_t)response_header,
+                                  'C', 'o', 'n', 't', 'e', 'n', 't', '-',
+                                  'L', 'e', 'n', 'g', 't', 'h'};
+        uint8_t query_body[] = {6, 0x2a, (uint8_t)response_body, 'x'};
+        void *saved_header = http.headers[header], *saved_body = http.bodies[body];
+        void *saved_response = http.bodies[response_body];
+        ht.reset(ht.context);
+        assert(http.headers[header] == saved_header && http.bodies[body] == saved_body &&
+               http.bodies[response_body] == saved_response);
+        assert(issue(ht, query_header, sizeof(query_header)) == MT_UCI_REPLY &&
+               status_is("000 OK") && reply.data_length == 1 && reply.data[0] == '7');
+        assert(issue(ht, query_body, sizeof(query_body)) == MT_UCI_REPLY &&
+               status_is("000 OK") && reply.data[0] == 1 && reply.data[1] == 3);
+    }
     assert(exchange(ht, header, true,
                     "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello",
                     output, sizeof(output)) == 0 &&
@@ -267,6 +285,27 @@ int main(void) {
         assert(ht.abort(ht.context, 0) == MT_UCI_REPLY);
         poll(&net, &model, 4);
         assert(http.socket == 0 && http.request == NULL);
+    }
+    /* Reset during an unfinished TCP exchange closes the socket and drops only
+     * transient buffers; the same header must be usable immediately afterward. */
+    {
+        uint8_t c[] = {6, 0x31, (uint8_t)header, 255};
+        mt_uci_result_t state = issue(ht, c, sizeof(c));
+        for (i = 0; http.phase < 3; ++i) {
+            assert(i < 20 && state == MT_UCI_WAIT);
+            poll(&net, &model, 1);
+            state = ht.poll(ht.context, &reply);
+        }
+        assert(http.socket > 0 && http.object);
+        const int socket = http.socket;
+        ht.reset(ht.context);
+        assert(!http.phase && !http.socket && !http.request && !http.object && !http.reply_data);
+        assert(http.headers[header] && http.bodies[body]);
+        poll(&net, &model, 4);
+        assert(net.sockets[socket].state == MT_NET_S_FREE);
+        assert(exchange(ht, header, true, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
+                        output, sizeof(output)) == 2 && !memcmp(output, "ok", 2));
+        poll(&net, &model, 4);
     }
     /* Decoder bounds against truncated/adversarial typed values and JSON.
      * Deterministic seed keeps failures reproducible under ASan/UBSan. */
@@ -282,10 +321,20 @@ int main(void) {
         for(unsigned j=0;j<13;j++){http_json_t *node=http_json_new(4);assert(node&&http_json_attach(body,parent,"a",node));parent=node;}
         http_json_t *sub=http_json_parse("{\"a\":{\"b\":1}}",13);assert(sub);assert(!http_json_attach(body,parent,"too-deep",sub));http_json_free(sub);http_body_free(body);
     }
-    ht.reset(ht.context);
+    {
+        const uint8_t c[] = {6, 0x10};
+        assert(issue(ht, c, sizeof(c)) == MT_UCI_REPLY && status_is("000 OK"));
+        assert(issue(ht, c, sizeof(c)) == MT_UCI_REPLY && status_is("000 OK"));
+    }
     for (i = 0; i < 16; i++)
         assert(!http.headers[i] && !http.bodies[i]);
+    {
+        const uint8_t c[] = {6, 0x21, 2};
+        assert(issue(ht, c, sizeof(c)) == MT_UCI_REPLY && reply.data[0] == 0);
+        mt_http_shutdown(&http);
+        assert(!http.bodies[0]);
+    }
     puts("PASS network UCI ownership/1472bytes/no-data/listener; HTTP "
-         "slots/JSON/TLS-refusal/asyncTCP/content-length/chunks/abort/reset");
+         "slots/JSON/TLS-refusal/asyncTCP/content-length/chunks/abort/reset-persistence/free-all");
     return 0;
 }

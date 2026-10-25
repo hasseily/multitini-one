@@ -669,6 +669,55 @@ mt_sd_result_t mt_sd_file_canonical_path(const char *path, char *output, size_t 
     memcpy(output, resolved, used + 1);
     return result(MT_SD_OK, FR_OK, used);
 }
+mt_sd_result_t mt_sd_storage_capacity(const char *path, uint64_t *bytes)
+{
+    if (bytes) *bytes = 0;
+    if (!path || !bytes || path[0] != '0')
+        return result(MT_SD_INVALID_ARGUMENT, FR_INVALID_PARAMETER, 0);
+    if (sd_external_owned || sd_callback_depth)
+        return result(MT_SD_EXTERNAL_ACCESS, FR_OK, 0);
+    mt_sd_result_t r = mt_sd_storage_mount();
+    if (r.status != MT_SD_OK) return r;
+    char canonical[512];
+    r = mt_sd_file_canonical_path(path, canonical, sizeof canonical);
+    if (r.status != MT_SD_OK) return r;
+    if (strcmp(canonical, MT_SD_VOLUME)) {
+        mt_sd_info_t info;
+        r = mt_sd_file_stat(canonical, &info);
+        if (r.status != MT_SD_OK) return r;
+        if (!(info.attributes & AM_DIR)) return result(MT_SD_DIR_OPEN_FAILED, FR_NO_PATH, 0);
+    }
+    if (sd_file_system.n_fatent < 2 || !sd_file_system.csize)
+        return result(MT_SD_READ_FAILED, FR_DISK_ERR, 0);
+#if defined(FF_MAX_SS) && FF_MAX_SS != FF_MIN_SS
+    const unsigned sector_size = sd_file_system.ssize;
+#elif defined(_MAX_SS) && _MAX_SS != _MIN_SS
+    const unsigned sector_size = sd_file_system.ssize;
+#elif defined(FF_MAX_SS)
+    const unsigned sector_size = FF_MAX_SS;
+#elif defined(_MAX_SS)
+    const unsigned sector_size = _MAX_SS;
+#else
+    const unsigned sector_size = 512;
+#endif
+    *bytes = (uint64_t)(sd_file_system.n_fatent - 2U) * sd_file_system.csize * sector_size;
+    return result(MT_SD_OK, FR_OK, 0);
+}
+mt_sd_result_t mt_sd_file_attributes(const char *path, uint8_t attributes, uint8_t mask)
+{
+    if (!path || path[0] != '0' || (mask & ~0x23U))
+        return result(MT_SD_INVALID_ARGUMENT, FR_INVALID_PARAMETER, 0);
+    if (sd_external_owned || sd_callback_depth)
+        return result(MT_SD_EXTERNAL_ACCESS, FR_OK, 0);
+    char canonical[512];
+    mt_sd_result_t r = mt_sd_file_canonical_path(path, canonical, sizeof canonical);
+    if (r.status != MT_SD_OK) return r;
+    if (file_path_busy(canonical, true)) return result(MT_SD_FILE_BUSY, FR_OK, 0);
+    r = mt_sd_storage_mount();
+    if (r.status != MT_SD_OK) return r;
+    FRESULT status = f_chmod(canonical, attributes, mask);
+    return result(status == FR_OK ? MT_SD_OK : MT_SD_WRITE_FAILED, status, 0);
+}
 mt_sd_result_t mt_sd_directory_open(const char *path,mt_sd_directory_t **directory)
 {
     if(directory)*directory=NULL;

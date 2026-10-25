@@ -119,7 +119,7 @@ hdl/core/c64/ports/video_sync.vhd,MiSTer C64 and Multitini One,62fc697e3c9b5982c
 hdl/core/c64/multitini_c64_d64_track.sv,MiSTer C64 and Multitini One,f11608f66bcb2b017680d7c719aa547f537bfd3f,GPL-3.0-only,xsim-2025.2-passed,Original generation-tagged transactional writable 35/40/42-track D64 request service based on the pre-DDRAM directory-track-first sector-buffer architecture
 hdl/core/c64/multitini_c64_cpu_turbo_guard.sv,Multitini One,,GPL-3.0-only,portable-simulation-pass,Original IEC and parallel-cable activity guard for the independent FPGA64 Smart CPU turbo setting
 hdl/core/c64/multitini_c64_1541.sv,MiSTer C64 and Multitini One,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-3.0-only,xsim-elaborated,Original Multitini wrapper for one 1541 using transactional D64 and read-only direct-GCR paths plus an opt-in DolphinDOS-style parallel cable; vendor build and board pending
-hdl/core/c64/ports/c1541_logic.sv,MiSTer C64 and Multitini One,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,xvlog-passed,Strict-tool compatibility port moving early-referenced net declarations including cpu_a and extram_cs before first use; logic otherwise unchanged
+hdl/core/c64/ports/c1541_logic.sv,MiSTer C64 and Multitini One,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,xvlog-passed,Strict-tool declaration ordering and passive RAM78 effective IEC address observer; CPU RAM and IEC behavior unchanged
 hdl/core/c64/ports/iecdrv_misc.sv,MiSTer C64 and Multitini One,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,vivado-2025.2-port,Compatibility port using XPM for the asymmetric dual-clock bit RAM during synthesis; portable simulation retains the pinned behavior
 hdl/board/multitini_c64_video_bridge.sv,Multitini One,,GPL-3.0-only,xsim-2025.2-passed,Original four-bank PAL/NTSC fixed-palette live-frame ring with Gray-pointer CDC explicit reset-epoch handshake centered registered-DVI integer scaling and clean frame repeat; routed PAL predecessor passes timing and the production-size NTSC path passes real-XPM XSim but still awaits a build and board test
 hdl/board/multitini_gameboy_video_bridge.sv,Multitini One,,GPL-3.0-only,portable-simulation-pass,Original four-bank RGB565 Game Boy frame ring with exact-pixel publication Gray-pointer CDC reset-epoch handshake centered 6x registered-DVI scaling and clean frame repeat
@@ -818,7 +818,9 @@ third_party/ultimate_firmware_reference/software/io/command_interface/http_targe
 third_party/ultimate_firmware_reference/software/io/command_interface/test_http_target.cc,GideonZ/1541ultimate,d43546fe25b26cb332f43f00219d33153dfe44f8,GPL-3.0,source-reviewed,Pinned test-only networking wire reference; excluded from product build
 tests/host/c64_uci_quiesce_cases.inc,Multitini One,,GPL-3.0-only,source-reviewed,Original native UCI transaction lifecycle fixture with delayed and dropped handshake acknowledgements
 scripts/c64_timing_policy.tcl,Multitini One,,GPL-3.0-only,source-reviewed,Original explicit C64 release timing policy with build-scoped user exception
-scripts/finish_c64_timing.tcl,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 route hook retaining shared video repair and bounded CPU optimization
+scripts/finish_c64_timing.tcl,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 route hook restoring the placement margin then retaining shared video repair and bounded CPU optimization
+scripts/c64_placement_margin.tcl,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 pixel and CPU half-cycle placement margin with exact apply and restore checks
+scripts/apply_c64_placement_margin.tcl,Multitini One,,GPL-3.0-only,source-reviewed,Original C64 place_design pre-hook applying the placement margin
 scripts/optimize_c64_cpu_margin.tcl,Multitini One,,GPL-3.0-only,source-reviewed,Original half-cycle optimization with exact clock and uncertainty restoration before signoff
 scripts/test_c64_cpu_write_path.py,Multitini One,,GPL-3.0-only,source-reviewed,Original real CPU falling-edge store comparison and negative-control runner
 hdl/sim/tb_c64_cpu_write_path.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original native and accelerated C64 store-path equivalence bench
@@ -833,3 +835,13 @@ hdl/sim/tb_c64_sid_osc3_8.sv,Multitini One,,GPL-3.0-only,source-reviewed,Origina
 hdl/sim/tb_c64_sid_fanout.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original two-through-eight SID edge queue and latch isolation regression
 tests/host/c64_sid_presets.c,Multitini One,,GPL-3.0-only,source-reviewed,Original production SID resolver table generator for HDL fixtures
 tests/test_c64_reload_runtime.py,Multitini One,,GPL-3.0-only,source-reviewed,Original actual-main forced reload cleanup and failure retention regression
+firmware/common/c64_uci_cvt.c,Multitini One,,GPL-3.0-only,host-tested,Original GEOS CVT linear and VLIR conversion codec with sector ownership validation
+firmware/include/multitini_c64_uci_cvt.h,Multitini One,,GPL-3.0-only,host-tested,Original GEOS CVT conversion interface
+firmware/platform/xilinx/c64_uci_image.c,Multitini One,,GPL-3.0-only,host-tested,Original transactional D64 D71 and D81 virtual filesystem for UCI and SoftIEC
+firmware/platform/xilinx/c64_uci_image.h,Multitini One,,GPL-3.0-only,host-tested,Original virtual disk-image filesystem interface
+tests/host/test_c64_uci_cvt.c,Multitini One,,GPL-3.0-only,host-tested,Original synthetic GEOS linear VLIR conversion and malformed input regressions
+tests/host/test_c64_uci_image.c,Multitini One,,GPL-3.0-only,host-tested,Original synthetic disk-image CRUD sectors and transaction recovery regressions
+tests/host/test_c64_uci_dos.c,Multitini One,,GPL-3.0-only,host-tested,Original UCI directory and large listing regressions
+tests/host/test_c64_uci_dos_image.c,Multitini One,,GPL-3.0-only,host-tested,Original full UCI target virtual disk-image integration regression
+hdl/sim/tb_c64_uci_palette.sv,Multitini One,,GPL-3.0-only,simulation-passed,Original real XPM palette crossing defaults reset retention and stopped clock regression
+tests/test_fatfs_chmod.py,Multitini One,,GPL-3.0-only,host-tested,Original production BSP CHMOD patch and platform reuse regressions

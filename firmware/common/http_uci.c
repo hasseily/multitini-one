@@ -601,12 +601,7 @@ static mt_uci_result_t begin(void *context, const uint8_t c[896], size_t length,
         return MT_UCI_REPLY;
     }
     if (cmd == 0x10) {
-        for (i = 0; i < 16; i++) {
-            free(h->headers[i]);
-            h->headers[i] = NULL;
-            http_body_free(h->bodies[i]);
-            h->bodies[i] = NULL;
-        }
+        mt_http_shutdown(h);
         return answer(r, "000 OK");
     }
     if (cmd == 0x11) {
@@ -769,9 +764,12 @@ static mt_uci_result_t abort_cmd(void *context, size_t consumed) {
 }
 static void reset(void *context) {
     mt_http_t *h = context;
-    unsigned i;
     abort_cmd(h, 0);
     mt_net_close_owner(h->net, MT_NET_OWNER_HTTP);
+}
+void mt_http_shutdown(mt_http_t *h) {
+    unsigned i;
+    reset(h);
     for (i = 0; i < 16; i++) {
         free(h->headers[i]);
         h->headers[i] = NULL;

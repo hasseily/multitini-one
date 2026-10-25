@@ -230,6 +230,11 @@ module multitini_one_top #(
     wire net_run,net_access_valid,net_access_error,c64_uci_op_ready,c64_uci_op_valid;
     wire [31:0] c64_uci_op,c64_uci_ram_request,c64_sid_data,c64_sid_status;
     wire [10:0] c64_uci_control;
+    wire c64_palette_ready,c64_palette_valid;
+    wire [28:0] c64_palette_data;
+    wire [31:0] c64_peripheral_control;
+    wire [31:0] c64_cart_erase_request,c64_cart_erase_status;
+    wire [31:0] c64_drive_status;
     wire [5:0] c64_sid_index;
     wire [7:0] c64_sid_sequence;
     wire c64_sid_write,c64_sid_commit;
@@ -764,10 +769,10 @@ module multitini_one_top #(
 
     multitini_control_regs #(.SHELL_BUILD_ID(SHELL_BUILD_ID),
         .IIGS_ACCEL_CAPS(ACTIVE_MACHINE==5 ? 32'h8000037f : 32'd0),
-        .C64_EXPANSION_CAPS(ACTIVE_MACHINE==0 ? 32'h80007F7F : 32'd0),
+        .C64_EXPANSION_CAPS(ACTIVE_MACHINE==0 ? 32'h8007FF7F : 32'd0),
         .NET_CAPS(ACTIVE_MACHINE==0 ? MT_NET_CAPS_W5100S : 32'd0),
         .C64_CPU_CAPS(ACTIVE_MACHINE==0 ? MT_C64_CPU_CAPS_RELEASE : 32'd0),
-        .C64_IEC_CAPS(ACTIVE_MACHINE==0 ? MT_C64_IEC_CAPS_DEVICE9 : 32'd0),
+        .C64_IEC_CAPS(ACTIVE_MACHINE==0 ? (MT_C64_IEC_CAPS_DEVICE9 | MT_C64_IEC_CAPS_ADDRESS) : 32'd0),
         .C64_CPU_CAPS2(ACTIVE_MACHINE==0 ?
             {MT_C64_CPU_CAPS2_RELEASE[31:8],C64_TURBO_TIMING_REVISION} : 32'd0)) control_regs (
         .clk(control_clk), .resetn(control_aresetn),
@@ -821,6 +826,10 @@ module multitini_one_top #(
         .c64_uci_op_ready(c64_uci_op_ready),.c64_uci_op_valid(c64_uci_op_valid),
         .c64_uci_op(c64_uci_op),.c64_uci_control(c64_uci_control),
         .c64_uci_ram_request(c64_uci_ram_request),
+        .c64_palette_ready(c64_palette_ready),.c64_palette_valid(c64_palette_valid),
+        .c64_palette_data(c64_palette_data),.c64_peripheral_control(c64_peripheral_control),
+        .c64_cart_erase_request(c64_cart_erase_request),.c64_cart_erase_status(c64_cart_erase_status),
+        .c64_drive_status(c64_drive_status),
         .c64_sid_index(c64_sid_index),.c64_sid_data(c64_sid_data),
         .c64_sid_write(c64_sid_write),.c64_sid_commit(c64_sid_commit),
         .c64_sid_sequence(c64_sid_sequence),.c64_sid_status(c64_sid_status),
@@ -1286,6 +1295,8 @@ module multitini_one_top #(
             wire reu_memory_write, reu_memory_valid, reu_memory_ready;
             wire reu_memory_rvalid, reu_memory_fault, reu_memory_burst, reu_memory_busy;
             wire [6:0] expansion_config;
+            wire [31:0] peripheral_control,cart_erase_request,cart_erase_status;
+            wire [31:0] drive_status;
             wire [31:0] cpu_config, cpu_status, ua_status, ua_fetches, reu_misses;
             wire [31:0] peek_request, peek_status, reu_host_request, reu_host_status;
             wire debug_enable;
@@ -1297,20 +1308,20 @@ module multitini_one_top #(
             // One snapshot in each direction also gives each remote reset a
             // single synchronizer. Independent synchronizers for the same
             // reset could release related command channels on different cycles.
-            multitini_word_mailbox #(.WIDTH(165),
-                .RESET_VALUE({32'd0,11'h01f,18'd0,MT_C64_CPU_CONFIG_DEFAULT,
+            multitini_word_mailbox #(.WIDTH(229),
+                .RESET_VALUE({96'd0,11'h01f,18'd0,MT_C64_CPU_CONFIG_DEFAULT,
                               MT_C64_EXPANSION_CONFIG_DEFAULT[6:0],65'd0})) controls_i (
                 .src_clk(control_clk), .src_resetn(control_aresetn),
-                .value({c64_uci_ram_request,c64_uci_control,iec9_control_value,c64_cpu_config,c64_expansion_config[6:0],debug_control[0],
+                .value({c64_cart_erase_request,c64_peripheral_control,c64_uci_ram_request,c64_uci_control,iec9_control_value,c64_cpu_config,c64_expansion_config[6:0],debug_control[0],
                         c64_ram_peek_request,c64_reu_host_request}),
                 .dst_clk(c64_clk), .dst_resetn(c64_aresetn),
                 .destination_running(c64_running_host),
-                .snapshot({uci_ram_request,uci_control,iec9_control_snapshot,cpu_config,expansion_config,debug_enable,peek_request,reu_host_request}));
-            multitini_word_mailbox #(.WIDTH(292)) status_i (
+                .snapshot({cart_erase_request,peripheral_control,uci_ram_request,uci_control,iec9_control_snapshot,cpu_config,expansion_config,debug_enable,peek_request,reu_host_request}));
+            multitini_word_mailbox #(.WIDTH(356)) status_i (
                 .src_clk(c64_clk), .src_resetn(c64_aresetn),
-                .value({uci_status,uci_status2,iec9_status_value,cpu_status,ua_status,ua_fetches,reu_misses,peek_status,reu_host_status}),
+                .value({drive_status,cart_erase_status,uci_status,uci_status2,iec9_status_value,cpu_status,ua_status,ua_fetches,reu_misses,peek_status,reu_host_status}),
                 .dst_clk(control_clk), .dst_resetn(control_aresetn),
-                .snapshot({c64_uci_status,c64_uci_status2,iec9_status_snapshot,c64_cpu_status,c64_ua_status,c64_ua_fetches,c64_reu_misses,
+                .snapshot({c64_drive_status,c64_cart_erase_status,c64_uci_status,c64_uci_status2,iec9_status_snapshot,c64_cpu_status,c64_ua_status,c64_ua_fetches,c64_reu_misses,
                            c64_ram_peek_status,c64_reu_host_status}));
             assign gbc_cart_size = 32'd0;
             assign gbc_cart_loaded = 1'b0;
@@ -1327,6 +1338,10 @@ module multitini_one_top #(
                 .cpu_clk(c64_cpu_clk), .cpu_config(cpu_config), .cpu_status(cpu_status),
                 .ua_enable(expansion_config[4]), .ua_status(ua_status),
                 .uci_enable(expansion_config[5]),.uci_control(uci_control),
+                .cart_erase_request(cart_erase_request),.cart_erase_status(cart_erase_status),
+                .drive_status(drive_status),
+                .drive_power_off(peripheral_control[0]),.uci_config_epoch(peripheral_control[1]),
+                .iec9_address(peripheral_control[12:8]),
                 .uci_status(uci_status),.uci_status2(uci_status2),
                 .uci_op(uci_op),.uci_op_valid(uci_op_valid),.uci_op_ready(uci_op_ready),
                 .uci_ram_request(uci_ram_request),.uci_buffer_addr(uci_buffer_addr),
@@ -1418,12 +1433,15 @@ module multitini_one_top #(
             );
 
             multitini_c64_video_bridge #(
-                .DYNAMIC_DISPLAY(1'b1),.NTSC_MODE(C64_NTSC_MODE)
+                .DYNAMIC_DISPLAY(1'b1),.PROGRAMMABLE_PALETTE(1'b1),.NTSC_MODE(C64_NTSC_MODE)
             ) video_bridge (
         .display_view_x(capture_display_view_x),.display_view_y(capture_display_view_y),
         .display_view_width(capture_display_view_width),.display_view_height(capture_display_view_height),
         .display_scale_num(capture_display_scale_num),.display_scale_den(capture_display_scale_den),
 
+                .palette_clk(control_clk),.palette_resetn(control_aresetn),
+                .palette_valid(c64_palette_valid),.palette_data(c64_palette_data),
+                .palette_ready(c64_palette_ready),
                 .source_clk(c64_clk), .source_resetn(c64_aresetn),
                 .source_ready(c64_ready),
                 .source_r(c64_video_r), .source_g(c64_video_g),
@@ -2411,6 +2429,7 @@ module multitini_one_top #(
         assign eth_d=8'hzz;assign eth_a=0;assign eth_rd_n=1;assign eth_wr_n=1;
         assign eth_cs_n=1;assign eth_rst_n=0;assign net_status=0;assign net_access_error=0;
         assign c64_uci_status=0;assign c64_uci_status2=0;assign c64_uci_op_ready=0;
+        assign c64_palette_ready=0;assign c64_cart_erase_status=0;assign c64_drive_status=0;
         assign c64_sid_status=0;assign uci_buffer_data=0;
     end endgenerate
 

@@ -13,11 +13,12 @@ def main():
     out.mkdir(parents=True)
     files=['hdl/core/c64/multitini_c64_uci.sv','hdl/core/c64/multitini_c64_uci_ram.sv',
         'hdl/core/c64/multitini_c64_uci_transport.sv','hdl/common/multitini_async_mailbox.sv','hdl/common/multitini_axi3_regs.sv',
-        'third_party/appletini/hdl/cdc_bit_sync.sv','hdl/sim/tb_c64_uci.sv',
+        'third_party/appletini/hdl/cdc_bit_sync.sv','hdl/sim/tb_c64_uci.sv','hdl/board/multitini_c64_video_bridge.sv','hdl/sim/tb_c64_uci_palette.sv',
         'hdl/sim/tb_c64_uci_ram.sv','hdl/sim/tb_c64_uci_transport.sv','hdl/sim/tb_c64_uci_axi.sv',
-        'firmware/common/c64_uci.c','firmware/common/c64_iec_dos.c','firmware/common/core_link.c','firmware/common/clock.c',
+        'firmware/common/c64_uci.c','firmware/common/c64_uci_cvt.c','firmware/include/multitini_c64_uci_cvt.h',
+        'firmware/common/c64_iec_dos.c','firmware/common/core_link.c','firmware/common/clock.c',
         'firmware/platform/xilinx/c64_uci_service.c','firmware/platform/xilinx/c64_uci_dos.c',
-        'firmware/platform/xilinx/c64_uci_control.c','firmware/platform/xilinx/c64_uci_geos.c','firmware/platform/xilinx/c64_uci_geos.h','firmware/include/multitini_c64_uci.h',
+        'firmware/platform/xilinx/c64_uci_image.c','firmware/platform/xilinx/c64_uci_control.c','firmware/platform/xilinx/c64_uci_geos.c','firmware/platform/xilinx/c64_uci_geos.h','firmware/include/multitini_c64_uci.h',
         'firmware/platform/xilinx/c64_uci_internal.h','firmware/platform/xilinx/c64_uci_service.h',
         'tests/host/test_c64_uci.c','tests/host/test_c64_uci_service.c',
         'tests/host/c64_uci_storage_fixture.h','tests/host/c64_uci_quiesce_cases.inc',
@@ -48,13 +49,16 @@ def main():
             ROOT/'hdl/core/c64/multitini_c64_uci_transport.sv',ROOT/'hdl/sim/tb_c64_uci_transport.sv'])
         run('transport-elaborate',[vendor/'xelab.bat','--nolog','--relax','-L','unisims_ver','--timescale','1ns/1ps','--snapshot','uci_transport','tb_c64_uci_transport','glbl'])
         run('transport',[vendor/'xsim.bat','--nolog','uci_transport','--runall'],'PASS C64 UCI transport')
+        run('palette-compile',[vendor/'xvlog.bat','--nolog','--sv','-d','SYNTHESIS',ROOT/'hdl/board/multitini_c64_video_bridge.sv',ROOT/'hdl/sim/tb_c64_uci_palette.sv'])
+        run('palette-elaborate',[vendor/'xelab.bat','--nolog','--relax','-L','unisims_ver','--timescale','1ns/1ps','--snapshot','uci_palette','tb_c64_uci_palette','glbl'])
+        run('palette',[vendor/'xsim.bat','--nolog','uci_palette','--runall'],'PASS C64 UCI palette')
         run('axi-compile',[vendor/'xvlog.bat','--nolog','--sv','-d','SYNTHESIS',ROOT/'hdl/common/multitini_axi3_regs.sv',ROOT/'hdl/sim/tb_c64_uci_axi.sv'])
         run('axi-elaborate',[vendor/'xelab.bat','--nolog','--relax','-L','unisims_ver','--timescale','1ns/1ps','--snapshot','uci_axi','tb_c64_uci_axi','glbl'])
         run('axi',[vendor/'xsim.bat','--nolog','uci_axi','--runall'],'PASS C64 UCI AXI')
-        common=['firmware/common/c64_uci.c','firmware/common/core_link.c']
+        common=['firmware/common/c64_uci.c','firmware/common/c64_uci_cvt.c','firmware/common/core_link.c']
         for name,src in [('engine',common+['tests/host/test_c64_uci.c']),('platform',common+[
             'firmware/common/c64_iec_dos.c','firmware/common/clock.c','firmware/platform/xilinx/c64_uci_service.c',
-            'firmware/platform/xilinx/c64_uci_dos.c','firmware/platform/xilinx/c64_uci_control.c','firmware/platform/xilinx/c64_uci_geos.c','tests/host/test_c64_uci_service.c'])]:
+            'firmware/platform/xilinx/c64_uci_dos.c','firmware/platform/xilinx/c64_uci_image.c','firmware/platform/xilinx/c64_uci_control.c','firmware/platform/xilinx/c64_uci_geos.c','tests/host/test_c64_uci_service.c'])]:
             run(name+'-compile',[native/'gcc.exe','-std=c11','-Wall','-Wextra','-Werror','-Wno-misleading-indentation',
                 '-I'+str(ROOT/'firmware/include'),'-I'+str(ROOT/'firmware/platform/xilinx'),*[ROOT/f for f in src],'-o',out/(name+'.exe')])
             run(name,[out/(name+'.exe')],'passed' if name=='platform' else 'PASS')

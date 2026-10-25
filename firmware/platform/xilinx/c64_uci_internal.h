@@ -37,6 +37,8 @@ int c64_uci_action_result(void); /* 1 pending,0 successful,-1 failed */
 bool c64_uci_cancel_action(void);
 mt_uci_target_t c64_uci_dos_target(unsigned instance);
 mt_uci_target_t c64_uci_control_target(void);
+/* For verified explicit PL replacement only, never an ordinary reset/retry. */
+void c64_uci_control_prepare_reload(void);
 mt_uci_target_t c64_uci_softiec_target(void);
 mt_uci_result_t c64_uci_named_reu_begin(bool save,mt_uci_reply_t *);
 mt_uci_result_t c64_uci_named_reu_poll(mt_uci_reply_t *);

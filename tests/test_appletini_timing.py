@@ -145,7 +145,7 @@ proc get_runs {args} {
     return [lindex $args 0]
 }
 proc get_filesets {name} {return $name}
-proc list_property {run} {return {STEPS.ROUTE_DESIGN.TCL.POST STEPS.SYNTH_DESIGN.TCL.PRE STEPS.OPT_DESIGN.TCL.POST}}
+proc list_property {run} {return {STEPS.ROUTE_DESIGN.TCL.POST STEPS.SYNTH_DESIGN.TCL.PRE STEPS.OPT_DESIGN.TCL.POST STEPS.PLACE_DESIGN.TCL.PRE}}
 proc get_property {property run} {
     set key "$run/$property"
     if {[dict exists $::properties $key]} {return [dict get $::properties $key]}
@@ -169,6 +169,7 @@ source {{{path}}}
 if {{[get_property STEPS.OPT_DESIGN.ARGS.DIRECTIVE impl_1] ne "ExploreSequentialArea"}} {{exit 5}}
 if {{[get_property STEPS.PLACE_DESIGN.ARGS.DIRECTIVE impl_1] ne "Explore"}} {{exit 6}}
 if {{![string match *finish_c64_timing.tcl [get_property STEPS.ROUTE_DESIGN.TCL.POST impl_1]]}} {{exit 14}}
+if {{![string match *apply_c64_placement_margin.tcl [get_property STEPS.PLACE_DESIGN.TCL.PRE impl_1]]}} {{exit 16}}
 set merge_hook [get_property STEPS.OPT_DESIGN.TCL.POST impl_1]
 if {{![string match *optimize_c64_control_sets.tcl $merge_hook]}} {{exit 7}}
 set ::merge_calls 0
@@ -185,6 +186,7 @@ foreach machine {{1 2 3 4 5 6 7 10}} {{
     if {{[get_property STEPS.PLACE_DESIGN.ARGS.DIRECTIVE impl_1] ne "Default"}} {{exit 12}}
     if {{[get_property STEPS.OPT_DESIGN.TCL.POST impl_1] ne ""}} {{exit 13}}
     if {{![string match *finish_video_timing.tcl [get_property STEPS.ROUTE_DESIGN.TCL.POST impl_1]]}} {{exit 15}}
+    if {{[get_property STEPS.PLACE_DESIGN.TCL.PRE impl_1] ne ""}} {{exit 17}}
 }}
 '''
         result = self.run_tcl(script)

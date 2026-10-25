@@ -72,6 +72,13 @@ module multitini_control_regs #(
     output logic c64_uci_op_valid,
     output logic [31:0] c64_uci_op,c64_uci_ram_request,
     output logic [10:0] c64_uci_control,
+    input  logic c64_palette_ready,
+    output logic c64_palette_valid,
+    output logic [28:0] c64_palette_data,
+    output logic [31:0] c64_peripheral_control,
+    output logic [31:0] c64_cart_erase_request,
+    input logic [31:0] c64_cart_erase_status,
+    input logic [31:0] c64_drive_status,
     output logic [5:0] c64_sid_index,
     output logic c64_sid_write,c64_sid_commit,
     output logic [31:0] c64_sid_data,
@@ -117,6 +124,9 @@ module multitini_control_regs #(
 
     logic [31:0] error_flags;
     logic [31:0] c64_uci_status2_snapshot;
+    wire erase_pending=c64_cart_erase_request[31:28]!=c64_cart_erase_status[3:0];
+    wire erase_write_good=C64_EXPANSION_CAPS[18] && wr_strb==4'hf &&
+        (wr_data & ~32'h78)==0 && !erase_pending && !c64_cart_erase_status[16];
     wire uci_op_good=C64_EXPANSION_CAPS[5] && wr_strb==4'hf &&
         c64_uci_op_ready && wr_data[15:14]==0 && !wr_data[24] &&
         (wr_data[3:0]==1 || wr_data[3:0]==2 || wr_data[3:0]==3 ||
@@ -328,6 +338,12 @@ module multitini_control_regs #(
                 (c64_uci_status | (c64_uci_op_ready?32'd0:32'h10000000)):0;
             MT_REG_C64_UCI_STATUS2: rd_data=C64_EXPANSION_CAPS[5]?c64_uci_status2_snapshot:0;
             MT_REG_C64_UCI_CONTROL: rd_data={21'd0,c64_uci_control};
+            MT_REG_C64_PALETTE_STATUS: rd_data=C64_EXPANSION_CAPS[15] ?
+                {1'b1,30'd0,(!c64_palette_ready || c64_palette_valid)} : 0;
+            MT_REG_C64_PERIPHERAL_CONTROL: rd_data=c64_peripheral_control;
+            MT_REG_C64_DRIVE_STATUS: rd_data=C64_EXPANSION_CAPS[17] ? c64_drive_status : 0;
+            MT_REG_C64_CART_ERASE_STATUS: rd_data=C64_EXPANSION_CAPS[18] ?
+                c64_cart_erase_status | (erase_pending?32'h10000:32'd0) : 0;
             MT_REG_C64_SID_INDEX: rd_data={26'd0,c64_sid_index};
             MT_REG_C64_SID_STATUS: rd_data=C64_EXPANSION_CAPS[6]?c64_sid_status:0;
             MT_REG_C64_IEC_CONTROL: rd_data={30'd0,c64_iec_control};
@@ -437,6 +453,15 @@ module multitini_control_regs #(
                 if(!NET_CAPS[31] || wr_strb!=4'hf)error_set_mask|=MT_ERROR_BAD_WRITE;
             MT_REG_C64_UCI_HANDSHAKE:
                 if(!uci_op_good)error_set_mask|=MT_ERROR_BAD_WRITE;
+            MT_REG_C64_CART_ERASE:
+                if(!erase_write_good)error_set_mask|=MT_ERROR_BAD_WRITE;
+            MT_REG_C64_PALETTE_DATA:
+                if(!C64_EXPANSION_CAPS[15] || wr_strb!=4'hf || wr_data[31:29]!=0 ||
+                   !c64_palette_ready || c64_palette_valid)error_set_mask|=MT_ERROR_BAD_WRITE;
+            MT_REG_C64_PERIPHERAL_CONTROL:
+                if(!C64_EXPANSION_CAPS[17] || wr_strb!=4'hf || (wr_data & ~32'h1f03)!=0 ||
+                   (wr_data[12:8]!=0 && (!C64_IEC_CAPS[8] || wr_data[12:8]<8 || wr_data[12:8]>30)))
+                    error_set_mask|=MT_ERROR_BAD_WRITE;
             MT_REG_C64_UCI_RAM_READ:
                 if(!C64_EXPANSION_CAPS[13] || wr_strb!=4'hf ||
                    wr_data[31:27]!=0 || wr_data[26:16]>=896)
@@ -483,6 +508,8 @@ module multitini_control_regs #(
             c64_iec_control <= 0;
             net_run<=0;net_access_valid<=0;net_access_word<=0;
             c64_uci_control<=11'h01f;c64_uci_op<=0;c64_uci_op_valid<=0;
+            c64_palette_valid<=0;c64_palette_data<=0;c64_peripheral_control<=0;
+            c64_cart_erase_request<=0;
             c64_uci_ram_request<=0;c64_uci_status2_snapshot<=0;
             c64_sid_index<=0;c64_sid_write<=0;c64_sid_commit<=0;
             c64_sid_data<=0;c64_sid_sequence<=0;
@@ -572,6 +599,7 @@ module multitini_control_regs #(
             effect_commit <= 1'b0;
             debug_control[2] <= 1'b0;
             net_access_valid<=0;c64_uci_op_valid<=0;
+            c64_palette_valid<=0;
             c64_sid_write<=0;c64_sid_commit<=0;
             if(rd_en && rd_addr==MT_REG_C64_UCI_STATUS)
                 c64_uci_status2_snapshot<=c64_uci_status2;
@@ -678,6 +706,18 @@ module multitini_control_regs #(
                             c64_uci_control<=11'(merge_strobes({21'd0,c64_uci_control},wr_data,wr_strb)) & 11'h71f;
                     MT_REG_C64_UCI_HANDSHAKE:
                         if(uci_op_good)begin c64_uci_op<=wr_data;c64_uci_op_valid<=1;end
+                    MT_REG_C64_CART_ERASE:
+                        if(erase_write_good)c64_cart_erase_request<=
+                            {c64_cart_erase_request[31:28]+4'd1,1'b1,20'd0,wr_data[6:0]};
+                    MT_REG_C64_PALETTE_DATA:
+                        if(C64_EXPANSION_CAPS[15] && wr_strb==4'hf && wr_data[31:29]==0 &&
+                           c64_palette_ready && !c64_palette_valid)begin
+                            c64_palette_data<=wr_data[28:0];c64_palette_valid<=1;
+                        end
+                    MT_REG_C64_PERIPHERAL_CONTROL:
+                        if(C64_EXPANSION_CAPS[17] && wr_strb==4'hf && (wr_data & ~32'h1f03)==0 &&
+                           (wr_data[12:8]==0 || (C64_IEC_CAPS[8] && wr_data[12:8]>=8 && wr_data[12:8]<=30)))
+                            c64_peripheral_control<=wr_data;
                     MT_REG_C64_UCI_RAM_READ:
                         if(C64_EXPANSION_CAPS[13] && wr_strb==4'hf &&
                            wr_data[31:27]==0 && wr_data[26:16]<896)

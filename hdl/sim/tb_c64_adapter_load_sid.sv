@@ -10,7 +10,7 @@ module tb_c64_adapter_load_sid #(parameter integer NTSC=0);
         #7.8125;clk=0;fastclk=1;
         #7.8125;fastclk=0;
     end
-    reg reset=1,pause_request=1;
+    reg reset=1,pause_request=1,guest_reset=0,uci_config_epoch=0;
     reg [31:0] config_word=0;
     reg [10:0] control=11'h31f;
     reg [31:0] op=0;
@@ -43,12 +43,18 @@ module tb_c64_adapter_load_sid #(parameter integer NTSC=0);
     wire [63:0] cart_wdata;wire [7:0] cart_wstrb;
     reg cart_rvalid=0;reg [7:0] cart_backing[0:8191];
     reg cart_pending=0;integer cart_delay=0,cart_bytes=0,uci_bytes=0;
+    reg [31:0] cart_erase_request=0;wire [31:0] cart_erase_status;
+    reg erase_test=0;integer erase_words=0;
+    reg drive_power_off=0;
+    wire [31:0] drive_status;
     wire cart_ready=!cart_pending;
     multitini_c64_adapter #(.NTSC_MODE(NTSC),.CORE_CLOCK_HZ(32000000),
         .ENABLE_EXTENSIONS(1),.SID_COUNT(8)) dut(
-        .core_clk(clk),.cpu_clk(fastclk),.reset(reset),.core_reset_request(1'b0),
+        .core_clk(clk),.cpu_clk(fastclk),.reset(reset),.core_reset_request(guest_reset),
         .cpu_config(config_word),.cpu_status(cpu_status),.cpu_turbo_enable(1'b0),
-        .ua_enable(ua_enable),.debug_enable(1'b0),.uci_enable(uci_enable),.uci_control(control),
+        .ua_enable(ua_enable),.debug_enable(1'b0),.uci_enable(uci_enable),
+        .uci_config_epoch(uci_config_epoch),.uci_control(control),
+        .cart_erase_request(cart_erase_request),.cart_erase_status(cart_erase_status),
         .uci_op(op),.uci_op_valid(op_valid),.uci_op_ready(),.uci_ram_request(32'd0),
         .uci_status(uci_status),.uci_status2(uci_status2),
         .uci_buffer_addr(buffer_addr),.uci_buffer_write(buffer_we),
@@ -59,7 +65,7 @@ module tb_c64_adapter_load_sid #(parameter integer NTSC=0);
         .ua_memory_ready(1'b1),.ua_memory_rvalid(1'b0),.ua_memory_fault(1'b0),.ua_memory_rdata(64'd0),
         .iec9_run(1'b0),.iec9_quiesce(1'b0),.iec9_event_ready(1'b1),
         .iec9_reply_data(32'd0),.iec9_reply_valid(1'b0),
-        .pause_request(pause_request),.drive_parallel_enable(1'b0),.sid_mode(3'd0),.reu_enable(reu_enable),
+        .pause_request(pause_request),.drive_parallel_enable(1'b0),.drive_power_off(drive_power_off),.drive_status(drive_status),.sid_mode(3'd0),.reu_enable(reu_enable),
         .load_abort(1'b0),.load_abort_epoch(1'b0),.clear_load_error(1'b0),
         .input_code(16'd0),.input_value(16'd0),.input_valid(1'b0),
         .load_data(load_data),.load_valid(load_valid),.load_ready(load_ready),
@@ -78,6 +84,7 @@ module tb_c64_adapter_load_sid #(parameter integer NTSC=0);
         .media_complete_block_count(16'd0),.media_complete_generation(32'd0),.media_write_data_ready(1'b1),
         .ready(ready),.load_error(load_error));
     integer checks=0;reg [15:0] probe_addr=0;reg probe_we=0;reg [7:0] probe_data=0;
+    reg [87:0] probe_fio_entries=0;reg [2:0] probe_fio_wp=0;
     task automatic check(input bit ok,input string why);
         checks++;if(!ok)$fatal(1,"ADAPTER LOAD SID %s",why);
     endtask
@@ -85,9 +92,16 @@ module tb_c64_adapter_load_sid #(parameter integer NTSC=0);
         cart_rvalid<=0;
         if(cart_valid&&cart_ready)begin
             check(cart_write,"CRT backend write");
-            for(integer b=0;b<8;b++)if(cart_wstrb[b])begin
-                check(cart_addr+b>=24'h200000 && cart_addr+b<24'h202000,"CRT address bounded");
-                cart_backing[cart_addr+b-24'h200000]<=cart_wdata[b*8+:8];cart_bytes++;
+            if(erase_test)begin
+                check(cart_addr==24'h200000+(erase_words/1024)*16384+(erase_words%1024)*8,
+                      "adapter erase bank geometry");
+                check(cart_wstrb==8'hff&&cart_wdata==64'hffffffffffffffff,"adapter erase data");
+                erase_words++;
+            end else begin
+                for(integer b=0;b<8;b++)if(cart_wstrb[b])begin
+                    check(cart_addr+b>=24'h200000 && cart_addr+b<24'h202000,"CRT address bounded");
+                    cart_backing[cart_addr+b-24'h200000]<=cart_wdata[b*8+:8];cart_bytes++;
+                end
             end
             cart_pending<=1;cart_delay<=4+(cart_bytes%7);
         end
@@ -96,6 +110,8 @@ module tb_c64_adapter_load_sid #(parameter integer NTSC=0);
             else cart_delay<=cart_delay-1;
         end
         if(dut.uci_ram_write)uci_bytes++;
+        if(erase_test&&cart_erase_status[16])
+            check(dut.core_reset_n&&dut.core_paused&&!dut.cart_loader_busy,"host erase preserves guest reset and HOLD");
     end
     function automatic [7:0] crt_byte(input integer a);
         reg [127:0] magic;
@@ -123,6 +139,19 @@ module tb_c64_adapter_load_sid #(parameter integer NTSC=0);
         integer n;
         n=0;while(!dut.ext_cpu_enable&&n<128)begin @(negedge clk);n++;end
         check(n<128,"native bus slot available");#1;
+    endtask
+    task automatic native_write(input [15:0] address,input [7:0] value);
+        @(negedge clk);probe_addr=address;probe_data=value;probe_we=1;
+        repeat(64)@(negedge clk);probe_we=0;
+    endtask
+    task automatic fio_write(input [9:0] address,input [7:0] value);
+        integer waited;
+        @(negedge clk);
+        probe_fio_entries[probe_fio_wp[1:0]*22+:22]={4'b0000,address,value};
+        probe_fio_wp=probe_fio_wp+1'b1;
+        waited=0;
+        while(dut.fio_done!=probe_fio_wp&&waited<64)begin @(negedge clk);waited++;end
+        check(waited<64,"real FIO key write drained");
     endtask
     initial begin
         $readmemh("kernal.hex",rom);repeat(8)@(negedge clk);reset=0;
@@ -173,6 +202,80 @@ module tb_c64_adapter_load_sid #(parameter integer NTSC=0);
         probe_addr=16'hdf00;wait_native_read();check(dut.reu_io_select&&!dut.sid_io_select,"REU priority");@(negedge clk);
         probe_addr=16'hdf1c;wait_native_read();check(dut.uci_io_select&&!dut.sid_io_select,"UCI priority");@(negedge clk);
         probe_addr=16'hdf20;wait_native_read();check(dut.ua_io_select&&!dut.sid_io_select,"UA priority");
+        // 3.15 unlock, with menu off. Test wrong order/data and mirrored VIC
+        // addresses first, then both real native and FIFO delivery paths.
+        @(negedge clk);uci_enable=0;reu_enable=0;ua_enable=0;map_enable=0;io_masks=0;
+        repeat(8)@(negedge clk);check(!dut.uci_active,"configured UCI off");
+        native_write(16'hd036,8'hcd);check(!dut.uci_active,"second key alone rejected");
+        native_write(16'hd078,8'hab);native_write(16'hd036,8'hcd);
+        check(!dut.uci_active,"VIC mirror is not an unlock register");
+        native_write(16'hd038,8'hab);native_write(16'hd036,8'hce);
+        check(!dut.uci_active,"wrong second key rejected");
+        native_write(16'hd038,8'hab);native_write(16'hd020,8'h00);native_write(16'hd036,8'hcd);
+        check(!dut.uci_active,"intervening VIC write cancels key sequence");
+        native_write(16'hd038,8'hab);native_write(16'hd036,8'hcd);
+        probe_addr=16'hdf1d;wait_native_read();
+        check(dut.uci_active&&dut.uci_io_select&&dut.ext_cpu_di==8'hc9&&uci_status[27],"native unlock identification");
+        @(negedge clk);guest_reset=1;repeat(16)@(negedge clk);guest_reset=0;
+        repeat(256)@(negedge clk);check(dut.uci_active,"warm reset retains host-owned unlock");
+        force dut.cart_loading=1;repeat(4)@(negedge clk);
+        check(!dut.uci_active&&!dut.uci_unlocked,"new cartridge relocks");
+        force dut.cart_loading=0;force dut.cart_loaded=1;force dut.loader_cart_id=1;
+        repeat(8)@(negedge clk);check(dut.uci_suspended,"cartridge initially owns IO2");
+        // FIFO runs through the actual native-domain fast I/O consumer.
+        @(negedge clk);probe_addr=16'h0400;probe_we=0;probe_fio_wp=dut.fio_done;
+        force dut.fio_entries=probe_fio_entries;force dut.fio_wp=probe_fio_wp;
+        fio_write(10'h038,8'hab);fio_write(10'h036,8'hcd);
+        check(dut.uci_active&&!dut.uci_suspended,"FIO unlock overrides cartridge exclusion");
+        probe_addr=16'hdf1d;wait_native_read();
+        check(dut.ext_cpu_di==8'hc9&&!dut.cartridge_i.IOF,"unlocked ID overrides cartridge");
+        for(integer offset=8'h18;offset<=8'h20;offset++)begin
+            @(negedge clk);probe_addr=16'hdf00+offset;probe_we=1;probe_data=0;
+            wait_native_read();
+            check(dut.uci_io_select==((offset>=8'h1b)&&(offset<=8'h1f)),"exact five-byte UCI aperture");
+            check(dut.cartridge_i.IOF==!dut.uci_io_select,"no cartridge side effects in UCI aperture");
+        end
+        @(negedge clk);probe_we=0;uci_config_epoch=~uci_config_epoch;
+        repeat(4)@(negedge clk);
+        check(!dut.uci_active&&!dut.uci_unlocked&&dut.uci_suspended,"explicit configuration apply revokes unlock");
+        @(negedge clk);probe_we=0;release dut.fio_entries;release dut.fio_wp;
+        release dut.cart_loading;release dut.cart_loaded;release dut.loader_cart_id;
+        $display("UCI_UNLOCK PASS native/FIO/wrong-key/mirror/cartridge/reset/config-epoch/5-byte-aperture NTSC=%0d",NTSC);
+        probe_addr=16'h0400;control[10]=1;pause_request=1;repeat(256)@(negedge clk);
+        check(dut.core_paused&&dut.core_reset_n,"erase starts in safe HOLD without reset");
+        erase_test=1;cart_erase_request=32'h18000000;
+        begin integer waited;waited=0;
+            while(cart_erase_status[3:0]!=1&&waited<500000)begin @(negedge clk);waited++;end
+            check(waited<500000,"adapter erase completion bounded");
+        end
+        check(cart_erase_status==32'h80000001&&erase_words==8192&&!cart_pending,
+              "adapter erase acknowledged every write");
+        erase_test=0;
+        $display("UCI_ERASE PASS words=8192 held-without-reset NTSC=%0d",NTSC);
+        check(drive_status==32'h80000008,"drive reset reports configured IEC address");
+        force dut.drive_i.drive_reset=0;
+        force dut.drive_i.drive_logic.ph2_r=1;
+        force dut.drive_i.drive_logic.cpu_rw=0;
+        force dut.drive_i.drive_logic.cpu_a=24'h0078;
+        force dut.drive_i.drive_logic.cpu_do=8'h2a;
+        repeat(2)@(negedge clk);
+        check(drive_status==32'h8000000a,"DOS M-W RAM78 changes effective IEC address");
+        force dut.drive_i.drive_logic.cpu_a=24'h0079;
+        force dut.drive_i.drive_logic.cpu_do=8'h2b;
+        repeat(2)@(negedge clk);
+        check(drive_status==32'h8000000a,"other RAM writes do not change IEC address");
+        force dut.drive_i.drive_logic.cpu_a=24'h0078;
+        force dut.drive_i.drive_logic.cpu_rw=1;
+        repeat(2)@(negedge clk);
+        check(drive_status==32'h8000000a,"RAM78 reads do not change IEC address");
+        release dut.drive_i.drive_logic.cpu_a;release dut.drive_i.drive_logic.cpu_do;
+        release dut.drive_i.drive_logic.cpu_rw;release dut.drive_i.drive_logic.ph2_r;
+        drive_power_off=1;release dut.drive_i.drive_reset;
+        repeat(4)@(negedge clk);
+        check(dut.drive_i.drive_reset&&dut.drive_i.drive_iec_clk&&dut.drive_i.drive_iec_data,
+              "drive power off releases IEC lines");
+        check(drive_status==32'h80000008,"drive power off returns configured address");
+        $display("UCI_DRIVE PASS power/address NTSC=%0d",NTSC);
         $display("PASS ADAPTER LOAD SID checks=%0d CRTbytes=%0d UCIbytes=%0d slots=16 NTSC=%0d",checks,cart_bytes,uci_bytes,NTSC);$finish;
     end
     initial begin #100000000;$fatal(1,"ADAPTER LOAD SID timeout");end

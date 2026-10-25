@@ -331,6 +331,7 @@ def main():
     sources = [Path(__file__).resolve(), GUARD, ROOT / "hdl/sim/tb_c64_iec9_rpc.sv",
                ROOT / "hdl/core/c64/multitini_c64_iec9.sv", ROOT / "tests/host/c64_iec_kernal_backend.c",
                ROOT / "firmware/common/c64_iec_dos.c", ROOT / "firmware/include/multitini_c64_iec_dos.h",
+               ROOT / "firmware/common/clock.c", ROOT / "firmware/include/multitini_clock.h",
                ROOT / "scripts/private_core_roms.py",
                *sorted((ROOT / "scripts/c64sim").glob("*.py"))]
     before = {p.relative_to(ROOT).as_posix(): digest(p) for p in sources}
@@ -350,6 +351,7 @@ def main():
                     ROOT / "hdl/core/c64/multitini_c64_iec9.sv", ROOT / "hdl/sim/tb_c64_iec9_rpc.sv"], build, build / (name + "-compile.log"))
         native([UCRT / "gcc.exe", "-shared", "-O2", "-Wall", "-Wextra", "-I", ROOT / "firmware/include",
                 ROOT / "tests/host/c64_iec_kernal_backend.c", ROOT / "firmware/common/c64_iec_dos.c",
+                ROOT / "firmware/common/clock.c",
                 "-o", build / "backend.dll"], build, build / "backend-compile.log")
         dll_dir = os.add_dll_directory(str(UCRT)) if os.name == "nt" else None
         backend = ctypes.CDLL(str(build / "backend.dll"))

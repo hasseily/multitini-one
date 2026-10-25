@@ -107,8 +107,8 @@ def main():
             original=snap(ROOT/'hdl/core/c64/multitini_c64_adapter.sv').read_text()
             for name,before,after,failure in [
                 ('irq','!(reu_irq || ua_irq || uci_irq)','!(reu_irq || ua_irq)','UCI machine timeout selector=4'),
-                ('hold','(uci_hold || uci_freeze) && !reu_busy','uci_hold || (uci_freeze && !reu_busy)','UCI machine timeout selector=2'),
-                ('freeze','(uci_hold || uci_freeze) && !reu_busy','(uci_hold && !reu_busy) || uci_freeze','UCI freeze paused active REU')]:
+                ('hold','(uci_hold || uci_freeze || cart_erase_status[16]) && !reu_busy','uci_hold || ((uci_freeze || cart_erase_status[16]) && !reu_busy)','UCI machine timeout selector=2'),
+                ('freeze','(uci_hold || uci_freeze || cart_erase_status[16]) && !reu_busy','((uci_hold || cart_erase_status[16]) && !reu_busy) || uci_freeze','UCI freeze paused active REU')]:
                 if original.count(before)!=1:raise RuntimeError('negative anchor '+name)
                 folder=out/'pal';mutant=folder/f'adapter-{name}.sv';mutant.write_text(original.replace(before,after,1))
                 run(folder,name+'-compile',[v/'xvlog.bat','--nolog','--sv','--relax',mutant])

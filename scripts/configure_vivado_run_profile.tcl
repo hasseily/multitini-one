@@ -58,10 +58,14 @@ namespace eval multitini_run_profile {
         dict set impl_settings STEPS.OPT_DESIGN.ARGS.DIRECTIVE ExploreSequentialArea
         dict set impl_settings STEPS.OPT_DESIGN.TCL.POST $control_merge
         dict set impl_settings STEPS.PLACE_DESIGN.ARGS.DIRECTIVE Explore
+        # Pixel and CPU half-cycle placement margin; finish_c64_timing restores it.
+        set placement_margin [file join $helper_dir apply_c64_placement_margin.tcl]
         set cpu_finish [file join $helper_dir finish_c64_timing.tcl]
-        foreach hook [list $cpu_finish [file join $helper_dir optimize_c64_cpu_margin.tcl]] {
+        foreach hook [list $placement_margin [file join $helper_dir c64_placement_margin.tcl] \
+                          $cpu_finish [file join $helper_dir optimize_c64_cpu_margin.tcl]] {
             if {![file isfile $hook]} {error "Missing C64 timing hook: $hook"}
         }
+        dict set impl_settings STEPS.PLACE_DESIGN.TCL.PRE $placement_margin
         dict set impl_settings STEPS.ROUTE_DESIGN.TCL.POST $cpu_finish
     }
     # Other cores keep one shared pass; C64 also targets the CPU half cycles.
@@ -85,5 +89,5 @@ namespace eval multitini_run_profile {
     foreach run [get_runs -filter {IS_SYNTHESIS && SRCSET != sources_1}] {
         set_if_changed $run STEPS.SYNTH_DESIGN.TCL.PRE $threads_hook
     }
-    puts "Vivado profile: automatic checkpoints enabled, OPT [dict get $impl_settings STEPS.OPT_DESIGN.ARGS.DIRECTIVE], PLACE [dict get $impl_settings STEPS.PLACE_DESIGN.ARGS.DIRECTIVE], PHYS Explore, ROUTE Explore, routed PHYS AggressiveExplore"
+    puts "Vivado profile: automatic checkpoints enabled, OPT [dict get $impl_settings STEPS.OPT_DESIGN.ARGS.DIRECTIVE], PLACE [dict get $impl_settings STEPS.PLACE_DESIGN.ARGS.DIRECTIVE], PHYS Explore, ROUTE Explore, routed PHYS AggressiveExplore[expr {$c64_profile ? ", C64 pixel/CPU placement margin" : ""}]"
 }
