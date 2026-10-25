@@ -28,7 +28,7 @@ typedef struct {
     uint32_t media_request_cancellations;
     uint32_t expansion_reads;
     unsigned drain_delay, drain_polls, commits;
-    bool require_handoff, fail_reset, fail_commit;
+    bool require_handoff, fail_reset, fail_commit, never_ack;
 } shell_t;
 
 static char requested_path[512];
@@ -40,11 +40,21 @@ static uint32_t sd_reads;
 static uint32_t read32(void *context, uint32_t offset)
 {
     shell_t *const shell = context;
-    if (offset == MT_REG_STREAM_STATUS && shell->drain_delay) {
-        assert(shell->registers[MT_REG_CONTROL / 4U] & MT_CONTROL_CORE_RESET_REQUEST);
-        ++shell->drain_polls;
-        if (--shell->drain_delay == 0)
-            shell->registers[MT_REG_STREAM_STATUS / 4U] |= MT_STREAM_STATUS_DRAINED;
+    if (offset == MT_REG_STREAM_STATUS) {
+        if (!shell->active_size) return 0U;
+        if (shell->active_offset < shell->active_size) return MT_STREAM_STATUS_READY;
+        return shell->drain_delay || shell->never_ack ? 0U : MT_STREAM_STATUS_DRAINED;
+    }
+    if (offset == MT_REG_STATUS) {
+        if (shell->drain_delay) {
+            assert(shell->registers[MT_REG_CONTROL / 4U] & MT_CONTROL_CORE_RESET_REQUEST);
+            ++shell->drain_polls;
+            --shell->drain_delay;
+        }
+        const uint32_t status = shell->registers[offset / sizeof(uint32_t)] &
+                                ~MT_STATUS_STREAM_READY;
+        return status | ((!shell->drain_delay && !shell->never_ack) ?
+                          MT_STATUS_STREAM_READY : 0U);
     }
     if (offset == MT_REG_C64_EXPANSION_CONFIG || offset == MT_REG_C64_EXPANSION_CAPS)
         ++shell->expansion_reads;
@@ -58,6 +68,7 @@ static void write32(void *context, uint32_t offset, uint32_t value)
     if (offset == MT_REG_STREAM_DATA_BURST) {
         const uint32_t remaining = shell->active_size - shell->active_offset;
         assert(remaining != 0U);
+        assert(!shell->drain_delay && !shell->never_ack);
         shell->active_offset += remaining < MT_STREAM_BURST_BYTES ? remaining : MT_STREAM_BURST_BYTES;
         return;
     }
@@ -102,12 +113,12 @@ static void respond(void *context)
         if (shell->require_handoff && shell->active_offset == 1) {
             assert(shell->commits == 1);
             assert(shell->registers[MT_REG_CONTROL / 4U] & MT_CONTROL_CORE_RESET_REQUEST);
-            shell->registers[MT_REG_STREAM_STATUS / 4U] &= ~MT_STREAM_STATUS_DRAINED;
             shell->drain_delay = 7;
         }
         break;
     case MT_COMMAND_STREAM_END:
         assert(shell->active_offset == shell->active_size);
+        assert(!shell->drain_delay && !shell->never_ack);
         assert(shell->completed_count <
                sizeof(shell->completed) / sizeof(shell->completed[0]));
         shell->completed[shell->completed_count++] = shell->active_kind;
@@ -119,6 +130,7 @@ static void respond(void *context)
     case MT_COMMAND_STREAM_ABORT:
         ++shell->abort_commands;
         shell->active_size = 0U;
+        shell->drain_delay = 0U;
         break;
     case MT_COMMAND_CORE_RESET:
         if (shell->fail_reset) {
@@ -131,7 +143,7 @@ static void respond(void *context)
             shell->registers[MT_REG_CONTROL / 4U] |=
                 MT_CONTROL_CORE_RESET_REQUEST;
         } else {
-            if (shell->require_handoff && !shell->fail_commit) {
+            if (shell->require_handoff && !shell->fail_commit && shell->active_size) {
                 assert(shell->active_offset >= 1 && shell->drain_delay == 0 &&
                        shell->drain_polls >= 7);
             }
@@ -209,9 +221,13 @@ mt_sd_result_t mt_sd_storage_read_file_max(const char *path, uint8_t *dst,
     }
     if (strstr(path, ".prg") != NULL) {
         static const uint8_t prg[] = {0x01U, 0x08U, 0x00U};
-        assert(capacity >= sizeof(prg));
+        /* Match the reported program's size and load address without copying
+         * any demo content into the repository. This ends on a partial burst
+         * after the separately accepted first byte. */
+        result.size = strstr(path, "udemo2026.prg") ? 37410U : sizeof(prg);
+        assert(capacity >= result.size);
+        memset(dst, 0, result.size);
         memcpy(dst, prg, sizeof(prg));
-        result.size = sizeof(prg);
     } else {
         const uint16_t type = strstr(path, "unsupported") != NULL ?
                                   32U : MT_CRT_MAGIC_DESK;
@@ -230,7 +246,6 @@ static void test_reu_excludes_cartridges(void)
     c64_content_service_init(&link, respond, &shell, NULL, NULL);
     shell.registers[MT_REG_CORE_ID / 4U] = MT_C64_CORE_ID;
     shell.registers[MT_REG_ABI_VERSION / 4U] = 23U;
-    shell.registers[MT_REG_STREAM_STATUS / 4U] = MT_STREAM_STATUS_READY | MT_STREAM_STATUS_DRAINED;
     shell.registers[MT_REG_STATUS / 4U] = MT_STATUS_CORE_READY;
     shell.registers[MT_REG_C64_EXPANSION_CAPS / 4U] = MT_C64_EXPANSION_CAPS_VALID | MT_C64_EXPANSION_CAPS_REU_16MB;
     shell.registers[MT_REG_C64_EXPANSION_CONFIG / 4U] = MT_C64_EXPANSION_CONFIG_DEFAULT;
@@ -400,7 +415,6 @@ static void test_title_handoff(void)
     shell.registers[MT_REG_CORE_ID / 4U] = MT_C64_CORE_ID;
     shell.registers[MT_REG_ABI_VERSION / 4U] = 26;
     shell.registers[MT_REG_STATUS / 4U] = MT_STATUS_CORE_READY;
-    shell.registers[MT_REG_STREAM_STATUS / 4U] = MT_STREAM_STATUS_READY | MT_STREAM_STATUS_DRAINED;
     mt_c64_launch_hook_t hook = {false, true, title_commit, &shell};
     shell.require_handoff = true;
     shell.fail_reset = true;
@@ -414,7 +428,10 @@ static void test_title_handoff(void)
     assert(shell.commits == 1 && !shell.active_offset && !shell.completed_count);
     shell.commits = 0;
     shell.fail_commit = false;
-    assert(c64_content_service_load_hooked("title.prg", &hook).status == MT_C64_CONTENT_SERVICE_OK);
+    const mt_c64_content_service_result_t demo = c64_content_service_load_hooked(
+        "idi8b/ultdemo2026/udemo2026.prg", &hook);
+    assert(demo.status == MT_C64_CONTENT_SERVICE_OK && demo.sd.size == 37410U);
+    assert(shell.active_offset == 37410U);
     assert(shell.commits == 1 && shell.completed_count == 1 && shell.drain_polls == 7);
     assert(!(shell.registers[MT_REG_CONTROL / 4U] & MT_CONTROL_CORE_RESET_REQUEST));
     shell.active_offset = 0;
@@ -429,6 +446,37 @@ static void test_title_handoff(void)
     shell.require_handoff = false;
     assert(c64_content_service_load_hooked("title.prg", &hook).status == MT_C64_CONTENT_SERVICE_OK);
     assert(!c64_content_service_crt_attached() && shell.commits == 1);
+    assert(c64_content_service_load("idi8b/ultdemo2026/udemo2026.prg").status ==
+           MT_C64_CONTENT_SERVICE_OK);
+    assert(shell.active_offset == 37410U && shell.commits == 1);
+}
+
+static void test_title_handoff_timeout_recovery(void)
+{
+    shell_t shell = {0};
+    mt_core_link_t link;
+    mt_core_link_init(&link, &shell, read32, write32);
+    c64_content_service_init(&link, respond, &shell, fake_monotonic_ms, NULL);
+    shell.registers[MT_REG_CORE_ID / 4U] = MT_C64_CORE_ID;
+    shell.registers[MT_REG_ABI_VERSION / 4U] = 26;
+    shell.registers[MT_REG_STATUS / 4U] = MT_STATUS_CORE_READY;
+    shell.require_handoff = shell.never_ack = true;
+    mt_c64_launch_hook_t hook = {false, true, title_commit, &shell};
+    const mt_c64_content_service_result_t failed =
+        c64_content_service_load_hooked("title.prg", &hook);
+    assert(failed.status == MT_C64_CONTENT_SERVICE_TRANSFER_FAILED &&
+           failed.link == MT_LINK_TIMEOUT);
+    assert(shell.active_offset == 1U && !shell.completed_count);
+    assert(shell.abort_commands == 1U && shell.reset_releases == 1U);
+    assert(!(shell.registers[MT_REG_CONTROL / 4U] & MT_CONTROL_CORE_RESET_REQUEST));
+
+    shell.never_ack = false;
+    shell.commits = shell.drain_polls = 0U;
+    shell.active_offset = 0U;
+    c64_content_service_init(&link, respond, &shell, NULL, NULL);
+    assert(c64_content_service_load_hooked("title.prg", &hook).status ==
+           MT_C64_CONTENT_SERVICE_OK);
+    assert(shell.completed_count == 1U && shell.commits == 1U && shell.drain_polls == 7U);
 }
 
 int main(void)
@@ -441,6 +489,7 @@ int main(void)
     };
 
     test_title_handoff();
+    test_title_handoff_timeout_recovery();
     test_reu_excludes_cartridges();
     test_run_preserves_pending_media_request();
     test_run_refuses_existing_core_fault();

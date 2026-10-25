@@ -20,7 +20,8 @@ typedef struct {
     int stream_open;
     int stream_blocked;
     int inject_busy;
-    unsigned drain_delay, handoffs;
+    unsigned drain_delay, submit_delay, first_ack_delay, first_submit_delay, handoffs;
+    int never_ack;
     uint32_t input_code;
     uint32_t input_value;
 } mock_shell_t;
@@ -30,8 +31,17 @@ static uint32_t mock_read(void *context, uint32_t offset)
     mock_shell_t *const shell = context;
     assert(offset < MT_REGISTER_SPAN && (offset & 3U) == 0U);
     if (offset == MT_REG_STREAM_STATUS && shell->stream_open) {
-        if (shell->stream_blocked != 0) return 0U;
-        return MT_STREAM_STATUS_READY | (shell->drain_delay ? 0U : MT_STREAM_STATUS_DRAINED);
+        if (shell->stream_blocked != 0 || shell->submit_delay) return 0U;
+        if (shell->stream_data_size < shell->stream_size) return MT_STREAM_STATUS_READY;
+        return shell->drain_delay || shell->never_ack ? 0U : MT_STREAM_STATUS_DRAINED;
+    }
+    if (offset == MT_REG_STATUS) {
+        const uint32_t status = shell->registers[offset / sizeof(uint32_t)] &
+                                ~MT_STATUS_STREAM_READY;
+        /* Before the queued pulse reaches the mailbox, its old idle-ready
+         * value is still visible. The producer-empty guard must reject it. */
+        return status | ((!shell->drain_delay && !shell->never_ack) ?
+                          MT_STATUS_STREAM_READY : 0U);
     }
     return shell->registers[offset / sizeof(uint32_t)];
 }
@@ -73,7 +83,9 @@ static void respond_to_stream(void *context)
     const uint32_t sequence = shell->registers[MT_REG_COMMAND_SEQ / 4U];
     const uint32_t opcode = shell->registers[MT_REG_COMMAND_OPCODE / 4U];
     uint32_t status = MT_RESPONSE_OK;
-    if (shell->drain_delay) --shell->drain_delay;
+    if (shell->submit_delay) {
+        if (--shell->submit_delay == 0U) shell->drain_delay = shell->first_ack_delay;
+    } else if (shell->drain_delay) --shell->drain_delay;
 
     if (sequence == shell->observed_sequence) {
         return;
@@ -93,13 +105,23 @@ static void respond_to_stream(void *context)
             assert(shell->stream_data_size < sizeof(shell->stream_data));
             shell->stream_data[shell->stream_data_size++] =
                 (uint8_t)shell->registers[MT_REG_COMMAND_ARG0 / 4U];
+            if (shell->stream_data_size == 1U) {
+                shell->submit_delay = shell->first_submit_delay;
+                shell->drain_delay = shell->submit_delay ? 0U : shell->first_ack_delay;
+            }
         }
     } else if (opcode == MT_COMMAND_INPUT_EVENT) {
         shell->input_code = shell->registers[MT_REG_COMMAND_ARG0 / 4U];
         shell->input_value = shell->registers[MT_REG_COMMAND_ARG1 / 4U];
     } else if (opcode == MT_COMMAND_STREAM_END ||
                opcode == MT_COMMAND_STREAM_ABORT) {
-        if (opcode == MT_COMMAND_STREAM_ABORT) ++shell->abort_commands;
+        if (opcode == MT_COMMAND_STREAM_ABORT) {
+            ++shell->abort_commands;
+            shell->submit_delay = shell->drain_delay = 0U;
+        } else {
+            assert(shell->stream_data_size == shell->stream_size);
+            assert(!shell->submit_delay && !shell->drain_delay && !shell->never_ack);
+        }
         shell->stream_open = 0;
     }
 
@@ -113,7 +135,7 @@ static int handoff(void *context)
 {
     mock_shell_t *shell=context;
     assert(shell->stream_data_size==1U);
-    assert(shell->drain_delay==0U);
+    assert(shell->submit_delay==0U && shell->drain_delay==0U && !shell->never_ack);
     ++shell->handoffs;
     return 0;
 }
@@ -242,15 +264,27 @@ int main(void)
                                (size_t)UINT32_MAX + 1U, 1U,
                                NULL, NULL) == MT_LINK_BAD_ARGUMENT);
 #endif
-    shell.stream_data_size=0U;shell.drain_delay=5U;
+    /* A title handoff waits for one accepted byte, never the final-object
+     * DRAINED bit. Exercise the queued-pulse race and delayed mailbox ACK. */
+    shell.stream_data_size=0U;shell.first_ack_delay=5U;shell.first_submit_delay=2U;
     shell.registers[MT_REG_ABI_VERSION/4U]=MT_ABI_VERSION;
     assert(mt_core_link_stream_handoff(&link,8U,stream_data,sizeof(stream_data),
         12U,respond_to_stream,&shell,NULL,NULL,handoff,&shell)==MT_LINK_OK);
     assert(shell.handoffs==1U&&shell.stream_data_size==sizeof(stream_data));
     assert(memcmp(shell.stream_data,stream_data,sizeof(stream_data))==0);
-    shell.stream_data_size=0U;shell.drain_delay=100U;
+    shell.stream_data_size=0U;shell.first_submit_delay=0U;shell.never_ack=1;
     assert(mt_core_link_stream_handoff(&link,8U,stream_data,sizeof(stream_data),
         4U,respond_to_stream,&shell,NULL,NULL,handoff,&shell)==MT_LINK_TIMEOUT);
     assert(shell.handoffs==1U&&!shell.stream_open);
+    /* Abort must leave a replacement transaction usable; a one-byte object
+     * has no producer READY window and reaches DRAINED only after its ACK. */
+    shell.stream_data_size=0U;shell.never_ack=0;
+    assert(mt_core_link_stream_handoff(&link,8U,stream_data,1U,
+        12U,respond_to_stream,&shell,NULL,NULL,handoff,&shell)==MT_LINK_OK);
+    assert(shell.handoffs==2U&&shell.stream_data_size==1U);
+    shell.stream_data_size=0U;shell.first_ack_delay=100U;remaining=2U;
+    assert(mt_core_link_stream_handoff(&link,8U,stream_data,sizeof(stream_data),
+        100U,respond_to_stream,&shell,continue_twice,&remaining,handoff,&shell)==MT_LINK_TIMEOUT);
+    assert(shell.handoffs==2U&&!shell.stream_open);
     return 0;
 }

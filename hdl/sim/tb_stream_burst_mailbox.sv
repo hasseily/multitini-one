@@ -18,6 +18,7 @@ module tb_stream_burst_mailbox;
     logic [3:0] wr_strb = 4'd0;
     logic [11:0] rd_addr = 12'd0;
     logic [31:0] rd_data;
+    logic [31:0] control;
 
     logic load_submit;
     logic load_submit_ready;
@@ -50,6 +51,8 @@ module tb_stream_burst_mailbox;
     integer accepted_count = 0;
     logic stream_under_test = 1'b0;
     logic abort_test_active = 1'b0;
+    logic handoff_test_active = 1'b0;
+    localparam integer HANDOFF_SIZE = 37410;
 
     always #5.0 control_clk = !control_clk;
     always #7.0 core_clk = !core_clk;
@@ -95,7 +98,7 @@ module tb_stream_burst_mailbox;
         .rd_en(1'b0),
         .rd_addr(rd_addr),
         .rd_data(rd_data),
-        .control(),
+        .control(control),
         .load_submit(load_submit),
         .load_kind(load_kind),
         .load_data(load_data),
@@ -227,6 +230,27 @@ module tb_stream_burst_mailbox;
         end
     endtask
 
+    function automatic logic [7:0] handoff_byte(input integer index);
+        case (index)
+            0: handoff_byte = 8'h01;
+            1: handoff_byte = 8'h08;
+            default: handoff_byte = index[7:0] ^ 8'h5a;
+        endcase
+    endfunction
+
+    task automatic wait_stream_flag(input logic [31:0] flag);
+        rd_addr = MT_REG_STREAM_STATUS;
+        #1;
+        while ((rd_data & flag) == 0) @(negedge control_clk);
+    endtask
+
+    task automatic wait_mailbox_idle;
+        rd_addr = MT_REG_STATUS;
+        #1;
+        while ((rd_data & MT_STATUS_STREAM_READY) == 0)
+            @(negedge control_clk);
+    endtask
+
     task automatic accept_next(input integer stalled_core_cycles);
         logic [82:0] held_payload;
         integer target_count;
@@ -266,6 +290,17 @@ module tb_stream_burst_mailbox;
                             destination_offset == 0 && destination_first &&
                             destination_last && destination_epoch == 1'b1,
                             "post-abort stream uses a fresh epoch");
+            end else if (handoff_test_active) begin
+                check_value(destination_kind == 8'h10 &&
+                            destination_offset == accepted_count - 9 &&
+                            destination_total == HANDOFF_SIZE &&
+                            destination_data == handoff_byte(accepted_count - 9) &&
+                            destination_first == (accepted_count == 9) &&
+                            destination_last == (accepted_count == HANDOFF_SIZE + 8),
+                            "mixed command/burst handoff preserves every payload byte and flag");
+                if (accepted_count == 9)
+                    check_value((control & MT_CONTROL_CORE_RESET_REQUEST) != 0,
+                                "first PRG byte is consumed before launch reset is released");
             end
             accepted_count <= accepted_count + 1;
         end
@@ -283,13 +318,15 @@ module tb_stream_burst_mailbox;
     initial begin
         fork
             begin
-                #50000;
+                #20000000;
                 $display("FAIL: packed stream mailbox timeout");
                 $fatal(1);
             end
         join_none
 
-        repeat (4) @(negedge control_clk);
+        // Real Vivado XPM startup uses the 100 ns global reset interval.
+        // Keep both endpoints reset until it and the CDC pipelines settle.
+        repeat (24) @(negedge control_clk);
         control_resetn = 1'b1;
         repeat (3) @(negedge core_clk);
         core_resetn = 1'b1;
@@ -399,6 +436,72 @@ module tb_stream_burst_mailbox;
         destination_ready = 1'b0;
         check_value(accepted_count == 9,
                     "queued old byte and fresh byte each crossed exactly once");
+
+        wait_stream_flag(MT_STREAM_STATUS_DRAINED);
+        command(32'd8, MT_COMMAND_STREAM_END, 0, 0);
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_OK,
+                    "abort-test replacement stream ends");
+        abort_test_active = 1'b0;
+
+        // A title configuration commits while reset is held. The launch
+        // callback must wait for the first byte's mailbox acknowledgment,
+        // not DRAINED, which deliberately requires the whole object. Use the
+        // reported PRG size to cover the final one-byte burst after handoff.
+        command(32'd9, MT_COMMAND_CORE_RESET, 1, 0);
+        command(32'd10, MT_COMMAND_STREAM_BEGIN, 8'h10, HANDOFF_SIZE);
+        handoff_test_active = 1'b1;
+        command(32'd11, MT_COMMAND_STREAM_DATA, handoff_byte(0), 0);
+        expect_read(MT_REG_RESPONSE_SEQ, 32'd11, "first byte response sequence");
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_OK, "first byte is queued");
+        expect_read(MT_REG_RESPONSE_ARG0, 0, "first byte response arg0");
+        expect_read(MT_REG_RESPONSE_ARG1, 0, "first byte response arg1");
+        wait (destination_valid === 1'b1);
+        repeat (12) begin
+            @(negedge control_clk);
+            expect_read(MT_REG_STREAM_STATUS, MT_STREAM_STATUS_READY,
+                        "packed input is available but object is not drained after byte zero");
+            rd_addr = MT_REG_STATUS; #1;
+            check_value((rd_data & MT_STATUS_STREAM_READY) == 0 && accepted_count == 9,
+                        "mailbox idle remains clear until the destination accepts byte zero");
+        end
+        @(negedge core_clk); destination_ready = 1'b1;
+        wait (accepted_count == 10);
+        @(negedge core_clk); destination_ready = 1'b0;
+        wait_mailbox_idle();
+        check_value(accepted_count == 10 && (control & MT_CONTROL_CORE_RESET_REQUEST) != 0,
+                    "mailbox acknowledgment is a safe reset-release barrier");
+        expect_read(MT_REG_STREAM_STATUS, MT_STREAM_STATUS_READY,
+                    "DRAINED stays clear after a consumed first byte of a multi-byte object");
+        command(32'd12, MT_COMMAND_CORE_RESET, 0, 0);
+        check_value((control & MT_CONTROL_CORE_RESET_REQUEST) == 0,
+                    "launch reset releases only after byte-zero acceptance");
+
+        destination_ready = 1'b1;
+        for (integer offset = 1; offset < HANDOFF_SIZE - 1; offset += 4) begin
+            wait_stream_flag(MT_STREAM_STATUS_READY);
+            write_reg(MT_REG_STREAM_DATA_BURST,
+                {handoff_byte(offset + 3), handoff_byte(offset + 2),
+                 handoff_byte(offset + 1), handoff_byte(offset)});
+        end
+        wait (accepted_count == HANDOFF_SIZE + 8);
+        @(negedge core_clk); destination_ready = 1'b0;
+        wait_stream_flag(MT_STREAM_STATUS_READY);
+        write_reg(MT_REG_STREAM_DATA_BURST, {24'hbadbad, handoff_byte(HANDOFF_SIZE - 1)});
+        wait (destination_valid === 1'b1);
+        repeat (12) @(negedge control_clk);
+        expect_read(MT_REG_STREAM_STATUS, 0,
+                    "final one-byte burst is neither ready nor drained before destination acceptance");
+        rd_addr = MT_REG_STATUS; #1;
+        check_value((rd_data & MT_STATUS_STREAM_READY) == 0,
+                    "final byte retains mailbox ownership");
+        @(negedge core_clk); destination_ready = 1'b1;
+        wait_stream_flag(MT_STREAM_STATUS_DRAINED);
+        check_value(accepted_count == HANDOFF_SIZE + 9,
+                    "all 37410 mixed command/burst bytes cross exactly once");
+        command(32'd13, MT_COMMAND_STREAM_END, 0, 0);
+        expect_read(MT_REG_RESPONSE_STATUS, MT_RESPONSE_OK,
+                    "mixed command/burst handoff stream ends after final acknowledgment");
+        $display("PASS: reset-held PRG handoff uses mailbox idle; 37410 bytes drain exactly");
 
         $display("PASS: packed stream through asynchronous mailbox");
         $finish;

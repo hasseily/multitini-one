@@ -209,6 +209,16 @@ mt_link_result_t mt_core_link_input_event(mt_core_link_t *link,
                               progress, progress_context);
 }
 
+static int stream_mailbox_drained(mt_core_link_t *link)
+{
+    const uint32_t stream = link->read32(link->context, MT_REG_STREAM_STATUS);
+    /* READY (more bytes remain) and DRAINED (the object is complete) both
+     * require the local producer to be empty. Check that first so an unsent
+     * load_submit pulse cannot look like an acknowledged mailbox. */
+    return (stream & (MT_STREAM_STATUS_READY | MT_STREAM_STATUS_DRAINED)) != 0U &&
+           (link->read32(link->context, MT_REG_STATUS) & MT_STATUS_STREAM_READY) != 0U;
+}
+
 static mt_link_result_t stream_until_prefix(
     mt_core_link_t *link, uint8_t kind, const uint8_t *data, size_t size,
     const uint8_t *prefix, size_t prefix_size,
@@ -249,7 +259,9 @@ static mt_link_result_t stream_until_prefix(
     }
 
     /* A command response means queued, not consumed. Drain the single-byte
-     * mailbox before the handoff: the receiver must have accepted the byte. */
+     * mailbox before the handoff: the receiver must have accepted the byte.
+     * MT_STREAM_STATUS_DRAINED alone waits for the entire object, so it cannot
+     * acknowledge this prefix while the remaining bytes are still unsent. */
     size_t first_offset = 0U;
     if (first_accepted != NULL) {
         args[0] = prefix_size != 0U ? prefix[0] : data[0];
@@ -259,13 +271,11 @@ static mt_link_result_t stream_until_prefix(
         if (result == MT_LINK_OK) {
             uint32_t poll;
             for (poll = 0U; poll < max_polls; ++poll) {
-                if ((link->read32(link->context, MT_REG_STREAM_STATUS) &
-                     MT_STREAM_STATUS_DRAINED) != 0U) break;
+                if (stream_mailbox_drained(link)) break;
                 if (progress != NULL) progress(progress_context);
                 if (!wait_may_continue(continue_wait, continue_context)) break;
             }
-            if ((link->read32(link->context, MT_REG_STREAM_STATUS) &
-                 MT_STREAM_STATUS_DRAINED) == 0U) result = MT_LINK_TIMEOUT;
+            if (!stream_mailbox_drained(link)) result = MT_LINK_TIMEOUT;
         }
         if (result == MT_LINK_OK && first_accepted(handoff_context) != 0)
             result = MT_LINK_REMOTE_ERROR;
