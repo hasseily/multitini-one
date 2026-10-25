@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "c64_uci_internal.h"
+static void observe_storage(void);
+#define UCI_STORAGE_OBSERVE() observe_storage()
 #include "c64_uci_storage_fixture.h"
 #include "multitini_c64_interface.h"
 #include "net_service.h"
@@ -13,6 +15,15 @@ static unsigned drains, writes, reads;
 static unsigned native_pending, native_delay, native_ops, guest_resets;
 static uint32_t native_op;
 static bool native_stall, native_drop;
+static bool watch_storage, iec_active = true;
+static unsigned observed_storage;
+static void observe_storage(void)
+{
+    if (watch_storage) {
+        assert(!(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD));
+        observed_storage++;
+    }
+}
 static void native_step(void)
 {
     if (!native_pending || native_stall || --native_pending)
@@ -111,13 +122,18 @@ mt_uci_target_t mt_net_service_http_target(void)
     return (mt_uci_target_t){0};
 }
 void mt_net_service_guest_reset(void) {guest_resets++;}
+static mt_uci_result_t softiec_present(void *ctx, const uint8_t c[896], size_t n, mt_uci_reply_t *r)
+{
+    (void)ctx; (void)c; (void)n; (void)r;
+    return MT_UCI_REPLY;
+}
 mt_uci_target_t c64_uci_softiec_target(void)
 {
-    return (mt_uci_target_t){0};
+    return (mt_uci_target_t){.begin=softiec_present};
 }
 bool c64_iec_service_active(void)
 {
-    return true;
+    return iec_active;
 }
 static mt_core_link_t link;
 static mt_uci_reply_t reply;
@@ -128,8 +144,12 @@ static void setup(void)
     memset(directories, 0, sizeof directories);
     memset(regs, 0, sizeof regs);
     file_close_failures = directory_close_failures = remove_failures = rename_failures = 0;
+    file_close_released_failures = 0;
     memset(command, 0, sizeof command);
     usec = 0;
+    watch_storage = false;
+    iec_active = true;
+    observed_storage = 0;
     drains = 0;
     native_pending = native_delay = native_ops = guest_resets = 0;
     ram_request_token = 0;
@@ -138,7 +158,7 @@ static void setup(void)
     regs[MT_REG_ABI_VERSION / 4] = (MT_ABI_MAJOR << 16) | 26;
     regs[MT_REG_CORE_ID / 4] = MT_C64_CORE_ID;
     regs[MT_REG_C64_EXPANSION_CAPS / 4] = MT_C64_EXPANSION_CAPS_UCI;
-    regs[MT_REG_C64_EXPANSION_CONFIG / 4] = MT_C64_EXPANSION_REU_ENABLE;
+    regs[MT_REG_C64_EXPANSION_CONFIG / 4] = MT_C64_EXPANSION_REU_ENABLE | MT_C64_EXPANSION_UCI_ENABLE;
     regs[MT_REG_C64_REU_HOST / 4] = MT_C64_REU_HOST_IDLE;
     link = (mt_core_link_t){.read32 = read32, .write32 = write32};
     c64_uci_callbacks_t cb = {.microseconds = now};
@@ -155,7 +175,7 @@ static mt_uci_result_t start(mt_uci_target_t *t, uint8_t op, const void *data, s
 }
 static void finish(mt_uci_target_t *t, mt_uci_result_t result)
 {
-    for (unsigned i = 0; result == MT_UCI_WAIT && i < 2048; i++)
+    for (unsigned i = 0; result == MT_UCI_WAIT && i < 20000; i++)
         result = t->poll(t->context, &reply);
     assert(result == MT_UCI_REPLY);
 }
@@ -359,11 +379,14 @@ static void named_reu_validation(void)
     assert(c64_uci_named_reu_poll(&reply) == MT_UCI_WAIT);
     fixture.fail_write = 25;
     file_close_failures = 1;
-    assert(c64_uci_named_reu_poll(&reply) == MT_UCI_REPLY);
+    mt_uci_result_t failed = MT_UCI_WAIT;
+    for (unsigned i = 0; failed == MT_UCI_WAIT && i < 20000; i++)
+        failed = c64_uci_named_reu_poll(&reply);
+    assert(failed == MT_UCI_REPLY);
     status("DISK ERROR");
     assert(reply.data_length > 4 && !memcmp(reply.data, "\xff\xff\xff\xff", 4));
     assert(c64_uci_environment.fault && mt_sd_file_path_busy("0:/media/image.reu", true));
-    assert(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD);
+    assert(!(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD));
     assert(fixture_find("0:/media/image.bu")->size == 8 &&
            !memcmp(fixture_find("0:/media/image.bu")->bytes, "original", 8));
     assert(c64_uci_service_quiesce() == -1);
@@ -372,11 +395,13 @@ static void named_reu_validation(void)
     assert(c64_uci_named_reu_abort() == MT_UCI_REPLY);
     assert(!mt_sd_file_path_busy("0:/media/image.reu", true));
     assert(!(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD));
+    fixture_find("0:/media/image.reu")->size = 8;
+    memcpy(fixture_find("0:/media/image.reu")->bytes, "original", 8);
     assert(c64_uci_named_reu_begin(false, &reply) == MT_UCI_WAIT);
     assert(c64_uci_named_reu_poll(&reply) == MT_UCI_WAIT);
     file_close_failures = 1;
     assert(c64_uci_named_reu_abort() == MT_UCI_FAILED && c64_uci_environment.fault);
-    assert(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD);
+    assert(!(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD));
     assert(mt_sd_file_path_busy("0:/media/image.reu", true));
     c64_uci_environment.fault = false;
     assert(c64_uci_named_reu_abort() == MT_UCI_REPLY);
@@ -384,8 +409,274 @@ static void named_reu_validation(void)
     puts("UCI COPY_HOME and named REU result/backup/close ownership cases passed");
 }
 #include "c64_uci_quiesce_cases.inc"
+static bool mounted_tree(void *ctx, const char *path)
+{
+    (void)ctx;
+    return fixture_equal(path, "0:/media") || fixture_equal(path, "0:/media/SUB") ||
+           fixture_equal(path, "0:/media/SUB/disk.d64");
+}
+static void rename_pair(mt_uci_target_t *dos, const char *from, const char *to)
+{
+    uint8_t request[896];
+    size_t a = strlen(from) + 1, b = strlen(to);
+    assert(a + b <= sizeof request);
+    memcpy(request, from, a);
+    memcpy(request + a, to, b);
+    finish(dos, start(dos, 10, request, a + b));
+}
+static void reviewer_regressions(void)
+{
+    setup();
+    mt_uci_target_t dos = c64_uci_dos_target(0);
+    fixture_add("0:/media/Long Directory", true, NULL, 0);
+    const char *from[] = {".", "SUB", "SUB", "LONGDI~1", "/Temp"};
+    const char *to[] = {"newroot", "SUB/child", "sub/child", "Long Directory/child", "/Temp/new"};
+    for (unsigned i = 0; i < 5; i++) {
+        rename_pair(&dos, from[i], to[i]);
+        status("98,FUNCTION PROHIBITED");
+        assert(fixture_find("0:/media") && fixture_find("0:/media/SUB"));
+    }
+    rename_pair(&dos, "SUB", "moved");
+    status("00,OK");
+    assert(fixture_find("0:/media/moved") && !fixture_find("0:/media/SUB"));
+
+    setup();
+    dos = c64_uci_dos_target(0);
+    fixture_add("0:/media/SUB/disk.d64", false, (const uint8_t *)"disk", 4);
+    fixture_add("0:/media/SUB/sibling.prg", false, (const uint8_t *)"PRG", 3);
+    c64_uci_environment.callbacks.protected_path = mounted_tree;
+    finish(&dos, start(&dos, 0x11, "SUB", 3)); status("00,OK");
+    finish(&dos, start(&dos, 8, "disk.d64", 8)); status("00,OK");
+    open_file(&dos, "sibling.prg", 1);
+    finish(&dos, start(&dos, 4, (uint8_t[]){3, 0}, 2));
+    assert(reply.data_length == 3 && !memcmp(reply.data, "PRG", 3));
+    finish(&dos, start(&dos, 3, NULL, 0));
+    finish(&dos, start(&dos, 2, (uint8_t[]){1,'d','i','s','k','.','d','6','4'}, 9));
+    status("98,FUNCTION PROHIBITED");
+    finish(&dos, start(&dos, 0x13, NULL, 0)); status("00,OK");
+    rename_pair(&dos, ".", "../moved"); status("98,FUNCTION PROHIBITED");
+
+    setup();
+    regs[MT_REG_C64_EXPANSION_CAPS / 4] |= MT_C64_EXPANSION_CAPS_UCI_RAM_DMA | MT_C64_EXPANSION_CAPS_UCI_C64_IRQ;
+    regs[MT_REG_C64_UCI_CONTROL / 4] |= MT_C64_UCI_CONTROL_HOLD;
+    c64_uci_service_refresh_control();
+    assert(regs[MT_REG_C64_UCI_CONTROL / 4] == (9U | MT_C64_UCI_CONTROL_HOLD | MT_C64_UCI_CONTROL_FREEZE | MT_C64_UCI_CONTROL_IRQ));
+    iec_active = false;
+    c64_uci_service_refresh_control();
+    assert((regs[MT_REG_C64_UCI_CONTROL / 4] & 31U) == 31U);
+    regs[MT_REG_C64_EXPANSION_CONFIG / 4] &= ~MT_C64_EXPANSION_UCI_ENABLE;
+    c64_uci_service_refresh_control();
+    assert(regs[MT_REG_C64_UCI_CONTROL / 4] == (31U | MT_C64_UCI_CONTROL_HOLD));
+    regs[MT_REG_C64_UCI_CONTROL / 4] &= ~MT_C64_UCI_CONTROL_HOLD;
+
+    fixture_add("0:/uci_temp", true, NULL, 0);
+    fixture_add("0:/uci_temp/orphan", false, (const uint8_t *)"old", 3);
+    remove_failures = 1;
+    for (unsigned i = 0; i < 32; i++) assert(c64_uci_service_poll(32) == 0);
+    assert(remove_failures == 1 && !c64_uci_environment.fault && !c64_uci_service_active());
+    regs[MT_REG_C64_EXPANSION_CONFIG / 4] |= MT_C64_EXPANSION_UCI_ENABLE;
+    assert(c64_uci_service_poll(1) == 0 && c64_uci_service_cleanup_warning());
+    assert(!c64_uci_environment.fault && c64_uci_service_quiesce() == 0);
+    assert(fixture_find("0:/uci_temp/orphan"));
+    assert(c64_uci_service_retry() == 0);
+    for (unsigned i = 0; c64_uci_service_active() && i < 8; i++) assert(c64_uci_service_poll(1) == 0);
+    assert(!fixture_find("0:/uci_temp/orphan") && !c64_uci_service_cleanup_warning());
+
+    /* Retry real retained target ownership through the public service API. */
+    native_setup();
+    fixture_add("0:/media/read", false, (const uint8_t *)"x", 1);
+    const uint8_t open[] = {1, 2, 1, 'r','e','a','d'};
+    native_push(open, sizeof open);
+    for (unsigned i = 0; i < 4; i++) assert(c64_uci_service_poll(1) == 0);
+    file_close_failures = 1;
+    assert(c64_uci_service_quiesce() == -1 && mt_sd_file_path_busy("0:/media/read", true));
+    int recovered = 1;
+    for (unsigned i = 0; recovered == 1 && i < 32; i++) recovered = c64_uci_service_retry();
+    assert(recovered == 0 && !c64_uci_environment.fault && !mt_sd_file_path_busy("0:/media/read", true));
+
+    setup();
+    uint8_t original[8193];
+    for (unsigned i = 0; i < sizeof original; i++) original[i] = (uint8_t)(i ^ (i >> 8));
+    fixture_add("0:/media/load", false, original, sizeof original);
+    dos = c64_uci_dos_target(0);
+    open_file(&dos, "load", 1);
+    watch_storage = true;
+    memset(reu, 0xcc, sizeof original);
+    uint8_t request[] = {0,0,0,0,1,32,0,0};
+    assert(start(&dos, 0x21, request, sizeof request) == MT_UCI_WAIT);
+    assert(dos.poll(dos.context, &reply) == MT_UCI_WAIT);
+    assert(reu[0] == 0xcc && !(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD));
+    assert(dos.abort(dos.context, 0) == MT_UCI_REPLY && reu[0] == 0xcc);
+    finish(&dos, start(&dos, 6, (uint8_t[]){0,0,0,0}, 4));
+    assert(start(&dos, 0x21, request, sizeof request) == MT_UCI_WAIT);
+    assert(dos.poll(dos.context, &reply) == MT_UCI_WAIT);
+    fixture.fail_read = 25;
+    finish(&dos, dos.poll(dos.context, &reply)); status("DISK ERROR");
+    assert(reu[0] == 0xcc && !(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD));
+    fixture.fail_read = 0;
+    finish(&dos, start(&dos, 6, (uint8_t[]){0,0,0,0}, 4));
+    finish(&dos, start(&dos, 0x21, request, sizeof request)); status("00,OK");
+    assert(!memcmp(reu, original, sizeof original));
+    finish(&dos, start(&dos, 3, NULL, 0));
+    open_file(&dos, "saved", 6);
+    assert(start(&dos, 0x22, request, sizeof request) == MT_UCI_WAIT);
+    assert(dos.poll(dos.context, &reply) == MT_UCI_WAIT);
+    while (regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD)
+        assert(dos.poll(dos.context, &reply) == MT_UCI_WAIT);
+    memset(reu, 0x19, sizeof original); /* Guest may now change the live REU. */
+    finish(&dos, dos.poll(dos.context, &reply)); status("00,OK");
+    finish(&dos, start(&dos, 3, NULL, 0));
+    fixture_file *saved = fixture_find("0:/media/saved");
+    assert(saved && saved->size == sizeof original && !memcmp(saved->bytes, original, sizeof original));
+    mt_uci_target_t control = c64_uci_control_target();
+    for (unsigned i = 0; i < sizeof ram; i++) ram[i] = (uint8_t)(i ^ 0x5a);
+    finish(&control, start(&control, 15, "snapshot.bin", 12)); status("00,OK");
+    saved = fixture_find("0:/media/snapshot.bin");
+    assert(saved && saved->size == sizeof ram && !memcmp(saved->bytes, ram, sizeof ram));
+    assert(observed_storage >= 25);
+    watch_storage = false;
+    assert(c64_uci_service_hold_begin() == 0);
+    acknowledge_fence = false;
+    assert(c64_uci_reu_fence() == 1);
+    usec += 1000001;
+    assert(c64_uci_reu_fence() == -1 && c64_uci_service_retry() == -1);
+    assert(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD);
+    uint32_t fence = regs[MT_REG_C64_REU_HOST / 4];
+    regs[MT_REG_C64_REU_HOST / 4] = fence | ((fence & 15U) << 8);
+    assert(c64_uci_service_retry() == 0 && !c64_uci_service_reload_required());
+    assert(!(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD));
+
+    native_setup();
+    fixture_add("0:/media/read", false, (const uint8_t *)"x", 1);
+    native_push(open, sizeof open);
+    for (unsigned i = 0; i < 4; i++) assert(c64_uci_service_poll(1) == 0);
+    c64_uci_service_hold_fault(); /* Unknown/partial stream has no provable late ACK. */
+    assert(c64_uci_service_reload_required() && c64_uci_service_retry() == -1);
+    assert(c64_uci_service_prepare_reload() == 1 && mt_sd_file_path_busy("0:/media/read", true));
+    regs[MT_REG_CONTROL / 4] |= MT_CONTROL_CORE_RESET_REQUEST;
+    assert(c64_uci_service_prepare_reload() == 1);
+    regs[MT_REG_VIDEO_FRAME_STATUS / 4] |= MT_VIDEO_FRAME_STATUS_QUIESCENT;
+    regs[MT_REG_C64_REU_HOST / 4] &= ~MT_C64_REU_HOST_IDLE;
+    assert(c64_uci_service_prepare_reload() == 1);
+    regs[MT_REG_C64_REU_HOST / 4] |= MT_C64_REU_HOST_IDLE;
+    file_close_failures = 1;
+    assert(c64_uci_service_prepare_reload() == -1 && mt_sd_file_path_busy("0:/media/read", true));
+    assert(c64_uci_service_poll(32) == -1 && c64_uci_service_retry() == -1);
+    assert(c64_uci_service_hold_begin() == -1);
+    c64_uci_service_hold_end();
+    assert(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD);
+    assert(c64_uci_service_prepare_reload() == 0 && !mt_sd_file_path_busy("0:/media/read", true));
+    assert(c64_uci_service_reload_required() && c64_uci_service_quiesce() == -1);
+
+    setup();
+    char resolved[512];
+    fixture_add("0:/media/match", false, (const uint8_t *)"x", 1);
+    directory_close_failures = 1;
+    assert(!c64_uci_path("0:/media", (const uint8_t *)"mat*", 4, resolved));
+    assert(c64_uci_environment.fault && directories[0].used);
+    assert(c64_uci_service_retry() == 0 && !directories[0].used);
+    fixture_add("0:/uci_temp", true, NULL, 0);
+    directory_close_failures = 1;
+    assert(c64_uci_service_poll(1) == -1 && c64_uci_service_cleanup_warning());
+    assert(c64_uci_service_retry() == 0);
+    assert(c64_uci_service_poll(1) == 0 && !c64_uci_environment.fault);
+    puts("UCI review regressions: rename roots/self/alias, mounted metadata/navigation, policy ID/Freeze/IRQ, off cleanup, retained-handle retry, staged REU/RAM snapshots and hardware-fault refusal passed");
+}
+static void retry_clean(void)
+{
+    int rc = 1;
+    for (unsigned i = 0; rc == 1 && i < 64; i++)
+        rc = c64_uci_service_retry();
+    assert(rc == 0 && !c64_uci_environment.fault);
+    assert(!(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD));
+}
+static void encode_gcr(const uint8_t *in, unsigned bytes, uint8_t *out)
+{
+    static const uint8_t code[16] = {10,11,18,19,14,15,22,23,9,25,26,27,13,29,30,21};
+    memset(out, 0, bytes * 10 / 8);
+    unsigned bit = 0;
+    for (unsigned i = 0; i < bytes; i++)
+        for (unsigned half = 0; half < 2; half++) {
+            unsigned value = code[(in[i] >> (half ? 0 : 4)) & 15];
+            for (unsigned j = 0; j < 5; j++, bit++)
+                out[bit / 8] |= (uint8_t)(((value >> (4 - j)) & 1) << (7 - bit % 8));
+        }
+}
+static void wrapper_failure_recovery(void)
+{
+    /* Actual DOS wrapper, including the error-after-successful-f_close case. */
+    for (unsigned released = 0; released < 2; released++) {
+        native_setup();
+        reu[0xbb0e] = 0x84; reu[0x7dc7] = 0x20;
+        reu[0xbafe] = 0; reu[0xbb02] = 0x90; reu[0x9084] = 1;
+        memset(reu + 0x300000, 0x5a, 65536);
+        fixture_add("0:/media/image.dnp", false, reu + 0x300000, 65536);
+        native_push((uint8_t[]){1,0x41,0,'i','m','a','g','e','.','d','n','p'}, 12);
+        file_close_failures = !released;
+        file_close_released_failures = released;
+        int result = 0;
+        for (unsigned i = 0; result == 0 && i < 200; i++)
+            result = c64_uci_service_poll(1);
+        assert(result == -1 && c64_uci_environment.fault);
+        assert(mt_sd_file_path_busy("0:/media/image.dnp", true) == !released);
+        retry_clean();
+        assert(!mt_sd_file_path_busy("0:/media/image.dnp", true));
+        native_push((uint8_t[]){4,0x40}, 2);
+        for (unsigned i = 0; i < 8; i++) assert(c64_uci_service_poll(1) == 0);
+        assert((regs[MT_REG_C64_UCI_STATUS / 4] & 3U) == 3U);
+    }
+    /* Control's private named-REU context must remain reachable after its
+     * failure reply. A public retry, not a helper-only abort, releases it. */
+    native_setup();
+    fixture_add("0:/media/image.reu", false, (const uint8_t *)"old", 3);
+    c64_uci_service_set_reu_image("0:/media/image.reu");
+    native_push((uint8_t[]){4,9,0,0,0}, 5);
+    fixture.fail_write = 25;
+    file_close_failures = 1;
+    int result = 0;
+    for (unsigned i = 0; result == 0 && i < 20000; i++)
+        result = c64_uci_service_poll(1);
+    assert(result == -1 && c64_uci_environment.fault);
+    assert(mt_sd_file_path_busy("0:/media/image.reu", true));
+    assert(c64_uci_named_reu_begin(false, &reply) == MT_UCI_FAILED);
+    assert(mt_sd_file_path_busy("0:/media/image.reu", true));
+    fixture.fail_write = 0;
+    retry_clean();
+    assert(!mt_sd_file_path_busy("0:/media/image.reu", true));
+    /* Actual Control GCR decoder writes a sector, then times out on its
+     * cache fence. The exact late ACK permits cleanup through the wrapper. */
+    native_setup();
+    uint8_t raw[400], header[8] = {8,0,0,1,0x12,0x34,15,15}, data[260] = {7};
+    memset(raw, 0x55, sizeof raw); memset(raw, 255, 5);
+    encode_gcr(header, 8, raw + 5); memset(raw + 24, 255, 5);
+    for (unsigned i = 1; i <= 256; i++) data[i] = (uint8_t)(i - 1);
+    encode_gcr(data, 260, raw + 29);
+    memcpy(reu + 65536, raw, sizeof raw);
+    memset(reu + 131072, 0xff, 256);
+    uint8_t request[14] = {4,0x11,1,1,0,0,1,0,0,0,2,0,144,1};
+    acknowledge_fence = false;
+    native_push(request, sizeof request);
+    result = 0;
+    for (unsigned i = 0; result == 0 && i < 1000; i++) {
+        result = c64_uci_service_poll(1);
+        if (drains) usec += 1000001;
+    }
+    assert(result == -1 && c64_uci_service_reload_required());
+    for (unsigned i = 0; i < 256; i++) assert(reu[131072 + i] == i);
+    assert(c64_uci_service_retry() == -1);
+    uint32_t token = regs[MT_REG_C64_REU_HOST / 4] & 15U;
+    regs[MT_REG_C64_REU_HOST / 4] |= token << 8;
+    acknowledge_fence = true;
+    retry_clean();
+    native_push((uint8_t[]){4,0x40}, 2);
+    for (unsigned i = 0; i < 8; i++) assert(c64_uci_service_poll(1) == 0);
+    assert((regs[MT_REG_C64_UCI_STATUS / 4] & 3U) == 3U);
+    puts("UCI wrapper recovery: DOS GEOS live/released close failures, Control named REU owner, Control GCR late fence ACK passed");
+}
 int main(void)
 {
+    wrapper_failure_recovery();
+    reviewer_regressions();
     quiesce_cases();
     path_alias_protection();
     copy_home_validation();
@@ -456,6 +747,7 @@ int main(void)
     uint8_t transfer2[] = {0, 0, 0, 0, 0xb0, 4, 0, 0};
     assert(start(&dos, 0x21, transfer2, 8) == MT_UCI_WAIT);
     assert(dos.poll(dos.context, &reply) == MT_UCI_WAIT);
+    assert(dos.poll(dos.context, &reply) == MT_UCI_WAIT); /* HOLD accepted */
     assert(dos.poll(dos.context, &reply) == MT_UCI_WAIT); /* RAM changed, fence pending */
     assert(dos.abort(dos.context, 0) == MT_UCI_WAIT);
     assert(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD);
@@ -532,7 +824,7 @@ int main(void)
     assert(dumped == MT_UCI_FAILED && c64_uci_environment.fault &&
            file_close_calls == close_before + 1);
     assert(mt_sd_file_path_busy("0:/media/close-fail.bin", true));
-    assert(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD);
+    assert(!(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD));
     assert(c64_uci_service_quiesce() == -1);
     c64_uci_environment.fault = false;
     assert(control.abort(control.context, 0) == MT_UCI_REPLY);

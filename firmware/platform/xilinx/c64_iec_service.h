@@ -35,6 +35,8 @@ const char *c64_iec_service_status(void);
  * A lease prevents native IEC from consuming/mutating that channel while a
  * non-consuming UCI reply is in flight. Reset the target before quiesce. */
 mt_iec_dos_t *c64_iec_service_dos(void);
+/* Cleanup only: available after a storage fault, never for a new operation. */
+mt_iec_dos_t *c64_iec_service_cleanup_dos(void);
 bool c64_iec_service_channel_acquire(unsigned channel);
 void c64_iec_service_channel_release(unsigned channel);
 void c64_iec_service_write_failure(int code);

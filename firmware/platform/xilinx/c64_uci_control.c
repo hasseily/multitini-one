@@ -12,12 +12,13 @@ enum
     CONTROL_REU,
     CONTROL_DUMP_HOLD,
     CONTROL_DUMP_READ,
+    CONTROL_DUMP_WRITE,
     CONTROL_GEOS
 };
 static unsigned state;
 static uint32_t dump_offset;
 static mt_sd_file_t *dump_file;
-static uint8_t dump_data[256];
+static uint8_t dump_data[65536];
 static const char *failure;
 static mt_uci_result_t answer(mt_uci_reply_t *r, const char *status)
 {
@@ -32,7 +33,7 @@ static mt_uci_result_t dump_finish(mt_uci_reply_t *r)
         if (s.status == MT_SD_OK || mt_sd_file_tell(dump_file) < 0)
             dump_file = NULL;
         if (s.status != MT_SD_OK) {
-            c64_uci_service_hold_fault();
+            c64_uci_environment.fault = true;
             return MT_UCI_FAILED;
         }
     }
@@ -45,7 +46,7 @@ static mt_uci_result_t poll(void *context, mt_uci_reply_t *r)
     (void)context;
     if (state == CONTROL_GEOS) {
         mt_uci_result_t result = c64_uci_geos_poll(r);
-        if (result != MT_UCI_WAIT)
+        if (result == MT_UCI_REPLY && !c64_uci_environment.fault)
             state = CONTROL_IDLE;
         return result;
     }
@@ -58,7 +59,7 @@ static mt_uci_result_t poll(void *context, mt_uci_reply_t *r)
     }
     if (state == CONTROL_REU) {
         mt_uci_result_t result = c64_uci_named_reu_poll(r);
-        if (result != MT_UCI_WAIT)
+        if (result == MT_UCI_REPLY && !c64_uci_environment.fault)
             state = CONTROL_IDLE;
         return result;
     }
@@ -74,19 +75,28 @@ static mt_uci_result_t poll(void *context, mt_uci_reply_t *r)
         return MT_UCI_WAIT;
     }
     if (state == CONTROL_DUMP_READ) {
-        int read = c64_uci_ram_read((uint16_t)dump_offset, dump_data, sizeof dump_data);
+        int read = c64_uci_ram_read((uint16_t)dump_offset, dump_data + dump_offset, 256);
         if (read > 0)
             return MT_UCI_WAIT;
         if (read < 0) {
             failure = "87,INTERNAL ERROR";
             return dump_finish(r);
         }
-        mt_sd_result_t s = mt_sd_file_write(dump_file, dump_data, sizeof dump_data);
-        if (s.status != MT_SD_OK || s.size != sizeof dump_data) {
+        dump_offset += 256;
+        if (dump_offset == sizeof dump_data) {
+            c64_uci_service_hold_end();
+            dump_offset = 0;
+            state = CONTROL_DUMP_WRITE;
+        }
+        return MT_UCI_WAIT;
+    }
+    if (state == CONTROL_DUMP_WRITE) {
+        mt_sd_result_t s = mt_sd_file_write(dump_file, dump_data + dump_offset, 4096);
+        if (s.status != MT_SD_OK || s.size != 4096) {
             failure = c64_uci_sd_status(s);
             return dump_finish(r);
         }
-        dump_offset += sizeof dump_data;
+        dump_offset += 4096;
         if (dump_offset == 65536)
             return dump_finish(r);
         return MT_UCI_WAIT;
@@ -114,12 +124,13 @@ static mt_uci_result_t abort_target(void *context, size_t consumed)
         return MT_UCI_WAIT;
     if (pending < 0)
         return MT_UCI_FAILED;
+    c64_uci_service_hold_end();
     if (dump_file) {
         mt_sd_result_t s = mt_sd_file_close(dump_file);
         if (s.status == MT_SD_OK || mt_sd_file_tell(dump_file) < 0)
             dump_file = NULL;
         if (s.status != MT_SD_OK) {
-            c64_uci_service_hold_fault();
+            c64_uci_environment.fault = true;
             return MT_UCI_FAILED;
         }
     }

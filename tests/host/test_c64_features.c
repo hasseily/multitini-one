@@ -82,5 +82,9 @@ int main(void) {
     const uint32_t plain = mt_c64_turbo_config(0x4f, 0, true, &c, 0x9000, false);
     assert(mt_c64_turbo_config(0x4f, 8, true, &c, plain, true) ==
            (plain | MT_C64_CPU_CONFIG_SCPU_DETECT));
+    /* The saved preference must not expose SuperCPU detection while Turbo
+     * Control is Off, including when a UART debug speed override is active. */
+    assert(!(mt_c64_turbo_config(0x4f, 8, false, &c, plain, true) &
+             MT_C64_CPU_CONFIG_SCPU_DETECT));
     puts("PASS C64 firmware capability order, all preferences, apply counter and masks");
 }

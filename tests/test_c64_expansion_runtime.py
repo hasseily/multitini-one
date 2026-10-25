@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -55,11 +56,27 @@ class C64ExpansionRuntimeTests(unittest.TestCase):
             "static void change_c64_turbo(",
             "static unsigned cycle_setting(",
             "static void change_c64_sid_setup(",
+            "static void c64_title_launched(",
+            "static mt_c64_content_service_result_t c64_title_load(",
+            "static mt_c64_content_service_result_t c64_title_disk(",
+            "static const char *c64_content_failure_message(",
         )
         harness = folder / "runtime.c"
         fixture = (ROOT / "tests/host/c64_title_runtime.inc").read_text()
+        # Preserve the actual Media failure call as well as the helper: a
+        # working helper alone does not prove the menu uses the refusal reason.
+        media_failure = re.findall(
+            r"set_supervisor_error\(c64_content_failure_message\(result\.status, remounted\)\);",
+            source)
+        if len(media_failure) != 1:
+            raise AssertionError("Expected exactly one production Media failure call")
+        content = (ROOT / "firmware/common/content_type.c").read_text()
+        classifier = "\n".join(production_function(content, s) for s in (
+            "static char ascii_lower(", "static bool extension_is(",
+            "mt_content_type_t mt_content_classify(const char *path)"))
         harness.write_text(fixture.replace("/* PRODUCTION_FUNCTIONS */",
-            "\n".join(production_function(source, s) for s in signatures)))
+            classifier + "\n" + "\n".join(production_function(source, s) for s in signatures)).replace(
+                "/* PRODUCTION_MENU_FAILURE */", media_failure[0]))
         cls.executable = folder / ("runtime.exe" if os.name == "nt" else "runtime")
         command = [sys.executable, str(ROOT / "scripts/run_native_tool.py"), "--", compiler,
                    "-std=c11", "-Wall", "-Wextra", "-Wpedantic", "-Werror",
@@ -93,6 +110,9 @@ class C64ExpansionRuntimeTests(unittest.TestCase):
     def test_rejected_sid_table_leaves_old_settings(self): self.run_scenario("sid-reject")
     def test_ambiguous_sid_ack_preserves_hold(self): self.run_scenario("sid-timeout")
     def test_sid_io_ownership_excludes_live_devices(self): self.run_scenario("io-owner")
+    def test_default_reu_cartridge_refusal_reaches_uart_and_menu(self): self.run_scenario("launch-refusal")
+    def test_disk_launch_refusal_reaches_uart_and_menu(self): self.run_scenario("disk-refusal")
+    def test_allowed_title_launches_still_reach_loader_and_set_home(self): self.run_scenario("launch-allowed")
 
 
 if __name__ == "__main__":

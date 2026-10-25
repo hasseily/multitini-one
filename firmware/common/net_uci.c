@@ -61,7 +61,7 @@ static mt_uci_result_t poll(void *context, mt_uci_reply_t *r) {
         if (!mt_net_available(n))
             return status(r, "83,INTERFACE NOT AVAILABLE");
         if (!u->phase) {
-            result = mt_net_resolve(n, u->host, ip);
+            result = mt_net_resolve_owned(n, MT_NET_OWNER_UCI, u->host, ip);
             if (result == MT_NET_AGAIN)
                 return MT_UCI_WAIT;
             if (result)
@@ -92,6 +92,13 @@ static mt_uci_result_t poll(void *context, mt_uci_reply_t *r) {
         result = mt_net_receive_result(n, u->socket, u->payload, sizeof(u->payload), &dg);
         if (result == MT_NET_AGAIN) {
             if (n->now < u->deadline)
+                return MT_UCI_WAIT;
+            /* The deadline bounds waiting for data, not copying a receive
+             * already selected from the ring. RECV may have committed RX_RD
+             * before the next poll publishes its result; canceling here would
+             * discard those bytes. Command completion retains its own bound. */
+            if (owns(u, u->socket) && n->sockets[u->socket].receive_active &&
+                n->sockets[u->socket].rx_phase != 0)
                 return MT_UCI_WAIT;
             if (owns(u, u->socket))
                 n->sockets[u->socket].receive_active = false;
@@ -273,7 +280,7 @@ static mt_uci_result_t abort_cmd(void *context, size_t consumed) {
     if ((u->command == 7 || u->command == 8) && u->phase < 2) {
         if (u->socket > 0)
             (void)mt_net_close(u->net, u->socket);
-        mt_net_resolve_cancel(u->net);
+        mt_net_resolve_cancel_owner(u->net, MT_NET_OWNER_UCI);
     }
     if (u->command == 0x11 && owns(u, u->socket) && u->net->sockets[u->socket].send_active)
         (void)mt_net_close(u->net, u->socket);

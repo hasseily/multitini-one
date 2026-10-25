@@ -822,3 +822,14 @@ scripts/finish_c64_timing.tcl,Multitini One,,GPL-3.0-only,source-reviewed,Origin
 scripts/optimize_c64_cpu_margin.tcl,Multitini One,,GPL-3.0-only,source-reviewed,Original half-cycle optimization with exact clock and uncertainty restoration before signoff
 scripts/test_c64_cpu_write_path.py,Multitini One,,GPL-3.0-only,source-reviewed,Original real CPU falling-edge store comparison and negative-control runner
 hdl/sim/tb_c64_cpu_write_path.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original native and accelerated C64 store-path equivalence bench
+tests/host/test_net_edges.c,Multitini One,,GPL-3.0-only,source-reviewed,Original TCP receive timeout and short-lived connection regression tests
+tests/host/test_http_json_alloc.c,Multitini One,,GPL-3.0-only,source-reviewed,Original actual-parser allocation bounds and allocation failure regression tests
+scripts/test_c64_adapter_load_sid.py,Multitini One,,GPL-3.0-only,source-reviewed,Original actual-adapter CRT and UCI stream plus SID IO ownership regression
+scripts/test_c64_sid_contracts.py,Multitini One,,GPL-3.0-only,source-reviewed,Original real-engine SID decode legacy equivalence isolation and edge contract runner
+hdl/sim/tb_c64_adapter_load_sid.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original eight-SID adapter loader and floating-bus regression with synthetic media
+hdl/sim/tb_c64_sid_decode.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original exhaustive SID decode and priority mux regression
+hdl/sim/tb_c64_sid_array_legacy.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original every-edge legacy SID leaf and array equivalence regression
+hdl/sim/tb_c64_sid_osc3_8.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original eight-SID live oscillator envelope and inhibited-mirror regression
+hdl/sim/tb_c64_sid_fanout.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original two-through-eight SID edge queue and latch isolation regression
+tests/host/c64_sid_presets.c,Multitini One,,GPL-3.0-only,source-reviewed,Original production SID resolver table generator for HDL fixtures
+tests/test_c64_reload_runtime.py,Multitini One,,GPL-3.0-only,source-reviewed,Original actual-main forced reload cleanup and failure retention regression

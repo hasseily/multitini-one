@@ -14,6 +14,7 @@ typedef enum
     DOS_SCAN,
     DOS_COPY,
     DOS_REU_HOLD,
+    DOS_REU_MEMORY,
     DOS_REU_COPY,
     DOS_REU_FENCE,
     DOS_ACTION,
@@ -26,7 +27,7 @@ typedef struct
     mt_sd_directory_t *directory;
     uint8_t entries[65536];
     uint16_t offsets[4096];
-    size_t entries_used, count, index, remaining, transferred;
+    size_t entries_used, count, index, remaining, transferred, staged, memory_offset;
     uint32_t reu_address;
     dos_state_t state;
     bool truncated, save, changed, named, canceling;
@@ -34,6 +35,10 @@ typedef struct
 } dos_t;
 static dos_t instances[3];
 static uint8_t transfer[4096];
+/* One foreground UCI command owns this snapshot. SD latency never extends
+ * the acknowledged native HOLD; the complete REU view is still atomic. */
+static uint8_t reu_staging[0x1000000];
+uint8_t *c64_uci_reu_staging(void) { return reu_staging; }
 static uint32_t le32(const uint8_t *p)
 {
     return p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
@@ -67,6 +72,14 @@ static bool equal(const char *a, const char *b)
             return false;
     }
     return *a == *b;
+}
+static bool same_or_child(const char *parent, const char *path)
+{
+    while (*parent && *path && toupper((unsigned char)*parent) == toupper((unsigned char)*path)) {
+        parent++;
+        path++;
+    }
+    return !*parent && (!*path || *path == '/');
 }
 static void close_file(mt_sd_file_t **file, const char **failure)
 {
@@ -115,9 +128,9 @@ static mt_uci_result_t directory_block(dos_t *d, mt_uci_reply_t *r)
 }
 static mt_uci_result_t reu_finish(dos_t *d, mt_uci_reply_t *r)
 {
+    c64_uci_service_hold_end();
     if (d->named)
         close_file(&d->file, &d->failure);
-    c64_uci_service_hold_end();
     d->state = DOS_IDLE;
     mt_uci_reply_clear(r);
     if (d->named) {
@@ -156,7 +169,7 @@ static mt_uci_result_t poll(void *context, mt_uci_reply_t *r)
     dos_t *d = context;
     if (d->state == DOS_GEOS) {
         mt_uci_result_t result = c64_uci_geos_poll(r);
-        if (result != MT_UCI_WAIT)
+        if (result == MT_UCI_REPLY && !c64_uci_environment.fault)
             d->state = DOS_IDLE;
         return result;
     }
@@ -232,24 +245,43 @@ static mt_uci_result_t poll(void *context, mt_uci_reply_t *r)
             d->failure = "87,INTERNAL ERROR";
             return reu_finish(d, r);
         }
-        d->state = DOS_REU_COPY;
+        d->memory_offset = 0;
+        d->state = DOS_REU_MEMORY;
+        return MT_UCI_WAIT;
+    }
+    if (d->state == DOS_REU_MEMORY) {
+        size_t n = d->staged - d->memory_offset;
+        if (n > sizeof transfer)
+            n = sizeof transfer;
+        if (d->save)
+            c64_uci_reu_read(d->reu_address + (uint32_t)d->memory_offset,
+                             reu_staging + d->memory_offset, n);
+        else if (n) {
+            c64_uci_reu_write(d->reu_address + (uint32_t)d->memory_offset,
+                              reu_staging + d->memory_offset, n);
+            d->changed = true;
+        }
+        d->memory_offset += n;
+        if (d->memory_offset == d->staged) {
+            if (d->save) {
+                c64_uci_service_hold_end();
+                d->state = DOS_REU_COPY;
+            } else if (d->changed)
+                d->state = DOS_REU_FENCE;
+            else
+                return reu_finish(d, r);
+        }
         return MT_UCI_WAIT;
     }
     if (d->state == DOS_REU_COPY) {
         size_t n = d->remaining > sizeof transfer ? sizeof transfer : d->remaining;
         mt_sd_result_t s = {MT_SD_OK, 0, 0};
         if (d->save) {
-            if (n) {
-                c64_uci_reu_read(d->reu_address + (uint32_t)d->transferred, transfer, n);
-                s = mt_sd_file_write(d->file, transfer, n);
-            }
+            if (n)
+                s = mt_sd_file_write(d->file, reu_staging + d->transferred, n);
         } else {
             if (n)
-                s = mt_sd_file_read(d->file, transfer, n);
-            if (s.size) {
-                c64_uci_reu_write(d->reu_address + (uint32_t)d->transferred, transfer, s.size);
-                d->changed = true;
-            }
+                s = mt_sd_file_read(d->file, reu_staging + d->transferred, n);
         }
         d->transferred += s.size;
         d->remaining -= s.size;
@@ -258,8 +290,11 @@ static mt_uci_result_t poll(void *context, mt_uci_reply_t *r)
         if (s.size < n && d->save && !d->failure)
             d->failure = "DISK IS FULL";
         if (d->failure || !d->remaining || s.size < n) {
-            if (d->changed) {
-                d->state = DOS_REU_FENCE;
+            if (d->failure)
+                return reu_finish(d, r);
+            if (!d->save && d->transferred) {
+                d->staged = d->transferred;
+                d->state = DOS_REU_HOLD;
                 return MT_UCI_WAIT;
             }
             return reu_finish(d, r);
@@ -272,6 +307,8 @@ static mt_uci_result_t poll(void *context, mt_uci_reply_t *r)
             return MT_UCI_WAIT;
         if (done < 0)
             d->failure = "87,INTERNAL ERROR";
+        else
+            d->changed = false;
         return reu_finish(d, r);
     }
     return answer(r, "81,NOT IN DATA MODE");
@@ -317,6 +354,8 @@ static mt_uci_result_t abort_target(void *context, size_t consumed)
         close_file(&d->copy, &d->failure);
         close_file(&d->copy_destination, &d->failure);
     }
+    if (d->named)
+        c64_uci_service_hold_end();
     if (d->named)
         close_file(&d->file, &d->failure);
     c64_uci_service_hold_end();
@@ -450,7 +489,7 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
             return answer(r, "85,NO FILE OPEN");
         return information(d->filename, r);
     case 8:
-        if (!path(d, command, length, 2, name) || c64_uci_protected(name, false))
+        if (!path(d, command, length, 2, name) || c64_uci_metadata_protected(name))
             return answer(r, "82,FILE NOT FOUND");
         return information(name, r);
     case 9:
@@ -470,6 +509,10 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
         if (c64_uci_protected(name, command[1] == 10) || c64_uci_protected(other, true))
             return answer(r, "98,FUNCTION PROHIBITED");
         mt_sd_info_t info;
+        /* FatFs does not reject moving a directory into itself. Validate
+         * canonical identities before it creates the new directory entry. */
+        if (command[1] == 10 && same_or_child(name, other))
+            return answer(r, "98,FUNCTION PROHIBITED");
         if (command[1] == 11 && mt_sd_file_stat(other, &info).status == MT_SD_OK &&
             (info.attributes & 16)) {
             const char *base = strrchr(name, '/');
@@ -565,7 +608,8 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
         d->transferred = 0;
         d->save = command[1] == 0x22;
         d->changed = false;
-        d->state = DOS_REU_HOLD;
+        d->staged = d->remaining;
+        d->state = d->save ? DOS_REU_HOLD : DOS_REU_COPY;
         return MT_UCI_WAIT;
     case 0x23: {
         if (command[2] != 0 && command[2] != 8)
@@ -630,6 +674,10 @@ mt_uci_target_t c64_uci_dos_target(unsigned instance)
 mt_uci_result_t c64_uci_named_reu_begin(bool save, mt_uci_reply_t *r)
 {
     dos_t *d = &instances[2];
+    if (d->file || d->state != DOS_IDLE) {
+        c64_uci_environment.fault = true;
+        return MT_UCI_FAILED;
+    }
     memset(d, 0, sizeof *d);
     d->named = true;
     d->save = save;
@@ -677,7 +725,8 @@ mt_uci_result_t c64_uci_named_reu_begin(bool save, mt_uci_reply_t *r)
     if (s.status != MT_SD_OK) {
         return named_error(r, "85,REU FILE CANNOT BE OPENED", -1);
     }
-    d->state = DOS_REU_HOLD;
+    d->staged = d->remaining;
+    d->state = save ? DOS_REU_HOLD : DOS_REU_COPY;
     return MT_UCI_WAIT;
 }
 mt_uci_result_t c64_uci_named_reu_poll(mt_uci_reply_t *r)

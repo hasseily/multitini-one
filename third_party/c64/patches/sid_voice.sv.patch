@@ -1,5 +1,5 @@
 --- a/rtl/sid/sid_voice.sv
-+++ b/hdl/core/c64/ports/sid_voice.sv
++++ b/rtl/sid/sid_voice.sv
 @@ -1,3 +1,8 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +// Multitini synthesis port of MiSTer C64 commit
@@ -9,16 +9,34 @@
  
  // altera message_off 10030
  module sid_voice
-@@ -61,7 +66,7 @@
+@@ -37,15 +42,12 @@
+ localparam NOISE_TTL_8580 = 24'h950000;
+ 
+ // Internal Signals
++reg [7:0] wave_out;
++// Declare before the first reference for strict SystemVerilog compilation.
++(* use_dsp="yes" *) reg  [23:0] oscillator;
+ wire test_ctrl     = control[3];
+ wire ringmod_ctrl  = control[2];
+ wire sync_ctrl     = control[1];
+-
+-// Signal Assignments
+-assign osc_msb_out = oscillator[23];
+-assign voice_out   = dca_out;
+-assign osc_out     = wave_out;
+-assign env_out     = envelope;
+ 
+ // Envelope Instantiation
+ wire [7:0] envelope;
+@@ -61,7 +63,6 @@
  );
  
  // Phase Accumulating Oscillator
 -reg  [23:0] oscillator;
-+(* use_dsp="yes" *) reg  [23:0] oscillator;
  reg         osc_msb_in_prv;
  always @(posedge clock) begin
  	reg test_delay;
-@@ -82,7 +87,7 @@
+@@ -82,7 +83,7 @@
  always @(posedge clock) begin
  	reg clk, clk_d;
  	reg osc_edge;
@@ -27,7 +45,13 @@
  	reg [22:0] lfsr_noise;
  
  	if (reset) begin
-@@ -177,7 +182,7 @@
+@@ -171,13 +172,12 @@
+ );
+ 
+ // for OSC3 readback
+-reg [7:0] wave_out;
+ always @(posedge clock) if(ce_1m) wave_out <= norm[11:4] | comb;
+ 
  // DAC with floating input simulation
  reg signed [21:0] dca_out;
  always @(posedge clock) begin
@@ -36,3 +60,15 @@
  	reg signed  [8:0] env_dac;
  	reg signed [12:0] dac_out;
  
+@@ -194,4 +194,11 @@
+ 	end
+ end
+ 
++// Output assignments follow all declarations for strict compilation.
++// Signal Assignments
++assign osc_msb_out = oscillator[23];
++assign voice_out   = dca_out;
++assign osc_out     = wave_out;
++assign env_out     = envelope;
++
+ endmodule

@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "c64_uci_internal.h"
+#include "c64_iec_service.h"
 #include "multitini_c64_iec_dos.h"
 #include "multitini_c64_interface.h"
 #include "net_service.h"
@@ -22,6 +23,12 @@ static char action_path[C64_UCI_PATH];
 static unsigned action_device;
 static int action_result;
 static bool temporary_pending;
+static bool temporary_failed, hardware_fault;
+static mt_sd_directory_t *temporary_directory;
+static mt_sd_directory_t *path_directory;
+static bool reload_only;
+enum { FAULT_UNKNOWN, FAULT_RAM, FAULT_FENCE, FAULT_NATIVE };
+static unsigned hardware_fault_kind;
 static char temporary_cursor[C64_UCI_PATH];
 uint32_t c64_uci_read(unsigned o)
 {
@@ -58,13 +65,16 @@ static bool inside(const char *path, const char *root)
             return false;
     return path[n] == 0 || path[n] == '/';
 }
-bool c64_uci_protected(const char *path, bool writing)
+static bool protected_access(const char *path, bool writing, bool metadata)
 {
     char canonical[C64_UCI_PATH];
     if (mt_sd_file_canonical_path(path, canonical, sizeof canonical).status != MT_SD_OK)
         return true;
     path = canonical;
     if (!inside(path, c64_uci_environment.root) && !inside(path, c64_uci_environment.temporary))
+        return true;
+    if (writing && (equal(path, c64_uci_environment.root) ||
+                    equal(path, c64_uci_environment.temporary)))
         return true;
     char component[256];
     size_t used = 0;
@@ -81,10 +91,25 @@ bool c64_uci_protected(const char *path, bool writing)
         else
             return true;
     }
-    if (c64_uci_environment.callbacks.protected_path &&
+    if (metadata)
+        return false;
+    /* Mounted-file ownership protects destructive ancestor operations, but
+     * inspecting or entering that ancestor does not access the disk image. */
+    mt_sd_info_t info;
+    bool directory_read = !writing && mt_sd_file_stat(path, &info).status == MT_SD_OK &&
+                          (info.attributes & 16) != 0;
+    if (!directory_read && c64_uci_environment.callbacks.protected_path &&
         c64_uci_environment.callbacks.protected_path(c64_uci_environment.callbacks.context, path))
         return true;
     return mt_sd_file_path_busy(path, writing);
+}
+bool c64_uci_protected(const char *path, bool writing)
+{
+    return protected_access(path, writing, false);
+}
+bool c64_uci_metadata_protected(const char *path)
+{
+    return protected_access(path, false, true);
 }
 static bool wildcard(const char *pattern, const char *name)
 {
@@ -222,8 +247,10 @@ bool c64_uci_path(const char *cwd, const uint8_t *bytes, size_t length, char out
                 }
             }
             bool closed = mt_sd_directory_close(dir).status == MT_SD_OK;
-            if (!closed)
+            if (!closed) {
+                path_directory = dir;
                 c64_uci_environment.fault = true;
+            }
             if (!found || !closed)
                 return false;
         }
@@ -290,6 +317,11 @@ const char *c64_uci_sd_status(mt_sd_result_t r)
  * close every DIR before returning so USB/core handoff has no hidden owner. */
 static int clean_temporary(void)
 {
+    if (temporary_directory) {
+        if (mt_sd_directory_close(temporary_directory).status != MT_SD_OK)
+            return -1;
+        temporary_directory = NULL;
+    }
     mt_sd_directory_t *directory = NULL;
     mt_sd_info_t info;
     mt_sd_result_t s = mt_sd_directory_open(temporary_cursor, &directory);
@@ -308,6 +340,8 @@ static int clean_temporary(void)
             break;
     }
     mt_sd_result_t closed = mt_sd_directory_close(directory);
+    if (closed.status != MT_SD_OK)
+        temporary_directory = directory;
     if (s.status != MT_SD_OK || closed.status != MT_SD_OK)
         return -1;
     if (!info.name[0]) {
@@ -341,7 +375,7 @@ static int clean_temporary(void)
 }
 int c64_uci_service_hold_begin(void)
 {
-    if (!c64_uci_environment.available || c64_uci_environment.fault)
+    if (!c64_uci_environment.available || c64_uci_environment.fault || reload_only)
         return -1;
     if (!hold_active) {
         uint32_t c = c64_uci_read(MT_REG_C64_UCI_CONTROL);
@@ -361,7 +395,7 @@ int c64_uci_service_hold_begin(void)
 }
 void c64_uci_service_hold_end(void)
 {
-    if (hold_active && !quiesce_active && !ram_active && !fence_active &&
+    if (hold_active && !reload_only && !quiesce_active && !ram_active && !fence_active &&
         !c64_uci_environment.fault) {
         uint32_t c = c64_uci_read(MT_REG_C64_UCI_CONTROL);
         if (!hold_previous)
@@ -371,6 +405,8 @@ void c64_uci_service_hold_end(void)
 }
 void c64_uci_service_hold_fault(void)
 {
+    hardware_fault = true;
+    hardware_fault_kind = FAULT_UNKNOWN;
     c64_uci_environment.fault = true;
     if (c64_uci_environment.available) {
         c64_uci_write(MT_REG_C64_UCI_CONTROL,
@@ -380,6 +416,8 @@ void c64_uci_service_hold_fault(void)
 }
 int c64_uci_reu_fence(void)
 {
+    if (reload_only)
+        return 0;
     if (c64_uci_environment.fault)
         return -1;
     if (!fence_active) {
@@ -396,7 +434,8 @@ int c64_uci_reu_fence(void)
         return 0;
     }
     if (c64_uci_time() - fence_start > 1000000) {
-        c64_uci_environment.fault = true;
+        c64_uci_service_hold_fault();
+        hardware_fault_kind = FAULT_FENCE;
         return -1;
     }
     return 1;
@@ -420,7 +459,8 @@ int c64_uci_ram_read(uint16_t address, uint8_t *data, size_t bytes)
         return -1;
     if (((s >> 24) & 15) != ram_token) {
         if (c64_uci_time() - ram_start > 100000) {
-            c64_uci_environment.fault = true;
+            c64_uci_service_hold_fault();
+            hardware_fault_kind = FAULT_RAM;
             return -1;
         }
         return 1;
@@ -443,13 +483,15 @@ int c64_uci_ram_write(uint16_t address, const uint8_t *data, size_t bytes)
     memcpy(stream + 2, data, bytes);
     if (mt_core_link_stream(c64_uci_environment.link, MT_C64_UCI_LOAD_KIND, stream, bytes + 2,
                             100000, NULL, NULL) != MT_LINK_OK) {
-        c64_uci_environment.fault = true;
+        c64_uci_service_hold_fault();
         return -1;
     }
     return 0;
 }
 int c64_uci_ram_cancel(void)
 {
+    if (reload_only)
+        return 0;
     if (c64_uci_environment.fault)
         return -1;
     if (!ram_active)
@@ -457,7 +499,8 @@ int c64_uci_ram_cancel(void)
     (void)c64_uci_read(MT_REG_C64_UCI_STATUS);
     if (((c64_uci_read(MT_REG_C64_UCI_STATUS2) >> 24) & 15) != ram_token) {
         if (c64_uci_time() - ram_start > 100000) {
-            c64_uci_environment.fault = true;
+            c64_uci_service_hold_fault();
+            hardware_fault_kind = FAULT_RAM;
             return -1;
         }
         return 1;
@@ -531,6 +574,10 @@ int c64_uci_service_init(mt_core_link_t *link, const char *root,
 {
     memset(&c64_uci_environment, 0, sizeof c64_uci_environment);
     hold_active = fence_active = ram_active = false;
+    hardware_fault = temporary_failed = false;
+    temporary_directory = path_directory = NULL;
+    reload_only = false;
+    hardware_fault_kind = FAULT_UNKNOWN;
     quiesce_active = quiesce_op_pending = reset_pending = false;
     pending_action = C64_UCI_ACTION_NONE;
     action_result = 0;
@@ -560,7 +607,27 @@ int c64_uci_service_init(mt_core_link_t *link, const char *root,
     mt_uci_engine_target(&engine, 5, &t);
     t = mt_net_service_http_target();
     mt_uci_engine_target(&engine, 6, &t);
+    c64_uci_service_refresh_control();
     return 0;
+}
+void c64_uci_service_refresh_control(void)
+{
+    if (!c64_uci_environment.available)
+        return;
+    uint32_t caps = c64_uci_read(MT_REG_C64_EXPANSION_CAPS);
+    uint32_t desired = engine.targets[5].begin && c64_iec_service_active()
+                           ? 9U : MT_C64_UCI_CONTROL_DEFAULT;
+    if (c64_uci_read(MT_REG_C64_EXPANSION_CONFIG) & MT_C64_EXPANSION_UCI_ENABLE) {
+        if (caps & MT_C64_EXPANSION_CAPS_UCI_RAM_DMA)
+            desired |= MT_C64_UCI_CONTROL_FREEZE;
+        if (caps & MT_C64_EXPANSION_CAPS_UCI_C64_IRQ)
+            desired |= MT_C64_UCI_CONTROL_IRQ;
+    }
+    uint32_t old = c64_uci_read(MT_REG_C64_UCI_CONTROL);
+    desired |= old & ~(MT_C64_UCI_CONTROL_DEFAULT | MT_C64_UCI_CONTROL_FREEZE |
+                       MT_C64_UCI_CONTROL_IRQ);
+    if (desired != old)
+        c64_uci_write(MT_REG_C64_UCI_CONTROL, desired);
 }
 void c64_uci_service_set_home(const char *path)
 {
@@ -583,27 +650,39 @@ bool c64_uci_service_available(void)
 bool c64_uci_service_active(void)
 {
     return c64_uci_environment.available &&
-           (engine.active || temporary_pending || quiesce_active || reset_pending);
+           (engine.active || quiesce_active || reset_pending ||
+            (temporary_pending && (c64_uci_read(MT_REG_C64_EXPANSION_CONFIG) &
+                                   MT_C64_EXPANSION_UCI_ENABLE)));
 }
 int c64_uci_service_poll(unsigned budget)
 {
     if (!c64_uci_environment.available)
         return 0;
+    if (reload_only)
+        return -1;
+    c64_uci_service_refresh_control();
     if (c64_uci_environment.fault)
         return -1;
     if (quiesce_active)
         return c64_uci_service_quiesce();
-    if (temporary_pending) {
+    if (temporary_pending && (c64_uci_read(MT_REG_C64_EXPANSION_CONFIG) &
+                              MT_C64_EXPANSION_UCI_ENABLE)) {
         if (clean_temporary() < 0) {
-            c64_uci_environment.fault = true;
-            return -1;
+            temporary_pending = false;
+            temporary_failed = true;
+            /* A failed deletion owns no hardware. Preserve the evidence and
+             * allow ordinary service; only a still-open DIR blocks handoff. */
+            if (temporary_directory) {
+                c64_uci_environment.fault = true;
+                return -1;
+            }
         }
         return 0;
     }
     for (unsigned i = 0; i < budget; i++) {
         mt_uci_engine_poll(&engine);
         if (engine.faulted || c64_uci_environment.fault) {
-            c64_uci_service_hold_fault();
+            c64_uci_environment.fault = true;
             return -1;
         }
     }
@@ -621,6 +700,8 @@ int c64_uci_service_quiesce(void)
 {
     if (!c64_uci_environment.available)
         return 0;
+    if (reload_only)
+        return -1;
     if (c64_uci_environment.fault)
         return -1;
     if (!quiesce_active) {
@@ -630,11 +711,12 @@ int c64_uci_service_quiesce(void)
     }
     if (c64_uci_time() - quiesce_start > 1000000) {
         c64_uci_service_hold_fault();
+        hardware_fault_kind = FAULT_NATIVE;
         return -1;
     }
     if (!mt_uci_engine_quiesce(&engine)) {
         if (engine.faulted) {
-            c64_uci_service_hold_fault();
+            c64_uci_environment.fault = true;
             return -1;
         }
         return 1;
@@ -680,6 +762,93 @@ int c64_uci_service_quiesce(void)
     if (reset_pending)
         finish_reset();
     return 0;
+}
+bool c64_uci_service_cleanup_warning(void)
+{
+    return temporary_failed;
+}
+int c64_uci_service_retry(void)
+{
+    if (!c64_uci_environment.available)
+        return 0;
+    /* Unknown DMA completion cannot be repaired by forgetting ownership. */
+    if (reload_only)
+        return -1;
+    if (hardware_fault) {
+        bool completed = hardware_fault_kind == FAULT_FENCE && fence_active &&
+            ((c64_uci_read(MT_REG_C64_REU_HOST) >> 8) & 15U) == fence_token;
+        if (completed) fence_active = false;
+        if (hardware_fault_kind == FAULT_RAM && ram_active &&
+            ((c64_uci_read(MT_REG_C64_UCI_STATUS2) >> 24) & 15U) == ram_token) {
+            ram_active = false;
+            completed = true;
+        }
+        if (hardware_fault_kind == FAULT_NATIVE && quiesce_op_pending &&
+            !(c64_uci_read(MT_REG_C64_UCI_STATUS) & MT_C64_UCI_STATUS_HANDSHAKE_BUSY) &&
+            ((c64_uci_read(MT_REG_C64_UCI_STATUS2) >> 19) & 3U) != quiesce_ack) {
+            quiesce_op_pending = false;
+            completed = true;
+        }
+        if (!completed) return -1;
+        hardware_fault = false;
+    }
+    if (path_directory) {
+        if (mt_sd_directory_close(path_directory).status != MT_SD_OK)
+            return -1;
+        path_directory = NULL;
+    }
+    if (temporary_directory) {
+        if (mt_sd_directory_close(temporary_directory).status != MT_SD_OK)
+            return -1;
+        temporary_directory = NULL;
+    }
+    if (c64_uci_environment.fault || engine.faulted) {
+        c64_uci_environment.fault = engine.faulted = false;
+        engine.quiesced = false;
+        quiesce_active = false;
+    }
+    int result = c64_uci_service_quiesce();
+    if (!result && temporary_failed) {
+        temporary_failed = false;
+        temporary_pending = true;
+        copy_path(temporary_cursor, c64_uci_environment.temporary);
+    }
+    return result;
+}
+bool c64_uci_service_reload_required(void)
+{
+    return hardware_fault || reload_only;
+}
+int c64_uci_service_prepare_reload(void)
+{
+    if (!c64_uci_environment.available)
+        return 0;
+    /* Only explicit PL replacement may abandon native tokens. The CPU must
+     * stay in reset and every external memory master must drain first. */
+    if (!(c64_uci_read(MT_REG_CONTROL) & MT_CONTROL_CORE_RESET_REQUEST) ||
+        !(c64_uci_read(MT_REG_VIDEO_FRAME_STATUS) & MT_VIDEO_FRAME_STATUS_QUIESCENT) ||
+        !(c64_uci_read(MT_REG_C64_REU_HOST) & MT_C64_REU_HOST_IDLE))
+        return 1;
+    reload_only = true;
+    c64_uci_write(MT_REG_C64_UCI_CONTROL,
+                  c64_uci_read(MT_REG_C64_UCI_CONTROL) | MT_C64_UCI_CONTROL_HOLD);
+    hold_active = true;
+    ram_active = fence_active = quiesce_op_pending = false;
+    hardware_fault = c64_uci_environment.fault = engine.faulted = false;
+    quiesce_active = false;
+    pending_action = C64_UCI_ACTION_NONE;
+    action_result = 0;
+    if (path_directory) {
+        if (mt_sd_directory_close(path_directory).status != MT_SD_OK) return -1;
+        path_directory = NULL;
+    }
+    if (temporary_directory) {
+        if (mt_sd_directory_close(temporary_directory).status != MT_SD_OK) return -1;
+        temporary_directory = NULL;
+    }
+    engine.quiesced = false;
+    if (!mt_uci_engine_quiesce(&engine)) return engine.faulted ? -1 : 1;
+    return c64_uci_environment.fault ? -1 : 0;
 }
 void c64_uci_service_reset(void)
 {

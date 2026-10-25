@@ -94,8 +94,7 @@ void mt_net_shutdown(mt_net_t *n) {
     n->ops.run(n->ops.context, false);
     n->ready = false;
     n->enabled = false;
-    n->query_pending = false;
-    n->query_result = -1;
+    mt_net_resolve_cancel(n);
     for (i = 0; i < 4; i++)
         n->hardware[i] = -1;
     for (i = 0; i < 16; i++) {
@@ -551,7 +550,9 @@ static void poll_socket(mt_net_t *n, int id) {
         return;
     }
     if (s->state == MT_NET_S_CONNECTING || s->state == MT_NET_S_LISTENING) {
-        if (sr == 0x17) {
+        /* A peer can establish, send and FIN between foreground polls.
+         * CLOSE_WAIT still represents that connection and owns unread bytes. */
+        if (sr == 0x17 || sr == 0x1c) {
             s->state = MT_NET_S_CONNECTED;
             if (s->listen) {
                 for (i = 0; i < 4; i++)

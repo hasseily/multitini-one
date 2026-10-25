@@ -67,6 +67,7 @@ bool mt_uci_engine_quiesce(mt_uci_engine_t *e)
 {
     if(!e)return true;
     if(e->faulted)return false;
+    if(e->quiesced)return true;
     if(e->active){
         mt_uci_target_t *t=&e->targets[e->target];
         mt_uci_result_t r=t->abort?t->abort(t->context,e->no_reply?0:e->response_consumed):MT_UCI_REPLY;
@@ -76,6 +77,7 @@ bool mt_uci_engine_quiesce(mt_uci_engine_t *e)
     for(unsigned i=0;i<MT_UCI_TARGET_COUNT;i++)if(e->targets[i].reset)e->targets[i].reset(e->targets[i].context);
     e->active=false;e->waiting=false;e->reply_pending=false;e->op_pending=false;
     e->canceling=false;e->reset_pending=false;e->initialized=false;e->awaiting_ack=false;
+    e->quiesced=true;
     return true;
 }
 
@@ -94,7 +96,7 @@ void mt_uci_engine_poll(mt_uci_engine_t *e)
     if(e->initialized && e->epoch!=epoch){
         if(!mt_uci_engine_quiesce(e))return;
     }
-    if(!e->initialized){e->initialized=true;e->epoch=(uint8_t)epoch;e->sequence=(uint8_t)((seq+15)&15);}
+    if(!e->initialized){e->initialized=true;e->quiesced=false;e->epoch=(uint8_t)epoch;e->sequence=(uint8_t)((seq+15)&15);}
     if(e->awaiting_ack){
         if(ack==e->op_ack)return;
         e->awaiting_ack=false;

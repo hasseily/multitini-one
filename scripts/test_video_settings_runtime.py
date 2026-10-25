@@ -38,6 +38,7 @@ def main() -> int:
         "firmware/common/gamepad.c",
         "firmware/common/controls.c",
         "firmware/common/c64_features.c",
+        "firmware/common/c64_sid.c", "firmware/common/c64_title.c",
         "firmware/common/c64_debug.c",
         "firmware/common/c64_reu_host.c",
         "-Wl,--gc-sections", "-lm", "-o", str(binary),

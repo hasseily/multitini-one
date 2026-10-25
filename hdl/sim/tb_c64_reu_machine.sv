@@ -4,7 +4,7 @@
 // The runner adds observation-only ports to an exact copy of the production
 // FPGA64 entity. CPU, PLA/ROM, VIC, CIA, SID and local RAM are their real RTL.
 // Synthetic ROMs/program are original test data and need no Commodore assets.
-module tb_c64_reu_machine;
+module tb_c64_reu_machine #(parameter integer SID_COUNT=2);
     logic clk = 0, reset_n = 0, pause = 1, memory_wait = 0;
     logic ntsc = 0, local_turbo_allowed = 1;
     logic [1:0] turbo_mode = 0, turbo_speed = 0, bios = 0;
@@ -58,7 +58,7 @@ module tb_c64_reu_machine;
         .machine_q(ram_q)
     );
 
-    fpga64_sid_iec dut (
+    fpga64_sid_iec #(.SID_COUNT(SID_COUNT)) dut (
         .clk32(clk), .reset_n(reset_n), .bios(bios), .pause(pause),
         .memory_wait(memory_wait), .pause_out(paused),
         .ps2_key(11'd0), .kbd_reset(!reset_n), .shift_mod(2'b11),

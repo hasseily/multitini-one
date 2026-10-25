@@ -272,7 +272,8 @@ static void line_value(mt_c64_title_overlay_t *o, mt_c64_title_report_t *r,
             mt_c64_sid_apply_key(&v->sid, sec, key, val, &fields, &classes);
         if (result == MT_SID_UNKNOWN || result == MT_SID_UNSUPPORTED) {
             ++r->skipped;
-            r->unavailable |= g;
+            /* Preserve this item without blocking edits to supported SID keys.
+             * Whole-group unavailability is reserved for missing capabilities. */
             note(r, line, key,
                  result == MT_SID_UNKNOWN ? "unknown SID item"
                                           : "SID engine does not implement this");

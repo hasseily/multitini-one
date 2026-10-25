@@ -78,6 +78,54 @@ int c64_d64_service_resume_after_reset(void) { unexpected_service(); }
 /* This fixture exercises video settings; its hardware exposes no C64 expansion. */
 uint32_t c64_content_service_expansion_caps(void) { return 0U; }
 bool c64_content_service_reu_enabled(void) { return false; }
+bool c64_content_service_crt_attached(void) { return false; }
+
+void c64_title_service_effective(mt_c64_title_values_t *requested,
+    mt_c64_title_values_t *applied, bool cartridge)
+{
+    (void)requested; (void)applied; (void)cartridge;
+    unexpected_service();
+}
+
+void mt_core_frontend_apply(mt_core_frontend_t *frontend,
+    const mt_core_frontend_state_t *state, mt_menu_view_t *view)
+{
+    (void)frontend; (void)state; (void)view;
+    unexpected_service();
+}
+
+bool mt_core_frontend_browser_folders(uint32_t core_id, mt_menu_browser_t browser)
+{
+    (void)core_id; (void)browser;
+    unexpected_service();
+}
+
+bool usb_hid_service_controller_device(uint8_t slot, mt_controller_device_t *device)
+{
+    (void)slot; (void)device;
+    unexpected_service();
+}
+
+bool usb_hid_service_get_controller_config(uint8_t slot, mt_controller_config_t *config)
+{
+    (void)slot; (void)config;
+    unexpected_service();
+}
+
+void usb_hid_service_controller_snapshot(uint8_t slot, mt_gamepad_state_t *raw,
+    mt_controls_output_t *output)
+{
+    (void)slot; (void)raw; (void)output;
+    unexpected_service();
+}
+
+uint8_t usb_hid_service_controller_player(uint8_t slot)
+{
+    (void)slot;
+    unexpected_service();
+}
+
+const char *mt_video_effect_service_status(void) { unexpected_service(); }
 
 mt_c64_content_service_result_t c64_content_service_load(const char *name)
 {

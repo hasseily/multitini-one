@@ -64,6 +64,10 @@ mt_supervisor_result_t mt_supervisor_set_initial(
     mt_supervisor_t *supervisor, const mt_core_selection_t *selection);
 mt_supervisor_result_t mt_supervisor_switch(
     mt_supervisor_t *supervisor, const mt_core_selection_t *selection);
+/* Run the complete transition even for the active image. Validation, quiesce
+ * failure handling and rollback are identical to an ordinary switch. */
+mt_supervisor_result_t mt_supervisor_reload(
+    mt_supervisor_t *supervisor, const mt_core_selection_t *selection);
 const char *mt_supervisor_state_name(mt_supervisor_state_t state);
 const char *mt_supervisor_result_name(mt_supervisor_result_t result);
 

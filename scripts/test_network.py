@@ -9,7 +9,7 @@ def main():
     b.mkdir(parents=True);(b/'temp').mkdir()
     common=['firmware/common/net_config.c','firmware/common/net_w5100s.c','firmware/common/net_protocol.c']
     targets=['firmware/common/net_uci.c','firmware/common/http_json.c','firmware/common/http_uci.c','firmware/common/c64_uci.c']
-    files=common+targets+['firmware/platform/xilinx/net_service.c','tests/host/test_net.c','tests/host/test_net_uci_http.c','tests/host/net_model.h','tests/host/test_net_service.c','tests/host/test_c64_uci.c','tests/host/test_sd_dma_quiesce.c','firmware/platform/xilinx/sd_quiesce_diskio.inc']
+    files=common+targets+['firmware/platform/xilinx/net_service.c','tests/host/test_net.c','tests/host/test_net_uci_http.c','tests/host/test_net_edges.c','tests/host/test_http_json_alloc.c','tests/host/net_model.h','tests/host/test_net_service.c','tests/host/test_c64_uci.c','tests/host/test_sd_dma_quiesce.c','firmware/platform/xilinx/sd_quiesce_diskio.inc']
     receipt={'status':'RUNNING','source_sha256':{f:hashlib.sha256((ROOT/f).read_bytes()).hexdigest() for f in files+['firmware/include/multitini_net.h','firmware/include/multitini_net_uci.h','firmware/include/multitini_http.h','firmware/include/multitini_c64_uci.h','firmware/include/multitini_core_link.h','firmware/include/multitini_regs.h','firmware/common/net_internal.h','firmware/common/http_internal.h','firmware/platform/xilinx/net_service.h','firmware/platform/xilinx/c64_uci_geos.c','firmware/platform/xilinx/c64_uci_geos.h','firmware/platform/xilinx/c64_uci_internal.h','firmware/platform/xilinx/sd_storage.h','tests/host/test_c64_uci_geos.c','scripts/run_native_tool.py','scripts/test_network.py']},'limits':'Register-accurate synthetic W5100S model; no physical network/board claim.'}
     reference=ROOT/'third_party/ultimate_firmware_reference/software/io'
     receipt['reference_commit']='d43546fe25b26cb332f43f00219d33153dfe44f8'
@@ -25,18 +25,23 @@ def main():
         return r.stdout
     try:
         receipt['checks']=[]
-        for name,test,src in [('base','tests/host/test_net.c',common),('engine','tests/host/test_c64_uci.c',['firmware/common/c64_uci.c']),('uci-http','tests/host/test_net_uci_http.c',common+targets),('cid','tests/host/test_sd_dma_quiesce.c',[]),('geos','tests/host/test_c64_uci_geos.c',['firmware/platform/xilinx/c64_uci_geos.c','firmware/common/c64_uci.c']),('platform','tests/host/test_net_service.c',common+targets+['firmware/platform/xilinx/net_service.c'])]:
+        for name,test,src in [('base','tests/host/test_net.c',common),('engine','tests/host/test_c64_uci.c',['firmware/common/c64_uci.c']),('uci-http','tests/host/test_net_uci_http.c',common+targets),('edges','tests/host/test_net_edges.c',common+targets),('json-allocation','tests/host/test_http_json_alloc.c',[]),('cid','tests/host/test_sd_dma_quiesce.c',[]),('geos','tests/host/test_c64_uci_geos.c',['firmware/platform/xilinx/c64_uci_geos.c','firmware/common/c64_uci.c']),('platform','tests/host/test_net_service.c',common+targets+['firmware/platform/xilinx/net_service.c'])]:
             run(name+'-compile',['C:/msys64/ucrt64/bin/gcc.exe','-std=c11','-Wall','-Wextra','-Werror','-I'+str(ROOT/'firmware/include'),'-I'+str(ROOT/'firmware/platform/xilinx'),'-I'+str(ROOT/'tests/xilinx_stubs'),*[ROOT/f for f in src+[test]],'-o',b/(name+'.exe')])
             result=run(name,[b/(name+'.exe')]);assert 'PASS ' in result;receipt['checks']+=result.splitlines();print(result)
         receipt['negative_controls']=[]
         for name,file,before,after,test,src in [
             ('ring','firmware/common/net_w5100s.c','& 0x7ff','& 0x3ff','tests/host/test_net.c',common),
             ('ttl-zero','firmware/common/net_protocol.c','if (!ttl)\n        return;','if (!ttl) ttl=60;','tests/host/test_net.c',common),
-            ('https','firmware/common/http_uci.c','if (header->secure)','if (false)','tests/host/test_net_uci_http.c',common+targets)]:
+            ('https','firmware/common/http_uci.c','if (header->secure)','if (false)','tests/host/test_net_uci_http.c',common+targets),
+            ('read-deadline','firmware/common/net_uci.c','n->sockets[u->socket].rx_phase != 0','false','tests/host/test_net_edges.c',common+targets),
+            ('close-wait','firmware/common/net_w5100s.c','sr == 0x17 || sr == 0x1c','sr == 0x17','tests/host/test_net_edges.c',common+targets),
+            ('dns-owner','firmware/common/http_uci.c','mt_net_resolve_cancel_owner(h->net, MT_NET_OWNER_HTTP);','mt_net_resolve_cancel(h->net);','tests/host/test_net_service.c',common+targets+['firmware/platform/xilinx/net_service.c']),
+            ('json-allocation','firmware/common/http_json.c','malloc(end - p->pos + 1)','malloc(p->size - p->pos + 1)','tests/host/test_http_json_alloc.c',[])]:
             original=(ROOT/file).read_text();assert before in original
             mutant=b/(name+'-mutant.c');mutant.write_text(original.replace(before,after))
             units=[mutant if f==file else ROOT/f for f in src]+[ROOT/test]
-            run(name+'-negative-compile',['C:/msys64/ucrt64/bin/gcc.exe','-std=c11','-Wall','-Wextra','-Werror','-I'+str(ROOT/'firmware/include'),'-I'+str(ROOT/'firmware/common'),*units,'-o',b/(name+'-negative.exe')])
+            defines=[f'-DHTTP_JSON_SOURCE="{mutant.as_posix()}"'] if name=='json-allocation' else []
+            run(name+'-negative-compile',['C:/msys64/ucrt64/bin/gcc.exe','-std=c11','-Wall','-Wextra','-Werror','-I'+str(ROOT/'firmware/include'),'-I'+str(ROOT/'firmware/common'),'-I'+str(ROOT/'firmware/platform/xilinx'),'-I'+str(ROOT/'tests/xilinx_stubs'),*defines,*units,'-o',b/(name+'-negative.exe')])
             rejected=False
             try:run(name+'-negative',[b/(name+'-negative.exe')])
             except RuntimeError:

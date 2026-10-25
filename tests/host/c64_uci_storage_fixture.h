@@ -5,6 +5,9 @@
 #define F_BYTES 65536
 #include "c64_iec_fixture.h"
 #include "sd_storage.h"
+#ifndef UCI_STORAGE_OBSERVE
+#define UCI_STORAGE_OBSERVE() ((void)0)
+#endif
 struct mt_sd_directory
 {
     bool used;
@@ -13,6 +16,7 @@ struct mt_sd_directory
 };
 static struct mt_sd_directory directories[4];
 static unsigned file_close_failures, directory_close_failures;
+static unsigned file_close_released_failures;
 static unsigned file_close_calls, directory_close_calls;
 static unsigned remove_failures, rename_failures;
 static mt_sd_result_t sd_result(int error, size_t bytes)
@@ -60,12 +64,14 @@ mt_sd_result_t mt_sd_file_open_flags(const char *path, uint8_t flags, mt_sd_file
 }
 mt_sd_result_t mt_sd_file_read(mt_sd_file_t *file, void *data, size_t cap)
 {
+    UCI_STORAGE_OBSERVE();
     size_t got = 0;
     int e = fixture_read(NULL, file, data, cap, &got);
     return sd_result(e, got);
 }
 mt_sd_result_t mt_sd_file_write(mt_sd_file_t *file, const void *data, size_t n)
 {
+    UCI_STORAGE_OBSERVE();
     size_t got = 0;
     int e = fixture_write(NULL, file, data, n, &got);
     return sd_result(e, got);
@@ -76,12 +82,18 @@ mt_sd_result_t mt_sd_file_write_buffered(mt_sd_file_t *file, const void *data, s
 }
 mt_sd_result_t mt_sd_file_close(mt_sd_file_t *file)
 {
+    UCI_STORAGE_OBSERVE();
     file_close_calls++;
     if (file_close_failures) {
         file_close_failures--;
         return (mt_sd_result_t){MT_SD_CLOSE_FAILED, 1, 0};
     }
     void *p = file;
+    if (file_close_released_failures) {
+        file_close_released_failures--;
+        assert(fixture_close(NULL, &p) == 0 && p == NULL);
+        return (mt_sd_result_t){MT_SD_SYNC_FAILED, 1, 0};
+    }
     return sd_result(fixture_close(NULL, &p), 0);
 }
 mt_sd_result_t mt_sd_file_seek(mt_sd_file_t *file, int64_t offset, int origin)

@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Execute real turbo/title/apply/debug transactions with mocked MMIO and SD."""
 from pathlib import Path
-import os, shutil, subprocess, sys, tempfile, unittest
-from tests.test_c64_expansion_runtime import production_function
+import os, re, shutil, subprocess, sys, tempfile, unittest
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from tests.test_c64_expansion_runtime import production_function
 SCENARIOS = r'''
 static void reset_scenario(void) {
     memset(&c64_debug,0,sizeof c64_debug);memset(&c64_live_sid_table,0,sizeof c64_live_sid_table);
@@ -79,8 +80,20 @@ class TurboRuntime(unittest.TestCase):
                 'static void refresh_c64_title(', 'static mt_c64_title_values_t c64_requested_values(',
                 'static int apply_c64_title(', 'static void configure_c64_turbo(', 'static void configure_c64_expansion(',
                 'static bool commit_c64_edit(', 'static void change_c64_expansion(', 'static void change_c64_turbo(',
-                'static unsigned cycle_setting(', 'static void change_c64_sid_setup(')
-            fixture=fixture.replace('/* PRODUCTION_FUNCTIONS */','\n'.join(production_function(source,s) for s in signatures))
+                'static unsigned cycle_setting(', 'static void change_c64_sid_setup(',
+                'static void c64_title_launched(', 'static mt_c64_content_service_result_t c64_title_load(',
+                'static mt_c64_content_service_result_t c64_title_disk(',
+                'static const char *c64_content_failure_message(')
+            content=(ROOT/'firmware/common/content_type.c').read_text()
+            classifier='\n'.join(production_function(content,s) for s in (
+                'static char ascii_lower(', 'static bool extension_is(',
+                'mt_content_type_t mt_content_classify(const char *path)'))
+            fixture=fixture.replace('/* PRODUCTION_FUNCTIONS */',classifier+'\n'+
+                '\n'.join(production_function(source,s) for s in signatures))
+            media_failure=re.findall(
+                r'set_supervisor_error\(c64_content_failure_message\(result\.status, remounted\)\);', source)
+            self.assertEqual(len(media_failure),1,'Expected actual Media failure call')
+            fixture=fixture.replace('/* PRODUCTION_MENU_FAILURE */',media_failure[0])
             fixture=fixture.replace('int main(int argc, char **argv)','int fixture_main(int argc, char **argv)')
             c=directory/'runtime.c';c.write_text(fixture+SCENARIOS)
             exe=directory/('runtime.exe' if os.name=='nt' else 'runtime')

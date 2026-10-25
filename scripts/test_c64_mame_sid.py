@@ -39,7 +39,7 @@ def method(source: str, name: str) -> str:
         cursor += 1
     return source[match.start():cursor]
 
-def subsystem(source: str) -> tuple[str, str]:
+def subsystem(source: str, sid_count: int = 8) -> tuple[str, str]:
     start = source.index("component multitini_c64_sid_array\n")
     component = source[start:source.index("end component;", start) + len("end component;")]
     start = source.index("--\tRight SID Port:")
@@ -60,7 +60,7 @@ entity c64_sid_socket_observed is port(
     audio_l, audio_r : out std_logic_vector(17 downto 0));
 end entity;
 architecture observed of c64_sid_socket_observed is
-constant SID_COUNT : integer := 2;
+constant SID_COUNT : integer := SID_COUNT_VALUE;
 signal sid_map_enable,sid_io_select : std_logic := '0';
 signal sid_slot_masks,sid_params : std_logic_vector(255 downto 0) := (others=>'0');
 signal sid_owners : std_logic_vector(95 downto 0) := (others=>'0');
@@ -90,13 +90,14 @@ signal sid_ld_clk : std_logic;
 signal sid_ld_wr,sid_digifix,io_ext : std_logic := '0';
 signal io_data,io_data_i : unsigned(7 downto 0) := x"FF";
 """ + component + "\nbegin\nsid_ld_clk <= clk32;\n" + body + "\nend architecture;\n"
-    return wrapper, body
+    return wrapper.replace("SID_COUNT_VALUE", str(sid_count)), body
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", type=Path, default=ROOT / "build/c64-mame-sid")
     parser.add_argument("--vivado-bin", type=Path, default=Path("C:/Xilinx/2025.2/Vivado/bin"))
     parser.add_argument("--cxx", type=Path, default=Path("C:/msys64/ucrt64/bin/g++.exe"))
+    parser.add_argument('--sid-count',type=int,choices=(2,8),default=8)
     args = parser.parse_args()
     build = args.build_dir.resolve()
     root_build = (ROOT / "build").resolve()
@@ -116,7 +117,7 @@ def main() -> int:
     tracked = [Path(__file__).resolve(), production, harness, *leaves, *[UPSTREAM / name for name in PINNED]]
     hashes = lambda: {p.relative_to(ROOT).as_posix(): digest(p) for p in tracked}
     initial = hashes()
-    result = {"status": "FAIL", "reference_commit": COMMIT, "source_sha256": initial,
+    result = {"status": "FAIL", "reference_commit": COMMIT, "sid_count": args.sid_count, "source_sha256": initial,
         "limits": ["MAME SID socket call routing and stereo gains only; SID register/audio devices are doubles in the reference.",
                    "Production SID leaves additionally exercise register isolation, paddle reads, stereo output and native enable holds.",
                    "No SID waveform/filter equivalence, whole-machine bus arbitration, routed timing or board acceptance claim."]}
@@ -146,7 +147,7 @@ def main() -> int:
         bodies = [method(single,"c64_sid_6581_device::"+n) for n in ("read","write")]
         bodies += [method(dual,"c64_sid_dual6581_device::"+n) for n in ("device_reset","read","write")]
         (build / "mame_sid_methods.inc").write_text(notice + "\n\n".join(bodies) + "\n")
-        wrapper, block = subsystem(production.read_text())
+        wrapper, block = subsystem(production.read_text(), args.sid_count)
         observed = build / "c64_sid_socket_observed.vhd"
         observed.write_text(wrapper)
         result["verbatim_production_sid_block_sha256"] = hashlib.sha256(block.encode()).hexdigest()

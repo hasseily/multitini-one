@@ -21,8 +21,15 @@ static bool golden_update_worker_held;
 static bool c64_iec_initialized;
 static mt_c64_debug_t c64_debug;
 static bool dispatch_c64_debug(const char *line) { (void)line; return false; }
+static bool dispatch_c64_title(const char *line) { (void)line; return false; }
+static void network_console(void *context, const char *text)
+{ (void)context; (void)text; }
+static bool mt_net_service_command(const char *text, void (*output)(void *, const char *), void *context)
+{ (void)text; (void)output; (void)context; return false; }
 static const char *test_command;
 static unsigned forbidden,retries,warnings,statuses;
+static int retry_c64_uci(void) { ++forbidden; return 0; }
+static bool c64_uci_service_reload_required(void) { ++forbidden; return false; }
 static unsigned unknown_commands;
 static unsigned hid_snapshots;
 static unsigned status_drive_mask;

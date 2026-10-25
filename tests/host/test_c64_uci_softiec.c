@@ -7,12 +7,24 @@
 static mt_iec_dos_t dos;
 static uint8_t ram[65536];
 static uint16_t leases;
-static bool active = true, held, ram_pending;
+static bool active = true, held, ram_pending, storage_fault;
 static unsigned checks, waits, failures;
 static mt_uci_target_t target;
 static mt_uci_reply_t reply;
+static int unheld_read(void *c, void *h, uint8_t *p, size_t n, size_t *got)
+{ assert(!held); return fixture_read(c,h,p,n,got); }
+static int unheld_write(void *c, void *h, const uint8_t *p, size_t n, size_t *got)
+{ assert(!held); return fixture_write(c,h,p,n,got); }
+static int unheld_close(void *c, void **h)
+{ assert(!held); return fixture_close(c,h); }
+static int unheld_commit(void *c, const char *a, const char *b, bool replace)
+{ assert(!held); return fixture_commit(c,a,b,replace); }
 c64_uci_environment_t c64_uci_environment;
 mt_iec_dos_t *c64_iec_service_dos(void)
+{
+    return storage_fault ? NULL : &dos;
+}
+mt_iec_dos_t *c64_iec_service_cleanup_dos(void)
 {
     return &dos;
 }
@@ -35,6 +47,7 @@ void c64_iec_service_write_failure(int code)
 {
     if (code)
         ++failures;
+    storage_fault = code != 0;
 }
 int c64_uci_service_hold_begin(void)
 {
@@ -134,6 +147,7 @@ int main(void)
 {
     fixture_reset();
     mt_iec_fs_t fs = fixture_api();
+    fs.read=unheld_read;fs.write=unheld_write;fs.close=unheld_close;fs.commit=unheld_commit;
     CHECK(mt_iec_dos_init(&dos, &fs, "0:/media") == 0);
     target = c64_uci_softiec_target();
     target.reset(NULL);
@@ -258,6 +272,20 @@ int main(void)
     CHECK(reply.status[0] == 2 && failures && !fixture_find("0:/media/FAVED.prg"));
     CHECK(!strncmp(dos.status, "25,", 3));
     fixture.fail_commit = 0;
+    storage_fault = false; /* Explicit device9 error recovery. */
+    CHECK(start(0x10, 1, (const uint8_t *)"DATA", 4, 8) == MT_UCI_REPLY);
+    fixture.keep_handle = true;
+    fixture.fail_close = 25;
+    target.reset(NULL);
+    CHECK(c64_uci_environment.fault && leases && dos.channels[0].handle);
+    fixture.fail_close = 0;
+    c64_uci_environment.fault = false;
+    target.reset(NULL);
+    CHECK(!leases && !dos.channels[0].handle && !held);
+    CHECK(storage_fault && c64_uci_environment.fault);
+    c64_uci_environment.fault = false;
+    target.reset(NULL);
+    CHECK(!leases && !c64_uci_environment.fault);
     printf("SoftIEC target PASS: %u checks, actual shared DOS, partial ACK/abort, async RAM, all "
            "command "
            "families\n",

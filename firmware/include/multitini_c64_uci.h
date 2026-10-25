@@ -45,7 +45,7 @@ typedef struct {
     bool initialized, active, waiting, no_reply, canceling, reset_pending;
     bool op_pending, reply_pending, awaiting_ack, idle_abort_ack;
     /* Failed cancellation keeps ownership and blocks lifecycle completion. */
-    bool faulted;
+    bool faulted, quiesced;
     size_t response_consumed;
 } mt_uci_engine_t;
 

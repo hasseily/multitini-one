@@ -5,15 +5,32 @@
 #include "c64_title_service.h"
 #include "multitini_c64_debug.h"
 #include "multitini_c64_interface.h"
+#include "multitini_content.h"
+#include "multitini_media_browser.h"
 #include "multitini_regs.h"
 #include "multitini_supervisor.h"
 #include "supervisor_settings.h"
 #include <assert.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #define MT_SHELL_BASE_ADDRESS UINT32_C(0x40000000)
-#define xil_printf(...) ((void)0)
+static char uart[2048];
+static int capture_printf(const char *format, ...)
+{
+    size_t at = strlen(uart);
+    va_list args;
+    va_start(args, format);
+    int written = vsnprintf(uart + at, sizeof(uart) - at, format, args);
+    va_end(args);
+    assert(written >= 0 && (size_t)written < sizeof(uart) - at);
+    return written;
+}
+#define xil_printf capture_printf
 static mt_supervisor_t supervisor;
+static mt_core_selection_t c64_extension_selection;
+static char c64_launch_disk_name[256] = "games/Demo.d64", uci_home[512];
+static unsigned launches, hook_commits, home_updates;
 static mt_supervisor_settings_t persistent_settings, settings_before_update, saved_settings;
 static mt_c64_sid_model_t c64_stored_sid, saved_sid;
 static mt_c64_sid_table_t c64_live_sid_table;
@@ -121,6 +138,7 @@ static int c64_uci_service_hold_begin(void)
     held = true;
     return 0;
 }
+static void c64_uci_service_refresh_control(void) {}
 static void c64_uci_service_hold_end(void)
 {
     if (!c64_sid_commit_fault)
@@ -154,6 +172,43 @@ static void set_supervisor_warning(const char *s)
 static void set_supervisor_status(const char *s)
 {
     set_supervisor_warning(s);
+}
+static void set_supervisor_error(const char *s)
+{
+    set_supervisor_warning(s);
+}
+static void c64_uci_service_set_home(const char *s)
+{
+    ++home_updates;
+    (void)snprintf(uci_home, sizeof(uci_home), "%s", s);
+}
+static mt_c64_content_service_result_t accepted_launch(const mt_c64_launch_hook_t *hook)
+{
+    ++launches;
+    if (hook && hook->commit) {
+        ++hook_commits;
+        assert(hook->commit(hook->context) == 0);
+    }
+    return (mt_c64_content_service_result_t){.status = MT_C64_CONTENT_SERVICE_OK};
+}
+mt_c64_content_service_result_t c64_content_service_load_hooked(
+    const char *path, const mt_c64_launch_hook_t *hook)
+{
+    assert(path && *path);
+    mt_c64_content_service_result_t result = accepted_launch(hook);
+    attached = mt_content_classify(path) == MT_CONTENT_CRT;
+    return result;
+}
+mt_c64_content_service_result_t c64_content_service_stage_prg_image_hooked(
+    const uint8_t *data, size_t size, const mt_c64_launch_hook_t *hook)
+{
+    assert(data && size);
+    return accepted_launch(hook);
+}
+mt_c64_content_service_result_t c64_content_service_prepare_disk_load_hooked(
+    const mt_c64_launch_hook_t *hook)
+{
+    return accepted_launch(hook);
 }
 static bool save_persistent_settings(void)
 {
@@ -214,6 +269,11 @@ mt_sd_result_t mt_sd_storage_journal_replace(const char *p, const char *j, const
 }
 static int apply_c64_title(void *, const mt_c64_title_values_t *, bool, bool);
 /* PRODUCTION_FUNCTIONS */
+static void media_failure(mt_c64_content_service_status_t status, bool remounted)
+{
+    mt_c64_content_service_result_t result = {.status = status};
+    /* PRODUCTION_MENU_FAILURE */
+}
 static void initialize(void)
 {
     memset(&supervisor, 0, sizeof supervisor);
@@ -222,6 +282,8 @@ static void initialize(void)
     supervisor.active.package.abi_minor = 26;
     strcpy(supervisor.active.package.id, "c64");
     strcpy(supervisor.active.package.variants[0].id, "pal");
+    strcpy(supervisor.active.package.content_root, "0:/media");
+    c64_extension_selection = supervisor.active;
     expansion_caps = MT_C64_EXPANSION_CAPS_VALID | MT_C64_EXPANSION_CAPS_DUAL_SID |
                      MT_C64_EXPANSION_CAPS_REU_16MB | MT_C64_EXPANSION_CAPS_ULTIMATE_AUDIO |
                      MT_C64_EXPANSION_CAPS_UCI | MT_C64_EXPANSION_CAPS_MULTI_SID |
@@ -356,6 +418,49 @@ int main(int argc, char **argv)
         assert(commits == 1 && !writes && !saves && held && c64_sid_commit_fault);
         change_c64_expansion(3);
         assert(!writes && !saves && held);
+    } else if (!strcmp(argv[1], "launch-refusal")) {
+        const char reason[] = "Turn REU off, or disable it in the title .cfg";
+        assert(c64_stored_values(&supervisor.active).reu);
+        mt_c64_content_service_result_t result = c64_title_load("games/Cart.crt", true);
+        assert(result.status == MT_C64_CONTENT_SERVICE_CONFIG_FAILED);
+        assert(!launches && !hook_commits && !writes && !home_updates);
+        assert(!strcmp(c64_title_service_status(), reason));
+        assert(!strcmp(uart, "[C64] Turn REU off, or disable it in the title .cfg\r\n"));
+        media_failure(result.status, true);
+        assert(!strcmp(message, reason));
+        media_failure(result.status, false);
+        assert(!strcmp(message, "Content load and drive remount failed"));
+        media_failure(MT_C64_CONTENT_SERVICE_READ_FAILED, true);
+        assert(!strcmp(message, "Content load failed"));
+        assert(!*c64_title_service_session());
+    } else if (!strcmp(argv[1], "disk-refusal")) {
+        const uint8_t program[] = {1, 8, 0};
+        expansion_caps |= MT_C64_EXPANSION_CAPS_SID_IO_SLOTS;
+        c64_stored_sid.sid_address[1] = 41;
+        for (unsigned i = 0; i < 2; i++) {
+            uart[0] = 0;
+            mt_c64_content_service_result_t result = c64_title_disk(i ? program : NULL,
+                                                                      i ? sizeof(program) : 0);
+            assert(result.status == MT_C64_CONTENT_SERVICE_CONFIG_FAILED);
+            assert(!launches && !hook_commits && !writes && !home_updates);
+            assert(!strcmp(uart, "[C64] Disable REU before mapping a SID in IO2\r\n"));
+            media_failure(result.status, true);
+            assert(!strcmp(message, "Disable REU before mapping a SID in IO2"));
+        }
+    } else if (!strcmp(argv[1], "launch-allowed")) {
+        const uint8_t program[] = {1, 8, 0};
+        assert(c64_title_load("games/Demo.prg", true).status == MT_C64_CONTENT_SERVICE_OK);
+        assert(launches == 1 && home_updates == 1 && !strcmp(uci_home, "0:/media/games"));
+        assert(c64_title_disk(NULL, 0).status == MT_C64_CONTENT_SERVICE_OK);
+        assert(c64_title_disk(program, sizeof(program)).status == MT_C64_CONTENT_SERVICE_OK);
+        assert(launches == 3 && home_updates == 3 && !strcmp(c64_title_service_session(),
+                                                           "games/Demo.d64"));
+        cfg_text = "[C64 and Cartridge Settings]\nRAM Expansion Unit=Disabled\n";
+        assert(c64_title_load("games/Cart.crt", true).status == MT_C64_CONTENT_SERVICE_OK);
+        assert(launches == 4 && hook_commits == 1 && home_updates == 4 && attached);
+        assert(!(config & MT_C64_EXPANSION_REU_ENABLE));
+        assert(!strcmp(c64_title_service_session(), "games/Cart.crt") &&
+               !strcmp(uci_home, "0:/media/games"));
     } else
         assert(0);
     printf("PASS: C64 expansion %s\n", argv[1]);

@@ -10,6 +10,9 @@ typedef struct {
     int probe_result;
     int activate_result;
     int recover_result;
+    unsigned fail_load_call;
+    unsigned fail_probe_call;
+    unsigned fail_activate_call;
     unsigned quiesce_calls;
     unsigned load_calls;
     unsigned probe_calls;
@@ -39,7 +42,9 @@ static int fake_load(void *context, const mt_core_selection_t *selection)
     assert(mt_supervisor_selection_valid(selection));
     ++backend->load_calls;
     record(backend, 'L');
-    return backend->load_result;
+    return backend->fail_load_call == 0U ||
+           backend->fail_load_call == backend->load_calls ?
+           backend->load_result : 0;
 }
 
 static int fake_probe(void *context, uint32_t core_id,
@@ -50,7 +55,9 @@ static int fake_probe(void *context, uint32_t core_id,
     assert(abi_major == 0U && abi_minor == 11U);
     ++backend->probe_calls;
     record(backend, 'P');
-    return backend->probe_result;
+    return backend->fail_probe_call == 0U ||
+           backend->fail_probe_call == backend->probe_calls ?
+           backend->probe_result : 0;
 }
 
 static int fake_activate(void *context,
@@ -60,7 +67,9 @@ static int fake_activate(void *context,
     assert(mt_supervisor_selection_valid(selection));
     ++backend->activate_calls;
     record(backend, 'A');
-    return backend->activate_result;
+    return backend->fail_activate_call == 0U ||
+           backend->fail_activate_call == backend->activate_calls ?
+           backend->activate_result : 0;
 }
 
 static int fake_recover(void *context)
@@ -103,8 +112,71 @@ static mt_supervisor_t make_supervisor(fake_backend_t *backend)
     return supervisor;
 }
 
+static void test_forced_reload(void)
+{
+    const mt_core_selection_t c64 = selection("c64", "pal");
+    fake_backend_t backend = {0};
+    mt_supervisor_t supervisor = make_supervisor(&backend);
+    assert(mt_supervisor_set_initial(&supervisor, &c64) == MT_SUPERVISOR_OK);
+    assert(mt_supervisor_switch(&supervisor, &c64) == MT_SUPERVISOR_NO_CHANGE);
+    assert(backend.order_size == 0U);
+    /* Selection may alias the active selection, as the Reset action does. */
+    assert(mt_supervisor_reload(&supervisor, &supervisor.active) == MT_SUPERVISOR_OK);
+    assert(strcmp(backend.order, "QLPA") == 0);
+    assert(supervisor.has_active && supervisor.state == MT_SUPERVISOR_ACTIVE);
+    assert(!supervisor.recovered && supervisor.last_backend_error == 0);
+    assert(memcmp(&supervisor.active, &c64, sizeof(c64)) == 0);
+
+    memset(&backend, 0, sizeof(backend));
+    backend.quiesce_result = -11;
+    assert(mt_supervisor_reload(&supervisor, &c64) == MT_SUPERVISOR_QUIESCE_FAILED);
+    assert(strcmp(backend.order, "Q") == 0);
+    assert(supervisor.has_active && supervisor.state == MT_SUPERVISOR_ACTIVE);
+    assert(!supervisor.recovered && supervisor.last_backend_error == -11);
+    assert(memcmp(&supervisor.active, &c64, sizeof(c64)) == 0);
+
+    for (unsigned phase = 0; phase < 3U; ++phase) {
+        memset(&backend, 0, sizeof(backend));
+        supervisor = make_supervisor(&backend);
+        assert(mt_supervisor_set_initial(&supervisor, &c64) == MT_SUPERVISOR_OK);
+        const mt_supervisor_result_t expected[] = {
+            MT_SUPERVISOR_LOAD_FAILED, MT_SUPERVISOR_PROBE_FAILED,
+            MT_SUPERVISOR_ACTIVATE_FAILED
+        };
+        const char *const orders[] = {"QLLPA", "QLPLPA", "QLPALPA"};
+        if (phase == 0U) { backend.load_result = -22; backend.fail_load_call = 1U; }
+        if (phase == 1U) { backend.probe_result = -22; backend.fail_probe_call = 1U; }
+        if (phase == 2U) { backend.activate_result = -22; backend.fail_activate_call = 1U; }
+        assert(mt_supervisor_reload(&supervisor, &c64) == expected[phase]);
+        assert(strcmp(backend.order, orders[phase]) == 0);
+        assert(supervisor.recovered && supervisor.has_active);
+        assert(supervisor.state == MT_SUPERVISOR_ACTIVE && supervisor.last_backend_error == -22);
+        assert(memcmp(&supervisor.active, &c64, sizeof(c64)) == 0);
+    }
+
+    memset(&backend, 0, sizeof(backend));
+    backend.load_result = -33;
+    assert(mt_supervisor_reload(&supervisor, &c64) == MT_SUPERVISOR_ROLLBACK_FAILED);
+    assert(strcmp(backend.order, "QLL") == 0);
+    assert(supervisor.state == MT_SUPERVISOR_FAILED && !supervisor.has_active);
+    assert(!supervisor.recovered && supervisor.last_backend_error == -33);
+
+    memset(&backend, 0, sizeof(backend));
+    supervisor = make_supervisor(&backend);
+    assert(mt_supervisor_set_initial(&supervisor, &c64) == MT_SUPERVISOR_OK);
+    mt_core_selection_t invalid = c64;
+    invalid.package.abi_minor = 0U;
+    assert(mt_supervisor_reload(&supervisor, &invalid) == MT_SUPERVISOR_INCOMPATIBLE_ABI);
+    invalid = c64;
+    invalid.variant_index = invalid.package.variant_count;
+    assert(mt_supervisor_reload(&supervisor, &invalid) == MT_SUPERVISOR_INVALID_ARGUMENT);
+    assert(mt_supervisor_reload(NULL, &c64) == MT_SUPERVISOR_INVALID_ARGUMENT);
+    assert(backend.order_size == 0U && supervisor.has_active);
+}
+
 int main(void)
 {
+    test_forced_reload();
     fake_backend_t backend = {0};
     mt_supervisor_t supervisor = make_supervisor(&backend);
     mt_core_selection_t c64 = selection("c64", "pal");

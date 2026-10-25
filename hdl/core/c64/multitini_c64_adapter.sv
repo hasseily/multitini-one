@@ -319,7 +319,7 @@ module multitini_c64_adapter #(
     wire [143:0] sid_chip_audio;
     wire signed [23:0] sid_mixed_l,sid_mixed_r;
     wire sid_clip;
-    wire uci_load_valid=ENABLE_EXTENSIONS && load_valid && load_kind==8'd17;
+    wire uci_load_valid=ENABLE_EXTENSIONS && load_valid && load_kind==multitini_regs_pkg::MT_C64_UCI_LOAD_KIND[7:0];
     wire uci_load_ready,uci_load_error,uci_ram_write,uci_peek_request,uci_buffer_owned;
     wire [15:0] uci_ram_address,uci_peek_address;
     wire [7:0] uci_ram_data;
@@ -377,6 +377,9 @@ module multitini_c64_adapter #(
     logic native_rd_override, fast_rd_override;
     logic [7:0] native_rd_data, fast_rd_data;
     logic diag_deadline_miss, diag_nmi_used;
+    logic [17:0] raw_audio_l;
+    logic [17:0] raw_audio_r;
+    integer unsigned audio_phase;
     wire ua_audio_tick = core_reset_n && audio_phase + AUDIO_SAMPLE_HZ >= CORE_CLOCK_HZ;
     wire signed [24:0] board_sum_l =
         $signed({raw_audio_l, 6'b000000}) + $signed({ua_audio_l, 6'b000000});
@@ -402,9 +405,6 @@ module multitini_c64_adapter #(
     logic        sync_pixel_tick;
     logic        sync_pixel_tick_d;
 
-    logic [17:0] raw_audio_l;
-    logic [17:0] raw_audio_r;
-    integer unsigned audio_phase;
 
     assign core_id = MT_C64_CORE_ID;
     assign system_rom_load_valid = load_valid &&
@@ -429,7 +429,7 @@ module multitini_c64_adapter #(
     // ROM object whose kind selects the ordinary loader instead.
     always_comb begin
         case (load_kind)
-            8'd17: load_ready=ENABLE_EXTENSIONS && uci_load_ready;
+            multitini_regs_pkg::MT_C64_UCI_LOAD_KIND[7:0]: load_ready=ENABLE_EXTENSIONS && uci_load_ready;
             MT_LOAD_C64_D64: load_ready = d64_load_ready;
             MT_LOAD_C64_G64: load_ready = g64_load_ready;
             MT_LOAD_C64_PRG,
@@ -662,7 +662,8 @@ module multitini_c64_adapter #(
     assign reu_io_select = reu_active && !reu_dma_req && cart_iof &&
                            !uci_io_select && (!ua_active || cpu_bus_addr[7:5] == 0);
     assign sid_io_select=map_enabled && !cart_loaded && !cart_loading && !reu_dma_req &&
-        (cart_ioe || cart_iof) && !reu_io_select && !ua_io_select && !uci_io_select;
+        (cart_ioe || cart_iof) && (|sid_io_masks[cpu_bus_addr[8:5]*8 +: 8]) &&
+        !reu_io_select && !ua_io_select && !uci_io_select;
     multitini_c64_uci uci_i(
         .clk(core_clk),.hard_reset(reset),.block_reset(!core_reset_n || !ENABLE_EXTENSIONS || !uci_enable || uci_suspended),
         .enabled(uci_active),.suspended(uci_suspended),

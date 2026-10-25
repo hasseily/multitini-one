@@ -500,10 +500,23 @@ static int unicode(parser_t *p) {
 }
 static char *parse_string(parser_t *p) {
     char *s;
-    size_t at = 0;
+    size_t at = 0, end;
     if (p->pos >= p->size || p->p[p->pos++] != '"')
         return NULL;
-    s = malloc(p->size - p->pos + 1);
+    /* Bound storage by this encoded token, not the remaining document.
+     * JSON escapes can only shrink when decoded to UTF-8. Skip escaped
+     * quotes here; the decoder below still validates every escape. */
+    for (end = p->pos; end < p->size; end++) {
+        if (p->p[end] == '"')
+            break;
+        if (p->p[end] == '\\') {
+            if (++end == p->size)
+                return NULL;
+        }
+    }
+    if (end == p->size)
+        return NULL;
+    s = malloc(end - p->pos + 1);
     if (!s)
         return NULL;
     while (p->pos < p->size) {

@@ -481,7 +481,7 @@ static mt_uci_result_t poll(void *context, mt_uci_reply_t *r) {
     if (h->net->now >= h->deadline)
         return fail(h, r, "504 GATEWAY TIMEOUT");
     if (h->phase == 1) {
-        result = mt_net_resolve(h->net, header->host, ip);
+        result = mt_net_resolve_owned(h->net, MT_NET_OWNER_HTTP, header->host, ip);
         if (result == MT_NET_AGAIN)
             return MT_UCI_WAIT;
         if (result)
@@ -764,7 +764,7 @@ static mt_uci_result_t abort_cmd(void *context, size_t consumed) {
     mt_http_t *h = context;
     (void)consumed;
     exchange_clear(h);
-    mt_net_resolve_cancel(h->net);
+    mt_net_resolve_cancel_owner(h->net, MT_NET_OWNER_HTTP);
     return MT_UCI_REPLY;
 }
 static void reset(void *context) {

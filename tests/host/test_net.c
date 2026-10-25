@@ -101,6 +101,9 @@ int main(void) {
     /* DNS uses the real system UDP socket and validates its peer. A TTL0
      * result is consumed once and a second lookup must send a new query. */
     memcpy(net.dns[0], peer, 4);
+    assert(mt_net_resolve_owned(&net, MT_NET_OWNER_HTTP, "a.com", received) == MT_NET_AGAIN);
+    mt_net_resolve_cancel_owner(&net, MT_NET_OWNER_UCI);
+    assert(net.query_pending && net.query_owner == MT_NET_OWNER_HTTP);
     assert(mt_net_resolve(&net, "a.com", received) == MT_NET_AGAIN);
     poll(&net, &model, 10);
     {
@@ -128,9 +131,16 @@ int main(void) {
         assert(net.query_pending);
         inject(&model, 0, p, q, true, peer, 53);
         poll(&net, &model, 8);
-        assert(mt_net_resolve(&net, "a.com", received) == 0 && !memcmp(received, peer, 4));
+        /* Console cannot consume or overwrite another owner's TTL-zero result. */
         assert(mt_net_resolve(&net, "a.com", received) == MT_NET_AGAIN);
-        mt_net_resolve_cancel(&net);
+        assert(mt_net_resolve(&net, "other.test", received) == MT_NET_AGAIN);
+        assert(mt_net_resolve_owned(&net, MT_NET_OWNER_HTTP, "a.com", received) == 0 &&
+               !memcmp(received, peer, 4));
+        assert(mt_net_resolve(&net, "a.com", received) == MT_NET_AGAIN);
+        mt_net_resolve_cancel_owner(&net, MT_NET_OWNER_HTTP);
+        assert(net.query_pending);
+        mt_net_resolve_cancel_owner(&net, MT_NET_OWNER_SYSTEM);
+        assert(!net.query_pending && !net.query[0]);
     }
     /* DNS compression and zero TTL, plus a compression pointer loop. */
     {

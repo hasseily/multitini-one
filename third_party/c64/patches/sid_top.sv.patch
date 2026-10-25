@@ -1,5 +1,5 @@
---- upstream/rtl/sid/sid_top.sv
-+++ ports/sid_top.sv
+--- a/rtl/sid/sid_top.sv
++++ b/rtl/sid/sid_top.sv
 @@ -1,20 +1,39 @@
 -
 -module sid_top 
@@ -58,15 +58,18 @@
  
  	input         ld_clk,
  	input  [11:0] ld_addr,
-@@ -39,6 +58,7 @@
+@@ -39,6 +58,10 @@
  );
  
  localparam N = DUAL ? 2 : 1;
++// Delay only the shared audio scheduler until the first native CE. Voices
++// use the register reset: holding ADSR reset after a queued GATE write would
++// copy GATE into gate_edge and swallow its first native rising edge.
 +wire time_reset = SEPARATE_RESETS ? engine_reset : reset;
  
  // Internal Signals
  reg  [15:0] Voice_1_Freq[N];
-@@ -74,26 +94,50 @@
+@@ -74,21 +97,45 @@
  wire        voice_2_PA_MSB[N];
  wire        voice_3_PA_MSB[N];
  
@@ -117,13 +120,7 @@
  		sid_voice v1
  		(
  			.clock(clk),
- 			.ce_1m(ce_1m),
--			.reset(reset),
-+			.reset(time_reset),
- 			.mode(mode[i]),
- 			.freq(Voice_1_Freq[i]),
- 			.pw(Voice_1_Pw[i]),
-@@ -107,14 +151,16 @@
+@@ -107,7 +154,9 @@
  			.p_t_out(p_t_out[i*3+0]),
  			.ps__out(ps__out[i*3+0]),
  			.pst_out(pst_out[i*3+0]),
@@ -134,15 +131,7 @@
  		);
  
  		sid_voice v2
- 		(
- 			.clock(clk),
- 			.ce_1m(ce_1m),
--			.reset(reset),
-+			.reset(time_reset),
- 			.mode(mode[i]),
- 			.freq(Voice_2_Freq[i]),
- 			.pw(Voice_2_Pw[i]),
-@@ -128,14 +174,16 @@
+@@ -128,7 +177,9 @@
  			.p_t_out(p_t_out[i*3+1]),
  			.ps__out(ps__out[i*3+1]),
  			.pst_out(pst_out[i*3+1]),
@@ -153,15 +142,7 @@
  		);
  
  		sid_voice v3
- 		(
- 			.clock(clk),
- 			.ce_1m(ce_1m),
--			.reset(reset),
-+			.reset(time_reset),
- 			.mode(mode[i]),
- 			.freq(Voice_3_Freq[i]),
- 			.pw(Voice_3_Pw[i]),
-@@ -153,7 +201,7 @@
+@@ -153,7 +204,7 @@
  			.pst_out(pst_out[i*3+2]),
  			.acc_t(acc_t[i*3+2])
  		);
@@ -170,7 +151,7 @@
  		always @(posedge clk) Fc_offset[i] <= i ? fc_offset_r : fc_offset_l;
  
  		// Register Decoding
-@@ -217,10 +265,150 @@
+@@ -217,10 +268,150 @@
  						5'h1c: bus_data[i] = Misc_Env3[i];
  					endcase
  				end
@@ -321,7 +302,7 @@
  
  wire [15:0] F0;
  wire n = DUAL && state[3];
-@@ -235,7 +423,7 @@
+@@ -235,7 +426,7 @@
  	.p_t_out(f_p_t_out),
  	.ps__out(f_ps__out),
  	.pst_out(f_pst_out),
@@ -330,7 +311,7 @@
  	.cfg(cfg[n*2 +:2]),
  	.Fc(Filter_Fc[n]),
  	.Fc_offset(Fc_offset[n]),
-@@ -246,39 +434,37 @@
+@@ -246,39 +437,37 @@
  	.ld_wr(ld_wr)
  );
  
@@ -400,7 +381,7 @@
  end
  
  wire [17:0] faudio;
-@@ -301,14 +487,26 @@
+@@ -301,14 +490,26 @@
  );
  
  always @(posedge clk) begin

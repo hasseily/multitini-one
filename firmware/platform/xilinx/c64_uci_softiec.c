@@ -15,7 +15,9 @@ enum
     HOLD_LOAD,
     LOAD,
     HOLD_SAVE,
-    SAVE
+    SAVE,
+    READ_FILE,
+    WRITE_FILE
 };
 static unsigned state, channel;
 static bool leased, load_ready, verify, last_window;
@@ -23,6 +25,8 @@ static uint16_t start_address, address, end_address;
 static size_t prepared;
 static uint32_t status_generation;
 static uint8_t block[256], memory[256];
+static uint8_t snapshot[65536];
+static size_t snapshot_size, snapshot_cursor;
 /* Partition zero follows the shared device9 cwd. Explicit 1..255 mappings
  * remain rooted and are cleared on target reset, not persisted to the card. */
 static char partitions[256][MT_IEC_PATH];
@@ -39,6 +43,24 @@ static void release_channel(void)
     if (leased)
         c64_iec_service_channel_release(channel);
     leased = false;
+}
+static bool close_owned_channel(mt_iec_dos_t *d, unsigned ch)
+{
+    int rc = mt_iec_dos_abort_channel(d, ch);
+    if (!d->channels[ch].kind) {
+        /* close may return a previously latched error after successfully
+         * releasing the handle. Preserve that error, but not a stale lease. */
+        release_channel();
+        load_ready = false;
+        state = IDLE;
+        prepared = 0;
+    }
+    if (rc) {
+        c64_iec_service_write_failure(rc);
+        c64_uci_environment.fault = true;
+        return false;
+    }
+    return true;
 }
 static bool acquire(unsigned ch)
 {
@@ -130,12 +152,10 @@ static mt_uci_result_t input_reply(mt_iec_dos_t *d, mt_uci_reply_t *r, size_t co
 }
 static mt_uci_result_t finish_memory(mt_iec_dos_t *d, mt_uci_reply_t *r, unsigned result)
 {
-    bool saving = state == SAVE || state == HOLD_SAVE;
-    int rc = mt_iec_dos_abort_channel(d, channel);
-    if (rc) {
-        c64_iec_service_write_failure(rc);
-        result = saving ? 2 : 0x80;
-    }
+    bool saving = state == SAVE || state == HOLD_SAVE || state == WRITE_FILE;
+    c64_uci_service_hold_end();
+    if (!close_owned_channel(d, channel))
+        return MT_UCI_FAILED;
     release_channel();
     load_ready = false;
     state = IDLE;
@@ -155,6 +175,20 @@ static mt_uci_result_t poll(void *context, mt_uci_reply_t *r)
     mt_iec_dos_t *d = c64_iec_service_dos();
     if (!d)
         return binary(r, 5);
+    if (state == READ_FILE) {
+        size_t count = 65536U - (unsigned)start_address - snapshot_size;
+        if (count > sizeof block) count = sizeof block;
+        if (!count) { state = HOLD_LOAD; return MT_UCI_WAIT; }
+        if (mt_iec_dos_peek_many(d, 0, snapshot + snapshot_size, count, &prepared, &last_window))
+            return finish_memory(d, r, 0x80);
+        if (mt_iec_dos_consume_many(d, 0, prepared))
+            return finish_memory(d, r, 0x80);
+        snapshot_size += prepared;
+        if (!prepared || last_window || snapshot_size == 65536U - (unsigned)start_address)
+            state = HOLD_LOAD;
+        prepared = 0;
+        return MT_UCI_WAIT;
+    }
     if (state == HOLD_LOAD || state == HOLD_SAVE) {
         int held = c64_uci_service_hold_begin();
         if (held > 0)
@@ -166,11 +200,11 @@ static mt_uci_result_t poll(void *context, mt_uci_reply_t *r)
     }
     if (state == LOAD) {
         if (!prepared) {
-            size_t count = 65536U - (unsigned)address;
+            size_t count = snapshot_size - snapshot_cursor;
             if (count > sizeof block)
                 count = sizeof block;
-            if (mt_iec_dos_peek_many(d, 0, block, count, &prepared, &last_window))
-                return finish_memory(d, r, 0x80);
+            prepared = count;
+            memcpy(block, snapshot + snapshot_cursor, count);
             if (!prepared)
                 return finish_memory(d, r, 0);
         }
@@ -184,20 +218,19 @@ static mt_uci_result_t poll(void *context, mt_uci_reply_t *r)
                 return finish_memory(d, r, 0x80);
         } else if (c64_uci_ram_write(address, block, prepared))
             return finish_memory(d, r, 0x80);
-        if (mt_iec_dos_consume_many(d, 0, prepared))
-            return finish_memory(d, r, 0x80);
         address = (uint16_t)(address + prepared);
+        snapshot_cursor += prepared;
         prepared = 0;
-        if (last_window || !address)
+        if (snapshot_cursor == snapshot_size || !address)
             return finish_memory(d, r, 0);
         return MT_UCI_WAIT;
     }
     if (state == SAVE) {
         if (address == end_address) {
-            int rc = mt_iec_dos_write(d, 1, NULL, 0, true);
-            if (rc)
-                c64_iec_service_write_failure(rc);
-            return finish_memory(d, r, rc ? 2 : 0);
+            c64_uci_service_hold_end();
+            snapshot_cursor = 0;
+            state = WRITE_FILE;
+            return MT_UCI_WAIT;
         }
         size_t count = (uint16_t)(end_address - address);
         if (count > sizeof block)
@@ -205,17 +238,25 @@ static mt_uci_result_t poll(void *context, mt_uci_reply_t *r)
         size_t boundary = 65536U - (unsigned)address;
         if (count > boundary)
             count = boundary;
-        int rc = c64_uci_ram_read(address, block, count);
+        int rc = c64_uci_ram_read(address, snapshot + snapshot_size, count);
         if (rc > 0)
             return MT_UCI_WAIT;
         if (rc < 0)
             return finish_memory(d, r, 2);
-        rc = mt_iec_dos_write(d, 1, block, count, false);
+        snapshot_size += count;
+        address = (uint16_t)(address + count);
+        return MT_UCI_WAIT;
+    }
+    if (state == WRITE_FILE) {
+        size_t count = snapshot_size - snapshot_cursor;
+        if (count > sizeof block) count = sizeof block;
+        int rc = mt_iec_dos_write(d, 1, snapshot + snapshot_cursor, count, count == 0);
         if (rc) {
             c64_iec_service_write_failure(rc);
             return finish_memory(d, r, 2);
         }
-        address = (uint16_t)(address + count);
+        snapshot_cursor += count;
+        if (!count) return finish_memory(d, r, 0);
         return MT_UCI_WAIT;
     }
     return binary(r, 3);
@@ -223,20 +264,20 @@ static mt_uci_result_t poll(void *context, mt_uci_reply_t *r)
 static mt_uci_result_t abort_target(void *context, size_t consumed)
 {
     (void)context;
-    mt_iec_dos_t *d = c64_iec_service_dos();
+    mt_iec_dos_t *d = c64_iec_service_cleanup_dos();
     int cancel = c64_uci_ram_cancel();
     if (cancel > 0)
         return MT_UCI_WAIT;
     if (cancel < 0)
         return MT_UCI_FAILED;
+    c64_uci_service_hold_end();
     if (state == INPUT && d) {
         (void)commit_input(d, consumed);
         release_channel();
         state = IDLE;
     } else if (state != IDLE && d) {
-        int rc = mt_iec_dos_abort_channel(d, channel);
-        if (rc)
-            c64_iec_service_write_failure(rc);
+        if (!close_owned_channel(d, channel))
+            return MT_UCI_FAILED;
         release_channel();
         state = IDLE;
         load_ready = false;
@@ -247,13 +288,12 @@ static mt_uci_result_t abort_target(void *context, size_t consumed)
 }
 static void reset_target(void *context)
 {
-    if (abort_target(context, 0) == MT_UCI_WAIT)
+    if (abort_target(context, 0) != MT_UCI_REPLY)
         return;
-    mt_iec_dos_t *d = c64_iec_service_dos();
+    mt_iec_dos_t *d = c64_iec_service_cleanup_dos();
     if (load_ready && d) {
-        int rc = mt_iec_dos_abort_channel(d, 0);
-        if (rc)
-            c64_iec_service_write_failure(rc);
+        if (!close_owned_channel(d, 0))
+            return;
     }
     release_channel();
     load_ready = false;
@@ -293,9 +333,8 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
         if (length < 8)
             return binary(r, 6);
         if (load_ready) {
-            (void)mt_iec_dos_abort_channel(d, 0);
-            release_channel();
-            load_ready = false;
+            if (!close_owned_channel(d, 0))
+                return MT_UCI_FAILED;
         }
         if (!acquire(0))
             return binary(r, 1);
@@ -306,8 +345,8 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
         size_t n = 0;
         bool eof = false;
         if (mt_iec_dos_peek_many(d, 0, block, 2, &n, &eof) || n != 2) {
-            (void)mt_iec_dos_abort_channel(d, 0);
-            release_channel();
+            if (!close_owned_channel(d, 0))
+                return MT_UCI_FAILED;
             return binary(r, 1);
         }
         (void)mt_iec_dos_consume_many(d, 0, 2);
@@ -329,7 +368,8 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
         verify = command[3] != 0;
         address = start_address;
         prepared = 0;
-        state = HOLD_LOAD;
+        snapshot_size = snapshot_cursor = 0;
+        state = READ_FILE;
         return MT_UCI_WAIT;
     }
     if (op == 0x12) {
@@ -346,6 +386,7 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
         uint8_t header[2] = {(uint8_t)address, (uint8_t)(address >> 8)};
         int rc = mt_iec_dos_write(d, 1, header, 2, false);
         state = HOLD_SAVE;
+        snapshot_size = snapshot_cursor = 0;
         verify = false;
         if (rc) {
             c64_iec_service_write_failure(rc);

@@ -399,6 +399,16 @@ int main(void)
     word = request(MT_C64_IEC_EVENT_TALK, 2, 501);
     CHECK((word & 255) == prg[2]);
     CHECK(c64_iec_service_quiesce() == 0);
+    CHECK(c64_iec_service_channel_acquire(0));
+    CHECK(mt_iec_dos_open(shared, 0, (const uint8_t *)"HELLO", 5) == 0);
+    c64_iec_service_write_failure(25);
+    CHECK(c64_iec_service_dos() == NULL);
+    CHECK(c64_iec_service_cleanup_dos() == shared && shared->channels[0].handle);
+    CHECK(c64_iec_service_quiesce() == 70); /* Retained UCI lease. */
+    CHECK(mt_iec_dos_abort_channel(c64_iec_service_cleanup_dos(), 0) == 0);
+    c64_iec_service_channel_release(0);
+    CHECK(c64_iec_service_reset() == 0);
+    CHECK(c64_iec_service_dos() == shared);
     CHECK(c64_iec_service_configure_root("0:/media/SUB") == 0);
     CHECK(!strcmp(c64_iec_service_cwd(), "0:/media/SUB"));
     CHECK(c64_iec_service_enable(true) == 0);

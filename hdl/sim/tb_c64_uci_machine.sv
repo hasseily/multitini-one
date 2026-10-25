@@ -100,7 +100,7 @@ module tb_c64_uci_machine #(parameter integer NTSC=0);
         end
     end
 
-    integer mode=0,stash=0,cases=0,rows;
+    integer mode=0,stash=0,cases=0,rows,bus_id_reads=0;
     integer retires=0,irq_entries=0,irq_clears=0,irq_release_checks=0,dma_bytes=0;
     integer copied=0,request_writes=0,hold_dma_bytes=0,read_clears=0,control_clears=0,target_requests=0;
     integer ff00_writes=0,trigger_progress=0,trigger_dma_bytes=0;
@@ -112,6 +112,10 @@ module tb_c64_uci_machine #(parameter integer NTSC=0);
     wire [7:0] cpu_data=dut.cpu_island_i.cpu_wdata;
     always @(posedge fastclk) if(measuring&&cpu_enable)begin
         retires++;
+        if(cpu_write&&cpu_addr==16'h2106)begin
+            if(cpu_data!=={3'd0,control[4:0]})$fatal(1,"DF1B real CPU bus ID readback");
+            bus_id_reads++;
+        end
         if(reply_pending && cpu_addr!=pending_ack_addr)begin
             if(dut.uci_irq!==0 || (mode!=0&&dut.cpu_island_i.irq_q!==dut.ext_irq_n))
                 $fatal(1,"UCI IRQ clear not visible before next CPU enable");
@@ -226,6 +230,7 @@ module tb_c64_uci_machine #(parameter integer NTSC=0);
         for(integer speed=0;speed<3;speed++)for(integer direction=0;direction<2;direction++)begin
             measuring=0;reset=1;pause_request=1;control=11'h31f;mode=speed;stash=direction;
             config_word=mode==0?0:mode==1?32'h45f:32'h41f;
+            control=11'h300|(mode==0?11'd31:11'd9);bus_id_reads=0;
             path=$sformatf("kernal-%0d.hex",stash);$readmemh(path,rom);
             for(integer a=0;a<512;a++)backing[a]=8'h80+(a&63);
             for(integer a=0;a<2048;a++)buffer[a]=0;
@@ -271,7 +276,7 @@ module tb_c64_uci_machine #(parameter integer NTSC=0);
             if(retires!=held_retires)$fatal(1,"Host HOLD allowed CPU progress after pause acknowledgement");
             control[10]=0;wait_count(3,100000);
             repeat(96)@(negedge clk);measuring=0;
-            if(irq_entries!=4||irq_clears!=4||irq_release_checks!=4||read_clears!=2||control_clears!=2||copied!=64||dut.uci_irq!==0)
+            if(bus_id_reads!=1||irq_entries!=4||irq_clears!=4||irq_release_checks!=4||read_clears!=2||control_clears!=2||copied!=64||dut.uci_irq!==0)
                 $fatal(1,"Incomplete UCI machine test IRQ=%0d clear=%0d release=%0d copied=%0d",irq_entries,irq_clears,irq_release_checks,copied);
             $fdisplay(rows,"%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d",NTSC,mode,stash,requests,irq_clears,read_clears,control_clears,irq_release_checks,ff00_writes,trigger_dma_bytes,dma_bytes,hold_dma_bytes,copied);$fflush(rows);
             $display("UCI_MACHINE_CASE NTSC=%0d mode=%0d stash=%0d requests=%0d DMA=%0d HOLD_DMA=%0d",NTSC,mode,stash,requests,dma_bytes,hold_dma_bytes);

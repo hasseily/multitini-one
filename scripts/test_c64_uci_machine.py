@@ -14,6 +14,7 @@ def kernal(stash):
     for address,value in [(0xdc0d,0x7f),(0xdd0d,0x7f),(0xdc0e,0),(0xdd0e,0),
                           (0xd01a,0),(0xd019,15),(0xd011,0x1b),(0xd015,0),
                           (0x2100,0),(0x2101,0),(0x2105,0)]:store(address,value)
+    code.extend(bytes.fromhex("AD 1B DF 8D 06 21"))
     # More native ticks than the fixture's shortened startup policy counter.
     code.extend(bytes.fromhex('A2 FF CA D0 FD'))
     for stage in range(1,4):
@@ -118,7 +119,7 @@ def main():
         if not receipt['sources_unchanged']:raise RuntimeError('source changed during validation')
         receipt['status']='PASS'
         receipt['limits']=['32MHz native/64MHz island test clocks for both video standards; timing here is functional, not physical-frequency signoff.',
-            'Only turbo policy startup reset window shortened to256 native ticks; scheduling, memory and bus modules unchanged.',
+            'Actual CPU reads DF1B=31 in stock and9 in accelerated modes. Only turbo policy startup reset window shortened to256 native ticks; scheduling, memory and bus modules unchanged.',
             'DDR responder completes linefill bursts within64 native clocks; real HP2 DDR bridge and ARM dispatcher are separately tested.',
             'Actual loaded ROM executes request/freeze, DF1E/DF1F read IRQ acknowledgments and DATA_ACC; DF1D49/C9 observed by CPU. One accepted FF00 starts deferred REU and UCI trigger freeze;64bytes drain before pause. Another64-byte fetch/stash drains while host HOLD arrives; cache drain and resumed CPU readback are checked.',
             'Additional isolated forced-selection decode/reset sweep: none, generic0, other type1, loading, DMA, and aperture boundaries. This does not claim execution of a loaded CRT.']

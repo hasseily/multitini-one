@@ -50,8 +50,9 @@ def inputs(machine: str) -> list[Path]:
             "scripts/port_c64_sid.py", "tests/test_timing_coverage.py",
             "hdl/sim/tb_multitini_w5100s_bridge.sv",
             "tests/host/net_model.h", "tests/host/test_net.c", "tests/host/test_net_service.c",
+            "tests/host/test_net_edges.c", "tests/host/test_http_json_alloc.c",
             "tests/host/test_net_uci_http.c", "tests/host/c64_uci_storage_fixture.h",
-            "tests/host/c64_sid_ultimate_oracle.cpp", "tests/host/c64_title_runtime.inc",
+            "tests/host/c64_sid_ultimate_oracle.cpp", "tests/host/c64_sid_presets.c", "tests/host/c64_title_runtime.inc",
             "tests/host/c64_uci_quiesce_cases.inc",
             "third_party/c64/upstream/rtl/sid/sid_top.sv",
             "third_party/c64/upstream/rtl/sid/sid_voice.sv"))

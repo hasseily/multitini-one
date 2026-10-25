@@ -32,6 +32,8 @@ static void setup(bus_t *b,mt_uci_engine_t *e,mt_core_link_t *link,target_t *t){
 static void push(bus_t *b,const uint8_t *command,size_t length){unsigned seq=(((b->s>>18)&15)+1)&15;memcpy(b->memory,command,length);b->s=(b->s&~(0x3ff00U|(15U<<18)|15U))|1|((uint32_t)length<<8)|(seq<<18);b->s2|=MT_C64_UCI_STATUS2_CMD_BUSY;}
 static void steps(bus_t *b,mt_uci_engine_t *e,unsigned count){while(count--){unsigned before=b->reads+b->writes;mt_uci_engine_poll(e);assert(b->reads+b->writes-before<600);hardware(b);}}
 int main(void){bus_t b;mt_uci_engine_t e;mt_core_link_t link;target_t t;uint8_t c[896]={3,1,0x12,0x34};
+    setup(&b,&e,&link,&t);b.s&=~MT_C64_UCI_STATUS_ENABLED;steps(&b,&e,4096);assert(t.resets==1&&!t.aborts);assert(mt_uci_engine_quiesce(&e)&&t.resets==1);
+    b.s|=MT_C64_UCI_STATUS_ENABLED;t.wait=100;push(&b,c,2);steps(&b,&e,1);b.s&=~MT_C64_UCI_STATUS_ENABLED;steps(&b,&e,4096);assert(t.resets==2&&t.aborts==1&&!e.active);
     setup(&b,&e,&link,&t);b.delay=5;push(&b,c,4);steps(&b,&e,1);assert(t.begins==1&&b.pending==4&&b.ops==1&&(b.op&15)==MT_C64_UCI_OP_LAST);assert(!memcmp(b.memory+896,"hello",5));steps(&b,&e,12);assert(t.begins==1&&b.ops==1&&(b.s&3)==3);
     /* Per-target fixed parameter reads retain only previous submitted bytes. */
     b.s&=~3U;c[2]=0x56;push(&b,c,3);steps(&b,&e,12);assert(t.begins==2&&t.length==3&&t.saved[2]==0x56&&t.saved[3]==0x34);

@@ -28,6 +28,11 @@ static uint32_t read32(void *context, uint32_t address) {
         extended_reads++;
         return status;
     }
+    /* Real portable UCI engine, disabled native endpoint. */
+    if (address == MT_REG_C64_UCI_STATUS)
+        return MT_C64_UCI_STATUS_VALID;
+    if (address == MT_REG_C64_UCI_STATUS2)
+        return 0;
     assert(0);
     return 0;
 }
@@ -94,6 +99,64 @@ static void output(void *context, const char *line) {
     printed++;
     snprintf(last_line, sizeof(last_line), "%s", line);
 }
+static void console_dns(mt_core_link_t *link) {
+    mt_uci_engine_t engine;
+    mt_uci_target_t nt = mt_net_service_network_target(), ht = mt_net_service_http_target();
+    assert(mt_net_service_command(":net set ip 10.0.0.1", output, NULL));
+    assert(mt_net_service_command(":net set dns1 10.0.0.2", output, NULL));
+    assert(mt_net_service_set_mode(MT_NET_STATIC));
+    for (unsigned i = 0; i < 5; i++) {
+        model.time += 1000;
+        mt_net_service_poll();
+    }
+    mt_uci_engine_init(&engine, link);
+    mt_uci_engine_target(&engine, 3, &nt);
+    mt_uci_engine_target(&engine, 6, &ht);
+    mt_uci_engine_poll(&engine);
+    unsigned before = model.packets;
+    assert(mt_net_service_command(":net resolve example.test", output, NULL));
+    assert(!strcmp(last_line, "Resolving"));
+    bool supplied = false;
+    for (unsigned i = 0; !strcmp(last_line, "Resolving"); i++) {
+        assert(i < 50);
+        model.time += 1000;
+        mt_net_service_poll();
+        for (unsigned j = 0; j < 32; j++) mt_uci_engine_poll(&engine);
+        if (!supplied && model.packets > before) {
+            uint8_t response[512] = {0};
+            size_t size = model.sent_size;
+            assert(size > 16 && size < sizeof(response) - 16 && model.sent[12] == 7);
+            memcpy(response, model.sent, size);
+            response[2] = 0x81; response[3] = 0x80; response[7] = 1;
+            response[size++] = 0xc0; response[size++] = 12;
+            response[size++] = 0; response[size++] = 1;
+            response[size++] = 0; response[size++] = 1;
+            put32(response + size, 0); size += 4; /* no cache can mask ownership */
+            response[size++] = 0; response[size++] = 4;
+            memcpy(response + size, "\x01\x02\x03\x04", 4); size += 4;
+            /* An intentional guest reset must not cancel host console DNS. */
+            mt_net_service_guest_reset();
+            inject(&model, 0, response, size, true, (const uint8_t *)"\x0a\x00\x00\x02", 53);
+            supplied = true;
+        }
+    }
+    assert(supplied && !strcmp(last_line, "example.test: 1.2.3.4"));
+    assert(mt_net_service_command(":net resolve missing.test", output, NULL));
+    for (unsigned i = 0; !strcmp(last_line, "Resolving"); i++) {
+        assert(i < 150);
+        model.time += 100000;
+        mt_net_service_poll();
+        for (unsigned j = 0; j < 32; j++) mt_uci_engine_poll(&engine);
+    }
+    assert(!strcmp(last_line, "missing.test: unresolved host"));
+    assert(mt_net_service_command(":net resolve cancel.test", output, NULL));
+    mt_net_service_shutdown();
+    before = printed;
+    for (unsigned i = 0; i < 5; i++) mt_net_service_poll();
+    assert(printed == before);
+    assert(mt_net_service_command(":net resolve example.test", output, NULL));
+    assert(!strcmp(last_line, "Network service unavailable"));
+}
 int main(void) {
     mt_core_link_t link = {NULL, read32, write32, 0};
     uint8_t seed[16] = {1, 2, 3, 4};
@@ -149,8 +212,9 @@ int main(void) {
     assert(!mt_net_service_command(":network", output, NULL));
     assert(mt_net_service_command(":net set ip 999.1.2.3", output, NULL) &&
            !strcmp(last_line, "Invalid network key or value"));
+    console_dns(&link);
     mt_net_service_shutdown();
     puts("PASS platform network ABI gates, atomic settings, USB-export refusal, stable CID/MAC "
-         "persistence/copied-card regeneration, explicitMAC, UART");
+         "persistence/copied-card regeneration, explicitMAC, UART DNS with UCI off/reset/timeout");
     return 0;
 }

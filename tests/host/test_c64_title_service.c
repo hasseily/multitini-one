@@ -161,6 +161,35 @@ int main(void)
     set_file("[U64 Specific Settings]\nCPU Speed=invalid\n");
     assert(c64_title_service_test("Game.cfg", report, sizeof report) < 0);
     assert(applied_count == before && recoveries == before_recovery && writes == before_writes);
+    /* U64 exports include mixer channels that this board does not implement.
+     * Preserve those lines without silently discarding edits to real SIDs. */
+    assert(c64_title_service_init("0:/package/media", &cb) == 0);
+    c64_title_service_refresh(&stored, &caps, false, true);
+    set_file("[SID Addressing]\r\nUltiSID 1 Address=$D400\r\n"
+             "UltiSID 2 Address=$D500\r\n[Audio Mixer]\r\n"
+             "Vol Drive 1=-27 dB\r\nVol UltiSID 1=0 dB\r\n"
+             "Pan Drive 1=Left\r\n;keep this comment\r\n");
+    hook = c64_title_service_prepare("Game.prg", MT_TITLE_PRG, true);
+    assert(hook && hook->commit(hook->context) == 0);
+    c64_title_service_finish(MT_C64_CONTENT_SERVICE_OK);
+    mt_c64_sid_model_t edited_sid;
+    assert(mt_c64_sid_preset(&edited_sid, MT_SID_EIGHT));
+    edited_sid.sid_volume[0] = 13;
+    edited_sid.sid_pan[7] = 9;
+    c64_title_service_edit_sid(&edited_sid, UINT64_MAX, 7);
+    c64_title_service_effective(&requested, &actual, false);
+    const mt_c64_sid_model_t expected_sid = actual.sid;
+    assert(c64_title_service_save() == 0);
+    assert(memcmp(&hardware.sid, &expected_sid, sizeof(expected_sid)) == 0);
+    assert(file_size < sizeof(file));
+    file[file_size] = 0;
+    assert(strstr((const char *)file, "Vol Drive 1=-27 dB\r\n"));
+    assert(strstr((const char *)file, "Pan Drive 1=Left\r\n;keep this comment\r\n"));
+    assert(c64_title_service_revert() == 0);
+    hook = c64_title_service_prepare("Game.prg", MT_TITLE_PRG, true);
+    assert(hook && hook->commit(hook->context) == 0);
+    c64_title_service_finish(MT_C64_CONTENT_SERVICE_OK);
+    assert(memcmp(&hardware.sid, &expected_sid, sizeof(expected_sid)) == 0);
     puts("C64 title launch/apply/failed-hold/save/revert/busy-file/root isolation service PASS");
     return 0;
 }

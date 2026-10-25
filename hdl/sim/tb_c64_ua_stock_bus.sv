@@ -2,8 +2,8 @@
 `timescale 1ns/1ps
 // Observation-only wrapper for the pre-UA, pre-island production machine.
 // The existing machine bench supplies independently checked DMA scenarios.
-module tb_c64_ua_stock_bus;
-    tb_c64_reu_machine machine();
+module tb_c64_ua_stock_bus #(parameter integer SID_COUNT=2);
+    tb_c64_reu_machine #(.SID_COUNT(SID_COUNT)) machine();
     integer trace_file;
     integer cycle = 0;
     reg previous_dma = 0, previous_irq = 0;

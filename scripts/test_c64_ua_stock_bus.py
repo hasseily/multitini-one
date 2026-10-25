@@ -57,7 +57,9 @@ def main() -> int:
     parser.add_argument('--build-dir', type=Path, default=ROOT/'build/c64-ua-stock-golden')
     parser.add_argument('--vivado', type=Path, default=Path('C:/Xilinx/2025.2/Vivado'))
     parser.add_argument('--capture', action='store_true', help='Create the reference once; refuses overwrite')
+    parser.add_argument('--sid-count',type=int,choices=(2,8),default=8)
     args = parser.parse_args()
+    if args.capture and args.sid_count!=2:parser.error('Immutable baseline capture requires original two-SID configuration')
     build = args.build_dir.resolve()
     if not build.is_relative_to((ROOT/'build').resolve()) or build == (ROOT/'build').resolve():
         parser.error('Use a dedicated build/ child')
@@ -92,7 +94,7 @@ def main() -> int:
     sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
     hashes = lambda: {p.relative_to(ROOT).as_posix(): sha(p) for p in inputs}
     before = hashes()
-    receipt = {'status':'FAIL', 'source_sha256':before,
+    receipt = {'status':'FAIL', 'source_sha256':before,'sid_count':args.sid_count,
                'limits':'Original synthetic program and production CPU/VIC/CIA/SID/REU RTL. '
                         'Observation-only FPGA64/6510 ports; abstract delayed expansion memory. '
                         'Not an adapter, cache/physical DDR, software corpus or board proof.'}
@@ -109,11 +111,14 @@ def main() -> int:
         if result.returncode or re.search(r'\b(?:ERROR|FAIL|FATAL)\s*:|\bFatal\b', output,re.I):
             raise RuntimeError(label+' failed: '+output[-12000:])
         return output
+    top=build/'stock_profile.sv'
+    top.write_text(f'module stock_profile; tb_c64_ua_stock_bus #(.SID_COUNT({args.sid_count})) machine(); endmodule\n')
+    receipt['profile_sha256']=sha(top)
     try:
         run('imported','xvlog','--nolog','--sv','--relax',*[p for p in sv if 'third_party' in p.parts])
-        run('local','xvlog','--nolog','--sv',*[p for p in sv if 'third_party' not in p.parts])
+        run('local','xvlog','--nolog','--sv',*[p for p in sv if 'third_party' not in p.parts],top)
         run('vhdl','xvhdl','--nolog','--2008',*[observed if p==production else observed_wrapper if p==wrapper else p for p in vhdl])
-        run('elaborate','xelab','--nolog','--relax','--timescale','1ns/1ps','--snapshot','ua_stock','tb_c64_ua_stock_bus')
+        run('elaborate','xelab','--nolog','--relax','--timescale','1ns/1ps','--snapshot','ua_stock','stock_profile')
         output=run('simulate','xsim','--nolog','ua_stock','--runall')
         if 'PASS: C64 production REU machine' not in output: raise RuntimeError('Machine checks did not finish')
         trace=(build/'stock_bus.csv').read_text()
@@ -132,7 +137,7 @@ def main() -> int:
             revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,env=env,text=True).strip()
             (GOLDEN.parent/'stock_bus_manifest.json').write_text(json.dumps({
                 'schema':1,'captured_from_commit':revision,'trace_sha256':sha(GOLDEN),
-                'source_sha256':before,'rows':len(rows),'limits':receipt['limits']},indent=2)+'\n')
+                'source_sha256':before,'sid_count':args.sid_count,'rows':len(rows),'limits':receipt['limits']},indent=2)+'\n')
         elif trace!=GOLDEN.read_text():
             raise RuntimeError('Stock IO2/REU trace changed from the pre-UA/pre-turbo reference')
         receipt.update(status='PASS',rows=len(rows),trace_sha256=sha(build/'stock_bus.csv'),sources_unchanged=True)

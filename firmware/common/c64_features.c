@@ -112,7 +112,7 @@ uint32_t mt_c64_turbo_config(uint8_t detail, uint8_t flags, bool enabled,
         config |= MT_C64_CPU_CONFIG_CARTRIDGE_NATIVE;
     if ((detail & 0x10U) && (caps->cpu2 & MT_C64_CPU_CAPS2_FOLLOW_CPU))
         config |= MT_C64_CPU_CONFIG_FOLLOW_CPU;
-    if ((flags & 8U) && (caps->cpu2 & MT_C64_CPU_CAPS2_SCPU_DETECT))
+    if (enabled && (flags & 8U) && (caps->cpu2 & MT_C64_CPU_CAPS2_SCPU_DETECT))
         config |= MT_C64_CPU_CONFIG_SCPU_DETECT;
     config |= previous & MT_C64_CPU_CONFIG_DEBUG_MASK;
     unsigned counter = (previous >> 12) & 15U;

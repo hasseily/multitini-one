@@ -62,6 +62,12 @@ mt_iec_dos_t *c64_iec_service_dos(void)
 {
     return initialized && !storage_failure ? &dos : NULL;
 }
+mt_iec_dos_t *c64_iec_service_cleanup_dos(void)
+{
+    /* A reported storage failure must not hide handles that still need to
+     * close. This accessor is only for cleanup of an existing UCI lease. */
+    return initialized ? &dos : NULL;
+}
 void c64_iec_service_channel_release(unsigned channel)
 {
     if (channel < 16)

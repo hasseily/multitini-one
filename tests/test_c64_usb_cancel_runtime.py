@@ -45,6 +45,9 @@ static int set_core_reset_request(bool on) {
     return 0;
 }
 static void c64_uci_service_reset(void) {++uci_resets;}
+static bool shell_is_c64(void) {return true;}
+static bool c64_uci_service_reload_required(void) {return false;}
+static int quiesce_c64_for_reload(void) {assert(0);return -1;}
 static void mt_net_service_shutdown(void) {network_running=false;++shutdowns;}
 static void c64_title_service_clear(void) {title_overlay=0;}
 static void set_audio(bool mute,bool test) {(void)mute;(void)test;}

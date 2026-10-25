@@ -54,6 +54,7 @@ typedef struct {
     mt_net_dns_cache_t cache[8];char query[MT_NET_NAME];uint8_t query_ip[4];
     uint8_t query_server,query_attempt;uint16_t query_id;
     int query_result;bool query_pending,query_sent;uint64_t query_due;
+    mt_net_owner_t query_owner;
     uint8_t packet[MT_NET_PACKET];
 } mt_net_t;
 void mt_net_config_default(mt_net_config_t *);
@@ -81,6 +82,10 @@ int mt_net_receive(mt_net_t *,int,size_t);
 int mt_net_receive_result(mt_net_t *,int,void *,size_t,size_t *datagram_length);
 int mt_net_resolve(mt_net_t *,const char *,uint8_t[4]);
 void mt_net_resolve_cancel(mt_net_t *);
+/* One DNS transaction is shared by the console and guest targets. A target
+ * reset must cancel only its own transaction, including a completed result. */
+int mt_net_resolve_owned(mt_net_t *,mt_net_owner_t,const char *,uint8_t[4]);
+void mt_net_resolve_cancel_owner(mt_net_t *,mt_net_owner_t);
 /* Pure wire parsers are exposed for adversarial fixtures. */
 int mt_net_dns_parse(const uint8_t *,size_t,uint16_t,const char *,uint8_t[4],uint32_t *ttl);
 void mt_net_dhcp_packet(mt_net_t *,const uint8_t *,size_t,const uint8_t[4],uint16_t);

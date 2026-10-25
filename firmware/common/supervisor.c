@@ -98,8 +98,9 @@ static mt_supervisor_result_t switch_failed(
     return failure;
 }
 
-mt_supervisor_result_t mt_supervisor_switch(
-    mt_supervisor_t *supervisor, const mt_core_selection_t *selection)
+static mt_supervisor_result_t transition(
+    mt_supervisor_t *supervisor, const mt_core_selection_t *selection,
+    bool force_reload)
 {
     mt_core_selection_t previous;
     bool had_previous;
@@ -119,7 +120,7 @@ mt_supervisor_result_t mt_supervisor_switch(
         supervisor->recovered = false;
         return supervisor->last_result;
     }
-    if (supervisor->has_active &&
+    if (!force_reload && supervisor->has_active &&
         selections_equal(&supervisor->active, selection)) {
         supervisor->last_result = MT_SUPERVISOR_NO_CHANGE;
         supervisor->last_backend_error = 0;
@@ -167,6 +168,18 @@ mt_supervisor_result_t mt_supervisor_switch(
     supervisor->last_result = MT_SUPERVISOR_OK;
     supervisor->last_backend_error = 0;
     return MT_SUPERVISOR_OK;
+}
+
+mt_supervisor_result_t mt_supervisor_switch(
+    mt_supervisor_t *supervisor, const mt_core_selection_t *selection)
+{
+    return transition(supervisor, selection, false);
+}
+
+mt_supervisor_result_t mt_supervisor_reload(
+    mt_supervisor_t *supervisor, const mt_core_selection_t *selection)
+{
+    return transition(supervisor, selection, true);
 }
 
 const char *mt_supervisor_state_name(mt_supervisor_state_t state)

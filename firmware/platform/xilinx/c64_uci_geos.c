@@ -9,7 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { IDLE, HOLD, FILE_COPY, GCR_READ, GCR_SCAN, FENCE };
+enum { IDLE, HOLD, FILE_COPY, MEMORY_HOLD, MEMORY_COPY, GCR_READ, GCR_SCAN, FENCE };
 static struct {
     unsigned state, command, drive, track, max_sector, type;
     uint32_t address, destination, length, offset, scan, ones;
@@ -80,6 +80,7 @@ static void close_file(void) {
     if (g.file) {
         mt_sd_result_t s = mt_sd_file_close(g.file);
         if(s.status==MT_SD_OK || mt_sd_file_tell(g.file)<0)g.file=NULL;
+        if(s.status==MT_SD_OK)g.close_failed=false;
         if (s.status != MT_SD_OK) {
             g.close_failed = true;
             if (!g.failure) g.failure = c64_uci_sd_status(s);
@@ -87,8 +88,9 @@ static void close_file(void) {
     }
 }
 static mt_uci_result_t finish(mt_uci_reply_t *r) {
+    c64_uci_service_hold_end();
     close_file();
-    if(g.close_failed){c64_uci_service_hold_fault();return MT_UCI_FAILED;}
+    if(g.close_failed){c64_uci_environment.fault=true;return MT_UCI_FAILED;}
     free(g.gcr);
     g.gcr = NULL;
     c64_uci_service_hold_end();
@@ -250,6 +252,7 @@ mt_uci_result_t c64_uci_geos_poll(mt_uci_reply_t *r) {
             g.failure = "91,INCOMPATIBLE IMAGE";
             return finish(r);
         }
+        c64_uci_service_hold_end();
         if (!g.save) {
             mt_sd_info_t info;
             mt_sd_result_t s = mt_sd_file_stat(g.path, &info);
@@ -269,37 +272,65 @@ mt_uci_result_t c64_uci_geos_poll(mt_uci_reply_t *r) {
             g.failure = c64_uci_sd_status(s);
             return finish(r);
         }
-        g.state = FILE_COPY;
+        g.state = g.save ? MEMORY_HOLD : FILE_COPY;
+        return MT_UCI_WAIT;
+    }
+    if (g.state == MEMORY_HOLD) {
+        int held = c64_uci_service_hold_begin();
+        if (held > 0) return MT_UCI_WAIT;
+        if (held < 0) { g.failure = "87,INTERNAL ERROR"; return finish(r); }
+        uint32_t address, length;
+        unsigned type = drive_info(g.drive, &address, &length);
+        if (address != g.address || length != g.length || type != g.type) {
+            g.failure = "91,INCOMPATIBLE IMAGE";
+            return finish(r);
+        }
+        g.offset = 0;
+        g.state = MEMORY_COPY;
+        return MT_UCI_WAIT;
+    }
+    if (g.state == MEMORY_COPY) {
+        size_t n = g.length - g.offset;
+        if (n > sizeof(g.scratch)) n = sizeof(g.scratch);
+        uint32_t where = g.address + g.offset;
+        if (g.type == 0x71) {
+            if (g.offset < 174848 && n > 174848 - g.offset) n = 174848 - g.offset;
+            if (g.offset >= 174848) where += 700U * 256U - 174848U;
+        }
+        if (g.save)
+            c64_uci_reu_read(where, c64_uci_reu_staging() + g.offset, n);
+        else {
+            c64_uci_reu_write(where, c64_uci_reu_staging() + g.offset, n);
+            g.changed = true;
+        }
+        g.offset += (uint32_t)n;
+        if (g.offset == g.length) {
+            if (!g.save) return complete(r);
+            c64_uci_service_hold_end();
+            g.offset = 0;
+            g.state = FILE_COPY;
+        }
         return MT_UCI_WAIT;
     }
     if (g.state == FILE_COPY) {
         size_t n = g.length - g.offset;
         if (n > sizeof(g.scratch))
             n = sizeof(g.scratch);
-        uint32_t where = g.address + g.offset;
-        if (g.type == 0x71) {
-            if (g.offset < 174848 && n > 174848 - g.offset)
-                n = 174848 - g.offset;
-            if (g.offset >= 174848)
-                where += 700U * 256U - 174848U;
-        }
         if (g.save) {
-            c64_uci_reu_read(where, g.scratch, n);
-            mt_sd_result_t s = mt_sd_file_write_buffered(g.file, g.scratch, n);
+            mt_sd_result_t s = mt_sd_file_write_buffered(g.file, c64_uci_reu_staging() + g.offset, n);
             if (s.status != MT_SD_OK || s.size != n)
                 g.failure = "87,INTERNAL ERROR";
         } else {
-            mt_sd_result_t s = mt_sd_file_read(g.file, g.scratch, n);
-            if (s.size) {
-                c64_uci_reu_write(where, g.scratch, s.size);
-                g.changed = true;
-            }
+            mt_sd_result_t s = mt_sd_file_read(g.file, c64_uci_reu_staging() + g.offset, n);
             if (s.status != MT_SD_OK || s.size != n)
                 g.failure = "87,INTERNAL ERROR";
         }
         g.offset += (uint32_t)n;
-        if (g.failure || g.offset == g.length)
-            return complete(r);
+        if (g.failure) return finish(r);
+        if (g.offset == g.length) {
+            if (g.save) return finish(r);
+            g.state = MEMORY_HOLD;
+        }
         return MT_UCI_WAIT;
     }
     if (g.state == GCR_READ) {
@@ -362,7 +393,6 @@ mt_uci_result_t c64_uci_geos_begin(const uint8_t c[896], size_t length, const ch
 mt_uci_result_t c64_uci_geos_abort(void) {
     if (g.state == IDLE)
         return MT_UCI_REPLY;
-    close_file();
     if (g.changed || g.state == FENCE) {
         int f = c64_uci_reu_fence();
         if (f > 0)
@@ -371,8 +401,14 @@ mt_uci_result_t c64_uci_geos_abort(void) {
             return MT_UCI_FAILED;
         g.changed = false;
     }
+    c64_uci_service_hold_end();
+    /* Explicit cleanup can recover a reported sync error after f_close
+     * already released the handle. Retrying a live handle still must close. */
+    if (!g.file)
+        g.close_failed = false;
+    close_file();
     if (g.close_failed) {
-        c64_uci_service_hold_fault();
+        c64_uci_environment.fault=true;
         return MT_UCI_FAILED;
     }
     free(g.gcr);

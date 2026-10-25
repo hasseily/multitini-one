@@ -27,6 +27,19 @@ void c64_uci_service_set_home(const char *absolute_directory);
 void c64_uci_service_set_reu_image(const char *absolute_path);
 bool c64_uci_service_available(void);
 bool c64_uci_service_active(void);
+/* Refresh device9 identity and capability-gated Freeze/IRQ policy while
+ * preserving HOLD. Call after expansion or device9 enable changes. */
+void c64_uci_service_refresh_control(void);
+bool c64_uci_service_cleanup_warning(void);
+/* Explicit storage-cleanup retry: 0 complete,1 pending,-1 failed. Ambiguous
+ * hardware completion remains latched and requires fabric reinitialization. */
+int c64_uci_service_retry(void);
+bool c64_uci_service_reload_required(void);
+/* Explicit reload only: caller asserts guest reset and drains all memory
+ * masters first. 0 means storage resources closed,1 pending,-1 error. This
+ * retains HOLD and disables service until init after PL replacement. Failed
+ * PCAP preflight must never resume the abandoned core. */
+int c64_uci_service_prepare_reload(void);
 int c64_uci_service_poll(unsigned budget);
 /* Returns 0 once coherent and closed, 1 for cleanup in progress, -1 on error.
  * Storage/core handoff must wait for zero without recursively polling targets. */

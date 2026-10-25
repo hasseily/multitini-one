@@ -129,7 +129,7 @@ static bool valid_name(const char *name) {
     }
     return label && label <= 63;
 }
-int mt_net_resolve(mt_net_t *n, const char *name, uint8_t out[4]) {
+int mt_net_resolve_owned(mt_net_t *n, mt_net_owner_t owner, const char *name, uint8_t out[4]) {
     unsigned i;
     uint8_t numeric[4];
     if (mt_net_ipv4(name, numeric)) {
@@ -138,7 +138,7 @@ int mt_net_resolve(mt_net_t *n, const char *name, uint8_t out[4]) {
     }
     if (!valid_name(name) || !mt_net_available(n))
         return -2;
-    if (name_equal(n->query, name) && !n->query_pending) {
+    if (n->query_owner == owner && name_equal(n->query, name) && !n->query_pending) {
         int result = n->query_result;
         if (result == 0)
             memcpy(out, n->query_ip, 4);
@@ -151,11 +151,14 @@ int mt_net_resolve(mt_net_t *n, const char *name, uint8_t out[4]) {
             n->cache[i].used = n->now;
             return 0;
         }
-    if (n->query_pending)
+    /* Preserve an uncached (including TTL-zero/error) completion until its
+     * owner consumes or cancels it. A different target must not steal it. */
+    if (n->query_pending || (n->query[0] && n->query_owner != owner))
         return MT_NET_AGAIN;
     if (net_zero(n->dns[0]) && net_zero(n->dns[1]))
         return -2;
     memcpy(n->query, name, strlen(name) + 1);
+    n->query_owner = owner;
     n->query_pending = true;
     n->query_sent = false;
     n->query_server = net_zero(n->dns[0]) ? 1 : 0;
@@ -165,10 +168,18 @@ int mt_net_resolve(mt_net_t *n, const char *name, uint8_t out[4]) {
     n->query_due = 0;
     return MT_NET_AGAIN;
 }
+int mt_net_resolve(mt_net_t *n, const char *name, uint8_t out[4]) {
+    return mt_net_resolve_owned(n, MT_NET_OWNER_SYSTEM, name, out);
+}
 void mt_net_resolve_cancel(mt_net_t *n) {
     n->query_pending = false;
+    n->query_sent = false;
     n->query[0] = 0;
     n->query_result = -2;
+}
+void mt_net_resolve_cancel_owner(mt_net_t *n, mt_net_owner_t owner) {
+    if (n->query_owner == owner)
+        mt_net_resolve_cancel(n);
 }
 static void query_next(mt_net_t *n) {
     n->query_sent = false;

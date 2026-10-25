@@ -115,6 +115,7 @@ static void change_c64_turbo(size_t option);
 static void c64_debug_pause(void *context, bool pause);
 static void refresh_c64_title(const mt_core_selection_t *selection);
 static int quiesce_c64_uci(void);
+static int retry_c64_uci(void);
 static void service_c64_uci_action(void);
 static bool dispatch_c64_title(const char *line);
 static void network_console(void *context, const char *text);
@@ -472,6 +473,7 @@ static int quiesce_c64_directory(void)
 {
     if (!c64_iec_initialized || !c64_iec_service_available()) return 0;
     const int result = c64_iec_service_quiesce();
+    if (c64_uci_initialized) c64_uci_service_refresh_control();
     if (result != 0)
         xil_printf("[C64] drive9 could not close safely: %s\r\n",
                    c64_iec_service_status());
@@ -482,6 +484,7 @@ static int resume_c64_directory(void)
 {
     if (!c64_iec_initialized || !c64_iec_service_available()) return 0;
     const int result = c64_iec_service_enable(true);
+    if (c64_uci_initialized) c64_uci_service_refresh_control();
     if (result != 0)
         xil_printf("[C64] drive9 could not resume: %s\r\n",
                    c64_iec_service_status());
@@ -490,6 +493,7 @@ static int resume_c64_directory(void)
 
 static void service_runtime(void)
 {
+    static bool uci_fault_reported, uci_cleanup_reported;
     const uint32_t control = shell_read(MT_REG_CONTROL);
     const bool c64_active = shell_is_c64();
     const bool gameboy_active =
@@ -536,9 +540,18 @@ static void service_runtime(void)
                            c64_iec_service_status());
             c64_iec_fault_displayed = faulted;
         }
+        mt_net_service_poll();
         if (!c64_title_foreground && c64_uci_initialized) {
-            mt_net_service_poll();
-            (void)c64_uci_service_poll(32U);
+            const bool faulted = c64_uci_service_poll(32U) < 0;
+            const bool cleanup = c64_uci_service_cleanup_warning();
+            if (faulted && !uci_fault_reported)
+                xil_printf("[C64] command interface fault: %s\r\n",
+                    c64_uci_service_reload_required() ? "reload the C64 core" :
+                                                       "retry with Reset or :uciretry");
+            if (cleanup && !uci_cleanup_reported)
+                xil_printf("[C64] temporary file cleanup incomplete; check SD and use :uciretry\r\n");
+            uci_fault_reported = faulted;
+            uci_cleanup_reported = cleanup;
             service_c64_uci_action();
         }
     }
@@ -801,8 +814,12 @@ static int set_core_reset_request(bool asserted)
         shell_read(MT_REG_CORE_ID) == MT_GBC_CORE_ID;
     int result;
 
+    if (!asserted && c64_active && c64_uci_service_reload_required()) {
+        xil_printf("[C64] reset remains asserted; reload the C64 core\r\n");
+        return -1;
+    }
     if (!hide_menu_for_core_action()) return -1;
-    if (asserted && !currently_asserted && c64_active && quiesce_c64_uci() != 0)
+    if (asserted && !currently_asserted && c64_active && retry_c64_uci() != 0)
         return -1;
     if (asserted && !currently_asserted && c64_active &&
         quiesce_c64_directory() != 0) return -1;
@@ -1321,6 +1338,7 @@ static void print_help(void)
     xil_printf(":mount FILE.d64|FILE.g64, :eject, :dir, :disk, ");
     xil_printf(":diskretry, :saveretry\r\n");
     xil_printf("C64 directory drive: :disk9 status, :disk9retry retry storage and return home\r\n");
+    xil_printf("C64 command interface: :uciretry retry storage cleanup; reload core after a DMA fault\r\n");
     xil_printf("Genesis: :load FILE.md|FILE.gen|FILE.bin|FILE.smd, :cartoff\r\n");
     xil_printf("NES: :load FILE.nes, :cartoff, :saveretry\r\n");
     xil_printf("recovery: :c64rx 20480 0xCRC32, :reboot to golden\r\n");
@@ -1565,8 +1583,10 @@ static mt_c64_content_service_result_t c64_title_load(const char *path, bool eve
     refresh_c64_title(&c64_extension_selection);
     const mt_c64_launch_hook_t *hook = c64_title_service_prepare(
         path, mt_content_classify(path) == MT_CONTENT_CRT ? MT_TITLE_CRT : MT_TITLE_PRG, event);
-    if (!c64_title_service_launch_allowed())
+    if (!c64_title_service_launch_allowed()) {
+        c64_title_launched(MT_C64_CONTENT_SERVICE_CONFIG_FAILED);
         return (mt_c64_content_service_result_t){.status = MT_C64_CONTENT_SERVICE_CONFIG_FAILED};
+    }
     const mt_c64_content_service_result_t r = c64_content_service_load_hooked(path, hook);
     c64_title_launched(r.status);
     return r;
@@ -1576,8 +1596,10 @@ static mt_c64_content_service_result_t c64_title_disk(const uint8_t *data, size_
     refresh_c64_title(&c64_extension_selection);
     const mt_c64_launch_hook_t *hook =
         c64_title_service_prepare(c64_launch_disk_name, MT_TITLE_DISK, true);
-    if (!c64_title_service_launch_allowed())
+    if (!c64_title_service_launch_allowed()) {
+        c64_title_launched(MT_C64_CONTENT_SERVICE_CONFIG_FAILED);
         return (mt_c64_content_service_result_t){.status = MT_C64_CONTENT_SERVICE_CONFIG_FAILED};
+    }
     const mt_c64_content_service_result_t r =
         data ? c64_content_service_stage_prg_image_hooked(data, size, hook)
              : c64_content_service_prepare_disk_load_hooked(hook);
@@ -1591,6 +1613,15 @@ static mt_c64_content_service_result_t c64_title_detach(void)
         c64_content_service_detach_crt_hooked(c64_title_service_prepare_detach());
     c64_title_launched(r.status);
     return r;
+}
+
+static const char *c64_content_failure_message(mt_c64_content_service_status_t status,
+                                               bool remounted)
+{
+    if (!remounted) return "Content load and drive remount failed";
+    if (status == MT_C64_CONTENT_SERVICE_CONFIG_FAILED && *c64_title_service_status())
+        return c64_title_service_status();
+    return "Content load failed";
 }
 
 static void handle_c64_content_load(const char *file_name)
@@ -2049,6 +2080,13 @@ static void handle_extended_command(bool recovery_only)
     } else if (strcmp(extended, "diag") == 0) {
         print_read_only_diagnostics("command");
     } else if (!recovery_only && mt_net_service_command(extended, network_console, NULL)) {
+    } else if (!recovery_only && shell_is_c64() && strcmp(extended, "uciretry") == 0) {
+        const int result = retry_c64_uci();
+        const char *failure = c64_uci_service_reload_required()
+                                  ? "Command DMA fault; reload the C64 core"
+                                  : "Command cleanup retry failed; check SD card";
+        set_supervisor_outcome(result == 0, "Command interface cleanup completed", failure);
+        xil_printf("[C64] %s\r\n", result == 0 ? "Command interface cleanup completed" : failure);
     } else if (!recovery_only && dispatch_c64_title(extended)) {
     } else if (!recovery_only && dispatch_c64_debug(extended)) {
         /* Commands qualify the image before accessing the new registers. */
@@ -2652,6 +2690,27 @@ static int quiesce_c64_uci(void)
             return -1;
     }
 }
+static int retry_c64_uci(void)
+{
+    if (!c64_uci_initialized) return 0;
+    const uint64_t start = monotonic_ms(NULL);
+    for (;;) {
+        const int result = c64_uci_service_retry();
+        if (result <= 0) return result;
+        usb_hid_service_poll_deferred();
+        if (monotonic_ms(NULL) - start >= 1000U) return -1;
+    }
+}
+static int retry_c64_storage_for_reset(void)
+{
+    if (!shell_is_c64()) return 0;
+    /* SoftIEC owns device9 channel leases. Its failed operation must close
+     * before device9 can perform the user's explicit storage retry. */
+    if (retry_c64_uci() != 0) return 1;
+    if (c64_iec_initialized && c64_iec_service_available() &&
+        c64_iec_service_reset() != 0) return 2;
+    return 0;
+}
 static int apply_c64_title(void *context, const mt_c64_title_values_t *v, bool live, bool event)
 {
     (void)context;
@@ -2741,6 +2800,7 @@ static int apply_c64_title(void *context, const mt_c64_title_values_t *v, bool l
             expansion |= MT_C64_EXPANSION_SID_MAP_ENABLE;
         if (caps.expansion & MT_C64_EXPANSION_CAPS_VALID)
             Xil_Out32(MT_SHELL_BASE_ADDRESS + MT_REG_C64_EXPANSION_CONFIG, expansion);
+        if (c64_uci_initialized) c64_uci_service_refresh_control();
         if (caps.turbo) {
             const uint32_t previous = shell_read(MT_REG_C64_CPU_CONFIG);
             const uint32_t config =
@@ -3503,6 +3563,29 @@ static void open_menu_browser(mt_menu_browser_t browser)
                           "No matching files" : "Choose a file");
 }
 
+static int quiesce_c64_for_reload(void)
+{
+    /* Only a requested PL replacement may abandon an ambiguous UCI token.
+     * Flush drive8 first, then stop the guest and drain every HP master.
+     * Any later failure leaves this core in reset until a reload succeeds. */
+    if (!shell_is_c64() || usb_sd_modal || !c64_uci_service_reload_required()) return -1;
+    if (c64_services_initialized && c64_d64_service_prepare_reset() != 0) return -1;
+    if (command(MT_COMMAND_CORE_RESET, 1U, 0U) != 0) return -1;
+    usb_hid_service_set_core_ready(false);
+    mt_video_effect_service_suspend();
+    const uint64_t start = monotonic_ms(NULL);
+    for (;;) {
+        const int result = c64_uci_service_prepare_reload();
+        if (result < 0) return -1;
+        /* UCI cleanup releases any SoftIEC channel lease before drive9 can
+         * quiesce. Both file owners must be closed before PCAP may start. */
+        if (result == 0 && mt_video_effect_service_quiescent())
+            return quiesce_c64_directory();
+        usb_hid_service_poll_deferred();
+        if (monotonic_ms(NULL) - start >= 1000U) return -1;
+    }
+}
+
 static int supervisor_quiesce(void *context)
 {
     const uint32_t control = shell_read(MT_REG_CONTROL);
@@ -3510,8 +3593,10 @@ static int supervisor_quiesce(void *context)
     if (!mt_screenshot_service_cancel()) return -1;
     mt_c64_debug_deactivate(&c64_debug);
     c64_debug_pause_active = false;
-    if (set_core_reset_request(true) != 0) return -1;
-    if (c64_uci_initialized)
+    if (shell_is_c64() && c64_uci_service_reload_required()) {
+        if (quiesce_c64_for_reload() != 0) return -1;
+    } else if (set_core_reset_request(true) != 0) return -1;
+    if (c64_uci_initialized && !c64_uci_service_reload_required())
         c64_uci_service_reset();
     /* USB export can still be refused by the DDR drain or SD ownership gate.
      * Keep the live session until acquire succeeds so cancellation can resume
@@ -5032,7 +5117,10 @@ static void handle_menu_action(mt_menu_action_t action)
         selection = core_catalog.cores[action.core_index];
         selection.variant_index = action.variant_index;
         set_supervisor_status("Switching core...");
-        result = mt_supervisor_switch(&supervisor, &selection);
+        result = shell_is_c64() && (c64_uci_service_reload_required() ||
+                                   c64_debug.reu_host.reload_required)
+                     ? mt_supervisor_reload(&supervisor, &selection)
+                     : mt_supervisor_switch(&supervisor, &selection);
         if (result == MT_SUPERVISOR_INCOMPATIBLE_ABI) {
             set_supervisor_error("Update core package for the smaller text interface");
             return;
@@ -5506,8 +5594,7 @@ static void handle_menu_action(mt_menu_action_t action)
             if (result.status == MT_C64_CONTENT_SERVICE_OK)
                 mt_menu_close_browser(&supervisor_menu);
             if (result.status != MT_C64_CONTENT_SERVICE_OK) {
-                set_supervisor_error(remounted ? "Content load failed" :
-                    "Content load and drive remount failed");
+                set_supervisor_error(c64_content_failure_message(result.status, remounted));
             } else if (mt_content_classify(relative) == MT_CONTENT_CRT &&
                        strlen(relative) >= MT_SETTINGS_MEDIA_NAME_MAX) {
                 if (!remember_active_cartridge(NULL))
@@ -5840,11 +5927,14 @@ static void handle_menu_action(mt_menu_action_t action)
         }
         /* A user-requested reset is also an explicit retry of a failed
          * directory-drive commit. Automatic storage handoffs never clear it. */
-        if (supervisor.active.package.core_id == MT_C64_CORE_ID &&
-            c64_iec_initialized && c64_iec_service_available() &&
-            c64_iec_service_reset() != 0) {
-            set_supervisor_error("Directory drive retry failed; check SD card");
-            return;
+        if (supervisor.active.package.core_id == MT_C64_CORE_ID) {
+            const int retry = retry_c64_storage_for_reset();
+            if (retry != 0) {
+                set_supervisor_error(retry == 2 ? "Directory drive retry failed; check SD card" :
+                    c64_uci_service_reload_required() ? "UCI completion unknown; reload the C64 core" :
+                    "UCI cleanup failed; check SD card");
+                return;
+            }
         }
         const bool title_disk_present = c64_d64_service_mounted();
         const int asserted = set_core_reset_request(true);

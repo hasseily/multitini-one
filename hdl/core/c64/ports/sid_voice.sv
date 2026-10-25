@@ -42,15 +42,12 @@ localparam NOISE_TTL_6581 = 24'h8000;
 localparam NOISE_TTL_8580 = 24'h950000;
 
 // Internal Signals
+reg [7:0] wave_out;
+// Declare before the first reference for strict SystemVerilog compilation.
+(* use_dsp="yes" *) reg  [23:0] oscillator;
 wire test_ctrl     = control[3];
 wire ringmod_ctrl  = control[2];
 wire sync_ctrl     = control[1];
-
-// Signal Assignments
-assign osc_msb_out = oscillator[23];
-assign voice_out   = dca_out;
-assign osc_out     = wave_out;
-assign env_out     = envelope;
 
 // Envelope Instantiation
 wire [7:0] envelope;
@@ -66,7 +63,6 @@ sid_envelope adsr
 );
 
 // Phase Accumulating Oscillator
-(* use_dsp="yes" *) reg  [23:0] oscillator;
 reg         osc_msb_in_prv;
 always @(posedge clock) begin
 	reg test_delay;
@@ -176,7 +172,6 @@ sid_dac #(.BITS (8)) envelope_dac
 );
 
 // for OSC3 readback
-reg [7:0] wave_out;
 always @(posedge clock) if(ce_1m) wave_out <= norm[11:4] | comb;
 
 // DAC with floating input simulation
@@ -198,5 +193,12 @@ always @(posedge clock) begin
 		dca_out <= (mode ? VOICE_DC_8580 : VOICE_DC_6581) + (dac_out * env_dac);
 	end
 end
+
+// Output assignments follow all declarations for strict compilation.
+// Signal Assignments
+assign osc_msb_out = oscillator[23];
+assign voice_out   = dca_out;
+assign osc_out     = wave_out;
+assign env_out     = envelope;
 
 endmodule

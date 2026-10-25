@@ -14,7 +14,37 @@ class AudioPathTests(unittest.TestCase):
         port = (ROOT / "hdl/core/c64/ports/sid_voice.sv").read_text()
         body = "\n".join(port.splitlines()[5:]) + "\n"
         self.assertEqual(body.count('(* use_dsp="yes" *) '), 3)
-        self.assertEqual(body.replace('(* use_dsp="yes" *) ', ""), upstream)
+        body = body.replace('(* use_dsp="yes" *) ', "")
+
+        # Undo only the declaration/continuous-assignment moves required by
+        # strict SystemVerilog parsing. All executable text must still match
+        # the pinned upstream byte for byte after removing the DSP attributes.
+        hoisted = (
+            "// Internal Signals\nreg [7:0] wave_out;\n"
+            "// Declare before the first reference for strict SystemVerilog compilation.\n"
+            "reg  [23:0] oscillator;\n"
+        )
+        self.assertEqual(body.count(hoisted), 1)
+        body = body.replace(hoisted, "// Internal Signals\n", 1)
+        for anchor, declaration in (
+            ("// Phase Accumulating Oscillator\n", "reg  [23:0] oscillator;\n"),
+            ("// for OSC3 readback\n", "reg [7:0] wave_out;\n"),
+        ):
+            self.assertEqual(body.count(anchor), 1)
+            body = body.replace(anchor, anchor + declaration, 1)
+        outputs = (
+            "// Signal Assignments\n"
+            "assign osc_msb_out = oscillator[23];\n"
+            "assign voice_out   = dca_out;\n"
+            "assign osc_out     = wave_out;\n"
+            "assign env_out     = envelope;\n\n"
+        )
+        moved_outputs = "// Output assignments follow all declarations for strict compilation.\n" + outputs
+        self.assertEqual(body.count(moved_outputs), 1)
+        body = body.replace(moved_outputs, "", 1)
+        self.assertEqual(body.count("// Envelope Instantiation\n"), 1)
+        body = body.replace("// Envelope Instantiation\n", outputs + "// Envelope Instantiation\n", 1)
+        self.assertEqual(body, upstream)
         sources = (ROOT / "hdl/hdl_sources.txt").read_text().splitlines()
         self.assertEqual(sources.count("core/c64/ports/sid_voice.sv"), 1)
         self.assertNotIn("../third_party/c64/upstream/rtl/sid/sid_voice.sv", sources)

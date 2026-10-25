@@ -82,6 +82,15 @@ int main(void)
     assert(strstr(m.output,"debug is off; send :debug on"));
     command(&m,":debug on");command(&m,":c64diag on");command(&m,":speed 15");
     assert(m.service.armed && m.service.override_active && (m.regs[MT_REG_C64_CPU_CONFIG/4]&0x3fU)==0x1fU);
+    mt_c64_capabilities_t scpu_caps = m.service.caps;
+    scpu_caps.cpu2 |= MT_C64_CPU_CAPS2_SCPU_DETECT;
+    const uint32_t turbo_off = mt_c64_turbo_config(0x4f, 8, false, &scpu_caps, 0, false);
+    const uint32_t overridden_off = mt_c64_debug_effective_overlay(&m.service, turbo_off, 0, true);
+    assert((overridden_off & MT_C64_CPU_CONFIG_MODE_MASK) != 0);
+    assert(!(overridden_off & MT_C64_CPU_CONFIG_SCPU_DETECT));
+    const uint32_t turbo_on = mt_c64_turbo_config(0x4f, 8, true, &scpu_caps, 0, false);
+    assert(mt_c64_debug_effective_overlay(&m.service, turbo_on, 0, true) &
+           MT_C64_CPU_CONFIG_SCPU_DETECT);
     const uint32_t applied=m.regs[MT_REG_C64_CPU_CONFIG/4];command(&m,":speed 15");assert(m.regs[MT_REG_C64_CPU_CONFIG/4]==applied);
     command(&m,":turbo c64u on");command(&m,":iec holdoff 20");command(&m,":iec release on");
     command(&m,":uastat");command(&m,":turbostat");

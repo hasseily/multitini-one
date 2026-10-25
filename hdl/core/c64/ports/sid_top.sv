@@ -58,6 +58,9 @@ module sid_top
 );
 
 localparam N = DUAL ? 2 : 1;
+// Delay only the shared audio scheduler until the first native CE. Voices
+// use the register reset: holding ADSR reset after a queued GATE write would
+// copy GATE into gate_edge and swallow its first native rising edge.
 wire time_reset = SEPARATE_RESETS ? engine_reset : reset;
 
 // Internal Signals
@@ -137,7 +140,7 @@ generate
 		(
 			.clock(clk),
 			.ce_1m(ce_1m),
-			.reset(time_reset),
+			.reset(reset),
 			.mode(mode[i]),
 			.freq(Voice_1_Freq[i]),
 			.pw(Voice_1_Pw[i]),
@@ -160,7 +163,7 @@ generate
 		(
 			.clock(clk),
 			.ce_1m(ce_1m),
-			.reset(time_reset),
+			.reset(reset),
 			.mode(mode[i]),
 			.freq(Voice_2_Freq[i]),
 			.pw(Voice_2_Pw[i]),
@@ -183,7 +186,7 @@ generate
 		(
 			.clock(clk),
 			.ce_1m(ce_1m),
-			.reset(time_reset),
+			.reset(reset),
 			.mode(mode[i]),
 			.freq(Voice_3_Freq[i]),
 			.pw(Voice_3_Pw[i]),

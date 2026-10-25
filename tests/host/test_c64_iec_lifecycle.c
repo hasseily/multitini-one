@@ -20,6 +20,12 @@ static char c64_launch_disk_name[256];
 /* This older fixture isolates IEC/reset orchestration. UCI/native transaction
  * cleanup and USB cancellation have their own production service fixtures. */
 static int quiesce_c64_uci(void) {return 0;}
+static int retry_c64_uci(void) {return quiesce_c64_uci();}
+static bool c64_uci_service_reload_required(void) {return false;}
+static void c64_uci_service_refresh_control(void) {}
+/* Ambiguous native-token recovery is exercised by test_c64_reload_runtime.
+ * It must never be selected by these normal reset/IEC scenarios. */
+static int quiesce_c64_for_reload(void) {assert(0);return -1;}
 static void c64_uci_service_reset(void) {}
 static void mt_net_service_guest_reset(void) {}
 static void mt_net_service_shutdown(void) {}

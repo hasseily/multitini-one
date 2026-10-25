@@ -322,6 +322,10 @@ bool mt_net_service_command(const char *text, mt_net_output_fn output, void *con
     if (!strncmp(text, "resolve ", 8)) {
         text += 8;
         size = strlen(text);
+        if (!initialized) {
+            output(context, "Network service unavailable");
+            return true;
+        }
         if (!size || size >= sizeof(lookup) || lookup[0] || network.query_pending) {
             output(context, "Resolve busy or invalid name");
             return true;
