@@ -1,5 +1,9 @@
 # Multitini One C64 turbo: a CPU island matching the U64/C64U turbo model (final design, v3)
 
+Current-source update: [cartridge compatibility](C64_CARTRIDGE_COMPATIBILITY.md)
+supersedes this design's blanket REU/CRT exclusion. The historical design and
+decision records below retain their original scope.
+
 This is a design-stage document. No HDL, firmware, script or build file was changed for it, and no build, synthesis or simulation was run.
 
 v3 applies the user decisions of 2026-10-23 (section 0.6, Q6-Q16) and the items the user adopted from the U64/C64U issue sweep (C64_TURBO_U64_ISSUES.md). The main changes:

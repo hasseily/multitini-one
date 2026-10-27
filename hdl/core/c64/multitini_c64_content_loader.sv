@@ -39,6 +39,8 @@ module multitini_c64_content_loader (
     output logic        cart_loading,
     output logic        cart_loaded,
     output logic [7:0]  cart_id,
+    output logic [7:0]  cart_subtype,
+    output logic [2:0]  cart_expansion_policy,
     output logic        cart_exrom,
     output logic        cart_game,
     output logic        cart_bank_hi,
@@ -100,6 +102,7 @@ module multitini_c64_content_loader (
     function automatic logic crt_type_supported(input logic [7:0] value);
         case (value)
             MT_CRT_NORMAL,
+            MT_CRT_FINAL_CARTRIDGE_3,
             MT_CRT_SIMONS_BASIC,
             MT_CRT_OCEAN_TYPE_1,
             MT_CRT_FUN_PLAY,
@@ -115,9 +118,44 @@ module multitini_c64_content_loader (
             MT_CRT_MIKRO_ASSEMBLER,
             MT_CRT_PROPHET64,
             MT_CRT_RGCD,
-            MT_CRT_MAGIC_DESK_2: crt_type_supported = 1'b1;
+            MT_CRT_WESTERMANN,
+            MT_CRT_KINGSOFT_BASIC,
+            MT_CRT_BLACKBOX_V8,
+            MT_CRT_BLACKBOX_V3,
+            MT_CRT_BLACKBOX_V4,
+            MT_CRT_BLACKBOX_V9,
+            MT_CRT_MEGABYTER,
+            MT_CRT_TWO_MEGABYTER,
+            MT_CRT_MAGIC_DESK_2,
+            MT_CRT_EASYFLASH: crt_type_supported = 1'b1;
             default: crt_type_supported = 1'b0;
         endcase
+    endfunction
+
+    // Allowed bits: REU, UCI, Ultimate Audio. Ultimate firmware reference
+    // d43546fe c64_crt.cc/c64.h; additional MiSTer mappers use their IO decode.
+    // Decode once at header receipt rather than on the native timing path.
+    function automatic logic [2:0] expansion_policy(
+        input logic [7:0] hardware_type, subtype
+    );
+        expansion_policy = 3'b000;
+        if (hardware_type == MT_CRT_FINAL_CARTRIDGE_3) begin
+            if (subtype == 1) expansion_policy = 3'b011;
+        end else if (subtype == 0) begin
+            case (hardware_type)
+                MT_CRT_NORMAL, MT_CRT_SIMONS_BASIC, MT_CRT_OCEAN_TYPE_1,
+                MT_CRT_FUN_PLAY, MT_CRT_C64_GAME_SYSTEM, MT_CRT_DINAMIC,
+                MT_CRT_ZAXXON, MT_CRT_MAGIC_DESK, MT_CRT_COMAL_80,
+                MT_CRT_WATERLOO_BASIC, MT_CRT_RGCD, MT_CRT_MAGIC_DESK_2,
+                MT_CRT_KINGSOFT_BASIC, MT_CRT_BLACKBOX_V9, MT_CRT_MEGABYTER,
+                MT_CRT_TWO_MEGABYTER:
+                    expansion_policy = 3'b111;
+                // EasyFlash RAM fills I/O2; the adapter moves UCI to $DE1C.
+                MT_CRT_EASYFLASH:
+                    expansion_policy = 3'b010;
+                default: ;
+            endcase
+        end
     endfunction
 
     function automatic logic indexed_8k_layout(
@@ -153,10 +191,16 @@ module multitini_c64_content_loader (
             MT_CRT_OCEAN_TYPE_1:
                 crt_profile_lines_supported = !exrom;
             MT_CRT_SIMONS_BASIC,
+            MT_CRT_FINAL_CARTRIDGE_3,
             MT_CRT_FINAL_CARTRIDGE_1_2,
             MT_CRT_SUPER_GAMES,
             MT_CRT_ZAXXON,
             MT_CRT_COMAL_80,
+            MT_CRT_WESTERMANN,
+            MT_CRT_KINGSOFT_BASIC,
+            MT_CRT_BLACKBOX_V8,
+            MT_CRT_BLACKBOX_V4,
+            MT_CRT_TWO_MEGABYTER,
             MT_CRT_MAGIC_DESK_2:
                 crt_profile_lines_supported = !exrom && !game;
             MT_CRT_FUN_PLAY,
@@ -167,8 +211,13 @@ module multitini_c64_content_loader (
             MT_CRT_WATERLOO_BASIC,
             MT_CRT_MIKRO_ASSEMBLER,
             MT_CRT_PROPHET64,
+            MT_CRT_BLACKBOX_V3,
+            MT_CRT_MEGABYTER,
             MT_CRT_RGCD:
                 crt_profile_lines_supported = !exrom && game;
+            MT_CRT_BLACKBOX_V9,
+            MT_CRT_EASYFLASH:
+                crt_profile_lines_supported = exrom && !game;
             default:
                 crt_profile_lines_supported = 1'b0;
         endcase
@@ -230,6 +279,7 @@ module multitini_c64_content_loader (
                 MT_CRT_FUN_PLAY:
                     crt_chip_layout_supported = indexed_8k_layout(
                         index, bank, address, image_size, 9'd16);
+                MT_CRT_FINAL_CARTRIDGE_3,
                 MT_CRT_SUPER_GAMES:
                     crt_chip_layout_supported = indexed_16k_layout(
                         index, bank, address, image_size, 9'd4);
@@ -269,9 +319,35 @@ module multitini_c64_content_loader (
                 MT_CRT_RGCD:
                     crt_chip_layout_supported = indexed_8k_layout(
                         index, bank, address, image_size, 9'd8);
+                MT_CRT_WESTERMANN,
+                MT_CRT_BLACKBOX_V4:
+                    crt_chip_layout_supported = indexed_16k_layout(
+                        index, bank, address, image_size, 9'd1);
+                MT_CRT_KINGSOFT_BASIC:
+                    crt_chip_layout_supported = indexed_8k_layout(
+                        index, bank, address, image_size, 9'd3);
+                MT_CRT_BLACKBOX_V8:
+                    crt_chip_layout_supported = indexed_16k_layout(
+                        index, bank, address, image_size, 9'd4);
+                MT_CRT_BLACKBOX_V3:
+                    crt_chip_layout_supported = indexed_8k_layout(
+                        index, bank, address, image_size, 9'd1);
+                MT_CRT_BLACKBOX_V9:
+                    crt_chip_layout_supported = indexed_16k_layout(
+                        index, bank, address, image_size, 9'd2);
+                MT_CRT_MEGABYTER:
+                    crt_chip_layout_supported = indexed_8k_layout(
+                        index, bank, address, image_size, 9'd256);
+                MT_CRT_TWO_MEGABYTER,
                 MT_CRT_MAGIC_DESK_2:
                     crt_chip_layout_supported = indexed_16k_layout(
                         index, bank, address, image_size, 9'd128);
+                // Firmware streams EasyFlash densely: bank b's ROML, then its
+                // ROMH, so packet i lands in canonical 8 KiB slot i.
+                MT_CRT_EASYFLASH:
+                    crt_chip_layout_supported = index < 9'd128 &&
+                        bank == index[8:1] && image_size == 16'h2000 &&
+                        address == (index[0] ? 16'ha000 : 16'h8000);
                 default: ;
             endcase
         end
@@ -299,16 +375,31 @@ module multitini_c64_content_loader (
             MT_CRT_FUN_PLAY,
             MT_CRT_DINAMIC:
                 crt_layout_complete = count == 16;
+            MT_CRT_FINAL_CARTRIDGE_3,
             MT_CRT_SUPER_GAMES,
             MT_CRT_COMAL_80:
                 crt_layout_complete = count == 4;
             MT_CRT_EPYX_FASTLOAD,
+            MT_CRT_WESTERMANN,
+            MT_CRT_BLACKBOX_V3,
+            MT_CRT_BLACKBOX_V4,
             MT_CRT_MIKRO_ASSEMBLER:
                 crt_layout_complete = count == 1;
+            MT_CRT_KINGSOFT_BASIC:
+                crt_layout_complete = count == 3;
+            MT_CRT_BLACKBOX_V8:
+                crt_layout_complete = count == 2 || count == 4;
+            MT_CRT_BLACKBOX_V9:
+                crt_layout_complete = count == 2;
+            MT_CRT_MEGABYTER:
+                crt_layout_complete = count != 0 && count <= 256 &&
+                    (count & (count - 1'b1)) == 0;
             MT_CRT_C64_GAME_SYSTEM:
                 crt_layout_complete = count == 64;
             MT_CRT_ZAXXON:
                 crt_layout_complete = count == 3;
+            MT_CRT_EASYFLASH:
+                crt_layout_complete = count == 128;
             MT_CRT_WATERLOO_BASIC:
                 crt_layout_complete = count == 2;
             MT_CRT_PROPHET64:
@@ -316,6 +407,7 @@ module multitini_c64_content_loader (
             MT_CRT_RGCD:
                 crt_layout_complete = count == 8;
             MT_CRT_MAGIC_DESK,
+            MT_CRT_TWO_MEGABYTER,
             MT_CRT_MAGIC_DESK_2:
                 crt_layout_complete = count != 0 && count <= 128 &&
                     (count & (count - 1'b1)) == 0;
@@ -419,6 +511,8 @@ module multitini_c64_content_loader (
             cart_loading          <= 1'b0;
             cart_loaded           <= 1'b0;
             cart_id               <= 8'hff;
+            cart_subtype          <= 8'd0;
+            cart_expansion_policy <= 3'd0;
             cart_exrom            <= 1'b1;
             cart_game             <= 1'b1;
             cart_bank_hi          <= 1'b0;
@@ -463,6 +557,8 @@ module multitini_c64_content_loader (
                 cart_loading <= 1'b0;
                 cart_loaded <= 1'b0;
                 cart_id <= 8'hff;
+                cart_subtype <= 8'd0;
+                cart_expansion_policy <= 3'd0;
                 active <= 1'b0;
                 state <= STATE_IDLE;
                 error <= 1'b1;
@@ -558,6 +654,8 @@ module multitini_c64_content_loader (
                         cart_loading <= 1'b0;
                         cart_loaded <= 1'b0;
                         cart_id <= 8'hff;
+                        cart_subtype <= 8'd0;
+                        cart_expansion_policy <= 3'd0;
                         if (!byte_good) error <= 1'b1;
                     end else if (load_kind == MT_LOAD_C64_PRG_RUN) begin
                         // The explicit command is deliberately a strict token:
@@ -597,6 +695,8 @@ module multitini_c64_content_loader (
                         cart_loading <= 1'b0;
                         cart_loaded <= 1'b0;
                         cart_id <= 8'hff;
+                        cart_subtype <= 8'd0;
+                        cart_expansion_policy <= 3'd0;
                         if (byte_good) begin
                             state <= STATE_STREAM;
                             active <= 1'b1;
@@ -667,6 +767,13 @@ module multitini_c64_content_loader (
                                 global_header_byte_good(load_offset[5:0],
                                                         load_data);
                             if (load_offset == 23) cart_id <= load_data;
+                            if (load_offset == 26) begin
+                                byte_good = byte_good &&
+                                    (cart_id == MT_CRT_FINAL_CARTRIDGE_3 ?
+                                     load_data <= 1 : load_data == 0);
+                                cart_subtype <= load_data;
+                                cart_expansion_policy <= expansion_policy(cart_id, load_data);
+                            end
                             if (load_offset == 24) cart_exrom <= load_data[0];
                             if (load_offset == 25) begin
                                 byte_good = byte_good &&
@@ -758,15 +865,25 @@ module multitini_c64_content_loader (
                             else
                                 chip_header_index <= chip_header_index + 1'd1;
                         end else if (byte_good) begin
+                            // Payload bytes collect into one 64-bit word,
+                            // written on its last byte. Chips start 8 KiB
+                            // aligned, so offset bits 2:0 of zero open a
+                            // word; a chip's last byte also closes one.
                             loader_memory_addr <=
                                 {3'b001, crt_store_offset[20:3], 3'b000};
                             loader_memory_write <= 1'b1;
                             loader_memory_wdata <=
-                                {{56{1'b0}}, load_data} <<
-                                (crt_store_offset[2:0] * 8);
+                                (crt_store_offset[2:0] == 3'd0 ? 64'd0 :
+                                 loader_memory_wdata) |
+                                ({{56{1'b0}}, load_data} <<
+                                 (crt_store_offset[2:0] * 8));
                             loader_memory_wstrb <=
-                                8'b00000001 << crt_store_offset[2:0];
-                            loader_memory_valid <= 1'b1;
+                                (crt_store_offset[2:0] == 3'd0 ? 8'd0 :
+                                 loader_memory_wstrb) |
+                                (8'b00000001 << crt_store_offset[2:0]);
+                            if (crt_store_offset[2:0] == 3'd7 ||
+                                chip_bytes_remaining == 1)
+                                loader_memory_valid <= 1'b1;
                             crt_store_offset <= crt_store_offset + 1'd1;
                             chip_bytes_remaining <=
                                 chip_bytes_remaining - 1'd1;
@@ -778,6 +895,8 @@ module multitini_c64_content_loader (
                             cart_loading <= 1'b0;
                             cart_loaded <= 1'b0;
                             cart_id <= 8'hff;
+                            cart_subtype <= 8'd0;
+                            cart_expansion_policy <= 3'd0;
                         end
                         if (load_last) begin
                             object_error <= 1'b0;
@@ -793,6 +912,8 @@ module multitini_c64_content_loader (
                                 cart_loading <= 1'b0;
                                 cart_loaded <= 1'b0;
                                 cart_id <= 8'hff;
+                                cart_subtype <= 8'd0;
+                                cart_expansion_policy <= 3'd0;
                                 error <= 1'b1;
                             end
                         end else begin

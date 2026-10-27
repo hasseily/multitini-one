@@ -30,7 +30,7 @@ verilator $lint_common --top-module sid_top \
 
 # shellcheck disable=SC2086
 verilator $lint_common --top-module mos6526 \
-    "$repo_root/third_party/c64/upstream/rtl/mos6526.v"
+    "$repo_root/hdl/core/c64/ports/mos6526.v"
 
 # shellcheck disable=SC2086
 verilator $lint_common --top-module multitini_c64_loader \

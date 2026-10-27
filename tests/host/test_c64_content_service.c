@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "c64_content_service.h"
+#include "multitini_c64_content.h"
+#include "multitini_c64_rom_files.h"
 
 #include "multitini_c64_interface.h"
 #include "multitini_regs.h"
@@ -29,6 +31,9 @@ typedef struct {
     uint32_t expansion_reads;
     unsigned drain_delay, drain_polls, commits;
     bool require_handoff, fail_reset, fail_commit, never_ack;
+    bool fail_stream_begin, fail_first_data, stall_after_prefix;
+    uint32_t journal[16];
+    unsigned journal_head, journal_count, journal_pops;
 } shell_t;
 
 static char requested_path[512];
@@ -41,6 +46,7 @@ static uint32_t read32(void *context, uint32_t offset)
 {
     shell_t *const shell = context;
     if (offset == MT_REG_STREAM_STATUS) {
+        if (shell->stall_after_prefix && shell->active_offset >= 5U) return 0U;
         if (!shell->active_size) return 0U;
         if (shell->active_offset < shell->active_size) return MT_STREAM_STATUS_READY;
         return shell->drain_delay || shell->never_ack ? 0U : MT_STREAM_STATUS_DRAINED;
@@ -58,6 +64,8 @@ static uint32_t read32(void *context, uint32_t offset)
     }
     if (offset == MT_REG_C64_EXPANSION_CONFIG || offset == MT_REG_C64_EXPANSION_CAPS)
         ++shell->expansion_reads;
+    if (offset == MT_REG_C64_EF_JOURNAL)
+        return shell->journal_count != 0U ? shell->journal[shell->journal_head] : 0U;
     return shell->registers[offset / sizeof(uint32_t)];
 }
 
@@ -65,6 +73,14 @@ static void write32(void *context, uint32_t offset, uint32_t value)
 {
     shell_t *const shell = context;
     ++shell->writes;
+    if (offset == MT_REG_C64_EF_JOURNAL) {
+        /* The FPGA pops only when the exact head word is written back. */
+        assert(shell->journal_count != 0U && value == shell->journal[shell->journal_head]);
+        shell->journal_head = (shell->journal_head + 1U) % 16U;
+        --shell->journal_count;
+        ++shell->journal_pops;
+        return;
+    }
     if (offset == MT_REG_STREAM_DATA_BURST) {
         const uint32_t remaining = shell->active_size - shell->active_offset;
         assert(remaining != 0U);
@@ -98,12 +114,22 @@ static void respond(void *context)
     shell->sequence = sequence;
     switch (opcode) {
     case MT_COMMAND_STREAM_BEGIN:
+        if (shell->fail_stream_begin) {
+            shell->registers[MT_REG_RESPONSE_STATUS / 4U] = MT_RESPONSE_IO_ERROR;
+            shell->registers[MT_REG_RESPONSE_SEQ / 4U] = sequence;
+            return;
+        }
         shell->active_kind =
             (uint8_t)shell->registers[MT_REG_COMMAND_ARG0 / 4U];
         shell->active_size = shell->registers[MT_REG_COMMAND_ARG1 / 4U];
         shell->active_offset = 0U;
         break;
     case MT_COMMAND_STREAM_DATA:
+        if (shell->fail_first_data && shell->active_offset == 0) {
+            shell->registers[MT_REG_RESPONSE_STATUS / 4U] = MT_RESPONSE_IO_ERROR;
+            shell->registers[MT_REG_RESPONSE_SEQ / 4U] = sequence;
+            return;
+        }
         if (shell->stall_stream_data != 0) {
             shell->registers[MT_REG_RESPONSE_STATUS / 4U] = MT_RESPONSE_BUSY;
             shell->registers[MT_REG_RESPONSE_SEQ / 4U] = sequence;
@@ -206,17 +232,175 @@ static size_t make_crt(uint8_t *data, uint16_t hardware_type)
     return size;
 }
 
+static const struct {
+    const char *name;
+    uint16_t type, bank_size;
+    unsigned banks;
+    uint8_t exrom, game, allowed;
+} rom_extensions[] = {
+    {"westermann.crt", MT_CRT_WESTERMANN, 0x4000U, 1U, 0U, 0U, 0U},
+    {"kingsoft.crt", MT_CRT_KINGSOFT_BASIC, 0x2000U, 3U, 0U, 0U, 7U},
+    {"blackbox8.crt", MT_CRT_BLACKBOX_V8, 0x4000U, 4U, 0U, 0U, 0U},
+    {"blackbox3.crt", MT_CRT_BLACKBOX_V3, 0x2000U, 1U, 0U, 1U, 0U},
+    {"blackbox4.crt", MT_CRT_BLACKBOX_V4, 0x4000U, 1U, 0U, 0U, 0U},
+    {"blackbox9.crt", MT_CRT_BLACKBOX_V9, 0x4000U, 2U, 1U, 0U, 7U},
+    {"one-megabyter.crt", MT_CRT_MEGABYTER, 0x2000U, 4U, 0U, 1U, 7U},
+    {"two-megabyter.crt", MT_CRT_TWO_MEGABYTER, 0x4000U, 4U, 0U, 0U, 7U},
+};
+
+static uint8_t sav_store[MT_C64_EASYFLASH_IMAGE_SIZE];
+static bool sav_present, fail_save;
+static unsigned sav_commits;
+static char sav_path[512];
+
+/* One exported file at a time: a temporary file renamed over its target. */
+struct mt_sd_file { int unused; };
+static struct mt_sd_file export_file;
+static uint8_t export_store[MT_C64_EASYFLASH_STREAM_SIZE];
+static size_t export_size;
+static char export_temp_path[512], export_final_path[512];
+static bool export_final_exists, export_open;
+static unsigned export_removes, export_renames;
+
+mt_sd_result_t mt_sd_file_open(const char *path, const char *mode, mt_sd_file_t **file)
+{
+    mt_sd_result_t result = {MT_SD_OK, 0U, 0U};
+    assert(strcmp(mode, "wb") == 0 && !export_open && strlen(path) < sizeof export_temp_path);
+    strcpy(export_temp_path, path);
+    export_size = 0U;
+    export_open = true;
+    *file = &export_file;
+    return result;
+}
+
+mt_sd_result_t mt_sd_file_write_buffered(mt_sd_file_t *file, const void *data, size_t size)
+{
+    mt_sd_result_t result = {MT_SD_OK, 0U, size};
+    assert(file == &export_file && export_open && export_size + size <= sizeof export_store);
+    memcpy(export_store + export_size, data, size);
+    export_size += size;
+    return result;
+}
+
+mt_sd_result_t mt_sd_file_close(mt_sd_file_t *file)
+{
+    mt_sd_result_t result = {MT_SD_OK, 0U, 0U};
+    assert(file == &export_file && export_open);
+    export_open = false;
+    return result;
+}
+
+mt_sd_result_t mt_sd_file_stat(const char *path, mt_sd_info_t *info)
+{
+    mt_sd_result_t result = {MT_SD_OPEN_FAILED, 0U, 0U};
+    (void)info;
+    if (export_final_exists && strcmp(path, export_final_path) == 0) result.status = MT_SD_OK;
+    return result;
+}
+
+mt_sd_result_t mt_sd_file_remove(const char *path)
+{
+    mt_sd_result_t result = {MT_SD_OK, 0U, 0U};
+    assert(export_final_exists && strcmp(path, export_final_path) == 0);
+    export_final_exists = false;
+    ++export_removes;
+    return result;
+}
+
+mt_sd_result_t mt_sd_file_rename(const char *old_path, const char *new_path)
+{
+    mt_sd_result_t result = {MT_SD_OK, 0U, 0U};
+    assert(!export_open && strcmp(old_path, export_temp_path) == 0 && !export_final_exists);
+    strcpy(export_final_path, new_path);
+    export_final_exists = true;
+    ++export_renames;
+    return result;
+}
+
+mt_sd_result_t mt_sd_storage_journal_recover(const char *path,
+                                             const char *journal_path,
+                                             uint8_t *recovery_buffer,
+                                             size_t recovery_capacity)
+{
+    mt_sd_result_t result = {MT_SD_OK, 0U, 0U};
+    (void)journal_path;
+    (void)recovery_buffer;
+    (void)recovery_capacity;
+    assert(strlen(path) < sizeof(sav_path));
+    strcpy(sav_path, path);
+    return result;
+}
+
+mt_sd_result_t mt_sd_storage_read_file_optional_exact(
+    const char *path, uint8_t *dst, size_t expected_size, bool *found)
+{
+    mt_sd_result_t result = {MT_SD_OK, 0U, 0U};
+    (void)path;
+    *found = sav_present;
+    if (sav_present) {
+        assert(expected_size == sizeof sav_store);
+        memcpy(dst, sav_store, expected_size);
+        result.size = expected_size;
+    }
+    return result;
+}
+
+mt_sd_result_t mt_sd_storage_journal_replace(const char *path,
+                                             const char *journal_path,
+                                             const uint8_t *src, size_t size)
+{
+    mt_sd_result_t result = {MT_SD_OK, 0U, 0U};
+    (void)path;
+    (void)journal_path;
+    if (fail_save) {
+        result.status = MT_SD_WRITE_FAILED;
+        return result;
+    }
+    assert(size == sizeof sav_store);
+    memcpy(sav_store, src, size);
+    sav_present = true;
+    ++sav_commits;
+    return result;
+}
+
+/* Sparse EasyFlash: bank 0 ROML, then bank 9 ROMH loaded at $E000. */
+static size_t make_easyflash(uint8_t *data)
+{
+    memset(data, 0, 0x40U);
+    memcpy(data, "C64 CARTRIDGE   ", 16U);
+    be32(data + 0x10U, 0x40U);
+    be16(data + 0x14U, 0x0100U);
+    be16(data + 0x16U, MT_CRT_EASYFLASH);
+    data[0x18U] = 1U;
+    for (unsigned packet = 0U; packet < 2U; ++packet) {
+        uint8_t *chip = data + 0x40U + packet * 0x2010U;
+        memcpy(chip, "CHIP", 4U);
+        be32(chip + 4U, 0x2010U);
+        be16(chip + 8U, 2U);
+        be16(chip + 10U, packet == 0U ? 0U : 9U);
+        be16(chip + 12U, packet == 0U ? 0x8000U : 0xe000U);
+        be16(chip + 14U, 0x2000U);
+        memset(chip + 0x10U, packet == 0U ? 0x10 : 0x99, 0x2000U);
+    }
+    return 0x40U + 2U * 0x2010U;
+}
+
 mt_sd_result_t mt_sd_storage_read_file_max(const char *path, uint8_t *dst,
                                            size_t capacity)
 {
     ++sd_reads;
     mt_sd_result_t result = {MT_SD_OK, 0U, 0U};
-    static uint8_t crt[0x40U + 0x10U + 0x2000U];
+    static uint8_t crt[0x40U + 4U * (0x10U + 0x4000U)];
     assert(strlen(path) < sizeof(requested_path));
     strcpy(requested_path, path);
     if (fail_read != 0) {
         result.status = MT_SD_READ_FAILED;
         result.backend_status = 7U;
+        return result;
+    }
+    if (strstr(path, "easyflash") != NULL) {
+        result.size = make_easyflash(dst);
+        assert(capacity >= result.size);
         return result;
     }
     if (strstr(path, ".prg") != NULL) {
@@ -230,8 +414,38 @@ mt_sd_result_t mt_sd_storage_read_file_max(const char *path, uint8_t *dst,
         memcpy(dst, prg, sizeof(prg));
     } else {
         const uint16_t type = strstr(path, "unsupported") != NULL ?
-                                  32U : MT_CRT_MAGIC_DESK;
+                                  36U : strstr(path, "epyx") ? MT_CRT_EPYX_FASTLOAD : MT_CRT_MAGIC_DESK;
         result.size = make_crt(crt, type);
+        if (strstr(path, "fc3")) {
+            memset(crt, 0, sizeof crt);
+            memcpy(crt, "C64 CARTRIDGE   ", 16);
+            be32(crt + 0x10, 0x40); be16(crt + 0x14, 0x100);
+            be16(crt + 0x16, MT_CRT_FINAL_CARTRIDGE_3);
+            crt[0x1a] = strstr(path, "fc3-reu") ? 1U : 0U;
+            for (unsigned bank = 0; bank < 4; ++bank) {
+                uint8_t *chip = crt + 0x40 + bank * 0x4010;
+                memcpy(chip, "CHIP", 4); be32(chip + 4, 0x4010);
+                be16(chip + 10, (uint16_t)bank); be16(chip + 12, 0x8000);
+                be16(chip + 14, 0x4000);
+            }
+            result.size = sizeof crt;
+        }
+        for (size_t i = 0U; i < sizeof rom_extensions / sizeof rom_extensions[0]; ++i) {
+            if (!strstr(path, rom_extensions[i].name)) continue;
+            memset(crt, 0, sizeof crt);
+            memcpy(crt, "C64 CARTRIDGE   ", 16U);
+            be32(crt + 0x10U, 0x40U); be16(crt + 0x14U, 0x100U);
+            be16(crt + 0x16U, rom_extensions[i].type);
+            crt[0x18U] = rom_extensions[i].exrom;
+            crt[0x19U] = rom_extensions[i].game;
+            for (unsigned bank = 0U; bank < rom_extensions[i].banks; ++bank) {
+                uint8_t *chip = crt + 0x40U + bank * (0x10U + rom_extensions[i].bank_size);
+                memcpy(chip, "CHIP", 4U); be32(chip + 4U, 0x10U + rom_extensions[i].bank_size);
+                be16(chip + 10U, (uint16_t)bank); be16(chip + 12U, 0x8000U);
+                be16(chip + 14U, rom_extensions[i].bank_size);
+            }
+            result.size = 0x40U + rom_extensions[i].banks * (0x10U + rom_extensions[i].bank_size);
+        }
         assert(capacity >= result.size);
         memcpy(dst, crt, result.size);
     }
@@ -279,6 +493,114 @@ static void test_reu_excludes_cartridges(void)
     assert(!c64_content_service_reu_enabled() && shell.expansion_reads == 0U);
     c64_content_service_init(NULL, NULL, NULL, NULL, NULL);
     assert(!c64_content_service_reu_enabled());
+}
+
+static void test_cartridge_expansion_policy(void)
+{
+    shell_t shell = {0};
+    mt_core_link_t link;
+    mt_core_link_init(&link, &shell, read32, write32);
+    c64_content_service_init(&link, respond, &shell, NULL, NULL);
+    shell.registers[MT_REG_CORE_ID / 4U] = MT_C64_CORE_ID;
+    shell.registers[MT_REG_ABI_VERSION / 4U] = MT_ABI_MINOR;
+    shell.registers[MT_REG_STATUS / 4U] = MT_STATUS_CORE_READY;
+    shell.registers[MT_REG_C64_EXPANSION_CAPS / 4U] = MT_C64_EXPANSION_CAPS_VALID |
+        MT_C64_EXPANSION_CAPS_REU_16MB | MT_C64_EXPANSION_CAPS_CART_COEXIST;
+    shell.registers[MT_REG_C64_EXPANSION_CONFIG / 4U] = MT_C64_EXPANSION_CONFIG_DEFAULT;
+    assert(c64_content_service_load("magic.crt").status == MT_C64_CONTENT_SERVICE_OK);
+    shell.registers[MT_REG_C64_REU_HOST / 4U] = MT_C64_REU_HOST_ACTIVE;
+    assert(c64_content_service_crt_expansion_policy() == 7 && c64_content_service_reu_enabled());
+    shell.registers[MT_REG_C64_REU_HOST / 4U] = 0;
+    assert(!c64_content_service_reu_enabled() && !c64_content_service_reu_load_allowed());
+    shell.registers[MT_REG_C64_REU_HOST / 4U] = MT_C64_REU_HOST_ACTIVE;
+    assert(c64_content_service_load("epyx.crt").status == MT_C64_CONTENT_SERVICE_OK);
+    shell.registers[MT_REG_C64_REU_HOST / 4U] = 0;
+    assert(c64_content_service_crt_expansion_policy() == 0 && !c64_content_service_reu_enabled());
+    assert(shell.registers[MT_REG_C64_EXPANSION_CONFIG / 4U] & MT_C64_EXPANSION_REU_ENABLE);
+    mt_c64_content_service_result_t result = c64_content_service_load("fc3-reu.crt");
+    assert(result.status == MT_C64_CONTENT_SERVICE_OK && result.content.subtype == 1);
+    shell.registers[MT_REG_C64_REU_HOST / 4U] = MT_C64_REU_HOST_ACTIVE;
+    assert(c64_content_service_crt_expansion_policy() == 3 && c64_content_service_reu_enabled());
+    assert(c64_content_service_load("fc3.crt").status == MT_C64_CONTENT_SERVICE_OK);
+    shell.registers[MT_REG_C64_REU_HOST / 4U] = 0;
+    assert(c64_content_service_crt_expansion_policy() == 0 && !c64_content_service_reu_enabled());
+    assert(c64_content_service_detach_crt().status == MT_C64_CONTENT_SERVICE_OK);
+    shell.registers[MT_REG_C64_REU_HOST / 4U] = MT_C64_REU_HOST_ACTIVE;
+    assert(c64_content_service_reu_enabled() && c64_content_service_crt_expansion_policy() == 7);
+    /* A failed replacement loses the previous cartridge, not the requested REU. */
+    assert(c64_content_service_load("epyx.crt").status == MT_C64_CONTENT_SERVICE_OK);
+    shell.registers[MT_REG_C64_REU_HOST / 4U] = 0;
+    shell.fail_stream_begin = true;
+    assert(c64_content_service_load("magic.crt").status == MT_C64_CONTENT_SERVICE_TRANSFER_FAILED);
+    assert(c64_content_service_crt_attached() && !strcmp(c64_content_service_crt_name(), "epyx.crt"));
+    assert(c64_content_service_crt_expansion_policy() == 0 && !c64_content_service_reu_load_allowed());
+    shell.fail_stream_begin = false;
+    shell.fail_first_data = true;
+    assert(c64_content_service_load("magic.crt").status == MT_C64_CONTENT_SERVICE_TRANSFER_FAILED);
+    assert(c64_content_service_crt_attached() && !strcmp(c64_content_service_crt_name(), "epyx.crt"));
+    assert(!c64_content_service_reu_enabled());
+    shell.fail_first_data = false;
+    shell.stall_after_prefix = true;
+    assert(c64_content_service_load("magic.crt").status == MT_C64_CONTENT_SERVICE_TRANSFER_FAILED);
+    assert(!c64_content_service_crt_attached());
+    /* Hardware status remains authoritative even after software ownership was
+     * dropped, e.g. while a failed transaction/reset has not settled. */
+    assert(!c64_content_service_reu_enabled() && !c64_content_service_reu_load_allowed());
+    shell.stall_after_prefix = false;
+    shell.registers[MT_REG_C64_REU_HOST / 4U] = MT_C64_REU_HOST_ACTIVE;
+    shell.raise_load_error_on_end = true;
+    assert(c64_content_service_load("magic.crt").status == MT_C64_CONTENT_SERVICE_TRANSFER_FAILED);
+    assert(!c64_content_service_crt_attached() && c64_content_service_reu_enabled());
+    shell.raise_load_error_on_end = false;
+    shell.registers[MT_REG_C64_EXPANSION_CONFIG / 4U] = 0;
+    shell.registers[MT_REG_C64_EXPANSION_CAPS / 4U] &= ~MT_C64_EXPANSION_CAPS_CART_COEXIST;
+    result = c64_content_service_load("fc3-reu.crt");
+    assert(result.status == MT_C64_CONTENT_SERVICE_REJECTED &&
+           result.content.status == MT_C64_CONTENT_UNSUPPORTED_CRT);
+}
+
+static void test_rom_extension_capability_profile(size_t i)
+{
+    shell_t shell = {0};
+    mt_core_link_t link;
+    mt_core_link_init(&link, &shell, read32, write32);
+    c64_content_service_init(&link, respond, &shell, NULL, NULL);
+    shell.registers[MT_REG_CORE_ID / 4U] = MT_C64_CORE_ID;
+    shell.registers[MT_REG_ABI_VERSION / 4U] = MT_ABI_MINOR;
+    shell.registers[MT_REG_STATUS / 4U] = MT_STATUS_CORE_READY;
+    const uint32_t caps = MT_C64_EXPANSION_CAPS_VALID | MT_C64_EXPANSION_CAPS_REU_16MB;
+    shell.registers[MT_REG_C64_EXPANSION_CAPS / 4U] = caps;
+    assert(c64_content_service_load("magic.crt").status == MT_C64_CONTENT_SERVICE_OK);
+    const uint32_t writes = shell.writes;
+    for (unsigned coexist = 0U; coexist < 2U; ++coexist) {
+        shell.registers[MT_REG_C64_EXPANSION_CAPS / 4U] = caps |
+            (coexist ? MT_C64_EXPANSION_CAPS_CART_COEXIST : 0U);
+        const mt_c64_content_service_result_t result =
+            c64_content_service_load(rom_extensions[i].name);
+        assert(result.status == MT_C64_CONTENT_SERVICE_REJECTED);
+        assert(result.content.status == MT_C64_CONTENT_UNSUPPORTED_CRT);
+        assert(result.content.hardware_type == rom_extensions[i].type && result.content.subtype == 0U);
+        assert(shell.writes == writes && shell.completed_count == 1U);
+        assert(c64_content_service_crt_attached());
+        assert(strcmp(c64_content_service_crt_name(), "magic.crt") == 0);
+    }
+    shell.registers[MT_REG_C64_EXPANSION_CAPS / 4U] |= MT_C64_EXPANSION_CAPS_CART_ROM_EXT;
+    shell.registers[MT_REG_C64_EXPANSION_CONFIG / 4U] = MT_C64_EXPANSION_CONFIG_DEFAULT;
+    shell.registers[MT_REG_C64_REU_HOST / 4U] = rom_extensions[i].allowed ? MT_C64_REU_HOST_ACTIVE : 0U;
+    const mt_c64_content_service_result_t result =
+        c64_content_service_load(rom_extensions[i].name);
+    assert(result.status == MT_C64_CONTENT_SERVICE_OK);
+    assert(result.content.hardware_type == rom_extensions[i].type && result.content.subtype == 0U);
+    assert(c64_content_service_crt_attached() && shell.completed_count == 2U);
+    assert(c64_content_service_crt_expansion_policy() == rom_extensions[i].allowed);
+    assert(c64_content_service_reu_enabled() == (rom_extensions[i].allowed != 0U));
+    assert(shell.registers[MT_REG_C64_EXPANSION_CONFIG / 4U] == MT_C64_EXPANSION_CONFIG_DEFAULT);
+}
+
+static void test_rom_extension_capability(void)
+{
+    for (size_t i = 0U; i < sizeof rom_extensions / sizeof rom_extensions[0]; ++i)
+        test_rom_extension_capability_profile(i);
 }
 
 static void test_run_preserves_pending_media_request(void)
@@ -532,8 +854,126 @@ static void test_reboot_default_cartridge(void)
     }
 }
 
+static uint32_t ef_entry(uint32_t kind, bool high, uint32_t bank,
+                         uint32_t offset, uint8_t data)
+{
+    return MT_C64_EF_JOURNAL_VALID | kind | (high ? MT_C64_EF_JOURNAL_ROMH : 0U) |
+           (bank << 22U) | (offset << 9U) | data;
+}
+
+static void push_entry(shell_t *shell, uint32_t entry)
+{
+    assert(shell->journal_count < 16U);
+    shell->journal[(shell->journal_head + shell->journal_count) % 16U] = entry;
+    ++shell->journal_count;
+}
+
+static void test_easyflash_saves(void)
+{
+    shell_t shell = {0};
+    mt_core_link_t link;
+    mt_c64_content_service_result_t result;
+    mt_core_link_init(&link, &shell, read32, write32);
+    c64_content_service_init(&link, respond, &shell, fake_monotonic_ms, NULL);
+    shell.registers[MT_REG_CORE_ID / 4U] = MT_C64_CORE_ID;
+    shell.registers[MT_REG_ABI_VERSION / 4U] = MT_ABI_MINOR;
+    shell.registers[MT_REG_STATUS / 4U] = MT_STATUS_CORE_READY;
+    shell.registers[MT_REG_C64_EXPANSION_CAPS / 4U] = MT_C64_EXPANSION_CAPS_VALID |
+        MT_C64_EXPANSION_CAPS_CART_COEXIST;
+    sav_present = false;
+    sav_commits = 0U;
+    fail_save = false;
+
+    /* An image without the EasyFlash capability is refused before any reset. */
+    result = c64_content_service_load("easyflash.crt");
+    assert(result.status == MT_C64_CONTENT_SERVICE_REJECTED);
+    assert(result.content.status == MT_C64_CONTENT_UNSUPPORTED_CRT);
+    assert(shell.reset_asserts == 0U && shell.completed_count == 0U);
+
+    /* Without a save, the sparse CRT streams as the dense canonical image. */
+    shell.registers[MT_REG_C64_EXPANSION_CAPS / 4U] |= MT_C64_EXPANSION_CAPS_CART_EASYFLASH;
+    push_entry(&shell, ef_entry(MT_C64_EF_JOURNAL_PROGRAM, false, 0U, 0U, 0x00U));
+    result = c64_content_service_load("Games/easyflash.crt");
+    assert(result.status == MT_C64_CONTENT_SERVICE_OK);
+    assert(result.content.hardware_type == MT_CRT_EASYFLASH);
+    assert(shell.completed_count == 1U && shell.completed[0] == MT_LOAD_C64_CRT);
+    assert(strcmp(sav_path, MT_C64_SD_MEDIA_ROOT "/Games/easyflash.crt.sav") == 0);
+    assert(c64_content_service_save_active() && !c64_content_service_save_dirty());
+    assert(shell.journal_count == 0U && shell.journal_pops == 1U);
+    assert(sav_commits == 0U);
+
+    /* Journal entries apply to the image; a quiet interval saves it. */
+    push_entry(&shell, ef_entry(MT_C64_EF_JOURNAL_PROGRAM, false, 0U, 0x0005U, 0x01U));
+    push_entry(&shell, ef_entry(MT_C64_EF_JOURNAL_PROGRAM, true, 9U, 0x1fffU, 0x0fU));
+    /* The fake clock advances one second per read: the first poll applies
+     * the entries, the next finds them quiet for two seconds and saves. */
+    c64_content_service_poll();
+    assert(shell.journal_count == 0U && c64_content_service_save_dirty() && sav_commits == 0U);
+    c64_content_service_poll();
+    assert(sav_commits == 1U && !c64_content_service_save_dirty());
+    assert(sav_store[5] == 0x00U && sav_store[6] == 0x10U);
+    assert(sav_store[9U * 0x4000U + 0x2000U + 0x1fffU] == 0x09U);
+    assert(sav_store[9U * 0x4000U] == 0xffU && sav_store[0x2000U] == 0xffU);
+
+    /* Export writes NAME-saved.crt beside the CRT from the mirrored image. */
+    {
+        static uint8_t reimported[MT_C64_EASYFLASH_IMAGE_SIZE];
+        char exported[300];
+        push_entry(&shell, ef_entry(MT_C64_EF_JOURNAL_PROGRAM, false, 0U, 0x0007U, 0x00U));
+        result = c64_content_service_export_crt(exported, sizeof exported);
+        assert(result.status == MT_C64_CONTENT_SERVICE_OK && shell.journal_count == 0U);
+        assert(strcmp(exported, "easyflash-saved.crt") == 0);
+        assert(strcmp(export_temp_path, MT_C64_SD_MEDIA_ROOT "/Games/easyflash-saved.crt.tmp") == 0);
+        assert(strcmp(export_final_path, MT_C64_SD_MEDIA_ROOT "/Games/easyflash-saved.crt") == 0);
+        assert(export_size == 0x40U + 2U * 0x2010U && result.sd.size == export_size);
+        assert(export_store[0x40U + 0x10U + 7U] == 0x00U && export_store[0x40U + 0x10U + 8U] == 0x10U);
+        mt_c64_easyflash_expand(export_store, export_size, reimported);
+        assert(reimported[7] == 0x00U && reimported[9U * 0x4000U + 0x2000U + 0x1fffU] == 0x09U);
+        assert(c64_content_service_save_dirty() && sav_commits == 1U);
+        /* A second export replaces the first one. */
+        result = c64_content_service_export_crt(NULL, 0U);
+        assert(result.status == MT_C64_CONTENT_SERVICE_OK);
+        assert(export_removes == 1U && export_renames == 2U && export_final_exists);
+        for (unsigned poll = 0U; poll < 4U && c64_content_service_save_dirty(); ++poll)
+            c64_content_service_poll();
+        assert(sav_commits == 2U && !c64_content_service_save_dirty());
+    }
+
+    /* A failed save is reported and blocks detach until it succeeds. */
+    push_entry(&shell, ef_entry(MT_C64_EF_JOURNAL_SECTOR_ERASE, true, 8U, 0U, 0xffU));
+    fail_save = true;
+    c64_content_service_poll();
+    c64_content_service_poll();
+    assert(c64_content_service_save_faulted() && c64_content_service_save_dirty());
+    result = c64_content_service_detach_crt();
+    assert(result.status == MT_C64_CONTENT_SERVICE_SAVE_FAILED);
+    assert(c64_content_service_crt_attached() && c64_content_service_save_active());
+    assert((shell.registers[MT_REG_CONTROL / 4U] & MT_CONTROL_CORE_RESET_REQUEST) == 0U);
+    fail_save = false;
+    result = c64_content_service_detach_crt();
+    assert(result.status == MT_C64_CONTENT_SERVICE_OK);
+    assert(sav_commits == 3U && !c64_content_service_save_active());
+    assert(sav_store[9U * 0x4000U + 0x2000U + 0x1fffU] == 0xffU && sav_store[5] == 0x00U);
+    result = c64_content_service_export_crt(NULL, 0U);
+    assert(result.status == MT_C64_CONTENT_SERVICE_INVALID_ARGUMENT);
+
+    /* A later load starts from the save, and replacing it saves first. */
+    result = c64_content_service_load("Games/easyflash.crt");
+    assert(result.status == MT_C64_CONTENT_SERVICE_OK && c64_content_service_save_active());
+    push_entry(&shell, ef_entry(MT_C64_EF_JOURNAL_PROGRAM, false, 0U, 0x0006U, 0x00U));
+    const unsigned asserts = shell.reset_asserts;
+    result = c64_content_service_load("magic.crt");
+    assert(result.status == MT_C64_CONTENT_SERVICE_OK);
+    assert(shell.reset_asserts > asserts && sav_commits == 4U);
+    assert(sav_store[5] == 0x00U && sav_store[6] == 0x00U && sav_store[7] == 0x00U);
+    assert(!c64_content_service_save_active());
+    assert(c64_content_service_flush() == 0 && sav_commits == 4U);
+}
+
 int main(void)
 {
+    test_rom_extension_capability();
+    test_easyflash_saves();
     shell_t shell = {0};
     mt_core_link_t link;
     mt_c64_content_service_result_t result;
@@ -545,6 +985,7 @@ int main(void)
     test_title_handoff_timeout_recovery();
     test_reboot_default_cartridge();
     test_reu_excludes_cartridges();
+    test_cartridge_expansion_policy();
     test_run_preserves_pending_media_request();
     test_run_refuses_existing_core_fault();
     test_nested_package_paths();

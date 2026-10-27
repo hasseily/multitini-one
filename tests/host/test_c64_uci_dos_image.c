@@ -28,7 +28,7 @@ int main(void)
     mt_uci_target_t dos = c64_uci_dos_target(0);
     finish(&dos, start(&dos, 0x11, (const uint8_t *)"disk.d64", 8)); status("00,OK");
     finish(&dos, start(&dos, 0x12, NULL, 0));
-    assert(reply.data_length == 10 && !memcmp(reply.data, "/disk.d64/", 10));
+    assert(reply.data_length == 13 && !memcmp(reply.data, "/SD/disk.d64/", 13));
     finish(&dos, start(&dos, 0x13, NULL, 0)); status("00,OK");
     finish(&dos, start(&dos, 0x14, NULL, 0));
     assert(reply.data[0] == 8 && reply.more);

@@ -2,17 +2,19 @@
 #include "multitini_c64_content.h"
 
 #include "multitini_c64_interface.h"
+#include "multitini_regs.h"
 
 #include <string.h>
 
 static mt_c64_content_result_t content_result(
     mt_c64_content_status_t status, mt_content_validation_t validation,
-    uint16_t hardware_type)
+    uint16_t hardware_type, uint8_t subtype)
 {
     mt_c64_content_result_t result;
     result.status = status;
     result.validation = validation;
     result.hardware_type = hardware_type;
+    result.subtype = subtype;
     return result;
 }
 
@@ -20,11 +22,13 @@ bool mt_c64_crt_hardware_supported(uint16_t hardware_type)
 {
     switch (hardware_type) {
     case MT_CRT_NORMAL:
+    case MT_CRT_FINAL_CARTRIDGE_3:
     case MT_CRT_SIMONS_BASIC:
     case MT_CRT_OCEAN_TYPE_1:
     case MT_CRT_FUN_PLAY:
     case MT_CRT_SUPER_GAMES:
     case MT_CRT_EPYX_FASTLOAD:
+    case MT_CRT_WESTERMANN:
     case MT_CRT_FINAL_CARTRIDGE_1_2:
     case MT_CRT_C64_GAME_SYSTEM:
     case MT_CRT_DINAMIC:
@@ -34,11 +38,62 @@ bool mt_c64_crt_hardware_supported(uint16_t hardware_type)
     case MT_CRT_WATERLOO_BASIC:
     case MT_CRT_MIKRO_ASSEMBLER:
     case MT_CRT_PROPHET64:
+    case MT_CRT_KINGSOFT_BASIC:
     case MT_CRT_RGCD:
+    case MT_CRT_BLACKBOX_V8:
+    case MT_CRT_BLACKBOX_V3:
+    case MT_CRT_BLACKBOX_V4:
+    case MT_CRT_BLACKBOX_V9:
     case MT_CRT_MAGIC_DESK_2:
+    case MT_CRT_MEGABYTER:
+    case MT_CRT_TWO_MEGABYTER:
+    case MT_CRT_EASYFLASH:
         return true;
     default:
         return false;
+    }
+}
+
+bool mt_c64_crt_subtype_supported(uint16_t hardware_type, uint8_t subtype)
+{
+    if (!mt_c64_crt_hardware_supported(hardware_type)) return false;
+    /* FC3 subtype 1 is the Ultimate REU/UCI-compatible profile. Other
+     * nonzero subtypes may change mapping (for example grey COMAL 80). */
+    return subtype == 0U ||
+           (hardware_type == MT_CRT_FINAL_CARTRIDGE_3 && subtype == 1U);
+}
+
+uint8_t mt_c64_crt_expansion_policy(uint16_t hardware_type, uint8_t subtype)
+{
+    if (!mt_c64_crt_subtype_supported(hardware_type, subtype)) return 0U;
+    /* Ultimate reference d43546fe25b26cb332f43f00219d33153dfe44f8:
+     * software/io/c64/c64_crt.cc configure_cart() and c64.h CART_PROHIBIT_*.
+     * FC3 subtype 1 permits REU/UCI but still occupies sampler I/O space.
+     * For MiSTer-only types, apply the same I/O2 conflict rule to the pinned
+     * cartridge.sv decoder: Mikro Assembler mirrors ROM over I/O2 and
+     * Prophet64 changes banks on any I/O2 write. The other admitted
+     * MiSTer-only types use I/O1 only. No upstream source is copied here. */
+    switch (hardware_type) {
+    case MT_CRT_FINAL_CARTRIDGE_3:
+        return subtype == 1U ?
+            MT_C64_CRT_ALLOW_REU | MT_C64_CRT_ALLOW_UCI : 0U;
+    case MT_CRT_SUPER_GAMES:
+    case MT_CRT_EPYX_FASTLOAD:
+    case MT_CRT_FINAL_CARTRIDGE_1_2:
+    case MT_CRT_MIKRO_ASSEMBLER:
+    case MT_CRT_PROPHET64:
+    case MT_CRT_WESTERMANN:
+    case MT_CRT_BLACKBOX_V8:
+    case MT_CRT_BLACKBOX_V3:
+    case MT_CRT_BLACKBOX_V4:
+        return 0U;
+    /* EasyFlash RAM fills I/O2. As on Ultimate, UCI moves to $DE1B-$DE1F;
+     * REU and Ultimate Audio stay off. */
+    case MT_CRT_EASYFLASH:
+        return subtype == 0U ? MT_C64_CRT_ALLOW_UCI : 0U;
+    default:
+        return MT_C64_CRT_ALLOW_REU | MT_C64_CRT_ALLOW_UCI |
+               MT_C64_CRT_ALLOW_ULTIMATE_AUDIO;
     }
 }
 
@@ -81,11 +136,17 @@ static bool crt_profile_lines_supported(uint16_t hardware_type,
     case MT_CRT_OCEAN_TYPE_1:
         return exrom == 0U;
     case MT_CRT_SIMONS_BASIC:
+    case MT_CRT_FINAL_CARTRIDGE_3:
     case MT_CRT_FINAL_CARTRIDGE_1_2:
     case MT_CRT_SUPER_GAMES:
     case MT_CRT_ZAXXON:
     case MT_CRT_COMAL_80:
+    case MT_CRT_WESTERMANN:
+    case MT_CRT_KINGSOFT_BASIC:
+    case MT_CRT_BLACKBOX_V8:
+    case MT_CRT_BLACKBOX_V4:
     case MT_CRT_MAGIC_DESK_2:
+    case MT_CRT_TWO_MEGABYTER:
         return exrom == 0U && game == 0U;
     case MT_CRT_FUN_PLAY:
     case MT_CRT_EPYX_FASTLOAD:
@@ -96,7 +157,11 @@ static bool crt_profile_lines_supported(uint16_t hardware_type,
     case MT_CRT_MIKRO_ASSEMBLER:
     case MT_CRT_PROPHET64:
     case MT_CRT_RGCD:
+    case MT_CRT_BLACKBOX_V3:
+    case MT_CRT_MEGABYTER:
         return exrom == 0U && game == 1U;
+    case MT_CRT_BLACKBOX_V9:
+        return exrom == 1U && game == 0U;
     default:
         return false;
     }
@@ -138,10 +203,23 @@ static bool crt_chip_layout_supported(uint16_t hardware_type, size_t index,
     case MT_CRT_FUN_PLAY:
         return indexed_8k_layout(index, bank, address, image_size, 16U);
     case MT_CRT_SUPER_GAMES:
+    case MT_CRT_FINAL_CARTRIDGE_3:
         return indexed_16k_layout(index, bank, address, image_size, 4U);
     case MT_CRT_EPYX_FASTLOAD:
     case MT_CRT_MIKRO_ASSEMBLER:
+    case MT_CRT_BLACKBOX_V3:
         return indexed_8k_layout(index, bank, address, image_size, 1U);
+    case MT_CRT_WESTERMANN:
+    case MT_CRT_BLACKBOX_V4:
+        return indexed_16k_layout(index, bank, address, image_size, 1U);
+    case MT_CRT_KINGSOFT_BASIC:
+        return indexed_8k_layout(index, bank, address, image_size, 3U);
+    case MT_CRT_BLACKBOX_V8:
+        return indexed_16k_layout(index, bank, address, image_size, 4U);
+    case MT_CRT_BLACKBOX_V9:
+        return indexed_16k_layout(index, bank, address, image_size, 2U);
+    case MT_CRT_MEGABYTER:
+        return indexed_8k_layout(index, bank, address, image_size, 256U);
     case MT_CRT_C64_GAME_SYSTEM:
         return indexed_8k_layout(index, bank, address, image_size, 64U);
     case MT_CRT_DINAMIC:
@@ -167,6 +245,7 @@ static bool crt_chip_layout_supported(uint16_t hardware_type, size_t index,
     case MT_CRT_RGCD:
         return indexed_8k_layout(index, bank, address, image_size, 8U);
     case MT_CRT_MAGIC_DESK_2:
+    case MT_CRT_TWO_MEGABYTER:
         return indexed_16k_layout(index, bank, address, image_size, 128U);
     default:
         return false;
@@ -190,28 +269,77 @@ static bool crt_layout_complete(uint16_t hardware_type, size_t chip_count,
     case MT_CRT_DINAMIC:
         return chip_count == 16U;
     case MT_CRT_SUPER_GAMES:
+    case MT_CRT_FINAL_CARTRIDGE_3:
     case MT_CRT_COMAL_80:
         return chip_count == 4U;
     case MT_CRT_EPYX_FASTLOAD:
     case MT_CRT_MIKRO_ASSEMBLER:
+    case MT_CRT_WESTERMANN:
+    case MT_CRT_BLACKBOX_V3:
+    case MT_CRT_BLACKBOX_V4:
         return chip_count == 1U;
     case MT_CRT_C64_GAME_SYSTEM:
         return chip_count == 64U;
     case MT_CRT_ZAXXON:
+    case MT_CRT_KINGSOFT_BASIC:
         return chip_count == 3U;
     case MT_CRT_WATERLOO_BASIC:
+    case MT_CRT_BLACKBOX_V9:
         return chip_count == 2U;
+    case MT_CRT_BLACKBOX_V8:
+        return chip_count == 2U || chip_count == 4U;
     case MT_CRT_PROPHET64:
         return chip_count == 32U;
     case MT_CRT_RGCD:
         return chip_count == 8U;
+    case MT_CRT_MEGABYTER:
+        return chip_count != 0U && chip_count <= 256U &&
+               (chip_count & (chip_count - 1U)) == 0U;
     case MT_CRT_MAGIC_DESK:
     case MT_CRT_MAGIC_DESK_2:
+    case MT_CRT_TWO_MEGABYTER:
         return chip_count != 0U && chip_count <= 128U &&
                (chip_count & (chip_count - 1U)) == 0U;
     default:
         return false;
     }
+}
+
+/* EasyFlash banks may be sparse and in any order. ROM (0) and flash (2) CHIP
+ * types both describe flash contents. ROML loads at $8000, ROMH at $A000 or
+ * $E000, and a 16 KiB packet at $8000 fills both halves of its bank. */
+static bool easyflash_packets_supported(const uint8_t *data, size_t size)
+{
+    bool low_seen[64] = {false};
+    bool high_seen[64] = {false};
+    size_t offset = 0x40U;
+
+    if (read_be32(data + 0x10U) != UINT32_C(0x40)) return false;
+    while (offset < size) {
+        const uint32_t packet_size = read_be32(data + offset + 4U);
+        const uint16_t chip_type = read_be16(data + offset + 8U);
+        const uint16_t bank = read_be16(data + offset + 10U);
+        const uint16_t address = read_be16(data + offset + 12U);
+        const uint16_t image_size = read_be16(data + offset + 14U);
+        const bool low = address == UINT16_C(0x8000);
+        const bool high = address == UINT16_C(0xa000) ||
+                          address == UINT16_C(0xe000);
+
+        if ((chip_type != 0U && chip_type != 2U) || bank >= 64U ||
+            packet_size != (uint32_t)image_size + UINT32_C(0x10)) return false;
+        if (low && image_size == UINT16_C(0x4000)) {
+            if (low_seen[bank] || high_seen[bank]) return false;
+            low_seen[bank] = high_seen[bank] = true;
+        } else if (image_size != UINT16_C(0x2000) || (!low && !high)) {
+            return false;
+        } else {
+            bool *const seen = low ? &low_seen[bank] : &high_seen[bank];
+            if (*seen) return false;
+            *seen = true;
+        }
+        offset += packet_size;
+    }
+    return true;
 }
 
 static bool crt_packets_supported(const uint8_t *data, size_t size,
@@ -226,6 +354,8 @@ static bool crt_packets_supported(const uint8_t *data, size_t size,
     const uint8_t exrom = data[0x18U];
     const uint8_t game = data[0x19U];
 
+    if (hardware_type == MT_CRT_EASYFLASH)
+        return easyflash_packets_supported(data, size);
     if (read_be32(data + 0x10U) != UINT32_C(0x40)) return false;
     if (!crt_profile_lines_supported(hardware_type, exrom, game))
         return false;
@@ -278,11 +408,13 @@ const char *mt_c64_crt_hardware_name(uint16_t hardware_type)
 {
     switch (hardware_type) {
     case MT_CRT_NORMAL: return "Normal cartridge";
+    case MT_CRT_FINAL_CARTRIDGE_3: return "Final Cartridge III";
     case MT_CRT_SIMONS_BASIC: return "Simons' BASIC";
     case MT_CRT_OCEAN_TYPE_1: return "Ocean type 1";
     case MT_CRT_FUN_PLAY: return "Fun Play/Power Play";
     case MT_CRT_SUPER_GAMES: return "Super Games";
     case MT_CRT_EPYX_FASTLOAD: return "Epyx FastLoad";
+    case MT_CRT_WESTERMANN: return "Westermann";
     case MT_CRT_FINAL_CARTRIDGE_1_2: return "Final Cartridge I/II";
     case MT_CRT_C64_GAME_SYSTEM: return "C64 Game System";
     case MT_CRT_DINAMIC: return "Dinamic";
@@ -292,8 +424,16 @@ const char *mt_c64_crt_hardware_name(uint16_t hardware_type)
     case MT_CRT_WATERLOO_BASIC: return "Structured BASIC";
     case MT_CRT_MIKRO_ASSEMBLER: return "Mikro Assembler";
     case MT_CRT_PROPHET64: return "Prophet64";
+    case MT_CRT_KINGSOFT_BASIC: return "Kingsoft Business Basic";
     case MT_CRT_RGCD: return "RGCD";
+    case MT_CRT_BLACKBOX_V8: return "Blackbox V8";
+    case MT_CRT_BLACKBOX_V3: return "Blackbox V3";
+    case MT_CRT_BLACKBOX_V4: return "Blackbox V4";
+    case MT_CRT_BLACKBOX_V9: return "Blackbox V9";
     case MT_CRT_MAGIC_DESK_2: return "Magic Desk 2";
+    case MT_CRT_MEGABYTER: return "Protovision Megabyter";
+    case MT_CRT_TWO_MEGABYTER: return "Protovision Two Megabyter";
+    case MT_CRT_EASYFLASH: return "EasyFlash";
     default: return "unsupported CRT hardware";
     }
 }
@@ -306,19 +446,19 @@ mt_c64_content_result_t mt_c64_validate_prg(
 
     if (image == NULL || image->data == NULL) {
         return content_result(MT_C64_CONTENT_INVALID_ARGUMENT,
-                              MT_CONTENT_INVALID_ARGUMENT, 0U);
+                              MT_CONTENT_INVALID_ARGUMENT, 0U, 0U);
     }
     if (image->size < MT_SIZE_C64_PRG_MIN ||
         image->size > MT_SIZE_C64_PRG_MAX) {
         return content_result(MT_C64_CONTENT_INVALID_IMAGE,
-                              MT_CONTENT_WRONG_SIZE, 0U);
+                              MT_CONTENT_WRONG_SIZE, 0U, 0U);
     }
     validation = mt_content_inspect(MT_CONTENT_PRG, image->data,
                                     image->size, &info);
     return content_result(validation == MT_CONTENT_VALID ?
                               MT_C64_CONTENT_OK :
                               MT_C64_CONTENT_INVALID_IMAGE,
-                          validation, 0U);
+                          validation, 0U, 0U);
 }
 
 bool mt_c64_prg_has_basic_program(const mt_c64_content_image_t *image)
@@ -357,34 +497,154 @@ mt_c64_content_result_t mt_c64_validate_crt(
 
     if (image == NULL || image->data == NULL) {
         return content_result(MT_C64_CONTENT_INVALID_ARGUMENT,
-                              MT_CONTENT_INVALID_ARGUMENT, 0U);
+                              MT_CONTENT_INVALID_ARGUMENT, 0U, 0U);
     }
     if (image->size < MT_SIZE_C64_CRT_MIN ||
         image->size > MT_SIZE_C64_CRT_MAX) {
         return content_result(MT_C64_CONTENT_INVALID_IMAGE,
-                              MT_CONTENT_WRONG_SIZE, 0U);
+                              MT_CONTENT_WRONG_SIZE, 0U, 0U);
     }
     if (image->data[0x18U] > 1U || image->data[0x19U] > 1U) {
         return content_result(MT_C64_CONTENT_INVALID_IMAGE,
-                              MT_CONTENT_BAD_STRUCTURE, 0U);
+                              MT_CONTENT_BAD_STRUCTURE, 0U, 0U);
     }
     validation = mt_content_inspect(MT_CONTENT_CRT, image->data,
                                     image->size, &info);
     if (validation != MT_CONTENT_VALID) {
-        return content_result(MT_C64_CONTENT_INVALID_IMAGE, validation, 0U);
+        return content_result(MT_C64_CONTENT_INVALID_IMAGE, validation, 0U, 0U);
     }
-    if (!mt_c64_crt_hardware_supported(info.hardware_type)) {
+    const uint8_t subtype = image->data[0x1aU];
+    if (!mt_c64_crt_subtype_supported(info.hardware_type, subtype)) {
         return content_result(MT_C64_CONTENT_UNSUPPORTED_CRT,
-                              MT_CONTENT_VALID, info.hardware_type);
+                              MT_CONTENT_VALID, info.hardware_type, subtype);
     }
     if (!crt_packets_supported(image->data, image->size,
                                info.hardware_type)) {
         return content_result(MT_C64_CONTENT_INVALID_IMAGE,
                               MT_CONTENT_BAD_STRUCTURE,
-                              info.hardware_type);
+                              info.hardware_type, subtype);
     }
     return content_result(MT_C64_CONTENT_OK, MT_CONTENT_VALID,
-                          info.hardware_type);
+                          info.hardware_type, subtype);
+}
+
+void mt_c64_easyflash_expand(const uint8_t *crt, size_t size, uint8_t *image)
+{
+    size_t offset = 0x40U;
+    if (crt == NULL || image == NULL) return;
+    memset(image, 0xff, MT_C64_EASYFLASH_IMAGE_SIZE);
+    while (offset + 0x10U <= size) {
+        const uint32_t packet_size = read_be32(crt + offset + 4U);
+        const uint16_t bank = read_be16(crt + offset + 10U);
+        const uint16_t address = read_be16(crt + offset + 12U);
+        const uint16_t image_size = read_be16(crt + offset + 14U);
+        const size_t target = (size_t)bank * 0x4000U +
+                              (address == UINT16_C(0x8000) ? 0U : 0x2000U);
+        if (packet_size < 0x10U || packet_size > size - offset) return;
+        if (bank < 64U && target + image_size <= MT_C64_EASYFLASH_IMAGE_SIZE &&
+            (size_t)image_size + 0x10U <= packet_size)
+            memcpy(image + target, crt + offset + 0x10U, image_size);
+        offset += packet_size;
+    }
+}
+
+size_t mt_c64_easyflash_stream(const uint8_t *image, uint8_t *out,
+                               size_t capacity)
+{
+    size_t offset = 0x40U;
+    size_t slot;
+    if (image == NULL || out == NULL || capacity < MT_C64_EASYFLASH_STREAM_SIZE)
+        return 0U;
+    memset(out, 0, 0x40U);
+    memcpy(out, "C64 CARTRIDGE   ", 16U);
+    out[0x13U] = 0x40U;
+    out[0x14U] = 0x01U;
+    out[0x17U] = (uint8_t)MT_CRT_EASYFLASH;
+    /* EXROM inactive and GAME active: EasyFlash boots in Ultimax mode. */
+    out[0x18U] = 1U;
+    out[0x19U] = 0U;
+    memcpy(out + 0x20U, "EASYFLASH", 9U);
+    for (slot = 0U; slot < 128U; ++slot) {
+        uint8_t *const chip = out + offset;
+        memset(chip, 0, 0x10U);
+        memcpy(chip, "CHIP", 4U);
+        chip[6] = 0x20U;
+        chip[7] = 0x10U;
+        chip[11] = (uint8_t)(slot / 2U);
+        chip[12] = (slot & 1U) != 0U ? 0xa0U : 0x80U;
+        chip[14] = 0x20U;
+        memcpy(chip + 0x10U, image + slot * 0x2000U, 0x2000U);
+        offset += 0x2010U;
+    }
+    return offset;
+}
+
+size_t mt_c64_easyflash_export(const uint8_t *image, const char *name,
+                               uint8_t *out, size_t capacity)
+{
+    size_t offset = 0x40U;
+    size_t slot;
+    size_t length = 0U;
+    if (image == NULL || out == NULL || capacity < 0x40U) return 0U;
+    memset(out, 0, 0x40U);
+    memcpy(out, "C64 CARTRIDGE   ", 16U);
+    out[0x13U] = 0x40U;
+    out[0x14U] = 0x01U;
+    out[0x17U] = (uint8_t)MT_CRT_EASYFLASH;
+    out[0x18U] = 1U;
+    out[0x19U] = 0U;
+    while (name != NULL && length < 32U && name[length] != '\0') ++length;
+    if (length != 0U) memcpy(out + 0x20U, name, length);
+    for (slot = 0U; slot < 128U; ++slot) {
+        const uint8_t *const data = image + slot * 0x2000U;
+        uint8_t *chip;
+        size_t byte = 0U;
+        /* Like VICE and Ultimate, omit 8 KiB halves that are fully erased. */
+        while (byte < 0x2000U && data[byte] == 0xffU) ++byte;
+        if (byte == 0x2000U) continue;
+        if (capacity - offset < 0x2010U) return 0U;
+        chip = out + offset;
+        memset(chip, 0, 0x10U);
+        memcpy(chip, "CHIP", 4U);
+        chip[6] = 0x20U;
+        chip[7] = 0x10U;
+        chip[9] = 2U; /* flash */
+        chip[11] = (uint8_t)(slot / 2U);
+        chip[12] = (slot & 1U) != 0U ? 0xa0U : 0x80U;
+        chip[14] = 0x20U;
+        memcpy(chip + 0x10U, data, 0x2000U);
+        offset += 0x2010U;
+    }
+    return offset;
+}
+
+bool mt_c64_easyflash_apply(uint8_t *image, uint32_t entry)
+{
+    const uint32_t flash = (entry & MT_C64_EF_JOURNAL_ADDRESS_MASK) >>
+                           MT_C64_EF_JOURNAL_ADDRESS_SHIFT;
+    const size_t half = (entry & MT_C64_EF_JOURNAL_ROMH) != 0U ? 0x2000U : 0U;
+    const size_t bank = flash >> 13U;
+    size_t first = 0U;
+    size_t last = 64U;
+    if (image == NULL || (entry & MT_C64_EF_JOURNAL_VALID) == 0U ||
+        (entry & 0x100U) != 0U) return false;
+    switch (entry & MT_C64_EF_JOURNAL_KIND_MASK) {
+    case MT_C64_EF_JOURNAL_PROGRAM:
+        image[bank * 0x4000U + half + (flash & 0x1fffU)] &=
+            (uint8_t)(entry & MT_C64_EF_JOURNAL_DATA_MASK);
+        return true;
+    case MT_C64_EF_JOURNAL_SECTOR_ERASE:
+        first = bank & ~(size_t)7U;
+        last = first + 8U;
+        break;
+    case MT_C64_EF_JOURNAL_CHIP_ERASE:
+        break;
+    default:
+        return false;
+    }
+    for (; first < last; ++first)
+        memset(image + first * 0x4000U + half, 0xff, 0x2000U);
+    return true;
 }
 
 static mt_link_result_t set_core_reset(

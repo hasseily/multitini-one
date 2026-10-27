@@ -90,7 +90,9 @@ typedef enum {
     MT_MENU_ACTION_APPLY_CONFIG,
     MT_MENU_ACTION_SID_SETUP,
     MT_MENU_ACTION_NETWORK_MODE,
-    MT_MENU_ACTION_NETWORK_RENEW
+    MT_MENU_ACTION_NETWORK_RENEW,
+    MT_MENU_ACTION_TOGGLE_DRIVE_ACTIVITY,
+    MT_MENU_ACTION_EXPORT_CARTRIDGE
 } mt_menu_action_kind_t;
 
 typedef enum {
@@ -183,6 +185,7 @@ typedef struct {
     bool video_test_enabled;
     bool settings_auto_boot;
     bool settings_faulted;
+    bool settings_drive_activity;
     bool border_supported;
     bool border_enabled;
     uint8_t border_style;

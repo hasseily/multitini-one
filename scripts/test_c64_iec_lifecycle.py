@@ -13,6 +13,7 @@ import sys
 
 ROOT=Path(__file__).resolve().parents[1]
 NAMES=("quiesce_c64_directory","resume_c64_directory","set_core_reset_request",
+       "change_c64_directory_drive",
        "prepare_c64_content_change","finish_c64_content_change","mount_c64_disk",
        "supervisor_quiesce","usb_sd_quiesce")
 

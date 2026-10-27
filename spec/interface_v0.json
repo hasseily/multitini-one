@@ -528,7 +528,7 @@
       "offset": "0x16C",
       "access": "rw",
       "reset": "0",
-      "description": "Bit0 disables drive A, preserving mounted media. Bit1 toggles to revoke software UCI unlock after explicit configuration apply. Bits12:8 select SoftIEC address8..30; zero uses default9. Other bits reserved."
+      "description": "Bit0 disables drive A, preserving mounted media. Bit1 toggles to revoke software UCI unlock after explicit configuration apply. Bits12:8 select SoftIEC address8..30; zero uses default9. Bit16 sets the EasyFlash boot jumper to Disable, with C64_EXPANSION_CAPS_CART_EASYFLASH. Other bits reserved."
     },
     {
       "name": "C64_CART_ERASE",
@@ -549,7 +549,14 @@
       "offset": "0x178",
       "access": "ro",
       "reset": "0",
-      "description": "Valid31; drive A effective IEC address4:0, observed from drive RAM $78. Available with drive-power capability."
+      "description": "Valid31; drive A effective IEC address4:0, observed from drive RAM $78. Available with drive-power capability. With C64_EXPANSION_CAPS_DRIVE_ACTIVITY: drive A LED8 and spindle9 while its CPU runs, EasyFlash LED10 ($DE02 bit7)."
+    },
+    {
+      "name": "C64_EF_JOURNAL",
+      "offset": "0x17C",
+      "access": "rw",
+      "reset": "0",
+      "description": "EasyFlash flash journal head, with C64_EXPANSION_CAPS_CART_EASYFLASH. Valid31; kind30:29 (1 program, 2 sector erase, 3 chip erase); ROMH28; flash address27:9; data7:0. Writing back the exact word read pops that entry."
     },
     {
       "name": "VIDEO_FRAME_CONTROL",
@@ -811,7 +818,10 @@
     "C64_REU_HOST": {
       "IDLE": 12,
       "UA_HOLD": 13,
-      "UA_HELD": 14
+      "UA_HELD": 14,
+      "ACTIVE": 16,
+      "UA_ACTIVE": 17,
+      "UCI_ACTIVE": 18
     },
     "C64_IEC_CONTROL": {
       "ENABLE": 0,
@@ -1035,7 +1045,24 @@
     "C64_EXPANSION_CAPS_CART_ERASE": "0x40000",
     "C64_CART_ERASE_BUSY": "0x10000",
     "C64_CART_ERASE_FAULT": "0x20000",
-    "C64_CART_ERASE_VALID": "0x80000000"
+    "C64_CART_ERASE_VALID": "0x80000000",
+    "C64_EXPANSION_CAPS_CART_COEXIST": "0x80000",
+    "C64_EXPANSION_CAPS_CART_ROM_EXT": "0x100000",
+    "C64_EXPANSION_CAPS_CART_EASYFLASH": "0x200000",
+    "C64_EF_JOURNAL_VALID": "0x80000000",
+    "C64_EF_JOURNAL_KIND_MASK": "0x60000000",
+    "C64_EF_JOURNAL_PROGRAM": "0x20000000",
+    "C64_EF_JOURNAL_SECTOR_ERASE": "0x40000000",
+    "C64_EF_JOURNAL_CHIP_ERASE": "0x60000000",
+    "C64_EF_JOURNAL_ROMH": "0x10000000",
+    "C64_EF_JOURNAL_ADDRESS_SHIFT": "9",
+    "C64_EF_JOURNAL_ADDRESS_MASK": "0x0FFFFE00",
+    "C64_EF_JOURNAL_DATA_MASK": "0xFF",
+    "C64_PERIPHERAL_EF_BOOT_DISABLE": "0x10000",
+    "C64_EXPANSION_CAPS_DRIVE_ACTIVITY": "0x400000",
+    "C64_DRIVE_STATUS_LED": "0x100",
+    "C64_DRIVE_STATUS_MOTOR": "0x200",
+    "C64_DRIVE_STATUS_CART_LED": "0x400"
   },
   "commands": {
     "PING": 0,

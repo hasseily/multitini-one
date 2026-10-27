@@ -96,7 +96,7 @@ def main():
             run(folder,'xvhdl',[v/'xvhdl.bat','--nolog','--2008',*[snap(p) for p in sources if p.suffix=='.vhd']])
             run(folder,'xelab',[v/'xelab.bat','--nolog','--relax','--mt','off','--timescale','1ns/1ps','-s','uci_machine_sim','uci_machine_top'])
             log=run(folder,'simulate',[v/'xsim.bat','--nolog','uci_machine_sim','--runall'])
-            if f'PASS UCI machine cases=6 NTSC={standard}' not in log or f'UCI_DECODE PASS checks=7 NTSC={standard}' not in log:raise RuntimeError('incomplete machine matrix/decode sweep')
+            if f'PASS UCI machine cases=6 NTSC={standard}' not in log or f'UCI_DECODE PASS checks=11 NTSC={standard}' not in log:raise RuntimeError('incomplete machine matrix/decode sweep')
             rows+=list(csv.DictReader((folder/'uci_machine.csv').open()))
             shutil.copyfile(folder/'uci_machine.csv',folder/'positive_uci_machine.csv')
             print('\n'.join(s for s in log.splitlines() if s.startswith(('UCI_MACHINE_CASE','PASS UCI'))),flush=True)

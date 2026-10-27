@@ -362,6 +362,28 @@ int main(int argc, char **argv)
         change_c64_expansion(3);
         assert(!writes && !saves && config == 3);
         assert(strstr(message, "Eject"));
+    } else if (!strcmp(argv[1], "coexist")) {
+        supervisor.active.package.abi_minor = 27;
+        expansion_caps |= MT_C64_EXPANSION_CAPS_CART_COEXIST;
+        attached = true;
+        refresh_c64_title(&supervisor.active);
+        change_c64_expansion(3);
+        assert(!(config & MT_C64_EXPANSION_REU_ENABLE) && saves == 1);
+        change_c64_expansion(3);
+        assert((config & MT_C64_EXPANSION_REU_ENABLE) && saves == 2);
+        change_c64_expansion(8);
+        assert((config & (MT_C64_EXPANSION_REU_ENABLE | MT_C64_EXPANSION_ULTIMATE_AUDIO_ENABLE)) == 24);
+        assert(persistent_settings.c64_ultimate_audio && persistent_settings.profiles[0].c64_reu_enabled);
+        save_fail = true;
+        change_c64_expansion(3);
+        assert((config & 24) == 24 && persistent_settings.c64_ultimate_audio &&
+               persistent_settings.profiles[0].c64_reu_enabled);
+        assert(strstr(message, "previous value restored"));
+        save_fail = false;
+        cfg_text = "[C64 and Cartridge Settings]\nRAM Expansion Unit=Enabled\nMap Ultimate Audio $DF20-DFFF=Enabled\n";
+        assert(c64_title_load("games/Cart.crt", true).status == MT_C64_CONTENT_SERVICE_OK);
+        assert(launches == 1 && hook_commits == 1 && attached && (config & 24) == 24);
+        assert(c64_title_service_revert() == 0 && (config & 24) == 24);
     } else if (!strcmp(argv[1], "save-failure")) {
         save_fail = true;
         change_c64_expansion(3);

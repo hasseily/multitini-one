@@ -89,6 +89,10 @@ module tb_control_regs #(parameter logic [31:0] ACCEL_CAPS=0,
     wire [28:0] palette_data;
     wire [31:0] peripheral_control,erase_request;
     logic [31:0] erase_status=32'h80000000;
+    logic [31:0] ef_journal=32'h0;
+    wire ef_journal_pop;
+    integer ef_pops=0;
+    always @(posedge clk) if(ef_journal_pop) ef_pops<=ef_pops+1;
 
     always #5 clk = !clk;
 
@@ -109,6 +113,7 @@ module tb_control_regs #(parameter logic [31:0] ACCEL_CAPS=0,
         .c64_palette_ready(palette_ready),.c64_palette_valid(palette_valid),.c64_palette_data(palette_data),
         .c64_peripheral_control(peripheral_control),.c64_cart_erase_request(erase_request),
         .c64_cart_erase_status(erase_status),.c64_drive_status(32'h8000000a),
+        .c64_ef_journal(ef_journal),.c64_ef_journal_pop(ef_journal_pop),
         .c64_sid_index(sid_index),.c64_sid_data(sid_data),.c64_sid_write(sid_write),
         .c64_sid_commit(sid_commit),.c64_sid_sequence(sid_sequence),
         .net_status(32'h8012ab15),.net_access_error(1'b0),.net_run(net_run),
@@ -780,7 +785,22 @@ module tb_control_regs #(parameter logic [31:0] ACCEL_CAPS=0,
         expect_read(MT_REG_C64_PERIPHERAL_CONTROL,C64_CAPS[17]?(EXTENSIONS?32'h1e03:3):0,"reserved address31 rejected");
         write_reg(MT_REG_C64_PERIPHERAL_CONTROL,32'h0703,4'hf);
         expect_read(MT_REG_C64_PERIPHERAL_CONTROL,C64_CAPS[17]?(EXTENSIONS?32'h1e03:3):0,"address below8 rejected");
+        write_reg(MT_REG_C64_PERIPHERAL_CONTROL,32'h10003,4'hf);
+        expect_read(MT_REG_C64_PERIPHERAL_CONTROL,C64_CAPS[17]?(C64_CAPS[21]?32'h10003:
+            (EXTENSIONS?32'h1e03:3)):0,"EasyFlash jumper capability gate");
+        if(C64_CAPS[21])check_value(peripheral_control==32'h10003,"EasyFlash jumper reaches the core");
         write_reg(MT_REG_C64_PERIPHERAL_CONTROL,3,4'hf);
+        ef_journal=32'hA0123456;
+        expect_read(MT_REG_C64_EF_JOURNAL,C64_CAPS[21]?32'hA0123456:0,"EasyFlash journal head gate");
+        write_reg(MT_REG_C64_EF_JOURNAL,32'hA0123457,4'hf);
+        check_value(ef_pops==0,"EasyFlash journal pop needs the exact head");
+        write_reg(MT_REG_C64_EF_JOURNAL,32'hA0123456,4'h7);
+        check_value(ef_pops==0,"EasyFlash journal pop needs a full word");
+        write_reg(MT_REG_C64_EF_JOURNAL,32'hA0123456,4'hf);
+        check_value(ef_pops==(C64_CAPS[21]?1:0),"EasyFlash journal exact write-back pops once");
+        ef_journal=32'h0;
+        write_reg(MT_REG_C64_EF_JOURNAL,32'h0,4'hf);
+        check_value(ef_pops==(C64_CAPS[21]?1:0),"empty EasyFlash journal never pops");
         write_reg(MT_REG_C64_PALETTE_DATA,32'h0f123456,4'hf);
         check_value(palette_valid==C64_CAPS[15],"palette capability gate");
         if(C64_CAPS[15])begin
@@ -821,4 +841,7 @@ module tb_control_regs_c64_turbo;
 endmodule
 module tb_control_regs_c64_extensions;
     tb_control_regs #(.C64_CAPS(32'h8007ff7f),.TURBO(1),.EXTENSIONS(1)) test_i();
+endmodule
+module tb_control_regs_c64_release;
+    tb_control_regs #(.C64_CAPS(32'h807fff7f),.TURBO(1),.EXTENSIONS(1)) test_i();
 endmodule

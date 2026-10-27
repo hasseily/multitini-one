@@ -588,7 +588,9 @@ static bool encode_settings(const mt_supervisor_settings_t *settings)
     settings_wire[26U] = (settings->c64_turbo_flags & 11U) |
                         (settings->c64_ultimate_audio ? 4U : 0U) |
                         (settings->c64_command_interface ? 16U : 0U) |
-                        (settings->c64_title_cfg_off ? 32U : 0U);
+                        (settings->c64_title_cfg_off ? 32U : 0U) |
+                        (settings->c64_directory_drive_off ? 64U : 0U) |
+                        (settings->drive_activity_off ? 128U : 0U);
     settings_wire[27U] = settings->c64_turbo_detail;
     memcpy(settings_wire + 28U, settings->selected_core_id,
            strlen(settings->selected_core_id));
@@ -713,6 +715,8 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
     settings_decode_candidate.c64_ultimate_audio = (settings_wire[26U] & 4U) != 0U;
     settings_decode_candidate.c64_command_interface = (settings_wire[26U] & 16U) != 0U;
     settings_decode_candidate.c64_title_cfg_off = (settings_wire[26U] & 32U) != 0U;
+    settings_decode_candidate.c64_directory_drive_off = (settings_wire[26U] & 64U) != 0U;
+    settings_decode_candidate.drive_activity_off = (settings_wire[26U] & 128U) != 0U;
     settings_decode_candidate.c64_turbo_detail = settings_wire[27U];
     if (schema == MT_SETTINGS_SCHEMA) {
         for (index = 0U; index < MT_SETTINGS_MAX_PROFILES; ++index) {

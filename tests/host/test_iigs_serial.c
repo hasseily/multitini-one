@@ -19,6 +19,9 @@
 #define MT_EXTENDED_COMMAND_CAPACITY 256U
 static bool golden_update_worker_held;
 static bool c64_iec_initialized;
+static mt_supervisor_settings_t persistent_settings;
+static bool c64_retry_case; /* Only the C64 disk9retry check may touch drive 9. */
+static const char *outcome_text;
 static mt_c64_debug_t c64_debug;
 static bool dispatch_c64_debug(const char *line) { (void)line; return false; }
 static bool dispatch_c64_title(const char *line) { (void)line; return false; }
@@ -53,7 +56,7 @@ static void set_supervisor_warning(const char *message)
 { assert(strcmp(message,"Use the Apple IIgs Media menu")==0);++warnings; }
 static void set_supervisor_status(const char *message) { (void)message;++statuses; }
 static void set_supervisor_outcome(bool success,const char *yes,const char *no)
-{ (void)success;(void)yes;(void)no;++forbidden; }
+{ if(!c64_retry_case)++forbidden;outcome_text=success?yes:no; }
 static bool hide_menu_for_core_action(void) { return hidden; }
 static void handle_c64_rx_command(const char *text) { (void)text;++forbidden; }
 static void handle_nes_cart_detach(void) { ++forbidden; }
@@ -75,11 +78,11 @@ int c64_d64_service_eject(void) { ++forbidden;return 0; }
 int c64_d64_service_mount(const char *name) { (void)name;++forbidden;return 0; }
 static int mount_c64_disk(const char *name) { return c64_d64_service_mount(name); }
 bool c64_iec_service_active(void) { ++forbidden;return false; }
-bool c64_iec_service_available(void) { ++forbidden;return false; }
+bool c64_iec_service_available(void) { if(!c64_retry_case)++forbidden;return c64_retry_case; }
 const char *c64_iec_service_cwd(void) { ++forbidden;return ""; }
-const char *c64_iec_service_status(void) { ++forbidden;return ""; }
-int c64_iec_service_reset(void) { ++forbidden;return 0; }
-static int resume_c64_directory(void) { ++forbidden;return 0; }
+const char *c64_iec_service_status(void) { if(!c64_retry_case)++forbidden;return ""; }
+int c64_iec_service_reset(void) { if(!c64_retry_case)++forbidden;return 0; }
+static int resume_c64_directory(void) { if(!c64_retry_case)++forbidden;return 0; }
 bool c64_content_service_prg_staged(void) { ++forbidden;return true; }
 mt_c64_content_service_result_t c64_content_service_run_staged_prg(void)
 { mt_c64_content_service_result_t r={0};++forbidden;return r; }
@@ -181,5 +184,13 @@ int main(void)
     active_core=MT_IIGS_CORE_ID;test_command="gsprofiles start";
     const unsigned before=unknown_commands;handle_extended_command(false);
     assert(unknown_commands==before+1U && forbidden==0U);
-    puts("PASS Apple IIgs serial routing, guarded HID snapshot, removed profiling commands, exact BSP clock boundaries and shared USB progress delegation");return 0;
+    /* The drive 9 retry reports whether the saved Off setting kept it off. */
+    active_core=MT_C64_CORE_ID;hidden=true;c64_iec_initialized=true;c64_retry_case=true;
+    test_command="disk9retry";handle_extended_command(false);
+    assert(strcmp(outcome_text,"Directory drive ready at media root")==0);
+    persistent_settings.c64_directory_drive_off=true;handle_extended_command(false);
+    assert(strcmp(outcome_text,"SD directory recovered; drive remains Off")==0);
+    c64_retry_case=false;c64_iec_initialized=false;active_core=MT_IIGS_CORE_ID;
+    assert(forbidden==0U);
+    puts("PASS Apple IIgs serial routing, guarded HID snapshot, removed profiling commands, exact BSP clock boundaries, shared USB progress delegation and C64 drive 9 retry outcomes");return 0;
 }

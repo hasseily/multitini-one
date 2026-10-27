@@ -36,8 +36,6 @@ module cartridge
 	input       [7:0] mem_in,
 	output      [7:0] mem_out,
 	output     [24:0] mem_addr, 	         // translated address output
-	output            mem_req,
-	input             mem_cycle,
 
 	output            IO_rom,					// FLAG to enable IOE/IOF address relocation
 	output            IO_rd,
@@ -49,64 +47,54 @@ module cartridge
 	input             freeze_key,
 	input             mod_key,
 	output reg        nmi,
-	input             nmi_ack
+	input             nmi_ack,
+	output      [5:0] ef_bank,				// EasyFlash bank register
+	output reg        ef_led					// EasyFlash $DE02 bit 7
 );
 
 reg  [7:0] bank_lo;
 reg  [7:0] bank_hi;
 reg [12:0] mask_lo;
-reg  [5:0] bank_no;
 
-reg [13:0] geo_bank;
 reg  [7:0] IOE_bank;
 reg  [7:0] IOF_bank;
-reg        IOE_wr_ena;
-reg        IOF_wr_ena;
 
 reg        exrom_overide;
 reg        game_overide;
 reg        force_ultimax;
 assign     {exrom, game} = force_ultimax ? 2'b10 : {exrom_overide, game_overide};
 
-(* ramstyle = "logic" *) reg [6:0] lobanks[0:63];
-(* ramstyle = "logic" *) reg [6:0] hibanks[0:63];
+// The loader stores admitted CHIP packets in bank order, so every mapper
+// except type 0 uses its bank number as the 8 KiB slot. Type 0 records
+// where bank 0's ROML and ROMH halves landed.
+reg  [6:0] normal_lo;
+reg  [6:0] normal_hi;
 
 reg  [7:0] bank_cnt;
-reg [63:0] lobanks_map;
-reg [63:0] hibanks_map;
 always @(posedge clk32) begin
 	reg old_loading;
 	old_loading <= cart_loading;
 
 	if(~old_loading & cart_loading) begin
 		bank_cnt <= 0;
-		lobanks_map <= 0;
-		hibanks_map <= 0;
+		normal_lo <= 0;
+		normal_hi <= 0;
 	end
 	if(cart_bank_wr) begin
 		bank_cnt <= bank_cnt + 1'd1;
-		if(cart_bank_num<64) begin
+		if(cart_bank_num == 0) begin
 			if(!cart_bank_hi) begin
-				lobanks[cart_bank_num[5:0]] <= cart_bank_addr[6:0];
-				lobanks_map[cart_bank_num[5:0]] <= 1;
-				if(cart_bank_16k) hibanks[cart_bank_num[5:0]] <= cart_bank_addr[6:0]+1'd1;
+				normal_lo <= cart_bank_addr[6:0];
+				if(cart_bank_16k) normal_hi <= cart_bank_addr[6:0]+1'd1;
 			end
-			else begin
-				hibanks[cart_bank_num[5:0]] <= cart_bank_addr[6:0];
-				hibanks_map[cart_bank_num[5:0]] <= 1;
-			end
+			else normal_hi <= cart_bank_addr[6:0];
 		end
 	end
 end
 
 reg IOE_ena,IOF_ena;
-reg IOE_rd,IOF_rd;
 
-assign IO_rom = (IOE & IOE_ena & ~IOE_rd) | (IOF & IOF_ena & ~IOF_rd);
-assign IO_rd  = IOE_rd | IOF_rd;
-
-reg romL_we = 0;
-reg romH_we = 0;
+assign IO_rom = (IOE & IOE_ena) | (IOF & IOF_ena);
 
 reg old_ioe, old_iof;
 always @(posedge clk32) begin
@@ -121,7 +109,7 @@ wire ioe_wr = stb_ioe & mem_write;
 wire ioe_rd = stb_ioe & ~mem_write;
 
 wire iof_wr = stb_iof & mem_write;
-//wire iof_rd = stb_iof & ~mem_write;
+wire iof_rd = stb_iof & ~mem_write;
 
 reg  old_freeze = 0;
 wire freeze_req = (~old_freeze & freeze_key);
@@ -131,20 +119,25 @@ wire freeze_ack = (nmi & ~old_nmiack & nmi_ack);
 wire freeze_crt = freeze_ack & ~mod_key;
 
 reg  cart_disable = 0;
-reg  allow_bank;
-reg  ram_bank;
-reg  reu_map;
-reg  clock_port;
 reg  rom_kbb;
-reg  ezrom_en;
+
+// EasyFlash 256-byte RAM at $DF00-$DFFF, the only cartridge RAM admitted.
+(* ram_style = "distributed" *) reg [7:0] ef_ram[0:255];
+integer ef_i;
+initial for(ef_i=0;ef_i<256;ef_i=ef_i+1) ef_ram[ef_i] = 8'h00;
+wire ef_io2 = cart_id == 32 && IOF;
+always @(posedge clk32) if(ef_io2 && iof_wr) ef_ram[addr_in[7:0]] <= data_in;
+assign IO_rd   = ef_io2 && !mem_write;
+assign ef_bank = bank_lo[6:1];
 
 // 0018 - EXROM line status
 // 0019 - GAME line status
 
 always @(posedge clk32) begin
-	reg        init_n = 0;
-	reg        allow_freeze = 0;
-	reg        saved_d6 = 0;
+	// Initialized block state must persist between clock edges in strict tools.
+	static reg init_n = 0;
+	static reg allow_freeze = 0;
+	static reg saved_d6 = 0;
 	reg [15:0] count;
 	reg        count_ena;
 	reg [15:0] old_id;
@@ -164,10 +157,6 @@ always @(posedge clk32) begin
 		bank_hi <= 0;
 		IOE_ena <= 0;
 		IOF_ena <= 0;
-		IOE_wr_ena <= 0;
-		IOF_wr_ena <= 0;
-		romL_we <= 0;
-		romH_we <= 0;
 		init_n <= 0;
 		allow_freeze <= 1;
 		nmi <= 0;
@@ -176,8 +165,7 @@ always @(posedge clk32) begin
 		exrom_overide <= 1;
 		game_overide <= 1;
 		rom_kbb <= 0;
-		geo_bank <= 0;
-		ezrom_en <= 0;
+		ef_led <= 0;
 	end
 	else
 	case(cart_id)
@@ -186,56 +174,8 @@ always @(posedge clk32) begin
 		0:	begin
 				exrom_overide <= cart_exrom;
 				game_overide <= cart_game;
-				bank_lo <= lobanks[0];
-				bank_hi <= hibanks[0];
-			end
-
-		// Action Replay v4+ - (32k 4x8k banks + 8K RAM)
-		// controlled by DE00
-		1:	begin
-				if(nmi) allow_freeze <= 0;
-				if(!init_n || freeze_crt) begin
-					cart_disable  <= 0;
-					exrom_overide <= 1;
-					game_overide  <= 0;
-					romL_we <= 0;
-					bank_lo <= 0;
-					bank_hi <= 0;
-					IOF_bank <= 0;
-					IOF_wr_ena <= 0;
-					IOF_ena <= 1;
-					if(~init_n) begin
-						exrom_overide <= 0;
-						game_overide  <= 1;
-					end
-				end
-				else if(cart_disable) begin
-					exrom_overide <= 1;
-					game_overide <= 1;
-					IOF_ena <= 0;
-					IOF_wr_ena <= 0;
-					romL_we <= 0;
-					allow_freeze <= 1;
-				end else begin
-					if(ioe_wr) begin
-						cart_disable <= data_in[2];
-						bank_lo <= data_in[4:3];
-						bank_hi <= data_in[4:3];
-						IOF_bank <= data_in[4:3];
-
-						if(data_in[6] | allow_freeze) begin
-							allow_freeze <= 1;
-							game_overide  <= ~data_in[0];
-							exrom_overide <=  data_in[1];
-							IOF_wr_ena <= data_in[5];
-							romL_we <= data_in[5];
-							if(data_in[5]) begin
-								bank_lo <= 0;
-								IOF_bank<= 0;
-							end
-						end
-					end
-				end
+				bank_lo <= normal_lo;
+				bank_hi <= normal_hi;
 			end
 
 		// Final Cart III - (64k 4x16k banks)
@@ -331,71 +271,6 @@ always @(posedge clk32) begin
 				end
 			end
 
-		// Atomic/Action/Nordic Power (32k 4x8k banks + 8K RAM)
-		9:	begin
-				if(nmi) allow_freeze <= 0;
-				if(!init_n || freeze_crt) begin
-					cart_disable  <= 0;
-					game_overide  <= 0;
-					exrom_overide <= 1;
-					romL_we       <= 0;
-					romH_we       <= 0;
-					bank_lo       <= 0;
-					bank_hi       <= 0;
-					IOF_bank      <= 0;
-					IOF_wr_ena    <= 0;
-					IOF_ena       <= 0;
-					if(!init_n) begin
-						game_overide  <= 1;
-						exrom_overide <= 0;
-					end
-				end
-				else if(cart_disable) begin
-					game_overide  <= 1;
-					exrom_overide <= 1;
-					IOF_ena       <= 0;
-					IOF_wr_ena    <= 0;
-					romL_we       <= 0;
-					romH_we       <= 0;
-					allow_freeze  <= 1;
-				end else begin
-					if(ioe_wr) begin
-						if(data_in[6] | allow_freeze) begin
-							allow_freeze <= 1;
-							cart_disable <= data_in[2];
-							bank_lo      <= data_in[4:3];
-							bank_hi      <= data_in[4:3];
-							IOF_bank     <= data_in[4:3];
-							IOF_ena      <= 1;
-
-							if({data_in[5], data_in[1:0]} == 3'b110) begin
-								game_overide  <= 0;
-								exrom_overide <= 0;
-								romL_we       <= 0;
-								romH_we       <= 1;
-								bank_hi       <= 0;
-								IOF_bank      <= 0;
-								IOF_wr_ena    <= 1;
-							end
-							else begin
-								game_overide  <=~data_in[0];
-								exrom_overide <= data_in[1];
-								IOF_wr_ena    <= data_in[5];
-								romL_we       <= data_in[5];
-								romH_we       <= 0;
-								if(data_in[5]) begin
-									bank_lo    <= 0;
-									IOF_bank   <= 0;
-								end
-								else if(data_in[0]) begin
-									IOF_ena    <= 0; // ultimax and 16K modes don't mirror ROM to IOF
-								end
-							end
-						end
-					end
-				end
-			end
-
 		// Epyx Fastload - (game=1, exrom=0, 8k bank)
 		// any access to romL or $DE00 charges a capacitor
 		// Once discharged the exrom drops to ON disabling cart
@@ -415,6 +290,17 @@ always @(posedge clk32) begin
 					if(count) count <= count - 1'd1;
 					else exrom_overide <= 1;
 				end
+			end
+
+		// Westermann: an IO2 read removes only the upper 8 KiB ROM.
+		11: begin
+				if(!init_n) begin
+					bank_lo <= 0;
+					bank_hi <= 1;
+					exrom_overide <= 0;
+					game_overide <= 0;
+				end
+				else if(iof_rd) game_overide <= 1;
 			end
 
 		// FINAL CARTRIDGE 1,2
@@ -493,34 +379,6 @@ always @(posedge clk32) begin
 				end
 			end
 
-		// Super Snapshot v5 -(64k/128K rom 8*8k banks/4*16k banks, 32k ram 4*8k banks)
-		20: begin
-				if(!init_n || freeze_crt) begin
-					romL_we <= 1;
-					bank_lo <= 0;
-					bank_hi <= 1;
-					game_overide  <= 0;
-					exrom_overide <= 1;
-					IOE_bank <= 0;
-					IOE_ena  <= 1;
-					cart_disable <= 0;
-				end
-				else
-				if(~cart_disable & ioe_wr) begin
-					game_overide <=  data_in[0] | data_in[3];
-					exrom_overide<= ~data_in[1] | data_in[3];
-					bank_lo <= {data_in[5] & bank_cnt[3], data_in[4], data_in[2], 1'b0};
-					bank_hi <= {data_in[5] & bank_cnt[3], data_in[4], data_in[2], 1'b1};
-					IOE_bank<= {data_in[5] & bank_cnt[3], data_in[4], data_in[2], 1'b0};
-					cart_disable <= data_in[3];
-					IOE_ena <= ~data_in[3];
-
-					//RAM overlay
-					if(~data_in[1]) bank_lo <= {data_in[4], data_in[2]};
-					romL_we <= ~data_in[1];
-				end
-			end
-
 		// Comal80 - (game=0, exrom=0, 4 banks by 16k)
 		21: begin
 				if(!init_n) begin
@@ -577,97 +435,26 @@ always @(posedge clk32) begin
 				IOF_ena  <= 1;
 			end
 
-		// EASYFLASH - 1mb 128x8k/64x16k, XBank format(33) looks the same
-		// upd: original Easyflash(32) boots in ultimax mode.
-		// Only one XBank(33) cart has been found: soulless-xbank. It doesn't boot in ultimax mode.
-		32,
-		33: begin
+		// EasyFlash: the loader stores bank b's ROML in slot 2b and its ROMH
+		// in slot 2b+1. With $DE02 M=0 the jumper drives GAME: Boot starts
+		// the cartridge in Ultimax mode, Disable leaves it hidden (VICE table).
+		32: begin
 				if(!init_n) begin
-					IOF_bank<= 0;
-					IOF_ena <= 1;
-					IOF_wr_ena <= 1;
-					exrom_overide <= (cart_id==32);
+					exrom_overide <= 1;
 					game_overide  <= ~cart_boot;
-					bank_lo <= lobanks[0];
-					bank_hi <= hibanks[0];
-					bank_no = 0;
-					ezrom_en <= 1;
+					bank_lo <= 0;
+					bank_hi <= 1;
 				end
 
 				if(ioe_wr) begin
 					if(addr_in[1]) begin
-						game_overide  <= ~data_in[0] & data_in[2]; //assume jumper in boot position bit2=0 -> game=0
+						game_overide  <= data_in[2] ? ~data_in[0] : ~cart_boot;
 						exrom_overide <= ~data_in[1];
+						ef_led        <= data_in[7];
 					end
 					else begin
-						bank_no <= data_in[5:0];
-						bank_lo <= lobanks[data_in[5:0]];
-						bank_hi <= hibanks[data_in[5:0]];
-					end
-				end
-			end
-
-		// Retro Replay - (64k 8x8k banks + 32K RAM)
-		36: begin
-				IOE_ena    <= allow_freeze;
-				IOF_ena    <= allow_freeze & ~reu_map;
-				IOE_wr_ena <= allow_freeze & romL_we;
-				IOF_wr_ena <= allow_freeze & romL_we & ~reu_map;
-				bank_lo    <= ~romL_we ? bank_hi : allow_bank ? bank_hi[1:0] : 2'b00;
-				IOE_bank   <= ~romL_we ? bank_hi : allow_bank ? bank_hi[1:0] : 2'b00;
-				IOF_bank   <= ~romL_we ? bank_hi : allow_bank ? bank_hi[1:0] : 2'b00;
-
-				if(nmi) allow_freeze <= 0;
-				if(!init_n || freeze_crt) begin
-					cart_disable  <= 0;
-					exrom_overide <= 1;
-					game_overide  <= 0;
-					romL_we       <= 0;
-					bank_lo       <= 0;
-					bank_hi       <= 0;
-					IOE_ena       <= 0;
-					IOF_ena       <= 0;
-					IOE_wr_ena    <= 0;
-					IOF_wr_ena    <= 0;
-					IOE_bank      <= 0;
-					IOF_bank      <= 0;
-					if(~init_n) begin
-						exrom_overide <= 0;
-						game_overide  <= 1;
-						reu_map       <= 0;
-						allow_bank    <= 0;
-						clock_port    <= 0;
-					end
-				end
-				else if(cart_disable) begin
-					exrom_overide <= 1;
-					game_overide  <= 1;
-					IOE_wr_ena    <= 0;
-					IOF_wr_ena    <= 0;
-					IOE_ena       <= 0;
-					IOF_ena       <= 0;
-					romL_we       <= 0;
-					allow_freeze  <= 1;
-				end else begin
-
-					if(ioe_wr & !addr_in[7:1]) begin
-						bank_hi <= {data_in[7],data_in[4:3]};
-
-						if(~addr_in[0]) begin
-							cart_disable <= data_in[2];
-						end
-						else begin
-							if(data_in[6]) reu_map    <= 1;
-							if(data_in[1]) allow_bank <= 1;
-							clock_port <= data_in[0];
-						end
-
-						if((data_in[6] | allow_freeze) & ~addr_in[0]) begin
-							allow_freeze  <= 1;
-							game_overide  <= ~data_in[0];
-							exrom_overide <=  data_in[1];
-							romL_we       <=  data_in[5];
-						end
+						bank_lo <= {data_in[5:0],1'b0};
+						bank_hi <= {data_in[5:0],1'b1};
 					end
 				end
 			end
@@ -687,13 +474,20 @@ always @(posedge clk32) begin
 
 		// Kingsoft Business Basic
 		54: begin
-				game_overide  <= 0;
-				exrom_overide <= 0;
 				bank_lo       <= 0;
 				bank_hi       <= 1;
 
-				if(ioe_rd) rom_kbb <= 0;
-				if(ioe_wr) rom_kbb <= 1;
+				if(!init_n || ioe_rd) begin
+					rom_kbb <= 0;
+					game_overide <= 0;
+					exrom_overide <= 0;
+				end
+				else if(ioe_wr) begin
+					rom_kbb <= 1;
+					// Dynamic Ultimax is asserted only in the ROM ranges below.
+					game_overide <= 1;
+					exrom_overide <= 1;
+				end
 			end
 
 		// RGCD (game=1, exrom=0, 8 banks by 8k)
@@ -714,30 +508,69 @@ always @(posedge clk32) begin
 				end
 			end
 
-		// GMod2
-		60: begin
+		// Blackbox V8 decodes IO2 address bits, not the written data.
+		// Inverted bank bits select one of two or four 16 KiB ROM banks.
+		64: begin
 				if(!init_n) begin
+					bank_lo <= {5'd0, (bank_cnt[1:0] - 2'd1), 1'b0};
+					bank_hi <= {5'd0, (bank_cnt[1:0] - 2'd1), 1'b1};
+					game_overide <= 0;
 					exrom_overide <= 0;
-					game_overide  <= 1;
-					bank_lo       <= 0;
 				end
-				else if(ioe_wr) begin
-					bank_lo       <= data_in[5:0];
-					exrom_overide <= data_in[6];
+				else if(iof_wr) begin
+					bank_lo <= {5'd0, (~addr_in[3:2] & (bank_cnt[1:0] - 2'd1)), 1'b0};
+					bank_hi <= {5'd0, (~addr_in[3:2] & (bank_cnt[1:0] - 2'd1)), 1'b1};
+					game_overide <= addr_in[0];
+					exrom_overide <= addr_in[1];
 				end
 			end
 
-		// BMP-Data Turbo 2000, (game=0, exrom=0, one 16k bank)
-		83: begin
-				bank_lo <= 0;
-				bank_hi <= 0;
-				if(!init_n || ioe_wr) begin
-					game_overide   <= 0;
-					exrom_overide  <= 0;
+		// Blackbox V3: IO1 writes disable, IO2 writes re-enable 8 KiB ROM.
+		65: begin
+				if(!init_n) begin
+					bank_lo <= 0;
+					game_overide <= 1;
+					exrom_overide <= 0;
 				end
-				else if(iof_wr) begin
-					 game_overide  <= 1;
-					 exrom_overide <= 1;
+				else if(ioe_wr) exrom_overide <= 1;
+				else if(iof_wr) exrom_overide <= 0;
+			end
+
+		// Blackbox V4: IO2 reads disable, IO1 reads re-enable 16 KiB ROM.
+		66: begin
+				if(!init_n) begin
+					bank_lo <= 0;
+					bank_hi <= 1;
+					game_overide <= 0;
+					exrom_overide <= 0;
+				end
+				else if(iof_rd) begin
+					game_overide <= 1;
+					exrom_overide <= 1;
+				end
+				else if(ioe_rd) begin
+					game_overide <= 0;
+					exrom_overide <= 0;
+				end
+			end
+
+		// Blackbox V9: IO1 address selects mode and bank. Writes invert A7.
+		// IO1 reads expose the newly selected bank's $9Exx ROM mirror.
+		71: begin
+				if(!init_n) begin
+					bank_lo <= 2;
+					bank_hi <= 3;
+					IOE_bank <= 2;
+					IOE_ena <= 1;
+					game_overide <= 0;
+					exrom_overide <= 1;
+				end
+				else if(ioe_rd || ioe_wr) begin
+					bank_lo <= {6'd0, (addr_in[7] ^ mem_write), 1'b0};
+					bank_hi <= {6'd0, (addr_in[7] ^ mem_write), 1'b1};
+					IOE_bank <= {6'd0, (addr_in[7] ^ mem_write), 1'b0};
+					game_overide <= addr_in[0];
+					exrom_overide <= addr_in[6];
 				end
 			end
 
@@ -757,105 +590,103 @@ always @(posedge clk32) begin
 				end
 			end
 
-		// GeoRAM
-		99: begin
-				IOE_ena    <= 1;
-				IOE_wr_ena <= 1;
-				if(iof_wr && &addr_in[7:1]) begin
-					if(addr_in[0]) geo_bank[13:6] <= data_in;
-					else           geo_bank[5:0]  <= data_in[5:0];
+		// Protovision Megabyter: 8 KiB banks and inverted GAME mode bit.
+		// The 8-bit counter wraps at 256 banks, yielding a full 0xff mask.
+		86: begin
+				if(!init_n) begin
+					game_overide <= 1;
+					exrom_overide <= 0;
+					bank_lo <= 0;
+					bank_hi <= 0;
+				end
+				else if(ioe_wr) begin
+					if(addr_in[1]) begin
+						game_overide <= ~data_in[0];
+						exrom_overide <= data_in[1];
+					end else begin
+						bank_lo <= data_in & (bank_cnt - 8'd1);
+						bank_hi <= data_in & (bank_cnt - 8'd1);
+					end
+				end
+			end
+
+		// Protovision TwoMegabyter. IO1 A1 selects bank or GAME/EXROM.
+		// Admitted ROM sizes are powers of two up to 2 MiB. Higher bank
+		// address bits mirror that ROM; the 4 MiB profile is not admitted.
+		87: begin
+				if(!init_n) begin
+					game_overide <= 0;
+					exrom_overide <= 0;
+					bank_lo <= 0;
+					bank_hi <= 1;
+				end
+				else if(ioe_wr) begin
+					if(addr_in[1]) begin
+						game_overide <= data_in[0];
+						exrom_overide <= data_in[1];
+					end else begin
+						bank_lo <= {(data_in[6:0] & (bank_cnt[6:0] - 7'd1)), 1'b0};
+						bank_hi <= {(data_in[6:0] & (bank_cnt[6:0] - 7'd1)), 1'b1};
+					end
 				end
 			end
 	endcase
 end
 
-wire [19:0] ezrom_addr;
-wire  [7:0] ezdq_out;
-wire        ezrom_ce, ezrom_we;
-wire  [7:0] ezmem_out;
-wire        ezmem_oe;
-wire        ezdq_oe;
 reg  [24:0] addr_out;
 
-ez_rom ez_rom
-(
-	.clk(clk32),
-	.reset_n(reset_n & ezrom_en),
-	.ce(mem_ce & (romH|romL)),
-	.we(mem_write),
-	.addr({romH, bank_no, addr_in[12:0]}),
-	.dq_in(data_in),
-	.dq_out(ezdq_out),
-	.dq_oe(ezdq_oe),
-	.mem_req(mem_req),
-	.mem_cycle(mem_cycle),
-	.mem_oe(ezmem_oe),
-	.mem_addr(ezrom_addr),
-	.mem_in(mem_in),
-	.mem_out(ezmem_out),
-	.mem_ce(ezrom_ce),
-	.mem_we(ezrom_we)
-);
-
-wire [21:0] ezmem_addr = {2'b10, ezrom_addr[19] ? hibanks[ezrom_addr[18:13]] : lobanks[ezrom_addr[18:13]], ezrom_addr[12:0]};
-wire        ezmem_we   = ezrom_we & (romH ? hibanks_map[ezrom_addr[18:13]] : lobanks_map[ezrom_addr[18:13]]);
-
-assign mem_addr = (ezmem_oe) ? ezmem_addr : addr_out;
-assign mem_out  = (ezmem_oe) ?  ezmem_out : data_in;
-
-assign data_out = (ezdq_oe & (romH|romL)) ? ezdq_out : mem_in;
+assign mem_addr = addr_out;
+assign mem_out  = data_in;
+assign data_out = mem_in;
 
 
 // ************************************************************************************************************
 // ****** Address handling - Redirection to SDRAM CRT file
 // ************************************************************************************************************
 
-wire cs_ioe = IOE && (mem_write ? IOE_wr_ena : IOE_ena);
-wire cs_iof = IOF && (mem_write ? IOF_wr_ena : IOF_ena);
+// IO1 and IO2 expose read-only ROM windows only.
+wire cs_ioe = IOE && !mem_write && IOE_ena;
+wire cs_iof = IOF && !mem_write && IOF_ena;
 
-assign mem_ce_out = mem_ce | (cs_ioe & stb_ioe) | (cs_iof & stb_iof) | ezrom_ce;
+assign mem_ce_out = mem_ce | (cs_ioe & stb_ioe) | (cs_iof & stb_iof);
 
-//RAM banks are mapped to 0x010000 (64K max)
 //ROM banks are mapped to 0x200000 (2MB max)
 function [8:0] get_bank;
 	input [7:0] bank;
-	input       ram;
 begin
-	get_bank = ram ? {6'b000001, bank[2:0]} : {1'b1, bank[7:0]};
+	get_bank = {1'b1, bank[7:0]};
 end
 endfunction
 
 always @* begin
-	IOE_rd = 0;
-	IOF_rd = 0;
-	IO_data = 8'hFF;
+	IO_data = ef_ram[addr_in[7:0]];
 	force_ultimax = 0;
 
 	//prohibit to write in ultimax mode into underlaying (actually non-existent) RAM
-	mem_write_out = (~(((romL & ~romL_we) | (romH & ~romH_we)) & exrom_overide & ~game_overide) & mem_write) | ezmem_we;
+	mem_write_out = ~((romL | romH) & exrom_overide & ~game_overide) & mem_write;
 	addr_out = addr_in;
 
 	if(reset_n) begin
-		if(romH & (romH_we | ~mem_write)) addr_out[24:13] =  get_bank(bank_hi, romH_we);
-		if(romL & (romL_we | ~mem_write)) addr_out        = {get_bank(bank_lo, romL_we), addr_in[12:0] & mask_lo};
+		if(romH & ~mem_write) addr_out[24:13] =  get_bank(bank_hi);
+		if(romL & ~mem_write) addr_out        = {get_bank(bank_lo), addr_in[12:0] & mask_lo};
 
-		if(cs_ioe) addr_out[24:13] = get_bank(IOE_bank, IOE_wr_ena); // read/write to DExx
-		if(cs_iof) addr_out[24:13] = get_bank(IOF_bank, IOF_wr_ena); // read/write to DFxx
+		if(cs_ioe) addr_out[24:13] = get_bank(IOE_bank); // read DExx
+		if(cs_iof) addr_out[24:13] = get_bank(IOF_bank); // read DFxx
 
-		if(UMAXromH) addr_out[24:12] = {get_bank(bank_hi, 0), 1'b1}; // ULTIMAX CharROM
+		if(UMAXromH) addr_out[24:12] = {get_bank(bank_hi), 1'b1}; // ULTIMAX CharROM
 
 		case(cart_id)
-			36: if(IOE && !(addr_in[7:0] & (clock_port ? 8'hF0 : 8'hFE)) && ~cart_disable) begin
-					mem_write_out = 0;
-					IOE_rd = 1;
-					IO_data = (!addr_in[7:1]) ? {bank_hi[2], reu_map, 1'b0, bank_hi[1:0], 1'b0, allow_bank, 1'b0} : 8'h00;
-				end
-			54: if(rom_kbb && addr_in[15:13] == 3'b111 && !mem_write) begin
+			54: if(rom_kbb && addr_in[15] && addr_in[14:13] != 2'b10) begin
 					force_ultimax = 1;
-					addr_out[24:13] = get_bank(2, 0);
+					// Ultimax leaves $A000-$BFFF unmapped and suppresses RAM
+					// writes in all three ROM ranges. Other RAM/IO stays normal.
+					mem_write_out = 0;
+					if(addr_in[15:13] == 3'b111) addr_out[24:13] = get_bank(2);
 				end
-			99: if(IOE) begin
-					addr_out[24:8] <= {3'b011, geo_bank};
+			71: if(IOE && !mem_write) begin
+					// Select from this read's address before the cache request,
+					// not from the register updated by the same IO1 strobe.
+					addr_out[24:13] = get_bank({6'd0, addr_in[7], 1'b0});
 				end
 		default:;
 		endcase

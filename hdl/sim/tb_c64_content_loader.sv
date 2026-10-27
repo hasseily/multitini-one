@@ -34,6 +34,8 @@ module tb_c64_content_loader;
     logic cart_loading;
     logic cart_loaded;
     logic [7:0] cart_id;
+    logic [7:0] cart_subtype;
+    logic [2:0] cart_expansion_policy;
     logic cart_exrom;
     logic cart_game;
     logic cart_bank_hi;
@@ -46,7 +48,11 @@ module tb_c64_content_loader;
     logic active;
     logic error;
     logic [7:0] ram [0:65535];
+    // Payload bytes reach memory packed: cart_write_count counts bytes,
+    // cart_word_count writes, and cart_partial_count writes of fewer than 8.
     integer cart_write_count = 0;
+    integer cart_word_count = 0;
+    integer cart_partial_count = 0;
     integer bank_write_count = 0;
     integer run_request_count = 0;
     localparam logic [8*16-1:0] CRT_MAGIC = "C64 CARTRIDGE   ";
@@ -56,8 +62,12 @@ module tb_c64_content_loader;
 
     always @(posedge clk) begin
         if (prg_ram_wr) ram[prg_ram_addr] <= prg_ram_data;
-        if (loader_memory_valid && loader_memory_ready)
-            cart_write_count <= cart_write_count + 1;
+        if (loader_memory_valid && loader_memory_ready) begin
+            cart_write_count <= cart_write_count + $countones(loader_memory_wstrb);
+            cart_word_count <= cart_word_count + 1;
+            if (loader_memory_wstrb != 8'hff)
+                cart_partial_count <= cart_partial_count + 1;
+        end
         if (cart_bank_wr) bank_write_count <= bank_write_count + 1;
         if (prg_run_request) run_request_count <= run_request_count + 1;
     end
@@ -121,6 +131,126 @@ module tb_c64_content_loader;
             endcase
         end
     endfunction
+
+    function automatic logic [7:0] fc3_byte(input integer offset,
+        input integer subtype, input integer bad_bank);
+        integer chip, local_offset;
+        begin
+            fc3_byte = 0;
+            if (offset < 64) begin
+                if (offset < 16) fc3_byte = CRT_MAGIC[(15-offset)*8 +: 8];
+                case (offset)
+                    19: fc3_byte = 8'h40;
+                    20: fc3_byte = 1;
+                    23: fc3_byte = MT_CRT_FINAL_CARTRIDGE_3;
+                    26: fc3_byte = subtype[7:0];
+                    default: ;
+                endcase
+            end else begin
+                chip = (offset - 64) / 16400;
+                local_offset = (offset - 64) % 16400;
+                case (local_offset)
+                    0: fc3_byte = "C"; 1: fc3_byte = "H";
+                    2: fc3_byte = "I"; 3: fc3_byte = "P";
+                    6: fc3_byte = 8'h40; 7: fc3_byte = 8'h10;
+                    11: fc3_byte = bad_bank && chip == 2 ? 1 : chip[7:0];
+                    12: fc3_byte = 8'h80; 14: fc3_byte = 8'h40;
+                    default: if (local_offset >= 16) fc3_byte = chip[7:0] ^ offset[7:0];
+                endcase
+            end
+        end
+    endfunction
+
+    function automatic logic [7:0] tmb_byte(input integer offset,
+        input integer variant);
+        begin
+            tmb_byte = fc3_byte(offset, 0, variant == 3);
+            if (offset == 23) tmb_byte = MT_CRT_TWO_MEGABYTER;
+            if (offset == 26 && variant == 4) tmb_byte = 1;
+            if (offset == 78 && variant == 5) tmb_byte = 8'h20;
+            if (offset == 25 && variant == 6) tmb_byte = 1;
+            if (offset == 75 && variant == 7) tmb_byte = 128;
+        end
+    endfunction
+
+    // Canonical ROM-only batch: ordered packets; payload is synthetic.
+    function automatic logic [7:0] rom_batch_byte(input integer offset,
+        input integer id, size, variant);
+        integer packet, local_offset;
+        begin
+            rom_batch_byte = 0;
+            if (offset < 64) begin
+                if (offset < 16) rom_batch_byte = CRT_MAGIC[(15-offset)*8 +: 8];
+                case (offset)
+                    19: rom_batch_byte = 8'h40;
+                    20: rom_batch_byte = 1;
+                    23: rom_batch_byte = id;
+                    24: rom_batch_byte = (id == 71) ^ (variant == 2);
+                    25: rom_batch_byte = id == 65 || id == 86;
+                    26: rom_batch_byte = variant == 1;
+                    default: ;
+                endcase
+            end else begin
+                packet = (offset-64)/(size+16);
+                local_offset = (offset-64)%(size+16);
+                case (local_offset)
+                    0: rom_batch_byte = "C"; 1: rom_batch_byte = "H";
+                    2: rom_batch_byte = "I"; 3: rom_batch_byte = "P";
+                    6: rom_batch_byte = (size+16)>>8;
+                    7: rom_batch_byte = 8'h10;
+                    9: rom_batch_byte = variant == 6 ? 2 : 0;
+                    11: rom_batch_byte = variant == 3 ? 1 : packet;
+                    12: rom_batch_byte = variant == 5 ? 8'ha0 : 8'h80;
+                    14: rom_batch_byte = variant == 4 ? 8'h10 : size>>8;
+                    default: if (local_offset >= 16) rom_batch_byte = packet ^ offset;
+                endcase
+            end
+        end
+    endfunction
+
+    task automatic rom_batch;
+        integer id, size, banks, actual_banks, total, before_bytes, before_banks, before_words;
+        for (integer profile=0;profile<8;profile++) begin
+            case(profile)
+                0:begin id=11;size=16384;banks=1;end
+                1:begin id=54;size=8192;banks=3;end
+                2:begin id=64;size=16384;banks=2;end
+                3:begin id=65;size=8192;banks=1;end
+                4:begin id=66;size=16384;banks=1;end
+                5:begin id=71;size=16384;banks=2;end
+                6:begin id=86;size=8192;banks=4;end
+                default:begin id=87;size=16384;banks=4;end
+            endcase
+            for(integer variant=0;variant<8;variant++) begin
+                actual_banks=variant==7?(banks==1?2:3):banks;
+                if(variant==7&&id==54)actual_banks=2;
+                total=64+actual_banks*(size+16);
+                clear_error=1;@(negedge clk);clear_error=0;
+                before_bytes=cart_write_count;before_banks=bank_write_count;before_words=cart_word_count;
+                for(integer a=0;a<total;a++)
+                    send_byte(MT_LOAD_C64_CRT,a,total,rom_batch_byte(a,id,size,variant));
+                wait(!active);@(negedge clk);
+                if(variant==0)begin
+                    check(!error&&cart_loaded&&cart_id==id&&cart_subtype==0,
+                        "ROM batch canonical image commits");
+                    check(cart_expansion_policy==((id==54||id==71||id>=86)?7:0),
+                        "ROM batch exact IO coexistence policy");
+                    check(cart_write_count-before_bytes==banks*size&&
+                        bank_write_count-before_banks==banks,"ROM batch complete payload and bank table");
+                    check(cart_word_count-before_words==banks*size/8&&cart_partial_count==0,
+                        "ROM batch payload written as whole 64-bit words");
+                end else check(error&&!cart_loaded,
+                    "ROM batch rejects subtype/lines/order/size/address/flash/count");
+            end
+            $display("ROM_LOADER PASS id=%0d positive=1 malformed=7",id);
+        end
+        check(dut.crt_layout_complete(MT_CRT_BLACKBOX_V8,4,1),"BB8 full four-bank shape");
+        check(dut.crt_chip_layout_supported(MT_CRT_MEGABYTER,255,255,16'h8000,16'h2000,0,1)&&
+            !dut.crt_chip_layout_supported(MT_CRT_MEGABYTER,256,0,16'h8000,16'h2000,0,1),
+            "Megabyter 256 physical banks and no wrapped packet");
+        check(dut.crt_layout_complete(MT_CRT_MEGABYTER,256,0)&&
+            !dut.crt_layout_complete(MT_CRT_MEGABYTER,257,0),"Megabyter two MiB limit");
+    endtask
 
     initial begin : test
         integer index;
@@ -205,6 +335,8 @@ module tb_c64_content_loader;
               "supported CRT committed");
         check(cart_write_count == 8192 && bank_write_count == 1,
               "one CHIP payload normalized to external memory");
+        check(cart_word_count == 1024 && cart_partial_count == 0,
+              "CHIP payload written as whole 64-bit words");
 
         // BEGIN may have completed in the control domain even though its first
         // byte has not reached this loader. Repeated aborts for that epoch are
@@ -287,6 +419,58 @@ module tb_c64_content_loader;
             send_byte(MT_LOAD_C64_CRT, index, 80,
                       index == 23 ? 8'd32 : crt_byte(index));
         check(error && !cart_loaded, "unsupported CRT rejected detached");
+
+        for (integer variant = 0; variant < 5; variant++) begin
+            clear_error = 1;
+            @(negedge clk); clear_error = 0;
+            for (index = 0; index < (variant == 4 ? 49264 : 65664); index++)
+                send_byte(MT_LOAD_C64_CRT, index, variant == 4 ? 49264 : 65664,
+                    fc3_byte(index, variant == 2 ? 2 : variant == 0 ? 0 : 1,
+                             variant == 3));
+            wait (!active); @(negedge clk);
+            if (variant < 2) begin
+                check(!error && cart_loaded && cart_id == MT_CRT_FINAL_CARTRIDGE_3 &&
+                      cart_subtype == variant, "FC3 exact four-bank image commits subtype");
+                check(cart_expansion_policy == (variant == 1 ? 3 : 0),
+                      "FC3 subtype determines REU and UCI compatibility");
+            end else check(error && !cart_loaded,
+                "FC3 rejects unknown subtype, duplicate bank and incomplete image");
+        end
+        clear_error = 1; @(negedge clk); clear_error = 0;
+        for (index = 0; index < CRT_SIZE; index++)
+            send_byte(MT_LOAD_C64_CRT, index, CRT_SIZE,
+                      index == 26 ? 8'd1 : crt_byte(index));
+        wait (!active); @(negedge clk);
+        check(error && !cart_loaded, "non-FC3 unknown subtype is rejected");
+
+        // TMB accepts only canonical power-of-two 16 KiB banks within the
+        // existing 2 MiB storage window. The upper boundary is also checked
+        // directly so this unit bench need not stream 2 MiB repeatedly.
+        check(dut.crt_chip_layout_supported(MT_CRT_TWO_MEGABYTER,
+                  127,127,16'h8000,16'h4000,0,0) &&
+              !dut.crt_chip_layout_supported(MT_CRT_TWO_MEGABYTER,
+                  128,128,16'h8000,16'h4000,0,0),
+              "TMB indexed bank limit is 128");
+        check(dut.crt_layout_complete(MT_CRT_TWO_MEGABYTER,128,1) &&
+              !dut.crt_layout_complete(MT_CRT_TWO_MEGABYTER,256,1),
+              "TMB admits 2 MiB and rejects 4 MiB");
+        for(integer variant=0;variant<8;variant++)begin
+            integer banks,total;
+            banks=variant==0?1:variant==1?16:variant==2?3:4;
+            total=64+banks*16400;
+            clear_error=1;@(negedge clk);clear_error=0;
+            for(index=0;index<total;index++)
+                send_byte(MT_LOAD_C64_CRT,index,total,tmb_byte(index,variant));
+            wait(!active);@(negedge clk);
+            if(variant<2)check(!error&&cart_loaded&&cart_id==MT_CRT_TWO_MEGABYTER&&
+                cart_subtype==0&&cart_expansion_policy==7,"TMB canonical image and expansion policy");
+            else check(error&&!cart_loaded,"TMB rejects malformed size/order/subtype/lines");
+        end
+        clear_error=1;@(negedge clk);clear_error=0;
+        send_byte(MT_LOAD_C64_CRT,0,4198464,"C");
+        check(error&&!cart_loaded,"TMB 4 MiB transfer is rejected at admission");
+
+        rom_batch();
 
         $display("PASS: C64 PRG and CRT content loader");
         $finish;

@@ -791,6 +791,14 @@ static void request_byte(unsigned channel, uint16_t token, bool next)
     tx_pending = true;
     offered_channel = channel;
 }
+static uint32_t activity_reads, activity_writes;
+void c64_iec_service_activity(uint32_t *reads, uint32_t *writes)
+{
+    if (reads != NULL)
+        *reads = activity_reads;
+    if (writes != NULL)
+        *writes = activity_writes;
+}
 static int event(uint32_t value)
 {
     unsigned type = (value >> 12) & 15, channel = (value >> 8) & 15;
@@ -818,6 +826,7 @@ static int event(uint32_t value)
         break;
     case EV_DATA:
     case EV_DATA_EOI:
+        ++activity_writes;
         if (opening || input_channel == 15)
         {
             if (command_size < sizeof command - 1)
@@ -851,6 +860,7 @@ static int event(uint32_t value)
         request_byte(channel, (uint16_t)(value >> 16), true);
         break;
     case EV_TX_ACK:
+        ++activity_reads;
         if (offered && offered_channel == channel && offered_token == (uint16_t)(value >> 16))
         {
             mt_iec_dos_consume(&dos, channel);

@@ -109,6 +109,19 @@ int main(void)
     assert((report.unavailable & MT_TITLE_SID) && !(overlay.owned & MT_TITLE_SID));
     const mt_c64_title_parse_context_t c = {&caps, &base, false, false, false, MT_TITLE_PRG};
     assert(!mt_c64_title_parse(binary, sizeof(binary), &c, &overlay, &report));
+    /* Coexistence images retain explicit requested settings in title files;
+     * legacy images still reject them while a cartridge is attached. */
+    mt_c64_title_defaults(&base);
+    caps.expansion = MT_C64_EXPANSION_CAPS_VALID | MT_C64_EXPANSION_CAPS_REU_16MB |
+        MT_C64_EXPANSION_CAPS_ULTIMATE_AUDIO | MT_C64_EXPANSION_CAPS_CART_COEXIST;
+    const mt_c64_title_parse_context_t cart_context = {&caps, &base, false, true, true, MT_TITLE_CRT};
+    const char memory_cfg[] = "[C64 and Cartridge Settings]\nRAM Expansion Unit=Enabled\nMap Ultimate Audio $DF20-DFFF=Enabled\n";
+    assert(mt_c64_title_parse((const uint8_t *)memory_cfg, sizeof memory_cfg - 1,
+        &cart_context, &overlay, &report));
+    assert(overlay.values.reu && overlay.values.ua && (overlay.owned & MT_TITLE_MEMORY));
+    caps.expansion &= ~MT_C64_EXPANSION_CAPS_CART_COEXIST;
+    assert(!mt_c64_title_parse((const uint8_t *)memory_cfg, sizeof memory_cfg - 1,
+        &cart_context, &overlay, &report));
     puts("C64 title parser, ownership, capability clamps, path confinement and merge writer PASS");
     return 0;
 }

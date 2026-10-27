@@ -38,7 +38,8 @@ module tb_island_map;
                         l=0;fw=0;io=1;src=5;
                         ack=(!w && a<16'hde00 && (a&15)==13) ||
                             (!w && a>=16'hdf00 && (a&31)==0) ||
-                            (w && a>=16'hdf20 && (a&31)==31);
+                            (w && a>=16'hdf20 && (a&31)==31) ||
+                            (w && a==16'hdf1c) || (!w && (a==16'hdf1e || a==16'hdf1f));
                     end
                 end
                 if(w && a==16'hff00) begin l=0;fw=0;io=1;ff=1;src=5;end

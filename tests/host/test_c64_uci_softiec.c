@@ -162,8 +162,10 @@ int main(void)
     CHECK(start(1, 0, NULL, 0, 2) == MT_UCI_REPLY &&
           reply.data_length == strlen("SOFTWARE IEC TARGET V1.0"));
     active = false;
-    CHECK(start(1, 0, NULL, 0, 2) == MT_UCI_REPLY && reply.status[0] == 5);
-    active = true;
+    CHECK(start(1, 0, NULL, 0, 2) == MT_UCI_REPLY &&
+          reply.data_length == strlen("SOFTWARE IEC TARGET V1.0"));
+    /* Exercise the complete shared-DOS command sequence with the physical
+     * serial listener off, including channel leases and RAM LOAD/SAVE. */
     const uint8_t move_address[]={'M','-','W',0x77,0,1,12};
     CHECK(start(0x13,15,move_address,sizeof move_address,4)==MT_UCI_REPLY && dos.current_device==12 && fixture.device==12);
     CHECK(start(0x13,15,(const uint8_t *)"M-E",3,4)==MT_UCI_REPLY);
@@ -291,6 +293,13 @@ int main(void)
     complete();
     CHECK(reply.status[0] == 2 && failures && !fixture_find("0:/media/FAVED.prg"));
     CHECK(!strncmp(dos.status, "25,", 3));
+    CHECK(!active && storage_fault);
+    CHECK(start(1, 0, NULL, 0, 2) == MT_UCI_REPLY && reply.status[0] == 5);
+    CHECK(start(0x10, 1, (const uint8_t *)"DATA", 4, 8) == MT_UCI_REPLY &&
+          reply.status[0] == 5 && !leases && !dos.channels[0].kind);
+    active = true;
+    CHECK(start(1, 0, NULL, 0, 2) == MT_UCI_REPLY && reply.status[0] == 5);
+    active = false;
     fixture.fail_commit = 0;
     storage_fault = false; /* Explicit device9 error recovery. */
     CHECK(start(0x10, 1, (const uint8_t *)"DATA", 4, 8) == MT_UCI_REPLY);

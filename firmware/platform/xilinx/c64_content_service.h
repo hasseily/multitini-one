@@ -17,7 +17,9 @@ typedef enum {
     MT_C64_CONTENT_SERVICE_REJECTED,
     MT_C64_CONTENT_SERVICE_TRANSFER_FAILED,
     MT_C64_CONTENT_SERVICE_REU_CONFLICT,
-    MT_C64_CONTENT_SERVICE_CONFIG_FAILED
+    MT_C64_CONTENT_SERVICE_CONFIG_FAILED,
+    MT_C64_CONTENT_SERVICE_SAVE_FAILED,
+    MT_C64_CONTENT_SERVICE_EXPORT_FAILED
 } mt_c64_content_service_status_t;
 
 typedef struct {
@@ -83,7 +85,31 @@ bool c64_content_service_crt_attached(void);
 /* Read the expansion registers only after a matching C64 ABI has been verified. */
 uint32_t c64_content_service_expansion_caps(void);
 bool c64_content_service_reu_enabled(void);
+/* Effective cartridge permissions, including the legacy image exclusion.
+ * Requested expansion settings remain stored while a mapper inhibits them. */
+uint8_t c64_content_service_crt_expansion_policy(void);
+bool c64_content_service_reu_load_allowed(void);
 const char *c64_content_service_crt_name(void);
+/* EasyFlash flash writes are mirrored into NAME.sav beside the CRT. The FPGA
+ * journals each program/erase; poll drains it and saves after a quiet
+ * interval. Flush drains and saves now; loads, detach and reboot flush first
+ * and refuse with SAVE_FAILED rather than discard unsaved flash changes. */
+void c64_content_service_poll(void);
+int c64_content_service_flush(void);
+bool c64_content_service_save_active(void);
+bool c64_content_service_save_dirty(void);
+bool c64_content_service_save_faulted(void);
+/* Cumulative flash program/erase operations mirrored from the journal. */
+uint32_t c64_content_service_flash_writes(void);
+/* The EasyFlash boot jumper. Disable takes effect at the next C64 reset and
+ * lasts until the C64 image is reloaded, like a jumper left in place. */
+bool c64_content_service_ef_jumper_disabled(void);
+int c64_content_service_set_ef_jumper(bool disabled);
+/* Write the attached flash as NAME-saved.crt beside the CRT (replacing an
+ * earlier export of that name); NAME.sav and the CRT stay unchanged.
+ * exported receives the file name. */
+mt_c64_content_service_result_t c64_content_service_export_crt(
+    char *exported, size_t capacity);
 const char *c64_content_service_status_name(
     mt_c64_content_service_status_t status);
 

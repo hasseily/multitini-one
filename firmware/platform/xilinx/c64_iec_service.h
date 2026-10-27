@@ -5,6 +5,7 @@
 #include "multitini_core_link.h"
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 /* Called on the foreground FatFs owner, never from an IRQ or progress
  * callback. Paths are normalized absolute paths below the configured root.
@@ -34,6 +35,8 @@ int c64_iec_service_reset(void);
 bool c64_iec_service_active(void);
 const char *c64_iec_service_cwd(void);
 const char *c64_iec_service_status(void);
+/* Cumulative bytes sent to (reads) and received from (writes) the C64. */
+void c64_iec_service_activity(uint32_t *reads, uint32_t *writes);
 /* UCI uses the same DOS channels on the same foreground storage owner.
  * A lease prevents native IEC from consuming/mutating that channel while a
  * non-consuming UCI reply is in flight. Reset the target before quiesce. */

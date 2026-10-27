@@ -34,11 +34,13 @@
   },
   "crt_hardware_types": {
     "NORMAL": 0,
+    "FINAL_CARTRIDGE_3": 3,
     "SIMONS_BASIC": 4,
     "OCEAN_TYPE_1": 5,
     "FUN_PLAY": 7,
     "SUPER_GAMES": 8,
     "EPYX_FASTLOAD": 10,
+    "WESTERMANN": 11,
     "FINAL_CARTRIDGE_1_2": 13,
     "C64_GAME_SYSTEM": 15,
     "DINAMIC": 17,
@@ -47,9 +49,17 @@
     "COMAL_80": 21,
     "WATERLOO_BASIC": 22,
     "MIKRO_ASSEMBLER": 28,
+    "EASYFLASH": 32,
     "PROPHET64": 43,
+    "KINGSOFT_BASIC": 54,
     "RGCD": 57,
-    "MAGIC_DESK_2": 85
+    "BLACKBOX_V8": 64,
+    "BLACKBOX_V3": 65,
+    "BLACKBOX_V4": 66,
+    "BLACKBOX_V9": 71,
+    "MAGIC_DESK_2": 85,
+    "MEGABYTER": 86,
+    "TWO_MEGABYTER": 87
   },
   "input_namespaces": {
     "PS2_SET2": "0x00",

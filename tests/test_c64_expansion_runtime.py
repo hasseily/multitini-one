@@ -101,6 +101,7 @@ class C64ExpansionRuntimeTests(unittest.TestCase):
     def test_older_abi_and_missing_capabilities(self): self.run_scenario("gates")
     def test_mode_cycle_and_reu_toggle(self): self.run_scenario("cycle")
     def test_cartridge_conflict_precedes_writes(self): self.run_scenario("conflict")
+    def test_cartridge_coexistence_keeps_requested_settings_and_rollback(self): self.run_scenario("coexist")
     def test_save_failure_preserves_hardware_and_settings(self): self.run_scenario("save-failure")
     def test_partial_capability_preserves_other_saved_preferences(self): self.run_scenario("partial")
     def test_ua_atomic_apply_and_refusals(self): self.run_scenario("ua")

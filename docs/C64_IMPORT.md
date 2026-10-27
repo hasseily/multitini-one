@@ -58,7 +58,10 @@ ROMs at run time.
   source uses `hdl/core/c64/ports/cartridge.sv`, a separately listed local
   compatibility port with its unsynthesizable bare `always` changed to
   `always @*` and two early-referenced net declarations moved before use.
-  Mapper behavior is otherwise unchanged.
+  Initialized clocked block state has explicit static lifetime. The local
+  port also adds or corrects the Westermann, Kingsoft Business Basic,
+  Blackbox V3/V4/V8/V9 and ROM-only Megabyter/TwoMegabyter decoders described in
+  [cartridge compatibility](C64_CARTRIDGE_COMPATIBILITY.md).
 
 The assumption does not cover ROMs, media, generated IP, binaries, logos,
 manuals, or files outside the allowlist. It is an owner-directed project input,
@@ -95,8 +98,11 @@ local port stretches the VIC0-to-VIC3 or CPUC-to-CPUF bus phase across an
 external cartridge-memory cache miss, so neither the VIC nor T65 can consume
 the cache's placeholder byte before PSRAM returns the requested line. This
 source path still requires vendor elaboration and board validation. It explicitly
-compiles `mos6526.v` as SystemVerilog because that upstream file uses block
-declarations despite its `.v` suffix. The local `ports/cpu_6510.vhd` changes
+compiles the local `ports/mos6526.v` as SystemVerilog because the imported file
+uses block declarations despite its `.v` suffix. The local CIA port preserves
+the pinned reference and corrects the timer-latch reload window for CIA1/CIA2
+Timer A and Timer B. Its generation and validation boundaries are described in
+[CIA timer reload correction](C64_CIA.md). The local `ports/cpu_6510.vhd` changes
 the T65 binding to direct entity instantiation because the upstream wrapper
 does not declare a component. The local T65 and VIC ports also correct
 MAME-observed bus timing: NMOS interrupt sampling and BRK vector selection,
@@ -119,11 +125,20 @@ their limits. The other local adaptations provide the ROM-free Xilinx build:
   imported RAM so consecutive cache-copy writes remain aligned with that
   RAM wrapper's delayed address and write enable;
 - `ports/cartridge.sv` is the local synthesis compatibility port of the pinned
-  cartridge mapper, with one procedural-sensitivity fix and two declaration
-  moves; the upstream reference remains unchanged;
+  cartridge mapper, with one procedural-sensitivity fix, two declaration
+  moves, and explicit static lifetime for initialized clocked block state;
+  the latter prevents repeated FC3 initialization in XSim. The upstream
+  reference remains unchanged;
 - `multitini_c64_adapter.sv` supplies main RAM, system and 1541 ROM loading,
   PRG memory injection, conservative CRT mapping, input mapping, reset
   sequencing, serial IEC, raw video, and 48 kHz signed audio samples;
+- `ports/video_sync.vhd` exposes the hsync-locked pixel tick. Its divider,
+  sync and blanking counters advance with completed native core steps, so
+  cartridge memory waits do not insert duplicate pixels into frame capture.
+  The adapter registers `ext_frame_run` on the rising edge before the sync
+  divider uses it on the falling edge. A pixel already in the output pipeline
+  drains once when a wait begins. This preserves the video sample sequence;
+  the existing cartridge wait still stretches native machine time;
 - `multitini_c64_content_loader.sv`, `multitini_c64_cart_memory.sv`, and
   `multitini_c64_run_injector.sv` provide the PRG/CRT stream sink, cartridge
   cache/common-memory bridge, BASIC readiness gate, and `RUN` key injection;
@@ -133,6 +148,14 @@ their limits. The other local adaptations provide the ROM-free Xilinx build:
   and sector-to-GCR buffering; and
 - `multitini_c64_g64_track.sv`, pinned `c1541_direct_gcr.sv`, and its pinned
   `lfsr.v` dependency provide read-only fixed-speed-zone G64 half tracks.
+
+The cartridge-video regression compares a full ordered RGB/DE/HS/VS frame in
+PAL and NTSC across all 16 pixel-phase/wait-length combinations. The original
+always-advancing sampler fails this comparison. The production adapter test
+performs 1,024 delayed cartridge ROM reads in each mode with the display active:
+complete lines retain 504 PAL or 520 NTSC pixels, with no samples emitted during
+extended VIC holds. These are simulation results; the BBC BASIC display fix
+still needs board retesting.
 
 The D64 track geometry and directory-track-first sequence are based on the
 sector-buffer design at MiSTer C64 commit
@@ -165,6 +188,7 @@ feature set. The current firmware and generated interface specification admit
 only these cartridge type IDs and profiles:
 
 - `0` Normal;
+- `3` Final Cartridge III, 64 KiB, subtypes 0 and 1;
 - `4` Simons' BASIC;
 - `5` Ocean type 1;
 - `7` Fun Play;
@@ -186,11 +210,18 @@ The host and HDL validators require the exact CRT header, binary EXROM/GAME
 values, ROM-only CHIP packets, exact mapper sizes and addresses, and a
 mapper-compatible contiguous bank layout. Sparse or out-of-order banks are
 rejected. Zaxxon is normalized only from its specific aligned 4 KiB plus 8 KiB
-plus 8 KiB layout. Types needing writable cartridge RAM or flash, freezer
-controls, or unimplemented peripherals are rejected even when the imported
-mapper contains some related logic. EasyFlash and XBank remain rejected;
-`am29f040.sv` is compiled only because it is an unconditional dependency of
-the local compatibility port.
+plus 8 KiB layout. Types needing writable cartridge RAM or flash or unimplemented
+peripherals are rejected. The local mapper port keeps only admitted cases.
+Cases the loader never admits, cartridge RAM paths, the AM29F040 flash model
+and the bank-translation tables were removed; the loader already stores CHIP
+packets in bank order. FC3 accepts four consecutive 16 KiB
+ROM banks and its software control/NMI register; there is no new physical
+freezer-button action. Unknown cartridge subtypes are rejected. See
+[cartridge compatibility](C64_CARTRIDGE_COMPATIBILITY.md) for REU, UCI and
+Ultimate Audio ownership. EasyFlash (type 32) is admitted with capability
+bit 21 and its own flash emulation and saves; see [EasyFlash](C64_EASYFLASH.md).
+XBank remains rejected. `am29f040.sv` stays in `third_party` as a reference
+and is not compiled.
 
 Validated CRT ROM bytes are normalized into the common 64-bit external-memory
 service. The C64 machine selection now connects that service to the board

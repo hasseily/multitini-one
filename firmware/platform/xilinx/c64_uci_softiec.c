@@ -283,7 +283,9 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
 {
     (void)context;
     mt_iec_dos_t *d = c64_iec_service_dos();
-    if (!d || !c64_iec_service_active())
+    /* The serial listener may be disabled for single-drive software while
+     * UCI keeps using the healthy shared DOS backend. */
+    if (!d)
         return binary(r, 5);
     mt_uci_reply_clear(r);
     if (length < 2)

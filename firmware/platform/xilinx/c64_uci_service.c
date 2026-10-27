@@ -36,6 +36,13 @@ uint32_t c64_uci_read(unsigned o)
 {
     return c64_uci_environment.link->read32(c64_uci_environment.link->context, o);
 }
+bool c64_uci_reu_enabled(void)
+{
+    if (!(c64_uci_read(MT_REG_C64_EXPANSION_CONFIG) & MT_C64_EXPANSION_REU_ENABLE))
+        return false;
+    return !(c64_uci_read(MT_REG_C64_EXPANSION_CAPS) & MT_C64_EXPANSION_CAPS_CART_COEXIST) ||
+           (c64_uci_read(MT_REG_C64_REU_HOST) & MT_C64_REU_HOST_ACTIVE) != 0;
+}
 void c64_uci_write(unsigned o, uint32_t v)
 {
     c64_uci_environment.link->write32(c64_uci_environment.link->context, o, v);
@@ -137,10 +144,9 @@ static bool wildcard(const char *pattern, const char *name)
         pattern++;
     return !*pattern;
 }
-bool c64_uci_path(const char *cwd, const uint8_t *bytes, size_t length, char out[C64_UCI_PATH])
+bool c64_uci_path_text(const uint8_t *bytes, size_t length, char name[C64_UCI_PATH])
 {
-    char name[C64_UCI_PATH], part[256];
-    if (length >= sizeof name)
+    if (length >= C64_UCI_PATH)
         return false;
     size_t n = 0;
     while (n < length && bytes[n]) {
@@ -161,7 +167,12 @@ bool c64_uci_path(const char *cwd, const uint8_t *bytes, size_t length, char out
         size_t count = strcspn(scan, "/");
         bool dot = (count == 1 && scan[0] == '.') ||
                    (count == 2 && scan[0] == '.' && scan[1] == '.');
-        if (count >= sizeof part || (!dot && (scan[count - 1] == '.' || scan[count - 1] == ' ')))
+        if (count >= 256 || (!dot && (scan[count - 1] == '.' || scan[count - 1] == ' ')))
+            return false;
+        char part[256];
+        memcpy(part, scan, count);
+        part[count] = 0;
+        if (!dot && mt_iec_dos_recovery_name(part))
             return false;
         for (size_t i = 0; i < count; i++) {
             bool volume = scan == name && count == 2 && i == 1 && scan[2] == '/';
@@ -171,6 +182,13 @@ bool c64_uci_path(const char *cwd, const uint8_t *bytes, size_t length, char out
         }
         scan += count;
     }
+    return true;
+}
+bool c64_uci_path(const char *cwd, const uint8_t *bytes, size_t length, char out[C64_UCI_PATH])
+{
+    char name[C64_UCI_PATH], part[256];
+    if (!c64_uci_path_text(bytes, length, name))
+        return false;
     const char *p = name, *root = c64_uci_environment.root;
     if (*p == '/') {
         while (*p == '/')
@@ -638,6 +656,8 @@ int c64_uci_service_init(mt_core_link_t *link, const char *root,
 }
 static bool uci_enabled(void)
 {
+    if (c64_uci_read(MT_REG_C64_EXPANSION_CAPS) & MT_C64_EXPANSION_CAPS_CART_COEXIST)
+        return (c64_uci_read(MT_REG_C64_REU_HOST) & MT_C64_REU_HOST_UCI_ACTIVE) != 0;
     return (c64_uci_read(MT_REG_C64_EXPANSION_CONFIG) & MT_C64_EXPANSION_UCI_ENABLE) ||
            (c64_uci_read(MT_REG_C64_UCI_STATUS) & MT_C64_UCI_STATUS_ENABLED);
 }
@@ -646,7 +666,9 @@ void c64_uci_service_refresh_control(void)
     if (!c64_uci_environment.available)
         return;
     uint32_t caps = c64_uci_read(MT_REG_C64_EXPANSION_CAPS);
-    uint32_t desired = engine.targets[5].begin && c64_iec_service_active()
+    /* SoftIEC discovery describes storage availability, independently of
+     * whether the directory drive is listening on the physical IEC bus. */
+    uint32_t desired = engine.targets[5].begin && c64_iec_service_dos()
                            ? c64_iec_service_device_number() : MT_C64_UCI_CONTROL_DEFAULT;
     if (uci_enabled()) {
         if (caps & MT_C64_EXPANSION_CAPS_UCI_RAM_DMA)

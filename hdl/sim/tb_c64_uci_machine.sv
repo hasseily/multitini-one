@@ -202,6 +202,7 @@ module tb_c64_uci_machine #(parameter integer NTSC=0);
             force dut.cpu_bus_valid=0;force dut.cpu_bus_addr=16'hdf1c;
             force dut.cart_iof=1;force dut.reu_dma_req=0;
             force dut.cart_loaded=0;force dut.cart_loading=0;force dut.loader_cart_id=0;
+            force dut.loader_cart_expansion_policy=3'b111;
             repeat(4)@(negedge clk);
             if(!dut.uci_active||!dut.uci_io_select||dut.uci_suspended)$fatal(1,"UCI no-cart decode");
             prior_epoch=uci_status[25:22];
@@ -213,16 +214,28 @@ module tb_c64_uci_machine #(parameter integer NTSC=0);
             force dut.cpu_bus_addr=16'hdf1b;#1;if(!dut.uci_io_select)$fatal(1,"UCI DF1B boundary missing");
             force dut.reu_dma_req=1;#1;if(dut.uci_io_select||!dut.uci_active)$fatal(1,"DMA must release UCI IO2 without resetting endpoint");
             force dut.reu_dma_req=0;
-            force dut.loader_cart_id=1;repeat(4)@(negedge clk);
+            force dut.loader_cart_id=1;force dut.loader_cart_expansion_policy=3'b000;repeat(4)@(negedge clk);
             if(dut.uci_active||dut.uci_io_select||!dut.uci_suspended||uci_status[25:22]==prior_epoch)
                 $fatal(1,"Non-generic cart must suspend/reset UCI");
+            // EasyFlash's policy allows UCI and moves it to I/O1 at $DE1B.
+            force dut.loader_cart_id=32;force dut.loader_cart_expansion_policy=3'b010;repeat(4)@(negedge clk);
+            prior_epoch=uci_status[25:22];
+            if(!dut.uci_active||dut.uci_io_select||dut.uci_suspended)$fatal(1,"EasyFlash keeps UCI off IO2");
+            force dut.cart_iof=0;force dut.cart_ioe=1;#1;
+            if(!dut.uci_io_select)$fatal(1,"EasyFlash moves UCI to $DE1C");
+            force dut.cpu_bus_addr=16'hde1a;#1;if(dut.uci_io_select)$fatal(1,"UCI owns EasyFlash $DE1A");
+            force dut.cpu_bus_addr=16'hde1b;#1;if(!dut.uci_io_select)$fatal(1,"UCI $DE1B boundary missing");
+            repeat(4)@(negedge clk);
+            if(uci_status[25:22]!=prior_epoch)$fatal(1,"EasyFlash decode must not reset UCI");
+            release dut.cart_ioe;force dut.cart_iof=1;force dut.cpu_bus_addr=16'hdf1b;
             force dut.cart_loaded=0;force dut.loader_cart_id=0;repeat(4)@(negedge clk);
             prior_epoch=uci_status[25:22];force dut.cart_loading=1;repeat(4)@(negedge clk);
             if(dut.uci_active||dut.uci_io_select||!dut.uci_suspended||uci_status[25:22]==prior_epoch)
                 $fatal(1,"Cartridge load must suspend/reset UCI");
             release dut.cpu_bus_valid;release dut.cpu_bus_addr;release dut.cart_iof;
             release dut.reu_dma_req;release dut.cart_loaded;release dut.cart_loading;release dut.loader_cart_id;
-            $display("UCI_DECODE PASS checks=7 NTSC=%0d",NTSC);
+            release dut.loader_cart_expansion_policy;
+            $display("UCI_DECODE PASS checks=11 NTSC=%0d",NTSC);
         end
     endtask
     initial begin

@@ -125,7 +125,7 @@ def main():
                 if path.name == 'fpga64_sid_iec.vhd': path = out / 'fpga64_sid_iec_observed.vhd'
                 elif path.name == 'cpu_6510.vhd': path = out / 'cpu_6510_observed.vhd'
                 vhdl.append(path)
-    sv = [ROOT / p for p in ('third_party/c64/upstream/rtl/mos6526.v',
+    sv = [ROOT / p for p in ('hdl/core/c64/ports/mos6526.v',
         'hdl/core/c64/ports/sid_dac.sv', 'hdl/core/c64/ports/sid_filter.sv',
         'third_party/c64/upstream/rtl/sid/sid_envelope.sv', 'hdl/core/c64/ports/sid_tables.sv',
         'hdl/core/c64/ports/sid_voice.sv', 'hdl/core/c64/ports/sid_top.sv',

@@ -68,6 +68,8 @@ int main(void) {
     assert(mt_c64_expansion_restore(3,false,true,true,&c)==3);
     assert(mt_c64_expansion_restore(3,false,true,false,&c)==0x1b);
     assert(mt_c64_expansion_restore(7,true,false,false,&c)==8);
+    c.expansion |= MT_C64_EXPANSION_CAPS_CART_COEXIST;
+    assert(mt_c64_expansion_restore(3,false,true,true,&c)==0x1b);
     reads = 0;
     live_abi = 26;
     expansion = UINT32_MAX;

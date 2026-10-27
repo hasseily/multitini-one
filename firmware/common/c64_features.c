@@ -126,7 +126,8 @@ uint32_t mt_c64_expansion_restore(uint8_t sid, bool reu, bool ua,
     uint32_t config = (sid == 2 || sid == 3) &&
         (caps->expansion & MT_C64_EXPANSION_CAPS_DUAL_SID) ? sid : 0;
     /* Restore never changes the global UA preference in persistent storage. */
-    const bool effective_ua = ua && caps->ultimate_audio && !cartridge;
+    const bool effective_ua = ua && caps->ultimate_audio &&
+        (!cartridge || (caps->expansion & MT_C64_EXPANSION_CAPS_CART_COEXIST));
     if ((reu || effective_ua) && (caps->expansion & MT_C64_EXPANSION_CAPS_REU_16MB)) {
         config |= MT_C64_EXPANSION_REU_ENABLE;
         if (effective_ua) config |= MT_C64_EXPANSION_ULTIMATE_AUDIO_ENABLE;

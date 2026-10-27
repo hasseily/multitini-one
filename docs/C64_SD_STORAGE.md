@@ -10,6 +10,30 @@ Storage supports exFAT, RTC-backed FAT timestamps, journaled writes to normal
 D64 images, safe media barriers, and read-only G64 images. The board-confirmed
 scope and remaining limits are recorded at the end of this document.
 
+## SD directory drive
+
+In M0.7.1dev3, C64 Options includes **SD directory drive**, with **On** and
+**Off** choices. The default is **On**, preserving the SD directory endpoint
+at device 9. The choice is saved and survives resets, disk changes and core
+changes. It is separate from the disk image mounted in drive 8.
+
+Some loaders require exactly one drive on the IEC bus. For
+`fairlight-2600.d64`, set **SD directory drive** to **Off** before entering
+`LOAD"*",8` and then `RUN`. This removes the directory endpoint from the bus;
+drive 8 remains available. Restart a loader that already reported more than
+one drive.
+
+Turning the option Off does not turn off the Command Interface or its rooted
+SD storage APIs, including SoftIEC. Changing the option closes pending
+storage operations safely before changing the bus endpoint. A failed close,
+start or settings save reports an error. Storage faults still require recovery.
+The setting uses a previously reserved bit in the existing settings format;
+older settings retain the default On behavior.
+
+Focused host tests cover persistence, menu state, reset/media transitions,
+failed transitions and UCI storage with the bus endpoint disabled. The new
+option still needs the reported loader retest on the board.
+
 ## Card layout
 
 Keep golden-updater files at the SD-card root and put each machine's package,

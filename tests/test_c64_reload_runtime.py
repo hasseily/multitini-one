@@ -42,6 +42,7 @@ static size_t event_count;
 static void event(char c) { assert(event_count+1<sizeof(events));events[event_count++]=c;events[event_count]=0; }
 static bool shell_is_c64(void) { return is_c64; }
 static bool c64_uci_service_reload_required(void) { return reload_required; }
+static int c64_content_service_flush(void) { return 0; }
 static uint32_t shell_read(uint32_t reg) { assert(reg==MT_REG_CONTROL);return control; }
 static uint64_t monotonic_ms(void *p) { assert(!p);return now_ms; }
 static void usb_hid_service_poll_deferred(void) { ++polls;now_ms+=100U; }

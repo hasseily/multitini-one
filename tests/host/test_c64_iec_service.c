@@ -593,6 +593,8 @@ int main(void)
     CHECK((word & 255) == prg[2]);
     CHECK(c64_iec_service_quiesce() == 0);
     CHECK(c64_iec_service_channel_acquire(0));
+    CHECK(!c64_iec_service_active() && control == 0 &&
+          c64_iec_service_dos() == shared);
     CHECK(mt_iec_dos_open(shared, 0, (const uint8_t *)"HELLO", 5) == 0);
     c64_iec_service_write_failure(25);
     CHECK(c64_iec_service_dos() == NULL);

@@ -139,6 +139,15 @@ void mt_system_frontend_apply(mt_system_frontend_t *frontend,
     view->system_items = frontend->items;
     view->system_item_count = sizeof(labels) / sizeof(labels[0]) - MT_MENU_MAX_ABOUT_ITEMS -
         (snapshot->golden_update_present ? 0U : 1U);
+    frontend->items[view->system_item_count++] = (mt_menu_item_t){
+        .label = "Drive activity",
+        .value = view->settings_drive_activity ? "On" : "Off",
+        .help = "Show the active drive, its LED and read/write lights in the top-right corner while they work.",
+        .action = MT_MENU_ACTION_TOGGLE_DRIVE_ACTIVITY,
+        .enabled = true,
+        .value_color = MT_UI_COLOR_TEXT,
+        .control = MT_MENU_CONTROL_CHECKBOX,
+        .control_value = view->settings_drive_activity ? 1U : 0U};
     if (snapshot->network_available) {
         size_t n = view->system_item_count;
         frontend->items[n++] = (mt_menu_item_t){

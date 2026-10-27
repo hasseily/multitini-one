@@ -10,6 +10,7 @@ static size_t file_size,file_at;static unsigned holds,fences,reads,writes,hold_w
 static bool held,enabled=true,write_file,close_error,protected_path,file_live;
 c64_uci_environment_t c64_uci_environment;
 struct mt_sd_file {int dummy;};static struct mt_sd_file file;
+bool c64_uci_reu_enabled(void){return enabled;}
 uint32_t c64_uci_read(unsigned a){assert(a==MT_REG_C64_EXPANSION_CONFIG);return enabled?MT_C64_EXPANSION_REU_ENABLE:0;}
 int c64_uci_service_hold_begin(void){holds++;held=true;if(hold_wait){hold_wait--;return 1;}return 0;}
 void c64_uci_service_hold_end(void){held=false;}

@@ -80,6 +80,7 @@ module multitini_c64_1541 #(
     output logic        media_dirty,
     output logic        media_eject_pending,
     output logic        drive_led,
+    output logic        drive_motor,
     output logic        error
 );
     import multitini_c64_defs_pkg::*;
@@ -168,7 +169,10 @@ module multitini_c64_1541 #(
     assign parallel_active = parallel_enable && !drive_reset;
     assign par_data_out = parallel_active ? drive_logic_par_data_out : 8'hFF;
     assign par_stb_out  = parallel_active ? drive_logic_par_stb_out : 1'b1;
-    assign drive_led = drive_activity || (mounted && disk_busy);
+    // VIA2 port B reads as one while its direction is input, including reset.
+    // Report the LED and spindle only while the drive CPU is running.
+    assign drive_led = !drive_reset && (drive_activity || (mounted && disk_busy));
+    assign drive_motor = !drive_reset && motor_on;
     assign stepper_move = stepper_phase - previous_stepper_phase;
     assign drive_data_from_disk = g64_mode ? g64_data_from_disk :
                                            d64_data_from_disk;

@@ -102,10 +102,12 @@ module tb_c64_ua_cache;
         if(samples[15:0]!==16'haa00)$fatal(1,"Post-B guard allowed stale data");checks=checks+1;
         flush=0;
         // Registered snoop and logical fetch on the same clock: the resident
-        // check must reject before the valid bit clears on that edge.
+        // check must reject before the valid bit clears on that edge. The
+        // queued write still fences any read, so no sample may appear once
+        // the shared extractor has served the fetch.
         put(0,64'h00000000000000bb,1);
         fetch_address[23:0]=0;fetch=1;step();fetch=0;
-        if(sample_ready[0])$fatal(1,"Same-edge resident snoop missed");
+        repeat(8)begin if(sample_ready[0])$fatal(1,"Same-edge resident snoop missed");step();end
         flush=1;get(0,16'hbb00);flush=0;
         // Fill a real REU read line, modify DDR externally under reset/hold,
         // and require invalidate ACK to remove that resident cached value.

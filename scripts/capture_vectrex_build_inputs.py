@@ -96,7 +96,7 @@ def inputs(machine: str) -> list[Path]:
         # Retain the exact originals alongside the local conformance ports.
         paths.update(ROOT / "third_party/c64/upstream/rtl" / name for name in (
             "t65/T65.vhd", "cpu_6510.vhd", "fpga64_sid_iec.vhd",
-            "fpga64_rgbcolor.vhd", "video_vicII_656x.vhd"))
+            "fpga64_rgbcolor.vhd", "video_vicII_656x.vhd", "video_sync.vhd"))
         paths.update(path for path in (ROOT / "third_party/mame_reference").rglob("*")
                      if path.is_file() and "__pycache__" not in path.parts)
         paths.update(path for path in (ROOT / "tests/c64_mame").rglob("*")
@@ -110,7 +110,8 @@ def inputs(machine: str) -> list[Path]:
             "test_c64_reu.py", "test_c64_reu_machine.py",
             "test_c64_ddr.py", "test_c64_reu_cache.py", "test_c64_reu_native.py",
             "test_c64_expansion_infrastructure.py",
-            "check_c64_local_ram_synthesis.tcl", "port_c64_vic.py"))
+            "check_c64_local_ram_synthesis.tcl", "port_c64_vic.py", "port_c64_cia.py"))
+        paths.add(ROOT / "third_party/c64/upstream/rtl/mos6526.v")
         paths.add(ROOT / "hdl/sim/tb_control_regs.sv")
         paths.update((ROOT / "scripts").glob("test_c64_machine*.py"))
         paths.update((ROOT / "scripts").glob("*c64_mame*.py"))
@@ -207,7 +208,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--machine", choices=("C64", "GBC", "VECTREX", "GENESIS", "APPLE_IIGS", "NES", "SUPERVISOR"))
     parser.add_argument("--c64-video-standard", choices=("PAL", "NTSC"), default="PAL")
-    parser.add_argument("--c64-timing-policy", choices=("default", "dev8-over-0.050"), default="default")
+    parser.add_argument("--c64-timing-policy", choices=("default", "dev8-over-0.050", "dev3-over-0.010"), default="default")
     parser.add_argument("--gbc-psram", action="store_true")
     parser.add_argument("--genesis-pal", action="store_true")
     parser.add_argument("--output", required=True, type=Path)

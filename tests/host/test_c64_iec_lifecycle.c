@@ -17,12 +17,23 @@ static bool gameboy_service_initialized, genesis_service_initialized, nes_servic
 static bool c64_debug_pause_active, usb_sd_core_stopped, usb_sd_previously_reset;
 static bool c64_uci_initialized, c64_title_initialized, c64_title_foreground, usb_sd_modal;
 static char c64_launch_disk_name[256];
+static struct { bool c64_directory_drive_off; } persistent_settings;
+static int uci_error, enable_error, restore_error;
+static bool save_ok, directory_active;
+static unsigned saves, status_count, error_count, refresh_count, quiesce_count;
+static const char *last_status;
 /* This older fixture isolates IEC/reset orchestration. UCI/native transaction
  * cleanup and USB cancellation have their own production service fixtures. */
-static int quiesce_c64_uci(void) {return 0;}
+static int quiesce_c64_uci(void) {return uci_error;}
 static int retry_c64_uci(void) {return quiesce_c64_uci();}
 static bool c64_uci_service_reload_required(void) {return false;}
-static void c64_uci_service_refresh_control(void) {}
+/* No EasyFlash is attached in these drive lifecycle scenarios. */
+static int c64_content_service_flush(void) {return 0;}
+static void c64_uci_service_refresh_control(void) {++refresh_count;}
+static void set_supervisor_status(const char *status) {last_status = status; ++status_count;}
+static void set_supervisor_error(const char *status) {last_status = status; ++error_count;}
+static void set_supervisor_warning(const char *status) {set_supervisor_error(status);}
+static bool save_persistent_settings(void) {++saves; return save_ok;}
 /* Ambiguous native-token recovery is exercised by test_c64_reload_runtime.
  * It must never be selected by these normal reset/IEC scenarios. */
 static int quiesce_c64_for_reload(void) {assert(0);return -1;}
@@ -69,13 +80,15 @@ static bool c64_iec_service_available(void)
 static int c64_iec_service_quiesce(void)
 {
     mark('q');
-    return directory_error;
+    directory_active = false;
+    return ++quiesce_count > 1 && restore_error ? restore_error : directory_error;
 }
 static int c64_iec_service_enable(bool on)
 {
     assert(on);
     mark('e');
-    return 0;
+    if (!enable_error) directory_active = true;
+    return enable_error;
 }
 static const char *c64_iec_service_status(void)
 {
@@ -191,6 +204,12 @@ static void reset_fixture(void)
     available = menu_ok = true;
     c64_core_reset_active = false;
     c64_iec_initialized = c64_services_initialized = true;
+    c64_uci_initialized = true;
+    persistent_settings.c64_directory_drive_off = false;
+    uci_error = enable_error = restore_error = 0;
+    save_ok = directory_active = true;
+    saves = status_count = error_count = refresh_count = quiesce_count = 0;
+    last_status = NULL;
 }
 int main(void)
 {
@@ -274,6 +293,75 @@ int main(void)
     reset_fixture();
     available = false;
     assert(quiesce_c64_directory() == 0 && resume_c64_directory() == 0 && !trace[0]);
+    ++cases;
+    reset_fixture();
+    assert(change_c64_directory_drive() && persistent_settings.c64_directory_drive_off);
+    assert(!directory_active && saves == 1 && status_count == 1 && !error_count && !strcmp(trace, "q"));
+    assert(strstr(last_status, "Off") && refresh_count == 2);
+    ++cases;
+    trace_size = 0; trace[0] = 0;
+    assert(resume_c64_directory() == 0 && resume_c64_directory() == 0 && !trace[0]);
+    assert(!directory_active && refresh_count == 4);
+    ++cases;
+    assert(change_c64_directory_drive() && !persistent_settings.c64_directory_drive_off);
+    assert(directory_active && saves == 2 && status_count == 2 && !strcmp(trace, "qe"));
+    ++cases;
+    reset_fixture();
+    persistent_settings.c64_directory_drive_off = true;
+    directory_active = false;
+    assert(set_core_reset_request(true) == 0 && !strcmp(trace, "qdanr"));
+    trace_size = 0; trace[0] = 0;
+    assert(set_core_reset_request(false) == 0 && !strcmp(trace, "u") && !directory_active);
+    ++cases;
+    reset_fixture();
+    persistent_settings.c64_directory_drive_off = true;
+    assert(prepare_c64_content_change() && finish_c64_content_change() && !strcmp(trace, "qdrb"));
+    assert(persistent_settings.c64_directory_drive_off && !directory_active);
+    ++cases;
+    reset_fixture();
+    persistent_settings.c64_directory_drive_off = true;
+    assert(mount_c64_disk("SUB/DISK.D64") == 0 && !strcmp(trace, "qm"));
+    assert(!directory_active);
+    ++cases;
+    reset_fixture();
+    uci_error = -1;
+    assert(!change_c64_directory_drive() && !trace[0] && !saves && !status_count && error_count == 1);
+    assert(!persistent_settings.c64_directory_drive_off && directory_active);
+    ++cases;
+    reset_fixture();
+    directory_error = 25;
+    assert(!change_c64_directory_drive() && !strcmp(trace, "q") && !saves && !status_count);
+    assert(!persistent_settings.c64_directory_drive_off && error_count == 1);
+    ++cases;
+    reset_fixture();
+    persistent_settings.c64_directory_drive_off = true;
+    directory_active = false;
+    enable_error = -1;
+    assert(!change_c64_directory_drive() && !strcmp(trace, "qeq") && !saves && !status_count);
+    assert(persistent_settings.c64_directory_drive_off && !directory_active && error_count == 1);
+    ++cases;
+    reset_fixture();
+    save_ok = false;
+    assert(!change_c64_directory_drive() && !strcmp(trace, "qqe") && saves == 1 && !status_count);
+    assert(!persistent_settings.c64_directory_drive_off && directory_active && error_count == 1);
+    ++cases;
+    reset_fixture();
+    persistent_settings.c64_directory_drive_off = true;
+    directory_active = false;
+    save_ok = false;
+    assert(!change_c64_directory_drive() && !strcmp(trace, "qeq") && saves == 1 && !status_count);
+    assert(persistent_settings.c64_directory_drive_off && !directory_active && error_count == 1);
+    ++cases;
+    reset_fixture();
+    save_ok = false;
+    restore_error = 25;
+    assert(!change_c64_directory_drive() && !strcmp(trace, "qq") && !status_count);
+    assert(!persistent_settings.c64_directory_drive_off && !directory_active);
+    assert(strstr(last_status, "restore failed"));
+    ++cases;
+    reset_fixture();
+    available = false;
+    assert(!change_c64_directory_drive() && !trace[0] && !saves && !status_count && error_count == 1);
     ++cases;
     printf("PASS C64 IEC lifecycle: %u scenarios\n", cases);
     return 0;

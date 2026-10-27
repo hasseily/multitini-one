@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "c64_uci_internal.h"
+#include "c64_iec_service.h"
 static void observe_storage(void);
 #define UCI_STORAGE_OBSERVE() observe_storage()
 #include "c64_uci_storage_fixture.h"
@@ -16,6 +17,8 @@ static unsigned native_pending, native_delay, native_ops, guest_resets;
 static uint32_t native_op;
 static bool native_stall, native_drop;
 static bool watch_storage, iec_active = true;
+static bool iec_ready = true;
+static mt_iec_dos_t iec_dos;
 static unsigned iec_address = 9;
 static unsigned observed_storage;
 static bool acknowledge_erase = true;
@@ -73,6 +76,7 @@ static void write32(void *context, uint32_t offset, uint32_t value)
 {
     (void)context;
     writes++;
+    const uint32_t previous = regs[offset / 4];
     regs[offset / 4] = value;
     if (emulate_ram_stream && offset == MT_REG_COMMAND_DOORBELL) {
         const uint32_t op = regs[MT_REG_COMMAND_OPCODE / 4];
@@ -111,6 +115,8 @@ static void write32(void *context, uint32_t offset, uint32_t value)
         else regs[MT_REG_C64_CART_ERASE_STATUS / 4] |= MT_C64_CART_ERASE_BUSY;
     } else if (offset == MT_REG_C64_REU_HOST) {
         regs[offset / 4] |= MT_C64_REU_HOST_IDLE;
+        regs[offset / 4] |= previous & (MT_C64_REU_HOST_ACTIVE |
+            MT_C64_REU_HOST_UA_ACTIVE | MT_C64_REU_HOST_UCI_ACTIVE);
         if (acknowledge_fence)
             regs[offset / 4] |= (value & 15) << 8;
     } else if (offset == MT_REG_C64_UCI_RAM_READ) {
@@ -168,6 +174,10 @@ bool c64_iec_service_active(void)
 {
     return iec_active;
 }
+mt_iec_dos_t *c64_iec_service_dos(void)
+{
+    return iec_ready ? &iec_dos : NULL;
+}
 static mt_core_link_t link;
 static mt_uci_reply_t reply;
 static uint8_t command[896];
@@ -182,6 +192,7 @@ static void setup(void)
     usec = 0;
     watch_storage = false;
     iec_active = true;
+    iec_ready = true;
     iec_address = 9;
     observed_storage = 0;
     drains = 0;
@@ -509,7 +520,7 @@ static void copy_home_validation(void)
     finish(&dos, start(&dos, 0x17, NULL, 0));
     status("00,OK");
     finish(&dos, start(&dos, 0x12, NULL, 0));
-    assert(reply.data_length == 5 && !memcmp(reply.data, "/SUB/", 5));
+    assert(reply.data_length == 8 && !memcmp(reply.data, "/SD/SUB/", 8));
     fixture_add("0:/media/file", false, (const uint8_t *)"x", 1);
     fixture_add("0:/media/secret.mtj", true, NULL, 0);
     const char *invalid[] = {"0:/media/missing", "0:/media/file", "0:/media/secret.mtj"};
@@ -518,13 +529,13 @@ static void copy_home_validation(void)
         finish(&dos, start(&dos, 0x17, NULL, 0));
         status("83,NO SUCH DIRECTORY");
         finish(&dos, start(&dos, 0x12, NULL, 0));
-        assert(reply.data_length == 5 && !memcmp(reply.data, "/SUB/", 5));
+        assert(reply.data_length == 8 && !memcmp(reply.data, "/SD/SUB/", 8));
     }
     c64_uci_service_set_home("0:/media");
     finish(&dos, start(&dos, 0x17, NULL, 0));
     status("00,OK");
     finish(&dos, start(&dos, 0x12, NULL, 0));
-    assert(reply.data_length == 1 && reply.data[0] == '/');
+    assert(reply.data_length == 4 && !memcmp(reply.data, "/SD/", 4));
     /* A new scan may not discard an existing handle after a failed close. */
     assert(start(&dos, 0x13, NULL, 0) == MT_UCI_WAIT);
     directory_close_failures = 1;
@@ -685,10 +696,19 @@ static void reviewer_regressions(void)
     assert(regs[MT_REG_C64_UCI_CONTROL / 4] == (9U | MT_C64_UCI_CONTROL_HOLD | MT_C64_UCI_CONTROL_FREEZE | MT_C64_UCI_CONTROL_IRQ));
     iec_active = false;
     c64_uci_service_refresh_control();
+    assert(regs[MT_REG_C64_UCI_CONTROL / 4] == (9U | MT_C64_UCI_CONTROL_HOLD | MT_C64_UCI_CONTROL_FREEZE | MT_C64_UCI_CONTROL_IRQ));
+    /* The serial drive list omits the listener, but UCI storage discovery
+     * still reports the healthy backend. A storage fault hides that backend. */
+    mt_uci_target_t serial_control = c64_uci_control_target();
+    finish(&serial_control, start(&serial_control, 0x29, NULL, 0));
+    assert(reply.data_length == 4 && reply.data[0] == 1 && reply.data[2] == 8);
+    iec_ready = false;
+    c64_uci_service_refresh_control();
     assert((regs[MT_REG_C64_UCI_CONTROL / 4] & 31U) == 31U);
+    iec_ready = true;
     regs[MT_REG_C64_EXPANSION_CONFIG / 4] &= ~MT_C64_EXPANSION_UCI_ENABLE;
     c64_uci_service_refresh_control();
-    assert(regs[MT_REG_C64_UCI_CONTROL / 4] == (31U | MT_C64_UCI_CONTROL_HOLD));
+    assert(regs[MT_REG_C64_UCI_CONTROL / 4] == (9U | MT_C64_UCI_CONTROL_HOLD));
     regs[MT_REG_C64_UCI_CONTROL / 4] &= ~MT_C64_UCI_CONTROL_HOLD;
 
     fixture_add("0:/uci_temp", true, NULL, 0);
@@ -895,8 +915,42 @@ static void wrapper_failure_recovery(void)
     assert((regs[MT_REG_C64_UCI_STATUS / 4] & 3U) == 3U);
     puts("UCI wrapper recovery: DOS GEOS live/released close failures, Control named REU owner, Control GCR late fence ACK passed");
 }
+static void effective_expansion_policy(void)
+{
+    setup();
+    assert(c64_uci_reu_enabled()); /* Older image: requested state is authoritative. */
+    regs[MT_REG_C64_EXPANSION_CAPS / 4] |= MT_C64_EXPANSION_CAPS_CART_COEXIST |
+        MT_C64_EXPANSION_CAPS_UCI_RAM_DMA | MT_C64_EXPANSION_CAPS_UCI_C64_IRQ;
+    assert(!c64_uci_reu_enabled());
+    mt_uci_target_t dos = c64_uci_dos_target(0);
+    fixture_add("0:/media/policy.reu", false, (const uint8_t *)"x", 1);
+    open_file(&dos, "policy.reu", 1);
+    const uint8_t request[] = {0, 0, 0, 0, 1, 0, 0, 0};
+    finish(&dos, start(&dos, 0x21, request, sizeof request));
+    status("98,FUNCTION PROHIBITED");
+    assert(drains == 0 && !(regs[MT_REG_C64_UCI_CONTROL / 4] & MT_C64_UCI_CONTROL_HOLD));
+    finish(&dos, start(&dos, 3, NULL, 0)); status("00,OK");
+    c64_uci_service_set_reu_image("0:/media/policy.reu");
+    assert(c64_uci_named_reu_begin(false, &reply) == MT_UCI_REPLY);
+    named_failure("84,REU NOT ENABLED", 254);
+    c64_uci_service_refresh_control();
+    const uint32_t controls = MT_C64_UCI_CONTROL_FREEZE | MT_C64_UCI_CONTROL_IRQ;
+    assert(!(regs[MT_REG_C64_UCI_CONTROL / 4] & controls));
+    regs[MT_REG_C64_REU_HOST / 4] |= MT_C64_REU_HOST_ACTIVE | MT_C64_REU_HOST_UCI_ACTIVE;
+    assert(c64_uci_reu_enabled());
+    c64_uci_service_refresh_control();
+    assert((regs[MT_REG_C64_UCI_CONTROL / 4] & controls) == controls);
+    open_file(&dos, "policy.reu", 1);
+    finish(&dos, start(&dos, 0x21, request, sizeof request)); status("00,OK");
+    assert(reu[0] == 'x' && drains != 0);
+    finish(&dos, start(&dos, 3, NULL, 0)); status("00,OK");
+    regs[MT_REG_C64_EXPANSION_CONFIG / 4] &= ~MT_C64_EXPANSION_REU_ENABLE;
+    assert(!c64_uci_reu_enabled());
+    dos.reset(dos.context);
+}
 int main(void)
 {
+    effective_expansion_policy();
     palette_and_drive_control();
     erase_abort_fault_retention();
     reboot_signature_and_hold();
@@ -953,9 +1007,9 @@ int main(void)
     finish(&second, start(&second, 0x11, "SUB", 3));
     status("00,OK");
     finish(&dos, start(&dos, 0x12, NULL, 0));
-    assert(reply.data_length == 1 && reply.data[0] == '/');
+    assert(reply.data_length == 4 && !memcmp(reply.data, "/SD/", 4));
     finish(&second, start(&second, 0x12, NULL, 0));
-    assert(reply.data_length == 5 && !memcmp(reply.data, "/SUB/", 5));
+    assert(reply.data_length == 8 && !memcmp(reply.data, "/SD/SUB/", 8));
     finish(&dos, start(&dos, 11, "one.prg\0SUB/copy.prg", 20));
     status("00,OK");
     fixture_file *copy = fixture_find("0:/media/SUB/copy.prg");

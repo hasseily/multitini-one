@@ -10,6 +10,7 @@ module tb_memory_cdc;
     logic [7:0] core_request_wstrb = 8'd0;
     logic core_request_valid = 1'b0;
     logic core_request_ready;
+    logic core_busy, memory_busy;
     logic [63:0] core_response_rdata;
     logic core_response_valid;
     logic memory_clk = 1'b0;

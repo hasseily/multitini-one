@@ -76,7 +76,7 @@ def main():
             elif section=='[c64]' and line and not line.startswith('#'):
                 src=(ROOT/'hdl'/line.split('|')[0].strip()).resolve()
                 if src.suffix=='.vhd':vhdl.append(src)
-        sv=[ROOT/path for path in ('third_party/c64/upstream/rtl/mos6526.v','hdl/core/c64/ports/sid_dac.sv','hdl/core/c64/ports/sid_filter.sv','third_party/c64/upstream/rtl/sid/sid_envelope.sv','hdl/core/c64/ports/sid_tables.sv','hdl/core/c64/ports/sid_voice.sv','hdl/core/c64/ports/sid_top.sv', 'hdl/core/c64/multitini_c64_sid_array.sv','hdl/core/c64/multitini_c64_local_ram.sv','hdl/core/c64/multitini_c64_fio_port.sv','hdl/sim/tb_c64_ua_irq.sv')]
+        sv=[ROOT/path for path in ('hdl/core/c64/ports/mos6526.v','hdl/core/c64/ports/sid_dac.sv','hdl/core/c64/ports/sid_filter.sv','third_party/c64/upstream/rtl/sid/sid_envelope.sv','hdl/core/c64/ports/sid_tables.sv','hdl/core/c64/ports/sid_voice.sv','hdl/core/c64/ports/sid_top.sv', 'hdl/core/c64/multitini_c64_sid_array.sv','hdl/core/c64/multitini_c64_local_ram.sv','hdl/core/c64/multitini_c64_fio_port.sv','hdl/sim/tb_c64_ua_irq.sv')]
         sv += [cp/f'multitini_c64_{name}.sv' for name in ('cpu_island','cpu_proxy','island_governor','island_map','island_memory','nmi_delivery','turbo_regs','reu','ua','ua_voice','ua_fetch','ua_mix')]
         sources=[*sv,*vhdl,Path(__file__),ROOT/'scripts/test_c64_machine_schedule.py',ROOT/'scripts/test_c64_turbo_exact.py',ROOT/'scripts/test_c64_turbo_ordering.py',ROOT/'scripts/run_native_tool.py',ROOT/'hdl/hdl_sources.txt',cp/'multitini_c64_adapter.sv']
         for src in sources:

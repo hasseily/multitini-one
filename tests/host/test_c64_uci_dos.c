@@ -16,19 +16,90 @@ mt_sd_result_t mt_sd_directory_next(mt_sd_directory_t *d, mt_sd_info_t *info)
         info->attributes |= 7; /* read-only, hidden and system all survive UCI. */
     return r;
 }
+static void check_path(mt_uci_target_t *dos, const char *expected)
+{
+    finish(dos, start(dos, 0x12, NULL, 0));
+    status("00,OK");
+    assert(reply.data_length == strlen(expected));
+    assert(!memcmp(reply.data, expected, reply.data_length));
+}
+static void change_path(mt_uci_target_t *dos, const char *name, const char *expected)
+{
+    finish(dos, start(dos, 0x11, name, strlen(name)));
+    status("00,OK");
+    check_path(dos, expected);
+}
+static void virtual_devices(void)
+{
+    setup();
+    fixture_find("0:/media/SUB")->exists = false;
+    mt_uci_target_t dos = c64_uci_dos_target(0);
+    mt_uci_target_t second = c64_uci_dos_target(1);
+    check_path(&dos, "/SD/");
+    change_path(&dos, "/", "/");
+    finish(&dos, start(&dos, 0x13, NULL, 0)); status("00,OK");
+    finish(&dos, start(&dos, 0x14, NULL, 0));
+    assert(reply.data_length == 3 && reply.data[0] == 16 &&
+           !memcmp(reply.data + 1, "SD", 2) && reply.more);
+    finish(&dos, dos.next(dos.context, reply.data_length, &reply));
+    assert(reply.data_length == 5 && reply.data[0] == 16 &&
+           !memcmp(reply.data + 1, "Temp", 4) && !reply.more);
+    status("00,OK");
+    /* Replay and abort retain the snapshot and hold no storage handle. */
+    finish(&dos, start(&dos, 0x14, NULL, 0));
+    assert(reply.more && !memcmp(reply.data + 1, "SD", 2));
+    assert(dos.abort(dos.context, 0) == MT_UCI_REPLY);
+    for (unsigned i = 0; i < 4; i++) assert(!directories[i].used);
+    check_path(&second, "/SD/");
+    change_path(&dos, "SD", "/SD/");
+    finish(&dos, start(&dos, 0x13, NULL, 0)); status("01,DIRECTORY EMPTY");
+    finish(&dos, start(&dos, 0x14, NULL, 0)); status("01,DIRECTORY EMPTY");
+    fixture_add("0:/media/GAMES", true, NULL, 0);
+    change_path(&dos, "GAMES", "/SD/GAMES/");
+    change_path(&dos, "..", "/SD/");
+    change_path(&dos, "..", "/");
+    change_path(&dos, ".././", "/");
+    change_path(&dos, "/SD/../Temp", "/Temp/");
+    open_file(&dos, "new.cfg", 6); status("00,OK");
+    finish(&dos, start(&dos, 3, NULL, 0)); status("00,OK");
+    char temporary_file[512];
+    snprintf(temporary_file, sizeof temporary_file, "%s/new.cfg", c64_uci_environment.temporary);
+    assert(fixture_find(temporary_file));
+    change_path(&dos, "../SD/GAMES", "/SD/GAMES/");
+    /* Existing absolute paths and USB aliases still use the confined SD. */
+    change_path(&dos, "/GAMES", "/SD/GAMES/");
+    change_path(&dos, "/Usb0", "/SD/");
+    change_path(&dos, "0:/media/GAMES", "/SD/GAMES/");
+    change_path(&dos, "../../", "/");
+    const char *invalid[] = {"/SD/bad./../GAMES", "/SD/secret.mtj/../GAMES", "0:/outside"};
+    for (unsigned i = 0; i < sizeof invalid / sizeof invalid[0]; i++) {
+        finish(&dos, start(&dos, 0x11, invalid[i], strlen(invalid[i])));
+        status("83,NO SUCH DIRECTORY");
+        check_path(&dos, "/");
+    }
+    c64_uci_service_set_home("0:/media/GAMES");
+    finish(&dos, start(&dos, 0x17, NULL, 0)); status("00,OK");
+    check_path(&dos, "/SD/GAMES/");
+    change_path(&dos, "/", "/");
+    dos.reset(dos.context);
+    check_path(&dos, "/SD/");
+    finish(&dos, start(&dos, 0x14, NULL, 0)); status("01,DIRECTORY EMPTY");
+    second.reset(second.context);
+}
 int main(void)
 {
+    virtual_devices();
     setup();
     mt_uci_target_t dos = c64_uci_dos_target(0);
     c64_uci_service_set_home("0:/media/SUB");
     finish(&dos, start(&dos, 0x17, NULL, 0));
     status("00,OK");
-    assert(reply.data_length == 5 && !memcmp(reply.data, "/SUB/", 5));
+    assert(reply.data_length == 8 && !memcmp(reply.data, "/SD/SUB/", 8));
     finish(&dos, start(&dos, 0x13, NULL, 0));
     status("01,DIRECTORY EMPTY");
     finish(&dos, start(&dos, 0x14, NULL, 0));
     status("01,DIRECTORY EMPTY");
-    finish(&dos, start(&dos, 0x11, (const uint8_t *)"/", 1));
+    finish(&dos, start(&dos, 0x11, (const uint8_t *)"/SD", 3));
     status("00,OK");
     for (unsigned i = 0; i < 5000; i++) {
         char path[96];

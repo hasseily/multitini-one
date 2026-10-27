@@ -230,7 +230,7 @@ mt_c64_reu_load_result_t mt_c64_debug_load_reu(mt_c64_debug_t *s,const char *pat
     if(!s || !path)return MT_REU_LOAD_BAD_ARGUMENT;
     if(!s->active || !s->caps.reu_host){say(s,"REU image load not available on this image");return MT_REU_LOAD_UNAVAILABLE;}
     if(s->reu_host.reload_required){say(s,"REU cache did not clear; reload the C64 core");return MT_REU_LOAD_RELOAD_REQUIRED;}
-    const bool cartridge=s->ops.cartridge && s->ops.cartridge(s->ops.context);
+    const bool cartridge=s->ops.cartridge_blocks_reu && s->ops.cartridge_blocks_reu(s->ops.context);
     const bool busy=s->capture || (s->ops.content_busy && s->ops.content_busy(s->ops.context));
     if(cartridge){say(s,"Eject the cartridge before loading REU memory");return MT_REU_LOAD_CARTRIDGE;}
     if(busy){say(s,"Busy; try again");return MT_REU_LOAD_BUSY;}

@@ -87,7 +87,7 @@ def main() -> int:
         elif section=="[c64]" and line and not line.startswith("#"):
             path=(ROOT/"hdl"/line.split("|")[0].strip()).resolve()
             if path.suffix==".vhd":vhdl.append(path)
-    sv=[ROOT/p for p in ("third_party/c64/upstream/rtl/mos6526.v","hdl/core/c64/ports/sid_dac.sv",
+    sv=[ROOT/p for p in ("hdl/core/c64/ports/mos6526.v","hdl/core/c64/ports/sid_dac.sv",
         "hdl/core/c64/ports/sid_filter.sv","third_party/c64/upstream/rtl/sid/sid_envelope.sv",
         "hdl/core/c64/ports/sid_tables.sv","hdl/core/c64/ports/sid_voice.sv",
         "hdl/core/c64/ports/sid_top.sv", "hdl/core/c64/multitini_c64_sid_array.sv","hdl/core/c64/multitini_c64_local_ram.sv","hdl/sim/tb_c64_machine_interrupts.sv")]

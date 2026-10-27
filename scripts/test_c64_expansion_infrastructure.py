@@ -56,7 +56,8 @@ def main():
             ('registers-no-caps','tb_control_regs',[],'PASS: control registers'),
             ('registers-c64-caps','tb_control_regs_c64_caps',[],'PASS: control registers'),
             ('registers-c64-turbo','tb_control_regs_c64_turbo',[],'PASS: control registers'),
-            ('registers-c64-extensions','tb_control_regs_c64_extensions',[],'PASS: control registers')):
+            ('registers-c64-extensions','tb_control_regs_c64_extensions',[],'PASS: control registers'),
+            ('registers-c64-release','tb_control_regs_c64_release',[],'PASS: control registers')):
             snapshot=label.replace('-','_')+'_sim'
             run(label+'-elaborate',[vendor('xelab'),'--nolog','--timescale','1ns/1ps',
                 '--snapshot',snapshot,*parameters,top,'glbl'])

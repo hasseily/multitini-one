@@ -653,6 +653,13 @@ foreach delay_type {max min} {
     if {![string is double -strict $slack] || ![expr {abs($slack) < Inf}] || $slack < 0.0} {
         error "Negative $delay_type slack: $slack ns"
     }
+    # The C713-only authorization applies to final global setup as well as
+    # the three C64 clock-path groups. Hold and all other policies are unchanged.
+    if {$image_kind eq "C64" && $delay_type eq "max" &&
+        [dict get $c64_timing_policy policy] eq "dev3-over-0.010" &&
+        $slack <= [dict get $c64_timing_policy minimum_setup_ns]} {
+        error "Final setup slack $slack ns must exceed +0.010 ns for C713"
+    }
 }
 
 puts [exec {*}$python [file join $script_dir capture_vectrex_build_inputs.py] --verify --output $inputs_file]

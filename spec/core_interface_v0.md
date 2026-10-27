@@ -52,10 +52,35 @@ image defaults to `0xB`. Partial writes respect byte strobes. A coherent
 mailbox carries the latest complete word to the machine clock domain.
 
 The REU owns DDR `0x25000000-0x25FFFFFF`; cartridge storage remains on PSRAM.
-REU and CRT remain mutually exclusive pending a simultaneous IO2 mapping policy.
-Firmware rejects their conflicting
-actions before loading or saving settings, and the adapter suppresses REU while
-a cartridge is present or loading. Disabling REU resets its command state and
+Capability bit 19 (`CART_COEXIST`) advertises per-cartridge REU, UCI and
+Ultimate Audio compatibility. Requested configuration remains unchanged while
+an incompatible cartridge suppresses effective peripheral state. Images without
+this capability retain the blanket REU/cartridge exclusion. With this capability,
+read-only `C64_REU_HOST` bits 16, 17 and 18 report effective REU, Ultimate Audio
+and UCI activation through the existing coherent status snapshot. See
+[cartridge compatibility](../docs/C64_CARTRIDGE_COMPATIBILITY.md).
+Capability bit 20 (`CART_ROM_EXT`) advertises the ROM-only profiles for CRT
+hardware types 11, 54, 64, 65, 66, 71, 86 and 87, all with subtype 0. The
+largest admitted ROM is 2 MiB. Firmware checks this bit before reset or
+streaming; older images retain their unsupported-type rejection. Exact CHIP
+layouts and mapping limits are listed in the cartridge compatibility guide.
+Capability bit 21 (`CART_EASYFLASH`) advertises CRT hardware type 32
+(EasyFlash), subtype 0. Firmware streams its 1 MiB flash as a dense CRT of 128
+8 KiB packets, bank b's ROML then its ROMH, CHIP type 0; the loader stores
+them in that canonical order. With this capability, `C64_EF_JOURNAL` (0x17C)
+presents one flash operation at a time: valid bit 31, kind bits 30:29
+(1 program, 2 sector erase, 3 chip erase), ROMH bit 28, chip address bits
+27:9 (bank in 27:22, offset in 21:9) and data bits 7:0. Writing back the exact
+word read pops it; any other write is a bad write. The FPGA queues each
+operation before it changes cartridge memory and holds the next one while the
+queue is full. With bit 21, `C64_PERIPHERAL_CONTROL` bit 16 sets the
+EasyFlash boot jumper to Disable: with `$DE02` M=0, GAME is released and a
+reset starts BASIC. While EasyFlash is attached, the UCI registers move from
+`$DF1B-$DF1F` to `$DE1B-$DE1F`. See [EasyFlash](../docs/C64_EASYFLASH.md).
+Capability bit 22 (`DRIVE_ACTIVITY`) adds live lights to `C64_DRIVE_STATUS`:
+drive A's LED in bit 8 and spindle in bit 9, both only while its CPU runs,
+and the EasyFlash LED (`$DE02` bit 7) in bit 10.
+Disabling REU resets its command state and
 drains accepted writes and memory responses without erasing REU storage. Firmware
 checks the live ABI and `VALID | REU_DDR` capabilities before requiring the DDR
 quiescent bit in `VIDEO_FRAME_STATUS`. This check does not depend on whether REU

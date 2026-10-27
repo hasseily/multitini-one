@@ -27,11 +27,12 @@ the Zynq HP2 port. PSRAM is not its backing store. The board's parallel PSRAM
 arrangement provides only 8 MiB of usable capacity. The earlier dev3 image
 incorrectly placed REU in PSRAM.
 
-CRT images retain their PSRAM path. REU and CRT remain mutually exclusive
-pending a simultaneous IO2 mapping policy. Turn REU off to attach
-a CRT, or eject the CRT before enabling REU. Menu and direct content-service
-loads enforce this rule; the HDL also disables REU while a CRT is loaded or
-being installed. PRG and disk use remains available with REU.
+CRT images retain their PSRAM path. Images advertising `CART_COEXIST` apply
+[cartridge-specific compatibility](C64_CARTRIDGE_COMPATIBILITY.md). Compatible
+cartridges can use REU and UCI together. Conflicting cartridges suppress the
+effective peripheral without changing its requested setting; eject restores it.
+FC3 subtype 1 permits REU and UCI but suppresses Ultimate Audio. Older FPGA
+images retain the blanket exclusion. PRG and disk use remains available with REU.
 
 Settings schema 10 appends the expansion byte without moving existing fields.
 Older settings migrate to the new defaults. Firmware requires ABI 0.23 and

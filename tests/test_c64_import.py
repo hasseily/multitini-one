@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import importlib.util
 import json
 import re
 import unittest
@@ -124,7 +125,23 @@ class C64ImportTests(unittest.TestCase):
         self.assertEqual(row["commit"], self.manifest["source"]["commit"])
         self.assertIn("port_c64_vic.py", row["notes"])
 
-    def test_video_sync_port_only_exposes_locked_pixel_tick(self):
+    def test_cia_build_uses_reproducible_licensed_local_port(self):
+        sources = (ROOT / "hdl/hdl_sources.txt").read_text().splitlines()
+        local = "hdl/core/c64/ports/mos6526.v"
+        self.assertEqual(sources.count("core/c64/ports/mos6526.v | systemverilog"), 1)
+        self.assertFalse(any("upstream/rtl/mos6526.v" in line for line in sources))
+        spec = importlib.util.spec_from_file_location(
+            "port_c64_cia", ROOT / "scripts/port_c64_cia.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.validate_reference()
+        self.assertEqual((ROOT / local).read_text(), module.port(module.SOURCE.read_text()))
+        with (ROOT / "licenses/files.csv").open(newline="", encoding="utf-8") as stream:
+            by_path = {row["path"]: row for row in csv.DictReader(stream)}
+        self.assertEqual(by_path[local]["commit"], self.manifest["source"]["commit"])
+        self.assertIn("port_c64_cia.py", by_path[local]["notes"])
+
+    def test_video_sync_port_tracks_native_pixel_steps(self):
         upstream = (
             ROOT / "third_party/c64/upstream/rtl/video_sync.vhd"
         ).read_text()
@@ -134,13 +151,25 @@ class C64ImportTests(unittest.TestCase):
         marker = "-- BEGIN PINNED SOURCE BODY WITH PIXEL_TICK PORT\n"
         self.assertIn(marker, product)
         expected = upstream.replace(
+            "\tpause : in std_logic;\n",
+            "\tpause : in std_logic;\n\tadvance : in std_logic;\n",
+            1,
+        ).replace(
             "\tvblank : out std_logic\n",
             "\tvblank : out std_logic;\n\tpixel_tick : out std_logic\n",
             1,
         ).replace(
+            "if falling_edge(clk32) then",
+            "if falling_edge(clk32) and advance = '1' then",
+            1,
+        ).replace(
+            'if clk_cnt = "00" and pause = \'0\' then',
+            'if clk_cnt = "00" and pause = \'0\' and advance = \'1\' then',
+            1,
+        ).replace(
             "\nend architecture;",
             "\npixel_tick <= '1' when clk_cnt = \"00\" and "
-            "pause = '0' else '0';\n\nend architecture;",
+            "pause = '0' and advance = '1' else '0';\n\nend architecture;",
             1,
         )
         self.assertEqual(

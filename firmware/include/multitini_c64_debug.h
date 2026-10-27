@@ -18,7 +18,8 @@ typedef struct {
     bool (*paused)(void *);
     void (*output)(void *, const char *);
     void (*apply_turbo)(void *, bool apply_change);
-    bool (*cartridge)(void *);
+    /* True only when the installed image/cartridge combination excludes REU. */
+    bool (*cartridge_blocks_reu)(void *);
     bool (*content_busy)(void *);
     bool (*reu_enabled)(void *);
     bool (*file_open)(void *, const char *, size_t *);

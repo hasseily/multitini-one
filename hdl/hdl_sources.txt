@@ -14,6 +14,7 @@ core/c64/multitini_c64_loader.sv
 core/c64/multitini_c64_content_loader.sv
 core/c64/multitini_c64_run_injector.sv
 core/c64/multitini_c64_cart_memory.sv
+core/c64/multitini_c64_ef_flash.sv
 core/c64/multitini_c64_input.sv
 core/c64/ports/dprom.vhd
 core/c64/ports/spram.vhd
@@ -30,8 +31,7 @@ core/c64/ports/fpga64_rgbcolor.vhd
 core/c64/ports/video_vicII_656x.vhd
 core/c64/multitini_c64_buslogic.vhd
 # This source uses SystemVerilog block declarations despite its .v suffix.
-../third_party/c64/upstream/rtl/mos6526.v | systemverilog
-../third_party/c64/upstream/rtl/am29f040.sv
+core/c64/ports/mos6526.v | systemverilog
 core/c64/ports/cartridge.sv
 core/c64/ports/sid_dac.sv
 core/c64/ports/sid_filter.sv

@@ -35,7 +35,7 @@ typedef struct
     size_t entries_used, count, index, remaining, transferred, staged, memory_offset;
     uint32_t reu_address;
     dos_state_t state;
-    bool truncated, save, changed, named, canceling;
+    bool truncated, save, changed, named, canceling, virtual_root;
     const char *failure;
 } dos_t;
 static dos_t instances[3];
@@ -66,10 +66,6 @@ static mt_uci_result_t named_error(mt_uci_reply_t *r, const char *text, int32_t 
     r->data_length = 4;
     return MT_UCI_REPLY;
 }
-static bool path(dos_t *d, const uint8_t *command, size_t length, size_t start, char *out)
-{
-    return start <= length && c64_uci_path(d->cwd, command + start, length - start, out);
-}
 static bool equal(const char *a, const char *b)
 {
     while (*a && *b) {
@@ -85,6 +81,60 @@ static bool same_or_child(const char *parent, const char *path)
         path++;
     }
     return !*parent && (!*path || *path == '/');
+}
+static bool guest_path(const dos_t *d, char text[C64_UCI_PATH])
+{
+    if (d->virtual_root) {
+        strcpy(text, "/");
+        return true;
+    }
+    const bool temporary = same_or_child(c64_uci_environment.temporary, d->cwd);
+    const char *root = temporary ? c64_uci_environment.temporary : c64_uci_environment.root;
+    int n = snprintf(text, C64_UCI_PATH, "%s%s", temporary ? "/Temp" : "/SD",
+                     d->cwd + strlen(root));
+    return n >= 0 && n < C64_UCI_PATH;
+}
+static bool resolve_path(dos_t *d, const uint8_t *bytes, size_t length,
+                         char out[C64_UCI_PATH], bool *virtual_root)
+{
+    char name[C64_UCI_PATH], logical[C64_UCI_PATH];
+    if (!c64_uci_path_text(bytes, length, name))
+        return false;
+    *virtual_root = false;
+    /* Retain confined native paths used by older clients and service hooks. */
+    if (strchr(name, ':'))
+        return c64_uci_path(d->cwd, (const uint8_t *)name, strlen(name), out);
+    if (name[0] == '/')
+        strcpy(logical, "/");
+    else if (!guest_path(d, logical))
+        return false;
+    /* Navigate the guest namespace before mapping a volume to its confined
+     * storage root. In particular, /SD/.. is /, not the SD directory again. */
+    for (const char *p = name; *p;) {
+        if (*p == '/') { p++; continue; }
+        size_t n = strcspn(p, "/"), used = strlen(logical);
+        if (n == 2 && p[0] == '.' && p[1] == '.') {
+            char *slash = strrchr(logical, '/');
+            if (slash == logical) logical[1] = 0;
+            else *slash = 0;
+        } else if (!(n == 1 && p[0] == '.')) {
+            size_t separator = used > 1 ? 1 : 0;
+            if (used + separator + n >= sizeof logical)
+                return false;
+            if (separator) logical[used++] = '/';
+            memcpy(logical + used, p, n);
+            logical[used + n] = 0;
+        }
+        p += n;
+    }
+    *virtual_root = !strcmp(logical, "/");
+    return c64_uci_path(c64_uci_environment.root, (const uint8_t *)logical,
+                        strlen(logical), out);
+}
+static bool path(dos_t *d, const uint8_t *command, size_t length, size_t start, char *out)
+{
+    bool virtual_root;
+    return start <= length && resolve_path(d, command + start, length - start, out, &virtual_root);
 }
 static bool opened(const dos_file_t *file) { return file->sd || file->image; }
 static mt_sd_result_t open_flags(const char *name, uint8_t flags, dos_file_t *file)
@@ -200,11 +250,16 @@ static bool append_directory(dos_t *d, const mt_sd_info_t *info)
 }
 static mt_uci_result_t current_path(dos_t *d, mt_uci_reply_t *r)
 {
-    const char *relative = d->cwd + strlen(c64_uci_environment.root);
-    if (same_or_child(c64_uci_environment.temporary, d->cwd))
-        relative = d->cwd + strlen(c64_uci_environment.temporary);
     char text[C64_UCI_PATH];
-    snprintf(text, sizeof text, "%s/", relative);
+    if (!guest_path(d, text))
+        return answer(r, "INVALID NAME");
+    size_t n = strlen(text);
+    if (n > 1) {
+        if (n + 1 >= sizeof text)
+            return answer(r, "INVALID NAME");
+        text[n++] = '/';
+        text[n] = 0;
+    }
     mt_uci_reply_text(r, text, "00,OK");
     return MT_UCI_REPLY;
 }
@@ -471,6 +526,7 @@ static void reset_target(void *context)
     if (failure)
         c64_uci_environment.fault = true;
     strcpy(d->cwd, c64_uci_environment.root);
+    d->virtual_root = false;
     clear_directory(d);
 }
 static mt_uci_result_t information(const char *filename, c64_uci_image_file_t *image, mt_uci_reply_t *r)
@@ -655,7 +711,9 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
     }
     case 0x11: {
         mt_sd_info_t info;
-        if (!path(d, command, length, 2, name) || c64_uci_protected(name, false))
+        bool virtual_root;
+        if (length < 2 || !resolve_path(d, command + 2, length - 2, name, &virtual_root) ||
+            c64_uci_protected(name, false))
             return answer(r, "83,NO SUCH DIRECTORY");
         char image[C64_UCI_PATH]; const char *member;
         if (c64_uci_image_path(name, image, &member)) {
@@ -667,6 +725,7 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
         } else if (mt_sd_file_stat(name, &info).status != MT_SD_OK || !(info.attributes & 16))
             return answer(r, "83,NO SUCH DIRECTORY");
         strcpy(d->cwd, name);
+        d->virtual_root = virtual_root;
         return answer(r, "00,OK");
     }
     case 0x12:
@@ -681,6 +740,23 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
             d->directory = NULL;
         }
         clear_directory(d);
+        d->truncated = false;
+        if (d->virtual_root) {
+            /* Device discovery is separate from listing the contents of SD.
+             * USB names remain path aliases; they are not extra devices. */
+            const char *devices[] = {"SD", "Temp"};
+            for (unsigned i = 0; i < sizeof devices / sizeof devices[0]; i++) {
+                mt_sd_info_t info = {0};
+                info.attributes = 16;
+                strcpy(info.name, devices[i]);
+                if (!append_directory(d, &info)) {
+                    clear_directory(d);
+                    return answer(r, "OUT OF MEMORY");
+                }
+            }
+            d->state = DOS_IDLE;
+            return answer(r, "00,OK");
+        }
         s = directory_open(d);
         if (s.status != MT_SD_OK)
             return answer(r, "86,CAN'T READ DIRECTORY");
@@ -709,13 +785,14 @@ static mt_uci_result_t begin(void *context, const uint8_t command[896], size_t l
             !(info.attributes & 16))
             return answer(r, "83,NO SUCH DIRECTORY");
         strcpy(d->cwd, c64_uci_environment.home);
+        d->virtual_root = false;
         return current_path(d, r);
     }
     case 0x21:
     case 0x22:
         if (!opened(&d->file))
             return answer(r, "85,NO FILE OPEN");
-        if (!(c64_uci_read(MT_REG_C64_EXPANSION_CONFIG) & MT_C64_EXPANSION_REU_ENABLE))
+        if (!c64_uci_reu_enabled())
             return answer(r, "98,FUNCTION PROHIBITED");
         d->reu_address = le32(command + 2) & 0xffffff;
         d->remaining = le32(command + 6) & 0x1ffffff;
@@ -806,7 +883,7 @@ mt_uci_result_t c64_uci_named_reu_begin(bool save, mt_uci_reply_t *r)
     d->named = true;
     d->save = save;
     const char *name = c64_uci_environment.reu_image;
-    if (!(c64_uci_read(MT_REG_C64_EXPANSION_CONFIG) & MT_C64_EXPANSION_REU_ENABLE)) {
+    if (!c64_uci_reu_enabled()) {
         return named_error(r, "84,REU NOT ENABLED", -2);
     }
     if (!name[0] || c64_uci_protected(name, save)) {

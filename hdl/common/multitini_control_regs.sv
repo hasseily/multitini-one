@@ -79,6 +79,9 @@ module multitini_control_regs #(
     output logic [31:0] c64_cart_erase_request,
     input logic [31:0] c64_cart_erase_status,
     input logic [31:0] c64_drive_status,
+    // EasyFlash journal head: valid in bit 31, entry in bits 30:0.
+    input logic [31:0] c64_ef_journal,
+    output logic c64_ef_journal_pop,
     output logic [5:0] c64_sid_index,
     output logic c64_sid_write,c64_sid_commit,
     output logic [31:0] c64_sid_data,
@@ -304,6 +307,13 @@ module multitini_control_regs #(
     assign c64_iec_tx_push = C64_IEC_CAPS[31] && wr_en &&
         wr_addr==MT_REG_C64_IEC_TX && wr_strb==4'hf;
     assign c64_iec_tx = wr_data;
+    // Firmware pops an entry by writing back the exact word it read.
+    wire ef_journal_ack = C64_EXPANSION_CAPS[21] && wr_strb==4'hf &&
+        c64_ef_journal[31] && wr_data==c64_ef_journal;
+    assign c64_ef_journal_pop = wr_en && wr_addr==MT_REG_C64_EF_JOURNAL && ef_journal_ack;
+    // Drive A off0, UCI epoch1, SoftIEC address12:8; the EasyFlash jumper16
+    // exists with the EasyFlash capability.
+    wire [31:0] peripheral_mask = C64_EXPANSION_CAPS[21] ? 32'h11f03 : 32'h1f03;
 
     always_comb begin
         rd_known = 1'b1;
@@ -342,6 +352,7 @@ module multitini_control_regs #(
                 {1'b1,30'd0,(!c64_palette_ready || c64_palette_valid)} : 0;
             MT_REG_C64_PERIPHERAL_CONTROL: rd_data=c64_peripheral_control;
             MT_REG_C64_DRIVE_STATUS: rd_data=C64_EXPANSION_CAPS[17] ? c64_drive_status : 0;
+            MT_REG_C64_EF_JOURNAL: rd_data=C64_EXPANSION_CAPS[21] ? c64_ef_journal : 0;
             MT_REG_C64_CART_ERASE_STATUS: rd_data=C64_EXPANSION_CAPS[18] ?
                 c64_cart_erase_status | (erase_pending?32'h10000:32'd0) : 0;
             MT_REG_C64_SID_INDEX: rd_data={26'd0,c64_sid_index};
@@ -455,11 +466,13 @@ module multitini_control_regs #(
                 if(!uci_op_good)error_set_mask|=MT_ERROR_BAD_WRITE;
             MT_REG_C64_CART_ERASE:
                 if(!erase_write_good)error_set_mask|=MT_ERROR_BAD_WRITE;
+            MT_REG_C64_EF_JOURNAL:
+                if(!ef_journal_ack)error_set_mask|=MT_ERROR_BAD_WRITE;
             MT_REG_C64_PALETTE_DATA:
                 if(!C64_EXPANSION_CAPS[15] || wr_strb!=4'hf || wr_data[31:29]!=0 ||
                    !c64_palette_ready || c64_palette_valid)error_set_mask|=MT_ERROR_BAD_WRITE;
             MT_REG_C64_PERIPHERAL_CONTROL:
-                if(!C64_EXPANSION_CAPS[17] || wr_strb!=4'hf || (wr_data & ~32'h1f03)!=0 ||
+                if(!C64_EXPANSION_CAPS[17] || wr_strb!=4'hf || (wr_data & ~peripheral_mask)!=0 ||
                    (wr_data[12:8]!=0 && (!C64_IEC_CAPS[8] || wr_data[12:8]<8 || wr_data[12:8]>30)))
                     error_set_mask|=MT_ERROR_BAD_WRITE;
             MT_REG_C64_UCI_RAM_READ:
@@ -706,6 +719,8 @@ module multitini_control_regs #(
                             c64_uci_control<=11'(merge_strobes({21'd0,c64_uci_control},wr_data,wr_strb)) & 11'h71f;
                     MT_REG_C64_UCI_HANDSHAKE:
                         if(uci_op_good)begin c64_uci_op<=wr_data;c64_uci_op_valid<=1;end
+                    // The journal pop is combinational from the same write.
+                    MT_REG_C64_EF_JOURNAL: ;
                     MT_REG_C64_CART_ERASE:
                         if(erase_write_good)c64_cart_erase_request<=
                             {c64_cart_erase_request[31:28]+4'd1,1'b1,20'd0,wr_data[6:0]};
@@ -715,7 +730,7 @@ module multitini_control_regs #(
                             c64_palette_data<=wr_data[28:0];c64_palette_valid<=1;
                         end
                     MT_REG_C64_PERIPHERAL_CONTROL:
-                        if(C64_EXPANSION_CAPS[17] && wr_strb==4'hf && (wr_data & ~32'h1f03)==0 &&
+                        if(C64_EXPANSION_CAPS[17] && wr_strb==4'hf && (wr_data & ~peripheral_mask)==0 &&
                            (wr_data[12:8]==0 || (C64_IEC_CAPS[8] && wr_data[12:8]>=8 && wr_data[12:8]<=30)))
                             c64_peripheral_control<=wr_data;
                     MT_REG_C64_UCI_RAM_READ:

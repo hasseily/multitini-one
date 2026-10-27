@@ -2,6 +2,7 @@
 #include "multitini_core_frontend.h"
 
 #include "multitini_c64_interface.h"
+#include "multitini_c64_content.h"
 #include "multitini_gameboy_interface.h"
 #include "multitini_genesis_interface.h"
 #include "multitini_iigs_interface.h"
@@ -179,12 +180,48 @@ static void test_c64_capabilities(void)
     mt_core_frontend_apply(&frontend, &state, &view);
     check(!view.core_options[7].enabled && !view.media_items[5].enabled,
         "attached cartridge blocks UA and REU preload");
+    state.c64_expansion_caps |= MT_C64_EXPANSION_CAPS_CART_COEXIST;
+    state.c64_cartridge_policy = MT_C64_CRT_ALLOW_REU | MT_C64_CRT_ALLOW_UCI;
+    state.c64_reu_enabled = state.c64_ua_enabled = true;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(view.core_options[7].enabled && view.media_items[5].enabled &&
+        strcmp(view.core_options[6].value, "16 MB REU") == 0 &&
+        strcmp(view.core_options[7].value, "Blocked by cartridge") == 0,
+        "FC3 subtype 1 permits REU/preload while preserving the inhibited UA request");
+    state.c64_cartridge_policy = 0;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(!view.media_items[5].enabled && view.core_options[7].enabled &&
+        strcmp(view.core_options[6].value, "Blocked by cartridge") == 0,
+        "incompatible cartridge reports effective inhibition without locking saved controls");
+    state.c64_cartridge_policy = 7;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(view.media_items[5].enabled && strcmp(view.core_options[7].value, "On") == 0,
+        "fully compatible cartridge leaves requested peripherals active");
     state.cartridge_attached = false; state.c64_ua_fault = true;
     mt_core_frontend_apply(&frontend, &state, &view);
     check(!view.core_options[7].enabled, "UA memory fault requests core reload");
     check(mt_core_frontend_accepts_content(MT_C64_CORE_ID,MT_MENU_BROWSER_REU,MT_CONTENT_C64_REU) &&
         !mt_core_frontend_accepts_content(MT_GBC_CORE_ID,MT_MENU_BROWSER_REU,MT_CONTENT_C64_REU),
         "REU browser accepts only C64 REU images");
+    state.abi_minor = 27;
+    state.c64_expansion_caps |= MT_C64_EXPANSION_CAPS_UCI;
+    state.cartridge_attached = true;
+    state.c64_cartridge_policy = 0;
+    state.c64_uci_enabled = true;
+    for (unsigned mode = 0; mode < 3; ++mode) {
+        state.c64_uci_active = mode != 0;
+        state.c64_uci_enabled = mode != 2;
+        mt_core_frontend_apply(&frontend, &state, &view);
+        bool found = false;
+        for (size_t i = 0; i < view.core_option_count; ++i) {
+            if (view.core_options[i].argument != 15) continue;
+            found = true;
+            check(strcmp(view.core_options[i].value,
+                mode == 0 ? "Blocked by cartridge" : mode == 1 ? "On" : "On (guest)") == 0,
+                "live UCI status overrides cartridge policy after guest unlock");
+        }
+        check(found, "Command Interface row remains available on coexistence image");
+    }
 }
 
 static void test_gameboy_saves_and_input(void)
@@ -438,11 +475,88 @@ static void test_c64_title_and_sid(void)
         check(view.core_options[i].argument<14||view.core_options[i].argument>16,"stale extension bits cannot expose ABI26 actions");
 }
 
+static void test_c64_directory_drive(void)
+{
+    mt_core_frontend_t frontend;
+    mt_core_frontend_state_t state = {0};
+    mt_menu_view_t view = {0};
+    state.core_id = MT_C64_CORE_ID;
+    state.services_ready = true;
+    state.abi_minor = 27;
+    state.c64_turbo_available = state.c64_ua_available = true;
+    state.c64_cpu_caps = MT_C64_CPU_CAPS_RELEASE;
+    state.c64_cpu_caps2 = MT_C64_CPU_CAPS2_RELEASE;
+    state.c64_expansion_caps = MT_C64_EXPANSION_CAPS_VALID | MT_C64_EXPANSION_CAPS_MULTI_SID |
+        MT_C64_EXPANSION_CAPS_DUAL_SID | MT_C64_EXPANSION_CAPS_REU_16MB | MT_C64_EXPANSION_CAPS_UCI;
+    state.c64_title_owned = UINT32_MAX;
+    state.c64_directory_drive_available = true;
+    for (unsigned on = 0; on < 2; ++on) {
+        state.c64_directory_drive_enabled = on != 0;
+        mt_core_frontend_apply(&frontend, &state, &view);
+        check(view.core_option_count <= MT_MENU_MAX_CORE_OPTIONS, "directory option fits full C64 menu");
+        bool found = false, uci = false;
+        for (size_t i = 0; i < view.core_option_count; ++i) {
+            const mt_menu_item_t *row = &view.core_options[i];
+            if (row->argument == 15) uci = true;
+            if (row->argument != 20) continue;
+            found = true;
+            check(!strcmp(row->label, "SD directory drive") &&
+                  !strcmp(row->value, on ? "On" : "Off"), "directory choice is independent of title overrides");
+            check(row->action == MT_MENU_ACTION_TOGGLE_CORE_OPTION && row->enabled &&
+                  row->control == MT_MENU_CONTROL_CHECKBOX && row->control_value == on,
+                  "directory checkbox carries its own action");
+        }
+        check(found && uci, "directory option and command interface remain separate");
+    }
+    state.c64_directory_drive_available = false;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    for (size_t i = 0; i < view.core_option_count; ++i)
+        check(view.core_options[i].argument != 20, "unavailable endpoint hides directory option");
+}
+
+static const mt_menu_item_t *media_row(const mt_menu_view_t *view, const char *label)
+{
+    for (size_t i = 0U; i < view->media_item_count; ++i)
+        if (strcmp(view->media_items[i].label, label) == 0) return &view->media_items[i];
+    return NULL;
+}
+
+static void test_c64_easyflash_rows(void)
+{
+    mt_core_frontend_t frontend;
+    mt_core_frontend_state_t state = {0};
+    mt_menu_view_t view = {0};
+    const mt_menu_item_t *row;
+    state.core_id = MT_C64_CORE_ID;
+    state.services_ready = true;
+    state.abi_minor = 27;
+    state.cartridge_attached = true;
+    state.cartridge_name = "Game.crt";
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(media_row(&view, "Cartridge save") == NULL && media_row(&view, "Export cartridge") == NULL &&
+          media_row(&view, "Boot jumper") == NULL, "ordinary cartridges have no EasyFlash rows");
+    state.save_active = true;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(view.media_item_count <= MT_MENU_MAX_ITEMS, "EasyFlash rows fit the Media page");
+    row = media_row(&view, "Export cartridge");
+    check(row != NULL && row->enabled && row->action == MT_MENU_ACTION_EXPORT_CARTRIDGE &&
+          strstr(row->help, "NAME-saved.crt") != NULL, "EasyFlash export writes a CRT copy");
+    row = media_row(&view, "Boot jumper");
+    check(row != NULL && row->enabled && row->action == MT_MENU_ACTION_TOGGLE_CORE_OPTION &&
+          row->argument == 21U && strcmp(row->value, "Boot") == 0, "the jumper starts at Boot");
+    state.c64_ef_jumper_disabled = true;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    row = media_row(&view, "Boot jumper");
+    check(row != NULL && strcmp(row->value, "Disable") == 0, "the jumper shows Disable");
+}
+
 int main(void)
 {
     test_profile_lifecycle();
+    test_c64_easyflash_rows();
     test_c64_capabilities();
     test_c64_title_and_sid();
+    test_c64_directory_drive();
     test_gameboy_saves_and_input();
     test_browser_filters();
     test_genesis_profile();

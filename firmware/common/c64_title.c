@@ -367,7 +367,8 @@ static void line_value(mt_c64_title_overlay_t *o, mt_c64_title_report_t *r,
         bool audio = same(key, "Map Ultimate Audio $DF20-DFFF");
         available =
             audio ? caps->ultimate_audio : (caps->expansion & MT_C64_EXPANSION_CAPS_REU_16MB) != 0;
-        if (c->cartridge && b == 1) {
+        if (c->cartridge && b == 1 &&
+            !(caps->expansion & MT_C64_EXPANSION_CAPS_CART_COEXIST)) {
             ++r->skipped;
             if (c->strict)
                 ++r->errors;
@@ -563,7 +564,8 @@ bool mt_c64_title_parse(const uint8_t *data, size_t size, const mt_c64_title_par
         }
     }
     mt_c64_title_values_t requested, applied;
-    mt_c64_title_effective(&requested, &applied, c->base, o, c->cartridge);
+    mt_c64_title_effective(&requested, &applied, c->base, o,
+        c->cartridge && !(c->caps->expansion & MT_C64_EXPANSION_CAPS_CART_COEXIST));
     const char *conflict = mt_c64_title_io_conflict(&applied, c->caps, c->cartridge);
     if (conflict) {
         ++r->errors;

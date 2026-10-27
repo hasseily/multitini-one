@@ -58,6 +58,7 @@ static uint32_t completion_block_count;
 static uint32_t completion_generation;
 static mt_c64_media_type_t mounted_type;
 static bool request_seen;
+static uint32_t activity_reads, activity_writes;
 static bool mounted;
 static bool mounted_read_only;
 static bool image_dirty;
@@ -542,6 +543,12 @@ int c64_d64_service_retry(void)
     return 0;
 }
 
+void c64_d64_service_activity(uint32_t *reads, uint32_t *writes)
+{
+    if (reads != NULL) *reads = activity_reads;
+    if (writes != NULL) *writes = activity_writes;
+}
+
 void c64_d64_service_poll(void)
 {
     uint32_t request_word;
@@ -605,6 +612,8 @@ void c64_d64_service_poll(void)
                      "invalid or stale media request");
         return;
     }
+    if ((request_word & MT_MEDIA_REQUEST_WRITE) != 0U) ++activity_writes;
+    else ++activity_reads;
     if ((request_word & MT_MEDIA_REQUEST_WRITE) != 0U) {
         if (mounted_type != MT_C64_MEDIA_D64) {
             fail_request(request_id, request_generation,

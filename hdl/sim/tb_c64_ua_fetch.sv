@@ -78,12 +78,25 @@ module tb_c64_ua_fetch;
         cache_inflight_write_valid=0;cache_write_done_addr=21'h1234;cache_write_done=1;step();cache_write_done=0;
         repeat(15)begin step();if(issues!=start_issues)$fatal(1,"Post-B hold ended early");end
         expect_sample(0,{byte_at(24'h0091a0),8'b0});
-        // Sixteen different writes complete on sixteen successive clocks.
+        // Two writes inside one hold window: each word keeps its own window,
+        // and an unrelated word is not held.
+        fresh();paused=1;
+        cache_write_done=1;cache_write_done_addr=21'h40;step();
+        cache_write_done_addr=21'h41;step();cache_write_done=0;paused=0;
+        start_issues=issues;request(0,24'h300,0);
+        repeat(10)step();if(issues==start_issues)$fatal(1,"Unrelated word held by post-B window");
+        expect_sample(0,{byte_at(24'h300),8'b0});
+        fresh();paused=1;
+        cache_write_done=1;cache_write_done_addr=21'h40;step();
+        cache_write_done_addr=21'h41;step();cache_write_done=0;paused=0;
+        start_issues=issues;request(0,24'h200,0);
+        repeat(12)begin step();if(issues!=start_issues)$fatal(1,"First of two post-B windows ended early");end
+        expect_sample(0,{byte_at(24'h200),8'b0});
+        // Sixteen different writes complete on sixteen successive clocks. The
+        // newest must still be held for its whole window.
         fresh();paused=1;
         for(i=0;i<16;i=i+1)begin cache_write_done=1;cache_write_done_addr=i;step();end
         cache_write_done=0;
-        for(i=0;i<16;i=i+1)
-            if(!dut.recent_valid[i] || dut.recent_tag[i]!=(15-i))$fatal(1,"Lost dense post-B history slot %0d",i);
         paused=0;request(0,24'd120,0);start_issues=issues;
         repeat(13)begin step();if(issues!=start_issues)$fatal(1,"Newest dense write not fenced");end
         expect_sample(0,{byte_at(120),8'b0});
@@ -131,7 +144,7 @@ module tb_c64_ua_fetch;
         // Fault lifetime is hard reset only, and faults remain local.
         memory_fault=1;step();memory_fault=0;reset=1;step();reset=0;repeat(50)step();
         if(!fault || memory_valid)$fatal(1,"Fault was not sticky or issued again");
-        $display("PASS: UA fetch coherence=10 invalidation=3 offsets=8 issues=%0d",issues);$finish;
+        $display("PASS: UA fetch coherence=12 invalidation=3 offsets=8 issues=%0d",issues);$finish;
     end
     initial begin #1000000;$fatal(1,"UA fetch timeout");end
 endmodule

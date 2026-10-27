@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-only
-# The normal release floor remains inclusive +0.100 ns. This named exception
-# is explicitly restricted to the user-authorized dev8 C708 image, and is
-# strictly greater than +0.050 ns. It changes no clock or timing constraint.
+# The normal release floor remains inclusive +0.100 ns. Named exceptions
+# are restricted to their user-authorized build IDs and use strict floors.
+# They change no clock or timing constraint.
 proc c64_resolve_timing_policy {machine generics requested} {
-    if {$requested ni {default dev8-over-0.050}} {
+    if {$requested ni {default dev8-over-0.050 dev3-over-0.010}} {
         error "Unknown MULTITINI_C64_TIMING_POLICY: $requested"
     }
     if {$machine ne "C64"} {
@@ -26,6 +26,10 @@ proc c64_resolve_timing_policy {machine generics requested} {
     if {$requested eq "dev8-over-0.050"} {
         if {$build_id ne "4D00C708"} {error "Dev8 timing exception requires build 4D00C708"}
         set minimum 0.050
+        set exclusive true
+    } elseif {$requested eq "dev3-over-0.010"} {
+        if {$build_id ne "4D00C713"} {error "Dev3 timing exception requires build 4D00C713"}
+        set minimum 0.010
         set exclusive true
     }
     return [dict create schema 1 policy $requested build_id $build_id \

@@ -75,6 +75,7 @@ int main(void)
     mt_c64_title_values_t stored;
     mt_c64_title_defaults(&stored);
     mt_c64_capabilities_t caps = {UINT32_MAX, UINT32_MAX, UINT32_MAX, true, true, true, true, true};
+    caps.expansion &= ~MT_C64_EXPANSION_CAPS_CART_COEXIST;
     const c64_title_callbacks_t cb = {NULL, apply};
     assert(c64_title_service_init("0:/package/media", &cb) == 0);
     c64_title_service_refresh(&stored, &caps, false, true);
@@ -226,6 +227,23 @@ int main(void)
     assert(hardware.reu == stored.reu);
     assert(c64_title_service_reboot(true) == 0);
     assert(!hardware.reu && !hardware.ua);
+    caps.expansion |= MT_C64_EXPANSION_CAPS_CART_COEXIST;
+    stored.reu = stored.ua = true;
+    c64_title_service_refresh(&stored, &caps, false, true);
+    exists = false;
+    cartridge = false;
+    hook = c64_title_service_prepare("Game.crt", MT_TITLE_CRT, true);
+    assert(c64_title_service_launch_allowed());
+    /* No title edits require no apply; the already configured requested
+     * registers are sufficient for the hardware's cartridge policy. */
+    if (hook) assert(hook->commit(hook->context) == 0);
+    cartridge = true;
+    c64_title_service_finish(MT_C64_CONTENT_SERVICE_OK);
+    assert(c64_title_service_revert() == 0 && hardware.reu && hardware.ua);
+    assert(c64_title_service_reboot(true) == 0 && hardware.reu && hardware.ua);
+    set_file("[C64 and Cartridge Settings]\nRAM Expansion Unit=Enabled\nMap Ultimate Audio $DF20-DFFF=Enabled\n");
+    assert(c64_title_service_apply("Game.cfg", false, NULL, 0) == 0);
+    assert(hardware.reu && hardware.ua && stored.reu && stored.ua);
     puts("C64 title launch/apply/failed-hold/save/revert/reboot/busy-file/root isolation service PASS");
     return 0;
 }

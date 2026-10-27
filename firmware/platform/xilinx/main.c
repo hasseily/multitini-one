@@ -34,6 +34,7 @@
 #include "multitini_system.h"
 #include "multitini_tmp102.h"
 #include "multitini_ui.h"
+#include "multitini_drive_activity.h"
 #include "multitini_usb_storage_mode.h"
 #include "multitini_vectrex_interface.h"
 #include "multitini_version.h"
@@ -203,6 +204,10 @@ static mt_supervisor_t supervisor;
 static mt_menu_t supervisor_menu;
 static mt_ui_frame_t supervisor_frame;
 static mt_ui_presenter_t supervisor_presenter;
+static mt_activity_t drive_activity;
+static mt_ui_legacy_frame_t activity_frame;
+static uint32_t activity_core;
+static bool activity_badge_shown;
 static mt_menu_action_t pending_menu_action;
 static bool supervisor_menu_ready;
 static bool supervisor_menu_dirty;
@@ -484,7 +489,10 @@ static int quiesce_c64_directory(void)
 static int resume_c64_directory(void)
 {
     if (!c64_iec_initialized || !c64_iec_service_available()) return 0;
-    const int result = c64_iec_service_enable(true);
+    /* Off is a bus preference, not a storage shutdown. Repeated reset/load
+     * resumes must leave UCI's shared DOS channels alone. */
+    const int result = persistent_settings.c64_directory_drive_off ? 0 :
+        c64_iec_service_enable(true);
     if (c64_uci_initialized) c64_uci_service_refresh_control();
     if (result != 0)
         xil_printf("[C64] drive9 could not resume: %s\r\n",
@@ -534,7 +542,9 @@ static void service_runtime(void)
     c64_core_reset_active = false;
     if (c64_active && c64_services_initialized) {
         c64_d64_service_poll();
-        if (c64_iec_initialized && c64_iec_service_available()) {
+        c64_content_service_poll();
+        if (c64_iec_initialized && c64_iec_service_available() &&
+            c64_iec_service_active()) {
             const bool faulted = c64_iec_service_poll(32U) < 0;
             if (faulted && !c64_iec_fault_displayed)
                 xil_printf("[C64] drive9 transport error: %s\r\n",
@@ -1371,9 +1381,16 @@ static void print_c64_content_result(
                    result->sd.backend_status,
                    (unsigned int)result->sd.size);
     } else if (result->status == MT_C64_CONTENT_SERVICE_REJECTED) {
-        xil_printf(" validation=%s hardware=%u",
+        xil_printf(" reason=%s validation=%s hardware=%s (%u) subtype=%u",
+                   mt_c64_content_status_name(result->content.status),
                    mt_content_validation_name(result->content.validation),
-                   (unsigned int)result->content.hardware_type);
+                   mt_c64_crt_hardware_name(result->content.hardware_type),
+                   (unsigned int)result->content.hardware_type,
+                   (unsigned int)result->content.subtype);
+        if (result->content.status == MT_C64_CONTENT_UNSUPPORTED_CRT &&
+            result->content.hardware_type == MT_CRT_FINAL_CARTRIDGE_3 &&
+            !(c64_content_service_expansion_caps() & MT_C64_EXPANSION_CAPS_CART_COEXIST))
+            xil_printf("; install the C64 FPGA image with cartridge coexistence support");
     } else if (result->status ==
                MT_C64_CONTENT_SERVICE_TRANSFER_FAILED) {
         xil_printf(" link=%s", mt_link_result_name(result->link));
@@ -1642,6 +1659,10 @@ static const char *c64_content_failure_message(mt_c64_content_service_status_t s
     if (!remounted) return "Content load and drive remount failed";
     if (status == MT_C64_CONTENT_SERVICE_CONFIG_FAILED && *c64_title_service_status())
         return c64_title_service_status();
+    if (status == MT_C64_CONTENT_SERVICE_REJECTED)
+        return "Content type or layout rejected; see UART details";
+    if (status == MT_C64_CONTENT_SERVICE_REU_CONFLICT)
+        return "This C64 FPGA requires REU off for cartridges";
     return "Content load failed";
 }
 
@@ -2143,7 +2164,9 @@ static void handle_extended_command(bool recovery_only)
         const bool recovered = c64_iec_initialized &&
             c64_iec_service_available() && c64_iec_service_reset() == 0 &&
             resume_c64_directory() == 0;
-        set_supervisor_outcome(recovered, "Directory drive ready at media root",
+        set_supervisor_outcome(recovered, persistent_settings.c64_directory_drive_off ?
+                               "SD directory recovered; drive remains Off" :
+                               "Directory drive ready at media root",
                                "Directory drive retry failed; check SD card");
         xil_printf("[C64] drive9 retry %s: %s\r\n",
                    recovered ? "completed" : "failed", c64_iec_service_status());
@@ -2722,6 +2745,39 @@ static int retry_c64_uci(void)
         if (monotonic_ms(NULL) - start >= 1000U) return -1;
     }
 }
+static bool change_c64_directory_drive(void)
+{
+    if (!c64_iec_initialized || !c64_iec_service_available()) {
+        set_supervisor_error("SD directory drive is unavailable");
+        return false;
+    }
+    if (quiesce_c64_uci() != 0) {
+        set_supervisor_warning("Command interface is busy");
+        return false;
+    }
+    if (quiesce_c64_directory() != 0) {
+        set_supervisor_error("SD directory could not close safely; retry storage");
+        return false;
+    }
+    const bool previous = persistent_settings.c64_directory_drive_off;
+    persistent_settings.c64_directory_drive_off = !previous;
+    const bool applied = resume_c64_directory() == 0;
+    if (applied && save_persistent_settings()) {
+        set_supervisor_status(persistent_settings.c64_directory_drive_off ?
+            "SD directory drive Off; UCI storage remains available" :
+            "SD directory drive On");
+        return true;
+    }
+    /* Restore the requested choice and bus state after an apply/save failure.
+     * A failed close must not be hidden by automatically reopening storage. */
+    const int closed = quiesce_c64_directory();
+    persistent_settings.c64_directory_drive_off = previous;
+    const bool restored = closed == 0 && resume_c64_directory() == 0;
+    set_supervisor_error(!restored ? "SD directory restore failed; retry storage" :
+        applied ? "SD directory drive setting was not saved" :
+                  "SD directory drive could not start; check SD card");
+    return false;
+}
 static int retry_c64_storage_for_reset(void)
 {
     if (!shell_is_c64()) return 0;
@@ -3131,8 +3187,19 @@ static mt_menu_view_t supervisor_menu_view(void)
         state.drive8_name = c64_d64_service_mounted_name();
         state.cartridge_attached = c64_content_service_crt_attached();
         state.cartridge_name = c64_content_service_crt_name();
+        state.save_active = c64_content_service_save_active();
+        state.save_dirty = c64_content_service_save_dirty();
+        state.save_faulted = c64_content_service_save_faulted();
+        state.c64_ef_jumper_disabled = c64_content_service_ef_jumper_disabled();
+        state.c64_cartridge_policy = c64_content_service_crt_expansion_policy();
+        if (!c64_content_service_reu_load_allowed())
+            state.c64_cartridge_policy =
+                (uint8_t)(state.c64_cartridge_policy & ~MT_C64_CRT_ALLOW_REU);
         state.c64_expansion_caps = selection_c64_expansion_caps(&supervisor.active);
         const mt_c64_capabilities_t features = selection_c64_features(&supervisor.active);
+        if (features.expansion & MT_C64_EXPANSION_CAPS_CART_COEXIST)
+            state.c64_uci_active = (shell_read(MT_REG_C64_REU_HOST) &
+                                    MT_C64_REU_HOST_UCI_ACTIVE) != 0U;
         state.c64_turbo_available = features.turbo;
         state.c64_ua_available = features.ultimate_audio;
         state.c64_reu_host_available = features.reu_host;
@@ -3171,6 +3238,8 @@ static mt_menu_view_t supervisor_menu_view(void)
         state.c64_sid_mode = values.sid_mode;
         state.c64_sid = values.sid;
         state.c64_uci_enabled = values.uci;
+        state.c64_directory_drive_available = c64_iec_initialized && c64_iec_service_available();
+        state.c64_directory_drive_enabled = !persistent_settings.c64_directory_drive_off;
         state.c64_title_automatic = !persistent_settings.c64_title_cfg_off;
         state.c64_title_session = *c64_title_service_session() != 0;
         state.c64_title_source = c64_title_service_overlay()->source;
@@ -3295,6 +3364,7 @@ static mt_menu_view_t supervisor_menu_view(void)
         strcmp(persistent_settings.selected_core_id,
                supervisor.active.package.id) == 0;
     view.settings_faulted = settings_faulted;
+    view.settings_drive_activity = !persistent_settings.drive_activity_off;
     {
         const mt_core_settings_profile_t *const profile = supervisor.has_active ?
             mt_supervisor_settings_find(&persistent_settings, supervisor.active.package.id) : NULL;
@@ -3626,6 +3696,8 @@ static int supervisor_quiesce(void *context)
     if (shell_is_c64() && c64_uci_service_reload_required()) {
         if (quiesce_c64_for_reload() != 0) return -1;
     } else if (set_core_reset_request(true) != 0) return -1;
+    /* The guest is held, so the EasyFlash journal cannot grow during this save. */
+    if (shell_is_c64() && c64_content_service_flush() != 0) return -1;
     if (c64_uci_initialized && !c64_uci_service_reload_required())
         c64_uci_service_reset();
     /* USB export can still be refused by the DDR drain or SD ownership gate.
@@ -4276,8 +4348,10 @@ static bool hide_menu_for_core_action(void)
     mt_menu_view_t view;
 
     if (!supervisor_menu_ready) return true;
+    /* The activity badge is a visible legacy frame; only the dense menu
+     * pauses the core, so only it must be hidden here. */
     if (!supervisor_menu.visible && !supervisor_presenter.pending &&
-        (shell_read(MT_REG_UI_STATUS) & MT_UI_STATUS_VISIBLE) == 0U)
+        !mt_ui_status_menu_shown(shell_read(MT_REG_UI_STATUS)))
         return true;
 
     /* Temporarily hide the video overlay without closing the user's menu.
@@ -4293,7 +4367,7 @@ static bool hide_menu_for_core_action(void)
         const mt_ui_present_result_t result = mt_ui_present_cached(
             &supervisor_presenter, &bus, &supervisor_frame, false);
         if (result == MT_UI_PRESENT_OK && !supervisor_presenter.pending &&
-            (shell_read(MT_REG_UI_STATUS) & MT_UI_STATUS_VISIBLE) == 0U) {
+            !mt_ui_status_menu_shown(shell_read(MT_REG_UI_STATUS))) {
             supervisor_menu_action_active = was_action_active;
             return true;
         }
@@ -4690,8 +4764,11 @@ static void c64_debug_apply(void *context, bool change)
         configure_c64_turbo(&supervisor.active, mt_supervisor_settings_find(
             &persistent_settings, supervisor.active.package.id), change);
 }
-static bool c64_debug_cartridge(void *context)
-{ (void)context; return c64_content_service_crt_attached(); }
+static bool c64_debug_cartridge_blocks_reu(void *context)
+{
+    (void)context;
+    return !c64_content_service_reu_load_allowed();
+}
 static bool c64_debug_content_busy(void *context)
 {
     (void)context;
@@ -4773,7 +4850,7 @@ static void initialize_c64_debug(void)
     const mt_c64_debug_ops_t ops = {
         .read32=c64_debug_read, .write32=c64_debug_write, .milliseconds=monotonic_ms,
         .progress=document_read_progress, .pause=c64_debug_pause, .paused=c64_debug_paused,
-        .output=c64_debug_output, .apply_turbo=c64_debug_apply, .cartridge=c64_debug_cartridge,
+        .output=c64_debug_output, .apply_turbo=c64_debug_apply, .cartridge_blocks_reu=c64_debug_cartridge_blocks_reu,
         .content_busy=c64_debug_content_busy, .reu_enabled=c64_debug_reu_enabled,
         .file_open=c64_debug_open, .file_read=c64_debug_file_read, .file_close=c64_debug_close,
         .file_write=c64_debug_file_write, .reu_read=c64_debug_reu_read, .reu_write=c64_debug_reu_write,
@@ -4799,7 +4876,8 @@ static bool commit_c64_edit(const mt_c64_title_values_t *value, uint32_t groups,
     const mt_c64_title_values_t previous =
         c64_requested_values(&supervisor.active, c64_content_service_crt_attached());
     mt_c64_title_values_t applied = *value;
-    if (c64_content_service_crt_attached()) {
+    if (c64_content_service_crt_attached() &&
+        !(c64_title_caps.expansion & MT_C64_EXPANSION_CAPS_CART_COEXIST)) {
         applied.reu = false;
         applied.ua = false;
     }
@@ -4871,7 +4949,8 @@ static bool commit_c64_edit(const mt_c64_title_values_t *value, uint32_t groups,
             c64_stored_sid = old_sid;
         }
         mt_c64_title_values_t rollback = previous;
-        if (c64_content_service_crt_attached()) {
+        if (c64_content_service_crt_attached() &&
+            !(c64_title_caps.expansion & MT_C64_EXPANSION_CAPS_CART_COEXIST)) {
             rollback.reu = false;
             rollback.ua = false;
         }
@@ -4923,7 +5002,8 @@ static void change_c64_expansion(size_t option)
         group = MT_TITLE_UCI;
     } else
         return;
-    if (group == MT_TITLE_MEMORY && value.reu && c64_content_service_crt_attached()) {
+    if (group == MT_TITLE_MEMORY && value.reu && c64_content_service_crt_attached() &&
+        !(caps.expansion & MT_C64_EXPANSION_CAPS_CART_COEXIST)) {
         set_supervisor_warning("Eject the cartridge before enabling expansion memory");
         return;
     }
@@ -5749,7 +5829,45 @@ static void handle_menu_action(mt_menu_action_t action)
     } else if (action.kind == MT_MENU_ACTION_NETWORK_RENEW) {
         mt_net_service_renew();
         set_supervisor_status("Network renewal requested");
+    } else if (action.kind == MT_MENU_ACTION_TOGGLE_DRIVE_ACTIVITY) {
+        const bool previous = persistent_settings.drive_activity_off;
+        persistent_settings.drive_activity_off = !previous;
+        if (!save_persistent_settings()) {
+            persistent_settings.drive_activity_off = previous;
+            set_supervisor_error("Drive activity setting was not saved");
+        } else {
+            set_supervisor_status(persistent_settings.drive_activity_off ?
+                "Drive activity badge Off" : "Drive activity badge On");
+        }
+    } else if (action.kind == MT_MENU_ACTION_EXPORT_CARTRIDGE) {
+        char exported[MT_MEDIA_BROWSER_PATH_MAX + 16U];
+        char message[sizeof(exported) + 16U];
+        if (supervisor_menu.visible)
+            show_handoff_progress("Writing cartridge CRT; please wait");
+        const mt_c64_content_service_result_t result =
+            c64_content_service_export_crt(exported, sizeof(exported));
+        xil_printf("[C64] EasyFlash export: %s sd=%s bytes=%u\r\n",
+                   c64_content_service_status_name(result.status),
+                   mt_sd_status_name(result.sd.status), (unsigned)result.sd.size);
+        if (result.status == MT_C64_CONTENT_SERVICE_OK) {
+            (void)snprintf(message, sizeof(message), "Exported %s", exported);
+            set_supervisor_status(message);
+        } else {
+            set_supervisor_error(c64_content_service_status_name(result.status));
+        }
     } else if (action.kind == MT_MENU_ACTION_TOGGLE_CORE_OPTION) {
+        if (shell_is_c64() && action.file_index == 20U) {
+            (void)change_c64_directory_drive();
+            return;
+        }
+        if (shell_is_c64() && action.file_index == 21U) {
+            const bool disable = !c64_content_service_ef_jumper_disabled();
+            set_supervisor_outcome(c64_content_service_set_ef_jumper(disable) == 0,
+                disable ? "EasyFlash jumper Disable; reset to start BASIC" :
+                          "EasyFlash jumper Boot; reset to start the cartridge",
+                "EasyFlash jumper is unavailable in this C64 image");
+            return;
+        }
         if (shell_is_c64() && action.file_index >= 16 && action.file_index <= 19) {
             if (action.file_index == 16) {
                 supervisor_menu.core_subpage = true;
@@ -6038,6 +6156,69 @@ static void handle_menu_action(mt_menu_action_t action)
     }
 }
 
+static const char *const iigs_activity_labels[MT_IIGS_DRIVE_COUNT] = {
+    "HD1", "HD2", "3.5", "5.25", "HD3", "HD4", "HD5", "HD6", "HD7", "HD8"
+};
+
+/* Sample every drive service and the core's own lights into one badge. */
+static void sample_drive_activity(uint64_t now)
+{
+    uint32_t reads, writes;
+    if (shell_is_c64()) {
+        const bool lights = (c64_content_service_expansion_caps() &
+                             MT_C64_EXPANSION_CAPS_DRIVE_ACTIVITY) != 0U;
+        const uint32_t status = lights ? shell_read(MT_REG_C64_DRIVE_STATUS) : 0U;
+        c64_d64_service_activity(&reads, &writes);
+        mt_activity_sample(&drive_activity, 0U, "D8", reads, writes, now);
+        if (lights)
+            mt_activity_lights(&drive_activity, 0U, "D8",
+                (status & MT_C64_DRIVE_STATUS_LED) != 0U,
+                (status & MT_C64_DRIVE_STATUS_MOTOR) != 0U, now);
+        if (c64_iec_initialized) {
+            c64_iec_service_activity(&reads, &writes);
+            mt_activity_sample(&drive_activity, 1U, "D9", reads, writes, now);
+        }
+        if (c64_content_service_save_active()) {
+            mt_activity_sample(&drive_activity, 2U, "EF", 0U,
+                               c64_content_service_flash_writes(), now);
+            if (lights)
+                mt_activity_lights(&drive_activity, 2U, "EF",
+                    (status & MT_C64_DRIVE_STATUS_CART_LED) != 0U, false, now);
+        }
+    } else if (supervisor.active.package.core_id == MT_IIGS_CORE_ID) {
+        for (unsigned drive = 0U; drive < MT_IIGS_DRIVE_COUNT; ++drive) {
+            iigs_content_service_activity(drive, &reads, &writes);
+            mt_activity_sample(&drive_activity, drive, iigs_activity_labels[drive],
+                               reads, writes, now);
+        }
+    }
+}
+
+static void service_drive_activity(const mt_ui_bus_t *bus)
+{
+    static uint64_t sampled;
+    const uint64_t now = monotonic_ms(NULL);
+    bool visible = false;
+    if (supervisor_menu.visible || supervisor_menu_action_active ||
+        now - sampled < 16U) return;
+    sampled = now;
+    if (!supervisor.has_active || activity_core != supervisor.active.package.core_id) {
+        mt_activity_reset(&drive_activity);
+        activity_core = supervisor.has_active ? supervisor.active.package.core_id : 0U;
+    }
+    if (supervisor.has_active && !persistent_settings.drive_activity_off) {
+        sample_drive_activity(now);
+        visible = mt_activity_render(&drive_activity, now, &activity_frame);
+    } else {
+        (void)mt_activity_render(&drive_activity, now, &activity_frame);
+        visible = false;
+    }
+    if (!visible && !activity_badge_shown) return;
+    if (mt_ui_present_legacy_cached(&supervisor_presenter, bus, &activity_frame, visible) ==
+        MT_UI_PRESENT_OK)
+        activity_badge_shown = visible;
+}
+
 static void service_supervisor_menu(void)
 {
     const mt_ui_bus_t bus = {
@@ -6077,13 +6258,21 @@ static void service_supervisor_menu(void)
             mt_menu_gamepad_update(&supervisor_menu, &view)) supervisor_menu_dirty = true;
         controller_preview_capture();
     }
-    if (!supervisor_menu_dirty) return;
+    /* A closed menu need not replace a shown activity badge; the dense frame
+     * is rendered again once the badge hides or the menu opens. */
+    if (!supervisor_menu_dirty ||
+        (activity_badge_shown && !supervisor_menu.visible &&
+         !mt_ui_status_menu_shown(shell_read(MT_REG_UI_STATUS)))) {
+        service_drive_activity(&bus);
+        return;
+    }
     view = supervisor_menu_view();
     mt_menu_render(&supervisor_menu, &view, &supervisor_frame);
     if (mt_ui_present_cached(&supervisor_presenter, &bus, &supervisor_frame,
                               supervisor_menu.visible) ==
         MT_UI_PRESENT_OK) {
         supervisor_menu_dirty = false;
+        activity_badge_shown = false;
     }
 }
 
@@ -6273,7 +6462,7 @@ static void service_screenshots(void)
         (uint8_t)(shell_read(MT_REG_DISPLAY_STATUS) & 15U),
         active && selection_supports_borders(&supervisor.active) ? shell_read(MT_REG_BORDER_CONFIG) : 0U,
         &supervisor_presenter.banks[ui_bank], supervisor_presenter.bank_valid[ui_bank] &&
-        (ui_status & MT_UI_STATUS_VISIBLE) != 0U);
+        mt_ui_status_menu_shown(ui_status));
     if (!mt_screenshot_service_busy()) {
         const char *status = mt_screenshot_service_status();
         if (status != NULL) {

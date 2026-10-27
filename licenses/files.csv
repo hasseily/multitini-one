@@ -1,5 +1,9 @@
 path,origin,commit,license,status,notes
 hdl/sim/tb_c64_ua_stock_bus.sv,Multitini One,,GPL-3.0-only,sim-tested,Original observation-only PAL and NTSC stock IO2 and REU bus trace wrapper
+hdl/sim/tb_c64_cart_coexist.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original streamed cartridge banking and expansion ownership and bidirectional REU DMA regression
+scripts/test_c64_cart_coexist.py,Multitini One,,GPL-3.0-only,source-reviewed,Original source-capturing PAL and NTSC cartridge coexistence regression with negative controls
+hdl/sim/tb_c64_cart_video.sv,Multitini One,,GPL-3.0-only,sim-tested,Original PAL and NTSC ordered video tuple comparison across cartridge wait phases
+scripts/test_c64_cart_video.py,Multitini One,,GPL-3.0-only,sim-tested,Original production video block differential and live-adapter cartridge cache wait regression
 scripts/test_c64_ua_stock_bus.py,Multitini One,,GPL-3.0-only,sim-tested,Original immutable pre-turbo and pre-UA synthetic bus capture and comparison runner
 tests/c64_ua/stock_bus.csv,Multitini One,,GPL-3.0-only,sim-tested,Generated synthetic production-RTL bus trace; contains no system ROM or game content
 tests/c64_ua/stock_bus_manifest.json,Multitini One,,GPL-3.0-only,sim-tested,Source hashes and provenance of the immutable stock bus trace
@@ -97,6 +101,7 @@ hdl/common/**,Multitini One,,GPL-3.0-only,pending-vivado,Original common shell l
 hdl/core/**,Multitini One,,GPL-3.0-only,pending-vivado,Original core adapter interfaces
 hdl/core/c64/multitini_c64_content_loader.sv,Multitini One,,GPL-3.0-only,xsim-2025.2-passed,C64 PRG and normalized CRT stream loader; vendor build and board pending
 hdl/core/c64/multitini_c64_cart_memory.sv,Multitini One,,GPL-3.0-only,xsim-2025.2-passed,C64 cartridge cache and common external-memory bridge; vendor build and board pending
+hdl/core/c64/multitini_c64_ef_flash.sv,Multitini One,,GPL-3.0-only,sim-tested,EasyFlash AM29F040B flash pair and firmware journal; commands follow VICE 3.10 flash040core.c; vendor build and board pending
 hdl/core/c64/multitini_c64_run_injector.sv,Multitini One,,GPL-3.0-only,xsim-2025.2-passed,C64 BASIC readiness gate and RUN key injector; vendor build and board pending
 hdl/core/c64/multitini_c64_g64_track.sv,Multitini One,,GPL-3.0-only,xsim-2025.2-passed,Read-only normalized G64 half-track request service; vendor build and board pending
 hdl/core/gameboy/ports/gb.v,MiSTer Game Boy and Multitini One,7a5ff50528cd9c1d13ffb675e7df8506bffaa078,GPL-3.0-or-later,vivado-2025.2-passed,Deterministic compatibility port selecting the generated open-source bootstrap memory and replacing fabric-gated clocks with root-clock enables
@@ -115,7 +120,7 @@ hdl/core/c64/ports/video_vicII_656x.vhd,MiSTer C64 and Multitini One,62fc697e3c9
 hdl/core/c64/multitini_c64_6510_port.vhd,MAME reference and Multitini One,122719e8d13e2fdb7dd33886455484207de59fc8,GPL-3.0-only AND BSD-3-Clause,source-reviewed,RTL processor-port model following Olivier Galibert's BSD-3-Clause MAME m6510.cpp; reference attribution retained; native-time decay independent of acceleration
 hdl/core/c64/ports/cpu_6510.vhd,MiSTer C64 and Multitini One,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,source-reviewed,Direct T65 entity instantiation and MAME-reference processor-port implementation; explicit scheduler bus-start input freezes late NMI decisions before retirement; forwards NMOS-store port indication without changing processor-port decoding; exact upstream copy stays import-locked
 hdl/core/c64/ports/fpga64_sid_iec.vhd,MiSTer C64 and Multitini One,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,source-reviewed,Local issue/retire scheduling and VICE REU arbitration; CPU port backing uses VIC bus data while DMA preserves payload; native peripheral timing; CIA2 parallel direction; owner-directed redistribution assumption
-hdl/core/c64/ports/video_sync.vhd,MiSTer C64 and Multitini One,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,pending-vivado,Compatibility port exposing the existing hsync-locked pixel phase; sync and blanking logic otherwise unchanged
+hdl/core/c64/ports/video_sync.vhd,MiSTer C64 and Multitini One,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,sim-tested,Compatibility port exposing the existing hsync-locked pixel phase; phase and sync counters follow completed native steps during cartridge memory waits
 hdl/core/c64/multitini_c64_d64_track.sv,MiSTer C64 and Multitini One,f11608f66bcb2b017680d7c719aa547f537bfd3f,GPL-3.0-only,xsim-2025.2-passed,Original generation-tagged transactional writable 35/40/42-track D64 request service based on the pre-DDRAM directory-track-first sector-buffer architecture
 hdl/core/c64/multitini_c64_cpu_turbo_guard.sv,Multitini One,,GPL-3.0-only,portable-simulation-pass,Original IEC and parallel-cable activity guard for the independent FPGA64 Smart CPU turbo setting
 hdl/core/c64/multitini_c64_1541.sv,MiSTer C64 and Multitini One,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-3.0-only,xsim-elaborated,Original Multitini wrapper for one 1541 using transactional D64 and read-only direct-GCR paths plus an opt-in DolphinDOS-style parallel cable; vendor build and board pending
@@ -148,6 +153,7 @@ tests/host/test_fatfs_time.c,Multitini One,,GPL-3.0-only,host-tested,RTC-backed 
 tests/test_c64sim.py,Multitini One,,GPL-3.0-only,host-tested,C64 and 1541 simulator unit and stock ROM acceptance tests
 hdl/sim/tb_c64_content_loader.sv,Multitini One,,GPL-3.0-only,xsim-2025.2-passed,C64 PRG and CRT stream-loader regression
 hdl/sim/tb_c64_cart_memory.sv,Multitini One,,GPL-3.0-only,xsim-2025.2-passed,C64 cartridge memory bridge regression
+hdl/sim/tb_c64_ef_flash.sv,Multitini One,,GPL-3.0-only,sim-tested,EasyFlash flash front-end regression against a byte-exact image model
 hdl/sim/tb_c64_run_injector.sv,Multitini One,,GPL-3.0-only,xsim-2025.2-passed,C64 BASIC readiness and RUN injection regression
 hdl/sim/tb_c64_g64_track.sv,Multitini One,,GPL-3.0-only,xsim-2025.2-passed,Read-only G64 raw-track service regression
 third_party/appletini/hdl/reset_sync.sv,Appletini One,052fe8aa43c483c193fcbc10ecba4225272c213d,GPL-3.0-only,pending-vivado,Exact copy
@@ -162,7 +168,7 @@ third_party/appletini/hdl/psram_driver.sv,Appletini One,052fe8aa43c483c193fcbc10
 hdl/board/multitini_psram_driver.sv,Appletini One and Multitini One,052fe8aa43c483c193fcbc10ecba4225272c213d,GPL-3.0-only,pending-vivado,Local compatibility port with active-high registered IOBUF tri-state controls for direct I/O packing
 third_party/appletini/constraints/multitini_pins.xdc,Appletini One,052fe8aa43c483c193fcbc10ecba4225272c213d,GPL-3.0-only,pending-vivado,Pin-assignment subset copied without timing exceptions
 third_party/c64/upstream/c64.sv,MiSTer C64,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later,imported,Exact copy; MiSTer platform top retained for reference and not built
-third_party/c64/upstream/rtl/am29f040.sv,MiSTer C64,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later,imported,Exact copy; compiled as a dependency of the local cartridge compatibility port; EasyFlash and XBank profiles remain rejected
+third_party/c64/upstream/rtl/am29f040.sv,MiSTer C64,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later,imported,Exact copy; not compiled since the local cartridge port dropped its flash model; reference for EasyFlash flash commands; EasyFlash and XBank profiles remain rejected
 third_party/c64/upstream/rtl/c1351.v,MiSTer C64,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later,imported,Exact copy; file-local notice
 third_party/c64/upstream/rtl/iec_drive/c1541_track.sv,MiSTer C64,62fc697e3c9b5982c9dc76aa8cd03db545d20803,LGPL-3.0-or-later,imported,Exact copy; file-local notice
 third_party/c64/upstream/rtl/iec_drive/iecdrv_via6522.vhd,MiSTer C64,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-3.0-only,imported,Exact copy; file-local notice
@@ -174,10 +180,12 @@ third_party/c64/upstream/rtl/t65/T65_MCode.vhd,MiSTer C64,62fc697e3c9b5982c9dc76
 third_party/c64/upstream/rtl/t65/T65_Pack.vhd,MiSTer C64,62fc697e3c9b5982c9dc76aa8cd03db545d20803,BSD-3-Clause-like-T65,imported,Exact copy; complete file-local notice
 third_party/c64/upstream/rtl/cpu_6510.vhd,MiSTer C64,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,imported,Exact copy; repository-owner-directed redistribution-grant assumption
 third_party/c64/upstream/rtl/mos6526.v,MiSTer C64,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,imported,Exact copy; repository-owner-directed redistribution-grant assumption
+hdl/core/c64/ports/mos6526.v,MiSTer C64 and Multitini One,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,source-reviewed,Timer A/B completed-reload latch-write bypass and strict declaration order; deterministic scripts/port_c64_cia.py; exact upstream copy stays import-locked
+scripts/port_c64_cia.py,Multitini One,,GPL-3.0-only,source-reviewed,Deterministic local CIA port from pinned MiSTer source with completed-reload timer latch-write correction
 third_party/c64/upstream/rtl/dprom.vhd,MiSTer C64,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,imported,Exact copy; repository-owner-directed redistribution-grant assumption
 third_party/c64/upstream/rtl/spram.vhd,MiSTer C64,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,imported,Exact copy; repository-owner-directed redistribution-grant assumption
 third_party/c64/upstream/rtl/cartridge.v,MiSTer C64,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,imported,Exact reference copy retained untouched; product source uses a separately tracked local compatibility port; repository-owner-directed redistribution-grant assumption
-hdl/core/c64/ports/cartridge.sv,MiSTer C64 and Multitini One,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,pending-vivado,Local synthesis port of the pinned cartridge module; bare always changed to always @* and two early-referenced net declarations moved before use; behavior otherwise unchanged; upstream reference remains untouched; repository-owner-directed redistribution-grant assumption
+hdl/core/c64/ports/cartridge.sv,MiSTer C64 and Multitini One,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,source-reviewed,Local synthesis port of the pinned cartridge module; bare always changed to always @* and two early-referenced net declarations moved before use; initialized clocked block state has explicit static lifetime; local ROM mapper additions follow pinned VICE behavior and Ultimate ROM-only Megabyter profiles as documented in C64_CARTRIDGE_COMPATIBILITY.md; mapper cases the loader never admits, cartridge RAM paths, the AM29F040 flash model and bank-translation tables removed (C64_EASYFLASH.md stage 0); upstream reference remains untouched; repository-owner-directed redistribution-grant assumption
 third_party/c64/upstream/rtl/video_sync.vhd,MiSTer C64,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,imported,Exact copy; repository-owner-directed redistribution-grant assumption
 third_party/c64/upstream/rtl/video_vicII_656x.vhd,MiSTer C64,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,imported,Exact copy; repository-owner-directed redistribution-grant assumption
 third_party/c64/upstream/rtl/fpga64_rgbcolor.vhd,MiSTer C64,62fc697e3c9b5982c9dc76aa8cd03db545d20803,GPL-2.0-or-later-assumed,imported,Exact copy; repository-owner-directed redistribution-grant assumption
@@ -845,3 +853,5 @@ tests/host/test_c64_uci_dos.c,Multitini One,,GPL-3.0-only,host-tested,Original U
 tests/host/test_c64_uci_dos_image.c,Multitini One,,GPL-3.0-only,host-tested,Original full UCI target virtual disk-image integration regression
 hdl/sim/tb_c64_uci_palette.sv,Multitini One,,GPL-3.0-only,simulation-passed,Original real XPM palette crossing defaults reset retention and stopped clock regression
 tests/test_fatfs_chmod.py,Multitini One,,GPL-3.0-only,host-tested,Original production BSP CHMOD patch and platform reuse regressions
+scripts/test_c64_cia_timers.py,Multitini One,,GPL-3.0-only,simulation-passed,Original hash-pinned user-supplied Lorenz CIA oracle extraction and production timer CPU NMI replay runner
+hdl/sim/tb_c64_cia_timers.sv,Multitini One,,GPL-3.0-only,simulation-passed,Original native CIA register and T65 NMI replay fixture with cascade reset and negative controls

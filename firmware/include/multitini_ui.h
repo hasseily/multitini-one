@@ -37,6 +37,12 @@ typedef struct {
     uint16_t cells[MT_UI_COLUMNS * MT_UI_ROWS];
 } mt_ui_frame_t;
 
+/* The ABI 0.11 legacy layout. A visible legacy frame neither pauses the
+ * core nor mutes it, so it carries status that must show during play. */
+typedef struct {
+    uint16_t cells[MT_UI_LEGACY_COLUMNS * MT_UI_LEGACY_ROWS];
+} mt_ui_legacy_frame_t;
+
 typedef struct {
     void *context;
     uint32_t (*read32)(void *context, uint32_t offset);
@@ -55,6 +61,10 @@ typedef enum {
 typedef struct {
     mt_ui_frame_t banks[2];
     bool bank_valid[2];
+    /* The 80x36 layout aliases the first cells of the same two memories, so
+     * an upload in one layout invalidates the other layout's cached bank. */
+    mt_ui_legacy_frame_t legacy[2];
+    bool legacy_valid[2];
     bool pending;
     uint32_t pending_status;
 } mt_ui_presenter_t;
@@ -106,5 +116,15 @@ mt_ui_present_result_t mt_ui_present_cached(mt_ui_presenter_t *presenter,
 mt_ui_present_result_t mt_ui_present(const mt_ui_bus_t *bus,
                                      const mt_ui_frame_t *frame,
                                      bool visible);
+/* The same cached presentation for an 80x36 legacy frame, sharing the
+ * presenter's bank, pending and invalidation state with dense frames. */
+mt_ui_present_result_t mt_ui_present_legacy_cached(mt_ui_presenter_t *presenter,
+                                                   const mt_ui_bus_t *bus,
+                                                   const mt_ui_legacy_frame_t *frame,
+                                                   bool visible);
+/* A visible dense frame is the menu, which pauses and mutes the core. On a
+ * dense-capable overlay, a visible legacy frame is status shown during play;
+ * an overlay without the dense layout can only be showing the menu. */
+bool mt_ui_status_menu_shown(uint32_t status);
 
 #endif

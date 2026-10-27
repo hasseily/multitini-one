@@ -23,12 +23,15 @@ typedef struct {
     bool save_active;
     bool save_dirty;
     bool save_faulted;
+    bool c64_ef_jumper_disabled;
     bool symbolic_keyboard;
     uint8_t joystick_port;
     bool fast_roms_active;
     bool fast_roms_fallback;
     bool cpu_turbo_enabled;
     uint32_t c64_expansion_caps;
+    uint8_t c64_cartridge_policy;
+    bool c64_uci_active;
     uint8_t c64_sid_mode;
     bool c64_reu_enabled;
     bool c64_turbo_available, c64_ua_available, c64_ua_enabled, c64_ua_fault;
@@ -36,6 +39,7 @@ typedef struct {
     uint8_t c64_turbo_detail, c64_turbo_flags;
     uint32_t c64_cpu_caps, c64_cpu_caps2, c64_cpu_config, c64_cpu_status;
     bool c64_uci_enabled,c64_title_automatic,c64_title_session,c64_sid_setup;
+    bool c64_directory_drive_available, c64_directory_drive_enabled;
     uint32_t c64_title_owned;
     uint64_t c64_sid_owned;
     uint8_t c64_sid_classes,c64_selected_sid;

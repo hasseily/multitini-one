@@ -63,6 +63,8 @@ run_test tb_c64_video_bridge \
 run_test tb_c64_ntsc_video_bridge \
     "$repo_root/hdl/sim/xilinx_primitives.sv" \
     "$repo_root/third_party/appletini/hdl/cdc_bit_sync.sv" \
+    "$repo_root/hdl/common/multitini_display_pkg.sv" \
+    "$repo_root/hdl/common/multitini_display_geometry.sv" \
     "$repo_root/hdl/board/multitini_c64_video_bridge.sv" \
     "$repo_root/hdl/sim/tb_c64_ntsc_video_bridge.sv"
 
@@ -149,6 +151,10 @@ run_test tb_c64_run_injector \
 run_test tb_c64_cart_memory \
     "$repo_root/hdl/core/c64/multitini_c64_cart_memory.sv" \
     "$repo_root/hdl/sim/tb_c64_cart_memory.sv"
+
+run_test tb_c64_ef_flash \
+    "$repo_root/hdl/core/c64/multitini_c64_ef_flash.sv" \
+    "$repo_root/hdl/sim/tb_c64_ef_flash.sv"
 
 run_test tb_c64_d64_track \
     "$repo_root/hdl/core/c64/multitini_c64_defs_pkg.sv" \

@@ -29,6 +29,7 @@ add_library(multitini_common STATIC
     firmware/common/core_frontend.c
     firmware/common/core_package.c
     firmware/common/core_link.c
+    firmware/common/drive_activity.c
     firmware/common/c64_features.c
     firmware/common/c64_sid.c
     firmware/common/c64_title.c
@@ -418,6 +419,9 @@ add_test(NAME core_catalog_sd COMMAND test_core_catalog_sd)
 add_executable(test_ui tests/host/test_ui.c)
 target_link_libraries(test_ui PRIVATE multitini_common)
 add_test(NAME ui COMMAND test_ui)
+add_executable(test_drive_activity tests/host/test_drive_activity.c)
+target_link_libraries(test_drive_activity PRIVATE multitini_common)
+add_test(NAME drive_activity COMMAND test_drive_activity)
 
 add_executable(test_menu tests/host/test_menu.c)
 target_link_libraries(test_menu PRIVATE multitini_common)
@@ -492,7 +496,10 @@ add_executable(test_c64_content_service
 target_include_directories(test_c64_content_service PRIVATE
     firmware/platform/xilinx
 )
-target_link_libraries(test_c64_content_service PRIVATE multitini_common)
+target_link_libraries(test_c64_content_service PRIVATE
+    multitini_common
+    xilinx_persistent_save_host
+)
 add_test(NAME c64_content_service COMMAND test_c64_content_service)
 
 add_executable(test_c64_d64 tests/host/test_c64_d64.c)

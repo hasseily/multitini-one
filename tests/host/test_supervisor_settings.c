@@ -992,16 +992,19 @@ static void test_c64_turbo_storage(void)
         settings.c64_ultimate_audio = (detail & 4U) != 0;
         settings.c64_command_interface = (detail & 16U) != 0;
         settings.c64_title_cfg_off = (detail & 32U) != 0;
+        settings.c64_directory_drive_off = (detail & 64U) != 0;
+        settings.drive_activity_off = (detail & 128U) != 0;
         assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
-        assert(stored_file[26] == (detail & 63U) && stored_file[27] == detail);
-        /* Future flags remain downgrade-safe rather than rejecting settings. */
-        stored_file[26] |= 0xC0U; update_stored_crc();
+        assert(stored_file[26] == detail && stored_file[27] == detail);
+        /* Every byte-26 flag remains downgrade-safe rather than rejecting settings. */
         assert_schema10_downgrade();
         assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
         assert(loaded.c64_turbo_detail == detail && loaded.c64_turbo_flags == (detail & 11U));
         assert(loaded.c64_ultimate_audio == settings.c64_ultimate_audio);
         assert(loaded.c64_command_interface == settings.c64_command_interface);
         assert(loaded.c64_title_cfg_off == settings.c64_title_cfg_off);
+        assert(loaded.c64_directory_drive_off == settings.c64_directory_drive_off);
+        assert(loaded.drive_activity_off == settings.drive_activity_off);
         assert(loaded.profiles[0].c64_reu_enabled);
     }
     const mt_controller_device_t pad = controller_device(1U, 43U);
@@ -1056,6 +1059,7 @@ int main(void)
     result = mt_supervisor_settings_load(&settings);
     assert(result.status == MT_SETTINGS_MISSING);
     assert(!settings.auto_boot && settings.profile_count == 0U);
+    assert(!settings.c64_directory_drive_off && !settings.drive_activity_off);
 
     assert(mt_supervisor_settings_remember_variant(&settings, "c64", "pal"));
     assert(settings.selected_core_id[0] == '\0');

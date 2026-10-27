@@ -362,7 +362,7 @@ mt_uci_result_t c64_uci_geos_begin(const uint8_t c[896], size_t length, const ch
         return MT_UCI_FAILED;
     memset(&g, 0, sizeof(g));
     g.command = length >= 2 ? c[1] : 0;
-    if (!(c64_uci_read(MT_REG_C64_EXPANSION_CONFIG) & MT_C64_EXPANSION_REU_ENABLE))
+    if (!c64_uci_reu_enabled())
         return answer(r, "84,REU NOT ENABLED");
     if (g.command == 0x11) {
         if (length != 14 || !c[3])

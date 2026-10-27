@@ -46,6 +46,10 @@ static mt_menu_t supervisor_menu;
 static mt_c64_debug_t c64_debug;
 static mt_ui_frame_t supervisor_frame;
 static mt_ui_presenter_t supervisor_presenter;
+/* The drive-activity badge has its own unit tests; these scenarios keep it
+ * hidden so menu visibility and pause handling are tested on their own. */
+static bool activity_badge_shown;
+static void service_drive_activity(const mt_ui_bus_t *bus) { (void)bus; }
 static mt_supervisor_t supervisor;
 static mt_menu_action_t pending_menu_action;
 static bool supervisor_menu_ready, supervisor_menu_dirty;

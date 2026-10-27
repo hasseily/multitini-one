@@ -67,6 +67,8 @@ typedef struct {
     bool c64_ultimate_audio; /* Byte 26 bit 2, never in a profile expansion byte. */
     bool c64_command_interface; /* Byte 26 bit 4. */
     bool c64_title_cfg_off; /* Byte 26 bit 5: automatic sidecars only. */
+    bool c64_directory_drive_off; /* Byte 26 bit 6: zero preserves drive 9 On. */
+    bool drive_activity_off; /* Byte 26 bit 7: zero shows the activity badge. */
     mt_gamepad_config_t gamepads[MT_GAMEPAD_SLOTS];
     char selected_core_id[MT_CORE_PACKAGE_ID_MAX];
     size_t profile_count;

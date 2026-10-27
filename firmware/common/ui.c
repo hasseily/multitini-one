@@ -158,6 +158,8 @@ void mt_ui_presenter_invalidate(mt_ui_presenter_t *presenter)
     if (presenter == NULL) return;
     presenter->bank_valid[0] = false;
     presenter->bank_valid[1] = false;
+    presenter->legacy_valid[0] = false;
+    presenter->legacy_valid[1] = false;
     presenter->pending = false;
     presenter->pending_status = 0U;
 }
@@ -219,6 +221,7 @@ mt_ui_present_result_t mt_ui_present_cached(mt_ui_presenter_t *presenter,
         }
         *cached = *frame;
         presenter->bank_valid[target_bank] = true;
+        presenter->legacy_valid[target_bank] = false;
     }
     commit = MT_UI_COMMIT_DENSE | (visible ? MT_UI_COMMIT_VISIBLE : 0U);
     if (target_bank != 0U) commit |= MT_UI_COMMIT_BANK;
@@ -228,6 +231,78 @@ mt_ui_present_result_t mt_ui_present_cached(mt_ui_presenter_t *presenter,
     presenter->pending = true;
     bus->write32(bus->context, MT_REG_UI_COMMIT, commit);
     return MT_UI_PRESENT_OK;
+}
+
+mt_ui_present_result_t mt_ui_present_legacy_cached(mt_ui_presenter_t *presenter,
+                                                   const mt_ui_bus_t *bus,
+                                                   const mt_ui_legacy_frame_t *frame,
+                                                   bool visible)
+{
+    const uint32_t state_mask = MT_UI_STATUS_BANK | MT_UI_STATUS_VISIBLE |
+                                MT_UI_STATUS_DENSE;
+    const size_t cells = MT_UI_LEGACY_COLUMNS * MT_UI_LEGACY_ROWS;
+    uint32_t status;
+    uint32_t commit;
+    size_t active_bank;
+    size_t target_bank;
+    size_t cell;
+    bool same_frame;
+
+    if (presenter == NULL || bus == NULL || frame == NULL ||
+        bus->read32 == NULL || bus->write32 == NULL) {
+        return MT_UI_PRESENT_INVALID_ARGUMENT;
+    }
+    status = bus->read32(bus->context, MT_REG_UI_STATUS);
+    if ((status & MT_UI_STATUS_DENSE_LAYOUT) == 0U)
+        return MT_UI_PRESENT_UNSUPPORTED_LAYOUT;
+    if ((status & MT_UI_STATUS_READY) == 0U) return MT_UI_PRESENT_BUSY;
+    if (presenter->pending) {
+        if ((status & state_mask) != presenter->pending_status)
+            return MT_UI_PRESENT_BUSY;
+        presenter->pending = false;
+    }
+
+    active_bank = (status & MT_UI_STATUS_BANK) != 0U ? 1U : 0U;
+    same_frame = (status & MT_UI_STATUS_DENSE) == 0U &&
+                 presenter->legacy_valid[active_bank] &&
+                 memcmp(&presenter->legacy[active_bank], frame,
+                        sizeof(*frame)) == 0;
+    if (same_frame && ((status & MT_UI_STATUS_VISIBLE) != 0U) == visible)
+        return MT_UI_PRESENT_OK;
+
+    target_bank = same_frame ? active_bank : 1U - active_bank;
+    if (!same_frame) {
+        const uint32_t bank_offset = target_bank != 0U ?
+            MT_UI_LEGACY_VRAM_BANK1_OFFSET : MT_UI_LEGACY_VRAM_BANK0_OFFSET;
+        mt_ui_legacy_frame_t *const cached = &presenter->legacy[target_bank];
+        for (cell = 0U; cell < cells; cell += 2U) {
+            if (!presenter->legacy_valid[target_bank] ||
+                cached->cells[cell] != frame->cells[cell] ||
+                cached->cells[cell + 1U] != frame->cells[cell + 1U]) {
+                const uint32_t word = (uint32_t)frame->cells[cell] |
+                    ((uint32_t)frame->cells[cell + 1U] << 16U);
+                bus->write32(bus->context,
+                             bank_offset + (uint32_t)(cell * 2U), word);
+            }
+        }
+        *cached = *frame;
+        presenter->legacy_valid[target_bank] = true;
+        presenter->bank_valid[target_bank] = false;
+    }
+    commit = visible ? MT_UI_COMMIT_VISIBLE : 0U;
+    if (target_bank != 0U) commit |= MT_UI_COMMIT_BANK;
+    presenter->pending_status = visible ? MT_UI_STATUS_VISIBLE : 0U;
+    if (target_bank != 0U) presenter->pending_status |= MT_UI_STATUS_BANK;
+    presenter->pending = true;
+    bus->write32(bus->context, MT_REG_UI_COMMIT, commit);
+    return MT_UI_PRESENT_OK;
+}
+
+bool mt_ui_status_menu_shown(uint32_t status)
+{
+    return (status & MT_UI_STATUS_VISIBLE) != 0U &&
+           ((status & MT_UI_STATUS_DENSE) != 0U ||
+            (status & MT_UI_STATUS_DENSE_LAYOUT) == 0U);
 }
 
 mt_ui_present_result_t mt_ui_present(const mt_ui_bus_t *bus,

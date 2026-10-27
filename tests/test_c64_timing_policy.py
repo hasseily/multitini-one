@@ -63,11 +63,20 @@ class C64TimingPolicyTests(unittest.TestCase):
         cases = [('default', '4D00C708', 'C64', 0.100, True),
                  ('default', '4D00C708', 'C64', 0.099, False),
                  ('default', '4D00C709', 'C64', 0.100, True),
+                 ('default', '4D00C713', 'C64', 0.099, False),
+                 ('default', '4D00C713', 'C64', 0.100, True),
                  ('dev8-over-0.050', '4D00C708', 'C64', 0.051, True),
                  ('dev8-over-0.050', '4D00C708', 'C64', 0.050, False),
                  ('dev8-over-0.050', '4D00C708', 'C64', 0.049, False),
                  ('dev8-over-0.050', '4D00C709', 'C64', 0.120, False),
                  ('dev8-over-0.050', '4D00C708', 'NES', 0.120, False),
+                 ('dev3-over-0.010', '4D00C713', 'C64', 0.011, True),
+                 ('dev3-over-0.010', '4D00C713', 'C64', 0.010001, True),
+                 ('dev3-over-0.010', '4D00C713', 'C64', 0.010, False),
+                 ('dev3-over-0.010', '4D00C713', 'C64', 0.009, False),
+                 ('dev3-over-0.010', '4D00C712', 'C64', 0.120, False),
+                 ('dev3-over-0.010', '4D00C714', 'C64', 0.120, False),
+                 ('dev3-over-0.010', '4D00C713', 'NES', 0.120, False),
                  ('0.050', '4D00C708', 'C64', 0.120, False)]
         for policy, build_id, machine, slack, passes in cases:
             with self.subTest(policy=policy, build=build_id, machine=machine, slack=slack):
@@ -84,6 +93,38 @@ check_c64_turbo_timing test fast native [dict get $policy minimum_setup_ns] 1 0.
             with self.subTest(slack=slack, duty=duty):
                 result = self.execute(f'set slack {slack}; set duty {duty}\ncheck_c64_turbo_timing test fast native')
                 self.assertEqual(result.returncode, 0 if passes else 1, result.stdout + result.stderr)
+
+    def test_dev3_final_global_setup_and_unchanged_hold(self):
+        source = (ROOT / 'scripts/build_and_export_xsa.tcl').read_text()
+        gate = source[source.rindex('foreach delay_type {max min} {'):]
+        gate = gate[:gate.index('\nputs [exec')]
+        for policy, machine, setup, hold, passes in (
+                ('dev3-over-0.010', 'C64', '0.010001', '0.000', True),
+                ('dev3-over-0.010', 'C64', '0.010', '0.100', False),
+                ('dev3-over-0.010', 'C64', '0.009', '0.100', False),
+                ('dev3-over-0.010', 'C64', '0.100', '-0.001', False),
+                ('dev3-over-0.010', 'C64', 'NaN', '0.100', False),
+                ('dev3-over-0.010', 'C64', 'Inf', '0.100', False),
+                ('default', 'C64', '0.000', '0.000', True),
+                ('default', 'NES', '0.000', '0.000', True),
+                ('default', 'C64', '-0.001', '0.100', False)):
+            with self.subTest(policy=policy, machine=machine, setup=setup, hold=hold):
+                result = self.execute(f'''
+set image_kind {machine}
+set c64_timing_policy [c64_resolve_timing_policy {machine} {{SHELL_BUILD_ID=32'h4D00C713}} {policy}]
+proc get_timing_paths {{args}} {{return [lindex $args [expr {{[lsearch -exact $args -delay_type]+1}}]]}}
+proc get_property {{key object}} {{if {{$object eq "max"}} {{return {setup}}}; return {hold}}}
+{gate}
+''')
+                self.assertEqual(result.returncode, 0 if passes else 1, result.stdout + result.stderr)
+
+    def test_dev3_still_requires_nominal_cpu_uncertainty(self):
+        result = self.execute('''
+set slack 0.011; set duty 0.199
+set policy [c64_resolve_timing_policy C64 {SHELL_BUILD_ID=32'h4D00C713} dev3-over-0.010]
+check_c64_turbo_timing test fast native [dict get $policy minimum_setup_ns] 1 0.200 [dict get $policy minimum_exclusive]
+''')
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_ambiguous_or_malformed_build_identity_rejected(self):
         for identity in ('', "XSHELL_BUILD_ID=32'h4D00C708", "SHELL_BUILD_ID=32'h4D00C708garbage",
@@ -118,19 +159,20 @@ c64_write_timing_policy {{{path}}} $policy $paths
         capture = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(capture)
         with tempfile.TemporaryDirectory(dir=ROOT / 'build', prefix='timing-policy-capture-') as folder:
-            for standard in ('PAL', 'NTSC'):
-                output = Path(folder) / (standard + '.json')
-                args = ['capture', '--machine', 'C64', '--c64-video-standard', standard,
-                        '--c64-timing-policy', 'dev8-over-0.050', '--output', str(output)]
-                with mock.patch('sys.argv', args), mock.patch.object(capture, 'inputs', return_value=[]), \
-                        mock.patch.object(capture, 'archive_inputs'), \
-                        mock.patch.object(capture.subprocess, 'check_output', return_value='frozen-head\n'), \
-                        contextlib.redirect_stdout(io.StringIO()):
-                    self.assertEqual(capture.main(), 0)
-                record = json.loads(output.read_text())
-                self.assertEqual(record['configuration']['c64_video_standard'], standard)
-                self.assertEqual(record['configuration']['c64_timing_policy'], 'dev8-over-0.050')
-                self.assertEqual(record['git_head'], 'frozen-head')
+            for policy in ('dev8-over-0.050', 'dev3-over-0.010'):
+                for standard in ('PAL', 'NTSC'):
+                    output = Path(folder) / (policy + '-' + standard + '.json')
+                    args = ['capture', '--machine', 'C64', '--c64-video-standard', standard,
+                            '--c64-timing-policy', policy, '--output', str(output)]
+                    with mock.patch('sys.argv', args), mock.patch.object(capture, 'inputs', return_value=[]), \
+                            mock.patch.object(capture, 'archive_inputs'), \
+                            mock.patch.object(capture.subprocess, 'check_output', return_value='frozen-head\n'), \
+                            contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(capture.main(), 0)
+                    record = json.loads(output.read_text())
+                    self.assertEqual(record['configuration']['c64_video_standard'], standard)
+                    self.assertEqual(record['configuration']['c64_timing_policy'], policy)
+                    self.assertEqual(record['git_head'], 'frozen-head')
 
     def test_placement_margin_applies_and_restores_exact_values(self):
         stub = r'''

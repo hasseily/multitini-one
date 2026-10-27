@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "multitini_core_frontend.h"
 #include "multitini_c64_features.h"
+#include "multitini_c64_content.h"
 
 #include "multitini_c64_interface.h"
 #include "multitini_gameboy_interface.h"
@@ -154,6 +155,13 @@ static void build_c64(mt_core_frontend_t *frontend,
     const bool extended = expansion_valid && state->abi_minor >= 26U;
     const bool reu_supported = expansion_valid &&
         (state->c64_expansion_caps & MT_C64_EXPANSION_CAPS_REU_16MB) != 0U;
+    const bool coexist = expansion_valid &&
+        (state->c64_expansion_caps & MT_C64_EXPANSION_CAPS_CART_COEXIST) != 0U;
+    const bool reu_blocked = state->cartridge_attached &&
+        (!coexist || !(state->c64_cartridge_policy & MT_C64_CRT_ALLOW_REU));
+    const bool ua_blocked = state->cartridge_attached &&
+        (!coexist || !(state->c64_cartridge_policy & MT_C64_CRT_ALLOW_ULTIMATE_AUDIO));
+    const bool uci_blocked = coexist && !state->c64_uci_active;
     frontend->media_items[view->media_item_count++] = item(
         "Drive 8", state->drive8_mounted ? attached_name(state->drive8_name) :
             (state->drive8_ready ? "Choose disk..." : "Drive ROM required"),
@@ -175,6 +183,27 @@ static void build_c64(mt_core_frontend_t *frontend,
                 MT_UI_COLOR_BLUE : MT_UI_COLOR_MUTED);
     }
     cartridge_item(frontend, state, view, "Load a CRT cartridge image.");
+    if (state->save_active) {
+        frontend->media_items[view->media_item_count++] = item(
+            "Cartridge save", state->save_faulted ? "Write failed" :
+                (state->save_dirty ? "Changes pending" : "Saved to SD"),
+            "EasyFlash writes save to the CRT's .sav file; delete it to restore the CRT.",
+            MT_MENU_ACTION_NONE, 0U, false,
+            state->save_faulted ? MT_UI_COLOR_RED :
+                (state->save_dirty ? MT_UI_COLOR_WARNING : MT_UI_COLOR_SUCCESS));
+        view->save_dirty = state->save_dirty;
+        view->save_faulted = state->save_faulted;
+        frontend->media_items[view->media_item_count++] = item(
+            "Export cartridge", "Write CRT copy",
+            "Write the current flash to NAME-saved.crt beside the CRT, for VICE, Ultimate or a "
+            "real EasyFlash. NAME.sav and the CRT stay unchanged.",
+            MT_MENU_ACTION_EXPORT_CARTRIDGE, 0U, true, MT_UI_COLOR_BLUE);
+        frontend->media_items[view->media_item_count++] = item(
+            "Boot jumper", state->c64_ef_jumper_disabled ? "Disable" : "Boot",
+            "Boot starts the cartridge at reset; Disable starts BASIC with it hidden. "
+            "Applies at the next reset.",
+            MT_MENU_ACTION_TOGGLE_CORE_OPTION, 21U, true, MT_UI_COLOR_BLUE);
+    }
     frontend->media_items[view->media_item_count++] = item(
         "Program", "Choose file...", "Load a PRG file into the C64.",
         MT_MENU_ACTION_BROWSE_PROGRAM, 0U, true, MT_UI_COLOR_BLUE);
@@ -187,7 +216,7 @@ static void build_c64(mt_core_frontend_t *frontend,
         frontend->media_items[view->media_item_count++] = item(
             "Load into REU", "Choose image...",
             "Load a raw .reu image into expansion memory without resetting the C64.",
-            MT_MENU_ACTION_BROWSE_REU, 0U, !state->cartridge_attached, MT_UI_COLOR_BLUE);
+            MT_MENU_ACTION_BROWSE_REU, 0U, !reu_blocked, MT_UI_COLOR_BLUE);
     frontend->input_items[view->input_item_count++] = item(
         "Keyboard", state->symbolic_keyboard ? "US symbolic" :
                                                 "MiSTer positional",
@@ -282,7 +311,9 @@ static void build_c64(mt_core_frontend_t *frontend,
     if (reu_supported) {
         const size_t index = view->core_option_count++;
         frontend->core_options[index] = item(
-            "RAM expansion", state->c64_reu_enabled ? "16 MB REU" : "Off",
+            "RAM expansion", state->c64_reu_enabled ?
+                (coexist && reu_blocked ? "Blocked by cartridge" : "16 MB REU") : "Off",
+            coexist ? "Enable the 16 MB DDR REU. A conflicting cartridge temporarily blocks it; the saved choice is retained." :
             (state->c64_expansion_caps & MT_C64_EXPANSION_CAPS_REU_DDR) != 0U ?
                 "Enable the 16 MB DDR REU; eject any cartridge first." :
                 "Enable the 16 MB REU; eject any cartridge first.",
@@ -292,12 +323,14 @@ static void build_c64(mt_core_frontend_t *frontend,
     }
     if (state->c64_ua_available) {
         frontend->core_options[view->core_option_count++] = item("Ultimate Audio $DF20-$DFFF",
-            state->c64_ua_fault ? "Fault" : state->c64_ua_enabled ? "On" :
-                state->cartridge_attached ? "Eject cartridge first" : "Off",
+            state->c64_ua_fault ? "Fault" : state->c64_ua_enabled ?
+                (coexist && ua_blocked ? "Blocked by cartridge" : "On") :
+                (!coexist && state->cartridge_attached) ? "Eject cartridge first" : "Off",
             state->c64_ua_fault ? "Reload the C64 core to clear the memory fault." :
+                coexist && ua_blocked ? "This cartridge blocks sample audio. The requested setting returns after eject." :
                 "Seven sample voices in REU memory. On also enables the 16 MB REU; Expand needs this off.",
             MT_MENU_ACTION_TOGGLE_CORE_OPTION, 8U,
-            !state->c64_ua_fault && (state->c64_ua_enabled || !state->cartridge_attached),
+            !state->c64_ua_fault && (coexist || state->c64_ua_enabled || !state->cartridge_attached),
             state->c64_ua_fault ? MT_UI_COLOR_WARNING : MT_UI_COLOR_BLUE);
     }
     if (state->abi_minor >= 26U && state->c64_turbo_available &&
@@ -309,7 +342,9 @@ static void build_c64(mt_core_frontend_t *frontend,
                  MT_MENU_ACTION_TOGGLE_CORE_OPTION, 14, true, MT_UI_COLOR_BLUE);
     if (extended && (state->c64_expansion_caps & MT_C64_EXPANSION_CAPS_UCI))
         frontend->core_options[view->core_option_count++] =
-            item("Command Interface", state->c64_uci_enabled ? "On" : "Off",
+            item("Command Interface", state->c64_uci_enabled ?
+                 (uci_blocked ? "Blocked by cartridge" : "On") :
+                 (coexist && state->c64_uci_active ? "On (guest)" : "Off"),
                  "Allow C64 programs to access the rooted command interface.",
                  MT_MENU_ACTION_TOGGLE_CORE_OPTION, 15, true, MT_UI_COLOR_BLUE);
     if (extended && (state->c64_expansion_caps & MT_C64_EXPANSION_CAPS_MULTI_SID))
@@ -317,6 +352,15 @@ static void build_c64(mt_core_frontend_t *frontend,
             item("SID setup...", "Addresses, pan and volume",
                  "Edit all SID channels and output settings. Escape returns to Options.",
                  MT_MENU_ACTION_TOGGLE_CORE_OPTION, 16, true, MT_UI_COLOR_BLUE);
+    if (state->c64_directory_drive_available) {
+        const size_t index = view->core_option_count++;
+        frontend->core_options[index] = item("SD directory drive",
+            state->c64_directory_drive_enabled ? "On" : "Off",
+            "Expose the SD directory as drive 9. Turn Off for loaders that require one drive; UCI storage remains available.",
+            MT_MENU_ACTION_TOGGLE_CORE_OPTION, 20U, true, MT_UI_COLOR_BLUE);
+        frontend->core_options[index].control = MT_MENU_CONTROL_CHECKBOX;
+        frontend->core_options[index].control_value = state->c64_directory_drive_enabled ? 1U : 0U;
+    }
     frontend->core_options[view->core_option_count++] =
         item("Title .cfg files", state->c64_title_automatic ? "On" : "Off",
              "Automatic sidecars on launch; manual Apply remains available when Off.",

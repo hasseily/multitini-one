@@ -12,10 +12,13 @@ typedef struct {
 } c64_uci_environment_t;
 extern c64_uci_environment_t c64_uci_environment;
 uint32_t c64_uci_read(unsigned offset);
+bool c64_uci_reu_enabled(void);
 void c64_uci_write(unsigned offset,uint32_t value);
 uint64_t c64_uci_time(void);
 bool c64_uci_protected(const char *path,bool writing);
 bool c64_uci_metadata_protected(const char *path);
+/* Decode and validate every supplied component before navigation removes it. */
+bool c64_uci_path_text(const uint8_t *name,size_t length,char out[C64_UCI_PATH]);
 /* Lexical normalization plus U64 aliases. Existing wildcard components are
  * resolved in FatFs directory order; non-existing last component is allowed. */
 bool c64_uci_path(const char *cwd,const uint8_t *name,size_t length,char out[C64_UCI_PATH]);

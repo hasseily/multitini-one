@@ -1,8 +1,9 @@
 -- SPDX-License-Identifier: GPL-2.0-or-later
 -- Multitini compatibility port of MiSTer C64 commit
 -- 62fc697e3c9b5982c9dc76aa8cd03db545d20803. This port exposes the existing
--- hsync-locked divide-by-four phase as pixel_tick. The original counter and
--- sync/blank generation logic is otherwise unchanged.
+-- hsync-locked divide-by-four phase as pixel_tick. advance qualifies completed
+-- native clock steps, keeping pixel phase and sync/blank counters together
+-- when cartridge memory waits stretch the native machine clock.
 -- BEGIN PINNED SOURCE BODY WITH PIXEL_TICK PORT
 ---------------------------------------------------------------------------------
 -- composite_sync by Dar (darfpga@aol.fr)
@@ -21,6 +22,7 @@ entity video_sync is
 port(
 	clk32 : in std_logic;
 	pause : in std_logic;
+	advance : in std_logic;
 	hsync : in std_logic;
 	vsync : in std_logic;
 	ntsc  : in std_logic;
@@ -47,7 +49,7 @@ process(clk32)
 	variable line_count : integer range 0 to 511 := 0;
 	variable line_reset : std_logic := '0';
 	begin
-	if falling_edge(clk32) then
+	if falling_edge(clk32) and advance = '1' then
 		hsync_r0 <= hsync;
 		if hsync_r0 = '0' and hsync = '1' then
 			clk_cnt <= "11";
@@ -57,7 +59,7 @@ process(clk32)
 	end if;
 
 	if rising_edge(clk32) then
-		if clk_cnt = "00" and pause = '0' then
+		if clk_cnt = "00" and pause = '0' and advance = '1' then
 			vsync_r <= vsync;
 			hsync_r <= hsync;
 
@@ -117,6 +119,6 @@ process(clk32)
 	end if;
 end process;
 
-pixel_tick <= '1' when clk_cnt = "00" and pause = '0' else '0';
+pixel_tick <= '1' when clk_cnt = "00" and pause = '0' and advance = '1' else '0';
 
 end architecture;

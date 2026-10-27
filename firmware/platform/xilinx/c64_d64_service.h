@@ -53,6 +53,8 @@ int c64_d64_service_ensure_mounted(const char *file_name);
 int c64_d64_service_mount_default(void);
 int c64_d64_service_eject(void);
 void c64_d64_service_poll(void);
+/* Cumulative media requests from drive 8, for the activity badge. */
+void c64_d64_service_activity(uint32_t *reads, uint32_t *writes);
 void c64_d64_service_list(void);
 void c64_d64_service_dump_status(void);
 bool c64_d64_service_mounted(void);

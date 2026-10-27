@@ -52,6 +52,7 @@ static bool media_target_drain_supported;
 static bool fast_floppy_supported;
 static bool staged_write;
 static uint32_t staged_id, staged_generation;
+static uint32_t activity_reads[MT_IIGS_DRIVE_COUNT], activity_writes[MT_IIGS_DRIVE_COUNT];
 static uint32_t crc32(const uint8_t *p,size_t n)
 {
     uint32_t c=UINT32_MAX;
@@ -371,6 +372,7 @@ void iigs_content_service_poll(void)
     const unsigned drive=mt_iigs_wire_slot_drive(slot);
     gs_drive_t *d=drive<MT_IIGS_DRIVE_COUNT ? &drives[drive]:NULL;
     const bool hdd=mt_iigs_drive_hdd_unit(drive)<MT_IIGS_HDD_COUNT;
+    if(d!=NULL) { if(writing)++activity_writes[drive]; else ++activity_reads[drive]; }
     /* The shared shell accepts only generic transport responses. SmartPort
      * unit/protection/range errors are validated in the HDD controller. */
     const uint32_t io_error=MT_RESPONSE_IO_ERROR;
@@ -776,6 +778,11 @@ bool iigs_content_service_fast_floppy_supported(void) { return fast_floppy_suppo
 void iigs_content_service_set_timestamp(uint32_t timestamp) { config.timestamp=timestamp; }
 const char *iigs_content_service_name(unsigned d) { return d<MT_IIGS_DRIVE_COUNT && drives[d].mounted ? drives[d].name:NULL; }
 const char *iigs_content_service_error(void) { return error; }
+void iigs_content_service_activity(unsigned d,uint32_t *reads,uint32_t *writes)
+{
+    if(reads!=NULL)*reads=d<MT_IIGS_DRIVE_COUNT ? activity_reads[d]:0U;
+    if(writes!=NULL)*writes=d<MT_IIGS_DRIVE_COUNT ? activity_writes[d]:0U;
+}
 bool iigs_content_service_ready(void) { return ready; }
 bool iigs_content_service_faulted(void) { return faulted; }
 int iigs_content_service_retry(void)

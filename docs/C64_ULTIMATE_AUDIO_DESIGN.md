@@ -1,5 +1,9 @@
 # Multitini One C64: Ultimate Audio at $DF20-$DFFF (design)
 
+Current-source update: [cartridge compatibility](C64_CARTRIDGE_COMPATIBILITY.md)
+supersedes this design's blanket REU/CRT exclusion. The historical design and
+decision records below retain their original scope.
+
 Design stage only. No HDL, firmware, script or build file was changed for this design. Nothing was built or simulated.
 
 - Repository: `multitini-one`, branch `c64-turbo`, HEAD `5341812` (M0.7.0dev5, C64 image `4D00C705`).
@@ -495,6 +499,31 @@ irq_ext_n     = !(reu_irq || ua_irq);   // ua_irq = |ua_flags
   - `ua_fault` is reported only through `C64_UA_STATUS` (section 6.1). It is **not** ORed into `reu_fault_latched`. That latch feeds `fatal_load_error`, which holds `core_reset_n` low and drops `ready` [V adapter:297-309, 431-434], so an audio fault would stop the whole machine and be reported as a REU fault;
   - `ua_fault` clears only on hard PL reset, matching the sticky path fault [V multitini_c64_ddr_path.sv:107]. Firmware shows it on the Options row (section 6.2).
 
+#### 2.4.6 Shared evaluator and extractor (implemented 2026-10-26)
+
+The first implementation evaluated all seven voices' issue candidates and sample extraction in parallel on every clock, and duplicated the extraction in a combinational same-edge bypass. Together that cost 5,533 LUTs, against a budget of about 600 [V out-of-context synthesis of `multitini_c64_ua_fetch`]. The rework keeps sections 2.4.2-2.5 and changes how the work is scheduled:
+
+- **Issue.** Each voice keeps a registered read status: candidate, class (demand, predict, look-ahead) and deferred. One shared evaluator refreshes one voice per clock. A voice that just fetched, was just served or was just issued is refreshed first.
+  - The issue slot takes the earliest deadline among the registered statuses: candidates before non-candidates, undeferred before deferred, then class, live deadline and voice number.
+  - It then re-evaluates only that winner against live state, including the section 2.5 fence. An unblocked winner issues on the same clock, including on the response edge. A blocked one only updates its status.
+  - After a fetch, a slot waits until that voice's status is refreshed, so a new demand competes by deadline. The wait is capped at 8 clocks, which covers seven simultaneous fetches.
+  - A fence release or a response edge issues without added delay, because the waiting voices' statuses are already current.
+- **Extraction.** On its fetch edge a voice freezes which of its two entries were valid, using the same-clock snoop rule of section 2.4.3. A word installed on that edge counts as valid.
+  - One shared extractor copies the sample bytes from the frozen entries within a few clocks (at most 7 when all voices fetch together). The result is the same as a latch on the fetch edge: a write accepted after the fetch edge does not affect that sample (rule 3).
+  - A frozen voice's entries cannot be targeted until the extractor has served it.
+  - A word that lands for its voice's current demand is served on its response edge, as in section 2.4.5: the extractor takes that voice first, reads the landing entry from the response itself, and exposes the sample combinationally on that edge. Only the owner voice can use it, so this is one 64-bit source mux, not seven parallel bypasses (added 2026-10-27, see below).
+- **Buffers.** The 14 data words are in LUT RAM (two 7 x 64-bit RAMs, one per entry of a voice) instead of flip-flops.
+- **Result.** The fetcher is 2,072 LUTs (88 of them LUT RAM) and 992 FFs, from 5,533 and 2,113. The whole UA block is 4,674 LUTs and 2,493 FFs, from 8,196 and 3,614, with 52 DSP unchanged [V out-of-context synthesis, 2026-10-27, including the restored response-edge path and its timing fix].
+- **Restored response-edge path (2026-10-27).** The first rework latched a landed word one clock after its response edge. `tb_c64_ua_top` then failed its shared-defer bound: seven 1-sample loops on one word need seven sequential reads after a fence, and at 90-clock latency the fourth word lands on the sample boundary itself. The original design served it on that edge (3 underruns); the rework missed it (4). With the path restored, the four shared-defer cases give 2, 0, 3 and 0 underruns, identical to the original fetcher on the same bench [V]. It costs 236 LUTs in the fetcher and 315 in the UA block.
+- **Timing of the response-edge path (2026-10-27).** As first restored, the response test used `owed || accepted`. `accepted` follows this clock's issue, so the whole evaluator (winner, live hit tests, fence) ran in front of the extractor and the mixer in one machine clock. Routed C64 images then had 46-53 logic levels and 31 ns on that path, with slack from -0.337 to +0.178 ns depending on placement; M0.7.1dev2 had about +2 ns on that clock [V routed builds]. A request issued on this clock only turns while a read is owed, so the test is now `owed || (request queued, not fenced, and memory_ready)`, which is the same function without the evaluator. Out of context at the NTSC machine period, the UA block's worst path went from +1.0 ns (58 levels, ending at a mixer DSP) to +7.8 ns (45 levels, ending in the evaluator) [V].
+- **Latency changes against section 2.4.5:**
+  - none between a response and the sample of its own demand;
+  - up to 8 clocks before the first issue after a burst of simultaneous fetches;
+  - up to 7 clocks after a fetch before a resident sample is latched, still inside any period of rate 1 or more.
+  `scripts/ua_model.py` and the T4/T4b envelopes must be re-run against these figures before release.
+- **Bench change.** The same-edge snoop check in `tb_c64_ua_cache` now holds over 8 clocks, because the sample appears only after extraction. The `resident_snoop_off` negative control is still rejected.
+- **Validated 2026-10-26.** `tb_c64_ua_fetch`, `tb_c64_ua_cache` and all four coherence negative controls pass. On 2026-10-27 `tb_c64_ua_top` passes with the restored response-edge path, and the full C64 suite passed in the M0.7.1dev3 batch.
+
 ### 2.5 Coherence with the REU cache
 
 **Facts [V multitini_c64_reu_cache.sv]:**
@@ -510,7 +539,7 @@ The queue, the in-flight write and the registered snoop cover every accepted wri
    - the valid queue entries (`wb_addr[head..head+count-1]`);
    - the in-flight write's `memory_addr[23:3]`;
    - the registered snoop (rule 2) of the last clock;
-   - the **post-B hold** set: the words of REU writes whose B response arrived less than `UA_POST_B_HOLD` clocks ago (default **16**). Writes complete one at a time, so the set needs one entry per write that can finish inside 16 clocks: 2 entries if a DDR write takes at least 8 clocks [I]. T5 checks the boundary.
+   - the **post-B hold** set: the words of REU writes whose B response arrived less than `UA_POST_B_HOLD` clocks ago (default **16**). Writes complete one at a time, so the set needs one entry per write that can finish inside 16 clocks: 2 entries if a DDR write takes at least 8 clocks [I]. T5 checks the boundary. Implemented 2026-10-26 as 2 entries, each a word tag with a countdown. A third write inside one window holds every word for a full window, so correctness does not depend on write spacing. This replaced a 16-entry delay line that cost about 720 LUTs [V out-of-context synthesis of the fetcher].
 
    A match skips the candidate this clock. The read therefore reaches DDR only after every earlier accepted REU write to W has received its B response, plus the hold.
 2. **Snoop.** Register `accept_write` and `request_addr[23:3]` from the cache request port (one clock late). A match:

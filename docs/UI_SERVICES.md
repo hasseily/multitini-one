@@ -57,6 +57,33 @@ the requested time or one second later counts as success. Stopped clocks,
 low-voltage flags, invalid dates, and I2C failures are reported. Successful
 edits also refresh the cached FAT timestamp.
 
+## Drive activity
+
+A badge in the top-right corner shows which drive is working, after
+Appletini ONE's storage widget. It shows a unit label, a red activity light
+and R/W lights. It appears while a drive works and hides 1.5 seconds after
+the last activity. System > "Drive activity" turns it off (byte 26 bit 7 of
+`settings.bin`; zero keeps it on).
+
+- **Sources.** Each storage service counts its own reads and writes; the
+  runtime samples them every 16 ms. A changed read count lights R for
+  133 ms, a changed write count lights W for 267 ms.
+  - C64: drive 8 media requests (`D8`), drive 9 bytes received and sent
+    (`D9`), and EasyFlash flash operations (`EF`). With capability bit 22
+    the core also reports the 1541 LED and spindle and the EasyFlash LED;
+    those units show their real LED.
+  - Apple IIgs: block requests per drive (`HD1`-`HD8`, `3.5`, `5.25`).
+  - Cores without drives show nothing.
+- **Display.** The badge is an 80x36 legacy-layout frame, mostly transparent.
+  ABI 0.11 shows a visible legacy frame without pausing or muting the core;
+  only a visible dense frame (the menu) does. The menu and badge share one
+  presenter: each upload invalidates the other layout's cache for that bank.
+  Hiding the menu for an action waits only for the dense menu, and
+  screenshots composite only the menu. On a shell without the dense layout,
+  any visible overlay still counts as the menu.
+- **No new FPGA image.** The badge needs no shell change, so cores built
+  before it show R/W activity from firmware; only the C64 adds live lights.
+
 ## Controls and source
 
 Menu descriptors now carry an optional checkbox or slider with bounds.

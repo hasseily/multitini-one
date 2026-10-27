@@ -26,6 +26,8 @@ module multitini_c64_adapter #(
     input  logic [31:0] cart_erase_request,
     output wire [31:0] cart_erase_status,
     input  logic drive_power_off,
+    // EasyFlash boot jumper in its Disable position (C64_PERIPHERAL_CONTROL).
+    input  tri0  ef_boot_disable,
     output wire [31:0] drive_status,
     input  logic [10:0] uci_control,
     input  logic [31:0] uci_op,uci_ram_request,
@@ -145,6 +147,10 @@ module multitini_c64_adapter #(
     output logic        prg_loaded,
     output logic        cart_loaded,
     output logic [7:0]  cart_hardware_type,
+    // EasyFlash flash operations for firmware, in acceptance order.
+    output wire  [30:0] ef_journal_data,
+    output wire         ef_journal_valid,
+    input  tri1         ef_journal_ready,
     output logic        prg_run_busy,
 
     output logic [7:0]  video_r,
@@ -160,7 +166,6 @@ module multitini_c64_adapter #(
     output logic               audio_valid
 );
     import multitini_c64_defs_pkg::*;
-    assign drive_status[31:5] = {1'b1,26'd0};
 
 
     logic        rom_wr;
@@ -241,6 +246,8 @@ module multitini_c64_adapter #(
         .busy(iec9_busy),.quiescent(iec9_quiescent),.token(iec9_token));
     logic        drive_mounted;
     logic        drive_led;
+    logic        drive_motor;
+    logic        ef_led;
     logic        cpu_turbo_active;
     logic [7:0]  c64_pb_o;
     logic [7:0]  c64_pb_oe;
@@ -266,6 +273,9 @@ module multitini_c64_adapter #(
     logic        cart_rom_l;
     logic        cart_rom_h;
     logic        cart_umax_rom_h;
+    logic [7:0] loader_cart_subtype;
+    logic [2:0] loader_cart_expansion_policy;
+    logic [31:0] reu_host_transport_status;
     logic        cart_ioe;
     logic        cart_iof;
     logic        cart_io_rom;
@@ -279,8 +289,14 @@ module multitini_c64_adapter #(
     logic [7:0]  cart_mem_out;
     logic [7:0]  cart_data_out;
     logic [24:0] cart_mem_addr;
-    logic        cart_mem_req;
-    logic        cart_mem_cycle;
+    logic [5:0]  ef_bank;
+    logic        ef_read_override;
+    logic [7:0]  ef_read_data;
+    logic        ef_mem_valid, ef_mem_write, ef_mem_accept, ef_mem_done;
+    logic [23:0] ef_mem_addr;
+    logic [7:0]  ef_mem_wdata, ef_mem_rdata;
+    logic        ef_erase_valid, ef_erase_high, ef_erase_accept, ef_erase_done;
+    logic [2:0]  ef_erase_group;
     logic [7:0]  cart_runtime_data;
     logic        cart_external_select;
     logic        cart_runtime_request;
@@ -321,8 +337,14 @@ module multitini_c64_adapter #(
     // guest reset, like Ultimate's host-owned CMD_IF_SLOT_ENABLE register.
     // Starting new content or reloading the FPGA restores configured policy.
     logic uci_unlock_key, uci_unlocked, uci_config_epoch_seen;
+    // EasyFlash RAM fills $DF00-$DFFF. Like Ultimate's CART_UCI_DE1C, its
+    // policy allows UCI and the decode below moves the block to $DE18.
+    wire ef_attached=ENABLE_EXTENSIONS && cart_loaded && loader_cart_id==MT_CRT_EASYFLASH;
     wire uci_suspended=cart_loading ||
-                       (cart_loaded && loader_cart_id!=0 && !uci_unlocked);
+                       (cart_loaded && !loader_cart_expansion_policy[1] && !uci_unlocked);
+    // Activity lights for the supervisor: drive A LED8, spindle9 and the
+    // EasyFlash LED10. Bits4:0 carry drive A's effective IEC address.
+    assign drive_status[31:5] = {1'b1,20'd0,ef_attached && ef_led,drive_motor,drive_led,3'd0};
     wire uci_active=ENABLE_EXTENSIONS && (uci_enable || uci_unlocked) && !uci_suspended;
     wire uci_hold=ENABLE_EXTENSIONS && uci_control[10];
     wire uci_freeze,uci_irq,uci_io_select;
@@ -416,6 +438,7 @@ module multitini_c64_adapter #(
     logic        vblank;
     logic        sync_pixel_tick;
     logic        sync_pixel_tick_d;
+    logic        video_advance_q;
 
 
     assign core_id = MT_C64_CORE_ID;
@@ -504,7 +527,8 @@ module multitini_c64_adapter #(
         .loader_memory_ready(loader_memory_ready),
         .memory_fault(cart_memory_fault),
         .cart_loading(cart_loading), .cart_loaded(cart_loaded),
-        .cart_id(loader_cart_id), .cart_exrom(cart_exrom_header),
+        .cart_id(loader_cart_id), .cart_subtype(loader_cart_subtype),
+        .cart_expansion_policy(loader_cart_expansion_policy), .cart_exrom(cart_exrom_header),
         .cart_game(cart_game_header), .cart_bank_hi(cart_bank_hi),
         .cart_bank_16k(cart_bank_16k), .cart_bank_num(cart_bank_num),
         .cart_bank_addr(cart_bank_addr), .cart_bank_wr(cart_bank_wr),
@@ -659,12 +683,17 @@ module multitini_c64_adapter #(
         end
     end
 
-    assign cart_external_select = cart_loaded && cart_mem_ce &&
+    // Mapping must outlive the one-cycle request strobe: VIC3/CPUF consume
+    // the cached response after VIC0/CPUC issued it. Gating the data mux by
+    // CE returns ordinary RAM at retirement even when the cartridge hit.
+    assign cart_external_select = cart_loaded &&
                                   cart_mem_addr[24:16] != 9'd0;
-    assign cart_runtime_request = core_reset_n && cart_external_select;
+    assign cart_runtime_request = core_reset_n && cart_mem_ce && cart_external_select;
     assign cart_mem_in = cart_external_select ?
                          cart_runtime_data : main_ram_din;
-    assign core_ram_din = cart_loaded ? cart_data_out : main_ram_din;
+    // A busy or autoselected EasyFlash chip answers reads itself.
+    assign core_ram_din = ef_read_override ? ef_read_data :
+                          cart_loaded ? cart_data_out : main_ram_din;
 
     multitini_c64_cart_memory cart_memory_i (
         .clk(core_clk), .reset(reset), .loader_active(cart_loading),
@@ -687,19 +716,63 @@ module multitini_c64_adapter #(
         .memory_wdata(cart_memory_wdata), .memory_wstrb(cart_memory_wstrb),
         .memory_valid(cart_memory_valid), .memory_ready(cart_memory_ready),
         .memory_rdata(memory_rdata), .memory_rvalid(cart_memory_rvalid),
-        .memory_fault(memory_fault)
+        .memory_fault(memory_fault),
+        .flash_valid(ef_mem_valid), .flash_write(ef_mem_write), .flash_addr(ef_mem_addr),
+        .flash_wdata(ef_mem_wdata), .flash_accept(ef_mem_accept), .flash_done(ef_mem_done),
+        .flash_rdata(ef_mem_rdata),
+        .flash_erase_valid(ef_erase_valid), .flash_erase_group(ef_erase_group),
+        .flash_erase_high(ef_erase_high), .flash_erase_accept(ef_erase_accept),
+        .flash_erase_done(ef_erase_done)
     );
 
-    // Keep the existing cartridge exclusion until simultaneous IO2 mapping
-    // has a defined compatibility policy. Storage is now independent DDR.
-    assign reu_active = reu_enable && !cart_loaded && !cart_loading;
+    // Guest reset leaves an accepted flash operation to finish, so cartridge
+    // memory always matches the journal firmware has already been sent.
+    // A cartridge access that misses the cache stalls on its request clock
+    // and is issued again once the line arrives. Only the retiring issue
+    // reaches the flash, so each CPU write steps a command sequence once and
+    // each status read toggles DQ6 once.
+    multitini_c64_ef_flash ef_flash_i (
+        .clk(core_clk), .reset(reset), .enable(ef_attached),
+        .ultimax(cart_exrom && !cart_game),
+        .access_ce(ram_ce && !cart_stall), .access_we(ram_we), .rom_l(cart_rom_l), .rom_h(cart_rom_h),
+        .address(ram_addr[12:0]), .write_data(ram_dout), .bank(ef_bank),
+        .read_override(ef_read_override), .read_data(ef_read_data),
+        .mem_valid(ef_mem_valid), .mem_write(ef_mem_write), .mem_addr(ef_mem_addr),
+        .mem_wdata(ef_mem_wdata), .mem_accept(ef_mem_accept), .mem_done(ef_mem_done),
+        .mem_rdata(ef_mem_rdata),
+        .erase_valid(ef_erase_valid), .erase_group(ef_erase_group), .erase_high(ef_erase_high),
+        .erase_accept(ef_erase_accept), .erase_done(ef_erase_done),
+        .journal_data(ef_journal_data), .journal_valid(ef_journal_valid),
+        .journal_ready(ef_journal_ready), .busy()
+    );
+
+    // Keep requested settings intact. Cartridge-specific permits suppress only
+    // conflicting peripherals and release them automatically on detach.
+    assign reu_active = reu_enable && !cart_loading &&
+                        (!cart_loaded || loader_cart_expansion_policy[0]);
     // MAME releases the REU register aperture during its own DMA. A transfer
     // reading $DFxx observes the machine's floating bus, not REU status.
-    assign ua_active = ua_enable && reu_active && !reu_host_word[13];
-    assign uci_io_select=uci_active && !reu_dma_req && cart_iof &&
+    assign ua_active = ua_enable && reu_active && !reu_host_word[13] &&
+                       (!cart_loaded || loader_cart_expansion_policy[2]);
+    // Existing coherent native-to-control snapshot carries effective state;
+    // no additional clock crossing or control register is introduced.
+    assign reu_host_status = reu_host_transport_status |
+        (reu_active ? multitini_regs_pkg::MT_C64_REU_HOST_ACTIVE : 32'd0) |
+        (ua_active ? multitini_regs_pkg::MT_C64_REU_HOST_UA_ACTIVE : 32'd0) |
+        (uci_active ? multitini_regs_pkg::MT_C64_REU_HOST_UCI_ACTIVE : 32'd0);
+    // The five UCI registers sit at offset $1B-$1F of I/O2, or of I/O1 while
+    // EasyFlash owns I/O2 (Ultimate's slot base $DE18). There they take
+    // priority over the EasyFlash register mirrors $DE1B-$DE1F.
+    assign uci_io_select=uci_active && !reu_dma_req && (ef_attached ? cart_ioe : cart_iof) &&
                          cpu_bus_addr[7:3]==5'b00011 && cpu_bus_addr[2:0]>=3;
     assign ua_io_select = ua_active && !reu_dma_req && cart_iof && cpu_bus_addr[7:5] != 0;
+    // With a cartridge, use Ultimate's narrow REU aperture: DF00-DF17 reads,
+    // DF00-DF1F writes, with the five UCI registers taking priority. In
+    // particular FC3's DFFF bank/control register must remain with the cart.
+    // Preserve the native REU mirrors when no cartridge is attached.
     assign reu_io_select = reu_active && !reu_dma_req && cart_iof &&
+                           (!cart_loaded || (cpu_bus_addr[7:5] == 0 &&
+                            (cpu_bus_write || cpu_bus_addr[4:3] != 2'b11))) &&
                            !uci_io_select && (!ua_active || cpu_bus_addr[7:5] == 0);
     assign sid_io_select=map_enabled && !cart_loaded && !cart_loading && !reu_dma_req &&
         (cart_ioe || cart_iof) && (|sid_io_masks[cpu_bus_addr[8:5]*8 +: 8]) &&
@@ -780,7 +853,7 @@ module multitini_c64_adapter #(
         .peek_request(peek_request), .peek_address(peek_address),
         .peek_valid(peek_valid && !uci_buffer_owned), .peek_data(peek_data), .peek_status(peek_status),
         .invalidate(cache_invalidate), .invalidate_done(cache_invalidate_done),
-        .reu_busy(reu_memory_busy), .ua_held(ua_held), .reu_status(reu_host_status)
+        .reu_busy(reu_memory_busy), .ua_held(ua_held), .reu_status(reu_host_transport_status)
     );
     multitini_c64_ua #(.CORE_CLOCK_HZ(CORE_CLOCK_HZ)) ua_i (
         .clk(core_clk), .hard_reset(reset), .guest_reset(!core_reset_n),
@@ -837,18 +910,20 @@ module multitini_c64_adapter #(
         .cart_exrom(cart_exrom_header), .cart_game(cart_game_header),
         .cart_bank_hi(cart_bank_hi), .cart_bank_16k(cart_bank_16k),
         .cart_bank_num(cart_bank_num), .cart_bank_addr(cart_bank_addr),
-        .cart_bank_wr(cart_bank_wr), .cart_boot(1'b1),
+        .cart_bank_wr(cart_bank_wr), .cart_boot(!ef_boot_disable),
         .exrom(cart_exrom), .game(cart_game), .romL(cart_rom_l),
         .romH(cart_rom_h), .UMAXromH(cart_umax_rom_h),
-        .IOE(cart_ioe), .IOF(cart_iof && !uci_io_select), .mem_write(ram_we),
+        .IOE(cart_ioe && !uci_io_select),
+        .IOF(cart_iof && !uci_io_select && !reu_io_select && !ua_io_select),
+        .mem_write(ram_we),
         .mem_ce(ram_ce), .mem_ce_out(cart_mem_ce),
         .mem_write_out(cart_mem_we), .mem_in(cart_mem_in),
         .mem_out(cart_mem_out), .mem_addr(cart_mem_addr),
-        .mem_req(cart_mem_req), .mem_cycle(cart_mem_cycle),
         .IO_rom(cart_io_rom), .IO_rd(cart_io_read),
         .IO_data(cart_io_data), .addr_in(ram_addr), .data_in(ram_dout),
         .data_out(cart_data_out), .freeze_key(1'b0),
-        .mod_key(1'b0), .nmi(cart_nmi), .nmi_ack(cart_nmi_ack)
+        .mod_key(1'b0), .nmi(cart_nmi), .nmi_ack(cart_nmi_ack), .ef_bank(ef_bank),
+        .ef_led(ef_led)
     );
 
     fpga64_sid_iec #(.EXTERNAL_CPU(1), .FAST_IO(1), .FIO_DEPTH(FIO_DEPTH),.SID_COUNT(SID_COUNT)) core_i (
@@ -875,7 +950,7 @@ module multitini_c64_adapter #(
         .ps2_key(ps2_key), .kbd_reset(!core_reset_n), .shift_mod(2'b11),
         .ramAddr(ram_addr), .ramDin(core_ram_din), .ramDout(ram_dout),
         .ramCE(ram_ce), .ramWE(ram_we),
-        .io_cycle(cart_mem_cycle), .ext_cycle(), .refresh(),
+        .io_cycle(), .ext_cycle(), .refresh(),
         // All acceleration belongs to the external island. Native timing
         // never uses the upstream Smart/C128 extra-cycle scheduler.
         .cia_mode(1'b0), .turbo_mode(2'b00),
@@ -989,13 +1064,22 @@ module multitini_c64_adapter #(
         .g64_load_total(load_total), .mounted(drive_mounted),
         .media_dirty(media_state_dirty),
         .media_eject_pending(media_state_eject_pending),
-        .drive_led(drive_led), .error(drive_media_error)
+        .drive_led(drive_led), .drive_motor(drive_motor), .error(drive_media_error)
     );
 
     assign media_state_mounted = drive_mounted;
 
+    // The VIC consumes ext_frame_run on the rising edge. Record that completed
+    // native step for video_sync's following falling edge; the core's wait
+    // register can change on the same rising edge that advances the VIC.
+    always_ff @(posedge core_clk) begin
+        if (!core_reset_n) video_advance_q <= 1'b0;
+        else video_advance_q <= ext_frame_run;
+    end
+
     video_sync sync_i (
         .clk32(core_clk), .pause(!core_reset_n || core_paused),
+        .advance(video_advance_q),
         .hsync(raw_hsync), .vsync(raw_vsync), .ntsc(NTSC_MODE),
         .wide(1'b0), .hsync_out(sync_hsync), .vsync_out(sync_vsync),
         .hblank(hblank), .vblank(vblank), .pixel_tick(sync_pixel_tick)
@@ -1004,7 +1088,8 @@ module multitini_c64_adapter #(
     // video_sync locks its divide-by-four pixel phase to the VIC hsync. Wait
     // one complete core-clock edge after that tick before registering the
     // entire video tuple, so RGB, blanking, and sync all describe one stable
-    // source pixel when video_valid is asserted.
+    // source pixel when video_valid is asserted. A queued pixel drains once
+    // even if a cartridge wait starts before its output edge.
     always_ff @(posedge core_clk) begin
         if (!core_reset_n) begin
             sync_pixel_tick_d <= 1'b0;
@@ -1049,5 +1134,5 @@ module multitini_c64_adapter #(
         end
     end
 
-    wire unused_drive_status = d64_load_ready ^ drive_mounted ^ drive_led;
+    wire unused_drive_status = d64_load_ready ^ drive_mounted;
 endmodule

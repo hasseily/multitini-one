@@ -235,6 +235,8 @@ module multitini_one_top #(
     wire [31:0] c64_peripheral_control;
     wire [31:0] c64_cart_erase_request,c64_cart_erase_status;
     wire [31:0] c64_drive_status;
+    wire [31:0] c64_ef_journal;
+    wire c64_ef_journal_pop;
     wire [5:0] c64_sid_index;
     wire [7:0] c64_sid_sequence;
     wire c64_sid_write,c64_sid_commit;
@@ -769,7 +771,7 @@ module multitini_one_top #(
 
     multitini_control_regs #(.SHELL_BUILD_ID(SHELL_BUILD_ID),
         .IIGS_ACCEL_CAPS(ACTIVE_MACHINE==5 ? 32'h8000037f : 32'd0),
-        .C64_EXPANSION_CAPS(ACTIVE_MACHINE==0 ? 32'h8007FF7F : 32'd0),
+        .C64_EXPANSION_CAPS(ACTIVE_MACHINE==0 ? 32'h807FFF7F : 32'd0),
         .NET_CAPS(ACTIVE_MACHINE==0 ? MT_NET_CAPS_W5100S : 32'd0),
         .C64_CPU_CAPS(ACTIVE_MACHINE==0 ? MT_C64_CPU_CAPS_RELEASE : 32'd0),
         .C64_IEC_CAPS(ACTIVE_MACHINE==0 ? (MT_C64_IEC_CAPS_DEVICE9 | MT_C64_IEC_CAPS_ADDRESS) : 32'd0),
@@ -830,6 +832,7 @@ module multitini_one_top #(
         .c64_palette_data(c64_palette_data),.c64_peripheral_control(c64_peripheral_control),
         .c64_cart_erase_request(c64_cart_erase_request),.c64_cart_erase_status(c64_cart_erase_status),
         .c64_drive_status(c64_drive_status),
+        .c64_ef_journal(c64_ef_journal),.c64_ef_journal_pop(c64_ef_journal_pop),
         .c64_sid_index(c64_sid_index),.c64_sid_data(c64_sid_data),
         .c64_sid_write(c64_sid_write),.c64_sid_commit(c64_sid_commit),
         .c64_sid_sequence(c64_sid_sequence),.c64_sid_status(c64_sid_status),
@@ -1305,6 +1308,15 @@ module multitini_one_top #(
             wire ua_memory_valid, ua_memory_busy, ua_memory_ready, ua_memory_rvalid, ua_memory_fault;
             wire reu_quiescent, ua_quiescent;
             assign c64_reu_memory_quiescent = reu_quiescent && ua_quiescent;
+            // EasyFlash journal: one entry in flight, the adapter queues the rest.
+            wire [30:0] ef_journal_data, ef_journal_head;
+            wire ef_journal_valid, ef_journal_ready, ef_journal_head_valid;
+            multitini_async_mailbox #(.WIDTH(31),.DRAIN_ON_RESET(1)) ef_journal_i(
+                .src_clk(c64_clk),.src_resetn(c64_aresetn),.src_data(ef_journal_data),
+                .src_valid(ef_journal_valid),.src_ready(ef_journal_ready),
+                .dst_clk(control_clk),.dst_resetn(control_aresetn),.dst_data(ef_journal_head),
+                .dst_valid(ef_journal_head_valid),.dst_ready(c64_ef_journal_pop));
+            assign c64_ef_journal={ef_journal_head_valid,ef_journal_head};
             // One snapshot in each direction also gives each remote reset a
             // single synchronizer. Independent synchronizers for the same
             // reset could release related command channels on different cycles.
@@ -1339,9 +1351,11 @@ module multitini_one_top #(
                 .ua_enable(expansion_config[4]), .ua_status(ua_status),
                 .uci_enable(expansion_config[5]),.uci_control(uci_control),
                 .cart_erase_request(cart_erase_request),.cart_erase_status(cart_erase_status),
+                .ef_journal_data(ef_journal_data),.ef_journal_valid(ef_journal_valid),
+                .ef_journal_ready(ef_journal_ready),
                 .drive_status(drive_status),
                 .drive_power_off(peripheral_control[0]),.uci_config_epoch(peripheral_control[1]),
-                .iec9_address(peripheral_control[12:8]),
+                .iec9_address(peripheral_control[12:8]),.ef_boot_disable(peripheral_control[16]),
                 .uci_status(uci_status),.uci_status2(uci_status2),
                 .uci_op(uci_op),.uci_op_valid(uci_op_valid),.uci_op_ready(uci_op_ready),
                 .uci_ram_request(uci_ram_request),.uci_buffer_addr(uci_buffer_addr),
@@ -2184,6 +2198,7 @@ module multitini_one_top #(
         assign c64_cpu_status=0, c64_ua_status=0, c64_ua_fetches=0, c64_reu_misses=0;
         assign c64_ram_peek_status=0, c64_reu_host_status=0;
         assign c64_iec_status=0,c64_iec_rx=0;
+        assign c64_ef_journal=0;
     end endgenerate
     generate if(ACTIVE_MACHINE!=0 && ACTIVE_MACHINE!=4 && ACTIVE_MACHINE!=5 && ACTIVE_MACHINE!=6)begin : g_no_machine_ddr
         assign hp2_araddr=0,hp2_arlen=0,hp2_arsize=3'd3,hp2_arburst=2'd1,hp2_arvalid=0,hp2_rready=1;

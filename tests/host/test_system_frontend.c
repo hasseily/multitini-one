@@ -92,8 +92,20 @@ static void test_actions_and_standby(void)
     view.status_text = "Status owned by runtime";
     view.content_root = "/core/content";
     mt_system_frontend_apply(&frontend, &snapshot, &view);
-    check(view.system_items == frontend.items && view.system_item_count == 9U,
+    check(view.system_items == frontend.items && view.system_item_count == 10U,
           "System descriptors fill the shared view");
+    check(item(&view, "Drive activity")->control == MT_MENU_CONTROL_CHECKBOX &&
+          item(&view, "Drive activity")->control_value == 0U &&
+          item(&view, "Drive activity")->enabled &&
+          item(&view, "Drive activity")->action == MT_MENU_ACTION_TOGGLE_DRIVE_ACTIVITY,
+          "drive activity is a checkbox setting");
+    view.settings_drive_activity = true;
+    mt_system_frontend_apply(&frontend, &snapshot, &view);
+    expect_value(&view, "Drive activity", "On");
+    check(item(&view, "Drive activity")->control_value == 1U,
+          "drive activity shows the saved choice");
+    view.settings_drive_activity = false;
+    mt_system_frontend_apply(&frontend, &snapshot, &view);
     check(!item(&view, "Restart active core")->enabled &&
           !item(&view, "Autoboot current core")->enabled,
           "standby disables actions that require an active core");
@@ -330,13 +342,13 @@ static void test_golden_update_confirmation(void)
     mt_menu_t menu;
     mt_system_frontend_apply(&frontend, &snapshot, &view);
     expect_value(&view, "Golden Boot", "Unknown");
-    check(view.system_item_count == 9U,
+    check(view.system_item_count == 10U,
           "absent BOOT.BIN does not display an update action");
     snapshot.golden_version = "B1.2.0";
     snapshot.golden_update_present = true;
     mt_system_frontend_apply(&frontend, &snapshot, &view);
     expect_value(&view, "Golden Boot", "B1.2.0");
-    check(view.system_item_count == 10U && !snapshot.multiboot_ready &&
+    check(view.system_item_count == 11U && !snapshot.multiboot_ready &&
           item(&view, "Update Golden Boot...")->enabled,
           "an SD BOOT.BIN enables update even with Golden 1.x");
     menu = focus_item(&view, "Update Golden Boot...");
@@ -389,7 +401,7 @@ static void test_about_move_and_navigation(void)
     static const char *const system[] = {
         "Restart active core", "Autoboot current core", "Read documents", "Date and time",
         "Restart USB", "Golden updater", "Startup firmware", "Switch to Appletini",
-        "USB SD card", "Update Golden Boot..."
+        "USB SD card", "Update Golden Boot...", "Drive activity"
     };
     mt_system_frontend_t frontend;
     mt_system_snapshot_t snapshot = {0};

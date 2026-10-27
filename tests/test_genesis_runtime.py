@@ -80,6 +80,7 @@ static int resume_c64_directory(void) {assert(0); return -1;}
 static int c64_iec_service_reset(void) {assert(0); return -1;}
 static int retry_c64_uci(void) {assert(0); return -1;}
 static bool c64_uci_service_reload_required(void) {assert(0); return true;}
+static int c64_content_service_flush(void) {assert(0); return -1;}
 static int quiesce_c64_for_reload(void) {assert(0); return -1;}
 static void c64_uci_service_reset(void) {assert(0);}
 static void mt_net_service_guest_reset(void) {assert(0);}

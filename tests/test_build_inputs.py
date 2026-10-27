@@ -147,7 +147,7 @@ class BuildInputTests(unittest.TestCase):
         self.assertNotIn("../third_party/gameboy/upstream/rtl/cheatcodes.sv",
                          sections["common"] + sections["c64"])
         self.assertEqual(
-            languages["../third_party/c64/upstream/rtl/mos6526.v"],
+            languages["core/c64/ports/mos6526.v"],
             "systemverilog",
         )
 
@@ -488,6 +488,7 @@ class BuildInputTests(unittest.TestCase):
             "hdl/sim/tb_control_regs.sv",
             "scripts/check_c64_local_ram_synthesis.tcl",
             "scripts/port_c64_vic.py",
+            "scripts/port_c64_cia.py",
             "scripts/test_c64_iec_kernal.py",
             "scripts/c64sim/system.py",
             "scripts/private_core_roms.py",
@@ -844,10 +845,11 @@ class BuildInputTests(unittest.TestCase):
         self.assertIn("supervisor_menu_dirty = true", hide)
         self.assertNotIn("supervisor_menu_dirty = false", hide)
         # Queuing a commit is insufficient: wait for its acknowledgement and
-        # the actual video visibility before a paused CPU must make progress.
+        # the actual video state before a paused CPU must make progress. The
+        # visible legacy activity badge does not count as the menu.
         self.assertRegex(
             hide, r"result == MT_UI_PRESENT_OK && !supervisor_presenter.pending &&\s+"
-                  r"\(shell_read\(MT_REG_UI_STATUS\) & MT_UI_STATUS_VISIBLE\) == 0U"
+                  r"!mt_ui_status_menu_shown\(shell_read\(MT_REG_UI_STATUS\)\)"
         )
         self.assertIn("MT_MENU_HIDE_TIMEOUT_MS", hide)
         self.assertIn("service_runtime();", hide)

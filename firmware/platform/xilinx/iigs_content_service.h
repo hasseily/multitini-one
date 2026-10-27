@@ -23,6 +23,8 @@ uint16_t iigs_content_service_mouse_sensitivity(void);
 int iigs_content_service_set_mouse_sensitivity(uint16_t percent);
 const char *iigs_content_service_name(unsigned drive);
 const char *iigs_content_service_error(void);
+/* Cumulative serviced block reads and writes for one drive. */
+void iigs_content_service_activity(unsigned drive,uint32_t *reads,uint32_t *writes);
 bool iigs_content_service_ready(void);
 bool iigs_content_service_faulted(void);
 #endif

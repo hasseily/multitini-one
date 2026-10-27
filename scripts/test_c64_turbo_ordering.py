@@ -13,7 +13,18 @@ def make_lane(io2=False):
     constants="assign policy_turbo=0; assign policy_blocked=0; assign policy_badline=1;\n    assign policy_index=0; assign policy_c64u_top=0;"
     if lane.count(constants)!=1:raise ValueError('exact policy anchor')
     adapter=(ROOT/'hdl/core/c64/multitini_c64_adapter.sv').read_text()
-    policy=adapter[adapter.index('    multitini_c64_turbo_regs #'):adapter.index('    assign cart_external_select')]
+    # Copy the complete turbo-register instance only. Later adapter blocks
+    # (including guest UCI unlock state) are not part of this turbo fixture.
+    policy_start='    multitini_c64_turbo_regs #'
+    policy_close='    );'
+    policy_end_anchor='        .guard_static_release(guard_static_release), .status(cpu_status), .live_d031()\n'+policy_close
+    if adapter.count(policy_start)!=1 or adapter.count(policy_end_anchor)!=1:
+        raise ValueError('turbo register instance anchors')
+    policy_begin=adapter.index(policy_start)
+    policy_end=adapter.index(policy_end_anchor,policy_begin)+len(policy_end_anchor)
+    policy=adapter[policy_begin:policy_end]+'\n'
+    if policy.count('turbo_regs_i (')!=1 or policy.splitlines()[-1]!=policy_close:
+        raise ValueError('complete turbo register instance boundary')
     policy=policy.replace('.CORE_CLOCK_HZ(CORE_CLOCK_HZ)', '.CORE_CLOCK_HZ(32000000), .RESET_WINDOW_CYCLES(256)')
     for old,new in {'core_clk':'clk','cpu_config':'test_config','cpu_turbo_enable':"1'b0",'cart_loaded':"1'b0",
         'content_load_active || rom_load_active || cart_loading':"1'b0",'core_paused':'paused','cpu_turbo_active':"1'b1",
@@ -122,7 +133,7 @@ def main():
                 if p.name=='fpga64_sid_iec.vhd':p=out/'fpga64_sid_iec_observed.vhd'
                 elif p.name=='cpu_6510.vhd':p=out/'cpu_6510_observed.vhd'
                 vhdl.append(p)
-    sv=[ROOT/p for p in ('third_party/c64/upstream/rtl/mos6526.v','hdl/core/c64/ports/sid_dac.sv','hdl/core/c64/ports/sid_filter.sv','third_party/c64/upstream/rtl/sid/sid_envelope.sv','hdl/core/c64/ports/sid_tables.sv','hdl/core/c64/ports/sid_voice.sv','hdl/core/c64/ports/sid_top.sv', 'hdl/core/c64/multitini_c64_sid_array.sv','hdl/core/c64/multitini_c64_local_ram.sv','hdl/core/c64/multitini_c64_fio_port.sv','hdl/sim/tb_c64_turbo_ordering.sv')]
+    sv=[ROOT/p for p in ('hdl/core/c64/ports/mos6526.v','hdl/core/c64/ports/sid_dac.sv','hdl/core/c64/ports/sid_filter.sv','third_party/c64/upstream/rtl/sid/sid_envelope.sv','hdl/core/c64/ports/sid_tables.sv','hdl/core/c64/ports/sid_voice.sv','hdl/core/c64/ports/sid_top.sv', 'hdl/core/c64/multitini_c64_sid_array.sv','hdl/core/c64/multitini_c64_local_ram.sv','hdl/core/c64/multitini_c64_fio_port.sv','hdl/sim/tb_c64_turbo_ordering.sv')]
     sv += [cp/name for name in ('multitini_c64_cpu_proxy.sv','multitini_c64_island_governor.sv','multitini_c64_island_map.sv','multitini_c64_island_memory.sv','multitini_c64_nmi_delivery.sv','multitini_c64_turbo_regs.sv')]
     sv += [out/'island_observed.sv',out/'c64_turbo_exact_lane.sv']
     if io2:

@@ -17,6 +17,16 @@ static mt_c64_launch_hook_t launch_hook;
 static bool automatic, ntsc, allowed, committed, pending_event;
 static uint8_t read_buffer[MT_C64_CFG_BYTES], write_buffer[MT_C64_CFG_BYTES];
 
+/* New images own per-cartridge inhibition in hardware. Keep the requested
+ * registers intact so detach restores them without rewriting saved settings. */
+static void effective(mt_c64_title_values_t *requested, mt_c64_title_values_t *applied,
+                      const mt_c64_title_values_t *base,
+                      const mt_c64_title_overlay_t *title, bool cartridge)
+{
+    mt_c64_title_effective(requested, applied, base, title,
+        cartridge && !(caps.expansion & MT_C64_EXPANSION_CAPS_CART_COEXIST));
+}
+
 static void status(const char *s)
 {
     (void)snprintf(notice, sizeof(notice), "%s", s);
@@ -114,13 +124,13 @@ void c64_title_service_refresh(const mt_c64_title_values_t *base,
 void c64_title_service_effective(mt_c64_title_values_t *requested, mt_c64_title_values_t *applied,
                                  bool cartridge)
 {
-    mt_c64_title_effective(requested, applied, &stored, &overlay, cartridge);
+    effective(requested, applied, &stored, &overlay, cartridge);
 }
 static int commit(void *unused)
 {
     (void)unused;
     mt_c64_title_values_t requested, applied;
-    mt_c64_title_effective(&requested, &applied, &stored, &pending, pending_origin == MT_TITLE_CRT);
+    effective(&requested, &applied, &stored, &pending, pending_origin == MT_TITLE_CRT);
     if (callbacks.apply(callbacks.context, &applied, false, pending_event) != 0)
         return -1;
     overlay = pending;
@@ -174,9 +184,10 @@ c64_title_service_prepare(const char *relative, mt_c64_title_origin_t origin, bo
         }
     }
     mt_c64_title_values_t next, applied, old, old_applied;
-    mt_c64_title_effective(&next, &applied, &stored, &pending, origin == MT_TITLE_CRT);
-    mt_c64_title_effective(&old, &old_applied, &stored, &overlay, false);
-    if (origin == MT_TITLE_CRT && next.reu) {
+    effective(&next, &applied, &stored, &pending, origin == MT_TITLE_CRT);
+    effective(&old, &old_applied, &stored, &overlay, false);
+    if (origin == MT_TITLE_CRT && next.reu &&
+        !(caps.expansion & MT_C64_EXPANSION_CAPS_CART_COEXIST)) {
         allowed = false;
         status("Turn REU off, or disable it in the title .cfg");
         return NULL;
@@ -216,7 +227,7 @@ void c64_title_service_finish(mt_c64_content_service_status_t result)
         session_origin = pending_origin;
     } else if (committed) {
         mt_c64_title_values_t requested, applied;
-        mt_c64_title_effective(&requested, &applied, &stored, NULL,
+        effective(&requested, &applied, &stored, NULL,
                                c64_content_service_crt_attached());
         if (callbacks.apply(callbacks.context, &applied, true, true) == 0) {
             memset(&overlay, 0, sizeof(overlay));
@@ -253,7 +264,7 @@ int c64_title_service_apply(const char *path, bool uci, char *report, size_t cap
     (void)snprintf(pending.source, sizeof(pending.source), "%s", uci ? "UCI configuration" : path);
     mt_c64_title_overlay_t merged = overlay;
     mt_c64_title_merge(&merged, &pending);
-    mt_c64_title_effective(&base, &applied, &stored, &merged, c64_content_service_crt_attached());
+    effective(&base, &applied, &stored, &merged, c64_content_service_crt_attached());
     const char *conflict =
         mt_c64_title_io_conflict(&applied, &caps, c64_content_service_crt_attached());
     if (conflict) {
@@ -347,7 +358,7 @@ int c64_title_service_test(const char *relative, char *report, size_t capacity)
 int c64_title_service_revert(void)
 {
     mt_c64_title_values_t requested, applied;
-    mt_c64_title_effective(&requested, &applied, &stored, NULL, c64_content_service_crt_attached());
+    effective(&requested, &applied, &stored, NULL, c64_content_service_crt_attached());
     if (callbacks.apply(callbacks.context, &applied, true, true) != 0) {
         status("Title settings could not be reverted");
         return -1;
@@ -390,7 +401,7 @@ int c64_title_service_save(void)
         return -1;
     }
     mt_c64_title_values_t saved, saved_applied;
-    mt_c64_title_effective(&saved, &saved_applied, &stored, &pending,
+    effective(&saved, &saved_applied, &stored, &pending,
                            c64_content_service_crt_attached());
     if (callbacks.apply(callbacks.context, &saved_applied, true, false) != 0) {
         status("Configuration saved; live apply failed");
@@ -419,7 +430,7 @@ int c64_title_service_reboot(bool default_cartridge)
 {
     mt_c64_title_overlay_t none = {0};
     mt_c64_title_values_t requested, applied;
-    mt_c64_title_effective(&requested, &applied, &stored, &none, default_cartridge);
+    effective(&requested, &applied, &stored, &none, default_cartridge);
     const char *conflict = mt_c64_title_io_conflict(&applied, &caps, default_cartridge);
     if (conflict) {
         status(conflict);
