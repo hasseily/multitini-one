@@ -78,6 +78,7 @@ static char c64_character(uint8_t scan, bool shifted)
     case 0x4cU: return shifted ? '[' : ':';
     case 0x52U: return shifted ? ']' : ';';
     case 0x5aU: assert(!shifted); return '\r';
+    case 0x5bU: assert(!shifted); return '*';
     default: assert(false); return '\0';
     }
 }
@@ -338,6 +339,63 @@ static void test_basic_launcher(void)
     test_basic_launcher_failures();
 }
 
+static void test_first_program(void)
+{
+    /* $0801, line 10 LOAD"*",8,1, next link $080E, then the empty link. */
+    static const uint8_t expected[] = {
+        0x01U, 0x08U, 0x0eU, 0x08U, 10U, 0U, 0x93U, '"', '*',
+        '"', ',', '8', ',', '1', 0U, 0U, 0U
+    };
+    uint8_t raw[16];
+    uint8_t output[MT_C64_NATIVE_LOAD_BASIC_LAUNCHER_MAX_BYTES];
+    uint8_t before[sizeof(output)];
+    size_t size = 99U;
+    keyboard_t keyboard = {0};
+    mt_c64_content_image_t image;
+
+    /* A directory entry named * must not stand in for the first PRG. */
+    raw_name(raw, "*");
+    expect_rejected(raw);
+
+    memset(output, 0xcd, sizeof(output));
+    memcpy(before, output, sizeof(before));
+    assert(mt_c64_native_load_build_first_basic_launcher(
+               output, sizeof(expected) - 1U, &size) ==
+           MT_C64_NATIVE_LOAD_BUFFER_TOO_SMALL);
+    assert(size == 0U && memcmp(output, before, sizeof(output)) == 0);
+    size = 99U;
+    assert(mt_c64_native_load_build_first_basic_launcher(
+               NULL, sizeof(output), &size) ==
+           MT_C64_NATIVE_LOAD_INVALID_ARGUMENT);
+    assert(size == 0U);
+    assert(mt_c64_native_load_build_first_basic_launcher(
+               output, sizeof(output), NULL) ==
+           MT_C64_NATIVE_LOAD_INVALID_ARGUMENT);
+    assert(memcmp(output, before, sizeof(output)) == 0);
+    assert(mt_c64_native_load_build_first_basic_launcher(
+               output, sizeof(expected), &size) == MT_C64_NATIVE_LOAD_OK);
+    assert(size == sizeof(expected));
+    assert(memcmp(output, expected, sizeof(expected)) == 0);
+    for (size_t index = size; index < sizeof(output); ++index) {
+        assert(output[index] == 0xcdU);
+    }
+    image.data = output;
+    image.size = size;
+    assert(mt_c64_validate_prg(&image).status == MT_C64_CONTENT_OK);
+    assert(mt_c64_prg_has_basic_program(&image));
+
+    assert(mt_c64_native_load_first(NULL, &keyboard) ==
+           MT_C64_NATIVE_LOAD_INVALID_ARGUMENT);
+    assert(keyboard.event_count == 0U && keyboard.delay_count == 0U);
+    assert(mt_c64_native_load_first(&io, &keyboard) == MT_C64_NATIVE_LOAD_OK);
+    assert(strcmp(keyboard.text, "LOAD\"*\",8,1\r") == 0);
+    assert_released(&keyboard);
+    for (size_t index = 1U; index < keyboard.event_count; ++index) {
+        assert(keyboard.events[index].at_ms -
+               keyboard.events[index - 1U].at_ms >= 40U);
+    }
+}
+
 int main(void)
 {
     expect_command("ULTIMA I", "LOAD\"ULTIMA I\",8,1\r");
@@ -349,5 +407,6 @@ int main(void)
     test_validation();
     test_callback_failures();
     test_basic_launcher();
+    test_first_program();
     return 0;
 }

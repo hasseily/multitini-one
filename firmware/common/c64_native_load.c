@@ -54,6 +54,7 @@ static bool key_for_character(uint8_t character, native_key_t *key)
     case '=': key->scan = 0x09U; break;
     case ',': key->scan = 0x41U; break; /* Command syntax only. */
     case '\r': key->scan = 0x5aU; break; /* Command syntax only. */
+    case '*': key->scan = 0x5bU; break; /* First-program request only. */
     case '!': key->scan = 0x16U; key->shift = true; break;
     case '"': key->scan = 0x1eU; key->shift = true; break;
     case '%': key->scan = 0x2eU; key->shift = true; break;
@@ -95,34 +96,23 @@ bool mt_c64_native_load_name_supported(const uint8_t raw_name[16])
          * command separators, directory/channel selectors and wildcards
          * out of the name rather than loading another directory entry. */
         if (character == '"' || character == ',' || character == '\r' ||
-            !key_for_character(character, &key)) {
+            character == '*' || !key_for_character(character, &key)) {
             return false;
         }
     }
     return true;
 }
 
-mt_c64_native_load_status_t mt_c64_native_load_build_basic_launcher(
-    const uint8_t raw_name[16], uint8_t *output, size_t capacity,
-    size_t *output_size)
+/* The caller validates the name; length excludes $A0 padding. */
+static mt_c64_native_load_status_t build_launcher(
+    const uint8_t *raw_name, size_t length, uint8_t *output,
+    size_t capacity, size_t *output_size)
 {
     static const uint8_t tail[] = {'"', ',', '8', ',', '1', 0U, 0U, 0U};
     uint8_t launcher[MT_C64_NATIVE_LOAD_BASIC_LAUNCHER_MAX_BYTES];
-    size_t length;
-    size_t size;
+    const size_t size = 16U + length;
     uint16_t next_line;
 
-    if (output_size != NULL) {
-        *output_size = 0U;
-    }
-    if (raw_name == NULL || output == NULL || output_size == NULL) {
-        return MT_C64_NATIVE_LOAD_INVALID_ARGUMENT;
-    }
-    if (!mt_c64_native_load_name_supported(raw_name)) {
-        return MT_C64_NATIVE_LOAD_INVALID_NAME;
-    }
-    length = name_length(raw_name);
-    size = 16U + length;
     if (capacity < size) {
         return MT_C64_NATIVE_LOAD_BUFFER_TOO_SMALL;
     }
@@ -146,6 +136,38 @@ mt_c64_native_load_status_t mt_c64_native_load_build_basic_launcher(
     memcpy(output, launcher, size);
     *output_size = size;
     return MT_C64_NATIVE_LOAD_OK;
+}
+
+mt_c64_native_load_status_t mt_c64_native_load_build_basic_launcher(
+    const uint8_t raw_name[16], uint8_t *output, size_t capacity,
+    size_t *output_size)
+{
+    if (output_size != NULL) {
+        *output_size = 0U;
+    }
+    if (raw_name == NULL || output == NULL || output_size == NULL) {
+        return MT_C64_NATIVE_LOAD_INVALID_ARGUMENT;
+    }
+    if (!mt_c64_native_load_name_supported(raw_name)) {
+        return MT_C64_NATIVE_LOAD_INVALID_NAME;
+    }
+    return build_launcher(raw_name, name_length(raw_name), output, capacity,
+                          output_size);
+}
+
+mt_c64_native_load_status_t mt_c64_native_load_build_first_basic_launcher(
+    uint8_t *output, size_t capacity, size_t *output_size)
+{
+    static const uint8_t first[] = {'*'};
+
+    if (output_size != NULL) {
+        *output_size = 0U;
+    }
+    if (output == NULL || output_size == NULL) {
+        return MT_C64_NATIVE_LOAD_INVALID_ARGUMENT;
+    }
+    return build_launcher(first, sizeof(first), output, capacity,
+                          output_size);
 }
 
 static int settle(native_input_t *input)
@@ -200,26 +222,18 @@ static int type_key(native_input_t *input, const native_key_t *key)
     return 0;
 }
 
-mt_c64_native_load_status_t mt_c64_native_load(
-    const uint8_t raw_name[16], const mt_c64_native_load_io_t *io,
-    void *context)
+/* The caller validates io and the name; length excludes $A0 padding. */
+static mt_c64_native_load_status_t type_load(
+    const uint8_t *raw_name, size_t length,
+    const mt_c64_native_load_io_t *io, void *context)
 {
     static const uint8_t prefix[] = "LOAD\"";
     static const uint8_t suffix[] = "\",8,1\r";
     native_key_t command[sizeof(prefix) - 1U +
                          MT_C64_NATIVE_LOAD_NAME_BYTES + sizeof(suffix) - 1U];
     size_t count = 0U;
-    size_t length;
     native_input_t input = {io, context, 0U, false, false};
 
-    if (raw_name == NULL || io == NULL || io->emit == NULL ||
-        io->delay == NULL) {
-        return MT_C64_NATIVE_LOAD_INVALID_ARGUMENT;
-    }
-    if (!mt_c64_native_load_name_supported(raw_name)) {
-        return MT_C64_NATIVE_LOAD_INVALID_NAME;
-    }
-    length = name_length(raw_name);
     for (size_t index = 0U; index < sizeof(prefix) - 1U; ++index) {
         (void)key_for_character(prefix[index], &command[count++]);
     }
@@ -236,4 +250,29 @@ mt_c64_native_load_status_t mt_c64_native_load(
         }
     }
     return MT_C64_NATIVE_LOAD_OK;
+}
+
+mt_c64_native_load_status_t mt_c64_native_load(
+    const uint8_t raw_name[16], const mt_c64_native_load_io_t *io,
+    void *context)
+{
+    if (raw_name == NULL || io == NULL || io->emit == NULL ||
+        io->delay == NULL) {
+        return MT_C64_NATIVE_LOAD_INVALID_ARGUMENT;
+    }
+    if (!mt_c64_native_load_name_supported(raw_name)) {
+        return MT_C64_NATIVE_LOAD_INVALID_NAME;
+    }
+    return type_load(raw_name, name_length(raw_name), io, context);
+}
+
+mt_c64_native_load_status_t mt_c64_native_load_first(
+    const mt_c64_native_load_io_t *io, void *context)
+{
+    static const uint8_t first[] = {'*'};
+
+    if (io == NULL || io->emit == NULL || io->delay == NULL) {
+        return MT_C64_NATIVE_LOAD_INVALID_ARGUMENT;
+    }
+    return type_load(first, sizeof(first), io, context);
 }

@@ -24,6 +24,8 @@
 #define MT_MENU_FILE_DIRECTORY UINT32_C(0x80000000)
 #define MT_MENU_FILE_PARENT UINT32_C(0x40000000)
 #define MT_MENU_FILE_TEXT UINT32_C(0x20000000)
+/* A Mount & Run row that loads its D64 program with the drive's LOAD"*". */
+#define MT_MENU_FILE_FIRST_PROGRAM UINT32_C(0x10000000)
 #define MT_MENU_TEXT_COLUMNS 95U
 #define MT_MENU_TEXT_ROWS 40U
 /* The content list leaves room for the shared header, help and footer. */

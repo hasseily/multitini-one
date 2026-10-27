@@ -57,4 +57,14 @@ mt_c64_native_load_status_t mt_c64_native_load(
     const uint8_t raw_name[MT_C64_NATIVE_LOAD_NAME_BYTES],
     const mt_c64_native_load_io_t *io, void *context);
 
+/* The same launcher and typed command for the DOS's own first-program
+ * request, LOAD"*",8,1. After a drive reset the 1541 DOS 2.6 OPEN path
+ * ($D81C) restricts the search to type PRG, so the drive loads the first
+ * PRG entry in directory order; an unclosed one fails with error 60.
+ * The caller resolves that entry itself to choose between these two. */
+mt_c64_native_load_status_t mt_c64_native_load_build_first_basic_launcher(
+    uint8_t *output, size_t capacity, size_t *output_size);
+mt_c64_native_load_status_t mt_c64_native_load_first(
+    const mt_c64_native_load_io_t *io, void *context);
+
 #endif

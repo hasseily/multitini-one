@@ -1,8 +1,9 @@
 # C64 EasyFlash
 
-Status, 2026-10-27: stages 0-4 are implemented in the working tree, not
-committed, and packaged as M0.7.1dev3 and M0.7.1dev4. XBank (type 33) stays
-rejected by the owner's choice. Board tests are pending. See [As built](#as-built-stages-1-4) for
+Status, 2026-10-27: stages 0-4 are implemented, committed, and packaged as
+M0.7.1dev3 and M0.7.1dev4. M0.7.1 reuses the dev4 C64 images unchanged; the
+owner reported it validated on the board on 2026-10-27. XBank (type 33) stays
+rejected by the owner's choice. See [As built](#as-built-stages-1-4) for
 where the implementation differs from the plan below.
 
 ## Goal
@@ -259,7 +260,7 @@ M0.7.1dev4 changes the loader and the test, not EasyFlash itself:
   from 67. PAL takes 324 s (was 882 s), NTSC 128 s, the EasyFlash-only run
   79 s, and each EasyFlash negative about 78 s (was about 870 s). About 35 s
   of each run is setup: ROM loads and the VIC's first frame.
-- **Pending:** board tests with owner-supplied titles.
+- **Board:** the owner reported M0.7.1 validated on the board (2026-10-27).
 
 ## Stage 0: mapper cleanup (fabric)
 

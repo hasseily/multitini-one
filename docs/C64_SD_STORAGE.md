@@ -185,6 +185,16 @@ program. There is no guessed SYS address or delayed RUN queued after LOAD.
 Names that cannot be typed exactly, or that ambiguously select another
 directory entry, are refused by the native path.
 
+From M0.7.1 the list starts with `* First program: <name>` when the disk's
+first PRG entry is listed. Enter, Right and Left act as on that program's own
+row, but Enter and Right send `LOAD"*",8,1`, so its name need not be typable.
+The C64 and drive are reset before the LOAD. With no earlier load the 1541
+DOS 2.6 OPEN path (`$D7C7`-`$D81C` in 251968-03) limits the `*` search to PRG
+entries, so the drive loads the first PRG entry in directory order. Firmware
+offers the row only when that entry is a closed, valid PRG and rechecks it at
+launch. An unclosed first PRG would fail in the drive with error 60, so the
+row is left out.
+
 All paths use the dirty-media flush/eject barrier before reset and remount.
 A failed flush refuses the launch; a failed remount leaves the staged program
 stopped and retains `:diskretry`. Firmware 20260917 preserves pending disk

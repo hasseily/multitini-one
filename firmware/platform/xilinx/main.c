@@ -3512,6 +3512,11 @@ static int collect_menu_file(void *context, const char *name, size_t size,
     return 0;
 }
 
+typedef struct {
+    bool visited;
+    size_t first; /* Program index loaded by LOAD"*", or SIZE_MAX. */
+} d64_prg_collection_t;
+
 static bool collect_d64_prg(void *context,
                             const mt_c64_d64_prg_entry_t *entry)
 {
@@ -3520,9 +3525,14 @@ static bool collect_d64_prg(void *context,
     size_t extracted_size = 0U;
     size_t name_size;
     const size_t index = supervisor_d64_prg_count;
-    (void)context;
+    d64_prg_collection_t *const collection = context;
+    bool first;
 
     if (entry == NULL || index >= MT_MENU_MAX_FILES) return false;
+    /* Entries arrive in directory order. After the launch reset, LOAD"*"
+     * takes the first PRG-type entry even when it cannot be listed here. */
+    first = !collection->visited;
+    collection->visited = true;
     /* Unclosed (splat) files are visible in a raw directory but are not safe
      * Mount & Run targets. Extraction also validates the complete chain. */
     if ((entry->file_type & UINT8_C(0x80)) == 0U) return true;
@@ -3548,6 +3558,7 @@ static bool collect_d64_prg(void *context,
         strcat(supervisor_menu_files[index].name, " [load only]");
     supervisor_menu_files[index].size = extracted_size;
     supervisor_menu_files[index].cookie = (uint32_t)index;
+    if (first) collection->first = index;
     ++supervisor_d64_prg_count;
     supervisor_menu_file_count = supervisor_d64_prg_count;
     return supervisor_d64_prg_count < MT_MENU_MAX_FILES;
@@ -3574,6 +3585,33 @@ static void sort_menu_files(void)
         }
         supervisor_menu_files[position] = value;
     }
+}
+
+/* Put the LOAD"*" row above the sorted programs. It reuses the target's
+ * label and cookie, so Enter, Right and Left keep their usual meaning. */
+static void add_first_program_row(size_t program)
+{
+    static const char prefix[] = "* First program: ";
+    size_t row = 0U;
+    size_t name_size;
+
+    if (program == SIZE_MAX ||
+        supervisor_menu_file_count >= MT_MENU_MAX_FILES) return;
+    while (row < supervisor_menu_file_count &&
+           supervisor_menu_files[row].cookie != (uint32_t)program) ++row;
+    if (row == supervisor_menu_file_count) return;
+    name_size = strlen(supervisor_menu_files[row].name);
+    if (sizeof(prefix) - 1U + name_size >= MT_MENU_FILE_NAME_MAX) return;
+    memmove(&supervisor_menu_files[1], &supervisor_menu_files[0],
+            supervisor_menu_file_count * sizeof(supervisor_menu_files[0]));
+    ++row;
+    memcpy(supervisor_menu_files[0].name, prefix, sizeof(prefix) - 1U);
+    memcpy(supervisor_menu_files[0].name + sizeof(prefix) - 1U,
+           supervisor_menu_files[row].name, name_size + 1U);
+    supervisor_menu_files[0].size = supervisor_menu_files[row].size;
+    supervisor_menu_files[0].cookie =
+        MT_MENU_FILE_FIRST_PROGRAM | (uint32_t)program;
+    ++supervisor_menu_file_count;
 }
 
 static void list_vectrex_browser(mt_menu_browser_t browser,
@@ -3636,8 +3674,9 @@ static void open_menu_browser(mt_menu_browser_t browser)
     supervisor_d64_prg_count = 0U;
     if (browser == MT_MENU_BROWSER_DISK_PROGRAM) {
         size_t directory_count = 0U;
+        d64_prg_collection_t collection = {false, SIZE_MAX};
         const mt_c64_d64_result_t result = c64_d64_service_list_prgs(
-            collect_d64_prg, NULL, &directory_count);
+            collect_d64_prg, &collection, &directory_count);
         if (result != MT_C64_D64_OK) {
             xil_printf("[C64] D64 directory: %s\r\n",
                        mt_c64_d64_result_name(result));
@@ -3645,6 +3684,7 @@ static void open_menu_browser(mt_menu_browser_t browser)
             return;
         }
         sort_menu_files();
+        add_first_program_row(collection.first);
         mt_menu_open_browser(&supervisor_menu, browser);
         set_supervisor_status(supervisor_menu_file_count == 0U ?
                               "No loadable PRGs in this D64" :
@@ -4671,7 +4711,40 @@ static bool native_load_name_unique(uint32_t cookie)
            MT_C64_D64_OK && search.matches == 1U;
 }
 
-static void launch_disk_program_native(uint32_t cookie)
+typedef struct {
+    bool seen;
+    mt_c64_d64_prg_entry_t entry;
+} first_prg_search_t;
+
+static bool find_first_prg(void *context,
+                           const mt_c64_d64_prg_entry_t *entry)
+{
+    first_prg_search_t *const search = context;
+    search->seen = true;
+    search->entry = *entry;
+    return false;
+}
+
+/* LOAD"*" goes to the drive's first PRG-type entry, so the disk must not
+ * have gained an earlier one since the browser listed it. */
+static bool first_program_current(uint32_t cookie)
+{
+    const mt_c64_d64_prg_entry_t *const target = &supervisor_d64_prgs[cookie];
+    first_prg_search_t search = {false, {0}};
+    size_t count = 0U;
+    return c64_d64_service_list_prgs(find_first_prg, &search, &count) ==
+               MT_C64_D64_OK && search.seen &&
+           search.entry.directory_sector == target->directory_sector &&
+           search.entry.directory_slot == target->directory_slot &&
+           search.entry.file_type == target->file_type &&
+           search.entry.start_track == target->start_track &&
+           search.entry.start_sector == target->start_sector &&
+           search.entry.blocks == target->blocks &&
+           memcmp(search.entry.raw_name, target->raw_name,
+                  MT_C64_D64_NAME_SIZE) == 0;
+}
+
+static void launch_disk_program_native(uint32_t cookie, bool first_program)
 {
     static const mt_c64_native_load_io_t io = {
         native_load_key, native_load_delay
@@ -4681,8 +4754,9 @@ static void launch_disk_program_native(uint32_t cookie)
     mt_c64_native_load_status_t typed;
     bool remounted;
     bool settings_saved;
-    if (!mt_c64_native_load_name_supported(entry->raw_name) ||
-        !native_load_name_unique(cookie)) {
+    if (!first_program &&
+        (!mt_c64_native_load_name_supported(entry->raw_name) ||
+         !native_load_name_unique(cookie))) {
         set_supervisor_error("Name cannot be selected exactly by a drive LOAD");
         return;
     }
@@ -4703,8 +4777,10 @@ static void launch_disk_program_native(uint32_t cookie)
         set_supervisor_warning("Retry disk remount, then select the program again");
         return;
     }
-    typed = mt_c64_native_load(entry->raw_name, &io, NULL);
-    xil_printf("[C64] native LOAD %s: %s\r\n", entry->display_name,
+    typed = first_program ? mt_c64_native_load_first(&io, NULL) :
+                            mt_c64_native_load(entry->raw_name, &io, NULL);
+    xil_printf("[C64] native LOAD %s%s: %s\r\n",
+               first_program ? "* for " : "", entry->display_name,
                typed == MT_C64_NATIVE_LOAD_OK ? "command sent" :
                                                "keyboard transfer failed");
     if (typed != MT_C64_NATIVE_LOAD_OK) {
@@ -5489,12 +5565,16 @@ static void handle_menu_action(mt_menu_action_t action)
         const bool drive_load = action.kind == MT_MENU_ACTION_MOUNT_AND_RUN;
         size_t extracted_size = 0U;
         uint32_t cookie;
+        bool first_program;
         if (action.file_index >= supervisor_menu_file_count) {
             set_supervisor_error("Mount & Run could not start");
             return;
         }
         cookie = supervisor_menu_files[action.file_index].cookie;
-        if (cookie >= supervisor_d64_prg_count) {
+        first_program = (cookie & MT_MENU_FILE_FIRST_PROGRAM) != 0U;
+        cookie &= ~MT_MENU_FILE_FIRST_PROGRAM;
+        if (cookie >= supervisor_d64_prg_count ||
+            (first_program && !first_program_current(cookie))) {
             set_supervisor_warning("D64 program selection is stale");
             return;
         }
@@ -5522,24 +5602,29 @@ static void handle_menu_action(mt_menu_action_t action)
                     set_supervisor_warning("No BASIC start; use Enter or Right to load");
                     return;
                 }
-                launch_disk_program_native(cookie);
+                launch_disk_program_native(cookie, first_program);
                 return;
             }
         }
         if (drive_load) {
             const uint8_t *const name = supervisor_d64_prgs[cookie].raw_name;
             const size_t program_size = extracted_size;
-            if (!mt_c64_native_load_name_supported(name) ||
-                !native_load_name_unique(cookie)) {
+            if (!first_program &&
+                (!mt_c64_native_load_name_supported(name) ||
+                 !native_load_name_unique(cookie))) {
                 set_supervisor_error("Name cannot be selected exactly by a drive LOAD");
                 return;
             }
             /* An in-program LOAD makes BASIC start the loaded program after
              * the real disk transfer succeeds. Preserve KERNAL/drive state
              * without guessing a delay or queuing RUN after a failed LOAD. */
-            if (mt_c64_native_load_build_basic_launcher(
-                    name, supervisor_disk_prg_buffer,
-                    sizeof(supervisor_disk_prg_buffer), &extracted_size) !=
+            if ((first_program ?
+                    mt_c64_native_load_build_first_basic_launcher(
+                        supervisor_disk_prg_buffer,
+                        sizeof(supervisor_disk_prg_buffer), &extracted_size) :
+                    mt_c64_native_load_build_basic_launcher(
+                        name, supervisor_disk_prg_buffer,
+                        sizeof(supervisor_disk_prg_buffer), &extracted_size)) !=
                 MT_C64_NATIVE_LOAD_OK) {
                 set_supervisor_error("Could not prepare disk LOAD launcher");
                 return;

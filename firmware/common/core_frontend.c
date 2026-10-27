@@ -177,7 +177,7 @@ static void build_c64(mt_core_frontend_t *frontend,
         frontend->media_items[view->media_item_count++] = item(
             "Mount & Run", state->drive8_d64_mounted ? "Choose program..." :
                                                         "Mount a D64 first",
-            "Choose a program from the mounted D64 and launch through drive 8.",
+            "Choose a program from the mounted D64, or * for the first one, and launch through drive 8.",
             MT_MENU_ACTION_BROWSE_DISK_PROGRAM, 0U,
             state->drive8_d64_mounted, state->drive8_d64_mounted ?
                 MT_UI_COLOR_BLUE : MT_UI_COLOR_MUTED);
