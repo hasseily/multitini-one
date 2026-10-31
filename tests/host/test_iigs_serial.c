@@ -25,6 +25,8 @@ static const char *outcome_text;
 static mt_c64_debug_t c64_debug;
 static bool dispatch_c64_debug(const char *line) { (void)line; return false; }
 static bool dispatch_c64_title(const char *line) { (void)line; return false; }
+static bool supervisor_serial_command(const char *line) { (void)line;return false; }
+static bool amiga_serial_command(const char *line) { (void)line;return false; }
 static void network_console(void *context, const char *text)
 { (void)context; (void)text; }
 static bool mt_net_service_command(const char *text, void (*output)(void *, const char *), void *context)

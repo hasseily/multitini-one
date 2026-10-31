@@ -6,6 +6,7 @@
 #include "multitini_menu.h"
 #include "multitini_iigs_interface.h"
 #include "multitini_c64_title.h"
+#include "multitini_amiga_interface.h"
 
 /* A snapshot of services already owned by the runtime. Building a menu never
  * performs I/O or changes core, media, input, or save state. String storage must
@@ -52,6 +53,9 @@ typedef struct {
     bool iigs_fast_floppy_supported;
     uint16_t iigs_mouse_sensitivity;
     bool iigs_ready;
+    const char *amiga_drive_name[MT_AMIGA_DRIVE_COUNT];
+    mt_amiga_config_t amiga_config;
+    bool amiga_ready;
 } mt_core_frontend_state_t;
 
 typedef struct {

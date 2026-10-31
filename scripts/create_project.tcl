@@ -96,8 +96,15 @@ switch -- $machine {
         set c64_video_standard "N/A"
         set active_machine 6
     }
+    AMIGA {
+        # Adapter, RAM and the gated native core share sibling 28 MHz clocks.
+        # Native CPU phase enables are derived from the original C1/C3 state.
+        set c64_clock_mhz 28.375160
+        set c64_video_standard "N/A"
+        set active_machine 7
+    }
     default {
-        error "MULTITINI_MACHINE must be SUPERVISOR, C64, GBC, VECTREX, GENESIS, APPLE_IIGS, or NES"
+        error "MULTITINI_MACHINE must be SUPERVISOR, C64, GBC, VECTREX, GENESIS, APPLE_IIGS, NES, or AMIGA"
     }
 }
 
@@ -134,7 +141,7 @@ proc add_manifest_sources {repo_root machine} {
         }
         if {[regexp {^\[([A-Za-z0-9_]+)\]$} $relative -> section]} {
             set active_section [string toupper $section]
-            if {$active_section ni {COMMON C64 GBC VECTREX GENESIS APPLE_IIGS NES}} {
+            if {$active_section ni {COMMON C64 GBC VECTREX GENESIS APPLE_IIGS NES AMIGA}} {
                 error "Unknown source-manifest section: $relative"
             }
             continue
@@ -163,22 +170,23 @@ proc add_manifest_sources {repo_root machine} {
                     "multitini_vectrex_psram_timing.xdc"
                     "multitini_c64_turbo_timing.xdc"
                     "multitini_w5100s_timing.xdc"
-                    "multitini_genesis_timing.xdc" "multitini_apple_iigs_timing.xdc"}} {
+                    "multitini_genesis_timing.xdc" "multitini_apple_iigs_timing.xdc"
+                    "multitini_amiga_timing.xdc"}} {
                 set_property USED_IN_SYNTHESIS false [get_files $source]
                 set_property PROCESSING_ORDER LATE [get_files $source]
             }
         } else {
             add_files -fileset sources_1 -norecurse $source
-            if {$extension eq ".sv" || $language eq "SYSTEMVERILOG"} {
+            if {$extension eq ".sv" || $language eq "SYSTEMVERILOG" ||
+                ($active_section eq "AMIGA" && $extension eq ".v")} {
                 set_property file_type SystemVerilog [get_files $source]
             } elseif {$extension eq ".vhd" || $extension eq ".vhdl"} {
                 set_property file_type {VHDL 2008} [get_files $source]
-            } elseif {$extension eq ".txt"} {
+            } elseif {$extension in {".txt" ".mem" ".hex"}} {
                 # Nuked-MD's licensed CPU implementation tables retain their
                 # upstream names for $readmemb and travel with every build.
                 set_property file_type {Memory Initialization Files} [get_files $source]
-            } elseif {$extension ne ".v" && $extension ne ".mem" &&
-                      $extension ne ".hex"} {
+            } elseif {$extension ne ".v"} {
                 error "Unsupported source-manifest extension: $source"
             }
         }
@@ -308,6 +316,11 @@ if {$machine eq "APPLE_IIGS"} {
     set_property include_dirs [list \
         [file join $repo_root third_party apple-iigs upstream rtl]] \
         [get_filesets sources_1]
+} elseif {$machine eq "AMIGA"} {
+    set_property include_dirs [list \
+        [file join $repo_root third_party amiga upstream rtl] \
+        [file join $repo_root third_party amiga upstream rtl tg68k]] \
+        [get_filesets sources_1]
 }
 set psram_timing_file [require_file \
     [file join $repo_root hdl board multitini_psram_timing.xdc]]
@@ -316,7 +329,7 @@ if {$machine eq "VECTREX"} {
     # input-delay constraints. Do not inherit the tunable PHY's false paths.
     set_property USED_IN_IMPLEMENTATION false [get_files $psram_timing_file]
 }
-if {$machine eq "SUPERVISOR" || $machine eq "APPLE_IIGS" ||
+if {$machine eq "SUPERVISOR" || $machine in {APPLE_IIGS AMIGA} ||
     ($machine eq "GBC" && !$enable_gbc_psram)} {
     set psram_iob_file [require_file \
         [file join $repo_root hdl board multitini_psram_iob.xdc]]
@@ -416,7 +429,7 @@ if {$machine eq "C64"} {
         CONFIG.ASSOCIATED_RESET {control_aresetn}] $control_clk
     set_property -dict [list CONFIG.ASSOCIATED_BUSIF {S_AXI_HP2_0:S_AXI_HP3_0} \
         CONFIG.ASSOCIATED_RESET {c64_aresetn}] $c64_clk
-} elseif {$machine eq "APPLE_IIGS"} {
+} elseif {$machine in {APPLE_IIGS AMIGA}} {
     set_property -dict [list CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0_0:S_AXI_HP0_0:S_AXI_HP1_0:S_AXI_HP3_0} \
         CONFIG.ASSOCIATED_RESET {control_aresetn}] $control_clk
     set_property -dict [list CONFIG.ASSOCIATED_BUSIF {S_AXI_HP2_0} \
@@ -516,6 +529,13 @@ if {$machine eq "C64"} {
         CONFIG.CLKOUT2_USED {true} \
         CONFIG.CLKOUT2_REQUESTED_OUT_FREQ $c64_clock_mhz \
         CONFIG.CLKOUT2_REQUESTED_PHASE {279.000}] $c64_wiz
+} elseif {$machine eq "AMIGA"} {
+    # The one fractional output directly supplies PAL 28 MHz; the wrapper
+    # gates a sibling copy rather than dividing a fabric flip-flop clock.
+    # 150 * 60.25 / 13 / 24.5 = 28.375196232 MHz (+1.28 ppm).
+    set_property -dict [list CONFIG.OVERRIDE_MMCM {true} \
+        CONFIG.MMCM_DIVCLK_DIVIDE {13} CONFIG.MMCM_CLKFBOUT_MULT_F {60.25} \
+        CONFIG.MMCM_CLKOUT0_DIVIDE_F {24.5}] $c64_wiz
 }
 
 set control_reset [create_bd_cell -type ip \
@@ -583,7 +603,7 @@ connect_bd_net [get_bd_pins $c64_wiz/clk_out1] $c64_clk \
 # MMCM keeps running then, and its clock stops with the other PL clock buffers
 # only once PCAP starts. No PS7 setting changes, so ps7_init.c must stay
 # identical; packaging verifies its hash against the firmware's FSBL.
-if {$machine in {C64 APPLE_IIGS}} {
+if {$machine in {C64 APPLE_IIGS AMIGA}} {
     connect_bd_net [get_bd_pins $c64_wiz/clk_out1] [get_bd_pins $ps/S_AXI_HP2_ACLK]
 } else {
     connect_bd_net [get_bd_pins $ps/FCLK_CLK0] [get_bd_pins $ps/S_AXI_HP2_ACLK]

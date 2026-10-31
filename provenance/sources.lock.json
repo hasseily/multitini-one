@@ -154,6 +154,13 @@
       "commit": "d43546fe25b26cb332f43f00219d33153dfe44f8",
       "license": "GPL-3.0",
       "use": "Pinned reference for SID address resolution and UCI/DOS/SoftIEC/REU and Network/HTTP wire behavior. Excluded from product firmware and FPGA synthesis; selected reference function is compiled only by the host differential oracle. No UltiSID HDL or private media."
+    },
+    {
+      "name": "MiSTer Minimig ECS Amiga",
+      "url": "https://github.com/MiSTer-devel/Minimig-AGA_MiSTer.git",
+      "commit": "e47c3457b486d09daaf47c8934bda90cf7723045",
+      "license": "GPL-3.0-or-later, LGPL-3.0-or-later TG68K, BSD-2-Clause IDE",
+      "use": "Selected machine source and CPU microcode only; no Intel IP, MiSTer platform, Kickstart, disks, samples or binary FPGA images. Per-file provenance/amiga.import.json."
     }
   ]
 }

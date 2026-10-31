@@ -22,6 +22,7 @@ hdl/common/multitini_font7x8.mem text eol=lf
 # Preserve imported source byte-for-byte, including upstream whitespace.
 third_party/appletini/** -whitespace
 third_party/apple-iigs/upstream/** -text -whitespace
+third_party/amiga/upstream/** -text -whitespace
 licenses/third_party/CiderPress2/LICENSE -text
 licenses/third_party/CiderPress2/NOTICE -text
 third_party/c64/upstream/** -text -whitespace
@@ -58,3 +59,5 @@ hdl/core/c64/ports/sid_voice.sv -whitespace
 hdl/core/c64/ports/fpga64_rgbcolor.vhd -whitespace
 hdl/core/gameboy/ports/gbc_snd.vhd -whitespace
 hdl/core/genesis/ports/** -whitespace
+hdl/core/amiga/ports/** -whitespace
+hdl/core/amiga/ports/*.hex text eol=lf

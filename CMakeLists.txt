@@ -11,6 +11,10 @@ if(MSVC OR CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
 endif()
 
 add_library(multitini_common STATIC
+    firmware/common/amiga_boot.c
+    firmware/common/amiga_content.c
+    firmware/common/amiga_hid_input.c
+    firmware/common/amiga_rtc.c
     firmware/common/ak4493.c
     firmware/common/clock.c
     firmware/common/c64_boot.c
@@ -77,6 +81,20 @@ if(NOT MSVC AND NOT CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
 endif()
 
 enable_testing()
+foreach(component amiga_content amiga_boot amiga_hid amiga_rtc)
+    add_executable(test_${component} tests/host/test_${component}.c)
+    target_link_libraries(test_${component} PRIVATE multitini_common)
+    add_test(NAME ${component} COMMAND test_${component})
+endforeach()
+add_library(xilinx_amiga_service_compile OBJECT firmware/platform/xilinx/amiga_content_service.c)
+add_executable(test_amiga_service tests/host/test_amiga_service.c firmware/platform/xilinx/amiga_content_service.c)
+target_include_directories(test_amiga_service PRIVATE firmware/platform/xilinx)
+target_link_libraries(test_amiga_service PRIVATE multitini_common)
+add_test(NAME amiga_service COMMAND test_amiga_service)
+target_include_directories(xilinx_amiga_service_compile PRIVATE firmware/include firmware/platform/xilinx)
+if(NOT MSVC AND NOT CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
+    target_compile_options(xilinx_amiga_service_compile PRIVATE -Wall -Wextra -Wpedantic -Werror -Wconversion -Wshadow -Wstrict-prototypes)
+endif()
 foreach(component net net_edges net_uci_http c64_uci c64_uci_cvt)
     add_executable(test_${component} tests/host/test_${component}.c)
     target_link_libraries(test_${component} PRIVATE multitini_common)
@@ -259,6 +277,9 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 add_test(NAME text_document COMMAND test_text_document)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME amiga_serial COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/tests/test_amiga_serial.py" --cc "${CMAKE_C_COMPILER}"
+    --build-dir "${CMAKE_BINARY_DIR}/amiga-serial-tests")
 add_test(NAME sd_quiesce_bsp_patch COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_SOURCE_DIR}/tests/test_sd_quiesce_patch.py)
 add_test(NAME fatfs_chmod COMMAND ${Python3_EXECUTABLE}

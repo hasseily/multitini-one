@@ -10,6 +10,7 @@
 #include "gameboy_content_service.h"
 #include "genesis_content_service.h"
 #include "iigs_content_service.h"
+#include "amiga_content_service.h"
 #include "multitini_ak4493.h"
 #include "multitini_c64_boot.h"
 #include "multitini_c64_debug.h"
@@ -119,6 +120,11 @@ static int quiesce_c64_uci(void);
 static int retry_c64_uci(void);
 static void service_c64_uci_action(void);
 static bool dispatch_c64_title(const char *line);
+static bool supervisor_serial_command(const char *line);
+static uint64_t monotonic_ms(void *context);
+static bool amiga_serial_command(const char *line);
+static void print_amiga_media_status(void);
+static void handle_menu_action(mt_menu_action_t action);
 static void network_console(void *context, const char *text);
 static uint8_t stored_c64_joystick(void);
 static mt_c64_sid_model_t c64_stored_sid;
@@ -145,6 +151,8 @@ static bool nes_service_initialized;
 static bool nes_save_dirty_displayed;
 static bool nes_save_fault_displayed;
 static bool iigs_service_initialized;
+static bool amiga_service_initialized;
+static bool amiga_fault_displayed;
 static bool iigs_fault_displayed;
 static unsigned iigs_browser_drive;
 static bool genesis_save_dirty_displayed;
@@ -448,7 +456,7 @@ static bool shell_is_c64(void)
 static bool core_requires_ddr_drain(void)
 {
     const uint32_t core = shell_read(MT_REG_CORE_ID);
-    if (core == MT_GENESIS_CORE_ID || core == MT_NES_CORE_ID || core == MT_IIGS_CORE_ID)
+    if (core == MT_GENESIS_CORE_ID || core == MT_NES_CORE_ID || core == MT_IIGS_CORE_ID || core == MT_AMIGA_CORE_ID)
         return true;
     if (core != MT_C64_CORE_ID) return false;
     const uint32_t abi = shell_read(MT_REG_ABI_VERSION);
@@ -508,6 +516,13 @@ static void service_runtime(void)
     const bool gameboy_active =
         shell_read(MT_REG_CORE_ID) == MT_GBC_CORE_ID;
     (void)service_fatfs_time();
+    if(shell_read(MT_REG_CORE_ID)==MT_AMIGA_CORE_ID && amiga_service_initialized) {
+        static mt_link_result_t last_rtc_result;
+        const mt_link_result_t result=amiga_content_service_set_clock(board_clock_valid ? &board_clock:NULL,(uint32_t)monotonic_ms(NULL));
+        if(result!=last_rtc_result) {
+            xil_printf("[Amiga] RTC refresh: %s\r\n",mt_link_result_name(result));last_rtc_result=result;
+        }
+    }
     service_usb_input();
     {
         static const char *last_effect_status;
@@ -564,6 +579,12 @@ static void service_runtime(void)
             uci_fault_reported = faulted;
             uci_cleanup_reported = cleanup;
             service_c64_uci_action();
+        }
+    }
+    if(shell_read(MT_REG_CORE_ID)==MT_AMIGA_CORE_ID && amiga_service_initialized) {
+        amiga_content_service_poll();
+        if(amiga_fault_displayed!=amiga_content_service_faulted()) {
+            amiga_fault_displayed=amiga_content_service_faulted();supervisor_menu_dirty=true;
         }
     }
     if(shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID && iigs_service_initialized) {
@@ -877,6 +898,10 @@ static int set_core_reset_request(bool asserted)
         xil_printf("[NES] reset release refused; save RAM remount failed\r\n");
         return -1;
     }
+    if(asserted && !currently_asserted && shell_read(MT_REG_CORE_ID)==MT_AMIGA_CORE_ID &&
+        amiga_service_initialized && amiga_content_service_prepare_reset()!=0)return -1;
+    if(!asserted && currently_asserted && shell_read(MT_REG_CORE_ID)==MT_AMIGA_CORE_ID &&
+        amiga_service_initialized && amiga_content_service_resume_after_reset()!=0)return -1;
     if(asserted && !currently_asserted && shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID &&
         iigs_service_initialized && iigs_content_service_prepare_reset()!=0)return -1;
     if(!asserted && currently_asserted && shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID &&
@@ -887,7 +912,8 @@ static int set_core_reset_request(bool asserted)
     if (result == 0 && asserted && (shell_read(MT_REG_CORE_ID) == MT_VECTREX_CORE_ID ||
                                   shell_read(MT_REG_CORE_ID) == MT_GENESIS_CORE_ID ||
                                   shell_read(MT_REG_CORE_ID) == MT_NES_CORE_ID ||
-                                  shell_read(MT_REG_CORE_ID) == MT_IIGS_CORE_ID))
+                                  shell_read(MT_REG_CORE_ID) == MT_IIGS_CORE_ID ||
+                                  shell_read(MT_REG_CORE_ID) == MT_AMIGA_CORE_ID))
         usb_hid_service_set_core_ready(false);
     if (result != 0 && asserted && !currently_asserted &&
         c64_active && c64_services_initialized) {
@@ -1334,6 +1360,11 @@ static void print_help(void)
     xil_printf("commands: h help, o menu, s status, p ping, a live audio, ");
     xil_printf("t test tone, m mute, ");
     xil_printf("v toggle video, r toggle core reset, u USB status, ");
+    xil_printf(":cores list, :core ID [VARIANT] select, :usbsd export SD, :shot [source|output]\r\n");
+    if(supervisor.has_active && supervisor.active.package.core_id==MT_AMIGA_CORE_ID) {
+        xil_printf("Amiga: :disk status, :diskretry retries I/O, :romload retries roms/kick.rom\r\n");
+        xil_printf("F12 opens Media and CPU options; q or Escape exits USB SD export\r\n");return;
+    }
     if(supervisor.has_active && supervisor.active.package.core_id==MT_IIGS_CORE_ID) {
         xil_printf("F12 opens the Multitini menu\r\n");
         xil_printf("Apple IIgs: :disk or :dir status, :diskretry or :saveretry retry SD I/O\r\n");
@@ -1750,6 +1781,11 @@ static void reboot_to_qspi(uint32_t offset, bool recovery_only)
         set_supervisor_error("Reboot cancelled; media flush or core reset failed");
         return;
     }
+    if(!recovery_only && shell_read(MT_REG_CORE_ID)==MT_AMIGA_CORE_ID &&
+        amiga_service_initialized && amiga_content_service_shutdown()!=0) {
+        if(!golden_update_worker_held)(void)set_core_reset_request(false);
+        set_supervisor_error("Reboot cancelled; Amiga media could not close");return;
+    }
     xil_printf("rebooting to golden at QSPI offset 0x%08x\r\n", offset);
     if (!wait_uart0_transmit_idle()) {
         xil_printf("UART did not drain; reboot cancelled\r\n");
@@ -1838,6 +1874,10 @@ static void switch_to_appletini(void)
         goto restore;
     }
     core_stopped = true;
+    if(shell_read(MT_REG_CORE_ID)==MT_AMIGA_CORE_ID && amiga_service_initialized &&
+        amiga_content_service_shutdown()!=0) {
+        error="Switch cancelled; Amiga media could not close";goto restore;
+    }
     usb_hid_service_set_core_ready(false);
     mt_video_effect_service_suspend();
     worker_stopped = true;
@@ -1969,6 +2009,10 @@ static void self_update_golden(bool recovery_only)
             goto restore;
         }
         core_stopped = true;
+        if(shell_read(MT_REG_CORE_ID)==MT_AMIGA_CORE_ID && amiga_service_initialized &&
+            amiga_content_service_shutdown()!=0) {
+            error="Golden update cancelled; Amiga media could not close";goto restore;
+        }
         usb_hid_service_set_core_ready(false);
         mt_video_effect_service_suspend();
         worker_stopped = true;
@@ -2121,6 +2165,8 @@ static void handle_extended_command(bool recovery_only)
         change_display_mode((size_t)(extended[8]-'0'));
     } else if (strcmp(extended, "diag") == 0) {
         print_read_only_diagnostics("command");
+    } else if (!recovery_only && supervisor_serial_command(extended)) {
+    } else if (!recovery_only && amiga_serial_command(extended)) {
     } else if (!recovery_only && mt_net_service_command(extended, network_console, NULL)) {
     } else if (!recovery_only && shell_is_c64() && strcmp(extended, "uciretry") == 0) {
         const int result = retry_c64_uci();
@@ -3281,6 +3327,11 @@ static mt_menu_view_t supervisor_menu_view(void)
         state.save_dirty = nes_content_service_save_dirty();
         state.save_faulted = nes_content_service_save_faulted();
 
+    } else if(supervisor.has_active && supervisor.active.package.core_id==MT_AMIGA_CORE_ID &&
+        amiga_service_initialized) {
+        state.services_ready=true;state.amiga_ready=amiga_content_service_ready();
+        state.amiga_config=*amiga_content_service_config();state.save_faulted=amiga_content_service_faulted();
+        for(unsigned d=0U;d<MT_AMIGA_DRIVE_COUNT;++d)state.amiga_drive_name[d]=amiga_content_service_name(d);
     } else if(supervisor.has_active && supervisor.active.package.core_id==MT_IIGS_CORE_ID &&
         iigs_service_initialized) {
         state.services_ready=true;
@@ -3736,6 +3787,8 @@ static int supervisor_quiesce(void *context)
     if (shell_is_c64() && c64_uci_service_reload_required()) {
         if (quiesce_c64_for_reload() != 0) return -1;
     } else if (set_core_reset_request(true) != 0) return -1;
+    if(!usb_sd_modal && shell_read(MT_REG_CORE_ID)==MT_AMIGA_CORE_ID &&
+        amiga_service_initialized && amiga_content_service_shutdown()!=0)return -1;
     /* The guest is held, so the EasyFlash journal cannot grow during this save. */
     if (shell_is_c64() && c64_content_service_flush() != 0) return -1;
     if (c64_uci_initialized && !c64_uci_service_reload_required())
@@ -3940,6 +3993,20 @@ static int supervisor_activate(void *context,
     bool request_fast_roms;
     (void)context;
     usb_hid_service_set_active_core(selection->package.core_id);
+    if(selection->package.core_id==MT_AMIGA_CORE_ID) {
+        amiga_content_service_init(&shell_link,selection->package.content_root,iigs_transfer_progress,NULL);
+        amiga_service_initialized=true;amiga_fault_displayed=false;
+        (void)amiga_content_service_set_clock(board_clock_valid ? &board_clock:NULL,(uint32_t)monotonic_ms(NULL));
+        const int boot=amiga_content_service_boot();
+        usb_hid_service_set_core_ready(boot==0);
+        if(dac_ready)set_audio(boot!=0,false);
+        set_video_test(boot!=0);
+        if(boot!=0)xil_printf("[Amiga] ROM/media activation: %s\r\n",amiga_content_service_error());
+        if(amiga_content_service_clock_status()!=MT_LINK_OK)
+            xil_printf("[Amiga] RTC seed: %s\r\n",mt_link_result_name(amiga_content_service_clock_status()));
+        last_settings_restore_ok=restore_selection_settings(selection);
+        return 0;
+    }
     if(selection->package.core_id==MT_IIGS_CORE_ID) {
         iigs_content_service_init(&shell_link,selection->package.content_root,iigs_transfer_progress,NULL);
         iigs_service_initialized=true;
@@ -4058,6 +4125,7 @@ static int supervisor_enter_standby(void)
     c64_core_reset_active = true;
     gameboy_service_initialized = false;
     iigs_service_initialized = false;
+    amiga_service_initialized = false;
     genesis_service_initialized = false;
     nes_service_initialized = false;
     nes_save_dirty_displayed = false;
@@ -4148,7 +4216,7 @@ static void supervisor_controller_action(void *context, unsigned action)
 static bool supervisor_controller_config(void *context, uint32_t core_id, uint8_t slot,
     const mt_controller_device_t *device, mt_controller_config_t *config)
 {
-    static const uint32_t cores[] = {MT_C64_CORE_ID, MT_GBC_CORE_ID, MT_GENESIS_CORE_ID, MT_VECTREX_CORE_ID, MT_IIGS_CORE_ID, MT_NES_CORE_ID};
+    static const uint32_t cores[] = {MT_C64_CORE_ID, MT_GBC_CORE_ID, MT_GENESIS_CORE_ID, MT_VECTREX_CORE_ID, MT_IIGS_CORE_ID, MT_NES_CORE_ID, MT_AMIGA_CORE_ID};
     (void)context;
     if (slot >= MT_GAMEPAD_SLOTS || device == NULL || config == NULL) return false;
     const mt_controller_settings_profile_t *saved = mt_supervisor_settings_find_controller(
@@ -4210,6 +4278,8 @@ static void usb_sd_cancel_quiesce(void *context)
 static int usb_sd_acquire(void *context)
 {
     (void)context;
+    if(shell_read(MT_REG_CORE_ID)==MT_AMIGA_CORE_ID && amiga_service_initialized &&
+        amiga_content_service_shutdown()!=0)return -1;
     if (mt_sd_storage_external_acquire().status != MT_SD_OK)
         return -1;
     mt_net_service_shutdown();
@@ -4276,7 +4346,7 @@ static int usb_sd_restart(void *context)
      * menu so the user can replace it or choose another core. */
     return 0;
 }
-static void mount_sd_over_usb(void)
+static void mount_sd_over_usb(bool serial_entry)
 {
     const mt_usb_sd_ops_t ops={NULL,usb_sd_quiesce,usb_sd_acquire,usb_sd_connect,usb_sd_poll,
         usb_sd_host_ejected,usb_sd_disconnect,usb_sd_release,usb_sd_restart,usb_sd_cancel_quiesce};
@@ -4291,14 +4361,19 @@ static void mount_sd_over_usb(void)
     supervisor_menu.visible=true;
     usb_hid_service_set_menu_capture(true);
     mt_usb_sd_state_t displayed=MT_USB_SD_IDLE;
+    bool ignore_initial_line_end=serial_entry;
     do {
         if(mode.state!=displayed) { show_handoff_progress(mt_usb_sd_mode_status(&mode));displayed=mode.state; }
         usb_hid_service_poll_deferred();
         uint8_t byte;
         if(uart0_try_read_byte(&byte)>0) {
-            if(byte==27U || byte=='\r' || byte=='\n' || byte=='q')usb_sd_stop_requested=true;
+            if(ignore_initial_line_end && (byte=='\r' || byte=='\n')) {
+                /* A terminal may send CRLF for :usbsd. The command reader
+                 * consumed CR; its already queued LF is not an eject. */
+            } else if(byte==27U || byte=='\r' || byte=='\n' || byte=='q')usb_sd_stop_requested=true;
             else if(byte=='u')usb_storage_service_dump_status();
         }
+        ignore_initial_line_end=false;
         if(usb_sd_stop_requested)mt_usb_sd_mode_stop(&mode);
         mt_usb_sd_mode_poll(&mode);
         if(mode.state==MT_USB_SD_REMOUNT_FAILED || mode.state==MT_USB_SD_STOP_FAILED)usleep(100000U);
@@ -4311,6 +4386,79 @@ static void mount_sd_over_usb(void)
         set_supervisor_error("USB SD stopped after transfer error; check copied files");
     else set_supervisor_outcome(!usb_sd_restart_failed,
         "USB SD stopped; active core restarted", "USB SD stopped; choose a core to recover");
+}
+
+static void print_amiga_media_status(void)
+{
+    const mt_amiga_config_t *c=amiga_content_service_config();
+    xil_printf("[Amiga] ready=%u fault=%u cpu=%u chip=2MiB fast=%uMiB PAL host=%08x error=%s\r\n",
+        amiga_content_service_ready() ? 1U:0U,amiga_content_service_faulted() ? 1U:0U,
+        c->cpu,c->fast_mib,(unsigned)shell_read(MT_AMIGA_HOST_PORT),amiga_content_service_error());
+    for(unsigned d=0U;d<MT_AMIGA_DRIVE_COUNT;++d) {
+        uint32_t reads,writes;amiga_content_service_activity(d,&reads,&writes);
+        const char *name=amiga_content_service_name(d);
+        xil_printf("[Amiga] drive%u: %s reads=%u writes=%u\r\n",d,name!=NULL ? name:"ejected",(unsigned)reads,(unsigned)writes);
+    }
+}
+static bool amiga_serial_command(const char *line)
+{
+    if(shell_read(MT_REG_CORE_ID)!=MT_AMIGA_CORE_ID || !amiga_service_initialized)return false;
+    if(strcmp(line,"disk")==0 || strcmp(line,"dir")==0) { print_amiga_media_status();return true; }
+    if(strcmp(line,"diskretry")==0 || strcmp(line,"saveretry")==0 || strcmp(line,"romload")==0) {
+        const mt_menu_action_t action={.kind=strcmp(line,"romload")==0 ? MT_MENU_ACTION_AMIGA_RELOAD:MT_MENU_ACTION_AMIGA_RETRY};
+        handle_menu_action(action);
+        print_amiga_media_status();return true;
+    }
+    if(legacy_c64_media_command(line)) {
+        xil_printf("[Amiga] Use the Amiga Media menu for mount/eject; :romload retries Kickstart\r\n");return true;
+    }
+    return false;
+}
+static bool supervisor_serial_command(const char *line)
+{
+    const bool listing=strcmp(line,"cores")==0;
+    const bool selection=strncmp(line,"core ",5U)==0;
+    const bool usb=strcmp(line,"usbsd")==0;
+    const bool shot=strcmp(line,"shot")==0 || strncmp(line,"shot ",5U)==0;
+    if(!listing && !selection && !usb && !shot)return false;
+    if(usb_sd_modal || mt_sd_storage_external_active()) {
+        xil_printf("[supervisor] USB SD owns storage; finish export first\r\n");return true;
+    }
+    if(shot) {
+        const bool output=strcmp(line,"shot output")==0;
+        if(strcmp(line,"shot")!=0 && strcmp(line,"shot source")!=0 && !output) {
+            xil_printf("usage: :shot [source|output]\r\n");return true;
+        }
+        if(mt_screenshot_service_busy()) {
+            xil_printf("[screenshot] Capture already busy\r\n");return true;
+        }
+        if(!mt_screenshot_service_request(output)) {
+            xil_printf("[screenshot] Capture unavailable\r\n");return true;
+        }
+        const char *status=mt_screenshot_service_status();
+        if(status!=NULL)xil_printf("[screenshot] %s\r\n",status);
+        return true;
+    }
+    if(usb) {
+        xil_printf("[supervisor] USB SD export requested; eject on PC, then q or Escape exits\r\n");
+        mount_sd_over_usb(true);return true;
+    }
+    if(listing) {
+        for(size_t i=0U;i<core_catalog.count;++i)for(size_t v=0U;v<core_catalog.cores[i].package.variant_count;++v)
+            xil_printf("[core] %s %s\r\n",core_catalog.cores[i].package.id,core_catalog.cores[i].package.variants[v].id);
+        return true;
+    }
+    char id[32],variant[32],extra;
+    const int fields=sscanf(line+5U,"%31s %31s %c",id,variant,&extra);
+    if(fields<1 || fields>2) { xil_printf("usage: :core <exact-id> [exact-variant]\r\n");return true; }
+    for(size_t i=0U;i<core_catalog.count;++i)if(strcmp(core_catalog.cores[i].package.id,id)==0) {
+        for(size_t v=0U;v<core_catalog.cores[i].package.variant_count;++v)if(fields==1 || strcmp(core_catalog.cores[i].package.variants[v].id,variant)==0) {
+            const mt_menu_action_t action={.kind=MT_MENU_ACTION_SWITCH_CORE,.core_index=i,.variant_index=v};
+            handle_menu_action(action);print_status();return true;
+        }
+        xil_printf("[supervisor] Unknown variant; use :cores\r\n");return true;
+    }
+    xil_printf("[supervisor] Unknown core ID; use :cores\r\n");return true;
 }
 
 static bool supervisor_keyboard_filter(void *context, uint8_t slot,
@@ -4434,6 +4582,9 @@ static bool menu_action_needs_core_progress(mt_menu_action_t action)
     case MT_MENU_ACTION_DIRECT_DISK_PROGRAM:
     case MT_MENU_ACTION_EJECT_DRIVE8:
     case MT_MENU_ACTION_EJECT_IIGS_DRIVE:
+    case MT_MENU_ACTION_EJECT_AMIGA_DRIVE:
+    case MT_MENU_ACTION_AMIGA_RELOAD:
+    case MT_MENU_ACTION_AMIGA_RETRY:
     case MT_MENU_ACTION_IIGS_PRAM:
     case MT_MENU_ACTION_IIGS_RELOAD:
     case MT_MENU_ACTION_DETACH_CARTRIDGE:
@@ -4454,6 +4605,7 @@ static bool menu_action_needs_core_progress(mt_menu_action_t action)
          * Turbo, input, video and startup settings apply while paused. */
         return supervisor.has_active &&
                (supervisor.active.package.core_id == MT_GENESIS_CORE_ID ||
+                supervisor.active.package.core_id == MT_AMIGA_CORE_ID ||
                 (supervisor.active.package.core_id == MT_IIGS_CORE_ID &&
                  (action.file_index==1U || action.file_index==2U || action.file_index==10U)) ||
                 (supervisor.active.package.core_id == MT_C64_CORE_ID &&
@@ -5333,6 +5485,22 @@ static void handle_menu_action(mt_menu_action_t action)
                    supervisor.recovered ? 1U : 0U);
     } else if (action.kind == MT_MENU_ACTION_BROWSE_DRIVE8) {
         open_menu_browser(MT_MENU_BROWSER_DRIVE8);
+    } else if(action.kind==MT_MENU_ACTION_BROWSE_AMIGA_DRIVE) {
+        if(action.file_index>=MT_AMIGA_DRIVE_COUNT || shell_read(MT_REG_CORE_ID)!=MT_AMIGA_CORE_ID)return;
+        iigs_browser_drive=(unsigned)action.file_index;
+        open_menu_browser(MT_MENU_BROWSER_DRIVE8);
+    } else if(action.kind==MT_MENU_ACTION_EJECT_AMIGA_DRIVE) {
+        const int result=amiga_content_service_eject((unsigned)action.file_index);
+        if(result!=0)set_supervisor_error(amiga_content_service_error());
+        else set_supervisor_status("Amiga disk ejected");
+    } else if(action.kind==MT_MENU_ACTION_AMIGA_RELOAD || action.kind==MT_MENU_ACTION_AMIGA_RETRY) {
+        usb_hid_service_set_core_ready(false);
+        const int result=action.kind==MT_MENU_ACTION_AMIGA_RELOAD ? amiga_content_service_boot():amiga_content_service_retry();
+        if(result!=0)set_supervisor_error(amiga_content_service_error());
+        else set_supervisor_status("Amiga ROM/media ready");
+        usb_hid_service_set_core_ready(result==0 && amiga_content_service_ready());
+        if(dac_ready)set_audio(!amiga_content_service_ready(),false);
+        set_video_test(!amiga_content_service_ready());
     } else if(action.kind==MT_MENU_ACTION_BROWSE_IIGS_DRIVE) {
         if(action.file_index>=MT_IIGS_DRIVE_COUNT || shell_read(MT_REG_CORE_ID)!=MT_IIGS_CORE_ID)return;
         iigs_browser_drive=(unsigned)action.file_index;
@@ -5483,7 +5651,7 @@ static void handle_menu_action(mt_menu_action_t action)
             set_supervisor_status("Board clock saved");
         } else set_supervisor_error("Clock write or verification failed; retry Save time");
     } else if (action.kind == MT_MENU_ACTION_USB_SD) {
-        mount_sd_over_usb();
+        mount_sd_over_usb(false);
     } else if (action.kind == MT_MENU_ACTION_RESTART_USB) {
         int status = usb_hid_service_stop();
         if (status == 0) status = usb_hid_service_start();
@@ -5513,6 +5681,18 @@ static void handle_menu_action(mt_menu_action_t action)
     } else if (action.kind == MT_MENU_ACTION_MOUNT_DRIVE8) {
         int status;
         char c64_relative[MT_MEDIA_BROWSER_PATH_MAX + 1U];
+        if(shell_read(MT_REG_CORE_ID)==MT_AMIGA_CORE_ID) {
+            char relative[MT_AMIGA_MEDIA_NAME_MAX+1U];
+            if(action.file_index>=supervisor_menu_file_count)return;
+            if((supervisor_menu_files[action.file_index].cookie&(MT_MENU_FILE_DIRECTORY|MT_MENU_FILE_TEXT))!=0U ||
+                !mt_media_browser_resolve(&vectrex_media_browser,supervisor_menu_files[action.file_index].name,relative,sizeof(relative))) {
+                set_supervisor_error("Disk path is too long or invalid");return;
+            }
+            status=amiga_content_service_mount(iigs_browser_drive,relative);
+            if(status!=0)set_supervisor_error(amiga_content_service_error());
+            else { mt_menu_close_browser(&supervisor_menu);set_supervisor_status("Amiga disk mounted"); }
+            return;
+        }
         if(shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID) {
             char relative[MT_IIGS_MEDIA_NAME_MAX+1U];
             if(action.file_index>=supervisor_menu_file_count)return;
@@ -5987,6 +6167,20 @@ static void handle_menu_action(mt_menu_action_t action)
                                    c64_title_service_status());
             return;
         }
+        if(supervisor.has_active && supervisor.active.package.core_id==MT_AMIGA_CORE_ID) {
+            mt_amiga_config_t changed=*amiga_content_service_config();
+            if(action.file_index==0U)changed.cpu=changed.cpu==MT_AMIGA_CPU_STOCK ? MT_AMIGA_CPU_68020_TURBO:MT_AMIGA_CPU_STOCK;
+            else if(action.file_index==1U)return;
+            else if(action.file_index==2U)changed.fast_mib=changed.fast_mib==4U ? 8U:4U;
+            else if(action.file_index==3U)changed.floppy_turbo^=1U;
+            else return;
+            usb_hid_service_set_core_ready(false);
+            if(amiga_content_service_configure(&changed)!=0)set_supervisor_error(amiga_content_service_error());
+            else set_supervisor_status("Amiga settings saved");
+            usb_hid_service_set_core_ready(amiga_content_service_ready());
+            if(dac_ready)set_audio(!amiga_content_service_ready(),false);
+            set_video_test(!amiga_content_service_ready());return;
+        }
         if(supervisor.has_active && supervisor.active.package.core_id==MT_IIGS_CORE_ID) {
             if(action.file_index==9U) {
                 const uint16_t next=mt_iigs_mouse_next_sensitivity(iigs_content_service_mouse_sensitivity());
@@ -6269,6 +6463,12 @@ static void sample_drive_activity(uint64_t now)
             if (lights)
                 mt_activity_lights(&drive_activity, 2U, "EF",
                     (status & MT_C64_DRIVE_STATUS_CART_LED) != 0U, false, now);
+        }
+    } else if (supervisor.active.package.core_id == MT_AMIGA_CORE_ID) {
+        static const char *const labels[]={"DF0","DF1","HD0","HD1"};
+        for(unsigned drive=0U;drive<MT_AMIGA_DRIVE_COUNT;++drive) {
+            amiga_content_service_activity(drive,&reads,&writes);
+            mt_activity_sample(&drive_activity,drive,labels[drive],reads,writes,now);
         }
     } else if (supervisor.active.package.core_id == MT_IIGS_CORE_ID) {
         for (unsigned drive = 0U; drive < MT_IIGS_DRIVE_COUNT; ++drive) {
@@ -6797,6 +6997,7 @@ int main(void)
         case 's':
             print_status();
             if (shell_is_c64()) c64_d64_service_dump_status();
+            else if(shell_read(MT_REG_CORE_ID)==MT_AMIGA_CORE_ID)print_amiga_media_status();
             else if(shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID)print_iigs_media_status();
             break;
         case 'p': (void)command(MT_COMMAND_PING, 0U, 0U); break;

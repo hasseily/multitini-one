@@ -26,7 +26,9 @@ typedef enum {
     MT_CONTENT_IIGS_WOZ,
     MT_CONTENT_NES_CART,
     MT_CONTENT_IIGS_FLOPPY,
-    MT_CONTENT_C64_REU
+    MT_CONTENT_C64_REU,
+    MT_CONTENT_AMIGA_ADF,
+    MT_CONTENT_AMIGA_HDF
 } mt_content_type_t;
 
 typedef enum {

@@ -10,6 +10,7 @@ static void copy_pixels(void *destination,uint32_t address,size_t size);
 #include "../../firmware/platform/xilinx/screenshot_service.c"
 #include "multitini_gameboy_interface.h"
 #include "multitini_iigs_interface.h"
+#include "multitini_amiga_interface.h"
 
 struct mt_sd_file { bool open;size_t position; };
 static struct mt_sd_file test_file;
@@ -156,6 +157,38 @@ static void iigs_capture(void)
     assert(!mt_screenshot_service_busy() && open_calls==0U && write_calls==0U);
     assert(strstr(mt_screenshot_service_status(),"unsupported display geometry")!=NULL);
 }
+static void amiga_capture(void)
+{
+    static const unsigned screen_w[]={1920U,1024U,1200U,1280U,1360U,1680U};
+    static const unsigned screen_h[]={1080U,768U,800U,1024U,768U,1050U};
+    static const unsigned active_scale[]={2U,1U,1U,2U,1U,2U};
+    for(unsigned geometry=0U;geometry<2U;++geometry)
+    for(unsigned mode=0U;mode<6U;++mode)for(unsigned full=0U;full<2U;++full) {
+        const unsigned width=geometry!=0U ? 640U:720U,height=geometry!=0U ? 512U:576U;
+        const unsigned stride=geometry!=0U ? 1280U:1536U;
+        const unsigned scale=geometry!=0U ? active_scale[mode]:1U;
+        reset_test();
+        registers[MT_REG_ABI_VERSION/4U]=27U;
+        registers[MT_REG_CORE_ID/4U]=MT_AMIGA_CORE_ID;
+        registers[MT_REG_DISPLAY_STATUS/4U]=mode;
+        registers[MT_REG_VIDEO_FRAME_GEOMETRY/4U]=(height<<16)|width;
+        registers[MT_REG_VIDEO_FRAME_STRIDE/4U]=stride;
+        assert(mt_screenshot_service_request(full!=0U));
+        for(unsigned i=0U;i<1200U && mt_screenshot_service_busy();++i)
+            mt_screenshot_service_poll(MT_AMIGA_CORE_ID,"Amiga ECS",(uint8_t)mode,0U,NULL,false);
+        assert(!mt_screenshot_service_busy());
+        assert(strstr(mt_screenshot_service_status(),"Screenshot saved")!=NULL);
+        assert(copies==height && copied_base==MT_VIDEO_FRAME_OUTPUT_BASE+MT_VIDEO_FRAME_SLOT_BYTES);
+        assert(copied_last==copied_base+(height-1U)*stride);
+        assert(open_calls==1U && close_calls==1U && rename_calls==1U && remove_calls==0U);
+        assert(memcmp(written,"\211PNG\r\n\032\n",8U)==0);
+        assert(big32_at(16U)==(full!=0U ? screen_w[mode]:width*scale));
+        assert(big32_at(20U)==(full!=0U ? screen_h[mode]:height*scale));
+        assert(progress_calls==big32_at(20U) && write_calls==progress_calls+2U);
+        assert(strstr(renamed_to,full!=0U ? "-screen.png":"-video.png")!=NULL);
+        assert(memcmp(written+test_file.position-12U,"\0\0\0\0IEND",8U)==0);
+    }
+}
 static void successful_capture(void)
 {
     reset_test();open_collisions=2U;rename_collisions=1U;race=1U;
@@ -229,6 +262,6 @@ static void failure_and_cancel(void)
 }
 int main(void)
 {
-    successful_capture();snapshot_ownership();failure_and_cancel();iigs_capture();
+    successful_capture();snapshot_ownership();failure_and_cancel();iigs_capture();amiga_capture();
     puts("screenshot service tests passed");return 0;
 }

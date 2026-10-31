@@ -570,7 +570,39 @@ static void build_iigs(mt_core_frontend_t *frontend,
     view->save_faulted=state->save_faulted;
 }
 
+static void build_amiga(mt_core_frontend_t *frontend,const mt_core_frontend_state_t *state,mt_menu_view_t *view)
+{
+    static const char *const labels[]={"DF0: DD floppy","DF1: DD floppy","IDE master","IDE slave"};
+    for(unsigned d=0U;d<MT_AMIGA_DRIVE_COUNT;++d) {
+        const char *name=state->amiga_drive_name[d];
+        frontend->media_items[view->media_item_count++]=item(labels[d],name!=NULL ? name:"Choose disk...",
+            name!=NULL ? "Finish disk writes and eject this image.":d<2U ? "Mount an 880 KiB DD ADF image.":"Mount a raw HDF hard disk with 512-byte sectors.",
+            name!=NULL ? MT_MENU_ACTION_EJECT_AMIGA_DRIVE:MT_MENU_ACTION_BROWSE_AMIGA_DRIVE,d,true,name!=NULL ? MT_UI_COLOR_SUCCESS:MT_UI_COLOR_BLUE);
+    }
+    frontend->media_items[view->media_item_count++]=item("Kickstart ROM",state->amiga_ready ? "Loaded":"Load / retry...",
+        "Load your 256 KiB, 512 KiB or 1 MiB roms/kick.rom.",MT_MENU_ACTION_AMIGA_RELOAD,0U,true,state->amiga_ready ? MT_UI_COLOR_SUCCESS:MT_UI_COLOR_WARNING);
+    frontend->media_items[view->media_item_count++]=item("Retry media",state->save_faulted ? "I/O error; retry":"No errors",
+        "Retry a retained disk journal or failed transfer.",MT_MENU_ACTION_AMIGA_RETRY,0U,state->save_faulted,MT_UI_COLOR_BLUE);
+    frontend->core_options[view->core_option_count++]=item("CPU",state->amiga_config.cpu==MT_AMIGA_CPU_STOCK ? "68000 stock":"68020 accelerated",
+        "Stock preserves the native 68000 schedule. Changing CPU saves disks and restarts.",MT_MENU_ACTION_TOGGLE_CORE_OPTION,0U,true,MT_UI_COLOR_BLUE);
+    frontend->core_options[view->core_option_count++]=item("Chipset","ECS PAL / 2 MiB chip RAM",
+        "This image uses the PAL Amiga clock and ECS chipset timing.",MT_MENU_ACTION_NONE,1U,false,MT_UI_COLOR_TEXT);
+    frontend->core_options[view->core_option_count++]=item("Fast RAM",state->amiga_config.fast_mib==4U ? "4 MiB":"8 MiB",
+        "Zorro II fast memory; chipset always has 2 MiB chip RAM.",MT_MENU_ACTION_TOGGLE_CORE_OPTION,2U,true,MT_UI_COLOR_BLUE);
+    frontend->core_options[view->core_option_count++]=item("Floppy speed",state->amiga_config.floppy_turbo ? "Fast":"Normal",
+        "Normal DD drive timing provides the widest compatibility.",MT_MENU_ACTION_TOGGLE_CORE_OPTION,3U,true,MT_UI_COLOR_BLUE);
+    frontend->input_items[view->input_item_count++]=item("Keyboard","USB keyboard","Windows keys are Amiga keys; F11 is Help; F12 opens this menu.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
+    frontend->input_items[view->input_item_count++]=item("Mouse","USB mouse","Relative movement and three mouse buttons.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
+    frontend->input_items[view->input_item_count++]=item("Joysticks","Two USB gamepads","Digital joystick directions and two fire buttons per port.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
+    view->save_faulted=state->save_faulted;
+}
 static const core_profile_t profiles[] = {
+    {
+        MT_AMIGA_CORE_ID,"Amiga 600 / ECS",
+        "USB keyboard, mouse and two digital joysticks; F12 opens the menu.",
+        {0U,CONTENT_MASK(MT_CONTENT_AMIGA_ADF)|CONTENT_MASK(MT_CONTENT_AMIGA_HDF),0U,0U,0U},
+        false,build_amiga
+    },
     {
         MT_NES_CORE_ID, "Nintendo Entertainment System",
         "Two USB gamepads or keyboard; F12 opens the menu.",
@@ -678,13 +710,15 @@ bool mt_core_frontend_browser_folders(uint32_t core_id, mt_menu_browser_t browse
             (browser == MT_MENU_BROWSER_REU || browser == MT_MENU_BROWSER_CONFIG ||
              browser == MT_MENU_BROWSER_PROGRAM || browser == MT_MENU_BROWSER_CARTRIDGE ||
              browser == MT_MENU_BROWSER_DRIVE8)) ||
-           ((core_id == MT_VECTREX_CORE_ID || core_id == MT_IIGS_CORE_ID) &&
+           ((core_id == MT_VECTREX_CORE_ID || core_id == MT_IIGS_CORE_ID || core_id == MT_AMIGA_CORE_ID) &&
             mt_core_frontend_browser_supported(core_id, browser));
 }
 
 bool mt_core_frontend_accepts_drive_content(uint32_t core_id, mt_menu_browser_t browser,
                                            unsigned drive, mt_content_type_t type)
 {
+    if(core_id==MT_AMIGA_CORE_ID && browser==MT_MENU_BROWSER_DRIVE8)
+        return drive<MT_AMIGA_DRIVE_COUNT && type==(drive<2U ? MT_CONTENT_AMIGA_ADF:MT_CONTENT_AMIGA_HDF);
     if(core_id==MT_IIGS_CORE_ID && browser==MT_MENU_BROWSER_DRIVE8) {
         if(drive>=MT_IIGS_DRIVE_COUNT) return false;
         if(mt_iigs_drive_hdd_unit(drive)<MT_IIGS_HDD_COUNT) return type==MT_CONTENT_IIGS_HDD;

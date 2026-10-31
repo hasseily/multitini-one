@@ -54,6 +54,14 @@ dfx_runtime.txt
 # GPL font source required by the shared text overlay.
 !hdl/common/multitini_font7x8.mem
 
+# Source-licensed CPU control stores and deterministic Minimig timing tables.
+!third_party/amiga/upstream/rtl/fx68k/microrom.mem
+!third_party/amiga/upstream/rtl/fx68k/nanorom.mem
+!third_party/amiga/upstream/rtl/tg68k/m68k_cyc_idx.mif
+!third_party/amiga/upstream/rtl/tg68k/m68k_ea_idx.mif
+!hdl/core/amiga/ports/m68k_cyc_idx.hex
+!hdl/core/amiga/ports/m68k_ea_idx.hex
+
 # System ROMs and user content. The repository policy check enforces these too.
 *.nes
 *.NES
@@ -61,6 +69,10 @@ dfx_runtime.txt
 *.FDS
 *.rom
 *.ROM
+*.adf
+*.ADF
+*.hdf
+*.HDF
 *.gen
 *.GEN
 *.smd

@@ -165,6 +165,20 @@ def inputs(machine: str) -> list[Path]:
         paths.add(ROOT / "hdl/sim/apple_iigs_bufgce.sv")
         paths.update((ROOT / "hdl/sim").glob("tb_apple_iigs_*.sv"))
         paths.update((ROOT / "hdl/sim").glob("tb_gs_*.sv"))
+    if machine == "AMIGA":
+        # Preserve exact imported originals and every portable transformation;
+        # user Kickstart and media files remain outside public source bundles.
+        paths.update(path for path in (ROOT / "third_party/amiga").rglob("*")
+                     if path.is_file() and "__pycache__" not in path.parts)
+        paths.update((ROOT / "scripts").glob("*amiga*.py"))
+        paths.update((ROOT / "tests").glob("test_amiga_*.py"))
+        paths.add(ROOT / "hdl/core/apple_iigs/multitini_apple_iigs_ddr_path.sv")
+        paths.add(ROOT / "scripts/build_phos1.py")
+        paths.add(ROOT / "hdl/sim/xilinx_primitives.sv")
+        paths.update((ROOT / "hdl/sim").glob("amiga_*.sv"))
+        paths.update((ROOT / "hdl/sim").glob("tb_amiga_*.sv"))
+        paths.update((ROOT / "hdl/sim").glob("amiga_*.vhd"))
+        paths.update((ROOT / "docs").glob("AMIGA_*.md"))
     if machine == "NES":
         paths.update(path for path in (ROOT / "third_party/nes").rglob("*")
                      if path.is_file())
@@ -206,7 +220,7 @@ def archive_inputs(output: Path, record: dict) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--machine", choices=("C64", "GBC", "VECTREX", "GENESIS", "APPLE_IIGS", "NES", "SUPERVISOR"))
+    parser.add_argument("--machine", choices=("C64", "GBC", "VECTREX", "GENESIS", "APPLE_IIGS", "NES", "AMIGA", "SUPERVISOR"))
     parser.add_argument("--c64-video-standard", choices=("PAL", "NTSC"), default="PAL")
     parser.add_argument("--c64-timing-policy", choices=("default", "dev8-over-0.050", "dev3-over-0.010"), default="default")
     parser.add_argument("--gbc-psram", action="store_true")

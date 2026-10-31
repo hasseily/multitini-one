@@ -1,0 +1,139 @@
+# SPDX-License-Identifier: GPL-3.0-only
+"""Exercise Amiga source capture, clock selection and private ROM packaging."""
+import hashlib
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+import build_core_amiga
+import build_phos1
+import capture_vectrex_build_inputs as capture
+import check_repo
+import package_phos1 as package
+
+
+class AmigaBuildTests(unittest.TestCase):
+    def test_git_keeps_cpu_tables_and_excludes_user_images(self):
+        result = subprocess.run(["git", "check-ignore", "--no-index", "--stdin", "-z"],
+                                input="\0".join(check_repo.AMIGA_CPU_TABLES) + "\0",
+                                cwd=ROOT, text=True, capture_output=True)
+        self.assertEqual((result.returncode, result.stdout), (1, ""))
+        private = "private/kick.rom\0private/Workbench.adf\0private/System.hdf\0"
+        result = subprocess.run(["git", "check-ignore", "--no-index", "--stdin", "-z"],
+                                input=private, cwd=ROOT, text=True, capture_output=True)
+        self.assertEqual((result.returncode, result.stdout), (0, private))
+
+    def test_cpu_table_policy_rejects_missing_or_changed_data(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / "build") as directory:
+            root = Path(directory)
+            for relative in check_repo.AMIGA_CPU_TABLES:
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((ROOT / relative).read_bytes())
+            with mock.patch.object(check_repo, "ROOT", root):
+                errors = []
+                check_repo.check_amiga_cpu_tables(errors)
+                self.assertEqual(errors, [])
+                target = root / "hdl/core/amiga/ports/m68k_cyc_idx.hex"
+                original = target.read_bytes()
+                target.write_bytes(original.replace(b"\r\n", b"\n"))
+                check_repo.check_amiga_cpu_tables(errors)
+                self.assertEqual(errors, [])
+                target.write_bytes(b"000\n" + original)
+                check_repo.check_amiga_cpu_tables(errors)
+                self.assertTrue(any("differs" in error for error in errors))
+                target.unlink()
+                errors = []
+                check_repo.check_amiga_cpu_tables(errors)
+                self.assertTrue(any("absent" in error for error in errors))
+
+    def test_standalone_wrapper_plans_only_amiga_by_default(self):
+        result = subprocess.run([sys.executable, ROOT / "scripts/build_core_amiga.py", "--plan"],
+                                cwd=ROOT, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("PLAN BUILD amiga ", result.stdout)
+        self.assertIn("PLAN TOTAL build=1 reuse=0", result.stdout)
+        self.assertNotIn("PLAN BUILD supervisor", result.stdout)
+
+    def test_explicit_amiga_reuse_is_validated_as_its_own_machine(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / "build") as directory:
+            root = Path(directory)
+            candidate = root / "old"
+            candidate.mkdir()
+            with mock.patch("core_artifacts.inspect_artifact", return_value={
+                    "current_input_match": True, "build_id": "0x4D000801", "abi": "0.24"}) as inspect:
+                plan = build_phos1.selection_plan(["amiga"], {"amiga": candidate},
+                                                 "4D000802", root / "new")
+            inspect.assert_called_once_with(candidate, "AMIGA", gbc_psram=False, genesis_pal=False)
+            self.assertEqual(plan["images"]["amiga"]["action"], "reuse")
+            self.assertEqual(plan["images"]["amiga"]["artifact"]["build_id"], "0x4D000801")
+
+    def test_source_capture_retains_upstream_and_port_inputs(self):
+        paths = {path.relative_to(ROOT).as_posix() for path in capture.inputs("AMIGA")}
+        self.assertIn("scripts/build_core_amiga.py", paths)
+        for source in (ROOT / "third_party/amiga").rglob("*"):
+            if source.is_file() and "__pycache__" not in source.parts:
+                self.assertIn(source.relative_to(ROOT).as_posix(), paths)
+        self.assertFalse(any(path.startswith("build/") or path.endswith("kick.rom") for path in paths))
+
+
+class AmigaPrivateContentTests(unittest.TestCase):
+    def test_rom_free_package_preserves_user_directories(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / "build") as directory:
+            root = Path(directory)
+            package.prepare_amiga_content(root)
+            core = root / "sd/multitini/cores/amiga"
+            self.assertTrue((core / "media/README.txt").is_file())
+            self.assertTrue((core / "roms/README.txt").is_file())
+            self.assertFalse((core / "roms/kick.rom").exists())
+
+    def test_explicit_rom_bytes_and_hash_are_retained_without_conversion(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / "build") as directory:
+            root = Path(directory)
+            for size in (256 * 1024, 512 * 1024, 1024 * 1024):
+                with self.subTest(size=size):
+                    source = root / f"kick-{size}.rom"
+                    data = bytes(range(256)) * (size // 256)
+                    source.write_bytes(data)
+                    rom = package.amiga_kickstart(source)
+                    output = root / f"package-{size}"
+                    package.prepare_amiga_content(output, rom)
+                    self.assertEqual((output / rom["provenance"]["output"]).read_bytes(), data)
+                    self.assertEqual(rom["provenance"]["sha256"], hashlib.sha256(data).hexdigest())
+
+    def test_truncated_or_oversized_kickstart_is_rejected(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / "build") as directory:
+            source = Path(directory) / "kick.rom"
+            for size in (0, 256 * 1024 - 1, 512 * 1024 + 1, 2 * 1024 * 1024):
+                with self.subTest(size=size):
+                    source.write_bytes(bytes(size))
+                    with self.assertRaisesRegex(ValueError, "Kickstart must be exactly"):
+                        package.amiga_kickstart(source)
+
+
+@unittest.skipUnless(shutil.which("tclsh"), "native Tcl unavailable")
+class AmigaProjectTests(unittest.TestCase):
+    def test_amiga_has_distinct_machine_id_and_pal_master_clock(self):
+        source = (ROOT / "scripts/create_project.tcl").read_text().split("proc require_file", 1)[0]
+        environment = {key: value for key, value in os.environ.items()
+                       if not key.startswith("MULTITINI_")}
+        environment["MULTITINI_MACHINE"] = "AMIGA"
+        script = "if {[catch {\n" + source + "\n} detail]} {puts stderr $detail; exit 1}\n"
+        script += 'puts "$active_machine $c64_clock_mhz $c64_video_standard"\n'
+        result = subprocess.run([shutil.which("tclsh")], input=script, text=True,
+                                capture_output=True, env=environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        machine, clock, standard = result.stdout.strip().split()
+        self.assertEqual((machine, standard), ("7", "N/A"))
+        self.assertAlmostEqual(float(clock), 28.375160)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -855,3 +855,168 @@ hdl/sim/tb_c64_uci_palette.sv,Multitini One,,GPL-3.0-only,simulation-passed,Orig
 tests/test_fatfs_chmod.py,Multitini One,,GPL-3.0-only,host-tested,Original production BSP CHMOD patch and platform reuse regressions
 scripts/test_c64_cia_timers.py,Multitini One,,GPL-3.0-only,simulation-passed,Original hash-pinned user-supplied Lorenz CIA oracle extraction and production timer CPU NMI replay runner
 hdl/sim/tb_c64_cia_timers.sv,Multitini One,,GPL-3.0-only,simulation-passed,Original native CIA register and T65 NMI replay fixture with cascade reset and negative controls
+scripts/build_core_amiga.py,Multitini One,,GPL-3.0-only,source-reviewed,"Original Amiga build, packaging or directed simulation evidence; board validation remains separate"
+docs/AMIGA_PLAN.md,Multitini One,,GPL-3.0-only,source-reviewed,"Original Amiga build, packaging or directed simulation evidence; board validation remains separate"
+tests/test_amiga_build.py,Multitini One,,GPL-3.0-only,source-reviewed,"Original Amiga build, packaging or directed simulation evidence; board validation remains separate"
+third_party/amiga/upstream/README.md,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/gpl.txt,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/Minimig.sv,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/agnus.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/agnus_audiodma.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/agnus_beamcounter.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/agnus_bitplanedma.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/agnus_blitter.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/agnus_blitter_adrgen.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/agnus_blitter_barrelshifter.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/agnus_blitter_fill.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/agnus_blitter_minterm.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/agnus_copper.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/agnus_diskdma.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/agnus_refresh.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/agnus_spritedma.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/amiga_clk.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/cart.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/cia_int.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/cia_timera.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/cia_timerb.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/cia_timerd.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/ciaa.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/ciab.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/cpu_cycles.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/cpu_wrapper.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/denise.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/denise_bitplane_shifter.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/denise_bitplanes.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/denise_collision.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/denise_colortable.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/denise_hamgenerator.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/denise_playfields.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/denise_spritepriority.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/denise_sprites.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/denise_sprites_shifter.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/gary.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/gayle.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/ide.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,BSD-2-Clause,source-reviewed,File-local two-clause BSD grant retained
+third_party/amiga/upstream/rtl/memory_router.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/minimig.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/minimig_bankmapper.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/minimig_m68k_bridge.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/minimig_sram_bridge.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/minimig_syscontrol.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/paula.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/paula_audio.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/paula_audio_channel.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/paula_audio_mixer.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/paula_audio_volume.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/paula_floppy.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/paula_floppy_fifo.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/paula_intcontroller.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/paula_uart.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/userio.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/minimig_version.vh,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/fx68k/fx68k.sv,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Grant in retained rtl/fx68k/fx68k.txt
+third_party/amiga/upstream/rtl/fx68k/fx68k.txt,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Grant in retained rtl/fx68k/fx68k.txt
+third_party/amiga/upstream/rtl/fx68k/fx68kAlu.sv,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Grant in retained rtl/fx68k/fx68k.txt
+third_party/amiga/upstream/rtl/fx68k/microrom.mem,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Grant in retained rtl/fx68k/fx68k.txt
+third_party/amiga/upstream/rtl/fx68k/nanorom.mem,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Grant in retained rtl/fx68k/fx68k.txt
+third_party/amiga/upstream/rtl/fx68k/uaddrPla.sv,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Grant in retained rtl/fx68k/fx68k.txt
+third_party/amiga/upstream/rtl/tg68k/m68k_cyc_idx.mif,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/tg68k/m68k_cyc_pal.vh,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/tg68k/m68k_ea_idx.mif,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/tg68k/m68k_ea_pal.vh,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/tg68k/m68k_misc_030.vh,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/tg68k/TG68K.vhd,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,LGPL-3.0-or-later,source-reviewed,File-local grant; project GPL also retained
+third_party/amiga/upstream/rtl/tg68k/TG68K_ALU.vhd,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,LGPL-3.0-or-later,source-reviewed,File-local grant; project GPL also retained
+third_party/amiga/upstream/rtl/tg68k/TG68K_MMU030.vhd,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/tg68k/TG68K_Pack.vhd,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,LGPL-3.0-or-later,source-reviewed,File-local grant; project GPL also retained
+third_party/amiga/upstream/rtl/tg68k/TG68KdotC_Kernel.vhd,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,LGPL-3.0-or-later,source-reviewed,File-local grant; project GPL also retained
+hdl/sim/amiga_cdc_model.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original four-stage digital CDC handshake model; simulation evidence is separate from board acceptance
+firmware/common/amiga_rtc.c,Multitini One,,GPL-3.0-only,host-tested,Original capability-gated MSM6242B RTC encoder and coherent host publication; host-tested separately from hardware
+firmware/include/multitini_amiga_rtc.h,Multitini One,,GPL-3.0-only,host-tested,Original typed Amiga RTC snapshot and update interface
+tests/host/test_amiga_rtc.c,Multitini One,,GPL-3.0-only,host-tested,Original BCD weekday capability cadence timeout and recovery regression
+hdl/core/amiga/ports/minimig.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/paula_floppy.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/cpu_wrapper.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/userio.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/cpu_cycles.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/fx68k.sv,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/amiga_ram.sv,Multitini One,,GPL-3.0-only,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/m68k_cyc_idx.hex,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/m68k_ea_idx.hex,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/agnus.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/agnus_audiodma.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/agnus_beamcounter.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/agnus_bitplanedma.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/agnus_blitter.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/agnus_blitter_adrgen.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/agnus_blitter_barrelshifter.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/agnus_blitter_fill.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/agnus_blitter_minterm.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/agnus_copper.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/agnus_diskdma.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/agnus_spritedma.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/amiga_clk.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/cart.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/cia_int.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/cia_timera.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/cia_timerb.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/cia_timerd.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/ciaa.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/ciab.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/denise.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/denise_bitplane_shifter.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/denise_bitplanes.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/denise_collision.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/denise_colortable.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/denise_hamgenerator.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/denise_playfields.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/denise_spritepriority.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/denise_sprites.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/denise_sprites_shifter.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/gary.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/gayle.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/ide.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/minimig_bankmapper.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/minimig_m68k_bridge.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/minimig_sram_bridge.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/minimig_syscontrol.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/paula.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/paula_audio.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/paula_audio_channel.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/paula_audio_mixer.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/paula_audio_volume.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/paula_floppy_fifo.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/paula_intcontroller.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/paula_uart.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/multitini_amiga_ddr_path.sv,Multitini One,,GPL-3.0-only,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+scripts/import_amiga_core.py,Multitini One,,GPL-3.0-only,source-reviewed,Original deterministic Minimig source import and port tool
+scripts/port_amiga_core.py,Multitini One,,GPL-3.0-only,source-reviewed,Original deterministic Minimig source import and port tool
+hdl/board/multitini_amiga_timing.xdc,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/board/multitini_amiga_video_bridge.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/board/multitini_amiga_video_normalizer.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/core/amiga/multitini_amiga_adapter.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/core/amiga/multitini_amiga_host.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/core/amiga/multitini_amiga_loader.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/core/amiga/multitini_amiga_machine.sv,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-only,source-reviewed,Original integration; CPU phase relation derived from licensed upstream Minimig.sv; exact reference/notices retained
+hdl/core/amiga/multitini_amiga_memory.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_adapter_input.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_cpu.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_loader.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_native_geometry.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_native_ide.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_native_video.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_ports.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_rtc.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_rtc_host.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_transport.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_video_normalizer.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_input.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_kickstart.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_native_geometry.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_native_video.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_phase.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_ports.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_rtc.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_rtc_host.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_transport.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_video.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance

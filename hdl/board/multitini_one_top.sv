@@ -7,7 +7,7 @@ module multitini_one_top #(
     parameter bit C64_NTSC_MODE = 1'b0,
     parameter logic [7:0] C64_TURBO_TIMING_REVISION = 8'd1,
     parameter bit GENESIS_PAL_MODE = 1'b0,
-    // 0 = C64, 1 = GBC, 2 = supervisor, 3 = Vectrex, 4 = Genesis, 5 = Apple IIgs, 6 = NES.
+    // 0 = C64, 1 = GBC, 2 = supervisor, 3 = Vectrex, 4 = Genesis, 5 = Apple IIgs, 6 = NES, 7 = Amiga ECS.
     parameter integer ACTIVE_MACHINE = 2,
     parameter bit ENABLE_GBC_PSRAM = 1'b0
 ) (
@@ -221,6 +221,9 @@ module multitini_one_top #(
     wire uci_buffer_rd_select=ACTIVE_MACHINE==0 && reg_rd_addr>=16'hc000 && reg_rd_addr<16'hc800;
     wire uci_buffer_wr_select=ACTIVE_MACHINE==0 && reg_wr_addr>=16'hc000 && reg_wr_addr<16'hc800;
     wire [31:0] uci_buffer_data;
+    wire amiga_host_rd_select=ACTIVE_MACHINE==7 && reg_rd_addr==16'hd000;
+    wire amiga_host_wr_select=ACTIVE_MACHINE==7 && reg_wr_addr==16'hd000;
+    wire [31:0] amiga_host_status;
     // The host BRAM port is shared by reads and byte-strobed writes. Stall a
     // new AXI read address while an already accepted buffer write uses it.
     wire axi_arready;
@@ -700,20 +703,21 @@ module multitini_one_top #(
         .hold_request(display_hold),.resetn(video_aresetn));
     // Filter coefficients stay in the control domain. Native DDR owners
     // have drained before active_mode changes; no coefficient CDC is needed.
-    multitini_display_geometry #(.MACHINE(ACTIVE_MACHINE)) display_filter_geometry(
+    multitini_display_geometry #(.MACHINE(ACTIVE_MACHINE),
+        .WIDTH(ACTIVE_MACHINE==7 ? 640 : 382),.HEIGHT(ACTIVE_MACHINE==7 ? 512 : 270)) display_filter_geometry(
         .mode(display_active_mode),.multiplier(3'd0),.scale_num(display_filter_scale_num),.scale_den(display_filter_scale_den));
     // Capture always observes the complete original Auto raster. The reader
     // independently scales/crops the completed native image at scanout.
     multitini_display_geometry #(.MACHINE(ACTIVE_MACHINE),
-        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==5 ? 724 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382),
-        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==5 ? 496 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270)) capture_geometry(
+        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==7 ? 640 : ACTIVE_MACHINE==5 ? 724 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382),
+        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==7 ? 512 : ACTIVE_MACHINE==5 ? 496 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270)) capture_geometry(
         .mode(display_pixel_mode),.multiplier(3'd0),
         .scale_num(capture_display_scale_num_next),.scale_den(capture_display_scale_den_next),
         .view_x(capture_display_view_x_next),.view_y(capture_display_view_y_next),
         .view_width(capture_display_view_width_next),.view_height(capture_display_view_height_next));
     multitini_display_geometry #(.ENABLE_MULTIPLIER(1'b1),.MACHINE(ACTIVE_MACHINE),
-        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==5 ? 724 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382),
-        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==5 ? 496 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270)) display_geometry(
+        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==7 ? 640 : ACTIVE_MACHINE==5 ? 724 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382),
+        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==7 ? 512 : ACTIVE_MACHINE==5 ? 496 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270)) display_geometry(
         .mode(display_pixel_mode),.multiplier(display_pixel_multiplier),.h_active(display_h_active_next),.h_front(display_h_front_next),.h_sync(display_h_sync_next),.h_total(display_h_total_next),
         .v_active(display_v_active_next),.v_front(display_v_front_next),.v_sync(display_v_sync_next),.v_total(display_v_total_next),
         .h_positive(display_h_positive_next),.v_positive(display_v_positive_next),
@@ -879,7 +883,7 @@ module multitini_one_top #(
              (reg_wr_addr >= MT_UI_LEGACY_VRAM_BANK1_OFFSET &&
               reg_wr_addr < MT_UI_LEGACY_VRAM_BANK1_OFFSET +
                             MT_UI_LEGACY_VRAM_BANK_BYTES));
-        reg_rd_data = uci_buffer_rd_select ? uci_buffer_data : display_rd_select ? display_rd_data : framebuffer_rd_select ? framebuffer_rd_data :
+        reg_rd_data = amiga_host_rd_select ? amiga_host_status : uci_buffer_rd_select ? uci_buffer_data : display_rd_select ? display_rd_data : framebuffer_rd_select ? framebuffer_rd_data :
                       reg_rd_addr < 16'h1000 ? control_rd_data : 32'd0;
         // Firmware holds the machine reset before PCAP. Its shared DMA
         // quiescence read also drains autonomous source rings, IIgs RAM and
@@ -888,7 +892,7 @@ module multitini_one_top #(
         // stopped the core and every posted write then drained.
         // A running-machine effects suspension keeps the normal status;
         // output-clock changes separately pause/drain the video HP masters.
-        if((ACTIVE_MACHINE==0 || ACTIVE_MACHINE==4 || ACTIVE_MACHINE==5 || ACTIVE_MACHINE==6) && reg_rd_addr==MT_REG_VIDEO_FRAME_STATUS &&
+        if((ACTIVE_MACHINE==0 || ACTIVE_MACHINE==4 || ACTIVE_MACHINE==5 || ACTIVE_MACHINE==6 || ACTIVE_MACHINE==7) && reg_rd_addr==MT_REG_VIDEO_FRAME_STATUS &&
            |(shell_control & MT_CONTROL_CORE_RESET_REQUEST) &&
            (!genesis_source_quiescent || !gs_memory_quiescent || !c64_reu_memory_quiescent))
             reg_rd_data=framebuffer_rd_data & ~MT_VIDEO_FRAME_STATUS_QUIESCENT;
@@ -2033,6 +2037,132 @@ module multitini_one_top #(
             );
             assign psram_a_io=4'hz,psram_b_io=4'hz;
             assign psram_ce_n=1'b1,psram_clk=1'b0;
+        end else if (ACTIVE_MACHINE == 7) begin : g_amiga_machine
+            wire gs_rom_loaded;
+            // Memory interface v2 extensions: 4-beat line reads, and the
+            // cache's registered drain level (posted writes or a request).
+            wire gs_memory_busy;
+            wire gs_memory_burst=1'b0;
+            wire [11:0] gs_video_x;
+            wire [11:0] gs_video_y;
+            wire amiga_frame_start;
+            wire gs_video_pal;
+            assign c64_rom_loaded={2'd0,gs_rom_loaded};
+            assign c64_prg_loaded=0,c64_cart_loaded=0,c64_cart_hardware_type=0,c64_prg_run_busy=0;
+            assign gbc_cart_size=0,gbc_cart_loaded=0;
+            assign gbc_memory_addr=0,gbc_memory_write=0,gbc_memory_wdata=0,gbc_memory_wstrb=0;
+            assign gbc_memory_valid=0,gbc_memory_ready=0,gbc_memory_rdata=0,gbc_memory_rvalid=0,gbc_memory_fault=0;
+            (* DONT_TOUCH = "yes" *) multitini_amiga_adapter machine_adapter (
+                .core_clk(c64_clk), .reset(!c64_aresetn),
+                .core_reset_request(c64_core_reset_request),
+                .pause_request(core_menu_pause),
+                .clear_load_error(c64_load_error_clear),
+                .control_clk(control_clk),.control_resetn(control_aresetn),
+                .host_write(reg_wr_en && amiga_host_wr_select),.host_command(reg_wr_data),.host_status(amiga_host_status),
+                .input_code(c64_input_code), .input_value(c64_input_value),
+                .input_valid(c64_input_valid), .input_ready(c64_input_ready),
+                .load_data(c64_load_data), .load_valid(c64_load_valid),
+                .load_ready(c64_load_ready), .load_first(c64_load_first),
+                .load_last(c64_load_last), .load_kind(c64_load_kind),
+                .load_offset(c64_load_offset), .load_total(c64_load_total),
+                .load_epoch(c64_load_epoch),.load_abort(c64_load_abort),.load_abort_epoch(c64_load_abort_epoch),
+                .memory_addr(c64_memory_addr),
+                .memory_write(c64_memory_write),
+                .memory_wdata(c64_memory_wdata),
+                .memory_wstrb(c64_memory_wstrb),
+                .memory_valid(c64_memory_valid),
+                .memory_busy(gs_memory_busy),
+                .memory_ready(c64_memory_ready),
+                .memory_rdata(c64_memory_rdata),
+                .memory_rvalid(c64_memory_rvalid),
+                .memory_fault(c64_memory_fault),
+                .core_id(c64_core_id), .ready(c64_ready),
+                .load_error(c64_load_error), .rom_loaded(gs_rom_loaded),
+                .video_r(c64_video_r), .video_g(c64_video_g),
+                .video_b(c64_video_b), .video_de(c64_video_de),
+                .video_hsync(c64_video_hsync),
+                .video_vsync(c64_video_vsync),
+                .video_frame_start(amiga_frame_start),.video_x(gs_video_x),.video_y(gs_video_y),.video_pal(gs_video_pal),.video_valid(c64_video_valid), .audio_l(c64_audio_l),
+                .audio_r(c64_audio_r), .audio_valid(c64_audio_valid)
+            );
+
+            assign c64_media_request_valid=0,c64_media_request_write=0,c64_media_request_id=0,c64_media_request_lba=0;
+            assign c64_media_request_block_count=0,c64_media_request_generation=0;
+            assign c64_media_write_data=0,c64_media_write_data_valid=0,c64_media_write_data_last=0;
+            assign c64_media_state_mounted=0,c64_media_state_dirty=0,c64_media_state_eject_pending=0;
+            multitini_amiga_video_bridge video_bridge (
+                .source_clk(c64_clk),.source_resetn(c64_aresetn),.source_ready(c64_ready),
+                .source_ready_control(c64_ready_control),
+                .source_r(c64_video_r),.source_g(c64_video_g),.source_b(c64_video_b),
+                .source_frame_start(amiga_frame_start),.source_valid(c64_video_valid),.source_x(gs_video_x),.source_y(gs_video_y),.source_pal(gs_video_pal),
+                .control_clk(control_clk),.control_resetn(control_aresetn),
+                .pixel_clk(video_clk),.pixel_resetn(video_aresetn),.shared_pixel_resetn(video_control_resetn),
+                .shared_pixel_running(video_pixel_running),
+                .diagnostic_request(video_enable),.scan_x(video_scan_x),.scan_y(video_scan_y),
+                .vblank_start(video_vblank_start),
+                .display_view_x(capture_display_view_x),.display_view_y(capture_display_view_y),
+                .display_view_width(capture_display_view_width),.display_view_height(capture_display_view_height),
+                .display_scale_num(capture_display_scale_num),.display_scale_den(capture_display_scale_den),
+                .display_pause(display_pause),.display_quiescent(genesis_source_quiescent),
+                .display_h_active(display_h_active),.display_v_active(display_v_active),
+                .display_h_total(display_h_total),.display_v_total(display_v_total),
+                .viewport_x(viewport_x),.viewport_y(viewport_y),
+                .viewport_width(viewport_width),.viewport_height(viewport_height),
+                .machine_active(machine_video_active),.machine_rgb565(machine_video_rgb565),
+                .capture_drops(),.capture_errors(),.read_errors(),.underruns(),
+                .araddr(hp3_araddr),
+                .arlen(hp3_arlen),
+                .arsize(hp3_arsize),
+                .arburst(hp3_arburst),
+                .arvalid(hp3_arvalid),
+                .arready(hp3_arready),
+                .rdata(hp3_rdata),
+                .rresp(hp3_rresp),
+                .rlast(hp3_rlast),
+                .rvalid(hp3_rvalid),
+                .rready(hp3_rready),
+                .awaddr(hp3_awaddr),
+                .awlen(hp3_awlen),
+                .awsize(hp3_awsize),
+                .awburst(hp3_awburst),
+                .awvalid(hp3_awvalid),
+                .awready(hp3_awready),
+                .wdata(hp3_wdata),
+                .wstrb(hp3_wstrb),
+                .wlast(hp3_wlast),
+                .wvalid(hp3_wvalid),
+                .wready(hp3_wready),
+                .bresp(hp3_bresp),
+                .bvalid(hp3_bvalid),
+                .bready(hp3_bready)
+            );
+            // HP2's ACLK is c64_clk in this image (create_project.tcl), so the
+            // AXI master runs in the machine domain. Only the registered
+            // drain level crosses to control_clk for gs_memory_quiescent.
+            // Quiescence also proves the stop: it needs the control-domain
+            // core reset request (the bit the status consumer masks on) and
+            // its synchronized machine copy, which holds the adapter in reset.
+            multitini_amiga_ddr_path ddr_path_i (
+                .core_clk(c64_clk),.core_resetn(c64_aresetn),
+                .control_clk(control_clk),.control_resetn(control_aresetn),
+                .control_reset_request(|(shell_control & MT_CONTROL_CORE_RESET_REQUEST)),
+                .core_reset_request(c64_core_reset_request),
+                .core_memory_addr(c64_memory_addr),.core_memory_write(c64_memory_write),
+                .core_memory_wdata(c64_memory_wdata),.core_memory_wstrb(c64_memory_wstrb),
+                .core_memory_valid(c64_memory_valid),.core_memory_burst(gs_memory_burst),
+                .core_memory_busy(gs_memory_busy),.core_memory_ready(c64_memory_ready),
+                .core_memory_rdata(c64_memory_rdata),.core_memory_rvalid(c64_memory_rvalid),
+                .core_memory_fault(c64_memory_fault),.quiescent(gs_memory_quiescent),
+                .araddr(hp2_araddr),.arlen(hp2_arlen),.arsize(hp2_arsize),.arburst(hp2_arburst),
+                .arvalid(hp2_arvalid),.arready(hp2_arready),
+                .rdata(hp2_rdata),.rresp(hp2_rresp),.rlast(hp2_rlast),.rvalid(hp2_rvalid),.rready(hp2_rready),
+                .awaddr(hp2_awaddr),.awlen(hp2_awlen),.awsize(hp2_awsize),.awburst(hp2_awburst),
+                .awvalid(hp2_awvalid),.awready(hp2_awready),
+                .wdata(hp2_wdata),.wstrb(hp2_wstrb),.wlast(hp2_wlast),.wvalid(hp2_wvalid),.wready(hp2_wready),
+                .bresp(hp2_bresp),.bvalid(hp2_bvalid),.bready(hp2_bready)
+            );
+            assign psram_a_io=4'hz,psram_b_io=4'hz;
+            assign psram_ce_n=1'b1,psram_clk=1'b0;
         end else if (ACTIVE_MACHINE == 3) begin : g_vectrex_machine
             wire [18:0] pixel_address;
             wire [7:0] pixel_intensity;
@@ -2190,8 +2320,11 @@ module multitini_one_top #(
         end
     endgenerate
 
-    generate if(ACTIVE_MACHINE!=4 && ACTIVE_MACHINE!=5 && ACTIVE_MACHINE!=6)begin : g_no_source_ddr
+    generate if(ACTIVE_MACHINE!=4 && ACTIVE_MACHINE!=5 && ACTIVE_MACHINE!=6 && ACTIVE_MACHINE!=7)begin : g_no_source_ddr
         assign genesis_source_quiescent=1'b1;
+    end endgenerate
+    generate if(ACTIVE_MACHINE!=7)begin:g_no_amiga_host
+        assign amiga_host_status=0;
     end endgenerate
     generate if(ACTIVE_MACHINE!=0)begin : g_no_c64_ddr
         assign c64_reu_memory_quiescent=1'b1;
@@ -2200,16 +2333,16 @@ module multitini_one_top #(
         assign c64_iec_status=0,c64_iec_rx=0;
         assign c64_ef_journal=0;
     end endgenerate
-    generate if(ACTIVE_MACHINE!=0 && ACTIVE_MACHINE!=4 && ACTIVE_MACHINE!=5 && ACTIVE_MACHINE!=6)begin : g_no_machine_ddr
+    generate if(ACTIVE_MACHINE!=0 && ACTIVE_MACHINE!=4 && ACTIVE_MACHINE!=5 && ACTIVE_MACHINE!=6 && ACTIVE_MACHINE!=7)begin : g_no_machine_ddr
         assign hp2_araddr=0,hp2_arlen=0,hp2_arsize=3'd3,hp2_arburst=2'd1,hp2_arvalid=0,hp2_rready=1;
         assign hp2_awaddr=0,hp2_awlen=0,hp2_awsize=3'd3,hp2_awburst=2'd1,hp2_awvalid=0;
         assign hp2_wdata=0,hp2_wstrb=0,hp2_wlast=0,hp2_wvalid=0,hp2_bready=1;
     end endgenerate
 
-    generate if(ACTIVE_MACHINE!=5)begin : g_no_apple_iigs_ddr
+    generate if(ACTIVE_MACHINE!=5 && ACTIVE_MACHINE!=7)begin : g_no_apple_iigs_ddr
         assign gs_memory_quiescent=1'b1;
     end endgenerate
-    generate if(ACTIVE_MACHINE!=5 && ACTIVE_MACHINE!=0)begin : g_no_hp3_ddr
+    generate if(ACTIVE_MACHINE!=5 && ACTIVE_MACHINE!=0 && ACTIVE_MACHINE!=7)begin : g_no_hp3_ddr
         assign hp3_araddr=0,hp3_arlen=0,hp3_arsize=3'd3,hp3_arburst=2'd1,hp3_arvalid=0,hp3_rready=1;
         assign hp3_awaddr=0,hp3_awlen=0,hp3_awsize=3'd3,hp3_awburst=2'd1,hp3_awvalid=0;
         assign hp3_wdata=0,hp3_wstrb=0,hp3_wlast=0,hp3_wvalid=0,hp3_bready=1;
@@ -2268,11 +2401,11 @@ module multitini_one_top #(
     multitini_video_framebuffer #(
         .DYNAMIC_DISPLAY(1'b1),
         .SHARED_PIXEL_RESET(1'b1),
-        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==5 ? 724 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382),
-        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==5 ? 496 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270),
-        .VIEW_X(ACTIVE_MACHINE==1 ? 480 : ACTIVE_MACHINE==3 ? 555 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==5 ? 236 : ACTIVE_MACHINE==6 ? 448 : C64_NTSC_MODE ? 152 : 196),
-        .VIEW_Y(ACTIVE_MACHINE==1 ? 108 : ACTIVE_MACHINE==3 ? 0 : ACTIVE_MACHINE==4 ? 60 : ACTIVE_MACHINE==5 ? 44 : ACTIVE_MACHINE==6 ? 60 : C64_NTSC_MODE ? 40 : 0),
-        .SCALE_NUM(ACTIVE_MACHINE==1 ? 6 : ACTIVE_MACHINE==3 ? 3 : ACTIVE_MACHINE==5 ? 2 : 4),
+        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==7 ? 640 : ACTIVE_MACHINE==5 ? 724 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382),
+        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==7 ? 512 : ACTIVE_MACHINE==5 ? 496 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270),
+        .VIEW_X(ACTIVE_MACHINE==1 ? 480 : ACTIVE_MACHINE==3 ? 555 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==7 ? 320 : ACTIVE_MACHINE==5 ? 236 : ACTIVE_MACHINE==6 ? 448 : C64_NTSC_MODE ? 152 : 196),
+        .VIEW_Y(ACTIVE_MACHINE==1 ? 108 : ACTIVE_MACHINE==3 ? 0 : ACTIVE_MACHINE==4 ? 60 : ACTIVE_MACHINE==7 ? 28 : ACTIVE_MACHINE==5 ? 44 : ACTIVE_MACHINE==6 ? 60 : C64_NTSC_MODE ? 40 : 0),
+        .SCALE_NUM(ACTIVE_MACHINE==1 ? 6 : ACTIVE_MACHINE==3 ? 3 : ACTIVE_MACHINE==7 ? 2 : ACTIVE_MACHINE==5 ? 2 : 4),
         .SCALE_DEN(ACTIVE_MACHINE==3 ? 2 : 1)) video_framebuffer (
         .display_view_x(display_view_x),.display_view_y(display_view_y),
         .display_view_width(display_view_width),.display_view_height(display_view_height),
@@ -2347,7 +2480,7 @@ module multitini_one_top #(
     );
 
     multitini_video_test #(.DYNAMIC_DISPLAY(1'b1),.SIGNED_VIEWPORT(1'b1),.ENABLE_EFFECTS(1'b1),.SHARED_PIXEL_RESET(1'b1),.SHARED_PIXEL_LIVENESS(1'b1),
-        .SOURCE_SCALE_NUM(ACTIVE_MACHINE == 1 ? 6 : ACTIVE_MACHINE == 3 ? 3 : ACTIVE_MACHINE==5 ? 2 : 4),
+        .SOURCE_SCALE_NUM(ACTIVE_MACHINE == 1 ? 6 : ACTIVE_MACHINE == 3 ? 3 : ACTIVE_MACHINE==7 ? 2 : ACTIVE_MACHINE==5 ? 2 : 4),
         .SOURCE_SCALE_DEN(ACTIVE_MACHINE == 3 ? 2 : 1)) video_test (
         .display_h_active(display_h_active),.display_h_front(display_h_front),.display_h_sync(display_h_sync),.display_h_total(display_h_total),
         .display_v_active(display_v_active),.display_v_front(display_v_front),.display_v_sync(display_v_sync),.display_v_total(display_v_total),

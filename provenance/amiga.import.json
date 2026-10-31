@@ -1,0 +1,448 @@
+{
+  "schema_version": 1,
+  "source": "https://github.com/MiSTer-devel/Minimig-AGA_MiSTer.git",
+  "commit": "e47c3457b486d09daaf47c8934bda90cf7723045",
+  "purpose": "ECS A600 chipset and stock FX68K / accelerated TG68K CPU; external memory and host services",
+  "exclusions": [
+    "Intel-generated IP and bram.vhd",
+    "MiSTer HPS/platform implementation excluded from build; Minimig.sv is reference only",
+    "system ROMs and media",
+    "drive samples",
+    "RTG/CD32/CDTV/A2065/Toccata",
+    "physical/flux floppy interfaces"
+  ],
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "0a0aabd1fdc10792e02d64c0e123ffcaa768793ce0660358cff232da4540cb87",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "gpl.txt",
+      "sha256": "0b383d5a63da644f628d99c33976ea6487ed89aaa59f0b3257992deac1171e6b",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "Minimig.sv",
+      "sha256": "411de384ac2be7054ad96a300cedd047a98fe47fbae548704bf633e320d39f93",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/agnus.v",
+      "sha256": "c4c270af58592a93858357b31b4451fc41b51a77f0b5d195c15d5b6fab98ffb4",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/agnus_audiodma.v",
+      "sha256": "aa5426bbb69759e338ef5ca32f84601668003ddd9b87729405bf56b2f8f3a659",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/agnus_beamcounter.v",
+      "sha256": "3c460cb3704ec08a17dab916ff8c73a6b575decfb913c5e024a9dd5e98162b59",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/agnus_bitplanedma.v",
+      "sha256": "dcf1df0306de701b4ee05653be7f295a47412a553d273e20bee589701c1682b2",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/agnus_blitter.v",
+      "sha256": "79c93c216fd0be1c374acce6dfc63e9d3d504fe6e5ff89293923ee89a6e35e70",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/agnus_blitter_adrgen.v",
+      "sha256": "b5cf5972ca461acdb681048ab3f6c5d6d7707909c8cc3aad152e30574d20cd21",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/agnus_blitter_barrelshifter.v",
+      "sha256": "189d68cd1d4aab2eb6aaa362d38f37466c4137a69e17b76cd7be8c4bff33da5f",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/agnus_blitter_fill.v",
+      "sha256": "9f921b555674a27b7c9ff5b62721608497c8ecfa05b50ad8b212e6754f428456",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/agnus_blitter_minterm.v",
+      "sha256": "c6e67288da3edd0f309240f3251e9fbdf5dcf37c21efe5b986a48c04bd70e503",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/agnus_copper.v",
+      "sha256": "679c13ba321a81a887482b530e524398d6adec1845957a9827c7fe816b50be8a",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/agnus_diskdma.v",
+      "sha256": "33643e266e949ec4a9509cb5611f82dbc6f7dd9960233fe32a8ae582438c4e34",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/agnus_refresh.v",
+      "sha256": "5c2f49d0914c72aaa372e31c22f3f8c43efbe3b16f80fa96b5472a2518e4b59e",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/agnus_spritedma.v",
+      "sha256": "39ca82146651d08aa7b0c9fcc258ccc077da1da175ffed029a11b0381ad42437",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/amiga_clk.v",
+      "sha256": "b79d3c23d2b7853f7cb34f0e56a1117b4b12cc3ce01e40d328df3855a3ec5b7a",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/cart.v",
+      "sha256": "ef031bf7c83566a6818274fc4a462775f06c18c2f8958f32697457bd0922499a",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/cia_int.v",
+      "sha256": "e89f2089d3c6033293458c1851454f6558cd5cb46908acc358f31fa71e4cc020",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/cia_timera.v",
+      "sha256": "98b7096ea437cec0c862bdf4c4bcd614c4d772bc9553dbcb4b8cdce6fa47d819",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/cia_timerb.v",
+      "sha256": "f1c23c877046ff46e7fd87a3f181d63516798da4ebb301327ec818ba09eec3ae",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/cia_timerd.v",
+      "sha256": "23acf4c15172595e10c7219e284920cb57d066951faa898e8c794632713aa343",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/ciaa.v",
+      "sha256": "aed56ea8e8dd6185e3eb85895e5a235f873d6b43f86e974ab82d76ae81e89664",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/ciab.v",
+      "sha256": "0c3ae9010f43759f9b6e72af9d015f530f54ee8a2a14b13bef1a409d1d729a11",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/cpu_cycles.v",
+      "sha256": "8be5d2cb24cafc179d92fa3e195593ce4d5003ad46fbc9af3927c8d77e46ead8",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/cpu_wrapper.v",
+      "sha256": "e6b65c71fb4069510adeb7cf874c342fbc521d007c2d690f089680fa58e48648",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/denise.v",
+      "sha256": "800f1d2dccd302bcb1994712a1a3654d5bb2b46e2e484e73ca0dc17092464c5e",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/denise_bitplane_shifter.v",
+      "sha256": "ce3aa366e70ff099b23f38bc084ce0450bb59ca53e7f82e765149f4bfc15912b",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/denise_bitplanes.v",
+      "sha256": "9978734292ff9d318a37894259371dbcf5ca3c32dc2cd0bd8f5bb42163890f23",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/denise_collision.v",
+      "sha256": "49952fac88d9b89bf6dc04bc0540ed547d3ea34d7d653503af0a41cbb2926372",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/denise_colortable.v",
+      "sha256": "9e3f9a7ce4fbf728ba05e0ef07ac386fa7263aacec5138accb885004cb88d731",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/denise_hamgenerator.v",
+      "sha256": "aab0686f31aa81b7e139d670bb97554050fe0904f83609049c1f4bb7ac8e1aea",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/denise_playfields.v",
+      "sha256": "bf2ba8bab15da352f2a28da48baa0ffc25caffa1b4dd5939b7fa4c9a0656824d",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/denise_spritepriority.v",
+      "sha256": "820e25329fde3e70140ea75912f677e45b6b0d850b9a0903f1daa0cc7ed4aa94",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/denise_sprites.v",
+      "sha256": "81e89440ff96982d54b50f11d08b179adde31b376122e88d8a5467e5abbac0ca",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/denise_sprites_shifter.v",
+      "sha256": "95a254b727c1442baeb07e849842db68f88f5df5111014d7406a093e0f691f55",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/gary.v",
+      "sha256": "10eeff1e31bb2280cb53a2f63c06a430b40fe8d7f198c11d921322a9f3b04d5d",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/gayle.v",
+      "sha256": "7c05f35c654639274a750a29067e5b1e94fd92bc35df870cb8766bf6ccfab47e",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/ide.v",
+      "sha256": "87ee5a9d0c51e2794db78bf66de33f9ff49b98cda33a0428c50952cd6e2ccb72",
+      "license": "BSD-2-Clause",
+      "license_evidence": "File-local two-clause BSD grant retained"
+    },
+    {
+      "path": "rtl/memory_router.v",
+      "sha256": "cd5ec26cacee9ea531c4eff544e617172fa95efa81c95023f509c2b14b05eef4",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/minimig.v",
+      "sha256": "58a805388f08b37ed3d0df55b982f1c51e692f4d860ba44aac7ade53c2114189",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/minimig_bankmapper.v",
+      "sha256": "1b9bebc8dc9b0de368050b9daa9c6797aec182fde6bfd6469ea8708dfa8dbe36",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/minimig_m68k_bridge.v",
+      "sha256": "8d1ac4e1158694588c57027bb5e93f8a54066a60b0988be189720692b99cfc4c",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/minimig_sram_bridge.v",
+      "sha256": "c275bd563d9e3abc6e8913a657bf94316b4575dedbc7161727c68334aa0c89ef",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/minimig_syscontrol.v",
+      "sha256": "8c81ae7238208efe6be390a4f3cfb0b0d67e3c27d87cc5f7f108425abcabce0e",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/paula.v",
+      "sha256": "808dec55f22686bef621c05eefe0dc5d072703be3deb13b97be21643e6cda19d",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/paula_audio.v",
+      "sha256": "d3a92f149003e41ffc38a447d2816222c775f32f05029e9a500f0adaa96e4b7f",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/paula_audio_channel.v",
+      "sha256": "2dcf83efe0d5e0cde5197b7757ba3851edff02f3bf6a468a01ccfd60b9dfb551",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/paula_audio_mixer.v",
+      "sha256": "264e71b8216620e802901d882ff68614be9a64f8fb637b80c309834226e51c24",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/paula_audio_volume.v",
+      "sha256": "ec9d5b349ab7552ce8760f787b01772a7fe678b4c2e2a96846c84e7971bd752a",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/paula_floppy.v",
+      "sha256": "8b301d0a50660595de5261e409b6c2eb7c12066c384bd01cc9a533378d8ef2b4",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/paula_floppy_fifo.v",
+      "sha256": "ef2cef77fc74a24d0c72b4f5e3e327c9035154fdfb69494c99eb34ac54976fd0",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/paula_intcontroller.v",
+      "sha256": "1aea9b58b9500e9e581f59129107f310eb0af22a174b1c5101918a09e81f29bc",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/paula_uart.v",
+      "sha256": "cfbb6ed54333d2aa913bb9670035dcedfd147a9a50a1ade68cf8d31a51c629c3",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/userio.v",
+      "sha256": "f584fc4c024f0b17e991548b6ff3a8387365ea2beac4351b8470cdf2283e02c0",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/minimig_version.vh",
+      "sha256": "1a12be0907d3c341233db7f3681ee8889748303c7539c4e55b375565ada31614",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/fx68k/fx68k.sv",
+      "sha256": "ce8fc1700b64fe33dbbd706845373cade3c02cc4927209b53c50acd404df51cb",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Grant in retained rtl/fx68k/fx68k.txt"
+    },
+    {
+      "path": "rtl/fx68k/fx68k.txt",
+      "sha256": "2a7d451e8f7ae8683e4ec4f40a9b3adf91fb5c8b5d569c0f4cdb2b5de090811d",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Grant in retained rtl/fx68k/fx68k.txt"
+    },
+    {
+      "path": "rtl/fx68k/fx68kAlu.sv",
+      "sha256": "dfd5200118ad1585f8428cbaea0b436c6b6a6283dee431c8b2d6ab8524f9593e",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Grant in retained rtl/fx68k/fx68k.txt"
+    },
+    {
+      "path": "rtl/fx68k/microrom.mem",
+      "sha256": "9d13082be0cf4b04bff887e6da23de84f9f2ee4321f3a2576b4f9540615dece6",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Grant in retained rtl/fx68k/fx68k.txt"
+    },
+    {
+      "path": "rtl/fx68k/nanorom.mem",
+      "sha256": "b3998009fb10605e8468cddf22fdd799a9792ba86f449de2e30615cfcefbeece",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Grant in retained rtl/fx68k/fx68k.txt"
+    },
+    {
+      "path": "rtl/fx68k/uaddrPla.sv",
+      "sha256": "f99e62db62fbf01fe3747342f25d6ed76641a5d2dcac4e936031f3d12fbdb3cf",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Grant in retained rtl/fx68k/fx68k.txt"
+    },
+    {
+      "path": "rtl/tg68k/m68k_cyc_idx.mif",
+      "sha256": "cd8dadfcd7dc879320a46ea849aa7724792d71bbab59e378058ea243926be3b5",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/tg68k/m68k_cyc_pal.vh",
+      "sha256": "9f55eb2866f7211c24fade118c07a261ffed45d277c2f3990cdb3ebbd189a7b8",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/tg68k/m68k_ea_idx.mif",
+      "sha256": "6b83022a0c93c1eb76b6f22756377f673afac8779044c3dcd966db84c2ab5078",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/tg68k/m68k_ea_pal.vh",
+      "sha256": "972d5930b44e4ec4322869e68011d6e155697380aea8246d4f3c20faf830e1aa",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/tg68k/m68k_misc_030.vh",
+      "sha256": "ac3ac0a7d6e5d940d9210f801f1ae2179881010dbf1d7aa54576d33fa3dac758",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/tg68k/TG68K.vhd",
+      "sha256": "dc3f799adfac8d7939c88d0b6ab14de8a2b3ec903523096fa2ed715266bbb851",
+      "license": "LGPL-3.0-or-later",
+      "license_evidence": "File-local grant; project GPL also retained"
+    },
+    {
+      "path": "rtl/tg68k/TG68K_ALU.vhd",
+      "sha256": "1dd9b7dd52984425d76d497e6d80bd5b9a0567fd67d358213af048c12892edc4",
+      "license": "LGPL-3.0-or-later",
+      "license_evidence": "File-local grant; project GPL also retained"
+    },
+    {
+      "path": "rtl/tg68k/TG68K_MMU030.vhd",
+      "sha256": "197a93bbbc03ff7501224ceca084ae15de2271e7acf710051057d2ed47e3a737",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
+      "path": "rtl/tg68k/TG68K_Pack.vhd",
+      "sha256": "7e9c96085b0bebe1ef3e1d01c0c49f1077f7b5aef0e1baf2f90acb424a444979",
+      "license": "LGPL-3.0-or-later",
+      "license_evidence": "File-local grant; project GPL also retained"
+    },
+    {
+      "path": "rtl/tg68k/TG68KdotC_Kernel.vhd",
+      "sha256": "7f08be95bf23c57af6c00185bddfa70ffc2e0888fde3a98c3de84188275ac4fe",
+      "license": "LGPL-3.0-or-later",
+      "license_evidence": "File-local grant; project GPL also retained"
+    }
+  ]
+}

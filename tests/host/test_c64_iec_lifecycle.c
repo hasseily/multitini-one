@@ -3,6 +3,7 @@
 #include "multitini_gameboy_interface.h"
 #include "multitini_genesis_interface.h"
 #include "multitini_iigs_interface.h"
+#include "multitini_amiga_interface.h"
 #include "multitini_nes_interface.h"
 #include "multitini_regs.h"
 #include "multitini_vectrex_interface.h"
@@ -13,7 +14,7 @@
 #include <string.h>
 static uint32_t core_id = MT_C64_CORE_ID, control;
 static bool c64_iec_initialized = true, c64_services_initialized = true, c64_core_reset_active;
-static bool gameboy_service_initialized, genesis_service_initialized, nes_service_initialized, iigs_service_initialized;
+static bool gameboy_service_initialized, genesis_service_initialized, nes_service_initialized, iigs_service_initialized,amiga_service_initialized;
 static bool c64_debug_pause_active, usb_sd_core_stopped, usb_sd_previously_reset;
 static bool c64_uci_initialized, c64_title_initialized, c64_title_foreground, usb_sd_modal;
 static char c64_launch_disk_name[256];
@@ -136,6 +137,9 @@ SAVE_STUB(nes_content_service_prepare_reset)
 SAVE_STUB(nes_content_service_resume_after_reset)
 SAVE_STUB(iigs_content_service_prepare_reset)
 SAVE_STUB(iigs_content_service_resume_after_reset)
+SAVE_STUB(amiga_content_service_prepare_reset)
+SAVE_STUB(amiga_content_service_resume_after_reset)
+SAVE_STUB(amiga_content_service_shutdown)
 static int command(uint32_t cmd, uint32_t arg, uint32_t unused)
 {
     assert(cmd == MT_COMMAND_CORE_RESET && !unused);

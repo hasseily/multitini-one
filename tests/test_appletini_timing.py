@@ -23,15 +23,15 @@ foreach group {video_framebuffer/capture/fifo_i/gen_cdc_pntr.wr_pntr_cdc_inst vi
     }
 }
 set machine 0
-if {[string match "genesis-*" $scenario]} {
-    set machine 4
+if {[string match "genesis-*" $scenario] || [string match "amiga-*" $scenario]} {
+    set machine [expr {[string match "amiga-*" $scenario] ? 7 : 4}]
     set sources [lrange $sources 0 15]
     foreach direction {wr rd} {
         for {set bit 0} {$bit < 8} {incr bit} {
             lappend sources [format {genesis_video/capture/fifo_i/gen_cdc_pntr.%s_pntr_cdc_inst/src_gray_ff_reg[%d]} $direction $bit]
         }
     }
-    if {$scenario eq "genesis-missing-fifo"} {set sources [lrange $sources 0 23]}
+    if {$scenario in {genesis-missing-fifo amiga-missing-fifo}} {set sources [lrange $sources 0 23]}
 }
 set multitini_signoff_generics "SHELL_BUILD_ID=32'h20260930 ACTIVE_MACHINE=$machine"
 if {$scenario eq "missing-build-generics"} {unset multitini_signoff_generics}
@@ -120,7 +120,7 @@ proc get_property {property object} {
                          'unknown-machine-generic', 'duplicate-machine-generic',
                          'missing-bit', 'false-path', 'unbounded', 'wrong-bound',
                          'violated', 'infinite-slack', 'unsafe-target',
-                         'genesis-pass', 'genesis-missing-fifo', 'wrong-fifo-width',
+                         'genesis-pass', 'genesis-missing-fifo', 'amiga-pass', 'amiga-missing-fifo', 'wrong-fifo-width',
                          'missed-mailbox', 'uncut-mailbox', 'cut-second-stage', 'missing-mailbox-path',
                          'missing-mailbox-stage', 'renamed-mailbox-stage',
                          'untimed-second-stage', 'missing-shell-samplers', 'uncut-shell-sampler'):
@@ -128,12 +128,12 @@ proc get_property {property object} {
                 result = self.run_tcl(f'set scenario {scenario}\n' + stub +
                     f'if {{[catch {{source {{{ROOT / "scripts/check_video_bus_constraints.tcl"}}}}} error]}} {{puts stderr $error; exit 1}}\n')
                 self.assertEqual(result.returncode, 0 if scenario in (
-                    'pass', 'genesis-pass', 'checkpoint-no-xdc-vars', 'checkpoint-stale-xdc-vars',
+                    'pass', 'genesis-pass', 'amiga-pass', 'checkpoint-no-xdc-vars', 'checkpoint-stale-xdc-vars',
                     'constant-input') else 1,
                                  result.stdout + result.stderr)
                 if scenario == 'pass':
                     self.assertIn('22 effective Gray-pointer', result.stdout)
-                elif scenario == 'genesis-pass':
+                elif scenario in ('genesis-pass', 'amiga-pass'):
                     self.assertIn('32 effective Gray-pointer', result.stdout)
 
     def test_run_profile_is_idempotent_and_sets_child_threads(self):

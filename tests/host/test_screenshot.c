@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "multitini_screenshot.h"
+#include "multitini_amiga_interface.h"
 #include "multitini_c64_interface.h"
 #include "multitini_gameboy_interface.h"
 #include "multitini_genesis_interface.h"
@@ -67,8 +68,8 @@ static void full_screen_ui(void)
 }
 static void manual_geometry(void)
 {
-    static const uint32_t cores[]={MT_C64_CORE_ID,MT_GBC_CORE_ID,MT_VECTREX_CORE_ID,MT_GENESIS_CORE_ID,MT_IIGS_CORE_ID,MT_IIGS_CORE_ID};
-    static const unsigned widths[]={382U,160U,540U,320U,640U,724U},heights[]={270U,144U,720U,240U,400U,496U};
+    static const uint32_t cores[]={MT_C64_CORE_ID,MT_GBC_CORE_ID,MT_VECTREX_CORE_ID,MT_GENESIS_CORE_ID,MT_IIGS_CORE_ID,MT_IIGS_CORE_ID,MT_AMIGA_CORE_ID,MT_AMIGA_CORE_ID};
+    static const unsigned widths[]={382U,160U,540U,320U,640U,724U,720U,640U},heights[]={270U,144U,720U,240U,400U,496U,576U,512U};
     static const unsigned screen_w[]={1920U,1024U,1200U,1280U,1360U,1680U};
     static const unsigned screen_h[]={1080U,768U,800U,1024U,768U,1050U};
     mt_screenshot_scene_t scene={0};scene.pixels=source;
@@ -280,11 +281,84 @@ static void iigs_border_geometry(void)
     scene.height=1U;scene.width=MT_VIDEO_FRAME_MAX_WIDTH+1U;
     assert(!mt_screenshot_dimensions(&scene,&w,&h));
 }
+static void amiga_geometry(void)
+{
+    /* Literal qualified FPGA MACHINE=7 viewports. Double height cannot fit
+     * any output mode, so Auto must retain every PAL source pixel at 1x. */
+    static const unsigned sw[]={1920U,1024U,1200U,1280U,1360U,1680U};
+    static const unsigned sh[]={1080U,768U,800U,1024U,768U,1050U};
+    static const unsigned left[]={600U,152U,240U,280U,320U,480U};
+    static const unsigned top[]={252U,96U,112U,224U,96U,237U};
+    mt_screenshot_scene_t scene={0};scene.pixels=source;
+    scene.width=720U;scene.height=576U;scene.core_id=MT_AMIGA_CORE_ID;
+    for(unsigned i=0U;i<720U*576U;++i)source[i]=(uint16_t)(i*113U+37U);
+    for(unsigned mode=0U;mode<6U;++mode) {
+        uint32_t w,h;scene.display_mode=(uint8_t)mode;scene.full_output=false;
+        assert(mt_screenshot_dimensions(&scene,&w,&h) && w==720U && h==576U);
+        const unsigned rows[]={0U,288U,575U};
+        for(unsigned r=0U;r<3U;++r) {
+            scene.full_output=false;assert(mt_screenshot_render_row(&scene,rows[r],cropped_row));
+            assert(memcmp(cropped_row,source+rows[r]*720U,720U*sizeof(uint16_t))==0);
+            scene.full_output=true;
+            assert(mt_screenshot_dimensions(&scene,&w,&h) && w==sw[mode] && h==sh[mode]);
+            assert(mt_screenshot_render_row(&scene,rows[r]+top[mode],row));
+            for(unsigned x=0U;x<sw[mode];++x)
+                assert(row[x]==(x>=left[mode] && x<left[mode]+720U ? source[rows[r]*720U+x-left[mode]]:0U));
+        }
+        assert(mt_screenshot_render_row(&scene,top[mode]-1U,row));
+        for(unsigned x=0U;x<sw[mode];++x)assert(row[x]==0U);
+        assert(mt_screenshot_render_row(&scene,top[mode]+576U,row));
+        for(unsigned x=0U;x<sw[mode];++x)assert(row[x]==0U);
+    }
+}
+static void amiga_active_geometry(void)
+{
+    /* The PAL640x256 active area doubles to640x512 without losing rows.
+     * Auto2 fits1080p and the two taller outputs; smaller modes use1x. */
+    static const unsigned sw[]={1920U,1024U,1200U,1280U,1360U,1680U};
+    static const unsigned sh[]={1080U,768U,800U,1024U,768U,1050U};
+    static const unsigned scale[]={2U,1U,1U,2U,1U,2U};
+    static const unsigned vw[]={1280U,640U,640U,1280U,640U,1280U};
+    static const unsigned vh[]={1024U,512U,512U,1024U,512U,1024U};
+    static const unsigned left[]={320U,192U,280U,0U,360U,200U};
+    static const unsigned top[]={28U,128U,144U,0U,128U,13U};
+    mt_screenshot_scene_t scene={0};scene.pixels=source;
+    scene.width=640U;scene.height=512U;scene.core_id=MT_AMIGA_CORE_ID;
+    assert(mt_video_frame_geometry_valid(640U,512U));
+    assert(mt_video_frame_geometry_valid(720U,576U));
+    for(unsigned i=0U;i<640U*512U;++i)source[i]=(uint16_t)(i*113U+37U);
+    for(unsigned mode=0U;mode<6U;++mode) {
+        uint32_t w,h;scene.display_mode=(uint8_t)mode;scene.full_output=false;
+        assert(mt_screenshot_dimensions(&scene,&w,&h) && w==vw[mode] && h==vh[mode]);
+        const unsigned rows[]={0U,vh[mode]/2U,vh[mode]-1U};
+        for(unsigned r=0U;r<3U;++r) {
+            scene.full_output=false;assert(mt_screenshot_render_row(&scene,rows[r],cropped_row));
+            for(unsigned x=0U;x<vw[mode];++x)
+                assert(cropped_row[x]==source[(rows[r]/scale[mode])*640U+x/scale[mode]]);
+            scene.full_output=true;
+            assert(mt_screenshot_dimensions(&scene,&w,&h) && w==sw[mode] && h==sh[mode]);
+            assert(mt_screenshot_render_row(&scene,rows[r]+top[mode],row));
+            for(unsigned x=0U;x<sw[mode];++x)
+                assert(row[x]==(x>=left[mode] && x<left[mode]+vw[mode] ?
+                    source[(rows[r]/scale[mode])*640U+(x-left[mode])/scale[mode]]:0U));
+        }
+        if(top[mode]!=0U) {
+            assert(mt_screenshot_render_row(&scene,top[mode]-1U,row));
+            for(unsigned x=0U;x<sw[mode];++x)assert(row[x]==0U);
+        }
+        if(top[mode]+vh[mode]<sh[mode]) {
+            assert(mt_screenshot_render_row(&scene,top[mode]+vh[mode],row));
+            for(unsigned x=0U;x<sw[mode];++x)assert(row[x]==0U);
+        }
+    }
+}
 int main(int argc,char **argv)
 {
     renderer();
     iigs_geometry();
     iigs_border_geometry();
+    amiga_geometry();
+    amiga_active_geometry();
     manual_geometry();
     full_screen_ui();
     mt_screenshot_png_t png;

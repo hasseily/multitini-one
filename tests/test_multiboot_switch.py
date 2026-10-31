@@ -22,6 +22,7 @@ PREAMBLE = r'''
 #include "multitini_c64_interface.h"
 #include "multitini_genesis_interface.h"
 #include "multitini_iigs_interface.h"
+#include "multitini_amiga_interface.h"
 #include "multitini_nes_interface.h"
 #define MT_DEVCFG_MULTIBOOT 1U
 #define MT_DEVCFG_MULTIBOOT_MASK 0x1fffU
@@ -49,6 +50,13 @@ static unsigned unmounts;
 static uint32_t boot_register;
 static uint64_t ticks;
 static char error_message[160];
+static bool amiga_service_initialized=true,amiga_files_open=true;
+static unsigned amiga_closes,amiga_reopens;
+static int amiga_content_service_shutdown(void) {
+    assert(core_paused);
+    if(fault==20)return -1;
+    amiga_files_open=false;++amiga_closes;return 0;
+}
 
 static uint32_t Xil_In32(uint32_t address) {
     assert(address==MT_DEVCFG_MULTIBOOT);
@@ -84,7 +92,11 @@ static int set_core_reset_request(bool asserted) {
     ++reset_calls;
     if (asserted && fault==5) return -1;
     if (!asserted && restore_fault==4) return -1;
-    core_paused=asserted; return 0;
+    core_paused=asserted;
+    if(!asserted && TEST_SOURCE_CORE==MT_AMIGA_CORE_ID && !amiga_files_open) {
+        amiga_files_open=true;++amiga_reopens;
+    }
+    return 0;
 }
 static void usb_hid_service_set_core_ready(bool ready) { input_ready=ready; }
 static void mt_video_effect_service_suspend(void) { assert(core_paused); video_suspended=true; }
@@ -94,6 +106,7 @@ static bool mt_video_worker_quiesce(void) { return fault!=7; }
 static void usb_hid_service_poll_deferred(void) {}
 static int usb_hid_service_stop(void) { usb_started=false; return fault==9 ? -1 : 0; }
 mt_sd_result_t mt_sd_storage_unmount(void) {
+    if(TEST_SOURCE_CORE==MT_AMIGA_CORE_ID)assert(!amiga_files_open);
     ++unmounts;
     if (fault==10 || (fault==15 && unmounts==2)) return (mt_sd_result_t){MT_SD_FILE_BUSY,0U,0U};
     mounted=false; return (mt_sd_result_t){MT_SD_OK,0U,0U};
@@ -168,6 +181,7 @@ static void initial_state(void) {
     status_refreshes=effects_configured=register_writes=uart_waits=unmounts=0;
     golden_runs=reader_closes=file_refreshes=0;
     ticks=0; boot_register=0x123U; error_message[0]=0;
+    amiga_files_open=true;amiga_closes=amiga_reopens=0;
 }
 int main(void) {
     const int faults[]={0,4,5,6,7,8,9,10,11,13,14,15,16,17,18,19};
@@ -287,8 +301,43 @@ int main(int argc, char **argv) {
 }
 '''
 
+AMIGA_SCENARIO = r'''
+int main(void) {
+    const int failures[]={20,13,0};
+    for(unsigned i=0;i<3;++i) {
+        fault=failures[i];golden_update_worker_held=false;
+        supervisor.has_active=true;supervisor_menu.visible=true;
+        core_paused=video_suspended=worker_held=request=reset_issued=false;
+        input_ready=usb_started=mounted=amiga_files_open=true;
+        amiga_closes=amiga_reopens=0;boot_register=0x123U;register_writes=0;ticks=0;
+        if(!setjmp(reset_jump))switch_to_appletini();
+        if(fault==20) {
+            assert(!reset_issued && !core_paused && amiga_files_open);
+            assert(amiga_closes==0 && amiga_reopens==0);
+        } else if(fault==13) {
+            assert(!reset_issued && !core_paused && amiga_files_open);
+            assert(amiga_closes==1 && amiga_reopens==1);
+        } else {
+            assert(reset_issued && core_paused && !amiga_files_open && !mounted);
+            assert(amiga_closes==1 && amiga_reopens==0);
+        }
+    }
+    puts("PASS Amiga handoff refusal preserves mounts, success closes files, rollback reopens");return 0;
+}
+'''
+
 
 class MultibootSwitchTests(unittest.TestCase):
+    def test_amiga_handoff_files_and_rollback(self):
+        source=(ROOT / "firmware/platform/xilinx/main.c").read_text()
+        start=source.index("static void switch_to_appletini(void)\n{")
+        end=source.index("\n}",start)+2
+        self.assertIn("rollback reopens",self.run_native(
+            "#define TEST_SOURCE_CORE MT_AMIGA_CORE_ID\n"+PREAMBLE+self.drain_helper(source)+source[start:end]+AMIGA_SCENARIO))
+        start=source.index("static void self_update_golden(bool recovery_only)\n{")
+        end=source.index("\n}",start)+2
+        self.assertIn("15 cancellation boundaries",self.run_native(
+            "#define TEST_SOURCE_CORE MT_AMIGA_CORE_ID\n"+PREAMBLE+GOLDEN_PREAMBLE+self.drain_helper(source)+source[start:end]+GOLDEN_SCENARIO))
     @staticmethod
     def drain_helper(source: str) -> str:
         start = source.index("static bool core_requires_ddr_drain(void)\n{")

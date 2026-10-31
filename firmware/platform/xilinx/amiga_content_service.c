@@ -1,0 +1,467 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+#include "amiga_content_service.h"
+#include "sd_storage.h"
+#include <stdio.h>
+#include <string.h>
+#define AM_POLLS 100000U
+#define AM_PATH 512U
+#define AM_NAME (MT_AMIGA_MEDIA_NAME_MAX+1U)
+#define AM_SETTINGS (24U+MT_AMIGA_DRIVE_COUNT*AM_NAME)
+typedef struct {
+    mt_sd_file_t *file;
+    uint64_t size;
+    uint16_t heads,sectors;
+    bool writable,pending,uncommitted;
+    uint8_t retained[544];
+    unsigned read_track,read_sector,write_track,write_used;
+    uint16_t previous;
+    uint32_t reads,writes;
+    char name[AM_NAME],path[AM_PATH],journal[AM_PATH],recovery[AM_PATH];
+} am_drive_t;
+static mt_core_link_t *link;
+static mt_link_progress_fn progress;
+static void *progress_context;
+static mt_amiga_config_t config;
+static am_drive_t drives[MT_AMIGA_DRIVE_COUNT];
+static char root[256],rom_root[256],error[160],remembered[MT_AMIGA_DRIVE_COUNT][AM_NAME];
+static uint8_t rom[MT_AMIGA_ROM_BYTES],sector[512],journal_wire[544],settings_wire[AM_SETTINGS];
+static uint16_t mfm[MT_AMIGA_MFM_SECTOR_WORDS],write_mfm[2][MT_AMIGA_MFM_SECTOR_WORDS];
+static bool ready,faulted,paused,settings_invalid;
+static mt_amiga_rtc_t rtc;
+static mt_clock_time_t cached_clock;
+static bool cached_clock_valid;
+static uint32_t clock_now_ms;
+static struct { uint32_t lba,left;uint8_t command,drive,task_head;bool active,captured,lba_mode; } ata;
+static uint32_t crc32(const uint8_t *p,size_t n)
+{ uint32_t c=UINT32_MAX;for(size_t i=0U;i<n;++i) { c^=p[i];for(unsigned b=0U;b<8U;++b)c=(c>>1U)^((0U-(c&1U))&UINT32_C(0xedb88320)); }return ~c; }
+static uint32_t le32(const uint8_t *p)
+{ return (uint32_t)p[0]|((uint32_t)p[1]<<8U)|((uint32_t)p[2]<<16U)|((uint32_t)p[3]<<24U); }
+static void put32(uint8_t *p,uint32_t v)
+{ for(unsigned i=0U;i<4U;++i)p[i]=(uint8_t)(v>>(i*8U)); }
+static int fail(const char *message)
+{ (void)snprintf(error,sizeof(error),"%s",message);faulted=true;return -1; }
+static int sd_fail(mt_sd_result_t r)
+{ return fail(mt_sd_status_name(r.status)); }
+static bool path(char *out,const char *name)
+{ const int n=snprintf(out,AM_PATH,"%s/%s",root,name);return n>0 && (size_t)n<AM_PATH; }
+static int host(uint8_t op,uint32_t payload,uint16_t *out)
+{
+    uint32_t value=0U;const mt_link_result_t r=mt_amiga_host_access(link,op,payload,AM_POLLS,&value);
+    if(r!=MT_LINK_OK)return fail(mt_link_result_name(r));
+    if(out!=NULL)*out=(uint16_t)value;
+    return 0;
+}
+static int select_io(unsigned pins)
+{ return host(MT_AMIGA_HOST_SELECT,pins,NULL); }
+static int xfer(uint16_t input,uint16_t *output)
+{ return host(MT_AMIGA_HOST_TRANSFER,input,output); }
+static int uio(uint8_t reg,uint16_t value)
+{
+    int r=select_io(2U);if(r==0)r=xfer((uint16_t)(0xf0U|reg),NULL);if(r==0)r=xfer(value,NULL);
+    const int end=select_io(0U);return r==0 ? end:r;
+}
+static int reset(bool asserted)
+{
+    const uint32_t args[4]={asserted ? 1U:0U,0U,0U,0U};mt_command_response_t response;
+    const mt_link_result_t r=mt_core_link_command(link,MT_COMMAND_CORE_RESET,args,AM_POLLS,progress,progress_context,&response);
+    return r==MT_LINK_OK ? 0:fail(mt_link_result_name(r));
+}
+static int drive_status(void)
+{
+    uint16_t status=0x1000U;
+    for(unsigned i=0U;i<2U;++i)if(drives[i].file!=NULL)status|=(uint16_t)((1U<<i)|(drives[i].writable ? 16U<<i:0U));
+    int r=select_io(1U);if(r==0)r=xfer(status,NULL);const int end=select_io(0U);return r==0 ? end:r;
+}
+static int ide_read(unsigned address,uint16_t *value)
+{ return host(MT_AMIGA_HOST_IDE_READ,address<<16U,value); }
+static int ide_write(unsigned address,uint16_t value)
+{ return host(MT_AMIGA_HOST_IDE_WRITE,(address<<16U)|value,NULL); }
+static int ide_presence(void)
+{
+    const uint16_t present=(uint16_t)(0x388U|(drives[2].file!=NULL ? 1U:0U)|(drives[3].file!=NULL ? 16U:0U));
+    return ide_write(6U,present);
+}
+static int settings_save(void)
+{
+    if(settings_invalid)return fail("Amiga settings invalid; retain file for recovery");
+    char target[AM_PATH],journal[AM_PATH];if(!path(target,"amiga-settings.bin") || !path(journal,"amiga-settings.bin.mtj"))return fail("Amiga settings path too long");
+    memset(settings_wire,0,sizeof(settings_wire));memcpy(settings_wire,"MTAMSET1",8U);
+    mt_amiga_config_encode(&config,settings_wire+8U);
+    for(unsigned i=0U;i<MT_AMIGA_DRIVE_COUNT;++i)memcpy(settings_wire+24U+i*AM_NAME,remembered[i],AM_NAME);
+    /* AM01 reserved bytes12..15 are checksum storage in the enclosing file. */
+    put32(settings_wire+20U,crc32(settings_wire,sizeof(settings_wire)));
+    const mt_sd_result_t r=mt_sd_storage_journal_replace(target,journal,settings_wire,sizeof(settings_wire));
+    return r.status==MT_SD_OK ? 0:sd_fail(r);
+}
+static void settings_load(void)
+{
+    char target[AM_PATH],journal[AM_PATH];bool found=false;
+    if(!path(target,"amiga-settings.bin") || !path(journal,"amiga-settings.bin.mtj")) { settings_invalid=true;(void)fail("Amiga settings path too long");return; }
+    mt_sd_result_t r=mt_sd_storage_journal_recover(target,journal,settings_wire,sizeof(settings_wire));
+    if(r.status!=MT_SD_OK) { settings_invalid=true;(void)sd_fail(r);return; }
+    r=mt_sd_storage_read_file_optional_max(target,settings_wire,sizeof(settings_wire),&found);
+    if(r.status!=MT_SD_OK) { settings_invalid=true;(void)sd_fail(r);return; }
+    if(!found)return;
+    const uint32_t expected=le32(settings_wire+20U);put32(settings_wire+20U,0U);
+    mt_amiga_config_t candidate;
+    bool valid=r.size==sizeof(settings_wire) && memcmp(settings_wire,"MTAMSET1",8U)==0 &&
+        expected==crc32(settings_wire,sizeof(settings_wire)) && mt_amiga_config_decode(settings_wire+8U,&candidate);
+    for(unsigned i=0U;valid && i<MT_AMIGA_DRIVE_COUNT;++i) {
+        const char *name=(const char *)settings_wire+24U+i*AM_NAME;
+        valid=memchr(name,0,AM_NAME)!=NULL && (*name=='\0' || mt_amiga_media_path_valid(name));
+    }
+    if(!valid) { settings_invalid=true;(void)fail("Amiga settings checksum or values invalid");return; }
+    config=candidate;for(unsigned i=0U;i<MT_AMIGA_DRIVE_COUNT;++i)memcpy(remembered[i],settings_wire+24U+i*AM_NAME,AM_NAME);
+}
+static int apply_journal(am_drive_t *d)
+{
+    bool found=false;d->pending=true;
+    if(d->uncommitted) {
+        const mt_sd_result_t saved=mt_sd_storage_journal_replace(d->journal,d->recovery,d->retained,sizeof(d->retained));
+        if(saved.status!=MT_SD_OK)return sd_fail(saved);
+        d->uncommitted=false;
+    }
+    mt_sd_result_t r=mt_sd_storage_journal_recover(d->journal,d->recovery,journal_wire,sizeof(journal_wire));
+    if(r.status!=MT_SD_OK)return sd_fail(r);
+    r=mt_sd_storage_read_file_optional_exact(d->journal,journal_wire,sizeof(journal_wire),&found);
+    if(r.status!=MT_SD_OK)return sd_fail(r);
+    if(!found) { d->pending=false;return 0; }
+    const uint32_t expected=le32(journal_wire+28U);put32(journal_wire+28U,0U);
+    const uint64_t offset=(uint64_t)le32(journal_wire+8U)|((uint64_t)le32(journal_wire+12U)<<32U);
+    const uint64_t bytes=(uint64_t)le32(journal_wire+16U)|((uint64_t)le32(journal_wire+20U)<<32U);
+    if(memcmp(journal_wire,"MTAMBLK1",8U)!=0 || crc32(journal_wire,sizeof(journal_wire))!=expected ||
+        bytes!=d->size || !d->writable || offset>d->size || d->size-offset<512U || (offset&511U)!=0U)
+        return fail("Amiga disk journal invalid; retained for recovery");
+    r=mt_sd_file_seek(d->file,(int64_t)offset,SEEK_SET);
+    if(r.status==MT_SD_OK)r=mt_sd_file_write(d->file,journal_wire+32U,512U);
+    if(r.status!=MT_SD_OK || r.size!=512U)return sd_fail(r.status==MT_SD_OK ? (mt_sd_result_t){MT_SD_WRITE_FAILED,0U,r.size}:r);
+    r=mt_sd_file_remove(d->journal);if(r.status!=MT_SD_OK)return sd_fail(r);
+    d->pending=false;++d->writes;return 0;
+}
+static int disk_write(am_drive_t *d,uint32_t lba)
+{
+    const uint64_t offset=(uint64_t)lba*512U;
+    if(d->file==NULL || !d->writable || offset>d->size || d->size-offset<512U)return fail("Amiga disk write out of bounds or protected");
+    memset(journal_wire,0,sizeof(journal_wire));memcpy(journal_wire,"MTAMBLK1",8U);
+    put32(journal_wire+8U,(uint32_t)offset);put32(journal_wire+12U,(uint32_t)(offset>>32U));
+    put32(journal_wire+16U,(uint32_t)d->size);put32(journal_wire+20U,(uint32_t)(d->size>>32U));
+    memcpy(journal_wire+32U,sector,512U);put32(journal_wire+28U,crc32(journal_wire,sizeof(journal_wire)));
+    memcpy(d->retained,journal_wire,sizeof(d->retained));d->pending=true;d->uncommitted=true;
+    return apply_journal(d);
+}
+static int disk_read(am_drive_t *d,uint32_t lba)
+{
+    const uint64_t offset=(uint64_t)lba*512U;
+    if(d->file==NULL || offset>d->size || d->size-offset<512U)return fail("Amiga disk read out of bounds");
+    mt_sd_result_t r=mt_sd_file_seek(d->file,(int64_t)offset,SEEK_SET);
+    if(r.status==MT_SD_OK)r=mt_sd_file_read(d->file,sector,512U);
+    if(r.status!=MT_SD_OK || r.size!=512U)return sd_fail(r.status==MT_SD_OK ? (mt_sd_result_t){MT_SD_READ_FAILED,0U,r.size}:r);
+    ++d->reads;return 0;
+}
+static int floppy_poll(bool *writing)
+{
+    uint16_t status=0U,sync=0U,count=0U;
+    int r=select_io(1U);if(r==0)r=xfer(0U,&status);if(r==0)r=xfer(0U,&sync);if(r==0)r=xfer(0U,&count);
+    if(r!=0) { (void)select_io(0U);return r; }
+    const unsigned drive=status>>14U,track=status&255U;
+    *writing=(status&0x200U)!=0U;
+    if(drive>=2U || track>=160U || drives[drive].file==NULL) { (void)select_io(0U);return 0; }
+    am_drive_t *const d=&drives[drive];
+    if(status&0x100U) {
+        /* SD access cannot run while the FIFO transaction is selected. */
+        (void)select_io(0U);
+        if(d->read_track!=track) { d->read_track=track;d->read_sector=0U;d->previous=0U; }
+        if(disk_read(d,track*11U+d->read_sector)!=0)return -1;
+        if(sync==0U || sync==0x8914U || sync==0xa144U)sync=0x4489U;
+        if(!mt_amiga_mfm_encode(track,d->read_sector,sync,sector,mfm,&d->previous))return fail("Amiga MFM encode failed");
+        r=select_io(1U);uint16_t current=0U;
+        if(r==0)r=xfer(0U,&current);
+        if(r==0)r=xfer(0U,NULL);
+        if(r==0)r=xfer(0U,NULL);
+        if(r==0 && (current&0xc1ffU)==(status&0xc1ffU)) {
+            for(unsigned i=0U;r==0 && i<MT_AMIGA_MFM_SECTOR_WORDS;++i)r=xfer(mfm[i],NULL);
+            if(r==0 && d->read_sector==10U)for(unsigned i=0U;r==0 && i<MT_AMIGA_MFM_GAP_WORDS;++i)r=xfer(mt_amiga_mfm_clock(0U,&d->previous),NULL);
+            if(r==0)d->read_sector=(d->read_sector+1U)%11U;
+        }
+    } else if(*writing) {
+        if(d->write_track!=track) { d->write_track=track;d->write_used=0U; }
+        unsigned available=count&0x3fffU;if(available>1024U)available=1024U;
+        for(unsigned i=0U;r==0 && i<available;++i) {
+            uint16_t value=0U;r=xfer(0U,&value);if(r!=0)break;
+            uint16_t *const wire=write_mfm[drive];
+            if(d->write_used<4U) {
+                if(value==0x4489U && d->write_used==3U) { wire[2]=value;wire[3]=value;d->write_used=4U; }
+                else d->write_used=value==0x4489U ? 3U:0U;
+            } else {
+                wire[d->write_used++]=value;
+                if(d->write_used==MT_AMIGA_MFM_SECTOR_WORDS) {
+                    unsigned s=0U;d->write_used=0U;
+                    if(mt_amiga_mfm_decode(wire,track,&s,sector)) {
+                        (void)select_io(0U);
+                        if(disk_write(d,track*11U+s)!=0)return -1;
+                        /* Finish this poll after durable commit. The next
+                         * transaction takes a fresh FIFO count. */
+                        return 0;
+                    }
+                }
+            }
+        }
+    }
+    const int end=select_io(0U);return r==0 ? end:r;
+}
+static void identify(am_drive_t *d)
+{
+    memset(sector,0,sizeof(sector));
+    const uint32_t count=(uint32_t)(d->size/512U);
+#define IDW(index,value) do { const uint16_t v=(uint16_t)(value);sector[(index)*2U]=(uint8_t)v;sector[(index)*2U+1U]=(uint8_t)(v>>8U); } while(0)
+    uint32_t cylinders=count/(16U*63U);if(cylinders>16383U)cylinders=16383U;if(cylinders==0U)cylinders=1U;
+    IDW(0U,0x0040U);IDW(1U,cylinders);IDW(3U,16U);IDW(6U,63U);
+    /* READ/WRITE MULTIPLE is not implemented: do not advertise it. */
+    IDW(47U,0U);IDW(49U,0x0200U);IDW(53U,1U);
+    uint32_t current_cylinders=count/((uint32_t)d->heads*d->sectors);
+    if(current_cylinders>65535U)current_cylinders=65535U;
+    const uint32_t current_capacity=current_cylinders*d->heads*d->sectors;
+    IDW(54U,current_cylinders);IDW(55U,d->heads);IDW(56U,d->sectors);
+    IDW(57U,current_capacity);IDW(58U,current_capacity>>16U);IDW(60U,count);IDW(61U,count>>16U);
+    static const char model[]="MULTITINI AMIGA VIRTUAL IDE DISK          ";
+    for(unsigned i=0U;i<40U;i+=2U) { sector[54U+i]=(uint8_t)model[i+1U];sector[55U+i]=(uint8_t)model[i]; }
+#undef IDW
+}
+static int ata_status(uint16_t status,uint8_t err)
+{
+    if(status&0x0100U)status|=0x0400U; /* ATA errors complete with IRQ too. */
+    int r=ide_write(0U,(uint16_t)(1U|((uint16_t)err<<8U)));
+    if(r==0)r=ide_write(5U,(uint16_t)(status|ata.task_head));
+    return r;
+}
+static int ata_data(bool writing)
+{
+    if(ide_write(14U,0U)!=0)return -1; /* Reset management FIFO pointer. */
+    for(unsigned i=0U;i<256U;++i) {
+        uint16_t value=0U;
+        if(writing) {
+            if(ide_read(15U,&value)!=0)return -1;
+            sector[2U*i]=(uint8_t)value;sector[2U*i+1U]=(uint8_t)(value>>8U);
+        } else if(ide_write(15U,(uint16_t)((uint16_t)sector[2U*i]|((uint16_t)sector[2U*i+1U]<<8U)))!=0)return -1;
+    }
+    return 0;
+}
+static int ata_poll(void)
+{
+    const uint32_t snapshot=link->read32(link->context,MT_AMIGA_HOST_PORT);
+    const unsigned request=(snapshot>>16U)&7U;
+    if(request==0U)return 0;
+    if(request==6U) {
+        ata.active=false;ata.captured=false;ata.task_head=0xa0U;
+        for(unsigned d=2U;d<MT_AMIGA_DRIVE_COUNT;++d) { drives[d].heads=16U;drives[d].sectors=63U; }
+        if(ide_write(1U,0x0101U)!=0 || ide_write(2U,0U)!=0)return -1;
+        return ata_status(0x5000U,1U);
+    }
+    if(request==4U) {
+        uint16_t regs[6];for(unsigned i=0U;i<6U;++i)if(ide_read(i,&regs[i])!=0)return -1;
+        ata.drive=(uint8_t)(2U+((regs[5]>>4U)&1U));ata.command=(uint8_t)(regs[5]>>8U);
+        ata.task_head=(uint8_t)regs[5];
+        ata.lba_mode=(regs[5]&0x40U)!=0U;
+        ata.left=regs[1]&255U;if(ata.left==0U)ata.left=256U;
+        am_drive_t *const d=&drives[ata.drive];ata.active=false;ata.captured=false;
+        if(d->file==NULL)return ata_status(0x5100U,4U);
+        if(ata.command==0xecU) { identify(d);if(ata_data(false)!=0)return -1;return ata_status(0x5e00U,0U); }
+        if(ata.command==0x91U) {
+            const uint16_t sectors=(uint16_t)(regs[1]&255U);
+            /* This target supports CHS sectors 1..255. Reject the optional
+             * 256-sector encoding rather than acknowledging unusable geometry. */
+            if(sectors==0U)return ata_status(0x5100U,4U);
+            d->heads=(uint16_t)((regs[5]&15U)+1U);d->sectors=sectors;
+            return ata_status(0x5400U,0U);
+        }
+        if(ata.command==0x20U || ata.command==0x21U || ata.command==0x30U || ata.command==0x31U) {
+            if(ata.lba_mode)ata.lba=((uint32_t)(regs[5]&15U)<<24U)|((uint32_t)regs[2]<<8U)|(regs[1]>>8U);
+            else {
+                const unsigned s=regs[1]>>8U,h=regs[5]&15U;
+                if(s==0U || s>d->sectors || h>=d->heads)return ata_status(0x5100U,0x10U);
+                ata.lba=((uint32_t)regs[2]*d->heads+h)*d->sectors+s-1U;
+            }
+            if(ata.lba>=d->size/512U || ata.left>d->size/512U-ata.lba)return ata_status(0x5100U,0x10U);
+            if(ata.command>=0x30U && !d->writable)return ata_status(0x5100U,4U);
+            ata.active=true;
+            if(ide_write(0U,1U)!=0)return -1;
+        } else if(ata.command==0xe7U || ata.command==0x10U || ata.command==0x70U || ata.command==0xefU)
+            return ata_status(0x5400U,0U);
+        else return ata_status(0x5100U,4U);
+    }
+    if(!ata.active)return ata_status(0x5100U,4U);
+    am_drive_t *const d=&drives[ata.drive];
+    if(ata.command>=0x30U) {
+        if(request==4U)return ata_status(0x5800U,0U);
+        if(!ata.captured) {
+            if(ata_data(true)!=0)return -1;
+            ata.captured=true;
+            if(disk_write(d,ata.lba)!=0)return -1;
+        }
+        if(d->pending)return -1;
+    } else {
+        if(disk_read(d,ata.lba)!=0 || ata_data(false)!=0)return -1;
+    }
+    ++ata.lba;--ata.left;
+    const uint16_t next_sector=(uint16_t)(ata.lba_mode ? ata.lba&255U:ata.lba%d->sectors+1U);
+    const uint16_t next_cylinder=(uint16_t)(ata.lba_mode ? ata.lba>>8U:ata.lba/((uint32_t)d->sectors*d->heads));
+    const uint16_t next_head=(uint16_t)(ata.lba_mode ? (ata.lba>>24U)&15U:(ata.lba/d->sectors)%d->heads);
+    int r=ide_write(1U,(uint16_t)((ata.left&255U)|(next_sector<<8U)));
+    if(r==0)r=ide_write(2U,next_cylinder);
+    const uint16_t status=(uint16_t)(ata.command>=0x30U ? (ata.left==0U ? 0x5400U:0x5c00U):(ata.left==0U ? 0x5e00U:0x5c00U));
+    if(r==0)r=ide_write(5U,(uint16_t)(status|((ata.lba_mode ? 0xe0U:0xa0U)|((ata.drive-2U)<<4U)|next_head)));
+    ata.captured=false;
+    if(ata.left==0U)ata.active=false;
+    return r;
+}
+void amiga_content_service_init(mt_core_link_t *l,const char *media_root,mt_link_progress_fn p,void *context)
+{
+    link=l;progress=p;progress_context=context;memset(drives,0,sizeof(drives));memset(remembered,0,sizeof(remembered));
+    root[0]='\0';rom_root[0]='\0';error[0]='\0';ready=false;faulted=false;paused=true;settings_invalid=false;ata.active=false;
+    mt_amiga_rtc_init(&rtc);cached_clock_valid=false;clock_now_ms=0U;
+    mt_amiga_config_defaults(&config);
+    const size_t n=media_root!=NULL ? strlen(media_root):0U;
+    if(n<6U || n>=sizeof(root) || strcmp(media_root+n-6U,"/media")!=0) { (void)fail("Amiga package requires /media content root");return; }
+    memcpy(root,media_root,n+1U);memcpy(rom_root,media_root,n-5U);memcpy(rom_root+n-5U,"roms",5U);
+    for(unsigned i=0U;i<MT_AMIGA_DRIVE_COUNT;++i) { drives[i].read_track=160U;drives[i].write_track=160U; }
+    settings_load();
+}
+int amiga_content_service_boot(void)
+{
+    if(link==NULL || root[0]=='\0' || settings_invalid)return fail("Amiga service not initialized");
+    if(amiga_content_service_prepare_reset()!=0 || reset(true)!=0)return -1;
+    char name[AM_PATH];const int n=snprintf(name,sizeof(name),"%s/kick.rom",rom_root);
+    if(n<=0 || (size_t)n>=sizeof(name))return fail("Kickstart path too long");
+    const mt_sd_result_t r=mt_sd_storage_read_file_max(name,rom,sizeof(rom));
+    if(r.status!=MT_SD_OK)return sd_fail(r);
+    if(!mt_amiga_rom_size_valid(r.size))return fail("kick.rom must be 256 KiB, 512 KiB or 1 MiB");
+    for(size_t i=r.size;i<sizeof(rom);++i)rom[i]=rom[i%r.size];
+    const mt_link_result_t staged=mt_amiga_stage(link,&config,rom,sizeof(rom),AM_POLLS,progress,progress_context);
+    if(staged!=MT_LINK_OK)return fail(mt_link_result_name(staged));
+    for(unsigned i=0U;i<MT_AMIGA_DRIVE_COUNT;++i)if(drives[i].file==NULL && remembered[i][0]!='\0') {
+        char saved[AM_NAME];memcpy(saved,remembered[i],AM_NAME);
+        if(amiga_content_service_mount(i,saved)!=0)return -1;
+    }
+    (void)mt_amiga_rtc_update(&rtc,link,cached_clock_valid ? &cached_clock:NULL,clock_now_ms,true,AM_POLLS);
+    if(drive_status()!=0 || ide_presence()!=0 || uio(1U,0U)!=0 || reset(false)!=0)return -1;
+    paused=false;ready=true;faulted=false;error[0]='\0';return 0;
+}
+void amiga_content_service_poll(void)
+{
+    if(!ready || paused || faulted)return;
+    bool writing=false;
+    if(floppy_poll(&writing)!=0 || ata_poll()!=0)return;
+}
+mt_link_result_t amiga_content_service_set_clock(const mt_clock_time_t *time,uint32_t now_ms)
+{
+    cached_clock_valid=time!=NULL && mt_clock_valid(time);
+    if(cached_clock_valid)cached_clock=*time;
+    clock_now_ms=now_ms;
+    /* Live wall-clock refresh is independent of media errors and guest pause.
+     * Before first boot only cache it; boot publishes while CPU reset is held. */
+    if(ready)return mt_amiga_rtc_update(&rtc,link,cached_clock_valid ? &cached_clock:NULL,now_ms,false,AM_POLLS);
+    return MT_LINK_OK;
+}
+mt_link_result_t amiga_content_service_clock_status(void) { return rtc.result; }
+int amiga_content_service_prepare_reset(void)
+{
+    if(link==NULL)return -1;
+    if(!ready) { paused=true;return 0; }
+    if(paused)return 0;
+    if(faulted)return -1;
+    /* Let a guest finish an in-progress PIO block before halting its CPU.
+     * After halt, sample again: a command may have arrived between the idle
+     * sample and the halt. Such a command needs the guest running to finish
+     * PIO, so release the halt and retry. A refusal always releases our halt. */
+    for(unsigned i=0U;i<4096U;++i) {
+        bool writing=false;if(floppy_poll(&writing)!=0 || ata_poll()!=0)return -1;
+        bool pending=ata.active || ((link->read32(link->context,MT_AMIGA_HOST_PORT)>>16U)&7U)!=0U;
+        for(unsigned d=0U;d<MT_AMIGA_DRIVE_COUNT;++d)pending|=drives[d].pending;
+        if(!writing && !pending) {
+            if(uio(1U,4U)!=0) { (void)uio(1U,0U);return -1; }
+            if(floppy_poll(&writing)!=0 || ata_poll()!=0) { (void)uio(1U,0U);return -1; }
+            pending=ata.active || ((link->read32(link->context,MT_AMIGA_HOST_PORT)>>16U)&7U)!=0U;
+            for(unsigned d=0U;d<MT_AMIGA_DRIVE_COUNT;++d)pending|=drives[d].pending;
+            if(!writing && !pending) { paused=true;return 0; }
+            if(uio(1U,0U)!=0)return -1;
+        }
+        if(progress!=NULL)progress(progress_context);
+    }
+    (void)uio(1U,0U);
+    return fail("Amiga media busy; reset refused");
+}
+int amiga_content_service_resume_after_reset(void)
+{
+    if(!ready)return amiga_content_service_boot();
+    if(drive_status()!=0 || ide_presence()!=0 || uio(1U,0U)!=0)return -1;
+    paused=false;ata.active=false;return 0;
+}
+int amiga_content_service_mount(unsigned drive,const char *name)
+{
+    if(drive>=MT_AMIGA_DRIVE_COUNT || !mt_amiga_media_path_valid(name))return fail("Amiga media path invalid");
+    am_drive_t *const d=&drives[drive];if(d->file!=NULL)return fail("Eject Amiga disk before mounting another");
+    if(!path(d->path,name))return fail("Amiga media path too long");
+    const size_t path_size=strlen(d->path);
+    if(path_size+9U>sizeof(d->recovery))return fail("Amiga journal path too long");
+    memcpy(d->journal,d->path,path_size);memcpy(d->journal+path_size,".amj",5U);
+    memcpy(d->recovery,d->journal,path_size+4U);memcpy(d->recovery+path_size+4U,".mtj",5U);
+    mt_sd_result_t r=mt_sd_file_open(d->path,"r+b",&d->file);d->writable=r.status==MT_SD_OK;
+    if(!d->writable)r=mt_sd_file_open(d->path,"rb",&d->file);
+    if(r.status!=MT_SD_OK) { d->file=NULL;return sd_fail(r); }
+    r=mt_sd_file_seek(d->file,0,SEEK_END);const int64_t bytes=mt_sd_file_tell(d->file);
+    if(r.status!=MT_SD_OK || bytes<0 || mt_amiga_media_validate(drive,(uint64_t)bytes)!=MT_CONTENT_VALID) {
+        (void)mt_sd_file_close(d->file);d->file=NULL;return fail("ADF must be 880 KiB; HDF must contain 512-byte sectors");
+    }
+    d->size=(uint64_t)bytes;
+    d->heads=16U;d->sectors=63U;
+    if(apply_journal(d)!=0)return -1;
+    memcpy(d->name,name,strlen(name)+1U);memcpy(remembered[drive],d->name,AM_NAME);
+    d->read_track=160U;d->write_track=160U;d->write_used=0U;
+    if(settings_save()!=0 || drive_status()!=0 || ide_presence()!=0)return -1;
+    return 0;
+}
+int amiga_content_service_eject(unsigned drive)
+{
+    if(drive>=MT_AMIGA_DRIVE_COUNT)return fail("Amiga drive invalid");
+    const bool running=ready && !paused;
+    if(running && amiga_content_service_prepare_reset()!=0)return -1;
+    am_drive_t *const d=&drives[drive];
+    if(d->pending && apply_journal(d)!=0)return -1;
+    if(d->file!=NULL) { const mt_sd_result_t r=mt_sd_file_close(d->file);if(r.status!=MT_SD_OK)return sd_fail(r);d->file=NULL; }
+    d->name[0]='\0';remembered[drive][0]='\0';
+    if(settings_save()!=0 || drive_status()!=0 || ide_presence()!=0)return -1;
+    return running ? amiga_content_service_resume_after_reset():0;
+}
+int amiga_content_service_shutdown(void)
+{
+    if(amiga_content_service_prepare_reset()!=0)return -1;
+    /* A partial close failure must reopen earlier handles on rollback too. */
+    ready=false;
+    for(unsigned i=0U;i<MT_AMIGA_DRIVE_COUNT;++i) {
+        if(drives[i].pending && apply_journal(&drives[i])!=0)return -1;
+        if(drives[i].file!=NULL) { const mt_sd_result_t r=mt_sd_file_close(drives[i].file);if(r.status!=MT_SD_OK)return sd_fail(r);drives[i].file=NULL; }
+    }
+    return 0;
+}
+int amiga_content_service_retry(void)
+{
+    if(settings_invalid)return fail("Amiga settings invalid; retain file for recovery");
+    for(unsigned i=0U;i<MT_AMIGA_DRIVE_COUNT;++i)if(drives[i].pending && apply_journal(&drives[i])!=0)return -1;
+    (void)mt_amiga_host_access(link,MT_AMIGA_HOST_CLEAR_ERROR,0U,AM_POLLS,NULL);
+    faulted=false;error[0]='\0';return 0;
+}
+int amiga_content_service_configure(const mt_amiga_config_t *candidate)
+{
+    if(!mt_amiga_config_valid(candidate))return fail("Amiga configuration invalid");
+    if(amiga_content_service_prepare_reset()!=0)return -1;
+    const mt_amiga_config_t previous=config;config=*candidate;
+    if(settings_save()!=0) { config=previous;return -1; }
+    return amiga_content_service_boot();
+}
+const mt_amiga_config_t *amiga_content_service_config(void) { return &config; }
+const char *amiga_content_service_name(unsigned drive) { return drive<MT_AMIGA_DRIVE_COUNT && drives[drive].file!=NULL ? drives[drive].name:NULL; }
+const char *amiga_content_service_error(void) { return error; }
+bool amiga_content_service_ready(void) { return ready; }
+bool amiga_content_service_faulted(void) { return faulted; }
+void amiga_content_service_activity(unsigned drive,uint32_t *reads,uint32_t *writes)
+{ if(reads!=NULL)*reads=drive<MT_AMIGA_DRIVE_COUNT ? drives[drive].reads:0U;if(writes!=NULL)*writes=drive<MT_AMIGA_DRIVE_COUNT ? drives[drive].writes:0U; }

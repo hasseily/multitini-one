@@ -6,6 +6,7 @@
 #include "multitini_nes_interface.h"
 #include "multitini_vectrex_interface.h"
 #include "multitini_iigs_interface.h"
+#include "multitini_amiga_interface.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -34,6 +35,7 @@ uint32_t mt_controls_action_mask(uint32_t core)
     case MT_GENESIS_CORE_ID: return UINT16_C(0x0fff) | menu;
     case MT_VECTREX_CORE_ID: return UINT16_C(0x00ff) | BIT(MT_CONTROL_AXIS_X) | BIT(MT_CONTROL_AXIS_Y) | menu;
     case MT_IIGS_CORE_ID: return UINT16_C(0x007f) | BIT(MT_CONTROL_AXIS_X) | BIT(MT_CONTROL_AXIS_Y) | menu;
+    case MT_AMIGA_CORE_ID: return UINT16_C(0x003f) | menu;
     default: return core == 0U ? menu : 0U;
     }
 }

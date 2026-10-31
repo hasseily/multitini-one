@@ -25,6 +25,7 @@ static uint8_t serial_suffix = '1';
 static uint32_t input_regs[MT_REGISTER_SPAN / 4U];
 static uint16_t routed_code, routed_value;
 static unsigned routed_events;
+static unsigned routed_amiga_keys;
 static uint32_t input_read(void *context, uint32_t offset)
 { (void)context; return input_regs[offset / 4U]; }
 static void input_write(void *context, uint32_t offset, uint32_t value)
@@ -36,6 +37,7 @@ static void input_write(void *context, uint32_t offset, uint32_t value)
         routed_code = (uint16_t)input_regs[MT_REG_COMMAND_ARG0 / 4U];
         routed_value = (uint16_t)input_regs[MT_REG_COMMAND_ARG1 / 4U];
         ++routed_events;
+        if(routed_code==MT_AMIGA_INPUT_KEYBOARD)++routed_amiga_keys;
         input_regs[MT_REG_RESPONSE_STATUS / 4U] = MT_RESPONSE_OK;
         input_regs[MT_REG_RESPONSE_SEQ / 4U] = value;
     }
@@ -1457,6 +1459,57 @@ static void test_nes_input_transport(void)
     puts("PASS NES two-player USB routing, keyboard fallback and menu capture release");
 }
 
+static void test_amiga_input_transport(void)
+{
+    mt_core_link_t link;
+    mt_core_link_init(&link,NULL,input_read,input_write);
+    usb_hid_service_init(&link);
+    usb_hid_service_set_active_core(MT_AMIGA_CORE_ID);
+    input_regs[MT_REG_STATUS/4U]=0U;
+    const unsigned before_ready_events=routed_events,before_ready_keys=routed_amiga_keys;
+    const uint8_t held[]={4U};
+    usb_hid_service_set_core_ready(true);assert(g_core_ready==0U);
+    submit_keyboard_state(0U,0U,held,1U);
+    usb_hid_service_set_core_ready(true);
+    assert(g_core_ready==0U && routed_events==before_ready_events && routed_amiga_keys==before_ready_keys);
+    input_regs[MT_REG_STATUS/4U]=MT_STATUS_CORE_READY;
+    usb_hid_service_set_core_ready(true);
+    assert(g_core_ready==1U && routed_amiga_keys==before_ready_keys+1U);
+    usb_hid_service_set_core_ready(true);poll_active_input();
+    assert(routed_amiga_keys==before_ready_keys+1U);
+    submit_keyboard_state(0U,0U,NULL,0U);
+    usb_hid_service_set_core_ready(true);
+    const uint8_t keys[]={4U};
+    submit_keyboard_state(0U,2U,keys,1U);
+    assert(g_amiga_input.emitted_keys[4U]&1U);
+    assert(routed_code==MT_AMIGA_INPUT_KEYBOARD && routed_value==0x60U);
+    submit_keyboard_state(0U,0U,NULL,0U);
+    struct usbh_hubport port={0};port.port=1U;
+    const uint8_t first=(uint8_t)usb_gamepad_input_connect();
+    usb_gamepad_input_identify(first,&port,0U,MT_CONTROLLER_TRANSPORT_XBOXONE);
+    port.port=2U;
+    const uint8_t second=(uint8_t)usb_gamepad_input_connect();
+    usb_gamepad_input_identify(second,&port,0U,MT_CONTROLLER_TRANSPORT_XBOXONE);
+    assert(g_controller_player[first]==0U && g_controller_player[second]==1U);
+    buttons(first,1U);buttons(second,2U);
+    assert(g_amiga_input.emitted_joystick[0]==0x10U && g_amiga_input.emitted_joystick[1]==0x20U);
+    assert(routed_code==0x6201U && routed_value==0x20U);
+    usb_hid_service_set_menu_capture(true);
+    assert(g_amiga_input.emitted_joystick[0]==0U && g_amiga_input.emitted_joystick[1]==0U);
+    buttons(first,0U);buttons(second,0U);usb_hid_service_set_menu_capture(false);
+    usb_gamepad_input_disconnect(first);usb_gamepad_input_disconnect(second);
+    /* Existing boot-mouse path delivers relative movement without mapping
+     * mouse buttons into joystick fire. */
+    mt_amiga_hid_mouse_report(&g_amiga_input,5,-3,1U);
+    poll_active_input();
+    assert(g_amiga_input.mouse_x==0 && g_amiga_input.mouse_y==0 && g_amiga_input.emitted_mouse_buttons==1U);
+    usb_hid_service_set_menu_capture(true);poll_active_input();
+    assert(g_amiga_input.emitted_mouse_buttons==0U);
+    usb_hid_service_init(NULL);usb_hid_service_set_active_core(MT_AMIGA_CORE_ID);
+    usb_hid_service_set_core_ready(true);assert(g_core_ready==0U);
+    puts("PASS Amiga native keyboard, two joysticks, mouse and menu capture");
+}
+
 int main(void)
 {
     test_shared_poll_deadline();
@@ -1478,5 +1531,6 @@ int main(void)
     test_shoulder_navigation();
     test_iigs_input_transport();
     test_nes_input_transport();
+    test_amiga_input_transport();
     return 0;
 }

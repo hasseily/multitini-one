@@ -37,10 +37,18 @@ class NesExportSignoffTests(unittest.TestCase):
 
     def test_cdc_census_adds_nes_without_changing_any_timing_bound(self):
         current = (ROOT / signoff.CDC_CHECKER).read_bytes()
+        # Reconstruct the historical NES checker: later machine additions
+        # must remain outside this narrowly authorized revalidation path.
+        latest = current
+        current = current.replace(b"([0-7])", b"([0-6])", 1).replace(
+            b"Genesis, IIgs, NES and Amiga capture native source frames", b"Genesis, IIgs and NES capture their native source frame", 1).replace(
+            b"$active_machine in {4 5 6 7}", b"$active_machine in {4 5 6}", 1)
         old = current.replace(b"([0-6])", b"([0-5])", 1).replace(
             b"Genesis, IIgs and NES capture", b"Genesis and IIgs capture", 1).replace(
             b"$active_machine in {4 5 6}", b"$active_machine in {4 5}", 1)
         signoff.cdc_checker_delta(old, current)
+        with self.assertRaisesRegex(ValueError, "beyond the reviewed"):
+            signoff.cdc_checker_delta(old, latest)
         with self.assertRaisesRegex(ValueError, "beyond the reviewed"):
             signoff.cdc_checker_delta(old, current.replace(b"> 0.0005", b"> 0.5", 1))
 

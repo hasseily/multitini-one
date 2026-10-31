@@ -144,6 +144,8 @@ if {[string match "*ACTIVE_MACHINE=2*" $build_generics]} {
     set image_kind "APPLE_IIGS"
 } elseif {[string match "*ACTIVE_MACHINE=6*" $build_generics]} {
     set image_kind "NES"
+} elseif {[string match "*ACTIVE_MACHINE=7*" $build_generics]} {
+    set image_kind "AMIGA"
 } else {
     error "Build generic has no recognized ACTIVE_MACHINE value: $build_generics"
 }
@@ -258,6 +260,93 @@ foreach {description pattern} {
 require_one_object "audio BCLK generated clock" [get_clocks -quiet audio_bclk]
 require_one_object "forwarded audio BCLK" [get_clocks -quiet audio_bclk_out]
 require_one_object "forwarded DVI clock" [get_clocks -quiet dvi_clk_out]
+if {$image_kind eq "AMIGA"} {
+    set amiga_clock [get_clocks -quiet -filter {NAME =~ *clk_out1*zynq_ps_bd_clk_wiz_c64*}]
+    require_one_object "Amiga service clock" $amiga_clock
+    set amiga_mmcm [get_cells -hierarchical -quiet -filter \
+        {REF_NAME == MMCME2_ADV && NAME =~ *clk_wiz_c64*}]
+    require_one_object "Amiga service MMCM" $amiga_mmcm
+    foreach {property expected} {CLKFBOUT_MULT_F 60.25 DIVCLK_DIVIDE 13 CLKOUT0_DIVIDE_F 24.5
+                                CLKOUT0_PHASE 0.0 CLKOUT0_DUTY_CYCLE 0.5} {
+        if {abs([get_property $property $amiga_mmcm] - $expected) > 0.000001} {
+            error "Amiga MMCM $property differs from the reviewed value $expected"
+        }
+    }
+    set amiga_parent [get_clocks -quiet -of_objects [get_pins $amiga_mmcm/CLKIN1]]
+    require_one_object "Amiga MMCM parent clock" $amiga_parent
+    set amiga_parent_period [get_property PERIOD $amiga_parent]
+    if {$amiga_parent ne "clk_fpga_2" || abs($amiga_parent_period - 1000.0 / 150.0) > 0.001} {
+        error "Amiga MMCM requires the reviewed 150 MHz PS clock"
+    }
+    set amiga_period [get_property PERIOD $amiga_clock]
+    set amiga_derived_period [expr {$amiga_parent_period * 13.0 * 24.5 / 60.25}]
+    # Parent/generated clock periods have picosecond precision. Bound that
+    # rounding separately from the exact MMCM divider properties above.
+    if {abs($amiga_period - $amiga_derived_period) > 0.006 ||
+        abs($amiga_period - 1000.0 / 28.375160) > 0.007} {
+        error "Amiga service clock differs from its reviewed MMCM ratio: $amiga_period ns"
+    }
+    puts "AMIGA_CLOCK_RATIO_PASS parent=$amiga_parent M=60.25 D=13 O_SERVICE=24.5 service_period=$amiga_period"
+    set amiga_chip_clock [get_clocks -quiet amiga_chip]
+    require_one_object "Amiga gated native clock" $amiga_chip_clock
+    if {![get_property IS_GENERATED $amiga_chip_clock] ||
+        ![get_property IS_USER_GENERATED $amiga_chip_clock] ||
+        abs([get_property PERIOD $amiga_chip_clock] - $amiga_period) > 0.001} {
+        error "Amiga native gate must retain its sibling service-clock period"
+    }
+    set amiga_gate [get_cells -hierarchical -quiet -regexp \
+        {.*amiga_machine/machine_clock_gate$}]
+    require_one_object "Amiga timeline clock gate" $amiga_gate
+    set amiga_gate_ref [get_property REF_NAME $amiga_gate]
+    if {$amiga_gate_ref ni {BUFGCE BUFGCTRL}} {
+        error "Amiga timeline gate must retain its global clock primitive: $amiga_gate_ref"
+    }
+    if {$amiga_gate_ref eq "BUFGCE"} {
+        if {[get_property CE_TYPE $amiga_gate] ne "SYNC" ||
+            [get_property IS_I_INVERTED $amiga_gate] != 0 ||
+            [get_property IS_CE_INVERTED $amiga_gate] != 0} {
+            error "Amiga timeline BUFGCE must retain non-inverted SYNC behavior"
+        }
+        set amiga_gate_input [get_pins -quiet $amiga_gate/I]
+    } else {
+        foreach {pin expected_type} {I1 POWER CE1 GROUND S0 POWER S1 GROUND IGNORE0 GROUND IGNORE1 POWER} {
+            set object [get_pins -quiet $amiga_gate/$pin]
+            set nets [get_nets -of_objects $object]
+            require_one_object "Amiga gate $pin pin" $object
+            require_one_object "Amiga gate $pin constant net" $nets
+            if {![get_property IS_TIED $object] || [get_property TYPE $nets] ne $expected_type} {
+                error "Amiga mapped clock gate has unsafe $pin control"
+            }
+        }
+        if {[get_property XILINX_LEGACY_PRIM $amiga_gate] ne "BUFGCE" ||
+            [get_property CE_TYPE_CE0 $amiga_gate] ne "SYNC" ||
+            ![get_property PRESELECT_I0 $amiga_gate] || [get_property PRESELECT_I1 $amiga_gate] ||
+            [get_property INIT_OUT $amiga_gate] != 0} {
+            error "Amiga mapped clock gate no longer retains BUFGCE behavior"
+        }
+        set amiga_gate_input [get_pins -quiet $amiga_gate/I0]
+    }
+    set amiga_gate_parent [get_clocks -quiet -of_objects $amiga_gate_input]
+    set amiga_gate_output [get_clocks -quiet -of_objects [get_pins -quiet $amiga_gate/O]]
+    if {$amiga_gate_parent ne $amiga_clock || $amiga_gate_output ne $amiga_chip_clock ||
+        [get_property MASTER_CLOCK $amiga_chip_clock] ne $amiga_clock} {
+        error "Amiga timeline gate must pass its service clock without a waveform change"
+    }
+    set amiga_ce_name [expr {$amiga_gate_ref eq "BUFGCTRL" ? "CE0" : "CE"}]
+    set amiga_ce [get_pins -quiet $amiga_gate/$amiga_ce_name]
+    require_one_object "Amiga timeline clock-enable pin" $amiga_ce
+    set amiga_ce_paths [get_timing_paths -quiet -delay_type max -to $amiga_ce -max_paths 1]
+    require_one_object "Amiga timeline clock-enable setup path" $amiga_ce_paths
+    set amiga_ce_path [lindex $amiga_ce_paths 0]
+    set amiga_ce_slack [get_property SLACK $amiga_ce_path]
+    if {[get_property EXCEPTION $amiga_ce_path] ne "" ||
+        ![string is double -strict $amiga_ce_slack] || $amiga_ce_slack <= 0.0} {
+        error "Amiga clock-enable setup must retain positive, unexcepted timing: $amiga_ce_slack ns"
+    }
+    report_timing -delay_type max -to $amiga_ce -max_paths 10 \
+        -file [file join $report_dir amiga_clock_enable_setup.rpt]
+    puts "AMIGA_NATIVE_CLOCK_PASS period=[get_property PERIOD $amiga_chip_clock] gate=$amiga_gate_ref ce_slack=$amiga_ce_slack"
+}
 if {$image_kind eq "NES"} {
     require_nes_save_ram implementation
     set nes_clock [get_clocks -quiet -filter {NAME =~ *clk_out1*zynq_ps_bd_clk_wiz_c64*}]
@@ -652,6 +741,9 @@ foreach delay_type {max min} {
     puts "Worst $delay_type slack: $slack ns"
     if {![string is double -strict $slack] || ![expr {abs($slack) < Inf}] || $slack < 0.0} {
         error "Negative $delay_type slack: $slack ns"
+    }
+    if {$image_kind eq "AMIGA" && $delay_type eq "max" && $slack <= 0.0} {
+        error "Amiga setup slack must be strictly positive: $slack ns"
     }
     # The C713-only authorization applies to final global setup as well as
     # the three C64 clock-path groups. Hold and all other policies are unchanged.

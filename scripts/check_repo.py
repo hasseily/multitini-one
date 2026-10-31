@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RESTRICTED_SUFFIXES = {
-    ".2mg", ".bin", ".bit", ".crt", ".d64", ".d81", ".elf", ".g64",
+    ".2mg", ".adf", ".bin", ".bit", ".crt", ".d64", ".d81", ".elf", ".g64", ".hdf",
     ".fds", ".gen", ".hex", ".img", ".mem", ".mif", ".nes", ".po", ".prg", ".rbf", ".reu", ".smd",
     ".rom", ".tap", ".t64", ".woz",
 }
@@ -29,6 +29,16 @@ C64_ROM_PATHS = (
     "third_party/c64/ROMs/kernal.901227-03.bin",
     "third_party/c64/ROMs/characters.901225-01.bin",
 )
+AMIGA_CPU_TABLES = {
+    # CPU implementation data, not Amiga system ROMs. Imports are pinned in
+    # amiga.import.json; port_amiga_core.py reproduces the two .hex files.
+    "third_party/amiga/upstream/rtl/fx68k/microrom.mem": "9d13082be0cf4b04bff887e6da23de84f9f2ee4321f3a2576b4f9540615dece6",
+    "third_party/amiga/upstream/rtl/fx68k/nanorom.mem": "b3998009fb10605e8468cddf22fdd799a9792ba86f449de2e30615cfcefbeece",
+    "third_party/amiga/upstream/rtl/tg68k/m68k_cyc_idx.mif": "cd8dadfcd7dc879320a46ea849aa7724792d71bbab59e378058ea243926be3b5",
+    "third_party/amiga/upstream/rtl/tg68k/m68k_ea_idx.mif": "6b83022a0c93c1eb76b6f22756377f673afac8779044c3dcd966db84c2ab5078",
+    "hdl/core/amiga/ports/m68k_cyc_idx.hex": "b5820dbf511611f47c9cc277605055c173903ffd3b289ef41564c504520c7657",
+    "hdl/core/amiga/ports/m68k_ea_idx.hex": "c22e171419a5a56e640c9d3b41692ff3df4571994bad185406b62e9028c261fa",
+}
 ALLOWED_RESTRICTED_FILES = {
     # Open-source SameBoy-derived bootstrap, plus its deterministic Vivado/
     # readmemh representation. Both are pinned and covered by the MIT notice.
@@ -36,6 +46,7 @@ ALLOWED_RESTRICTED_FILES = {
     "hdl/core/gameboy/boot/cgb_boot.mem",
     # GPL font derived from Appletini fb16 at the commit in licenses/files.csv.
     FONT_PATH,
+    *AMIGA_CPU_TABLES,
 }
 
 
@@ -75,6 +86,19 @@ def sha256(path: Path) -> str:
 
 def covered(path: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
+
+
+def check_amiga_cpu_tables(errors: list[str]) -> None:
+    for relative, expected in AMIGA_CPU_TABLES.items():
+        target = ROOT / relative
+        if not target.is_file():
+            errors.append("Amiga CPU source table is absent: " + relative)
+        else:
+            # Generated readmemh text has portable LF/CRLF representations;
+            # imported control stores retain their exact upstream bytes.
+            actual = hashlib.sha256(target.read_text().encode()).hexdigest() if target.suffix == ".hex" else sha256(target)
+            if actual != expected:
+                errors.append("Amiga CPU source table differs from pinned bytes: " + relative)
 
 
 def check_c64_rom_provenance(errors: list[str]) -> None:
@@ -152,6 +176,7 @@ def main() -> int:
             errors.append(f"source has no license-list row: {path}")
 
     check_c64_rom_provenance(errors)
+    check_amiga_cpu_tables(errors)
 
     font = ROOT / FONT_PATH
     if not font.is_file():

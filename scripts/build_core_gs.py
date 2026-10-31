@@ -9,4 +9,5 @@ import build_phos1
 build_phos1.BUILD_ID='4D000400'
 build_phos1.DEFAULT_OUTPUT=build_phos1.ROOT / 'build/core-gs3/hardware'
 build_phos1.MATRIX['apple-iigs']=('APPLE_IIGS',False,False)
+build_phos1.MATRIX['amiga']=('AMIGA',False,False)
 if __name__=='__main__':raise SystemExit(build_phos1.main())

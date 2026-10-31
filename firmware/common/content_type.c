@@ -7,6 +7,7 @@
 #include "multitini_genesis_content.h"
 #include "multitini_nes_content.h"
 #include "multitini_iigs_interface.h"
+#include "multitini_amiga_content.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -74,6 +75,8 @@ mt_content_type_t mt_content_classify(const char *path)
         extension_is(extension, "2mg")) return MT_CONTENT_IIGS_HDD;
     if (extension_is(extension, "woz")) return MT_CONTENT_IIGS_WOZ;
     if (extension_is(extension, "dsk")) return MT_CONTENT_IIGS_FLOPPY;
+    if (extension_is(extension, "adf")) return MT_CONTENT_AMIGA_ADF;
+    if (extension_is(extension, "hdf")) return MT_CONTENT_AMIGA_HDF;
     return MT_CONTENT_UNKNOWN;
 }
 
@@ -100,7 +103,7 @@ bool mt_content_supported_first_release(mt_content_type_t type)
            type == MT_CONTENT_VECTREX_BASIC || type == MT_CONTENT_VECTREX_OVERLAY ||
            type == MT_CONTENT_GENESIS_CART || type == MT_CONTENT_GENESIS_SMD ||
            type == MT_CONTENT_IIGS_HDD || type == MT_CONTENT_IIGS_WOZ ||
-           type == MT_CONTENT_IIGS_FLOPPY;
+           type == MT_CONTENT_IIGS_FLOPPY || type == MT_CONTENT_AMIGA_ADF || type == MT_CONTENT_AMIGA_HDF;
 }
 
 bool mt_content_may_write_first_release(mt_content_type_t type)
@@ -130,6 +133,8 @@ const char *mt_content_type_name(mt_content_type_t type)
     case MT_CONTENT_IIGS_HDD: return "Apple IIgs block disk";
     case MT_CONTENT_IIGS_WOZ: return "Apple IIgs WOZ floppy";
     case MT_CONTENT_IIGS_FLOPPY: return "Apple IIgs sector floppy";
+    case MT_CONTENT_AMIGA_ADF: return "Amiga DD ADF floppy";
+    case MT_CONTENT_AMIGA_HDF: return "Amiga IDE hard disk";
     case MT_CONTENT_UNKNOWN: return "unknown";
     }
     return "unknown";
@@ -363,6 +368,11 @@ mt_content_validation_t mt_content_inspect(mt_content_type_t type,
         }
         break;
     }
+    case MT_CONTENT_AMIGA_ADF:
+    case MT_CONTENT_AMIGA_HDF:
+        status=mt_amiga_media_validate(type==MT_CONTENT_AMIGA_ADF ? 0U:2U,size);
+        if(status==MT_CONTENT_VALID)result.payload_size=size;
+        break;
     case MT_CONTENT_TAP_FUTURE:
     case MT_CONTENT_IIGS_HDD:
     case MT_CONTENT_IIGS_WOZ:

@@ -16,7 +16,7 @@ class BuildInputTests(unittest.TestCase):
     def test_hdl_manifest_is_unique_and_complete(self):
         entries = []
         sections = {name: [] for name in
-                    ("common", "c64", "gbc", "vectrex", "genesis", "apple_iigs", "nes")}
+                    ("common", "c64", "gbc", "vectrex", "genesis", "apple_iigs", "nes", "amiga")}
         languages = {}
         active_section = "common"
         manifest = ROOT / "hdl" / "hdl_sources.txt"
@@ -359,7 +359,7 @@ class BuildInputTests(unittest.TestCase):
             'set machine "SUPERVISOR"',
             "set active_machine 2",
             "MULTITINI_C64_VIDEO_STANDARD must be PAL or NTSC",
-            "MULTITINI_MACHINE must be SUPERVISOR, C64, GBC, VECTREX, GENESIS, APPLE_IIGS, or NES",
+            "MULTITINI_MACHINE must be SUPERVISOR, C64, GBC, VECTREX, GENESIS, APPLE_IIGS, NES, or AMIGA",
             "MULTITINI_GENESIS_PAL must be 0 or 1",
             "GENESIS_PAL_MODE=1'b${genesis_pal_mode}",
             "CONFIG.PCW_USE_S_AXI_HP2 {1}",
@@ -377,12 +377,12 @@ class BuildInputTests(unittest.TestCase):
         for value in required:
             self.assertIn(value, script)
 
-    def test_c64_and_apple_iigs_hp2_use_the_machine_clock(self):
+    def test_c64_apple_iigs_and_amiga_hp2_use_the_machine_clock(self):
         script = (ROOT / "scripts" / "create_project.tcl").read_text()
         associations = script.split(
             'if {$machine eq "C64"} {\n    set_property -dict [list CONFIG.ASSOCIATED_BUSIF', 1
         )[1].split("\n}\n", 1)[0]
-        c64, rest = associations.split('\n} elseif {$machine eq "APPLE_IIGS"} {\n', 1)
+        c64, rest = associations.split('\n} elseif {$machine in {APPLE_IIGS AMIGA}} {\n', 1)
         iigs, other = rest.split("\n} else {\n", 1)
         self.assertIn("{M_AXI_GP0_0:S_AXI_HP0_0:S_AXI_HP1_0}", c64)
         self.assertIn("CONFIG.ASSOCIATED_BUSIF {S_AXI_HP2_0:S_AXI_HP3_0}", c64)
@@ -401,7 +401,7 @@ class BuildInputTests(unittest.TestCase):
         self.assertNotIn("S_AXI_HP2_0", other.split("$control_clk", 1)[1])
 
         self.assertIn(
-            'if {$machine in {C64 APPLE_IIGS}} {\n'
+            'if {$machine in {C64 APPLE_IIGS AMIGA}} {\n'
             '    connect_bd_net [get_bd_pins $c64_wiz/clk_out1] [get_bd_pins $ps/S_AXI_HP2_ACLK]\n'
             '} else {\n'
             '    connect_bd_net [get_bd_pins $ps/FCLK_CLK0] [get_bd_pins $ps/S_AXI_HP2_ACLK]\n}', script)
