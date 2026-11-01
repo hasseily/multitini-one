@@ -49,9 +49,12 @@ typedef struct {
 } mt_amiga_ide_profile_t;
 /* Optional host timing only: no reset, settings, media or FIFO operations.
  * Stop before printing. Snapshot of a stopped run never calls the timer.
- * Read bytes include partial backend returns; FIFO bytes require success.
+ * SD calls/time/bytes describe actual backend fills, including partial returns.
+ * Read sectors and drive counters count logical 512-byte sectors, including
+ * cache hits; FIFO bytes require success. Cache copying is ATA-other work.
  * Histogram: 1,2,3..4,5..8,9..16,17..32,33..64,65..128,129..256 sectors.
- * Read window: first SD read start through last successful READ-sector ACK;
+ * Read window: first logical READ attempt through last successful sector ACK
+ * (also valid if profiling starts during a command with cached sectors);
  * offsets are relative to profile start, bytes are ACK-published full sectors.
  * The window includes inter-command gaps. ATA other includes write journals.
  * DRQ-to-next-request intervals overlap outside ticks and are NON-additive:

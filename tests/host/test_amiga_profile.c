@@ -48,7 +48,10 @@ int main(void)
     ticks+=30U;command(0x20U,0U,6U,1U);amiga_content_service_poll();
     p=snapshot();assert(p.running && p.valid && p.polls==3U && p.req4==2U && p.req5==1U);
     assert(p.read_commands==2U && p.requested_read_sectors==4U && p.read_command_hist[2]==1U && p.read_command_hist[0]==1U);
-    assert(p.sd_read_calls==3U && p.read_sectors==3U && p.read_bytes==1536U && p.sd_read_ticks==300U && p.sd_read_max_ticks==100U);
+    /* First command fetches all three explicitly requested sectors, although
+     * a new command replaces it after two are served. Backend bytes/calls
+     * describe fills; logical sectors and published bytes describe service. */
+    assert(p.sd_read_calls==2U && p.read_sectors==3U && p.read_bytes==2048U && p.sd_read_ticks==200U && p.sd_read_max_ticks==100U);
     assert(p.fifo_calls==3U && p.fifo_bytes==1536U && p.fifo_ticks>0U && p.ata_other_ticks>0U && p.fdd_ticks>0U);
     assert(p.sequential_reads==1U && p.nonsequential_reads==2U && p.drq_intervals==2U && p.max_drq_to_request_ticks>=200U);
     assert(p.read_window_started && p.first_read_ticks>=50U && p.last_read_ticks>p.first_read_ticks);
@@ -68,8 +71,8 @@ int main(void)
     ticks=UINT64_MAX-10U;assert(amiga_content_service_profile_start(timer,&ticks)==0);ticks+=20U;
     amiga_content_service_profile_stop();p=snapshot();assert(p.valid && p.elapsed_ticks==20U && p.outside_ticks==20U);
     assert(amiga_content_service_profile_start(timer,&ticks)==0);sd_cost=UINT64_MAX/2U+1U;
-    command(0x20U,0U,0U,2U);amiga_content_service_poll();assert(snapshot().running);
-    ide_request=5U;amiga_content_service_poll();p=snapshot();
+    command(0x20U,0U,0U,1U);amiga_content_service_poll();assert(snapshot().running);
+    command(0x20U,0U,1U,1U);amiga_content_service_poll();p=snapshot();
     assert(!p.running && !p.valid && p.reason==MT_AMIGA_PROFILE_OVERFLOW && !amiga_content_service_faulted());sd_cost=100U;
     /* A real service lifecycle invalidates the run but preserves mounted media. */
     assert(amiga_content_service_profile_start(timer,&ticks)==0);assert(amiga_content_service_boot()==0);

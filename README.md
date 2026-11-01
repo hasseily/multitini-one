@@ -5,6 +5,12 @@ It runs C64, Game Boy Color, Vectrex, Genesis / Mega Drive and Apple IIgs
 machines through a shared supervisor, menu, input, audio, storage and
 core-loading system. It does not use an Apple II host.
 
+ARM M0.8.0dev11 adds bounded 16 KiB sequential HDF read-ahead for Amiga,
+using the existing FPGA 817. The update passed 132 host tests and boots
+Workbench on the card. SysInfo DH0 rises from 952,096 to 1,370,090 bytes/s;
+independent host throughput rises 38.2%. See the
+[read-ahead record](docs/AMIGA_M080DEV11.md) for the matched measurements.
+
 The Amiga development update, ARM M0.8.0dev10 / FPGA 817, adds four
 Workbench display choices, 68020 14/28 MHz options, reset shortcuts, sector
 block transfers and native Fast IDE with a Classic compatibility option.

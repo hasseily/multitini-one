@@ -7,6 +7,7 @@
 #define AM_PATH 512U
 #define AM_NAME (MT_AMIGA_MEDIA_NAME_MAX+1U)
 #define AM_SETTINGS (24U+MT_AMIGA_DRIVE_COUNT*AM_NAME)
+#define AM_READ_AHEAD_SECTORS 32U
 typedef struct {
     mt_sd_file_t *file;
     uint64_t size;
@@ -33,6 +34,12 @@ static mt_clock_time_t cached_clock;
 static bool cached_clock_valid;
 static uint32_t clock_now_ms;
 static struct { uint32_t lba,left;uint8_t command,drive,task_head;bool active,captured,lba_mode; } ata;
+/* One command's consecutive HDF sectors. No speculative reads past its ATA
+ * count, no floppy/IDENTIFY cache, and no dirty/write-back data. */
+_Alignas(32) static uint8_t read_ahead[AM_READ_AHEAD_SECTORS*MT_AMIGA_SECTOR_BYTES];
+static struct { am_drive_t *drive;mt_sd_file_t *file;uint32_t lba;unsigned used,count; } read_cache;
+static void invalidate_read_cache(void)
+{ read_cache.drive=NULL;read_cache.file=NULL;read_cache.used=0U;read_cache.count=0U; }
 static mt_amiga_ide_profile_t profile;
 static uint64_t (*profile_timer)(void *);
 static void *profile_context;
@@ -101,7 +108,7 @@ static uint32_t le32(const uint8_t *p)
 static void put32(uint8_t *p,uint32_t v)
 { for(unsigned i=0U;i<4U;++i)p[i]=(uint8_t)(v>>(i*8U)); }
 static int fail(const char *message)
-{ profile_invalidate(MT_AMIGA_PROFILE_IO_ERROR);(void)snprintf(error,sizeof(error),"%s",message);faulted=true;return -1; }
+{ invalidate_read_cache();profile_invalidate(MT_AMIGA_PROFILE_IO_ERROR);(void)snprintf(error,sizeof(error),"%s",message);faulted=true;return -1; }
 static int sd_fail(mt_sd_result_t r)
 { return fail(mt_sd_status_name(r.status)); }
 static bool path(char *out,const char *name)
@@ -184,6 +191,7 @@ static void settings_load(void)
 }
 static int apply_journal(am_drive_t *d)
 {
+    invalidate_read_cache();
     bool found=false;d->pending=true;
     if(d->uncommitted) {
         const mt_sd_result_t saved=mt_sd_storage_journal_replace(d->journal,d->recovery,d->retained,sizeof(d->retained));
@@ -209,6 +217,7 @@ static int apply_journal(am_drive_t *d)
 }
 static int disk_write(am_drive_t *d,uint32_t lba)
 {
+    invalidate_read_cache();
     const uint64_t offset=(uint64_t)lba*512U;
     if(d->file==NULL || !d->writable || offset>d->size || d->size-offset<512U)return fail("Amiga disk write out of bounds or protected");
     memset(journal_wire,0,sizeof(journal_wire));memcpy(journal_wire,"MTAMBLK1",8U);
@@ -218,34 +227,59 @@ static int disk_write(am_drive_t *d,uint32_t lba)
     memcpy(d->retained,journal_wire,sizeof(d->retained));d->pending=true;d->uncommitted=true;
     return apply_journal(d);
 }
-static int disk_read(am_drive_t *d,uint32_t lba)
+static int disk_read_backend(am_drive_t *d,uint32_t lba,uint8_t *data,size_t bytes)
 {
     const uint64_t offset=(uint64_t)lba*512U;
-    if(d->file==NULL || offset>d->size || d->size-offset<512U)return fail("Amiga disk read out of bounds");
+    if(d->file==NULL || offset>d->size || d->size-offset<bytes)return fail("Amiga disk read out of bounds");
     const bool timed=profile.running && profile_ata;
     const uint64_t began=timed ? profile_now():0U;
-    if(timed) {
-        profile_add(&profile.sd_read_calls,1U);
-        if(!profile.read_window_started) {
-            profile.read_window_started=true;profile.first_read_ticks=began-profile_started;
-        }
-    }
+    if(timed)profile_add(&profile.sd_read_calls,1U);
     mt_sd_result_t r=mt_sd_file_seek(d->file,(int64_t)offset,SEEK_SET);
-    if(r.status==MT_SD_OK)r=mt_sd_file_read(d->file,sector,512U);
+    size_t received=0U;
+    if(r.status==MT_SD_OK) { r=mt_sd_file_read(d->file,data,bytes);received=r.size; }
     if(timed) {
         profile_span(&profile.sd_read_ticks,&profile.sd_read_max_ticks,profile_now()-began);
-        profile_add(&profile.read_bytes,r.size);
-        if(r.status==MT_SD_OK && r.size==512U) {
-            profile_add(&profile.read_sectors,1U);
-            const unsigned disk=(unsigned)(d-&drives[2]);
-            if(disk<2U) {
-                profile_add(profile_lba_seen[disk] && profile_next_lba[disk]==lba ?
-                    &profile.sequential_reads:&profile.nonsequential_reads,1U);
-                profile_lba_seen[disk]=true;profile_next_lba[disk]=lba+1U;
-            }
+        profile_add(&profile.read_bytes,received);
+    }
+    /* Even a complete prefix of a failed/short batch is not published. A
+     * FatFs read error may be sticky; preserve the existing error path. */
+    if(r.status!=MT_SD_OK || r.size!=bytes)return sd_fail(r.status==MT_SD_OK ? (mt_sd_result_t){MT_SD_READ_FAILED,0U,r.size}:r);
+    return 0;
+}
+static int disk_read(am_drive_t *d,uint32_t lba)
+{
+    if(disk_read_backend(d,lba,sector,sizeof(sector))!=0)return -1;
+    ++d->reads;return 0;
+}
+static int ata_read_sector(am_drive_t *d,uint32_t lba)
+{
+    const bool timed=profile.running && profile_ata;
+    if(timed && !profile.read_window_started) {
+        profile.read_window_started=true;profile.first_read_ticks=profile_now()-profile_started;
+    }
+    if(read_cache.drive!=d || read_cache.file!=d->file || read_cache.used>=read_cache.count ||
+       lba<read_cache.lba || lba-read_cache.lba!=read_cache.used) {
+        invalidate_read_cache();
+        const uint64_t offset=(uint64_t)lba*512U;
+        if(d->file==NULL || offset>d->size || d->size-offset<512U || ata.left==0U)
+            return fail("Amiga disk read out of bounds");
+        unsigned count=ata.left<AM_READ_AHEAD_SECTORS ? (unsigned)ata.left:AM_READ_AHEAD_SECTORS;
+        const uint64_t remaining=(d->size-offset)/512U;
+        if(remaining<count)count=(unsigned)remaining;
+        if(disk_read_backend(d,lba,read_ahead,(size_t)count*512U)!=0)return -1;
+        read_cache.drive=d;read_cache.file=d->file;read_cache.lba=lba;read_cache.count=count;
+    }
+    memcpy(sector,read_ahead+(size_t)read_cache.used*512U,sizeof(sector));
+    if(++read_cache.used==read_cache.count)invalidate_read_cache();
+    if(timed) {
+        profile_add(&profile.read_sectors,1U);
+        const unsigned disk=(unsigned)(d-&drives[2]);
+        if(disk<2U) {
+            profile_add(profile_lba_seen[disk] && profile_next_lba[disk]==lba ?
+                &profile.sequential_reads:&profile.nonsequential_reads,1U);
+            profile_lba_seen[disk]=true;profile_next_lba[disk]=lba+1U;
         }
     }
-    if(r.status!=MT_SD_OK || r.size!=512U)return sd_fail(r.status==MT_SD_OK ? (mt_sd_result_t){MT_SD_READ_FAILED,0U,r.size}:r);
     ++d->reads;return 0;
 }
 static int floppy_poll(bool *writing)
@@ -319,6 +353,7 @@ static void identify(am_drive_t *d)
 }
 static int ata_status(uint16_t status,uint8_t err)
 {
+    if(status&0x0100U)invalidate_read_cache();
     if(status&0x0100U)status|=0x0400U; /* ATA errors complete with IRQ too. */
     int r=ide_write(0U,(uint16_t)(1U|((uint16_t)err<<8U)));
     if(r==0)r=ide_write(5U,(uint16_t)(status|ata.task_head));
@@ -377,6 +412,7 @@ static int ata_poll(void)
     }
     if(request==0U)return 0;
     if(request==6U) {
+        invalidate_read_cache();
         profile_invalidate(MT_AMIGA_PROFILE_LIFECYCLE);
         ata.active=false;ata.captured=false;ata.task_head=0xa0U;
         for(unsigned d=2U;d<MT_AMIGA_DRIVE_COUNT;++d) { drives[d].heads=16U;drives[d].sectors=63U; }
@@ -384,6 +420,7 @@ static int ata_poll(void)
         return ata_status(0x5000U,1U);
     }
     if(request==4U) {
+        invalidate_read_cache();
         uint16_t regs[6];for(unsigned i=0U;i<6U;++i)if(ide_read(i,&regs[i])!=0)return -1;
         ata.drive=(uint8_t)(2U+((regs[5]>>4U)&1U));ata.command=(uint8_t)(regs[5]>>8U);
         ata.task_head=(uint8_t)regs[5];
@@ -433,7 +470,15 @@ static int ata_poll(void)
         }
         if(d->pending)return -1;
     } else {
-        if(disk_read(d,ata.lba)!=0 || ata_data(false)!=0)return -1;
+        if(ata_read_sector(d,ata.lba)!=0)return -1;
+        /* A guest reset can arrive while a synchronous SD batch is in
+         * progress. Do not overwrite its pending reset with old data/ACK.
+         * This also checks a cache hit before taking native FIFO ownership. */
+        if(((link->read32(link->context,MT_AMIGA_HOST_PORT)>>16U)&7U)==6U) {
+            invalidate_read_cache();ata.active=false;ata.captured=false;
+            profile_invalidate(MT_AMIGA_PROFILE_LIFECYCLE);return 0;
+        }
+        if(ata_data(false)!=0)return -1;
     }
     ++ata.lba;--ata.left;
     const uint16_t next_sector=(uint16_t)(ata.lba_mode ? ata.lba&255U:ata.lba%d->sectors+1U);
@@ -454,6 +499,7 @@ static int ata_poll(void)
 }
 void amiga_content_service_init(mt_core_link_t *l,const char *media_root,mt_link_progress_fn p,void *context)
 {
+    invalidate_read_cache();
     profile_invalidate(MT_AMIGA_PROFILE_LIFECYCLE);
     link=l;progress=p;progress_context=context;memset(drives,0,sizeof(drives));memset(remembered,0,sizeof(remembered));
     root[0]='\0';rom_root[0]='\0';error[0]='\0';ready=false;faulted=false;paused=true;settings_invalid=false;bulk_failed=false;ata.active=false;
@@ -473,6 +519,7 @@ void amiga_content_service_init(mt_core_link_t *l,const char *media_root,mt_link
 }
 int amiga_content_service_boot(void)
 {
+    invalidate_read_cache();
     profile_invalidate(MT_AMIGA_PROFILE_LIFECYCLE);
     if(link==NULL || root[0]=='\0' || settings_invalid)return fail("Amiga service not initialized");
     if(amiga_content_service_prepare_reset()!=0 || reset(true)!=0)return -1;
@@ -531,6 +578,7 @@ mt_link_result_t amiga_content_service_set_clock(const mt_clock_time_t *time,uin
 mt_link_result_t amiga_content_service_clock_status(void) { return rtc.result; }
 int amiga_content_service_prepare_reset(void)
 {
+    invalidate_read_cache();
     profile_invalidate(MT_AMIGA_PROFILE_LIFECYCLE);
     if(bulk_failed)return fail("Amiga IDE transfer uncertain; reload core");
     if(link==NULL)return -1;
@@ -550,7 +598,7 @@ int amiga_content_service_prepare_reset(void)
             if(floppy_poll(&writing)!=0 || ata_poll()!=0) { (void)uio(1U,0U);return -1; }
             pending=ata.active || ((link->read32(link->context,MT_AMIGA_HOST_PORT)>>16U)&7U)!=0U;
             for(unsigned d=0U;d<MT_AMIGA_DRIVE_COUNT;++d)pending|=drives[d].pending;
-            if(!writing && !pending) { paused=true;return 0; }
+            if(!writing && !pending) { invalidate_read_cache();paused=true;return 0; }
             if(uio(1U,0U)!=0)return -1;
         }
         if(progress!=NULL)progress(progress_context);
@@ -560,12 +608,14 @@ int amiga_content_service_prepare_reset(void)
 }
 int amiga_content_service_resume_after_reset(void)
 {
+    invalidate_read_cache();
     if(!ready)return amiga_content_service_boot();
     if(drive_status()!=0 || ide_presence()!=0 || uio(1U,0U)!=0)return -1;
     paused=false;ata.active=false;return 0;
 }
 int amiga_content_service_mount(unsigned drive,const char *name)
 {
+    invalidate_read_cache();
     profile_invalidate(MT_AMIGA_PROFILE_LIFECYCLE);
     if(drive>=MT_AMIGA_DRIVE_COUNT || !mt_amiga_media_path_valid(name))return fail("Amiga media path invalid");
     am_drive_t *const d=&drives[drive];if(d->file!=NULL)return fail("Eject Amiga disk before mounting another");
@@ -591,6 +641,7 @@ int amiga_content_service_mount(unsigned drive,const char *name)
 }
 int amiga_content_service_eject(unsigned drive)
 {
+    invalidate_read_cache();
     profile_invalidate(MT_AMIGA_PROFILE_LIFECYCLE);
     if(drive>=MT_AMIGA_DRIVE_COUNT)return fail("Amiga drive invalid");
     const bool running=ready && !paused;
@@ -604,6 +655,7 @@ int amiga_content_service_eject(unsigned drive)
 }
 int amiga_content_service_shutdown(void)
 {
+    invalidate_read_cache();
     if(amiga_content_service_prepare_reset()!=0)return -1;
     /* A partial close failure must reopen earlier handles on rollback too. */
     ready=false;
@@ -615,6 +667,7 @@ int amiga_content_service_shutdown(void)
 }
 int amiga_content_service_retry(void)
 {
+    invalidate_read_cache();
     if(bulk_failed)return fail("Amiga IDE transfer uncertain; reload core");
     if(settings_invalid)return fail("Amiga settings invalid; retain file for recovery");
     for(unsigned i=0U;i<MT_AMIGA_DRIVE_COUNT;++i)if(drives[i].pending && apply_journal(&drives[i])!=0)return -1;
