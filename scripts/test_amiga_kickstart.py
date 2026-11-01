@@ -40,6 +40,7 @@ def fixture(cycles: int) -> str:
     always @(posedge clk)consumed_tick<=!reset && chip_tick;
     multitini_amiga_video_normalizer normalizer(
         .clk(clk),.reset(reset),.ready(!guest_reset),.chip_tick(consumed_tick),
+        .capture_mode(2'd0),.native_lace(1'b0),.diw_hstart(9'd129),.diw_vstart(11'd44),
         .hsync_n(video_hs),.vsync_n(video_vs),.ntsc(video_ntsc),.field_short(video_field),.hblank(video_hb),.vblank(video_vb),.rgb(video_rgb),
         .scan_x(scan_x),.scan_y(scan_y),.rgb565(scan_pixel),.frame_start(scan_start),.valid(scan_valid),.malformed_frames(malformed));
     reg [15:0] frame_pixels[0:640*512-1];

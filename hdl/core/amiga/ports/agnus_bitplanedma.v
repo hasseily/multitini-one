@@ -39,6 +39,8 @@ module agnus_bitplanedma (
   input  wire           dmaena,           // enable dma input
   input  wire [ 11-1:0] vpos,             // vertical position counter
   input  wire [  9-1:0] hpos,             // agnus internal horizontal position counter (advanced by 4 CCK)
+  output wire [8:0] diw_hstart,diw_hstop,
+  output wire [10:0] diw_vstart,diw_vstop,
   output reg            hde,              // video data enable (horizontal)
   output wire           dma,              // true if bitplane dma engine uses it's cycle
   input  wire [  9-1:1] reg_address_in,   // register address inputs
@@ -592,5 +594,10 @@ always @ (*) begin
 end
 
 
+// Read-only board capture metadata; native register behavior is unchanged.
+assign diw_hstart=hdiwstrt;
+assign diw_hstop=hdiwstop;
+assign diw_vstart=vdiwstrt;
+assign diw_vstop=vdiwstop;
 endmodule
 

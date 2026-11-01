@@ -550,6 +550,72 @@ static void test_c64_easyflash_rows(void)
     check(row != NULL && strcmp(row->value, "Disable") == 0, "the jumper shows Disable");
 }
 
+static const mt_menu_item_t *core_row(const mt_menu_view_t *view,const char *label)
+{
+    for(size_t i=0U;i<view->core_option_count;++i)
+        if(strcmp(view->core_options[i].label,label)==0)return &view->core_options[i];
+    return NULL;
+}
+static void test_amiga_resolution(void)
+{
+    mt_core_frontend_t frontend;
+    mt_core_frontend_state_t state={0};
+    mt_menu_view_t view={0};
+    state.core_id=MT_AMIGA_CORE_ID;state.services_ready=true;state.amiga_config.cpu=MT_AMIGA_CPU_STOCK;
+    state.amiga_display_applied=UINT8_MAX;
+    mt_core_frontend_apply(&frontend,&state,&view);
+    check(strcmp(view.core_description,"Amiga")==0,"Amiga core has its stable user-facing name");
+    const mt_menu_item_t *row=core_row(&view,"Resolution");
+    check(row!=NULL && !row->enabled && strstr(row->value,"Unavailable")!=NULL &&
+          strstr(row->help,"MTDisplay")!=NULL,"legacy/helper-absent resolution is disabled with installation help");
+    check(row->action==MT_MENU_ACTION_AMIGA_DISPLAY && row->action!=MT_MENU_ACTION_TOGGLE_CORE_OPTION,
+          "resolution has a separate action from CPU/reset options");
+    state.amiga_display_available=true;state.amiga_display_status="Ready";state.amiga_display_mode_count=3U;
+    mt_core_frontend_apply(&frontend,&state,&view);row=core_row(&view,"Resolution");
+    check(row->enabled && strstr(row->value,"640 x 256")!=NULL && strstr(row->value,"unverified")!=NULL,
+          "default request is standard nonlace while capture remains unverified");
+    state.amiga_display_requested=2U;state.amiga_display_applied=1U;state.amiga_display_pending=true;
+    mt_core_frontend_apply(&frontend,&state,&view);row=core_row(&view,"Resolution");
+    check(!row->enabled && strstr(row->value,"Requested 724 x 566")!=NULL &&
+          strstr(row->value,"active 640 x 512")!=NULL && row->argument==2U,
+          "pending row distinguishes requested and committed sizes");
+    state.amiga_display_pending=false;state.amiga_display_applied=2U;
+    mt_core_frontend_apply(&frontend,&state,&view);row=core_row(&view,"Resolution");
+    check(row->enabled && strcmp(row->value,"724 x 566 / 16 colours")==0 &&
+          strstr(row->help,"do not reset")!=NULL,"committed resolution exposes sixteen colours without reset");
+    check(strstr(row->help,"updated core")!=NULL,"legacy helper/core explains unavailable fourth mode");
+    state.amiga_display_mode_count=4U;state.amiga_display_requested=state.amiga_display_applied=3U;
+    mt_core_frontend_apply(&frontend,&state,&view);row=core_row(&view,"Resolution");
+    check(row->enabled && strcmp(row->value,"1280 x 512 / 4 colours")==0 && row->argument==3U,
+          "fourth mode has four colours and its own selection");
+    row=core_row(&view,"CPU");
+    check(row!=NULL && row->argument==0U && row->action==MT_MENU_ACTION_TOGGLE_CORE_OPTION &&
+          strcmp(row->value,"68000 stock")==0,"display row preserves the stock CPU control contract");
+    state.amiga_config.cpu=MT_AMIGA_CPU_68020_TURBO;mt_core_frontend_apply(&frontend,&state,&view);row=core_row(&view,"CPU");
+    check(row!=NULL && strcmp(row->value,"68020 28 MHz")==0 && view.core_option_count<=MT_MENU_MAX_CORE_OPTIONS,
+          "existing accelerated CPU option and menu capacity are unchanged");
+    check(strstr(row->help,"requires an updated core")!=NULL,"old core describes unavailable14MHz");
+    state.amiga_cpu14_available=true;state.amiga_config.cpu=MT_AMIGA_CPU_68020_14;
+    mt_core_frontend_apply(&frontend,&state,&view);row=core_row(&view,"CPU");
+    check(strcmp(row->value,"68020 14 MHz")==0,"newcore14MHzlabelmatchesactualselector");
+    state.amiga_cpu14_available=false;state.amiga_cpu14_fallback=true;state.amiga_config.cpu=MT_AMIGA_CPU_68020_TURBO;
+    mt_core_frontend_apply(&frontend,&state,&view);row=core_row(&view,"CPU");
+    check(strcmp(row->value,"68020 28 MHz")==0 && strstr(row->help,"preference retained")!=NULL,"legacyfallbackexplicitlylabelsactual28MHz");
+    row=core_row(&view,"IDE mode");
+    check(row!=NULL && row->argument==4U && strcmp(row->value,"Auto / Classic")==0 &&
+        strstr(row->help,"updated core")!=NULL,"old FPGA exposes Classic fallback without discarding Auto preference");
+    state.amiga_fast_ide_available=true;state.amiga_fast_ide_expected=true;
+    mt_core_frontend_apply(&frontend,&state,&view);row=core_row(&view,"IDE mode");
+    check(strcmp(row->value,"Auto / Fast")==0 && strstr(row->help,"restarts")!=NULL,"fast-capable 68020 has an explicit restart option");
+    state.amiga_config.ide_compat=MT_AMIGA_IDE_CLASSIC;state.amiga_fast_ide_expected=false;
+    mt_core_frontend_apply(&frontend,&state,&view);row=core_row(&view,"IDE mode");
+    check(strcmp(row->value,"Classic")==0,"compatibility selection remains explicit");
+    state.amiga_config.ide_compat=MT_AMIGA_IDE_AUTO;state.amiga_config.cpu=MT_AMIGA_CPU_STOCK;
+    mt_core_frontend_apply(&frontend,&state,&view);row=core_row(&view,"IDE mode");
+    check(strcmp(row->value,"Auto / Classic")==0 && strstr(row->help,"68000 always")!=NULL,"stock CPU always keeps Classic IDE");
+    state.amiga_display_pending=true;mt_core_frontend_apply(&frontend,&state,&view);row=core_row(&view,"IDE mode");
+    check(!row->enabled,"a pending display transaction cannot queue an IDE restart");
+}
 int main(void)
 {
     test_profile_lifecycle();
@@ -562,6 +628,7 @@ int main(void)
     test_genesis_profile();
     test_iigs_drive_formats();
     test_iigs_card_speed();
+    test_amiga_resolution();
     puts("Core front-end profile tests passed");
     return 0;
 }

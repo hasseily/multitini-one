@@ -2,6 +2,9 @@
 
 ## Target
 
+The core is named `Amiga`; its current variant is `Amiga 600 ECS PAL`.
+The stable core and variant identifiers remain `amiga` and `pal`.
+
 The Amiga profile targets an expanded A600 with ECS, 2 MiB chip RAM, a
 1 MiB Kickstart ROM aperture, 8 MiB fast RAM, two DD floppy drives and two
 IDE hard disks. Stock mode uses the upstream FX68K 68000 with native bus
@@ -50,22 +53,32 @@ and memory faults also hold native time. Simulations verify ordering and
 coherence under delayed responses. They do not establish real-time memory
 throughput or the maximum sustainable CPU performance on this board.
 
-The revised video path captures the standard 640 by 256 PAL active image
-and independently bob doubles each field to 640 by 512, with a 640-pixel
-capture stride. Native Denise timing determines the crop origin, including
-the different vertical origin of short interlace fields. This fits an
-integer 2x image (1280 by 1024) inside 1080p. Full PAL overscan is outside
-this standard crop. Superhires content is resampled to the hires canvas.
-The ECS profile fixes PAL and rejects NTSC configuration. See
-[video geometry](AMIGA_VIDEO_GEOMETRY.md) for the correction to build 802
+The accepted standard crop captures 640 by 256 PAL pixels and line doubles
+noninterlaced screens to a 640 by 512 canvas. Native Denise timing determines
+the crop origin. This fits an integer 2x image (1280 by 1024) inside 1080p.
+See [video geometry](AMIGA_VIDEO_GEOMETRY.md) for the correction to build 802
 and the passing build 804 timing and desktop-alignment observations.
+
+The display supports woven PAL interlace, maximum 724 by 566 HiRes
+overscan with 16 colours, and 1280 by 512 SuperHiRes with four colours.
+SuperHiRes samples native 28 MHz pixels and explicitly selects larger video
+slots; CPU/chip clocks and machine RAM stay unchanged. FPGA 811 passed strict
+routed timing and CDC gates. ARM 812 with normalized helper07 passes all four
+on-card layout, origin and restore checks; external physical DVI output was
+not separately measured. The ECS profile fixes PAL and rejects NTSC. See
+[Workbench display options](AMIGA_DISPLAY_OPTIONS.md) for guest helper,
+capture geometry, memory layout and compatibility contracts.
 
 ## User content
 
 The package directory is `multitini/cores/amiga/`. Place a user-owned
-Kickstart image at `roms/kick.rom`. Accept exact 256 KiB, 512 KiB or 1 MiB
-images; mirror smaller images across the 1 MiB ROM aperture. Proprietary
-ROM bytes stay outside Git and public source archives.
+Kickstart image at `roms/kick.rom`. The loader accepts exact 256 KiB, 512 KiB
+or 1 MiB images and mirrors smaller images across the 1 MiB ROM aperture.
+A600 Kickstart 3.1 revision 40.063 (512 KiB) has passed board boot tests;
+other ROMs require compatibility testing. Amiga system ROMs are never included
+in the distributable SD data. The canonical
+`sd/multitini/cores/amiga/roms/readme.txt` records the user-supplied filename
+and sizes. Proprietary ROM bytes stay outside Git and source archives.
 
 Place DD ADF floppy images and HDF hard disk images under `media/`. The
 firmware must preserve dirty data and recovery journals when a write fails,
@@ -92,10 +105,11 @@ only after the existing routed timing, CDC, DRC and coverage gates pass.
 The Amiga service-clock ratio is checked before export.
 
 `scripts/package_core_gs.py --include-amiga` adds an explicitly selected,
-qualified Amiga image to the shared package. `--amiga-kickstart PATH`
-includes an explicitly supplied private ROM with its size and SHA-256
-provenance; omit that argument for an empty ROM directory. Existing image
-reuse retains each artifact's original identity and source archives.
+qualified Amiga image to the shared package with the names above and only
+`readme.txt` in its ROM directory. Supply Kickstart separately on the SD card;
+the packager does not accept or embed an Amiga system ROM. Existing image reuse
+retains each artifact's original identity and source archives. These source and
+SD-data labels do not rebuild or relabel retained FPGA or ARM binaries.
 
 ## Qualification
 

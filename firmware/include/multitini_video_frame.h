@@ -7,17 +7,28 @@
 
 #define MT_VIDEO_FRAME_JOB_MAGIC UINT32_C(0x4D544646)
 #define MT_VIDEO_FRAME_JOB_ABI 2U
+#define MT_VIDEO_FRAME_JOB_ABI_WIDE 3U
 #define MT_VIDEO_FRAME_CAPTURE_BASE UINT32_C(0x22000000)
 #define MT_VIDEO_FRAME_OUTPUT_BASE UINT32_C(0x22400000)
 #define MT_VIDEO_FRAME_HISTORY_BASE UINT32_C(0x22800000)
 #define MT_VIDEO_FRAME_HISTORY_BYTES UINT32_C(0x00200000)
 #define MT_VIDEO_FRAME_SLOT_BYTES UINT32_C(0x00100000)
 #define MT_VIDEO_FRAME_SLOT_COUNT 4U
-#define MT_VIDEO_FRAME_MAX_WIDTH 724U
+#define MT_VIDEO_FRAME_LEGACY_MAX_WIDTH 724U
+#define MT_VIDEO_FRAME_LEGACY_MAX_PIXELS 460800U
+#define MT_VIDEO_FRAME_WIDE_OUTPUT_BASE UINT32_C(0x22800000)
+#define MT_VIDEO_FRAME_WIDE_HISTORY_BASE UINT32_C(0x23000000)
+#define MT_VIDEO_FRAME_WIDE_HISTORY_BYTES UINT32_C(0x00400000)
+#define MT_VIDEO_FRAME_WIDE_SOURCE_BASE UINT32_C(0x23800000)
+#define MT_VIDEO_FRAME_WIDE_SLOT_BYTES UINT32_C(0x00200000)
+#define MT_VIDEO_FRAME_RESERVED_BASE MT_VIDEO_FRAME_CAPTURE_BASE
+#define MT_VIDEO_FRAME_RESERVED_BYTES UINT32_C(0x02000000)
+#define MT_VIDEO_FRAME_MMU_SECTION_BYTES UINT32_C(0x00100000)
+#define MT_VIDEO_FRAME_MAX_WIDTH 1280U
 #define MT_VIDEO_FRAME_MAX_HEIGHT 720U
-/* Width and height limits are independent. Keep the original packed-array
- * allocation budget; the padded DDR stride must also fit its own slot. */
-#define MT_VIDEO_FRAME_MAX_PIXELS 460800U
+/* Pure processing/screenshot array budget. Physical DDR validation is a
+ * separate profile decision; legacy slots and bounds remain unchanged. */
+#define MT_VIDEO_FRAME_MAX_PIXELS 655360U
 
 static inline bool mt_video_frame_geometry_valid(uint32_t width, uint32_t height)
 {
@@ -25,6 +36,17 @@ static inline bool mt_video_frame_geometry_valid(uint32_t width, uint32_t height
         height != 0U && height <= MT_VIDEO_FRAME_MAX_HEIGHT &&
         width <= MT_VIDEO_FRAME_MAX_PIXELS / height;
 }
+
+typedef struct {
+    uint32_t capture_base,output_base,history_base,history_bytes;
+    uint32_t source_base,source_bytes,slot_bytes;
+} mt_video_frame_layout_t;
+
+/* Select only a currently committed hardware profile. Legacy global address
+ * macros retain their meaning. Wide DDR addresses require Amiga, SHRES
+ * capability and the exact negotiated 1280x512/2560-byte-stride geometry. */
+bool mt_video_frame_select_layout(uint32_t core_id,uint32_t host_caps,
+    uint32_t width,uint32_t height,uint32_t stride,mt_video_frame_layout_t *layout);
 
 typedef struct {
     uint8_t enabled;
@@ -52,6 +74,11 @@ typedef struct {
     uint32_t stride;
     mt_video_frame_options_t options;
 } mt_video_frame_job_t;
+
+/* The 48-byte reference job remains unchanged. ABI2 uses legacy bounds and
+ * pools; ABI3 explicitly opts in to the exact wide profile. Production CPU1
+ * only prepares controls; its host-only frame reference uses this helper. */
+bool mt_video_frame_job_layout(const mt_video_frame_job_t *,mt_video_frame_layout_t *);
 
 typedef struct {
     uint32_t magic;

@@ -90,6 +90,9 @@ static bool geometry(const mt_screenshot_scene_t *s,geometry_t *g)
     static const uint16_t heights[6]={1080U,768U,800U,1024U,768U,1050U};
     if(s==NULL || s->pixels==NULL || !mt_video_frame_geometry_valid(s->width,s->height) ||
        s->display_mode>=6U || s->video_multiplier>4U) return false;
+    const bool wide=s->core_id==MT_AMIGA_CORE_ID && s->width==1280U && s->height==512U;
+    if(!wide && (s->width>MT_VIDEO_FRAME_LEGACY_MAX_WIDTH ||
+                 s->width>MT_VIDEO_FRAME_LEGACY_MAX_PIXELS/s->height))return false;
     const uint8_t m=s->display_mode;
     g->w=widths[m]; g->h=heights[m]; g->num=g->den=1U;
     if(s->core_id==MT_VECTREX_CORE_ID) { g->num=m==0U ? 3U:1U; g->den=m==0U ? 2U:1U; }
@@ -101,7 +104,7 @@ static bool geometry(const mt_screenshot_scene_t *s,geometry_t *g)
     else return false;
     if(s->video_multiplier!=0U) { g->num=s->video_multiplier;g->den=1U; }
     g->vw=s->width*g->num/g->den; g->vh=s->height*g->num/g->den;
-    if(s->video_multiplier==0U && (g->vw>g->w || g->vh>g->h)) return false;
+    if(s->video_multiplier==0U && !wide && (g->vw>g->w || g->vh>g->h)) return false;
     g->vx=centered_origin(g->w,g->vw);g->vy=centered_origin(g->h,g->vh);
     g->cw=g->vw<g->w ? g->vw:g->w;g->ch=g->vh<g->h ? g->vh:g->h;
     g->cx=g->vx>0 ? (uint32_t)g->vx:0U;g->cy=g->vy>0 ? (uint32_t)g->vy:0U;

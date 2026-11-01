@@ -5,7 +5,9 @@
 module multitini_display_geometry #(
     parameter bit ENABLE_MULTIPLIER=1'b0,
     parameter integer MACHINE=0,
-    parameter integer WIDTH=382, HEIGHT=270
+    parameter integer WIDTH=382, HEIGHT=270,
+    parameter bit CLIP_OVERSIZE_CANVAS=1'b0,
+    parameter bit VIRTUAL_CAPTURE=1'b0
 )(
     input wire [3:0] mode,
     input wire [2:0] multiplier,
@@ -31,7 +33,7 @@ module multitini_display_geometry #(
         logic [3:0] numerator, denominator;
         logic [11:0] width, height, left, top;
         integer signed signed_left,signed_top;
-        integer crop_x,crop_y;
+        integer crop_x,crop_y,full_width,full_height,active_width,active_height;
         logic [9:0] start_x,start_y;
         logic [3:0] start_phase_x,start_phase_y;
         begin
@@ -78,6 +80,35 @@ module multitini_display_geometry #(
                 crop_y=signed_top<0 ? -signed_top : 0;
                 start_x=10'(crop_x/size);start_y=10'(crop_y/size);
                 start_phase_x=4'(crop_x%size);start_phase_y=4'(crop_y%size);
+            end
+            if(CLIP_OVERSIZE_CANVAS)begin
+                // The opt-in wide table may exceed the 12-bit viewport at
+                // manual 4x (1280*4=5120). Center the full integer canvas,
+                // then bound the visible rectangle to HDMI active pixels.
+                // Crop/phase retain that original canvas origin so clipping
+                // does not stretch, wrap or shift the sampled source.
+                active_width=int'(selected_timing[$bits(video_mode_t)-1 -: 12]);
+                active_height=int'(selected_timing[$bits(video_mode_t)-13 -: 12]);
+                // HP3-to-HP0 recapture can use otherwise blank raster clocks.
+                // The PAL wide Auto raster still fits every HDMI line total;
+                // preserve all1280 source pixels on1024/1200-wide outputs.
+                // Timing outputs and final-display clipping remain physical.
+                if(VIRTUAL_CAPTURE && MACHINE==7 && WIDTH==1280 && HEIGHT==512 &&
+                   size==0 && active_width<WIDTH)active_width=WIDTH;
+                full_width=(WIDTH*int'(numerator))/int'(denominator);
+                full_height=(HEIGHT*int'(numerator))/int'(denominator);
+                signed_left=(active_width-full_width)>>>1;
+                signed_top=(active_height-full_height)>>>1;
+                left=signed_left<0 ? 12'd0 : 12'(signed_left);
+                top=signed_top<0 ? 12'd0 : 12'(signed_top);
+                width=12'(full_width>active_width ? active_width : full_width);
+                height=12'(full_height>active_height ? active_height : full_height);
+                crop_x=signed_left<0 ? -signed_left : 0;
+                crop_y=signed_top<0 ? -signed_top : 0;
+                start_x=10'((crop_x*int'(denominator))/int'(numerator));
+                start_y=10'((crop_y*int'(denominator))/int'(numerator));
+                start_phase_x=4'((crop_x*int'(denominator))%int'(numerator));
+                start_phase_y=4'((crop_y*int'(denominator))%int'(numerator));
             end
             geometry_for_mode={numerator,denominator,left,top,width,height,
                 start_x,start_y,start_phase_x,start_phase_y};

@@ -6,9 +6,17 @@
 module multitini_video_framebuffer #(
     parameter bit DYNAMIC_DISPLAY=1'b0,
     parameter integer WIDTH=382,HEIGHT=270,VIEW_X=196,VIEW_Y=0,
+    parameter integer ALT_WIDTH=WIDTH,ALT_HEIGHT=HEIGHT,
+    parameter integer WIDE_WIDTH=WIDTH,WIDE_HEIGHT=HEIGHT,
+    parameter integer SLOT_SHIFT=20,WIDE_SLOT_SHIFT=SLOT_SHIFT,
+    parameter [31:0] CAPTURE_BASE=32'h22000000,OUTPUT_BASE=32'h22400000,HISTORY_BASE=32'h22800000,
+    parameter [31:0] WIDE_CAPTURE_BASE=CAPTURE_BASE,WIDE_OUTPUT_BASE=OUTPUT_BASE,WIDE_HISTORY_BASE=HISTORY_BASE,
+    parameter integer HISTORY_BYTES=2097152,WIDE_HISTORY_BYTES=HISTORY_BYTES,
     parameter integer SCALE_NUM=4,SCALE_DEN=1,
     parameter bit SHARED_PIXEL_RESET=1'b0
 )(
+    input wire source_alt,pixel_source_alt,
+    input wire [1:0] source_profile,pixel_source_profile,
     input wire [11:0] display_view_x, display_view_y, display_view_width, display_view_height,
     input wire [3:0] display_scale_num, display_scale_den,
     input wire [11:0] display_h_active,display_v_active,display_h_total,display_v_total,
@@ -59,11 +67,20 @@ module multitini_video_framebuffer #(
     reg [31:0] capture_error_base,read_error_base,drop_base,underrun_base;
     wire [31:0] producer,capture_drops,capture_errors,read_errors,underruns,active_value;
     wire capture_busy,capture_quiet,reader_busy,reader_quiet,active_valid,submit_ready;
+    localparam bit HAS_WIDE=WIDE_WIDTH!=WIDTH || WIDE_HEIGHT!=HEIGHT;
+    localparam bit HAS_ALT=ALT_WIDTH!=WIDTH || ALT_HEIGHT!=HEIGHT;
+    wire [1:0] control_profile=HAS_WIDE ? (source_profile<=2 ? source_profile:2'd0):{1'b0,HAS_ALT && source_alt};
+    wire [1:0] capture_profile=HAS_WIDE ? (pixel_source_profile<=2 ? pixel_source_profile:2'd0):{1'b0,HAS_ALT && pixel_source_alt};
+    wire [7:0] capture_slot_profile;
+    reg [7:0] output_slot_profile;
     wire scheduler_busy,scheduler_quiet,scheduler_error,hardware_submit;
     wire [31:0] hardware_consumer,hardware_value,processed_frames,deadline_misses;
     wire engine_start,engine_history_reset,engine_busy,engine_done,engine_error;
     wire [1:0] engine_input_slot,engine_output_slot;
     wire [7:0] engine_options;
+    always @(posedge clk)
+        if(!resetn)output_slot_profile<=0;
+        else if(engine_start)output_slot_profile[engine_output_slot*2+:2]<=capture_slot_profile[engine_input_slot*2+:2];
     wire [31:0] engine_errors,engine_cycles,engine_max_stall;
     wire paused=DYNAMIC_DISPLAY && display_pause;
     wire automatic_mode=control[2] || autonomous_owned;
@@ -127,8 +144,10 @@ module multitini_video_framebuffer #(
             12'h188:rd_data=producer;
             12'h18c:rd_data=selected_consumer;
             12'h194:rd_data=active_value;
-            12'h198:rd_data=(HEIGHT<<16)|WIDTH;
-            12'h19c:rd_data=((WIDTH+63)/64)*128;
+            12'h198:rd_data=control_profile==2 ? (WIDE_HEIGHT<<16)|WIDE_WIDTH:
+                control_profile==1 ? (ALT_HEIGHT<<16)|ALT_WIDTH:(HEIGHT<<16)|WIDTH;
+            12'h19c:rd_data=control_profile==2 ? ((WIDE_WIDTH+63)/64)*128:
+                control_profile==1 ? ((ALT_WIDTH+63)/64)*128:((WIDTH+63)/64)*128;
             12'h1a0:rd_data=capture_drops-drop_base;
             12'h1a4:rd_data=(capture_errors-capture_error_base)+(read_errors-read_error_base);
             12'h1a8:rd_data=underruns-underrun_base;
@@ -141,8 +160,12 @@ module multitini_video_framebuffer #(
             default:rd_data=0;
         endcase
     end
-    multitini_video_capture #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.WIDTH(WIDTH),.HEIGHT(HEIGHT),.VIEW_X(VIEW_X),.VIEW_Y(VIEW_Y),
+    multitini_video_capture #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.WIDTH(WIDTH),.HEIGHT(HEIGHT),
+        .ALT_WIDTH(ALT_WIDTH),.ALT_HEIGHT(ALT_HEIGHT),.WIDE_WIDTH(WIDE_WIDTH),.WIDE_HEIGHT(WIDE_HEIGHT),
+        .SLOT_SHIFT(SLOT_SHIFT),.WIDE_SLOT_SHIFT(WIDE_SLOT_SHIFT),.BASE(CAPTURE_BASE),.WIDE_BASE(WIDE_CAPTURE_BASE),
+        .VIEW_X(VIEW_X),.VIEW_Y(VIEW_Y),
         .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN),.SHARED_PIXEL_RESET(SHARED_PIXEL_RESET)) capture_i(
+        .source_alt(capture_profile==1),.source_profile(capture_profile),.source_weave(1'b0),.slot_alt(),.slot_profile(capture_slot_profile),
         .display_view_x(capture_display_view_x),.display_view_y(capture_display_view_y),
         .display_view_width(capture_display_view_width),.display_view_height(capture_display_view_height),
         .display_scale_num(capture_display_scale_num),.display_scale_den(capture_display_scale_den),
@@ -158,9 +181,14 @@ module multitini_video_framebuffer #(
         .awaddr(awaddr),.awlen(awlen),.awsize(awsize),.awburst(awburst),.awvalid(awvalid),.awready(awready),
         .wdata(wdata),.wstrb(wstrb),.wlast(wlast),.wvalid(wvalid),.wready(wready),
         .bresp(bresp),.bvalid(bvalid),.bready(bready));
-    multitini_video_frame_reader #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.WIDTH(WIDTH),.HEIGHT(HEIGHT),.VIEW_X(VIEW_X),.VIEW_Y(VIEW_Y),
+    multitini_video_frame_reader #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.WIDTH(WIDTH),.HEIGHT(HEIGHT),
+        .ALT_WIDTH(ALT_WIDTH),.ALT_HEIGHT(ALT_HEIGHT),.WIDE_WIDTH(WIDE_WIDTH),.WIDE_HEIGHT(WIDE_HEIGHT),
+        .SLOT_SHIFT(SLOT_SHIFT),.WIDE_SLOT_SHIFT(WIDE_SLOT_SHIFT),.BASE(OUTPUT_BASE),.WIDE_BASE(WIDE_OUTPUT_BASE),
+        .VIEW_X(VIEW_X),.VIEW_Y(VIEW_Y),
         .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN),.SHARED_PIXEL_RESET(SHARED_PIXEL_RESET),
         .SHARED_PIXEL_LIVENESS(1'b1)) reader_i(
+        .source_alt(output_slot_profile[selected_value[1:0]*2+:2]==1),
+        .source_profile(output_slot_profile[selected_value[1:0]*2+:2]),.active_alt(),.active_profile(),
         .display_view_x(display_view_x),.display_view_y(display_view_y),
         .display_view_width(display_view_width),.display_view_height(display_view_height),
         .display_scale_num(display_scale_num),.display_scale_den(display_scale_den),
@@ -190,8 +218,15 @@ module multitini_video_framebuffer #(
         .transport_error(transport_error),.busy(scheduler_busy),.quiescent(scheduler_quiet),
         .processed_frames(processed_frames),.deadline_misses(deadline_misses),.sticky_error(scheduler_error));
 
-    multitini_video_frame_engine #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.WIDTH(WIDTH),.HEIGHT(HEIGHT),.STRIDE(((WIDTH+63)/64)*128),
+    multitini_video_frame_engine #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.WIDTH(WIDTH),.HEIGHT(HEIGHT),
+        .ALT_WIDTH(ALT_WIDTH),.ALT_HEIGHT(ALT_HEIGHT),.WIDE_WIDTH(WIDE_WIDTH),.WIDE_HEIGHT(WIDE_HEIGHT),
+        .SLOT_SHIFT(SLOT_SHIFT),.WIDE_SLOT_SHIFT(WIDE_SLOT_SHIFT),
+        .CAPTURE_BASE(CAPTURE_BASE),.OUTPUT_BASE(OUTPUT_BASE),.HISTORY_BASE(HISTORY_BASE),
+        .WIDE_CAPTURE_BASE(WIDE_CAPTURE_BASE),.WIDE_OUTPUT_BASE(WIDE_OUTPUT_BASE),.WIDE_HISTORY_BASE(WIDE_HISTORY_BASE),
+        .HISTORY_BYTES(HISTORY_BYTES),.WIDE_HISTORY_BYTES(WIDE_HISTORY_BYTES),.STRIDE(((WIDTH+63)/64)*128),
         .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN)) engine_i(
+        .source_alt(capture_slot_profile[engine_input_slot*2+:2]==1),
+        .source_profile(capture_slot_profile[engine_input_slot*2+:2]),
         .display_scale_num(display_filter_scale_num),.display_scale_den(display_filter_scale_den),
         .clk(clk),.resetn(resetn),.start(engine_start),.clear_errors(clear_errors),
         .input_slot(engine_input_slot),.output_slot(engine_output_slot),

@@ -2,9 +2,23 @@
 `timescale 1ns/1ps
 module tb_video_frame_engine;
     parameter integer WIDTH=13,HEIGHT=9,JOBS=260,FAULT_TESTS=1;
+    parameter integer ALT_WIDTH=WIDTH,ALT_HEIGHT=HEIGHT;
+    parameter bit SOURCE_ALT=0;
+    parameter integer WIDE_WIDTH=WIDTH,WIDE_HEIGHT=HEIGHT,SOURCE_PROFILE=SOURCE_ALT;
+    parameter integer SLOT_SHIFT=20,WIDE_SLOT_SHIFT=SLOT_SHIFT;
+    localparam integer FRAME_PROFILE=SOURCE_PROFILE;
+    localparam integer SLOT_BYTES=1<<(FRAME_PROFILE==2 ? WIDE_SLOT_SHIFT:SLOT_SHIFT);
+    localparam [31:0] OUTPUT_BASE=FRAME_PROFILE==2 ? 32'h22800000:32'h22400000;
+    localparam [31:0] HISTORY_BASE=FRAME_PROFILE==2 ? 32'h23000000:32'h22800000;
+    parameter bit AUTO_PROFILE_RESET=0;
+    parameter integer WATCHDOG_NS=100000000;
+    localparam integer FRAME_WIDTH=FRAME_PROFILE==2 ? WIDE_WIDTH:FRAME_PROFILE==1 ? ALT_WIDTH:WIDTH;
+    localparam integer FRAME_HEIGHT=FRAME_PROFILE==2 ? WIDE_HEIGHT:FRAME_PROFILE==1 ? ALT_HEIGHT:HEIGHT;
     parameter integer SCALE_NUM=3,SCALE_DEN=2;
-    localparam integer STRIDE=((WIDTH+63)/64)*128,PIXELS=WIDTH*HEIGHT;
-    localparam integer FRAME_WORDS=((WIDTH+3)/4)*HEIGHT,HISTORY_WORDS=(PIXELS+1)/2;
+    localparam integer STRIDE=((FRAME_WIDTH+63)/64)*128,PIXELS=FRAME_WIDTH*FRAME_HEIGHT;
+    localparam integer FRAME_WORDS=((FRAME_WIDTH+3)/4)*FRAME_HEIGHT,HISTORY_WORDS=(PIXELS+1)/2;
+    reg source_alt=SOURCE_ALT;
+    reg [1:0] source_profile=2'(FRAME_PROFILE);
     reg clk=0,resetn=0,clear_errors=0,start=0,history_reset=0;
     always #3.75 clk=!clk;
     reg [1:0] input_slot=0,output_slot=0;
@@ -22,7 +36,10 @@ module tb_video_frame_engine;
     reg rlast=0,rvalid=0,bvalid=0;
     wire [63:0] wdata;
     wire [7:0] wstrb;
-    multitini_video_frame_engine #(.WIDTH(WIDTH),.HEIGHT(HEIGHT),.STRIDE(STRIDE),
+    multitini_video_frame_engine #(.WIDTH(WIDTH),.HEIGHT(HEIGHT),.STRIDE(((WIDTH+63)/64)*128),
+        .ALT_WIDTH(ALT_WIDTH),.ALT_HEIGHT(ALT_HEIGHT),
+        .WIDE_WIDTH(WIDE_WIDTH),.WIDE_HEIGHT(WIDE_HEIGHT),.SLOT_SHIFT(SLOT_SHIFT),.WIDE_SLOT_SHIFT(WIDE_SLOT_SHIFT),
+        .WIDE_OUTPUT_BASE(32'h22800000),.WIDE_HISTORY_BASE(32'h23000000),.WIDE_HISTORY_BYTES(4194304),
         .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN)) dut(.display_scale_num(4'd0),.display_scale_den(4'd0),.*);
 
     reg [15:0] inputs[0:JOBS*PIXELS-1],expected[0:JOBS*PIXELS-1];
@@ -39,8 +56,8 @@ module tb_video_frame_engine;
     reg [31:0] read_address=0,write_address=0;
     reg force_read_stall=0,force_write_stall=0,force_response_stall=0;
     reg compare_values=1;
-    wire [31:0] source_base=32'h22000000+{10'd0,owned_input_slot,20'd0};
-    wire [31:0] output_base=32'h22400000+{10'd0,owned_output_slot,20'd0};
+    wire [31:0] source_base=32'h22000000+owned_input_slot*SLOT_BYTES;
+    wire [31:0] output_base=OUTPUT_BASE+owned_output_slot*SLOT_BYTES;
     // Declared adverse schedule: AR blocked up to8 consecutive clocks,
     // AW up to8, R offers separated by at least one cycle plus periodic
     // stalls, W stalls one in four clocks, B delayed10 clocks. Read/write
@@ -54,13 +71,13 @@ module tb_video_frame_engine;
         reg [63:0] value;
         begin
             value=0;
-            if(address>=source_base && address<source_base+STRIDE*HEIGHT)begin
+            if(address>=source_base && address<source_base+STRIDE*FRAME_HEIGHT)begin
                 offset=address-source_base;row=offset/STRIDE;column=(offset%STRIDE)/2;
-                if(column>=WIDTH)$fatal(1,"Read in source row padding: %h",address);
-                for(lane=0;lane<4;lane=lane+1)if(column+lane<WIDTH)
-                    value[lane*16+:16]=inputs[job*PIXELS+row*WIDTH+column+lane];
-            end else if(address>=32'h22800000 && address<32'h22800000+PIXELS*4)begin
-                index=(address-32'h22800000)/4;
+                if(column>=FRAME_WIDTH)$fatal(1,"Read in source row padding: %h",address);
+                for(lane=0;lane<4;lane=lane+1)if(column+lane<FRAME_WIDTH)
+                    value[lane*16+:16]=inputs[job*PIXELS+row*FRAME_WIDTH+column+lane];
+            end else if(address>=HISTORY_BASE && address<HISTORY_BASE+PIXELS*4)begin
+                index=(address-HISTORY_BASE)/4;
                 value[31:0]=history[index];
                 if(index+1<PIXELS)value[63:32]=history[index+1];
             end else $fatal(1,"Read outside owned source/history: %h",address);
@@ -71,18 +88,18 @@ module tb_video_frame_engine;
         integer offset,row,column,index,lane;
         reg [7:0] expected_strobe;
         begin
-            if(address>=output_base && address<output_base+STRIDE*HEIGHT)begin
+            if(address>=output_base && address<output_base+STRIDE*FRAME_HEIGHT)begin
                 offset=address-output_base;row=offset/STRIDE;column=(offset%STRIDE)/2;expected_strobe=0;
-                if(column>=WIDTH)$fatal(1,"Write in output row padding: %h",address);
-                for(lane=0;lane<4;lane=lane+1)if(column+lane<WIDTH)begin
-                    expected_strobe[lane*2+:2]=2'b11;index=row*WIDTH+column+lane;
+                if(column>=FRAME_WIDTH)$fatal(1,"Write in output row padding: %h",address);
+                for(lane=0;lane<4;lane=lane+1)if(column+lane<FRAME_WIDTH)begin
+                    expected_strobe[lane*2+:2]=2'b11;index=row*FRAME_WIDTH+column+lane;
                     if(compare_values && data[lane*16+:16]!==expected[job*PIXELS+index])
                         $fatal(1,"Output mismatch job%0d pixel%0d got%h expected%h",job,index,data[lane*16+:16],expected[job*PIXELS+index]);
                     output_memory[index]=data[lane*16+:16];output_writes=output_writes+1;
                 end
                 if(strobe!==expected_strobe)$fatal(1,"Bad output byte strobes %h expected%h",strobe,expected_strobe);
-            end else if(address>=32'h22800000 && address<32'h22800000+PIXELS*4)begin
-                index=(address-32'h22800000)/4;expected_strobe=index+1<PIXELS?8'hff:8'h0f;
+            end else if(address>=HISTORY_BASE && address<HISTORY_BASE+PIXELS*4)begin
+                index=(address-HISTORY_BASE)/4;expected_strobe=index+1<PIXELS?8'hff:8'h0f;
                 if(strobe!==expected_strobe)$fatal(1,"Bad history byte strobes");
                 for(lane=0;lane<2;lane=lane+1)if(index+lane<PIXELS)begin
                     if(compare_values && data[lane*32+:32]!==expected_history[job*PIXELS+index+lane])
@@ -119,7 +136,7 @@ module tb_video_frame_engine;
             end
             if(rvalid && rready)begin
                 read_beats_total=read_beats_total+1;
-                if(read_address>=32'h22800000)history_reads=history_reads+1;else source_reads=source_reads+1;
+                if(read_address>=HISTORY_BASE)history_reads=history_reads+1;else source_reads=source_reads+1;
                 rvalid<=0;read_remaining<=read_remaining-1;read_beat<=read_beat+1;
                 read_address<=read_address+8;
                 if(rlast)read_active<=0;
@@ -129,8 +146,8 @@ module tb_video_frame_engine;
                 // avoid inventing an actual out-of-bounds memory access here.
                 rdata<=fault==6 && fault_injected && read_remaining==1?64'd0:memory_read(read_address);
                 rresp<=0;
-                if(!fault_injected && ((fault==1 && read_address<32'h22800000) ||
-                    (fault==2 && read_address>=32'h22800000)))begin rresp<=2;fault_injected<=1;end
+                if(!fault_injected && ((fault==1 && read_address<HISTORY_BASE) ||
+                    (fault==2 && read_address>=HISTORY_BASE)))begin rresp<=2;fault_injected<=1;end
                 rlast<=read_remaining==1;rvalid<=1;
             end
             if(awvalid && awready)begin
@@ -145,8 +162,8 @@ module tb_video_frame_engine;
                 write_address<=write_address+8;write_remaining<=write_remaining-1;write_beat<=write_beat+1;
                 if(wlast)begin
                     write_active<=0;response_pending<=1;response_delay<=10;bresp<=0;
-                    if(!fault_injected && ((fault==3 && write_address>=32'h22800000) ||
-                        (fault==4 && write_address<32'h22800000)))begin bresp<=2;fault_injected<=1;end
+                    if(!fault_injected && ((fault==3 && write_address>=HISTORY_BASE) ||
+                        (fault==4 && write_address<HISTORY_BASE)))begin bresp<=2;fault_injected<=1;end
                 end
             end
             if(response_pending && !force_response_stall)begin
@@ -167,11 +184,19 @@ module tb_video_frame_engine;
             @(negedge clk);
             source_reads=0;history_reads=0;history_writes=0;output_writes=0;write_responses=0;
             for(i=0;i<PIXELS;i=i+1)begin history[i]=old[job*PIXELS+i];output_memory[i]=16'hdead;end
-            input_slot=job%4;output_slot=3-job%4;options=configurations[job][7:0];history_reset=configurations[job][8];
+            input_slot=job%4;output_slot=3-job%4;options=configurations[job][7:0];
+            // The oracle resets history for the first geometry transition,
+            // but the caller deliberately omits explicit HISTORY_RESET.
+            // The engine must detect its base-to-ALT transition itself.
+            history_reset=configurations[job][8] && !(AUTO_PROFILE_RESET && FRAME_PROFILE!=0 && job==0);
             owned_input_slot=input_slot;owned_output_slot=output_slot;
-            start=1;@(negedge clk);start=0;
+            source_alt=FRAME_PROFILE==1;source_profile=2'(FRAME_PROFILE);start=1;@(negedge clk);start=0;
+            if(AUTO_PROFILE_RESET && FRAME_PROFILE!=0 && job==0 && dut.use_history)
+                $fatal(1,"Geometry transition reused history without an explicit reset");
             // Ownership and controls must have been sampled once at START.
             input_slot=~input_slot;output_slot=~output_slot;options=~options;history_reset=!history_reset;
+            source_alt=!SOURCE_ALT;
+            source_profile=FRAME_PROFILE==2 ? 2'd0:2'd2;
         end
     endtask
     task finish_job;
@@ -197,7 +222,7 @@ module tb_video_frame_engine;
         repeat(5)@(negedge clk);resetn=1;
         for(job=0;job<JOBS;job=job+1)begin launch();finish_job(0);end
         $display("PASS frame engine oracle/deadline: %0dx%0d jobs=%0d pixels=%0d cycles=%0d max_stall=%0d bound=2216666",
-            WIDTH,HEIGHT,JOBS,total,cycles,max_stall);
+            FRAME_WIDTH,FRAME_HEIGHT,JOBS,total,cycles,max_stall);
         if(FAULT_TESTS)begin
             job=255;compare_values=0;
             for(f=1;f<=6;f=f+1)begin
@@ -221,5 +246,6 @@ module tb_video_frame_engine;
         end
         $finish;
     end
-    initial begin #100000000;$fatal(1,"Frame engine simulation timeout");end
+    initial begin #WATCHDOG_NS;$fatal(1,"Frame engine simulation timeout busy%0b readstate%0d historyleft%0d oldcount%0d usehistory%0b sourceleft%0d",
+        busy,dut.read_state,dut.history_read_left,dut.old_fifo.count,dut.use_history,dut.source_left);end
 endmodule

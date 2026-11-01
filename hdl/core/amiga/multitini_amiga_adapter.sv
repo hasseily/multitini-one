@@ -3,6 +3,14 @@
 module multitini_amiga_adapter(
     input wire core_clk,reset,core_reset_request,pause_request,clear_load_error,
     input wire control_clk,control_resetn,host_write,
+    input wire host_block_write,host_block_read,
+    input wire [15:0] host_block_address,host_block_read_address,
+    input wire [6:0] host_block_ram_read_address,
+    input wire [3:0] host_block_wstrb,
+    output wire [31:0] host_block_rdata,
+    input wire video_quiescent,
+    output wire video_switch_pending,
+    output wire [1:0] video_capture_mode,
     input wire [31:0] host_command,output wire [31:0] host_status,
     input wire [15:0] input_code,input_value,input wire input_valid,output wire input_ready,
     input wire [7:0] load_data,load_kind,
@@ -15,6 +23,8 @@ module multitini_amiga_adapter(
     output wire [31:0] core_id,output wire ready,load_error,rom_loaded,
     output wire [7:0] video_r,video_g,video_b,
     output wire video_de,video_hsync,video_vsync,video_valid,video_frame_start,
+    output wire video_frame_alt,video_frame_weave,
+    output wire [1:0] video_frame_profile,
     output wire [11:0] video_x,video_y,output wire video_pal,
     output reg signed [23:0] audio_l,audio_r,output reg audio_valid
 );
@@ -41,6 +51,7 @@ module multitini_amiga_adapter(
     wire signed [14:0] native_audio_l,native_audio_r;
     wire [4:0] cpucfg;
     wire [6:0] memcfg;
+    wire ide_fast;
     wire loader_error,config_valid,write_valid,write_ready,write_done,memory_run,memory_error;
     wire [127:0] config_bytes;
     wire [23:0] write_addr;wire [7:0] write_data;
@@ -139,12 +150,24 @@ module multitini_amiga_adapter(
         .memory_valid(memory_valid),.memory_ready(memory_ready),.memory_rdata(memory_rdata),
         .memory_rvalid(memory_rvalid),.memory_fault(memory_fault));
     wire [64:0] native_rtc;
+    wire [15:0] native_display_request,display_read_data;
+    wire [4:0] display_read_address;
+    wire [8:0] diw_hstart,diw_hstop;
+    wire [10:0] diw_vstart,diw_vstop;
     multitini_amiga_host host_i(
         .control_clk(control_clk),.control_resetn(control_resetn),.write(host_write),.command(host_command),.status(host_status),
+        .block_write(host_block_write),.block_read(host_block_read),
+        .block_address(host_block_address),.block_read_address(host_block_read_address),
+        .block_ram_read_address(host_block_ram_read_address),.block_wstrb(host_block_wstrb),.block_rdata(host_block_rdata),
+        .guest_reset(native_stopped),
+        .native_config({3'd0,ide_fast,memcfg,cpucfg}),
         .clk(core_clk),.reset(reset),.chip_tick(chip_tick),
         .io_fpga(io_fpga),.io_uio(io_uio),.io_strobe(io_strobe),.io_din(io_din),.io_wait(io_wait),.io_dout(io_dout),
         .ide_req(ide_req),.ide_address(ide_address),.ide_read(ide_read),.ide_write(ide_write),.ide_wdata(ide_wdata),.ide_rdata(ide_rdata),
-        .native_rtc(native_rtc));
+        .native_rtc(native_rtc),.native_display_request(native_display_request),
+        .display_read_address(display_read_address),.display_read_data(display_read_data),
+        .capture_mode(video_capture_mode),.display_switch_pending(video_switch_pending),
+        .display_quiescent(video_quiescent));
     multitini_amiga_machine amiga_machine(
         .clk_service28(core_clk),.reset(reset),.guest_reset(native_guest_reset),
         .run_enable(memory_run),.clk_chip(chip_clk),.chip_tick(chip_tick),
@@ -158,16 +181,20 @@ module multitini_amiga_adapter(
         .ide_req(ide_req),.ide_address(ide_address),.ide_write(ide_write),.ide_read(ide_read),.ide_wdata(ide_wdata),.ide_rdata(ide_rdata),
         .joy1(native_joy1),.joy2(native_joy2),.mouse_buttons(native_mouse_buttons),.kms_level(native_kms_level),
         .kbd_mouse_type(native_kbd_mouse_type),.kbd_mouse_data(native_kbd_mouse_data),
-        .rtc(native_rtc),.rgb(rgb),.hsync_n(hsync_n),.vsync_n(vsync_n),.hblank(hblank),.vblank(vblank),
+        .rtc(native_rtc),.display_request(native_display_request),
+        .display_read_address(display_read_address),.display_read_data(display_read_data),
+        .diw_hstart(diw_hstart),.diw_hstop(diw_hstop),.diw_vstart(diw_vstart),.diw_vstop(diw_vstop),
+        .rgb(rgb),.hsync_n(hsync_n),.vsync_n(vsync_n),.hblank(hblank),.vblank(vblank),
         .field(field),.lace(lace),.ce_pix(ce_pix),.res(resolution),.ntsc(ntsc),
-        .audio_l(native_audio_l),.audio_r(native_audio_r),.cpu_reset_n(cpu_reset_n),.cpucfg(cpucfg),.memcfg(memcfg),.fdd_led(),.hdd_led());
+        .audio_l(native_audio_l),.audio_r(native_audio_r),.cpu_reset_n(cpu_reset_n),.cpucfg(cpucfg),.memcfg(memcfg),.ide_fast(ide_fast),.fdd_led(),.hdd_led());
     wire [15:0] normalized_rgb;
     wire [31:0] malformed_frames;
     multitini_amiga_video_normalizer normalizer(
-        .clk(core_clk),.reset(reset),.ready(ready),.chip_tick(chip_tick_q),.hsync_n(hsync_n),.vsync_n(vsync_n),
+        .clk(core_clk),.reset(reset),.ready(ready && !video_switch_pending),.chip_tick(chip_tick_q),.hsync_n(hsync_n),.vsync_n(vsync_n),
+        .capture_mode(video_capture_mode),.native_lace(lace),.diw_hstart(diw_hstart),.diw_vstart(diw_vstart),
         .ntsc(ntsc),.hblank(hblank),.vblank(vblank),.field_short(field),.rgb(rgb),
         .scan_x(video_x),.scan_y(video_y),.rgb565(normalized_rgb),.frame_start(video_frame_start),
-        .valid(video_valid),.malformed_frames(malformed_frames));
+        .valid(video_valid),.frame_alt(video_frame_alt),.frame_weave(video_frame_weave),.frame_profile(video_frame_profile),.malformed_frames(malformed_frames));
     assign video_r={normalized_rgb[15:11],normalized_rgb[15:13]};
     assign video_g={normalized_rgb[10:5],normalized_rgb[10:9]};
     assign video_b={normalized_rgb[4:0],normalized_rgb[4:2]};

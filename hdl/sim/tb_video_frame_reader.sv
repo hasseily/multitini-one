@@ -6,12 +6,22 @@ module tb_video_frame_reader;
     parameter bit SHARED_PIXEL_RESET=0;
     parameter bit DYNAMIC_DISPLAY=0;
     parameter integer HEIGHT=9,VIEW_X=12,VIEW_Y=2;
-    parameter integer H_ACTIVE=VIEW_X+WIDTH*SCALE_NUM/SCALE_DEN+1;
-    parameter integer V_ACTIVE=VIEW_Y+HEIGHT*SCALE_NUM/SCALE_DEN;
-    localparam integer H_TOTAL=H_ACTIVE+29,V_TOTAL=128;
-    localparam integer OUT_WIDTH=WIDTH*SCALE_NUM/SCALE_DEN;
-    localparam integer OUT_HEIGHT=HEIGHT*SCALE_NUM/SCALE_DEN;
-    localparam integer STRIDE=((WIDTH+63)/64)*128;
+    parameter integer ALT_WIDTH=WIDTH,ALT_HEIGHT=HEIGHT;
+    parameter bit SOURCE_ALT=0;
+    parameter integer WIDE_WIDTH=WIDTH,WIDE_HEIGHT=HEIGHT,SOURCE_PROFILE=SOURCE_ALT;
+    parameter integer SLOT_SHIFT=20,WIDE_SLOT_SHIFT=SLOT_SHIFT;
+    parameter [31:0] BASE=32'h22400000,WIDE_BASE=BASE;
+    parameter integer WATCHDOG_NS=10000000;
+    localparam integer FRAME_WIDTH=SOURCE_PROFILE==2 ? WIDE_WIDTH:SOURCE_PROFILE==1 ? ALT_WIDTH:WIDTH;
+    localparam integer FRAME_HEIGHT=SOURCE_PROFILE==2 ? WIDE_HEIGHT:SOURCE_PROFILE==1 ? ALT_HEIGHT:HEIGHT;
+    localparam [31:0] FRAME_BASE=SOURCE_PROFILE==2 ? WIDE_BASE:BASE;
+    localparam integer SLOT_BYTES=1<<(SOURCE_PROFILE==2 ? WIDE_SLOT_SHIFT:SLOT_SHIFT);
+    parameter integer H_ACTIVE=VIEW_X+FRAME_WIDTH*SCALE_NUM/SCALE_DEN+1;
+    parameter integer V_ACTIVE=VIEW_Y+FRAME_HEIGHT*SCALE_NUM/SCALE_DEN;
+    localparam integer H_TOTAL=H_ACTIVE+29,V_TOTAL=V_ACTIVE>=128 ? V_ACTIVE+8:128;
+    localparam integer OUT_WIDTH=FRAME_WIDTH*SCALE_NUM/SCALE_DEN;
+    localparam integer OUT_HEIGHT=FRAME_HEIGHT*SCALE_NUM/SCALE_DEN;
+    localparam integer STRIDE=((FRAME_WIDTH+63)/64)*128;
     localparam integer SOURCE_X0=(VIEW_X<0 ? -VIEW_X*SCALE_DEN/SCALE_NUM : 0);
     localparam integer SOURCE_Y0=(VIEW_Y<0 ? -VIEW_Y*SCALE_DEN/SCALE_NUM : 0);
     localparam integer PHASE_X0=(VIEW_X<0 ? -VIEW_X*SCALE_DEN%SCALE_NUM : 0);
@@ -43,7 +53,8 @@ module tb_video_frame_reader;
     reg [31:0] submit_value=0;
     wire submit_ready,active_valid,busy,quiescent,pixel_use;
     wire [31:0] active_value,error_count,underrun_count;
-    reg [11:0] scan_x=0,scan_y=100;
+    wire [1:0] active_profile;
+    reg [11:0] scan_x=0,scan_y=V_TOTAL-1;
     reg vblank_start=0;
     wire [15:0] pixel_rgb565;
     wire [15:0] pixel_neighbor_rgb565,pixel_opposite_rgb565;
@@ -65,28 +76,35 @@ module tb_video_frame_reader;
     function automatic [15:0] memory_pixel(input [31:0] address);
         integer slot,row,x;
         begin
-            slot=(address-32'h22400000)>>20;
-            row=((address-32'h22400000)&32'h000fffff)/STRIDE;
-            x=(((address-32'h22400000)&32'h000fffff)%STRIDE)/2;
-            memory_pixel=16'h1000+slot*16'h2000+row*WIDTH+x;
+            slot=(address-FRAME_BASE)/SLOT_BYTES;
+            row=((address-FRAME_BASE)%SLOT_BYTES)/STRIDE;
+            x=(((address-FRAME_BASE)%SLOT_BYTES)%STRIDE)/2;
+            memory_pixel=16'h1000+slot*16'h2000+row*FRAME_WIDTH+x;
         end
     endfunction
     wire [31:0] address_now=read_base+beat*8;
     wire [63:0] rdata={memory_pixel(address_now+6),memory_pixel(address_now+4),
                        memory_pixel(address_now+2),memory_pixel(address_now)};
     multitini_video_frame_reader #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.WIDTH(WIDTH),.HEIGHT(HEIGHT),
+        .ALT_WIDTH(ALT_WIDTH),.ALT_HEIGHT(ALT_HEIGHT),
+        .WIDE_WIDTH(WIDE_WIDTH),.WIDE_HEIGHT(WIDE_HEIGHT),.BASE(BASE),.WIDE_BASE(WIDE_BASE),
+        .SLOT_SHIFT(SLOT_SHIFT),.WIDE_SLOT_SHIFT(WIDE_SLOT_SHIFT),
         .VIEW_X(VIEW_X),.VIEW_Y(VIEW_Y),.SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN),
         .H_ACTIVE(H_ACTIVE),.V_ACTIVE(V_ACTIVE),.H_TOTAL(H_TOTAL),.V_TOTAL(V_TOTAL),
         .SHARED_PIXEL_RESET(SHARED_PIXEL_RESET),.SHARED_PIXEL_LIVENESS(SHARED_PIXEL_RESET)) dut(
-        .display_view_x(12'(VIEW_X+(geometry_glitch ? 3:0))),.display_view_y(12'(VIEW_Y+(geometry_glitch ? 2:0))),
-        .display_view_width(12'(OUT_WIDTH)),.display_view_height(12'(OUT_HEIGHT)),
+        .source_alt(SOURCE_ALT),.source_profile(2'(SOURCE_PROFILE)),.active_alt(),.active_profile(active_profile),
+        .display_view_x(12'((SOURCE_PROFILE==2 ? VISIBLE_X0:VIEW_X)+(geometry_glitch ? 3:0))),.display_view_y(12'((SOURCE_PROFILE==2 ? VISIBLE_Y0:VIEW_Y)+(geometry_glitch ? 2:0))),
+        .display_view_width(12'(SOURCE_PROFILE==2 ? VISIBLE_X1-VISIBLE_X0:OUT_WIDTH)),.display_view_height(12'(SOURCE_PROFILE==2 ? VISIBLE_Y1-VISIBLE_Y0:OUT_HEIGHT)),
         .display_scale_num(4'(SCALE_NUM)),.display_scale_den(4'(SCALE_DEN)),
         .display_h_active(12'(H_ACTIVE)),.display_v_active(12'(V_ACTIVE)),.display_h_total(12'(H_TOTAL)),.display_v_total(12'(V_TOTAL)),
-        .display_source_x0(10'(SOURCE_X0+(geometry_glitch ? 1:0))),.display_source_y0(10'(SOURCE_Y0+(geometry_glitch ? 1:0))),
+        .display_source_x0(11'(SOURCE_X0+(geometry_glitch ? 1:0))),.display_source_y0(10'(SOURCE_Y0+(geometry_glitch ? 1:0))),
         .display_phase_x0(4'(PHASE_X0)),.display_phase_y0(4'(PHASE_Y0)),.*);
     always @(posedge clk) begin
         cycle<=cycle+1;
         if (arvalid && arready) begin
+            if(araddr<FRAME_BASE || araddr>=FRAME_BASE+4*SLOT_BYTES ||
+               (araddr-FRAME_BASE)%SLOT_BYTES>=STRIDE*FRAME_HEIGHT)
+                $fatal(1,"Reader escaped submitted profile slot extent %h",araddr);
             if (arsize!=3 || arburst!=1 || araddr[2:0]!=0 ||
                 araddr[11:0]+8*(arlen+1)>4096) $fatal(1,"invalid AXI burst");
             if (transaction) $fatal(1,"more than one outstanding burst");
@@ -111,9 +129,12 @@ module tb_video_frame_reader;
     endtask
     task blank;
         begin
-            @(negedge pixel_clk);scan_x=0;scan_y=100;vblank_start=1;
+            @(negedge pixel_clk);scan_x=0;scan_y=V_TOTAL-1;vblank_start=1;
             @(negedge pixel_clk);vblank_start=0;
-            repeat(600) @(posedge pixel_clk);
+            // Supply the declared vertical blank duration. A full1280px
+            // row needs320AXI beats; a fixed600pixel-clock shortcut is
+            // shorter than that transfer under the declared bus stalls.
+            repeat(H_TOTAL*(V_TOTAL-V_ACTIVE)) @(posedge pixel_clk);
         end
     endtask
     integer checked=0;
@@ -145,19 +166,19 @@ module tb_video_frame_reader;
                         if(want_processed) begin
                             sx=((x-VIEW_X)*SCALE_DEN)/SCALE_NUM;
                             sy=((y-VIEW_Y)*SCALE_DEN)/SCALE_NUM;
-                            expected=memory_pixel(32'h22400000+(slot<<20)+sy*STRIDE+sx*2);
+                            expected=memory_pixel(FRAME_BASE+slot*SLOT_BYTES+sy*STRIDE+sx*2);
                             if(pixel_rgb565!==expected)
                                 $fatal(1,"wrong pixel x%0d y%0d got%h expected%h",x,y,pixel_rgb565,expected);
                             distance=2*(((x-VIEW_X)*SCALE_DEN)%SCALE_NUM)+SCALE_DEN-SCALE_NUM;
                             neighbor=sx+(distance<0 ? -1 : 1);
-                            if(neighbor<0)neighbor=0;if(neighbor>=WIDTH)neighbor=WIDTH-1;
+                            if(neighbor<0)neighbor=0;if(neighbor>=FRAME_WIDTH)neighbor=FRAME_WIDTH-1;
                             weight=((distance<0 ? -distance : distance)*128+SCALE_NUM/2)/SCALE_NUM;
-                            expected=memory_pixel(32'h22400000+(slot<<20)+sy*STRIDE+neighbor*2);
+                            expected=memory_pixel(FRAME_BASE+slot*SLOT_BYTES+sy*STRIDE+neighbor*2);
                             if(pixel_neighbor_rgb565!==expected || pixel_neighbor_weight!==weight[7:0])
                                 $fatal(1,"wrong neighbor x%0d y%0d got%h/%0d expected%h/%0d",x,y,pixel_neighbor_rgb565,pixel_neighbor_weight,expected,weight);
                             neighbor=sx+(distance<0 ? 1 : -1);
-                            if(neighbor<0)neighbor=0;if(neighbor>=WIDTH)neighbor=WIDTH-1;
-                            expected=memory_pixel(32'h22400000+(slot<<20)+sy*STRIDE+neighbor*2);
+                            if(neighbor<0)neighbor=0;if(neighbor>=FRAME_WIDTH)neighbor=FRAME_WIDTH-1;
+                            expected=memory_pixel(FRAME_BASE+slot*SLOT_BYTES+sy*STRIDE+neighbor*2);
                             if(pixel_opposite_rgb565!==expected)
                                 $fatal(1,"wrong opposite neighbor x%0d y%0d got%h expected%h",x,y,pixel_opposite_rgb565,expected);
                             checked=checked+1;
@@ -177,10 +198,10 @@ module tb_video_frame_reader;
             // an actual changed source seed, then restore the desired mode
             // for eight held clocks before the normal release guard starts.
             repeat(8)@(negedge pixel_clk);
-            if(dut.source_x0!==10'(SOURCE_X0+1) || dut.source_y0!==10'(SOURCE_Y0+1))
+            if(dut.source_x0!==11'(SOURCE_X0+1) || dut.source_y0!==10'(SOURCE_Y0+1))
                 $fatal(1,"Held geometry snapshot did not capture changed source seeds");
             geometry_glitch=0;repeat(8)@(negedge pixel_clk);
-            if(dut.source_x0!==10'(SOURCE_X0) || dut.source_y0!==10'(SOURCE_Y0) ||
+            if(dut.source_x0!==11'(SOURCE_X0) || dut.source_y0!==10'(SOURCE_Y0) ||
                 dut.phase_x0!==4'(PHASE_X0) || dut.phase_y0!==4'(PHASE_Y0))
                 $fatal(1,"Held geometry snapshot did not settle before pixel release");
         end
@@ -192,7 +213,7 @@ module tb_video_frame_reader;
         // read remains stalled. Its eventual reply must neither validate old
         // slot data nor release the new frame's outstanding request.
         publish(32'h4);
-        @(negedge pixel_clk);scan_x=0;scan_y=100;vblank_start=1;
+        @(negedge pixel_clk);scan_x=0;scan_y=V_TOTAL-1;vblank_start=1;
         @(negedge pixel_clk);vblank_start=0;
         wait(transaction);stall=1;
         before_reset_epoch=dut.fill_epoch;
@@ -200,7 +221,7 @@ module tb_video_frame_reader;
         repeat(20) @(posedge clk);
         if(!active_valid) $fatal(1,"overlapping reset released a stalled old slot");
         pixel_resetn=1;publish(32'h9);
-        @(negedge pixel_clk);scan_x=0;scan_y=100;vblank_start=1;
+        @(negedge pixel_clk);scan_x=0;scan_y=V_TOTAL-1;vblank_start=1;
         @(negedge pixel_clk);vblank_start=0;
         repeat(30) @(posedge pixel_clk);
         if(dut.epoch<=before_reset_epoch) $fatal(1,"pixel reset did not advance the outstanding epoch");
@@ -211,7 +232,7 @@ module tb_video_frame_reader;
         repeat(80) @(posedge clk);
         if(dut.line_valid!=0) $fatal(1,"old slot reply validated a restarted frame");
         if(!dut.row_outstanding) $fatal(1,"old reply released a new outstanding request");
-        stall=0;repeat(600) @(posedge pixel_clk);
+        stall=0;repeat(H_TOTAL*(V_TOTAL-V_ACTIVE)) @(posedge pixel_clk);
         wait(active_valid && active_value==9);
         scan_frame(1,1);
         publish(32'h4);blank;
@@ -231,7 +252,7 @@ module tb_video_frame_reader;
         if(error_count==0 || underrun_count==0) $fatal(1,"fault diagnostics missing");
         inject_error=0;blank;scan_frame(1,1);
         // Disabling drains an accepted transaction before releasing the slot.
-        @(negedge pixel_clk);scan_x=0;scan_y=100;vblank_start=1;
+        @(negedge pixel_clk);scan_x=0;scan_y=V_TOTAL-1;vblank_start=1;
         @(negedge pixel_clk);vblank_start=0;
         wait(transaction);stall=1;
         @(negedge clk);enable=0;
@@ -245,7 +266,7 @@ module tb_video_frame_reader;
         // Slot three is legal, and an unrelated pixel reset cannot cancel
         // the read channel or release the currently accessed DDR slot early.
         enable=1;publish(32'hf);blank;scan_frame(3,1);
-        @(negedge pixel_clk);scan_x=0;scan_y=100;vblank_start=1;
+        @(negedge pixel_clk);scan_x=0;scan_y=V_TOTAL-1;vblank_start=1;
         @(negedge pixel_clk);vblank_start=0;
         wait(transaction);stall=1;
         @(negedge clk);pixel_resetn=0;enable=0;
@@ -260,5 +281,5 @@ module tb_video_frame_reader;
             SCALE_NUM,SCALE_DEN,VIEW_X,VIEW_Y,H_ACTIVE,V_ACTIVE,SOURCE_X0,SOURCE_Y0,PHASE_X0,PHASE_Y0,checked);
         $finish;
     end
-    initial begin #10000000;$fatal(1,"timeout");end
+    initial begin #WATCHDOG_NS;$fatal(1,"timeout");end
 endmodule

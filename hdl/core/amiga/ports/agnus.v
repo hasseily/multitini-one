@@ -81,6 +81,8 @@ module agnus
 	output        lace,
 	output        hblank,          // video blanking
 	output        vblank,          // video blanking
+	output [8:0] diw_hstart,diw_hstop,
+	output [10:0] diw_vstart,diw_vstop,
 	output        hde,             // video horizontal data enable
 	output        sol,             // start of video line (active during last pixel of previous line)
 	output        sof,             // start of video frame (active during last pixel of previous frame)
@@ -429,6 +431,8 @@ agnus_bitplanedma bpd1
 	.vpos(vpos),
 	.hpos(hpos),
 	.hde(hde),
+	.diw_hstart(diw_hstart),.diw_hstop(diw_hstop),
+	.diw_vstart(diw_vstart),.diw_vstop(diw_vstop),
 	.dma(dma_bpl),
 	.reg_address_in(reg_address),
 	.reg_address_out(reg_address_bpl),

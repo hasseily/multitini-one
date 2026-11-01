@@ -19,6 +19,9 @@ from build_phos1 import MATRIX, BUILD_ID
 
 ROOT = package.ROOT
 ABI_MINOR = 19
+AMIGA_CORE_SPEC = ("amiga", "Amiga", "0x414D4947",
+                   [("pal", "Amiga 600 ECS PAL", "amiga")])
+AMIGA_ROM_README = Path("sd/multitini/cores/amiga/roms/readme.txt")
 GS_GUIDES = ("APPLE_IIGS_HARDWARE_TEST.md", "APPLE_IIGS_CPU_VALIDATION.md",
              "APPLE_IIGS_PLAN.md", "APPLE_IIGS_ACCELERATION.md", "APPLE_IIGS_SMARTPORT.md",
              "APPLE_IIGS_LEGACY_VIDEO.md",
@@ -147,36 +150,23 @@ def prepare_nes_content(out):
         "No games or Nintendo firmware are supplied.\n", encoding="utf-8")
 
 
-def amiga_kickstart(path):
-    """Stage only an explicitly supplied ROM, retaining its original bytes."""
-    if path is None:
-        return None
-    data = Path(path).read_bytes()
-    package.require(len(data) in {256 * 1024, 512 * 1024, 1024 * 1024},
-                    "Amiga Kickstart must be exactly 256 KiB, 512 KiB or 1 MiB")
-    return {"data": data, "provenance": {"source": str(Path(path).resolve()),
-            "bytes": len(data), "sha256": package.digest(data),
-            "output": "sd/multitini/cores/amiga/roms/kick.rom"}}
-
-
-def prepare_amiga_content(out, kickstart=None):
-    """Retain empty user-ROM/media directories in the distributable archive."""
+def prepare_amiga_content(out):
+    """Copy ROM instructions only; users supply Kickstart separately on SD."""
+    readme = ROOT / AMIGA_ROM_README
+    package.require(readme.is_file() and set(readme.parent.iterdir()) == {readme},
+                    "Canonical Amiga ROM data must contain only readme.txt")
     core = out / "sd/multitini/cores/amiga"
     (core / "roms").mkdir(parents=True, exist_ok=True)
+    package.require(all(path.name == "readme.txt" and path.is_file()
+                        for path in (core / "roms").iterdir()),
+                    "Amiga package ROM directory must contain only readme.txt")
     (core / "media").mkdir(parents=True, exist_ok=True)
-    (core / "roms/README.txt").write_text(
-        "Place your user-owned Amiga Kickstart ROM here as kick.rom.\n"
-        "Exact 256 KiB, 512 KiB and 1 MiB images are accepted.\n"
-        "The firmware mirrors smaller images across the 1 MiB ROM aperture.\n"
-        "No system ROM is included unless explicitly supplied to the packager.\n",
-        encoding="utf-8")
+    package.copy(readme, core / "roms/readme.txt")
     (core / "media/README.txt").write_text(
         "Place user-owned DD floppy images (.adf) and IDE hard disks (.hdf) here.\n"
         "The Amiga ECS profile provides DF0:, DF1: and two IDE devices.\n"
         "Keep write recovery journals beside their media.\n",
         encoding="utf-8")
-    if kickstart is not None:
-        (core / "roms/kick.rom").write_bytes(kickstart["data"])
 
 
 def main():
@@ -196,7 +186,6 @@ def main():
     parser.add_argument("--include-apple-iigs", action="store_true", help="Include the GS source/machine and runtime HDD boot ROM")
     parser.add_argument("--include-nes", action="store_true", help="Include the NES machine and empty cartridge directory")
     parser.add_argument("--include-amiga", action="store_true", help="Include the timing-qualified Amiga ECS image and empty ROM/media directories")
-    parser.add_argument("--amiga-kickstart", type=Path, help="Explicit user-owned Kickstart ROM for private Amiga packages")
     parser.add_argument("--include-c64-ntsc", action="store_true", help="Include independently timed PAL and NTSC C64 variants")
     parser.add_argument("--reuse-image", action="append", default=[], metavar="NAME=DIR",
                         help="Reuse an explicitly selected audited FPGA build with its original identity and sources")
@@ -213,9 +202,6 @@ def main():
         MATRIX['nes']=('NES',False,False)
     if args.include_amiga:
         MATRIX['amiga']=('AMIGA',False,False)
-    if args.amiga_kickstart and not args.include_amiga:
-        parser.error("--amiga-kickstart requires --include-amiga")
-    kickstart = amiga_kickstart(args.amiga_kickstart)
     if args.include_c64_ntsc:
         MATRIX['c64-ntsc']=('C64',False,False)
     if not re.fullmatch(r"[0-9A-Fa-f]{8}", args.build_id):
@@ -263,7 +249,6 @@ def main():
     if args.check_only:
         print(json.dumps({"status": "PASS", "firmware_id": "0x" + args.build_id, "abi": package.ABI,
                           "images": image_records(builds), "private_roms": roms.provenance,
-                          "private_amiga_kickstart": kickstart["provenance"] if kickstart else None,
                           "matrix": {n: b["timing"] for n, b in builds.items()}}, indent=2))
         return 0
     out.mkdir(parents=True, exist_ok=False)
@@ -346,8 +331,8 @@ def main():
         package.copy(ROOT / "third_party/nes/upstream/COPYING", out / "licenses/nes/COPYING")
         package.copy(ROOT / "third_party/nes/T65-NOTICE.txt", out / "licenses/nes/T65-NOTICE.txt")
     if args.include_amiga:
-        core_specs += (("amiga", "Amiga 600 ECS", "0x414D4947", [("pal", "Amiga ECS PAL", "amiga")]),)
-        prepare_amiga_content(out, kickstart)
+        core_specs += (AMIGA_CORE_SPEC,)
+        prepare_amiga_content(out)
         for source_name, target_name in (
                 ("third_party/amiga/upstream/gpl.txt", "GPL-3.0.txt"),
                 ("licenses/third_party/LGPL-3.0.txt", "LGPL-3.0.txt"),
@@ -355,8 +340,6 @@ def main():
             package.copy(ROOT / source_name, out / "licenses/amiga" / target_name)
         ide_notice = (ROOT / "third_party/amiga/upstream/rtl/ide.v").read_text().split("module ide", 1)[0]
         (out / "licenses/amiga/IDE-BSD-2-Clause.txt").write_text(ide_notice, encoding="utf-8")
-        if kickstart is not None:
-            package.write_json(out / "evidence/amiga/kickstart-provenance.json", kickstart["provenance"])
         for guide in sorted((ROOT / "docs").glob("AMIGA_*.md")):
             target = out / "docs" / guide.name
             package.copy(guide, target)
@@ -412,7 +395,7 @@ def main():
         f"Selected cores: C64 {'PAL/NTSC' if args.include_c64_ntsc else 'PAL'}, PSRAM GBC, Vectrex, Genesis NTSC/PAL.\n"
         + ("NES adds iNES cartridge loading through the shared PSRAM service.\n"
            "No NES BIOS or cartridges are included; see docs/NES_PLAN.md.\n" if args.include_nes else "") +
-        ("Amiga ECS supplies stock/accelerated CPU modes, 2 MiB chip RAM, 8 MiB fast RAM,\n"
+        ("Amiga: Amiga 600 ECS PAL supplies stock/accelerated CPU modes, 2 MiB chip RAM, 8 MiB fast RAM,\n"
          "two DD floppy drives and two IDE disks. See docs/AMIGA_PLAN.md.\n"
          "Kickstart is a separate user-owned input.\n" if args.include_amiga else "") +
         "This is a private local delivery with validated user-supplied boot ROMs in sd/*/roms.\n"

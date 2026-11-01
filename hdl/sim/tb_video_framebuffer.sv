@@ -2,6 +2,8 @@
 `timescale 1ns/1ps
 module tb_video_framebuffer;
     parameter bit SHARED_PIXEL_RESET=0;
+    parameter bit PROFILE_TEST=0;
+    reg source_alt=0,pixel_source_alt=0;
     reg clk=0,pixel_clk=0,resetn=0,wr_en=0;
     always #5 clk=~clk;
     always #3.5 pixel_clk=~pixel_clk;
@@ -25,7 +27,9 @@ module tb_video_framebuffer;
     reg bvalid=0,rvalid=0,rlast=0;
     integer read_remaining=0,reads=0,cycles=0;
     multitini_video_framebuffer #(.WIDTH(6),.HEIGHT(2),.VIEW_X(4),.VIEW_Y(0),.SCALE_NUM(1),
+        .ALT_WIDTH(PROFILE_TEST ? 724:6),.ALT_HEIGHT(PROFILE_TEST ? 566:2),
         .SHARED_PIXEL_RESET(SHARED_PIXEL_RESET)) dut(
+        .source_alt(source_alt),.pixel_source_alt(pixel_source_alt),
         .display_view_x(12'd4),.display_view_y(12'd0),.display_view_width(12'd6),.display_view_height(12'd2),
         .display_scale_num(4'd1),.display_scale_den(4'd1),.display_filter_scale_num(4'd1),.display_filter_scale_den(4'd1),
         .capture_display_view_x(12'd4),.capture_display_view_y(12'd0),.capture_display_view_width(12'd6),.capture_display_view_height(12'd2),
@@ -80,6 +84,10 @@ module tb_video_framebuffer;
         repeat(30)@(negedge clk);wait_quiet();
         expect_reg(12'h180,0);expect_reg(12'h184,8);expect_reg(12'h188,0);expect_reg(12'h18c,0);
         expect_reg(12'h198,32'h00020006);expect_reg(12'h19c,128);
+        if(PROFILE_TEST)begin
+            source_alt=1;expect_reg(12'h198,(566<<16)|724);expect_reg(12'h19c,1536);
+            source_alt=0;expect_reg(12'h198,32'h00020006);expect_reg(12'h19c,128);
+        end
         expect_reg(12'h1b0,0);expect_reg(12'h1b4,0);expect_reg(12'h1b8,0);
         write_reg(12'h1b0,255,4'hf);expect_reg(12'h1b0,255);
         write_reg(12'h1b0,256,4'hf);expect_reg(12'h1b0,255);expect_reg(12'h184,24);

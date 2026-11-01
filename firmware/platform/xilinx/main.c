@@ -11,6 +11,7 @@
 #include "genesis_content_service.h"
 #include "iigs_content_service.h"
 #include "amiga_content_service.h"
+#include "amiga_display_service.h"
 #include "multitini_ak4493.h"
 #include "multitini_c64_boot.h"
 #include "multitini_c64_debug.h"
@@ -124,6 +125,9 @@ static bool supervisor_serial_command(const char *line);
 static uint64_t monotonic_ms(void *context);
 static bool amiga_serial_command(const char *line);
 static void print_amiga_media_status(void);
+static bool amiga_apply_display(void *context,uint8_t mode);
+static bool amiga_request_display(uint8_t mode);
+static void amiga_display_guest_restarted(void);
 static void handle_menu_action(mt_menu_action_t action);
 static void network_console(void *context, const char *text);
 static uint8_t stored_c64_joystick(void);
@@ -508,6 +512,13 @@ static int resume_c64_directory(void)
     return result;
 }
 
+static void queue_amiga_reset_shortcut(void)
+{
+    if(!supervisor_menu_action_active && !supervisor_menu.visible &&
+        pending_menu_action.kind==MT_MENU_ACTION_NONE &&
+        shell_read(MT_REG_CORE_ID)==MT_AMIGA_CORE_ID && usb_hid_service_take_amiga_reset())
+        pending_menu_action=(mt_menu_action_t){.kind=MT_MENU_ACTION_RESET_CORE};
+}
 static void service_runtime(void)
 {
     static bool uci_fault_reported, uci_cleanup_reported;
@@ -518,12 +529,25 @@ static void service_runtime(void)
     (void)service_fatfs_time();
     if(shell_read(MT_REG_CORE_ID)==MT_AMIGA_CORE_ID && amiga_service_initialized) {
         static mt_link_result_t last_rtc_result;
-        const mt_link_result_t result=amiga_content_service_set_clock(board_clock_valid ? &board_clock:NULL,(uint32_t)monotonic_ms(NULL));
-        if(result!=last_rtc_result) {
-            xil_printf("[Amiga] RTC refresh: %s\r\n",mt_link_result_name(result));last_rtc_result=result;
+        const uint32_t now_ms=(uint32_t)monotonic_ms(NULL);
+        const bool menu_paused=mt_ui_status_menu_shown(shell_read(MT_REG_UI_STATUS));
+        amiga_display_service_set_paused(menu_paused,now_ms);
+        if(!menu_paused) {
+            const mt_link_result_t result=amiga_content_service_set_clock(board_clock_valid ? &board_clock:NULL,now_ms);
+            if(result!=last_rtc_result) {
+                xil_printf("[Amiga] RTC refresh: %s\r\n",mt_link_result_name(result));last_rtc_result=result;
+            }
         }
+        const bool display_was_pending=amiga_display_service_pending();
+        const bool display_was_available=amiga_display_service_available();
+        amiga_display_service_poll(now_ms);
+        if(display_was_pending!=amiga_display_service_pending() ||
+           display_was_available!=amiga_display_service_available())supervisor_menu_dirty=true;
     }
     service_usb_input();
+    /* HID callbacks only latch an edge. Queue the existing deferred action;
+     * it drains disk writes and uses the ordinary core reset lifecycle. */
+    queue_amiga_reset_shortcut();
     {
         static const char *last_effect_status;
         const char *status;
@@ -907,6 +931,9 @@ static int set_core_reset_request(bool asserted)
     if(!asserted && currently_asserted && shell_read(MT_REG_CORE_ID)==MT_IIGS_CORE_ID &&
         iigs_service_initialized && iigs_content_service_resume_after_reset()!=0)return -1;
     result = command(MT_COMMAND_CORE_RESET, asserted ? 1U : 0U, 0U);
+    if(result==0 && !asserted && currently_asserted &&
+       shell_read(MT_REG_CORE_ID)==MT_AMIGA_CORE_ID && amiga_service_initialized)
+        amiga_display_guest_restarted();
     /* A synchronous assert/release can finish before the USB service observes
      * reset. Invalidate the cached Vectrex delivery state explicitly. */
     if (result == 0 && asserted && (shell_read(MT_REG_CORE_ID) == MT_VECTREX_CORE_ID ||
@@ -1363,6 +1390,7 @@ static void print_help(void)
     xil_printf(":cores list, :core ID [VARIANT] select, :usbsd export SD, :shot [source|output]\r\n");
     if(supervisor.has_active && supervisor.active.package.core_id==MT_AMIGA_CORE_ID) {
         xil_printf("Amiga: :disk status, :diskretry retries I/O, :romload retries roms/kick.rom\r\n");
+        xil_printf("       :amigadisplay status, :amigadisplay 0..3 selects a supported Workbench mode\r\n");
         xil_printf("F12 opens Media and CPU options; q or Escape exits USB SD export\r\n");return;
     }
     if(supervisor.has_active && supervisor.active.package.core_id==MT_IIGS_CORE_ID) {
@@ -2425,6 +2453,70 @@ static void configure_selection_effects(const mt_core_selection_t *selection)
     supervisor_menu_dirty = true;
 }
 
+static bool amiga_apply_display(void *context,uint8_t mode)
+{
+    (void)context;
+    if(mode>=MT_AMIGA_DISPLAY_MODES || shell_read(MT_REG_CORE_ID)!=MT_AMIGA_CORE_ID ||
+       !(shell_read(MT_AMIGA_HOST_PORT)&MT_AMIGA_HOST_DISPLAY) || mt_screenshot_service_busy())return false;
+    if(mode==3U && !(shell_read(MT_AMIGA_HOST_PORT)&MT_AMIGA_HOST_SHRES))return false;
+    const uint32_t display_status=shell_read(MT_REG_DISPLAY_STATUS);
+    if(display_status&(MT_DISPLAY_BUSY|MT_DISPLAY_HELD|MT_DISPLAY_ERROR))return false;
+    mt_video_effect_service_suspend();
+    const uint64_t began=monotonic_ms(NULL);
+    while(!mt_video_effect_service_quiescent()) {
+        usb_hid_service_poll_deferred();
+        if(monotonic_ms(NULL)-began>=1000U) {
+            configure_selection_effects(supervisor.has_active ? &supervisor.active:NULL);
+            return false;
+        }
+    }
+    const uint32_t host_status=shell_read(MT_AMIGA_HOST_PORT);
+    if(host_status&(MT_AMIGA_HOST_BUSY|MT_AMIGA_HOST_ERROR)) {
+        configure_selection_effects(supervisor.has_active ? &supervisor.active:NULL);
+        return false;
+    }
+    uint32_t response=0U;
+    const mt_link_result_t result=mt_amiga_host_access(&shell_link,MT_AMIGA_HOST_DISPLAY_APPLY,
+        mode,20000000U,&response);
+    const uint32_t geometry=shell_read(MT_REG_VIDEO_FRAME_GEOMETRY);
+    const uint32_t stride=shell_read(MT_REG_VIDEO_FRAME_STRIDE);
+    const uint32_t expected_geometry=mode==3U ? (512U<<16)|1280U:
+        mode==2U ? (566U<<16)|724U:(512U<<16)|640U;
+    const bool applied=result==MT_LINK_OK && (response&0xffffU)==mode &&
+        geometry==expected_geometry && stride==(mode==3U ? 2560U:mode==2U ? 1536U:1280U);
+    if(result==MT_LINK_REMOTE_ERROR && !(shell_read(MT_AMIGA_HOST_PORT)&MT_AMIGA_HOST_BUSY))
+        (void)mt_amiga_host_access(&shell_link,MT_AMIGA_HOST_CLEAR_ERROR,0U,100000U,NULL);
+    configure_selection_effects(supervisor.has_active ? &supervisor.active:NULL);
+    mt_ui_presenter_invalidate(&supervisor_presenter);supervisor_menu_dirty=true;
+    xil_printf("[Amiga] display profile=%u result=%s geometry=%08x stride=%u\r\n",
+        (unsigned)mode,mt_link_result_name(result),(unsigned)geometry,(unsigned)stride);
+    return applied;
+}
+
+static bool amiga_request_display(uint8_t mode)
+{
+    if(!amiga_service_initialized || shell_read(MT_REG_CORE_ID)!=MT_AMIGA_CORE_ID ||
+       !amiga_display_service_mode_available(mode) || mt_screenshot_service_busy()) {
+        set_supervisor_warning(amiga_display_service_status());return false;
+    }
+    const bool was_visible=supervisor_menu.visible;
+    /* Dismiss the overlay and release guest input before publishing a request.
+     * ScreenMode can ask for windows to close or display an OS requester. */
+    if(!hide_menu_for_core_action())return false;
+    supervisor_menu.visible=false;supervisor_menu_dirty=true;
+    usb_hid_service_set_menu_capture(false);
+    const uint32_t now_ms=(uint32_t)monotonic_ms(NULL);
+    amiga_display_service_set_paused(false,now_ms);
+    const bool accepted=amiga_display_service_request(mode,now_ms);
+    if(accepted)set_supervisor_status("Changing Workbench resolution; answer any Amiga requester");
+    else {
+        supervisor_menu.visible=was_visible;
+        usb_hid_service_set_menu_capture(was_visible);
+        set_supervisor_warning(amiga_display_service_status());
+    }
+    return accepted;
+}
+
 static void video_effect_write(uint32_t offset, uint32_t value);
 static uint32_t video_effect_milliseconds(void);
 static const mt_display_ops_t display_bus = {
@@ -3331,6 +3423,16 @@ static mt_menu_view_t supervisor_menu_view(void)
         amiga_service_initialized) {
         state.services_ready=true;state.amiga_ready=amiga_content_service_ready();
         state.amiga_config=*amiga_content_service_config();state.save_faulted=amiga_content_service_faulted();
+        state.amiga_cpu14_available=amiga_content_service_cpu14_available();
+        state.amiga_cpu14_fallback=amiga_content_service_cpu14_fallback();
+        state.amiga_fast_ide_available=amiga_content_service_fast_ide_available();
+        state.amiga_fast_ide_expected=amiga_content_service_fast_ide_expected();
+        state.amiga_display_available=amiga_display_service_available();
+        state.amiga_display_mode_count=amiga_display_service_mode_count();
+        state.amiga_display_pending=amiga_display_service_pending();
+        state.amiga_display_requested=amiga_display_service_requested();
+        state.amiga_display_applied=amiga_display_service_applied();
+        state.amiga_display_status=amiga_display_service_status();
         for(unsigned d=0U;d<MT_AMIGA_DRIVE_COUNT;++d)state.amiga_drive_name[d]=amiga_content_service_name(d);
     } else if(supervisor.has_active && supervisor.active.package.core_id==MT_IIGS_CORE_ID &&
         iigs_service_initialized) {
@@ -3996,6 +4098,7 @@ static int supervisor_activate(void *context,
     if(selection->package.core_id==MT_AMIGA_CORE_ID) {
         amiga_content_service_init(&shell_link,selection->package.content_root,iigs_transfer_progress,NULL);
         amiga_service_initialized=true;amiga_fault_displayed=false;
+        amiga_display_service_init(&shell_link,selection->package.content_root,amiga_apply_display,NULL);
         (void)amiga_content_service_set_clock(board_clock_valid ? &board_clock:NULL,(uint32_t)monotonic_ms(NULL));
         const int boot=amiga_content_service_boot();
         usb_hid_service_set_core_ready(boot==0);
@@ -4394,16 +4497,268 @@ static void print_amiga_media_status(void)
     xil_printf("[Amiga] ready=%u fault=%u cpu=%u chip=2MiB fast=%uMiB PAL host=%08x error=%s\r\n",
         amiga_content_service_ready() ? 1U:0U,amiga_content_service_faulted() ? 1U:0U,
         c->cpu,c->fast_mib,(unsigned)shell_read(MT_AMIGA_HOST_PORT),amiga_content_service_error());
+    xil_printf("[Amiga IDE] saved_policy=%s expected=%s fast_available=%u; use :amigaide status for native readback\r\n",
+        c->ide_compat==MT_AMIGA_IDE_CLASSIC ? "Classic":"Auto",
+        amiga_content_service_fast_ide_expected() ? "Fast":"Classic",amiga_content_service_fast_ide_available()?1U:0U);
     for(unsigned d=0U;d<MT_AMIGA_DRIVE_COUNT;++d) {
         uint32_t reads,writes;amiga_content_service_activity(d,&reads,&writes);
         const char *name=amiga_content_service_name(d);
         xil_printf("[Amiga] drive%u: %s reads=%u writes=%u\r\n",d,name!=NULL ? name:"ejected",(unsigned)reads,(unsigned)writes);
     }
 }
+static void amiga_display_guest_restarted(void)
+{
+    amiga_display_service_guest_restarted();
+    supervisor_menu_dirty=true;
+}
+static int apply_amiga_config(const mt_amiga_config_t *changed)
+{
+    usb_hid_service_set_core_ready(false);
+    const int result=amiga_content_service_configure(changed);
+    if(result!=0)set_supervisor_error(amiga_content_service_error());
+    else { amiga_display_guest_restarted();set_supervisor_status("Amiga settings saved"); }
+    usb_hid_service_set_core_ready(amiga_content_service_ready());
+    if(dac_ready)set_audio(!amiga_content_service_ready(),false);
+    set_video_test(!amiga_content_service_ready());return result;
+}
+static bool amiga_cpu_command(const char *line)
+{
+    if(strcmp(line,"amigacpu")==0 || strcmp(line,"amigacpu status")==0) {
+        const mt_amiga_config_t *c=amiga_content_service_config();
+        xil_printf("[Amiga CPU] active=%s cpu14_available=%u saved14_fallback=%u\r\n",
+            c->cpu==MT_AMIGA_CPU_STOCK ? "68000 stock":c->cpu==MT_AMIGA_CPU_68020_14 ? "68020 14 MHz":"68020 28 MHz",
+            amiga_content_service_cpu14_available()?1U:0U,amiga_content_service_cpu14_fallback()?1U:0U);
+        if(amiga_content_service_cpu14_available()) {
+            uint32_t native=0U;
+            const mt_link_result_t result=mt_amiga_host_access(&shell_link,MT_AMIGA_HOST_READ_CONFIG,0U,100000U,&native);
+            if(result==MT_LINK_OK)xil_printf("[Amiga CPU] native_cpucfg=%02x native_memcfg=%02x\r\n",
+                (unsigned)(native&31U),(unsigned)((native>>5U)&127U));
+            else xil_printf("[Amiga CPU] native readback failed: %s\r\n",mt_link_result_name(result));
+        } else xil_printf("[Amiga CPU] native readback unsupported by this core\r\n");
+        return true;
+    }
+    if(strncmp(line,"amigacpu ",9U)!=0)return false;
+    mt_amiga_config_t changed=*amiga_content_service_config();
+    if(strcmp(line+9U,"stock")==0)changed.cpu=MT_AMIGA_CPU_STOCK;
+    else if(strcmp(line+9U,"14")==0)changed.cpu=MT_AMIGA_CPU_68020_14;
+    else if(strcmp(line+9U,"28")==0)changed.cpu=MT_AMIGA_CPU_68020_TURBO;
+    else { xil_printf("usage: :amigacpu [status|stock|14|28]\r\n");return true; }
+    if(changed.cpu==MT_AMIGA_CPU_68020_14 && !amiga_content_service_cpu14_available()) {
+        set_supervisor_warning("14 MHz requires an updated Amiga core");return true;
+    }
+    if(usb_sd_modal || mt_sd_storage_external_active() || mt_screenshot_service_busy() || amiga_display_service_pending()) {
+        set_supervisor_warning("CPU change unavailable while storage/display is busy");return true;
+    }
+    if(!hide_menu_for_core_action())return true;
+    supervisor_menu.visible=false;supervisor_menu_dirty=true;usb_hid_service_set_menu_capture(false);
+    (void)apply_amiga_config(&changed);print_amiga_media_status();return true;
+}
+static bool amiga_ide_command(const char *line)
+{
+    if(strcmp(line,"amigaide")==0 || strcmp(line,"amigaide status")==0) {
+        const mt_amiga_config_t *c=amiga_content_service_config();
+        const bool capable=amiga_content_service_fast_ide_available();
+        xil_printf("[Amiga IDE] saved_policy=%s expected=%s fast_available=%u\r\n",
+            c->ide_compat==MT_AMIGA_IDE_CLASSIC ? "Classic":"Auto",
+            amiga_content_service_fast_ide_expected() ? "Fast":"Classic",capable?1U:0U);
+        if(capable) {
+            uint32_t native=0U;
+            const mt_link_result_t result=mt_amiga_host_access(&shell_link,MT_AMIGA_HOST_READ_CONFIG,0U,100000U,&native);
+            if(result==MT_LINK_OK)xil_printf("[Amiga IDE] native_actual=%s native_cpucfg=%02x native_memcfg=%02x\r\n",
+                (native&0x1000U)!=0U ? "Fast":"Classic",(unsigned)(native&31U),(unsigned)((native>>5U)&127U));
+            else xil_printf("[Amiga IDE] native readback failed: %s\r\n",mt_link_result_name(result));
+        } else xil_printf("[Amiga IDE] native fast readback unsupported by this core; Classic fallback\r\n");
+        return true;
+    }
+    if(strncmp(line,"amigaide ",9U)!=0)return false;
+    mt_amiga_config_t changed=*amiga_content_service_config();
+    if(strcmp(line+9U,"auto")==0)changed.ide_compat=MT_AMIGA_IDE_AUTO;
+    else if(strcmp(line+9U,"classic")==0)changed.ide_compat=MT_AMIGA_IDE_CLASSIC;
+    else { xil_printf("usage: :amigaide [status|auto|classic]\r\n");return true; }
+    /* An identical full profile is an explicit CPU reapply to configure().
+     * An IDE no-op must retain an unavailable saved 14 MHz CPU preference. */
+    if(changed.ide_compat==amiga_content_service_config()->ide_compat) {
+        set_supervisor_status("IDE policy already selected");return true;
+    }
+    if(usb_sd_modal || mt_sd_storage_external_active() || mt_screenshot_service_busy() || amiga_display_service_pending()) {
+        set_supervisor_warning("IDE change unavailable while storage/display is busy");return true;
+    }
+    if(!hide_menu_for_core_action())return true;
+    supervisor_menu.visible=false;supervisor_menu_dirty=true;usb_hid_service_set_menu_capture(false);
+    (void)apply_amiga_config(&changed);print_amiga_media_status();return true;
+}
+static uint64_t amiga_bench_ticks(void *context)
+{ XTime now;(void)context;XTime_GetTime(&now);return (uint64_t)now; }
+static const char *amiga_profile_decimal(char text[21],uint64_t value)
+{
+    char *at=text+20;*at='\0';
+    do { *--at=(char)('0'+value%10U);value/=10U; } while(value!=0U);
+    return at;
+}
+static uint64_t amiga_profile_microseconds(uint64_t ticks)
+{
+    const uint64_t frequency=(uint64_t)(COUNTS_PER_SECOND);
+    /* Quotient/remainder avoids ticks*1000000 overflow on long captures.
+     * Parentheses also preserve the BSP's CPU-clock/2 macro expression. */
+    return (ticks/frequency)*UINT64_C(1000000)+
+        ((ticks%frequency)*UINT64_C(1000000))/frequency;
+}
+static void amiga_profile_metric(const char *name,uint64_t ticks,uint64_t count,
+                                 uint64_t bytes,uint64_t maximum)
+{
+    char a[21],b[21],c[21],d[21],e[21];
+    xil_printf("[Amiga IDE profile] %s ticks=%s us=%s count=%s bytes=%s max_us=%s\r\n",
+        name,amiga_profile_decimal(a,ticks),amiga_profile_decimal(b,amiga_profile_microseconds(ticks)),
+        amiga_profile_decimal(c,count),amiga_profile_decimal(d,bytes),
+        amiga_profile_decimal(e,amiga_profile_microseconds(maximum)));
+}
+static bool amiga_ide_profile_command(const char *line)
+{
+    if(strncmp(line,"amigaideprof",12U)!=0 || (line[12]!='\0' && line[12]!=' '))return false;
+    const bool start=strcmp(line,"amigaideprof start")==0;
+    const bool status=strcmp(line,"amigaideprof")==0 || strcmp(line,"amigaideprof status")==0;
+    const bool stop=strcmp(line,"amigaideprof stop")==0;
+    mt_amiga_ide_profile_t p;amiga_content_service_profile_snapshot(&p);
+    /* Freeze before any console output, including error/usage text. UART
+     * reporting must not appear as a measured outside-service delay. */
+    if(p.running)amiga_content_service_profile_stop();
+    if(!start && !status && !stop) {
+        xil_printf("usage: :amigaideprof start|status|stop (status freezes a running capture)\r\n");return true;
+    }
+    if(start) {
+        if(p.running) {
+            set_supervisor_warning("IDE profile was already running; stopped before console output");return true;
+        }
+        if(usb_sd_modal || mt_sd_storage_external_active() || mt_screenshot_service_busy() ||
+           amiga_display_service_pending() || supervisor_menu.visible ||
+           mt_ui_status_menu_shown(shell_read(MT_REG_UI_STATUS)) ||
+           (shell_read(MT_REG_CONTROL)&MT_CONTROL_CORE_RESET_REQUEST)!=0U ||
+           (shell_read(MT_REG_STATUS)&MT_STATUS_CORE_READY)==0U || !amiga_content_service_ready() ||
+           amiga_content_service_faulted()) {
+            set_supervisor_warning("IDE profile requires a ready Amiga with menu/reset/storage/display idle");return true;
+        }
+        xil_printf("[Amiga IDE profile] starting after this message; run disk test, then stop/status; no guest reset or media changes\r\n");
+        if(amiga_content_service_profile_start(amiga_bench_ticks,NULL)!=0)
+            set_supervisor_warning("IDE profile could not start");
+        return true;
+    }
+    amiga_content_service_profile_snapshot(&p);
+    xil_printf("[Amiga IDE profile] stopped valid=%u reason=%u; host timer only; byte counts are backend/FIFO bytes\r\n",
+        p.valid?1U:0U,(unsigned)p.reason);
+    amiga_profile_metric("wall",p.elapsed_ticks,0U,0U,0U);
+    xil_printf("[Amiga IDE profile] read-window offsets from capture start; active span excludes idle before first/after last READ, includes gaps inside\r\n");
+    amiga_profile_metric("read_window_first",p.first_read_ticks,p.read_window_started?1U:0U,0U,0U);
+    amiga_profile_metric("read_window_last",p.last_read_ticks,0U,0U,0U);
+    amiga_profile_metric("active_read_window",p.active_read_ticks,p.read_window_bytes/512U,p.read_window_bytes,0U);
+    amiga_profile_metric("service_inclusive",p.service_ticks,p.polls,0U,p.service_max_ticks);
+    amiga_profile_metric("outside_service",p.outside_ticks,p.polls,0U,p.max_gap_ticks);
+    xil_printf("[Amiga IDE profile] exclusive service stages follow; service_inclusive also includes instrumentation overhead\r\n");
+    amiga_profile_metric("SD_read",p.sd_read_ticks,p.sd_read_calls,p.read_bytes,p.sd_read_max_ticks);
+    amiga_profile_metric("FIFO",p.fifo_ticks,p.fifo_calls,p.fifo_bytes,p.fifo_max_ticks);
+    amiga_profile_metric("ATA_other",p.ata_other_ticks,p.polls,0U,p.ata_other_max_ticks);
+    amiga_profile_metric("FDD_poll",p.fdd_ticks,p.polls,0U,p.fdd_max_ticks);
+    amiga_profile_metric("idle_ATA_polls",0U,p.idle_ata_polls,0U,0U);
+    amiga_profile_metric("REQ4",0U,p.req4,0U,0U);
+    amiga_profile_metric("REQ5",0U,p.req5,0U,0U);
+    amiga_profile_metric("REQ6",0U,p.req6,0U,0U);
+    amiga_profile_metric("read_commands",0U,p.read_commands,0U,0U);
+    amiga_profile_metric("write_commands",0U,p.write_commands,0U,0U);
+    amiga_profile_metric("requested_read_sectors",0U,p.requested_read_sectors,0U,0U);
+    amiga_profile_metric("successful_read_sectors",0U,p.read_sectors,0U,0U);
+    amiga_profile_metric("sequential_reads",0U,p.sequential_reads,0U,0U);
+    amiga_profile_metric("nonsequential_reads",0U,p.nonsequential_reads,0U,0U);
+    xil_printf("[Amiga IDE profile] ATA_other includes command/control and any write-journal work; only SD reads are split out\r\n");
+    static const char *const bins[]={"1","2","3..4","5..8","9..16","17..32","33..64","65..128","129..256"};
+    for(unsigned i=0U;i<9U;++i) {
+        char value[21];xil_printf("[Amiga IDE profile] command_sectors=%s count=%s\r\n",
+            bins[i],amiga_profile_decimal(value,p.read_command_hist[i]));
+    }
+    amiga_profile_metric("DRQ_to_REQ_combined_NON_ADDITIVE",p.drq_to_request_ticks,p.drq_intervals,0U,p.max_drq_to_request_ticks);
+    xil_printf("[Amiga IDE profile] DRQ gap overlaps other totals: guest work + CDC visibility + ARM polling; not pure guest PIO time\r\n");
+    return true;
+}
+static bool amiga_ide_bench_command(const char *line)
+{
+    if(strncmp(line,"amigaidebench",13U)!=0)return false;
+    unsigned iterations=32U;
+    const char *at=line+13U;
+    if(*at!='\0') {
+        if(*at++!=' ' || *at<'0' || *at>'9')goto usage;
+        iterations=0U;unsigned digits=0U;
+        while(*at>='0' && *at<='9') {
+            if(++digits>3U)goto usage;
+            iterations=iterations*10U+(unsigned)(*at++-'0');
+        }
+        if(*at!='\0' || iterations==0U || iterations>256U)goto usage;
+    }
+    if(usb_sd_modal || mt_sd_storage_external_active() || mt_screenshot_service_busy() || amiga_display_service_pending()) {
+        set_supervisor_warning("IDE benchmark unavailable while storage/display is busy");return true;
+    }
+    if((shell_read(MT_REG_STATUS)&MT_STATUS_CORE_READY)==0U || !amiga_content_service_ready()) {
+        set_supervisor_warning("IDE benchmark requires a running Amiga core");return true;
+    }
+    if(!(shell_read(MT_AMIGA_HOST_PORT)&MT_AMIGA_HOST_BULK)) {
+        set_supervisor_warning("IDE benchmark requires a bulk-capable Amiga core");return true;
+    }
+    if(!hide_menu_for_core_action())return true;
+    supervisor_menu.visible=false;supervisor_menu_dirty=true;usb_hid_service_set_menu_capture(false);
+    xil_printf("[Amiga IDE transport] guest restarts after verified completion; current session is lost\r\n");
+    usb_hid_service_set_core_ready(false);
+    mt_amiga_ide_bench_t result;
+    if(amiga_content_service_ide_bench(iterations,amiga_bench_ticks,NULL,&result)!=0) {
+        set_supervisor_warning(amiga_content_service_error());
+        xil_printf("[Amiga IDE transport] failed: %s\r\n",amiga_content_service_error());return true;
+    }
+    usb_hid_service_set_core_ready(amiga_content_service_ready());
+    amiga_display_guest_restarted();
+    const uint64_t counts_per_second=(uint64_t)(COUNTS_PER_SECOND);
+    for(unsigned backend=0U;backend<2U;++backend)for(unsigned direction=0U;direction<2U;++direction) {
+        const uint64_t ticks=result.ticks[backend][direction];
+        const uint32_t elapsed=(uint32_t)(ticks*UINT64_C(1000000)/counts_per_second);
+        const uint32_t kib=ticks!=0U ? (uint32_t)((uint64_t)result.bytes_per_leg*counts_per_second/ticks/1024U):0U;
+        xil_printf("[Amiga IDE transport] %s %s bytes=%u us=%u KiB/s=%u verified=1 (no HDF I/O timed)\r\n",
+            backend==0U ? "legacy":"bulk",direction==0U ? "ARM->IDE":"IDE->ARM",
+            (unsigned)result.bytes_per_leg,(unsigned)elapsed,(unsigned)kib);
+    }
+    xil_printf("[Amiga IDE transport] verified; Amiga restarted with current settings and media\r\n");
+    return true;
+usage:
+    xil_printf("usage: :amigaidebench [1..256] (default32; FIFO transport only; restarts Amiga)\r\n");return true;
+}
 static bool amiga_serial_command(const char *line)
 {
     if(shell_read(MT_REG_CORE_ID)!=MT_AMIGA_CORE_ID || !amiga_service_initialized)return false;
+    if(amiga_cpu_command(line))return true;
+    if(amiga_ide_command(line))return true;
+    if(amiga_ide_profile_command(line))return true;
+    if(amiga_ide_bench_command(line))return true;
     if(strcmp(line,"disk")==0 || strcmp(line,"dir")==0) { print_amiga_media_status();return true; }
+    if(strcmp(line,"amigadisplay")==0) {
+        const mt_amiga_display_info_t *const info=amiga_display_service_info();
+        xil_printf("[Amiga display] available=%u modes=%u pending=%u requested=%u applied=%u saved=%u status=%s\r\n",
+            amiga_display_service_available()?1U:0U,(unsigned)amiga_display_service_mode_count(),
+            amiga_display_service_pending()?1U:0U,(unsigned)amiga_display_service_requested(),
+            (unsigned)amiga_display_service_applied(),(unsigned)amiga_display_service_saved(),amiga_display_service_status());
+        if(info!=NULL)xil_printf("[Amiga display] width=%u height=%u depth=%u mode=%08x flags=%04x\r\n",
+            (unsigned)info->width,(unsigned)info->height,(unsigned)info->depth,(unsigned)info->mode_id,(unsigned)info->flags);
+        const uint32_t host_status=shell_read(MT_AMIGA_HOST_PORT);
+        if((host_status&MT_AMIGA_HOST_DISPLAY) && !(host_status&(MT_AMIGA_HOST_BUSY|MT_AMIGA_HOST_ERROR))) {
+            for(unsigned i=0U;i<18U;++i) {
+                uint32_t word=0U;
+                const mt_link_result_t result=mt_amiga_host_access(&shell_link,MT_AMIGA_HOST_DISPLAY_READ,i,100000U,&word);
+                if(result!=MT_LINK_OK) {
+                    if(result==MT_LINK_REMOTE_ERROR && !(shell_read(MT_AMIGA_HOST_PORT)&MT_AMIGA_HOST_BUSY))
+                        (void)mt_amiga_host_access(&shell_link,MT_AMIGA_HOST_CLEAR_ERROR,0U,100000U,NULL);
+                    xil_printf("[Amiga display] mailbox read%u failed=%s\r\n",i,mt_link_result_name(result));break;
+                }
+                xil_printf("[Amiga display] word%u=%04x\r\n",i,(unsigned)(word&0xffffU));
+            }
+        }
+        return true;
+    }
+    if(strncmp(line,"amigadisplay ",13U)==0 && line[13]>='0' && line[13]<='3' && line[14]=='\0') {
+        (void)amiga_request_display((uint8_t)(line[13]-'0'));return true;
+    }
     if(strcmp(line,"diskretry")==0 || strcmp(line,"saveretry")==0 || strcmp(line,"romload")==0) {
         const mt_menu_action_t action={.kind=strcmp(line,"romload")==0 ? MT_MENU_ACTION_AMIGA_RELOAD:MT_MENU_ACTION_AMIGA_RETRY};
         handle_menu_action(action);
@@ -4585,6 +4940,7 @@ static bool menu_action_needs_core_progress(mt_menu_action_t action)
     case MT_MENU_ACTION_EJECT_AMIGA_DRIVE:
     case MT_MENU_ACTION_AMIGA_RELOAD:
     case MT_MENU_ACTION_AMIGA_RETRY:
+    case MT_MENU_ACTION_AMIGA_DISPLAY:
     case MT_MENU_ACTION_IIGS_PRAM:
     case MT_MENU_ACTION_IIGS_RELOAD:
     case MT_MENU_ACTION_DETACH_CARTRIDGE:
@@ -5493,11 +5849,23 @@ static void handle_menu_action(mt_menu_action_t action)
         const int result=amiga_content_service_eject((unsigned)action.file_index);
         if(result!=0)set_supervisor_error(amiga_content_service_error());
         else set_supervisor_status("Amiga disk ejected");
+    } else if(action.kind==MT_MENU_ACTION_AMIGA_DISPLAY) {
+        if(shell_read(MT_REG_CORE_ID)!=MT_AMIGA_CORE_ID || !amiga_service_initialized)return;
+        const unsigned delta=action.variant_index==1U ? MT_AMIGA_DISPLAY_MODES-1U:1U;
+        uint8_t next=amiga_display_service_requested();
+        for(unsigned i=0U;i<MT_AMIGA_DISPLAY_MODES;++i) {
+            next=(uint8_t)((next+delta)%MT_AMIGA_DISPLAY_MODES);
+            if(amiga_display_service_mode_available(next))break;
+        }
+        (void)amiga_request_display(next);
     } else if(action.kind==MT_MENU_ACTION_AMIGA_RELOAD || action.kind==MT_MENU_ACTION_AMIGA_RETRY) {
         usb_hid_service_set_core_ready(false);
         const int result=action.kind==MT_MENU_ACTION_AMIGA_RELOAD ? amiga_content_service_boot():amiga_content_service_retry();
         if(result!=0)set_supervisor_error(amiga_content_service_error());
-        else set_supervisor_status("Amiga ROM/media ready");
+        else {
+            if(action.kind==MT_MENU_ACTION_AMIGA_RELOAD)amiga_display_guest_restarted();
+            set_supervisor_status("Amiga ROM/media ready");
+        }
         usb_hid_service_set_core_ready(result==0 && amiga_content_service_ready());
         if(dac_ready)set_audio(!amiga_content_service_ready(),false);
         set_video_test(!amiga_content_service_ready());
@@ -6169,17 +6537,20 @@ static void handle_menu_action(mt_menu_action_t action)
         }
         if(supervisor.has_active && supervisor.active.package.core_id==MT_AMIGA_CORE_ID) {
             mt_amiga_config_t changed=*amiga_content_service_config();
-            if(action.file_index==0U)changed.cpu=changed.cpu==MT_AMIGA_CPU_STOCK ? MT_AMIGA_CPU_68020_TURBO:MT_AMIGA_CPU_STOCK;
+            if(action.file_index==0U)changed.cpu=changed.cpu==MT_AMIGA_CPU_STOCK ?
+                (amiga_content_service_cpu14_available() ? MT_AMIGA_CPU_68020_14:MT_AMIGA_CPU_68020_TURBO):
+                changed.cpu==MT_AMIGA_CPU_68020_14 ? MT_AMIGA_CPU_68020_TURBO:MT_AMIGA_CPU_STOCK;
             else if(action.file_index==1U)return;
             else if(action.file_index==2U)changed.fast_mib=changed.fast_mib==4U ? 8U:4U;
             else if(action.file_index==3U)changed.floppy_turbo^=1U;
+            else if(action.file_index==4U) {
+                if(usb_sd_modal || mt_sd_storage_external_active() || mt_screenshot_service_busy() || amiga_display_service_pending()) {
+                    set_supervisor_warning("IDE change unavailable while storage/display is busy");return;
+                }
+                changed.ide_compat^=1U;
+            }
             else return;
-            usb_hid_service_set_core_ready(false);
-            if(amiga_content_service_configure(&changed)!=0)set_supervisor_error(amiga_content_service_error());
-            else set_supervisor_status("Amiga settings saved");
-            usb_hid_service_set_core_ready(amiga_content_service_ready());
-            if(dac_ready)set_audio(!amiga_content_service_ready(),false);
-            set_video_test(!amiga_content_service_ready());return;
+            (void)apply_amiga_config(&changed);return;
         }
         if(supervisor.has_active && supervisor.active.package.core_id==MT_IIGS_CORE_ID) {
             if(action.file_index==9U) {
@@ -6511,6 +6882,12 @@ static void service_supervisor_menu(void)
     };
     mt_menu_view_t view;
     if (!supervisor_menu_ready) return;
+    if(amiga_service_initialized && shell_read(MT_REG_CORE_ID)==MT_AMIGA_CORE_ID &&
+       amiga_display_service_pending() && supervisor_menu.visible) {
+        /* Leave the guest accessible while its OS preferences utility is
+         * waiting for application windows or an Amiga requester. */
+        supervisor_menu.visible=false;supervisor_menu_dirty=true;
+    }
     if (c64_debug.reu_host.reload_required) {
         supervisor_menu.visible = true;
         supervisor_menu_dirty = true;

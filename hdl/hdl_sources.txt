@@ -5,6 +5,7 @@ common/multitini_display_pkg.sv
 common/multitini_display_control.sv
 common/multitini_display_reset.sv
 common/multitini_display_geometry.sv
+common/multitini_display_geometry_pair.sv
 core/multitini_core_interface.sv
 core/genesis/multitini_genesis_media_stream.sv
 [c64]
@@ -327,6 +328,7 @@ core/amiga/ports/ciaa.v
 core/amiga/ports/ciab.v
 core/amiga/ports/cpu_cycles.v
 core/amiga/ports/cpu_wrapper.v
+core/amiga/ports/fastchip.v
 core/amiga/ports/denise.v
 core/amiga/ports/denise_bitplane_shifter.v
 core/amiga/ports/denise_bitplanes.v
@@ -365,6 +367,8 @@ core/amiga/ports/m68k_ea_idx.hex
 core/amiga/multitini_amiga_loader.sv
 core/amiga/multitini_amiga_memory.sv
 core/amiga/multitini_amiga_host.sv
+core/amiga/multitini_amiga_ide_block.sv
+core/amiga/multitini_amiga_display_mailbox.sv
 core/amiga/multitini_amiga_adapter.sv
 board/multitini_amiga_video_normalizer.sv
 board/multitini_amiga_video_bridge.sv

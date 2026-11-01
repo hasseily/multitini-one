@@ -32,6 +32,25 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0);
     reg [63:0] chip_store=0,fast_store=0,blit_store=0,repeat_store=0;
     integer transactions=0,holds=0,cycles;
     integer completions=0,dma_source_hits=0,dma_source_misses=0;
+    integer speed_edges=0,speed_opportunities=0,kernel_steps=0;
+    reg previous_speed_ce=0,speed_phase_valid=0;
+    always @(posedge chip_clk)begin
+        if(!cpu_reset_n)begin
+            speed_edges=0;speed_opportunities=0;kernel_steps=0;
+            speed_phase_valid=0;previous_speed_ce=0;
+        end else if(CPU_MODE!=0)begin
+            speed_edges=speed_edges+1;
+            if(dut.cpu.cpu_speed_ce)speed_opportunities=speed_opportunities+1;
+            if(dut.cpu_step)kernel_steps=kernel_steps+1;
+            if(CPU_MODE==7 && speed_phase_valid && dut.cpu.cpu_speed_ce==previous_speed_ce)
+                $fatal(1,"14 MHz execution opportunity did not alternate native edges");
+            if(CPU_MODE==3 && !dut.cpu.cpu_speed_ce)
+                $fatal(1,"28 MHz execution opportunity was throttled");
+            if(CPU_MODE==7 && dut.cpu_step && !dut.cpu.cpu_speed_ce)
+                $fatal(1,"14 MHz kernel consumed a disabled edge");
+            previous_speed_ce=dut.cpu.cpu_speed_ce;speed_phase_valid=1;
+        end
+    end
     // Both copies use the same source: its first lookup misses after the
     // Fast RAM alias evicts it, while the repeated DMA lookup must hit.
     always @(posedge clk)if(!reset && memory_i.state==0 && memory_i.request_valid &&
@@ -260,7 +279,7 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0);
     task automatic config_cpu;
         @(negedge chip_clk);io_uio=1;io_din=16'h00f4;io_strobe=1;
         @(negedge chip_clk);io_strobe=0;
-        @(negedge chip_clk);io_din=CPU_MODE==0 ? 16'h0000 : 16'h001f;io_strobe=1;
+        @(negedge chip_clk);io_din=CPU_MODE==0 ? 16'h0000 : CPU_MODE==7 ? 16'h005f : 16'h001f;io_strobe=1;
         @(negedge chip_clk);io_strobe=0;
         repeat(8)@(negedge chip_clk);io_uio=0;
         repeat(8)@(negedge chip_clk);
@@ -269,6 +288,7 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0);
         repeat(8)@(negedge clk);reset=0;
         repeat(32)@(negedge chip_clk);config_cpu();
         if(cpucfg[1:0]!==CPU_MODE[1:0])$fatal(1,"CPU fixture configuration mismatch");
+        if(cpucfg[3] !== (CPU_MODE==7))$fatal(1,"CPU fixture speed selector mismatch");
         // Shorten only the four-frame reset delay; retain all production CPU
         // reset handling, native bus state and memory scheduling.
         force dut.chipset.CONTROL1.rst_cnt=3'd4;
@@ -280,6 +300,10 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0);
                fast_store[31:0]==32'hd4c3b2a1 && repeat_store[31:0]==32'hd4c3b2a1 &&
                blit_store==64'h3412341234123412 && dut.chipset.DENISE1.clut0.clut.mem[0]===32'h0f000f00)begin
                 if(holds<20 || transactions<10 || dma_source_hits<1 || dma_source_misses<1)$fatal(1,"CPU fixture did not exercise variable DDR latency");
+                if(CPU_MODE!=0 && (kernel_steps<30 || speed_edges<100))$fatal(1,"CPU speed proof did not execute sufficient kernel steps");
+                if(CPU_MODE==7 && (speed_opportunities*2-speed_edges>1 || speed_edges-speed_opportunities*2>1))
+                    $fatal(1,"14 MHz kernel opportunity count is not exactly half the native rate");
+                $display("CPU speed proof mode=%0d native_edges=%0d opportunities=%0d consumed=%0d",CPU_MODE,speed_edges,speed_opportunities,kernel_steps);
                 $display("PASS Amiga CPU mode=%0d real instructions, repeated Chip/Fast RAM, native blitter miss/hit DMA (%0d/%0d), COLOR00 and %0d DDR holds/%0d transactions",CPU_MODE,dma_source_misses,dma_source_hits,holds,transactions);
                 $finish;
             end
@@ -289,3 +313,4 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0);
 endmodule
 module tb_amiga_cpu_stock;tb_amiga_cpu #(.CPU_MODE(0)) test();endmodule
 module tb_amiga_cpu_turbo;tb_amiga_cpu #(.CPU_MODE(3)) test();endmodule
+module tb_amiga_cpu_half;tb_amiga_cpu #(.CPU_MODE(7)) test();endmodule

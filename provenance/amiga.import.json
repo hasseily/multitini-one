@@ -229,6 +229,12 @@
       "license_evidence": "Project-wide grant in retained README.md License section"
     },
     {
+      "path": "rtl/fastchip.v",
+      "sha256": "b5d14c884fa7b0c2219389f80836dd3049c8d8aa5c914f56b0b92a80f5639dd6",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "Project-wide grant in retained README.md License section"
+    },
+    {
       "path": "rtl/gary.v",
       "sha256": "10eeff1e31bb2280cb53a2f63c06a430b40fe8d7f198c11d921322a9f3b04d5d",
       "license": "GPL-3.0-or-later",

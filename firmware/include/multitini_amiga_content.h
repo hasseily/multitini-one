@@ -7,6 +7,7 @@
 #define MT_AMIGA_MFM_GAP_WORDS 350U
 #define MT_AMIGA_MAX_HDF_BYTES (UINT64_C(512)*UINT32_C(0x0fffffff))
 bool mt_amiga_config_valid(const mt_amiga_config_t *);
+bool mt_amiga_fast_ide_enabled(const mt_amiga_config_t *,uint32_t host_status);
 void mt_amiga_config_defaults(mt_amiga_config_t *);
 void mt_amiga_config_encode(const mt_amiga_config_t *,uint8_t wire[MT_AMIGA_CONFIG_BYTES]);
 bool mt_amiga_config_decode(const uint8_t wire[MT_AMIGA_CONFIG_BYTES],mt_amiga_config_t *);

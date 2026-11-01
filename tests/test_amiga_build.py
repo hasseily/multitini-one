@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Exercise Amiga source capture, clock selection and private ROM packaging."""
-import hashlib
+"""Exercise Amiga source capture, clock selection and ROM-free SD packaging."""
 import os
 from pathlib import Path
 import shutil
@@ -81,41 +80,60 @@ class AmigaBuildTests(unittest.TestCase):
         for source in (ROOT / "third_party/amiga").rglob("*"):
             if source.is_file() and "__pycache__" not in source.parts:
                 self.assertIn(source.relative_to(ROOT).as_posix(), paths)
+        for source in (ROOT / "software/amiga").rglob("*"):
+            if source.is_file() and "__pycache__" not in source.parts:
+                self.assertIn(source.relative_to(ROOT).as_posix(), paths)
         self.assertFalse(any(path.startswith("build/") or path.endswith("kick.rom") for path in paths))
 
 
-class AmigaPrivateContentTests(unittest.TestCase):
+class AmigaContentTests(unittest.TestCase):
     def test_rom_free_package_preserves_user_directories(self):
         with tempfile.TemporaryDirectory(dir=ROOT / "build") as directory:
             root = Path(directory)
             package.prepare_amiga_content(root)
             core = root / "sd/multitini/cores/amiga"
             self.assertTrue((core / "media/README.txt").is_file())
-            self.assertTrue((core / "roms/README.txt").is_file())
-            self.assertFalse((core / "roms/kick.rom").exists())
+            readme = core / "roms/readme.txt"
+            self.assertEqual(readme.read_bytes(), (ROOT / package.AMIGA_ROM_README).read_bytes())
+            self.assertEqual(list((core / "roms").iterdir()), [readme])
 
-    def test_explicit_rom_bytes_and_hash_are_retained_without_conversion(self):
+    def test_amiga_names_preserve_core_and_variant_ids(self):
+        self.assertEqual(package.AMIGA_CORE_SPEC,
+                         ("amiga", "Amiga", "0x414D4947",
+                          [("pal", "Amiga 600 ECS PAL", "amiga")]))
+
+    def test_canonical_sd_data_rejects_a_rom_without_deleting_it(self):
         with tempfile.TemporaryDirectory(dir=ROOT / "build") as directory:
             root = Path(directory)
-            for size in (256 * 1024, 512 * 1024, 1024 * 1024):
-                with self.subTest(size=size):
-                    source = root / f"kick-{size}.rom"
-                    data = bytes(range(256)) * (size // 256)
-                    source.write_bytes(data)
-                    rom = package.amiga_kickstart(source)
-                    output = root / f"package-{size}"
-                    package.prepare_amiga_content(output, rom)
-                    self.assertEqual((output / rom["provenance"]["output"]).read_bytes(), data)
-                    self.assertEqual(rom["provenance"]["sha256"], hashlib.sha256(data).hexdigest())
+            readme = root / package.AMIGA_ROM_README
+            readme.parent.mkdir(parents=True)
+            readme.write_bytes((ROOT / package.AMIGA_ROM_README).read_bytes())
+            rom = readme.parent / "kick.rom"
+            rom.write_bytes(b"synthetic test input")
+            output = root / "output"
+            with mock.patch.object(package, "ROOT", root):
+                with self.assertRaisesRegex(ValueError, "Canonical Amiga ROM data"):
+                    package.prepare_amiga_content(output)
+            self.assertEqual(rom.read_bytes(), b"synthetic test input")
+            self.assertFalse(output.exists())
 
-    def test_truncated_or_oversized_kickstart_is_rejected(self):
+    def test_package_rejects_a_preexisting_rom_without_deleting_it(self):
         with tempfile.TemporaryDirectory(dir=ROOT / "build") as directory:
-            source = Path(directory) / "kick.rom"
-            for size in (0, 256 * 1024 - 1, 512 * 1024 + 1, 2 * 1024 * 1024):
-                with self.subTest(size=size):
-                    source.write_bytes(bytes(size))
-                    with self.assertRaisesRegex(ValueError, "Kickstart must be exactly"):
-                        package.amiga_kickstart(source)
+            root = Path(directory)
+            rom = root / "sd/multitini/cores/amiga/roms/kick.rom"
+            rom.parent.mkdir(parents=True)
+            rom.write_bytes(b"synthetic test input")
+            with self.assertRaisesRegex(ValueError, "package ROM directory"):
+                package.prepare_amiga_content(root)
+            self.assertEqual(rom.read_bytes(), b"synthetic test input")
+
+    def test_removed_rom_embedding_argument_is_rejected_before_packaging(self):
+        result = subprocess.run([sys.executable, ROOT / "scripts/package_core_gs.py",
+                                 "--hardware", "unused", "--workspace", "unused",
+                                 "--include-amiga", "--amiga-kickstart", "unused.rom"],
+                                cwd=ROOT, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("unrecognized arguments: --amiga-kickstart", result.stderr)
 
 
 @unittest.skipUnless(shutil.which("tclsh"), "native Tcl unavailable")

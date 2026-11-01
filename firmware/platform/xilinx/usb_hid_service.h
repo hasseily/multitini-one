@@ -44,6 +44,8 @@ void usb_hid_service_poll_deferred_if_due(uint32_t min_interval_us);
 void usb_hid_service_vectrex_controls(int controls[2][6]);
 void usb_hid_service_set_active_core(uint32_t core_id);
 void usb_hid_service_set_core_ready(bool ready);
+/* Consume a deferred Amiga chord edge outside all HID callbacks. */
+bool usb_hid_service_take_amiga_reset(void);
 void usb_hid_service_set_keyboard_filter(mt_usb_keyboard_filter_fn filter,
                                          void *context);
 int usb_hid_service_set_joystick_port(uint8_t port);

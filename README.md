@@ -5,6 +5,13 @@ It runs C64, Game Boy Color, Vectrex, Genesis / Mega Drive and Apple IIgs
 machines through a shared supervisor, menu, input, audio, storage and
 core-loading system. It does not use an Apple II host.
 
+The Amiga development update, ARM M0.8.0dev10 / FPGA 817, adds four
+Workbench display choices, 68020 14/28 MHz options, reset shortcuts, sector
+block transfers and native Fast IDE with a Classic compatibility option.
+Fast IDE is active on the card at 28 MHz. See the
+[release and qualification record](docs/AMIGA_M080DEV10.md) for exact artifacts,
+tests and the remaining performance measurements.
+
 M0.5.7 shares USB poll timing between the main loop and IIgs transfers, so a
 transfer skips USB work when the main loop has just serviced it. Long transfers
 retain the one-millisecond fallback. This ARM-only follow-up is separate from
@@ -73,7 +80,9 @@ See the [IIgs integration](docs/APPLE_IIGS_PLAN.md),
 [selective builds](docs/CORE_ARTIFACT_REUSE.md) and [USB SD mount](docs/USB_SD_MOUNT.md).
 
 Private delivery packages place user-supplied boot ROMs in each core's `roms/`
-folder and provide media loaders. IIgs ROMs belong in
+folder and provide media loaders. Amiga is supplied without a system ROM;
+follow `sd/multitini/cores/amiga/roms/readme.txt` and supply `kick.rom` separately.
+IIgs ROMs belong in
 `multitini/cores/apple-iigs/roms/`; disks and PRAM belong in the sibling
 `multitini/cores/apple-iigs/media/`. ROM bytes stay outside Git and source
 archives. Games and operating-system disks are not included.

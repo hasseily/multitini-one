@@ -6,6 +6,7 @@
 module tb_video_frame_pipeline;
     parameter integer SCALE_NUM=4,SCALE_DEN=1;
     parameter bit DYNAMIC_DISPLAY=0;
+    parameter bit PROFILE_TEST=0,SOURCE_ALT=0;
     parameter bit MANUAL_CROP_TEST=0;
     reg display_pause=0,display_pixel_hold=0;
     wire display_quiescent;
@@ -16,7 +17,9 @@ module tb_video_frame_pipeline;
         if(dut.engine_i.filter.blur_vertical_tent(8'd7,8'd11,8'd19)!==8'd12)
             $fatal(1,"Blur vertical tent did not round the normalized sum");
     end
-    localparam integer WIDTH=13,HEIGHT=8,VIEW_X=16,VIEW_Y=2;
+    localparam integer WIDTH=PROFILE_TEST && SOURCE_ALT ? 19:13;
+    localparam integer HEIGHT=PROFILE_TEST && SOURCE_ALT ? 10:8;
+    localparam integer VIEW_X=16,VIEW_Y=2;
     localparam integer OUT_WIDTH=WIDTH*SCALE_NUM/SCALE_DEN;
     localparam integer OUT_HEIGHT=HEIGHT*SCALE_NUM/SCALE_DEN;
     localparam integer STRIDE=128,SLOT_BYTES=STRIDE*HEIGHT,PIXELS=WIDTH*HEIGHT;
@@ -84,8 +87,10 @@ module tb_video_frame_pipeline;
     wire [7:0] wstrb[0:1];
     reg [63:0] rdata[0:1];
     reg [1:0] bvalid=0,rvalid=0,rlast=0;
-    multitini_video_framebuffer #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.WIDTH(WIDTH),.HEIGHT(HEIGHT),.VIEW_X(VIEW_X),.VIEW_Y(VIEW_Y),
+    multitini_video_framebuffer #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.WIDTH(13),.HEIGHT(8),
+        .ALT_WIDTH(PROFILE_TEST ? 19:13),.ALT_HEIGHT(PROFILE_TEST ? 10:8),.VIEW_X(VIEW_X),.VIEW_Y(VIEW_Y),
         .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN),.SHARED_PIXEL_RESET(1)) dut(
+        .source_alt(SOURCE_ALT),.pixel_source_alt(SOURCE_ALT),
         .display_filter_scale_num(4'(SCALE_NUM)),.display_filter_scale_den(4'(SCALE_DEN)),
         .display_pause(display_pause),.display_quiescent(display_quiescent),
         .display_view_x(12'(READER_X)),.display_view_y(12'(READER_Y)),

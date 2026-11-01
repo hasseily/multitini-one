@@ -170,6 +170,8 @@ def inputs(machine: str) -> list[Path]:
         # user Kickstart and media files remain outside public source bundles.
         paths.update(path for path in (ROOT / "third_party/amiga").rglob("*")
                      if path.is_file() and "__pycache__" not in path.parts)
+        paths.update(path for path in (ROOT / "software/amiga").rglob("*")
+                     if path.is_file() and "__pycache__" not in path.parts)
         paths.update((ROOT / "scripts").glob("*amiga*.py"))
         paths.update((ROOT / "tests").glob("test_amiga_*.py"))
         paths.add(ROOT / "hdl/core/apple_iigs/multitini_apple_iigs_ddr_path.sv")

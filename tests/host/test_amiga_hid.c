@@ -20,5 +20,29 @@ int main(void)
     assert(mt_amiga_hid_poll(&input)==0);assert(input.mouse_x==173 && input.mouse_y== -173);
     assert(events[count-1U].code==0x6102U && events[count-1U].value==3U);
     assert(mt_amiga_hid_release_all(&input)==0);assert(input.mouse_x==0 && input.mouse_y==0 && input.emitted_joystick[0]==0U);
+    const uint8_t menu[]={0x65U};
+    assert(mt_amiga_hid_keyboard_report(&input,0U,0U,menu,1U)==0 && events[count-1U].value==0x67U);
+    assert(mt_amiga_hid_keyboard_report(&input,1U,0x80U,NULL,0U)==0);
+    const unsigned held=count;assert(mt_amiga_hid_disconnect(&input,0U)==0 && count==held);
+    assert(mt_amiga_hid_disconnect(&input,1U)==0 && events[count-1U].value==0xe7U);
+    /* Aggregate modifiers across keyboards, including the Menu alias. */
+    assert(mt_amiga_hid_keyboard_report(&input,0U,0x01U,NULL,0U)==0);
+    assert(mt_amiga_hid_keyboard_report(&input,1U,0x08U,NULL,0U)==0);
+    assert(!mt_amiga_hid_take_reset(&input));
+    assert(mt_amiga_hid_keyboard_report(&input,2U,0U,menu,1U)==0 && mt_amiga_hid_take_reset(&input));
+    assert(mt_amiga_hid_poll(&input)==0 && !mt_amiga_hid_take_reset(&input));
+    mt_amiga_hid_reassert(&input);assert(mt_amiga_hid_poll(&input)==0 && !mt_amiga_hid_take_reset(&input));
+    assert(mt_amiga_hid_keyboard_report(&input,2U,0U,NULL,0U)==0);
+    assert(mt_amiga_hid_keyboard_report(&input,2U,0x80U,NULL,0U)==0 && mt_amiga_hid_take_reset(&input));
+    assert(mt_amiga_hid_release_all(&input)==0);
+    assert(mt_amiga_hid_keyboard_report(&input,0U,0x89U,NULL,0U)==0);
+    assert(mt_amiga_hid_disconnect(&input,1U)==0 && !mt_amiga_hid_take_reset(&input));
+    assert(mt_amiga_hid_release_all(&input)==0);
+    mt_amiga_hid_set_reset_enabled(&input,false);
+    assert(mt_amiga_hid_keyboard_report(&input,0U,0x98U,NULL,0U)==0 && !mt_amiga_hid_take_reset(&input));
+    mt_amiga_hid_set_reset_enabled(&input,true);
+    assert(mt_amiga_hid_poll(&input)==0 && !mt_amiga_hid_take_reset(&input));
+    assert(mt_amiga_hid_release_all(&input)==0);
+    assert(mt_amiga_hid_keyboard_report(&input,0U,0x98U,NULL,0U)==0 && mt_amiga_hid_take_reset(&input));
     return 0;
 }

@@ -12,6 +12,7 @@ static mt_video_worker_mailbox_t test_mailbox;
 static uint8_t test_private[16];
 static uint32_t reset_control,write_count,control_count,ignore_control_write;
 static struct { uintptr_t address; uint32_t value; } writes[16];
+static uintptr_t tlb_sections[64];static unsigned tlb_count;
 
 uint32_t Xil_In32(uintptr_t address)
 {
@@ -25,7 +26,8 @@ void Xil_Out32(uintptr_t address,uint32_t value)
         reset_control=value;
 }
 void Xil_DCacheFlushRange(INTPTR address,u32 size) { (void)address; (void)size; }
-void Xil_SetTlbAttributes(uintptr_t address,uint32_t attributes) { (void)address; (void)attributes; }
+void Xil_SetTlbAttributes(uintptr_t address,uint32_t attributes)
+{ (void)attributes;assert(tlb_count<64U);tlb_sections[tlb_count++]=address; }
 void XTime_GetTime(XTime *value) { *value=0; }
 
 static void reset_fixture(uint32_t control)
@@ -34,7 +36,7 @@ static void reset_fixture(uint32_t control)
     memset(test_private,0xC3,sizeof test_private);
     started=true; timed_out=false; held_for_reset=false; accepting=true;
     test_worker_entry=(uintptr_t)test_private; test_worker_size=1;
-    reset_control=control; write_count=control_count=ignore_control_write=0;
+    reset_control=control; write_count=control_count=ignore_control_write=tlb_count=0;
 }
 static void expect_write(unsigned index,uintptr_t address,uint32_t value)
 {
@@ -93,6 +95,12 @@ int main(void)
     expect_write(1,MT_SLCR_A9_CPU_RESET,0x122U); /* complete partial clock hold */
     expect_write(2,MT_SLCR_A9_CPU_RESET,0x120U);
     expect_write(3,MT_SLCR_A9_CPU_RESET,0x100U);
-    puts("PASS: CPU1 UG585 hold/release, preserved controls, busy refusal, failed readback and partial-reset recovery");
+    reset_fixture(0x100U);started=false;assert(mt_video_worker_start());
+    for(uint32_t n=0U;n<32U;++n) {
+        bool found=false;
+        for(unsigned i=0U;i<tlb_count;++i)if(tlb_sections[i]==MT_VIDEO_FRAME_RESERVED_BASE+n*MT_VIDEO_FRAME_MMU_SECTION_BYTES)found=true;
+        assert(found);
+    }
+    puts("PASS: CPU1 UG585 hold/release and every reserved video MMU section");
     return 0;
 }

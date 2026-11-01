@@ -10,7 +10,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ["third_party/appletini/hdl/cdc_bit_sync.sv", "hdl/sim/amiga_cdc_model.sv",
-           "hdl/common/multitini_async_mailbox.sv", "hdl/core/amiga/multitini_amiga_host.sv",
+           "hdl/common/multitini_async_mailbox.sv", "hdl/core/amiga/multitini_amiga_ide_block.sv",
+           "hdl/core/amiga/multitini_amiga_host.sv",
            "hdl/sim/tb_amiga_rtc_host.sv"]
 
 

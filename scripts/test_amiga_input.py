@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Check the production Amiga adapter input queue with a controlled native stub."""
 from pathlib import Path
+import argparse
 import hashlib
 import json
 import os
@@ -11,13 +12,18 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ["third_party/appletini/hdl/cdc_bit_sync.sv", "hdl/sim/amiga_cdc_model.sv",
            "hdl/common/multitini_async_mailbox.sv", "hdl/core/amiga/multitini_amiga_memory.sv",
+           "hdl/core/amiga/multitini_amiga_ide_block.sv",
            "hdl/core/amiga/multitini_amiga_host.sv", "hdl/core/amiga/multitini_amiga_loader.sv",
            "hdl/core/amiga/multitini_amiga_adapter.sv", "hdl/board/multitini_amiga_video_normalizer.sv",
            "hdl/sim/tb_amiga_adapter_input.sv"]
 
 
 def main():
-    output = ROOT / "build/amiga-input-tests"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output",type=Path,default=ROOT / "build/amiga-input-tests")
+    output = parser.parse_args().output.resolve()
+    if not output.is_relative_to(ROOT / "build"):
+        parser.error("Output must remain under the project build directory")
     output.mkdir(parents=True, exist_ok=True)
     runtime = Path(os.environ.get("MULTITINI_UCRT_BIN", "C:/msys64/ucrt64/bin"))
     def tool(name):

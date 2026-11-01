@@ -197,6 +197,7 @@ static bool mt_video_worker_quiesce(void)
 static void usb_hid_service_poll_deferred(void)
 {
 }
+static void amiga_display_guest_restarted(void) {assert(core_id == MT_AMIGA_CORE_ID); }
 #include "c64_iec_lifecycle.inc"
 static void reset_fixture(void)
 {

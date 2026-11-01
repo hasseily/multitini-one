@@ -56,6 +56,11 @@ typedef struct {
     const char *amiga_drive_name[MT_AMIGA_DRIVE_COUNT];
     mt_amiga_config_t amiga_config;
     bool amiga_ready;
+    bool amiga_cpu14_available,amiga_cpu14_fallback;
+    bool amiga_fast_ide_available,amiga_fast_ide_expected;
+    bool amiga_display_available,amiga_display_pending;
+    uint8_t amiga_display_requested,amiga_display_applied,amiga_display_mode_count;
+    const char *amiga_display_status;
 } mt_core_frontend_state_t;
 
 typedef struct {
@@ -64,6 +69,7 @@ typedef struct {
     mt_menu_core_option_t core_options[MT_MENU_MAX_CORE_OPTIONS];
     char c64_turbo_text[96], c64_turbo_help[192], c64_speed_text[80];
     char c64_option_text[MT_MENU_MAX_CORE_OPTIONS][96];
+    char amiga_resolution_text[128],amiga_resolution_help[224];
 } mt_core_frontend_t;
 
 /* Replace only the profile-owned view fields. The caller retains ownership of

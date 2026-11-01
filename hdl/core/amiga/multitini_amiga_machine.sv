@@ -52,14 +52,20 @@ module multitini_amiga_machine (
     input wire [1:0] kbd_mouse_type,
     input wire [7:0] kbd_mouse_data,
     input wire [64:0] rtc,
+    input wire [15:0] display_request,
+    input wire [4:0] display_read_address,
+    output wire [15:0] display_read_data,
     output wire [23:0] rgb,
     output wire hsync_n,vsync_n,hblank,vblank,field,lace,ce_pix,
     output wire [1:0] res,
     output wire ntsc,
+    output wire [8:0] diw_hstart,diw_hstop,
+    output wire [10:0] diw_vstart,diw_vstop,
     output wire signed [14:0] audio_l,audio_r,
     output wire cpu_reset_n,
     output wire [4:0] cpucfg,
     output wire [6:0] memcfg,
+    output wire ide_fast,
     output wire fdd_led,hdd_led
 );
     // The memory/host/video service runs on the ungated sibling clock. Its
@@ -85,6 +91,9 @@ module multitini_amiga_machine (
 
     wire [23:1] cpu_chip_addr;
     wire [15:0] cpu_chip_din,cpu_chip_dout;
+    wire [15:0] chipset_cpu_data,display_guest_data;
+    wire display_guest_selected;
+    assign cpu_chip_dout=display_guest_selected ? display_guest_data : chipset_cpu_data;
     wire cpu_chip_as,cpu_chip_uds,cpu_chip_lds,cpu_chip_rw,cpu_chip_dtack;
     wire [2:0] cpu_chip_ipl;
     wire cpu_chip_long,chip32_en;
@@ -92,11 +101,19 @@ module multitini_amiga_machine (
     wire [31:0] cpu_nmi_addr;
     wire [3:0] cpu_cacr;
     wire [2:0] cachecfg;
-    wire bootrom,ide_ena,ide_fast;
+    wire bootrom,ide_ena;
+    wire [15:0] fastchip_dout,classic_ide_rdata,fast_ide_rdata;
+    wire [5:0] classic_ide_req,fast_ide_req;
+    wire fastchip_sel,fastchip_lds,fastchip_uds,fastchip_rnw,fastchip_lw;
+    wire fastchip_selack,fastchip_ready,fast_ide_irq,fast_ide_led,classic_ide_led;
+    assign ide_req=ide_fast ? fast_ide_req : classic_ide_req;
+    assign ide_rdata=ide_fast ? fast_ide_rdata : classic_ide_rdata;
+    assign hdd_led=ide_fast ? fast_ide_led : classic_ide_led;
     wire ar_fetch;
     wire cpu_shared;
     wire cpu_ram_sel;
     wire cpu_ram_long;
+    wire cpu_step;
     wire [15:0] cpu_ram_wdata2;
     reg cpu_retirement_hold=0;
     wire native_cpu_ready=cpu_ready && !cpu_retirement_hold;
@@ -105,7 +122,7 @@ module multitini_amiga_machine (
     always @(posedge clk_chip or posedge reset)
         if(reset)cpu_retirement_hold<=0;
         else if(!cpu_reset_n || cpu_retirement_hold)cpu_retirement_hold<=0;
-        else if(cpucfg[1] && cpu_ram_sel && native_cpu_ready)cpu_retirement_hold<=1;
+        else if(cpucfg[1] && cpu_ram_sel && native_cpu_ready && cpu_step)cpu_retirement_hold<=1;
     assign cpu_req=cpu_ram_sel && !cpu_retirement_hold;
     assign cpu_long=cpucfg[1] && cpu_ram_long;
     assign cpu_wdata2=cpu_long ? cpu_ram_wdata2 : 16'd0;
@@ -117,15 +134,15 @@ module multitini_amiga_machine (
     cpu_wrapper cpu(
         .reset(cpu_reset_n),.reset_out(cpu_reset_out),.clk(clk_chip),
         .ph1(cpu_ph1),.ph2(cpu_ph2),
-        .cpucfg(cpucfg),.ntsc(ntsc),.fastramcfg(memcfg[6:4]),
+        .cpucfg(cpucfg),.cpu_step(cpu_step),.ntsc(ntsc),.fastramcfg(memcfg[6:4]),
         .cachecfg(cachecfg),.bootrom(bootrom),
         .chip_addr(cpu_chip_addr),.chip_dout(cpu_chip_dout),.chip_din(cpu_chip_din),
         .chip_as(cpu_chip_as),.chip_uds(cpu_chip_uds),.chip_lds(cpu_chip_lds),
         .chip_rw(cpu_chip_rw),.chip_dtack(cpu_chip_dtack),.chip_ipl(cpu_chip_ipl),
         .chip32_en(chip32_en),.chip_long(cpu_chip_long),
         .chip_din2(chip_cpu_din2),.chip_dout2(chip_rdata2),
-        .fastchip_dout(16'd0),.fastchip_sel(),.fastchip_lds(),.fastchip_uds(),
-        .fastchip_rnw(),.fastchip_lw(),.fastchip_selack(1'b0),.fastchip_ready(1'b0),
+        .fastchip_dout(fastchip_dout),.fastchip_sel(fastchip_sel),.fastchip_lds(fastchip_lds),.fastchip_uds(fastchip_uds),
+        .fastchip_rnw(fastchip_rnw),.fastchip_lw(fastchip_lw),.fastchip_selack(fastchip_selack),.fastchip_ready(fastchip_ready),
         .ramsel(cpu_ram_sel),.ramaddr(cpu_addr),.ramdin(cpu_wdata),
         .ramdout(cpu_rdata),.ramdout2(cpu_rdata),.ramready(native_cpu_ready),
         .ramlds(cpu_lb_n),.ramuds(cpu_ub_n),.ramshared(cpu_shared),
@@ -139,8 +156,27 @@ module multitini_amiga_machine (
         .ramready_l(cpu_ready_long && !cpu_retirement_hold),.dcache_sw_en(dcache_sw_en));
     assign chip_wdata2=chip_cpu_din2;
 
+    // The upstream CPU-side IDE path shares the accepted native clock here.
+    // Management strobes belong exclusively to the selected backend. A mode
+    // change is configured with the guest held reset, before media presence.
+    fastchip fastchip_i(
+        .clk_sys(clk_chip),.reset(!cpu_reset_n || !cpu_reset_out),
+        .sel(fastchip_sel),.sel_ack(fastchip_selack),.ready(fastchip_ready),
+        .addr({cpu_chip_addr,1'b0}),.din(cpu_chip_din),.dout(fastchip_dout),
+        .lds(!fastchip_lds),.uds(!fastchip_uds),.rnw(fastchip_rnw),.longword(fastchip_lw),
+        .ide_ena(ide_ena && ide_fast),.ide_irq(fast_ide_irq),.ide_req(fast_ide_req),
+        .ide_address(ide_address),.ide_write(ide_write && ide_fast),.ide_read(ide_read && ide_fast),
+        .ide_writedata(ide_wdata),.ide_readdata(fast_ide_rdata),.ide_led(fast_ide_led));
+
+    multitini_amiga_display_mailbox display_i(
+        .service_clk(clk_service28),.native_clk(clk_chip),.reset(reset),.guest_reset(guest_reset),
+        .request(display_request),.address(cpu_chip_addr),.as_n(cpu_chip_as),.rw(cpu_chip_rw),
+        .uds_n(cpu_chip_uds),.lds_n(cpu_chip_lds),.dtack_n(cpu_chip_dtack),.write_data(cpu_chip_din),
+        .read_selected(display_guest_selected),.read_data(display_guest_data),
+        .arm_address(display_read_address),.arm_data(display_read_data));
+
     minimig chipset(
-        .cpu_address(cpu_chip_addr),.cpu_data(cpu_chip_dout),.cpudata_in(cpu_chip_din),
+        .cpu_address(cpu_chip_addr),.cpu_data(chipset_cpu_data),.cpudata_in(cpu_chip_din),
         ._cpu_ipl(cpu_chip_ipl),._cpu_as(cpu_chip_as),._cpu_uds(cpu_chip_uds),
         ._cpu_lds(cpu_chip_lds),.cpu_r_w(cpu_chip_rw),.cpu_long(cpu_chip_long),
         .chip32_en(chip32_en),.ram_long(chip_long),._cpu_dtack(cpu_chip_dtack),
@@ -156,12 +192,14 @@ module multitini_amiga_machine (
         ._joy1(joy1),._joy2(joy2),._joy3(16'hffff),._joy4(16'hffff),
         .joya1(16'd0),.joya2(16'd0),.mouse_btn(mouse_buttons),
         .kms_level(kms_level),.kbd_mouse_type(kbd_mouse_type),.kbd_mouse_data(kbd_mouse_data),
-        .pwr_led(),.fdd_led(fdd_led),.hdd_led(hdd_led),.rtc(rtc),
+        .pwr_led(),.fdd_led(fdd_led),.hdd_led(classic_ide_led),.rtc(rtc),
         .IO_UIO(io_uio),.IO_FPGA(io_fpga),.IO_STROBE(io_strobe),
         .IO_WAIT(io_wait),.IO_DIN(io_din),.IO_DOUT(io_dout),
         ._hsync(hsync_n),._vsync(vsync_n),._csync(),.field1(field),.lace(lace),
         .hblank(hblank),.vblank(vblank),.red(rgb[23:16]),.green(rgb[15:8]),.blue(rgb[7:0]),
         .ar(),.scanline(),.ce_pix(ce_pix),.res(res),.ntsc(ntsc),
+        .diw_hstart(diw_hstart),.diw_hstop(diw_hstop),
+        .diw_vstart(diw_vstart),.diw_vstop(diw_vstop),
         .ldata(audio_l),.rdata(audio_r),.ldata_okk(),.rdata_okk(),.aud_mix(),
         .toccata_ena(1'b0),.toccata_base(8'd0),.cdtv_base(8'd0),
         .toccata_aud_left(),.toccata_aud_right(),.a2065_ena(1'b0),.a2065_base(8'd0),
@@ -173,9 +211,9 @@ module multitini_amiga_machine (
         .cdtv_dma_req(),.cdtv_dma_we(),.cdtv_dma_baddr(),.cdtv_dma_wbyte(),.cdtv_dma_ack(1'b0),
         .cdtv_nvr_dirty(),.cdtv_card_dirty(),.cdtv_cdda_volume(),.cdtv_cdda_volume_valid(),
         .cpucfg(cpucfg),.cachecfg(cachecfg),.memcfg(memcfg),.bootrom(bootrom),.ide_ena(ide_ena),
-        .ide_fast(ide_fast),.ide_ext_irq(1'b0),.akiko_irq(1'b0),.ide_req(ide_req),
-        .ide_address(ide_address),.ide_write(ide_write),.ide_writedata(ide_wdata),
-        .ide_read(ide_read),.ide_readdata(ide_rdata),
+        .ide_fast(ide_fast),.ide_ext_irq(fast_ide_irq),.akiko_irq(1'b0),.ide_req(classic_ide_req),
+        .ide_address(ide_address),.ide_write(ide_write && !ide_fast),.ide_writedata(ide_wdata),
+        .ide_read(ide_read && !ide_fast),.ide_readdata(classic_ide_rdata),
         .USER_IN(7'h7f),.USER_OUT(),.user_port_mode(),.mister_floppy_status(),.drive_snd(),
         .a2065_clk_ddr(clk_chip),.a2065_mem_address(),.a2065_mem_burstcount(),.a2065_mem_read(),
         .a2065_mem_readdata(64'd0),.a2065_mem_readdatavalid(1'b0),

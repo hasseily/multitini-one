@@ -14,7 +14,7 @@ static void copy_pixels(void *destination,uint32_t address,size_t size);
 
 struct mt_sd_file { bool open;size_t position; };
 static struct mt_sd_file test_file;
-static uint32_t registers[256],now_ms;
+static uint32_t registers[256],now_ms,amiga_host_caps;
 static unsigned copies,progress_calls,open_calls,close_calls,remove_calls,rename_calls,write_calls;
 static unsigned open_collisions,rename_collisions,close_failures,write_failure_at,race;
 static mt_sd_status_t directory_failure,open_failure,rename_failure;
@@ -27,7 +27,7 @@ static char opened_name[128],renamed_from[128],renamed_to[128],removed_name[128]
 static mt_sd_result_t result(mt_sd_status_t status,size_t size)
 { const mt_sd_result_t r={status,0U,size};return r; }
 static uint32_t read_register(uint32_t offset)
-{ assert(offset/4U<256U);return registers[offset/4U]; }
+{ if(offset==MT_AMIGA_HOST_PORT)return amiga_host_caps;assert(offset/4U<256U);return registers[offset/4U]; }
 static uint32_t milliseconds(void) { return now_ms; }
 static void progress(void) { ++progress_calls; }
 static void copy_pixels(void *destination,uint32_t address,size_t size)
@@ -92,6 +92,7 @@ const char *mt_sd_status_name(mt_sd_status_t status)
 { return status==MT_SD_OK ? "OK":"stub SD error"; }
 static void reset_test(void)
 {
+    amiga_host_caps=0U;
     const mt_screenshot_service_ops_t ops={read_register,milliseconds,progress};
     assert(!test_file.open);memset(registers,0,sizeof(registers));
     registers[MT_REG_ABI_VERSION/4U]=MT_VIDEO_PHOSPHOR_MIN_ABI_MINOR;
@@ -204,6 +205,24 @@ static void successful_capture(void)
     assert(strcmp(mt_screenshot_service_last_path(),renamed_to)==0);
     assert(strstr(mt_screenshot_service_status(),"Screenshot saved")!=NULL);
 }
+static void shres_capture(void)
+{
+    static const uint16_t sw[]={1920,1024,1200,1280,1360,1680},sh[]={1080,768,800,1024,768,1050};
+    for(unsigned supported=0U;supported<2U;++supported)for(unsigned mode=0U;mode<6U;++mode)for(unsigned full=0U;full<2U;++full) {
+        reset_test();amiga_host_caps=supported ? MT_AMIGA_HOST_SHRES:0U;
+        registers[MT_REG_ABI_VERSION/4U]=27;registers[MT_REG_CORE_ID/4U]=MT_AMIGA_CORE_ID;
+        registers[MT_REG_DISPLAY_STATUS/4U]=mode;registers[MT_REG_VIDEO_FRAME_GEOMETRY/4U]=(512U<<16)|1280U;
+        registers[MT_REG_VIDEO_FRAME_STRIDE/4U]=2560;
+        assert(mt_screenshot_service_request(full!=0U));
+        for(unsigned n=0U;n<1200U && mt_screenshot_service_busy();++n)
+            mt_screenshot_service_poll(MT_AMIGA_CORE_ID,"Amiga",(uint8_t)mode,0,NULL,false);
+        assert(!mt_screenshot_service_busy());
+        if(!supported) { assert(copies==0U && open_calls==0U);continue; }
+        assert(copies==512U && copied_base==0x22A00000U && copied_last==copied_base+511U*2560U);
+        assert(rename_calls==1U && big32_at(16)==(full ? sw[mode]:sw[mode]<1280 ? sw[mode]:1280));
+        assert(big32_at(20)==(full ? sh[mode]:512));
+    }
+}
 static void snapshot_ownership(void)
 {
     for(unsigned mode=0U;mode<2U;++mode)for(unsigned r=2U;r<=5U;++r) {
@@ -262,6 +281,6 @@ static void failure_and_cancel(void)
 }
 int main(void)
 {
-    successful_capture();snapshot_ownership();failure_and_cancel();iigs_capture();amiga_capture();
+    successful_capture();snapshot_ownership();failure_and_cancel();iigs_capture();amiga_capture();shres_capture();
     puts("screenshot service tests passed");return 0;
 }

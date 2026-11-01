@@ -396,10 +396,10 @@ int main(void) {
 #include <stdint.h>
 #include <string.h>
 #include "multitini_video_frame.h"
-static uint8_t capture[MT_VIDEO_FRAME_SLOT_BYTES * MT_VIDEO_FRAME_SLOT_COUNT];
-static uint8_t display[MT_VIDEO_FRAME_SLOT_BYTES * MT_VIDEO_FRAME_SLOT_COUNT];
-#define MT_VIDEO_FRAME_CAPTURE_POINTER(slot) ((const uint16_t *)(capture + (slot) * MT_VIDEO_FRAME_SLOT_BYTES))
-#define MT_VIDEO_FRAME_OUTPUT_POINTER(slot) ((uint16_t *)(display + (slot) * MT_VIDEO_FRAME_SLOT_BYTES))
+static uint8_t capture[MT_VIDEO_FRAME_WIDE_SLOT_BYTES * MT_VIDEO_FRAME_SLOT_COUNT];
+static uint8_t display[MT_VIDEO_FRAME_WIDE_SLOT_BYTES * MT_VIDEO_FRAME_SLOT_COUNT];
+#define MT_VIDEO_FRAME_CAPTURE_POINTER(slot) ((const uint16_t *)(capture + (slot) * layout.slot_bytes))
+#define MT_VIDEO_FRAME_OUTPUT_POINTER(slot) ((uint16_t *)(display + (slot) * layout.slot_bytes))
 #define MT_VIDEO_WORKER_HOST_TEST
 #define MT_VIDEO_WORKER_FRAME_REFERENCE
 #include "firmware/cpu1/main.c"
@@ -497,6 +497,16 @@ int main(void) {
             assert(display[3U * MT_VIDEO_FRAME_SLOT_BYTES] == 0xa5);
         }
     }
+    job.abi=MT_VIDEO_FRAME_JOB_ABI_WIDE;job.width=1280;job.height=512;job.stride=2560;job.source_slot=3;job.output_slot=3;job.epoch++;
+    src=(uint16_t *)(capture+3U*MT_VIDEO_FRAME_WIDE_SLOT_BYTES);
+    dst=(uint16_t *)(display+3U*MT_VIDEO_FRAME_WIDE_SLOT_BYTES);
+    for(unsigned i=0;i<1280U*512U;++i)src[i]=(uint16_t)(i*17U+91U);
+    run(&job,true,1);
+    for(unsigned i=0;i<1280U*512U;++i)assert(dst[i]==(uint16_t)~src[i]);
+    assert(display[3U*MT_VIDEO_FRAME_WIDE_SLOT_BYTES-1U]==0xa5);
+    assert(display[3U*MT_VIDEO_FRAME_WIDE_SLOT_BYTES+1280U*512U*2U]==0xa5);
+    bad=job;bad.abi=MT_VIDEO_FRAME_JOB_ABI;size=sizeof(result);
+    assert(mt_video_worker_execute(&bad,sizeof(bad),&result,&size)!=0);
     return 0;
 }
 ''')
@@ -504,7 +514,7 @@ int main(void) {
         guard = [sys.executable, str(ROOT / "scripts/run_native_tool.py"), "--"]
         subprocess.run(guard + [compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
                        "-I", str(ROOT), "-I", str(ROOT / "firmware/include"),
-                       str(source), "-o", str(executable)], check=True,
+                       str(source), str(ROOT / "firmware/common/video_frame_layout.c"), "-o", str(executable)], check=True,
                        capture_output=True, text=True)
         subprocess.run(guard + [str(executable)], check=True,
                        capture_output=True, text=True)

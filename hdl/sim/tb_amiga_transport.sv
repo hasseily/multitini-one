@@ -115,6 +115,12 @@ module tb_amiga_transport;
     reg [31:0] command=0;
     wire [31:0] status;
     wire [64:0] native_rtc;
+    wire [15:0] native_display_request;
+    wire [4:0] display_read_address;
+    wire [15:0] display_read_data=0;
+    wire [1:0] capture_mode;
+    wire display_switch_pending;
+    wire display_quiescent=1;
     wire io_fpga,io_uio,io_strobe;
     wire [15:0] io_din;
     reg io_wait=0;
@@ -128,7 +134,10 @@ module tb_amiga_transport;
     reg [1:0] host_phase=0;
     wire chip_tick=host_ticks;
     always @(posedge clk)host_phase<=host_phase+1'b1;
-    multitini_amiga_host host_i(.*);
+    multitini_amiga_host host_i(
+        .block_write(1'b0),.block_read(1'b0),.block_address(16'd0),.block_read_address(16'd0),
+        .block_ram_read_address(7'd0),.block_wstrb(4'd0),.block_rdata(),
+        .guest_reset(1'b0),.native_config(16'h0663),.*);
     integer io_pulses=0,ide_reads=0,ide_writes=0;
     reg prior_strobe=0,prior_read=0,prior_write=0;
     always @(posedge clk)begin

@@ -33,7 +33,8 @@ def remove_instance(text: str, kind: str, instance: str, replacement: str) -> st
 
 def minimig() -> str:
     text = (SOURCE / "rtl/minimig.v").read_text()
-    text = replace_once(text, "assign ide_fast = ~ide_config[5] & cpucfg[1];", "assign ide_fast = 1'b0; // A600 Gayle IDE remains available in every CPU mode")
+    text = replace_once(text, "\toutput  [1:0] res,", "\toutput  [1:0] res,\n\toutput [8:0] diw_hstart,diw_hstop,\n\toutput [10:0] diw_vstart,diw_vstop,")
+    text = replace_once(text, "\t.hde(hde),", "\t.hde(hde),\n\t.diw_hstart(diw_hstart),.diw_hstop(diw_hstop),\n\t.diw_vstart(diw_vstart),.diw_vstop(diw_vstop),")
     text = replace_once(text, ".address(ram_address),", ".address(ram_address[22:1]),")
     text = replace_once(text, "//instantiate sram bridge", "assign ram_address[23]=1'b0;\n\n//instantiate sram bridge")
     text = replace_once(text, ".memory_config(memory_config[3:0]),\n\t.bank(bank)", ".memory_config(memory_config[1:0]),\n\t.bank(bank)")
@@ -96,6 +97,70 @@ end""")
     return NOTICE + text
 
 
+def fastchip() -> str:
+    """Retain the pinned CPU-side IDE controller without RTG or CD32 devices.
+
+    Both ports use the existing accepted native clock. The upstream IDE
+    decode, registered acknowledgement, read wait and Gayle instance are
+    copied intact; the board wrapper selects this or the conventional path.
+    """
+    text = (SOURCE / "rtl/fastchip.v").read_text()
+    header = text[:text.index("module fastchip")]
+    start = text.index("wire sel_ide   =")
+    stop = text.index("wire        sel_rtg =", start)
+    interface = """module fastchip (
+    input wire clk_sys,reset,sel,
+    output wire sel_ack,ready,
+    input wire [23:0] addr,input wire [15:0] din,
+    output wire [15:0] dout,
+    input wire lds,uds,rnw,longword,ide_ena,
+    output wire ide_irq,output wire [5:0] ide_req,
+    input wire [4:0] ide_address,input wire ide_write,ide_read,
+    input wire [15:0] ide_writedata,output wire [15:0] ide_readdata,
+    output wire ide_led
+);
+// IDE-only extraction. No RTG, Akiko, extra CPU clock or memory interface.
+assign sel_ack=sel_ide | sel_gayle;
+assign ready=ide_ready;
+assign dout=ide_dout;
+"""
+    return NOTICE + header + interface + text[start:stop] + "\nendmodule\n"
+
+
+def ide() -> str:
+    text=(SOURCE / "rtl/ide.v").read_text()
+    # A 68020 may mix word and longword reads of the FIFO data register.
+    # Keep the even bank looking at the next even word when the pointer is
+    # odd, so it is already prefetched before a longword transfer begins.
+    # The odd bank supplies the current word. No extra CPU acknowledgement
+    # delay is needed; ordinary 16-bit reads/writes remain unchanged.
+    text=replace_once(text,
+        "{buf_q[31:16], (~io_32 & io_cnt[0]) ? buf_q[31:16] : buf_q[15:0]}",
+        "((io_32 && io_cnt[0]) ? {buf_q[15:0],buf_q[31:16]} : {buf_q[31:16], (~io_32 & io_cnt[0]) ? buf_q[31:16] : buf_q[15:0]})")
+    text=replace_once(text,
+        ".address_b(io_cnt[12:1]),\n\t.data_b(io_writedata[15:0]),",
+        ".address_b(io_cnt[12:1]+{11'd0,io_cnt[0]}),\n\t.data_b((io_32 && io_cnt[0]) ? io_writedata[31:16] : io_writedata[15:0]),")
+    text=replace_once(text,
+        ".data_b(io_32 ? io_writedata[31:16] : io_writedata[15:0]),",
+        ".data_b((io_32 && !io_cnt[0]) ? io_writedata[31:16] : io_writedata[15:0]),")
+    return NOTICE+text
+
+
+def agnus_window() -> str:
+    """Expose the native programmed window, without changing its timing."""
+    text = (SOURCE / "rtl/agnus.v").read_text()
+    text = replace_once(text, "\toutput        hde,", "\toutput [8:0] diw_hstart,diw_hstop,\n\toutput [10:0] diw_vstart,diw_vstop,\n\toutput        hde,")
+    text = replace_once(text, "\t.hde(hde),", "\t.hde(hde),\n\t.diw_hstart(diw_hstart),.diw_hstop(diw_hstop),\n\t.diw_vstart(diw_vstart),.diw_vstop(diw_vstop),")
+    return NOTICE + text
+
+
+def bitplane_window() -> str:
+    text = (SOURCE / "rtl/agnus_bitplanedma.v").read_text()
+    text = replace_once(text, "  output reg            hde,", "  output wire [8:0] diw_hstart,diw_hstop,\n  output wire [10:0] diw_vstart,diw_vstop,\n  output reg            hde,")
+    text = replace_once(text, "endmodule", "// Read-only board capture metadata; native register behavior is unchanged.\nassign diw_hstart=hdiwstrt;\nassign diw_hstop=hdiwstop;\nassign diw_vstart=vdiwstrt;\nassign diw_vstop=vdiwstop;\nendmodule")
+    return NOTICE + text
+
+
 def floppy() -> str:
     text = (SOURCE / "rtl/paula_floppy.v").read_text()
     text = replace_once(text,"\tif(reset)\n  \t\t{disk_fluxdensitymode[3:0], disk_fluxmode[3:0], disk_writable[3:0],disk_present[3:0]} <= 16'b0000_0000_0000_0000;\n  \telse if (rx_data[15:12]==4'b0001 && stb7 && !cmd_cnt)", "\t// Mounted image presence belongs to ARM and survives guest reset.\n  \tif (rx_data[15:12]==4'b0001 && stb7 && !cmd_cnt)")
@@ -141,6 +206,14 @@ assign mister_floppy_status=3'b000;
 
 def cpu() -> str:
     text = (SOURCE / "rtl/cpu_wrapper.v").read_text()
+    text = replace_once(text, "\tinput       [4:0] cpucfg,", "\tinput       [4:0] cpucfg,\n\toutput            cpu_step,")
+    text = replace_once(text, "wire clkena_p_throttled = clkena_p_rest | (ramready & clkena_p_thr);", """// PAL 68020 14 MHz mode uses the existing opposite native bus phases.
+// These alternate accepted 28 MHz edges and include the chipset-ready phase.
+// The wrapper/chip bus stay at 28 MHz and global memory holds freeze both
+// phases together. An independent divide-by-two can miss every ready pulse.
+wire cpu_speed_ce = !cpucfg[3] || ph1n || ph2n;
+wire clkena_p_throttled = (clkena_p_rest | (ramready & clkena_p_thr)) & cpu_speed_ce;
+assign cpu_step = clkena_p_throttled;""")
     text = replace_once(text, ".ipl_autovector(1)", ".ipl_autovector(1'b1)")
     for pin in ("HALTn","BERRn","BRn","BGACKn"):
         text = replace_once(text,f".{pin}(1)",f".{pin}(1'b1)")
@@ -157,7 +230,7 @@ def userio() -> str:
     text = replace_once(text, "reg [7:0] t_memory_config = 8'b0_0_00_01_01;", "reg [7:0] t_memory_config = 8'h33; // 2MiB Chip + 8MiB Zorro-II Fast")
     text = replace_once(text, "reg [5:0] t_chipset_config = 0;", "reg [5:0] t_chipset_config = 6'h08; // ECS PAL")
     text = replace_once(text, "chipset_config <= t_chipset_config;", "chipset_config <= 6'h08; // ECS PAL only in the A600 image")
-    text = replace_once(text, "cpu_cfg <= {t_cpu_config[7:6], t_cpu_config[5], t_cpu_config[1:0]};", "cpu_cfg <= {2'b00, (t_cpu_config[1:0]==2'b11) & t_cpu_config[5], {2{t_cpu_config[1:0]==2'b11}}}; // stock FX68K or TG68K 68020")
+    text = replace_once(text, "cpu_cfg <= {t_cpu_config[7:6], t_cpu_config[5], t_cpu_config[1:0]};", "cpu_cfg <= {1'b0, (t_cpu_config[1:0]==2'b11) & t_cpu_config[6], (t_cpu_config[1:0]==2'b11) & t_cpu_config[5], {2{t_cpu_config[1:0]==2'b11}}}; // bit3 selects alternate-edge 68020 execution")
     text = replace_once(text, "memory_config[5:0] <= t_memory_config[5:0];", "memory_config[5:0] <= {(t_memory_config[5:4]==2'd2 ? 2'd2 : 2'd3), 2'b00, 2'b11}; // 2MiB Chip; 4/8MiB Fast")
     text = replace_once(text, "memory_config[7] <= t_memory_config[7];", "memory_config[7] <= 1'b0;")
     text = replace_once(text, "memory_config[6] <= t_memory_config[6];", "memory_config[6] <= 1'b0; // no monitor cartridge")
@@ -311,7 +384,8 @@ def hoist_module_declarations(text: str) -> str:
 
 
 def generated() -> dict[str, str]:
-    result={"minimig.v": minimig(), "paula_floppy.v": floppy(), "cpu_wrapper.v": cpu(),
+    result={"minimig.v": minimig(), "fastchip.v": fastchip(), "ide.v": ide(), "paula_floppy.v": floppy(), "cpu_wrapper.v": cpu(),
+            "agnus.v": agnus_window(), "agnus_bitplanedma.v": bitplane_window(),
             "userio.v": userio(), "cpu_cycles.v": cpu_cycles(), "fx68k.sv": fx68k(),
             "amiga_ram.sv": RAM, "m68k_cyc_idx.hex": mif_hex("m68k_cyc_idx",16384,6),
             "m68k_ea_idx.hex": mif_hex("m68k_ea_idx",2048,5)}
@@ -328,6 +402,7 @@ def generated() -> dict[str, str]:
 def main() -> int:
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check",action="store_true")
+    parser.add_argument("--no-licenses",action="store_true",help="Leave the shared license list to its owner")
     args=parser.parse_args()
     manifest=json.loads((ROOT / "provenance/amiga.import.json").read_text())
     for entry in manifest["files"]:
@@ -344,7 +419,7 @@ def main() -> int:
         else:
             target.parent.mkdir(parents=True,exist_ok=True)
             target.write_text(expected)
-    if not args.check:
+    if not args.check and not args.no_licenses:
         csv_path=ROOT / "licenses/files.csv"
         with csv_path.open(newline="",encoding="utf-8") as stream: rows=list(csv.reader(stream))
         rows=[r for r in rows if not r[0].startswith("hdl/core/amiga/ports/") and r[0] not in ("scripts/import_amiga_core.py","scripts/port_amiga_core.py")]

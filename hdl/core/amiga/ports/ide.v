@@ -108,7 +108,7 @@ always @(posedge clk) if(io_read) begin
 	if(!present) io_readdata <= 32'hFFFFFFFF;
 	else begin
 		case(io_address)
-				   0: io_readdata <= status[3] ? {buf_q[31:16], (~io_32 & io_cnt[0]) ? buf_q[31:16] : buf_q[15:0]} : 32'd0;
+				   0: io_readdata <= status[3] ? ((io_32 && io_cnt[0]) ? {buf_q[15:0],buf_q[31:16]} : {buf_q[31:16], (~io_32 & io_cnt[0]) ? buf_q[31:16] : buf_q[15:0]}) : 32'd0;
 				   1: io_readdata <= error;
 				   2: io_readdata <= (hob ? sector_count[15:8] : sector_count[7:0] );
 				   3: io_readdata <= (hob ? sector[15:8]       : sector[7:0]       );
@@ -328,8 +328,8 @@ dpram #(12,16) io_buf0
 	.wren_a(mgmt_write & &mgmt_address & ~mgmt_cnt[0]),
 	.q_a(buf_readdata[15:0]),
 
-	.address_b(io_cnt[12:1]),
-	.data_b(io_writedata[15:0]),
+	.address_b(io_cnt[12:1]+{11'd0,io_cnt[0]}),
+	.data_b((io_32 && io_cnt[0]) ? io_writedata[31:16] : io_writedata[15:0]),
 	.wren_b(write_data_io & (io_32 | ~io_cnt[0])),
 	.q_b(buf_q[15:0])
 );
@@ -344,7 +344,7 @@ dpram #(12,16) io_buf1
 	.q_a(buf_readdata[31:16]),
 
 	.address_b(io_cnt[12:1]),
-	.data_b(io_32 ? io_writedata[31:16] : io_writedata[15:0]),
+	.data_b((io_32 && !io_cnt[0]) ? io_writedata[31:16] : io_writedata[15:0]),
 	.wren_b(write_data_io & (io_32 | io_cnt[0])),
 	.q_b(buf_q[31:16])
 );

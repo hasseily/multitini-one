@@ -23,11 +23,28 @@ static uint8_t amiga_key(uint8_t hid)
     case 0x5c:return 0x2d;case 0x5d:return 0x2e;case 0x5e:return 0x2f;
     case 0x5f:return 0x3d;case 0x60:return 0x3e;case 0x61:return 0x3f;
     case 0x62:return 0x0f;case 0x63:return 0x3c;case 0x64:return 0x30;
+    case 0x65:return 0x67; /* Application/Menu aliases Right Amiga. */
     default:return 0xff;
     }
 }
 void mt_amiga_hid_init(mt_amiga_hid_input_t *in,mt_c64_hid_emit_fn emit,void *context)
-{ memset(in,0,sizeof(*in)); memset(in->player,0xff,sizeof(in->player)); in->emit=emit;in->context=context; }
+{ memset(in,0,sizeof(*in)); memset(in->player,0xff,sizeof(in->player)); in->emit=emit;in->context=context;in->reset_enabled=true; }
+static bool reset_chord(const uint8_t keys[16])
+{ return (keys[0x63U>>3U]&(1U<<(0x63U&7U)))!=0U &&
+    (keys[0x66U>>3U]&(1U<<(0x66U&7U)))!=0U &&
+    (keys[0x67U>>3U]&(1U<<(0x67U&7U)))!=0U; }
+void mt_amiga_hid_set_reset_enabled(mt_amiga_hid_input_t *in,bool enabled)
+{
+    if(in==NULL)return;
+    if(!enabled) {
+        uint8_t keys[16]={0};
+        for(unsigned s=0U;s<MT_C64_HID_SLOT_COUNT;++s)for(unsigned b=0U;b<16U;++b)keys[b]|=in->keys[s][b];
+        in->reset_pending=false;in->reset_latched=reset_chord(keys);
+    }
+    in->reset_enabled=enabled;
+}
+bool mt_amiga_hid_take_reset(mt_amiga_hid_input_t *in)
+{ if(in==NULL || !in->reset_enabled || !in->reset_pending)return false;in->reset_pending=false;return true; }
 static void set_key(uint8_t *keys,uint8_t key)
 { if(key<128U)keys[key>>3U]|=(uint8_t)(1U<<(key&7U)); }
 int mt_amiga_hid_keyboard_report(mt_amiga_hid_input_t *in,uint8_t slot,uint8_t modifiers,const uint8_t *keys,size_t count)
@@ -69,6 +86,12 @@ int mt_amiga_hid_poll(mt_amiga_hid_input_t *in)
         for(unsigned b=0U;b<16U;++b)keys[b]|=in->keys[i][b];
         if(in->player[i]<2U)joystick[in->player[i]]|=in->joystick[i];
     }
+    const bool chord=reset_chord(keys);
+    if(!chord)in->reset_latched=false;
+    else if(!in->reset_latched) {
+        in->reset_latched=true;
+        if(in->reset_enabled)in->reset_pending=true;
+    }
     /* Releases first so a new chord cannot inherit an old modifier. */
     for(unsigned down=0U;down<2U;++down)for(unsigned k=0U;k<128U;++k) {
         const uint8_t mask=(uint8_t)(1U<<(k&7U)); const unsigned byte=k>>3U;
@@ -94,9 +117,9 @@ int mt_amiga_hid_poll(mt_amiga_hid_input_t *in)
     return 0;
 }
 int mt_amiga_hid_disconnect(mt_amiga_hid_input_t *in,uint8_t slot)
-{ if(in==NULL || slot>=MT_C64_HID_SLOT_COUNT)return -1;memset(in->keys[slot],0,16U);in->joystick[slot]=0U;return mt_amiga_hid_poll(in); }
+{ if(in==NULL || slot>=MT_C64_HID_SLOT_COUNT)return -1;in->reset_pending=false;memset(in->keys[slot],0,16U);in->joystick[slot]=0U;return mt_amiga_hid_poll(in); }
 int mt_amiga_hid_release_all(mt_amiga_hid_input_t *in)
-{ if(in==NULL)return -1;memset(in->keys,0,sizeof(in->keys));memset(in->joystick,0,sizeof(in->joystick));
+{ if(in==NULL)return -1;in->reset_pending=false;in->reset_latched=false;memset(in->keys,0,sizeof(in->keys));memset(in->joystick,0,sizeof(in->joystick));
     in->mouse_buttons=0U;mt_amiga_hid_clear_mouse_motion(in);return mt_amiga_hid_poll(in); }
 void mt_amiga_hid_reassert(mt_amiga_hid_input_t *in)
 { if(in!=NULL) { memset(in->emitted_keys,0,sizeof(in->emitted_keys));memset(in->emitted_joystick,0xff,2U);in->emitted_mouse_buttons=255U; } }

@@ -18,6 +18,10 @@ scripts/test_apple_iigs_legacy_video.py,Multitini One,,GPL-3.0-only,sim-tested,O
 hdl/core/apple_iigs/roms/smartport.a65,Multitini One,,GPL-3.0-only,CPU-tested,Original eight-unit standard and extended SmartPort ROM with DMA controller interface; AppleWin and pinned Appletini MIT handler compatibility references in provenance/iigs_smartport.import.json; no Apple SSC wrappers included
 hdl/core/nes/multitini_nes_adapter.sv,MiSTer NES and Multitini One,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Original shared-shell adapter with licensed RGB palette constants from pinned rtl/video.sv; original upstream source retained and import-locked
 README.md,Multitini One,,GPL-3.0-only,reviewed,Original project documentation
+sd/multitini/cores/amiga/roms/readme.txt,Multitini One,,GPL-3.0-only,source-reviewed,Original user-supplied Kickstart filename and compatibility instructions; no system ROM bytes
+tests/host/test_amiga_bulk.c,Multitini One,,GPL-3.0-only,source-reviewed,Original bounded IDE block firmware protocol and error ownership tests with synthetic sectors
+tests/host/test_amiga_profile.c,Multitini One,,GPL-3.0-only,source-reviewed,Original host-timer IDE profiling and exclusive-stage accounting tests using the production storage and native-port fixture
+docs/AMIGA_HOST_EXTENSIONS.md,Multitini One,,GPL-3.0-only,source-reviewed,Original optional IDE block transport and CPU execution-enable and keyboard contract; candidate qualification remains separate
 MULTITINI_ONE_PLAN.md,Multitini One,,GPL-3.0-only,reviewed,Original product plan
 docs/**,Multitini One,,GPL-3.0-only,reviewed,Original documentation except quoted facts
 spec/**,Multitini One,,GPL-3.0-only,reviewed,Register ABI source specification
@@ -858,6 +862,27 @@ hdl/sim/tb_c64_cia_timers.sv,Multitini One,,GPL-3.0-only,simulation-passed,Origi
 scripts/build_core_amiga.py,Multitini One,,GPL-3.0-only,source-reviewed,"Original Amiga build, packaging or directed simulation evidence; board validation remains separate"
 docs/AMIGA_PLAN.md,Multitini One,,GPL-3.0-only,source-reviewed,"Original Amiga build, packaging or directed simulation evidence; board validation remains separate"
 tests/test_amiga_build.py,Multitini One,,GPL-3.0-only,source-reviewed,"Original Amiga build, packaging or directed simulation evidence; board validation remains separate"
+hdl/sim/amiga_cdc_model.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original four-stage digital CDC handshake model; simulation evidence is separate from board acceptance
+firmware/common/amiga_rtc.c,Multitini One,,GPL-3.0-only,host-tested,Original capability-gated MSM6242B RTC encoder and coherent host publication; host-tested separately from hardware
+firmware/include/multitini_amiga_rtc.h,Multitini One,,GPL-3.0-only,host-tested,Original typed Amiga RTC snapshot and update interface
+tests/host/test_amiga_rtc.c,Multitini One,,GPL-3.0-only,host-tested,Original BCD weekday capability cadence timeout and recovery regression
+firmware/common/amiga_display.c,Multitini One,,GPL-3.0-only,source-reviewed,"Original Amiga desktop selection, guest helper or bounded video profile integration; offline tests and physical acceptance remain separate"
+firmware/include/multitini_amiga_display.h,Multitini One,,GPL-3.0-only,source-reviewed,"Original Amiga desktop selection, guest helper or bounded video profile integration; offline tests and physical acceptance remain separate"
+firmware/platform/xilinx/amiga_display_service.c,Multitini One,,GPL-3.0-only,source-reviewed,"Original Amiga desktop selection, guest helper or bounded video profile integration; offline tests and physical acceptance remain separate"
+firmware/platform/xilinx/amiga_display_service.h,Multitini One,,GPL-3.0-only,source-reviewed,"Original Amiga desktop selection, guest helper or bounded video profile integration; offline tests and physical acceptance remain separate"
+hdl/common/multitini_display_geometry_pair.sv,Multitini One,,GPL-3.0-only,source-reviewed,"Original Amiga desktop selection, guest helper or bounded video profile integration; offline tests and physical acceptance remain separate"
+software/amiga/adf.py,Multitini One,,GPL-3.0-only,source-reviewed,"Original Amiga desktop selection, guest helper or bounded video profile integration; offline tests and physical acceptance remain separate"
+software/amiga/build.py,Multitini One,,GPL-3.0-only,source-reviewed,"Original Amiga desktop selection, guest helper or bounded video profile integration; offline tests and physical acceptance remain separate"
+software/amiga/helper.py,Multitini One,,GPL-3.0-only,source-reviewed,"Original Amiga desktop selection, guest helper or bounded video profile integration; offline tests and physical acceptance remain separate"
+software/amiga/m68k.py,Multitini One,,GPL-3.0-only,source-reviewed,"Original Amiga desktop selection, guest helper or bounded video profile integration; offline tests and physical acceptance remain separate"
+software/amiga/test_native.py,Multitini One,,GPL-3.0-only,source-reviewed,"Original Amiga desktop selection, guest helper or bounded video profile integration; offline tests and physical acceptance remain separate"
+software/amiga/tests/tb_helper.sv,Multitini One,,GPL-3.0-only,source-reviewed,"Original Amiga desktop selection, guest helper or bounded video profile integration; offline tests and physical acceptance remain separate"
+software/amiga/tests/test_helper.py,Multitini One,,GPL-3.0-only,source-reviewed,"Original Amiga desktop selection, guest helper or bounded video profile integration; offline tests and physical acceptance remain separate"
+tests/host/amiga_display_fixture.h,Multitini One,,GPL-3.0-only,source-reviewed,"Original Amiga desktop selection, guest helper or bounded video profile integration; offline tests and physical acceptance remain separate"
+tests/host/test_amiga_display.c,Multitini One,,GPL-3.0-only,source-reviewed,"Original Amiga desktop selection, guest helper or bounded video profile integration; offline tests and physical acceptance remain separate"
+tests/host/test_amiga_display_service.c,Multitini One,,GPL-3.0-only,source-reviewed,"Original Amiga desktop selection, guest helper or bounded video profile integration; offline tests and physical acceptance remain separate"
+firmware/common/video_frame_layout.c,Multitini One,,GPL-3.0-only,source-reviewed,Original profile-aware video frame layout and host regression
+tests/host/test_video_frame_layout.c,Multitini One,,GPL-3.0-only,source-reviewed,Original profile-aware video frame layout and host regression
 third_party/amiga/upstream/README.md,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
 third_party/amiga/upstream/gpl.txt,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
 third_party/amiga/upstream/Minimig.sv,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
@@ -894,6 +919,7 @@ third_party/amiga/upstream/rtl/denise_playfields.v,MiSTer Minimig,e47c3457b486d0
 third_party/amiga/upstream/rtl/denise_spritepriority.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
 third_party/amiga/upstream/rtl/denise_sprites.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
 third_party/amiga/upstream/rtl/denise_sprites_shifter.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
+third_party/amiga/upstream/rtl/fastchip.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
 third_party/amiga/upstream/rtl/gary.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
 third_party/amiga/upstream/rtl/gayle.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
 third_party/amiga/upstream/rtl/ide.v,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,BSD-2-Clause,source-reviewed,File-local two-clause BSD grant retained
@@ -930,23 +956,21 @@ third_party/amiga/upstream/rtl/tg68k/TG68K_ALU.vhd,MiSTer Minimig,e47c3457b486d0
 third_party/amiga/upstream/rtl/tg68k/TG68K_MMU030.vhd,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Project-wide grant in retained README.md License section
 third_party/amiga/upstream/rtl/tg68k/TG68K_Pack.vhd,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,LGPL-3.0-or-later,source-reviewed,File-local grant; project GPL also retained
 third_party/amiga/upstream/rtl/tg68k/TG68KdotC_Kernel.vhd,MiSTer Minimig,e47c3457b486d09daaf47c8934bda90cf7723045,LGPL-3.0-or-later,source-reviewed,File-local grant; project GPL also retained
-hdl/sim/amiga_cdc_model.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original four-stage digital CDC handshake model; simulation evidence is separate from board acceptance
-firmware/common/amiga_rtc.c,Multitini One,,GPL-3.0-only,host-tested,Original capability-gated MSM6242B RTC encoder and coherent host publication; host-tested separately from hardware
-firmware/include/multitini_amiga_rtc.h,Multitini One,,GPL-3.0-only,host-tested,Original typed Amiga RTC snapshot and update interface
-tests/host/test_amiga_rtc.c,Multitini One,,GPL-3.0-only,host-tested,Original BCD weekday capability cadence timeout and recovery regression
 hdl/core/amiga/ports/minimig.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/fastchip.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/ide.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
 hdl/core/amiga/ports/paula_floppy.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
 hdl/core/amiga/ports/cpu_wrapper.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/agnus.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
+hdl/core/amiga/ports/agnus_bitplanedma.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
 hdl/core/amiga/ports/userio.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
 hdl/core/amiga/ports/cpu_cycles.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
 hdl/core/amiga/ports/fx68k.sv,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
 hdl/core/amiga/ports/amiga_ram.sv,Multitini One,,GPL-3.0-only,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
 hdl/core/amiga/ports/m68k_cyc_idx.hex,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
 hdl/core/amiga/ports/m68k_ea_idx.hex,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
-hdl/core/amiga/ports/agnus.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
 hdl/core/amiga/ports/agnus_audiodma.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
 hdl/core/amiga/ports/agnus_beamcounter.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
-hdl/core/amiga/ports/agnus_bitplanedma.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
 hdl/core/amiga/ports/agnus_blitter.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
 hdl/core/amiga/ports/agnus_blitter_adrgen.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
 hdl/core/amiga/ports/agnus_blitter_barrelshifter.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
@@ -975,7 +999,6 @@ hdl/core/amiga/ports/denise_sprites.v,MiSTer Minimig and Multitini One,e47c3457b
 hdl/core/amiga/ports/denise_sprites_shifter.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
 hdl/core/amiga/ports/gary.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
 hdl/core/amiga/ports/gayle.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
-hdl/core/amiga/ports/ide.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
 hdl/core/amiga/ports/minimig_bankmapper.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
 hdl/core/amiga/ports/minimig_m68k_bridge.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
 hdl/core/amiga/ports/minimig_sram_bridge.v,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_amiga_core.py; ECS A600 only
@@ -995,28 +1018,59 @@ hdl/board/multitini_amiga_timing.xdc,Multitini One,,GPL-3.0-only,source-reviewed
 hdl/board/multitini_amiga_video_bridge.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 hdl/board/multitini_amiga_video_normalizer.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 hdl/core/amiga/multitini_amiga_adapter.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/core/amiga/multitini_amiga_display_mailbox.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 hdl/core/amiga/multitini_amiga_host.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/core/amiga/multitini_amiga_ide_block.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 hdl/core/amiga/multitini_amiga_loader.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 hdl/core/amiga/multitini_amiga_machine.sv,MiSTer Minimig and Multitini One,e47c3457b486d09daaf47c8934bda90cf7723045,GPL-3.0-only,source-reviewed,Original integration; CPU phase relation derived from licensed upstream Minimig.sv; exact reference/notices retained
 hdl/core/amiga/multitini_amiga_memory.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 hdl/sim/tb_amiga_adapter_input.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_capture_profiles.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 hdl/sim/tb_amiga_cpu.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_display_cpu.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_display_host.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_fastide.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_ide_block.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_ide_block_axi.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_interlace_repeat.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 hdl/sim/tb_amiga_loader.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 hdl/sim/tb_amiga_native_geometry.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 hdl/sim/tb_amiga_native_ide.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 hdl/sim/tb_amiga_native_video.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 hdl/sim/tb_amiga_ports.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_profile_cdc_settle.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_profile_transition.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_quiet_cdc.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_resolution.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 hdl/sim/tb_amiga_rtc.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 hdl/sim/tb_amiga_rtc_host.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_shres.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_shres_probe.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 hdl/sim/tb_amiga_transport.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 hdl/sim/tb_amiga_video_normalizer.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+hdl/sim/tb_amiga_wide_pipeline.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_capture.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_display.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_display_cpu.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_fastide.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_frame_profiles.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_ide_block.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_ide_block_axi.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 scripts/test_amiga_input.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_interlace_repeat.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 scripts/test_amiga_kickstart.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 scripts/test_amiga_native_geometry.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 scripts/test_amiga_native_video.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 scripts/test_amiga_phase.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 scripts/test_amiga_ports.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_profile_cdc_settle.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_profile_transition.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_quiet_cdc.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_resolution.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 scripts/test_amiga_rtc.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 scripts/test_amiga_rtc_host.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_shres.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_shres_normalizer.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 scripts/test_amiga_transport.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 scripts/test_amiga_video.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_wide_pipeline.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance

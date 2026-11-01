@@ -1,0 +1,102 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Reuse the real service's storage/native-port fixture, not a profiler model. */
+#define main amiga_service_existing_regressions
+#define mt_sd_file_read fixture_file_read
+#include "test_amiga_service.c"
+#undef mt_sd_file_read
+#undef main
+
+static uint64_t ticks,sd_cost=100U;
+static unsigned timer_calls,port_reads,port_writes,short_read;
+static uint64_t timer(void *context)
+{ assert(context==&ticks);++timer_calls;return ticks; }
+static uint32_t profile_rd(void *context,uint32_t address)
+{ ++port_reads;++ticks;return rd(context,address); }
+static void profile_wr(void *context,uint32_t address,uint32_t value)
+{ ++port_writes;ticks+=2U;wr(context,address,value); }
+mt_sd_result_t mt_sd_file_read(mt_sd_file_t *file,void *data,size_t capacity)
+{
+    ticks+=sd_cost;
+    if(short_read!=0U) {
+        assert(capacity==512U);memcpy(data,file->file->data+file->pos,128U);file->pos+=128U;
+        return result(short_read==1U ? MT_SD_READ_FAILED:MT_SD_OK,128U);
+    }
+    return fixture_file_read(file,data,capacity);
+}
+static mt_amiga_ide_profile_t snapshot(void)
+{ mt_amiga_ide_profile_t value;amiga_content_service_profile_snapshot(&value);return value; }
+static void retry(void)
+{ short_read=0U;ide_request=0U;assert(amiga_content_service_retry()==0); }
+int main(void)
+{
+    mt_amiga_ide_profile_t p=snapshot();assert(!p.running && !p.valid && timer_calls==0U);
+    assert(amiga_content_service_profile_start(timer,&ticks)!=0 && timer_calls==0U);
+    (void)create("0:/multitini/cores/amiga/roms/kick.rom",524288U);
+    file_t *disk=create(ROOT "/Profile.hdf",8192U);uint8_t original[8192];memcpy(original,disk->data,sizeof(original));
+    mt_core_link_t link;mt_core_link_init(&link,NULL,profile_rd,profile_wr);
+    amiga_content_service_init(&link,ROOT,progress,NULL);assert(amiga_content_service_boot()==0);
+    assert(amiga_content_service_mount(2U,"Profile.hdf")==0);bulk_capable=true;
+    amiga_content_service_poll();assert(timer_calls==0U); /* Disabled hot path has no clock calls. */
+    const unsigned reads=port_reads,writes=port_writes,roms=rom_streams;
+    const uint32_t sequence=regs[MT_REG_COMMAND_SEQ/4U];
+    assert(amiga_content_service_profile_start(NULL,NULL)!=0);
+    assert(amiga_content_service_profile_start(timer,&ticks)==0);
+    assert(amiga_content_service_profile_start(timer,&ticks)!=0);
+    assert(port_reads==reads && port_writes==writes && regs[MT_REG_COMMAND_SEQ/4U]==sequence);
+    ticks+=50U;command(0x20U,0U,0U,3U);amiga_content_service_poll();
+    ticks+=200U;ide_request=5U;amiga_content_service_poll();
+    ticks+=30U;command(0x20U,0U,6U,1U);amiga_content_service_poll();
+    p=snapshot();assert(p.running && p.valid && p.polls==3U && p.req4==2U && p.req5==1U);
+    assert(p.read_commands==2U && p.requested_read_sectors==4U && p.read_command_hist[2]==1U && p.read_command_hist[0]==1U);
+    assert(p.sd_read_calls==3U && p.read_sectors==3U && p.read_bytes==1536U && p.sd_read_ticks==300U && p.sd_read_max_ticks==100U);
+    assert(p.fifo_calls==3U && p.fifo_bytes==1536U && p.fifo_ticks>0U && p.ata_other_ticks>0U && p.fdd_ticks>0U);
+    assert(p.sequential_reads==1U && p.nonsequential_reads==2U && p.drq_intervals==2U && p.max_drq_to_request_ticks>=200U);
+    assert(p.read_window_started && p.first_read_ticks>=50U && p.last_read_ticks>p.first_read_ticks);
+    assert(p.active_read_ticks==p.last_read_ticks-p.first_read_ticks && p.read_window_bytes==1536U);
+    assert(p.active_read_ticks<p.elapsed_ticks && p.write_commands==0U);
+    assert(p.service_ticks==p.sd_read_ticks+p.fifo_ticks+p.ata_other_ticks+p.fdd_ticks);
+    assert(p.elapsed_ticks==p.service_ticks+p.outside_ticks && p.max_gap_ticks==200U);
+    assert(rom_streams==roms && memcmp(original,disk->data,sizeof(original))==0);
+    assert(strcmp(amiga_content_service_name(2U),"Profile.hdf")==0);
+    ticks+=25U;amiga_content_service_profile_stop();p=snapshot();
+    assert(!p.running && p.valid && p.reason==MT_AMIGA_PROFILE_STOPPED);
+    const unsigned stopped_calls=timer_calls,stopped_reads=port_reads,stopped_writes=port_writes;
+    ticks+=100U;amiga_content_service_profile_stop();mt_amiga_ide_profile_t again=snapshot();
+    assert(memcmp(&p,&again,sizeof(p))==0 && timer_calls==stopped_calls && port_reads==stopped_reads && port_writes==stopped_writes);
+    /* Unsigned absolute timer wrap is defined, while aggregate overflow must
+     * invalidate instead of reporting plausible wrapped timing totals. */
+    ticks=UINT64_MAX-10U;assert(amiga_content_service_profile_start(timer,&ticks)==0);ticks+=20U;
+    amiga_content_service_profile_stop();p=snapshot();assert(p.valid && p.elapsed_ticks==20U && p.outside_ticks==20U);
+    assert(amiga_content_service_profile_start(timer,&ticks)==0);sd_cost=UINT64_MAX/2U+1U;
+    command(0x20U,0U,0U,2U);amiga_content_service_poll();assert(snapshot().running);
+    ide_request=5U;amiga_content_service_poll();p=snapshot();
+    assert(!p.running && !p.valid && p.reason==MT_AMIGA_PROFILE_OVERFLOW && !amiga_content_service_faulted());sd_cost=100U;
+    /* A real service lifecycle invalidates the run but preserves mounted media. */
+    assert(amiga_content_service_profile_start(timer,&ticks)==0);assert(amiga_content_service_boot()==0);
+    p=snapshot();assert(!p.running && !p.valid && p.reason==MT_AMIGA_PROFILE_LIFECYCLE);
+    assert(strcmp(amiga_content_service_name(2U),"Profile.hdf")==0);
+    assert(amiga_content_service_profile_start(timer,&ticks)==0);ide_request=6U;amiga_content_service_poll();
+    p=snapshot();assert(!p.running && !p.valid && p.reason==MT_AMIGA_PROFILE_LIFECYCLE && p.req6==1U && p.read_bytes==0U);
+    amiga_content_service_profile_stop();
+    /* ATA's zero sector count means256. A rejected guest command is visible
+     * in the histogram and invalidates the run without inventing data bytes. */
+    assert(amiga_content_service_profile_start(timer,&ticks)==0);command(0x20U,0U,0U,0U);amiga_content_service_poll();
+    p=snapshot();assert(!p.running && !p.valid && p.reason==MT_AMIGA_PROFILE_IO_ERROR);
+    assert(p.requested_read_sectors==256U && p.read_command_hist[8]==1U && p.read_bytes==0U);
+    for(unsigned failure=1U;failure<=2U;++failure) {
+        assert(amiga_content_service_profile_start(timer,&ticks)==0);short_read=failure;
+        const unsigned blocks=bulk_commands;command(0x20U,0U,0U,1U);amiga_content_service_poll();p=snapshot();
+        assert(!p.running && !p.valid && p.reason==MT_AMIGA_PROFILE_IO_ERROR);
+        assert(p.sd_read_calls==1U && p.read_bytes==128U && p.read_sectors==0U && p.fifo_calls==0U && bulk_commands==blocks);
+        assert(p.read_window_started && p.read_window_bytes==0U && p.active_read_ticks==0U);
+        retry();
+    }
+    assert(amiga_content_service_profile_start(timer,&ticks)==0);bulk_timeout=true;
+    command(0x20U,0U,1U,1U);amiga_content_service_poll();p=snapshot();
+    assert(!p.running && !p.valid && p.reason==MT_AMIGA_PROFILE_IO_ERROR && p.read_bytes==512U);
+    assert(p.fifo_calls==1U && p.fifo_bytes==0U && ide_request==4U);
+    assert(p.read_window_bytes==0U);
+    assert(memcmp(original,disk->data,sizeof(original))==0);
+    puts("PASS optional IDE profiler stages, no-I/O controls, partial/error bytes, unsigned wrap, overflow and lifecycle invalidation");
+    return 0;
+}

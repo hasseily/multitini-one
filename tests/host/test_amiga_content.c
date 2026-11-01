@@ -6,9 +6,21 @@
 int main(void)
 {
     mt_amiga_config_t config,decoded;uint8_t wire[16];
-    mt_amiga_config_defaults(&config);assert(config.cpu==MT_AMIGA_CPU_68020_TURBO && config.fast_mib==8U);
+    mt_amiga_config_defaults(&config);assert(config.cpu==MT_AMIGA_CPU_68020_TURBO && config.fast_mib==8U && config.ide_compat==MT_AMIGA_IDE_AUTO);
     mt_amiga_config_encode(&config,wire);assert(mt_amiga_config_decode(wire,&decoded));
-    wire[10]=1U;assert(!mt_amiga_config_decode(wire,&decoded));wire[10]=0U;
+    const uint8_t legacy_auto[16]={'A','M','0','1',2U,0U,0U,0U,8U,2U,0U,0U,0U,0U,0U,0U};
+    assert(memcmp(wire,legacy_auto,sizeof(wire))==0);
+    assert(!mt_amiga_fast_ide_enabled(&config,0U) && mt_amiga_fast_ide_enabled(&config,MT_AMIGA_HOST_FAST_IDE));
+    config.ide_compat=MT_AMIGA_IDE_CLASSIC;mt_amiga_config_encode(&config,wire);
+    assert(wire[10]==1U && mt_amiga_config_decode(wire,&decoded) && decoded.ide_compat==1U);
+    assert(!mt_amiga_fast_ide_enabled(&config,MT_AMIGA_HOST_FAST_IDE));
+    config.ide_compat=MT_AMIGA_IDE_AUTO;config.cpu=MT_AMIGA_CPU_STOCK;
+    assert(!mt_amiga_fast_ide_enabled(&config,MT_AMIGA_HOST_FAST_IDE));
+    config.cpu=MT_AMIGA_CPU_68020_14;mt_amiga_config_encode(&config,wire);
+    assert(mt_amiga_config_decode(wire,&decoded) && decoded.cpu==3U);
+    assert(mt_amiga_fast_ide_enabled(&config,MT_AMIGA_HOST_FAST_IDE));
+    wire[10]=2U;assert(!mt_amiga_config_decode(wire,&decoded));wire[10]=0U;
+    wire[11]=1U;assert(!mt_amiga_config_decode(wire,&decoded));wire[11]=0U;
     wire[4]=1U;assert(!mt_amiga_config_decode(wire,&decoded));
     assert(mt_amiga_media_path_valid("Workbench/Disk 1.adf"));
     assert(!mt_amiga_media_path_valid("../disk.adf"));assert(!mt_amiga_media_path_valid("foo/../disk.adf"));

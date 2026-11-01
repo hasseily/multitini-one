@@ -9,8 +9,12 @@
 module multitini_video_frame_filter #(
     parameter bit DYNAMIC_DISPLAY=1'b0,
     parameter integer WIDTH=540, HEIGHT=720,
+    parameter integer ALT_WIDTH=WIDTH,ALT_HEIGHT=HEIGHT,
+    parameter integer WIDE_WIDTH=WIDTH,WIDE_HEIGHT=HEIGHT,
     parameter integer SCALE_NUM=3, SCALE_DEN=2
 )(
+    input wire source_alt,
+    input wire [1:0] source_profile,
     input wire [3:0] display_scale_num,display_scale_den,
     input wire clk,resetn,
     input wire start,
@@ -32,33 +36,42 @@ module multitini_video_frame_filter #(
     end
     // synthesis translate_on
     reg [1:0] blur,bloom;
-    reg [9:0] front_x,front_y;
+    localparam integer ALT_MAX_WIDTH=ALT_WIDTH>WIDTH ? ALT_WIDTH:WIDTH;
+    localparam integer MAX_WIDTH=WIDE_WIDTH>ALT_MAX_WIDTH ? WIDE_WIDTH:ALT_MAX_WIDTH;
+    localparam bit HAS_ALT=ALT_WIDTH!=WIDTH || ALT_HEIGHT!=HEIGHT;
+    localparam bit HAS_WIDE=WIDE_WIDTH!=WIDTH || WIDE_HEIGHT!=HEIGHT;
+    reg [1:0] job_profile;
+    wire [1:0] incoming_profile=HAS_WIDE ? (source_profile==2 ? 2'd2:source_profile==1 ? 2'd1:2'd0):
+        (HAS_ALT && source_alt ? 2'd1:2'd0);
+    wire [10:0] active_width=job_profile==2 ? WIDE_WIDTH:job_profile==1 ? ALT_WIDTH:WIDTH;
+    wire [9:0] active_height=job_profile==2 ? WIDE_HEIGHT:job_profile==1 ? ALT_HEIGHT:HEIGHT;
+    reg [10:0] front_x;reg [9:0] front_y;
     reg front_finished;
     reg [23:0] last_input;
     wire advance=!out_valid || out_ready;
-    wire needs_input=front_x<WIDTH && front_y<HEIGHT;
+    wire needs_input=front_x<active_width && front_y<active_height;
     wire issue=busy && !front_finished && advance && (!needs_input || in_valid);
     assign in_ready=resetn && busy && !front_finished && advance && needs_input;
 
     // Read old rows at x, then overwrite the oldest bank at x one advancing
     // clock later. The next RAM read is x+1 (or none at the right edge), so
     // correctness does not depend on cross-port same-address collision mode.
-    (* ram_style="block" *) reg [23:0] line0[0:WIDTH-1];
-    (* ram_style="block" *) reg [23:0] line1[0:WIDTH-1];
-    (* ram_style="block" *) reg [23:0] line2[0:WIDTH-1];
-    (* ram_style="block" *) reg [23:0] line3[0:WIDTH-1];
+    (* ram_style="block" *) reg [23:0] line0[0:MAX_WIDTH-1];
+    (* ram_style="block" *) reg [23:0] line1[0:MAX_WIDTH-1];
+    (* ram_style="block" *) reg [23:0] line2[0:MAX_WIDTH-1];
+    (* ram_style="block" *) reg [23:0] line3[0:MAX_WIDTH-1];
     reg [23:0] bank_q[0:3];
     reg s0_valid;
-    reg [9:0] s0_x,s0_y;
+    reg [10:0] s0_x;reg [9:0] s0_y;
     reg [23:0] s0_rgb;
     reg [1:0] s0_bank[0:4];
     reg [4:0] s0_current;
     always @(posedge clk) begin
-        if(resetn && issue && front_x<WIDTH)begin
+        if(resetn && issue && front_x<active_width)begin
             bank_q[0]<=line0[front_x];bank_q[1]<=line1[front_x];
             bank_q[2]<=line2[front_x];bank_q[3]<=line3[front_x];
         end
-        if(resetn && advance && s0_valid && s0_x<WIDTH && s0_y<HEIGHT)begin
+        if(resetn && advance && s0_valid && s0_x<active_width && s0_y<active_height)begin
             case(s0_y[1:0])
                 0:line0[s0_x]<=s0_rgb;
                 1:line1[s0_x]<=s0_rgb;
@@ -69,7 +82,7 @@ module multitini_video_frame_filter #(
     end
 
     reg s1_valid;
-    reg [9:0] s1_x,s1_y;
+    reg [10:0] s1_x;reg [9:0] s1_y;
     reg [23:0] column[0:4];
     reg [23:0] window[0:4][0:4];
     reg s2_valid,s2_last;
@@ -147,7 +160,7 @@ module multitini_video_frame_filter #(
     reg [7:0] b,c,d;
     always @(posedge clk)begin
         if(!resetn)begin
-            busy<=0;done<=0;out_valid<=0;out_last<=0;out_rgb565<=0;
+            busy<=0;done<=0;out_valid<=0;out_last<=0;out_rgb565<=0;job_profile<=0;
             front_x<=0;front_y<=0;front_finished<=0;blur<=0;bloom<=0;last_input<=0;
             s0_valid<=0;s1_valid<=0;s2_valid<=0;s3_valid<=0;s4_valid<=0;s5_valid<=0;s6_valid<=0;s7_valid<=0;
             s2_last<=0;s3_last<=0;s4_last<=0;s5_last<=0;s6_last<=0;s7_last<=0;
@@ -155,7 +168,7 @@ module multitini_video_frame_filter #(
             done<=0;
             if(out_valid && out_ready && out_last)begin busy<=0;done<=1;end
             if(start && !busy)begin
-                busy<=1;blur<=options[3:2];bloom<=options[5:4];
+                busy<=1;blur<=options[3:2];bloom<=options[5:4];job_profile<=incoming_profile;
                 front_x<=0;front_y<=0;front_finished<=0;
                 s0_valid<=0;s1_valid<=0;s2_valid<=0;s3_valid<=0;s4_valid<=0;s5_valid<=0;s6_valid<=0;s7_valid<=0;
                 out_valid<=0;out_last<=0;
@@ -166,14 +179,14 @@ module multitini_video_frame_filter #(
                     s0_rgb<=needs_input ? in_rgb : last_input;
                     if(needs_input)last_input<=in_rgb;
                     for(row=0;row<5;row=row+1)begin
-                        s0_current[row]<=front_y==0 || (row==4 && front_y<HEIGHT);
+                        s0_current[row]<=front_y==0 || (row==4 && front_y<active_height);
                         if(front_y<4-row)s0_bank[row]<=0;
-                        else if(front_y>=HEIGHT+4-row)s0_bank[row]<=(HEIGHT-1)%4;
+                        else if(front_y>=active_height+4-row)s0_bank[row]<=(active_height-1)%4;
                         else s0_bank[row]<=front_y[1:0]+row;
                     end
-                    if(front_x==WIDTH+1)begin
+                    if(front_x==active_width+1)begin
                         front_x<=0;
-                        if(front_y==HEIGHT+1)front_finished<=1;
+                        if(front_y==active_height+1)front_finished<=1;
                         else front_y<=front_y+1'b1;
                     end else front_x<=front_x+1'b1;
                 end
@@ -182,13 +195,13 @@ module multitini_video_frame_filter #(
                 if(s0_valid)begin
                     s1_x<=s0_x;s1_y<=s0_y;
                     // Right-edge tokens retain the complete previous column.
-                    if(s0_x<WIDTH)
+                    if(s0_x<active_width)
                         for(row=0;row<5;row=row+1)
                             column[row]<=s0_current[row] ? s0_rgb : bank_q[s0_bank[row]];
                 end
 
                 s2_valid<=s1_valid && s1_x>=2 && s1_y>=2;
-                s2_last<=s1_x==WIDTH+1 && s1_y==HEIGHT+1;
+                s2_last<=s1_x==active_width+1 && s1_y==active_height+1;
                 if(s1_valid)begin
                     for(row=0;row<5;row=row+1)begin
                         for(col=0;col<4;col=col+1)
@@ -200,7 +213,7 @@ module multitini_video_frame_filter #(
                             d=s1_x==0 ? column[row][channel*8+:8] : window[row][4][channel*8+:8];
                             h_near[row][channel]<={1'b0,b}+{1'b0,d};
                             h_center[row][channel]<=c;
-                            if(blur==0 || WIDTH<4)h_blur[row][channel]<=c;
+                            if(blur==0 || active_width<4)h_blur[row][channel]<=c;
                             else if(blur==3)h_blur[row][channel]<=
                                 blur_horizontal_five(window[row][1][channel*8+:8],b,c,d,
                                     column[row][channel*8+:8]);

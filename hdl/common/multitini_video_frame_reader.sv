@@ -10,6 +10,9 @@ module multitini_video_frame_reader #(
     parameter bit DYNAMIC_DISPLAY=1'b0,
     parameter integer WIDTH = 382,
     parameter integer HEIGHT = 270,
+    parameter integer ALT_WIDTH = WIDTH, ALT_HEIGHT = HEIGHT,
+    parameter integer WIDE_WIDTH = WIDTH, WIDE_HEIGHT = HEIGHT,
+    parameter integer SLOT_SHIFT = 20, WIDE_SLOT_SHIFT = SLOT_SHIFT,
     parameter integer VIEW_X = 196,
     parameter integer VIEW_Y = 0,
     parameter integer SCALE_NUM = 4,
@@ -17,20 +20,28 @@ module multitini_video_frame_reader #(
     parameter integer H_ACTIVE = 1920, V_ACTIVE = 1080,
     parameter integer H_TOTAL = 2200, V_TOTAL = 1125,
     parameter [31:0] BASE = 32'h22400000,
+    parameter [31:0] WIDE_BASE = BASE,
     parameter bit SHARED_PIXEL_RESET = 1'b0,
     parameter bit SHARED_PIXEL_LIVENESS = 1'b0
 ) (
     input wire [11:0] display_view_x, display_view_y, display_view_width, display_view_height,
     input wire [3:0] display_scale_num, display_scale_den,
     input wire [11:0] display_h_active, display_v_active, display_h_total, display_v_total,
-    input wire [9:0] display_source_x0, display_source_y0,
+    input wire [((WIDE_WIDTH!=WIDTH || WIDE_HEIGHT!=HEIGHT) ? 11:10)-1:0] display_source_x0,
+    input wire [9:0] display_source_y0,
     input wire [3:0] display_phase_x0, display_phase_y0,
     input wire clk, resetn, enable,
     input wire submit,
+    // Control-domain geometry travels atomically with each submitted frame.
+    // Equal alternate/base dimensions disable this extension for legacy cores.
+    input wire source_alt,
+    input wire [1:0] source_profile, // control domain, latched with submit; ignored without WIDE
     input wire [31:0] submit_value,
     output wire submit_ready,
     output reg [31:0] active_value,
     output reg active_valid,
+    output reg active_alt,
+    output reg [1:0] active_profile,
     output wire busy, quiescent,
     output reg [31:0] error_count, underrun_count,
     input wire pixel_clk, pixel_resetn, shared_pixel_resetn, shared_pixel_running,
@@ -71,14 +82,33 @@ module multitini_video_frame_reader #(
     wire [11:0] prepare_x,left_x,preload_x,start_x;
     wire clipped_lead,prepare_wrap,left_wrap,preload_wrap,start_wrap;
     wire first_x_zero,first_y_zero,end_x_nonzero,end_y_nonzero;
-    wire [9:0] source_x0,source_y0;
+    localparam integer SOURCE_X_BITS=$bits(display_source_x0);
+    wire [SOURCE_X_BITS-1:0] source_x0;wire [9:0] source_y0;
     wire [3:0] phase_x0,phase_y0,scale_num,scale_den;
-    localparam integer WORDS = (WIDTH + 3) / 4;
-    // The bordered IIgs needs 181 words per line, crossing the 512-word
-    // capacity of one BRAM for three rows. Pad its cache rows to 256 words
-    // so pixel-rate bank selection is wiring, not a multiply/add. DDR row
-    // lengths and the cache layout of existing machine images stay unchanged.
-    localparam integer CACHE_WORDS = WIDTH == 724 ? 256 : WORDS;
+    localparam bit HAS_ALT=ALT_WIDTH!=WIDTH || ALT_HEIGHT!=HEIGHT;
+    localparam bit HAS_WIDE=WIDE_WIDTH!=WIDTH || WIDE_HEIGHT!=HEIGHT;
+    localparam bit PROFILED=HAS_ALT || HAS_WIDE;
+    localparam integer MAX_BASE_WIDTH=ALT_WIDTH>WIDTH ? ALT_WIDTH:WIDTH;
+    localparam integer MAX_WIDTH=WIDE_WIDTH>MAX_BASE_WIDTH ? WIDE_WIDTH:MAX_BASE_WIDTH;
+    localparam integer WORDS=(WIDTH+3)/4,ALT_WORDS=(ALT_WIDTH+3)/4,WIDE_WORDS=(WIDE_WIDTH+3)/4;
+    wire [1:0] submitted_profile=HAS_WIDE ? source_profile:{1'b0,HAS_ALT && source_alt};
+    reg [1:0] profile_pixel;
+    reg alt_pixel;
+    wire [8:0] control_words=HAS_WIDE && active_profile==2 ? WIDE_WORDS:HAS_ALT && active_profile==1 ? ALT_WORDS:WORDS;
+    wire [8:0] pixel_words=HAS_WIDE && profile_pixel==2 ? WIDE_WORDS:HAS_ALT && profile_pixel==1 ? ALT_WORDS:WORDS;
+    wire [9:0] control_height=HAS_WIDE && active_profile==2 ? WIDE_HEIGHT:HAS_ALT && active_profile==1 ? ALT_HEIGHT:HEIGHT;
+    wire [9:0] pixel_height=HAS_WIDE && profile_pixel==2 ? WIDE_HEIGHT:HAS_ALT && profile_pixel==1 ? ALT_HEIGHT:HEIGHT;
+    wire [10:0] pixel_width=HAS_WIDE && profile_pixel==2 ? WIDE_WIDTH:HAS_ALT && profile_pixel==1 ? ALT_WIDTH:WIDTH;
+    wire [15:0] control_stride=HAS_WIDE && active_profile==2 ? ((WIDE_WIDTH+63)/64)*128:
+        HAS_ALT && active_profile==1 ? ((ALT_WIDTH+63)/64)*128:((WIDTH+63)/64)*128;
+    wire [31:0] control_base=HAS_WIDE && active_profile==2 ? WIDE_BASE:BASE;
+    wire [5:0] control_slot_shift=HAS_WIDE && active_profile==2 ? WIDE_SLOT_SHIFT:SLOT_SHIFT;
+    // Power-of-two banks keep the pixel-rate select as wiring. The1280wide
+    // profile needs320words/line, so each of its three cache banks has512words.
+    localparam integer CACHE_WORDS=HAS_WIDE ? (MAX_WIDTH>1024 ? 512:MAX_WIDTH>512 ? 256:(MAX_WIDTH+3)/4):
+        MAX_WIDTH==724 ? 256:(MAX_WIDTH+3)/4;
+    localparam integer CACHE_BANK_BITS=$clog2(CACHE_WORDS);
+    localparam bit CACHE_POW2=(CACHE_WORDS&(CACHE_WORDS-1))==0;
     localparam integer STRIDE = ((WIDTH + 63) / 64) * 128;
     localparam integer OUT_WIDTH = WIDTH * SCALE_NUM / SCALE_DEN;
     localparam integer OUT_HEIGHT = HEIGHT * SCALE_NUM / SCALE_DEN;
@@ -103,7 +133,7 @@ module multitini_video_frame_reader #(
     generate if(DYNAMIC_DISPLAY)begin : g_geometry_snapshot
         reg [11:0] x0_1,y0_1,ha_1,va_1,ht_1,vt_1;
         reg signed [13:0] xe_1,ye_1;
-        reg [35:0] seeds_1,seeds_2,seeds_3,seeds_4;
+        reg [SOURCE_X_BITS+25:0] seeds_1,seeds_2,seeds_3,seeds_4;
         reg [11:0] x0_2,y0_2,x1_2,y1_2,ht_2,vt_2;
         reg [11:0] x0_3,y0_3,x1_3,y1_3,base_3,last_x_3,last_y_3;
         reg [3:0] wraps_3,wraps_4;
@@ -125,7 +155,7 @@ module multitini_video_frame_reader #(
             x0_3<=x0_2;y0_3<=y0_2;x1_3<=x1_2;y1_3<=y1_2;seeds_3<=seeds_2;
             base_3<=ht_2+x0_2;last_x_3<=ht_2-12'd1;last_y_3<=vt_2-12'd1;
             wraps_3<={x0_2<12'd5,x0_2<12'd4,x0_2<12'd3,x0_2<12'd2};
-            clipped_3<=x0_2<12'd4 || seeds_2[35:8]!=0;
+            clipped_3<=x0_2<12'd4 || seeds_2[SOURCE_X_BITS+25:8]!=0;
 
             x0_4<=x0_3;y0_4<=y0_3;x1_4<=x1_3;y1_4<=y1_3;seeds_4<=seeds_3;
             px0_4<=x0_3-12'd1;px1_4<=x1_3-12'd1;py0_4<=y0_3-12'd1;py1_4<=y1_3-12'd1;
@@ -197,12 +227,16 @@ module multitini_video_frame_reader #(
     // Bundled ownership publication. Old-frame prefetch continues until
     // vertical blank; queuing a frame mid-scan must not starve that scanout.
     reg pending, publish_launched, publish_pulse;
-    reg [32:0] publish_data;
+    localparam integer PUBLICATION_WIDTH=HAS_WIDE ? 35:PROFILED ? 34:33;
+    localparam integer PROFILE_BITS=HAS_WIDE ? 2:1;
+    reg [PUBLICATION_WIDTH-1:0] publish_data;
     wire publish_ready, publish_valid_pixel;
-    wire [32:0] publish_pixel;
+    wire [PUBLICATION_WIDTH-1:0] publish_pixel;
+    wire [1:0] returned_profile=HAS_WIDE ? 2'(publish_data>>33):{1'b0,PROFILED && 1'(publish_data>>33)};
+    wire [1:0] returned_pixel_profile=HAS_WIDE ? 2'(publish_pixel>>33):{1'b0,PROFILED && 1'(publish_pixel>>33)};
     reg [2:0] state;
     wire publish_accept_pixel = vblank_start || !pixel_run;
-    multitini_async_mailbox #(.WIDTH(33),.DRAIN_ON_RESET(1'b1)) publication (
+    multitini_async_mailbox #(.WIDTH(PUBLICATION_WIDTH),.DRAIN_ON_RESET(1'b1)) publication (
         .src_clk(clk),.src_resetn(mailbox_control_run),.src_data(publish_data),
         .src_valid(publish_pulse),.src_ready(publish_ready),
         .dst_clk(pixel_clk),.dst_resetn(mailbox_pixel_run),.dst_data(publish_pixel),
@@ -262,11 +296,11 @@ module multitini_video_frame_reader #(
     // at the next 16-word boundary, so later full bursts cannot cross 4 KB.
     wire [4:0] first_burst_limit=5'd16-{1'b0,request_control[79:76]};
     wire [8:0] fill_cache_word=fill_word+beat_index;
-    wire [31:0] fill_cache_address=WIDTH==724 ? {22'd0,fill_bank,fill_cache_word[7:0]} :
-        fill_bank*WORDS+fill_word+beat_index;
+    wire [31:0] fill_cache_address=CACHE_POW2 ? ((32'(fill_bank)<<CACHE_BANK_BITS)|32'(fill_cache_word)) :
+        fill_bank*CACHE_WORDS+fill_word+beat_index;
     always @(posedge clk) begin
         if (take_read && beat_index < burst_words &&
-            fill_word + beat_index < WORDS)
+            fill_word + beat_index < control_words)
             cache[fill_cache_address] <= rdata;
     end
 
@@ -277,6 +311,7 @@ module multitini_video_frame_reader #(
         if (!control_run) begin
             pending<=0; publish_launched<=0; publish_pulse<=0; publish_data<=0;
             active_value<=0; active_valid<=0; state<=IDLE;
+            active_alt<=0;active_profile<=0;
             araddr<=0; arlen<=0; fill_bank<=0; fill_row<=0; fill_epoch<=0;
             fill_word<=0; beat_index<=0; burst_words<=0; row_failed<=0;
             reply_control<=0; error_count<=0; underrun_count<=0;
@@ -292,7 +327,8 @@ module multitini_video_frame_reader #(
                 error_count<=error_count+1'b1;
             if (accepted_submit || begin_disable) begin
                 pending<=1; publish_launched<=0;
-                publish_data<={accepted_submit,accepted_submit ? submit_value : active_value};
+                publish_data<={PROFILE_BITS'(accepted_submit ? submitted_profile:active_profile),
+                               accepted_submit,accepted_submit ? submit_value : active_value};
             end
             if (pending && !publish_launched && publish_ready) begin
                 // A disable before launch supersedes a queued frame. Once a
@@ -303,6 +339,7 @@ module multitini_video_frame_reader #(
             end else if (complete_publication) begin
                 active_value<=publish_data[31:0];
                 active_valid<=publish_data[32];
+                active_profile<=returned_profile;active_alt<=returned_profile==1;
                 pending<=0; publish_launched<=0;
             end
 
@@ -313,15 +350,15 @@ module multitini_video_frame_reader #(
                 fill_epoch<=request_control[75:44];
                 fill_word<=request_control[84:76]; beat_index<=0; row_failed<=0;
                 if (!enable || !active_valid || request_control[43:12] != active_value ||
-                    request_control[11:2] >= HEIGHT || request_control[1:0] >= 3 ||
-                    request_control[84:76] >= WORDS) begin
+                    request_control[11:2] >= control_height || request_control[1:0] >= 3 ||
+                    request_control[84:76] >= control_words) begin
                     reply_control<={1'b0,request_control[75:44],request_control[11:0]};
                     state<=REPLY;
                 end else begin
-                    araddr<=BASE + ({30'd0,active_value[1:0]} << 20) +
-                            request_control[11:2]*STRIDE+({23'd0,request_control[84:76]} << 3);
-                    arlen<=WORDS-request_control[84:76] >= first_burst_limit ? first_burst_limit-1'b1 : WORDS-request_control[84:76]-1;
-                    burst_words<=WORDS-request_control[84:76] >= first_burst_limit ? first_burst_limit : WORDS-request_control[84:76];
+                    araddr<=control_base + ({30'd0,active_value[1:0]} << control_slot_shift) +
+                            request_control[11:2]*control_stride+({23'd0,request_control[84:76]} << 3);
+                    arlen<=control_words-request_control[84:76] >= first_burst_limit ? first_burst_limit-1'b1 : control_words-request_control[84:76]-1;
+                    burst_words<=control_words-request_control[84:76] >= first_burst_limit ? first_burst_limit : control_words-request_control[84:76];
                     state<=ISSUE;
                 end
             end
@@ -334,16 +371,16 @@ module multitini_video_frame_reader #(
                         error_count<=error_count+1'b1;
                         reply_control<={1'b0,fill_epoch,fill_row,fill_bank};
                         state<=REPLY;
-                    end else if (fill_word + burst_words >= WORDS) begin
+                    end else if (fill_word + burst_words >= control_words) begin
                         reply_control<={1'b1,fill_epoch,fill_row,fill_bank};
                         state<=REPLY;
                     end else begin
                         fill_word<=fill_word+burst_words;
                         araddr<=araddr+({27'd0,burst_words} << 3);
-                        arlen<=WORDS-(fill_word+burst_words) >= 16 ?
-                               4'd15 : WORDS-(fill_word+burst_words)-1;
-                        burst_words<=WORDS-(fill_word+burst_words) >= 16 ?
-                                     5'd16 : WORDS-(fill_word+burst_words);
+                        arlen<=control_words-(fill_word+burst_words) >= 16 ?
+                               4'd15 : control_words-(fill_word+burst_words)-1;
+                        burst_words<=control_words-(fill_word+burst_words) >= 16 ?
+                                     5'd16 : control_words-(fill_word+burst_words);
                         state<=ISSUE;
                     end
                 end else if (beat_index < 31) beat_index<=beat_index+1'b1;
@@ -374,10 +411,10 @@ module multitini_video_frame_reader #(
     reg [9:0] line_row [0:2];
     reg [31:0] line_epoch [0:2];
     reg [63:0] cache_word, current_word, previous_word;
-    reg [7:0] current_word_index;
+    reg [8:0] current_word_index;
     reg [15:0] pixel_center;
     reg pixel_cached;
-    reg [9:0] source_x, source_y;
+    reg [10:0] source_x;reg [9:0] source_y;
     reg [1:0] read_bank, next_bank;
     reg [3:0] horizontal_phase, vertical_phase;
     // One pixel lookahead compensates the synchronous BRAM read. The
@@ -408,9 +445,9 @@ module multitini_video_frame_reader #(
         (left_wrap ? following_row_visible : row_visible);
     wire preload=scan_x==preload_x && (preload_wrap ? following_row_visible : row_visible);
     wire start_line=scan_x==start_x && (start_wrap ? following_row_visible : row_visible);
-    wire [8:0] first_word={1'b0,source_x0[9:2]};
+    wire [8:0] first_word=9'(source_x0>>2);
     wire [8:0] first_fill_word=first_word==0 ? 9'd0 : first_word-1'b1;
-    wire word_advance = source_x[9:2] != current_word_index;
+    wire word_advance = source_x[10:2] != current_word_index;
     wire [63:0] center_word = word_advance ? cache_word : current_word;
     wire [63:0] left_word = word_advance ? current_word : previous_word;
     wire [15:0] center_pixel = center_word[source_x[1:0]*16+:16];
@@ -433,7 +470,7 @@ module multitini_video_frame_reader #(
     endfunction
     wire [15:0] left_pixel = source_x == 0 ? center_pixel :
         (source_x[1:0] == 0 ? left_word[63:48] : center_word[(source_x[1:0]-2'd1)*16+:16]);
-    wire [15:0] right_pixel = source_x == WIDTH-1 ? center_pixel :
+    wire [15:0] right_pixel = source_x == pixel_width-1 ? center_pixel :
         (source_x[1:0] == 3 ? cache_word[15:0] : center_word[(source_x[1:0]+2'd1)*16+:16]);
     // Replies can outlive a pixel-only reset because accepted AXI reads must
     // drain. Never reuse their epoch when scanout restarts. PS reset alone
@@ -450,15 +487,16 @@ module multitini_video_frame_reader #(
     end
     integer bank;
     wire [31:0] read_cache_word=preload_left ? first_fill_word : preload ? first_word :
-        start_line ? (first_word+1 < WORDS ? first_word+1 : first_word) :
-        (source_x[9:2]+1 < WORDS ? source_x[9:2]+1 : source_x[9:2]);
-    wire [31:0] read_cache_address=WIDTH==724 ? {22'd0,read_bank,read_cache_word[7:0]} :
-        read_bank*WORDS+read_cache_word;
+        start_line ? (first_word+1 < pixel_words ? first_word+1 : first_word) :
+        (source_x[10:2]+1 < pixel_words ? source_x[10:2]+1 : source_x[10:2]);
+    wire [31:0] read_cache_address=CACHE_POW2 ? ((32'(read_bank)<<CACHE_BANK_BITS)|read_cache_word) :
+        read_bank*CACHE_WORDS+read_cache_word;
     always @(posedge pixel_clk) begin
-        if (preload_left || preload || start_line || (prefetch && source_x < WIDTH))
+        if (preload_left || preload || start_line || (prefetch && source_x < pixel_width))
             cache_word<=cache[read_cache_address];
         if (!pixel_run) begin
             enabled_pixel<=0; frame_failed<=0; value_pixel<=0;
+            alt_pixel<=0;profile_pixel<=0;
             next_row<=0; current_row<=0; line_valid<=0; row_outstanding<=0;
             outstanding_token<=0;
             request_valid_pixel<=0; request_pixel<=0; underrun_toggle<=0;
@@ -484,7 +522,7 @@ module multitini_video_frame_reader #(
             if (preload && clipped_lead) previous_word<=cache_word;
             if (start_line) begin
                 source_x<=source_x0;horizontal_phase<=phase_x0;
-                current_word<=cache_word;current_word_index<=source_x0[9:2];
+                current_word<=cache_word;current_word_index<=9'(source_x0>>2);
                 if(!clipped_lead)previous_word<=cache_word;
             end else if (prefetch) begin
                 if (horizontal_phase+scale_den>=scale_num) begin
@@ -492,7 +530,7 @@ module multitini_video_frame_reader #(
                     horizontal_phase<=horizontal_phase+scale_den-scale_num;
                 end else horizontal_phase<=horizontal_phase+scale_den;
                 if(word_advance)begin
-                    previous_word<=current_word;current_word<=cache_word;current_word_index<=source_x[9:2];
+                    previous_word<=current_word;current_word<=cache_word;current_word_index<=source_x[10:2];
                 end
             end
             pixel_center<=center_pixel;
@@ -515,7 +553,7 @@ module multitini_video_frame_reader #(
                 end
             end
             if (enabled_pixel && !frame_failed && !row_outstanding &&
-                request_ready_pixel && !request_valid_pixel && next_row < HEIGHT &&
+                request_ready_pixel && !request_valid_pixel && next_row < pixel_height &&
                 next_row <= current_row+2 && !vblank_start) begin
                 request_pixel<={first_fill_word,epoch,value_pixel,next_row,next_bank};
                 outstanding_token<={epoch,next_row,next_bank};
@@ -531,6 +569,7 @@ module multitini_video_frame_reader #(
                 if (publish_valid_pixel) begin
                     value_pixel<=publish_pixel[31:0];
                     enabled_pixel<=publish_pixel[32];
+                    profile_pixel<=returned_pixel_profile;alt_pixel<=returned_pixel_profile==1;
                 end
             end
         end

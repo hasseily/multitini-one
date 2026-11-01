@@ -14,13 +14,20 @@
 module multitini_video_frame_engine #(
     parameter bit DYNAMIC_DISPLAY=1'b0,
     parameter integer WIDTH=540, HEIGHT=720,
+    parameter integer ALT_WIDTH=WIDTH,ALT_HEIGHT=HEIGHT,
+    parameter integer WIDE_WIDTH=WIDTH,WIDE_HEIGHT=HEIGHT,
+    parameter integer SLOT_SHIFT=20,WIDE_SLOT_SHIFT=SLOT_SHIFT,
     parameter integer SCALE_NUM=3, SCALE_DEN=2,
     parameter integer STRIDE=((WIDTH+63)/64)*128,
     parameter [31:0] CAPTURE_BASE=32'h22000000,
     parameter [31:0] OUTPUT_BASE=32'h22400000,
     parameter [31:0] HISTORY_BASE=32'h22800000,
+    parameter [31:0] WIDE_CAPTURE_BASE=CAPTURE_BASE,WIDE_OUTPUT_BASE=OUTPUT_BASE,WIDE_HISTORY_BASE=HISTORY_BASE,
+    parameter integer HISTORY_BYTES=2097152,WIDE_HISTORY_BYTES=HISTORY_BYTES,
     parameter integer FIFO_DEPTH=64
 ) (
+    input wire source_alt,
+    input wire [1:0] source_profile,
     input wire [3:0] display_scale_num,display_scale_den,
     input wire clk,resetn,clear_errors,start,
     input wire [1:0] input_slot,output_slot,
@@ -44,24 +51,48 @@ module multitini_video_frame_engine #(
     output wire wlast,wvalid,input wire wready,
     input wire [1:0] bresp,input wire bvalid,output wire bready
 );
-    localparam integer PIXELS=WIDTH*HEIGHT;
-    localparam integer ROW_WORDS=(WIDTH+3)/4;
-    localparam integer FRAME_WORDS=ROW_WORDS*HEIGHT;
-    localparam integer HISTORY_WORDS=(PIXELS+1)/2;
+    localparam bit HAS_ALT=ALT_WIDTH!=WIDTH || ALT_HEIGHT!=HEIGHT;
+    localparam bit HAS_WIDE=WIDE_WIDTH!=WIDTH || WIDE_HEIGHT!=HEIGHT || WIDE_SLOT_SHIFT!=SLOT_SHIFT;
+    reg [1:0] job_profile;
+    wire [1:0] incoming_profile=HAS_WIDE ? (source_profile==2 ? 2'd2:source_profile==1 ? 2'd1:2'd0):
+        (HAS_ALT && source_alt ? 2'd1:2'd0);
+    wire [1:0] selected_profile=(start && !busy) ? incoming_profile:job_profile;
+    wire wide=HAS_WIDE && selected_profile==2;
+    wire alt=selected_profile==1;
+    wire [10:0] active_width=wide ? WIDE_WIDTH:alt ? ALT_WIDTH:WIDTH;
+    wire [9:0] active_height=wide ? WIDE_HEIGHT:alt ? ALT_HEIGHT:HEIGHT;
+    wire [15:0] active_stride=wide ? ((WIDE_WIDTH+63)/64)*128:alt ? ((ALT_WIDTH+63)/64)*128:STRIDE;
+    wire [31:0] active_capture_base=wide ? WIDE_CAPTURE_BASE:CAPTURE_BASE;
+    wire [31:0] active_output_base=wide ? WIDE_OUTPUT_BASE:OUTPUT_BASE;
+    wire [31:0] active_history_base=wide ? WIDE_HISTORY_BASE:HISTORY_BASE;
+    wire [31:0] active_slot_bytes=32'd1 << (wide ? WIDE_SLOT_SHIFT:SLOT_SHIFT);
+    wire [19:0] PIXELS=wide ? WIDE_WIDTH*WIDE_HEIGHT:alt ? ALT_WIDTH*ALT_HEIGHT:WIDTH*HEIGHT;
+    wire [9:0] ROW_WORDS=wide ? (WIDE_WIDTH+3)/4:alt ? (ALT_WIDTH+3)/4:(WIDTH+3)/4;
+    wire [19:0] FRAME_WORDS=wide ? ((WIDE_WIDTH+3)/4)*WIDE_HEIGHT:alt ? ((ALT_WIDTH+3)/4)*ALT_HEIGHT:((WIDTH+3)/4)*HEIGHT;
+    wire [19:0] HISTORY_WORDS=wide ? (WIDE_WIDTH*WIDE_HEIGHT+1)/2:alt ? (ALT_WIDTH*ALT_HEIGHT+1)/2:(WIDTH*HEIGHT+1)/2;
     localparam integer CW=$clog2(FIFO_DEPTH)+1;
     localparam [2:0] R_IDLE=0,R_ADDR=1,R_DATA=2,R_FILL=3,R_DRAIN=4,R_PLAN=5;
     localparam [2:0] W_IDLE=0,W_ADDR=1,W_DATA=2,W_RESP=3,W_PLAN=4;
 
     // Static geometry checks are also elaborated by the focused benches.
     initial begin
-        if(WIDTH<1 || WIDTH>724 || HEIGHT<1 || HEIGHT>720 || PIXELS>460800 || STRIDE<WIDTH*2 ||
-           STRIDE%128!=0 || STRIDE*HEIGHT>1048576 || PIXELS*4>2097152)
+        if(WIDTH<1 || WIDTH>724 || HEIGHT<1 || HEIGHT>720 || WIDTH*HEIGHT>460800 || STRIDE<WIDTH*2 ||
+           STRIDE%128!=0 || STRIDE*HEIGHT>(1<<SLOT_SHIFT) || WIDTH*HEIGHT*4>HISTORY_BYTES ||
+           ALT_WIDTH<1 || ALT_WIDTH>724 || ALT_HEIGHT<1 || ALT_HEIGHT>720 ||
+           ALT_WIDTH*ALT_HEIGHT>460800 || ((ALT_WIDTH+63)/64)*128*ALT_HEIGHT>(1<<SLOT_SHIFT) ||
+           ALT_WIDTH*ALT_HEIGHT*4>HISTORY_BYTES || SLOT_SHIFT<20 || SLOT_SHIFT>21 ||
+           WIDE_SLOT_SHIFT<20 || WIDE_SLOT_SHIFT>21 || WIDE_WIDTH<1 || WIDE_WIDTH>1280 ||
+           WIDE_HEIGHT<1 || WIDE_HEIGHT>720 || WIDE_WIDTH*WIDE_HEIGHT>655360 ||
+           ((WIDE_WIDTH+63)/64)*128*WIDE_HEIGHT>(1<<WIDE_SLOT_SHIFT) || WIDE_WIDTH*WIDE_HEIGHT*4>WIDE_HISTORY_BYTES)
             $error("Invalid native-frame DMA geometry");
         if(FIFO_DEPTH<32 || (FIFO_DEPTH & (FIFO_DEPTH-1))!=0)
             $error("Frame DMA FIFO depth must be a power of two >=32");
     end
 
     wire begin_job=start && !busy;
+    always @(posedge clk)
+        if(!resetn)job_profile<=0;
+        else if(begin_job)job_profile<=incoming_profile;
     reg [7:0] job_options;
     reg use_history;
     reg [2:0] read_state;
@@ -135,10 +166,11 @@ module multitini_video_frame_engine #(
             source_address<=0;history_read_address<=0;source_left<=0;history_read_left<=0;source_row_left<=0;
         end else if(begin_job)begin
             read_state<=R_PLAN;read_prefer_history<=0;
-            source_address<=CAPTURE_BASE+{10'd0,input_slot,20'd0};
-            history_read_address<=HISTORY_BASE;source_left<=FRAME_WORDS;
+            source_address<=active_capture_base+input_slot*active_slot_bytes;
+            history_read_address<=active_history_base;source_left<=FRAME_WORDS;
             source_row_left<=ROW_WORDS;
-            history_read_left<=(!history_reset && options[1:0]!=0)?HISTORY_WORDS:0;
+            history_read_left<=(!history_reset && options[1:0]!=0 &&
+                incoming_profile==job_profile)?HISTORY_WORDS:0;
         end else begin
             case(read_state)
                 R_PLAN:begin
@@ -176,7 +208,7 @@ module multitini_video_frame_engine #(
                     source_left<=source_left-read_beats;
                     if(source_row_left==read_beats)begin
                         source_row_left<=ROW_WORDS;
-                        source_address<=source_address+{24'd0,read_beats,3'd0}+STRIDE-ROW_WORDS*8;
+                        source_address<=source_address+{24'd0,read_beats,3'd0}+active_stride-ROW_WORDS*8;
                     end else begin
                         source_row_left<=source_row_left-read_beats;
                         source_address<=source_address+{24'd0,read_beats,3'd0};
@@ -194,7 +226,7 @@ module multitini_video_frame_engine #(
     reg [5:0] p0_coefficient;
     (* use_dsp="yes" *) reg [13:0] p1_r,p1_g,p1_b;
     reg [19:0] input_pixels,persist_pixels;
-    reg [9:0] input_x;
+    reg [10:0] input_x;
     reg [1:0] source_lane;
     wire [15:0] source_pixel=source_data[source_lane*16+:16];
     wire [23:0] old_pixel=use_history ? (input_pixels[0]?old_data[55:32]:old_data[23:0]) :24'd0;
@@ -224,12 +256,13 @@ module multitini_video_frame_engine #(
     wire p0_ready=!p0_valid || p1_ready;
     wire input_accept=busy && input_pixels<PIXELS && !source_empty &&
                       (!use_history || !old_empty) && p0_ready;
-    assign source_pop=input_accept && (source_lane==3 || input_x==WIDTH-1);
+    assign source_pop=input_accept && (source_lane==3 || input_x==active_width-1);
     assign old_pop=input_accept && use_history && (input_pixels[0] || input_pixels==PIXELS-1);
     multitini_video_frame_filter #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.WIDTH(WIDTH),.HEIGHT(HEIGHT),
+        .ALT_WIDTH(ALT_WIDTH),.ALT_HEIGHT(ALT_HEIGHT),.WIDE_WIDTH(WIDE_WIDTH),.WIDE_HEIGHT(WIDE_HEIGHT),
         .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN)) filter(
         .display_scale_num(display_scale_num),.display_scale_den(display_scale_den),
-        .clk(clk),.resetn(resetn),.start(begin_job),.options(options),
+        .source_alt(alt),.source_profile(selected_profile),.clk(clk),.resetn(resetn),.start(begin_job),.options(options),
         .in_valid(p2_valid && history_pack_ready),.in_ready(filter_in_ready),.in_rgb(p2_rgb),
         .out_valid(filter_out_valid),.out_ready(filter_out_ready),.out_rgb565(filter_out_rgb),
         .busy(filter_busy),.done(filter_done));
@@ -269,7 +302,7 @@ module multitini_video_frame_engine #(
             end
             if(input_accept)begin
                 input_pixels<=input_pixels+1'b1;
-                if(input_x==WIDTH-1)begin input_x<=0;source_lane<=0;end
+                if(input_x==active_width-1)begin input_x<=0;source_lane<=0;end
                 else begin input_x<=input_x+1'b1;source_lane<=source_lane+1'b1;end
             end
             if(persist_accept)begin
@@ -281,9 +314,9 @@ module multitini_video_frame_engine #(
 
     reg [47:0] output_pack;
     reg [1:0] output_lane;
-    reg [9:0] output_x;
+    reg [10:0] output_x;
     reg [19:0] output_pixels;
-    wire output_flush=output_lane==3 || output_x==WIDTH-1;
+    wire output_flush=output_lane==3 || output_x==active_width-1;
     wire output_accept=filter_out_valid && filter_out_ready;
     assign filter_out_ready=busy && (!output_flush || !output_full);
     assign output_push=output_accept && output_flush;
@@ -299,7 +332,7 @@ module multitini_video_frame_engine #(
             output_pixels<=output_pixels+1'b1;
             if(output_flush)begin output_pack<=0;output_lane<=0;end
             else begin output_pack[output_lane*16+:16]<=filter_out_rgb;output_lane<=output_lane+1'b1;end
-            if(output_x==WIDTH-1)output_x<=0;else output_x<=output_x+1'b1;
+            if(output_x==active_width-1)output_x<=0;else output_x<=output_x+1'b1;
         end
     end
 
@@ -325,8 +358,8 @@ module multitini_video_frame_engine #(
             output_address<=0;history_write_address<=0;output_left<=0;history_write_left<=0;output_row_left<=0;
         end else if(begin_job)begin
             write_state<=W_PLAN;write_prefer_history<=1;
-            output_address<=OUTPUT_BASE+{10'd0,output_slot,20'd0};
-            history_write_address<=HISTORY_BASE;output_left<=FRAME_WORDS;
+            output_address<=active_output_base+output_slot*active_slot_bytes;
+            history_write_address<=active_history_base;output_left<=FRAME_WORDS;
             output_row_left<=ROW_WORDS;history_write_left<=HISTORY_WORDS;
         end else begin
             case(write_state)
@@ -355,7 +388,7 @@ module multitini_video_frame_engine #(
                         output_left<=output_left-write_beats;
                         if(output_row_left==write_beats)begin
                             output_row_left<=ROW_WORDS;
-                            output_address<=output_address+{24'd0,write_beats,3'd0}+STRIDE-ROW_WORDS*8;
+                            output_address<=output_address+{24'd0,write_beats,3'd0}+active_stride-ROW_WORDS*8;
                         end else begin
                             output_row_left<=output_row_left-write_beats;
                             output_address<=output_address+{24'd0,write_beats,3'd0};
@@ -383,7 +416,7 @@ module multitini_video_frame_engine #(
             done<=0;
             if(begin_job)begin
                 busy<=1;error<=0;cycles<=0;job_options<=options;
-                use_history<=!history_reset && options[1:0]!=0;
+                use_history<=!history_reset && options[1:0]!=0 && incoming_profile==job_profile;
             end else if(busy)begin
                 cycles<=cycles+1'b1;
                 if(filter_finished && input_pixels==PIXELS && persist_pixels==PIXELS && output_pixels==PIXELS &&

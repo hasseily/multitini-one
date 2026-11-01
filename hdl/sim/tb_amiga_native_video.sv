@@ -26,6 +26,7 @@ module tb_amiga_native_video;
     wire [31:0] malformed;
     multitini_amiga_video_normalizer normalizer(
         .clk(clk),.reset(reset),.ready(ready),.chip_tick(consumed_tick),
+        .capture_mode(2'd0),.native_lace(1'b0),.diw_hstart(9'd129),.diw_vstart(11'd44),
         .hsync_n(hsync_n),.vsync_n(vsync_n),.ntsc(ntsc),.field_short(field_short),.hblank(hblank),.vblank(vblank),.rgb(rgb),
         .scan_x(x),.scan_y(y),.rgb565(pixel),.frame_start(frame_start),.valid(valid),.malformed_frames(malformed));
     integer pixels=0,frames=0,starts=0;

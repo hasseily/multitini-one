@@ -22,6 +22,15 @@ static bool rtc_capable=true,rtc_fail_middle,rtc_seed_held;
 static uint32_t rtc_low,rtc_middle;
 static uint64_t rtc_value;
 static unsigned rtc_stage,rtc_commits,rtc_discards;
+static bool bulk_capable,bulk_timeout,cpu14_capable,fast_ide_capable;
+static uint8_t staged_config[MT_AMIGA_CONFIG_BYTES];
+static uint32_t bulk_stage[128],bulk_status;
+static unsigned bulk_commands,legacy_data_words;
+static bool bench_timed;
+static uint64_t bench_clock;
+static bool bench_restart_expected;
+static unsigned bench_restarts;
+static uint16_t expected_restart_fifo[256];
 static uint8_t rom_first,rom_middle,rom_last,stream_kind;static size_t stream_offset;
 static mt_sd_result_t result(mt_sd_status_t s,size_t n) { return (mt_sd_result_t){s,0U,n}; }
 static file_t *find(const char *name,bool create)
@@ -60,17 +69,38 @@ mt_sd_result_t mt_sd_file_seek(mt_sd_file_t *f,int64_t offset,int origin)
 }
 int64_t mt_sd_file_tell(const mt_sd_file_t *f) { assert(f->open);return (int64_t)f->pos; }
 mt_sd_result_t mt_sd_file_read(mt_sd_file_t *f,void *b,size_t n)
-{ assert(f->open);if(n>f->file->size-f->pos)n=f->file->size-f->pos;memcpy(b,f->file->data+f->pos,n);f->pos+=n;return result(MT_SD_OK,n); }
+{ assert(!bench_timed && f->open);if(n>f->file->size-f->pos)n=f->file->size-f->pos;memcpy(b,f->file->data+f->pos,n);f->pos+=n;return result(MT_SD_OK,n); }
 mt_sd_result_t mt_sd_file_write(mt_sd_file_t *f,const void *b,size_t n)
-{ assert(f->open && f->pos+n<=f->file->size);if(fail_write)return result(MT_SD_SYNC_FAILED,0U);memcpy(f->file->data+f->pos,b,n);f->pos+=n;return result(MT_SD_OK,n); }
+{ assert(!bench_timed && f->open && f->pos+n<=f->file->size);if(fail_write)return result(MT_SD_SYNC_FAILED,0U);memcpy(f->file->data+f->pos,b,n);f->pos+=n;return result(MT_SD_OK,n); }
 mt_sd_result_t mt_sd_file_close(mt_sd_file_t *f) { assert(f->open);f->open=false;return result(MT_SD_OK,0U); }
 mt_sd_result_t mt_sd_file_remove(const char *p) { file_t *f=find(p,false);if(f!=NULL)f->used=false;return result(MT_SD_OK,0U); }
 const char *mt_sd_status_name(mt_sd_status_t s) { (void)s;return "test storage error"; }
 static uint32_t rd(void *ctx,uint32_t offset)
-{ (void)ctx;return offset==MT_AMIGA_HOST_PORT ? native_status|((uint32_t)ide_request<<16U)|(rtc_capable ? MT_AMIGA_HOST_RTC:0U):regs[offset/4U]; }
+{
+    (void)ctx;
+    if(offset==MT_AMIGA_HOST_PORT)return native_status|((uint32_t)ide_request<<16U)|
+        (rtc_capable ? MT_AMIGA_HOST_RTC:0U)|(bulk_capable ? MT_AMIGA_HOST_BULK:0U)|(cpu14_capable ? MT_AMIGA_HOST_CPU14:0U)|
+        (fast_ide_capable ? MT_AMIGA_HOST_FAST_IDE:0U);
+    if(offset==MT_AMIGA_BULK_STATUS)return bulk_status;
+    if(offset==MT_AMIGA_BULK_PROGRESS)return 256U;
+    if(offset>=MT_AMIGA_BULK_DATA && offset<MT_AMIGA_BULK_DATA+512U)return bulk_stage[(offset-MT_AMIGA_BULK_DATA)/4U];
+    return regs[offset/4U];
+}
 static void wr(void *ctx,uint32_t offset,uint32_t value)
 {
     (void)ctx;
+    if(offset>=MT_AMIGA_BULK_DATA && offset<MT_AMIGA_BULK_DATA+512U) {
+        assert(!(bulk_status&MT_AMIGA_BULK_BUSY));bulk_stage[(offset-MT_AMIGA_BULK_DATA)/4U]=value;return;
+    }
+    if(offset==MT_AMIGA_BULK_COMMAND) {
+        assert(bulk_capable && (value>>16U)!=0U && (value&0xfffeU)==512U);++bulk_commands;
+        if(bulk_timeout) { bulk_status=MT_AMIGA_BULK_BUSY;return; }
+        for(unsigned i=0U;i<128U;++i) {
+            if(value&1U)bulk_stage[i]=(uint32_t)fifo[2U*i]|((uint32_t)fifo[2U*i+1U]<<16U);
+            else { transmitted[2U*i]=fifo[2U*i]=(uint16_t)bulk_stage[i];transmitted[2U*i+1U]=fifo[2U*i+1U]=(uint16_t)(bulk_stage[i]>>16U); }
+        }
+        bulk_status=MT_AMIGA_BULK_DONE|(value>>16U);return;
+    }
     if(offset!=MT_AMIGA_HOST_PORT) {
         if(offset==MT_REG_ERROR && (value&MT_ERROR_CORE_LOAD)!=0U) { load_failure=false;++load_error_clears; }
         regs[offset/4U]=value;return;
@@ -106,10 +136,10 @@ static void wr(void *ctx,uint32_t offset,uint32_t value)
         rtc_value=(uint64_t)rtc_low|((uint64_t)rtc_middle<<24U)|((uint64_t)data<<48U);
         rtc_stage=0U;++rtc_commits;if(core_reset)rtc_seed_held=true;
     } else if(op==MT_AMIGA_HOST_IDE_READ) {
-        if(address==15U) { assert(ide_pointer<256U);answer=fifo[ide_pointer++]; }
+        if(address==15U) { ++legacy_data_words;assert(ide_pointer<256U);answer=fifo[ide_pointer++]; }
         else { answer=ide_regs[address];ide_pointer=0U; }
     } else if(op==MT_AMIGA_HOST_IDE_WRITE) {
-        if(address==15U) { assert(ide_pointer<256U);transmitted[ide_pointer++]=data; }
+        if(address==15U) { ++legacy_data_words;assert(ide_pointer<256U);fifo[ide_pointer]=data;transmitted[ide_pointer++]=data; }
         else { ide_regs[address]=data;ide_pointer=0U;if(address==5U)ide_request=0U; }
     }
     native_status=(native_status^MT_AMIGA_HOST_TOGGLE)&MT_AMIGA_HOST_TOGGLE;native_status|=answer;
@@ -124,7 +154,13 @@ static void progress(void *ctx)
     }
     const uint32_t seq=regs[MT_REG_COMMAND_SEQ/4U];if(seq==regs[MT_REG_RESPONSE_SEQ/4U])return;
     const uint32_t op=regs[MT_REG_COMMAND_OPCODE/4U],a=regs[MT_REG_COMMAND_ARG0/4U];
-    if(op==MT_COMMAND_CORE_RESET)core_reset=a!=0U;
+    if(op==MT_COMMAND_CORE_RESET) {
+        if(a!=0U && bench_restart_expected) {
+            assert(!bench_timed && memcmp(fifo,expected_restart_fifo,sizeof(expected_restart_fifo))==0);
+            bench_restart_expected=false;++bench_restarts;
+        }
+        core_reset=a!=0U;
+    }
     else if(op==MT_COMMAND_STREAM_BEGIN) {
         assert(core_reset && !load_failure);stream_kind=(uint8_t)a;stream_offset=0U;
         if(stream_kind==MT_LOAD_AMIGA_KICKSTART && reject_rom_begin) {
@@ -133,6 +169,7 @@ static void progress(void *ctx)
         }
     }
     else if(op==MT_COMMAND_STREAM_DATA) {
+        if(stream_kind==MT_LOAD_AMIGA_CONFIG) { assert(stream_offset<sizeof(staged_config));staged_config[stream_offset]=(uint8_t)a; }
         if(stream_kind==MT_LOAD_AMIGA_KICKSTART) {
             if(stream_offset==0U)rom_first=(uint8_t)a;
             if(stream_offset==0x80000U)rom_middle=(uint8_t)a;
@@ -148,6 +185,8 @@ static void command(uint8_t op,unsigned drive,uint32_t lba,unsigned count)
     ide_regs[1]=(uint16_t)(count|((lba&255U)<<8U));ide_regs[2]=(uint16_t)(lba>>8U);
     ide_regs[5]=(uint16_t)(((uint16_t)op<<8U)|0xe0U|(drive<<4U)|((lba>>24U)&15U));ide_request=4U;
 }
+static uint64_t bench_timer(void *context)
+{ assert(context==NULL && native_config[1]==4U && ide_request==0U);bench_timed=!bench_timed;bench_clock+=10U;return bench_clock; }
 int main(void)
 {
     file_t *kick=create("0:/multitini/cores/amiga/roms/kick.rom",524288U);
@@ -188,10 +227,16 @@ int main(void)
     command(0x20U,0U,1U,1U);amiga_content_service_poll();
     assert((ide_regs[5]&0xff00U)==0x5e00U);
     for(unsigned i=0U;i<256U;++i)assert(transmitted[i]==(uint16_t)((uint16_t)hdf->data[512U+2U*i]|((uint16_t)hdf->data[513U+2U*i]<<8U)));
+    assert(bulk_commands==0U && legacy_data_words==256U);
+    bulk_capable=true;command(0x20U,0U,1U,1U);amiga_content_service_poll();
+    assert(bulk_commands==1U && legacy_data_words==256U && (ide_regs[5]&0xff00U)==0x5e00U);
+    for(unsigned i=0U;i<256U;++i)assert(transmitted[i]==(uint16_t)((uint16_t)hdf->data[512U+2U*i]|((uint16_t)hdf->data[513U+2U*i]<<8U)));
     command(0x30U,0U,2U,1U);amiga_content_service_poll();assert((ide_regs[5]&0xff00U)==0x5800U);
     for(unsigned i=0U;i<256U;++i)fifo[i]=0xbeefU;ide_request=5U;fail_write=true;
     amiga_content_service_poll();assert(amiga_content_service_faulted() && ide_request==5U);
+    const unsigned captured_bulk=bulk_commands;
     fail_write=false;assert(amiga_content_service_retry()==0);amiga_content_service_poll();
+    assert(bulk_commands==captured_bulk); /* Journal retry never consumes the FIFO twice. */
     assert(ide_request==0U && (ide_regs[5]&0xff00U)==0x5400U);
     for(unsigned i=1024U;i<1536U;i+=2U)assert(hdf->data[i]==0xefU && hdf->data[i+1U]==0xbeU);
     command(0x20U,0U,8U,1U);amiga_content_service_poll();assert((ide_regs[5]&0xff00U)==0x5500U && (ide_regs[0]>>8U)==0x10U && ide_request==0U);
@@ -239,7 +284,15 @@ int main(void)
     command(0x30U,0U,4U,1U);amiga_content_service_poll();pio_ticks=100000U;
     assert(amiga_content_service_shutdown()!=0 && native_config[1]==0U);
     assert(strcmp(amiga_content_service_name(0U),"Workbench.adf")==0 && strcmp(amiga_content_service_name(2U),"System.hdf")==0);
-    assert(amiga_content_service_faulted());pio_ticks=0U;ide_request=5U;
+    assert(amiga_content_service_faulted());
+    /* Refusing an IDE-mode change cannot publish settings or restart while
+     * the guest still owns an unfinished write. Mounts remain retryable. */
+    mt_amiga_config_t refused=*amiga_content_service_config();refused.ide_compat=MT_AMIGA_IDE_CLASSIC;
+    const unsigned before_refusal_roms=rom_streams;pio_ticks=100000U;
+    assert(amiga_content_service_configure(&refused)!=0 && rom_streams==before_refusal_roms &&
+        amiga_content_service_config()->ide_compat==MT_AMIGA_IDE_AUTO && native_config[1]==0U);
+    assert(find(ROOT "/amiga-settings.bin",false)->data[18]==0U && strcmp(amiga_content_service_name(2U),"System.hdf")==0);
+    pio_ticks=0U;ide_request=5U;
     for(unsigned i=0U;i<256U;++i)fifo[i]=0x1357U;
     assert(amiga_content_service_retry()==0);amiga_content_service_poll();assert(ide_request==0U);
     assert(hdf->data[2048U]==0x57U && hdf->data[2049U]==0x13U);
@@ -264,5 +317,96 @@ int main(void)
     ide_request=6U;amiga_content_service_poll();
     assert((ide_regs[5]&0xff00U)==0x5000U && (ide_regs[0]>>8U)==1U); /* Reset signature has no completion IRQ. */
     assert(amiga_content_service_shutdown()==0);
+    /* Existing zero-byte settings choose Auto, but an old FPGA stays classic.
+     * The same preference activates fast IDE only on a capable 68020 core. */
+    fast_ide_capable=true;amiga_content_service_init(&link,ROOT,progress,NULL);
+    assert(amiga_content_service_boot()==0 && native_config[8]==7U && amiga_content_service_fast_ide_expected());
+    /* Fast guest interface retains the same bulk FIFO and durable journal
+     * protocol. A failed sync must not ACK or capture the FIFO a second time. */
+    command(0x30U,0U,6U,1U);amiga_content_service_poll();
+    for(unsigned i=0U;i<256U;++i)fifo[i]=0x2468U;ide_request=5U;fail_write=true;
+    amiga_content_service_poll();const unsigned fast_captured=bulk_commands;
+    assert(amiga_content_service_faulted() && ide_request==5U);
+    fail_write=false;assert(amiga_content_service_retry()==0);amiga_content_service_poll();
+    assert(bulk_commands==fast_captured && ide_request==0U && (ide_regs[5]&0xff00U)==0x5400U);
+    assert(hdf->data[3072U]==0x68U && hdf->data[3073U]==0x24U);
+    command(0x20U,0U,6U,1U);amiga_content_service_poll();
+    assert((ide_regs[5]&0xff00U)==0x5e00U);
+    for(unsigned i=0U;i<256U;++i)assert(transmitted[i]==0x2468U);
+    mt_amiga_config_t ide_config=*amiga_content_service_config();ide_config.ide_compat=MT_AMIGA_IDE_CLASSIC;
+    const unsigned before_ide_roms=rom_streams;
+    assert(amiga_content_service_configure(&ide_config)==0 && rom_streams==before_ide_roms+1U &&
+        native_config[8]==0x27U && staged_config[10]==1U && !amiga_content_service_fast_ide_expected());
+    assert(find(ROOT "/amiga-settings.bin",false)->data[18]==1U && strcmp(amiga_content_service_name(2U),"System.hdf")==0);
+    assert(amiga_content_service_shutdown()==0);fast_ide_capable=false;
+    amiga_content_service_init(&link,ROOT,progress,NULL);
+    assert(amiga_content_service_config()->ide_compat==MT_AMIGA_IDE_CLASSIC && !amiga_content_service_fast_ide_available());
+    assert(amiga_content_service_boot()==0 && staged_config[10]==0U && native_config[8]==0x27U);
+    assert(find(ROOT "/amiga-settings.bin",false)->data[18]==1U); /* Sanitizing PL wire cannot erase saved policy. */
+    ide_config=*amiga_content_service_config();ide_config.ide_compat=MT_AMIGA_IDE_AUTO;
+    assert(amiga_content_service_configure(&ide_config)==0 && native_config[8]==0x27U && staged_config[10]==0U);
+    fast_ide_capable=true;ide_config.cpu=MT_AMIGA_CPU_STOCK;
+    assert(amiga_content_service_configure(&ide_config)==0 && native_config[8]==0x27U && !amiga_content_service_fast_ide_expected());
+    ide_config.cpu=MT_AMIGA_CPU_68020_TURBO;
+    assert(amiga_content_service_configure(&ide_config)==0 && native_config[8]==7U && amiga_content_service_fast_ide_expected());
+    assert(amiga_content_service_shutdown()==0);
+    cpu14_capable=true;amiga_content_service_init(&link,ROOT,progress,NULL);
+    assert(amiga_content_service_boot()==0);
+    mt_amiga_config_t cpu_config=*amiga_content_service_config();cpu_config.cpu=MT_AMIGA_CPU_68020_14;
+    assert(amiga_content_service_configure(&cpu_config)==0 && native_config[4]==0x5fU && native_config[8]==7U);
+    assert(amiga_content_service_shutdown()==0);cpu14_capable=false;
+    amiga_content_service_init(&link,ROOT,progress,NULL);
+    assert(amiga_content_service_cpu14_fallback() && amiga_content_service_config()->cpu==MT_AMIGA_CPU_68020_TURBO);
+    assert(amiga_content_service_boot()==0 && native_config[4]==0x1fU);
+    file_t *settings=find(ROOT "/amiga-settings.bin",false);assert(settings!=NULL && settings->data[12]==3U);
+    cpu_config=*amiga_content_service_config();cpu_config.fast_mib=4U;
+    assert(amiga_content_service_configure(&cpu_config)==0 && settings->data[12]==3U);
+    cpu_config=*amiga_content_service_config();cpu_config.ide_compat=MT_AMIGA_IDE_CLASSIC;
+    assert(amiga_content_service_configure(&cpu_config)==0 && settings->data[12]==3U && settings->data[18]==1U);
+    cpu_config.ide_compat=MT_AMIGA_IDE_AUTO;
+    assert(amiga_content_service_configure(&cpu_config)==0 && settings->data[12]==3U && settings->data[18]==0U);
+    cpu_config.cpu=MT_AMIGA_CPU_68020_14;
+    assert(amiga_content_service_configure(&cpu_config)!=0 && native_config[4]==0x1fU);
+    assert(amiga_content_service_retry()==0);
+    cpu_config=*amiga_content_service_config();
+    assert(amiga_content_service_configure(&cpu_config)==0 && settings->data[12]==2U && !amiga_content_service_cpu14_fallback());
+    cpu14_capable=true;cpu_config.cpu=MT_AMIGA_CPU_68020_14;
+    assert(amiga_content_service_configure(&cpu_config)==0 && settings->data[12]==3U);
+    assert(amiga_content_service_shutdown()==0);
+    cpu14_capable=true;amiga_content_service_init(&link,ROOT,progress,NULL);
+    assert(amiga_content_service_boot()==0 && native_config[4]==0x5fU && !amiga_content_service_cpu14_fallback());
+    mt_amiga_ide_bench_t benchmark;uint16_t saved_fifo[256];memcpy(saved_fifo,fifo,sizeof(saved_fifo));
+    uint32_t reads_before,writes_before,reads_after,writes_after;
+    amiga_content_service_activity(2U,&reads_before,&writes_before);const uint16_t saved_status=ide_regs[5];
+    assert(amiga_content_service_ide_bench(0U,bench_timer,NULL,&benchmark)!=0);
+    assert(amiga_content_service_ide_bench(257U,bench_timer,NULL,&benchmark)!=0);
+    memcpy(expected_restart_fifo,saved_fifo,sizeof(saved_fifo));bench_restart_expected=true;
+    const unsigned before_bench_roms=rom_streams;
+    assert(amiga_content_service_ide_bench(2U,bench_timer,NULL,&benchmark)==0);
+    assert(!bench_restart_expected && bench_restarts==1U && rom_streams==before_bench_roms+1U && !core_reset);
+    assert(amiga_content_service_config()->cpu==MT_AMIGA_CPU_68020_14 && native_config[4]==0x5fU);
+    assert(strcmp(amiga_content_service_name(2U),"System.hdf")==0 && settings->data[12]==3U);
+    assert(!bench_timed && native_config[1]==0U && benchmark.bytes_per_leg==1024U);
+    for(unsigned b=0U;b<2U;++b)for(unsigned direction=0U;direction<2U;++direction)assert(benchmark.ticks[b][direction]==20U);
+    assert(memcmp(saved_fifo,fifo,sizeof(saved_fifo))==0 && ide_regs[5]==saved_status);
+    amiga_content_service_activity(2U,&reads_after,&writes_after);assert(reads_before==reads_after && writes_before==writes_after);
+    /* Active guest PIO is drained before the first timer invocation. */
+    command(0x30U,0U,3U,1U);pio_ticks=3U;pio_progress=0U;
+    for(unsigned i=0U;i<256U;++i)expected_restart_fifo[i]=0x45a3U;
+    bench_restart_expected=true;
+    assert(amiga_content_service_ide_bench(1U,bench_timer,NULL,&benchmark)==0 && pio_progress==3U);
+    assert(!bench_restart_expected && bench_restarts==2U && rom_streams==before_bench_roms+2U && !core_reset);
+    assert(native_config[1]==0U && ide_request==0U && !bench_timed);
+    amiga_content_service_activity(2U,&reads_after,&writes_after);assert(writes_after==writes_before+1U);
+    /* Ambiguous transport completion cannot ACK, fall back, replay or close
+     * mounted images. Recovery requires an explicit core reload. */
+    bulk_timeout=true;const unsigned before_uncertain=bulk_commands;
+    assert(amiga_content_service_ide_bench(1U,bench_timer,NULL,&benchmark)!=0);
+    assert(bench_restarts==2U && rom_streams==before_bench_roms+2U);
+    const unsigned old_words=legacy_data_words;
+    assert(amiga_content_service_faulted() && bulk_commands==before_uncertain+1U && ide_request==0U && native_config[1]==4U);
+    assert(amiga_content_service_retry()!=0 && amiga_content_service_prepare_reset()!=0 && amiga_content_service_shutdown()!=0);
+    assert(bulk_commands==before_uncertain+1U && legacy_data_words==old_words);
+    assert(strcmp(amiga_content_service_name(2U),"System.hdf")==0 && settings->data[12]==3U);
     return 0;
 }

@@ -22,7 +22,7 @@ def main() -> int:
     original_sources=list(sources)
     if args.mutation:
         text=normalizer.read_text()
-        before,after=('CAPTURE_X=206','CAPTURE_X=207') if args.mutation=='x' else ("9'd41+{8'd0,field_short_q}","9'd41")
+        before,after=("capture_mode==0 ? 11'd206:","capture_mode==0 ? 11'd207:") if args.mutation=='x' else ("9'd41+{8'd0,field_short_q}","9'd41")
         if text.count(before)!=1:raise SystemExit('Normalizer changed; review mutation target')
         mutant=build/'normalizer-mutant.sv';mutant.write_text(text.replace(before,after))
         sources[-1]=mutant

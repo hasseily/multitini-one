@@ -4,12 +4,13 @@
 #include "video_worker.h"
 #include "multitini_video_frame.h"
 #include "multitini_regs.h"
+#include "multitini_amiga_interface.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
 
 static uint32_t registers[0x200U / 4U];
-static uint32_t milliseconds;
+static uint32_t milliseconds,amiga_caps;
 static unsigned reads, writes, submissions, collections, data_writes, commits;
 static unsigned display_submits;
 static unsigned error_clears;
@@ -56,6 +57,7 @@ bool mt_video_worker_collect(uint32_t epoch, void *output, uint32_t capacity,
 
 static uint32_t read_register(uint32_t offset)
 {
+    if(offset==MT_AMIGA_HOST_PORT)return amiga_caps;
     assert(!forbidden_mmio && (offset & 3U) == 0U && offset < sizeof(registers));
     reads++;
     return registers[offset / 4U];
@@ -91,6 +93,7 @@ static uint32_t get_milliseconds(void) { return milliseconds; }
 
 static void reset_service(void)
 {
+    amiga_caps=0U;
     const mt_video_effect_service_ops_t ops = {
         read_register, write_register, get_milliseconds
     };
@@ -525,6 +528,15 @@ static void test_frame_geometry_budget(void)
         assert(mt_video_frame_service_failed()==(geometry[i][2]==0U));
         assert((registers[MT_REG_VIDEO_FRAME_CONTROL/4U]!=0U)==(geometry[i][2]!=0U));
         assert(error_clears==geometry[i][2]);
+    }
+    for(unsigned enabled=0U;enabled<2U;++enabled) {
+        mt_video_effects_settings_t settings;reset_service();
+        registers[MT_REG_CORE_ID/4U]=MT_AMIGA_CORE_ID;amiga_caps=enabled ? MT_AMIGA_HOST_SHRES:0U;
+        registers[MT_REG_VIDEO_FRAME_GEOMETRY/4U]=(512U<<16)|1280U;registers[MT_REG_VIDEO_FRAME_STRIDE/4U]=2560U;
+        mt_video_effects_defaults(&settings);settings.enabled=1U;
+        mt_video_effect_service_configure(true,&settings);poll_bounded();finish_apply();poll_bounded();
+        assert(mt_video_frame_service_failed()==!enabled);
+        assert((registers[MT_REG_VIDEO_FRAME_CONTROL/4U]!=0U)==(enabled!=0U));
     }
 }
 

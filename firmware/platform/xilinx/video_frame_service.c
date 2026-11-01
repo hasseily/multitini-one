@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "video_frame_service.h"
 #include "multitini_regs.h"
+#include "multitini_amiga_interface.h"
 #include <stddef.h>
 #include <string.h>
 
@@ -87,9 +88,11 @@ void mt_video_frame_service_poll(void)
         const uint32_t geometry = bus.read(MT_REG_VIDEO_FRAME_GEOMETRY);
         const uint32_t width = geometry & UINT32_C(0xffff), height = geometry >> 16;
         const uint32_t stride = bus.read(MT_REG_VIDEO_FRAME_STRIDE);
+        const uint32_t core_id=bus.read(MT_REG_CORE_ID);
+        const uint32_t caps=core_id==MT_AMIGA_CORE_ID ? bus.read(MT_AMIGA_HOST_PORT):0U;
+        mt_video_frame_layout_t layout;
         if ((bus.read(MT_REG_VIDEO_FRAME_STATUS) & MT_VIDEO_FRAME_STATUS_AUTONOMOUS_SUPPORTED) == 0U ||
-            !mt_video_frame_geometry_valid(width, height) || stride != ((width * 2U + 127U) & ~UINT32_C(127)) ||
-            stride * height > MT_VIDEO_FRAME_SLOT_BYTES) { fail(false); return; }
+            !mt_video_frame_select_layout(core_id,caps,width,height,stride,&layout)) { fail(false); return; }
         bus.write(MT_REG_VIDEO_FRAME_ERROR_CLEAR, 1U);
         bus.write(MT_REG_VIDEO_FRAME_OPTIONS, packed_options);
         bus.write(MT_REG_VIDEO_FRAME_CONTROL, MT_VIDEO_FRAME_CAPTURE_ENABLE |

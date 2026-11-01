@@ -13,6 +13,7 @@ endif()
 add_library(multitini_common STATIC
     firmware/common/amiga_boot.c
     firmware/common/amiga_content.c
+    firmware/common/amiga_display.c
     firmware/common/amiga_hid_input.c
     firmware/common/amiga_rtc.c
     firmware/common/ak4493.c
@@ -73,6 +74,7 @@ add_library(multitini_common STATIC
     firmware/common/video_effects.c
     firmware/common/video_effects_frontend.c
     firmware/common/video_frame.c
+    firmware/common/video_frame_layout.c
     firmware/common/xmodem.c
 )
 target_include_directories(multitini_common PUBLIC firmware/include)
@@ -81,7 +83,7 @@ if(NOT MSVC AND NOT CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
 endif()
 
 enable_testing()
-foreach(component amiga_content amiga_boot amiga_hid amiga_rtc)
+foreach(component amiga_content amiga_boot amiga_bulk amiga_hid amiga_rtc amiga_display)
     add_executable(test_${component} tests/host/test_${component}.c)
     target_link_libraries(test_${component} PRIVATE multitini_common)
     add_test(NAME ${component} COMMAND test_${component})
@@ -91,9 +93,20 @@ add_executable(test_amiga_service tests/host/test_amiga_service.c firmware/platf
 target_include_directories(test_amiga_service PRIVATE firmware/platform/xilinx)
 target_link_libraries(test_amiga_service PRIVATE multitini_common)
 add_test(NAME amiga_service COMMAND test_amiga_service)
+add_executable(test_amiga_profile tests/host/test_amiga_profile.c firmware/platform/xilinx/amiga_content_service.c)
+target_include_directories(test_amiga_profile PRIVATE firmware/platform/xilinx)
+target_link_libraries(test_amiga_profile PRIVATE multitini_common)
+add_test(NAME amiga_profile COMMAND test_amiga_profile)
+add_library(xilinx_amiga_display_compile OBJECT firmware/platform/xilinx/amiga_display_service.c)
+target_include_directories(xilinx_amiga_display_compile PRIVATE firmware/include firmware/platform/xilinx)
+add_executable(test_amiga_display_service tests/host/test_amiga_display_service.c firmware/platform/xilinx/amiga_display_service.c)
+target_include_directories(test_amiga_display_service PRIVATE firmware/platform/xilinx)
+target_link_libraries(test_amiga_display_service PRIVATE multitini_common)
+add_test(NAME amiga_display_service COMMAND test_amiga_display_service)
 target_include_directories(xilinx_amiga_service_compile PRIVATE firmware/include firmware/platform/xilinx)
 if(NOT MSVC AND NOT CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
     target_compile_options(xilinx_amiga_service_compile PRIVATE -Wall -Wextra -Wpedantic -Werror -Wconversion -Wshadow -Wstrict-prototypes)
+    target_compile_options(xilinx_amiga_display_compile PRIVATE -Wall -Wextra -Wpedantic -Werror -Wconversion -Wshadow -Wstrict-prototypes)
 endif()
 foreach(component net net_edges net_uci_http c64_uci c64_uci_cvt)
     add_executable(test_${component} tests/host/test_${component}.c)
@@ -262,7 +275,7 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/CherryUSB/core/usbh_core.h")
 else()
     message(FATAL_ERROR "Run git submodule update --init third_party/CherryUSB for USB tests")
 endif()
-foreach(component clock text_reader system_frontend menu_services video_effects video_effects_frontend video_frame)
+foreach(component clock text_reader system_frontend menu_services video_effects video_effects_frontend video_frame video_frame_layout)
     add_executable(test_${component} tests/host/test_${component}.c)
     target_link_libraries(test_${component} PRIVATE multitini_common)
     add_test(NAME ${component} COMMAND test_${component})

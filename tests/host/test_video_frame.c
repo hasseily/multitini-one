@@ -212,10 +212,10 @@ static void invalid(void)
 
 static void native_geometry_limits(void)
 {
-    const unsigned sizes[][2]={{724U,496U},{724U,636U},{640U,720U},{540U,720U}};
-    assert(MT_VIDEO_FRAME_MAX_PIXELS==460800U);
-    assert(MT_VIDEO_FRAME_MAX_PIXELS*sizeof(uint16_t)<=MT_VIDEO_FRAME_SLOT_BYTES);
-    assert(MT_VIDEO_FRAME_MAX_PIXELS*sizeof(uint32_t)<=MT_VIDEO_FRAME_HISTORY_BYTES);
+    const unsigned sizes[][2]={{724U,496U},{724U,636U},{640U,720U},{540U,720U},{1280U,512U}};
+    assert(MT_VIDEO_FRAME_MAX_PIXELS==655360U);
+    assert(MT_VIDEO_FRAME_MAX_PIXELS*sizeof(uint16_t)<=MT_VIDEO_FRAME_WIDE_SLOT_BYTES);
+    assert(MT_VIDEO_FRAME_MAX_PIXELS*sizeof(uint32_t)<=MT_VIDEO_FRAME_WIDE_HISTORY_BYTES);
     for(unsigned g=0U;g<sizeof(sizes)/sizeof(sizes[0]);++g) {
         const unsigned width=sizes[g][0],height=sizes[g][1],pixels=width*height;
         assert(mt_video_frame_geometry_valid(width,height));
@@ -232,7 +232,7 @@ static void native_geometry_limits(void)
         assert(input[pixels]==0x1234U && output[pixels]==0x1234U);
         assert(history[pixels]==0x12345678U && base[pixels]==0x12345678U && scratch[pixels]==0x12345678U);
     }
-    const unsigned bad[][2]={{724U,637U},{724U,720U},{725U,1U},{UINT32_MAX,UINT32_MAX}};
+    const unsigned bad[][2]={{1280U,513U},{1280U,720U},{1281U,1U},{UINT32_MAX,UINT32_MAX}};
     for(unsigned g=0U;g<sizeof(bad)/sizeof(bad[0]);++g) {
         output[0]=0x1234U;history[0]=base[0]=scratch[0]=0x12345678U;
         assert(!mt_video_frame_geometry_valid(bad[g][0],bad[g][1]));

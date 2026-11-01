@@ -166,6 +166,8 @@ static mt_genesis_hid_input_t g_genesis_input;
 static mt_nes_hid_input_t g_nes_input;
 static mt_iigs_hid_input_t g_iigs_input;
 static mt_amiga_hid_input_t g_amiga_input;
+static uint8_t g_amiga_reset_keys[MT_C64_HID_SLOT_COUNT];
+static bool g_amiga_reset_blocked;
 static mt_core_link_t *g_link;
 static uint32_t g_reports_total;
 static uint32_t g_submit_errors;
@@ -183,6 +185,23 @@ static mt_usb_keyboard_filter_fn g_keyboard_filter;
 static void *g_keyboard_filter_context;
 static void refresh_controller_outputs(bool reload, bool reset_players);
 static void deliver_controllers(void);
+static uint8_t amiga_reset_keys(void)
+{ uint8_t keys=0U;for(unsigned s=0U;s<MT_C64_HID_SLOT_COUNT;++s)keys|=g_amiga_reset_keys[s];return keys; }
+static void block_amiga_reset(void)
+{ g_amiga_reset_blocked=amiga_reset_keys()!=0U;mt_amiga_hid_set_reset_enabled(&g_amiga_input,false); }
+static void track_amiga_reset_keys(uint8_t slot,uint8_t modifiers,const uint8_t *keys,size_t count)
+{
+    if(slot>=MT_C64_HID_SLOT_COUNT)return;
+    uint8_t value=(uint8_t)(((modifiers&0x11U)!=0U ? 1U:0U)|((modifiers&0x08U)!=0U ? 2U:0U)|
+        ((modifiers&0x80U)!=0U ? 4U:0U));
+    for(size_t i=0U;i<count;++i) {
+        if(keys[i]>0U && keys[i]<4U)return; /* Rollover preserves the preceding state. */
+        if(keys[i]==0x65U)value|=4U;
+    }
+    g_amiga_reset_keys[slot]=value;
+    if(amiga_reset_keys()==0U)g_amiga_reset_blocked=false;
+    else if(g_core_ready==0U || g_menu_capture || g_active_core_id!=MT_AMIGA_CORE_ID)g_amiga_reset_blocked=true;
+}
 
 static int emit_active_input(void *context, uint16_t code, uint16_t value)
 {
@@ -244,6 +263,9 @@ static void submit_keyboard_state(uint8_t slot, uint8_t modifiers,
 
 static void disconnect_input_slot(uint8_t slot)
 {
+    if(slot<MT_C64_HID_SLOT_COUNT)g_amiga_reset_keys[slot]=0U;
+    block_amiga_reset();
+    mt_amiga_hid_set_reset_enabled(&g_amiga_input,g_core_ready!=0U && !g_menu_capture && g_active_core_id==MT_AMIGA_CORE_ID);
     g_controller_tab[slot] = 0U;
     memset(&g_menu_chord[slot], 0, sizeof(g_menu_chord[slot]));
     g_menu_navigation_guard[slot] = 0U;
@@ -1044,6 +1066,7 @@ static void submit_report(mt_hid_slot_t *slot);
 static void keyboard_report(mt_hid_slot_t *slot, uint8_t modifiers,
                             uint8_t *keys, size_t count)
 {
+    track_amiga_reset_keys(slot->input_slot,modifiers,keys,count);
     const bool captured = g_keyboard_filter != NULL &&
         g_keyboard_filter(g_keyboard_filter_context, slot->input_slot, modifiers, keys, count);
     if (captured) submit_keyboard_state(slot->input_slot, 0U, NULL, 0U);
@@ -1137,6 +1160,7 @@ static void report_complete(void *argument, int bytes)
         } else if (slot->keyboard != 0U && bytes >= 8) {
             const struct usb_hid_kbd_report *const keyboard =
                 (const struct usb_hid_kbd_report *)g_reports[index];
+            track_amiga_reset_keys(slot->input_slot,keyboard->modifier,keyboard->key,sizeof(keyboard->key));
             const bool captured = g_keyboard_filter != NULL &&
                 g_keyboard_filter(g_keyboard_filter_context, slot->input_slot,
                                   keyboard->modifier, keyboard->key,
@@ -1746,6 +1770,8 @@ void usb_hid_service_init(mt_core_link_t *link)
     mt_nes_hid_input_init(&g_nes_input, emit_active_input, link);
     mt_iigs_hid_init(&g_iigs_input,emit_active_input,link);
     mt_amiga_hid_init(&g_amiga_input,emit_active_input,link);
+    memset(g_amiga_reset_keys,0,sizeof(g_amiga_reset_keys));g_amiga_reset_blocked=false;
+    mt_amiga_hid_set_reset_enabled(&g_amiga_input,false);
 }
 
 void usb_hid_service_set_keyboard_filter(mt_usb_keyboard_filter_fn filter,
@@ -1841,6 +1867,7 @@ int usb_hid_service_stop(void)
 
 void usb_hid_service_set_active_core(uint32_t core_id)
 {
+    block_amiga_reset();
     g_core_ready = 0U;
     clear_relative_inputs();
     g_active_core_id = core_id;
@@ -1879,6 +1906,9 @@ void usb_hid_service_set_core_ready(bool ready)
         ready=g_link!=NULL && g_link->read32!=NULL && g_link->write32!=NULL &&
             (g_link->read32(g_link->context,MT_REG_STATUS)&MT_STATUS_CORE_READY)!=0U;
     const uint8_t next = ready ? 1U : 0U;
+    if(next==0U)block_amiga_reset();
+    mt_amiga_hid_set_reset_enabled(&g_amiga_input,
+        next!=0U && g_active_core_id==MT_AMIGA_CORE_ID && !g_menu_capture);
     if (next != 0U && g_core_ready == 0U) {
         g_core_ready = 1U;
         if(g_active_core_id==MT_AMIGA_CORE_ID)
@@ -1899,6 +1929,13 @@ void usb_hid_service_set_core_ready(bool ready)
     } else {
         g_core_ready = next;
     }
+}
+
+bool usb_hid_service_take_amiga_reset(void)
+{
+    if(g_active_core_id!=MT_AMIGA_CORE_ID || g_core_ready==0U || g_menu_capture)return false;
+    const bool pending=mt_amiga_hid_take_reset(&g_amiga_input);
+    return pending && !g_amiga_reset_blocked;
 }
 
 void usb_hid_service_poll(void)
@@ -2111,6 +2148,9 @@ void usb_hid_service_set_menu_capture(bool captured)
 {
     if (g_menu_capture == captured) return;
     g_menu_capture = captured;
+    if(captured)block_amiga_reset();
+    mt_amiga_hid_set_reset_enabled(&g_amiga_input,
+        !captured && g_core_ready!=0U && g_active_core_id==MT_AMIGA_CORE_ID);
     clear_relative_inputs();
     if(captured && g_active_core_id==MT_IIGS_CORE_ID) {
         mt_iigs_hid_clear_mouse_motion(&g_iigs_input);

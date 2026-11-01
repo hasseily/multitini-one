@@ -352,6 +352,52 @@ static void amiga_active_geometry(void)
         }
     }
 }
+static void amiga_shres_geometry(void)
+{
+    static const unsigned sw[]={1920U,1024U,1200U,1280U,1360U,1680U};
+    static const unsigned sh[]={1080U,768U,800U,1024U,768U,1050U};
+    mt_screenshot_scene_t scene={0};scene.pixels=source;
+    scene.width=1280U;scene.height=512U;scene.core_id=MT_AMIGA_CORE_ID;
+    for(unsigned y=0U;y<512U;++y)for(unsigned x=0U;x<1280U;++x)
+        source[y*1280U+x]=(uint16_t)(x*113U+y*37U);
+    /* The geometry oracle uses the complete scaled canvas before clipping.
+     * At4x it is5120px wide: truncating that value to12bits or discarding
+     * the crop phase changes these pixel comparisons. Auto remains1x. */
+    for(unsigned mode=0U;mode<6U;++mode)for(unsigned multiplier=0U;multiplier<=4U;++multiplier) {
+        const unsigned scale=multiplier==0U ? 1U:multiplier;
+        const unsigned vw=1280U*scale,vh=512U*scale;
+        const int dx=(int)sw[mode]-(int)vw,dy=(int)sh[mode]-(int)vh;
+        const int left=dx>=0 ? dx/2:-((-dx+1)/2);
+        const int top=dy>=0 ? dy/2:-((-dy+1)/2);
+        const unsigned cw=vw<sw[mode] ? vw:sw[mode],ch=vh<sh[mode] ? vh:sh[mode];
+        const unsigned x0=left>0 ? (unsigned)left:0U,y0=top>0 ? (unsigned)top:0U;
+        scene.display_mode=(uint8_t)mode;scene.video_multiplier=(uint8_t)multiplier;
+        uint32_t w,h;scene.full_output=false;
+        assert(mt_screenshot_dimensions(&scene,&w,&h) && w==cw && h==ch);
+        const unsigned ys[]={0U,ch/2U,ch-1U};
+        for(unsigned r=0U;r<3U;++r) {
+            const unsigned py=ys[r]+y0;
+            scene.full_output=false;assert(mt_screenshot_render_row(&scene,ys[r],cropped_row));
+            scene.full_output=true;
+            assert(mt_screenshot_dimensions(&scene,&w,&h) && w==sw[mode] && h==sh[mode]);
+            assert(mt_screenshot_render_row(&scene,py,row));
+            assert(memcmp(cropped_row,row+x0,cw*sizeof(uint16_t))==0);
+            for(unsigned x=0U;x<sw[mode];++x) {
+                uint16_t expected=0U;
+                if((int)x>=left && (int)x<left+(int)vw &&
+                   (int)py>=top && (int)py<top+(int)vh) {
+                    const unsigned sx=(unsigned)((int)x-left)/scale;
+                    const unsigned sy=(unsigned)((int)py-top)/scale;
+                    expected=source[sy*1280U+sx];
+                }
+                assert(row[x]==expected);
+            }
+        }
+    }
+    /* Pure composition permits this exceptional size only for Amiga. */
+    scene.core_id=MT_IIGS_CORE_ID;
+    uint32_t w,h;assert(!mt_screenshot_dimensions(&scene,&w,&h));
+}
 int main(int argc,char **argv)
 {
     renderer();
@@ -359,6 +405,7 @@ int main(int argc,char **argv)
     iigs_border_geometry();
     amiga_geometry();
     amiga_active_geometry();
+    amiga_shres_geometry();
     manual_geometry();
     full_screen_ui();
     mt_screenshot_png_t png;

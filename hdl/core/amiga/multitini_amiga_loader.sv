@@ -57,10 +57,11 @@ module multitini_amiga_loader(
                             active<=0;
                             // AM01: CPU, standard, chip acceleration, disk speed,
                             // Fast MiB, Chip MiB. Reject unsupported options.
-                            if(config_next[31:0]!=32'h31304d41 || (config_next[39:32]!=0 && config_next[39:32]!=2) ||
+                            if(config_next[31:0]!=32'h31304d41 ||
+                               (config_next[39:32]!=0 && config_next[39:32]!=2 && config_next[39:32]!=3) ||
                                config_next[47:40]!=0 || config_next[55:48]!=0 || config_next[63:56]>1 ||
                                (config_next[71:64]!=4 && config_next[71:64]!=8) ||
-                               config_next[79:72]!=2 || config_next[127:80]!=0)begin error<=1;config_valid<=0;end
+                               config_next[79:72]!=2 || config_next[87:80]>1 || config_next[127:88]!=0)begin error<=1;config_valid<=0;end
                             else begin config_bytes<=config_next;config_valid<=1;end
                         end
                     end

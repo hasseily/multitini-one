@@ -4,6 +4,7 @@
 #include "video_effect_service.h"
 #include "multitini_video_frame.h"
 #include "multitini_display.h"
+#include "multitini_amiga_interface.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -105,8 +106,9 @@ static bool snapshot(uint32_t core_id,uint8_t mode,uint32_t border,const mt_ui_f
     if((bus.read(MT_REG_VIDEO_FRAME_CONTROL)&MT_VIDEO_FRAME_CAPTURE_ENABLE)==0U)return false;
     const uint32_t geometry=bus.read(MT_REG_VIDEO_FRAME_GEOMETRY),stride=bus.read(MT_REG_VIDEO_FRAME_STRIDE);
     const uint32_t width=geometry&0xffffU,height=geometry>>16;
-    if(!mt_video_frame_geometry_valid(width,height) ||
-       stride!=((width*2U+127U)&~UINT32_C(127)) || stride*height>MT_VIDEO_FRAME_SLOT_BYTES) {
+    const uint32_t caps=core_id==MT_AMIGA_CORE_ID ? bus.read(MT_AMIGA_HOST_PORT):0U;
+    mt_video_frame_layout_t layout;
+    if(!mt_video_frame_select_layout(core_id,caps,width,height,stride,&layout)) {
         fail("invalid capture geometry");return false;
     }
     const uint32_t selector=MT_REG_VIDEO_FRAME_DISPLAY_ACTIVE;
@@ -115,7 +117,7 @@ static bool snapshot(uint32_t core_id,uint8_t mode,uint32_t border,const mt_ui_f
     const uint32_t effect_sequence=bus.read(MT_REG_VIDEO_EFFECT_SEQUENCE);
     if(!mt_video_effect_service_snapshot(&captured_effects))return false;
     const uint32_t slot=sequence&3U;
-    const uint32_t base=MT_VIDEO_FRAME_OUTPUT_BASE+slot*MT_VIDEO_FRAME_SLOT_BYTES;
+    const uint32_t base=layout.output_base+slot*layout.slot_bytes;
     memory_barrier();
     for(uint32_t y=0U;y<height;++y)
         MT_SCREENSHOT_COPY_PIXELS(captured_pixels+y*width,base+y*stride,width*sizeof(uint16_t));

@@ -19,11 +19,12 @@ static FILE *open_output(const char *directory,const char *name)
 }
 int main(int argc,char **argv)
 {
-    if(argc!=5 && argc!=7)return 2;
+    if(argc!=5 && argc!=7 && argc!=8)return 2;
     uint32_t width=(uint32_t)strtoul(argv[1],NULL,10),height=(uint32_t)strtoul(argv[2],NULL,10);
     unsigned exhaustive=(unsigned)strtoul(argv[4],NULL,10);
-    uint32_t scale_num=argc==7 ? (uint32_t)strtoul(argv[5],NULL,10) : 3U;
-    uint32_t scale_den=argc==7 ? (uint32_t)strtoul(argv[6],NULL,10) : 2U;
+    uint32_t scale_num=argc>=7 ? (uint32_t)strtoul(argv[5],NULL,10) : 3U;
+    uint32_t scale_den=argc>=7 ? (uint32_t)strtoul(argv[6],NULL,10) : 2U;
+    bool force_reset=argc==8 && strtoul(argv[7],NULL,10)!=0U;
     if(!width || width>MT_VIDEO_FRAME_MAX_WIDTH || !height || height>MT_VIDEO_FRAME_MAX_HEIGHT ||
        width*height>MT_VIDEO_FRAME_MAX_PIXELS || exhaustive>1)return 2;
     if(scale_num==0 || scale_num>64 || scale_den==0 || scale_den>64)return 2;
@@ -38,7 +39,7 @@ int main(int argc,char **argv)
     unsigned jobs=exhaustive?260U:1U;
     for(unsigned job=0;job<jobs;++job){
         unsigned bits=exhaustive?(job<256U?job:(252U|(job&3U))):255U;
-        bool reset=job>=256U;
+        bool reset=force_reset || job>=256U;
         mt_video_frame_options_t options={1U,(uint8_t)(bits&3U),(uint8_t)((bits>>2)&3U),
             (uint8_t)((bits>>4)&3U),(uint8_t)((bits>>6)&3U)};
         for(uint32_t i=0;i<count;++i){

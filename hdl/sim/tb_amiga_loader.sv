@@ -66,6 +66,16 @@ module tb_amiga_loader;
         begin @(negedge clk);reset=1;load_valid=0;load_abort=0;memory_fault=0;write_done=0;auto_done=1;backpressure=1;
             repeat(4)tick;@(negedge clk);reset=0;repeat(3)tick;end
     endtask
+    task ide_config(input [7:0] policy,input bit reserved_bad);
+        reg [127:0] bytes;integer n;
+        begin
+            bytes=0;bytes[31:0]=32'h31304d41;bytes[39:32]=2;
+            bytes[71:64]=8;bytes[79:72]=2;bytes[87:80]=policy;
+            bytes[95:88]=reserved_bad;
+            for(n=0;n<16;n=n+1)send_byte(8'h60,n,16,bytes[n*8+:8],n==0,n==15,1);
+            tick;
+        end
+    endtask
     integer offset,saved_writes;
     initial begin
         reset_loader;
@@ -73,6 +83,18 @@ module tb_amiga_loader;
         if(!config_valid || error || config_bytes[39:32]!=0)$fatal(1,"stock AM01 config rejected");
         config_record(2,0,0,1,4);
         if(!config_valid || error || config_bytes[39:32]!=2 || config_bytes[71:64]!=4)$fatal(1,"turbo AM01 config rejected");
+        config_record(3,0,0,0,8);
+        if(!config_valid || error || config_bytes[39:32]!=3)$fatal(1,"14 MHz 68020 AM01 config rejected");
+        ide_config(1,0);
+        if(!config_valid || error || config_bytes[87:80]!=1)$fatal(1,"Classic IDE policy rejected");
+        ide_config(2,0);
+        if(config_valid || !error)$fatal(1,"Unknown IDE policy accepted");
+        clear;ide_config(0,1);
+        if(config_valid || !error)$fatal(1,"Reserved AM01 byte11 accepted");
+        clear;
+        config_record(4,0,0,0,8);
+        if(config_valid || !error)$fatal(1,"unknown CPU mode accepted");
+        clear;
         config_record(0,1,0,0,8);
         if(config_valid || !error)$fatal(1,"unsupported NTSC config accepted");
         clear;config_record(0,0,1,0,8);

@@ -42,17 +42,18 @@ module tb_amiga_native_geometry;
   .reg_address_in(denise_reg),.data_in(denise_data),.chip48(48'd0),.blank(!hs|vb),.red(rgb[23:16]),.green(rgb[15:8]),.blue(rgb[7:0]),.a1k(1'b0),.ecs(1'b1),.aga(1'b0));
  wire [11:0] x,y;wire [15:0] p;wire valid,fs;wire[31:0] malformed;
  multitini_amiga_video_normalizer n(.clk(clk),.reset(reset),.ready(!reset),.chip_tick(consumed_tick),.field_short(!bc.long_frame && bc.lace),.hsync_n(hs),.vsync_n(vs),.ntsc(1'b0),
+  .capture_mode(2'd0),.native_lace(bc.lace),.diw_hstart(9'd129),.diw_vstart(11'd44),
   .hblank(hb),.vblank(vb),.rgb(rgb),.scan_x(x),.scan_y(y),.rgb565(p),.frame_start(fs),.valid(valid),.malformed_frames(malformed));
  reg synced=0;
  reg hs_q=1;integer lines=0,first_x=-1,last_x=-1,line_pixels=0;
  integer first_y=-1,last_y=-1,active_lines=0,measured_fields=0;
- integer completed_canvases=0,output_count=0;
+ integer completed_canvases=0,output_count=0,expected_y;
  reg waiting_for_first_field=1;
  reg [15:0] left_marker=0,right_marker=0;
  reg [23:0] first_color=0,last_color=0;
  always @(posedge clk)if(!reset && consumed_tick)begin
   hs_q<=hs;
-  if(fs)begin synced=1;active_lines=0;first_y=-1;last_y=-1;end
+  if(n.new_field)begin synced=1;active_lines=0;first_y=-1;last_y=-1;end
   if(hs_q && !hs)begin
    if(line_pixels!=0 && synced)begin
     if(first_x!=206 || last_x!=845 || (active_lines>0 && active_lines<255 && line_pixels!=640))$fatal(1,"Native horizontal geometry changed x%0d..%0d pixels%0d",first_x,last_x,line_pixels);
@@ -102,17 +103,19 @@ module tb_amiga_native_geometry;
  always @(negedge clk)begin
   if(fs)begin
    if(!waiting_for_first_field && output_count!=640*512)$fatal(1,"Native VSYNC truncated a canvas at%0d pixels",output_count);
+   if(waiting_for_first_field)measured_fields=0;
    waiting_for_first_field=0;output_count=0;
   end
   if(valid && !waiting_for_first_field)begin
-   if(x!==output_count%640 || y!==output_count/640)$fatal(1,"Normalized coordinate mismatch x%0d y%0d count%0d",x,y,output_count);
+   expected_y=$test$plusargs("LACE") ? 2*((output_count/640)%256)+((output_count/640)>=256):output_count/640;
+   if(x!==output_count%640 || y!==expected_y)$fatal(1,"Normalized coordinate mismatch x%0d y%0d count%0d",x,y,output_count);
    if(p!==expected_pixel(x,y))$fatal(1,"Normalized RGB mismatch at%0d,%0d expected%h got%h",x,y,expected_pixel(x,y),p);
    output_count=output_count+1;
    if(output_count==640*512)begin
     completed_canvases=completed_canvases+1;
-    if(measured_fields!=completed_canvases)$fatal(1,"Canvas completed before native corners were measured");
+    if(measured_fields!=completed_canvases*($test$plusargs("LACE") ? 2:1))$fatal(1,"Canvas completed before native corners were measured");
     $display("PASS native normalized640x512 canvas%0d: every pixel and four DMA corner words",completed_canvases);
-    if(!$test$plusargs("LACE") || completed_canvases==2)begin
+    if(!$test$plusargs("LACE") || completed_canvases==1)begin
      if($test$plusargs("PAUSES") && pause_counter<100)$fatal(1,"Native pauses were not exercised");
      $display("PASS actual native geometry: standardPAL640x256 to640x512; fieldshort alignment; four DMA corners intact");$finish;
     end
@@ -126,6 +129,9 @@ module tb_amiga_native_geometry;
  endtask
  initial begin
   bc.hpos[8:1]=0;bc.vpos=0;
+  // Observe the first complete native sync pulse; this is fixture startup
+  // conditioning, not a claim about physical configuration INIT values.
+  bc._hsync=1;bc._vsync=1;
   de.window=0;de.window_d=0;
 
   #1;de.clut0.clut.mem[0]=0;de.clut0.clut.mem[1]=32'h0fff0fff;

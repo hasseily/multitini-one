@@ -110,12 +110,10 @@ bool mt_video_worker_start(void)
     /* Neither CPU has accessed this reserved DDR section before mapping.
      * Avoid cacheable aliases: AMP CPU1 cannot clean shared L2 itself. */
     Xil_SetTlbAttributes(MT_VIDEO_WORKER_SHARED_BASE, NORM_NONCACHE);
-    for (uint32_t slot = 0U; slot < MT_VIDEO_FRAME_SLOT_COUNT; ++slot) {
-        Xil_SetTlbAttributes(MT_VIDEO_FRAME_CAPTURE_BASE + slot * MT_VIDEO_FRAME_SLOT_BYTES,
-                             NORM_NONCACHE);
-        Xil_SetTlbAttributes(MT_VIDEO_FRAME_OUTPUT_BASE + slot * MT_VIDEO_FRAME_SLOT_BYTES,
-                             NORM_NONCACHE);
-    }
+    /* One MMU descriptor covers 1MiB, including both halves of every wide
+     * slot. Map the reserved union once before any video DDR is accessed. */
+    for (uint32_t offset=0U;offset<MT_VIDEO_FRAME_RESERVED_BYTES;offset+=MT_VIDEO_FRAME_MMU_SECTION_BYTES)
+        Xil_SetTlbAttributes(MT_VIDEO_FRAME_RESERVED_BASE+offset,NORM_NONCACHE);
     memset((void *)(uintptr_t)mailbox, 0, sizeof(*mailbox));
     mailbox->magic = MT_VIDEO_WORKER_MAGIC;
     mailbox->abi = MT_VIDEO_WORKER_ABI;

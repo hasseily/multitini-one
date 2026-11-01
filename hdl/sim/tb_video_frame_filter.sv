@@ -2,10 +2,17 @@
 `timescale 1ns/1ps
 module tb_video_frame_filter;
     parameter integer WIDTH=13,HEIGHT=9,JOBS=448,STALL=1;
+    parameter integer ALT_WIDTH=WIDTH,ALT_HEIGHT=HEIGHT;
+    parameter bit SOURCE_ALT=0;
+    parameter integer WIDE_WIDTH=WIDTH,WIDE_HEIGHT=HEIGHT,SOURCE_PROFILE=SOURCE_ALT;
+    localparam integer FRAME_WIDTH=SOURCE_PROFILE==2 ? WIDE_WIDTH:SOURCE_PROFILE==1 ? ALT_WIDTH:WIDTH;
+    localparam integer FRAME_HEIGHT=SOURCE_PROFILE==2 ? WIDE_HEIGHT:SOURCE_PROFILE==1 ? ALT_HEIGHT:HEIGHT;
     parameter integer SCALE_NUM=3,SCALE_DEN=2;
     parameter integer OUTPUT_SCALE_NUM=SCALE_NUM,OUTPUT_SCALE_DEN=SCALE_DEN;
     parameter bit DYNAMIC_DISPLAY=1'b0;
-    localparam integer PIXELS=WIDTH*HEIGHT;
+    localparam integer PIXELS=FRAME_WIDTH*FRAME_HEIGHT;
+    reg source_alt=SOURCE_ALT;
+    reg [1:0] source_profile=2'(SOURCE_PROFILE);
     reg clk=0,resetn=0,start=0,in_valid=0,out_ready=0;
     always #3.75 clk=!clk;
     reg [7:0] options=0;
@@ -14,6 +21,8 @@ module tb_video_frame_filter;
     wire in_ready,out_valid,busy,done;
     wire [15:0] out_rgb565;
     multitini_video_frame_filter #(.WIDTH(WIDTH),.HEIGHT(HEIGHT),
+        .ALT_WIDTH(ALT_WIDTH),.ALT_HEIGHT(ALT_HEIGHT),
+        .WIDE_WIDTH(WIDE_WIDTH),.WIDE_HEIGHT(WIDE_HEIGHT),
         .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN),.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY)) dut(.*);
     reg [23:0] inputs[0:JOBS*PIXELS-1];
     reg [15:0] expected[0:JOBS*PIXELS-1];
@@ -50,6 +59,8 @@ module tb_video_frame_filter;
             // A job owns its launch configuration even while stalled. Change
             // the external controls after launch to catch live blend decode.
             options=~configurations[job];
+            source_alt=!SOURCE_ALT;
+            source_profile=SOURCE_PROFILE==2 ? 2'd0:2'd2;
             display_scale_num=SCALE_NUM==4 ? 4'd6 : 4'd4;
             display_scale_den=1;
             random_state=random_state^(random_state<<13);
@@ -64,7 +75,7 @@ module tb_video_frame_filter;
     end
     task begin_job;
         begin
-            @(negedge clk);sent=0;received=0;options=configurations[job];start=1;
+            @(negedge clk);sent=0;received=0;options=configurations[job];source_alt=SOURCE_PROFILE==1;source_profile=2'(SOURCE_PROFILE);start=1;
             display_scale_num=4'(OUTPUT_SCALE_NUM);display_scale_den=4'(OUTPUT_SCALE_DEN);
             start_cycle=cycles;in_valid=0;out_ready=0;running=0;
             @(negedge clk);start=0;running=1;
@@ -98,14 +109,14 @@ module tb_video_frame_filter;
             wait(done);#1;
             job_cycles=cycles-start_cycle;
             if(sent!=PIXELS || received!=PIXELS || busy)$fatal(1,"Incorrect completion counts/state");
-            if(STALL==0 && job_cycles>(WIDTH+2)*(HEIGHT+2)+12)
+            if(STALL==0 && job_cycles>(FRAME_WIDTH+2)*(FRAME_HEIGHT+2)+12)
                 $fatal(1,"Flowing filter exceeded fixed cycle budget: %0d",job_cycles);
             @(negedge clk);running=0;in_valid=0;out_ready=0;
             repeat(3)@(negedge clk);
             if(done || out_valid)$fatal(1,"Job completion/output repeated");
         end
         $display("PASS native frame filter: %0dx%0d, %0d jobs, %0d pixels, stalls=%0d, last cycles=%0d budget=%0d",
-            WIDTH,HEIGHT,JOBS,total,STALL,job_cycles,(WIDTH+2)*(HEIGHT+2)+12);
+            FRAME_WIDTH,FRAME_HEIGHT,JOBS,total,STALL,job_cycles,(FRAME_WIDTH+2)*(FRAME_HEIGHT+2)+12);
         $finish;
     end
     initial begin #100000000;$fatal(1,"Filter simulation timeout");end

@@ -224,10 +224,27 @@ module multitini_one_top #(
     wire amiga_host_rd_select=ACTIVE_MACHINE==7 && reg_rd_addr==16'hd000;
     wire amiga_host_wr_select=ACTIVE_MACHINE==7 && reg_wr_addr==16'hd000;
     wire [31:0] amiga_host_status;
+    wire amiga_block_rd_select=ACTIVE_MACHINE==7 && reg_rd_addr>=16'hd100 && reg_rd_addr<16'hd400;
+    wire amiga_block_wr_select=ACTIVE_MACHINE==7 && reg_wr_addr>=16'hd100 && reg_wr_addr<16'hd400;
+    wire [31:0] amiga_block_rdata;
+    localparam integer NATIVE_FRAME_WIDTH=ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==7 ? 640 : ACTIVE_MACHINE==5 ? 724 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382;
+    localparam integer NATIVE_FRAME_HEIGHT=ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==7 ? 512 : ACTIVE_MACHINE==5 ? 496 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270;
+    wire [1:0] amiga_capture_mode;
+    wire amiga_switch_source,amiga_switch_control,amiga_switch_pixel,amiga_quiet_source;
+    reg [1:0] amiga_profile_source=0,amiga_profile_control=0,amiga_profile_pixel=0;
+    wire [1:0] amiga_profile_control_payload,amiga_profile_pixel_payload;
+    wire amiga_profile_control_valid,amiga_profile_pixel_valid;
+    wire effective_display_pause=display_pause || amiga_switch_control;
+    // Geometry snapshots update during this pixel-only hold. Keep mailbox
+    // resets and the HDMI raster alive so accepted AXI traffic can drain.
+    wire amiga_video_resetn=video_aresetn && !amiga_switch_pixel;
     // The host BRAM port is shared by reads and byte-strobed writes. Stall a
     // new AXI read address while an already accepted buffer write uses it.
     wire axi_arready;
-    wire uci_read_port_free=!(reg_wr_en && uci_buffer_wr_select);
+    // Both dual-clock host RAMs share their control read/write address port.
+    // Do not accept an AR prime on the edge that commits an aperture write.
+    wire uci_read_port_free=!(reg_wr_en && (uci_buffer_wr_select ||
+        (amiga_block_wr_select && reg_wr_addr>=16'hd200)));
     assign m_axi_arready=axi_arready && uci_read_port_free;
     wire [31:0] net_status,net_access_word,c64_uci_status,c64_uci_status2;
     wire net_run,net_access_valid,net_access_error,c64_uci_op_ready,c64_uci_op_valid;
@@ -703,21 +720,29 @@ module multitini_one_top #(
         .hold_request(display_hold),.resetn(video_aresetn));
     // Filter coefficients stay in the control domain. Native DDR owners
     // have drained before active_mode changes; no coefficient CDC is needed.
-    multitini_display_geometry #(.MACHINE(ACTIVE_MACHINE),
+    multitini_display_geometry_pair #(.MACHINE(ACTIVE_MACHINE),.ALT_WIDTH(ACTIVE_MACHINE==7 ? 724 : 0),.ALT_HEIGHT(ACTIVE_MACHINE==7 ? 566 : 0),
+        .WIDE_WIDTH(ACTIVE_MACHINE==7 ? 1280 : 0),.WIDE_HEIGHT(ACTIVE_MACHINE==7 ? 512 : 0),
         .WIDTH(ACTIVE_MACHINE==7 ? 640 : 382),.HEIGHT(ACTIVE_MACHINE==7 ? 512 : 270)) display_filter_geometry(
+        .source_profile(amiga_profile_control),
         .mode(display_active_mode),.multiplier(3'd0),.scale_num(display_filter_scale_num),.scale_den(display_filter_scale_den));
-    // Capture always observes the complete original Auto raster. The reader
-    // independently scales/crops the completed native image at scanout.
-    multitini_display_geometry #(.MACHINE(ACTIVE_MACHINE),
+    // Capture always observes the complete original Auto raster. A wide
+    // Amiga image can extend into horizontal blanking on 1024/1200 outputs;
+    // every supported total has room for all 1280 native samples. Only the
+    // final output reader crops to the physical HDMI active rectangle.
+    multitini_display_geometry_pair #(.VIRTUAL_CAPTURE(1'b1),.MACHINE(ACTIVE_MACHINE),.ALT_WIDTH(ACTIVE_MACHINE==7 ? 724 : 0),.ALT_HEIGHT(ACTIVE_MACHINE==7 ? 566 : 0),
+        .WIDE_WIDTH(ACTIVE_MACHINE==7 ? 1280 : 0),.WIDE_HEIGHT(ACTIVE_MACHINE==7 ? 512 : 0),
         .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==7 ? 640 : ACTIVE_MACHINE==5 ? 724 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382),
         .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==7 ? 512 : ACTIVE_MACHINE==5 ? 496 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270)) capture_geometry(
+        .source_profile(amiga_profile_pixel),
         .mode(display_pixel_mode),.multiplier(3'd0),
         .scale_num(capture_display_scale_num_next),.scale_den(capture_display_scale_den_next),
         .view_x(capture_display_view_x_next),.view_y(capture_display_view_y_next),
         .view_width(capture_display_view_width_next),.view_height(capture_display_view_height_next));
-    multitini_display_geometry #(.ENABLE_MULTIPLIER(1'b1),.MACHINE(ACTIVE_MACHINE),
+    multitini_display_geometry_pair #(.ENABLE_MULTIPLIER(1'b1),.MACHINE(ACTIVE_MACHINE),.ALT_WIDTH(ACTIVE_MACHINE==7 ? 724 : 0),.ALT_HEIGHT(ACTIVE_MACHINE==7 ? 566 : 0),
+        .WIDE_WIDTH(ACTIVE_MACHINE==7 ? 1280 : 0),.WIDE_HEIGHT(ACTIVE_MACHINE==7 ? 512 : 0),
         .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==7 ? 640 : ACTIVE_MACHINE==5 ? 724 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382),
         .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==7 ? 512 : ACTIVE_MACHINE==5 ? 496 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270)) display_geometry(
+        .source_profile(amiga_profile_pixel),
         .mode(display_pixel_mode),.multiplier(display_pixel_multiplier),.h_active(display_h_active_next),.h_front(display_h_front_next),.h_sync(display_h_sync_next),.h_total(display_h_total_next),
         .v_active(display_v_active_next),.v_front(display_v_front_next),.v_sync(display_v_sync_next),.v_total(display_v_total_next),
         .h_positive(display_h_positive_next),.v_positive(display_v_positive_next),
@@ -883,7 +908,7 @@ module multitini_one_top #(
              (reg_wr_addr >= MT_UI_LEGACY_VRAM_BANK1_OFFSET &&
               reg_wr_addr < MT_UI_LEGACY_VRAM_BANK1_OFFSET +
                             MT_UI_LEGACY_VRAM_BANK_BYTES));
-        reg_rd_data = amiga_host_rd_select ? amiga_host_status : uci_buffer_rd_select ? uci_buffer_data : display_rd_select ? display_rd_data : framebuffer_rd_select ? framebuffer_rd_data :
+        reg_rd_data = amiga_host_rd_select ? amiga_host_status : amiga_block_rd_select ? amiga_block_rdata : uci_buffer_rd_select ? uci_buffer_data : display_rd_select ? display_rd_data : framebuffer_rd_select ? framebuffer_rd_data :
                       reg_rd_addr < 16'h1000 ? control_rd_data : 32'd0;
         // Firmware holds the machine reset before PCAP. Its shared DMA
         // quiescence read also drains autonomous source rings, IIgs RAM and
@@ -2045,7 +2070,8 @@ module multitini_one_top #(
             wire gs_memory_burst=1'b0;
             wire [11:0] gs_video_x;
             wire [11:0] gs_video_y;
-            wire amiga_frame_start;
+            wire amiga_frame_start,amiga_frame_alt,amiga_frame_weave;
+            wire [1:0] amiga_frame_profile;
             wire gs_video_pal;
             assign c64_rom_loaded={2'd0,gs_rom_loaded};
             assign c64_prg_loaded=0,c64_cart_loaded=0,c64_cart_hardware_type=0,c64_prg_run_busy=0;
@@ -2059,6 +2085,11 @@ module multitini_one_top #(
                 .clear_load_error(c64_load_error_clear),
                 .control_clk(control_clk),.control_resetn(control_aresetn),
                 .host_write(reg_wr_en && amiga_host_wr_select),.host_command(reg_wr_data),.host_status(amiga_host_status),
+                .host_block_write(reg_wr_en && amiga_block_wr_select),.host_block_read(reg_rd_en && amiga_block_rd_select),
+                .host_block_address(reg_wr_addr),.host_block_read_address(reg_rd_addr),
+                .host_block_ram_read_address(reg_rd_early_en ? reg_rd_early_addr[8:2]:reg_rd_addr[8:2]),
+                .host_block_wstrb(reg_wr_strb),.host_block_rdata(amiga_block_rdata),
+                .video_quiescent(amiga_quiet_source),.video_switch_pending(amiga_switch_source),.video_capture_mode(amiga_capture_mode),
                 .input_code(c64_input_code), .input_value(c64_input_value),
                 .input_valid(c64_input_valid), .input_ready(c64_input_ready),
                 .load_data(c64_load_data), .load_valid(c64_load_valid),
@@ -2082,7 +2113,7 @@ module multitini_one_top #(
                 .video_b(c64_video_b), .video_de(c64_video_de),
                 .video_hsync(c64_video_hsync),
                 .video_vsync(c64_video_vsync),
-                .video_frame_start(amiga_frame_start),.video_x(gs_video_x),.video_y(gs_video_y),.video_pal(gs_video_pal),.video_valid(c64_video_valid), .audio_l(c64_audio_l),
+                .video_frame_start(amiga_frame_start),.video_frame_alt(amiga_frame_alt),.video_frame_profile(amiga_frame_profile),.video_frame_weave(amiga_frame_weave),.video_x(gs_video_x),.video_y(gs_video_y),.video_pal(gs_video_pal),.video_valid(c64_video_valid), .audio_l(c64_audio_l),
                 .audio_r(c64_audio_r), .audio_valid(c64_audio_valid)
             );
 
@@ -2094,17 +2125,21 @@ module multitini_one_top #(
                 .source_clk(c64_clk),.source_resetn(c64_aresetn),.source_ready(c64_ready),
                 .source_ready_control(c64_ready_control),
                 .source_r(c64_video_r),.source_g(c64_video_g),.source_b(c64_video_b),
-                .source_frame_start(amiga_frame_start),.source_valid(c64_video_valid),.source_x(gs_video_x),.source_y(gs_video_y),.source_pal(gs_video_pal),
+                .source_frame_start(amiga_frame_start),.source_frame_alt(amiga_frame_alt),.source_frame_weave(amiga_frame_weave),
+                .source_frame_profile(amiga_frame_profile),
+                .source_alt(amiga_profile_control==1),.source_profile(amiga_profile_control),.source_alt_control(),.source_profile_control(),.source_valid(c64_video_valid),.source_x(gs_video_x),.source_y(gs_video_y),.source_pal(gs_video_pal),
                 .control_clk(control_clk),.control_resetn(control_aresetn),
-                .pixel_clk(video_clk),.pixel_resetn(video_aresetn),.shared_pixel_resetn(video_control_resetn),
+                .pixel_clk(video_clk),.pixel_resetn(amiga_video_resetn),.shared_pixel_resetn(video_control_resetn),
                 .shared_pixel_running(video_pixel_running),
                 .diagnostic_request(video_enable),.scan_x(video_scan_x),.scan_y(video_scan_y),
                 .vblank_start(video_vblank_start),
                 .display_view_x(capture_display_view_x),.display_view_y(capture_display_view_y),
                 .display_view_width(capture_display_view_width),.display_view_height(capture_display_view_height),
                 .display_scale_num(capture_display_scale_num),.display_scale_den(capture_display_scale_den),
-                .display_pause(display_pause),.display_quiescent(genesis_source_quiescent),
-                .display_h_active(display_h_active),.display_v_active(display_v_active),
+                .display_pause(effective_display_pause),.display_quiescent(genesis_source_quiescent),
+                // The intermediate native image includes all 1280 samples,
+                // even when the final HDMI view is only 1024/1200 pixels.
+                .display_h_active(amiga_profile_pixel==2 && display_h_active<1280 ? 12'd1280:display_h_active),.display_v_active(display_v_active),
                 .display_h_total(display_h_total),.display_v_total(display_v_total),
                 .viewport_x(viewport_x),.viewport_y(viewport_y),
                 .viewport_width(viewport_width),.viewport_height(viewport_height),
@@ -2323,8 +2358,41 @@ module multitini_one_top #(
     generate if(ACTIVE_MACHINE!=4 && ACTIVE_MACHINE!=5 && ACTIVE_MACHINE!=6 && ACTIVE_MACHINE!=7)begin : g_no_source_ddr
         assign genesis_source_quiescent=1'b1;
     end endgenerate
+    // Send each complete physical profile as one coherent payload. Native
+    // modes 0/1 share the base pool; 2 uses ALT and 3 opts into wide DDR slots.
+    // The host keeps every DDR owner paused through both mailbox round trips
+    // and the registered pixel geometry snapshots (DISPLAY_COMMIT).
+    always @(posedge c64_clk)
+        if(!c64_aresetn)amiga_profile_source<=0;
+        else amiga_profile_source<=amiga_capture_mode==3 ? 2'd2:amiga_capture_mode==2 ? 2'd1:2'd0;
+    multitini_async_mailbox #(.WIDTH(2),.DRAIN_ON_RESET(1'b1)) amiga_profile_to_control(
+        .src_clk(c64_clk),.src_resetn(c64_aresetn),.src_data(amiga_profile_source),.src_valid(1'b1),.src_ready(),
+        .dst_clk(control_clk),.dst_resetn(control_aresetn),.dst_data(amiga_profile_control_payload),
+        .dst_valid(amiga_profile_control_valid),.dst_ready(1'b1));
+    always @(posedge control_clk)
+        if(!control_aresetn)amiga_profile_control<=0;
+        else if(amiga_profile_control_valid)amiga_profile_control<=amiga_profile_control_payload;
+    multitini_async_mailbox #(.WIDTH(2),.DRAIN_ON_RESET(1'b1)) amiga_profile_to_pixel(
+        .src_clk(control_clk),.src_resetn(control_aresetn),.src_data(amiga_profile_control),.src_valid(1'b1),.src_ready(),
+        .dst_clk(video_clk),.dst_resetn(video_control_resetn),.dst_data(amiga_profile_pixel_payload),
+        .dst_valid(amiga_profile_pixel_valid),.dst_ready(1'b1));
+    always @(posedge video_clk)
+        if(!video_control_resetn)amiga_profile_pixel<=0;
+        else if(amiga_profile_pixel_valid)amiga_profile_pixel<=amiga_profile_pixel_payload;
+    cdc_bit_sync amiga_stop_to_control(.clk(control_clk),.resetn(control_aresetn),.din(amiga_switch_source),.dout(amiga_switch_control));
+    cdc_bit_sync amiga_stop_to_pixel(.clk(video_clk),.resetn(video_control_resetn),.din(amiga_switch_control),.dout(amiga_switch_pixel));
+    // Settle the control-domain owners' reconvergent status before crossing.
+    // A combinational FIFO reset-busy path must not feed a synchronizer.
+    reg amiga_quiet_control=0;
+    always @(posedge control_clk)
+        if(!control_aresetn)amiga_quiet_control<=0;
+        else amiga_quiet_control<=genesis_source_quiescent && framebuffer_display_quiescent && amiga_switch_control;
+    cdc_bit_sync amiga_quiet_to_source(.clk(c64_clk),.resetn(c64_aresetn),
+        .din(amiga_quiet_control),.dout(amiga_quiet_source));
     generate if(ACTIVE_MACHINE!=7)begin:g_no_amiga_host
         assign amiga_host_status=0;
+        assign amiga_block_rdata=0;
+        assign amiga_capture_mode=0,amiga_switch_source=0;
     end endgenerate
     generate if(ACTIVE_MACHINE!=0)begin : g_no_c64_ddr
         assign c64_reu_memory_quiescent=1'b1;
@@ -2401,12 +2469,19 @@ module multitini_one_top #(
     multitini_video_framebuffer #(
         .DYNAMIC_DISPLAY(1'b1),
         .SHARED_PIXEL_RESET(1'b1),
+        .ALT_WIDTH(ACTIVE_MACHINE==7 ? 724 : NATIVE_FRAME_WIDTH),.ALT_HEIGHT(ACTIVE_MACHINE==7 ? 566 : NATIVE_FRAME_HEIGHT),
+        .WIDE_WIDTH(ACTIVE_MACHINE==7 ? 1280 : NATIVE_FRAME_WIDTH),.WIDE_HEIGHT(ACTIVE_MACHINE==7 ? 512 : NATIVE_FRAME_HEIGHT),
+        .WIDE_SLOT_SHIFT(ACTIVE_MACHINE==7 ? 21 : 20),
+        .WIDE_CAPTURE_BASE(32'h22000000),.WIDE_OUTPUT_BASE(ACTIVE_MACHINE==7 ? 32'h22800000:32'h22400000),
+        .WIDE_HISTORY_BASE(ACTIVE_MACHINE==7 ? 32'h23000000:32'h22800000),.WIDE_HISTORY_BYTES(ACTIVE_MACHINE==7 ? 4194304:2097152),
         .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==7 ? 640 : ACTIVE_MACHINE==5 ? 724 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382),
         .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==7 ? 512 : ACTIVE_MACHINE==5 ? 496 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270),
         .VIEW_X(ACTIVE_MACHINE==1 ? 480 : ACTIVE_MACHINE==3 ? 555 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==7 ? 320 : ACTIVE_MACHINE==5 ? 236 : ACTIVE_MACHINE==6 ? 448 : C64_NTSC_MODE ? 152 : 196),
         .VIEW_Y(ACTIVE_MACHINE==1 ? 108 : ACTIVE_MACHINE==3 ? 0 : ACTIVE_MACHINE==4 ? 60 : ACTIVE_MACHINE==7 ? 28 : ACTIVE_MACHINE==5 ? 44 : ACTIVE_MACHINE==6 ? 60 : C64_NTSC_MODE ? 40 : 0),
         .SCALE_NUM(ACTIVE_MACHINE==1 ? 6 : ACTIVE_MACHINE==3 ? 3 : ACTIVE_MACHINE==7 ? 2 : ACTIVE_MACHINE==5 ? 2 : 4),
         .SCALE_DEN(ACTIVE_MACHINE==3 ? 2 : 1)) video_framebuffer (
+        .source_alt(amiga_profile_control==1),.pixel_source_alt(amiga_profile_pixel==1),
+        .source_profile(amiga_profile_control),.pixel_source_profile(amiga_profile_pixel),
         .display_view_x(display_view_x),.display_view_y(display_view_y),
         .display_view_width(display_view_width),.display_view_height(display_view_height),
         .display_scale_num(display_scale_num),.display_scale_den(display_scale_den),
@@ -2417,12 +2492,12 @@ module multitini_one_top #(
         .display_h_total(display_h_total),.display_v_total(display_v_total),
         .display_source_x0(display_source_x0),.display_source_y0(display_source_y0),
         .display_phase_x0(display_phase_x0),.display_phase_y0(display_phase_y0),
-        .display_pause(display_pause),.display_quiescent(framebuffer_display_quiescent),
+        .display_pause(effective_display_pause),.display_quiescent(framebuffer_display_quiescent),
         .display_filter_scale_num(display_filter_scale_num),.display_filter_scale_den(display_filter_scale_den),
         .clk(control_clk),.resetn(control_aresetn),
         .wr_en(reg_wr_en && framebuffer_wr_select),.wr_addr(reg_wr_addr[11:0]),
         .wr_data(reg_wr_data),.wr_strb(reg_wr_strb),.rd_addr(reg_rd_addr[11:0]),.rd_data(framebuffer_rd_data),
-        .pixel_clk(video_clk),.pixel_resetn(video_aresetn),.shared_pixel_resetn(video_control_resetn),.vblank_start(video_vblank_start),
+        .pixel_clk(video_clk),.pixel_resetn(amiga_video_resetn),.shared_pixel_resetn(video_control_resetn),.vblank_start(video_vblank_start),
         .machine_ready(machine_video_active),.scan_x(video_scan_x),.scan_y(video_scan_y),
         .machine_rgb565(machine_video_rgb565),.pixel_use(framebuffer_use),.pixel_rgb565(framebuffer_rgb565),
         .pixel_neighbor_rgb565(framebuffer_neighbor_rgb565),.pixel_opposite_rgb565(framebuffer_opposite_rgb565),.pixel_neighbor_weight(framebuffer_neighbor_weight),
@@ -2496,7 +2571,10 @@ module multitini_one_top #(
         .viewport_width(display_view_width),.viewport_height(display_view_height),
         .pixel_clk(video_clk), .resetn(video_aresetn), .enable(video_enable),
         .machine_enable(machine_video_active),
-        .machine_rgb565(framebuffer_use ? framebuffer_rgb565 : display_pixel_multiplier==0 ? machine_video_rgb565 : 16'd0),
+        // Virtual wide capture is uncropped. Wait for the processed reader
+        // instead of briefly showing its left edge in a centered HDMI view.
+        .machine_rgb565(framebuffer_use ? framebuffer_rgb565 : display_pixel_multiplier==0 &&
+            !(ACTIVE_MACHINE==7 && amiga_profile_pixel==2 && display_h_active<1280) ? machine_video_rgb565 : 16'd0),
         .machine_neighbor_rgb565(framebuffer_neighbor_rgb565),
         .machine_opposite_rgb565(framebuffer_opposite_rgb565),.machine_dot_valid(framebuffer_use),
         .machine_neighbor_weight(framebuffer_use ? framebuffer_neighbor_weight : 8'd0),

@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "multitini_core_frontend.h"
+#include "multitini_amiga_display.h"
 #include "multitini_c64_features.h"
 #include "multitini_c64_content.h"
 
@@ -583,22 +584,51 @@ static void build_amiga(mt_core_frontend_t *frontend,const mt_core_frontend_stat
         "Load your 256 KiB, 512 KiB or 1 MiB roms/kick.rom.",MT_MENU_ACTION_AMIGA_RELOAD,0U,true,state->amiga_ready ? MT_UI_COLOR_SUCCESS:MT_UI_COLOR_WARNING);
     frontend->media_items[view->media_item_count++]=item("Retry media",state->save_faulted ? "I/O error; retry":"No errors",
         "Retry a retained disk journal or failed transfer.",MT_MENU_ACTION_AMIGA_RETRY,0U,state->save_faulted,MT_UI_COLOR_BLUE);
-    frontend->core_options[view->core_option_count++]=item("CPU",state->amiga_config.cpu==MT_AMIGA_CPU_STOCK ? "68000 stock":"68020 accelerated",
-        "Stock preserves the native 68000 schedule. Changing CPU saves disks and restarts.",MT_MENU_ACTION_TOGGLE_CORE_OPTION,0U,true,MT_UI_COLOR_BLUE);
+    const char *const cpu=state->amiga_config.cpu==MT_AMIGA_CPU_STOCK ? "68000 stock":
+        state->amiga_config.cpu==MT_AMIGA_CPU_68020_14 ? "68020 14 MHz":"68020 28 MHz";
+    frontend->core_options[view->core_option_count++]=item("CPU",cpu,
+        state->amiga_cpu14_fallback ? "14 MHz unavailable on this core; using 28 MHz. Saved preference retained.":
+        state->amiga_cpu14_available ? "Stock 68000, 68020 14 MHz, 68020 28 MHz. Changing CPU saves disks and restarts.":
+        "Stock 68000 or 68020 28 MHz. 14 MHz requires an updated core. Changing CPU saves disks and restarts.",
+        MT_MENU_ACTION_TOGGLE_CORE_OPTION,0U,true,MT_UI_COLOR_BLUE);
+    const char *const requested=mt_amiga_display_mode_name(state->amiga_display_requested);
+    const bool verified=state->amiga_display_applied<MT_AMIGA_DISPLAY_MODES;
+    const char *const applied=verified ? mt_amiga_display_mode_name(state->amiga_display_applied):"unverified";
+    if(!state->amiga_display_available)
+        (void)snprintf(frontend->amiga_resolution_text,sizeof(frontend->amiga_resolution_text),"Unavailable");
+    else if(!verified || state->amiga_display_pending || state->amiga_display_requested!=state->amiga_display_applied)
+        (void)snprintf(frontend->amiga_resolution_text,sizeof(frontend->amiga_resolution_text),"Requested %s; active %s",requested,applied);
+    else (void)snprintf(frontend->amiga_resolution_text,sizeof(frontend->amiga_resolution_text),"%s",applied);
+    (void)snprintf(frontend->amiga_resolution_help,sizeof(frontend->amiga_resolution_help),"%s. %s",
+        state->amiga_display_status!=NULL ? state->amiga_display_status:"Install the MTDisplay guest helper",
+        state->amiga_display_available ? state->amiga_display_mode_count>=4U ?
+            "Changes Workbench without resetting the guest; an Amiga requester may need confirmation.":
+            "1280 x 512 requires an updated core and guest helper. Resolution changes do not reset the guest.":
+                                         "Install MTDisplay in the Amiga and use a display-capable core.");
+    frontend->core_options[view->core_option_count++]=item("Resolution",frontend->amiga_resolution_text,
+        frontend->amiga_resolution_help,MT_MENU_ACTION_AMIGA_DISPLAY,state->amiga_display_requested,
+        state->amiga_display_available && !state->amiga_display_pending,
+        state->amiga_display_pending ? MT_UI_COLOR_WARNING:MT_UI_COLOR_BLUE);
     frontend->core_options[view->core_option_count++]=item("Chipset","ECS PAL / 2 MiB chip RAM",
         "This image uses the PAL Amiga clock and ECS chipset timing.",MT_MENU_ACTION_NONE,1U,false,MT_UI_COLOR_TEXT);
     frontend->core_options[view->core_option_count++]=item("Fast RAM",state->amiga_config.fast_mib==4U ? "4 MiB":"8 MiB",
         "Zorro II fast memory; chipset always has 2 MiB chip RAM.",MT_MENU_ACTION_TOGGLE_CORE_OPTION,2U,true,MT_UI_COLOR_BLUE);
     frontend->core_options[view->core_option_count++]=item("Floppy speed",state->amiga_config.floppy_turbo ? "Fast":"Normal",
         "Normal DD drive timing provides the widest compatibility.",MT_MENU_ACTION_TOGGLE_CORE_OPTION,3U,true,MT_UI_COLOR_BLUE);
-    frontend->input_items[view->input_item_count++]=item("Keyboard","USB keyboard","Windows keys are Amiga keys; F11 is Help; F12 opens this menu.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
+    frontend->core_options[view->core_option_count++]=item("IDE mode",state->amiga_config.ide_compat==MT_AMIGA_IDE_CLASSIC ? "Classic":
+        state->amiga_fast_ide_expected ? "Auto / Fast":"Auto / Classic",
+        !state->amiga_fast_ide_available ? "Fast IDE requires an updated core. Saved policy retained; Classic is active. Changing mode restarts Amiga; save your work first.":
+        state->amiga_config.cpu==MT_AMIGA_CPU_STOCK ? "Stock 68000 always uses Classic IDE. Auto enables Fast IDE for 68020. Changing mode restarts Amiga; save your work first.":
+        "Auto enables Fast IDE for 68020; Classic retains Gayle compatibility. Changing mode restarts Amiga; save your work first.",
+        MT_MENU_ACTION_TOGGLE_CORE_OPTION,4U,!state->amiga_display_pending,MT_UI_COLOR_BLUE);
+    frontend->input_items[view->input_item_count++]=item("Keyboard","USB keyboard","Windows keys are Amiga keys; Menu is Right Amiga; Ctrl + both Amiga restarts. F12 opens this menu.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
     frontend->input_items[view->input_item_count++]=item("Mouse","USB mouse","Relative movement and three mouse buttons.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
     frontend->input_items[view->input_item_count++]=item("Joysticks","Two USB gamepads","Digital joystick directions and two fire buttons per port.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
     view->save_faulted=state->save_faulted;
 }
 static const core_profile_t profiles[] = {
     {
-        MT_AMIGA_CORE_ID,"Amiga 600 / ECS",
+        MT_AMIGA_CORE_ID,"Amiga",
         "USB keyboard, mouse and two digital joysticks; F12 opens the menu.",
         {0U,CONTENT_MASK(MT_CONTENT_AMIGA_ADF)|CONTENT_MASK(MT_CONTENT_AMIGA_HDF),0U,0U,0U},
         false,build_amiga

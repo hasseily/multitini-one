@@ -30,13 +30,11 @@ static void worker_barrier(void)
  * the FPGA scheduler; CPU1 must never write its capture/output pools. */
 #ifndef MT_VIDEO_FRAME_CAPTURE_POINTER
 #define MT_VIDEO_FRAME_CAPTURE_POINTER(slot) \
-    ((const uint16_t *)(uintptr_t)(MT_VIDEO_FRAME_CAPTURE_BASE + \
-                                  (slot) * MT_VIDEO_FRAME_SLOT_BYTES))
+    ((const uint16_t *)(uintptr_t)(layout.capture_base + (slot) * layout.slot_bytes))
 #endif
 #ifndef MT_VIDEO_FRAME_OUTPUT_POINTER
 #define MT_VIDEO_FRAME_OUTPUT_POINTER(slot) \
-    ((uint16_t *)(uintptr_t)(MT_VIDEO_FRAME_OUTPUT_BASE + \
-                            (slot) * MT_VIDEO_FRAME_SLOT_BYTES))
+    ((uint16_t *)(uintptr_t)(layout.output_base + (slot) * layout.slot_bytes))
 #endif
 static uint16_t frame_input[MT_VIDEO_FRAME_MAX_PIXELS] __attribute__((aligned(32)));
 static uint16_t frame_output[MT_VIDEO_FRAME_MAX_PIXELS] __attribute__((aligned(32)));
@@ -49,11 +47,8 @@ static uint32_t decay_remainder;
 
 static bool frame_job_valid(const mt_video_frame_job_t *job)
 {
-    return job->magic == MT_VIDEO_FRAME_JOB_MAGIC && job->abi == MT_VIDEO_FRAME_JOB_ABI &&
-        job->source_slot < MT_VIDEO_FRAME_SLOT_COUNT && job->output_slot < MT_VIDEO_FRAME_SLOT_COUNT &&
-        mt_video_frame_geometry_valid(job->width, job->height) &&
-        job->stride == ((job->width + 63U) / 64U) * 128U &&
-        job->height * job->stride <= MT_VIDEO_FRAME_SLOT_BYTES &&
+    mt_video_frame_layout_t layout;
+    return mt_video_frame_job_layout(job,&layout) &&
         job->options.enabled <= 1U && job->options.persistence <= 3U &&
         job->options.blur <= 3U && job->options.bloom <= 3U && job->options.softness <= 3U;
 }
@@ -65,11 +60,13 @@ static int execute_frame(const mt_video_frame_job_t *job, void *output, uint32_t
     bool reset_history;
     uint32_t decay_steps;
     mt_video_frame_result_t result;
+    mt_video_frame_layout_t layout;
     if (!frame_job_valid(job) || *size < sizeof(result)) return -4;
+    if(!mt_video_frame_job_layout(job,&layout))return -4;
     source = MT_VIDEO_FRAME_CAPTURE_POINTER(job->source_slot);
     destination = MT_VIDEO_FRAME_OUTPUT_POINTER(job->output_slot);
     reset_history = !frame_history_valid || last_frame.epoch != job->epoch ||
-        last_frame.width != job->width || last_frame.height != job->height ||
+        last_frame.width != job->width || last_frame.height != job->height || last_frame.abi!=job->abi ||
         memcmp(&last_frame.options, &job->options, sizeof(job->options)) != 0;
     if (reset_history) {
         decay_steps = 1U;

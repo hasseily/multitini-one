@@ -22,16 +22,78 @@ static mt_core_link_t *link;
 static mt_link_progress_fn progress;
 static void *progress_context;
 static mt_amiga_config_t config;
+static uint8_t preferred_cpu;
 static am_drive_t drives[MT_AMIGA_DRIVE_COUNT];
 static char root[256],rom_root[256],error[160],remembered[MT_AMIGA_DRIVE_COUNT][AM_NAME];
 static uint8_t rom[MT_AMIGA_ROM_BYTES],sector[512],journal_wire[544],settings_wire[AM_SETTINGS];
 static uint16_t mfm[MT_AMIGA_MFM_SECTOR_WORDS],write_mfm[2][MT_AMIGA_MFM_SECTOR_WORDS];
-static bool ready,faulted,paused,settings_invalid;
+static bool ready,faulted,paused,settings_invalid,bulk_failed;
 static mt_amiga_rtc_t rtc;
 static mt_clock_time_t cached_clock;
 static bool cached_clock_valid;
 static uint32_t clock_now_ms;
 static struct { uint32_t lba,left;uint8_t command,drive,task_head;bool active,captured,lba_mode; } ata;
+static mt_amiga_ide_profile_t profile;
+static uint64_t (*profile_timer)(void *);
+static void *profile_context;
+static uint64_t profile_started,profile_last,profile_service_end,profile_drq;
+static bool profile_in_service,profile_ata,profile_drq_pending;
+static uint32_t profile_next_lba[2];
+static bool profile_lba_seen[2];
+static uint64_t profile_now(void)
+{
+    if(profile.running) {
+        profile_last=profile_timer(profile_context);
+        profile.elapsed_ticks=profile_last-profile_started; /* unsigned timer wrap */
+    }
+    return profile_last;
+}
+static void profile_add(uint64_t *value,uint64_t amount)
+{
+    if(profile.reason==MT_AMIGA_PROFILE_OVERFLOW)return;
+    if(UINT64_MAX-*value<amount) {
+        *value=UINT64_MAX;profile.running=false;profile.valid=false;profile.reason=MT_AMIGA_PROFILE_OVERFLOW;
+    } else *value+=amount;
+}
+static void profile_span(uint64_t *total,uint64_t *maximum,uint64_t elapsed)
+{ profile_add(total,elapsed);if(elapsed>*maximum)*maximum=elapsed; }
+void amiga_content_service_profile_stop(void)
+{
+    if(!profile.running)return;
+    const uint64_t now=profile_now();
+    if(!profile_in_service)profile_span(&profile.outside_ticks,&profile.max_gap_ticks,now-profile_service_end);
+    profile.running=false;
+    if(profile.valid)profile.reason=MT_AMIGA_PROFILE_STOPPED;
+}
+static void profile_invalidate(mt_amiga_profile_reason_t reason)
+{
+    if(!profile.running)return;
+    amiga_content_service_profile_stop();profile.valid=false;
+    if(profile.reason!=MT_AMIGA_PROFILE_OVERFLOW)profile.reason=reason;
+}
+int amiga_content_service_profile_start(uint64_t (*timer)(void *),void *context)
+{
+    if(timer==NULL || profile.running || !ready || paused || faulted)return -1;
+    memset(&profile,0,sizeof(profile));profile_timer=timer;profile_context=context;
+    profile_started=profile_last=profile_service_end=timer(context);
+    profile_in_service=false;profile_ata=false;profile_drq_pending=false;
+    memset(profile_lba_seen,0,sizeof(profile_lba_seen));
+    profile.running=true;profile.valid=true;profile.reason=MT_AMIGA_PROFILE_RUNNING;return 0;
+}
+void amiga_content_service_profile_snapshot(mt_amiga_ide_profile_t *out)
+{
+    if(out==NULL)return;
+    const uint64_t now=profile_now();*out=profile;
+    if(profile.running && !profile_in_service) {
+        const uint64_t gap=now-profile_service_end;
+        if(UINT64_MAX-out->outside_ticks<gap) {
+            profile.running=false;profile.valid=false;profile.reason=MT_AMIGA_PROFILE_OVERFLOW;
+            profile.outside_ticks=UINT64_MAX;*out=profile;
+        }
+        else out->outside_ticks+=gap;
+        if(gap>out->max_gap_ticks)out->max_gap_ticks=gap;
+    }
+}
 static uint32_t crc32(const uint8_t *p,size_t n)
 { uint32_t c=UINT32_MAX;for(size_t i=0U;i<n;++i) { c^=p[i];for(unsigned b=0U;b<8U;++b)c=(c>>1U)^((0U-(c&1U))&UINT32_C(0xedb88320)); }return ~c; }
 static uint32_t le32(const uint8_t *p)
@@ -39,7 +101,7 @@ static uint32_t le32(const uint8_t *p)
 static void put32(uint8_t *p,uint32_t v)
 { for(unsigned i=0U;i<4U;++i)p[i]=(uint8_t)(v>>(i*8U)); }
 static int fail(const char *message)
-{ (void)snprintf(error,sizeof(error),"%s",message);faulted=true;return -1; }
+{ profile_invalidate(MT_AMIGA_PROFILE_IO_ERROR);(void)snprintf(error,sizeof(error),"%s",message);faulted=true;return -1; }
 static int sd_fail(mt_sd_result_t r)
 { return fail(mt_sd_status_name(r.status)); }
 static bool path(char *out,const char *name)
@@ -75,7 +137,13 @@ static int drive_status(void)
 static int ide_read(unsigned address,uint16_t *value)
 { return host(MT_AMIGA_HOST_IDE_READ,address<<16U,value); }
 static int ide_write(unsigned address,uint16_t value)
-{ return host(MT_AMIGA_HOST_IDE_WRITE,(address<<16U)|value,NULL); }
+{
+    const int result=host(MT_AMIGA_HOST_IDE_WRITE,(address<<16U)|value,NULL);
+    if(result==0 && profile.running && profile_ata && address==5U && (value&0x0800U)!=0U) {
+        profile_drq=profile_now();profile_drq_pending=true;
+    }
+    return result;
+}
 static int ide_presence(void)
 {
     const uint16_t present=(uint16_t)(0x388U|(drives[2].file!=NULL ? 1U:0U)|(drives[3].file!=NULL ? 16U:0U));
@@ -86,7 +154,8 @@ static int settings_save(void)
     if(settings_invalid)return fail("Amiga settings invalid; retain file for recovery");
     char target[AM_PATH],journal[AM_PATH];if(!path(target,"amiga-settings.bin") || !path(journal,"amiga-settings.bin.mtj"))return fail("Amiga settings path too long");
     memset(settings_wire,0,sizeof(settings_wire));memcpy(settings_wire,"MTAMSET1",8U);
-    mt_amiga_config_encode(&config,settings_wire+8U);
+    mt_amiga_config_t saved=config;saved.cpu=preferred_cpu;
+    mt_amiga_config_encode(&saved,settings_wire+8U);
     for(unsigned i=0U;i<MT_AMIGA_DRIVE_COUNT;++i)memcpy(settings_wire+24U+i*AM_NAME,remembered[i],AM_NAME);
     /* AM01 reserved bytes12..15 are checksum storage in the enclosing file. */
     put32(settings_wire+20U,crc32(settings_wire,sizeof(settings_wire)));
@@ -153,8 +222,29 @@ static int disk_read(am_drive_t *d,uint32_t lba)
 {
     const uint64_t offset=(uint64_t)lba*512U;
     if(d->file==NULL || offset>d->size || d->size-offset<512U)return fail("Amiga disk read out of bounds");
+    const bool timed=profile.running && profile_ata;
+    const uint64_t began=timed ? profile_now():0U;
+    if(timed) {
+        profile_add(&profile.sd_read_calls,1U);
+        if(!profile.read_window_started) {
+            profile.read_window_started=true;profile.first_read_ticks=began-profile_started;
+        }
+    }
     mt_sd_result_t r=mt_sd_file_seek(d->file,(int64_t)offset,SEEK_SET);
     if(r.status==MT_SD_OK)r=mt_sd_file_read(d->file,sector,512U);
+    if(timed) {
+        profile_span(&profile.sd_read_ticks,&profile.sd_read_max_ticks,profile_now()-began);
+        profile_add(&profile.read_bytes,r.size);
+        if(r.status==MT_SD_OK && r.size==512U) {
+            profile_add(&profile.read_sectors,1U);
+            const unsigned disk=(unsigned)(d-&drives[2]);
+            if(disk<2U) {
+                profile_add(profile_lba_seen[disk] && profile_next_lba[disk]==lba ?
+                    &profile.sequential_reads:&profile.nonsequential_reads,1U);
+                profile_lba_seen[disk]=true;profile_next_lba[disk]=lba+1U;
+            }
+        }
+    }
     if(r.status!=MT_SD_OK || r.size!=512U)return sd_fail(r.status==MT_SD_OK ? (mt_sd_result_t){MT_SD_READ_FAILED,0U,r.size}:r);
     ++d->reads;return 0;
 }
@@ -232,9 +322,10 @@ static int ata_status(uint16_t status,uint8_t err)
     if(status&0x0100U)status|=0x0400U; /* ATA errors complete with IRQ too. */
     int r=ide_write(0U,(uint16_t)(1U|((uint16_t)err<<8U)));
     if(r==0)r=ide_write(5U,(uint16_t)(status|ata.task_head));
+    if((status&0x0100U)!=0U)profile_invalidate(MT_AMIGA_PROFILE_IO_ERROR);
     return r;
 }
-static int ata_data(bool writing)
+static int ata_data_legacy(bool writing)
 {
     if(ide_write(14U,0U)!=0)return -1; /* Reset management FIFO pointer. */
     for(unsigned i=0U;i<256U;++i) {
@@ -246,12 +337,47 @@ static int ata_data(bool writing)
     }
     return 0;
 }
+static int ata_data_bulk(bool writing)
+{
+    bool submitted=false;
+    const mt_link_result_t result=mt_amiga_bulk_transfer(link,writing,sector,AM_POLLS,&submitted);
+    if(result==MT_LINK_OK)return 0;
+    bulk_failed=true;
+    return fail(submitted ? "Amiga IDE transfer uncertain; reload core":"Amiga IDE bulk unavailable; reload core");
+}
+static int ata_data(bool writing)
+{
+    if(bulk_failed)return fail("Amiga IDE transfer uncertain; reload core");
+    const bool timed=profile.running && profile_ata;
+    const uint64_t began=timed ? profile_now():0U;
+    if(timed)profile_add(&profile.fifo_calls,1U);
+    const int result=(link->read32(link->context,MT_AMIGA_HOST_PORT)&MT_AMIGA_HOST_BULK)!=0U ?
+        ata_data_bulk(writing):ata_data_legacy(writing);
+    if(timed) {
+        profile_span(&profile.fifo_ticks,&profile.fifo_max_ticks,profile_now()-began);
+        if(result==0)profile_add(&profile.fifo_bytes,512U);
+    }
+    return result;
+}
 static int ata_poll(void)
 {
     const uint32_t snapshot=link->read32(link->context,MT_AMIGA_HOST_PORT);
     const unsigned request=(snapshot>>16U)&7U;
+    if(profile.running) {
+        if(request==0U)profile_add(&profile.idle_ata_polls,1U);
+        else if(request==4U)profile_add(&profile.req4,1U);
+        else if(request==5U)profile_add(&profile.req5,1U);
+        else if(request==6U)profile_add(&profile.req6,1U);
+        if(profile_drq_pending && (request==4U || request==5U)) {
+            const uint64_t elapsed=profile_now()-profile_drq;
+            profile_add(&profile.drq_intervals,1U);
+            profile_span(&profile.drq_to_request_ticks,&profile.max_drq_to_request_ticks,elapsed);
+            profile_drq_pending=false;
+        } else if(request==6U)profile_drq_pending=false;
+    }
     if(request==0U)return 0;
     if(request==6U) {
+        profile_invalidate(MT_AMIGA_PROFILE_LIFECYCLE);
         ata.active=false;ata.captured=false;ata.task_head=0xa0U;
         for(unsigned d=2U;d<MT_AMIGA_DRIVE_COUNT;++d) { drives[d].heads=16U;drives[d].sectors=63U; }
         if(ide_write(1U,0x0101U)!=0 || ide_write(2U,0U)!=0)return -1;
@@ -263,6 +389,13 @@ static int ata_poll(void)
         ata.task_head=(uint8_t)regs[5];
         ata.lba_mode=(regs[5]&0x40U)!=0U;
         ata.left=regs[1]&255U;if(ata.left==0U)ata.left=256U;
+        if(profile.running && (ata.command==0x20U || ata.command==0x21U)) {
+            profile_add(&profile.read_commands,1U);profile_add(&profile.requested_read_sectors,ata.left);
+            unsigned bin=0U,limit=1U;
+            while(ata.left>limit && bin<8U) { ++bin;limit<<=1U; }
+            profile_add(&profile.read_command_hist[bin],1U);
+        }
+        if(profile.running && (ata.command==0x30U || ata.command==0x31U))profile_add(&profile.write_commands,1U);
         am_drive_t *const d=&drives[ata.drive];ata.active=false;ata.captured=false;
         if(d->file==NULL)return ata_status(0x5100U,4U);
         if(ata.command==0xecU) { identify(d);if(ata_data(false)!=0)return -1;return ata_status(0x5e00U,0U); }
@@ -310,24 +443,37 @@ static int ata_poll(void)
     if(r==0)r=ide_write(2U,next_cylinder);
     const uint16_t status=(uint16_t)(ata.command>=0x30U ? (ata.left==0U ? 0x5400U:0x5c00U):(ata.left==0U ? 0x5e00U:0x5c00U));
     if(r==0)r=ide_write(5U,(uint16_t)(status|((ata.lba_mode ? 0xe0U:0xa0U)|((ata.drive-2U)<<4U)|next_head)));
+    if(r==0 && profile.running && (ata.command==0x20U || ata.command==0x21U)) {
+        profile.last_read_ticks=profile_now()-profile_started;
+        profile.active_read_ticks=profile.last_read_ticks-profile.first_read_ticks;
+        profile_add(&profile.read_window_bytes,512U);
+    }
     ata.captured=false;
     if(ata.left==0U)ata.active=false;
     return r;
 }
 void amiga_content_service_init(mt_core_link_t *l,const char *media_root,mt_link_progress_fn p,void *context)
 {
+    profile_invalidate(MT_AMIGA_PROFILE_LIFECYCLE);
     link=l;progress=p;progress_context=context;memset(drives,0,sizeof(drives));memset(remembered,0,sizeof(remembered));
-    root[0]='\0';rom_root[0]='\0';error[0]='\0';ready=false;faulted=false;paused=true;settings_invalid=false;ata.active=false;
+    root[0]='\0';rom_root[0]='\0';error[0]='\0';ready=false;faulted=false;paused=true;settings_invalid=false;bulk_failed=false;ata.active=false;
     mt_amiga_rtc_init(&rtc);cached_clock_valid=false;clock_now_ms=0U;
     mt_amiga_config_defaults(&config);
+    preferred_cpu=config.cpu;
     const size_t n=media_root!=NULL ? strlen(media_root):0U;
     if(n<6U || n>=sizeof(root) || strcmp(media_root+n-6U,"/media")!=0) { (void)fail("Amiga package requires /media content root");return; }
     memcpy(root,media_root,n+1U);memcpy(rom_root,media_root,n-5U);memcpy(rom_root+n-5U,"roms",5U);
     for(unsigned i=0U;i<MT_AMIGA_DRIVE_COUNT;++i) { drives[i].read_track=160U;drives[i].write_track=160U; }
     settings_load();
+    preferred_cpu=config.cpu;
+    if(config.cpu==MT_AMIGA_CPU_68020_14 && !amiga_content_service_cpu14_available()) {
+        config.cpu=MT_AMIGA_CPU_68020_TURBO;
+        (void)snprintf(error,sizeof(error),"14 MHz unavailable on this core; using 28 MHz; preference retained");
+    }
 }
 int amiga_content_service_boot(void)
 {
+    profile_invalidate(MT_AMIGA_PROFILE_LIFECYCLE);
     if(link==NULL || root[0]=='\0' || settings_invalid)return fail("Amiga service not initialized");
     if(amiga_content_service_prepare_reset()!=0 || reset(true)!=0)return -1;
     char name[AM_PATH];const int n=snprintf(name,sizeof(name),"%s/kick.rom",rom_root);
@@ -349,8 +495,28 @@ int amiga_content_service_boot(void)
 void amiga_content_service_poll(void)
 {
     if(!ready || paused || faulted)return;
-    bool writing=false;
-    if(floppy_poll(&writing)!=0 || ata_poll()!=0)return;
+    const bool timed=profile.running;
+    const uint64_t began=timed ? profile_now():0U;
+    if(timed) {
+        profile_span(&profile.outside_ticks,&profile.max_gap_ticks,began-profile_service_end);
+        profile_in_service=true;profile_add(&profile.polls,1U);
+    }
+    bool writing=false;const int floppy_result=floppy_poll(&writing);
+    const uint64_t fdd_end=timed ? profile_now():0U;
+    if(timed)profile_span(&profile.fdd_ticks,&profile.fdd_max_ticks,fdd_end-began);
+    const uint64_t sd_before=profile.sd_read_ticks,fifo_before=profile.fifo_ticks;
+    profile_ata=timed;
+    if(floppy_result==0)(void)ata_poll();
+    profile_ata=false;
+    if(timed) {
+        const uint64_t end=profile_now(),ata_ticks=end-fdd_end;
+        const uint64_t sd_ticks=profile.sd_read_ticks-sd_before,fifo_ticks=profile.fifo_ticks-fifo_before;
+        if(sd_ticks>ata_ticks || fifo_ticks>ata_ticks-sd_ticks) {
+            profile.running=false;profile.valid=false;profile.reason=MT_AMIGA_PROFILE_OVERFLOW;
+        } else profile_span(&profile.ata_other_ticks,&profile.ata_other_max_ticks,ata_ticks-sd_ticks-fifo_ticks);
+        profile_span(&profile.service_ticks,&profile.service_max_ticks,end-began);
+        profile_service_end=end;profile_in_service=false;
+    }
 }
 mt_link_result_t amiga_content_service_set_clock(const mt_clock_time_t *time,uint32_t now_ms)
 {
@@ -365,6 +531,8 @@ mt_link_result_t amiga_content_service_set_clock(const mt_clock_time_t *time,uin
 mt_link_result_t amiga_content_service_clock_status(void) { return rtc.result; }
 int amiga_content_service_prepare_reset(void)
 {
+    profile_invalidate(MT_AMIGA_PROFILE_LIFECYCLE);
+    if(bulk_failed)return fail("Amiga IDE transfer uncertain; reload core");
     if(link==NULL)return -1;
     if(!ready) { paused=true;return 0; }
     if(paused)return 0;
@@ -398,6 +566,7 @@ int amiga_content_service_resume_after_reset(void)
 }
 int amiga_content_service_mount(unsigned drive,const char *name)
 {
+    profile_invalidate(MT_AMIGA_PROFILE_LIFECYCLE);
     if(drive>=MT_AMIGA_DRIVE_COUNT || !mt_amiga_media_path_valid(name))return fail("Amiga media path invalid");
     am_drive_t *const d=&drives[drive];if(d->file!=NULL)return fail("Eject Amiga disk before mounting another");
     if(!path(d->path,name))return fail("Amiga media path too long");
@@ -422,6 +591,7 @@ int amiga_content_service_mount(unsigned drive,const char *name)
 }
 int amiga_content_service_eject(unsigned drive)
 {
+    profile_invalidate(MT_AMIGA_PROFILE_LIFECYCLE);
     if(drive>=MT_AMIGA_DRIVE_COUNT)return fail("Amiga drive invalid");
     const bool running=ready && !paused;
     if(running && amiga_content_service_prepare_reset()!=0)return -1;
@@ -445,6 +615,7 @@ int amiga_content_service_shutdown(void)
 }
 int amiga_content_service_retry(void)
 {
+    if(bulk_failed)return fail("Amiga IDE transfer uncertain; reload core");
     if(settings_invalid)return fail("Amiga settings invalid; retain file for recovery");
     for(unsigned i=0U;i<MT_AMIGA_DRIVE_COUNT;++i)if(drives[i].pending && apply_journal(&drives[i])!=0)return -1;
     (void)mt_amiga_host_access(link,MT_AMIGA_HOST_CLEAR_ERROR,0U,AM_POLLS,NULL);
@@ -453,12 +624,71 @@ int amiga_content_service_retry(void)
 int amiga_content_service_configure(const mt_amiga_config_t *candidate)
 {
     if(!mt_amiga_config_valid(candidate))return fail("Amiga configuration invalid");
+    if(candidate->cpu==MT_AMIGA_CPU_68020_14 && !amiga_content_service_cpu14_available())
+        return fail("14 MHz requires an updated Amiga core");
     if(amiga_content_service_prepare_reset()!=0)return -1;
-    const mt_amiga_config_t previous=config;config=*candidate;
-    if(settings_save()!=0) { config=previous;return -1; }
+    const mt_amiga_config_t previous=config;const uint8_t previous_cpu=preferred_cpu;
+    /* Other option changes retain an unavailable saved14 preference. An
+     * explicit reapply of the current CPU/profile accepts its actual speed. */
+    if(candidate->cpu!=config.cpu || (candidate->ntsc==config.ntsc &&
+        candidate->fast_blitter==config.fast_blitter && candidate->floppy_turbo==config.floppy_turbo &&
+        candidate->fast_mib==config.fast_mib && candidate->ide_compat==config.ide_compat))preferred_cpu=candidate->cpu;
+    config=*candidate;
+    if(settings_save()!=0) { config=previous;preferred_cpu=previous_cpu;return -1; }
     return amiga_content_service_boot();
 }
 const mt_amiga_config_t *amiga_content_service_config(void) { return &config; }
+int amiga_content_service_ide_bench(unsigned iterations,uint64_t (*timer)(void *),
+    void *context,mt_amiga_ide_bench_t *result)
+{
+    if(result==NULL || timer==NULL || iterations==0U || iterations>256U || !ready || paused ||
+        faulted || link==NULL || link->read32==NULL ||
+        !(link->read32(link->context,MT_AMIGA_HOST_PORT)&MT_AMIGA_HOST_BULK))return -1;
+    memset(result,0,sizeof(*result));
+    if(amiga_content_service_prepare_reset()!=0)return -1;
+    uint8_t original[512],expected[512];
+    /* A final READ may still have DRQ data even when ARM has no active job.
+     * Management accesses preserve the guest pointer; restore its exact RAM. */
+    if(ata_data_legacy(true)!=0)goto uncertain;
+    memcpy(original,sector,sizeof(original));
+    for(unsigned backend=0U;backend<2U;++backend)for(unsigned iteration=0U;iteration<iterations;++iteration) {
+        for(unsigned i=0U;i<512U;++i)expected[i]=(uint8_t)(i^(i>>3U)^(iteration*37U));
+        memcpy(sector,expected,sizeof(expected));
+        for(unsigned direction=0U;direction<2U;++direction) {
+            const uint64_t began=timer(context);
+            const int transferred=backend==0U ? ata_data_legacy(direction!=0U):ata_data_bulk(direction!=0U);
+            const uint64_t ended=timer(context);
+            if(transferred!=0 || ended<began)goto uncertain;
+            result->ticks[backend][direction]+=ended-began;
+        }
+        if(memcmp(sector,expected,sizeof(expected))!=0)goto uncertain;
+        /* Cross-read outside the timer so symmetric packing mistakes cannot
+         * make either backend's loopback falsely verify itself. */
+        if((backend==0U ? ata_data_bulk(true):ata_data_legacy(true))!=0 ||
+            memcmp(sector,expected,sizeof(expected))!=0)goto uncertain;
+        if(progress!=NULL)progress(progress_context);
+    }
+    memcpy(sector,original,sizeof(original));
+    if(ata_data_legacy(false)!=0)goto uncertain;
+    if(ata_data_legacy(true)!=0 || memcmp(sector,original,sizeof(original))!=0)goto uncertain;
+    result->bytes_per_leg=(uint32_t)iterations*512U;
+    /* The native chip-bus halt cannot safely resume a CPU cycle that began
+     * while the bridge was halted. This diagnostic always performs a full
+     * guest boot after verified restoration; it does not resume the session. */
+    if(amiga_content_service_boot()!=0)return -1;
+    return 0;
+uncertain:
+    bulk_failed=true;
+    return fail("Amiga IDE benchmark uncertain; reload core; guest remains halted");
+}
+bool amiga_content_service_cpu14_available(void)
+{ return link!=NULL && link->read32!=NULL && (link->read32(link->context,MT_AMIGA_HOST_PORT)&MT_AMIGA_HOST_CPU14)!=0U; }
+bool amiga_content_service_cpu14_fallback(void)
+{ return preferred_cpu==MT_AMIGA_CPU_68020_14 && config.cpu!=preferred_cpu; }
+bool amiga_content_service_fast_ide_available(void)
+{ return link!=NULL && link->read32!=NULL && (link->read32(link->context,MT_AMIGA_HOST_PORT)&MT_AMIGA_HOST_FAST_IDE)!=0U; }
+bool amiga_content_service_fast_ide_expected(void)
+{ return mt_amiga_fast_ide_enabled(&config,amiga_content_service_fast_ide_available() ? MT_AMIGA_HOST_FAST_IDE:0U); }
 const char *amiga_content_service_name(unsigned drive) { return drive<MT_AMIGA_DRIVE_COUNT && drives[drive].file!=NULL ? drives[drive].name:NULL; }
 const char *amiga_content_service_error(void) { return error; }
 bool amiga_content_service_ready(void) { return ready; }

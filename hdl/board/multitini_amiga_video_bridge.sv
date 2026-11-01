@@ -11,6 +11,14 @@ module multitini_amiga_video_bridge (
     input wire [11:0] source_x,
     input wire [11:0] source_y,
     input wire source_frame_start,
+    // Native/service28 metadata is latched with capture's accepted frame.
+    input wire source_frame_alt,source_frame_weave,
+    input wire [1:0] source_frame_profile,
+    // Control-domain selected profile changes only after display_quiescent.
+    input wire source_alt,
+    input wire [1:0] source_profile,
+    output reg source_alt_control,
+    output reg [1:0] source_profile_control,
     input wire control_clk,control_resetn,
     input wire pixel_clk,pixel_resetn,shared_pixel_resetn,shared_pixel_running,
     input wire diagnostic_request,
@@ -42,19 +50,26 @@ module multitini_amiga_video_bridge (
     wire [15:0] normalized_rgb={source_r[7:3],source_g[7:2],source_b[7:3]};
     wire normalized_start=source_frame_start;
     wire [31:0] producer;
+    wire [3:0] slot_alt;wire [7:0] slot_profile;wire [1:0] active_profile;
+    reg [31:0] producer_q;
     reg [31:0] consumer;
-    wire capture_quiet,reader_quiet,submit_ready,active_valid,pixel_use;
+    wire capture_quiet,reader_quiet,submit_ready,active_valid,active_alt,pixel_use;
     wire [31:0] active_value;
     wire [15:0] pixel_rgb;
     // Reuse the shell's registered and synchronized readiness level. A second
     // independent synchronizer could disagree while control logic reconverges.
     reg enabled,pause_launch,frame_ready_launch;
     always @(posedge control_clk)begin
-        if(!control_resetn)begin enabled<=0;pause_launch<=0;frame_ready_launch<=0;end
+        if(!control_resetn)begin enabled<=0;pause_launch<=0;frame_ready_launch<=0;source_alt_control<=0;source_profile_control<=0;producer_q<=0;end
         else begin
             enabled<=source_ready_control && !display_pause;
             pause_launch<=display_pause;
-            frame_ready_launch<=active_valid && source_ready_control;
+            frame_ready_launch<=active_valid && source_ready_control && active_profile==source_profile;
+            producer_q<=producer;
+            if(producer!=producer_q)begin
+                source_alt_control<=slot_alt[(producer-1'b1)&3];
+                source_profile_control<=slot_profile[((producer-1'b1)&3)*2+:2];
+            end
         end
     end
     wire pause_source;
@@ -65,7 +80,7 @@ module multitini_amiga_video_bridge (
     // stay alive until the control-side drain acknowledges them.
     wire capture_source_resetn=source_resetn && source_ready && !pause_source;
     wire [31:0] next_value=active_valid ? active_value+1'b1 : consumer;
-    wire submit=enabled && submit_ready && producer!=next_value;
+    wire submit=enabled && submit_ready && producer!=next_value && slot_profile[next_value[1:0]*2+:2]==source_profile;
     always @(posedge control_clk)begin
         if(!control_resetn)consumer<=0;
         else if(!enabled && capture_quiet && reader_quiet)consumer<=producer;
@@ -74,11 +89,13 @@ module multitini_amiga_video_bridge (
     // Wait until the registered enable has fallen before acknowledging drain;
     // otherwise a capture can re-arm while the display clock is being stopped.
     assign display_quiescent=!enabled && capture_quiet && reader_quiet;
-    multitini_video_capture #(.WIDTH(640),.HEIGHT(512),.VIEW_X(0),.VIEW_Y(0),
+    multitini_video_capture #(.WIDTH(640),.HEIGHT(512),.ALT_WIDTH(724),.ALT_HEIGHT(566),
+        .WIDE_WIDTH(1280),.WIDE_HEIGHT(512),.WIDE_BASE(32'h23800000),.WIDE_SLOT_SHIFT(21),.VIEW_X(0),.VIEW_Y(0),
         .SCALE_NUM(1),.SCALE_DEN(1),.BASE(32'h23000000),.SHARED_PIXEL_RESET(1'b1),
         .ABORT_INCOMPLETE_ON_VBLANK(1'b1)) capture_i(
         .display_view_x(12'd0),.display_view_y(12'd0),.display_view_width(12'd640),.display_view_height(12'd512),
         .display_scale_num(4'd1),.display_scale_den(4'd1),
+        .source_alt(source_frame_alt),.source_profile(source_frame_profile),.source_weave(source_frame_weave),.slot_alt(slot_alt),.slot_profile(slot_profile),
         .clk(control_clk),.resetn(control_resetn),.enable(enabled),.consumer(consumer),
         .producer(producer),.drops(capture_drops),.errors(capture_errors),.busy(),.quiescent(capture_quiet),.pixel_running(),
         .pixel_clk(source_clk),.pixel_resetn(capture_source_resetn),.shared_pixel_resetn(source_resetn),
@@ -87,7 +104,8 @@ module multitini_amiga_video_bridge (
         .awaddr(awaddr),.awlen(awlen),.awsize(awsize),.awburst(awburst),.awvalid(awvalid),.awready(awready),
         .wdata(wdata),.wstrb(wstrb),.wlast(wlast),.wvalid(wvalid),.wready(wready),
         .bresp(bresp),.bvalid(bvalid),.bready(bready));
-    multitini_video_frame_reader #(.DYNAMIC_DISPLAY(1'b1),.WIDTH(640),.HEIGHT(512),
+    multitini_video_frame_reader #(.DYNAMIC_DISPLAY(1'b1),.WIDTH(640),.HEIGHT(512),.ALT_WIDTH(724),.ALT_HEIGHT(566),
+        .WIDE_WIDTH(1280),.WIDE_HEIGHT(512),.WIDE_BASE(32'h23800000),.WIDE_SLOT_SHIFT(21),
         .VIEW_X(320),.VIEW_Y(28),.SCALE_NUM(2),.SCALE_DEN(1),.BASE(32'h23000000),
         .SHARED_PIXEL_RESET(1'b1),.SHARED_PIXEL_LIVENESS(1'b1)) reader_i(
         .display_view_x(display_view_x),.display_view_y(display_view_y),
@@ -95,10 +113,11 @@ module multitini_amiga_video_bridge (
         .display_scale_num(display_scale_num),.display_scale_den(display_scale_den),
         .display_h_active(display_h_active),.display_v_active(display_v_active),
         .display_h_total(display_h_total),.display_v_total(display_v_total),
-        .display_source_x0(10'd0),.display_source_y0(10'd0),.display_phase_x0(4'd0),.display_phase_y0(4'd0),
+        .display_source_x0(11'd0),.display_source_y0(10'd0),.display_phase_x0(4'd0),.display_phase_y0(4'd0),
         .clk(control_clk),.resetn(control_resetn),.enable(enabled),
         .submit(submit),.submit_value(next_value),.submit_ready(submit_ready),
-        .active_value(active_value),.active_valid(active_valid),.busy(),.quiescent(reader_quiet),
+        .source_alt(slot_alt[next_value[1:0]]),.source_profile(slot_profile[next_value[1:0]*2+:2]),
+        .active_value(active_value),.active_valid(active_valid),.active_alt(active_alt),.active_profile(active_profile),.busy(),.quiescent(reader_quiet),
         .error_count(read_errors),.underrun_count(underruns),
         .pixel_clk(pixel_clk),.pixel_resetn(pixel_resetn),.shared_pixel_resetn(shared_pixel_resetn),.shared_pixel_running(shared_pixel_running),
         .scan_x(scan_x),.scan_y(scan_y),.vblank_start(vblank_start),.pixel_use(pixel_use),.pixel_rgb565(pixel_rgb),

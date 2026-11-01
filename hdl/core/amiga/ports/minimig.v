@@ -239,6 +239,8 @@ module minimig
 	output  [2:0] scanline,
 	output 	     ce_pix,
 	output  [1:0] res,
+	output [8:0] diw_hstart,diw_hstop,
+	output [10:0] diw_vstart,diw_vstop,
 	output reg    ntsc,
 
 	//audio
@@ -683,7 +685,7 @@ assign cachecfg = {cachecfg_pre[2],
 always @(posedge clk) if (clk7_en && reset) ntsc <= chipset_config[1];
 
 assign ide_ena  = ide_config[0];
-assign ide_fast = 1'b0; // A600 Gayle IDE remains available in every CPU mode
+assign ide_fast = ~ide_config[5] & cpucfg[1];
 
 //--------------------------------------------------------------------------------------
 
@@ -717,6 +719,8 @@ agnus AGNUS1
 	._vsync(_vsync),
 	._csync(_csync),
 	.hde(hde),
+	.diw_hstart(diw_hstart),.diw_hstop(diw_hstop),
+	.diw_vstart(diw_vstart),.diw_vstop(diw_vstop),
 	.field1(field1),
 	.lace(lace),
 	.hblank(hbl),

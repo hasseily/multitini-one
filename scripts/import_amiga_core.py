@@ -20,7 +20,7 @@ PIN = "e47c3457b486d09daaf47c8934bda90cf7723045"
 URL = "https://github.com/MiSTer-devel/Minimig-AGA_MiSTer.git"
 EXCLUDED = {
     "bram.vhd", "denise_colortable_ram_mf.v", "sdram_ctrl.v",
-    "ddram_ctrl.v", "cpu_cache_new.v", "fastchip.v", "rtg.v", "pll.v",
+    "ddram_ctrl.v", "cpu_cache_new.v", "rtg.v", "pll.v",
     "akiko.v", "akiko_hps_bridge.v", "akiko_nvram.v", "cdda.v",
     "drive_sounds.v", "chipdma_arb.v", "cdtv_bridge.v", "cdtv_nvram.v",
 }
@@ -58,6 +58,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("checkout", type=Path)
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--no-licenses", action="store_true", help="Leave the shared per-file license list to its owner")
     args = parser.parse_args()
     pin = subprocess.check_output(["git", "-C", str(args.checkout), "rev-parse", "HEAD"], text=True).strip()
     if pin != PIN:
@@ -96,6 +97,9 @@ def main() -> int:
                                 "license": "GPL-3.0-or-later, LGPL-3.0-or-later TG68K, BSD-2-Clause IDE",
                                 "use": "Selected machine source and CPU microcode only; no Intel IP, MiSTer platform, Kickstart, disks, samples or binary FPGA images. Per-file provenance/amiga.import.json."})
         lock_path.write_text(json.dumps(lock, indent=2) + "\n")
+        if args.no_licenses:
+            print(f"Imported {len(imported)} pinned Minimig source files; license refresh deferred")
+            return 0
         csv_path = ROOT / "licenses/files.csv"
         with csv_path.open(newline="", encoding="utf-8") as stream:
             existing = list(csv.reader(stream))

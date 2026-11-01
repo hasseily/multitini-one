@@ -46,6 +46,11 @@ module multitini_amiga_machine (
     input wire [1:0] kbd_mouse_type,
     input wire [7:0] kbd_mouse_data,
     input wire [64:0] rtc,
+    input wire [15:0] display_request,
+    input wire [4:0] display_read_address,
+    output wire [15:0] display_read_data,
+    output wire [8:0] diw_hstart,diw_hstop,
+    output wire [10:0] diw_vstart,diw_vstop,
     output wire [23:0] rgb,
     output wire hsync_n,vsync_n,hblank,vblank,field,lace,ce_pix,
     output wire [1:0] res,
@@ -54,6 +59,7 @@ module multitini_amiga_machine (
     output wire cpu_reset_n,
     output wire [4:0] cpucfg,
     output wire [6:0] memcfg,
+    output wire ide_fast,
     output wire fdd_led,hdd_led
 );
     // Test-only native machine. The production adapter, queue, loader,
@@ -69,7 +75,8 @@ module multitini_amiga_machine (
     assign cpu_req=0,cpu_addr=0,cpu_wdata=0,cpu_state=1,cpu_ub_n=1,cpu_lb_n=1,cpu_long=0,cpu_wdata2=0;
     assign io_wait=0,io_dout=0,ide_req=0,ide_rdata=0;
     assign rgb=0,hsync_n=1,vsync_n=1,hblank=1,vblank=1,field=0,lace=0,ce_pix=0,res=0,ntsc=0;
-    assign audio_l=0,audio_r=0,cpucfg=0,memcfg=0,fdd_led=0,hdd_led=0;
+    assign audio_l=0,audio_r=0,cpucfg=0,memcfg=0,ide_fast=0,fdd_led=0,hdd_led=0;
+    assign display_read_data=0,diw_hstart=129,diw_hstop=449,diw_vstart=44,diw_vstop=300;
 endmodule
 
 `timescale 1ns/1ps
@@ -82,6 +89,7 @@ module tb_amiga_adapter_input;
     wire input_ready,ready;
     multitini_amiga_adapter dut(.core_clk(core_clk),.reset(reset),.core_reset_request(core_reset_request),
         .pause_request(1'b0),.clear_load_error(1'b0),.control_clk(control_clk),.control_resetn(!reset),
+        .video_quiescent(1'b1),.video_switch_pending(),.video_capture_mode(),
         .host_write(1'b0),.host_command(32'd0),.host_status(),
         .input_code(input_code),.input_value(input_value),.input_valid(input_valid),.input_ready(input_ready),
         .load_data(8'd0),.load_kind(8'd0),.load_valid(1'b0),.load_first(1'b0),.load_last(1'b0),

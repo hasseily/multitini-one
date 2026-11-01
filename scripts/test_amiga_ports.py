@@ -25,7 +25,8 @@ def machine_sources() -> list[Path]:
     result += [source / "fx68k/fx68kAlu.sv",source / "fx68k/uaddrPla.sv"]
     result += sorted((ROOT / "hdl/core/amiga/ports").glob("*.v"))
     result += [p for p in sorted((ROOT / "hdl/core/amiga/ports").glob("*.sv")) if p.name!="multitini_amiga_ddr_path.sv"]
-    result += [ROOT / "hdl/core/amiga/multitini_amiga_machine.sv"]
+    result += [ROOT / "hdl/core/amiga/multitini_amiga_display_mailbox.sv",
+               ROOT / "hdl/core/amiga/multitini_amiga_machine.sv"]
     return result
 
 
@@ -89,8 +90,8 @@ def main() -> int:
     if "PASS Amiga portable RAM" not in log or "Fatal:" in log:
         raise SystemExit("Amiga smoke did not report success")
     if args.cpu:
-        for mode in (0,3):
-            top="tb_amiga_cpu_stock" if mode==0 else "tb_amiga_cpu_turbo"
+        for mode in (0,3,7):
+            top={0:"tb_amiga_cpu_stock",3:"tb_amiga_cpu_turbo",7:"tb_amiga_cpu_half"}[mode]
             run("xelab",[f"work.{top}","-s",f"amiga_cpu{mode}","--debug","typical","--timescale","1ns/1ps","--mt","auto"])
             run("xsim",[f"amiga_cpu{mode}","--runall"])
             log=(build / "xsim.stdout.log").read_text()

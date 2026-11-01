@@ -35,6 +35,7 @@ module cpu_wrapper
 	input             ph2,
 
 	input       [4:0] cpucfg,
+	output            cpu_step,
 	input             ntsc,
 	input       [2:0] fastramcfg,
 	input       [2:0] cachecfg,
@@ -176,6 +177,7 @@ wire cyc_hold;
 reg as_o_d = 1;
 reg inflight;
 wire req_gate;
+wire cpu_speed_ce;
 wire clkena_p_throttled;
 reg       chipreq;
 reg [2:0] cpu_ipl;
@@ -248,7 +250,8 @@ assign cpu030 = (cpucfg[1:0] == 2'b10);
 assign stock_speed = cpucfg[2] & (cpucfg[1:0] == 2'b11);
 assign skip_rd = skipfetch & (cpustate_p == 2) & ~ramsel_i & ~fastchip_selack;
 assign req_gate = cyc_hold & ~inflight;
-assign clkena_p_throttled = clkena_p_rest | (ramready & clkena_p_thr);
+assign cpu_speed_ce = !cpucfg[3] || ph1n || ph2n;
+assign clkena_p_throttled = (clkena_p_rest | (ramready & clkena_p_thr)) & cpu_speed_ce;
 assign c32 = chip32_en & longword & ~uds_in & ~lds_in & ~|cpu_addr_m[1:0] & ~|cpu_addr_m[31:21] &
            ~sel_nmi_vector & ~ramsel_i & ~fastchip_selack & ~cdtv_selack;
 assign ifch = ic_ena & ~|cpustate_p & ~|cpu_addr_m[23:21];
@@ -569,7 +572,13 @@ end
 
 assign clkena_p_thr  = cpu_req ? ~req_gate : ~cyc_hold;
 assign clkena_p_rest = (~cpu_req | chipready | fastchip_ready) & clkena_p_thr;
+// PAL 68020 14 MHz mode uses the existing opposite native bus phases.
+// These alternate accepted 28 MHz edges and include the chipset-ready phase.
+// The wrapper/chip bus stay at 28 MHz and global memory holds freeze both
+// phases together. An independent divide-by-two can miss every ready pulse.
 
+
+assign cpu_step = clkena_p_throttled;
 
 assign s21_en    = cpu030;
 assign ramlong1  = long_cand & s21_en & sel_zram & ~sel_rtg & ~sel_dd & ~req_gate;

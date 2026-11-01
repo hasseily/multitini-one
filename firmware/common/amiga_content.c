@@ -2,21 +2,24 @@
 #include "multitini_amiga_content.h"
 #include <string.h>
 bool mt_amiga_config_valid(const mt_amiga_config_t *c)
-{ return c!=NULL && (c->cpu==MT_AMIGA_CPU_STOCK || c->cpu==MT_AMIGA_CPU_68020_TURBO) && c->ntsc==0U &&
-    c->fast_blitter==0U && c->floppy_turbo<=1U && (c->fast_mib==4U || c->fast_mib==8U); }
+{ return c!=NULL && (c->cpu==MT_AMIGA_CPU_STOCK || c->cpu==MT_AMIGA_CPU_68020_TURBO || c->cpu==MT_AMIGA_CPU_68020_14) && c->ntsc==0U &&
+    c->fast_blitter==0U && c->floppy_turbo<=1U && (c->fast_mib==4U || c->fast_mib==8U) && c->ide_compat<=MT_AMIGA_IDE_CLASSIC; }
+bool mt_amiga_fast_ide_enabled(const mt_amiga_config_t *c,uint32_t host_status)
+{ return mt_amiga_config_valid(c) && c->cpu!=MT_AMIGA_CPU_STOCK && c->ide_compat==MT_AMIGA_IDE_AUTO &&
+    (host_status&MT_AMIGA_HOST_FAST_IDE)!=0U; }
 void mt_amiga_config_defaults(mt_amiga_config_t *c)
-{ if(c!=NULL) { const mt_amiga_config_t value={MT_AMIGA_CPU_68020_TURBO,0U,0U,0U,8U}; *c=value; } }
+{ if(c!=NULL) { const mt_amiga_config_t value={MT_AMIGA_CPU_68020_TURBO,0U,0U,0U,8U,MT_AMIGA_IDE_AUTO}; *c=value; } }
 void mt_amiga_config_encode(const mt_amiga_config_t *c,uint8_t wire[MT_AMIGA_CONFIG_BYTES])
 {
     memset(wire,0,MT_AMIGA_CONFIG_BYTES); memcpy(wire,"AM01",4U);
     wire[4]=c->cpu; wire[5]=c->ntsc; wire[6]=c->fast_blitter;
-    wire[7]=c->floppy_turbo; wire[8]=c->fast_mib; wire[9]=2U;
+    wire[7]=c->floppy_turbo; wire[8]=c->fast_mib; wire[9]=2U; wire[10]=c->ide_compat;
 }
 bool mt_amiga_config_decode(const uint8_t wire[MT_AMIGA_CONFIG_BYTES],mt_amiga_config_t *c)
 {
     if(wire==NULL || c==NULL || memcmp(wire,"AM01",4U)!=0 || wire[9]!=2U)return false;
-    for(unsigned i=10U;i<MT_AMIGA_CONFIG_BYTES;++i)if(wire[i]!=0U)return false;
-    const mt_amiga_config_t candidate={wire[4],wire[5],wire[6],wire[7],wire[8]};
+    for(unsigned i=11U;i<MT_AMIGA_CONFIG_BYTES;++i)if(wire[i]!=0U)return false;
+    const mt_amiga_config_t candidate={wire[4],wire[5],wire[6],wire[7],wire[8],wire[10]};
     if(!mt_amiga_config_valid(&candidate))return false;
     *c=candidate; return true;
 }

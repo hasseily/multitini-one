@@ -505,7 +505,7 @@ always @(posedge clk) begin
 	if (reset) begin
 		chipset_config <= 6'h08; // ECS PAL only in the A600 image
 		ide_cfg <= t_ide_config;
-		cpu_cfg <= {2'b00, (t_cpu_config[1:0]==2'b11) & t_cpu_config[5], {2{t_cpu_config[1:0]==2'b11}}}; // stock FX68K or TG68K 68020
+		cpu_cfg <= {1'b0, (t_cpu_config[1:0]==2'b11) & t_cpu_config[6], (t_cpu_config[1:0]==2'b11) & t_cpu_config[5], {2{t_cpu_config[1:0]==2'b11}}}; // bit3 selects alternate-edge 68020 execution
 		memory_config[5:0] <= {(t_memory_config[5:4]==2'd2 ? 2'd2 : 2'd3), 2'b00, 2'b11}; // 2MiB Chip; 4/8MiB Fast
 		memory_config[7] <= 1'b0;
 	end

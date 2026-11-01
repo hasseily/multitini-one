@@ -6,9 +6,13 @@
 module multitini_video_capture #(
     parameter bit DYNAMIC_DISPLAY=1'b0,
     parameter integer WIDTH=382, HEIGHT=270,
+    parameter integer ALT_WIDTH=WIDTH, ALT_HEIGHT=HEIGHT,
+    parameter integer WIDE_WIDTH=WIDTH, WIDE_HEIGHT=HEIGHT,
+    parameter integer SLOT_SHIFT=20, WIDE_SLOT_SHIFT=SLOT_SHIFT,
     parameter integer VIEW_X=196, VIEW_Y=0,
     parameter integer SCALE_NUM=4, SCALE_DEN=1,
     parameter [31:0] BASE=32'h22000000,
+    parameter [31:0] WIDE_BASE=BASE,
     parameter bit SHARED_PIXEL_RESET=1'b0,
     // Sparse source streams can end early on a malformed chip field. Never
     // concatenate their partial pixels with the following field.
@@ -16,9 +20,15 @@ module multitini_video_capture #(
 ) (
     input wire [11:0] display_view_x, display_view_y, display_view_width, display_view_height,
     input wire [3:0] display_scale_num, display_scale_den,
+    // Pixel-domain profile, stable for an accepted source frame. Ignored by
+    // legacy instances whose alternate dimensions equal the base profile.
+    input wire source_alt,source_weave,
+    input wire [1:0] source_profile, // pixel domain; ignored without WIDE geometry
     input wire clk,resetn,enable,
     input wire [31:0] consumer,
     output reg [31:0] producer,drops,errors,
+    output reg [3:0] slot_alt,
+    output reg [7:0] slot_profile, // control-domain completed-slot metadata
     output wire busy,quiescent,pixel_running,
     input wire pixel_clk,pixel_resetn,shared_pixel_resetn,vblank_start,machine_ready,
     input wire [11:0] scan_x,scan_y,
@@ -39,11 +49,55 @@ module multitini_video_capture #(
     localparam integer PAD_PIXELS=STRIDE_PIXELS-WIDTH;
     localparam integer FRAME_PIXELS=STRIDE_PIXELS*HEIGHT;
     localparam integer FRAME_BURSTS=FRAME_PIXELS/64;
+    localparam bit HAS_ALT=ALT_WIDTH!=WIDTH || ALT_HEIGHT!=HEIGHT;
+    localparam bit HAS_WIDE=WIDE_WIDTH!=WIDTH || WIDE_HEIGHT!=HEIGHT;
+    localparam bit PROFILED=HAS_ALT || HAS_WIDE;
+    localparam integer PROFILE_BITS=HAS_WIDE ? 2:1;
+    localparam integer WIDE_STRIDE_PIXELS=((WIDE_WIDTH+63)/64)*64;
+    localparam integer WIDE_FRAME_PIXELS=WIDE_STRIDE_PIXELS*WIDE_HEIGHT;
+    wire [1:0] requested_profile=HAS_WIDE ? source_profile : {1'b0,HAS_ALT && source_alt};
+    reg [1:0] active_profile_pixel,frame_profile_control;
+    localparam integer ALT_STRIDE_PIXELS=((ALT_WIDTH+63)/64)*64;
+    localparam integer ALT_FRAME_PIXELS=ALT_STRIDE_PIXELS*ALT_HEIGHT;
+    reg active_alt_pixel,active_weave_pixel;
+    reg profile_launch;
+    wire profile_ready,profile_valid;
+    wire [PROFILE_BITS:0] profile_data;
+    wire [1:0] received_profile=HAS_WIDE ? 2'(profile_data>>1):{1'b0,profile_data[1]};
+    wire [31:0] received_base=HAS_WIDE && received_profile==2 ? WIDE_BASE:BASE;
+    wire [5:0] received_shift=HAS_WIDE && received_profile==2 ? WIDE_SLOT_SHIFT:SLOT_SHIFT;
+    wire [31:0] received_frame_base=received_base+({30'd0,producer[1:0]}<<received_shift);
+    reg frame_alt_control,frame_weave_control,profile_received,profile_pending;
+    wire [19:0] selected_frame_pixels=HAS_WIDE && active_profile_pixel==2 ? WIDE_FRAME_PIXELS:
+        HAS_ALT && active_profile_pixel==1 ? ALT_FRAME_PIXELS:FRAME_PIXELS;
+    wire [11:0] selected_width=HAS_WIDE && active_profile_pixel==2 ? WIDE_WIDTH:
+        HAS_ALT && active_profile_pixel==1 ? ALT_WIDTH:WIDTH;
+    wire [11:0] selected_height=HAS_WIDE && active_profile_pixel==2 ? WIDE_HEIGHT:
+        HAS_ALT && active_profile_pixel==1 ? ALT_HEIGHT:HEIGHT;
+    wire [11:0] selected_stride=HAS_WIDE && active_profile_pixel==2 ? WIDE_STRIDE_PIXELS:
+        HAS_ALT && active_profile_pixel==1 ? ALT_STRIDE_PIXELS:STRIDE_PIXELS;
+    wire [11:0] capture_right=PROFILED && !DYNAMIC_DISPLAY ? view_x+selected_width*SCALE_NUM/SCALE_DEN:view_right;
+    wire [11:0] capture_bottom=PROFILED && !DYNAMIC_DISPLAY ? view_y+selected_height*SCALE_NUM/SCALE_DEN:view_bottom;
+    wire [13:0] capture_padding_right=PROFILED ? {2'd0,capture_right}+selected_stride-selected_width:padding_right;
+    wire mailbox_pixel_run;
+    wire [15:0] selected_frame_bursts=HAS_WIDE && frame_profile_control==2 ? WIDE_FRAME_PIXELS/64:
+        HAS_ALT && frame_profile_control==1 ? ALT_FRAME_PIXELS/64:FRAME_BURSTS;
+    wire [5:0] row_bursts=HAS_WIDE && frame_profile_control==2 ? WIDE_STRIDE_PIXELS/64:
+        HAS_ALT && frame_profile_control==1 ? ALT_STRIDE_PIXELS/64:STRIDE_PIXELS/64;
+    wire [15:0] row_bytes=HAS_WIDE && frame_profile_control==2 ? WIDE_STRIDE_PIXELS*2:
+        HAS_ALT && frame_profile_control==1 ? ALT_STRIDE_PIXELS*2:STRIDE_PIXELS*2;
+    wire [9:0] half_rows=HAS_WIDE && frame_profile_control==2 ? WIDE_HEIGHT/2:
+        HAS_ALT && frame_profile_control==1 ? ALT_HEIGHT/2:HEIGHT/2;
+    // Return source profile through a coherent mailbox before dispatching any
+    // DDR address. Data may already be queued safely in the ordinary FIFO.
+    multitini_async_mailbox #(.WIDTH(PROFILE_BITS+1),.DRAIN_ON_RESET(1'b1)) profile_mailbox(
+        .src_clk(pixel_clk),.src_resetn(mailbox_pixel_run),
+        .src_data({PROFILE_BITS'(active_profile_pixel),active_weave_pixel}),.src_valid(profile_launch),.src_ready(profile_ready),
+        .dst_clk(clk),.dst_resetn(resetn),.dst_data(profile_data),.dst_valid(profile_valid),.dst_ready(1'b1));
     localparam integer VIEW_WIDTH=WIDTH*SCALE_NUM/SCALE_DEN;
     localparam integer VIEW_HEIGHT=HEIGHT*SCALE_NUM/SCALE_DEN;
     // Synchronize PS reset separately. Mailboxes and FIFO stay alive through
     // a pixel-only reset so accepted AXI transactions can finish draining.
-    wire mailbox_pixel_run;
     generate if(SHARED_PIXEL_RESET)begin : g_shared_reset
         assign mailbox_pixel_run=shared_pixel_resetn;
     end else begin : g_local_reset
@@ -93,7 +147,7 @@ module multitini_video_capture #(
         .src_clk(clk),.src_resetn(resetn),.src_data(1'b1),
         .src_valid(arm_launch),.src_ready(arm_ready),.dst_clk(pixel_clk),.dst_resetn(mailbox_pixel_run),
         .dst_data(unused_arm),.dst_valid(arm_valid_pixel),
-        .dst_ready(!pixel_run || (vblank_start && !capturing && finish_ready)));
+        .dst_ready((!pixel_run || (vblank_start && !capturing && finish_ready)) && (!PROFILED || profile_ready)));
     multitini_async_mailbox #(.WIDTH(1),.DRAIN_ON_RESET(1'b1)) finish_mailbox(
         .src_clk(pixel_clk),.src_resetn(mailbox_pixel_run),.src_data(finish_bad),
         .src_valid(finish_launch),.src_ready(finish_ready),.dst_clk(clk),.dst_resetn(resetn),
@@ -107,20 +161,20 @@ module multitini_video_capture #(
         if(!pixel_run)begin horizontal_phase<=0;vertical_phase<=0;end
         else begin
             if(scan_x==view_x-1)horizontal_phase<=0;
-            else if(scan_x>=view_x && scan_x<view_right)
+            else if(scan_x>=view_x && scan_x<capture_right)
                 horizontal_phase<=horizontal_phase==scale_num-1 ? 0 : horizontal_phase+1'b1;
             if(scan_x==0)begin
-                if(scan_y<=view_y || scan_y>=view_bottom)vertical_phase<=0;
+                if(scan_y<=view_y || scan_y>=capture_bottom)vertical_phase<=0;
                 else vertical_phase<=vertical_phase==scale_num-1 ? 0 : vertical_phase+1'b1;
             end
         end
     end
-    wire selected_row=scan_y>=view_y && scan_y<view_bottom &&
+    wire selected_row=scan_y>=view_y && scan_y<capture_bottom &&
         (scale_den==2 ? vertical_phase!=1 : vertical_phase==0);
-    wire native_sample=scan_x>=view_x && scan_x<view_right &&
+    wire native_sample=scan_x>=view_x && scan_x<capture_right &&
         (scale_den==2 ? horizontal_phase!=1 : horizontal_phase==0);
-    wire padding_sample=PAD_PIXELS!=0 && scan_x>=view_right &&
-                        scan_x<padding_right;
+    wire padding_sample=(PROFILED || PAD_PIXELS!=0) && scan_x>=capture_right &&
+                        scan_x<capture_padding_right;
     wire sample=capturing && selected_row && (native_sample || padding_sample);
     wire [15:0] sampled_pixel=padding_sample?16'd0:rgb565;
     reg [1:0] pack_index;
@@ -139,12 +193,17 @@ module multitini_video_capture #(
         if(!pixel_run) begin
             capturing<=0;capture_bad<=0;finish_launch<=0;finish_bad<=0;
             pack_index<=0;pack<=0;sample_count<=0;skipped_toggle<=0;
+            active_alt_pixel<=0;active_profile_pixel<=0;active_weave_pixel<=0;profile_launch<=0;
+            if(PROFILED && arm_valid_pixel && profile_ready)profile_launch<=1;
         end else begin
-            finish_launch<=0;
+            finish_launch<=0;profile_launch<=0;
             if(vblank_start && enable_pixel && !(arm_valid_pixel && !capturing && finish_ready))
                 skipped_toggle<=!skipped_toggle;
-            if(arm_valid_pixel && vblank_start && !capturing && finish_ready) begin
+            if(arm_valid_pixel && vblank_start && !capturing && finish_ready && (!PROFILED || profile_ready)) begin
                 pack_index<=0;sample_count<=0;capture_bad<=0;
+                active_profile_pixel<=requested_profile;active_alt_pixel<=requested_profile==1;
+                active_weave_pixel<=PROFILED && source_weave;
+                profile_launch<=PROFILED;
                 if(enable_pixel && machine_ready)capturing<=1;
                 else begin finish_bad<=1;finish_launch<=1;end
             end
@@ -156,7 +215,7 @@ module multitini_video_capture #(
                 pack_index<=pack_index+1'b1;
                 sample_count<=sample_count+1'b1;
                 if(pack_index==3 && (fifo_full || fifo_write_busy))capture_bad<=1;
-                if(sample_count==FRAME_PIXELS-1)begin
+                if(sample_count==selected_frame_pixels-1)begin
                     capturing<=0;
                     finish_bad<=capture_bad || !machine_ready || !enable_pixel || fifo_full || fifo_write_busy;
                     finish_launch<=1;
@@ -187,8 +246,12 @@ module multitini_video_capture #(
     reg [3:0] drain_empty_count;
     reg [15:0] completed_bursts;
     reg ended,failed;
+    reg [5:0] burst_in_row;
+    reg [9:0] row_in_field;
+    reg second_field;
+    reg [31:0] frame_base;
     assign busy=state!=IDLE || !arm_ready || !fifo_empty || fifo_read_busy;
-    assign quiescent=state==IDLE && arm_ready && !arm_launch && fifo_empty && !fifo_read_busy;
+    assign quiescent=state==IDLE && arm_ready && !arm_launch && fifo_empty && !fifo_read_busy && (!PROFILED || !profile_pending);
     assign fifo_read=!fifo_empty && !fifo_read_busy &&
                      ((state==FILL && staged<16 && !failed) || state==DRAIN);
     assign awlen=15,awsize=3,awburst=1;
@@ -200,6 +263,9 @@ module multitini_video_capture #(
             state<=IDLE;producer<=0;drops<=0;errors<=0;awaddr<=BASE;
             arm_launch<=0;staged<=0;beat<=0;completed_bursts<=0;ended<=0;failed<=0;
             skipped_previous<=0;drain_empty_count<=0;
+            slot_alt<=0;slot_profile<=0;frame_profile_control<=0;frame_alt_control<=0;frame_weave_control<=0;profile_received<=0;
+            profile_pending<=0;
+            burst_in_row<=0;row_in_field<=0;second_field<=0;frame_base<=BASE;
         end else begin
             arm_launch<=0;
             if(state!=DRAIN || !ended || !fifo_empty || fifo_read_busy)drain_empty_count<=0;
@@ -207,6 +273,11 @@ module multitini_video_capture #(
             skipped_previous<=skipped_control;
             if(skipped_control!=skipped_previous)drops<=drops+1'b1;
             if(finish_valid)begin ended<=1;failed<=failed || finish_bad_control;end
+            if(PROFILED && profile_valid)begin
+                frame_profile_control<=received_profile;frame_alt_control<=received_profile==1;
+                frame_weave_control<=profile_data[0];profile_received<=1;profile_pending<=0;
+                frame_base<=received_frame_base;awaddr<=received_frame_base;
+            end
             // Unexpected pixel reset aborts this frame, but never cancels an
             // accepted AXI burst. ADDRESS/DATA/RESPONSE drain normally first.
             if(!pixel_running && state!=IDLE)begin ended<=1;failed<=1;end
@@ -217,13 +288,18 @@ module multitini_video_capture #(
                     state<=DRAIN;ended<=1;failed<=1;
                 end else if(enable && pixel_running && arm_ready && (producer-consumer)<4 && fifo_empty && !fifo_read_busy)begin
                     arm_launch<=1;state<=FILL;staged<=0;completed_bursts<=0;ended<=0;failed<=0;
-                    awaddr<=BASE+{producer[1:0],20'd0};
+                    awaddr<=BASE+({30'd0,producer[1:0]}<<SLOT_SHIFT);
+                    frame_base<=BASE+({30'd0,producer[1:0]}<<SLOT_SHIFT);
+                    profile_received<=!PROFILED;burst_in_row<=0;row_in_field<=0;second_field<=0;
+                    profile_pending<=PROFILED;
                 end
                 FILL:begin
                     if(failed || (finish_valid && finish_bad_control))begin state<=DRAIN;staged<=0;end
-                    else if(staged==16)begin state<=ADDRESS;beat<=0;end
+                    else if(staged==16 && profile_received)begin state<=ADDRESS;beat<=0;end
                     else if(fifo_read)begin staging[staged]<=fifo_data;staged<=staged+1'b1;end
-                    else if(ended && completed_bursts==FRAME_BURSTS)begin
+                    else if(ended && completed_bursts==selected_frame_bursts)begin
+                        slot_alt[producer[1:0]]<=PROFILED && frame_alt_control;
+                        slot_profile[producer[1:0]*2+:2]<=PROFILED ? frame_profile_control:2'd0;
                         producer<=producer+1'b1;state<=IDLE;
                     end
                 end
@@ -231,7 +307,21 @@ module multitini_video_capture #(
                 DATA:if(wready)begin if(beat==15)state<=RESPONSE;else beat<=beat+1'b1;end
                 RESPONSE:if(bvalid)begin
                     if(bresp[1])begin failed<=1;errors<=errors+1'b1;state<=DRAIN;end
-                    else begin completed_bursts<=completed_bursts+1'b1;awaddr<=awaddr+128;staged<=0;state<=FILL;end
+                    else begin
+                        completed_bursts<=completed_bursts+1'b1;
+                        awaddr<=awaddr+128;
+                        if(PROFILED && frame_weave_control)begin
+                            if(burst_in_row==row_bursts-1)begin
+                                burst_in_row<=0;row_in_field<=row_in_field+1'b1;
+                                awaddr<=awaddr+row_bytes+128;
+                                if(row_in_field==half_rows-1)begin
+                                    row_in_field<=0;second_field<=1;
+                                    if(!second_field)awaddr<=frame_base+row_bytes;
+                                end
+                            end else burst_in_row<=burst_in_row+1'b1;
+                        end
+                        staged<=0;state<=FILL;
+                    end
                 end
                 // XPM's FWFT pointer/prefetch pipeline can reveal a final
                 // word after pixel_running falls. Require eight settled
