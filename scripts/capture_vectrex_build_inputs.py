@@ -130,6 +130,16 @@ def inputs(machine: str) -> list[Path]:
     if machine == "APPLE_IIGS":
         paths.add(ROOT / "docs/APPLE_IIGS_LEGACY_VIDEO.md")
         paths.add(ROOT / "docs/APPLE_IIGS_DOOM_GS.md")
+        paths.update(ROOT / name for name in (
+            "docs/APPLE_IIGS_MMU_AUDIT.md", "docs/APPLE_IIGS_ARKANOID.md",
+            "hdl/sim/apple_iigs_mmu_rom3_capture.vh",
+            "hdl/sim/fixtures/iigs_mmu_rom03.json"))
+        paths.update((ROOT / "scripts").glob("test_apple_iigs_mmu_*.py"))
+        # Keep the native observation program and decoder with its HDL fixture.
+        # Generated captures, private ROMs and Python caches are not source.
+        paths.update(path for path in (ROOT / "tools/iigs-mmu-probe").iterdir()
+                     if path.is_file() and (path.suffix in {".py", ".s", ".cfg", ".md", ".txt"}
+                                            or path.name == "LICENSE"))
         paths.update(path for path in (ROOT / "third_party/apple-iigs").rglob("*")
                      if path.is_file())
         paths.update(path for path in (ROOT / "hdl/core/apple_iigs/roms").rglob("*")

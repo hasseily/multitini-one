@@ -1,0 +1,28 @@
+IIGS MMU PROBE v1
+
+Use an original Apple IIgs ROM 01 or ROM 03, booted into GS/OS.
+Save work, close applications, and disable CPU accelerators before running.
+This is a TAKEOVER diagnostic. It overwrites RAM, including RAM disks.
+It performs no disk writes. It does not return to GS/OS: REBOOT afterward.
+Do not use a RAM disk to hold anything you need to keep.
+
+1. Mount MMUPROBE.po as a ProDOS data disk, or copy its MMUPROBE application
+   onto a real ProDOS disk. Keep file type S16 ($B3), auxiliary type $0000.
+   This disk contains no operating system and is not a boot disk.
+2. In the GS/OS Finder, double-click MMUPROBE. The display may change while
+   the probe runs. Wait for the black-and-white encoded screen with the
+   MMU1: DONE or MMU1: CHECK STATUS heading. The target is under a minute.
+3. Photograph the ENTIRE active picture, including all edges. Keep the camera
+   square to the screen, in focus, and wide enough to resolve individual dots.
+   A direct, unscaled screenshot is preferable when a capture device is used.
+4. Send that one image, with the machine's ROM version, RAM size, RAM card,
+   other installed cards, accelerator status, and NTSC/PAL model.
+5. Reboot the computer. Do not try to resume the old GS/OS session.
+
+CHECK STATUS is still useful: send the image. Its status explains whether
+measurements were inconsistent, a limit was reached, or a marker was unexpected.
+The program records observations. It does not judge the machine against KEGS,
+MiSTer, MAME, or GSSquared.
+
+Hardware acceptance and runtime measurements are recorded separately in the
+package validation receipt. A successful assembly is not hardware validation.

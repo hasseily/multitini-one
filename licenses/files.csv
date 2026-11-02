@@ -502,7 +502,7 @@ third_party/apple-iigs/upstream/rtl/iigs.sv,MiSTer Apple IIgs,9adbba8622f3782537
 third_party/apple-iigs/upstream/rtl/iwm_flux.v,MiSTer Apple IIgs,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-3.0-or-later,source-reviewed,Explicit file-local GNU GPL version 3 or later grant; upstream notices retained.
 third_party/apple-iigs/upstream/rtl/iwm_woz.v,MiSTer Apple IIgs,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-3.0-or-later,source-reviewed,Explicit file-local GNU GPL version 3 or later grant; upstream notices retained.
 third_party/apple-iigs/upstream/rtl/mmu.sv,MiSTer Apple IIgs,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-3.0-or-later,source-reviewed,Explicit file-local GNU GPL version 3 or later grant; upstream notices retained.
-hdl/core/apple_iigs/ports/mmu.sv,MiSTer Apple IIgs and Multitini One,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_apple_iigs_core.py; KEGS-reference MMU audit; preserve original notices; provenance/apple_iigs_mmu_audit.json
+hdl/core/apple_iigs/ports/mmu.sv,MiSTer Apple IIgs and Multitini One,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_apple_iigs_core.py; hardware-reference MMU audit; preserve original notices; provenance/apple_iigs_mmu_audit.json
 third_party/apple-iigs/upstream/rtl/paddle_timer.v,MiSTer Apple IIgs,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-3.0,source-reviewed,"Repository GPL version 3 LICENSE covers otherwise unmarked subsidiary machine logic and documentation; imported without changes. The DHR table is the source-licensed GSSquared decoder table, not system ROM content."
 third_party/apple-iigs/upstream/rtl/prtc.v,MiSTer Apple IIgs,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-3.0,source-reviewed,"Repository GPL version 3 LICENSE covers otherwise unmarked subsidiary machine logic and documentation; imported without changes. The DHR table is the source-licensed GSSquared decoder table, not system ROM content."
 third_party/apple-iigs/upstream/rtl/rom.v,MiSTer Apple IIgs,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-3.0,source-reviewed,"Repository GPL version 3 LICENSE covers otherwise unmarked subsidiary machine logic and documentation; imported without changes. The DHR table is the source-licensed GSSquared decoder table, not system ROM content."
@@ -536,6 +536,7 @@ hdl/core/apple_iigs/ports/txuart.sv,MiSTer Apple IIgs and Multitini One,9adbba86
 hdl/core/apple_iigs/ports/prtc.sv,MiSTer Apple IIgs and Multitini One,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-3.0,source-reviewed,Reproduced by scripts/port_apple_iigs_core.py; original notices retained where derived; runtime firmware excluded
 hdl/core/apple_iigs/ports/iir_filter.sv,MiSTer Apple IIgs and Multitini One,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-2.0-or-later,source-reviewed,Reproduced by scripts/port_apple_iigs_core.py; original notices retained where derived; runtime firmware excluded
 hdl/core/apple_iigs/ports/bram.sv,MiSTer Apple IIgs and Multitini One,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-3.0-only,source-reviewed,Reproduced by scripts/port_apple_iigs_core.py; original notices retained where derived; runtime firmware excluded
+hdl/core/apple_iigs/ports/clock_divider.sv,MiSTer Apple IIgs and Multitini One,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-3.0,source-reviewed,Reproduced by scripts/port_apple_iigs_core.py; pinned repository GPL grant; adds a registered PH2 output for DMA-only bus strobes
 hdl/core/apple_iigs/ports/runtime_rom.sv,MiSTer Apple IIgs and Multitini One,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-3.0-only,source-reviewed,Reproduced by scripts/port_apple_iigs_core.py; original notices retained where derived; runtime firmware excluded
 hdl/core/apple_iigs/ports/twgs_card.sv,MiSTer Apple IIgs and Multitini One,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-3.0-only,source-reviewed,Reproduced by scripts/port_apple_iigs_core.py; original notices retained where derived; runtime firmware excluded
 hdl/core/apple_iigs/ports/mcode.sv,MiSTer Apple IIgs and Multitini One,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_apple_iigs_core.py; synchronous block-ROM microcode lookup with separate async default selector; original one-edge latency and notices retained
@@ -588,11 +589,11 @@ hdl/core/nes/ports/ppu.sv,MiSTer NES and Multitini One,49a0a662e244469ca77b21557
 hdl/core/apple_iigs/ports/flux_drive.sv,MiSTer Apple IIgs and Multitini One,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_apple_iigs_core.py; eleven-bit fractional timer sums preserve carry; explicit upstream GPL version 3 or later notices retained
 hdl/core/apple_iigs/ports/iwm_flux.sv,MiSTer Apple IIgs and Multitini One,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_apple_iigs_core.py; eleven-bit fractional timer sums and unconditional functional latch expiry; explicit upstream GPL version 3 or later notices retained
 hdl/core/apple_iigs/ports/iwm_woz.sv,MiSTer Apple IIgs and Multitini One,9adbba8622f378253765b7d438b6cbcc4d03fc57,GPL-3.0-or-later,source-reviewed,Reproduced by scripts/port_apple_iigs_core.py; IWM mode register latches on any odd address with Q6=Q7=1 while idle; explicit upstream GPL version 3 or later notices retained
-hdl/sim/tb_apple_iigs_mmu_decode.sv,Multitini One,,GPL-3.0-only,sim-tested,Original KEGS-reference MMU decode regression; no private ROM or game bytes
+hdl/sim/tb_apple_iigs_mmu_decode.sv,Multitini One,,GPL-3.0-only,sim-tested,Original hardware-reference MMU decode regression; no private ROM or game bytes
 scripts/test_apple_iigs_mmu_decode.py,Multitini One,,GPL-3.0-only,sim-tested,Original source-hashing MMU decode runner
-hdl/sim/tb_apple_iigs_mmu_state.sv,Multitini One,,GPL-3.0-only,sim-tested,Original KEGS-reference MMU state regression; no private ROM or game bytes
+hdl/sim/tb_apple_iigs_mmu_state.sv,Multitini One,,GPL-3.0-only,sim-tested,Original hardware-reference MMU state regression; no private ROM or game bytes
 scripts/test_apple_iigs_mmu_state.py,Multitini One,,GPL-3.0-only,sim-tested,Original source-hashing MMU state runner
-hdl/sim/tb_apple_iigs_mmu_slots.sv,Multitini One,,GPL-3.0-only,sim-tested,Original KEGS-reference MMU slots regression; no private ROM or game bytes
+hdl/sim/tb_apple_iigs_mmu_slots.sv,Multitini One,,GPL-3.0-only,sim-tested,Original hardware-reference MMU slots regression; no private ROM or game bytes
 scripts/test_apple_iigs_mmu_slots.py,Multitini One,,GPL-3.0-only,sim-tested,Original source-hashing MMU slots runner
 third_party/mame_reference/import_manifest.json,Multitini One,,GPL-3.0-only,source-reviewed,Original pinned MAME reference subset and file hashes
 third_party/mame_reference/NOTICE.md,Multitini One,,GPL-3.0-only,source-reviewed,Reference scope and preserved MAME notices
@@ -1080,3 +1081,16 @@ tests/host/test_amiga_diag.c,Multitini One,,GPL-3.0-only,source-reviewed,Origina
 hdl/core/amiga/multitini_amiga_diagnostics.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original optional coherent Amiga native diagnostic counters
 hdl/sim/tb_amiga_diagnostics.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original native diagnostic counter and frozen snapshot fixture
 scripts/test_amiga_diagnostics.py,Multitini One,,GPL-3.0-only,source-reviewed,Original native diagnostic fixture runner
+tools/iigs-mmu-probe/probe.s,Multitini One,,GPL-3.0-only,source-reviewed,Original native GS/OS MMU observation probe or its build and screenshot transport
+tools/iigs-mmu-probe/kernels.s,Multitini One,,GPL-3.0-only,source-reviewed,Original native GS/OS MMU observation probe or its build and screenshot transport
+tools/iigs-mmu-probe/transport.s,Multitini One,,GPL-3.0-only,source-reviewed,Original native GS/OS MMU observation probe or its build and screenshot transport
+tools/iigs-mmu-probe/probe.cfg,Multitini One,,GPL-3.0-only,source-reviewed,Original native GS/OS MMU observation probe or its build and screenshot transport
+tools/iigs-mmu-probe/protocol.py,Multitini One,,GPL-3.0-only,source-reviewed,Original native GS/OS MMU observation probe or its build and screenshot transport
+tools/iigs-mmu-probe/build.py,Multitini One,,GPL-3.0-only,source-reviewed,Original native GS/OS MMU observation probe or its build and screenshot transport
+tools/iigs-mmu-probe/decode.py,Multitini One,,GPL-3.0-only,source-reviewed,Original native GS/OS MMU observation probe or its build and screenshot transport
+tools/iigs-mmu-probe/test_probe.py,Multitini One,,GPL-3.0-only,source-reviewed,Original native GS/OS MMU observation probe or its build and screenshot transport
+tools/iigs-mmu-probe/README.md,Multitini One,,GPL-3.0-only,source-reviewed,Original native GS/OS MMU observation probe or its build and screenshot transport
+tools/iigs-mmu-probe/TESTERS.txt,Multitini One,,GPL-3.0-only,source-reviewed,Original native GS/OS MMU observation probe or its build and screenshot transport
+tools/iigs-mmu-probe/LICENSE,Multitini One,,GPL-3.0-only,source-reviewed,Unmodified repository GPL version 3 license text for the standalone diagnostic source bundle
+hdl/sim/apple_iigs_mmu_rom3_capture.vh,Multitini One,,GPL-3.0-only,source-reviewed,Original production-MMU regression against physical ROM03 observations
+hdl/sim/fixtures/iigs_mmu_rom03.json,Multitini One,,GPL-3.0-only,source-reviewed,Original captured MMU behavior data and selection classifications; no Apple ROM bytes

@@ -3,7 +3,7 @@
 module BUFG(input wire I,output wire O);assign O=I;endmodule
 // Original synthetic 65816 programs check slot mapping through the complete
 // production adapter/cache at stock and accelerated speeds. Expected slot
-// latch semantics follow KEGS 1.38 moremem.c; no Apple ROM bytes are used.
+// latch semantics follow physical ROM03 observations; no Apple ROM bytes are used.
 module tb_apple_iigs_mmu_slots;
     reg core_clk=0;always #8.730 core_clk=~core_clk;
     reg reset=1,core_reset_request=1,pause_request=0,clear_load_error=0;
@@ -57,7 +57,8 @@ module tb_apple_iigs_mmu_slots;
         end
     end
 
-    reg [7:0] rom[0:131071];
+    reg [7:0] rom[0:262143];
+    integer rom_size=131072,ff_base=65536;
     integer speed=0,pc=0,result_count=0,retired_slots=0,protected_writes=0,observed_result=0;
     bit captured_read=0,captured_rom=0,captured_fast=0,captured_slow=0;
     reg [7:0] expected[0:255];
@@ -91,7 +92,8 @@ module tb_apple_iigs_mmu_slots;
         load_epoch=~load_epoch;
         for(integer i=0;i<size;i++)begin
           value=0;
-          if(kind==8'h41)value=rom[i];
+          if(kind==8'h40 || kind==8'h41)value=rom[i];
+          else if(kind==8'h43 && i==0)value=rom_size==262144 ? 1:0;
           else if(kind==8'h43 && i==1)value=8'(speed);
           else if(kind==8'h43 && i==3)value=8'h10;
           else if(kind==8'h49)begin
@@ -118,7 +120,7 @@ module tb_apple_iigs_mmu_slots;
       if(dut.bus_write && dut.cpu_logical_addr[23:8]==16'h0300)begin
         if(dut.cpu_speed!==3'(speed))$fatal(1,"Effective CPU speed%0d differs from requested%0d",dut.cpu_speed,speed);
         if(dut.cpu_logical_addr[7:0]!=8'(observed_result) || !captured_read)
-          $fatal(1,"Missing source read for slot result%0d",observed_result);
+          $fatal(1,"Missing source read for slot result%0d addr%06x expectedsrc%06x speed%0d",observed_result,dut.cpu_logical_addr,expected_source[observed_result],speed);
         if(!check_value[observed_result] && (captured_rom || captured_fast || captured_slow))
           $fatal(1,"Unmapped/external slot returned system memory check%0d %s rom%0d fast%0d slow%0d",observed_result,case_name[observed_result],captured_rom,captured_fast,captured_slow);
         observed_result++;captured_read=0;
@@ -129,7 +131,8 @@ module tb_apple_iigs_mmu_slots;
           $fatal(1,"Absent bank accessed backing memory addr%06x",dut.cpu_logical_addr);
       end
       if((dut.cpu_logical_addr[23:16]==0 || dut.cpu_logical_addr[23:16]==1 ||
-          dut.cpu_logical_addr[23:16]==8'he0 || dut.cpu_logical_addr[23:16]==8'he1) &&
+          dut.cpu_logical_addr[23:16]==8'he0 || dut.cpu_logical_addr[23:16]==8'he1 ||
+          (dut.machine_i.CYAREG[4] && dut.cpu_logical_addr[23:16]<128)) &&
           (dut.cpu_logical_addr[23:16]>=8'he0 || !dut.machine_i.shadow[6]) &&
           dut.cpu_logical_addr[15:0]>=16'hc100 && dut.cpu_logical_addr[15:0]<=16'hcfff)begin
         retired_slots++;
@@ -142,17 +145,18 @@ module tb_apple_iigs_mmu_slots;
 
     initial begin
       integer polls;byte actual;reg [7:0] bank_id;
-      for(integer setting=0;setting<2;setting++)begin
-        speed=setting==0 ? 0:6;reset=1;core_reset_request=1;
-        result_count=0;retired_slots=0;protected_writes=0;observed_result=0;captured_read=0;pc=24'h020000;
-        for(integer i=0;i<131072;i++)rom[i]=8'hea;
-        rom[131068]=0;rom[131069]=8'he0;
-        // Reset entry: SEI; JML $020000.
-        rom[122880]=8'h78;rom[122881]=8'h5c;rom[122882]=0;rom[122883]=0;rom[122884]=2;
-        rom[65536+16'hc123]=8'hc1;rom[65536+16'hc300]=8'hc3;
-        rom[65536+16'hc700]=8'hc7;rom[65536+16'hc800]=8'hc8;
-        rom[65536+16'hc803]=8'hc8;rom[65536+16'hc823]=8'hc8;
-        rom[65536+16'hcfff]=8'hcf;rom[65536+16'hc071]=8'h71;rom[65536+16'hc07f]=8'h7f;
+      for(integer setting=0;setting<4;setting++)begin
+        speed=(setting&1)==0 ? 0:6;rom_size=setting<2 ? 131072:262144;ff_base=rom_size-65536;reset=1;core_reset_request=1;
+        result_count=0;retired_slots=0;protected_writes=0;observed_result=0;captured_read=0;pc=24'h02a000;
+        for(integer i=0;i<rom_size;i++)rom[i]=8'hea;
+        rom[rom_size-4]=0;rom[rom_size-3]=8'he0;
+        // Reset entry: SEI; JML $02A000.
+        rom[ff_base+16'he000]=8'h78;rom[ff_base+16'he001]=8'h5c;rom[ff_base+16'he002]=0;rom[ff_base+16'he003]=8'ha0;rom[ff_base+16'he004]=2;
+        rom[ff_base+16'hc123]=8'hc1;rom[ff_base+16'hc300]=8'hc3;
+        rom[ff_base+16'hc700]=8'hc7;rom[ff_base+16'hc800]=8'hc8;
+        rom[ff_base+16'hc803]=8'hc8;rom[ff_base+16'hc823]=8'hc8;
+        rom[ff_base+16'hd800]=8'hd8;
+        rom[ff_base+16'hcfff]=8'hcf;rom[ff_base+16'hc071]=8'h71;rom[ff_base+16'hc07f]=8'h7f;
         emit(8'h18);emit(8'hfb);emit(8'he2);emit(8'h30); // native A8/X8
         io_write(16'hc035,8'h08);io_write(16'hc02d,8'h80);
         io_write(16'hc007,0);
@@ -167,7 +171,7 @@ module tb_apple_iigs_mmu_slots;
         capture(24'h00c800,8'hc8,1,"internal C8 latch");
         capture(24'h00c700,8'ha7,1,"INTC8 does not replace CN firmware");
         capture(24'h00c800,8'hc8,1,"C7 read does not clear INTC8");
-        capture(24'h00cfff,8'hcf,1,"CFFF returns internal byte before clear");
+        capture(24'h00cfff,0,0,"CFFF releases internal selection for its read");
         write_long(24'h00c300,8'h11);
         capture(24'h00c800,8'hc8,1,"C3 write also sets INTC8");
         write_long(24'h00cfff,0);
@@ -218,21 +222,47 @@ module tb_apple_iigs_mmu_slots;
           emit(8'h8f);emit(region==0 ? 8'h00 : 8'ha0);emit(region==0 ? 8'h20 : 8'h93);emit(8'h03);
           capture(region==0 ? 24'he12000 : 24'he193a0,8'h44,1,"SHR LDA/STA self-copy restores background");
         end
-        // KEGS sizing probes and other uninstalled-bank reads return zero;
+        // Uninstalled-bank reads retain the bank byte;
         // stores are ignored and must never request either RAM backing.
         for(integer missing=0;missing<4;missing++)begin
           bank_id=missing==0 ? 8'h80 : missing==1 ? 8'he2 : missing==2 ? 8'hf0 : 8'hf8;
           write_long({bank_id,16'h0000},8'h99);write_long({bank_id,16'h0001},8'h88);
           write_long({bank_id,16'h1234},8'h77);
-          capture({bank_id,16'h0000},0,1,"KEGS absent-bank sizing offset0 returns zero");
-          capture({bank_id,16'h0001},0,1,"KEGS absent-bank sizing offset1 returns zero");
-          capture({bank_id,16'h1234},0,1,"KEGS absent-bank general read returns zero");
+          capture({bank_id,16'h0000},bank_id,1,"Absent-bank offset0 retains bank byte");
+          capture({bank_id,16'h0001},bank_id,1,"Absent-bank offset1 retains bank byte");
+          capture({bank_id,16'h1234},bank_id,1,"Absent-bank general read retains bank byte");
         end
-        capture(24'hfc1234,0,1,"KEGS ROM01 reserved FC reads zero");
-        capture(24'hfd1234,0,1,"KEGS ROM01 reserved FD reads zero");
+        capture(24'hfc1234,rom_size==131072 ? 8'hfc:8'hea,1,"FC availability follows ROM revision");
+        capture(24'hfd1234,rom_size==131072 ? 8'hfd:8'hea,1,"FD availability follows ROM revision");
+        // Exercise the newly measured rules through CPU/cache retirement.
+        io_write(16'hc029,1);io_write(16'hc068,8'h08);
+        io_write(16'hc035,0);io_write(16'hc036,8'h90);
+        write_long(24'h020400,8'h42);capture(24'he00400,8'h42,1,"Extended even text shadow");
+        write_long(24'h030400,8'h43);capture(24'he10400,8'h43,1,"Extended odd text shadow");
+        write_long(24'he00800,0);write_long(24'h020800,8'h52);
+        capture(24'he00800,rom_size==262144 ? 8'h52:0,1,"Text2 shadow follows ROM revision");
+        io_write(16'hc006,0);io_write(16'hc00a,0);read_long(24'he0cfff);
+        capture(24'h02c700,8'ha7,1,"Extended slot7 CN alias");
+        capture(24'h02c800,8'ha8,1,"Extended slot7 expansion alias");
+        capture(24'h02c300,8'hc3,1,"Extended C3 latch acquisition");
+        capture(24'h02c800,8'hc8,1,"Extended internal C800 ownership");
+        capture(24'h02cfff,0,0,"Extended CFFF release");
+        write_long(24'h02c005,0);capture(24'he0c068,8'h18,1,"Extended C005 changes RAMWRT");
+        write_long(24'h022000,8'h62);capture(24'he12000,8'h62,1,"Extended aux redirect and HGR shadow");
+        io_write(16'hc068,8'h08);
+        for(integer k=0;k<2;k++)begin
+          bank_id=8'he0+8'(k);
+          read_long(24'he0c083);read_long(24'he0c083);
+          write_long({bank_id,16'hd800},8'h72+8'(k));
+          read_long(24'he0c082);read_long(24'he0c082);
+          capture({bank_id,16'hd800},8'hd8,1,"Slow LC ROM read");
+          write_long({bank_id,16'hd800},8'h99);
+          read_long(24'he0c080);
+          capture({bank_id,16'hd800},8'h72+8'(k),1,"Slow LC rejected protected store");
+        end
         emit(8'hdb);
         repeat(20)@(negedge core_clk);reset=0;
-        packet(8'h43,16);packet(8'h41,131072);packet(8'h42,4096);packet(8'h46,4096);packet(8'h49,2304);
+        packet(8'h43,16);packet(rom_size==262144 ? 8'h40:8'h41,rom_size);packet(8'h42,4096);packet(rom_size==262144 ? 8'h44:8'h46,4096);packet(8'h49,2304);
         if(!rom_loaded)$fatal(1,"Synthetic slot ROM set not ready");
         // External HDD firmware is visible only while a synthetic disk is mounted.
         @(negedge core_clk);media_slot=0;media_kind=8'h40;media_image_size=8192;media_generation=1;media_mount=1;

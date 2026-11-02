@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "policy": "KEGS takes precedence on MMU differences by user instruction. See docs/APPLE_IIGS_MMU_AUDIT.md for exclusions.",
+  "policy": "Physical ROM03 MMU1 observations take precedence on measured MMU differences. See docs/APPLE_IIGS_MMU_AUDIT.md for coverage and limits.",
   "references": {
     "kegs": {
       "version": "1.38",
@@ -24,5 +24,15 @@
       }
     }
   },
-  "implementation": "Original HDL and independent tests; reference source is not imported or required at runtime."
+  "implementation": "Original HDL and tests with captured hardware observations; reference emulator source is not imported or required at runtime.",
+  "authority": {
+    "kind": "physical ROM03 MMU1 capture",
+    "source_packet_sha256": "229b1ff3000003086ab63ca9abe33cd8f1dafee29acd611ac163f2f5f06d923c",
+    "source_packet_crc32": "9fa6eb7c",
+    "fixture": "hdl/sim/fixtures/iigs_mmu_rom03.json",
+    "fixture_sha256": "cd2bea2c7d36d209ce73f3bf24864544ce3337f6ccb76e4d4240d1287ef9f8e0",
+    "main_observations": 45824,
+    "supplemental_comparisons": 176,
+    "rom_bytes_in_fixture": false
+  }
 }

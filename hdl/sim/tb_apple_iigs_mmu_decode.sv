@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns/1ps
-// Independent address/effect oracle. KEGS 1.38 moremem.c is the selected
-// reference: fixup_bank0_*, fixup_shadow_*, fixup_lc and fixup_intcx.
-// This does not compare two instances of the production decode to each other.
-// NEWVIDEO latch-off retains the port's existing direct-E1 behavior; KEGS
-// warns on that unsupported setting. No GS-only linearization is asserted.
+// Address/effect oracle for the physical ROM03 mapping rules.
 module tb_apple_iigs_mmu_decode;
     reg [7:0] bank_log=0,shadow=0,SLTROMSEL=0;
     reg [15:0] addr_log=0;
@@ -35,12 +31,15 @@ module tb_apple_iigs_mmu_decode;
 
     function automatic bit low_bank;return bank_log<=1;endfunction
     function automatic bit slow_bank;return bank_log==8'he0 || bank_log==8'he1;endfunction
-    function automatic bit low_even;
-      return bank_log==0 || bank_log==8'he0 || (bank_log==8'he1 && !bank_latch);
+    function automatic bit fast_mapped(input integer n);
+      return low_bank() || (shadow_all && int'(bank_log)<(n==0 ? 128:32) && bank_log<8'he0);
     endfunction
-    function automatic bit selected_aux;
+    function automatic bit low_even(input integer n);
+      return (!bank_log[0] && fast_mapped(n)) || bank_log==8'he0 || (bank_log==8'he1 && !bank_latch);
+    endfunction
+    function automatic bit selected_aux(input integer n);
       if(bank_log==1 || (bank_log==8'he1 && bank_latch))return 1;
-      if(!low_even())return 0;
+      if(!low_even(n))return 0;
       // KEGS fixup_shadow_iolc maps Cxxx from each bank's own Dxxx image.
       if(bank_log==0 && shadow[6] && addr_log>=16'hc000 && addr_log<16'hd000)return 0;
       if(addr_log<16'h0200 || addr_log>=16'hc000)return ALTZP;
@@ -48,26 +47,25 @@ module tb_apple_iigs_mmu_decode;
       if(STORE80 && HIRES_MODE && addr_log>=16'h2000 && addr_log<16'h4000)return PAGE2;
       return we ? RAMWRT:RAMRD;
     endfunction
-    function automatic [7:0] selected_bank;
+    function automatic [7:0] selected_bank(input integer n);
       reg [7:0] b;
       b=(bank_log==8'he1 && !bank_latch) ? 8'he0:bank_log;
-      if(selected_aux())b=b|8'h01;
+      if(selected_aux(n))b=b|8'h01;
       return b;
     endfunction
-    function automatic [15:0] ram_offset;
+    function automatic [15:0] ram_offset(input integer n);
       reg [15:0] a;
       a=addr_log;
       if(low_bank() && shadow[6] && addr_log>=16'hc000 && addr_log<16'he000)
         a=addr_log^16'h1000;
       else if(addr_log>=16'hd000 && addr_log<16'he000 && !LCRAM2 &&
-              ((slow_bank() && (we || !RDROM)) ||
-               (low_bank() && !shadow[6] && ((!we && !RDROM) || (we && LC_WE)))))
+              ((slow_bank() || (fast_mapped(n) && !shadow[6])) && (!RDROM || (we && LC_WE))))
         a=addr_log-16'h1000;
       return a;
     endfunction
-    function automatic bit video_shadow;
+    function automatic bit video_shadow(input integer n);
       bit odd;
-      odd=(selected_bank() & 8'h01)!=0;
+      odd=(selected_bank(n) & 8'h01)!=0;
       if(addr_log>=16'h0400 && addr_log<16'h0800)return !shadow[0];
       if(addr_log>=16'h0800 && addr_log<16'h0c00)return !rom_select && !shadow[5];
       if(addr_log>=16'h2000 && addr_log<16'h4000)
@@ -87,11 +85,10 @@ module tb_apple_iigs_mmu_decode;
       bit want_fast,want_mirror;
       reg [23:0] want_addr;
       #1;
-      want_addr={selected_bank(),ram_offset()};
       for(integer n=0;n<2;n++)begin
+        want_addr={selected_bank(n),ram_offset(n)};
         want_fast=int'(bank_log)<(n==0 ? 128:32);
-        want_mirror=we && (low_bank() ? video_shadow():
-          (want_fast && shadow_all && bank_log[0] && addr_log>=16'h2000 && addr_log<16'ha000 && !shadow[3]));
+        want_mirror=we && want_fast && fast_mapped(n) && video_shadow(n);
         if(slow_bank())begin want_fast=0;want_mirror=we;end
         if(addr_bus[n]!==want_addr)fail("video address",n,$sformatf("got%06x expected%06x",addr_bus[n],want_addr));
         if(fastram_ce[n]!==want_fast)fail("fast RAM",n,$sformatf("got%0b expected%0b",fastram_ce[n],want_fast));
@@ -104,8 +101,8 @@ module tb_apple_iigs_mmu_decode;
     task check_aux;
       reg [23:0] want_addr;
       #1;
-      want_addr={selected_bank(),ram_offset()};
       for(integer n=0;n<2;n++)begin
+        want_addr={selected_bank(n),ram_offset(n)};
         if(addr_bus[n]!==want_addr)fail("aux mapping",n,$sformatf("got%06x expected%06x",addr_bus[n],want_addr));
         checks++;aux_checks++;
       end
@@ -114,17 +111,17 @@ module tb_apple_iigs_mmu_decode;
       bit active,want_rom,want_fast,want_slow;
       reg [23:0] want_addr;
       #1;
-      active=low_bank() && !shadow[6];
-      want_rom=active && !we && (RDROM || !vpb_n);
-      want_addr={selected_bank(),ram_offset()};
       for(integer n=0;n<2;n++)begin
+        want_addr={selected_bank(n),ram_offset(n)};
+        active=slow_bank() || (fast_mapped(n) && !shadow[6]);
+        want_rom=active && !we && (RDROM || !vpb_n);
         want_fast=int'(bank_log)<(n==0 ? 128:32) && !want_rom && !(active && we && !LC_WE);
-        want_slow=slow_bank();
+        want_slow=slow_bank() && !want_rom && !(we && !LC_WE);
         if(fastram_ce[n]!==want_fast || slowram_ce[n]!==want_slow)
           fail("LC source",n,$sformatf("fast/slow=%0b/%0b expected%0b/%0b",fastram_ce[n],slowram_ce[n],want_fast,want_slow));
         if(!we && rom2_ce[n]!==want_rom)fail("LC ROM",n,$sformatf("got%0b expected%0b",rom2_ce[n],want_rom));
         if((want_fast || want_slow) && addr_bus[n]!==want_addr)fail("LC offset",n,$sformatf("got%06x expected%06x",addr_bus[n],want_addr));
-        if(want_slow && slowram_we[n]!==we)fail("slow LC write",n,"KEGS slow RAM ignores LC_WE");
+        if(want_slow && slowram_we[n]!==we)fail("slow LC write",n,"slow LC write gate");
         if(IO[n] || EXTERNAL_IO[n] || slot_ce[n] || slot_internalrom_ce[n])fail("LC exclusion",n,"folded RAM mistaken for I/O/slot");
         checks++;lc_checks++;
       end
@@ -134,14 +131,14 @@ module tb_apple_iigs_mmu_decode;
       reg [23:0] want_addr;
       integer slot;
       #1;
-      mapped=slow_bank() || (low_bank() && !shadow[6]);
+      for(integer n=0;n<2;n++)begin
+      mapped=slow_bank() || (fast_mapped(n) && !shadow[6]);
       external=mapped && addr_log>=16'hc090 && addr_log<16'hc100 && SLTROMSEL[addr_log[6:4]];
       slot=int'(addr_log[10:8]);
       internal_slot=INTCXROM || (slot==3 ? !SLOTC3ROM:!SLTROMSEL[slot]);
       want_rom=mapped && ((addr_log>=16'hc071 && addr_log<=16'hc07f) ||
-               (addr_log>=16'hc800 && (INTCXROM || INTC8ROM)));
-      want_addr={selected_bank(),ram_offset()};
-      for(integer n=0;n<2;n++)begin
+               (addr_log>=16'hc800 && (INTCXROM || (INTC8ROM && addr_log!=16'hcfff))));
+        want_addr={selected_bank(n),ram_offset(n)};
         want_fast=!mapped && int'(bank_log)<(n==0 ? 128:32);
         if(IO[n] !== (mapped && addr_log<16'hc100 && !external))fail("I/O aliases",n,"wrong internal I/O select");
         if(EXTERNAL_IO[n]!==external)fail("slot I/O",n,"wrong external I/O select");
@@ -299,7 +296,7 @@ module tb_apple_iigs_mmu_decode;
         background_scene(8'h81,16'h2000,1,8'h57,0,0);
         background_scene(8'h21,16'h2000,1,8'h57,1,0);
       end
-      $display("PASS IIgs MMU decode: %0d checks; shadow=%0d aux=%0d LC=%0d IO/slots=%0d ROM=%0d scenes=%0d; KEGS1.38 rules, RAMSIZE32/128, ROM1/3",checks,shadow_checks,aux_checks,lc_checks,io_checks,rom_checks,scene_checks);
+      $display("PASS IIgs MMU decode: %0d checks; shadow=%0d aux=%0d LC=%0d IO/slots=%0d ROM=%0d scenes=%0d; physical ROM03 rules, RAMSIZE32/128, ROM1/3",checks,shadow_checks,aux_checks,lc_checks,io_checks,rom_checks,scene_checks);
       $finish;
     end
     initial begin #100000000;$fatal(1,"MMU decode test timeout");end

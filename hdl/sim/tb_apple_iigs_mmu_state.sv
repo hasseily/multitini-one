@@ -31,10 +31,8 @@ module tb_apple_iigs_mmu_state;
     reg [7:0] e_shadow=0,e_speed=0,e_slotreg=0,e_newvideo=8'h41;
     integer checks=0,failures=0,transactions=0,printed_failures=0;
     string group_name,printed_group;
-    // KEGS also clears power-on bit 6 on a reserved-bit-5 write. Such a
-    // write emits a KEGS diagnostic; this bench compares the stored byte.
     function automatic [7:0] speed_value(input [7:0] value);
-        speed_value=(value & 8'h9f) | ((!rom1 && !value[5]) ? (value & 8'h40):8'd0);
+        return value;
     endfunction
     task expect_byte(input [7:0] actual,expected,input string label_text);
         begin
@@ -64,17 +62,17 @@ module tb_apple_iigs_mmu_state;
     task reference_access(input [7:0] bank,offset,value,input bit rd);
         bit io_enabled;
         begin
-            io_enabled=bank==8'he0 || bank==8'he1 || ((bank==0 || bank==1) && !e_shadow[6]);
+            io_enabled=bank==8'he0 || bank==8'he1 || ((bank==0 || bank==1 || (e_speed[4] && bank<128)) && !e_shadow[6]);
             if(io_enabled)begin
                 if(!rd && offset<16)case(offset[3:1])
                     0:e_store=offset[0];1:e_ramrd=offset[0];2:e_ramwrt=offset[0];3:e_intcx=offset[0];
                     4:e_altzp=offset[0];
-                    5:begin e_slot3=offset[0];e_slotreg[3]=offset[0];end
+                    5:e_slot3=offset[0];
                     6:e_eighty=offset[0];7:e_altchar=offset[0];
                 endcase
                 if(!rd)case(offset)
                     8'h29:e_newvideo=value & 8'he1;
-                    8'h2d:begin e_slotreg=value;e_slot3=value[3];end
+                    8'h2d:e_slotreg=value & 8'hf6;
                     8'h35:e_shadow=value;
                     8'h36:e_speed=speed_value(value);
                     8'h68:{e_altzp,e_page2,e_ramrd,e_ramwrt,e_rdrom,e_lcbank2,e_rombank,e_intcx}=value;
@@ -159,6 +157,7 @@ module tb_apple_iigs_mmu_state;
             access_io(8'he0,8'h22,8'hf2,0);
         end
     endtask
+    `include "apple_iigs_mmu_rom3_capture.vh"
     reg [7:0] banks[0:3];
     initial begin
         banks[0]=0;banks[1]=1;banks[2]=8'he0;banks[3]=8'he1;
@@ -199,7 +198,7 @@ module tb_apple_iigs_mmu_state;
             read_register(8'he0,8'h2d,e_slotreg);check_slot3(slot[0]);
             for(integer value=0;value<256;value++)begin
                 access_io(8'he0,8'h2d,8'(value),0);
-                read_register(8'he0,8'h2d,8'(value));check_slot3(value[3]);
+                read_register(8'he0,8'h2d,8'(value)&8'hf6);check_slot3(slot[0]);
             end
         end
         $display("GROUP slot3 complete transactions=%0d failures=%0d",transactions,failures);
@@ -237,8 +236,9 @@ module tb_apple_iigs_mmu_state;
             end
         end
         $display("GROUP speed/reset complete transactions=%0d failures=%0d",transactions,failures);
+        capture_rom3();
         if(failures)$fatal(1,"MMU state failures=%0d checks=%0d transactions=%0d",failures,checks,transactions);
         $display("PASS: IIgs MMU state checks=%0d transactions=%0d",checks,transactions);$finish;
     end
-    initial begin #10000000;$fatal(1,"MMU state timeout");end
+    initial begin #100000000;$fatal(1,"MMU state timeout");end
 endmodule

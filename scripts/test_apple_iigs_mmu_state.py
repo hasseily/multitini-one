@@ -42,9 +42,21 @@ def main() -> int:
             raise ValueError(name + " failed:\n" + output[-14000:])
         return output
 
+    fixture = ROOT / "hdl/sim/fixtures/iigs_mmu_rom03.json"
+    observed = json.loads(fixture.read_text())
+    values = b"".join(bytes.fromhex(p["observations_hex"]) for p in observed["profiles"])
+    if len(values) != 45824 or observed["flags"] or observed["anomalies"]:
+        raise ValueError("Invalid physical ROM03 observation fixture")
+    extra = observed["supplemental"]
+    supplemental = bytes(v for key in ("absent_samples", "lc_flat", "extended_io", "text2_cya6")
+                         for row in extra[key] for v in row)
+    supplemental += bytes(sum(v << bit for bit, v in enumerate(row)) for row in extra["c800_internal"])
+    if len(supplemental) != 176:
+        raise ValueError("Invalid supplemental capture")
+    (build / "rom3-capture.hex").write_text("".join(f"{v:02x}\n" for v in values + supplemental))
     bench = ROOT / "hdl/sim/tb_apple_iigs_mmu_state.sv"
     sources = machine_sources() + [bench]
-    captured = sources + [ROOT / "third_party/apple-iigs/upstream/rtl/dhr_lut.vh",
+    captured = sources + [fixture, ROOT / "hdl/sim/apple_iigs_mmu_rom3_capture.vh",ROOT / "third_party/apple-iigs/upstream/rtl/dhr_lut.vh",
                           ROOT / "scripts/port_apple_iigs_core.py", ROOT / "scripts/test_apple_iigs_ports.py",
                           Path(__file__).resolve()]
     def hashes():
@@ -54,7 +66,7 @@ def main() -> int:
     top = bench.stem
     directory = build / "obj"
     run([tool("verilator_bin") if os.name == "nt" else tool("verilator"), "--cc", "--exe", "--main",
-         "--timing", "-Wno-fatal", "--top-module", top, "-I" + str(ROOT / "third_party/apple-iigs/upstream/rtl"),
+         "--timing", "-Wno-fatal", "-I" + str(bench.parent), "--top-module", top, "-I" + str(ROOT / "third_party/apple-iigs/upstream/rtl"),
          "--Mdir", directory, *sources], "generate")
     executable = directory / ("V" + top + (".exe" if os.name == "nt" else ""))
     if os.name == "nt":
@@ -65,7 +77,7 @@ def main() -> int:
              "-o", executable], "compile")
     else:
         run([tool("make"), "-C", directory, "-f", "V" + top + ".mk", "-j8"], "compile")
-    output = run([executable], "simulate")
+    output = run([executable, "+ROM3_CAPTURE=rom3-capture.hex"], "simulate")
     match = re.search(r"PASS: IIgs MMU state checks=(\d+) transactions=(\d+)", output)
     if not match:
         raise ValueError("Missing MMU state completion marker")
@@ -74,12 +86,13 @@ def main() -> int:
     (build / "validation.json").write_text(json.dumps({
         "schema_version": 1, "files": before, "checks": int(match[1]), "transactions": int(match[2]),
         "coverage": ["four bank aliases, C000-C00F write-only behavior", "C029 all values, reserved bits and warm-reset preservation", "C035 all values and cross-alias readback", "C068 all values and LC latch preservation",
-                     "KEGS C00A/C00B/C017/C02D shared slot3 state", "every LC read/write access pair and cross-alias sequence",
+                     "independent C00A/C00B/C017 state; C02D mask F6", "every LC read/write access pair and cross-alias sequence",
                      "PAGE2/HIRES read and write switches through four aliases", "held uncommitted I/O cycles", "IOLC guard",
-                     "C036 reserved bits, ROM versions, dirty video and LC reset"],
-        "references": ["KEGS 1.38 moremem.c io_read/io_write (LC and soft switches), sim65816.c do_reset, video.c video_reset"],
+                     "C036 full-byte readback, ROM versions, dirty video and LC reset; 45824 physical ROM03 observations"],
+        "physical_capture_sha256": observed["source_packet_sha256"],
+        "physical_observations": len(values), "supplemental_observations": len(supplemental),
         "limits": ["CPU bus is forced; production decode and I/O state machinery are used.",
-                   "KEGS state semantics take precedence; its diagnostics on reserved-bit writes are not reproduced.",
+                   "Physical fixture compares memory effects and source selection, not backing-memory or CPU timing.",
                    "No system ROM, full CPU program, synthesis, timing or board acceptance is implied."]}, indent=2) + "\n")
     print(output.strip())
     return 0

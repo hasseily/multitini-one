@@ -38,6 +38,19 @@
             media_write_data_ready=1;@(negedge core_clk);media_write_data_ready=0;
         end
     end endtask
+    // C800 reads with no owner return the floating bus, a variable value on
+    // ROM01 and ROM03 hardware. Record the machine's floating-bus byte at each
+    // unowned C800 read commit; the stored results must match it.
+    integer released_c800_count=0;
+    reg [7:0] released_c800[0:1];
+    // CLK14 is gated while the bench holds reset, so the count resets asynchronously.
+    always @(posedge dut.machine_i.CLK_14M or posedge reset)
+        if(reset)released_c800_count<=0;
+        else if(dut.machine_i.NATIVE_COMMIT && !dut.machine_i.hdd_dma && !dut.machine_i.we &&
+                dut.machine_i.addr_bef==16'hc800 && !dut.machine_i.hdd_expansion_select)begin
+            if(released_c800_count<2)released_c800[released_c800_count]<=dut.machine_i.floating_bus;
+            released_c800_count<=released_c800_count+1;
+        end
     task smartport_machine_checks(input integer speed,input bit bypass);
         reg [23:0] buffer;integer wire_slot;
         begin
@@ -99,9 +112,10 @@
             if(memory[24'h020150>>3][15:0]!==16'haa27 || memory[24'h050000>>3]!==64'haaaaaaaaaaaaaaaa)
                 $fatal(1,"failed read copied stale sector bytes or lost final error %x",memory[24'h020150>>3]);
             if(memory[24'h020140>>3][7:0]!==hdd_rom[0] || memory[24'h020140>>3][15:8]!==hdd_rom[256] ||
-                memory[24'h020140>>3][23:16]!==hdd_rom[2303] || memory[24'h020140>>3][31:24]!==8'h80 ||
-                memory[24'h020140>>3][39:32]!==8'h80)
-                $fatal(1,"C700/C800 owner,CFFF release,otherCn release %x",memory[24'h020140>>3]);
+                memory[24'h020140>>3][23:16]!==hdd_rom[2303] || released_c800_count!==2 ||
+                memory[24'h020140>>3][31:24]!==released_c800[0] || memory[24'h020140>>3][39:32]!==released_c800[1])
+                $fatal(1,"C700/C800 owner,CFFF release,otherCn release %x floating%x/%x unowned reads%0d",
+                    memory[24'h020140>>3],released_c800[0],released_c800[1],released_c800_count);
             $display("PASS: SmartPort production eight-unit stock/max/bypass speed%0d bypass%b32-bitLBA24-bitDMA bankcross cachecoherence/errors",speed,bypass);
         end
     endtask

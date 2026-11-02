@@ -19,6 +19,12 @@ CMakeLists.txt text eol=lf
 .gitattributes text eol=lf
 hdl/common/multitini_font7x8.mem text eol=lf
 
+# Keep the IIgs probe and slot-ROM source hashes stable across checkouts.
+tools/iigs-mmu-probe/** text eol=lf
+hdl/sim/apple_iigs_mmu_rom3_capture.vh text eol=lf
+hdl/core/apple_iigs/roms/smartport.a65 text eol=lf
+hdl/sim/apple_iigs_smartport_rom.cpp text eol=lf
+
 # Preserve imported source byte-for-byte, including upstream whitespace.
 third_party/appletini/** -whitespace
 third_party/apple-iigs/upstream/** -text -whitespace

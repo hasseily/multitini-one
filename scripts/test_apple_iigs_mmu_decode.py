@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Check production IIgs MMU effects against an independent KEGS-rule oracle."""
+"""Check production IIgs MMU effects against an independent physical-ROM03-rule oracle."""
 from __future__ import annotations
 import argparse
 import hashlib
@@ -68,10 +68,9 @@ def main() -> int:
     counts = dict(zip(("total", "shadow", "aux", "language_card", "io_slots", "rom", "background_scenes"), map(int, match.groups())))
     (build / "validation.json").write_text(json.dumps({
         "passed": True, "source_sha256": before, "checks": counts,
-        "reference": "KEGS 1.38 moremem.c; independent architectural address/effect oracle",
+        "reference": "physical ROM03 MMU1 observations; independent address/effect oracle",
         "limits": ["Combinatorial MMU only: no real CPU execution, FPGA timing or physical-board acceptance.",
-                   "NEWVIDEO latch-off retains the existing port behavior; KEGS does not qualify that mode.",
-                   "No GSSquared-only linearization, extended aux/IOLC aliases or unpopulated-bank shadowing is asserted."]
+                   "Unpopulated-bank shadowing and unmeasured ASIC behavior are not established by this test."]
     }, indent=2) + "\n")
     print(output.strip())
     return 0

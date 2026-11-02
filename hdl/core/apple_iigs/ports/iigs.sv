@@ -449,8 +449,7 @@ output video_pal,
   logic               RAMWRT;
   logic               INTCXROM;
   logic               ALTZP;
-  // KEGS keeps C00A/B and C02D bit 3 in the same slot byte.
-  wire                SLOTC3ROM = SLTROMSEL[3];
+  logic               SLOTC3ROM;
   //logic               EIGHTYCOL;
   //logic               ALTCHARSET;
   //logic PAGE2;
@@ -960,7 +959,7 @@ output video_pal,
       RAMWRT<=0;
       INTCXROM<=1;
       ALTZP<=0;
-      SLTROMSEL[3]<=0;
+      SLOTC3ROM<=0;
       EIGHTYCOL<=0;
       ALTCHARSET<=0;
       PAGE2<=0;
@@ -1028,7 +1027,7 @@ output video_pal,
         begin
           case (addr[11:0])
             // Apple II compatibility soft switches ($C000-$C00F)
-            // All four mapped I/O aliases have identical side effects.
+            // All mapped I/O aliases have identical side effects.
 `ifdef DEBUG_IO
             12'h000: begin $display("**STORE80 %x",0); STORE80<= 1'b0 ; end
             12'h001: begin $display("**STORE80 %x",1); STORE80<= 1'b1 ; end
@@ -1040,8 +1039,8 @@ output video_pal,
             12'h007: begin $display("**INTCXROM %x",1);INTCXROM <= 1'b1; end
             12'h008: begin $display("**ALTZP %x",0); ALTZP<= 1'b0; end
             12'h009: begin $display("**ALTZP %x",1); ALTZP<= 1'b1; end
-            12'h00A: begin $display("**SLOTC3ROM %x",0);SLTROMSEL[3]<= 1'b0; end
-            12'h00B: begin $display("**SLOTC3ROM %x",1);SLTROMSEL[3]<= 1'b1; end
+            12'h00A: begin $display("**SLOTC3ROM %x",0);SLOTC3ROM<= 1'b0; end
+            12'h00B: begin $display("**SLOTC3ROM %x",1);SLOTC3ROM<= 1'b1; end
             12'h00C: begin $display("**EIGHTYCOL %x",0); EIGHTYCOL<= 1'b0; end
             12'h00D: begin $display("**EIGHTYCOL %x",1); EIGHTYCOL<= 1'b1; end
             12'h00E: begin $display("**ALTCHARSET %x",0); ALTCHARSET<= 1'b0; end
@@ -1057,8 +1056,8 @@ output video_pal,
             12'h007: begin INTCXROM <= 1'b1; end
             12'h008: begin ALTZP<= 1'b0; end
             12'h009: begin ALTZP<= 1'b1; end
-            12'h00A: begin SLTROMSEL[3]<= 1'b0; end
-            12'h00B: begin SLTROMSEL[3]<= 1'b1; end
+            12'h00A: begin SLOTC3ROM<= 1'b0; end
+            12'h00B: begin SLOTC3ROM<= 1'b1; end
             12'h00C: begin EIGHTYCOL<= 1'b0; end
             12'h00D: begin EIGHTYCOL<= 1'b1; end
             12'h00E: begin ALTCHARSET<= 1'b0; end
@@ -1105,9 +1104,9 @@ output video_pal,
 `endif
             12'h02b: C02BVAL <= dout; // from gsplus
 `ifdef DEBUG_IO
-            12'h02d: begin SLTROMSEL <= dout; $display("**SLTROMSEL <= %02x (slot7_external=%0d)", dout, dout[7]); end
+            12'h02d: begin SLTROMSEL <= dout & 8'hf6; $display("**SLTROMSEL <= %02x (slot7_external=%0d)", dout, dout[7]); end
 `else
-            12'h02d: begin SLTROMSEL <= dout; end
+            12'h02d: begin SLTROMSEL <= dout & 8'hf6; end
 `endif
             12'h030: begin if (bus_phi2) speaker_state <= ~speaker_state; end
             12'h031: begin
@@ -1152,9 +1151,9 @@ output video_pal,
               shadow <= dout;
             end
 `ifdef DEBUG_IO
-            12'h036: begin $display("__CYAREG %x",dout);CYAREG <= (dout & 8'h9f) | ((!rom_select && !dout[5]) ? (dout & 8'h40) : 8'h00); end
+            12'h036: begin $display("__CYAREG %x",dout);CYAREG <= dout; end
 `else
-            12'h036: begin CYAREG <= (dout & 8'h9f) | ((!rom_select && !dout[5]) ? (dout & 8'h40) : 8'h00); end
+            12'h036: begin CYAREG <= dout; end
 `endif
             12'h037: DMAREG <= dout;
             // SCC (Serial Communications Controller) - Zilog 8530
@@ -1818,11 +1817,12 @@ reg [7:0]  device_select;
 reg [7:0]  io_select;
 wire       hdd_dma;
 // C3 accesses latch internal C800 when slot 3 is internal. Other slots do
-// not clear that latch. CFFF releases it after its read/write data phase.
+// not clear that latch. CFFF releases it on reads and writes.
 // Slot 7's expansion firmware is a board extension, below internal priority.
 reg INTC8ROM=1'b0;
 reg hdd_expansion_owner=1'b0;
-wire hdd_slot_bank=bank_bef==8'h00 || bank_bef==8'h01 || bank_bef==8'he0 || bank_bef==8'he1;
+wire hdd_slot_bank=bank_bef==8'h00 || bank_bef==8'h01 || bank_bef==8'he0 || bank_bef==8'he1 ||
+    (CYAREG[4] && bank_bef<RAMSIZE && bank_bef<8'he0);
 wire hdd_expansion_select=hdd_expansion_owner && hdd_slot_bank && !inhibit_cxxx &&
     !CXROM && !INTC8ROM && SLTROMSEL[7] && addr_bef>=16'hc800 && addr_bef<=16'hcfff;
 always @(posedge CLK_14M) begin
@@ -1847,12 +1847,12 @@ always @(*)
 begin
    device_select=8'h0;
    io_select=8'h0;
-   if ((bank == 8'h0 || bank == 8'h1 || bank == 8'he0 || bank == 8'he1) && addr >= 'hc090 && addr < 'hc100 && ~is_internal_io && ~inhibit_cxxx)
+   if (EXTERNAL_IO)
    begin
 //	   $display("device_select addr[10:8] %x %x ISINTERNAL? ",addr[6:4],din);
           device_select[addr[6:4]]=1'b1;
   end
-   if ((bank == 8'h0 || bank == 8'h1 || bank == 8'he0 || bank == 8'he1) && addr >= 'hc100 && addr < 'hc800 && ~is_internal && ~CXROM && ~inhibit_cxxx)
+   if (slot_ce)
    begin
 //	   $display("io_select addr[10:8] %x din %x HDD_DO %x fastclk %x addr %x RD %x",addr[10:8],din,HDD_DO,fast_clk,addr,we);
           io_select[addr[10:8]]=1'b1;
@@ -2034,16 +2034,15 @@ vgc vgc(
 
 
 
-// KEGS returns zero for uninstalled memory; mapped empty I/O retains
-// this core's existing bus value. The KEGS EF DOC alias is not exposed.
+// Absent memory reads retain the bank byte. Unowned mapped C800
+// uses the same video/CPU floating bus as the I/O read mux.
 wire unmapped_bank = bank_bef >= RAMSIZE && bank_bef != 8'he0 &&
-    bank_bef != 8'he1 && bank_bef < 8'hfc;
-wire [7:0] floating_bus = unmapped_bank ? 8'h00 : 8'h80;
+    bank_bef != 8'he1 && (bank_bef < 8'hfc || rom_select && bank_bef < 8'hfe);
+wire [7:0] floating_bus = unmapped_bank ? bank_bef :
+    !m2_bus_driven ? cpu_last_bus :
+    (NEWVIDEO[7] && shr_pix_win) ? shr_bus_byte : video_data;
 
-// KEGS zero-fills the unused FC/FD half of a ROM01 image.
-wire reserved_rom01 = rom_select && (bank_bef==8'hfc || bank_bef==8'hfd);
 wire [7:0] din =
-  reserved_rom01 ? 8'h00 :
   (io_select[7] | hdd_expansion_select | device_select[7] | (hdd_dma & hdd_dma_we)) ? HDD_DO :
   (fastram_ce | rom_ce) ?  top_din :
   slowram_ce ? slowram_dout :
@@ -3292,6 +3291,7 @@ wire [3:0] cd_fast_thresh = (external_accel && hdd_dma) ? 4'd2 : fast_thresh;
 wire cd_dma_active = external_accel ? 1'b0 : hdd_dma;
 wire cd_slot_access = external_accel ? 1'b0 : slot_delay_this;
 wire cd_valid = external_accel ? 1'b0 : valid;
+wire ph2_en_reg;
 clock_divider clk_div_inst (
     .clk_14M(CLK_14M),
     .cyareg(cd_cyareg),
@@ -3315,6 +3315,7 @@ clock_divider clk_div_inst (
     .clk_7M_en(clk_7M_en),
     .ph0_en(ph0_en),
     .ph2_en(ph2_en),
+    .ph2_en_reg(ph2_en_reg),
     .q3_en(q3_en),
     .ph0_state(ph0_state),
     .slow(slow),
@@ -3322,8 +3323,12 @@ clock_divider clk_div_inst (
 );
 // Map clock enables to Apple IIgs standard names
 assign phi2 = ph2_en;
+// External-CPU PH2 reaches bus_phi2 only during HDD DMA. DMA holds the
+// divider's fast-escape guard off (accelerated: cd_valid=0; native:
+// cd_dma_active=1), so ph2_en equals its registered pulse. Using the register
+// keeps the CPU address decode out of DMA-time peripheral strobes.
 wire bus_phi2 = EXTERNAL_CPU
-    ? (hdd_dma ? (ph2_en & ~mem_stall) : (NATIVE_COMMIT & ~reset))
+    ? (hdd_dma ? (ph2_en_reg & ~mem_stall) : (NATIVE_COMMIT & ~reset))
     : (ph2_en & (~mem_stall | reset));
 // A DMA transaction never creates a CPU response. CPU CE must also stay low
 // until DMA relinquishes the address bus, enforced independently by RDY_IN.
@@ -3352,7 +3357,7 @@ assign cpu_memory_cycle = cpu_valid && (fastram_ce || (rom_ce && !we)) &&
 // Slot/IO and Mega II $C000-$CFFF use the native bridge. Direct E0/E1 RAM
 // ($0000-$BFFF, $D000-$FFFF with aux/ALTZP/LC/bank-latch mapping already in
 // the physical address) and every slow-RAM write (E0/E1 or shadow copy) use
-// the primary-clock slow-RAM port. KEGS E0/E1 LC windows always use RAM.
+// the primary-clock slow-RAM port. E0/E1 LC ROM reads use the ROM cache.
 // All mapped C1-CF accesses retire through the native bridge, including
 // internal ROM reads. This clocks C3/CFFF ownership once at every speed.
 wire cpu_mapped_slot_bus = hdd_slot_bank && !inhibit_cxxx &&

@@ -20,7 +20,7 @@
 //============================================================================
 
 // Apple IIgs memory decode. Pure combinational translation of a logical bus
-// access and the current soft switches. Reference: KEGS 1.38 moremem.c.
+// access and the current soft switches. Reference: physical ROM03 MMU1 capture.
 // See docs/APPLE_IIGS_MMU_AUDIT.md for the reference policy and regressions.
 
 // Multitini port, 2026-10-14: reproduced by scripts/port_apple_iigs_core.py.
@@ -79,20 +79,19 @@ module mmu #(
 
   wire low_bank = bank_log == 8'h00 || bank_log == 8'h01;
   wire slow_bank = bank_log == 8'he0 || bank_log == 8'he1;
-  wire iolc_bank = (low_bank && !shadow[6]) || slow_bank;
+  wire fast_mapped_bank = low_bank || (shadow_all && bank_log < RAMSIZE && bank_log < 8'he0);
+  wire iolc_bank = (fast_mapped_bank && !shadow[6]) || slow_bank;
   wire mapped_cxxx = iolc_bank && addr_log[15:12] == 4'hc;
   wire flat_low = low_bank && shadow[6];
 
-  // KEGS fixup_altzp/ramrd/ramwrt and fixup_bank0_{0400,2000}.
-  // Higher banks never inherit the bank-00 aux switches. KEGS does not support
-  // NEWVIDEO[0]=0; retain the existing direct E1 latch-off implementation.
+  // SPEED.4 extends aux switches and video shadowing to installed fast banks.
   wire [7:0] bank_eff = (bank_log == 8'he1 && !bank_latch) ? 8'he0 : bank_log;
-  wire switched_bank = bank_eff == 8'h00 || bank_eff == 8'he0;
+  wire switched_bank = !bank_eff[0] && (fast_mapped_bank || slow_bank);
   always_comb begin
     aux = 1'b0;
     if (switched_bank) begin
       if (addr_log < 16'h0200 || addr_log >= 16'hc000)
-        // IOLC-inhibited Cxxx bypasses ALTZP (KEGS fixup_shadow_iolc).
+        // Low-bank IOLC-inhibited Cxxx bypasses ALTZP.
         aux = ALTZP && !(flat_low && addr_log[15:12] == 4'hc);
       else if (STORE80 && (addr_log >= 16'h0400 && addr_log < 16'h0800 ||
                HIRES_MODE && addr_log >= 16'h2000 && addr_log < 16'h4000))
@@ -104,13 +103,12 @@ module mmu #(
   end
   wire [7:0] bank_phys = {bank_eff[7:1], bank_eff[0] | aux};
 
-  // Keep KEGS's backing layout: LC bank 1 at Cxxx, bank 2 at Dxxx.
+  // LC bank 1 is backed at Cxxx, bank 2 at Dxxx.
   // IOLC inhibit swaps C/D, exposing bank 2 at Cxxx and bank 1 at Dxxx.
-  // E0/E1 never overlay ROM or write-protect RAM; RDROM still selects the
-  // read-side Dxxx backing window in KEGS fixup_lc.
+  // Slow-bank LC windows also overlay ROM and obey the shared write latch.
   wire lc_dxxx_fold = addr_log[15:12] == 4'hd &&
       (flat_low || (iolc_bank && !LCRAM2 &&
-       (!RDROM || (we && (slow_bank || LC_WE)))));
+       (!RDROM || (we && LC_WE))));
   wire flat_cxxx_swap = flat_low && addr_log[15:12] == 4'hc;
   assign addr_bus = {bank_phys, addr_log[15:13],
                     addr_log[12] ^ (lc_dxxx_fold || flat_cxxx_swap), addr_log[11:0]};
@@ -128,16 +126,16 @@ module mmu #(
   assign slot_ce = slot_window && !is_internal;
   assign slot_internalrom_ce = slot_window && is_internal;
 
-  // ROM 01 has no FC/FD payload. The machine returns the KEGS zero-filled
-  // reserved-ROM value without accessing or aliasing the loaded FE/FF image.
+  // ROM01 has no FC/FD payload; these banks use the absent-memory bus value.
   assign romc_ce = bank_log == 8'hfc && !rom_select;
   assign romd_ce = bank_log == 8'hfd && !rom_select;
   assign rom1_ce = bank_log == 8'hfe;
   assign rom2_ce = bank_log == 8'hff ||
-      (low_bank && !shadow[6] && addr_log >= 16'hd000 && (RDROM || !vpb_n)) ||
-      (mapped_cxxx && addr_log >= 16'hc800 && (INTCXROM || INTC8ROM)) ||
+      (iolc_bank && addr_log >= 16'hd000 && (RDROM || !vpb_n)) ||
+      (mapped_cxxx && addr_log >= 16'hc800 &&
+       (INTCXROM || (INTC8ROM && addr_log != 16'hcfff))) ||
       (iolc_bank && addr_log >= 16'hc071 && addr_log <= 16'hc07f);
-  assign rom_writethrough = low_bank && !shadow[6] && addr_log >= 16'hd000 && LC_WE && we;
+  assign rom_writethrough = iolc_bank && addr_log >= 16'hd000 && LC_WE && we;
 
   wire txt1_shadow = !shadow[0] && addr_log >= 16'h0400 && addr_log < 16'h0800;
   wire txt2_shadow = !rom_select && !shadow[5] && addr_log >= 16'h0800 && addr_log < 16'h0c00;
@@ -156,18 +154,14 @@ module mmu #(
     // Slot/ROM writes must not corrupt LC bank 1 behind the Cxxx window.
     // Test the logical address so a legitimate Dxxx->Cxxx LC write survives.
     if (!mapped_cxxx) begin
-      if (slow_bank)
-        slowram_ce = 1'b1;
-      else if (low_bank) begin
-        if (!(addr_log >= 16'hd000 && !shadow[6] &&
-              (we ? !LC_WE : (RDROM || !vpb_n)))) begin
+      if (!(iolc_bank && addr_log >= 16'hd000 &&
+            (we ? !LC_WE : (RDROM || !vpb_n)))) begin
+        if (slow_bank)
+          slowram_ce = 1'b1;
+        else if (bank_log < RAMSIZE && bank_log < 8'he0) begin
           fastram_ce = 1'b1;
-          slowram_ce = we && low_shadow;
+          slowram_ce = we && fast_mapped_bank && low_shadow;
         end
-      end else if (bank_log < RAMSIZE && bank_log < 8'he0) begin
-        fastram_ce = 1'b1;
-        // KEGS fixup_shadow_all_banks: installed odd banks 03+, SHR only.
-        slowram_ce = we && shadow_all && bank_log[0] && shr_shadow;
       end
     end
   end

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Verify KEGS slot ownership and mapped-ROM isolation through the real IIgs CPU adapter."""
+"""Verify physical ROM03 slot ownership and mapped-ROM isolation through the real IIgs CPU adapter."""
 from __future__ import annotations
 import argparse, hashlib, json, os, re, shutil, subprocess, sys
 from pathlib import Path
@@ -42,14 +42,14 @@ def main():
             *sorted(directory.glob("*.cpp")),inc/"verilated.cpp",inc/"verilated_timing.cpp",inc/"verilated_threads.cpp","-o",executable],"compile")
     else:run([tool("make"),"-C",directory,"-f","V"+top+".mk","-j8"],"compile")
     out=run([executable],"simulate")
-    if out.count("PASS:")!=2:raise ValueError("stock and accelerated slot cases must pass")
+    if out.count("PASS:")!=4:raise ValueError("ROM01/03 stock and accelerated slot cases must pass")
     if hashes()!=before:raise ValueError("MMU slot sources changed during regression; rerun current sources")
     (build/"validation.json").write_text(json.dumps({"schema_version":1,"result":"PASS","files":before,
-        "reference":"KEGS 1.38 moremem.c slot state and config.c ROM01 reserved-bank behavior",
+        "reference":"physical ROM03 MMU1 capture; synthetic ROM01 and ROM03 programs",
         "checks":["INTCXROM and SLOTC3ROM selection", "C3 read/write INTC8 latch and CFFF read/write release",
             "External slot7 C8 owner with sticky internal override", "Mapped C1-CF accesses retire natively at both speeds",
             "Mapped Cxxx writes preserve hidden LC RAM in banks 00/01/E0/E1", "C071 and firmware aliases in all four I/O banks",
-            "IOLC inhibit permits fast-bank Cxxx RAM", "Arkanoid SHR background restore by bank03 LDA/STA at 2000 and 93A0", "ROM01 FC/FD zero reads", "Absent banks 80/E2/F0/F8 zero reads and discarded stores at sizing and general addresses"],
+            "IOLC inhibit permits fast-bank Cxxx RAM", "Arkanoid SHR background restore by bank03 LDA/STA at 2000 and 93A0", "ROM01 FC/FD bank-byte reads; ROM03 ROM payload", "Absent banks 80/E2/F0/F8 bank-byte reads and discarded stores at sizing and general addresses"],
         "limits":["Synthetic ROM only; no full-system boot, FPGA timing or physical hardware claim."]},indent=2)+"\n")
     print(out.strip());return 0
 if __name__=="__main__":

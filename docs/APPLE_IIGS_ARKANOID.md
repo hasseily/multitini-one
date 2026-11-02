@@ -72,7 +72,7 @@ revision. It is not introduced by the Multitini frame scaler or ARM firmware.
 
 The production correction recognizes installed odd banks for SHR writes when
 the all-bank path is enabled, preserving ordinary bank-01 operation and inhibit
-controls. It follows KEGS precedence and is reproduced by
+controls. It follows the measured ROM03 behavior and is reproduced by
 `scripts/port_apple_iigs_core.py`; the full audit records related corrections.
 
 ## Validation boundaries
