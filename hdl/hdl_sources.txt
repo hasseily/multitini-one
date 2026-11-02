@@ -367,6 +367,7 @@ core/amiga/ports/m68k_ea_idx.hex
 core/amiga/multitini_amiga_loader.sv
 core/amiga/multitini_amiga_memory.sv
 core/amiga/multitini_amiga_host.sv
+core/amiga/multitini_amiga_diagnostics.sv
 core/amiga/multitini_amiga_ide_block.sv
 core/amiga/multitini_amiga_display_mailbox.sv
 core/amiga/multitini_amiga_adapter.sv

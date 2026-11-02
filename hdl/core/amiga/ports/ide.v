@@ -36,6 +36,7 @@ module ide
 	input             use_fast, // 1 - supports fast read mode
 	output            no_data,  // pause for system when no data is available in fast mode
 
+	output [5:0] monitor,
 	output      [1:0] drive_en,
 
 	input       [3:0] io_address,
@@ -86,6 +87,8 @@ wire       n_data;
 reg  [1:0] n_data_r;
 wire [31:0] buf_readdata;
 wire [31:0] buf_q;
+reg monitor_old_stb=0,monitor_wide=0,monitor_read=0;
+wire monitor_retire;
 assign io_wr = io_write & |present;
 assign reset = ~rst_n | sw_reset;
 assign write_data_io = io_wr   && io_address == 0 && drq;
@@ -93,6 +96,7 @@ assign read_data_io = io_read && io_address == 0 && drq;
 assign io_done = (blk_size && io_cnt >= blk_size);
 assign io_stb = read_data_io | write_data_io;
 assign n_data = (mgmt_cnt[13:1] <= io_cnt[13:1]) && drq && fast_read;
+assign monitor_retire =monitor_old_stb && !io_stb && !reset;
 
 
 assign drq      = status[3];
@@ -351,4 +355,19 @@ dpram #(12,16) io_buf1
 
 //------------------------------------------------------------------------------
 
+// Read-only diagnostics. Retire words on the SAME falling-strobe edge as
+// io_cnt, and qualify this pre-edge bundle by the accepted native clock.
+
+always @(posedge clk) begin
+    if(reset)begin monitor_old_stb<=0;monitor_wide<=0;monitor_read<=0;end
+    else begin
+        monitor_old_stb<=io_stb;
+        if(io_stb)begin monitor_wide<=io_32;monitor_read<=read_data_io;end
+    end
+end
+
+assign monitor[0]=!reset && mgmt_write && mgmt_address==5 && mgmt_writedata[11] && (cmd==8'h20 || cmd==8'h21);
+assign monitor[2:1]=(monitor_retire && monitor_read) ? (monitor_wide ? 2'd2:2'd1):2'd0;
+assign monitor[4:3]=(monitor_retire && !monitor_read) ? (monitor_wide ? 2'd2:2'd1):2'd0;
+assign monitor[5]=io_read || io_write;
 endmodule

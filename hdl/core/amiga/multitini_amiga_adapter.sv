@@ -18,7 +18,7 @@ module multitini_amiga_adapter(
     input wire [31:0] load_offset,load_total,output wire load_ready,
     output wire [23:0] memory_addr,output wire memory_write,
     output wire [63:0] memory_wdata,output wire [7:0] memory_wstrb,
-    output wire memory_valid,memory_busy,input wire memory_ready,
+    output wire memory_burst,memory_valid,memory_busy,input wire memory_ready,
     input wire [63:0] memory_rdata,input wire memory_rvalid,memory_fault,
     output wire [31:0] core_id,output wire ready,load_error,rom_loaded,
     output wire [7:0] video_r,video_g,video_b,
@@ -43,6 +43,8 @@ module multitini_amiga_adapter(
     wire io_uio,io_fpga,io_strobe,io_wait;
     wire [15:0] io_din,io_dout,ide_wdata,ide_rdata;
     wire [5:0] ide_req;
+    wire [5:0] ide_monitor;
+    wire [7:0] memory_monitor;
     wire [4:0] ide_address;
     wire ide_write,ide_read;
     wire [23:0] rgb;
@@ -145,9 +147,9 @@ module multitini_amiga_adapter(
         .cpu_ub_n(cpu_ub_n),.cpu_lb_n(cpu_lb_n),.cpu_long(cpu_long),.cpu_wdata2(cpu_wdata2),
         .cpu_rdata(cpu_rdata),.cpu_rdata2(cpu_rdata2),.cpu_ready(cpu_ready),
         .load_valid(write_valid),.load_addr(write_addr),.load_data(write_data),.load_ready(write_ready),.load_done(write_done),
-        .run_enable(memory_run),.busy(memory_busy),.fault(memory_error),
+        .run_enable(memory_run),.busy(memory_busy),.fault(memory_error),.monitor(memory_monitor),
         .memory_addr(memory_addr),.memory_write(memory_write),.memory_wdata(memory_wdata),.memory_wstrb(memory_wstrb),
-        .memory_valid(memory_valid),.memory_ready(memory_ready),.memory_rdata(memory_rdata),
+        .memory_burst(memory_burst),.memory_valid(memory_valid),.memory_ready(memory_ready),.memory_rdata(memory_rdata),
         .memory_rvalid(memory_rvalid),.memory_fault(memory_fault));
     wire [64:0] native_rtc;
     wire [15:0] native_display_request,display_read_data;
@@ -161,6 +163,8 @@ module multitini_amiga_adapter(
         .block_ram_read_address(host_block_ram_read_address),.block_wstrb(host_block_wstrb),.block_rdata(host_block_rdata),
         .guest_reset(native_stopped),
         .native_config({3'd0,ide_fast,memcfg,cpucfg}),
+        .diag_cpu_reset_n(cpu_reset_n),.diag_cpu_wait(cpu_req && !cpu_ready),.diag_cpu_write(cpu_state==2'b11),
+        .diag_ide(ide_monitor),.diag_memory(memory_monitor),
         .clk(core_clk),.reset(reset),.chip_tick(chip_tick),
         .io_fpga(io_fpga),.io_uio(io_uio),.io_strobe(io_strobe),.io_din(io_din),.io_wait(io_wait),.io_dout(io_dout),
         .ide_req(ide_req),.ide_address(ide_address),.ide_read(ide_read),.ide_write(ide_write),.ide_wdata(ide_wdata),.ide_rdata(ide_rdata),
@@ -178,7 +182,7 @@ module multitini_amiga_adapter(
         .cpu_req(cpu_req),.cpu_addr(cpu_addr),.cpu_wdata(cpu_wdata),.cpu_state(cpu_state),.cpu_ub_n(cpu_ub_n),.cpu_lb_n(cpu_lb_n),
         .cpu_long(cpu_long),.cpu_wdata2(cpu_wdata2),.cpu_rdata(cpu_rdata),.cpu_rdata2(cpu_rdata2),.cpu_ready(cpu_ready),.cpu_ready_long(cpu_ready),
         .io_uio(io_uio),.io_fpga(io_fpga),.io_strobe(io_strobe),.io_din(io_din),.io_wait(io_wait),.io_dout(io_dout),
-        .ide_req(ide_req),.ide_address(ide_address),.ide_write(ide_write),.ide_read(ide_read),.ide_wdata(ide_wdata),.ide_rdata(ide_rdata),
+        .ide_req(ide_req),.ide_address(ide_address),.ide_write(ide_write),.ide_read(ide_read),.ide_wdata(ide_wdata),.ide_rdata(ide_rdata),.ide_monitor(ide_monitor),
         .joy1(native_joy1),.joy2(native_joy2),.mouse_buttons(native_mouse_buttons),.kms_level(native_kms_level),
         .kbd_mouse_type(native_kbd_mouse_type),.kbd_mouse_data(native_kbd_mouse_data),
         .rtc(native_rtc),.display_request(native_display_request),

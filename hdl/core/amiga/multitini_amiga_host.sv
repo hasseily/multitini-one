@@ -14,6 +14,9 @@ module multitini_amiga_host #(
     input wire [3:0] block_wstrb,output wire [31:0] block_rdata,
     input wire clk,reset,chip_tick,
     input wire guest_reset,
+    input wire diag_cpu_reset_n,diag_cpu_wait,diag_cpu_write,
+    input wire [5:0] diag_ide,
+    input wire [7:0] diag_memory,
     input wire [15:0] native_config,
     output reg io_fpga,io_uio,io_strobe,output reg [15:0] io_din,
     input wire io_wait,input wire [15:0] io_dout,
@@ -81,7 +84,8 @@ module multitini_amiga_host #(
     wire [5:0] req_snapshot;
     wire req_snapshot_valid;
     localparam [3:0] IDLE=0,PULSE=1,SETTLE=2,ARM=3,RTC_WAIT=4,
-        DISPLAY_REQUEST_WAIT=5,DISPLAY_READ_WAIT=6,DISPLAY_DRAIN=7,DISPLAY_COMMIT=8,READ_CONFIG_WAIT=9;
+        DISPLAY_REQUEST_WAIT=5,DISPLAY_READ_WAIT=6,DISPLAY_DRAIN=7,DISPLAY_COMMIT=8,READ_CONFIG_WAIT=9,
+        DIAG_CONTROL_WAIT=10,DIAG_READ_WAIT=11;
     reg [3:0] state;
     // These are encoded request states (e.g. 0 -> 5), not independent flags.
     // Publish a coherent held snapshot so a transition cannot look like a
@@ -97,7 +101,20 @@ module multitini_amiga_host #(
     // Bit28 advertises the optional framed RTC extension to ARM firmware.
     // Bits25/24 advertise sector-block transport and selectable68020/14MHz.
     // Bit23 advertises the optional CPU-side fast IDE path/configuration.
-    assign status={pending||outstanding||block_legacy_blocked,error,completion_toggle,3'b111,2'b11,2'b10,req_control,result};
+    assign status={pending||outstanding||block_legacy_blocked,error,completion_toggle,3'b111,2'b11,2'b11,req_control,result};
+    reg diag_control_valid;
+    reg [7:0] diag_action;
+    reg [15:0] diag_sequence;
+    reg [6:0] diag_index;
+    wire diag_done,diag_error,diag_frozen,diag_running;
+    wire [15:0] diag_result,diag_word;
+    multitini_amiga_diagnostics diagnostics_i(
+        .clk(clk),.reset(reset),.guest_reset((guest_reset===1'b1) || (diag_cpu_reset_n===1'b0)),
+        .chip_tick(chip_tick),.native_config(native_config),.native_request(ide_req[2:0]),
+        .ide_monitor(diag_ide),.cpu_wait(diag_cpu_wait),.cpu_write(diag_cpu_write),.memory_monitor(diag_memory),
+        .control_valid(diag_control_valid),.control_action(diag_action),.control_sequence(diag_sequence),
+        .control_done(diag_done),.control_error(diag_error),.result_sequence(diag_result),
+        .read_index(diag_index),.read_word(diag_word),.frozen(diag_frozen),.running(diag_running));
     multitini_amiga_ide_block #(.STALL_TIMEOUT_CYCLES(BLOCK_STALL_TIMEOUT_CYCLES)) block_i(
         .control_clk(control_clk),.control_resetn(control_resetn),
         .host_write(block_write===1'b1),.host_read(block_read===1'b1),
@@ -145,7 +162,9 @@ module multitini_amiga_host #(
             staged_display_request<=0;committed_display_request<=0;display_read_address<=0;
             staged_capture_mode<=0;target_capture_mode<=0;staged_display_switch<=0;display_timeout<=0;
             response_pending<=0;response_error<=0;response_word<=0;
+            diag_control_valid<=0;diag_action<=0;diag_sequence<=0;diag_index<=0;
         end else begin
+            diag_control_valid<=0;
             if(response_pending && response_ready)response_pending<=0;
             case(state)
                 IDLE:if(request_valid && !response_pending)begin
@@ -184,8 +203,22 @@ module multitini_amiga_host #(
                         staged_display_switch<=1;state<=DISPLAY_DRAIN;
                     end else if(request_data[31:24]==11 && request_data[23:0]==0)begin
                         state<=READ_CONFIG_WAIT;
+                    end else if(request_data[31:24]==12)begin
+                        diag_action<=request_data[7:0];diag_sequence<=request_data[23:8];
+                        diag_control_valid<=1;state<=DIAG_CONTROL_WAIT;
+                    end else if(request_data[31:24]==13 && request_data[23:7]==0 && diag_frozen && !diag_running)begin
+                        diag_index<=request_data[6:0];state<=DIAG_READ_WAIT;
                     end else begin response_error<=1;response_word<=0;response_pending<=1;end
                 end
+                DIAG_CONTROL_WAIT:begin
+                    timeout_count<=timeout_count+1'b1;
+                    if(diag_done)begin
+                        response_word<=diag_result;response_error<=diag_error;response_pending<=1;state<=IDLE;
+                    end else if(&timeout_count)begin
+                        response_error<=1;response_word<=0;response_pending<=1;state<=IDLE;
+                    end
+                end
+                DIAG_READ_WAIT:begin response_word<=diag_word;response_pending<=1;state<=IDLE;end
                 READ_CONFIG_WAIT:begin
                     timeout_count<=timeout_count+1'b1;
                     if(chip_tick)begin

@@ -33,6 +33,8 @@ def remove_instance(text: str, kind: str, instance: str, replacement: str) -> st
 
 def minimig() -> str:
     text = (SOURCE / "rtl/minimig.v").read_text()
+    text=replace_once(text,"\toutput  [5:0] ide_req,","\toutput [5:0] ide_monitor,\n\toutput  [5:0] ide_req,")
+    text=replace_once(text,"\t.ide_req(ide_req),","\t.monitor(ide_monitor),\n\t.ide_req(ide_req),")
     text = replace_once(text, "\toutput  [1:0] res,", "\toutput  [1:0] res,\n\toutput [8:0] diw_hstart,diw_hstop,\n\toutput [10:0] diw_vstart,diw_vstop,")
     text = replace_once(text, "\t.hde(hde),", "\t.hde(hde),\n\t.diw_hstart(diw_hstart),.diw_hstop(diw_hstop),\n\t.diw_vstart(diw_vstart),.diw_vstop(diw_vstop),")
     text = replace_once(text, ".address(ram_address),", ".address(ram_address[22:1]),")
@@ -117,18 +119,37 @@ def fastchip() -> str:
     output wire ide_irq,output wire [5:0] ide_req,
     input wire [4:0] ide_address,input wire ide_write,ide_read,
     input wire [15:0] ide_writedata,output wire [15:0] ide_readdata,
-    output wire ide_led
+    output wire ide_led,output wire [5:0] monitor
 );
 // IDE-only extraction. No RTG, Akiko, extra CPU clock or memory interface.
 assign sel_ack=sel_ide | sel_gayle;
 assign ready=ide_ready;
 assign dout=ide_dout;
 """
-    return NOTICE + header + interface + text[start:stop] + "\nendmodule\n"
+    body=text[start:stop]
+    body=replace_once(body,"\t.ide_req(ide_req),","\t.monitor(monitor),\n\t.ide_req(ide_req),")
+    return NOTICE + header + interface + body + "\nendmodule\n"
 
 
 def ide() -> str:
     text=(SOURCE / "rtl/ide.v").read_text()
+    text=replace_once(text,"\toutput      [1:0] drive_en,","\toutput [5:0] monitor,\n\toutput      [1:0] drive_en,")
+    text=replace_once(text,"endmodule", """// Read-only diagnostics. Retire words on the SAME falling-strobe edge as
+// io_cnt, and qualify this pre-edge bundle by the accepted native clock.
+reg monitor_old_stb=0,monitor_wide=0,monitor_read=0;
+always @(posedge clk) begin
+    if(reset)begin monitor_old_stb<=0;monitor_wide<=0;monitor_read<=0;end
+    else begin
+        monitor_old_stb<=io_stb;
+        if(io_stb)begin monitor_wide<=io_32;monitor_read<=read_data_io;end
+    end
+end
+wire monitor_retire=monitor_old_stb && !io_stb && !reset;
+assign monitor[0]=!reset && mgmt_write && mgmt_address==5 && mgmt_writedata[11] && (cmd==8'h20 || cmd==8'h21);
+assign monitor[2:1]=(monitor_retire && monitor_read) ? (monitor_wide ? 2'd2:2'd1):2'd0;
+assign monitor[4:3]=(monitor_retire && !monitor_read) ? (monitor_wide ? 2'd2:2'd1):2'd0;
+assign monitor[5]=io_read || io_write;
+endmodule""")
     # A 68020 may mix word and longword reads of the FIFO data register.
     # Keep the even bank looking at the next even word when the pointer is
     # odd, so it is already prefetched before a longword transfer begins.
@@ -143,6 +164,13 @@ def ide() -> str:
     text=replace_once(text,
         ".data_b(io_32 ? io_writedata[31:16] : io_writedata[15:0]),",
         ".data_b((io_32 && !io_cnt[0]) ? io_writedata[31:16] : io_writedata[15:0]),")
+    return NOTICE+text
+
+
+def gayle() -> str:
+    text=(SOURCE / "rtl/gayle.v").read_text()
+    text=replace_once(text,"\toutput        led\n", "\toutput [5:0] monitor,\n\toutput        led\n")
+    text=replace_once(text,"\t.request(ide_req[2:0]),", "\t.monitor(monitor),\n\t.request(ide_req[2:0]),")
     return NOTICE+text
 
 
@@ -384,7 +412,7 @@ def hoist_module_declarations(text: str) -> str:
 
 
 def generated() -> dict[str, str]:
-    result={"minimig.v": minimig(), "fastchip.v": fastchip(), "ide.v": ide(), "paula_floppy.v": floppy(), "cpu_wrapper.v": cpu(),
+    result={"minimig.v": minimig(), "fastchip.v": fastchip(), "ide.v": ide(), "gayle.v": gayle(), "paula_floppy.v": floppy(), "cpu_wrapper.v": cpu(),
             "agnus.v": agnus_window(), "agnus_bitplanedma.v": bitplane_window(),
             "userio.v": userio(), "cpu_cycles.v": cpu_cycles(), "fx68k.sv": fx68k(),
             "amiga_ram.sv": RAM, "m68k_cyc_idx.hex": mif_hex("m68k_cyc_idx",16384,6),

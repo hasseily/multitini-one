@@ -742,8 +742,8 @@ foreach delay_type {max min} {
     if {![string is double -strict $slack] || ![expr {abs($slack) < Inf}] || $slack < 0.0} {
         error "Negative $delay_type slack: $slack ns"
     }
-    if {$image_kind eq "AMIGA" && $delay_type eq "max" && $slack <= 0.0} {
-        error "Amiga setup slack must be strictly positive: $slack ns"
+    if {$image_kind eq "AMIGA" && $delay_type eq "max" && $slack <= 0.010} {
+        error "Amiga final setup slack must exceed +0.010 ns: $slack ns"
     }
     # The C713-only authorization applies to final global setup as well as
     # the three C64 clock-path groups. Hold and all other policies are unchanged.

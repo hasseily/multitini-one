@@ -136,6 +136,48 @@ class AmigaContentTests(unittest.TestCase):
         self.assertIn("unrecognized arguments: --amiga-kickstart", result.stderr)
 
 
+class AmigaTimingGateTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        try:
+            import tkinter
+            cls.interpreter = staticmethod(tkinter.Tcl)
+            cls.interpreter().eval("expr {1 + 1}")
+        except (ImportError, RuntimeError) as error:
+            raise unittest.SkipTest("Tcl interpreter unavailable") from error
+        source = (ROOT / "scripts/build_and_export_xsa.tcl").read_text()
+        start = source.index("foreach delay_type {max min} {", source.index(
+            "check_multitini_timing_coverage $coverage_checks $ethernet_checked"))
+        cls.gate = source[start:source.index("\nputs [exec {*}$python", start)]
+
+    def run_gate(self, machine, setup, hold="0.060"):
+        tcl = self.interpreter()
+        tcl.eval("proc puts {args} {}; proc get_timing_paths {args} {return path}")
+        tcl.eval("proc get_property {property path} {global delay_type setup hold; "
+                 "if {$delay_type eq {max}} {return $setup}; return $hold}")
+        tcl.setvar("image_kind", machine)
+        tcl.setvar("setup", setup)
+        tcl.setvar("hold", hold)
+        try:
+            tcl.eval(self.gate)
+        except Exception as error:
+            return str(error)
+        return None
+
+    def test_final_amiga_setup_requires_more_than_ten_picoseconds(self):
+        for slack in ("0", "0.009", "0.010"):
+            with self.subTest(slack=slack):
+                self.assertIn("must exceed +0.010 ns", self.run_gate("AMIGA", slack))
+        for slack in ("0.010001", "0.017"):
+            with self.subTest(slack=slack):
+                self.assertIsNone(self.run_gate("AMIGA", slack))
+
+    def test_other_machines_and_hold_keep_existing_policy(self):
+        self.assertIsNone(self.run_gate("GENESIS", "0.009"))
+        self.assertIsNone(self.run_gate("AMIGA", "0.017", "0"))
+        self.assertIn("Negative min slack", self.run_gate("AMIGA", "0.017", "-0.001"))
+
+
 @unittest.skipUnless(shutil.which("tclsh"), "native Tcl unavailable")
 class AmigaProjectTests(unittest.TestCase):
     def test_amiga_has_distinct_machine_id_and_pal_master_clock(self):

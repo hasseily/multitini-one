@@ -20,13 +20,15 @@ module tb_amiga_fastide #(parameter integer CPU_MODE=3, parameter bit CLASSIC=0)
     reg io_uio=0,io_strobe=0;reg [15:0] io_din=0;
     wire [4:0] cpucfg;
     wire [23:0] memory_addr;
-    wire memory_write,memory_valid,memory_busy,memory_fault;
+    wire memory_write,memory_valid,memory_busy,memory_fault,memory_burst;
     wire [63:0] memory_wdata;
     wire [7:0] memory_wstrb;
     reg [63:0] response_data=0;
     reg response_valid=0,response_busy=0;
     reg [7:0] response_delay=0;
     reg [23:0] held_addr;
+    // Line fills return four ascending beats; every write is one beat.
+    reg held_burst=0;reg [1:0] held_beat=0;
     reg held_write;
     reg [63:0] held_data;
     reg [7:0] held_mask;
@@ -37,6 +39,7 @@ module tb_amiga_fastide #(parameter integer CPU_MODE=3, parameter bit CLASSIC=0)
     reg [31:0] command=0;wire [31:0] status,block_rdata;
     reg [15:0] block_address=0,block_read_address=0;reg [6:0] block_ram_read_address=0;reg [3:0] block_wstrb=0;
     wire [6:0] memcfg;
+    wire [5:0] ide_monitor;wire [7:0] memory_monitor;
     integer transactions=0,holds=0,cycles;
     integer completions=0,dma_source_hits=0,dma_source_misses=0;
     integer speed_edges=0,speed_opportunities=0,kernel_steps=0;
@@ -60,10 +63,10 @@ module tb_amiga_fastide #(parameter integer CPU_MODE=3, parameter bit CLASSIC=0)
     end
     // Both copies use the same source: its first lookup misses after the
     // Fast RAM alias evicts it, while the repeated DMA lookup must hit.
-    always @(posedge clk)if(!reset && memory_i.state==0 && memory_i.request_valid &&
+    always @(posedge clk)if(!reset && memory_i.lookup &&
         memory_i.request_owner==0 && !memory_i.request_write && memory_i.request_addr==24'h001000)begin
         if(memory_i.hit)dma_source_hits=dma_source_hits+1;
-        else dma_source_misses=dma_source_misses+1;
+        else if(memory_i.launch_fill)dma_source_misses=dma_source_misses+1;
     end
     always @(posedge chip_clk)if(cpu_req && cpu_ready && completions<48)begin
         completions=completions+1;
@@ -84,7 +87,7 @@ module tb_amiga_fastide #(parameter integer CPU_MODE=3, parameter bit CLASSIC=0)
         .cpu_state(cpu_state),.cpu_ub_n(cpu_ub_n),.cpu_lb_n(cpu_lb_n),.cpu_long(cpu_long),
         .cpu_rdata(cpu_rdata),.cpu_rdata2(cpu_rdata2),.cpu_ready(cpu_ready),.cpu_ready_long(cpu_ready),
         .io_uio(io_uio),.io_fpga(1'b0),.io_strobe(io_strobe),.io_din(io_din),.io_wait(),.io_dout(),
-        .ide_address(ide_address),.ide_read(ide_read),.ide_write(ide_write),.ide_wdata(ide_wdata),.ide_rdata(ide_rdata),.ide_req(ide_req),.ide_fast(actual_fast),.memcfg(memcfg),
+        .ide_address(ide_address),.ide_read(ide_read),.ide_write(ide_write),.ide_wdata(ide_wdata),.ide_rdata(ide_rdata),.ide_req(ide_req),.ide_fast(actual_fast),.memcfg(memcfg),.ide_monitor(ide_monitor),
         .joy1(16'hffff),.joy2(16'hffff),.mouse_buttons(3'd0),.kms_level(1'b0),
         .kbd_mouse_type(2'd0),.kbd_mouse_data(8'd0),.rtc(65'd0),.cpucfg(cpucfg),.cpu_reset_n(cpu_reset_n));
     multitini_amiga_memory memory_i(
@@ -96,9 +99,9 @@ module tb_amiga_fastide #(parameter integer CPU_MODE=3, parameter bit CLASSIC=0)
         .cpu_state(cpu_state),.cpu_ub_n(cpu_ub_n),.cpu_lb_n(cpu_lb_n),.cpu_long(cpu_long),
         .cpu_rdata(cpu_rdata),.cpu_rdata2(cpu_rdata2),.cpu_ready(cpu_ready),
         .load_valid(1'b0),.load_addr(24'd0),.load_data(8'd0),.load_ready(),.load_done(),
-        .run_enable(memory_run),.busy(memory_busy),.fault(memory_fault),
+        .run_enable(memory_run),.busy(memory_busy),.fault(memory_fault),.monitor(memory_monitor),
         .memory_addr(memory_addr),.memory_write(memory_write),.memory_wdata(memory_wdata),.memory_wstrb(memory_wstrb),
-        .memory_valid(memory_valid),.memory_ready(!response_busy),.memory_rdata(response_data),
+        .memory_burst(memory_burst),.memory_valid(memory_valid),.memory_ready(!response_busy),.memory_rdata(response_data),
         .memory_rvalid(response_valid),.memory_fault(1'b0));
 
     multitini_amiga_host host_i(
@@ -107,6 +110,8 @@ module tb_amiga_fastide #(parameter integer CPU_MODE=3, parameter bit CLASSIC=0)
         .block_read_address(block_read_address),.block_ram_read_address(block_ram_read_address),
         .block_wstrb(block_wstrb),.block_rdata(block_rdata),
         .clk(clk),.reset(reset),.guest_reset(guest_reset),.native_config({3'd0,actual_fast,memcfg,cpucfg}),.chip_tick(chip_tick),
+        .diag_cpu_reset_n(cpu_reset_n),.diag_cpu_wait(cpu_req && !cpu_ready),.diag_cpu_write(cpu_state==2'b11),
+        .diag_ide(ide_monitor),.diag_memory(memory_monitor),
         .io_fpga(),.io_uio(),.io_strobe(),.io_din(),.io_wait(1'b0),.io_dout(16'd0),
         .ide_req(ide_req),.ide_address(ide_address),.ide_read(ide_read),.ide_write(ide_write),.ide_wdata(ide_wdata),.ide_rdata(ide_rdata));
     function automatic [63:0] read_line(input [23:0] address);
@@ -147,10 +152,11 @@ module tb_amiga_fastide #(parameter integer CPU_MODE=3, parameter bit CLASSIC=0)
             else begin
                 if(held_write && held_addr<16384)for(lane=0;lane<8;lane=lane+1)
                     if(held_mask[lane])ram[held_addr+lane]<=held_data[lane*8+:8];
-                response_data<=read_line(held_addr);response_valid<=1;response_busy<=0;
+                response_data<=read_line(held_addr+{held_beat,3'b000});response_valid<=1;
+                if(held_burst && held_beat!=2'd3)held_beat<=held_beat+1'b1;else response_busy<=0;
             end
         end else if(memory_valid)begin
-            held_addr<=memory_addr;held_write<=memory_write;held_data<=memory_wdata;held_mask<=memory_wstrb;
+            held_addr<=memory_addr;held_burst<=memory_burst;held_beat<=0;held_write<=memory_write;held_data<=memory_wdata;held_mask<=memory_wstrb;
             response_delay<=4+(transactions%13);response_busy<=1;transactions<=transactions+1;
         end
     end
@@ -256,6 +262,8 @@ module tb_amiga_fastide #(parameter integer CPU_MODE=3, parameter bit CLASSIC=0)
         wait_request(4);legacy(2,5,0,0);
         release dut.chipset.CONTROL1.rst_cnt;
         if(status[15:8]!==8'h20)$fatal(1,"Guest READ command not received:%h",status);
+        legacy(12,0,16'h0101,0);
+        if(status[15:0]!==1 || !status[22])$fatal(1,"Native diagnostics ARM/capability failed");
         legacy(3,0,1,0);fill(1);start_block(1,0);finish_block(1,0,256);
         legacy(3,1,0,0);legacy(3,2,0,0);legacy(3,5,16'h5ee0,0);
         wait_request(4);legacy(2,5,0,0);
@@ -283,6 +291,12 @@ module tb_amiga_fastide #(parameter integer CPU_MODE=3, parameter bit CLASSIC=0)
         if(n==100000 || irq_edges==0 || holds<50)$fatal(1,"Guest completion/IRQ/holds missing marker=%h irq=%0d holds=%0d classicEnable=%b fastEnable=%b",ram_word(4096),irq_edges,holds,dut.chipset.GAYLE1.intena,dut.fastchip_i.gayle.intena);
         if(actual_fast && (fast_reads<256 || classic_reads!=0 || (CPU_MODE==7 && held_reads==0)))$fatal(1,"Fast actual CPU/held CE coverage missing");
         if(!actual_fast && classic_reads==0)$fatal(1,"Classic guest path not exercised");
+        legacy(12,0,16'h0102,0);
+        if(status[15:0]!==1)$fatal(1,"Native diagnostics STOP sequence mismatch");
+        legacy(13,0,0,0);if(status[15:0]!==16'h4447)$fatal(1,"Native diagnostics schema magic");
+        legacy(13,0,4,0);if(status[15:0]!==3)$fatal(1,"Native diagnostics capture invalid:%h",status);
+        legacy(13,0,16+4*4,0);if(status[15:0]!==1)$fatal(1,"Native diagnostics closed interval count");
+        legacy(13,0,16+4*11,0);if(status[15:0]!==256)$fatal(1,"Native diagnostics guest FIFO words expected256 got%0d",status[15:0]);
         // Partial management transfer aborts into a poisoned epoch. A guest
         // reset cannot silently permit another descriptor or a late write.
         fill(2);start_block(3,0);

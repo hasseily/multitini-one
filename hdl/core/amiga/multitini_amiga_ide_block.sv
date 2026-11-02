@@ -88,12 +88,16 @@ module multitini_amiga_ide_block #(
         .dst_clk(control_clk),.dst_resetn(control_resetn),.dst_data(response),
         .dst_valid(response_valid),.dst_ready(1'b1));
 
+    // host_ram_read_address is the live AXI ARADDR during AR acceptance and
+    // must drive only the BRAM address pins. RDATA is captured one edge later,
+    // when it equals the registered host_read_address. Indexing filled[] with
+    // the live address made a false ARADDR->RDATA path that failed setup.
     always @* begin
         host_rdata=0;
         case(host_read_address)
             16'hd100:host_rdata={busy,failed,done,error_code,8'd0,completed_sequence};
             16'hd108:host_rdata={23'd0,completed_words};
-            default:if(aperture_read && !busy && !poisoned && filled[host_ram_read_address])
+            default:if(aperture_read && !busy && !poisoned && filled[host_read_address[8:2]])
                 host_rdata=ram_host_q;
         endcase
     end

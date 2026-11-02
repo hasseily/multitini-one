@@ -2065,9 +2065,9 @@ module multitini_one_top #(
         end else if (ACTIVE_MACHINE == 7) begin : g_amiga_machine
             wire gs_rom_loaded;
             // Memory interface v2 extensions: 4-beat line reads, and the
-            // cache's registered drain level (posted writes or a request).
+            // cache's drain level (posted writes or a request).
             wire gs_memory_busy;
-            wire gs_memory_burst=1'b0;
+            wire gs_memory_burst;
             wire [11:0] gs_video_x;
             wire [11:0] gs_video_y;
             wire amiga_frame_start,amiga_frame_alt,amiga_frame_weave;
@@ -2101,6 +2101,7 @@ module multitini_one_top #(
                 .memory_write(c64_memory_write),
                 .memory_wdata(c64_memory_wdata),
                 .memory_wstrb(c64_memory_wstrb),
+                .memory_burst(gs_memory_burst),
                 .memory_valid(c64_memory_valid),
                 .memory_busy(gs_memory_busy),
                 .memory_ready(c64_memory_ready),

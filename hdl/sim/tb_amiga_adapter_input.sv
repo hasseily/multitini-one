@@ -36,6 +36,7 @@ module multitini_amiga_machine (
     output wire io_wait,
     output wire [15:0] io_dout,
     output wire [5:0] ide_req,
+    output wire [5:0] ide_monitor,
     input wire [4:0] ide_address,
     input wire ide_write,ide_read,
     input wire [15:0] ide_wdata,
@@ -73,7 +74,7 @@ module multitini_amiga_machine (
     assign chip_c1=0,chip_c3=0,chip_clk7_en=0,chip_clk7n_en=0;
     assign chip_addr=0,chip_wdata=0,chip_wdata2=0,chip_oe_n=1,chip_we_n=1,chip_ub_n=1,chip_lb_n=1,chip_long=0;
     assign cpu_req=0,cpu_addr=0,cpu_wdata=0,cpu_state=1,cpu_ub_n=1,cpu_lb_n=1,cpu_long=0,cpu_wdata2=0;
-    assign io_wait=0,io_dout=0,ide_req=0,ide_rdata=0;
+    assign io_wait=0,io_dout=0,ide_req=0,ide_rdata=0,ide_monitor=0;
     assign rgb=0,hsync_n=1,vsync_n=1,hblank=1,vblank=1,field=0,lace=0,ce_pix=0,res=0,ntsc=0;
     assign audio_l=0,audio_r=0,cpucfg=0,memcfg=0,ide_fast=0,fdd_led=0,hdd_led=0;
     assign display_read_data=0,diw_hstart=129,diw_hstop=449,diw_vstart=44,diw_vstop=300;
@@ -94,7 +95,7 @@ module tb_amiga_adapter_input;
         .input_code(input_code),.input_value(input_value),.input_valid(input_valid),.input_ready(input_ready),
         .load_data(8'd0),.load_kind(8'd0),.load_valid(1'b0),.load_first(1'b0),.load_last(1'b0),
         .load_epoch(1'b0),.load_abort(1'b0),.load_abort_epoch(1'b0),.load_offset(32'd0),.load_total(32'd0),.load_ready(),
-        .memory_addr(),.memory_write(),.memory_wdata(),.memory_wstrb(),.memory_valid(),.memory_busy(),
+        .memory_addr(),.memory_write(),.memory_wdata(),.memory_wstrb(),.memory_burst(),.memory_valid(),.memory_busy(),
         .memory_ready(1'b1),.memory_rdata(64'd0),.memory_rvalid(1'b0),.memory_fault(1'b0),
         .core_id(),.ready(ready),.load_error(),.rom_loaded(),.video_r(),.video_g(),.video_b(),
         .video_de(),.video_hsync(),.video_vsync(),.video_valid(),.video_frame_start(),.video_x(),.video_y(),.video_pal(),

@@ -6,7 +6,7 @@ import argparse,hashlib,json,os,re,subprocess,sys
 ROOT=Path(__file__).resolve().parents[1]
 SOURCES=['third_party/appletini/hdl/cdc_bit_sync.sv','hdl/sim/amiga_cdc_model.sv',
  'hdl/common/multitini_async_mailbox.sv','hdl/common/multitini_axi3_regs.sv',
- 'hdl/core/amiga/multitini_amiga_ide_block.sv','hdl/core/amiga/multitini_amiga_host.sv',
+ 'hdl/core/amiga/multitini_amiga_ide_block.sv','hdl/core/amiga/multitini_amiga_diagnostics.sv','hdl/core/amiga/multitini_amiga_host.sv',
  'hdl/sim/tb_amiga_ide_block_axi.sv']
 TOP='hdl/board/multitini_one_top.sv'
 def top_slice(mutate):

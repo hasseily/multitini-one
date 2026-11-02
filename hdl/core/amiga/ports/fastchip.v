@@ -27,7 +27,7 @@ module fastchip (
     output wire ide_irq,output wire [5:0] ide_req,
     input wire [4:0] ide_address,input wire ide_write,ide_read,
     input wire [15:0] ide_writedata,output wire [15:0] ide_readdata,
-    output wire ide_led
+    output wire ide_led,output wire [5:0] monitor
 );
 // Strict-tool declaration order; no functional change.
 wire sel_ide;
@@ -71,6 +71,7 @@ gayle gayle
 	.nrdy(ide_nrdy),
 	.longword(longword),
 
+	.monitor(monitor),
 	.ide_req(ide_req),
 	.ide_address(ide_address),
 	.ide_write(ide_write),

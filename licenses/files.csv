@@ -1072,6 +1072,11 @@ scripts/test_amiga_rtc_host.py,Multitini One,,GPL-3.0-only,source-reviewed,Origi
 scripts/test_amiga_shres.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 scripts/test_amiga_shres_normalizer.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 scripts/test_amiga_transport.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
+scripts/test_amiga_memory_mutations.py,Multitini One,,GPL-3.0-only,source-reviewed,Original Amiga cache and posted-write negative-control runner
 scripts/test_amiga_video.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 scripts/test_amiga_wide_pipeline.py,Multitini One,,GPL-3.0-only,source-reviewed,Original ECS Amiga integration; host/simulation evidence remains separate from board acceptance
 tests/host/test_amiga_read_ahead.c,Multitini One,,GPL-3.0-only,source-reviewed,Original production-service ATA command-scoped read-ahead and cache invalidation tests
+tests/host/test_amiga_diag.c,Multitini One,,GPL-3.0-only,source-reviewed,Original coherent native Amiga diagnostic snapshot and validation tests
+hdl/core/amiga/multitini_amiga_diagnostics.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original optional coherent Amiga native diagnostic counters
+hdl/sim/tb_amiga_diagnostics.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original native diagnostic counter and frozen snapshot fixture
+scripts/test_amiga_diagnostics.py,Multitini One,,GPL-3.0-only,source-reviewed,Original native diagnostic fixture runner

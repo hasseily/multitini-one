@@ -5,6 +5,18 @@
 #include "multitini_amiga_content.h"
 mt_link_result_t mt_amiga_host_access(mt_core_link_t *,uint8_t opcode,uint32_t payload,
     uint32_t polls,uint32_t *response);
+typedef struct {
+    uint16_t sequence,status,config_begin,config_end;
+    uint32_t service_hz,epoch;
+    uint64_t counters[MT_AMIGA_DIAG_COUNTERS];
+} mt_amiga_diag_snapshot_t;
+/* Optional read-only instrumentation. Control ACK must echo sequence. Read
+ * publishes output only after a complete, coherent, validated frozen bank.
+ * An invalid native capture remains readable with its status reason bits. */
+mt_link_result_t mt_amiga_diag_control(mt_core_link_t *,uint16_t sequence,
+    uint8_t action,uint32_t polls);
+mt_link_result_t mt_amiga_diag_read(mt_core_link_t *,uint16_t sequence,
+    uint32_t polls,mt_amiga_diag_snapshot_t *);
 /* Single main-loop owner. Stage is ARM-owned only while idle. Capture means
  * IDE -> ARM; false means ARM -> IDE. On failure after submission the caller
  * must not replay this sector or fall back to the word transport. */

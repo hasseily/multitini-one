@@ -4287,6 +4287,16 @@ static void supervisor_controller_report(void *context, uint8_t slot, const mt_g
     controller_preview_capture();
 }
 
+/* While an Amiga ScreenMode request is pending, guest input stays with
+ * Workbench so the user can answer its requesters. The request closed the
+ * menu before it was published; the menu key does not reopen it until the
+ * request finishes. The dispatcher itself never changes menu visibility. */
+static bool amiga_display_holds_menu_closed(void)
+{
+    return !supervisor_menu.visible && amiga_service_initialized &&
+        shell_read(MT_REG_CORE_ID)==MT_AMIGA_CORE_ID && amiga_display_service_pending();
+}
+
 static void supervisor_controller_action(void *context, unsigned action)
 {
     (void)context;
@@ -4294,6 +4304,10 @@ static void supervisor_controller_action(void *context, unsigned action)
     if (action == MT_CONTROL_MENU) {
         if (vectrex_basic_running) { vectrex_basic_stop = true; return; }
         if (!supervisor_menu_ready || supervisor_menu_action_active) return;
+        if (amiga_display_holds_menu_closed()) {
+            set_supervisor_status("Changing Workbench resolution; answer any Amiga requester");
+            return;
+        }
         const mt_menu_view_t view = supervisor_menu_view();
         const mt_menu_action_t selected = mt_menu_key_with_modifiers(
             &supervisor_menu, &view, MT_MENU_HID_F12, true, 0U);
@@ -4612,6 +4626,44 @@ static void amiga_profile_metric(const char *name,uint64_t ticks,uint64_t count,
         amiga_profile_decimal(c,count),amiga_profile_decimal(d,bytes),
         amiga_profile_decimal(e,amiga_profile_microseconds(maximum)));
 }
+static uint64_t amiga_profile_native_microseconds(uint64_t cycles,uint32_t hz)
+{
+    if(hz==0U)return 0U;
+    const uint64_t whole=cycles/hz,part=((cycles%hz)*UINT64_C(1000000))/hz;
+    if(whole>(UINT64_MAX-part)/UINT64_C(1000000))return UINT64_MAX;
+    return whole*UINT64_C(1000000)+part;
+}
+static void amiga_profile_native_report(const mt_amiga_ide_profile_t *p)
+{
+    if(!p->native_available) {
+        xil_printf("[Amiga IDE native] unavailable on this core; ARM-only capture\r\n");return;
+    }
+    const mt_amiga_diag_snapshot_t *n=&p->native;
+    xil_printf("[Amiga IDE native] valid=%u transport_result=%u sequence=%u status=%04x epoch=%u hz=%u config_begin=%04x config_end=%04x\r\n",
+        p->native_valid ? 1U:0U,(unsigned)p->native_result,(unsigned)n->sequence,(unsigned)n->status,
+        (unsigned)n->epoch,(unsigned)n->service_hz,(unsigned)n->config_begin,(unsigned)n->config_end);
+    if(p->native_result!=MT_LINK_OK) {
+        xil_printf("[Amiga IDE native] snapshot unavailable; restart Amiga before another capture\r\n");return;
+    }
+    static const char *const names[MT_AMIGA_DIAG_COUNTERS]={
+        "capture_service","capture_native_accepted","capture_native_held","read_DRQ_publications",
+        "closed_read_intervals","closed_gap","gap_held","gap_cpu_write_req_wait","gap_cpu_read_req_wait",
+        "gap_IDE_active","gap_other","gap_PIO_read_words","gap_PIO_write_words","gap_cpu_read_tx",
+        "gap_cpu_write_tx","gap_cpu_DDR_send","gap_cpu_DDR_wait","gap_chip_DDR_send","gap_chip_DDR_wait",
+        "gap_cpu_read_req_wait_wall","gap_cpu_write_req_wait_wall","max_closed_gap",
+        "first_DRQ_capture_cycle_stamp","last_REQ_capture_cycle_stamp","REQ4_events","REQ5_events",
+        "gap_cpu_DDR_read_tx","gap_cpu_DDR_write_tx"};
+    for(unsigned i=0U;i<MT_AMIGA_DIAG_COUNTERS;++i) {
+        char value[21],us[21];
+        const bool cycles=i<=2U || (i>=5U && i<=10U) || (i>=15U && i<=23U);
+        if(cycles)xil_printf("[Amiga IDE native] %s cycles=%s us=%s\r\n",names[i],
+            amiga_profile_decimal(value,n->counters[i]),
+            amiga_profile_decimal(us,amiga_profile_native_microseconds(n->counters[i],n->service_hz)));
+        else xil_printf("[Amiga IDE native] %s count=%s\r\n",names[i],amiga_profile_decimal(value,n->counters[i]));
+    }
+    xil_printf("[Amiga IDE native] exclusive CLOSED-gap buckets: held + accepted write wait + accepted read wait + IDE active + other; detail counters overlap\r\n");
+    xil_printf("[Amiga IDE native] native and ARM intervals have different publication/observation endpoints; do not exactly subtract them or raw cross-domain timestamps\r\n");
+}
 static bool amiga_ide_profile_command(const char *line)
 {
     if(strncmp(line,"amigaideprof",12U)!=0 || (line[12]!='\0' && line[12]!=' '))return false;
@@ -4621,7 +4673,7 @@ static bool amiga_ide_profile_command(const char *line)
     mt_amiga_ide_profile_t p;amiga_content_service_profile_snapshot(&p);
     /* Freeze before any console output, including error/usage text. UART
      * reporting must not appear as a measured outside-service delay. */
-    if(p.running)amiga_content_service_profile_stop();
+    amiga_content_service_profile_stop();
     if(!start && !status && !stop) {
         xil_printf("usage: :amigaideprof start|status|stop (status freezes a running capture)\r\n");return true;
     }
@@ -4675,6 +4727,10 @@ static bool amiga_ide_profile_command(const char *line)
     }
     amiga_profile_metric("DRQ_to_REQ_combined_NON_ADDITIVE",p.drq_to_request_ticks,p.drq_intervals,0U,p.max_drq_to_request_ticks);
     xil_printf("[Amiga IDE profile] DRQ gap overlaps other totals: guest work + CDC visibility + ARM polling; not pure guest PIO time\r\n");
+    amiga_profile_metric("poll_tail_control_visible_UPPER_BOUND",p.poll_tail_upper_ticks,p.poll_bracketed_intervals,0U,p.max_poll_tail_upper_ticks);
+    amiga_profile_metric("poll_unbracketed_intervals",0U,p.poll_unbracketed_intervals,0U,0U);
+    xil_printf("[Amiga IDE profile] bracketed polling tail lies in [0,upper]; no-zero intervals are unbracketed, not zero delay; native assertion/CDC excluded; NON_ADDITIVE\r\n");
+    amiga_profile_native_report(&p);
     return true;
 }
 static bool amiga_ide_bench_command(const char *line)
@@ -4865,6 +4921,10 @@ static bool supervisor_keyboard_filter(void *context, uint8_t slot,
         const uint8_t usage = menu_keys[index];
         const bool pressed = key_bitmap_get(next, usage);
         if (pressed != key_bitmap_get(supervisor_menu_keys[slot], usage)) {
+            if (usage == MT_MENU_HID_F12 && pressed && amiga_display_holds_menu_closed()) {
+                set_supervisor_status("Changing Workbench resolution; answer any Amiga requester");
+                continue;
+            }
             const mt_menu_view_t view = supervisor_menu_view();
             const mt_menu_action_t action = mt_menu_key_with_modifiers(
                 &supervisor_menu, &view, usage, pressed, modifiers);
@@ -6882,12 +6942,6 @@ static void service_supervisor_menu(void)
     };
     mt_menu_view_t view;
     if (!supervisor_menu_ready) return;
-    if(amiga_service_initialized && shell_read(MT_REG_CORE_ID)==MT_AMIGA_CORE_ID &&
-       amiga_display_service_pending() && supervisor_menu.visible) {
-        /* Leave the guest accessible while its OS preferences utility is
-         * waiting for application windows or an Amiga requester. */
-        supervisor_menu.visible=false;supervisor_menu_dirty=true;
-    }
     if (c64_debug.reu_host.reload_required) {
         supervisor_menu.visible = true;
         supervisor_menu_dirty = true;

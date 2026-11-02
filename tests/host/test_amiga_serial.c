@@ -28,6 +28,7 @@ static bool display_pending;
 static mt_amiga_ide_profile_t ide_profile;
 static unsigned profile_starts,profile_stops,profile_start_messages;
 static bool profile_start_fails;
+static bool profile_native_pending;
 static char profile_output[16000];
 static size_t profile_output_length;
 static mt_amiga_config_t cpu_config={MT_AMIGA_CPU_68020_TURBO,0U,0U,0U,8U,MT_AMIGA_IDE_AUTO};
@@ -64,7 +65,7 @@ int amiga_content_service_profile_start(uint64_t (*timer)(void *),void *context)
     return 0;
 }
 void amiga_content_service_profile_stop(void)
-{ assert(ide_profile.running);++profile_stops;ide_profile.running=false;ide_profile.reason=MT_AMIGA_PROFILE_STOPPED; }
+{ profile_native_pending=false;if(ide_profile.running) { ++profile_stops;ide_profile.running=false;ide_profile.reason=MT_AMIGA_PROFILE_STOPPED; } }
 void amiga_content_service_profile_snapshot(mt_amiga_ide_profile_t *out) { *out=ide_profile; }
 int amiga_content_service_ide_bench(unsigned iterations,uint64_t (*timer)(void *),void *context,mt_amiga_ide_bench_t *out)
 {
@@ -130,8 +131,9 @@ static int xil_printf(const char *format,...)
         const int count=vsnprintf(ide_output+ide_output_length,sizeof(ide_output)-ide_output_length,format,args);va_end(args);
         assert(count>=0 && (size_t)count<sizeof(ide_output)-ide_output_length);ide_output_length+=(size_t)count;
     }
-    if(strncmp(format,"[Amiga IDE profile]",sizeof("[Amiga IDE profile]")-1U)==0) {
-        assert(!ide_profile.running);
+    if(strncmp(format,"[Amiga IDE profile]",sizeof("[Amiga IDE profile]")-1U)==0 ||
+       strncmp(format,"[Amiga IDE native]",sizeof("[Amiga IDE native]")-1U)==0) {
+        assert(!ide_profile.running && !profile_native_pending);
         if(strstr(format,"starting after")!=NULL)++profile_start_messages;
         va_list args;va_start(args,format);
         const int count=vsnprintf(profile_output+profile_output_length,
@@ -197,6 +199,8 @@ static void profile_cli_tests(void)
     ide_profile.sd_read_ticks=frequency/4U;ide_profile.sd_read_calls=2U;ide_profile.read_bytes=1024U;
     ide_profile.fifo_ticks=frequency/2U;ide_profile.fifo_calls=2U;ide_profile.fifo_bytes=UINT64_MAX;
     ide_profile.req4=UINT64_C(4294967297);ide_profile.read_command_hist[8]=UINT64_MAX;
+    ide_profile.poll_bracketed_intervals=1U;ide_profile.poll_unbracketed_intervals=UINT64_C(4294967297);
+    ide_profile.poll_tail_upper_ticks=frequency/2U;ide_profile.max_poll_tail_upper_ticks=frequency/2U;
     ide_profile.drq_to_request_ticks=frequency;ide_profile.drq_intervals=1U;
     assert(amiga_serial_command("amigaideprof status") && !ide_profile.running && profile_stops==2U);
     assert(strstr(profile_output,"wall ticks=666666686 us=2000000")!=NULL);
@@ -206,10 +210,34 @@ static void profile_cli_tests(void)
     assert(strstr(profile_output,"command_sectors=129..256 count=18446744073709551615")!=NULL);
     assert(strstr(profile_output,"DRQ_to_REQ_combined_NON_ADDITIVE")!=NULL &&
            strstr(profile_output,"not pure guest PIO time")!=NULL);
+    assert(strstr(profile_output,"poll_tail_control_visible_UPPER_BOUND ticks=166666671 us=499999 count=1")!=NULL);
+    assert(strstr(profile_output,"poll_unbracketed_intervals ticks=0 us=0 count=4294967297")!=NULL);
+    assert(strstr(profile_output,"no-zero intervals are unbracketed, not zero delay")!=NULL);
+    assert(strstr(profile_output,"unavailable on this core; ARM-only capture")!=NULL);
     assert(amiga_profile_microseconds(0U)==0U && amiga_profile_microseconds(frequency)==1000000U &&
            amiga_profile_microseconds(UINT64_MAX)==UINT64_C(55340230616261966));
     char decimal[21];assert(strcmp(amiga_profile_decimal(decimal,UINT64_MAX),"18446744073709551615")==0);
     assert(strcmp(amiga_profile_decimal(decimal,0U),"0")==0);
+    profile_output_length=0U;profile_output[0]='\0';
+    ide_profile.native_available=true;ide_profile.native_valid=true;ide_profile.native_result=MT_LINK_OK;
+    ide_profile.native.sequence=42U;ide_profile.native.status=7U;ide_profile.native.service_hz=MT_AMIGA_DIAG_SERVICE_HZ;
+    ide_profile.native.epoch=UINT32_MAX;ide_profile.native.config_begin=ide_profile.native.config_end=0x1663U;
+    ide_profile.native.counters[MT_AMIGA_DIAG_CLOSED_CYCLES]=MT_AMIGA_DIAG_SERVICE_HZ;
+    ide_profile.native.counters[MT_AMIGA_DIAG_CPU_READ_TX]=UINT64_MAX;
+    assert(amiga_serial_command("amigaideprof status"));
+    assert(strstr(profile_output,"[Amiga IDE native] valid=1 transport_result=0 sequence=42 status=0007 epoch=4294967295 hz=28375196")!=NULL);
+    assert(strstr(profile_output,"closed_gap cycles=28375196 us=1000000")!=NULL);
+    assert(strstr(profile_output,"gap_cpu_read_tx count=18446744073709551615")!=NULL);
+    assert(strstr(profile_output,"do not exactly subtract them or raw cross-domain timestamps")!=NULL);
+    assert(amiga_profile_native_microseconds(MT_AMIGA_DIAG_SERVICE_HZ,MT_AMIGA_DIAG_SERVICE_HZ)==1000000U);
+    assert(amiga_profile_native_microseconds(UINT64_MAX,1U)==UINT64_MAX && amiga_profile_native_microseconds(1U,0U)==0U);
+    /* Even an ARM run already stopped by overflow must freeze any pending
+     * native capture before output; no invented counters on transport error. */
+    profile_output_length=0U;profile_output[0]='\0';profile_native_pending=true;
+    ide_profile.native_valid=false;ide_profile.native_result=MT_LINK_TIMEOUT;
+    assert(amiga_serial_command("amigaideprof status") && !profile_native_pending);
+    assert(strstr(profile_output,"snapshot unavailable; restart Amiga before another capture")!=NULL);
+    assert(strstr(profile_output,"closed_gap cycles=")==NULL);
     assert(amiga_serial_command("amigaideprof stop") && profile_stops==2U);
     profile_start_fails=true;
     assert(amiga_serial_command("amigaideprof start") && profile_starts==3U && !ide_profile.running);

@@ -5,7 +5,7 @@ from pathlib import Path
 import argparse,hashlib,json,os,subprocess,sys
 ROOT=Path(__file__).resolve().parents[1]
 SOURCES=['third_party/appletini/hdl/cdc_bit_sync.sv','hdl/sim/amiga_cdc_model.sv','hdl/common/multitini_async_mailbox.sv',
- 'hdl/core/amiga/multitini_amiga_ide_block.sv','hdl/core/amiga/multitini_amiga_host.sv',
+ 'hdl/core/amiga/multitini_amiga_ide_block.sv','hdl/core/amiga/multitini_amiga_diagnostics.sv','hdl/core/amiga/multitini_amiga_host.sv',
  'hdl/core/amiga/ports/amiga_ram.sv','hdl/core/amiga/ports/ide.v','hdl/sim/tb_amiga_ide_block.sv']
 def main():
     p=argparse.ArgumentParser(description=__doc__)

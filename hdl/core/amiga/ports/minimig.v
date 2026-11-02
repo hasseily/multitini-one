@@ -304,6 +304,7 @@ module minimig
 	output        ide_fast,
 	input         ide_ext_irq,
 	input         akiko_irq,
+	output [5:0] ide_monitor,
 	output  [5:0] ide_req,
 	input   [4:0] ide_address,
 	input         ide_write,
@@ -1141,6 +1142,7 @@ gayle GAYLE1
 	.irq(gayle_irq),
 	.nrdy(gayle_nrdy),
 
+	.monitor(ide_monitor),
 	.ide_req(ide_req),
 	.ide_address(ide_address),
 	.ide_write(ide_write),

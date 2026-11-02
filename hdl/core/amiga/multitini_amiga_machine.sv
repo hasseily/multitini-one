@@ -42,6 +42,7 @@ module multitini_amiga_machine (
     output wire io_wait,
     output wire [15:0] io_dout,
     output wire [5:0] ide_req,
+    output wire [5:0] ide_monitor,
     input wire [4:0] ide_address,
     input wire ide_write,ide_read,
     input wire [15:0] ide_wdata,
@@ -104,9 +105,11 @@ module multitini_amiga_machine (
     wire bootrom,ide_ena;
     wire [15:0] fastchip_dout,classic_ide_rdata,fast_ide_rdata;
     wire [5:0] classic_ide_req,fast_ide_req;
+    wire [5:0] classic_ide_monitor,fast_ide_monitor;
     wire fastchip_sel,fastchip_lds,fastchip_uds,fastchip_rnw,fastchip_lw;
     wire fastchip_selack,fastchip_ready,fast_ide_irq,fast_ide_led,classic_ide_led;
     assign ide_req=ide_fast ? fast_ide_req : classic_ide_req;
+    assign ide_monitor=ide_fast ? fast_ide_monitor : classic_ide_monitor;
     assign ide_rdata=ide_fast ? fast_ide_rdata : classic_ide_rdata;
     assign hdd_led=ide_fast ? fast_ide_led : classic_ide_led;
     wire ar_fetch;
@@ -164,7 +167,7 @@ module multitini_amiga_machine (
         .sel(fastchip_sel),.sel_ack(fastchip_selack),.ready(fastchip_ready),
         .addr({cpu_chip_addr,1'b0}),.din(cpu_chip_din),.dout(fastchip_dout),
         .lds(!fastchip_lds),.uds(!fastchip_uds),.rnw(fastchip_rnw),.longword(fastchip_lw),
-        .ide_ena(ide_ena && ide_fast),.ide_irq(fast_ide_irq),.ide_req(fast_ide_req),
+        .ide_ena(ide_ena && ide_fast),.ide_irq(fast_ide_irq),.ide_req(fast_ide_req),.monitor(fast_ide_monitor),
         .ide_address(ide_address),.ide_write(ide_write && ide_fast),.ide_read(ide_read && ide_fast),
         .ide_writedata(ide_wdata),.ide_readdata(fast_ide_rdata),.ide_led(fast_ide_led));
 
@@ -211,7 +214,7 @@ module multitini_amiga_machine (
         .cdtv_dma_req(),.cdtv_dma_we(),.cdtv_dma_baddr(),.cdtv_dma_wbyte(),.cdtv_dma_ack(1'b0),
         .cdtv_nvr_dirty(),.cdtv_card_dirty(),.cdtv_cdda_volume(),.cdtv_cdda_volume_valid(),
         .cpucfg(cpucfg),.cachecfg(cachecfg),.memcfg(memcfg),.bootrom(bootrom),.ide_ena(ide_ena),
-        .ide_fast(ide_fast),.ide_ext_irq(fast_ide_irq),.akiko_irq(1'b0),.ide_req(classic_ide_req),
+        .ide_fast(ide_fast),.ide_ext_irq(fast_ide_irq),.akiko_irq(1'b0),.ide_req(classic_ide_req),.ide_monitor(classic_ide_monitor),
         .ide_address(ide_address),.ide_write(ide_write && !ide_fast),.ide_writedata(ide_wdata),
         .ide_read(ide_read && !ide_fast),.ide_readdata(classic_ide_rdata),
         .USER_IN(7'h7f),.USER_OUT(),.user_port_mode(),.mister_floppy_status(),.drive_snd(),

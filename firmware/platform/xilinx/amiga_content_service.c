@@ -44,7 +44,11 @@ static mt_amiga_ide_profile_t profile;
 static uint64_t (*profile_timer)(void *);
 static void *profile_context;
 static uint64_t profile_started,profile_last,profile_service_end,profile_drq;
+static uint64_t profile_poll_before,profile_last_zero_before;
 static bool profile_in_service,profile_ata,profile_drq_pending;
+static bool profile_zero_seen;
+static bool profile_native_capable,profile_native_active,profile_native_faulted;
+static uint16_t profile_native_sequence;
 static uint32_t profile_next_lba[2];
 static bool profile_lba_seen[2];
 static uint64_t profile_now(void)
@@ -66,24 +70,44 @@ static void profile_span(uint64_t *total,uint64_t *maximum,uint64_t elapsed)
 { profile_add(total,elapsed);if(elapsed>*maximum)*maximum=elapsed; }
 void amiga_content_service_profile_stop(void)
 {
-    if(!profile.running)return;
-    const uint64_t now=profile_now();
-    if(!profile_in_service)profile_span(&profile.outside_ticks,&profile.max_gap_ticks,now-profile_service_end);
-    profile.running=false;
-    if(profile.valid)profile.reason=MT_AMIGA_PROFILE_STOPPED;
+    if(profile.running) {
+        const uint64_t now=profile_now();
+        if(!profile_in_service)profile_span(&profile.outside_ticks,&profile.max_gap_ticks,now-profile_service_end);
+        profile.running=false;
+        if(profile.valid)profile.reason=MT_AMIGA_PROFILE_STOPPED;
+    }
+    if(profile_native_active) {
+        /* Stop ARM timing before diagnostic commands; no UART or native
+         * snapshot transport is charged as measured service/guest delay. */
+        profile_native_active=false;
+        profile.native_result=mt_amiga_diag_control(link,profile_native_sequence,MT_AMIGA_DIAG_STOP,AM_POLLS);
+        if(profile.native_result==MT_LINK_OK)
+            profile.native_result=mt_amiga_diag_read(link,profile_native_sequence,AM_POLLS,&profile.native);
+        profile.native_valid=profile.native_result==MT_LINK_OK && (profile.native.status&MT_AMIGA_DIAG_VALID)!=0U;
+        if(profile.native_result!=MT_LINK_OK)profile_native_faulted=true;
+    }
 }
 static void profile_invalidate(mt_amiga_profile_reason_t reason)
 {
-    if(!profile.running)return;
+    if(!profile.running && !profile_native_active)return;
     amiga_content_service_profile_stop();profile.valid=false;
     if(profile.reason!=MT_AMIGA_PROFILE_OVERFLOW)profile.reason=reason;
 }
 int amiga_content_service_profile_start(uint64_t (*timer)(void *),void *context)
 {
-    if(timer==NULL || profile.running || !ready || paused || faulted)return -1;
+    if(timer==NULL || profile.running || profile_native_active || profile_native_faulted || !ready || paused || faulted)return -1;
     memset(&profile,0,sizeof(profile));profile_timer=timer;profile_context=context;
+    profile.native_available=profile_native_capable;profile.native_result=MT_LINK_ABI_MISMATCH;
+    if(profile_native_capable) {
+        if(++profile_native_sequence==0U)profile_native_sequence=1U;
+        profile.native_result=mt_amiga_diag_control(link,profile_native_sequence,MT_AMIGA_DIAG_ARM,AM_POLLS);
+        if(profile.native_result!=MT_LINK_OK) {
+            profile_native_faulted=true;profile.reason=MT_AMIGA_PROFILE_IO_ERROR;return -1;
+        }
+        profile_native_active=true;
+    }
     profile_started=profile_last=profile_service_end=timer(context);
-    profile_in_service=false;profile_ata=false;profile_drq_pending=false;
+    profile_in_service=false;profile_ata=false;profile_drq_pending=false;profile_zero_seen=false;
     memset(profile_lba_seen,0,sizeof(profile_lba_seen));
     profile.running=true;profile.valid=true;profile.reason=MT_AMIGA_PROFILE_RUNNING;return 0;
 }
@@ -147,7 +171,7 @@ static int ide_write(unsigned address,uint16_t value)
 {
     const int result=host(MT_AMIGA_HOST_IDE_WRITE,(address<<16U)|value,NULL);
     if(result==0 && profile.running && profile_ata && address==5U && (value&0x0800U)!=0U) {
-        profile_drq=profile_now();profile_drq_pending=true;
+        profile_drq=profile_now();profile_drq_pending=true;profile_zero_seen=false;
     }
     return result;
 }
@@ -399,16 +423,29 @@ static int ata_poll(void)
     const uint32_t snapshot=link->read32(link->context,MT_AMIGA_HOST_PORT);
     const unsigned request=(snapshot>>16U)&7U;
     if(profile.running) {
-        if(request==0U)profile_add(&profile.idle_ata_polls,1U);
+        if(request==0U) {
+            profile_add(&profile.idle_ata_polls,1U);
+            if(profile_drq_pending) {
+                /* Reuse the existing pre-ATA timer sample. It precedes this
+                 * zero MMIO observation; it is not the assertion timestamp. */
+                profile_last_zero_before=profile_poll_before;profile_zero_seen=true;
+            }
+        }
         else if(request==4U)profile_add(&profile.req4,1U);
         else if(request==5U)profile_add(&profile.req5,1U);
         else if(request==6U)profile_add(&profile.req6,1U);
         if(profile_drq_pending && (request==4U || request==5U)) {
-            const uint64_t elapsed=profile_now()-profile_drq;
+            const uint64_t observed_after=profile_now();
+            const uint64_t elapsed=observed_after-profile_drq;
             profile_add(&profile.drq_intervals,1U);
             profile_span(&profile.drq_to_request_ticks,&profile.max_drq_to_request_ticks,elapsed);
-            profile_drq_pending=false;
-        } else if(request==6U)profile_drq_pending=false;
+            if(profile_zero_seen) {
+                profile_add(&profile.poll_bracketed_intervals,1U);
+                profile_span(&profile.poll_tail_upper_ticks,&profile.max_poll_tail_upper_ticks,
+                    observed_after-profile_last_zero_before);
+            } else profile_add(&profile.poll_unbracketed_intervals,1U);
+            profile_drq_pending=false;profile_zero_seen=false;
+        } else if(request==6U) { profile_drq_pending=false;profile_zero_seen=false; }
     }
     if(request==0U)return 0;
     if(request==6U) {
@@ -501,6 +538,7 @@ void amiga_content_service_init(mt_core_link_t *l,const char *media_root,mt_link
 {
     invalidate_read_cache();
     profile_invalidate(MT_AMIGA_PROFILE_LIFECYCLE);
+    profile_native_capable=false;profile_native_faulted=false;
     link=l;progress=p;progress_context=context;memset(drives,0,sizeof(drives));memset(remembered,0,sizeof(remembered));
     root[0]='\0';rom_root[0]='\0';error[0]='\0';ready=false;faulted=false;paused=true;settings_invalid=false;bulk_failed=false;ata.active=false;
     mt_amiga_rtc_init(&rtc);cached_clock_valid=false;clock_now_ms=0U;
@@ -537,6 +575,8 @@ int amiga_content_service_boot(void)
     }
     (void)mt_amiga_rtc_update(&rtc,link,cached_clock_valid ? &cached_clock:NULL,clock_now_ms,true,AM_POLLS);
     if(drive_status()!=0 || ide_presence()!=0 || uio(1U,0U)!=0 || reset(false)!=0)return -1;
+    profile_native_capable=(link->read32(link->context,MT_AMIGA_HOST_PORT)&MT_AMIGA_HOST_DIAGNOSTICS)!=0U;
+    profile_native_faulted=false;
     paused=false;ready=true;faulted=false;error[0]='\0';return 0;
 }
 void amiga_content_service_poll(void)
@@ -552,6 +592,7 @@ void amiga_content_service_poll(void)
     const uint64_t fdd_end=timed ? profile_now():0U;
     if(timed)profile_span(&profile.fdd_ticks,&profile.fdd_max_ticks,fdd_end-began);
     const uint64_t sd_before=profile.sd_read_ticks,fifo_before=profile.fifo_ticks;
+    profile_poll_before=fdd_end;
     profile_ata=timed;
     if(floppy_result==0)(void)ata_poll();
     profile_ata=false;

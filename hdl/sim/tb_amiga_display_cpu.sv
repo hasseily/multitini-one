@@ -20,13 +20,15 @@ module tb_amiga_display_cpu #(parameter integer CPU_MODE=0);
     reg io_uio=0,io_strobe=0;reg [15:0] io_din=0;
     wire [4:0] cpucfg;
     wire [23:0] memory_addr;
-    wire memory_write,memory_valid,memory_busy,memory_fault;
+    wire memory_write,memory_valid,memory_busy,memory_fault,memory_burst;
     wire [63:0] memory_wdata;
     wire [7:0] memory_wstrb;
     reg [63:0] response_data=0;
     reg response_valid=0,response_busy=0;
     reg [7:0] response_delay=0;
     reg [23:0] held_addr;
+    // Line fills return four ascending beats; every write is one beat.
+    reg held_burst=0;reg [1:0] held_beat=0;
     reg held_write;
     reg [63:0] held_data;
     reg [7:0] held_mask;
@@ -43,10 +45,10 @@ module tb_amiga_display_cpu #(parameter integer CPU_MODE=0);
     integer completions=0,dma_source_hits=0,dma_source_misses=0;
     // Both copies use the same source: its first lookup misses after the
     // Fast RAM alias evicts it, while the repeated DMA lookup must hit.
-    always @(posedge clk)if(!reset && memory_i.state==0 && memory_i.request_valid &&
+    always @(posedge clk)if(!reset && memory_i.lookup &&
         memory_i.request_owner==0 && !memory_i.request_write && memory_i.request_addr==24'h001000)begin
         if(memory_i.hit)dma_source_hits=dma_source_hits+1;
-        else dma_source_misses=dma_source_misses+1;
+        else if(memory_i.launch_fill)dma_source_misses=dma_source_misses+1;
     end
     always @(posedge chip_clk)if(cpu_req && cpu_ready && completions<48)begin
         completions=completions+1;
@@ -82,7 +84,7 @@ module tb_amiga_display_cpu #(parameter integer CPU_MODE=0);
         .load_valid(1'b0),.load_addr(24'd0),.load_data(8'd0),.load_ready(),.load_done(),
         .run_enable(run_enable),.busy(memory_busy),.fault(memory_fault),
         .memory_addr(memory_addr),.memory_write(memory_write),.memory_wdata(memory_wdata),.memory_wstrb(memory_wstrb),
-        .memory_valid(memory_valid),.memory_ready(!response_busy),.memory_rdata(response_data),
+        .memory_burst(memory_burst),.memory_valid(memory_valid),.memory_ready(!response_busy),.memory_rdata(response_data),
         .memory_rvalid(response_valid),.memory_fault(1'b0));
 
     function automatic [15:0] romword(input [19:0] position);
@@ -329,11 +331,12 @@ module tb_amiga_display_cpu #(parameter integer CPU_MODE=0);
                         else if(held_addr==24'ha00000)fast_store[lane*8+:8]<=held_data[lane*8+:8];
                     end
                 end
-                response_data<=read_line(held_addr);response_valid<=1;response_busy<=0;
+                response_data<=read_line(held_addr+{held_beat,3'b000});response_valid<=1;
+                if(held_burst && held_beat!=2'd3)held_beat<=held_beat+1'b1;else response_busy<=0;
             end
         end else if(memory_valid)begin
             if(transactions<40)$display("DDR tx%0d %h write=%b mask=%h data=%h",transactions,memory_addr,memory_write,memory_wstrb,memory_wdata);
-            held_addr<=memory_addr;held_write<=memory_write;held_data<=memory_wdata;held_mask<=memory_wstrb;
+            held_addr<=memory_addr;held_burst<=memory_burst;held_beat<=0;held_write<=memory_write;held_data<=memory_wdata;held_mask<=memory_wstrb;
             response_delay<=4+(transactions%13);response_busy<=1;transactions<=transactions+1;
         end
     end

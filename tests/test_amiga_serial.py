@@ -22,6 +22,8 @@ def main():
         extract(source,'amiga_profile_decimal','char text[21],uint64_t value','const char *')+'\n\n'+
         extract(source,'amiga_profile_microseconds','uint64_t ticks','uint64_t')+'\n\n'+
         extract(source,'amiga_profile_metric','const char *name,uint64_t ticks,uint64_t count, uint64_t bytes,uint64_t maximum','void')+'\n\n'+
+        extract(source,'amiga_profile_native_microseconds','uint64_t cycles,uint32_t hz','uint64_t')+'\n\n'+
+        extract(source,'amiga_profile_native_report','const mt_amiga_ide_profile_t *p','void')+'\n\n'+
         extract(source,'amiga_ide_profile_command')+'\n\n'+
         extract(source,'amiga_ide_bench_command')+'\n\n'+
         extract(source,'amiga_cpu_command')+'\n\n'+

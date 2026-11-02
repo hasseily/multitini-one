@@ -17,7 +17,7 @@ HOST = "hdl/core/amiga/multitini_amiga_host.sv"
 SOURCES = ["hdl/sim/amiga_cdc_model.sv", "third_party/appletini/hdl/cdc_bit_sync.sv",
            "hdl/common/multitini_async_mailbox.sv", "hdl/common/multitini_display_pkg.sv",
            "hdl/common/multitini_display_geometry.sv", "hdl/common/multitini_display_geometry_pair.sv",
-           "hdl/core/amiga/multitini_amiga_ide_block.sv", HOST, "hdl/sim/tb_amiga_profile_cdc_settle.sv"]
+           "hdl/core/amiga/multitini_amiga_ide_block.sv", "hdl/core/amiga/multitini_amiga_diagnostics.sv", HOST, "hdl/sim/tb_amiga_profile_cdc_settle.sv"]
 TRACKED = list(dict.fromkeys([TOP, READER] + SOURCES + ["scripts/test_amiga_profile_cdc_settle.py", "scripts/run_native_tool.py"]))
 
 

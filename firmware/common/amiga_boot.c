@@ -1,13 +1,17 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "multitini_amiga_boot.h"
+#include <string.h>
 mt_link_result_t mt_amiga_host_access(mt_core_link_t *link,uint8_t opcode,uint32_t payload,uint32_t polls,uint32_t *response)
 {
-    if(link==NULL || link->read32==NULL || link->write32==NULL || polls==0U || opcode>MT_AMIGA_HOST_READ_CONFIG ||
+    if(link==NULL || link->read32==NULL || link->write32==NULL || polls==0U || opcode>MT_AMIGA_HOST_DIAG_READ ||
         payload>0xffffffU || (opcode==MT_AMIGA_HOST_RTC_COMMIT && payload>0xffffU) ||
         (opcode==MT_AMIGA_HOST_DISPLAY_REQUEST && (payload>0xffffU || payload<4U)) ||
         (opcode==MT_AMIGA_HOST_DISPLAY_READ && payload>17U) ||
         (opcode==MT_AMIGA_HOST_DISPLAY_APPLY && payload>3U) ||
-        (opcode==MT_AMIGA_HOST_READ_CONFIG && payload!=0U))return MT_LINK_BAD_ARGUMENT;
+        (opcode==MT_AMIGA_HOST_READ_CONFIG && payload!=0U) ||
+        (opcode==MT_AMIGA_HOST_DIAG_CONTROL && ((payload>>8U)==0U ||
+            (uint8_t)payload<MT_AMIGA_DIAG_ARM || (uint8_t)payload>MT_AMIGA_DIAG_STOP)) ||
+        (opcode==MT_AMIGA_HOST_DIAG_READ && payload>=MT_AMIGA_DIAG_WORDS))return MT_LINK_BAD_ARGUMENT;
     uint32_t before=0U;
     for(uint32_t i=0U;;++i) {
         before=link->read32(link->context,MT_AMIGA_HOST_PORT);
@@ -17,6 +21,7 @@ mt_link_result_t mt_amiga_host_access(mt_core_link_t *link,uint8_t opcode,uint32
     if(opcode>=MT_AMIGA_HOST_RTC_LOW && opcode<=MT_AMIGA_HOST_RTC_COMMIT && !(before&MT_AMIGA_HOST_RTC))return MT_LINK_ABI_MISMATCH;
     if(opcode>=MT_AMIGA_HOST_DISPLAY_REQUEST && opcode<=MT_AMIGA_HOST_DISPLAY_APPLY && !(before&MT_AMIGA_HOST_DISPLAY))return MT_LINK_ABI_MISMATCH;
     if(opcode==MT_AMIGA_HOST_READ_CONFIG && !(before&(MT_AMIGA_HOST_CPU14|MT_AMIGA_HOST_FAST_IDE)))return MT_LINK_ABI_MISMATCH;
+    if(opcode>=MT_AMIGA_HOST_DIAG_CONTROL && !(before&MT_AMIGA_HOST_DIAGNOSTICS))return MT_LINK_ABI_MISMATCH;
     if(((opcode==MT_AMIGA_HOST_DISPLAY_REQUEST && (payload&3U)==3U) ||
         (opcode==MT_AMIGA_HOST_DISPLAY_APPLY && payload==3U)) && !(before&MT_AMIGA_HOST_SHRES))return MT_LINK_ABI_MISMATCH;
     link->write32(link->context,MT_AMIGA_HOST_PORT,((uint32_t)opcode<<24U)|payload);
@@ -28,6 +33,60 @@ mt_link_result_t mt_amiga_host_access(mt_core_link_t *link,uint8_t opcode,uint32
         }
     }
     return MT_LINK_TIMEOUT;
+}
+mt_link_result_t mt_amiga_diag_control(mt_core_link_t *link,uint16_t sequence,
+    uint8_t action,uint32_t polls)
+{
+    if(sequence==0U || action<MT_AMIGA_DIAG_ARM || action>MT_AMIGA_DIAG_STOP)return MT_LINK_BAD_ARGUMENT;
+    uint32_t response=0U;
+    const mt_link_result_t result=mt_amiga_host_access(link,MT_AMIGA_HOST_DIAG_CONTROL,
+        ((uint32_t)sequence<<8U)|action,polls,&response);
+    return result!=MT_LINK_OK ? result:(uint16_t)response==sequence ? MT_LINK_OK:MT_LINK_REMOTE_ERROR;
+}
+mt_link_result_t mt_amiga_diag_read(mt_core_link_t *link,uint16_t sequence,
+    uint32_t polls,mt_amiga_diag_snapshot_t *out)
+{
+    if(sequence==0U || out==NULL)return MT_LINK_BAD_ARGUMENT;
+    uint16_t words[MT_AMIGA_DIAG_WORDS];
+    for(unsigned i=0U;i<MT_AMIGA_DIAG_WORDS;++i) {
+        uint32_t response=0U;
+        const mt_link_result_t result=mt_amiga_host_access(link,MT_AMIGA_HOST_DIAG_READ,i,polls,&response);
+        if(result!=MT_LINK_OK)return result;
+        words[i]=(uint16_t)response;
+    }
+    if(words[0]!=0x4447U || words[1]!=1U || words[2]!=MT_AMIGA_DIAG_WORDS || words[3]!=sequence ||
+       !(words[4]&MT_AMIGA_DIAG_FROZEN) || (words[4]&~UINT16_C(0x007f))!=0U ||
+       words[7]!=0U || ((uint32_t)words[8]|((uint32_t)words[9]<<16U))!=MT_AMIGA_DIAG_SERVICE_HZ || words[12]!=1U || words[13]!=1U ||
+       words[14]!=MT_AMIGA_DIAG_COUNTERS || words[15]!=0U || (words[5]&0xe000U)!=0U ||
+       (words[6]&0xe000U)!=0U)return MT_LINK_ABI_MISMATCH;
+    /* Reset or a competing capture must not turn a torn bank into plausible
+     * counters. Recheck the identifying header after all data words. */
+    static const uint8_t identity[]={0U,3U,4U,10U,11U};
+    for(unsigned i=0U;i<sizeof(identity);++i) {
+        uint32_t response=0U;
+        const mt_link_result_t result=mt_amiga_host_access(link,MT_AMIGA_HOST_DIAG_READ,identity[i],polls,&response);
+        if(result!=MT_LINK_OK)return result;
+        if((uint16_t)response!=words[identity[i]])return MT_LINK_REMOTE_ERROR;
+    }
+    mt_amiga_diag_snapshot_t value;memset(&value,0,sizeof(value));
+    value.sequence=sequence;value.status=words[4];value.config_begin=words[5];value.config_end=words[6];
+    value.service_hz=(uint32_t)words[8]|((uint32_t)words[9]<<16U);
+    value.epoch=(uint32_t)words[10]|((uint32_t)words[11]<<16U);
+    for(unsigned i=0U;i<MT_AMIGA_DIAG_COUNTERS;++i)for(unsigned w=0U;w<4U;++w)
+        value.counters[i]|=(uint64_t)words[16U+i*4U+w]<<(w*16U);
+    if(value.status&MT_AMIGA_DIAG_VALID) {
+        if((value.status&UINT16_C(0x0078))!=0U || value.config_begin!=value.config_end)return MT_LINK_REMOTE_ERROR;
+        uint64_t sum=0U;
+        for(unsigned i=MT_AMIGA_DIAG_GAP_HELD;i<=MT_AMIGA_DIAG_GAP_OTHER;++i) {
+            if(UINT64_MAX-sum<value.counters[i])return MT_LINK_REMOTE_ERROR;
+            sum+=value.counters[i];
+        }
+        if(sum!=value.counters[MT_AMIGA_DIAG_CLOSED_CYCLES] ||
+           UINT64_MAX-value.counters[MT_AMIGA_DIAG_CAPTURE_ACCEPTED]<value.counters[MT_AMIGA_DIAG_CAPTURE_HELD] ||
+           value.counters[MT_AMIGA_DIAG_CAPTURE_ACCEPTED]+value.counters[MT_AMIGA_DIAG_CAPTURE_HELD]!=
+               value.counters[MT_AMIGA_DIAG_CAPTURE_CYCLES])return MT_LINK_REMOTE_ERROR;
+    }
+    *out=value;return MT_LINK_OK;
 }
 mt_link_result_t mt_amiga_bulk_transfer(mt_core_link_t *link,bool capture,
     uint8_t sector[MT_AMIGA_SECTOR_BYTES],uint32_t polls,bool *submitted)

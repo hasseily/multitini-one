@@ -78,7 +78,7 @@ def main():
     vhdlbase=ROOT/'third_party/amiga/upstream/rtl/tg68k'
     vhdl=[vhdlbase/name for name in ('TG68K_Pack.vhd','TG68K_ALU.vhd','TG68K_MMU030.vhd','TG68KdotC_Kernel.vhd','TG68K.vhd')]
     sources=machine_sources()+[ROOT/x for x in ('third_party/appletini/hdl/cdc_bit_sync.sv','hdl/sim/amiga_cdc_model.sv','hdl/common/multitini_async_mailbox.sv',
-        'hdl/core/amiga/multitini_amiga_ide_block.sv','hdl/core/amiga/multitini_amiga_host.sv','hdl/core/amiga/multitini_amiga_memory.sv',
+        'hdl/core/amiga/multitini_amiga_ide_block.sv','hdl/core/amiga/multitini_amiga_diagnostics.sv','hdl/core/amiga/multitini_amiga_host.sv','hdl/core/amiga/multitini_amiga_memory.sv',
         'hdl/sim/tb_amiga_ports.sv','hdl/sim/tb_amiga_fastide.sv')]
     mutation=None
     if args.mutation:

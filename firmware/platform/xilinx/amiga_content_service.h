@@ -45,7 +45,12 @@ typedef struct {
     uint64_t sd_read_calls,read_sectors,read_bytes;
     uint64_t fifo_calls,fifo_bytes,sequential_reads,nonsequential_reads;
     uint64_t drq_intervals,drq_to_request_ticks,max_drq_to_request_ticks;
+    uint64_t poll_bracketed_intervals,poll_unbracketed_intervals;
+    uint64_t poll_tail_upper_ticks,max_poll_tail_upper_ticks;
     uint64_t first_read_ticks,last_read_ticks,active_read_ticks,read_window_bytes;
+    bool native_available,native_valid;
+    mt_link_result_t native_result;
+    mt_amiga_diag_snapshot_t native;
 } mt_amiga_ide_profile_t;
 /* Optional host timing only: no reset, settings, media or FIFO operations.
  * Stop before printing. Snapshot of a stopped run never calls the timer.
@@ -58,7 +63,11 @@ typedef struct {
  * offsets are relative to profile start, bytes are ACK-published full sectors.
  * The window includes inter-command gaps. ATA other includes write journals.
  * DRQ-to-next-request intervals overlap outside ticks and are NON-additive:
- * they include guest work, CDC visibility and ARM polling latency. */
+ * they include guest work, CDC visibility and ARM polling latency.
+ * A post-DRQ zero then positive status brackets control-visible readiness.
+ * Its polling tail lies in [0,poll_tail_upper_ticks], summed only over
+ * bracketed intervals; no-zero intervals are explicitly unbracketed. These
+ * are bounds, not measured native request assertion or exact polling time. */
 int amiga_content_service_profile_start(uint64_t (*timer)(void *),void *context);
 void amiga_content_service_profile_stop(void);
 void amiga_content_service_profile_snapshot(mt_amiga_ide_profile_t *out);

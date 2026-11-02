@@ -83,7 +83,7 @@ if(NOT MSVC AND NOT CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
 endif()
 
 enable_testing()
-foreach(component amiga_content amiga_boot amiga_bulk amiga_hid amiga_rtc amiga_display)
+foreach(component amiga_content amiga_boot amiga_bulk amiga_hid amiga_rtc amiga_display amiga_diag)
     add_executable(test_${component} tests/host/test_${component}.c)
     target_link_libraries(test_${component} PRIVATE multitini_common)
     add_test(NAME ${component} COMMAND test_${component})

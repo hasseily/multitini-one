@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ["third_party/appletini/hdl/cdc_bit_sync.sv", "hdl/sim/amiga_cdc_model.sv",
            "hdl/common/multitini_async_mailbox.sv", "hdl/core/amiga/multitini_amiga_memory.sv",
            "hdl/core/amiga/multitini_amiga_ide_block.sv",
+           "hdl/core/amiga/multitini_amiga_diagnostics.sv",
            "hdl/core/amiga/multitini_amiga_host.sv", "hdl/core/amiga/multitini_amiga_loader.sv",
            "hdl/core/amiga/multitini_amiga_adapter.sv", "hdl/board/multitini_amiga_video_normalizer.sv",
            "hdl/sim/tb_amiga_adapter_input.sv"]

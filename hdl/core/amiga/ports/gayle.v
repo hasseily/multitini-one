@@ -42,6 +42,7 @@ module gayle
 	input         ide_read,
 	output [15:0] ide_readdata,
 
+	output [5:0] monitor,
 	output        led
 );
 // Strict-tool declaration order; no functional change.
@@ -203,6 +204,7 @@ ide ide0
 	.io_writedata({16'd0,data_in[7:0],data_in[15:8]}),
 	.io_32(io_32),
 
+	.monitor(monitor),
 	.request(ide_req[2:0]),
 	.drq(ide0_drq),
 
