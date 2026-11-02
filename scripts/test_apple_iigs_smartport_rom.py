@@ -34,9 +34,16 @@ def main():
     text=run([exe,rom],"simulate");print(text.strip())
     match=re.search(r"SmartPort ROM: (\d+) exact cases, (\d+) DMA initiations PASS",text)
     stack=re.search(r"SmartPort stack: peak(\d+) bytes including caller/helper frames PASS",text)
-    if not match or not stack or int(stack[1])!=35 or hashes()!=before:raise ValueError("Missing result, invalid stack peak or changed sources")
+    irq_cases=[line for line in text.splitlines() if line.startswith("IRQ_RESELECT ")]
+    if not match or not stack or int(stack[1])!=35 or len(irq_cases)!=6 or hashes()!=before:raise ValueError("Missing result, invalid stack peak or changed sources")
+    if any("C800_LOST" in line for line in irq_cases):raise ValueError("SmartPort IRQ return lost expansion ROM ownership")
     result={"schema":1,"status":"PASS","files":before,"ROM":json.loads((rom.parent/"provenance.json").read_text()),
-        "cases":int(match[1]),"DMA_initiations":int(match[2]),"peak_stack_bytes_including_caller_helpers":int(stack[1]),"checks":["8unitstandard/extendedSTATUS,DIB,READ,WRITE","banked4bytepointerand32bitLBA","exact3/5inline-returnskipincludingpage/bank0wrap","stackpagewrap,SP/E/I/D/B/scratchpreservation","exact35bytepeakstackincludingcallerandhelperframes","actualparameterlistandresponse/controlspanoverflowguards","offline/protected/badblock/errorfromF1afterstaleF0","hostcount8evenholes,emptydriveDIB","INIT,resetCONTROL,preformattedFORMATandblock-onlyerrors","legacyProDOSandboot/fallback","prelatchedINTC8releaseonSmartPortProDOSandbootentries","C7trampolinespreserveA/P/X/Y/SP"],
-        "limits":["ProductionCPU executesROM against independentmockcontroller; nativeMMIO,DDRcachecoherence,actualROM/System6boot,routedtimingandphysicalhardware require separateintegration gates."]}
+        "cases":int(match[1]),"DMA_initiations":int(match[2]),"peak_stack_bytes_including_caller_helpers":int(stack[1]),"checks":["8unitstandard/extendedSTATUS,DIB,READ,WRITE","banked4bytepointerand32bitLBA","exact3/5inline-returnskipincludingpage/bank0wrap","stackpagewrap,SP/E/I/D/B/scratchpreservation","exact35bytepeakstackincludingcallerandhelperframes","actualparameterlistandresponse/controlspanoverflowguards","offline/protected/badblock/errorfromF1afterstaleF0","hostcount8evenholes,emptydriveDIB","INIT,resetCONTROL,preformattedFORMATandblock-onlyerrors","legacyProDOSandboot/fallback","prelatchedINTC8releaseonSmartPortProDOSandbootentries","C7 handoff preserves A/B/X/Y and original P; protected firmware masks IRQ, saves one P byte and publishes MSLOT=C7"],
+        "IRQ_reselect_cases":irq_cases,
+        "IRQ_reselect_model":"Native PEA/PHA/SEC-XCE/RTS standard STATUS call; IRQ at the C7 entry enable/mask boundary or after epilogue PLP; handler BIT CFFF and saved-slot read as in ROM01. Original-ROM ownership loss is characterized before executing a synthetic floating-bus opcode; protected C7 firmware must return for all saved-slot values.",
+        "evidence_files":{name:{"bytes":path.stat().st_size,"sha256":hashlib.sha256(path.read_bytes()).hexdigest()}
+            for name in ("generate.log","compile.log","simulate.log") if (path:=out/name).exists()},
+        "limits":["Production CPU executes ROM against independent mock controller and C800 ownership model; native MMIO, DDR/cache coherence, actual ROM/System6 boot, routed timing and physical hardware require separate integration gates.",
+            "Different saved-slot cases characterize ownership loss; the $07F8 caller/callee contract and hardware fault attribution require separate evidence."]}
     (out/"validation.json").write_text(json.dumps(result,indent=2)+"\n");return 0
 if __name__=="__main__":raise SystemExit(main())

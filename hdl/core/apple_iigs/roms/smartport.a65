@@ -13,6 +13,8 @@
 ; pointers must have a zero fourth byte on this 24-bit machine.
 ; I and B are preserved, decimal is cleared, A/C report error, X/Y give
 ; the transferred byte count. Scratch $60-$7C is saved and restored.
+; MSLOT ($07F8) records this card while its C800 ROM is selected. IRQs stay
+; masked until execution has returned to the always-visible C7 slot page.
 ; Maximum stack usage is 35 bytes, including caller and helper JSR frames.
 ; Disk payloads use the controller DMA, never a 512-byte CPU copy loop.
 !cpu 65816
@@ -51,8 +53,7 @@ range_low=$7b
 range_high=$7c
 
 !macro save_context {
-    php
-    sei
+    ; Original P was saved by the C7 entry before it masked interrupts.
     cld
     xba
     pha                         ; save caller's hidden B accumulator byte
@@ -82,25 +83,57 @@ smartport_entry:
 ; The IIgs boot scan reads C3xx, which can leave internal C800 ROM selected.
 ; Release that latch before entering our expansion ROM. Each following C7
 ; fetch selects our slot again after CFFF also releases its external owner.
-; BIT changes flags, so retain the complete caller status and stack depth.
+; The IIgs IRQ manager restores C800 from MSLOT, which the card must set.
+; Save P exactly once and mask IRQ before the C800 handoff. Original A is
+; restored before entering C800; its temporary stack byte is already gone.
 ; Keep the published ProDOS/SmartPort entries at C70A/C70D and boot at C757.
 prodos_select:
     php
+    sei
+    pha
+    lda #$c7
+    sta $07f8
+    pla
     bit $cfff
-    plp
     jmp prodos
 smartport_select:
     php
+    sei
+    pha
+    lda #$c7
+    sta $07f8
+    pla
     bit $cfff
-    plp
     jmp smartport
-boot_select:
-    php
-    bit $cfff
+
+; An IRQ may change C800 ownership as soon as PLP restores the caller's I.
+; Finish entirely in C7 so even that first pending interrupt is safe.
+card_return:
     plp
-    jmp boot
+    cld
+    cmp #1                      ; carry clear only when result is zero
+    rts
+
+; Boot setup and the continuation also remain in C7. Only the protected
+; ProDOS call executes C800 code, with the same stack bound as a normal call.
+boot:
+    lda #1
+    sta $42
+    lda #$70
+    sta $43
+    stz $44
+    lda #8
+    sta $45
+    stz $46
+    stz $47
+    jsr prodos_entry
+    bcs .floppy
+    ldx #$70
+    jmp $0801
+.floppy jmp $c600
+
     !fill $c757-*, $ea
-    jmp boot_select
+    jmp boot
     !fill $c7fb-*, $ea
     !byte $80                   ; generic extended-call interface, not a SCSI card
     !word 0                     ; obtain legacy capacity with STATUS
@@ -577,26 +610,7 @@ restore_context:
     }
     pla                         ; original B
     xba                         ; A=result; B=original B
-    plp                         ; restore original interrupt-disable flag
-    cld
-    cmp #1                      ; carry clear only when result is zero
-    rts
-
-boot:
-    lda #1
-    sta $42
-    lda #$70
-    sta $43
-    stz $44
-    lda #8
-    sta $45
-    stz $46
-    stz $47
-    jsr prodos_entry
-    bcs .floppy
-    ldx #$70
-    jmp $0801
-.floppy jmp $c600
+    jmp card_return             ; restore caller I only after leaving C800
 
 parameter_counts:
     !byte 3,3,3,1,3,1

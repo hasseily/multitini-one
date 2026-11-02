@@ -87,6 +87,95 @@ module tb_apple_iigs_iolc_vectors;
     task ram_emit(input byte value);
       begin put(ram_cursor,value);ram_cursor++;end
     endtask
+    bit handler_in_rom;
+    task handler_emit(input byte value);
+      begin if(handler_in_rom)emit(value);else ram_emit(value);end
+    endtask
+    task return_handler(input bit in_rom);
+      begin
+        handler_in_rom=in_rom;
+        if(in_rom)cursor=65536+16'he400;else ram_cursor=24'h00cd00;
+        // Hardware saves PBR/PC/P. The handler owns A/X/Y/DBR/D and
+        // explicitly saves them at 16-bit width before changing them.
+        handler_emit(8'hc2);handler_emit(8'h30);
+        handler_emit(8'h48);handler_emit(8'hda);handler_emit(8'h5a);handler_emit(8'h8b);handler_emit(8'h0b);
+        handler_emit(8'he2);handler_emit(8'h20);handler_emit(8'ha9);handler_emit(8'h66);handler_emit(8'h48);handler_emit(8'hab);
+        handler_emit(8'hc2);handler_emit(8'h20);handler_emit(8'ha9);handler_emit(8'hef);handler_emit(8'hbe);handler_emit(8'h5b);
+        handler_emit(8'ha9);handler_emit(8'h34);handler_emit(8'h12);handler_emit(8'ha2);handler_emit(8'h78);handler_emit(8'h56);
+        handler_emit(8'ha0);handler_emit(8'hbc);handler_emit(8'h9a);
+        handler_emit(8'h2b);handler_emit(8'hab);handler_emit(8'h7a);handler_emit(8'hfa);handler_emit(8'h68);handler_emit(8'h40);
+      end
+    endtask
+    task native_return_case(input integer selected_speed,input bit use_iolc);
+      integer polls,irq_tick,return_tick;
+      bit irq_started,entered,returned,stopped;
+      reg [23:0] isr_target;
+      begin
+        @(negedge core_clk);reset=1;core_reset_request=1;test_irq=0;
+        speed=selected_speed;emulation_case=0;iolc_case=use_iolc;vector_address=16'hffee;vector_reads=0;
+        for(integer i=0;i<131072;i++)rom[i]=8'hea;
+        rom[131068]=0;rom[131069]=8'he0;
+        rom[65536+16'hffee]=0;rom[65536+16'hffef]=8'he4;
+        // This native I/O read needs a ROM-cache lookup. Its line is cold;
+        // IRQ is asserted while the variable-latency DDR model holds it.
+        rom[65536+16'hc071]=8'h6b;rom[65536+16'hc072]=8'ha1;
+        cursor=122880;emit(8'h78);emit(8'h5c);emit(0);emit(0);emit(2);
+        ram_cursor=24'h020000;
+        ram_emit(8'h18);ram_emit(8'hfb);ram_emit(8'hc2);ram_emit(8'h30);
+        ram_emit(8'ha9);ram_emit(8'h01);ram_emit(8'h35);ram_emit(8'h1b); // S=$3501
+        ram_emit(8'ha9);ram_emit(8'h68);ram_emit(8'h24);ram_emit(8'h5b); // D=$2468
+        ram_emit(8'he2);ram_emit(8'h20);
+        ram_emit(8'ha9);ram_emit(8'h40);ram_emit(8'h8f);ram_emit(8'h35);ram_emit(8'hc0);ram_emit(8'he0);
+        ram_emit(8'ha9);ram_emit(0);ram_emit(8'h8f);ram_emit(8'hee);ram_emit(8'hff);ram_emit(0);
+        ram_emit(8'ha9);ram_emit(8'hdd);ram_emit(8'h8f);ram_emit(8'hef);ram_emit(8'hff);ram_emit(0);
+        ram_emit(8'ha9);ram_emit(use_iolc ? 8'h40:0);ram_emit(8'h8f);ram_emit(8'h35);ram_emit(8'hc0);ram_emit(8'he0);
+        ram_emit(8'ha9);ram_emit(8'h5a);ram_emit(8'h48);ram_emit(8'hab); // DBR=$5A
+        ram_emit(8'hc2);ram_emit(8'h20);
+        ram_emit(8'ha2);ram_emit(8'h7c);ram_emit(8'hb2);ram_emit(8'ha0);ram_emit(8'h8d);ram_emit(8'hc3);
+        ram_emit(8'h5c);ram_emit(0);ram_emit(8'h80);ram_emit(8'h23);
+        ram_cursor=24'h238000;
+        ram_emit(8'hc2);ram_emit(8'hff);ram_emit(8'he2);ram_emit(8'h49); // native A/X16, V/D/C, IRQ enabled
+        ram_emit(8'haf);ram_emit(8'h71);ram_emit(8'hc0);ram_emit(8'he0); // LDA $E0C071 -> $A16B, P=$C9
+        ram_emit(8'hea);ram_emit(8'hdb); // RTI must resume at $238008
+        return_handler(!use_iolc);isr_target=use_iolc ? 24'h00dd00:24'h00e400;
+        repeat(20)@(negedge core_clk);reset=0;
+        packet(8'h43,16);packet(8'h41,131072);packet(8'h42,4096);packet(8'h46,4096);packet(8'h45,256);
+        if(!rom_loaded)$fatal(1,"Native RTI synthetic ROM not loaded");
+        core_reset_request=0;irq_started=0;entered=0;returned=0;stopped=0;irq_tick=0;return_tick=0;
+        for(polls=0;polls<200000;polls++)begin
+          @(negedge core_clk);
+          if(!irq_started && dut.machine_i.cpu_addr==24'he0c071 && dut.native_path &&
+             dut.cpu_memory_cycle && dut.cache_stall && busy && !pending_write)begin
+            if(dut.cpu_ce)$fatal(1,"IRQ trigger did not occur during a held native DDR read");
+            irq_started=1;test_irq=1;irq_tick=polls;
+            $display("BRIDGE_IRQ_PENDING speed%0d iolc%0d pc%02x:%04x addr%06x physical%06x native%0b stall%0b DDRdelay%0d",speed,use_iolc,dut.machine_i.cpu.PBR,dut.machine_i.cpu.PC,dut.machine_i.cpu_addr,dut.physical_addr,dut.native_path,dut.cache_stall,delay_count);
+          end
+          // Observe registers before the accepted opcode-fetch edge.
+          if(dut.cpu_ce && dut.machine_i.cpu.STATE==0 && dut.machine_i.cpu_vpa && dut.machine_i.cpu_vda)begin
+            if(dut.machine_i.cpu_addr==isr_target)begin
+              entered=1;test_irq=0;
+              if(!irq_started || dut.machine_i.cpu.SP!==16'h34fd || dut.machine_i.cpu.P!==9'h0c5 ||
+                 dut.machine_i.cpu.DBR!==8'h5a || dut.machine_i.cpu.D!==16'h2468)
+                $fatal(1,"Bridge native IRQ entry differs S%04x P%03x B%02x D%04x",dut.machine_i.cpu.SP,dut.machine_i.cpu.P,dut.machine_i.cpu.DBR,dut.machine_i.cpu.D);
+            end
+            // Discarded pre-IRQ opcode fetches at the return PC are ignored.
+            if(entered && dut.machine_i.cpu_addr==24'h238008)begin
+              returned=1;return_tick=polls;
+              if(dut.machine_i.cpu.PBR!==8'h23 || dut.machine_i.cpu.PC!==16'h8008 ||
+                 dut.machine_i.cpu.SP!==16'h3501 || dut.machine_i.cpu.P!==9'h0c9 ||
+                 dut.machine_i.cpu.DBR!==8'h5a || dut.machine_i.cpu.D!==16'h2468 ||
+                 dut.machine_i.cpu.A!==16'ha16b || dut.machine_i.cpu.X!==16'hb27c || dut.machine_i.cpu.Y!==16'hc38d)
+                $fatal(1,"Bridge native RTI restore differs K:PC%02x:%04x S%04x P%03x B%02x D%04x A%04x X%04x Y%04x",dut.machine_i.cpu.PBR,dut.machine_i.cpu.PC,dut.machine_i.cpu.SP,dut.machine_i.cpu.P,dut.machine_i.cpu.DBR,dut.machine_i.cpu.D,dut.machine_i.cpu.A,dut.machine_i.cpu.X,dut.machine_i.cpu.Y);
+            end
+          end
+          if(dut.machine_i.cpu.STPExec)begin stopped=1;polls=200000;end
+        end
+        test_irq=0;
+        if(!irq_started || !entered || !returned || !stopped || vector_reads!=2)
+          $fatal(1,"Bridge native RTI coverage absent IRQ%0b entry%0b return%0b stop%0b vectors%0d pc%06x",irq_started,entered,returned,stopped,vector_reads,dut.machine_i.cpu_addr);
+        $display("PASS: native bridge IRQ/RTI speed%0d iolc%0d pendingDDRread E0:C071 return23:8008 S3501 PC9 softwareDBR5A D2468 waitticks%0d",speed,use_iolc,return_tick-irq_tick);$fflush();
+      end
+    endtask
     always @(posedge core_clk) if(!dut.machine_reset && dut.cpu_ce && !dut.machine_i.cpu_vpb && dut.machine_i.cpu_we_n) begin
       if((dut.machine_i.cpu_addr=={8'h00,vector_address} || dut.machine_i.cpu_addr=={8'h00,vector_address+16'd1}) && dut.cpu_speed!==3'(speed))
         $fatal(1,"IRQ vector effective speed%0d differs from configured speed%0d",dut.cpu_speed,speed);
@@ -137,7 +226,9 @@ module tb_apple_iigs_iolc_vectors;
         if(vector_reads!=2 || actual_marker!==expected_marker || {vector_hi,vector_lo}!==(expect_rom ? 16'he400 : 16'hdd00))$fatal(1,"IOLC nativeIRQ result differs");
         $display("PASS: speed%0d emulation%0d iolc%0d IRQ vector%04x marker%02x",speed,emulation_case,iolc_case,{vector_hi,vector_lo},actual_marker);$fflush();
       end
+      if(!original_upstream)for(integer setting=0;setting<2;setting++)for(integer mapping=0;mapping<2;mapping++)
+        native_return_case(setting==0 ? 0:6,mapping!=0);
       $finish;
     end
-    initial begin #100000000;$fatal(1,"IOLC IRQ timeout");end
+    initial begin #250000000;$fatal(1,"IOLC IRQ timeout");end
 endmodule

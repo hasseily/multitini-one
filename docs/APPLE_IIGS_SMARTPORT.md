@@ -50,12 +50,38 @@ The source-built ROM contains a 256-byte slot page followed by a 2 KiB
 expansion ROM. It is loaded with IIgs stream kind 0x49; an older FPGA image
 cannot accept this stream and must be updated with the firmware.
 
-The [KEGS-priority MMU audit](APPLE_IIGS_MMU_AUDIT.md) adds internal C800
+The [hardware-reference MMU audit](APPLE_IIGS_MMU_AUDIT.md) adds internal C800
 ownership. Its matching `hdd.rom` releases that latch through CFFF in C7
 before entering expansion ROM, preserving the published C70A/C70D/C757
 entries and caller registers. Install the rebuilt slot ROM with the corrected
 IIgs FPGA: the previous slot ROM can fail after the system boot scan selects
 internal C800. This change does not inherently require an ARM rebuild.
+
+### IRQ-safe expansion-ROM calls
+
+The slot ROM records `$C7` in `MSLOT` (`$0007F8`) before entering C800. It
+keeps IRQs masked throughout C800 execution and restores the caller's I flag
+in the C7 slot page. Boot setup and its continuation also execute in C7.
+The ROM remains 2,304 bytes; C70A, C70D and C757 retain their published entries.
+No FPGA or ARM rebuild is needed for this slot-ROM update.
+
+The previous ROM could lose C800 ownership if an IRQ restored another slot
+during its entry or return. A GS/OS-style call reproducer loses the mapping
+with initial MSLOT values `$00` and `$C3`, while `$C7` is a passing control.
+The corrected ROM passes all six entry/return cases, the existing 171 ROM
+cases, and all 19 production-adapter groups. The same regression rejects the
+previous ROM. The maximum measured stack use remains 35 bytes.
+
+The reported ROM01 hardware BRK at `00:3DFB` has a pending return to the
+GS/OS SmartPort continuation. Its relationship to this reproduced defect
+still requires a hardware retest; the full baseline ROM01 simulation reached
+Finder. ROM01 and ROM03 use the same C800-restoration sequence, so ROM03 or
+accelerated boot success does not isolate the cause by itself. Monitor input
+can alter live MSLOT, and later interrupts can overwrite its saved copy.
+
+Apple assigns MSLOT maintenance to the peripheral card in the Firmware
+Reference, chapter 8, page 182, "Restoring the original environment":
+[Apple IIgs Firmware Reference](https://manuals.plus/m/270296c2f198557cb885e31b31dd2b06504e099af985e68f26b5fe3c70953a01).
 
 Media kind 0x43 carries a 32-bit block count in the existing media-size
 argument. This preserves the common shell ABI and avoids changing the other

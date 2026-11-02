@@ -15,7 +15,7 @@ scripts/test_apple_iigs_fast_floppy_protocol.py,Multitini One,,GPL-3.0-only,sour
 hdl/sim/tb_apple_iigs_legacy_video.sv,Multitini One,,GPL-3.0-only,sim-tested,Original synthetic-memory functional netlist oracle for legacy graphics and text plus SHR
 scripts/synth_apple_iigs_legacy_video.tcl,Multitini One,,GPL-3.0-only,sim-tested,Original isolated VGC synthesis and functional netlist export
 scripts/test_apple_iigs_legacy_video.py,Multitini One,,GPL-3.0-only,sim-tested,Original guarded synthesis and Xsim runner with ordered pixel checks and source-hash evidence
-hdl/core/apple_iigs/roms/smartport.a65,Multitini One,,GPL-3.0-only,CPU-tested,Original eight-unit standard and extended SmartPort ROM with DMA controller interface; AppleWin and pinned Appletini MIT handler compatibility references in provenance/iigs_smartport.import.json; no Apple SSC wrappers included
+hdl/core/apple_iigs/roms/smartport.a65,Multitini One,,GPL-3.0-only,CPU-tested,Original eight-unit standard and extended SmartPort ROM with DMA controller interface; C7 IRQ boundaries and MSLOT publication; AppleWin and pinned Appletini MIT handler compatibility references in provenance/iigs_smartport.import.json; no Apple SSC wrappers included
 hdl/core/nes/multitini_nes_adapter.sv,MiSTer NES and Multitini One,49a0a662e244469ca77b2155746a066df704ffae,GPL-3.0-only,source-reviewed,Original shared-shell adapter with licensed RGB palette constants from pinned rtl/video.sv; original upstream source retained and import-locked
 README.md,Multitini One,,GPL-3.0-only,reviewed,Original project documentation
 sd/multitini/cores/amiga/roms/readme.txt,Multitini One,,GPL-3.0-only,source-reviewed,Original user-supplied Kickstart filename and compatibility instructions; no system ROM bytes
@@ -1094,3 +1094,4 @@ tools/iigs-mmu-probe/TESTERS.txt,Multitini One,,GPL-3.0-only,source-reviewed,Ori
 tools/iigs-mmu-probe/LICENSE,Multitini One,,GPL-3.0-only,source-reviewed,Unmodified repository GPL version 3 license text for the standalone diagnostic source bundle
 hdl/sim/apple_iigs_mmu_rom3_capture.vh,Multitini One,,GPL-3.0-only,source-reviewed,Original production-MMU regression against physical ROM03 observations
 hdl/sim/fixtures/iigs_mmu_rom03.json,Multitini One,,GPL-3.0-only,source-reviewed,Original captured MMU behavior data and selection classifications; no Apple ROM bytes
+scripts/test_apple_iigs_interrupts.py,Multitini One,,GPL-3.0-only,sim-tested,Original source-capturing native IRQ/RTI regression runner; no system ROM or disk inputs

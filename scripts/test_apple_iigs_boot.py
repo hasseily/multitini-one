@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Check actual ROM3 RTC/disk bootstrap milestones with private runtime fixtures.
+"""Check actual IIgs ROM RTC/disk bootstrap milestones with private runtime fixtures.
 
 This test does not embed or distribute Apple ROMs or disk images. It checks
 the complete production loader, CPU, memory path and native HDD/IWM interfaces.
@@ -54,42 +54,65 @@ def disk_payload(path: Path) -> tuple[bytes,dict]:
 
 def main() -> int:
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--rom-source",type=Path,required=True,help="private directory containing rom3.rom, char.rom, adb3.rom and hdd.rom")
+    parser.add_argument("--rom-source",type=Path,required=True,help="private directory containing rom1.rom/adb1.rom or rom3.rom/adb3.rom, char.rom and hdd.rom")
+    parser.add_argument("--rom",type=int,choices=(1,3),default=3)
+    parser.add_argument("--card",choices=("zipgs","none"),default="zipgs")
+    parser.add_argument("--pram-source",type=Path,help="optional private 1024-byte PRAM backup; use ROM3 half0 or ROM1 half512 instead of fresh defaults")
     media_args=parser.add_mutually_exclusive_group(required=True)
     media_args.add_argument("--disk",type=Path,help="private bootable ProDOS-order HDD fixture (.2mg, .po or .hdv)")
     media_args.add_argument("--floppy-woz",type=Path,help="private virtual WOZ2 generated from the exact raw 800K floppy fixture")
     parser.add_argument("--raw-floppy",type=Path,help="original private .po/.2mg 800K image, required with --floppy-woz for provenance and boot opcode")
     parser.add_argument("--floppy-provenance",type=Path,help="optional JSON evidence recording the production raw-to-WOZ conversion")
     parser.add_argument("--build-dir",type=Path,default=ROOT/"build/apple-iigs-boot-tests")
-    parser.add_argument("--max-primary-ticks",type=int,default=120000000)
+    parser.add_argument("--max-primary-ticks",type=int,default=120000000,help="primary clock budget, 1..2000000000 (about 35 simulated seconds maximum)")
     parser.add_argument("--min-reads",type=int,default=2)
     parser.add_argument("--speed",type=int,choices=range(7),default=0)
     parser.add_argument("--compatibility-flags",type=lambda value:int(value,0),default=0x10,
                         help="runtime config byte3: 0x10=fresh IRQ-off default; 0x17=all delays off; 0=legacy defaults")
     parser.add_argument("--trace-start",type=int,default=0)
     parser.add_argument("--trace-end",type=int,default=0)
+    parser.add_argument("--trace-zipgs",action="store_true",help="trace completed C058-C05F accesses, ZipGS state and effective CPU speed; count primary ticks at each speed")
+    parser.add_argument("--save-frame",action="store_true",help="save the last complete 724x248 native RGB frame as final-frame.ppm, plus progress-frame.ppm every 100M ticks")
+    parser.add_argument("--dump-memory",action="store_true",help="save final raw 128 KiB backing RAM (00/01) and 128 KiB slow RAM (E0/E1); pending writes are not drained")
+    parser.add_argument("--writable-disk",action="store_true",help="allow HDD writes to the private in-memory image copy; input files stay unchanged")
     parser.add_argument("--require-irq-dispatch",action="store_true",help="also require execution of the native E1:0010 interrupt handler")
     args=parser.parse_args()
+    if args.card=="none" and args.speed!=0:
+        parser.error("--card none requires --speed 0")
+    if args.writable_disk and args.floppy_woz:
+        parser.error("--writable-disk currently supports HDD fixtures only")
     build=args.build_dir.resolve()
     if not build.is_relative_to(ROOT/"build"):
         raise ValueError("private fixture outputs must stay under the ignored repository build directory")
     if (build/"validation.json").exists():
         raise ValueError("validation already exists; select a fresh --build-dir")
-    if args.max_primary_ticks<1 or args.min_reads<1 or args.trace_start<0 or args.trace_end<0:
-        raise ValueError("tick/read budgets must be positive; trace positions must be nonnegative")
+    if not 1<=args.max_primary_ticks<=2000000000 or not 1<=args.min_reads<=2000000000:
+        raise ValueError("tick/read budgets must be in 1..2000000000")
+    if not 0<=args.trace_start<=2000000000 or not 0<=args.trace_end<=2000000000:
+        raise ValueError("trace positions must be in 0..2000000000")
     if not 0<=args.compatibility_flags<=0x1f:
         raise ValueError("compatibility flags must fit the five supported runtime bits")
     build.mkdir(parents=True,exist_ok=True)
     fixtures=build/"private"
     fixtures.mkdir(exist_ok=True)
     roms={}
-    for name,size in (("rom3",262144),("char",4096),("adb3",4096),("hdd",2304)):
+    for name,size in ((f"rom{args.rom}",262144 if args.rom==3 else 131072),("char",4096),(f"adb{args.rom}",4096),("hdd",2304)):
         path=args.rom_source/(name+".rom")
         data=path.read_bytes()
         if len(data)!=size or len(set(data))<2:
             raise ValueError(f"{name}.rom must contain {size} nonblank bytes")
         roms[name]={"path":str(path.resolve()),"bytes":len(data),"sha256":sha(data)}
         (fixtures/(name+".hex")).write_text("\n".join(f"{byte:02x}" for byte in data)+"\n")
+    pram=None
+    if args.pram_source:
+        data=args.pram_source.read_bytes()
+        if len(data)!=1024:
+            raise ValueError("--pram-source must contain exactly 1024 bytes")
+        offset=0 if args.rom==3 else 512
+        selected=data[offset:offset+512]
+        pram={"path":str(args.pram_source.resolve()),"bytes":len(data),"sha256":sha(data),
+              "selected_offset":offset,"selected_sha256":sha(selected),"provenance":"supplied backup; current board state is unverified"}
+        (fixtures/"pram.hex").write_text("\n".join(f"{byte:02x}" for byte in selected)+"\n")
     expected_boot_opcode=-1
     if args.floppy_woz:
         if not args.raw_floppy:
@@ -150,14 +173,18 @@ def main() -> int:
     top="tb_apple_iigs_boot"
     obj=build/"obj"
     executable=obj/("V"+top+(".exe" if os.name=="nt" else ""))
-    record={"schema_version":1,"status":"RUNNING","files":before,"private_inputs":{"roms":roms,"media":media},
+    record={"schema_version":1,"status":"RUNNING","files":before,"private_inputs":{"roms":roms,"media":media,"pram":pram},
             "git_head":subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip(),
-            "configuration":{"rom":3,"speed":args.speed,"compatibility_flags":args.compatibility_flags,
-                             "pram":"fresh defaults","read_only_disk":True,
+            "configuration":{"rom":args.rom,"card":args.card,"speed":args.speed,"compatibility_flags":args.compatibility_flags,
+                             "trace_zipgs":args.trace_zipgs,
+                             "save_frame":args.save_frame,"dump_memory":args.dump_memory,
+                             "pram":"supplied backup half" if pram else "fresh defaults","read_only_disk":not args.writable_disk,
+                             "disk_writes":"private volatile in-memory copy" if args.writable_disk else "disabled",
                              "max_primary_ticks":args.max_primary_ticks,"minimum_disk_reads":args.min_reads,
                              "require_native_irq_dispatch":args.require_irq_dispatch},
             "limits":["Bounded RTC and actual disk-bootstrap progress; no GS/OS desktop or game compatibility assertion.",
-                      "ARM file transport is replaced by a read-only host sector service; DDR uses a variable-latency simulation model.",
+                      "ARM file transport is replaced by a host sector service; optional writes remain in a private volatile memory copy. DDR uses a variable-latency simulation model.",
+                      "Optional RAM dumps are raw snapshots; posted/staged writes are reported but not drained.",
                       "Private fixture bytes remain only in ignored build/private files.",
                       "No FPGA timing closure or physical board qualification is implied."],"commands":commands}
     started=time.monotonic()
@@ -173,13 +200,19 @@ def main() -> int:
             run([tool("make"),"-C",obj,"-f","V"+top+".mk","-j8"],"compile")
         text=run([executable,"+FIXTURES="+fixtures.as_posix(),"+DISK="+(fixtures/"disk.bin").as_posix(),
                   "+TICKS="+str(args.max_primary_ticks),"+SPEED="+str(args.speed),"+MIN_READS="+str(args.min_reads),
+                  "+ROM="+str(args.rom),"+CARD="+str(0 if args.card=="zipgs" else 2),"+TRACE_ZIPGS="+str(int(args.trace_zipgs)),
+                  "+SAVE_FRAME="+str(int(args.save_frame)),"+DUMP_MEMORY="+str(int(args.dump_memory)),
+                  "+WRITABLE_DISK="+str(int(args.writable_disk)),
+                  "+LOAD_PRAM="+str(int(pram is not None)),
                   "+COMPAT_FLAGS="+str(args.compatibility_flags),
                   "+REQUIRE_IRQ="+str(int(args.require_irq_dispatch)),
                   "+FLOPPY="+str(int(args.floppy_woz is not None)),"+BOOT_OPCODE="+str(expected_boot_opcode),
                   "+TRACE_START="+str(args.trace_start),"+TRACE_END="+str(args.trace_end)],"simulate")
-        if "PASS: actual ROM3 RTC and disk bootstrap milestones" not in text:
+        if "PASS: actual IIgs ROM RTC and disk bootstrap milestones" not in text:
             raise ValueError("actual-ROM bootstrap PASS marker is absent")
-        record["milestones"]=[line for line in text.splitlines() if line.startswith(("BOOT_MILESTONE","BOOT_RESULT"))]
+        record["milestones"]=[line for line in text.splitlines() if line.startswith(("BOOT_MILESTONE","BOOT_RESULT","BOOT_IRQ","BOOT_FRAME","BOOT_MEMORY"))]
+        if args.save_frame and not (build/"final-frame.ppm").exists():
+            raise ValueError("no complete native frame was saved")
         if hashes()!=before:
             raise ValueError("current sources changed during actual-ROM test; captured result is not a current-source qualification")
         record["source_hashes_unchanged"]=True
@@ -190,10 +223,14 @@ def main() -> int:
         raise
     finally:
         record["wall_seconds"]=time.monotonic()-started
+        if args.trace_zipgs and (build/"simulate.log").exists():
+            record["effective_speed_counts"]=[{"code":int(code),"primary_ticks":int(ticks),"accepted_cycles":int(accepted)}
+                for code,ticks,accepted in re.findall(r"CPU_SPEED_TIME code=(\d+) primary_ticks=(\d+) accepted_cycles=(\d+)",
+                                                     (build/"simulate.log").read_text(errors="replace"))]
         record["evidence_files"]={name:{"bytes":path.stat().st_size,"sha256":sha(path.read_bytes())}
-            for name in ("generate.log","compile.log","simulate.log") if (path:=build/name).exists()}
+            for name in ("generate.log","compile.log","simulate.log","final-frame.ppm","progress-frame.ppm","final-fast-00-01.bin","final-slow-e0-e1.bin") if (path:=build/name).exists()}
         (build/"validation.json").write_text(json.dumps(record,indent=2)+"\n")
-    print("PASS: actual ROM3 RTC and disk-bootstrap milestones",build)
+    print("PASS: actual IIgs ROM RTC and disk-bootstrap milestones",build)
     return 0
 
 if __name__=="__main__":

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Verify real native/emulation IRQ vectors honor the IOLC RAM mapping."""
+"""Verify IOLC IRQ vectors and native IRQ/RTI through the production bridge."""
 from __future__ import annotations
 import argparse, hashlib, json, os, re, shutil, subprocess, sys
 from pathlib import Path
@@ -53,13 +53,26 @@ def main():
             *sorted(directory.glob("*.cpp")),inc/"verilated.cpp",inc/"verilated_timing.cpp",inc/"verilated_threads.cpp","-o",executable],"compile")
     else:run([tool("make"),"-C",directory,"-f","V"+top+".mk","-j8"],"compile")
     out=run([executable]+(["+UPSTREAM_NEGATIVE_CONTROL"] if a.upstream_negative_control else []),"simulate")
-    if out.count("PASS:")!=8:raise ValueError("all eight speed/mode/IOLC IRQ vector cases must pass")
+    expected_cases=8 if a.upstream_negative_control else 12
+    if out.count("PASS:")!=expected_cases:raise ValueError(f"all {expected_cases} IRQ vector/return cases must pass")
+    pending_cases=[line for line in out.splitlines() if line.startswith("BRIDGE_IRQ_PENDING ")]
+    if not a.upstream_negative_control and len(pending_cases)!=4:
+        raise ValueError("all four native RTI cases must assert IRQ during a confirmed pending DDR read")
     if hashes()!=before:raise ValueError("IOLC vector sources changed during regression; rerun current sources")
     (build/"validation.json").write_text(json.dumps({"schema_version":1,"result":"PASS","files":before,
         "checks":["Stock and maximum effective CPU speed asserted on both IRQ vector reads with Zip IRQ delay disabled", "Native and emulation IRQ entry from CLI/WAI", "RAM IRQ vector installed by real CPU",
             "Original upstream MMU incorrectly forces ROM under IOLC" if a.upstream_negative_control else "Normal LC retains ROM vector; IOLC exposes RAM vector",
-            "Both vector bytes and distinct ISR completion markers"], "upstream_negative_control":a.upstream_negative_control,
-        "limits":["Synthetic ROM only; no full-system boot, FPGA timing or physical hardware claim."]},indent=2)+"\n")
+            "Both vector bytes and distinct ISR completion markers"]+([] if a.upstream_negative_control else [
+            "Four stock/maximum and LC/IOLC native IRQ-to-RTI returns from PBR23 through production adapter/cache",
+            "IRQ asserted while native E0:C071 read waits for a cold ROM line in variable-latency DDR",
+            "Hardware PBR/PC/fullSP/P and software-saved A/X/Y/DBR/D restored after RTI"]),
+        "return_cases":[line for line in out.splitlines() if line.startswith("PASS: native bridge")],
+        "pending_ddr_read_cases":pending_cases,
+        "evidence_files":{name:{"bytes":path.stat().st_size,"sha256":hashlib.sha256(path.read_bytes()).hexdigest()}
+            for name in ("generate.log","compile.log","simulate.log") if (path:=build/name).exists()},
+        "upstream_negative_control":a.upstream_negative_control,
+        "limits":["Synthetic ROM only; no full-system boot, FPGA timing or physical hardware claim.",
+            "No HDD DMA overlap, nested IRQ or NMI test is implied; IRQ source is a forced sound-IRQ level."]},indent=2)+"\n")
     print(out.strip());return 0
 if __name__=="__main__":
     try:raise SystemExit(main())
