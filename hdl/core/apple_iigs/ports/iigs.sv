@@ -460,7 +460,7 @@ output video_pal,
 
   logic               LC_WE_PRE;
 
-  logic inhibit_cxxx;
+  logic mapped_cxxx;
 
   //logic TEXTG;
   //logic MIXG;
@@ -569,7 +569,7 @@ output video_pal,
     .addr_bus(addr_bus),
     .aux(aux),
     .lcram2_sel(lcram2_sel),
-    .inhibit_cxxx(inhibit_cxxx),
+    .mapped_cxxx(mapped_cxxx),
     .IO(IO),
     .EXTERNAL_IO(EXTERNAL_IO),
     .is_internal_io(is_internal_io),
@@ -619,7 +619,7 @@ output video_pal,
     .addr_bus(),
     .aux(),
     .lcram2_sel(),
-    .inhibit_cxxx(),
+    .mapped_cxxx(),
     .IO(cpu_peek_io),
     .EXTERNAL_IO(),
     .is_internal_io(),
@@ -1821,15 +1821,13 @@ wire       hdd_dma;
 // Slot 7's expansion firmware is a board extension, below internal priority.
 reg INTC8ROM=1'b0;
 reg hdd_expansion_owner=1'b0;
-wire hdd_slot_bank=bank_bef==8'h00 || bank_bef==8'h01 || bank_bef==8'he0 || bank_bef==8'he1 ||
-    (CYAREG[4] && bank_bef<RAMSIZE && bank_bef<8'he0);
-wire hdd_expansion_select=hdd_expansion_owner && hdd_slot_bank && !inhibit_cxxx &&
+wire hdd_expansion_select=hdd_expansion_owner && mapped_cxxx &&
     !CXROM && !INTC8ROM && SLTROMSEL[7] && addr_bef>=16'hc800 && addr_bef<=16'hcfff;
 always @(posedge CLK_14M) begin
     if(reset)begin
         INTC8ROM<=0;
         hdd_expansion_owner<=0;
-    end else if(bus_phi2 && valid && !hdd_dma && hdd_slot_bank && !inhibit_cxxx)begin
+    end else if(bus_phi2 && valid && !hdd_dma && mapped_cxxx)begin
         if(addr_bef==16'hcfff)begin
             INTC8ROM<=0;
             hdd_expansion_owner<=0;
@@ -3360,7 +3358,7 @@ assign cpu_memory_cycle = cpu_valid && (fastram_ce || (rom_ce && !we)) &&
 // the primary-clock slow-RAM port. E0/E1 LC ROM reads use the ROM cache.
 // All mapped C1-CF accesses retire through the native bridge, including
 // internal ROM reads. This clocks C3/CFFF ownership once at every speed.
-wire cpu_mapped_slot_bus = hdd_slot_bank && !inhibit_cxxx &&
+wire cpu_mapped_slot_bus = mapped_cxxx &&
     addr_bef>=16'hc100 && addr_bef<=16'hcfff;
 wire cpu_plain_bus = !cpu_mapped_slot_bus && !IO && !EXTERNAL_IO && !(|device_select) && !(|io_select) && !slot_ce && !hdd_expansion_select;
 wire cpu_mega2_bank = bank_bef == 8'hE0 || bank_bef == 8'hE1;

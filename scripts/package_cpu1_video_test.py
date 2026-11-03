@@ -312,7 +312,13 @@ def verify_hardware(directory, machine, *, ntsc=False, build_id=None, genesis_pa
         require(len(bits) == 1 and digest(archive.read(bits[0])) == sha(bit),
                 "XSA bitstream differs from selected image")
     log = (directory / "build.log").read_text(errors="replace").replace("\\", "/")
-    require("Timing gates passed and XSA exported: " + xsa.as_posix() in log,
+    export_path = xsa.as_posix()
+    if reuse:
+        archived_dirs = re.findall(r"^set ::env\(MULTITINI_VIVADO_DIR\) \{([^\r\n]+)\}\s*$",
+                                  (directory / "build.tcl").read_text(), re.MULTILINE)
+        require(len(archived_dirs) == 1, "Missing or ambiguous archived Vivado build directory")
+        export_path = archived_dirs[0].replace("\\", "/").rstrip("/") + "/" + xsa.name
+    require("Timing gates passed and XSA exported: " + export_path in log.splitlines(),
             "Build did not reach timing-gated XSA export")
     artifacts = [bit, marker, xsa, directory / "build.log", directory / "build.tcl"]
     artifacts += sorted(p for p in (directory / "reports").rglob("*") if p.is_file())

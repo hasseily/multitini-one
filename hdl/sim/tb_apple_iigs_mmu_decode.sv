@@ -26,7 +26,7 @@ module tb_apple_iigs_mmu_decode;
         .IO(IO[n]),.EXTERNAL_IO(EXTERNAL_IO[n]),.rom1_ce(rom1_ce[n]),
         .rom2_ce(rom2_ce[n]),.romc_ce(romc_ce[n]),.romd_ce(romd_ce[n]),
         .slot_ce(slot_ce[n]),.slot_internalrom_ce(slot_internalrom_ce[n]),
-        .lcram2_sel(),.inhibit_cxxx(),.is_internal_io(),.is_internal(),.rom_writethrough());
+        .lcram2_sel(),.mapped_cxxx(),.is_internal_io(),.is_internal(),.rom_writethrough());
     end
 
     function automatic bit low_bank;return bank_log<=1;endfunction

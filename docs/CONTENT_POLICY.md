@@ -5,10 +5,14 @@ bytes to Git or source archives. Private local delivery packages may copy the
 validated files into `sd/multitini/cores/<core>/roms/` from an explicit private
 ROM collection. Record every input and output hash and any conversion. No games
 or operating-system disks are included by the boot-ROM collection step.
+Use `--public-release` with the core package scripts for a distributable bundle.
+It includes setup instructions in each core's ROM directory and the source-built
+IIgs SmartPort ROM when the IIgs core is selected.
 
 Amiga SD data is ROM-free, including private delivery packages. Its `roms/`
 directory contains only `readme.txt`; the user supplies a legally obtained
-Kickstart image separately as `multitini/cores/amiga/roms/kick.rom` on SD.
+Kickstart image separately as `kick.rom` for the A600 or `kick-a1200.rom` for the
+A1200 in `multitini/cores/amiga/roms/` on SD.
 Private ROM test inputs remain outside the distributable data and source archives.
 
 The earlier owner-directed C64 inclusion decision is retired as of 2026-10-15.

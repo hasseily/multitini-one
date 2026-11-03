@@ -1323,6 +1323,9 @@ def mmu_state_iigs(text: str) -> str:
     text = replace(text,
         "if ((bank == 8'h0 || bank == 8'h1 || bank == 8'he0 || bank == 8'he1) && addr >= 'hc100 && addr < 'hc800 && ~is_internal && ~CXROM && ~inhibit_cxxx)",
         "if (slot_ce)")
+    text = replace(text, "logic inhibit_cxxx;", "logic mapped_cxxx;")
+    text = replace(text, ".inhibit_cxxx(inhibit_cxxx),", ".mapped_cxxx(mapped_cxxx),")
+    text = replace(text, ".inhibit_cxxx(),", ".mapped_cxxx(),")
     start = text.index("// A Cn access selects that slot's C800 firmware.")
     end = text.index("assign dbg_hdd_dma", start)
     text = text[:start] + """// C3 accesses latch internal C800 when slot 3 is internal. Other slots do
@@ -1330,15 +1333,13 @@ def mmu_state_iigs(text: str) -> str:
 // Slot 7's expansion firmware is a board extension, below internal priority.
 reg INTC8ROM=1'b0;
 reg hdd_expansion_owner=1'b0;
-wire hdd_slot_bank=bank_bef==8'h00 || bank_bef==8'h01 || bank_bef==8'he0 || bank_bef==8'he1 ||
-    (CYAREG[4] && bank_bef<RAMSIZE && bank_bef<8'he0);
-wire hdd_expansion_select=hdd_expansion_owner && hdd_slot_bank && !inhibit_cxxx &&
+wire hdd_expansion_select=hdd_expansion_owner && mapped_cxxx &&
     !CXROM && !INTC8ROM && SLTROMSEL[7] && addr_bef>=16'hc800 && addr_bef<=16'hcfff;
 always @(posedge CLK_14M) begin
     if(reset)begin
         INTC8ROM<=0;
         hdd_expansion_owner<=0;
-    end else if(bus_phi2 && valid && !hdd_dma && hdd_slot_bank && !inhibit_cxxx)begin
+    end else if(bus_phi2 && valid && !hdd_dma && mapped_cxxx)begin
         if(addr_bef==16'hcfff)begin
             INTC8ROM<=0;
             hdd_expansion_owner<=0;
@@ -1353,7 +1354,7 @@ end
     text = replace(text, "wire cpu_plain_bus = !IO",
                    "// All mapped C1-CF accesses retire through the native bridge, including\n"
                    "// internal ROM reads. This clocks C3/CFFF ownership once at every speed.\n"
-                   "wire cpu_mapped_slot_bus = hdd_slot_bank && !inhibit_cxxx &&\n"
+                   "wire cpu_mapped_slot_bus = mapped_cxxx &&\n"
                    "    addr_bef>=16'hc100 && addr_bef<=16'hcfff;\n"
                    "wire cpu_plain_bus = !cpu_mapped_slot_bus && !IO")
     text = replace(text,
@@ -1386,12 +1387,16 @@ def generate_mmu() -> str:
                    "    input  wire        INTCXROM,\n"
                    "    input  wire        SLOTC3ROM,\n"
                    "    input  wire        INTC8ROM,")
+    text = replace(text, "    output wire        lcram2_sel,    // LC RAM window active (feeds inhibit_cxxx)\n"
+                         "    output wire        inhibit_cxxx,  // suppress $Cxxx slot/ROM decode",
+                   "    output wire        lcram2_sel,    // LC RAM window active\n"
+                   "    output wire        mapped_cxxx,   // Cxxx selects I/O or slot space")
     text = text[:text.index("  // --------------------------------------------------------------------------")]
     return normalize(text + """  wire low_bank = bank_log == 8'h00 || bank_log == 8'h01;
   wire slow_bank = bank_log == 8'he0 || bank_log == 8'he1;
   wire fast_mapped_bank = low_bank || (shadow_all && bank_log < RAMSIZE && bank_log < 8'he0);
   wire iolc_bank = (fast_mapped_bank && !shadow[6]) || slow_bank;
-  wire mapped_cxxx = iolc_bank && addr_log[15:12] == 4'hc;
+  assign mapped_cxxx = iolc_bank && addr_log[15:12] == 4'hc;
   wire flat_low = low_bank && shadow[6];
 
   // SPEED.4 extends aux switches and video shadowing to installed fast banks.
@@ -1424,8 +1429,6 @@ def generate_mmu() -> str:
                     addr_log[12] ^ (lc_dxxx_fold || flat_cxxx_swap), addr_log[11:0]};
   assign lcram2_sel = iolc_bank && addr_log >= 16'hd000 &&
                      (lc_dxxx_fold || !RDROM);
-  assign inhibit_cxxx = lcram2_sel || flat_low;
-
   assign slowram_we = we;
   assign is_internal_io = !SLTROMSEL[addr_log[6:4]];
   assign EXTERNAL_IO = iolc_bank && addr_log >= 16'hc090 && addr_log < 16'hc100 && !is_internal_io;

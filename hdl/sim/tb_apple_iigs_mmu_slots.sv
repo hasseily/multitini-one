@@ -98,7 +98,8 @@ module tb_apple_iigs_mmu_slots;
           else if(kind==8'h43 && i==3)value=8'h10;
           else if(kind==8'h49)begin
             // Synthetic external slot7 ROM: CN page=A7, expansion=A8, CFFF=AF.
-            value=i<256 ? 8'ha7 : i==2303 ? 8'haf : 8'ha8;
+            // The current SmartPort ROM has a zero byte at CCEC.
+            value=i<256 ? 8'ha7 : i==2303 ? 8'haf : i==12'h5ec ? 8'h00 : 8'ha8;
           end
           @(negedge core_clk);load_kind=kind;load_total=size;load_offset=i;load_data=value;
           load_first=i==0;load_last=i==size-1;load_valid=1;
@@ -113,6 +114,8 @@ module tb_apple_iigs_mmu_slots;
     // Every mapped C1-CF access must retire through the native bridge, including
     // internal firmware at acceleration, because C3/CFFF update slot latches.
     always @(posedge core_clk) if(!dut.machine_reset && dut.cpu_ce && dut.cpu_valid)begin
+      if(!dut.bus_write && dut.cpu_logical_addr==24'h08ccec && dut.cpu_read_data!==8'hbf)
+        $fatal(1,"Arkanoid fetch $08:CCEC returned %02x instead of RAM opcode BF",dut.cpu_read_data);
       if(!dut.bus_write && observed_result<result_count && dut.cpu_logical_addr==expected_source[observed_result])begin
         captured_read=1;captured_rom=dut.machine_i.rom_ce;
         captured_fast=dut.machine_i.fastram_ce;captured_slow=dut.machine_i.slowram_ce;
@@ -247,6 +250,41 @@ module tb_apple_iigs_mmu_slots;
         capture(24'h02c300,8'hc3,1,"Extended C3 latch acquisition");
         capture(24'h02c800,8'hc8,1,"Extended internal C800 ownership");
         capture(24'h02cfff,0,0,"Extended CFFF release");
+        // A completed SmartPort call leaves its external C800 owner active.
+        // With Arkanoid's shadow settings, high-bank Cxxx must use RAM and
+        // accesses there must not change the retained slot-ROM owner.
+        io_write(16'hc035,8'h57);
+        write_long(24'h02c8b0,8'h5a);write_long(24'h02cfff,8'h6b);
+        write_long(24'h02c700,8'h7c);
+        // Recreate the opcode and first word store observed on the board:
+        // LDA.l $08DEB2,X; STA $2000,Y; RTL at $08:CCEC.
+        io_write(16'hc036,8'h94);io_write(16'hc068,8'h0c);
+        write_long(24'h08ccec,8'hbf);write_long(24'h08cced,8'hb2);
+        write_long(24'h08ccee,8'hde);write_long(24'h08ccef,8'h08);
+        write_long(24'h08ccf0,8'h99);write_long(24'h08ccf1,0);
+        write_long(24'h08ccf2,8'h20);write_long(24'h08ccf3,8'h6b);
+        write_long(24'h08deb2,8'h0f);write_long(24'h08deb3,8'hff);
+        capture(24'he0c700,8'ha7,1,"Slow slot7 alias remains active with IOLC inhibited");
+        capture(24'h02c8b0,8'h5a,1,"IOLC-inhibited bank02 C8xx reads RAM despite slot7 owner");
+        capture(24'h02cfff,8'h6b,1,"IOLC-inhibited bank02 CFFF reads RAM");
+        capture(24'h02c700,8'h7c,1,"IOLC-inhibited bank02 C700 reads RAM");
+        capture(24'he0c800,8'ha8,1,"Unmapped bank02 Cxxx accesses preserve slot7 owner");
+        read_long(24'he0c700); // ensure a live slot7 owner for the opcode fetch
+        emit(8'h8b);emit(8'hc2);emit(8'h30); // PHB; REP #$30
+        emit(8'hf4);emit(8'h07);emit(8'h07);emit(8'hab);emit(8'hab); // DBR=$07
+        emit(8'ha2);emit(0);emit(0); // LDX #0
+        emit(8'ha0);emit(8'h5c);emit(8'h2a); // LDY #$2A5C
+        emit(8'h22);emit(8'hec);emit(8'hcc);emit(8'h08); // JSL $08:CCEC
+        emit(8'he2);emit(8'h30);emit(8'hab); // SEP #$30; PLB
+        capture(24'h074a5c,8'h0f,1,"Arkanoid CCEC fetch and fast glyph low byte");
+        capture(24'h074a5d,8'hff,1,"Arkanoid CCEC fetch and fast glyph high byte");
+        capture(24'he14a5c,8'h0f,1,"Arkanoid glyph low byte mirrors into E1");
+        capture(24'he14a5d,8'hff,1,"Arkanoid glyph high byte mirrors into E1");
+        read_long(24'he0cfff);
+        write_long(24'h02c300,8'h74);
+        capture(24'h02c300,8'h74,1,"IOLC-inhibited bank02 C300 reads RAM");
+        capture(24'he0c800,0,0,"Unmapped bank02 C300 did not acquire internal C800");
+        io_write(16'hc035,0);io_write(16'hc036,8'h90);io_write(16'hc068,8'h08);
         write_long(24'h02c005,0);capture(24'he0c068,8'h18,1,"Extended C005 changes RAMWRT");
         write_long(24'h022000,8'h62);capture(24'he12000,8'h62,1,"Extended aux redirect and HGR shadow");
         io_write(16'hc068,8'h08);

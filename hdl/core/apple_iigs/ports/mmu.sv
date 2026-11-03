@@ -59,8 +59,8 @@ module mmu #(
     // Physical address & decode
     output wire [23:0] addr_bus,      // translated physical address
     output reg         aux,           // main/aux select (ORed into bank bit 0)
-    output wire        lcram2_sel,    // LC RAM window active (feeds inhibit_cxxx)
-    output wire        inhibit_cxxx,  // suppress $Cxxx slot/ROM decode
+    output wire        lcram2_sel,    // LC RAM window active
+    output wire        mapped_cxxx,   // Cxxx selects I/O or slot space
     output wire        IO,            // internal I/O space $C000-$C0FF
     output wire        EXTERNAL_IO,   // slot I/O $C090-$C0FF routed off-chip
     output wire        is_internal_io,
@@ -81,7 +81,7 @@ module mmu #(
   wire slow_bank = bank_log == 8'he0 || bank_log == 8'he1;
   wire fast_mapped_bank = low_bank || (shadow_all && bank_log < RAMSIZE && bank_log < 8'he0);
   wire iolc_bank = (fast_mapped_bank && !shadow[6]) || slow_bank;
-  wire mapped_cxxx = iolc_bank && addr_log[15:12] == 4'hc;
+  assign mapped_cxxx = iolc_bank && addr_log[15:12] == 4'hc;
   wire flat_low = low_bank && shadow[6];
 
   // SPEED.4 extends aux switches and video shadowing to installed fast banks.
@@ -114,8 +114,6 @@ module mmu #(
                     addr_log[12] ^ (lc_dxxx_fold || flat_cxxx_swap), addr_log[11:0]};
   assign lcram2_sel = iolc_bank && addr_log >= 16'hd000 &&
                      (lc_dxxx_fold || !RDROM);
-  assign inhibit_cxxx = lcram2_sel || flat_low;
-
   assign slowram_we = we;
   assign is_internal_io = !SLTROMSEL[addr_log[6:4]];
   assign EXTERNAL_IO = iolc_bank && addr_log >= 16'hc090 && addr_log < 16'hc100 && !is_internal_io;

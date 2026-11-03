@@ -120,6 +120,22 @@ def copy_delivery_guides(out):
     return guides
 
 
+def verify_iigs_bootstrap(asset):
+    provenance = json.loads((asset.parent / "provenance.json").read_text())
+    package.require(asset.is_file() and asset.stat().st_size == 2304, "Missing source-built IIgs SmartPort ROM")
+    package.require(provenance.get("license") == "GPL-3.0-only" and
+                    provenance.get("size") == 2304 and provenance.get("sha256") == package.sha(asset),
+                    "IIgs SmartPort ROM provenance differs")
+    sources = provenance.get("source_inputs", {})
+    assembly = "hdl/core/apple_iigs/roms/smartport.a65"
+    expected = {assembly, "scripts/build_apple_iigs_smartport_rom.py"}
+    package.require(set(sources) == expected and all(package.sha(ROOT / name) == digest
+                    for name, digest in sources.items()) and
+                    provenance.get("source") == assembly and sources[assembly] == provenance.get("source_sha256"),
+                    "IIgs SmartPort ROM was built from different source inputs")
+    return provenance
+
+
 def prepare_iigs_content(out, hdd_bootstrap):
     """Keep both sibling directories present after a fresh ZIP extraction."""
     core = out / "sd/multitini/cores/apple-iigs"
@@ -136,8 +152,31 @@ def prepare_iigs_content(out, hdd_bootstrap):
         "Eject disks before removing power.\n"
         "System, character and ADB ROMs belong in the sibling ../roms/ folder,\n"
         "alongside the included licensed hdd.rom bootstrap.\n"
-        "Private packaging stages validated owner-supplied Apple ROMs in that folder.\n"
         "No games or operating-system disk images are supplied.\n", encoding="utf-8")
+
+
+def prepare_public_content(out, rom_cores):
+    """Preserve the user ROM and media directories without reading private inputs."""
+    for core in sorted(rom_cores):
+        directory = out / "sd/multitini/cores" / core
+        roms = directory / "roms"
+        roms.mkdir(parents=True, exist_ok=True)
+        if core == "apple-iigs":
+            instructions = (
+                "Supply char.rom (4096 bytes) and the matching system and ADB ROM pair.\n"
+                "For ROM 3 use rom3.rom (262144 bytes) and adb3.rom (4096 bytes).\n"
+                "For ROM 1 use rom1.rom (131072 bytes) and adb1.rom (4096 bytes).\n"
+                "Keep the included hdd.rom. See docs/APPLE_IIGS_HARDWARE_TEST.md.\n")
+        elif core in private_core_roms.NO_EXTERNAL:
+            instructions = private_core_roms.NO_EXTERNAL[core]
+        else:
+            instructions = "Supply these system ROMs in this folder:\n" + "".join(
+                f"{name} ({size} bytes)\n" for name, size in private_core_roms.REQUIRED[core].items())
+        (roms / "README.txt").write_text(instructions, encoding="utf-8")
+        if core != "apple-iigs":
+            media = directory / "media"
+            media.mkdir(parents=True, exist_ok=True)
+            (media / "README.txt").write_text("Place user-owned media here.\n", encoding="utf-8")
 
 
 def prepare_nes_content(out):
@@ -194,11 +233,16 @@ def main():
                         help="Reuse an explicitly selected audited FPGA build with its original identity and sources")
     parser.add_argument("--selection-manifest", type=Path,
                         help="Explicit build/reuse selection manifest emitted by the matrix builder")
-    parser.add_argument("--rom-source", type=Path, default=private_core_roms.default_rom_source(),
-                        help="Required private boot-ROM collection; defaults to MULTITINI_ROM_SOURCE or the user's OneDrive ROM folder")
+    rom_mode = parser.add_mutually_exclusive_group()
+    rom_mode.add_argument("--public-release", action="store_true",
+                          help="Include user ROM setup instructions and omit private ROM inputs")
+    rom_mode.add_argument("--rom-source", type=Path,
+                          help="Private boot-ROM collection; defaults to MULTITINI_ROM_SOURCE or the user's OneDrive ROM folder")
     parser.add_argument("--iigs-mame-zip", type=Path,
                         help="Optional user-owned MAME archive within --rom-source for missing prepared IIgs ROMs")
     args = parser.parse_args()
+    if args.public_release and args.iigs_mame_zip:
+        parser.error("--iigs-mame-zip requires private packaging")
     if args.include_apple_iigs:
         MATRIX['apple-iigs']=('APPLE_IIGS',False,False)
     if args.include_nes:
@@ -235,13 +279,14 @@ def main():
         identity = version[1]
     cpu = package.verify_cpu_images(workspace, build_id=args.build_id, abi_minor=args.abi_minor)
     builds = verify_image_set(args, cpu)
+    iigs_bootstrap = ROOT / "build/apple-iigs-assets/hdd.rom" if args.include_apple_iigs else None
+    iigs_provenance = verify_iigs_bootstrap(iigs_bootstrap) if iigs_bootstrap is not None else None
     rom_cores = {"c64", "gbc", "vectrex", "genesis"} | ({"apple-iigs"} if args.include_apple_iigs else set())
-    roms = private_core_roms.collect(args.rom_source, rom_cores, iigs_mame_zip=args.iigs_mame_zip,
-        iigs_hdd_rom=ROOT / "build/apple-iigs-assets/hdd.rom" if args.include_apple_iigs else None)
-    if args.include_apple_iigs:
-        package.require(roms.outputs["sd/multitini/cores/apple-iigs/roms/hdd.rom"] ==
-                        (ROOT / "build/apple-iigs-assets/hdd.rom").read_bytes(),
-                        "Supplied IIgs HDD bootstrap differs from the licensed source-built bootstrap")
+    roms = None
+    if not args.public_release:
+        roms = private_core_roms.collect(args.rom_source or private_core_roms.default_rom_source(),
+            rom_cores, iigs_mame_zip=args.iigs_mame_zip, iigs_hdd_rom=iigs_bootstrap)
+    rom_provenance = roms.provenance if roms is not None else None
     required = dict(cpu["record"]["files"])
     for build in builds.values():
         if build["reused"]:
@@ -254,7 +299,7 @@ def main():
         package.require(path.is_file(), "Missing evidence: " + str(path))
     if args.check_only:
         print(json.dumps({"status": "PASS", "firmware_id": "0x" + args.build_id, "abi": package.ABI,
-                          "images": image_records(builds), "private_roms": roms.provenance,
+                          "images": image_records(builds), "private_roms": rom_provenance,
                           "matrix": {n: b["timing"] for n, b in builds.items()}}, indent=2))
         return 0
     out.mkdir(parents=True, exist_ok=False)
@@ -305,25 +350,8 @@ def main():
                   ("genesis", "Genesis / Mega Drive", "0x4D442020", [("ntsc", "NTSC", "genesis-ntsc"), ("pal", "PAL", "genesis-pal")]))
     if args.include_apple_iigs:
         core_specs += (("apple-iigs", "Apple IIgs", "0x49494753", [("native", "Apple IIgs", "apple-iigs")]),)
-        # Verify the licensed source-built bootstrap before staging private ROMs.
-        asset=ROOT/'build/apple-iigs-assets/hdd.rom'
-        asset_record=json.loads((asset.parent/'provenance.json').read_text())
-        package.require(asset.is_file() and asset.stat().st_size==2304, "Missing source-built IIgs SmartPort ROM")
-        package.require(asset_record.get('license') == 'GPL-3.0-only' and
-                        asset_record.get('size') == 2304 and
-                        asset_record.get('sha256')==package.sha(asset) and
-                        asset_record.get('source_sha256')==package.sha(ROOT/asset_record['source']),
-                        "IIgs SmartPort ROM/source provenance differs")
-        expected_rom_sources = {
-            'hdl/core/apple_iigs/roms/smartport.a65',
-            'scripts/build_apple_iigs_smartport_rom.py',
-        }
-        package.require(set(asset_record.get('source_inputs', {})) == expected_rom_sources and
-                        all(package.sha(ROOT / name) == digest
-                            for name, digest in asset_record['source_inputs'].items()),
-                        "IIgs SmartPort ROM was built from different source inputs")
-        prepare_iigs_content(out, asset)
-        package.copy(asset.parent/'provenance.json',out/'evidence/apple-iigs/hdd-rom-provenance.json')
+        prepare_iigs_content(out, iigs_bootstrap)
+        package.write_json(out / "evidence/apple-iigs/hdd-rom-provenance.json", iigs_provenance)
     if args.include_nes:
         core_specs += (("nes", "Nintendo Entertainment System", "0x4E455320", [("ntsc", "NTSC", "nes")]),)
         prepare_nes_content(out)
@@ -351,8 +379,11 @@ def main():
             target = out / "docs" / guide.name
             package.copy(guide, target)
             delivery_guides["docs/" + guide.name] = package.describe(target)
-    private_core_roms.stage(out, roms)
-    package.write_json(out / "evidence/private-rom-provenance.json", roms.provenance)
+    if roms is None:
+        prepare_public_content(out, rom_cores)
+    else:
+        private_core_roms.stage(out, roms)
+        package.write_json(out / "evidence/private-rom-provenance.json", rom_provenance)
     cores = {}
     with tempfile.TemporaryDirectory(prefix=args.suffix + "-audit-", dir=ROOT / "build") as temporary:
         scratch = Path(temporary)
@@ -407,10 +438,11 @@ def main():
          "Kickstart is a separate user-owned input.\n" if args.include_amiga else "") +
         ("Amiga 1200 AGA PAL provides stock 68EC020 and accelerated 68020 modes.\n"
          "Supply your A1200 Kickstart separately as kick-a1200.rom.\n" if args.include_amiga_aga else "") +
-        "This is a private local delivery with validated user-supplied boot ROMs in sd/*/roms.\n"
+        ("Supply your system ROMs using the instructions in each core's roms/ folder.\n"
+         if args.public_release else "This is a private local delivery with validated user-supplied boot ROMs.\n")
         + ("Apple IIgs includes selectable stock/accelerated CPU, eight SmartPort HDDs, floppy media and PRAM.\n"
            "Install its matching FPGA image, core.cfg and 2304-byte roms/hdd.rom with this firmware.\n"
-           "Apple system/character/ADB ROMs are included privately; see docs/APPLE_IIGS_HARDWARE_TEST.md.\n"
+           "See docs/APPLE_IIGS_HARDWARE_TEST.md for the matching system, character and ADB ROMs.\n"
            "The new FSBL enables HP3; install matching firmware before selecting the GS core.\n" if args.include_apple_iigs else "") +
         "Appletini F1.2.5-derived Dot bleed, Blur and Glow replace independent axis smoothing.\n"
         + ("Blur uses a 12.5%, 25%, 50% kernel mix and preserves flat colours exactly. Glow is unchanged.\n"
@@ -446,16 +478,22 @@ def main():
     if args.selection_manifest:
         package.require(package.sha(args.selection_manifest) == package.sha(out / "evidence/core-selection.json"),
                         "Image selection manifest changed during packaging")
-    private_core_roms.verify_inputs(roms)
-    for name, record in roms.provenance["outputs"].items():
-        package.require(package.describe(out / name) == {key: record[key] for key in ("bytes", "sha256")},
-                        "Staged private ROM differs from its validated input: " + name)
+    if roms is not None:
+        private_core_roms.verify_inputs(roms)
+        for name, record in rom_provenance["outputs"].items():
+            package.require(package.describe(out / name) == {key: record[key] for key in ("bytes", "sha256")},
+                            "Staged private ROM differs from its validated input: " + name)
+    if iigs_provenance is not None:
+        package.require(package.sha(out / "sd/multitini/cores/apple-iigs/roms/hdd.rom") == iigs_provenance["sha256"],
+                        "Staged IIgs SmartPort ROM differs from the source-built bootstrap")
     files = {p.relative_to(out).as_posix(): package.describe(p) for p in sorted(out.rglob("*")) if p.is_file()}
-    package.write_json(out / "manifest.json", {"classification": "Private local ROM delivery; board acceptance pending",
+    classification = "Public firmware release package" if args.public_release else "Private local ROM delivery"
+    package.write_json(out / "manifest.json", {"classification": classification + "; board acceptance pending",
         "created_utc": datetime.now(timezone.utc).isoformat(), "firmware_id": "0x" + args.build_id, "suffix": "-" + args.suffix,
-        "abi": package.ABI, "git_head": package.git("rev-parse", "HEAD").strip(), "dirty_source_snapshot": True,
+        "abi": package.ABI, "git_head": package.git("rev-parse", "HEAD").strip(),
+        "dirty_source_snapshot": bool(package.git("status", "--porcelain").strip()),
         "source_files": len(source), "images": image_records(builds),
-        "private_roms": roms.provenance,
+        "private_roms": rom_provenance,
         "delivery_guide_files": delivery_guides, "files": files})
     files["manifest.json"] = package.describe(out / "manifest.json")
     (out / "SHA256SUMS.txt").write_text("".join(f"{v['sha256']}  {n}\n" for n, v in sorted(files.items())), encoding="ascii")

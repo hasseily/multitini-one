@@ -1,5 +1,17 @@
 # Arkanoid graphics and ROM compatibility diagnosis
 
+## SmartPort player prompt freeze
+
+When Arkanoid launches from SmartPort, slot 7 can retain C800 ownership.
+Arkanoid inhibits I/O mapping before drawing the score. The old core still
+selected the slot ROM at `$08:CCEC` and fetched `BRK` instead of the game
+instruction in RAM. The fix uses the MMU mapping for slot ROM selection and
+ownership changes.
+
+The CPU regression executes the recorded fetch and first glyph store with
+both ROM revisions at stock and maximum speed. FPGA build `4D000614` includes
+the fix. The owner reported that the rebuilt firmware works on the board.
+
 ## Findings
 
 The first Arkanoid uses a graphics operation that the pre-audit IIgs MMU decoded

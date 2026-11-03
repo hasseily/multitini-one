@@ -13,6 +13,7 @@ core preserves the measured ROM01 text-page-2 difference when ROM01 is selected.
 | IOLC RAM | With low-bank IOLC inhibited, C800 exposes LC bank 2 and D800 exposes LC bank 1. |
 | Registers | C029 reads `v & E1`; C02D reads `v & F6`; C035, C036 and C068 read `v`. |
 | Slot 3 | C00A/B changes SLOTC3ROM independently of C02D. Internal C3 reads and writes acquire internal C800. Other Cn accesses preserve that latch. |
+| External C800 | Slot 7 can supply ROM only when the MMU maps Cxxx to I/O. RAM accesses in an inhibited Cxxx window do not change slot ownership. |
 | CFFF | Reads and writes release internal C800. With INTCXROM clear, the CFFF read uses the floating bus. INTCXROM continues to select internal ROM. |
 | Absent memory | Sampled banks 80/81/82/DF return the bank byte and discard stores. ROM01 FC/FD return FC/FD; ROM03 selects ROM. |
 | Unowned C800 | Uses the existing video/last-CPU-data floating bus. |

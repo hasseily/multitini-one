@@ -1,9 +1,17 @@
 # Multitini One
 
 Multitini One turns the Appletini ONE card into a stand-alone FPGA computer.
-It runs C64, Game Boy Color, Vectrex, Genesis / Mega Drive and Apple IIgs
+It runs C64, Game Boy Color, Vectrex, Genesis / Mega Drive, Apple IIgs, NES and Amiga
 machines through a shared supervisor, menu, input, audio, storage and
 core-loading system. It does not use an Apple II host.
+
+M0.8.0 adds Amiga 600 ECS PAL and Amiga 1200 AGA PAL to the complete firmware
+package. Both offer stock and accelerated CPU modes, two DD floppy drives and
+two IDE disks. Amiga also gains Fast IDE, HDF read-ahead and burst-cached Fast
+RAM. Street Racer booted on the A1200 FPGA 828 in stock and 28 MHz modes.
+The release includes the IIgs slot-ROM mapping and SmartPort IRQ return fixes.
+See the [Kickstart setup instructions](sd/multitini/cores/amiga/roms/readme.txt)
+and [Amiga integration notes](docs/AMIGA_PLAN.md).
 
 ARM M0.8.0dev11 adds bounded 16 KiB sequential HDF read-ahead for Amiga,
 using the existing FPGA 817. The update passed 132 host tests and boots
