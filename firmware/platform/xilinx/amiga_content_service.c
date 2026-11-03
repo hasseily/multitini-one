@@ -10,7 +10,8 @@
 #define AM_READ_AHEAD_SECTORS 32U
 typedef struct {
     mt_sd_file_t *file;
-    uint64_t size;
+    uint64_t size; /* Physical file size, including in journal records. */
+    mt_amiga_hardfile_t hardfile;
     uint16_t heads,sectors;
     bool writable,pending,uncommitted;
     uint8_t retained[544];
@@ -27,6 +28,8 @@ static uint8_t preferred_cpu;
 static am_drive_t drives[MT_AMIGA_DRIVE_COUNT];
 static char root[256],rom_root[256],error[160],remembered[MT_AMIGA_DRIVE_COUNT][AM_NAME];
 static uint8_t rom[MT_AMIGA_ROM_BYTES],sector[512],journal_wire[544],settings_wire[AM_SETTINGS];
+static uint8_t pfs_handler[MT_AMIGA_PFS_HANDLER_MAX];
+static size_t pfs_handler_bytes;
 static uint16_t mfm[MT_AMIGA_MFM_SECTOR_WORDS],write_mfm[2][MT_AMIGA_MFM_SECTOR_WORDS];
 static bool ready,faulted,paused,settings_invalid,bulk_failed;
 static bool aga_pal;
@@ -249,7 +252,8 @@ static int apply_journal(am_drive_t *d)
 static int disk_write(am_drive_t *d,uint32_t lba)
 {
     invalidate_read_cache();
-    const uint64_t offset=(uint64_t)lba*512U;
+    if(lba<d->hardfile.first_lba)return fail("Virtual Amiga partition table is read-only");
+    const uint64_t offset=(uint64_t)(lba-d->hardfile.first_lba)*512U;
     if(d->file==NULL || !d->writable || offset>d->size || d->size-offset<512U)return fail("Amiga disk write out of bounds or protected");
     memset(journal_wire,0,sizeof(journal_wire));memcpy(journal_wire,"MTAMBLK1",8U);
     put32(journal_wire+8U,(uint32_t)offset);put32(journal_wire+12U,(uint32_t)(offset>>32U));
@@ -282,6 +286,17 @@ static int disk_read(am_drive_t *d,uint32_t lba)
     if(disk_read_backend(d,lba,sector,sizeof(sector))!=0)return -1;
     ++d->reads;return 0;
 }
+static uint32_t ata_sector_count(const am_drive_t *d)
+{
+    return (uint32_t)(d->size/512U)+d->hardfile.first_lba;
+}
+
+static void ata_default_geometry(am_drive_t *d)
+{
+    d->heads=d->hardfile.first_lba!=0U ? d->hardfile.heads:16U;
+    d->sectors=d->hardfile.first_lba!=0U ? d->hardfile.sectors:63U;
+}
+
 static int ata_read_sector(am_drive_t *d,uint32_t lba)
 {
     const bool timed=profile.running && profile_ata;
@@ -291,13 +306,20 @@ static int ata_read_sector(am_drive_t *d,uint32_t lba)
     if(read_cache.drive!=d || read_cache.file!=d->file || read_cache.used>=read_cache.count ||
        lba<read_cache.lba || lba-read_cache.lba!=read_cache.used) {
         invalidate_read_cache();
-        const uint64_t offset=(uint64_t)lba*512U;
-        if(d->file==NULL || offset>d->size || d->size-offset<512U || ata.left==0U)
+        const uint32_t capacity=ata_sector_count(d);
+        if(d->file==NULL || lba>=capacity || ata.left==0U)
             return fail("Amiga disk read out of bounds");
         unsigned count=ata.left<AM_READ_AHEAD_SECTORS ? (unsigned)ata.left:AM_READ_AHEAD_SECTORS;
-        const uint64_t remaining=(d->size-offset)/512U;
-        if(remaining<count)count=(unsigned)remaining;
-        if(disk_read_backend(d,lba,read_ahead,(size_t)count*512U)!=0)return -1;
+        if(capacity-lba<count)count=(unsigned)(capacity-lba);
+        const uint32_t first=d->hardfile.first_lba;
+        unsigned prefix=0U;
+        while(prefix<count && lba+prefix<first) {
+            mt_amiga_hardfile_sector(&d->hardfile,ata.drive-2U,pfs_handler,lba+prefix,
+                read_ahead+(size_t)prefix*512U);
+            ++prefix;
+        }
+        if(prefix<count && disk_read_backend(d,lba+prefix-first,read_ahead+(size_t)prefix*512U,
+            (size_t)(count-prefix)*512U)!=0)return -1;
         read_cache.drive=d;read_cache.file=d->file;read_cache.lba=lba;read_cache.count=count;
     }
     memcpy(sector,read_ahead+(size_t)read_cache.used*512U,sizeof(sector));
@@ -367,10 +389,12 @@ static int floppy_poll(bool *writing)
 static void identify(am_drive_t *d)
 {
     memset(sector,0,sizeof(sector));
-    const uint32_t count=(uint32_t)(d->size/512U);
+    const uint32_t count=ata_sector_count(d);
+    const unsigned heads=d->hardfile.first_lba!=0U ? d->hardfile.heads:16U;
+    const unsigned sectors=d->hardfile.first_lba!=0U ? d->hardfile.sectors:63U;
 #define IDW(index,value) do { const uint16_t v=(uint16_t)(value);sector[(index)*2U]=(uint8_t)v;sector[(index)*2U+1U]=(uint8_t)(v>>8U); } while(0)
-    uint32_t cylinders=count/(16U*63U);if(cylinders>16383U)cylinders=16383U;if(cylinders==0U)cylinders=1U;
-    IDW(0U,0x0040U);IDW(1U,cylinders);IDW(3U,16U);IDW(6U,63U);
+    uint32_t cylinders=count/(heads*sectors);if(cylinders>16383U)cylinders=16383U;if(cylinders==0U)cylinders=1U;
+    IDW(0U,0x0040U);IDW(1U,cylinders);IDW(3U,heads);IDW(6U,sectors);
     /* READ/WRITE MULTIPLE is not implemented: do not advertise it. */
     IDW(47U,0U);IDW(49U,0x0200U);IDW(53U,1U);
     uint32_t current_cylinders=count/((uint32_t)d->heads*d->sectors);
@@ -459,7 +483,7 @@ static int ata_poll(void)
         invalidate_read_cache();
         profile_invalidate(MT_AMIGA_PROFILE_LIFECYCLE);
         ata.active=false;ata.captured=false;ata.task_head=0xa0U;
-        for(unsigned d=2U;d<MT_AMIGA_DRIVE_COUNT;++d) { drives[d].heads=16U;drives[d].sectors=63U; }
+        for(unsigned d=2U;d<MT_AMIGA_DRIVE_COUNT;++d)ata_default_geometry(&drives[d]);
         if(ide_write(1U,0x0101U)!=0 || ide_write(2U,0U)!=0)return -1;
         return ata_status(0x5000U,1U);
     }
@@ -495,8 +519,10 @@ static int ata_poll(void)
                 if(s==0U || s>d->sectors || h>=d->heads)return ata_status(0x5100U,0x10U);
                 ata.lba=((uint32_t)regs[2]*d->heads+h)*d->sectors+s-1U;
             }
-            if(ata.lba>=d->size/512U || ata.left>d->size/512U-ata.lba)return ata_status(0x5100U,0x10U);
-            if(ata.command>=0x30U && !d->writable)return ata_status(0x5100U,4U);
+            const uint32_t capacity=ata_sector_count(d);
+            if(ata.lba>=capacity || ata.left>capacity-ata.lba)return ata_status(0x5100U,0x10U);
+            if(ata.command>=0x30U && (!d->writable || ata.lba<d->hardfile.first_lba))
+                return ata_status(0x5100U,4U);
             ata.active=true;
             if(ide_write(0U,1U)!=0)return -1;
         } else if(ata.command==0xe7U || ata.command==0x10U || ata.command==0x70U || ata.command==0xefU)
@@ -548,6 +574,7 @@ void amiga_content_service_init(mt_core_link_t *l,const char *media_root,bool us
     profile_native_capable=false;profile_native_faulted=false;
     link=l;progress=p;progress_context=context;memset(drives,0,sizeof(drives));memset(remembered,0,sizeof(remembered));
     root[0]='\0';rom_root[0]='\0';error[0]='\0';ready=false;faulted=false;paused=true;settings_invalid=false;bulk_failed=false;ata.active=false;
+    pfs_handler_bytes=0U;
     mt_amiga_rtc_init(&rtc);cached_clock_valid=false;clock_now_ms=0U;
     mt_amiga_config_defaults(&config);
     aga_pal=use_aga;
@@ -668,6 +695,44 @@ int amiga_content_service_resume_after_reset(void)
     if(drive_status()!=0 || ide_presence()!=0 || uio(1U,0U)!=0)return -1;
     paused=false;ata.active=false;return 0;
 }
+static int load_pfs_handler(void)
+{
+    if(pfs_handler_bytes!=0U)return 0;
+    char name[AM_PATH];
+    const int length=snprintf(name,sizeof(name),"%s/pfs3aio",rom_root);
+    if(length<=0 || (size_t)length>=sizeof(name))return fail("PFS3 handler path too long");
+    bool found=false;
+    const mt_sd_result_t r=mt_sd_storage_read_file_optional_max(name,pfs_handler,sizeof(pfs_handler),&found);
+    if(r.status!=MT_SD_OK)return sd_fail(r);
+    if(!found)return 0; /* A handler can also be installed by another RDB disk. */
+    static const uint8_t hunk_header[4]={0U,0U,3U,0xf3U};
+    if(r.size<sizeof(hunk_header) || (r.size&3U)!=0U || memcmp(pfs_handler,hunk_header,sizeof(hunk_header))!=0)
+        return fail("roms/pfs3aio must be an Amiga Hunk filesystem handler");
+    pfs_handler_bytes=r.size;
+    return 0;
+}
+
+static int configure_hardfile(am_drive_t *d)
+{
+    /* RDB may live anywhere in the first 16 sectors. Leave a real disk's
+     * sector numbering alone, even if the first sector has a DOS signature. */
+    const size_t scan=d->size<8192U ? (size_t)d->size:8192U;
+    if(disk_read_backend(d,0U,read_ahead,scan)!=0)return -1;
+    const uint32_t type=mt_amiga_partition_type(read_ahead);
+    if(type==0U)return 0;
+    for(size_t i=512U;i<scan;i+=512U) {
+        if(memcmp(read_ahead+i,"RDSK",4U)==0 || memcmp(read_ahead+i,"DRKS",4U)==0)return 0;
+    }
+    size_t handler_bytes=0U;
+    if(type==MT_AMIGA_PFS3_DOSTYPE) {
+        if(load_pfs_handler()!=0)return -1;
+        handler_bytes=pfs_handler_bytes;
+    }
+    if(!mt_amiga_hardfile_layout(&d->hardfile,(uint32_t)(d->size/512U),type,handler_bytes))
+        return fail("Partition HDF size has no supported exact IDE geometry");
+    return 0;
+}
+
 int amiga_content_service_mount(unsigned drive,const char *name)
 {
     invalidate_read_cache();
@@ -687,7 +752,11 @@ int amiga_content_service_mount(unsigned drive,const char *name)
         (void)mt_sd_file_close(d->file);d->file=NULL;return fail("ADF must be 880 KiB; HDF must contain 512-byte sectors");
     }
     d->size=(uint64_t)bytes;
-    d->heads=16U;d->sectors=63U;
+    memset(&d->hardfile,0,sizeof(d->hardfile));
+    if(drive>=2U && configure_hardfile(d)!=0) {
+        (void)mt_sd_file_close(d->file);d->file=NULL;return -1;
+    }
+    ata_default_geometry(d);
     if(apply_journal(d)!=0)return -1;
     memcpy(d->name,name,strlen(name)+1U);memcpy(remembered[drive],d->name,AM_NAME);
     d->read_track=160U;d->write_track=160U;d->write_used=0U;

@@ -18,3 +18,13 @@ tested on the board.
 If Multitini cannot open Kickstart, check the folder and filename above.
 After correcting the file, open F12, select Media, then select Kickstart ROM
 to retry.
+
+Optional PFS3 filesystem handler
+
+For a bare PFS3 partition HDF, copy the pfs3aio executable from the
+PFS3 All-In-One archive into this folder as pfs3aio. Multitini exposes the
+handler and partition table in memory. An AmigaOS installation that
+already loads PFS3 can also mount the partition. After selecting an IDE
+image, restart the Amiga so Kickstart scans it.
+
+https://aminet.net/package/disk/misc/pfs3aio

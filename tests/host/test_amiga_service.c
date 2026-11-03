@@ -187,6 +187,89 @@ static void command(uint8_t op,unsigned drive,uint32_t lba,unsigned count)
 }
 static uint64_t bench_timer(void *context)
 { assert(context==NULL && native_config[1]==4U && ide_request==0U);bench_timed=!bench_timed;bench_clock+=10U;return bench_clock; }
+
+static uint32_t disk_word(unsigned index)
+{
+    return ((uint32_t)(transmitted[2U*index]&255U)<<24U) |
+        ((uint32_t)(transmitted[2U*index]>>8U)<<16U) |
+        ((uint32_t)(transmitted[2U*index+1U]&255U)<<8U) |
+        (transmitted[2U*index+1U]>>8U);
+}
+static void check_metadata(uint32_t magic)
+{
+    assert(disk_word(0U)==magic && disk_word(1U)<=128U);
+    uint32_t sum=0U;
+    for(unsigned i=0U;i<disk_word(1U);++i)sum+=disk_word(i);
+    assert(sum==0U);
+}
+static void test_partition_hardfiles(void)
+{
+    /* Match the exact geometry of the two reported files without a copy of
+     * any private media. */
+    mt_amiga_hardfile_t layout;
+    assert(mt_amiga_hardfile_layout(&layout,409600U,0x444f5301U,0U));
+    assert(layout.first_lba==512U && layout.cylinders==801U);
+    assert(mt_amiga_hardfile_layout(&layout,4112640U,MT_AMIGA_PFS3_DOSTYPE,59120U));
+    assert(layout.first_lba==1008U && layout.cylinders==4081U);
+
+    file_t *ffs=create(ROOT "/Partition.hdf",262144U);
+    memcpy(ffs->data,"DOS\1",4U);
+    assert(amiga_content_service_mount(3U,"Partition.hdf")==0);
+    command(0xecU,1U,0U,1U);amiga_content_service_poll();
+    assert(transmitted[55]==16U && transmitted[56]==32U && transmitted[60]==1024U);
+    command(0x20U,1U,0U,2U);amiga_content_service_poll();
+    check_metadata(0x5244534bU);
+    assert(disk_word(7U)==1U && disk_word(8U)==UINT32_MAX && disk_word(34U)==1U);
+    ide_request=5U;amiga_content_service_poll();
+    check_metadata(0x50415254U);
+    assert(disk_word(5U)==0U && disk_word(9U)==0x03444831U && disk_word(48U)==0x444f5301U);
+    command(0x20U,1U,511U,2U);amiga_content_service_poll();
+    assert(disk_word(0U)==0U);
+    ide_request=5U;amiga_content_service_poll();
+    assert(disk_word(0U)==0x444f5301U);
+
+    command(0x30U,1U,511U,2U);amiga_content_service_poll();
+    assert(ide_request==0U && (ide_regs[0]>>8U)==4U && !amiga_content_service_faulted());
+    command(0x30U,1U,514U,1U);amiga_content_service_poll();
+    for(unsigned i=0U;i<256U;++i)fifo[i]=0x3412U;
+    ide_request=5U;fail_write=true;amiga_content_service_poll();
+    assert(amiga_content_service_faulted());
+    const file_t *journal=find(ROOT "/Partition.hdf.amj",false);
+    assert(journal!=NULL && journal->data[8]==0U && journal->data[9]==4U);
+    fail_write=false;assert(amiga_content_service_retry()==0);
+    amiga_content_service_poll();
+    assert(ide_request==0U && memcmp(ffs->data,"DOS\1",4U)==0);
+    for(unsigned i=1024U;i<1536U;i+=2U)assert(ffs->data[i]==0x12U && ffs->data[i+1U]==0x34U);
+    command(0x20U,1U,1024U,1U);amiga_content_service_poll();
+    assert(ide_request==0U && (ide_regs[0]>>8U)==0x10U);
+    assert(amiga_content_service_eject(3U)==0);
+
+    file_t *pfs=create(ROOT "/Apps.hdf",262144U);
+    memcpy(pfs->data,"PFS\1",4U);
+    memcpy(pfs->data+1024U,"PFS\1",4U);
+    file_t *handler=create("0:/multitini/cores/amiga/roms/pfs3aio",500U);
+    memcpy(handler->data,"\0\0\3\xf3",4U);
+    assert(amiga_content_service_mount(3U,"Apps.hdf")==0);
+    command(0x20U,1U,0U,1U);amiga_content_service_poll();
+    check_metadata(0x5244534bU);
+    assert(disk_word(8U)==2U);
+    command(0x20U,1U,1U,1U);amiga_content_service_poll();
+    check_metadata(0x50415254U);
+    assert(disk_word(48U)==MT_AMIGA_PFS3_DOSTYPE);
+    command(0x20U,1U,2U,1U);amiga_content_service_poll();
+    check_metadata(0x46534844U);
+    assert(disk_word(8U)==MT_AMIGA_PFS3_DOSTYPE && disk_word(18U)==3U);
+    command(0x20U,1U,3U,2U);amiga_content_service_poll();
+    check_metadata(0x4c534547U);
+    assert(disk_word(4U)==4U && disk_word(5U)==0x000003f3U);
+    ide_request=5U;amiga_content_service_poll();
+    check_metadata(0x4c534547U);
+    assert(disk_word(1U)==7U && disk_word(4U)==UINT32_MAX);
+    command(0x20U,1U,512U,1U);amiga_content_service_poll();
+    assert(disk_word(0U)==0x50465301U);
+    assert(amiga_content_service_eject(3U)==0);
+}
+
 int main(void)
 {
     file_t *kick=create("0:/multitini/cores/amiga/roms/kick.rom",524288U);
@@ -266,7 +349,13 @@ int main(void)
     command(0x20U,0U,0U,1U);ide_regs[1]=0x0101U;ide_regs[5]=0x20a2U;amiga_content_service_poll();
     assert((ide_regs[5]&0xff00U)==0x5500U && (ide_regs[0]>>8U)==0x10U); /* Head 2 is invalid for two heads. */
     command(0xc6U,0U,0U,1U);amiga_content_service_poll();assert((ide_regs[5]&0xff00U)==0x5500U && (ide_regs[0]>>8U)==4U);
-    (void)create(ROOT "/Second.hdf",4096U);assert(amiga_content_service_mount(3U,"Second.hdf")==0);
+    test_partition_hardfiles();
+    file_t *second=create(ROOT "/Second.hdf",4096U);
+    memcpy(second->data,"DOS\1",4U);
+    memcpy(second->data+512U,"RDSK",4U);
+    assert(amiga_content_service_mount(3U,"Second.hdf")==0);
+    command(0x20U,1U,0U,1U);amiga_content_service_poll();
+    assert(disk_word(0U)==0x444f5301U); /* Existing RDB keeps its physical layout. */
     command(0xecU,1U,0U,1U);amiga_content_service_poll();assert(transmitted[55]==16U && transmitted[56]==63U);
     command(0xecU,0U,0U,1U);amiga_content_service_poll();assert(transmitted[55]==2U && transmitted[56]==2U);
     /* A partially written PIO block must complete while the guest runs. */

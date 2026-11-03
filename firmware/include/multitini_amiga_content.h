@@ -14,6 +14,21 @@ bool mt_amiga_config_decode(const uint8_t wire[MT_AMIGA_CONFIG_BYTES],mt_amiga_c
 bool mt_amiga_media_path_valid(const char *);
 bool mt_amiga_rom_size_valid(size_t);
 mt_content_validation_t mt_amiga_media_validate(unsigned drive,uint64_t bytes);
+
+/* A bare partition gets a virtual, write-protected prefix of whole cylinders. */
+#define MT_AMIGA_PFS3_DOSTYPE UINT32_C(0x50465303)
+#define MT_AMIGA_PFS_HANDLER_MAX (128U*1024U)
+typedef struct {
+    uint32_t first_lba, cylinders, dos_type;
+    uint16_t heads, sectors;
+    size_t handler_bytes;
+} mt_amiga_hardfile_t;
+uint32_t mt_amiga_partition_type(const uint8_t header[4]);
+bool mt_amiga_hardfile_layout(mt_amiga_hardfile_t *, uint32_t data_sectors,
+    uint32_t dos_type, size_t handler_bytes);
+void mt_amiga_hardfile_sector(const mt_amiga_hardfile_t *, unsigned unit,
+    const uint8_t *handler, uint32_t lba, uint8_t data[512]);
+
 /* ADF sectors contain 512 bytes. The MFM sector includes preamble, two
  * syncs, header/label/checksums and odd/even data. Clock state crosses sectors. */
 bool mt_amiga_mfm_encode(unsigned track,unsigned sector,uint16_t sync,
