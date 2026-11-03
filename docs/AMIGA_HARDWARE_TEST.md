@@ -105,7 +105,16 @@ Golden recovery remains intact. On this card Golden's monitor is COM12 at
 921600 baud; ARM firmware's console is COM13 at 921600. A reboot must be
 sent to the ARM console before catching Golden on its separate port.
 
-## Remaining qualification
+## Amiga 1200 AGA PAL
+
+The board loaded FPGA `4D000828` over PCAP with CRC32 `DEDC263F`. Final
+routed setup slack was +0.202 ns and hold slack was +0.036 ns.
+
+With A1200 Kickstart 3.1 revision 40.068, Street Racer booted from DF0 in stock
+68EC020 mode. The serial console recorded 72 reads and zero faults. The owner
+also confirmed the game booted in the accelerated 28 MHz mode.
+
+## Remaining ECS qualification
 
 The current AROS 20261031 1 MiB ROM reaches its graphical splash with the
 accelerated profile. No HDF reads were observed during that attempt, so its

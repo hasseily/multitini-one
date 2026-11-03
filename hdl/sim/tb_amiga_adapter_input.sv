@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns/1ps
 // Test-only native-machine interface stub for the production input FIFO.
-module multitini_amiga_machine (
+module multitini_amiga_machine #(parameter bit AGA_PAL=1'b0) (
     input wire clk_service28,
     input wire reset,
     input wire guest_reset,

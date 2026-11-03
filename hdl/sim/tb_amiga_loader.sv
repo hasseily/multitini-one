@@ -13,6 +13,14 @@ module tb_amiga_loader;
     wire [7:0] write_data;
     reg write_ready=1,write_done=0,memory_fault=0;
     multitini_amiga_loader dut(.*);
+    wire aga_error,aga_config_valid;
+    multitini_amiga_loader #(.AGA_PAL(1'b1)) aga(
+        .clk(clk),.reset(reset),.clear_error(clear_error),.load_abort(1'b0),
+        .load_abort_epoch(1'b0),.load_epoch(load_epoch),.load_kind(load_kind),
+        .load_data(load_data),.load_valid(load_valid && load_kind==8'h60),
+        .load_first(load_first),.load_last(load_last),.load_offset(load_offset),
+        .load_total(load_total),.error(aga_error),.config_valid(aga_config_valid),
+        .write_ready(1'b1),.write_done(1'b0),.memory_fault(1'b0));
     integer writes=0,cycle=0,expected_offset=0;
     reg auto_done=1,check_rom=0,backpressure=1;
     reg [23:0] expected_address;
@@ -81,6 +89,7 @@ module tb_amiga_loader;
         reset_loader;
         config_record(0,0,0,0,8);
         if(!config_valid || error || config_bytes[39:32]!=0)$fatal(1,"stock AM01 config rejected");
+        if(aga_config_valid || !aga_error)$fatal(1,"AGA loader accepted legacy ECS config");
         config_record(2,0,0,1,4);
         if(!config_valid || error || config_bytes[39:32]!=2 || config_bytes[71:64]!=4)$fatal(1,"turbo AM01 config rejected");
         config_record(3,0,0,0,8);
@@ -90,7 +99,8 @@ module tb_amiga_loader;
         ide_config(2,0);
         if(config_valid || !error)$fatal(1,"Unknown IDE policy accepted");
         clear;ide_config(0,1);
-        if(config_valid || !error)$fatal(1,"Reserved AM01 byte11 accepted");
+        if(config_valid || !error)$fatal(1,"ECS loader accepted AGA config");
+        if(!aga_config_valid || aga_error)$fatal(1,"AGA loader rejected AGA config");
         clear;
         config_record(4,0,0,0,8);
         if(config_valid || !error)$fatal(1,"unknown CPU mode accepted");

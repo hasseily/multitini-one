@@ -67,7 +67,7 @@ int main(void)
     file_t *adf=create(ROOT "/ReadAhead.adf",901120U);
     for(unsigned i=0U;i<a->size;++i) { a->data[i]^=0x17U;b->data[i]^=0xc3U; }
     mt_core_link_t link;mt_core_link_init(&link,NULL,timed_rd,timed_wr);bulk_capable=true;fast_ide_capable=true;
-    amiga_content_service_init(&link,ROOT,progress_reads,NULL);assert(amiga_content_service_boot()==0);
+    amiga_content_service_init(&link,ROOT,false,progress_reads,NULL);assert(amiga_content_service_boot()==0);
     assert(amiga_content_service_mount(2U,"ReadAhead.hdf")==0 && amiga_content_service_mount(3U,"Other.hdf")==0);
     assert(amiga_content_service_mount(0U,"ReadAhead.adf")==0);
     const unsigned counts[]={1U,31U,32U,33U,128U,256U};

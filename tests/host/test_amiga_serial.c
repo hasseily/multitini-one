@@ -40,6 +40,7 @@ static uint32_t config_readback=0x166bU;
 static char ide_output[4096];
 static size_t ide_output_length;
 const mt_amiga_config_t *amiga_content_service_config(void) { return &cpu_config; }
+bool amiga_content_service_aga_pal(void) { return false; }
 bool amiga_content_service_cpu14_available(void) { return cpu14_available; }
 bool amiga_content_service_cpu14_fallback(void) { return false; }
 bool amiga_content_service_fast_ide_available(void) { return fast_ide_available; }

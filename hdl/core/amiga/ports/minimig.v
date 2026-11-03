@@ -147,7 +147,7 @@
 // SB:
 // 2012-03-23 - fixed sprite enable signal (coppermaster demo)
 
-module minimig
+module minimig #(parameter AGA_PAL = 1'b0)
 (
 	//m68k pins
 	input  [23:1] cpu_address, // m68k address bus
@@ -171,6 +171,8 @@ module minimig
 
 	//sram pins
 	output [15:0] ram_data,    // sram data bus
+	input  [15:0] ramdata2_in,
+	output reg [15:0] cpu_data2,
 	input  [15:0] ramdata_in,  // sram data bus in
 	output [23:1] ram_address, // sram address bus
 	output 	     _ram_bhe,    // sram upper byte select
@@ -810,7 +812,7 @@ paula PAULA1
 
 
 //instantiate user IO
-userio USERIO1 
+userio #(.AGA_PAL(AGA_PAL)) USERIO1 
 (	
 	.clk(clk),
 	.clk7_en(clk7_en),
@@ -948,6 +950,12 @@ ciab CIAB1
 
 assign chip32_en = cpucfg[1] & (chipset_config[4] | (chipset_config[3] & ~cpucfg[0])) & ~ovr & ~cpuhlt;
 assign ram_long  = cpu_long_en & ~dbr & |bank[3:0];
+
+// Latch the second word with the CPU bridge's first word. Subsequent DMA
+// and refresh cycles can change the raw RAM response before the CPU uses it.
+always @(posedge clk)
+	if (!c1 && c3 && cpu_rd && ram_long && !_ram_oe)
+		cpu_data2 <= ramdata2_in;
 
 //instantiate cpu bridge
 minimig_m68k_bridge CPU1 

@@ -141,13 +141,14 @@ static mt_link_result_t uio(mt_core_link_t *link,uint8_t reg,uint16_t value,uint
     const mt_link_result_t deselect=mt_amiga_host_access(link,MT_AMIGA_HOST_SELECT,0U,polls,NULL);
     return r==MT_LINK_OK ? deselect:r;
 }
-mt_link_result_t mt_amiga_native_configure(mt_core_link_t *link,const mt_amiga_config_t *c,uint32_t polls)
+mt_link_result_t mt_amiga_native_configure(mt_core_link_t *link,const mt_amiga_config_t *c,bool aga_pal,uint32_t polls)
 {
-    if(!mt_amiga_config_valid(c))return MT_LINK_BAD_ARGUMENT;
+    if(!mt_amiga_config_valid(c) || (aga_pal && c->cpu==MT_AMIGA_CPU_68020_14))return MT_LINK_BAD_ARGUMENT;
     if(c->cpu==MT_AMIGA_CPU_68020_14 && (link==NULL || link->read32==NULL ||
         !(link->read32(link->context,MT_AMIGA_HOST_PORT)&MT_AMIGA_HOST_CPU14)))return MT_LINK_ABI_MISMATCH;
-    const uint16_t cpu=c->cpu==MT_AMIGA_CPU_68020_14 ? 0x5fU:c->cpu==MT_AMIGA_CPU_68020_TURBO ? 0x1fU:0U;
-    const uint16_t chipset=(uint16_t)(8U|(c->ntsc<<1U)|(c->cpu!=MT_AMIGA_CPU_STOCK ? 1U:0U));
+    const uint16_t cpu=c->cpu==MT_AMIGA_CPU_68020_14 ? 0x5fU:
+        c->cpu==MT_AMIGA_CPU_68020_TURBO ? 0x1fU:aga_pal ? 0x23U:0U;
+    const uint16_t chipset=(uint16_t)((aga_pal ? 0x18U:8U)|(c->ntsc<<1U)|(c->cpu!=MT_AMIGA_CPU_STOCK ? 1U:0U));
     const uint16_t memory=(uint16_t)(3U|((c->fast_mib==8U ? 3U:2U)<<4U));
     const uint32_t capabilities=link!=NULL && link->read32!=NULL ? link->read32(link->context,MT_AMIGA_HOST_PORT):0U;
     const uint16_t ide=mt_amiga_fast_ide_enabled(c,capabilities) ? 7U:0x27U;
@@ -160,10 +161,11 @@ mt_link_result_t mt_amiga_native_configure(mt_core_link_t *link,const mt_amiga_c
     }
     return MT_LINK_OK;
 }
-mt_link_result_t mt_amiga_stage(mt_core_link_t *link,const mt_amiga_config_t *c,const uint8_t *rom,size_t bytes,
+mt_link_result_t mt_amiga_stage(mt_core_link_t *link,const mt_amiga_config_t *c,bool aga_pal,const uint8_t *rom,size_t bytes,
     uint32_t polls,mt_link_progress_fn progress,void *context)
 {
-    if(!mt_amiga_config_valid(c) || rom==NULL || bytes!=MT_AMIGA_ROM_BYTES || polls==0U)return MT_LINK_BAD_ARGUMENT;
+    if(!mt_amiga_config_valid(c) || (aga_pal && c->cpu==MT_AMIGA_CPU_68020_14) ||
+        rom==NULL || bytes!=MT_AMIGA_ROM_BYTES || polls==0U)return MT_LINK_BAD_ARGUMENT;
     if(c->cpu==MT_AMIGA_CPU_68020_14 && (link==NULL || link->read32==NULL ||
         !(link->read32(link->context,MT_AMIGA_HOST_PORT)&MT_AMIGA_HOST_CPU14)))return MT_LINK_ABI_MISMATCH;
     const uint32_t args[4]={1U,0U,0U,0U}; mt_command_response_t response;
@@ -176,8 +178,9 @@ mt_link_result_t mt_amiga_stage(mt_core_link_t *link,const mt_amiga_config_t *c,
     /* Legacy loaders require byte10 zero. The saved policy is retained by
      * ARM; an older FPGA always uses the classic guest interface. */
     if(link==NULL || link->read32==NULL || !(link->read32(link->context,MT_AMIGA_HOST_PORT)&MT_AMIGA_HOST_FAST_IDE))wire[10]=0U;
+    wire[11]=(uint8_t)aga_pal;
     if(r==MT_LINK_OK)r=mt_core_link_stream(link,MT_LOAD_AMIGA_CONFIG,wire,sizeof(wire),polls,progress,context);
-    if(r==MT_LINK_OK)r=mt_amiga_native_configure(link,c,polls);
+    if(r==MT_LINK_OK)r=mt_amiga_native_configure(link,c,aga_pal,polls);
     if(r==MT_LINK_OK)r=mt_core_link_stream(link,MT_LOAD_AMIGA_KICKSTART,rom,bytes,polls,progress,context);
     return r;
 }

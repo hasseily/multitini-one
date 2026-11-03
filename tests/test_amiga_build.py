@@ -61,6 +61,15 @@ class AmigaBuildTests(unittest.TestCase):
         self.assertIn("PLAN TOTAL build=1 reuse=0", result.stdout)
         self.assertNotIn("PLAN BUILD supervisor", result.stdout)
 
+    def test_aga_variant_plans_as_distinct_image(self):
+        result = subprocess.run([sys.executable, ROOT / "scripts/build_core_amiga.py", "--plan",
+                                 "--image", "amiga-aga", "--output", "build/amiga-aga-plan-test"],
+                                cwd=ROOT, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("PLAN BUILD amiga-aga ", result.stdout)
+        self.assertIn("PLAN TOTAL build=1 reuse=0", result.stdout)
+        self.assertEqual(package.AMIGA_AGA_VARIANT, ("aga-pal", "Amiga 1200 AGA PAL", "amiga-aga"))
+
     def test_explicit_amiga_reuse_is_validated_as_its_own_machine(self):
         with tempfile.TemporaryDirectory(dir=ROOT / "build") as directory:
             root = Path(directory)

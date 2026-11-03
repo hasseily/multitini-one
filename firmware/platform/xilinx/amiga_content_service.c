@@ -29,6 +29,7 @@ static char root[256],rom_root[256],error[160],remembered[MT_AMIGA_DRIVE_COUNT][
 static uint8_t rom[MT_AMIGA_ROM_BYTES],sector[512],journal_wire[544],settings_wire[AM_SETTINGS];
 static uint16_t mfm[MT_AMIGA_MFM_SECTOR_WORDS],write_mfm[2][MT_AMIGA_MFM_SECTOR_WORDS];
 static bool ready,faulted,paused,settings_invalid,bulk_failed;
+static bool aga_pal;
 static mt_amiga_rtc_t rtc;
 static mt_clock_time_t cached_clock;
 static bool cached_clock_valid;
@@ -180,10 +181,15 @@ static int ide_presence(void)
     const uint16_t present=(uint16_t)(0x388U|(drives[2].file!=NULL ? 1U:0U)|(drives[3].file!=NULL ? 16U:0U));
     return ide_write(6U,present);
 }
+static bool settings_paths(char target[AM_PATH],char journal[AM_PATH])
+{
+    return path(target,aga_pal ? "amiga-aga-settings.bin":"amiga-settings.bin") &&
+        path(journal,aga_pal ? "amiga-aga-settings.bin.mtj":"amiga-settings.bin.mtj");
+}
 static int settings_save(void)
 {
     if(settings_invalid)return fail("Amiga settings invalid; retain file for recovery");
-    char target[AM_PATH],journal[AM_PATH];if(!path(target,"amiga-settings.bin") || !path(journal,"amiga-settings.bin.mtj"))return fail("Amiga settings path too long");
+    char target[AM_PATH],journal[AM_PATH];if(!settings_paths(target,journal))return fail("Amiga settings path too long");
     memset(settings_wire,0,sizeof(settings_wire));memcpy(settings_wire,"MTAMSET1",8U);
     mt_amiga_config_t saved=config;saved.cpu=preferred_cpu;
     mt_amiga_config_encode(&saved,settings_wire+8U);
@@ -196,7 +202,7 @@ static int settings_save(void)
 static void settings_load(void)
 {
     char target[AM_PATH],journal[AM_PATH];bool found=false;
-    if(!path(target,"amiga-settings.bin") || !path(journal,"amiga-settings.bin.mtj")) { settings_invalid=true;(void)fail("Amiga settings path too long");return; }
+    if(!settings_paths(target,journal)) { settings_invalid=true;(void)fail("Amiga settings path too long");return; }
     mt_sd_result_t r=mt_sd_storage_journal_recover(target,journal,settings_wire,sizeof(settings_wire));
     if(r.status!=MT_SD_OK) { settings_invalid=true;(void)sd_fail(r);return; }
     r=mt_sd_storage_read_file_optional_max(target,settings_wire,sizeof(settings_wire),&found);
@@ -206,6 +212,7 @@ static void settings_load(void)
     mt_amiga_config_t candidate;
     bool valid=r.size==sizeof(settings_wire) && memcmp(settings_wire,"MTAMSET1",8U)==0 &&
         expected==crc32(settings_wire,sizeof(settings_wire)) && mt_amiga_config_decode(settings_wire+8U,&candidate);
+    if(valid && aga_pal && candidate.cpu==MT_AMIGA_CPU_68020_14)valid=false;
     for(unsigned i=0U;valid && i<MT_AMIGA_DRIVE_COUNT;++i) {
         const char *name=(const char *)settings_wire+24U+i*AM_NAME;
         valid=memchr(name,0,AM_NAME)!=NULL && (*name=='\0' || mt_amiga_media_path_valid(name));
@@ -534,7 +541,7 @@ static int ata_poll(void)
     if(ata.left==0U)ata.active=false;
     return r;
 }
-void amiga_content_service_init(mt_core_link_t *l,const char *media_root,mt_link_progress_fn p,void *context)
+void amiga_content_service_init(mt_core_link_t *l,const char *media_root,bool use_aga,mt_link_progress_fn p,void *context)
 {
     invalidate_read_cache();
     profile_invalidate(MT_AMIGA_PROFILE_LIFECYCLE);
@@ -543,6 +550,8 @@ void amiga_content_service_init(mt_core_link_t *l,const char *media_root,mt_link
     root[0]='\0';rom_root[0]='\0';error[0]='\0';ready=false;faulted=false;paused=true;settings_invalid=false;bulk_failed=false;ata.active=false;
     mt_amiga_rtc_init(&rtc);cached_clock_valid=false;clock_now_ms=0U;
     mt_amiga_config_defaults(&config);
+    aga_pal=use_aga;
+    if(aga_pal)config.cpu=MT_AMIGA_CPU_STOCK;
     preferred_cpu=config.cpu;
     const size_t n=media_root!=NULL ? strlen(media_root):0U;
     if(n<6U || n>=sizeof(root) || strcmp(media_root+n-6U,"/media")!=0) { (void)fail("Amiga package requires /media content root");return; }
@@ -559,15 +568,20 @@ int amiga_content_service_boot(void)
 {
     invalidate_read_cache();
     profile_invalidate(MT_AMIGA_PROFILE_LIFECYCLE);
-    if(link==NULL || root[0]=='\0' || settings_invalid)return fail("Amiga service not initialized");
+    if(settings_invalid)return -1;
+    if(link==NULL || root[0]=='\0')return fail("Amiga service not initialized");
     if(amiga_content_service_prepare_reset()!=0 || reset(true)!=0)return -1;
-    char name[AM_PATH];const int n=snprintf(name,sizeof(name),"%s/kick.rom",rom_root);
+    const char *const filename=aga_pal ? "kick-a1200.rom":"kick.rom";
+    char name[AM_PATH];const int n=snprintf(name,sizeof(name),"%s/%s",rom_root,filename);
     if(n<=0 || (size_t)n>=sizeof(name))return fail("Kickstart path too long");
     const mt_sd_result_t r=mt_sd_storage_read_file_max(name,rom,sizeof(rom));
+    if(r.status==MT_SD_OPEN_FAILED)return fail(aga_pal ?
+        "Cannot open roms/kick-a1200.rom":"Cannot open roms/kick.rom");
     if(r.status!=MT_SD_OK)return sd_fail(r);
-    if(!mt_amiga_rom_size_valid(r.size))return fail("kick.rom must be 256 KiB, 512 KiB or 1 MiB");
+    if(!mt_amiga_rom_size_valid(r.size))return fail(aga_pal ?
+        "kick-a1200.rom must be 256 KiB, 512 KiB or 1 MiB":"kick.rom must be 256 KiB, 512 KiB or 1 MiB");
     for(size_t i=r.size;i<sizeof(rom);++i)rom[i]=rom[i%r.size];
-    const mt_link_result_t staged=mt_amiga_stage(link,&config,rom,sizeof(rom),AM_POLLS,progress,progress_context);
+    const mt_link_result_t staged=mt_amiga_stage(link,&config,aga_pal,rom,sizeof(rom),AM_POLLS,progress,progress_context);
     if(staged!=MT_LINK_OK)return fail(mt_link_result_name(staged));
     for(unsigned i=0U;i<MT_AMIGA_DRIVE_COUNT;++i)if(drives[i].file==NULL && remembered[i][0]!='\0') {
         char saved[AM_NAME];memcpy(saved,remembered[i],AM_NAME);
@@ -717,7 +731,8 @@ int amiga_content_service_retry(void)
 }
 int amiga_content_service_configure(const mt_amiga_config_t *candidate)
 {
-    if(!mt_amiga_config_valid(candidate))return fail("Amiga configuration invalid");
+    if(!mt_amiga_config_valid(candidate) || (aga_pal && candidate->cpu==MT_AMIGA_CPU_68020_14))
+        return fail("Amiga configuration invalid");
     if(candidate->cpu==MT_AMIGA_CPU_68020_14 && !amiga_content_service_cpu14_available())
         return fail("14 MHz requires an updated Amiga core");
     if(amiga_content_service_prepare_reset()!=0)return -1;
@@ -732,6 +747,7 @@ int amiga_content_service_configure(const mt_amiga_config_t *candidate)
     return amiga_content_service_boot();
 }
 const mt_amiga_config_t *amiga_content_service_config(void) { return &config; }
+bool amiga_content_service_aga_pal(void) { return aga_pal; }
 int amiga_content_service_ide_bench(unsigned iterations,uint64_t (*timer)(void *),
     void *context,mt_amiga_ide_bench_t *result)
 {
@@ -776,7 +792,7 @@ uncertain:
     return fail("Amiga IDE benchmark uncertain; reload core; guest remains halted");
 }
 bool amiga_content_service_cpu14_available(void)
-{ return link!=NULL && link->read32!=NULL && (link->read32(link->context,MT_AMIGA_HOST_PORT)&MT_AMIGA_HOST_CPU14)!=0U; }
+{ return !aga_pal && link!=NULL && link->read32!=NULL && (link->read32(link->context,MT_AMIGA_HOST_PORT)&MT_AMIGA_HOST_CPU14)!=0U; }
 bool amiga_content_service_cpu14_fallback(void)
 { return preferred_cpu==MT_AMIGA_CPU_68020_14 && config.cpu!=preferred_cpu; }
 bool amiga_content_service_fast_ide_available(void)

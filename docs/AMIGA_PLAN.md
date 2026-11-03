@@ -2,14 +2,23 @@
 
 ## Target
 
-The core is named `Amiga`; its current variant is `Amiga 600 ECS PAL`.
-The stable core and variant identifiers remain `amiga` and `pal`.
+The `amiga` core has two PAL variants. `pal` selects Amiga 600 ECS PAL and
+`aga-pal` selects Amiga 1200 AGA PAL.
 
 The Amiga profile targets an expanded A600 with ECS, 2 MiB chip RAM, a
 1 MiB Kickstart ROM aperture, 8 MiB fast RAM, two DD floppy drives and two
 IDE hard disks. Stock mode uses the upstream FX68K 68000 with native bus
 phase enables. Accelerated mode uses the upstream TG68K 68020. Keep chipset,
 CIA, floppy and audio timing independent of CPU acceleration.
+
+The A1200 uses the same pinned Minimig source, PAL clock and memory adapter.
+It starts with the 68EC020 stock bus throttle and offers the 28 MHz TG68K
+execution profile as an option. Both modes use 2 MiB chip RAM and offer
+4 or 8 MiB Fast RAM. Auto IDE uses Classic in stock mode and Fast IDE with
+acceleration when available. CPU changes flush media and restart the guest.
+The variants share the media directory and store separate CPU, drive and IDE
+preferences. The AGA guest needs its own user-supplied A1200 Kickstart 3.1
+ROM at `roms/kick-a1200.rom`.
 
 The imported source is MiSTer's Minimig-AGA core at commit
 `e47c3457b486d09daaf47c8934bda90cf7723045`. Its ECS configuration retains the
@@ -65,7 +74,8 @@ SuperHiRes samples native 28 MHz pixels and explicitly selects larger video
 slots; CPU/chip clocks and machine RAM stay unchanged. FPGA 811 passed strict
 routed timing and CDC gates. ARM 812 with normalized helper07 passes all four
 on-card layout, origin and restore checks; external physical DVI output was
-not separately measured. The ECS profile fixes PAL and rejects NTSC. See
+not separately measured. Both variants fix PAL and reject NTSC. The AGA
+variant uses the shared RGB565 display path. See
 [Workbench display options](AMIGA_DISPLAY_OPTIONS.md) for guest helper,
 capture geometry, memory layout and compatibility contracts.
 
@@ -84,7 +94,7 @@ Place DD ADF floppy images and HDF hard disk images under `media/`. The
 firmware must preserve dirty data and recovery journals when a write fails,
 and flush before eject, reset, core switching or USB SD export.
 
-This target does not promise AGA, RTG, CD32/CDTV, HRTmon, physical or flux
+This target does not promise RTG, CD32/CDTV, HRTmon, physical or flux
 floppy interfaces, Ethernet, shared-folder or MiSTer Linux services. The
 retained upstream README describes the upstream product and is not the
 feature contract for this port.
@@ -104,12 +114,18 @@ builds only Amiga, captures exact sources and settings, and exports the XSA
 only after the existing routed timing, CDC, DRC and coverage gates pass.
 The Amiga service-clock ratio is checked before export.
 
+Select `--image amiga-aga` and a fresh build ID and output directory to build
+the A1200 variant. The AM01 loader validates byte 11 against the synthesized
+chipset (0 for ECS, 1 for AGA). The native configuration readback reports AGA
+in bit 13. The A1200 variant requires AGA-aware ARM firmware.
+
 `scripts/package_core_gs.py --include-amiga` adds an explicitly selected,
 qualified Amiga image to the shared package with the names above and only
 `readme.txt` in its ROM directory. Supply Kickstart separately on the SD card;
 the packager does not accept or embed an Amiga system ROM. Existing image reuse
 retains each artifact's original identity and source archives. These source and
 SD-data labels do not rebuild or relabel retained FPGA or ARM binaries.
+Use `--include-amiga-aga` to package both variants.
 
 ## Qualification
 
@@ -167,3 +183,14 @@ configuration and remaining work. In particular, maximum performance,
 hardware audio/input, interlace and application compatibility need further
 evidence. The downloaded AROS ROM reaches its splash screen, but hard-disk
 boot has not been established.
+
+The AGA acceptance pass must cover A1200 Kickstart boot, stock and accelerated
+CPU timing, AGA bitplane and sprite DMA under chip RAM contention, and PAL
+interlace on the board. ECS board results apply to the tested ECS images.
+
+On FPGA 826, A1200 Kickstart 40.068 could halt before requesting DF0 in either
+CPU mode. The boot trace showed a refresh response replacing the lower word
+of an AGA 32-bit chip RAM read after the CPU bridge had sampled the upper word.
+The bridge now latches both words on the same CPU read phase. The real-CPU
+fixture checks the returned longword when another DMA response takes over
+the raw RAM outputs immediately after that phase.

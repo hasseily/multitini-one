@@ -33,6 +33,18 @@ def remove_instance(text: str, kind: str, instance: str, replacement: str) -> st
 
 def minimig() -> str:
     text = (SOURCE / "rtl/minimig.v").read_text()
+    text = replace_once(text, "module minimig\n", "module minimig #(parameter AGA_PAL = 1'b0)\n")
+    text = replace_once(text, "userio USERIO1", "userio #(.AGA_PAL(AGA_PAL)) USERIO1")
+    text = replace_once(text, "input  [15:0] ramdata_in,", """input  [15:0] ramdata2_in,
+	output reg [15:0] cpu_data2,
+	input  [15:0] ramdata_in,""")
+    text = replace_once(text, "//instantiate cpu bridge", """// Latch the second word with the CPU bridge's first word. Subsequent DMA
+// and refresh cycles can change the raw RAM response before the CPU uses it.
+always @(posedge clk)
+	if (!c1 && c3 && cpu_rd && ram_long && !_ram_oe)
+		cpu_data2 <= ramdata2_in;
+
+//instantiate cpu bridge""")
     text=replace_once(text,"\toutput  [5:0] ide_req,","\toutput [5:0] ide_monitor,\n\toutput  [5:0] ide_req,")
     text=replace_once(text,"\t.ide_req(ide_req),","\t.monitor(ide_monitor),\n\t.ide_req(ide_req),")
     text = replace_once(text, "\toutput  [1:0] res,", "\toutput  [1:0] res,\n\toutput [8:0] diw_hstart,diw_hstop,\n\toutput [10:0] diw_vstart,diw_vstop,")
@@ -255,22 +267,27 @@ assign cpu_step = clkena_p_throttled;""")
 
 def userio() -> str:
     text = (SOURCE / "rtl/userio.v").read_text()
+    text = replace_once(text, "module userio\n", "module userio #(parameter AGA_PAL = 1'b0)\n")
     text = replace_once(text, "reg [7:0] t_memory_config = 8'b0_0_00_01_01;", "reg [7:0] t_memory_config = 8'h33; // 2MiB Chip + 8MiB Zorro-II Fast")
     text = replace_once(text, "reg [5:0] t_chipset_config = 0;", "reg [5:0] t_chipset_config = 6'h08; // ECS PAL")
-    text = replace_once(text, "chipset_config <= t_chipset_config;", "chipset_config <= 6'h08; // ECS PAL only in the A600 image")
-    text = replace_once(text, "cpu_cfg <= {t_cpu_config[7:6], t_cpu_config[5], t_cpu_config[1:0]};", "cpu_cfg <= {1'b0, (t_cpu_config[1:0]==2'b11) & t_cpu_config[6], (t_cpu_config[1:0]==2'b11) & t_cpu_config[5], {2{t_cpu_config[1:0]==2'b11}}}; // bit3 selects alternate-edge 68020 execution")
+    text = replace_once(text, "chipset_config <= t_chipset_config;", "chipset_config <= AGA_PAL ? 6'h18 : 6'h08;")
+    text = replace_once(text, "cpu_cfg <= {t_cpu_config[7:6], t_cpu_config[5], t_cpu_config[1:0]};", """// A1200 stock uses the upstream 68EC020 bus throttle and 24-bit addressing.
+		if (AGA_PAL)
+			cpu_cfg <= t_cpu_config[1:0]==2'b11 && !t_cpu_config[5] ? 5'h03 : 5'h07;
+		else
+			cpu_cfg <= {1'b0, (t_cpu_config[1:0]==2'b11) & t_cpu_config[6], (t_cpu_config[1:0]==2'b11) & t_cpu_config[5], {2{t_cpu_config[1:0]==2'b11}}}; // bit3 selects alternate-edge 68020 execution""")
     text = replace_once(text, "memory_config[5:0] <= t_memory_config[5:0];", "memory_config[5:0] <= {(t_memory_config[5:4]==2'd2 ? 2'd2 : 2'd3), 2'b00, 2'b11}; // 2MiB Chip; 4/8MiB Fast")
     text = replace_once(text, "memory_config[7] <= t_memory_config[7];", "memory_config[7] <= 1'b0;")
     text = replace_once(text, "memory_config[6] <= t_memory_config[6];", "memory_config[6] <= 1'b0; // no monitor cartridge")
     text = replace_once(text, "\treg       bootrom_r;", "\treg       bootrom_r=0;")
     text = replace_once(text,"\treg [5:0] ide_cfg = 0;", "")
     text = replace_once(text,"\treg [4:0] cpu_cfg = 0;", "")
-    text = replace_once(text,"// configuration changes only while reset is active", "reg [5:0] ide_cfg=0;\nreg [4:0] cpu_cfg=0;\n// configuration changes only while reset is active")
+    text = replace_once(text,"// configuration changes only while reset is active", "reg [5:0] ide_cfg=0;\nreg [4:0] cpu_cfg=AGA_PAL ? 5'h07 : 5'd0;\n// configuration changes only while reset is active")
     text = replace_once(text, "reg [7:0] cmd;", """reg [7:0] cmd;
 initial begin
-    memory_config=8'h33; chipset_config=6'h08; floppy_config=5'h04;
+    memory_config=8'h33; chipset_config=AGA_PAL ? 6'h18 : 6'h08; floppy_config=5'h04;
     floppy_ext_drive=12'd0; user_port_mode=1'b0;
-    ide_config=6'd0; cpu_config=5'd0; cache_config=3'd0;
+    ide_config=6'd0; cpu_config=AGA_PAL ? 5'h07 : 5'd0; cache_config=3'd0;
     usrrst=1'b0; cpurst=1'b0; cpuhlt=1'b0;
     aud_mix=2'd0; scanline=3'd0; ar=2'd0; blver=2'd0;
     IO_WAIT=1'b0; host_cs=1'b0; host_we=1'b0;

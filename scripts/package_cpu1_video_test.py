@@ -260,7 +260,7 @@ def verify_c64_release_settings(source):
 
 
 def verify_hardware(directory, machine, *, ntsc=False, build_id=None, genesis_pal=False,
-                    gbc_psram=True, reuse=False):
+                    gbc_psram=True, amiga_aga_pal=False, reuse=False):
     expected_build_id = BUILD_ID if build_id is None else build_id
     require(re.fullmatch(r"[0-9A-Fa-f]{8}", expected_build_id) is not None, "Invalid expected FPGA build ID")
     record = json.loads((directory / "source-inputs.json").read_text())
@@ -272,6 +272,8 @@ def verify_hardware(directory, machine, *, ntsc=False, build_id=None, genesis_pa
         require(configuration["gbc_psram"] is gbc_psram, "Wrong GBC PSRAM selection")
     if machine == "GENESIS":
         require(configuration["genesis_pal"] is genesis_pal, "Wrong Genesis clock variant")
+    if machine == "AMIGA":
+        require(configuration.get("amiga_aga_pal", False) is amiga_aga_pal, "Wrong Amiga chipset variant")
     if not reuse:
         verify_sources(record["files"])
         require(set(record["files"]) == {p.relative_to(ROOT).as_posix() for p in hardware_inputs.inputs(machine)},
@@ -300,6 +302,8 @@ def verify_hardware(directory, machine, *, ntsc=False, build_id=None, genesis_pa
     require(f"C64_NTSC_MODE=1'b{int(ntsc)}" in generics, "Wrong FPGA PAL/NTSC generic")
     if machine == "GENESIS":
         require(f"GENESIS_PAL_MODE=1'b{int(genesis_pal)}" in generics, "Wrong Genesis PAL generic")
+    if machine == "AMIGA" and (amiga_aga_pal or "AMIGA_AGA_PAL=" in generics):
+        require(f"AMIGA_AGA_PAL=1'b{int(amiga_aga_pal)}" in generics, "Wrong Amiga AGA generic")
     psram = machine in {"C64", "VECTREX", "GENESIS", "NES"} or configuration["gbc_psram"]
     require(f"ENABLE_GBC_PSRAM=1'b{int(configuration['gbc_psram'])}" in generics, "Wrong GBC PSRAM generic")
     xsa = directory / "multitini_one.xsa"

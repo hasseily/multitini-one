@@ -21,6 +21,7 @@ ROOT = package.ROOT
 ABI_MINOR = 19
 AMIGA_CORE_SPEC = ("amiga", "Amiga", "0x414D4947",
                    [("pal", "Amiga 600 ECS PAL", "amiga")])
+AMIGA_AGA_VARIANT = ("aga-pal", "Amiga 1200 AGA PAL", "amiga-aga")
 AMIGA_ROM_README = Path("sd/multitini/cores/amiga/roms/readme.txt")
 GS_GUIDES = ("APPLE_IIGS_HARDWARE_TEST.md", "APPLE_IIGS_CPU_VALIDATION.md",
              "APPLE_IIGS_PLAN.md", "APPLE_IIGS_ACCELERATION.md", "APPLE_IIGS_SMARTPORT.md",
@@ -86,7 +87,7 @@ def verify_image_set(args, cpu):
     for name, (machine, psram, pal) in MATRIX.items():
         build = package.verify_hardware(directories[name], machine, build_id=build_ids[name],
                                         gbc_psram=psram, genesis_pal=pal, ntsc=name == "c64-ntsc",
-                                        reuse=name in reuse)
+                                        amiga_aga_pal=name == "amiga-aga", reuse=name in reuse)
         build["source_tar"] = verify_source_tar(directories[name], build["record"])
         core_artifacts.require_runtime_abi(build["identity"], 0, args.abi_minor)
         if machine == "APPLE_IIGS":
@@ -164,7 +165,7 @@ def prepare_amiga_content(out):
     package.copy(readme, core / "roms/readme.txt")
     (core / "media/README.txt").write_text(
         "Place user-owned DD floppy images (.adf) and IDE hard disks (.hdf) here.\n"
-        "The Amiga ECS profile provides DF0:, DF1: and two IDE devices.\n"
+        "The Amiga core provides DF0:, DF1: and two IDE devices.\n"
         "Keep write recovery journals beside their media.\n",
         encoding="utf-8")
 
@@ -186,6 +187,8 @@ def main():
     parser.add_argument("--include-apple-iigs", action="store_true", help="Include the GS source/machine and runtime HDD boot ROM")
     parser.add_argument("--include-nes", action="store_true", help="Include the NES machine and empty cartridge directory")
     parser.add_argument("--include-amiga", action="store_true", help="Include the timing-qualified Amiga ECS image and empty ROM/media directories")
+    parser.add_argument("--include-amiga-aga", action="store_true",
+                        help="Include the Amiga 600 ECS PAL and Amiga 1200 AGA PAL variants")
     parser.add_argument("--include-c64-ntsc", action="store_true", help="Include independently timed PAL and NTSC C64 variants")
     parser.add_argument("--reuse-image", action="append", default=[], metavar="NAME=DIR",
                         help="Reuse an explicitly selected audited FPGA build with its original identity and sources")
@@ -200,8 +203,11 @@ def main():
         MATRIX['apple-iigs']=('APPLE_IIGS',False,False)
     if args.include_nes:
         MATRIX['nes']=('NES',False,False)
+    args.include_amiga = args.include_amiga or args.include_amiga_aga
     if args.include_amiga:
         MATRIX['amiga']=('AMIGA',False,False)
+    if args.include_amiga_aga:
+        MATRIX['amiga-aga']=('AMIGA',False,False)
     if args.include_c64_ntsc:
         MATRIX['c64-ntsc']=('C64',False,False)
     if not re.fullmatch(r"[0-9A-Fa-f]{8}", args.build_id):
@@ -331,7 +337,8 @@ def main():
         package.copy(ROOT / "third_party/nes/upstream/COPYING", out / "licenses/nes/COPYING")
         package.copy(ROOT / "third_party/nes/T65-NOTICE.txt", out / "licenses/nes/T65-NOTICE.txt")
     if args.include_amiga:
-        core_specs += (AMIGA_CORE_SPEC,)
+        ident, label, core_id, variants = AMIGA_CORE_SPEC
+        core_specs += ((ident, label, core_id, variants + ([AMIGA_AGA_VARIANT] if args.include_amiga_aga else [])),)
         prepare_amiga_content(out)
         for source_name, target_name in (
                 ("third_party/amiga/upstream/gpl.txt", "GPL-3.0.txt"),
@@ -398,6 +405,8 @@ def main():
         ("Amiga: Amiga 600 ECS PAL supplies stock/accelerated CPU modes, 2 MiB chip RAM, 8 MiB fast RAM,\n"
          "two DD floppy drives and two IDE disks. See docs/AMIGA_PLAN.md.\n"
          "Kickstart is a separate user-owned input.\n" if args.include_amiga else "") +
+        ("Amiga 1200 AGA PAL provides stock 68EC020 and accelerated 68020 modes.\n"
+         "Supply your A1200 Kickstart separately as kick-a1200.rom.\n" if args.include_amiga_aga else "") +
         "This is a private local delivery with validated user-supplied boot ROMs in sd/*/roms.\n"
         + ("Apple IIgs includes selectable stock/accelerated CPU, eight SmartPort HDDs, floppy media and PRAM.\n"
            "Install its matching FPGA image, core.cfg and 2304-byte roms/hdd.rom with this firmware.\n"

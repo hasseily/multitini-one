@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns/1ps
-module multitini_amiga_loader(
+module multitini_amiga_loader #(parameter bit AGA_PAL=1'b0) (
     input wire clk,reset,clear_error,load_abort,load_abort_epoch,load_epoch,
     input wire [7:0] load_kind,load_data,
     input wire load_valid,load_first,load_last,
@@ -56,12 +56,14 @@ module multitini_amiga_loader(
                         if(load_last)begin
                             active<=0;
                             // AM01: CPU, standard, chip acceleration, disk speed,
-                            // Fast MiB, Chip MiB. Reject unsupported options.
+                            // Fast MiB, Chip MiB, IDE mode and chipset variant.
                             if(config_next[31:0]!=32'h31304d41 ||
-                               (config_next[39:32]!=0 && config_next[39:32]!=2 && config_next[39:32]!=3) ||
+                               (config_next[39:32]!=0 && config_next[39:32]!=2 &&
+                                (AGA_PAL || config_next[39:32]!=3)) ||
                                config_next[47:40]!=0 || config_next[55:48]!=0 || config_next[63:56]>1 ||
                                (config_next[71:64]!=4 && config_next[71:64]!=8) ||
-                               config_next[79:72]!=2 || config_next[87:80]>1 || config_next[127:88]!=0)begin error<=1;config_valid<=0;end
+                               config_next[79:72]!=2 || config_next[87:80]>1 ||
+                               config_next[95:88]!={7'd0,AGA_PAL} || config_next[127:96]!=0)begin error<=1;config_valid<=0;end
                             else begin config_bytes<=config_next;config_valid<=1;end
                         end
                     end

@@ -7,6 +7,7 @@ module multitini_one_top #(
     parameter bit C64_NTSC_MODE = 1'b0,
     parameter logic [7:0] C64_TURBO_TIMING_REVISION = 8'd1,
     parameter bit GENESIS_PAL_MODE = 1'b0,
+    parameter bit AMIGA_AGA_PAL = 1'b0,
     // 0 = C64, 1 = GBC, 2 = supervisor, 3 = Vectrex, 4 = Genesis, 5 = Apple IIgs, 6 = NES, 7 = Amiga ECS.
     parameter integer ACTIVE_MACHINE = 2,
     parameter bit ENABLE_GBC_PSRAM = 1'b0
@@ -2078,7 +2079,7 @@ module multitini_one_top #(
             assign gbc_cart_size=0,gbc_cart_loaded=0;
             assign gbc_memory_addr=0,gbc_memory_write=0,gbc_memory_wdata=0,gbc_memory_wstrb=0;
             assign gbc_memory_valid=0,gbc_memory_ready=0,gbc_memory_rdata=0,gbc_memory_rvalid=0,gbc_memory_fault=0;
-            (* DONT_TOUCH = "yes" *) multitini_amiga_adapter machine_adapter (
+            (* DONT_TOUCH = "yes" *) multitini_amiga_adapter #(.AGA_PAL(AMIGA_AGA_PAL)) machine_adapter (
                 .core_clk(c64_clk), .reset(!c64_aresetn),
                 .core_reset_request(c64_core_reset_request),
                 .pause_request(core_menu_pause),

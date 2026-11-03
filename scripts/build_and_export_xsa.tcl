@@ -189,6 +189,9 @@ if {$image_kind eq "GBC" && $psram_active} {lappend capture_command --gbc-psram}
 if {$image_kind eq "GENESIS" && [string match {*GENESIS_PAL_MODE=1'b1*} $build_generics]} {
     lappend capture_command --genesis-pal
 }
+if {$image_kind eq "AMIGA" && [string match {*AMIGA_AGA_PAL=1'b1*} $build_generics]} {
+    lappend capture_command --amiga-aga-pal
+}
 puts [exec {*}$capture_command]
 
 reset_run synth_1

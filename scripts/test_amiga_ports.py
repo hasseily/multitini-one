@@ -58,7 +58,7 @@ def main() -> int:
             cpu=ROOT / "hdl/sim/tb_amiga_cpu.sv"
             delayed_cpu=build / "tb_amiga_cpu_delayed.sv"
             text=cpu.read_text()
-            start=text.index("    multitini_amiga_machine dut(")
+            start=text.index("    multitini_amiga_machine #(")
             end=text.index("    multitini_amiga_memory memory_i(",start)
             block=text[start:end]
             declarations=[]
@@ -90,14 +90,14 @@ def main() -> int:
     if "PASS Amiga portable RAM" not in log or "Fatal:" in log:
         raise SystemExit("Amiga smoke did not report success")
     if args.cpu:
-        for mode in (0,3,7):
-            top={0:"tb_amiga_cpu_stock",3:"tb_amiga_cpu_turbo",7:"tb_amiga_cpu_half"}[mode]
-            run("xelab",[f"work.{top}","-s",f"amiga_cpu{mode}","--debug","typical","--timescale","1ns/1ps","--mt","auto"])
-            run("xsim",[f"amiga_cpu{mode}","--runall"])
+        for profile,mode in (("stock",0),("turbo",3),("half",7),("aga_stock",7),("aga_turbo",3)):
+            snapshot=f"amiga_cpu_{profile}"
+            run("xelab",[f"work.tb_amiga_cpu_{profile}","-s",snapshot,"--debug","typical","--timescale","1ns/1ps","--mt","auto"])
+            run("xsim",[snapshot,"--runall"])
             log=(build / "xsim.stdout.log").read_text()
-            (build / f"cpu{mode}.log").write_text(log)
+            (build / f"{snapshot}.log").write_text(log)
             if f"PASS Amiga CPU mode={mode}" not in log or "Fatal:" in log:
-                raise SystemExit(f"Amiga CPU mode {mode} did not report success; see {build / f'cpu{mode}.log'}")
+                raise SystemExit(f"Amiga CPU profile {profile} did not report success; see {build / (snapshot + '.log')}")
     receipt["result"]="passed"
     (build / "report.json").write_text(json.dumps(receipt,indent=2)+"\n")
     print("PASS real Minimig ECS source elaboration and portable host smoke")

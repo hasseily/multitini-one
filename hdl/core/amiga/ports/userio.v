@@ -26,7 +26,7 @@
 
 
 
-module userio
+module userio #(parameter AGA_PAL = 1'b0)
 (
 	input             clk,        // bus clock
 	input             reset,      // reset
@@ -139,7 +139,7 @@ reg [5:0] t_ide_config = 0;
 reg [7:0] t_cpu_config = 0;
 reg [5:0] t_chipset_config = 6'h08;
 reg [5:0] ide_cfg=0;
-reg [4:0] cpu_cfg=0;
+reg [4:0] cpu_cfg=AGA_PAL ? 5'h07 : 5'd0;
 reg [7:0] cmd;
 wire mem_write_sel;
 wire reset_ctrl_sel;
@@ -503,9 +503,13 @@ always @(posedge clk) begin
 
 
 	if (reset) begin
-		chipset_config <= 6'h08; // ECS PAL only in the A600 image
+		chipset_config <= AGA_PAL ? 6'h18 : 6'h08;
 		ide_cfg <= t_ide_config;
-		cpu_cfg <= {1'b0, (t_cpu_config[1:0]==2'b11) & t_cpu_config[6], (t_cpu_config[1:0]==2'b11) & t_cpu_config[5], {2{t_cpu_config[1:0]==2'b11}}}; // bit3 selects alternate-edge 68020 execution
+		// A1200 stock uses the upstream 68EC020 bus throttle and 24-bit addressing.
+		if (AGA_PAL)
+			cpu_cfg <= t_cpu_config[1:0]==2'b11 && !t_cpu_config[5] ? 5'h03 : 5'h07;
+		else
+			cpu_cfg <= {1'b0, (t_cpu_config[1:0]==2'b11) & t_cpu_config[6], (t_cpu_config[1:0]==2'b11) & t_cpu_config[5], {2{t_cpu_config[1:0]==2'b11}}}; // bit3 selects alternate-edge 68020 execution
 		memory_config[5:0] <= {(t_memory_config[5:4]==2'd2 ? 2'd2 : 2'd3), 2'b00, 2'b11}; // 2MiB Chip; 4/8MiB Fast
 		memory_config[7] <= 1'b0;
 	end
@@ -521,9 +525,9 @@ end
 
 
 initial begin
-    memory_config=8'h33; chipset_config=6'h08; floppy_config=5'h04;
+    memory_config=8'h33; chipset_config=AGA_PAL ? 6'h18 : 6'h08; floppy_config=5'h04;
     floppy_ext_drive=12'd0; user_port_mode=1'b0;
-    ide_config=6'd0; cpu_config=5'd0; cache_config=3'd0;
+    ide_config=6'd0; cpu_config=AGA_PAL ? 5'h07 : 5'd0; cache_config=3'd0;
     usrrst=1'b0; cpurst=1'b0; cpuhlt=1'b0;
     aud_mix=2'd0; scanline=3'd0; ar=2'd0; blver=2'd0;
     IO_WAIT=1'b0; host_cs=1'b0; host_we=1'b0;

@@ -198,12 +198,13 @@ def platform_contract(image_hash, firmware_hash):
 
 
 def inspect_artifact(directory, machine, *, ntsc=False, gbc_psram=False,
-                     genesis_pal=False, require_current_inputs=False):
+                     genesis_pal=False, amiga_aga_pal=False, require_current_inputs=False):
     """Reusable JSON-safe audit for an explicitly selected completed build."""
     import package_cpu1_video_test as package
     try:
         build = package.verify_hardware(Path(directory).resolve(), machine, ntsc=ntsc,
-                                        gbc_psram=gbc_psram, genesis_pal=genesis_pal, reuse=True)
+                                        gbc_psram=gbc_psram, genesis_pal=genesis_pal,
+                                        amiga_aga_pal=amiga_aga_pal, reuse=True)
     except (OSError, KeyError, TypeError, tarfile.TarError, zipfile.BadZipFile,
             zlib.error, RuntimeError) as error:
         raise ValueError("Invalid FPGA artifact: " + str(error)) from error

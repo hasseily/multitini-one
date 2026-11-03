@@ -581,12 +581,15 @@ static void build_amiga(mt_core_frontend_t *frontend,const mt_core_frontend_stat
             name!=NULL ? MT_MENU_ACTION_EJECT_AMIGA_DRIVE:MT_MENU_ACTION_BROWSE_AMIGA_DRIVE,d,true,name!=NULL ? MT_UI_COLOR_SUCCESS:MT_UI_COLOR_BLUE);
     }
     frontend->media_items[view->media_item_count++]=item("Kickstart ROM",state->amiga_ready ? "Loaded":"Load / retry...",
+        state->amiga_aga_pal ? "Load your A1200 ROM from roms/kick-a1200.rom." :
         "Load your 256 KiB, 512 KiB or 1 MiB roms/kick.rom.",MT_MENU_ACTION_AMIGA_RELOAD,0U,true,state->amiga_ready ? MT_UI_COLOR_SUCCESS:MT_UI_COLOR_WARNING);
     frontend->media_items[view->media_item_count++]=item("Retry media",state->save_faulted ? "I/O error; retry":"No errors",
         "Retry a retained disk journal or failed transfer.",MT_MENU_ACTION_AMIGA_RETRY,0U,state->save_faulted,MT_UI_COLOR_BLUE);
-    const char *const cpu=state->amiga_config.cpu==MT_AMIGA_CPU_STOCK ? "68000 stock":
+    const char *const cpu=state->amiga_config.cpu==MT_AMIGA_CPU_STOCK ?
+        (state->amiga_aga_pal ? "68EC020 stock":"68000 stock"):
         state->amiga_config.cpu==MT_AMIGA_CPU_68020_14 ? "68020 14 MHz":"68020 28 MHz";
     frontend->core_options[view->core_option_count++]=item("CPU",cpu,
+        state->amiga_aga_pal ? "68EC020 stock or 68020 accelerated. Changing CPU saves disks and restarts.":
         state->amiga_cpu14_fallback ? "14 MHz unavailable on this core; using 28 MHz. Saved preference retained.":
         state->amiga_cpu14_available ? "Stock 68000, 68020 14 MHz, 68020 28 MHz. Changing CPU saves disks and restarts.":
         "Stock 68000 or 68020 28 MHz. 14 MHz requires an updated core. Changing CPU saves disks and restarts.",
@@ -609,8 +612,9 @@ static void build_amiga(mt_core_frontend_t *frontend,const mt_core_frontend_stat
         frontend->amiga_resolution_help,MT_MENU_ACTION_AMIGA_DISPLAY,state->amiga_display_requested,
         state->amiga_display_available && !state->amiga_display_pending,
         state->amiga_display_pending ? MT_UI_COLOR_WARNING:MT_UI_COLOR_BLUE);
-    frontend->core_options[view->core_option_count++]=item("Chipset","ECS PAL / 2 MiB chip RAM",
-        "This image uses the PAL Amiga clock and ECS chipset timing.",MT_MENU_ACTION_NONE,1U,false,MT_UI_COLOR_TEXT);
+    frontend->core_options[view->core_option_count++]=item("Chipset",
+        state->amiga_aga_pal ? "AGA PAL / 2 MiB chip RAM":"ECS PAL / 2 MiB chip RAM",
+        "CPU speed is independent of the PAL chipset clock.",MT_MENU_ACTION_NONE,1U,false,MT_UI_COLOR_TEXT);
     frontend->core_options[view->core_option_count++]=item("Fast RAM",state->amiga_config.fast_mib==4U ? "4 MiB":"8 MiB",
         "Zorro II fast memory; chipset always has 2 MiB chip RAM.",MT_MENU_ACTION_TOGGLE_CORE_OPTION,2U,true,MT_UI_COLOR_BLUE);
     frontend->core_options[view->core_option_count++]=item("Floppy speed",state->amiga_config.floppy_turbo ? "Fast":"Normal",
@@ -618,7 +622,7 @@ static void build_amiga(mt_core_frontend_t *frontend,const mt_core_frontend_stat
     frontend->core_options[view->core_option_count++]=item("IDE mode",state->amiga_config.ide_compat==MT_AMIGA_IDE_CLASSIC ? "Classic":
         state->amiga_fast_ide_expected ? "Auto / Fast":"Auto / Classic",
         !state->amiga_fast_ide_available ? "Fast IDE requires an updated core. Saved policy retained; Classic is active. Changing mode restarts Amiga; save your work first.":
-        state->amiga_config.cpu==MT_AMIGA_CPU_STOCK ? "Stock 68000 always uses Classic IDE. Auto enables Fast IDE for 68020. Changing mode restarts Amiga; save your work first.":
+        state->amiga_config.cpu==MT_AMIGA_CPU_STOCK ? "Stock CPU mode uses Classic IDE. Auto enables Fast IDE with acceleration. Changing mode restarts Amiga.":
         "Auto enables Fast IDE for 68020; Classic retains Gayle compatibility. Changing mode restarts Amiga; save your work first.",
         MT_MENU_ACTION_TOGGLE_CORE_OPTION,4U,!state->amiga_display_pending,MT_UI_COLOR_BLUE);
     frontend->input_items[view->input_item_count++]=item("Keyboard","USB keyboard","Windows keys are Amiga keys; Menu is Right Amiga; Ctrl + both Amiga restarts. F12 opens this menu.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);

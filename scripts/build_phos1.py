@@ -30,10 +30,11 @@ def selection_plan(images, reuse, build_id, output, reuse_from=None):
         machine, psram, pal = MATRIX[name]
         entry = {"machine": machine, "action": "build"}
         candidate = reuse.get(name, reuse_from / name if reuse_from else None)
+        amiga_variant = {"amiga_aga_pal": True} if name == "amiga-aga" else {}
         if candidate is not None:
             try:
                 artifact = core_artifacts.inspect_artifact(candidate, machine,
-                    gbc_psram=psram, genesis_pal=pal)
+                    gbc_psram=psram, genesis_pal=pal, **amiga_variant)
                 if not artifact["current_input_match"]:
                     changed = artifact.get("changed_required", artifact.get("changed_inputs", []))
                     raise ValueError("Reuse requires an FPGA rebuild for " + name + ": " + ", ".join(changed))
@@ -117,12 +118,14 @@ def main(argv=None):
 
     def build(name):
         machine, psram, pal = MATRIX[name]
+        amiga_aga_pal = name == "amiga-aga"
         folder = output / name
         folder.mkdir(parents=True, exist_ok=False)
         (folder / "temp").mkdir()
         environment = dict(os.environ, TEMP=(folder / "temp").as_posix(), TMP=(folder / "temp").as_posix())
         # Remove inherited variant selections; every build names all applicable settings.
-        for key in ("MULTITINI_GENESIS_PAL", "MULTITINI_ENABLE_GBC_PSRAM", "MULTITINI_C64_VIDEO_STANDARD"):
+        for key in ("MULTITINI_GENESIS_PAL", "MULTITINI_ENABLE_GBC_PSRAM", "MULTITINI_C64_VIDEO_STANDARD",
+                    "MULTITINI_AMIGA_AGA_PAL"):
             environment.pop(key, None)
         settings = {"MULTITINI_VIVADO_DIR": folder.as_posix(), "MULTITINI_MACHINE": machine,
                     "MULTITINI_BUILD_ID": args.build_id,
@@ -132,6 +135,7 @@ def main(argv=None):
         if machine == "C64": settings["MULTITINI_C64_VIDEO_STANDARD"] = "PAL"
         if machine == "GBC": settings["MULTITINI_ENABLE_GBC_PSRAM"] = str(int(psram))
         if machine == "GENESIS": settings["MULTITINI_GENESIS_PAL"] = str(int(pal))
+        if amiga_aga_pal: settings["MULTITINI_AMIGA_AGA_PAL"] = "1"
         config = "".join(f"set ::env({key}) {{{value}}}\n" for key, value in settings.items())
         for kind, script in (("generate", "create_project"), ("build", "build_and_export_xsa")):
             (folder / f"{kind}.tcl").write_text(config +
@@ -140,6 +144,7 @@ def main(argv=None):
                    "--machine", machine, "--output", folder / "source-inputs.json"]
         if psram: capture.append("--gbc-psram")
         if pal: capture.append("--genesis-pal")
+        if amiga_aga_pal: capture.append("--amiga-aga-pal")
         subprocess.run(list(map(str, capture)), cwd=ROOT, env=environment, check=True)
         record = json.loads((folder / "source-inputs.json").read_text())
         with zipfile.ZipFile(folder / "source-inputs.zip", "w", zipfile.ZIP_DEFLATED) as archive:
@@ -158,7 +163,8 @@ def main(argv=None):
                 subprocess.run(command, cwd=folder, env=environment, stdout=log, stderr=subprocess.STDOUT, check=True)
         subprocess.run([sys.executable, str(ROOT / "scripts/capture_vectrex_build_inputs.py"),
                         "--output", str(folder / "source-inputs.json"), "--verify"], cwd=ROOT, check=True)
-        artifact = core_artifacts.inspect_artifact(folder, machine, gbc_psram=psram, genesis_pal=pal)
+        artifact = core_artifacts.inspect_artifact(folder, machine, gbc_psram=psram, genesis_pal=pal,
+                                                  amiga_aga_pal=amiga_aga_pal)
         core_artifacts.require_compatible_inputs(artifact)
         if int(artifact["build_id"], 16) != int(args.build_id, 16):
             raise ValueError("New FPGA image does not have its requested build ID: " + name)

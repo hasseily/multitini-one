@@ -25,6 +25,13 @@ if {[info exists ::env(MULTITINI_MACHINE)]} {
 set c64_video_standard "PAL"
 set c64_ntsc_mode 0
 set genesis_pal_mode 0
+set amiga_aga_pal 0
+if {[info exists ::env(MULTITINI_AMIGA_AGA_PAL)]} {
+    set amiga_aga_pal [string trim $::env(MULTITINI_AMIGA_AGA_PAL)]
+    if {$machine ne "AMIGA" || $amiga_aga_pal ni {0 1}} {
+        error "MULTITINI_AMIGA_AGA_PAL must be 0 or 1 and requires AMIGA"
+    }
+}
 if {[info exists ::env(MULTITINI_GENESIS_PAL)]} {
     set genesis_pal_mode [string trim $::env(MULTITINI_GENESIS_PAL)]
     if {$genesis_pal_mode ni {0 1}} {
@@ -657,7 +664,7 @@ if {[info exists ::env(MULTITINI_BUILD_ID)]} {
 }
 set c64_turbo_revision [expr {$machine eq "C64" && !$c64_ntsc_mode ? 2 : 1}]
 set_property generic \
-    "SHELL_BUILD_ID=32'h${git_id} C64_NTSC_MODE=1'b${c64_ntsc_mode} C64_TURBO_TIMING_REVISION=${c64_turbo_revision} ACTIVE_MACHINE=${active_machine} ENABLE_GBC_PSRAM=1'b${enable_gbc_psram} GENESIS_PAL_MODE=1'b${genesis_pal_mode}" \
+    "SHELL_BUILD_ID=32'h${git_id} C64_NTSC_MODE=1'b${c64_ntsc_mode} C64_TURBO_TIMING_REVISION=${c64_turbo_revision} ACTIVE_MACHINE=${active_machine} ENABLE_GBC_PSRAM=1'b${enable_gbc_psram} GENESIS_PAL_MODE=1'b${genesis_pal_mode} AMIGA_AGA_PAL=1'b${amiga_aga_pal}" \
     [get_filesets sources_1]
 update_compile_order -fileset sources_1
 source [file join $script_dir configure_vivado_run_profile.tcl]

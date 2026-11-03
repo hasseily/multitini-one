@@ -612,9 +612,17 @@ static void test_amiga_resolution(void)
     check(strcmp(row->value,"Classic")==0,"compatibility selection remains explicit");
     state.amiga_config.ide_compat=MT_AMIGA_IDE_AUTO;state.amiga_config.cpu=MT_AMIGA_CPU_STOCK;
     mt_core_frontend_apply(&frontend,&state,&view);row=core_row(&view,"IDE mode");
-    check(strcmp(row->value,"Auto / Classic")==0 && strstr(row->help,"68000 always")!=NULL,"stock CPU always keeps Classic IDE");
+    check(strcmp(row->value,"Auto / Classic")==0 && strstr(row->help,"Stock CPU mode uses Classic")!=NULL,"stock CPU always keeps Classic IDE");
     state.amiga_display_pending=true;mt_core_frontend_apply(&frontend,&state,&view);row=core_row(&view,"IDE mode");
     check(!row->enabled,"a pending display transaction cannot queue an IDE restart");
+    state.amiga_aga_pal=true;state.amiga_cpu14_fallback=false;
+    mt_core_frontend_apply(&frontend,&state,&view);
+    check(strcmp(core_row(&view,"CPU")->value,"68EC020 stock")==0 &&
+          strcmp(core_row(&view,"Chipset")->value,"AGA PAL / 2 MiB chip RAM")==0,
+          "A1200 reports its chipset and stock CPU");
+    state.amiga_config.cpu=MT_AMIGA_CPU_68020_TURBO;
+    mt_core_frontend_apply(&frontend,&state,&view);
+    check(strcmp(core_row(&view,"CPU")->value,"68020 28 MHz")==0,"A1200 offers acceleration");
 }
 int main(void)
 {

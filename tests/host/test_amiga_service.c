@@ -192,7 +192,7 @@ int main(void)
     file_t *kick=create("0:/multitini/cores/amiga/roms/kick.rom",524288U);
     file_t *adf=create(ROOT "/Workbench.adf",901120U),*hdf=create(ROOT "/System.hdf",4096U);
     mt_core_link_t link;mt_core_link_init(&link,NULL,rd,wr);
-    amiga_content_service_init(&link,ROOT,progress,NULL);
+    amiga_content_service_init(&link,ROOT,false,progress,NULL);
     mt_clock_time_t clock={2026U,10U,31U,12U,34U,56U};
     assert(amiga_content_service_set_clock(&clock,0U)==MT_LINK_OK && rtc_commits==0U);
     assert(amiga_content_service_boot()==0);
@@ -301,17 +301,17 @@ int main(void)
     assert(amiga_content_service_resume_after_reset()==0);
     assert(strcmp(amiga_content_service_name(0U),"Workbench.adf")==0 && strcmp(amiga_content_service_name(2U),"System.hdf")==0);
     assert(amiga_content_service_shutdown()==0);
-    amiga_content_service_init(&link,ROOT,progress,NULL);assert(amiga_content_service_boot()==0);
+    amiga_content_service_init(&link,ROOT,false,progress,NULL);assert(amiga_content_service_boot()==0);
     assert(strcmp(amiga_content_service_name(0U),"Workbench.adf")==0 && strcmp(amiga_content_service_name(2U),"System.hdf")==0);
     assert(amiga_content_service_eject(0U)==0 && amiga_content_service_name(0U)==NULL);
     assert(amiga_content_service_shutdown()==0);
     /* Invalid time and an old core remain bootable without any RTC opcode. */
     const unsigned old_commits=rtc_commits;rtc_capable=false;
-    amiga_content_service_init(&link,ROOT,progress,NULL);
+    amiga_content_service_init(&link,ROOT,false,progress,NULL);
     assert(amiga_content_service_set_clock(&clock,5000U)==MT_LINK_OK);
     assert(amiga_content_service_boot()==0 && rtc_commits==old_commits);
     assert(amiga_content_service_shutdown()==0);rtc_capable=true;clock.month=13U;
-    amiga_content_service_init(&link,ROOT,progress,NULL);
+    amiga_content_service_init(&link,ROOT,false,progress,NULL);
     assert(amiga_content_service_set_clock(&clock,6000U)==MT_LINK_OK);
     assert(amiga_content_service_boot()==0 && rtc_commits==old_commits && !amiga_content_service_faulted());
     ide_request=6U;amiga_content_service_poll();
@@ -319,7 +319,7 @@ int main(void)
     assert(amiga_content_service_shutdown()==0);
     /* Existing zero-byte settings choose Auto, but an old FPGA stays classic.
      * The same preference activates fast IDE only on a capable 68020 core. */
-    fast_ide_capable=true;amiga_content_service_init(&link,ROOT,progress,NULL);
+    fast_ide_capable=true;amiga_content_service_init(&link,ROOT,false,progress,NULL);
     assert(amiga_content_service_boot()==0 && native_config[8]==7U && amiga_content_service_fast_ide_expected());
     /* Fast guest interface retains the same bulk FIFO and durable journal
      * protocol. A failed sync must not ACK or capture the FIFO a second time. */
@@ -339,7 +339,7 @@ int main(void)
         native_config[8]==0x27U && staged_config[10]==1U && !amiga_content_service_fast_ide_expected());
     assert(find(ROOT "/amiga-settings.bin",false)->data[18]==1U && strcmp(amiga_content_service_name(2U),"System.hdf")==0);
     assert(amiga_content_service_shutdown()==0);fast_ide_capable=false;
-    amiga_content_service_init(&link,ROOT,progress,NULL);
+    amiga_content_service_init(&link,ROOT,false,progress,NULL);
     assert(amiga_content_service_config()->ide_compat==MT_AMIGA_IDE_CLASSIC && !amiga_content_service_fast_ide_available());
     assert(amiga_content_service_boot()==0 && staged_config[10]==0U && native_config[8]==0x27U);
     assert(find(ROOT "/amiga-settings.bin",false)->data[18]==1U); /* Sanitizing PL wire cannot erase saved policy. */
@@ -350,12 +350,12 @@ int main(void)
     ide_config.cpu=MT_AMIGA_CPU_68020_TURBO;
     assert(amiga_content_service_configure(&ide_config)==0 && native_config[8]==7U && amiga_content_service_fast_ide_expected());
     assert(amiga_content_service_shutdown()==0);
-    cpu14_capable=true;amiga_content_service_init(&link,ROOT,progress,NULL);
+    cpu14_capable=true;amiga_content_service_init(&link,ROOT,false,progress,NULL);
     assert(amiga_content_service_boot()==0);
     mt_amiga_config_t cpu_config=*amiga_content_service_config();cpu_config.cpu=MT_AMIGA_CPU_68020_14;
     assert(amiga_content_service_configure(&cpu_config)==0 && native_config[4]==0x5fU && native_config[8]==7U);
     assert(amiga_content_service_shutdown()==0);cpu14_capable=false;
-    amiga_content_service_init(&link,ROOT,progress,NULL);
+    amiga_content_service_init(&link,ROOT,false,progress,NULL);
     assert(amiga_content_service_cpu14_fallback() && amiga_content_service_config()->cpu==MT_AMIGA_CPU_68020_TURBO);
     assert(amiga_content_service_boot()==0 && native_config[4]==0x1fU);
     file_t *settings=find(ROOT "/amiga-settings.bin",false);assert(settings!=NULL && settings->data[12]==3U);
@@ -373,7 +373,26 @@ int main(void)
     cpu14_capable=true;cpu_config.cpu=MT_AMIGA_CPU_68020_14;
     assert(amiga_content_service_configure(&cpu_config)==0 && settings->data[12]==3U);
     assert(amiga_content_service_shutdown()==0);
-    cpu14_capable=true;amiga_content_service_init(&link,ROOT,progress,NULL);
+    amiga_content_service_init(&link,ROOT,true,progress,NULL);
+    assert(amiga_content_service_aga_pal() && !amiga_content_service_cpu14_available());
+    assert(amiga_content_service_boot()!=0 && core_reset && !amiga_content_service_ready());
+    assert(strcmp(amiga_content_service_error(),"Cannot open roms/kick-a1200.rom")==0);
+    file_t *kick1200=create("0:/multitini/cores/amiga/roms/kick-a1200.rom",524288U);
+    kick1200->data[0]=0xa2U;
+    assert(amiga_content_service_boot()==0 && rom_first==0xa2U && rom_middle==0xa2U);
+    assert(staged_config[4]==MT_AMIGA_CPU_STOCK && staged_config[11]==1U &&
+           native_config[3]==0x18U && native_config[4]==0x23U && native_config[8]==0x27U);
+    mt_amiga_config_t aga_config=*amiga_content_service_config();
+    aga_config.cpu=MT_AMIGA_CPU_68020_TURBO;
+    assert(amiga_content_service_configure(&aga_config)==0 &&
+           native_config[3]==0x19U && native_config[4]==0x1fU && native_config[8]==7U);
+    file_t *aga_settings=find(ROOT "/amiga-aga-settings.bin",false);
+    assert(aga_settings!=NULL && aga_settings->data[12]==MT_AMIGA_CPU_68020_TURBO && settings->data[12]==3U);
+    assert(amiga_content_service_shutdown()==0);
+    amiga_content_service_init(&link,ROOT,true,progress,NULL);
+    assert(amiga_content_service_config()->cpu==MT_AMIGA_CPU_68020_TURBO);
+    assert(amiga_content_service_shutdown()==0);
+    cpu14_capable=true;amiga_content_service_init(&link,ROOT,false,progress,NULL);
     assert(amiga_content_service_boot()==0 && native_config[4]==0x5fU && !amiga_content_service_cpu14_fallback());
     mt_amiga_ide_bench_t benchmark;uint16_t saved_fifo[256];memcpy(saved_fifo,fifo,sizeof(saved_fifo));
     uint32_t reads_before,writes_before,reads_after,writes_after;

@@ -3423,6 +3423,7 @@ static mt_menu_view_t supervisor_menu_view(void)
         amiga_service_initialized) {
         state.services_ready=true;state.amiga_ready=amiga_content_service_ready();
         state.amiga_config=*amiga_content_service_config();state.save_faulted=amiga_content_service_faulted();
+        state.amiga_aga_pal=amiga_content_service_aga_pal();
         state.amiga_cpu14_available=amiga_content_service_cpu14_available();
         state.amiga_cpu14_fallback=amiga_content_service_cpu14_fallback();
         state.amiga_fast_ide_available=amiga_content_service_fast_ide_available();
@@ -3495,6 +3496,12 @@ static mt_menu_view_t supervisor_menu_view(void)
         supervisor_status_color != MT_UI_COLOR_RED && supervisor_status_color != MT_UI_COLOR_WARNING) {
         view.status_text = mt_video_effect_service_status();
         view.status_color = MT_UI_COLOR_MUTED;
+    }
+    if (supervisor.has_active && supervisor.active.package.core_id == MT_AMIGA_CORE_ID &&
+        amiga_service_initialized && !state.amiga_ready && state.save_faulted &&
+        view.status_color != MT_UI_COLOR_RED) {
+        view.status_text = amiga_content_service_error();
+        view.status_color = MT_UI_COLOR_RED;
     }
     view.files = supervisor_menu_files;
     view.file_count = supervisor_menu_file_count;
@@ -4096,7 +4103,8 @@ static int supervisor_activate(void *context,
     (void)context;
     usb_hid_service_set_active_core(selection->package.core_id);
     if(selection->package.core_id==MT_AMIGA_CORE_ID) {
-        amiga_content_service_init(&shell_link,selection->package.content_root,iigs_transfer_progress,NULL);
+        const bool aga_pal=strcmp(selection->package.variants[selection->variant_index].id,"aga-pal")==0;
+        amiga_content_service_init(&shell_link,selection->package.content_root,aga_pal,iigs_transfer_progress,NULL);
         amiga_service_initialized=true;amiga_fault_displayed=false;
         amiga_display_service_init(&shell_link,selection->package.content_root,amiga_apply_display,NULL);
         (void)amiga_content_service_set_clock(board_clock_valid ? &board_clock:NULL,(uint32_t)monotonic_ms(NULL));
@@ -4540,13 +4548,14 @@ static bool amiga_cpu_command(const char *line)
     if(strcmp(line,"amigacpu")==0 || strcmp(line,"amigacpu status")==0) {
         const mt_amiga_config_t *c=amiga_content_service_config();
         xil_printf("[Amiga CPU] active=%s cpu14_available=%u saved14_fallback=%u\r\n",
-            c->cpu==MT_AMIGA_CPU_STOCK ? "68000 stock":c->cpu==MT_AMIGA_CPU_68020_14 ? "68020 14 MHz":"68020 28 MHz",
+            c->cpu==MT_AMIGA_CPU_STOCK ? (amiga_content_service_aga_pal() ? "68EC020 stock":"68000 stock"):
+                c->cpu==MT_AMIGA_CPU_68020_14 ? "68020 14 MHz":"68020 28 MHz",
             amiga_content_service_cpu14_available()?1U:0U,amiga_content_service_cpu14_fallback()?1U:0U);
-        if(amiga_content_service_cpu14_available()) {
+        if(amiga_content_service_cpu14_available() || amiga_content_service_aga_pal()) {
             uint32_t native=0U;
             const mt_link_result_t result=mt_amiga_host_access(&shell_link,MT_AMIGA_HOST_READ_CONFIG,0U,100000U,&native);
-            if(result==MT_LINK_OK)xil_printf("[Amiga CPU] native_cpucfg=%02x native_memcfg=%02x\r\n",
-                (unsigned)(native&31U),(unsigned)((native>>5U)&127U));
+            if(result==MT_LINK_OK)xil_printf("[Amiga CPU] native_cpucfg=%02x native_memcfg=%02x aga_pal=%u\r\n",
+                (unsigned)(native&31U),(unsigned)((native>>5U)&127U),(unsigned)((native>>13U)&1U));
             else xil_printf("[Amiga CPU] native readback failed: %s\r\n",mt_link_result_name(result));
         } else xil_printf("[Amiga CPU] native readback unsupported by this core\r\n");
         return true;

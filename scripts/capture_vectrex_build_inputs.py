@@ -237,6 +237,7 @@ def main() -> int:
     parser.add_argument("--c64-timing-policy", choices=("default", "dev8-over-0.050", "dev3-over-0.010"), default="default")
     parser.add_argument("--gbc-psram", action="store_true")
     parser.add_argument("--genesis-pal", action="store_true")
+    parser.add_argument("--amiga-aga-pal", action="store_true")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--verify", action="store_true")
     args = parser.parse_args()
@@ -264,6 +265,8 @@ def main() -> int:
         parser.error("--gbc-psram requires --machine GBC")
     if args.genesis_pal and args.machine != "GENESIS":
         parser.error("--genesis-pal requires --machine GENESIS")
+    if args.amiga_aga_pal and args.machine != "AMIGA":
+        parser.error("--amiga-aga-pal requires --machine AMIGA")
     if args.c64_timing_policy != "default" and args.machine != "C64":
         parser.error("--c64-timing-policy requires --machine C64")
     record = {
@@ -282,6 +285,8 @@ def main() -> int:
     }
     if args.machine == "C64":
         record["configuration"]["c64_timing_policy"] = args.c64_timing_policy
+    if args.amiga_aga_pal:
+        record["configuration"]["amiga_aga_pal"] = True
     output.parent.mkdir(parents=True, exist_ok=True)
     archive_inputs(output, record)
     output.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")

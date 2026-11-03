@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Board-independent ECS machine wiring around the pinned Minimig chipset/CPUs.
+// Board-independent machine wiring around the pinned Minimig chipset/CPUs.
 // CPU phase relation derives from Minimig.sv by Alexey Melnikov, 2017-2020,
 // MiSTer Minimig e47c3457b486d09daaf47c8934bda90cf7723045 (GPL-3.0-or-later).
 // The exact reference and complete notices are retained in
@@ -7,7 +7,7 @@
 // Memory lives in the adapter. run_enable stops the entire virtual timeline;
 // fixed chip-DMA deadlines must be met before releasing it. Chip, CIA, CPU and
 // Paula therefore retain their native clock ratios even during a memory miss.
-module multitini_amiga_machine (
+module multitini_amiga_machine #(parameter bit AGA_PAL=1'b0) (
     input wire clk_service28,
     input wire reset,
     input wire guest_reset,
@@ -92,7 +92,7 @@ module multitini_amiga_machine (
 
     wire [23:1] cpu_chip_addr;
     wire [15:0] cpu_chip_din,cpu_chip_dout;
-    wire [15:0] chipset_cpu_data,display_guest_data;
+    wire [15:0] chipset_cpu_data,chipset_cpu_data2,display_guest_data;
     wire display_guest_selected;
     assign cpu_chip_dout=display_guest_selected ? display_guest_data : chipset_cpu_data;
     wire cpu_chip_as,cpu_chip_uds,cpu_chip_lds,cpu_chip_rw,cpu_chip_dtack;
@@ -143,7 +143,7 @@ module multitini_amiga_machine (
         .chip_as(cpu_chip_as),.chip_uds(cpu_chip_uds),.chip_lds(cpu_chip_lds),
         .chip_rw(cpu_chip_rw),.chip_dtack(cpu_chip_dtack),.chip_ipl(cpu_chip_ipl),
         .chip32_en(chip32_en),.chip_long(cpu_chip_long),
-        .chip_din2(chip_cpu_din2),.chip_dout2(chip_rdata2),
+        .chip_din2(chip_cpu_din2),.chip_dout2(chipset_cpu_data2),
         .fastchip_dout(fastchip_dout),.fastchip_sel(fastchip_sel),.fastchip_lds(fastchip_lds),.fastchip_uds(fastchip_uds),
         .fastchip_rnw(fastchip_rnw),.fastchip_lw(fastchip_lw),.fastchip_selack(fastchip_selack),.fastchip_ready(fastchip_ready),
         .ramsel(cpu_ram_sel),.ramaddr(cpu_addr),.ramdin(cpu_wdata),
@@ -178,14 +178,15 @@ module multitini_amiga_machine (
         .read_selected(display_guest_selected),.read_data(display_guest_data),
         .arm_address(display_read_address),.arm_data(display_read_data));
 
-    minimig chipset(
+    minimig #(.AGA_PAL(AGA_PAL)) chipset(
         .cpu_address(cpu_chip_addr),.cpu_data(chipset_cpu_data),.cpudata_in(cpu_chip_din),
         ._cpu_ipl(cpu_chip_ipl),._cpu_as(cpu_chip_as),._cpu_uds(cpu_chip_uds),
         ._cpu_lds(cpu_chip_lds),.cpu_r_w(cpu_chip_rw),.cpu_long(cpu_chip_long),
         .chip32_en(chip32_en),.ram_long(chip_long),._cpu_dtack(cpu_chip_dtack),
         ._cpu_reset(cpu_reset_n),._cpu_reset_in(cpu_reset_out),
         .nmi_addr(cpu_nmi_addr),.ovr(),.cart_ar(1'b0),.ar_fetch(ar_fetch),
-        .ram_data(chip_wdata),.ramdata_in(chip_rdata),.ram_address(chip_addr),
+        .ram_data(chip_wdata),.ramdata_in(chip_rdata),.ramdata2_in(chip_rdata2),
+        .cpu_data2(chipset_cpu_data2),.ram_address(chip_addr),
         ._ram_bhe(chip_ub_n),._ram_ble(chip_lb_n),._ram_we(chip_we_n),
         ._ram_oe(chip_oe_n),.chip48(chip_rdata48),
         .rst_ext(guest_reset | reset),.rst_out(),.clk(clk_chip),

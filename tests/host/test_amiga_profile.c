@@ -59,7 +59,7 @@ int main(void)
     (void)create("0:/multitini/cores/amiga/roms/kick.rom",524288U);
     file_t *disk=create(ROOT "/Profile.hdf",8192U);uint8_t original[8192];memcpy(original,disk->data,sizeof(original));
     mt_core_link_t link;mt_core_link_init(&link,NULL,profile_rd,profile_wr);
-    amiga_content_service_init(&link,ROOT,progress,NULL);assert(amiga_content_service_boot()==0);
+    amiga_content_service_init(&link,ROOT,false,progress,NULL);assert(amiga_content_service_boot()==0);
     assert(amiga_content_service_mount(2U,"Profile.hdf")==0);bulk_capable=true;
     amiga_content_service_poll();assert(timer_calls==0U); /* Disabled hot path has no clock calls. */
     const unsigned reads=port_reads,writes=port_writes,roms=rom_streams;

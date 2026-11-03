@@ -4,12 +4,12 @@
 // Only the reset timer is shortened. The native bus, clock gate and coherent
 // production memory adapter are unmodified. The DDR responder adds variable
 // latency so the CPU has to survive real timeline holds.
-module tb_amiga_cpu #(parameter integer CPU_MODE=0);
+module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0);
     reg clk=0;always #17.62 clk=~clk;
     reg reset=1,guest_reset=1;
     wire chip_clk,chip_tick,c1,c3,en7,en7n,run_enable;
     wire [23:1] chip_addr;
-    wire [15:0] chip_wdata,chip_wdata2,chip_rdata,chip_rdata2;
+    wire [15:0] chip_wdata,chip_wdata2,chip_rdata,chip_rdata2,chip_mem_rdata2;
     wire [47:0] chip_rdata48;
     wire chip_oe_n,chip_we_n,chip_ub_n,chip_lb_n,chip_long;
     wire cpu_req,cpu_ub_n,cpu_lb_n,cpu_long,cpu_ready,cpu_reset_n;
@@ -31,20 +31,30 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0);
     reg held_write;
     reg [63:0] held_data;
     reg [7:0] held_mask;
-    reg [63:0] chip_store=0,fast_store=0,blit_store=0,repeat_store=0;
+    reg [63:0] chip_store=0,fast_store=0,blit_store=0,repeat_store=0,pair_store=0;
+    reg replace_second_word=0;
+    assign chip_rdata2=replace_second_word ? 16'hbad2 : chip_mem_rdata2;
+    // Model another DMA response taking ownership of the raw RAM data just
+    // after the CPU bridge samples the first half of this paired read.
+    always @(posedge chip_clk)
+        if(AGA_PAL && cpu_reset_n && !c1 && c3 && !chip_oe_n && chip_long &&
+           chip_addr==23'h000802 && dut.chipset.cpu_rd)
+            replace_second_word<=1;
     integer transactions=0,holds=0,cycles;
     integer completions=0,dma_source_hits=0,dma_source_misses=0;
     integer speed_edges=0,speed_opportunities=0,kernel_steps=0;
+    integer wide_chip_writes=0;
     reg previous_speed_ce=0,speed_phase_valid=0;
     always @(posedge chip_clk)begin
         if(!cpu_reset_n)begin
             speed_edges=0;speed_opportunities=0;kernel_steps=0;
             speed_phase_valid=0;previous_speed_ce=0;
         end else if(CPU_MODE!=0)begin
+            if(chip_long && !chip_we_n)wide_chip_writes=wide_chip_writes+1;
             speed_edges=speed_edges+1;
             if(dut.cpu.cpu_speed_ce)speed_opportunities=speed_opportunities+1;
             if(dut.cpu_step)kernel_steps=kernel_steps+1;
-            if(CPU_MODE==7 && speed_phase_valid && dut.cpu.cpu_speed_ce==previous_speed_ce)
+            if(CPU_MODE==7 && !AGA_PAL && speed_phase_valid && dut.cpu.cpu_speed_ce==previous_speed_ce)
                 $fatal(1,"14 MHz execution opportunity did not alternate native edges");
             if(CPU_MODE==3 && !dut.cpu.cpu_speed_ce)
                 $fatal(1,"28 MHz execution opportunity was throttled");
@@ -69,7 +79,7 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0);
         $display("TG consume addr=%h state=%b din=%h chipaddr=%h chipdata=%h ready=%b",dut.cpu.cpu_addr,cpu_state,dut.cpu.cpu_din,{chip_addr,1'b0},chip_rdata,dut.cpu.chipready);
     end
 
-    multitini_amiga_machine dut(
+    multitini_amiga_machine #(.AGA_PAL(AGA_PAL)) dut(
         .clk_service28(clk),.reset(reset),.guest_reset(guest_reset),.run_enable(run_enable),
         .clk_chip(chip_clk),.chip_tick(chip_tick),.chip_c1(c1),.chip_c3(c3),.chip_clk7_en(en7),.chip_clk7n_en(en7n),
         .chip_addr(chip_addr),.chip_wdata(chip_wdata),.chip_wdata2(chip_wdata2),
@@ -86,7 +96,7 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0);
         .clk(clk),.reset(reset),.chip_c1(c1 && !guest_reset),.chip_addr(chip_addr),
         .chip_wdata(chip_wdata),.chip_wdata2(chip_wdata2),.chip_oe_n(chip_oe_n),.chip_we_n(chip_we_n),
         .chip_ub_n(chip_ub_n),.chip_lb_n(chip_lb_n),.chip_long(chip_long),
-        .chip_rdata(chip_rdata),.chip_rdata2(chip_rdata2),.chip_rdata48(chip_rdata48),
+        .chip_rdata(chip_rdata),.chip_rdata2(chip_mem_rdata2),.chip_rdata48(chip_rdata48),
         .cpu_req(cpu_req && cpu_reset_n && !guest_reset),.cpu_addr(cpu_addr),.cpu_wdata(cpu_wdata),.cpu_wdata2(cpu_wdata2),
         .cpu_state(cpu_state),.cpu_ub_n(cpu_ub_n),.cpu_lb_n(cpu_lb_n),.cpu_long(cpu_long),
         .cpu_rdata(cpu_rdata),.cpu_rdata2(cpu_rdata2),.cpu_ready(cpu_ready),
@@ -236,7 +246,23 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0);
             135:romword=16'h33c1;
             136:romword=16'h0000;
             137:romword=16'h100e;
-            138:romword=16'h60fe;
+            138:romword=AGA_PAL ? 16'h3039 : 16'h60fe; // move.w DENISEID,d0
+            139:romword=16'h00df;
+            140:romword=16'hf07c;
+            141:romword=16'h33c0; // move.w d0,$1014
+            142:romword=16'h0000;
+            143:romword=16'h1014;
+            144:romword=16'h33fc; // move.w #$000f,FMODE
+            145:romword=16'h000f;
+            146:romword=16'h00df;
+            147:romword=16'hf1fc;
+            148:romword=16'h2039; // move.l $1004,d0
+            149:romword=16'h0000;
+            150:romword=16'h1004;
+            151:romword=16'h23c0; // move.l d0,$1018
+            152:romword=16'h0000;
+            153:romword=16'h1018;
+            154:romword=16'h60fe;
             default:romword=16'h4e71;
         endcase
     endfunction
@@ -247,6 +273,7 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0);
             if(address==24'h001000)read_line=chip_store;
             else if(address==24'h001008)read_line=blit_store;
             else if(address==24'h001010)read_line=repeat_store;
+            else if(address==24'h001018)read_line=pair_store;
             else if(address==24'ha00000)read_line=fast_store;
             else if(address>=24'h780000 && address<24'h800000)
                 for(n=0;n<4;n=n+1)begin
@@ -267,6 +294,7 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0);
                         if(held_addr==24'h001000)chip_store[lane*8+:8]<=held_data[lane*8+:8];
                         else if(held_addr==24'h001008)blit_store[lane*8+:8]<=held_data[lane*8+:8];
                         else if(held_addr==24'h001010)repeat_store[lane*8+:8]<=held_data[lane*8+:8];
+                        else if(held_addr==24'h001018)pair_store[lane*8+:8]<=held_data[lane*8+:8];
                         else if(held_addr==24'ha00000)fast_store[lane*8+:8]<=held_data[lane*8+:8];
                     end
                 end
@@ -282,7 +310,8 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0);
     task automatic config_cpu;
         @(negedge chip_clk);io_uio=1;io_din=16'h00f4;io_strobe=1;
         @(negedge chip_clk);io_strobe=0;
-        @(negedge chip_clk);io_din=CPU_MODE==0 ? 16'h0000 : CPU_MODE==7 ? 16'h005f : 16'h001f;io_strobe=1;
+        @(negedge chip_clk);io_din=CPU_MODE==0 ? 16'h0000 :
+            CPU_MODE==7 ? (AGA_PAL ? 16'h0023 : 16'h005f) : 16'h001f;io_strobe=1;
         @(negedge chip_clk);io_strobe=0;
         repeat(8)@(negedge chip_clk);io_uio=0;
         repeat(8)@(negedge chip_clk);
@@ -291,7 +320,10 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0);
         repeat(8)@(negedge clk);reset=0;
         repeat(32)@(negedge chip_clk);config_cpu();
         if(cpucfg[1:0]!==CPU_MODE[1:0])$fatal(1,"CPU fixture configuration mismatch");
-        if(cpucfg[3] !== (CPU_MODE==7))$fatal(1,"CPU fixture speed selector mismatch");
+        if(cpucfg[3:2] !== (CPU_MODE==7 ? (AGA_PAL ? 2'b01 : 2'b10) : 2'b00))
+            $fatal(1,"CPU fixture speed selector mismatch");
+        if(dut.chipset.chipset_config !== (AGA_PAL ? 6'h18 : 6'h08))
+            $fatal(1,"PAL chipset variant mismatch");
         // Shorten only the four-frame reset delay; retain all production CPU
         // reset handling, native bus state and memory scheduling.
         force dut.chipset.CONTROL1.rst_cnt=3'd4;
@@ -301,10 +333,14 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0);
             if(memory_fault)$fatal(1,"CPU memory adapter fault");
             if(chip_store[15:0]==16'h3412 && chip_store[63:32]==32'h78563412 &&
                fast_store[31:0]==32'hd4c3b2a1 && repeat_store[31:0]==32'hd4c3b2a1 &&
-               blit_store==64'h3412341234123412 && dut.chipset.DENISE1.clut0.clut.mem[0]===32'h0f000f00)begin
+               blit_store==64'h3412341234123412 &&
+               (AGA_PAL ? (repeat_store[47:32]==16'hf800 && dut.chipset.DENISE1.bplm0.fmode[1:0]==2'b11 &&
+                pair_store[31:0]==32'h78563412 && replace_second_word) :
+                dut.chipset.DENISE1.clut0.clut.mem[0]===32'h0f000f00))begin
+                if(AGA_PAL && wide_chip_writes==0)$fatal(1,"AGA CPU never issued a 32-bit chip RAM write");
                 if(holds<20 || transactions<10 || dma_source_hits<1 || dma_source_misses<1)$fatal(1,"CPU fixture did not exercise variable DDR latency");
                 if(CPU_MODE!=0 && (kernel_steps<30 || speed_edges<100))$fatal(1,"CPU speed proof did not execute sufficient kernel steps");
-                if(CPU_MODE==7 && (speed_opportunities*2-speed_edges>1 || speed_edges-speed_opportunities*2>1))
+                if(CPU_MODE==7 && !AGA_PAL && (speed_opportunities*2-speed_edges>1 || speed_edges-speed_opportunities*2>1))
                     $fatal(1,"14 MHz kernel opportunity count is not exactly half the native rate");
                 $display("CPU speed proof mode=%0d native_edges=%0d opportunities=%0d consumed=%0d",CPU_MODE,speed_edges,speed_opportunities,kernel_steps);
                 $display("PASS Amiga CPU mode=%0d real instructions, repeated Chip/Fast RAM, native blitter miss/hit DMA (%0d/%0d), COLOR00 and %0d DDR holds/%0d transactions",CPU_MODE,dma_source_misses,dma_source_hits,holds,transactions);
@@ -317,3 +353,5 @@ endmodule
 module tb_amiga_cpu_stock;tb_amiga_cpu #(.CPU_MODE(0)) test();endmodule
 module tb_amiga_cpu_turbo;tb_amiga_cpu #(.CPU_MODE(3)) test();endmodule
 module tb_amiga_cpu_half;tb_amiga_cpu #(.CPU_MODE(7)) test();endmodule
+module tb_amiga_cpu_aga_stock;tb_amiga_cpu #(.CPU_MODE(7),.AGA_PAL(1)) test();endmodule
+module tb_amiga_cpu_aga_turbo;tb_amiga_cpu #(.CPU_MODE(3),.AGA_PAL(1)) test();endmodule
