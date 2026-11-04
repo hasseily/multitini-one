@@ -428,10 +428,22 @@ def hoist_module_declarations(text: str) -> str:
     return text
 
 
+def m68k_bridge() -> str:
+    text=(SOURCE / "rtl/minimig_m68k_bridge.v").read_text()
+    return replace_once(text,"\t\tif (_as && cpu_halt) halt <= #1 1'b1;\n"
+        "\t\telse if (_as && !cpu_halt) halt <= #1 1'b0;",
+        "\t\t// The CPU can start a cycle while the host owns the bus.\n"
+        "\t\t// Release on host idle so the waiting CPU cycle can get DTACK.\n"
+        "\t\tif (halt) begin\n"
+        "\t\t\tif (!cpu_halt && !host_cs) halt <= #1 1'b0;\n"
+        "\t\tend else if (_as && cpu_halt) halt <= #1 1'b1;")
+
+
 def generated() -> dict[str, str]:
     result={"minimig.v": minimig(), "fastchip.v": fastchip(), "ide.v": ide(), "gayle.v": gayle(), "paula_floppy.v": floppy(), "cpu_wrapper.v": cpu(),
             "agnus.v": agnus_window(), "agnus_bitplanedma.v": bitplane_window(),
             "userio.v": userio(), "cpu_cycles.v": cpu_cycles(), "fx68k.sv": fx68k(),
+            "minimig_m68k_bridge.v": m68k_bridge(),
             "amiga_ram.sv": RAM, "m68k_cyc_idx.hex": mif_hex("m68k_cyc_idx",16384,6),
             "m68k_ea_idx.hex": mif_hex("m68k_ea_idx",2048,5)}
     for path in sorted((SOURCE / "rtl").glob("*.v")):

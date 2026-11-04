@@ -21,4 +21,7 @@ void mt_screenshot_service_poll(uint32_t core_id, const char *core_name,
 bool mt_screenshot_service_busy(void);
 const char *mt_screenshot_service_status(void);
 const char *mt_screenshot_service_last_path(void);
+/* Add a two-second save confirmation to the legacy status frame. The caller
+ * clears the frame first and presents it through the shared UI presenter. */
+bool mt_screenshot_service_render_feedback(mt_ui_legacy_frame_t *frame);
 #endif

@@ -12,6 +12,8 @@ enum { IDLE, SNAPSHOT, OPEN_FILE, WRITE_ROWS, FINISH, CLEANUP };
 static mt_screenshot_service_ops_t bus;
 static unsigned state, attempts;
 static bool full;
+static bool feedback_visible;
+static uint32_t saved_at;
 static uint32_t started, counter, output_width, output_height, next_row;
 static mt_sd_file_t *file;
 static mt_screenshot_scene_t scene;
@@ -56,11 +58,13 @@ static bool write_bytes(void *context,const void *bytes,size_t size)
 void mt_screenshot_service_init(const mt_screenshot_service_ops_t *ops)
 {
     memset(&bus,0,sizeof(bus));if(ops!=NULL)bus=*ops;
-    state=IDLE;file=NULL;counter=0U;temporary_path[0]=final_path[0]=last_path[0]=message[0]='\0';
+    state=IDLE;file=NULL;counter=0U;feedback_visible=false;
+    temporary_path[0]=final_path[0]=last_path[0]=message[0]='\0';
 }
 bool mt_screenshot_service_request(bool full_output)
 {
     if(state!=IDLE || bus.read==NULL || bus.milliseconds==NULL)return false;
+    feedback_visible=false;
     full=full_output;attempts=0U;started=bus.milliseconds();state=SNAPSHOT;
     temporary_path[0]=final_path[0]='\0';
     (void)snprintf(message,sizeof(message),"Capturing %s screenshot...",full ? "full screen":"filtered video");
@@ -69,6 +73,19 @@ bool mt_screenshot_service_request(bool full_output)
 bool mt_screenshot_service_busy(void) { return state!=IDLE; }
 const char *mt_screenshot_service_status(void) { return message[0]=='\0' ? NULL:message; }
 const char *mt_screenshot_service_last_path(void) { return last_path; }
+
+bool mt_screenshot_service_render_feedback(mt_ui_legacy_frame_t *frame)
+{
+    static const char text[]=" Screenshot saved ";
+    if(frame==NULL || !feedback_visible)return false;
+    if(bus.milliseconds()-saved_at>=2000U) {
+        feedback_visible=false;return false;
+    }
+    for(size_t i=0U;i<sizeof(text)-1U;++i)
+        frame->cells[MT_UI_LEGACY_COLUMNS+1U+i]=
+            mt_ui_cell(text[i],MT_UI_COLOR_SUCCESS,MT_UI_COLOR_PANEL,false);
+    return true;
+}
 
 static bool cleanup(void)
 {
@@ -86,6 +103,7 @@ static bool cleanup(void)
 }
 bool mt_screenshot_service_cancel(void)
 {
+    feedback_visible=false;
     if(state==IDLE)return true;
     if(state!=CLEANUP)(void)snprintf(message,sizeof(message),"Screenshot cancelled.");
     state=CLEANUP;
@@ -217,6 +235,7 @@ void mt_screenshot_service_poll(uint32_t core_id,const char *core_name,uint8_t m
         if(renamed.status!=MT_SD_OK) { fail(mt_sd_status_name(renamed.status));return; }
         (void)snprintf(last_path,sizeof(last_path),"%s",final_path);
         (void)snprintf(message,sizeof(message),"Screenshot saved: %s",final_path+3U);
+        saved_at=bus.milliseconds();feedback_visible=true;
         temporary_path[0]='\0';state=IDLE;
     }
 }

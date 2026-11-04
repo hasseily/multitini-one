@@ -32,9 +32,11 @@ PREAMBLE = r'''
 #include "multitini_gameboy_interface.h"
 #include "multitini_genesis_interface.h"
 #include "multitini_iigs_interface.h"
+#include "multitini_amiga_interface.h"
 #include "multitini_nes_interface.h"
 #include "multitini_vectrex_interface.h"
 #include "multitini_tmp102.h"
+#include "multitini_drive_activity.h"
 #include "vectrex_content_service.h"
 #include "supervisor_settings.h"
 #include <assert.h>
@@ -46,10 +48,20 @@ static mt_menu_t supervisor_menu;
 static mt_c64_debug_t c64_debug;
 static mt_ui_frame_t supervisor_frame;
 static mt_ui_presenter_t supervisor_presenter;
-/* The drive-activity badge has its own unit tests; these scenarios keep it
- * hidden so menu visibility and pause handling are tested on their own. */
+static mt_activity_t drive_activity;
+static mt_ui_legacy_frame_t activity_frame;
+static uint32_t activity_core;
 static bool activity_badge_shown;
-static void service_drive_activity(const mt_ui_bus_t *bus) { (void)bus; }
+static void service_drive_activity(const mt_ui_bus_t *bus);
+static void sample_drive_activity(uint64_t now) { (void)now; }
+static bool screenshot_feedback;
+static bool amiga_display_holds_menu_closed(void) { return false; }
+static bool mt_screenshot_service_render_feedback(mt_ui_legacy_frame_t *frame) {
+    if (screenshot_feedback)
+        frame->cells[MT_UI_LEGACY_COLUMNS + 1U] =
+            mt_ui_cell('S', MT_UI_COLOR_SUCCESS, MT_UI_COLOR_PANEL, false);
+    return screenshot_feedback;
+}
 static mt_supervisor_t supervisor;
 static mt_menu_action_t pending_menu_action;
 static bool supervisor_menu_ready, supervisor_menu_dirty;
@@ -279,6 +291,8 @@ static void handle_menu_action(mt_menu_action_t action);
 SCENARIOS = r'''
 enum { SUCCESS, WARNING, FAILURE, NO_CHANGE, ROLLBACK };
 static void reset_fixture(bool visible) {
+    mt_activity_reset(&drive_activity);
+    activity_badge_shown = screenshot_feedback = false; activity_core = 0U;
     memset(&supervisor_menu, 0, sizeof(supervisor_menu));
     memset(&supervisor, 0, sizeof(supervisor));
     memset(supervisor_menu_keys, 0, sizeof(supervisor_menu_keys));
@@ -812,9 +826,10 @@ static void controller_profiles_and_legacy_migration(void) {
     assert(supervisor_controller_config(NULL, MT_SUPERVISOR_CORE_ID, 0U, &devices[0], &config));
     assert(persistent_settings.controller_profile_count == 0U && persistent_settings.legacy_gamepad_pending == 1U);
     assert(supervisor_controller_config(NULL, MT_C64_CORE_ID, 0U, &devices[0], &config));
-    assert(config.binding[MT_CONTROL_A] == 5U && persistent_settings.controller_profile_count == 6U);
+    assert(config.binding[MT_CONTROL_A] == 5U && persistent_settings.controller_profile_count == 7U);
     assert(mt_supervisor_settings_find_controller(&persistent_settings, MT_IIGS_CORE_ID, &devices[0].identity) != NULL);
     assert(mt_supervisor_settings_find_controller(&persistent_settings, MT_NES_CORE_ID, &devices[0].identity) != NULL);
+    assert(mt_supervisor_settings_find_controller(&persistent_settings, MT_AMIGA_CORE_ID, &devices[0].identity) != NULL);
     assert(persistent_settings.legacy_gamepad_pending == 0U && settings_writes == 0U);
     config.binding[MT_CONTROL_A] = 32U;
     assert(mt_supervisor_settings_remember_controller(&persistent_settings, MT_C64_CORE_ID, &devices[0].identity, &config));
@@ -870,6 +885,37 @@ static void save_drafts_atomically_and_freeze_identity(void) {
     controller_edit_action(save);
     assert(errors == 2U && settings_writes == saved_before && config_applies == 2U);
 }
+static void screenshot_feedback_during_play(void) {
+    reset_fixture(false);
+    now_ms = 100U;
+    activity_core = supervisor.active.package.core_id;
+    mt_activity_lights(&drive_activity, 0U, "D8", true, true, now_ms);
+    persistent_settings.drive_activity_off = true;
+    screenshot_feedback = true;
+    service_supervisor_menu();
+    for (unsigned i = 0U; i < 3U; ++i) hardware_tick();
+    assert(activity_badge_shown && !supervisor_menu.visible);
+    assert((status_word & MT_UI_STATUS_VISIBLE) && !mt_ui_status_menu_shown(status_word));
+    assert(!drive_activity.any && (activity_frame.cells[MT_UI_LEGACY_COLUMNS-2U] & 0x8000U));
+    assert((activity_frame.cells[MT_UI_LEGACY_COLUMNS+1U] & 0x7fU) == 'S');
+    assert(input_changes == 0U && core_control == 0U);
+    screenshot_feedback = false; now_ms += 20U;
+    service_supervisor_menu();
+    for (unsigned i = 0U; i < 3U; ++i) hardware_tick();
+    assert(!activity_badge_shown && !(status_word & MT_UI_STATUS_VISIBLE));
+    persistent_settings.drive_activity_off = false;
+    now_ms += 20U;
+    mt_activity_lights(&drive_activity, 0U, "D8", true, true, now_ms);
+    screenshot_feedback = true;
+    service_supervisor_menu();
+    for (unsigned i = 0U; i < 3U; ++i) hardware_tick();
+    assert(activity_badge_shown && (activity_frame.cells[MT_UI_LEGACY_COLUMNS-2U] & 0x8000U) == 0U);
+    assert((activity_frame.cells[MT_UI_LEGACY_COLUMNS+1U] & 0x7fU) == 'S');
+    supervisor_menu.visible = true; now_ms += 20U; supervisor_menu_dirty = true;
+    service_supervisor_menu();
+    for (unsigned i = 0U; i < 3U; ++i) hardware_tick();
+    assert(mt_ui_status_menu_shown(status_word) && !activity_badge_shown);
+}
 static void about_refreshes_live_status(void) {
     reset_fixture(true);
     i2c_ready = true;board_temperature_valid = false;last_system_refresh_ms = 0U;
@@ -908,6 +954,7 @@ int main(int argc, char **argv) {
     else if (strcmp(argv[1], "content-input") == 0) failed_content_restores_running_input();
     else if (strcmp(argv[1], "screenshots") == 0) screenshot_keyboard_and_controller();
     else if (strcmp(argv[1], "screenshot-presenter") == 0) screenshot_waits_for_displayed_ui_commit();
+    else if (strcmp(argv[1], "screenshot-feedback") == 0) screenshot_feedback_during_play();
     else if (strcmp(argv[1], "raw-capture") == 0) raw_capture_is_immediate_and_held_safe();
     else if (strcmp(argv[1], "stick-navigation") == 0) stick_settings_accept_controller_navigation();
     else if (strcmp(argv[1], "capture-chord") == 0) menu_chord_does_not_assign_controller_controls();
@@ -942,6 +989,7 @@ class MenuRuntimeTests(unittest.TestCase):
             "static bool menu_action_needs_core_progress(",
             "static mt_vectrex_content_result_t load_vectrex_content_with_input(",
             "static void service_supervisor_menu(void)\n{",
+            "static void service_drive_activity(const mt_ui_bus_t *bus)\n{",
             "static void service_screenshots(void)\n{",
             "static void service_system_page(void)\n{",
         )
@@ -966,7 +1014,9 @@ class MenuRuntimeTests(unittest.TestCase):
             str(ROOT / "firmware/common/display.c"), str(ROOT / "firmware/common/menu.c"), str(ROOT / "firmware/common/gamepad.c"), str(ROOT / "firmware/common/controls.c"), str(ROOT / "firmware/common/ui.c"),
             str(ROOT / "firmware/common/text_reader.c"), str(ROOT / "firmware/common/clock.c"),
             str(ROOT / "firmware/common/tmp102.c"),
+            str(ROOT / "firmware/common/drive_activity.c"),
             str(ROOT / "firmware/common/content_type.c"),
+            str(ROOT / "firmware/common/amiga_content.c"),
             str(ROOT / "firmware/common/genesis_content.c"),
             str(ROOT / "firmware/common/nes_content.c"),
             str(ROOT / "firmware/common/vectrex_overlay.c"),
@@ -1017,6 +1067,9 @@ class MenuRuntimeTests(unittest.TestCase):
 
     def test_screenshot_waits_for_ack_then_uses_displayed_ui_without_menu_edit(self):
         self.run_scenario("screenshot-presenter")
+
+    def test_screenshot_feedback_shows_without_menu_and_respects_drive_badge_setting(self):
+        self.run_scenario("screenshot-feedback")
 
     def test_raw_capture_handles_quick_presses_before_navigation(self):
         self.run_scenario("raw-capture")

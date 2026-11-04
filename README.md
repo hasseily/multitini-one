@@ -5,6 +5,11 @@ It runs C64, Game Boy Color, Vectrex, Genesis / Mega Drive, Apple IIgs, NES and 
 machines through a shared supervisor, menu, input, audio, storage and
 core-loading system. It does not use an Apple II host.
 
+M0.8.1 fixes Amiga disk-swap stalls, mounts bare AmigaDOS and PFS3 HDF
+partitions, and shows a brief confirmation after saving a screenshot.
+See the [M0.8.1 release notes](docs/RELEASE_M081.md) for installation and
+validation status.
+
 M0.8.0 adds Amiga 600 ECS PAL and Amiga 1200 AGA PAL to the complete firmware
 package. Both offer stock and accelerated CPU modes, two DD floppy drives and
 two IDE disks. Amiga also gains Fast IDE, HDF read-ahead and burst-cached Fast

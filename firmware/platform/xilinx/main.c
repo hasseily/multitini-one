@@ -6935,9 +6935,11 @@ static void service_drive_activity(const mt_ui_bus_t *bus)
         sample_drive_activity(now);
         visible = mt_activity_render(&drive_activity, now, &activity_frame);
     } else {
+        mt_activity_reset(&drive_activity);
         (void)mt_activity_render(&drive_activity, now, &activity_frame);
         visible = false;
     }
+    if (mt_screenshot_service_render_feedback(&activity_frame)) visible = true;
     if (!visible && !activity_badge_shown) return;
     if (mt_ui_present_legacy_cached(&supervisor_presenter, bus, &activity_frame, visible) ==
         MT_UI_PRESENT_OK)

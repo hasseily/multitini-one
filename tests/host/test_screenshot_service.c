@@ -205,6 +205,49 @@ static void successful_capture(void)
     assert(strcmp(mt_screenshot_service_last_path(),renamed_to)==0);
     assert(strstr(mt_screenshot_service_status(),"Screenshot saved")!=NULL);
 }
+static void save_feedback(void)
+{
+    static mt_ui_legacy_frame_t frame;
+    const size_t start=MT_UI_LEGACY_COLUMNS+1U;
+    const uint16_t untouched=mt_ui_cell('D',MT_UI_COLOR_TEXT,MT_UI_COLOR_PANEL,false);
+    const char text[]=" Screenshot saved ";
+    reset_test();
+    assert(!mt_screenshot_service_render_feedback(&frame));
+    for(unsigned full=0U;full<2U;++full) {
+        assert(mt_screenshot_service_request(full!=0U));
+        for(unsigned i=0U;i<1200U && state!=FINISH;++i) {
+            poll();assert(!mt_screenshot_service_render_feedback(&frame));
+        }
+        assert(state==FINISH);
+        rename_collisions=1U;poll();
+        assert(mt_screenshot_service_busy() && !mt_screenshot_service_render_feedback(&frame));
+        poll();assert(!mt_screenshot_service_busy());
+        frame.cells[MT_UI_LEGACY_COLUMNS-1U]=untouched;
+        assert(mt_screenshot_service_render_feedback(&frame));
+        for(size_t i=0U;i<sizeof(text)-1U;++i)
+            assert(frame.cells[start+i]==mt_ui_cell(text[i],MT_UI_COLOR_SUCCESS,MT_UI_COLOR_PANEL,false));
+        assert(frame.cells[MT_UI_LEGACY_COLUMNS-1U]==untouched);
+        now_ms+=1999U;assert(mt_screenshot_service_render_feedback(&frame));
+        ++now_ms;assert(!mt_screenshot_service_render_feedback(&frame));
+    }
+    now_ms=UINT32_MAX-1000U;
+    assert(mt_screenshot_service_request(false));finish();
+    now_ms+=1999U;assert(mt_screenshot_service_render_feedback(&frame));
+    ++now_ms;assert(!mt_screenshot_service_render_feedback(&frame));
+    now_ms-=2000U;assert(!mt_screenshot_service_render_feedback(&frame));
+    assert(mt_screenshot_service_request(false));finish();
+    assert(mt_screenshot_service_render_feedback(&frame));
+    assert(mt_screenshot_service_request(false));
+    assert(!mt_screenshot_service_render_feedback(&frame));
+    assert(mt_screenshot_service_cancel() && !mt_screenshot_service_render_feedback(&frame));
+    assert(mt_screenshot_service_request(false));finish();
+    assert(mt_screenshot_service_cancel() && !mt_screenshot_service_render_feedback(&frame));
+    reset_test();rename_failure=MT_SD_RENAME_FAILED;
+    assert(mt_screenshot_service_request(false));finish();
+    assert(!mt_screenshot_service_render_feedback(&frame));
+    reset_test();
+    assert(!mt_screenshot_service_render_feedback(&frame));
+}
 static void shres_capture(void)
 {
     static const uint16_t sw[]={1920,1024,1200,1280,1360,1680},sh[]={1080,768,800,1024,768,1050};
@@ -281,6 +324,6 @@ static void failure_and_cancel(void)
 }
 int main(void)
 {
-    successful_capture();snapshot_ownership();failure_and_cancel();iigs_capture();amiga_capture();shres_capture();
+    successful_capture();save_feedback();snapshot_ownership();failure_and_cancel();iigs_capture();amiga_capture();shres_capture();
     puts("screenshot service tests passed");return 0;
 }

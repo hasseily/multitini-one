@@ -307,18 +307,19 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0);
             response_delay<=4+(transactions%13);response_busy<=1;transactions<=transactions+1;
         end
     end
-    task automatic config_cpu;
-        @(negedge chip_clk);io_uio=1;io_din=16'h00f4;io_strobe=1;
+    task automatic uio_config(input [7:0] command,input [15:0] value);
+        @(negedge chip_clk);io_uio=1;io_din={8'd0,command};io_strobe=1;
         @(negedge chip_clk);io_strobe=0;
-        @(negedge chip_clk);io_din=CPU_MODE==0 ? 16'h0000 :
-            CPU_MODE==7 ? (AGA_PAL ? 16'h0023 : 16'h005f) : 16'h001f;io_strobe=1;
+        @(negedge chip_clk);io_din=value;io_strobe=1;
         @(negedge chip_clk);io_strobe=0;
         repeat(8)@(negedge chip_clk);io_uio=0;
         repeat(8)@(negedge chip_clk);
     endtask
     initial begin
         repeat(8)@(negedge clk);reset=0;
-        repeat(32)@(negedge chip_clk);config_cpu();
+        repeat(32)@(negedge chip_clk);
+        uio_config(8'hf4,CPU_MODE==0 ? 16'h0000 :
+            CPU_MODE==7 ? (AGA_PAL ? 16'h0023 : 16'h005f) : 16'h001f);
         if(cpucfg[1:0]!==CPU_MODE[1:0])$fatal(1,"CPU fixture configuration mismatch");
         if(cpucfg[3:2] !== (CPU_MODE==7 ? (AGA_PAL ? 2'b01 : 2'b10) : 2'b00))
             $fatal(1,"CPU fixture speed selector mismatch");
@@ -328,6 +329,18 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0);
         // reset handling, native bus state and memory scheduling.
         force dut.chipset.CONTROL1.rst_cnt=3'd4;
         guest_reset=0;
+        wait(cpu_reset_n);
+        repeat(64)@(negedge chip_clk);
+        // Media eject uses this UIO halt and resume sequence. The real CPU
+        // can start a chipset access while the host owns the bus.
+        uio_config(8'hf1,16'h0004);
+        for(cycles=0;cycles<2048 && !(dut.chipset.CPU1.halt && !dut.chipset._cpu_as);cycles=cycles+1)
+            @(negedge chip_clk);
+        if(cycles==2048 || !dut.chipset._cpu_dtack)
+            $fatal(1,"CPU fixture did not reach a chipset access waiting behind the host halt");
+        uio_config(8'hf1,16'h0000);
+        if(dut.chipset.CPU1.halt)
+            $fatal(1,"CPU mode=%0d could not resume with a pending chipset access",CPU_MODE);
         for(cycles=0;cycles<400000;cycles=cycles+1)begin
             @(negedge clk);
             if(memory_fault)$fatal(1,"CPU memory adapter fault");

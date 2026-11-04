@@ -128,8 +128,11 @@ DOUT   -------------------------------------------------<___________________>---
 
 always @ (posedge clk) begin
 	if (clk7_en) begin
-		if (_as && cpu_halt) halt <= #1 1'b1;
-		else if (_as && !cpu_halt) halt <= #1 1'b0;
+		// The CPU can start a cycle while the host owns the bus.
+		// Release on host idle so the waiting CPU cycle can get DTACK.
+		if (halt) begin
+			if (!cpu_halt && !host_cs) halt <= #1 1'b0;
+		end else if (_as && cpu_halt) halt <= #1 1'b1;
 	end
 end
 

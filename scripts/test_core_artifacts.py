@@ -45,8 +45,10 @@ class ArtifactTests(unittest.TestCase):
         self.record = {"machine": "C64", "captured_utc": "2000-01-01T00:00:00+00:00",
                        "configuration": {"c64_video_standard": "PAL", "gbc_psram": False, "genesis_pal": False}}
         for name in ("generate.tcl", "build.tcl"):
-            (self.directory / name).write_text("set ::env(MULTITINI_MACHINE) {C64}\n"
-                                              "set ::env(MULTITINI_BUILD_ID) {50484F35}\n")
+            (self.directory / name).write_text(
+                f"set ::env(MULTITINI_VIVADO_DIR) {{{self.directory.as_posix()}}}\n"
+                "set ::env(MULTITINI_MACHINE) {C64}\n"
+                "set ::env(MULTITINI_BUILD_ID) {50484F35}\n")
         reports = self.directory / "reports"
         reports.mkdir()
         (reports / "build_manifest.txt").write_text(
@@ -275,7 +277,7 @@ class ArtifactTests(unittest.TestCase):
         self.assertIn("pram.bin", text)
         self.assertIn("WOZ2", text)
         self.assertIn("../roms/", text)
-        self.assertIn("validated owner-supplied Apple ROMs", text)
+        self.assertIn("System, character and ADB ROMs", text)
         self.assertIn("No games or operating-system disk images", text)
         self.assertNotIn("No Apple ROMs", text)
 
