@@ -89,6 +89,8 @@ foreach(component amiga_content amiga_boot amiga_bulk amiga_hid amiga_rtc amiga_
     add_test(NAME ${component} COMMAND test_${component})
 endforeach()
 add_library(xilinx_amiga_service_compile OBJECT firmware/platform/xilinx/amiga_content_service.c)
+add_library(xilinx_spectrum_service_compile OBJECT firmware/platform/xilinx/spectrum_content_service.c)
+target_include_directories(xilinx_spectrum_service_compile PRIVATE firmware/include tests/xilinx_stubs)
 add_executable(test_amiga_service tests/host/test_amiga_service.c firmware/platform/xilinx/amiga_content_service.c)
 target_include_directories(test_amiga_service PRIVATE firmware/platform/xilinx)
 target_link_libraries(test_amiga_service PRIVATE multitini_common)

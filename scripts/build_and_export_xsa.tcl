@@ -146,6 +146,8 @@ if {[string match "*ACTIVE_MACHINE=2*" $build_generics]} {
     set image_kind "NES"
 } elseif {[string match "*ACTIVE_MACHINE=7*" $build_generics]} {
     set image_kind "AMIGA"
+} elseif {[regexp {(^|[[:space:]])ACTIVE_MACHINE=8($|[[:space:]])} $build_generics]} {
+    set image_kind "ZX_SPECTRUM"
 } else {
     error "Build generic has no recognized ACTIVE_MACHINE value: $build_generics"
 }
@@ -410,6 +412,34 @@ if {$image_kind eq "AMIGA"} {
         }
         puts "AP68040_PROCESSOR_CLOCK_PASS period=$fast_period enable_slack=[get_property SLACK $processor_ce_path]"
     }
+}
+if {$image_kind eq "ZX_SPECTRUM"} {
+    set spectrum_clock [get_clocks -quiet -filter {NAME =~ *clk_out1*zynq_ps_bd_clk_wiz_c64*}]
+    require_one_object "Spectrum machine clock" $spectrum_clock
+    set spectrum_mmcm [get_cells -hierarchical -quiet -filter \
+        {REF_NAME == MMCME2_ADV && NAME =~ *clk_wiz_c64*}]
+    require_one_object "Spectrum machine MMCM" $spectrum_mmcm
+    foreach {property expected} {CLKFBOUT_MULT_F 28 DIVCLK_DIVIDE 5 CLKOUT0_DIVIDE_F 15} {
+        if {abs([get_property $property $spectrum_mmcm] - $expected) > 0.000001} {
+            error "Spectrum MMCM $property differs from the reviewed value $expected"
+        }
+    }
+    set spectrum_parent [get_clocks -quiet -of_objects [get_pins $spectrum_mmcm/CLKIN1]]
+    require_one_object "Spectrum MMCM parent clock" $spectrum_parent
+    set spectrum_parent_period [get_property PERIOD $spectrum_parent]
+    set spectrum_period [get_property PERIOD $spectrum_clock]
+    if {$spectrum_parent ne "clk_fpga_2" || abs($spectrum_parent_period - 1000.0 / 150.0) > 0.001 ||
+        abs($spectrum_period - $spectrum_parent_period * 5.0 * 15.0 / 28.0) > 0.002 ||
+        abs($spectrum_period - 1000.0 / 56.0) > 0.002} {
+        error "Spectrum machine clock does not match its reviewed 150 MHz to 56 MHz ratio"
+    }
+    set spectrum_registers [get_pins -hierarchical -quiet \
+        -filter {NAME =~ *g_zx_spectrum_machine*machine_adapter*/C}]
+    if {[llength $spectrum_registers] == 0 ||
+        [get_clocks -quiet -of_objects $spectrum_registers] ne $spectrum_clock} {
+        error "Spectrum machine state must use the single reviewed root clock"
+    }
+    puts "ZX_SPECTRUM_CLOCK_RATIO_PASS parent=$spectrum_parent M=28 D=5 O=15 period=$spectrum_period"
 }
 if {$image_kind eq "NES"} {
     require_nes_save_ram implementation

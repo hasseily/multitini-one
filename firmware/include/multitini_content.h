@@ -28,7 +28,8 @@ typedef enum {
     MT_CONTENT_IIGS_FLOPPY,
     MT_CONTENT_C64_REU,
     MT_CONTENT_AMIGA_ADF,
-    MT_CONTENT_AMIGA_HDF
+    MT_CONTENT_AMIGA_HDF,
+    MT_CONTENT_SPECTRUM_TAP
 } mt_content_type_t;
 
 typedef enum {

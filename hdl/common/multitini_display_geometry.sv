@@ -39,7 +39,13 @@ module multitini_display_geometry #(
         begin
             selected_timing=video_mode(id);
             denominator=1;
-            if(MACHINE==3)begin numerator=id==0 ? 3 : 1;denominator=id==0 ? 2 : 1;end
+            if(MACHINE==8)begin
+                numerator=1;
+                for(integer candidate=2;candidate<=4;candidate=candidate+1)
+                    if(WIDTH*candidate<=selected_timing[$bits(video_mode_t)-1 -: 12] &&
+                       HEIGHT*candidate<=selected_timing[$bits(video_mode_t)-13 -: 12])
+                        numerator=4'(candidate);
+            end else if(MACHINE==3)begin numerator=id==0 ? 3 : 1;denominator=id==0 ? 2 : 1;end
             // IIgs includes its native border. Auto must fit both axes;
             // a 724x496 frame cannot use 2x on a 1280x1024 output.
             else if(MACHINE==5 || MACHINE==7)numerator=(id==0 || id==3 || id==5) &&
@@ -49,7 +55,7 @@ module multitini_display_geometry #(
             else if(MACHINE==1)numerator=(id==1 || id==2 || id==4) ? 5 : 6;
             else numerator=id==0 ? 4 : (id==1 || id==2 || id==4) ? 2 : 3;
             if(MACHINE==3)begin width=id==0 ? WIDTH*3/2 : WIDTH;height=id==0 ? HEIGHT*3/2 : HEIGHT;end
-            else if(MACHINE==5 || MACHINE==7)begin
+            else if(MACHINE==5 || MACHINE==7 || MACHINE==8)begin
                 width=12'(WIDTH*numerator);
                 height=12'(HEIGHT*numerator);
             end

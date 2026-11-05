@@ -2,6 +2,13 @@
   "schema_version": 1,
   "sources": [
     {
+      "name": "MiSTer ZX Spectrum",
+      "url": "https://github.com/MiSTer-devel/ZX-Spectrum_MISTer.git",
+      "commit": "8502d492a3ad89c68413b2f0e2e4cf947dab42ba",
+      "license": "GPL-3.0-or-later ULA; BSD-3-Clause T80 and YM2149; GPL-2.0-or-later reference top",
+      "use": "Selected machine logic for PAL 48K and 128K. Exact upstream bytes and licenses are recorded in provenance/zx-spectrum.import.json. Excludes the MiSTer platform, noncommercial keyboard, ROMs, media and bitstreams."
+    },
+    {
       "name": "AP68040",
       "url": "https://github.com/apolkosnik/AP68040.git",
       "commit": "b16aa6a43d8e92190f1669859884485b3b4ea14b",

@@ -229,8 +229,9 @@ module multitini_one_top #(
     wire amiga_block_rd_select=ACTIVE_MACHINE==7 && reg_rd_addr>=16'hd100 && reg_rd_addr<16'hd400;
     wire amiga_block_wr_select=ACTIVE_MACHINE==7 && reg_wr_addr>=16'hd100 && reg_wr_addr<16'hd400;
     wire [31:0] amiga_block_rdata;
-    localparam integer NATIVE_FRAME_WIDTH=ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==7 ? 640 : ACTIVE_MACHINE==5 ? 724 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382;
-    localparam integer NATIVE_FRAME_HEIGHT=ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==7 ? 512 : ACTIVE_MACHINE==5 ? 496 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270;
+    localparam integer NATIVE_FRAME_WIDTH=ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==7 ? 640 : ACTIVE_MACHINE==5 ? 724 : ACTIVE_MACHINE==6 ? 256 : ACTIVE_MACHINE==8 ? 344 : C64_NTSC_MODE ? 404 : 382;
+    localparam integer NATIVE_FRAME_HEIGHT=ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==7 ? 512 : ACTIVE_MACHINE==5 ? 496 : ACTIVE_MACHINE==6 ? 240 : ACTIVE_MACHINE==8 ? 280 : C64_NTSC_MODE ? 250 : 270;
+    localparam bit NATIVE_SOURCE_DDR=ACTIVE_MACHINE>=4 && ACTIVE_MACHINE<=8;
     wire [1:0] amiga_capture_mode;
     wire amiga_switch_source,amiga_switch_control,amiga_switch_pixel,amiga_quiet_source;
     reg [1:0] amiga_profile_source=0,amiga_profile_control=0,amiga_profile_pixel=0;
@@ -724,7 +725,8 @@ module multitini_one_top #(
     // have drained before active_mode changes; no coefficient CDC is needed.
     multitini_display_geometry_pair #(.MACHINE(ACTIVE_MACHINE),.ALT_WIDTH(ACTIVE_MACHINE==7 ? 724 : 0),.ALT_HEIGHT(ACTIVE_MACHINE==7 ? 566 : 0),
         .WIDE_WIDTH(ACTIVE_MACHINE==7 ? 1280 : 0),.WIDE_HEIGHT(ACTIVE_MACHINE==7 ? 512 : 0),
-        .WIDTH(ACTIVE_MACHINE==7 ? 640 : 382),.HEIGHT(ACTIVE_MACHINE==7 ? 512 : 270)) display_filter_geometry(
+        .WIDTH((ACTIVE_MACHINE==7 || ACTIVE_MACHINE==8) ? NATIVE_FRAME_WIDTH : 382),
+        .HEIGHT((ACTIVE_MACHINE==7 || ACTIVE_MACHINE==8) ? NATIVE_FRAME_HEIGHT : 270)) display_filter_geometry(
         .source_profile(amiga_profile_control),
         .mode(display_active_mode),.multiplier(3'd0),.scale_num(display_filter_scale_num),.scale_den(display_filter_scale_den));
     // Capture always observes the complete original Auto raster. A wide
@@ -733,8 +735,7 @@ module multitini_one_top #(
     // final output reader crops to the physical HDMI active rectangle.
     multitini_display_geometry_pair #(.VIRTUAL_CAPTURE(1'b1),.MACHINE(ACTIVE_MACHINE),.ALT_WIDTH(ACTIVE_MACHINE==7 ? 724 : 0),.ALT_HEIGHT(ACTIVE_MACHINE==7 ? 566 : 0),
         .WIDE_WIDTH(ACTIVE_MACHINE==7 ? 1280 : 0),.WIDE_HEIGHT(ACTIVE_MACHINE==7 ? 512 : 0),
-        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==7 ? 640 : ACTIVE_MACHINE==5 ? 724 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382),
-        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==7 ? 512 : ACTIVE_MACHINE==5 ? 496 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270)) capture_geometry(
+        .WIDTH(NATIVE_FRAME_WIDTH),.HEIGHT(NATIVE_FRAME_HEIGHT)) capture_geometry(
         .source_profile(amiga_profile_pixel),
         .mode(display_pixel_mode),.multiplier(3'd0),
         .scale_num(capture_display_scale_num_next),.scale_den(capture_display_scale_den_next),
@@ -742,8 +743,7 @@ module multitini_one_top #(
         .view_width(capture_display_view_width_next),.view_height(capture_display_view_height_next));
     multitini_display_geometry_pair #(.ENABLE_MULTIPLIER(1'b1),.MACHINE(ACTIVE_MACHINE),.ALT_WIDTH(ACTIVE_MACHINE==7 ? 724 : 0),.ALT_HEIGHT(ACTIVE_MACHINE==7 ? 566 : 0),
         .WIDE_WIDTH(ACTIVE_MACHINE==7 ? 1280 : 0),.WIDE_HEIGHT(ACTIVE_MACHINE==7 ? 512 : 0),
-        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==7 ? 640 : ACTIVE_MACHINE==5 ? 724 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382),
-        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==7 ? 512 : ACTIVE_MACHINE==5 ? 496 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270)) display_geometry(
+        .WIDTH(NATIVE_FRAME_WIDTH),.HEIGHT(NATIVE_FRAME_HEIGHT)) display_geometry(
         .source_profile(amiga_profile_pixel),
         .mode(display_pixel_mode),.multiplier(display_pixel_multiplier),.h_active(display_h_active_next),.h_front(display_h_front_next),.h_sync(display_h_sync_next),.h_total(display_h_total_next),
         .v_active(display_v_active_next),.v_front(display_v_front_next),.v_sync(display_v_sync_next),.v_total(display_v_total_next),
@@ -919,7 +919,7 @@ module multitini_one_top #(
         // stopped the core and every posted write then drained.
         // A running-machine effects suspension keeps the normal status;
         // output-clock changes separately pause/drain the video HP masters.
-        if((ACTIVE_MACHINE==0 || ACTIVE_MACHINE==4 || ACTIVE_MACHINE==5 || ACTIVE_MACHINE==6 || ACTIVE_MACHINE==7) && reg_rd_addr==MT_REG_VIDEO_FRAME_STATUS &&
+        if((ACTIVE_MACHINE==0 || NATIVE_SOURCE_DDR) && reg_rd_addr==MT_REG_VIDEO_FRAME_STATUS &&
            |(shell_control & MT_CONTROL_CORE_RESET_REQUEST) &&
            (!genesis_source_quiescent || !gs_memory_quiescent || !c64_reu_memory_quiescent))
             reg_rd_data=framebuffer_rd_data & ~MT_VIDEO_FRAME_STATUS_QUIESCENT;
@@ -1856,7 +1856,7 @@ module multitini_one_top #(
                 .audio_r(c64_audio_r), .audio_valid(c64_audio_valid)
             );
 
-            multitini_nes_video_bridge video_bridge (
+            multitini_fixed_raster_bridge video_bridge (
                 .source_clk(c64_clk),.source_resetn(c64_aresetn),.source_ready(c64_ready),
                 .source_ready_control(c64_ready_control),
                 .source_r(c64_video_r),.source_g(c64_video_g),.source_b(c64_video_b),
@@ -2289,6 +2289,65 @@ module multitini_one_top #(
             assign gbc_memory_valid=1'b0;assign gbc_memory_ready=1'b0;
             assign gbc_memory_rdata=64'd0;assign gbc_memory_rvalid=1'b0;
             assign gbc_memory_fault=1'b0;
+        end else if (ACTIVE_MACHINE == 8) begin : g_zx_spectrum_machine
+            wire [11:0] native_x,native_y;
+            assign c64_core_id=32'h5a585350;
+            (* DONT_TOUCH = "yes" *) multitini_zx_spectrum_adapter machine_adapter(
+                .core_clk(c64_clk),.reset(!c64_aresetn),
+                .core_reset_request(c64_core_reset_request),.pause_request(core_menu_pause),
+                .clear_load_error(c64_load_error_clear),
+                .input_code(c64_input_code),.input_value(c64_input_value),
+                .input_valid(c64_input_valid),.input_ready(c64_input_ready),
+                .load_kind(c64_load_kind),.load_offset(c64_load_offset),.load_total(c64_load_total),
+                .load_data(c64_load_data),.load_valid(c64_load_valid),.load_ready(c64_load_ready),
+                .load_first(c64_load_first),.load_last(c64_load_last),.load_epoch(c64_load_epoch),
+                .load_abort(c64_load_abort),.load_abort_epoch(c64_load_abort_epoch),
+                .ready(c64_ready),.load_error(c64_load_error),.rom_loaded(c64_rom_loaded),
+                .video_r(c64_video_r),.video_g(c64_video_g),.video_b(c64_video_b),
+                .video_x(native_x),.video_y(native_y),.video_valid(c64_video_valid),
+                .audio_l(c64_audio_l),.audio_r(c64_audio_r),.audio_valid(c64_audio_valid));
+
+            multitini_fixed_raster_bridge #(.WIDTH(NATIVE_FRAME_WIDTH),.HEIGHT(NATIVE_FRAME_HEIGHT),
+                .COORD_BITS(12)) video_bridge(
+                .source_clk(c64_clk),.source_resetn(c64_aresetn),.source_ready(c64_ready),
+                .source_ready_control(c64_ready_control),
+                .source_r(c64_video_r),.source_g(c64_video_g),.source_b(c64_video_b),
+                .source_x(native_x),.source_y(native_y),.source_valid(c64_video_valid),
+                .control_clk(control_clk),.control_resetn(control_aresetn),
+                .pixel_clk(video_clk),.pixel_resetn(video_aresetn),.shared_pixel_resetn(video_control_resetn),
+                .shared_pixel_running(video_pixel_running),
+                .diagnostic_request(video_enable),.scan_x(video_scan_x),.scan_y(video_scan_y),
+                .vblank_start(video_vblank_start),
+                .display_view_x(capture_display_view_x),.display_view_y(capture_display_view_y),
+                .display_view_width(capture_display_view_width),.display_view_height(capture_display_view_height),
+                .display_scale_num(capture_display_scale_num),.display_scale_den(capture_display_scale_den),
+                .display_pause(display_pause),.display_quiescent(genesis_source_quiescent),
+                .display_h_active(display_h_active),.display_v_active(display_v_active),
+                .display_h_total(display_h_total),.display_v_total(display_v_total),
+                .viewport_x(viewport_x),.viewport_y(viewport_y),
+                .viewport_width(viewport_width),.viewport_height(viewport_height),
+                .machine_active(machine_video_active),.machine_rgb565(machine_video_rgb565),
+                .capture_drops(),.capture_errors(),.read_errors(),.underruns(),
+                .araddr(hp2_araddr),.arlen(hp2_arlen),.arsize(hp2_arsize),.arburst(hp2_arburst),
+                .arvalid(hp2_arvalid),.arready(hp2_arready),
+                .rdata(hp2_rdata),.rresp(hp2_rresp),.rlast(hp2_rlast),.rvalid(hp2_rvalid),.rready(hp2_rready),
+                .awaddr(hp2_awaddr),.awlen(hp2_awlen),.awsize(hp2_awsize),.awburst(hp2_awburst),
+                .awvalid(hp2_awvalid),.awready(hp2_awready),
+                .wdata(hp2_wdata),.wstrb(hp2_wstrb),.wlast(hp2_wlast),.wvalid(hp2_wvalid),.wready(hp2_wready),
+                .bresp(hp2_bresp),.bvalid(hp2_bvalid),.bready(hp2_bready));
+
+            assign c64_video_de=c64_video_valid,c64_video_hsync=0,c64_video_vsync=0;
+            assign c64_media_request_valid=0,c64_media_request_write=0,c64_media_request_id=0;
+            assign c64_media_request_lba=0,c64_media_request_block_count=0,c64_media_request_generation=0;
+            assign c64_media_write_data=0,c64_media_write_data_valid=0,c64_media_write_data_last=0;
+            assign c64_media_state_mounted=0,c64_media_state_dirty=0,c64_media_state_eject_pending=0;
+            assign c64_prg_loaded=0,c64_cart_loaded=0,c64_cart_hardware_type=0,c64_prg_run_busy=0;
+            assign c64_memory_addr=0,c64_memory_write=0,c64_memory_wdata=0,c64_memory_wstrb=0;
+            assign c64_memory_valid=0,c64_memory_ready=0,c64_memory_rdata=0,c64_memory_rvalid=0,c64_memory_fault=0;
+            assign gbc_cart_size=0,gbc_cart_loaded=0;
+            assign gbc_memory_addr=0,gbc_memory_write=0,gbc_memory_wdata=0,gbc_memory_wstrb=0;
+            assign gbc_memory_valid=0,gbc_memory_ready=0,gbc_memory_rdata=0,gbc_memory_rvalid=0,gbc_memory_fault=0;
+            assign psram_a_io=4'hz,psram_b_io=4'hz,psram_ce_n=1'b1,psram_clk=1'b0;
         end else begin : g_supervisor_shell
             // The boot shell owns the shared control/UI/video plumbing but
             // deliberately contains no machine. Every core is loaded from an
@@ -2359,7 +2418,7 @@ module multitini_one_top #(
         end
     endgenerate
 
-    generate if(ACTIVE_MACHINE!=4 && ACTIVE_MACHINE!=5 && ACTIVE_MACHINE!=6 && ACTIVE_MACHINE!=7)begin : g_no_source_ddr
+    generate if(!NATIVE_SOURCE_DDR)begin : g_no_source_ddr
         assign genesis_source_quiescent=1'b1;
     end endgenerate
     // Send each complete physical profile as one coherent payload. Native
@@ -2405,7 +2464,7 @@ module multitini_one_top #(
         assign c64_iec_status=0,c64_iec_rx=0;
         assign c64_ef_journal=0;
     end endgenerate
-    generate if(ACTIVE_MACHINE!=0 && ACTIVE_MACHINE!=4 && ACTIVE_MACHINE!=5 && ACTIVE_MACHINE!=6 && ACTIVE_MACHINE!=7)begin : g_no_machine_ddr
+    generate if(ACTIVE_MACHINE!=0 && !NATIVE_SOURCE_DDR)begin : g_no_machine_ddr
         assign hp2_araddr=0,hp2_arlen=0,hp2_arsize=3'd3,hp2_arburst=2'd1,hp2_arvalid=0,hp2_rready=1;
         assign hp2_awaddr=0,hp2_awlen=0,hp2_awsize=3'd3,hp2_awburst=2'd1,hp2_awvalid=0;
         assign hp2_wdata=0,hp2_wstrb=0,hp2_wlast=0,hp2_wvalid=0,hp2_bready=1;
@@ -2479,8 +2538,7 @@ module multitini_one_top #(
         .WIDE_SLOT_SHIFT(ACTIVE_MACHINE==7 ? 21 : 20),
         .WIDE_CAPTURE_BASE(32'h22000000),.WIDE_OUTPUT_BASE(ACTIVE_MACHINE==7 ? 32'h22800000:32'h22400000),
         .WIDE_HISTORY_BASE(ACTIVE_MACHINE==7 ? 32'h23000000:32'h22800000),.WIDE_HISTORY_BYTES(ACTIVE_MACHINE==7 ? 4194304:2097152),
-        .WIDTH(ACTIVE_MACHINE==1 ? 160 : ACTIVE_MACHINE==3 ? 540 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==7 ? 640 : ACTIVE_MACHINE==5 ? 724 : ACTIVE_MACHINE==6 ? 256 : C64_NTSC_MODE ? 404 : 382),
-        .HEIGHT(ACTIVE_MACHINE==1 ? 144 : ACTIVE_MACHINE==3 ? 720 : ACTIVE_MACHINE==4 ? 240 : ACTIVE_MACHINE==7 ? 512 : ACTIVE_MACHINE==5 ? 496 : ACTIVE_MACHINE==6 ? 240 : C64_NTSC_MODE ? 250 : 270),
+        .WIDTH(NATIVE_FRAME_WIDTH),.HEIGHT(NATIVE_FRAME_HEIGHT),
         .VIEW_X(ACTIVE_MACHINE==1 ? 480 : ACTIVE_MACHINE==3 ? 555 : ACTIVE_MACHINE==4 ? 320 : ACTIVE_MACHINE==7 ? 320 : ACTIVE_MACHINE==5 ? 236 : ACTIVE_MACHINE==6 ? 448 : C64_NTSC_MODE ? 152 : 196),
         .VIEW_Y(ACTIVE_MACHINE==1 ? 108 : ACTIVE_MACHINE==3 ? 0 : ACTIVE_MACHINE==4 ? 60 : ACTIVE_MACHINE==7 ? 28 : ACTIVE_MACHINE==5 ? 44 : ACTIVE_MACHINE==6 ? 60 : C64_NTSC_MODE ? 40 : 0),
         .SCALE_NUM(ACTIVE_MACHINE==1 ? 6 : ACTIVE_MACHINE==3 ? 3 : ACTIVE_MACHINE==7 ? 2 : ACTIVE_MACHINE==5 ? 2 : 4),

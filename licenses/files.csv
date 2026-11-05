@@ -1,4 +1,15 @@
 path,origin,commit,license,status,notes
+third_party/zx-spectrum/upstream/ZX-Spectrum.sv,MiSTer ZX Spectrum,8502d492a3ad89c68413b2f0e2e4cf947dab42ba,GPL-2.0-or-later,reference,Exact upstream machine top; reference only
+third_party/zx-spectrum/upstream/rtl/ula.sv,MiSTer ZX Spectrum,8502d492a3ad89c68413b2f0e2e4cf947dab42ba,GPL-3.0-or-later,imported,Exact upstream ULA with file-local grant
+third_party/zx-spectrum/upstream/rtl/ym2149.sv,MiSTer ZX Spectrum,8502d492a3ad89c68413b2f0e2e4cf947dab42ba,BSD-3-Clause,imported,Exact upstream PSG with file-local grant
+third_party/zx-spectrum/upstream/rtl/T80/T80_Pack.vhd,MiSTer ZX Spectrum,8502d492a3ad89c68413b2f0e2e4cf947dab42ba,BSD-3-Clause,imported,Exact upstream T80 package with file-local grant
+third_party/zx-spectrum/upstream/rtl/T80/T80_ALU.vhd,MiSTer ZX Spectrum,8502d492a3ad89c68413b2f0e2e4cf947dab42ba,BSD-3-Clause,imported,Exact upstream T80 ALU with file-local grant
+third_party/zx-spectrum/upstream/rtl/T80/T80_MCode.vhd,MiSTer ZX Spectrum,8502d492a3ad89c68413b2f0e2e4cf947dab42ba,BSD-3-Clause,imported,Exact upstream T80 microcode with file-local grant
+third_party/zx-spectrum/upstream/rtl/T80/T80_Reg.vhd,MiSTer ZX Spectrum,8502d492a3ad89c68413b2f0e2e4cf947dab42ba,BSD-3-Clause,imported,Exact upstream T80 register bank with file-local grant
+third_party/zx-spectrum/upstream/rtl/T80/T80.vhd,MiSTer ZX Spectrum,8502d492a3ad89c68413b2f0e2e4cf947dab42ba,BSD-3-Clause,imported,Exact upstream T80 CPU with file-local grant
+third_party/zx-spectrum/upstream/rtl/T80/T80pa.vhd,MiSTer ZX Spectrum,8502d492a3ad89c68413b2f0e2e4cf947dab42ba,BSD-3-Clause,imported,Exact upstream T80 two-phase wrapper with file-local grant
+hdl/core/zx_spectrum/ports/ula.sv,MiSTer ZX Spectrum and Multitini One,8502d492a3ad89c68413b2f0e2e4cf947dab42ba,GPL-3.0-or-later,generated,Port exposes native raster counters and initializes timing state
+hdl/core/zx_spectrum/ports/ym2149.sv,MiSTer ZX Spectrum and Multitini One,8502d492a3ad89c68413b2f0e2e4cf947dab42ba,BSD-3-Clause,generated,Port initializes PSG generators on reset
 hdl/sim/tb_c64_ua_stock_bus.sv,Multitini One,,GPL-3.0-only,sim-tested,Original observation-only PAL and NTSC stock IO2 and REU bus trace wrapper
 hdl/sim/tb_c64_cart_coexist.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original streamed cartridge banking and expansion ownership and bidirectional REU DMA regression
 scripts/test_c64_cart_coexist.py,Multitini One,,GPL-3.0-only,source-reviewed,Original source-capturing PAL and NTSC cartridge coexistence regression with negative controls

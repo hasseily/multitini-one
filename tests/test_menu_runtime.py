@@ -33,6 +33,7 @@ PREAMBLE = r'''
 #include "multitini_genesis_interface.h"
 #include "multitini_iigs_interface.h"
 #include "multitini_amiga_interface.h"
+#include "multitini_spectrum_interface.h"
 #include "multitini_nes_interface.h"
 #include "multitini_vectrex_interface.h"
 #include "multitini_tmp102.h"
@@ -825,6 +826,9 @@ static void controller_profiles_and_legacy_migration(void) {
     persistent_settings.legacy_gamepad_pending = 1U;
     assert(supervisor_controller_config(NULL, MT_SUPERVISOR_CORE_ID, 0U, &devices[0], &config));
     assert(persistent_settings.controller_profile_count == 0U && persistent_settings.legacy_gamepad_pending == 1U);
+    assert(supervisor_controller_config(NULL, MT_SPECTRUM_CORE_ID, 0U, &devices[0], &config));
+    assert(config.binding[MT_CONTROL_A] == 1U && persistent_settings.controller_profile_count == 0U &&
+           persistent_settings.legacy_gamepad_pending == 1U);
     assert(supervisor_controller_config(NULL, MT_C64_CORE_ID, 0U, &devices[0], &config));
     assert(config.binding[MT_CONTROL_A] == 5U && persistent_settings.controller_profile_count == 7U);
     assert(mt_supervisor_settings_find_controller(&persistent_settings, MT_IIGS_CORE_ID, &devices[0].identity) != NULL);

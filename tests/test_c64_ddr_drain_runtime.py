@@ -18,10 +18,12 @@ def production_function(source, signature):
 
 PREAMBLE = r'''
 #include "multitini_supervisor.h"
+#include "multitini_amiga_interface.h"
 #include "multitini_c64_interface.h"
 #include "multitini_genesis_interface.h"
 #include "multitini_iigs_interface.h"
 #include "multitini_nes_interface.h"
+#include "multitini_spectrum_interface.h"
 #include "multitini_regs.h"
 #include "pl_loader.h"
 #include <assert.h>
@@ -105,9 +107,10 @@ int main(int argc,char **argv) {
         }
         initial_state();core=0U;
         assert(!core_requires_ddr_drain() && abi_reads==0U && caps_reads==0U);
-        const uint32_t existing[]={MT_GENESIS_CORE_ID,MT_NES_CORE_ID,MT_IIGS_CORE_ID};
-        for(unsigned i=0U;i<sizeof(existing)/sizeof(existing[0]);++i) {
-            core=existing[i];assert(core_requires_ddr_drain());
+        const uint32_t native_sources[]={MT_GENESIS_CORE_ID,MT_NES_CORE_ID,MT_IIGS_CORE_ID,
+            MT_AMIGA_CORE_ID,MT_SPECTRUM_CORE_ID};
+        for(unsigned i=0U;i<sizeof(native_sources)/sizeof(native_sources[0]);++i) {
+            core=native_sources[i];assert(core_requires_ddr_drain());
         }
         assert(abi_reads==0U && caps_reads==0U);
     } else if(strcmp(argv[1],"pcap")==0) {

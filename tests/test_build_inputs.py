@@ -16,7 +16,8 @@ class BuildInputTests(unittest.TestCase):
     def test_hdl_manifest_is_unique_and_complete(self):
         entries = []
         sections = {name: [] for name in
-                    ("common", "c64", "gbc", "vectrex", "genesis", "apple_iigs", "nes", "amiga")}
+                    ("common", "c64", "gbc", "vectrex", "genesis", "apple_iigs", "nes",
+                     "amiga", "amiga_ap68040", "zx_spectrum")}
         languages = {}
         active_section = "common"
         manifest = ROOT / "hdl" / "hdl_sources.txt"
@@ -359,14 +360,14 @@ class BuildInputTests(unittest.TestCase):
             'set machine "SUPERVISOR"',
             "set active_machine 2",
             "MULTITINI_C64_VIDEO_STANDARD must be PAL or NTSC",
-            "MULTITINI_MACHINE must be SUPERVISOR, C64, GBC, VECTREX, GENESIS, APPLE_IIGS, NES, or AMIGA",
+            "MULTITINI_MACHINE must be SUPERVISOR, C64, GBC, VECTREX, GENESIS, APPLE_IIGS, NES, AMIGA, or ZX_SPECTRUM",
             "MULTITINI_GENESIS_PAL must be 0 or 1",
             "GENESIS_PAL_MODE=1'b${genesis_pal_mode}",
             "CONFIG.PCW_USE_S_AXI_HP2 {1}",
             "S_AXI_HP0_0:S_AXI_HP1_0:S_AXI_HP2_0",
             "MULTITINI_ENABLE_GBC_PSRAM",
             "ACTIVE_MACHINE",
-            "proc add_manifest_sources {repo_root machine}",
+            "proc add_manifest_sources {repo_root machine amiga_ap68040}",
             "COMMON C64 GBC",
             'active_section ne "COMMON" && $active_section ne $machine',
             "add_manifest_sources $repo_root $machine",
@@ -393,7 +394,7 @@ class BuildInputTests(unittest.TestCase):
         self.assertIn(
             "CONFIG.ASSOCIATED_BUSIF {S_AXI_HP2_0} \\\n"
             "        CONFIG.ASSOCIATED_RESET {c64_aresetn}] $c64_clk", iigs)
-        # Genesis and NES keep their HP2 source rings on the control clock.
+        # Genesis, NES and Spectrum keep HP2 source rings on the control clock.
         self.assertIn(
             "CONFIG.ASSOCIATED_BUSIF {M_AXI_GP0_0:S_AXI_HP0_0:S_AXI_HP1_0:S_AXI_HP2_0:S_AXI_HP3_0} \\\n"
             "        CONFIG.ASSOCIATED_RESET {control_aresetn}] $control_clk", other)
@@ -410,9 +411,12 @@ class BuildInputTests(unittest.TestCase):
         )[1].split("\n\n", 1)[0]
         self.assertIn('if {$machine eq "C64"} {\n'
                       '    connect_bd_net [get_bd_pins $c64_wiz/clk_out1] [get_bd_pins $ps/S_AXI_HP3_ACLK]\n'
-                      '    connect_bd_net [get_bd_pins $c64_wiz/clk_out2] $c64_cpu_clk\n'
                       '} else {\n'
                       '    connect_bd_net [get_bd_pins $ps/FCLK_CLK0] [get_bd_pins $ps/S_AXI_HP3_ACLK]', script)
+        self.assertIn('if {$machine eq "C64" || $amiga_ap68040} {\n'
+                      '    connect_bd_net [get_bd_pins $c64_wiz/clk_out2] $c64_cpu_clk\n'
+                      '} else {\n'
+                      '    connect_bd_net [get_bd_pins $c64_wiz/clk_out1] $c64_cpu_clk', script)
         self.assertNotIn("S_AXI_HP2_ACLK", fclk_net.split("connect_bd_net", 1)[0])
         self.assertEqual(script.count("S_AXI_HP2_ACLK"), 2)
 

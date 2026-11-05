@@ -8,6 +8,7 @@
 #include "multitini_nes_content.h"
 #include "multitini_iigs_interface.h"
 #include "multitini_amiga_content.h"
+#include "multitini_spectrum_interface.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -84,6 +85,8 @@ mt_content_type_t mt_content_classify_for_core(uint32_t core_id, const char *pat
 {
     const mt_content_type_t type = mt_content_classify(path);
     const char *extension;
+    if (core_id == MT_SPECTRUM_CORE_ID && type == MT_CONTENT_TAP_FUTURE)
+        return MT_CONTENT_SPECTRUM_TAP;
     if (type != MT_CONTENT_UNKNOWN || path == NULL)
         return type;
     extension = strrchr(path, '.');
@@ -103,7 +106,8 @@ bool mt_content_supported_first_release(mt_content_type_t type)
            type == MT_CONTENT_VECTREX_BASIC || type == MT_CONTENT_VECTREX_OVERLAY ||
            type == MT_CONTENT_GENESIS_CART || type == MT_CONTENT_GENESIS_SMD ||
            type == MT_CONTENT_IIGS_HDD || type == MT_CONTENT_IIGS_WOZ ||
-           type == MT_CONTENT_IIGS_FLOPPY || type == MT_CONTENT_AMIGA_ADF || type == MT_CONTENT_AMIGA_HDF;
+           type == MT_CONTENT_IIGS_FLOPPY || type == MT_CONTENT_AMIGA_ADF || type == MT_CONTENT_AMIGA_HDF ||
+           type == MT_CONTENT_SPECTRUM_TAP;
 }
 
 bool mt_content_may_write_first_release(mt_content_type_t type)
@@ -135,9 +139,27 @@ const char *mt_content_type_name(mt_content_type_t type)
     case MT_CONTENT_IIGS_FLOPPY: return "Apple IIgs sector floppy";
     case MT_CONTENT_AMIGA_ADF: return "Amiga DD ADF floppy";
     case MT_CONTENT_AMIGA_HDF: return "Amiga IDE hard disk";
+    case MT_CONTENT_SPECTRUM_TAP: return "ZX Spectrum TAP";
     case MT_CONTENT_UNKNOWN: return "unknown";
     }
     return "unknown";
+}
+
+static mt_content_validation_t inspect_spectrum_tap(const uint8_t *data, size_t size,
+                                                     mt_content_info_t *info)
+{
+    size_t offset = 0U;
+    if (size < 3U) return MT_CONTENT_TOO_SMALL;
+    if (size > MT_SPECTRUM_TAP_MAX_BYTES) return MT_CONTENT_WRONG_SIZE;
+    while (offset < size) {
+        if (size - offset < 2U) return MT_CONTENT_BAD_STRUCTURE;
+        const size_t length = data[offset] | ((size_t)data[offset + 1U] << 8);
+        offset += 2U;
+        if (length == 0U || length > size - offset) return MT_CONTENT_BAD_STRUCTURE;
+        offset += length;
+    }
+    info->payload_size = size;
+    return MT_CONTENT_VALID;
 }
 
 static uint16_t read_be16(const uint8_t *data)
@@ -372,6 +394,9 @@ mt_content_validation_t mt_content_inspect(mt_content_type_t type,
     case MT_CONTENT_AMIGA_HDF:
         status=mt_amiga_media_validate(type==MT_CONTENT_AMIGA_ADF ? 0U:2U,size);
         if(status==MT_CONTENT_VALID)result.payload_size=size;
+        break;
+    case MT_CONTENT_SPECTRUM_TAP:
+        status = inspect_spectrum_tap(data, size, &result);
         break;
     case MT_CONTENT_TAP_FUTURE:
     case MT_CONTENT_IIGS_HDD:

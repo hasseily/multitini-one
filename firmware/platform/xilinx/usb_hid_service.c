@@ -17,6 +17,7 @@
 #include "multitini_nes_hid_input.h"
 #include "multitini_iigs_hid_input.h"
 #include "multitini_amiga_hid_input.h"
+#include "multitini_spectrum_interface.h"
 #include "usb_config.h"
 #include "usbh_core.h"
 #include "usbh_hid.h"
@@ -160,6 +161,7 @@ static uint8_t g_menu_navigation_guard[MT_GAMEPAD_SLOTS];
 static bool g_menu_capture;
 static bool g_gamepad_preview;
 static mt_c64_hid_input_t g_c64_input;
+static mt_c64_keyboard_layout_t g_saved_c64_keyboard_layout;
 static mt_gameboy_hid_input_t g_gameboy_input;
 static mt_vectrex_hid_input_t g_vectrex_input;
 static mt_genesis_hid_input_t g_genesis_input;
@@ -323,7 +325,8 @@ static void resolve_controller_players(void)
         /* C64's default first controller uses its selected joystick port. */
         for (unsigned candidate = 0U; candidate < players; ++candidate) {
             unsigned player = candidate;
-            if (g_active_core_id != MT_AMIGA_CORE_ID && g_active_core_id != MT_IIGS_CORE_ID && g_active_core_id != MT_GBC_CORE_ID && g_active_core_id != MT_GENESIS_CORE_ID && g_active_core_id != MT_NES_CORE_ID &&
+            if (g_active_core_id != MT_SPECTRUM_CORE_ID &&
+                g_active_core_id != MT_AMIGA_CORE_ID && g_active_core_id != MT_IIGS_CORE_ID && g_active_core_id != MT_GBC_CORE_ID && g_active_core_id != MT_GENESIS_CORE_ID && g_active_core_id != MT_NES_CORE_ID &&
                 g_active_core_id != MT_VECTREX_CORE_ID && g_c64_input.joystick_port == 2U)
                 player = 1U - candidate;
             if ((occupied & (1U << player)) == 0U) {
@@ -1870,6 +1873,13 @@ void usb_hid_service_set_active_core(uint32_t core_id)
     block_amiga_reset();
     g_core_ready = 0U;
     clear_relative_inputs();
+    /* Spectrum uses the shared Set 2 event path with PC key positions. */
+    if (core_id == MT_SPECTRUM_CORE_ID && g_active_core_id != MT_SPECTRUM_CORE_ID) {
+        g_saved_c64_keyboard_layout = g_c64_input.keyboard_layout;
+        g_c64_input.keyboard_layout = MT_C64_KEYBOARD_LAYOUT_PS2_PC;
+    } else if (core_id != MT_SPECTRUM_CORE_ID && g_active_core_id == MT_SPECTRUM_CORE_ID) {
+        g_c64_input.keyboard_layout = g_saved_c64_keyboard_layout;
+    }
     g_active_core_id = core_id;
     for (uint8_t slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot) {
         g_release_guard[slot] = pad_active(&g_gamepads.raw[slot]) ? 1U : 0U;
@@ -1998,6 +2008,7 @@ uint8_t usb_hid_service_joystick_port(void)
 
 int usb_hid_service_set_symbolic_keyboard(bool enabled)
 {
+    if (g_active_core_id == MT_SPECTRUM_CORE_ID) return -1;
     return mt_c64_hid_set_keyboard_layout(
         &g_c64_input,
         enabled ? MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC

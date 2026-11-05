@@ -6,6 +6,7 @@
 #include "multitini_gameboy_interface.h"
 #include "multitini_genesis_interface.h"
 #include "multitini_iigs_interface.h"
+#include "multitini_spectrum_interface.h"
 #include "multitini_regs.h"
 
 #include <stdio.h>
@@ -636,6 +637,28 @@ static void test_amiga_resolution(void)
     mt_core_frontend_apply(&frontend,&state,&view);row=core_row(&view,"CPU speed");
     check(row->enabled && strcmp(row->value,"56.75 MHz")==0,"AP68040 Options shows the selected 56.75 MHz");
 }
+static void test_spectrum_profile(void)
+{
+    mt_core_frontend_t frontend;
+    mt_core_frontend_state_t state = {.core_id = MT_SPECTRUM_CORE_ID, .services_ready = true};
+    mt_menu_view_t view = {0};
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(view.media_item_count == 2U && view.media_items[0].enabled &&
+          view.media_items[0].action == MT_MENU_ACTION_SPECTRUM_RELOAD &&
+          !view.media_items[1].enabled, "Spectrum exposes ROM retry before tape loading");
+    state.spectrum_ready = true;
+    state.spectrum_tape_name = "Games/Example.TAP";
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(view.media_items[1].enabled &&
+          strcmp(view.media_items[1].value, state.spectrum_tape_name) == 0 &&
+          mt_core_frontend_browser_folders(MT_SPECTRUM_CORE_ID, MT_MENU_BROWSER_PROGRAM) &&
+          mt_core_frontend_accepts_content(MT_SPECTRUM_CORE_ID, MT_MENU_BROWSER_PROGRAM,
+                                          MT_CONTENT_SPECTRUM_TAP) &&
+          !mt_core_frontend_accepts_content(MT_SPECTRUM_CORE_ID, MT_MENU_BROWSER_PROGRAM,
+                                           MT_CONTENT_TAP_FUTURE),
+          "Spectrum browser displays only its TAP format and keeps nested paths");
+}
+
 int main(void)
 {
     test_profile_lifecycle();
@@ -649,6 +672,7 @@ int main(void)
     test_iigs_drive_formats();
     test_iigs_card_speed();
     test_amiga_resolution();
+    test_spectrum_profile();
     puts("Core front-end profile tests passed");
     return 0;
 }

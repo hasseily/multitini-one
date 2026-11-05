@@ -23,6 +23,7 @@ PREAMBLE = r'''
 #include "multitini_genesis_interface.h"
 #include "multitini_iigs_interface.h"
 #include "multitini_amiga_interface.h"
+#include "multitini_spectrum_interface.h"
 #include "multitini_nes_interface.h"
 #define MT_DEVCFG_MULTIBOOT 1U
 #define MT_DEVCFG_MULTIBOOT_MASK 0x1fffU

@@ -5,6 +5,11 @@ It runs C64, Game Boy Color, Vectrex, Genesis / Mega Drive, Apple IIgs, NES and 
 machines through a shared supervisor, menu, input, audio, storage and
 core-loading system. It does not use an Apple II host.
 
+The ZX Spectrum development core adds PAL 48K and 128K modes with USB
+keyboard, Kempston joystick and read-only TAP playback. Supply the ROM
+separately using the [Spectrum ROM setup](sd/multitini/cores/zx-spectrum/roms/readme.txt).
+See [Spectrum integration](docs/ZX_SPECTRUM.md) for build and test status.
+
 M0.8.1 fixes Amiga disk-swap stalls, mounts bare AmigaDOS and PFS3 HDF
 partitions, and shows a brief confirmation after saving a screenshot.
 See the [M0.8.1 release notes](docs/RELEASE_M081.md) for installation and

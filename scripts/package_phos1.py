@@ -24,6 +24,8 @@ AMIGA_CORE_SPEC = ("amiga", "Amiga", "0x414D4947",
 AMIGA_AGA_VARIANT = ("aga-pal", "Amiga 1200 AGA PAL", "amiga-aga")
 AMIGA_040_VARIANT = ("aga-040-pal", "Amiga 1200 AGA + 68040", "amiga-aga-040")
 AMIGA_ROM_README = Path("sd/multitini/cores/amiga/roms/readme.txt")
+SPECTRUM_CORE_SPEC = ("zx-spectrum", "ZX Spectrum", "0x5A585350",
+                      [("pal", "ZX Spectrum 48K / 128K PAL", "zx-spectrum")])
 GS_GUIDES = ("APPLE_IIGS_HARDWARE_TEST.md", "APPLE_IIGS_CPU_VALIDATION.md",
              "APPLE_IIGS_PLAN.md", "APPLE_IIGS_ACCELERATION.md", "APPLE_IIGS_SMARTPORT.md",
              "APPLE_IIGS_LEGACY_VIDEO.md",
@@ -211,6 +213,18 @@ def prepare_amiga_content(out):
         encoding="utf-8")
 
 
+def prepare_spectrum_content(out):
+    """Stage instructions for user-supplied ROMs and read-only tapes."""
+    core = Path("sd/multitini/cores/zx-spectrum")
+    readme = core / "roms/readme.txt"
+    package.copy(ROOT / readme, out / readme)
+    media = out / core / "media"
+    media.mkdir(parents=True, exist_ok=True)
+    (media / "README.txt").write_text(
+        "Place your ZX Spectrum TAP images here. Nested directories are supported.\n",
+        encoding="utf-8")
+
+
 def main():
     # Large evidence inventories exceed Windows' command-line limit. argparse
     # response files keep each argument on its own line, including spaced paths.
@@ -227,6 +241,8 @@ def main():
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--include-apple-iigs", action="store_true", help="Include the GS source/machine and runtime HDD boot ROM")
     parser.add_argument("--include-nes", action="store_true", help="Include the NES machine and empty cartridge directory")
+    parser.add_argument("--include-zx-spectrum", action="store_true",
+                        help="Include the timing-qualified ZX Spectrum image and ROM/TAP setup directories")
     parser.add_argument("--include-amiga", action="store_true", help="Include the timing-qualified Amiga ECS image and empty ROM/media directories")
     parser.add_argument("--include-amiga-aga", action="store_true",
                         help="Include the Amiga 600 ECS PAL and Amiga 1200 AGA PAL variants")
@@ -251,6 +267,8 @@ def main():
         MATRIX['apple-iigs']=('APPLE_IIGS',False,False)
     if args.include_nes:
         MATRIX['nes']=('NES',False,False)
+    if args.include_zx_spectrum:
+        MATRIX['zx-spectrum'] = ('ZX_SPECTRUM', False, False)
     args.include_amiga_aga = args.include_amiga_aga or args.include_amiga_aga_040
     args.include_amiga = args.include_amiga or args.include_amiga_aga
     if args.include_amiga:
@@ -279,7 +297,7 @@ def main():
     identity = bytes.fromhex(args.build_id).decode("ascii", errors="replace")
     if not re.fullmatch(r"[A-Z0-9]+", identity):
         identity = "0x" + args.build_id
-    if args.include_apple_iigs or args.include_nes or args.include_amiga:
+    if args.include_apple_iigs or args.include_nes or args.include_amiga or args.include_zx_spectrum:
         version = re.search(r'^#define MT_FIRMWARE_VERSION\s+"([^"]+)"',
                             (ROOT / "firmware/include/multitini_version.h").read_text(), re.M)
         package.require(version is not None, "Missing firmware release version")
@@ -371,6 +389,13 @@ def main():
             delivery_guides["docs/" + name] = package.describe(target)
         package.copy(ROOT / "third_party/nes/upstream/COPYING", out / "licenses/nes/COPYING")
         package.copy(ROOT / "third_party/nes/T65-NOTICE.txt", out / "licenses/nes/T65-NOTICE.txt")
+    if args.include_zx_spectrum:
+        core_specs += (SPECTRUM_CORE_SPEC,)
+        prepare_spectrum_content(out)
+        for guide in sorted((ROOT / "docs").glob("ZX_SPECTRUM*.md")):
+            target = out / "docs" / guide.name
+            package.copy(guide, target)
+            delivery_guides["docs/" + guide.name] = package.describe(target)
     if args.include_amiga:
         ident, label, core_id, variants = AMIGA_CORE_SPEC
         variants = variants.copy()
@@ -446,6 +471,8 @@ def main():
         f"Selected cores: C64 {'PAL/NTSC' if args.include_c64_ntsc else 'PAL'}, PSRAM GBC, Vectrex, Genesis NTSC/PAL.\n"
         + ("NES adds iNES cartridge loading through the shared PSRAM service.\n"
            "No NES BIOS or cartridges are included; see docs/NES_PLAN.md.\n" if args.include_nes else "") +
+        ("ZX Spectrum provides PAL 48K / 128K modes and read-only TAP playback.\n"
+         "Supply spectrum.rom and TAP files separately.\n" if args.include_zx_spectrum else "") +
         ("Amiga: Amiga 600 ECS PAL supplies stock/accelerated CPU modes, 2 MiB chip RAM, 8 MiB fast RAM,\n"
          "two DD floppy drives and two IDE disks. See docs/AMIGA_PLAN.md.\n"
          "Kickstart is a separate user-owned input.\n" if args.include_amiga else "") +

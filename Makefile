@@ -14,6 +14,7 @@ generate:
 	$(PYTHON) scripts/port_gameboy_core.py
 	$(PYTHON) scripts/port_genesis_core.py
 	$(PYTHON) scripts/port_nes_core.py
+	$(PYTHON) scripts/port_zx_spectrum_core.py
 
 check-generated:
 	$(PYTHON) scripts/generate_registers.py --check
@@ -24,6 +25,7 @@ check-generated:
 	$(PYTHON) scripts/port_gameboy_core.py --check
 	$(PYTHON) scripts/port_genesis_core.py --check
 	$(PYTHON) scripts/port_nes_core.py --check
+	$(PYTHON) scripts/port_zx_spectrum_core.py --check
 
 repo-check:
 	$(PYTHON) scripts/check_repo.py

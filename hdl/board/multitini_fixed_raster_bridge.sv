@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns/1ps
-// Complete NES source frames live in a four-slot DDR ring on HP2.
+// Complete native source frames live in a four-slot DDR ring on HP2.
 // Keep the displayed slot owned until a later publication is acknowledged.
 // Source-field repeats/drops absorb source/output rate differences; the shared
 // ordered effects pipeline still consumes the output at its normal cadence.
-module multitini_nes_video_bridge (
+module multitini_fixed_raster_bridge #(
+    parameter integer WIDTH=256, HEIGHT=240, COORD_BITS=8
+)(
     input wire source_clk,source_resetn,source_ready,source_ready_control,
     input wire source_valid,
     input wire [7:0] source_r,source_g,source_b,
-    input wire [7:0] source_x,
-    input wire [7:0] source_y,
+    input wire [COORD_BITS-1:0] source_x,
+    input wire [COORD_BITS-1:0] source_y,
     input wire control_clk,control_resetn,
     input wire pixel_clk,pixel_resetn,shared_pixel_resetn,shared_pixel_running,
     input wire diagnostic_request,
@@ -40,7 +42,7 @@ module multitini_nes_video_bridge (
     wire [15:0] normalized_rgb;
     wire normalized_start;
     wire [31:0] malformed_frames;
-    multitini_nes_video_normalizer normalizer(
+    multitini_fixed_raster_normalizer #(.WIDTH(WIDTH),.HEIGHT(HEIGHT),.COORD_BITS(COORD_BITS)) normalizer(
         .clk(source_clk),.resetn(source_resetn),.ready(source_ready),
         .pixel_ce(source_valid),.pixel_x(source_x),.pixel_y(source_y),
         .red(source_r),.green(source_g),.blue(source_b),
@@ -79,10 +81,10 @@ module multitini_nes_video_bridge (
     // Wait until the registered enable has fallen before acknowledging drain;
     // otherwise a capture can re-arm while the display clock is being stopped.
     assign display_quiescent=!enabled && capture_quiet && reader_quiet;
-    multitini_video_capture #(.WIDTH(256),.HEIGHT(240),.VIEW_X(0),.VIEW_Y(0),
+    multitini_video_capture #(.WIDTH(WIDTH),.HEIGHT(HEIGHT),.VIEW_X(0),.VIEW_Y(0),
         .SCALE_NUM(1),.SCALE_DEN(1),.BASE(32'h23000000),.SHARED_PIXEL_RESET(1'b1),
         .ABORT_INCOMPLETE_ON_VBLANK(1'b1)) capture_i(
-        .display_view_x(12'd0),.display_view_y(12'd0),.display_view_width(12'd256),.display_view_height(12'd240),
+        .display_view_x(12'd0),.display_view_y(12'd0),.display_view_width(12'(WIDTH)),.display_view_height(12'(HEIGHT)),
         .display_scale_num(4'd1),.display_scale_den(4'd1),
         .clk(control_clk),.resetn(control_resetn),.enable(enabled),.consumer(consumer),
         .producer(producer),.drops(capture_drops),.errors(capture_errors),.busy(),.quiescent(capture_quiet),.pixel_running(),
@@ -92,7 +94,7 @@ module multitini_nes_video_bridge (
         .awaddr(awaddr),.awlen(awlen),.awsize(awsize),.awburst(awburst),.awvalid(awvalid),.awready(awready),
         .wdata(wdata),.wstrb(wstrb),.wlast(wlast),.wvalid(wvalid),.wready(wready),
         .bresp(bresp),.bvalid(bvalid),.bready(bready));
-    multitini_video_frame_reader #(.DYNAMIC_DISPLAY(1'b1),.WIDTH(256),.HEIGHT(240),
+    multitini_video_frame_reader #(.DYNAMIC_DISPLAY(1'b1),.WIDTH(WIDTH),.HEIGHT(HEIGHT),
         .VIEW_X(448),.VIEW_Y(60),.SCALE_NUM(4),.SCALE_DEN(1),.BASE(32'h23000000),
         .SHARED_PIXEL_RESET(1'b1),.SHARED_PIXEL_LIVENESS(1'b1)) reader_i(
         .display_view_x(display_view_x),.display_view_y(display_view_y),

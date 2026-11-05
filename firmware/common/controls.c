@@ -7,6 +7,7 @@
 #include "multitini_vectrex_interface.h"
 #include "multitini_iigs_interface.h"
 #include "multitini_amiga_interface.h"
+#include "multitini_spectrum_interface.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -36,6 +37,7 @@ uint32_t mt_controls_action_mask(uint32_t core)
     case MT_VECTREX_CORE_ID: return UINT16_C(0x00ff) | BIT(MT_CONTROL_AXIS_X) | BIT(MT_CONTROL_AXIS_Y) | menu;
     case MT_IIGS_CORE_ID: return UINT16_C(0x007f) | BIT(MT_CONTROL_AXIS_X) | BIT(MT_CONTROL_AXIS_Y) | menu;
     case MT_AMIGA_CORE_ID: return UINT16_C(0x003f) | menu;
+    case MT_SPECTRUM_CORE_ID: return directions | BIT(MT_CONTROL_A) | menu;
     default: return core == 0U ? menu : 0U;
     }
 }
@@ -57,6 +59,7 @@ const char *mt_controls_action_name(uint32_t core, unsigned action)
         return vec[action - MT_CONTROL_A];
     }
     if (core == MT_GENESIS_CORE_ID && action == MT_CONTROL_SELECT) return "Mode";
+    if (core == MT_SPECTRUM_CORE_ID && action == MT_CONTROL_A) return "Fire";
     return names[action];
 }
 

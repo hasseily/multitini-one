@@ -47,6 +47,7 @@ def main():
             raise RuntimeError(name + " failed")
         if name == "run":
             if ("PASS display geometry: 2304 cases;" not in result.stdout or
+                "PASS Spectrum geometry: 344x280 raster" not in result.stdout or
                 result.stdout.count("PASS geometry profiles:512 selections") != 3 or
                 "PASS wide geometry:30 full-canvas cases" not in result.stdout or
                 "PASS virtual capture:6 fullwideAuto modes,120 selections,118 bit-identical" not in result.stdout):
@@ -87,7 +88,7 @@ def main():
     if before != after:
         raise RuntimeError("Geometry inputs changed during the run")
     (build / "validation.json").write_text(json.dumps({
-        "passed": True, "legacy_geometry_cases": 2304, "profile_selections": 1536,
+        "passed": True, "legacy_geometry_cases": 2304, "spectrum_geometry_cases": 16, "profile_selections": 1536,
         "wide_full_canvas_cases": 30, "wide_pixel_seed_checks": pixel_checks,
         "virtual_capture_modes": 6, "virtual_capture_selections": 120,
         "virtual_capture_bit_identical_physical_bundles": 118,

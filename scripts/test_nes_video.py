@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Exercise the complete NES native raster and its shared DDR video transport."""
+"""Exercise the NES raster and the NES/Spectrum shared DDR video transport."""
 from pathlib import Path
 import hashlib
 import json
@@ -26,8 +26,8 @@ def main():
         'hdl/common/multitini_async_mailbox.sv',
         'hdl/common/multitini_video_capture.sv',
         'hdl/common/multitini_video_frame_reader.sv',
-        'hdl/board/multitini_nes_video_normalizer.sv',
-        'hdl/board/multitini_nes_video_bridge.sv',
+        'hdl/board/multitini_fixed_raster_normalizer.sv',
+        'hdl/board/multitini_fixed_raster_bridge.sv',
         'hdl/sim/video_fifo_model.sv',
         'hdl/sim/xilinx_primitives.sv',
     ]
@@ -37,34 +37,27 @@ def main():
         return {p: hashlib.sha256((ROOT/p).read_bytes()).hexdigest() for p in tracked}
     before = hashes()
     checks = []
-    for name in ('normalizer', 'bridge'):
+    for name in ('normalizer', 'bridge', 'zx-spectrum-bridge'):
         directory = build / name
         directory.mkdir(parents=True, exist_ok=True)
-        top = 'tb_nes_video_' + name
+        top = 'tb_nes_video_normalizer' if name == 'normalizer' else 'tb_nes_video_bridge'
         bench = ROOT / ('hdl/sim/' + top + '.sv')
-        if name == 'normalizer':
-            executable = directory / 'video.vvp'
-            commands = [
-                ('compile', [tool('iverilog'), '-g2012', '-s', top, '-o', str(executable),
-                             str(ROOT/sources[4]), str(bench)]),
-                ('simulate', [tool('vvp'), str(executable)]),
-            ]
+        parameters = ['-GWIDTH=344', '-GHEIGHT=280', '-GCOORD_BITS=12'] if name == 'zx-spectrum-bridge' else []
+        obj = directory/'obj'
+        executable = obj/(('V'+top)+('.exe' if os.name == 'nt' else ''))
+        commands = [
+            ('generate', [tool('verilator_bin') if os.name == 'nt' else tool('verilator'),
+                         '--cc', '--exe', '--main', '--timing', '--top-module', top,
+                         '-Wno-fatal', '--Mdir', str(obj), *parameters,
+                         *[str(ROOT/p) for p in sources], str(bench)]),
+        ]
+        if os.name == 'nt':
+            include = runtime.parent/'share/verilator/include'
+            # Source generation precedes expanding the generated C++ list.
+            commands.append(('compile', None))
         else:
-            executable = directory/'obj'/(('V'+top)+('.exe' if os.name == 'nt' else ''))
-            obj = directory/'obj'
-            commands = [
-                ('generate', [tool('verilator_bin') if os.name == 'nt' else tool('verilator'),
-                             '--cc', '--exe', '--main', '--timing', '--top-module', top,
-                             '-Wno-fatal', '--Mdir', str(obj),
-                             *[str(ROOT/p) for p in sources], str(bench)]),
-            ]
-            if os.name == 'nt':
-                include = runtime.parent/'share/verilator/include'
-                # Source generation precedes expanding the generated C++ list.
-                commands.append(('compile', None))
-            else:
-                commands.append(('compile', ['make', '-C', str(obj), '-f', 'V'+top+'.mk', '-j8']))
-            commands.append(('simulate', [str(executable)]))
+            commands.append(('compile', ['make', '-C', str(obj), '-f', 'V'+top+'.mk', '-j8']))
+        commands.append(('simulate', [str(executable)]))
         for stage, command in commands:
             if command is None:
                 command = [tool('g++'), '-std=c++20', '-O1', '-pthread', '-DVL_TIME_CONTEXT',
@@ -75,9 +68,9 @@ def main():
             result = subprocess.run(guard+command, cwd=directory, stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, text=True, timeout=300, env=environment)
             (directory/(stage+'.log')).write_text(result.stdout)
-            if result.returncode or (stage == 'simulate' and 'PASS NES' not in result.stdout):
+            if result.returncode or (stage == 'simulate' and 'PASS ' not in result.stdout):
                 print(result.stdout[-18000:])
-                raise RuntimeError(f'NES video {name}/{stage} failed')
+                raise RuntimeError(f'Native video {name}/{stage} failed')
             if stage == 'simulate':
                 print('\n'.join(line for line in result.stdout.splitlines() if 'PASS' in line), flush=True)
         checks.append(name)

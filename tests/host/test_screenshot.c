@@ -5,6 +5,7 @@
 #include "multitini_gameboy_interface.h"
 #include "multitini_genesis_interface.h"
 #include "multitini_iigs_interface.h"
+#include "multitini_spectrum_interface.h"
 #include "multitini_video_frame.h"
 #include "multitini_vectrex_interface.h"
 #include <assert.h>
@@ -68,8 +69,8 @@ static void full_screen_ui(void)
 }
 static void manual_geometry(void)
 {
-    static const uint32_t cores[]={MT_C64_CORE_ID,MT_GBC_CORE_ID,MT_VECTREX_CORE_ID,MT_GENESIS_CORE_ID,MT_IIGS_CORE_ID,MT_IIGS_CORE_ID,MT_AMIGA_CORE_ID,MT_AMIGA_CORE_ID};
-    static const unsigned widths[]={382U,160U,540U,320U,640U,724U,720U,640U},heights[]={270U,144U,720U,240U,400U,496U,576U,512U};
+    static const uint32_t cores[]={MT_C64_CORE_ID,MT_GBC_CORE_ID,MT_VECTREX_CORE_ID,MT_GENESIS_CORE_ID,MT_IIGS_CORE_ID,MT_IIGS_CORE_ID,MT_AMIGA_CORE_ID,MT_AMIGA_CORE_ID,MT_SPECTRUM_CORE_ID};
+    static const unsigned widths[]={382U,160U,540U,320U,640U,724U,720U,640U,344U},heights[]={270U,144U,720U,240U,400U,496U,576U,512U,280U};
     static const unsigned screen_w[]={1920U,1024U,1200U,1280U,1360U,1680U};
     static const unsigned screen_h[]={1080U,768U,800U,1024U,768U,1050U};
     mt_screenshot_scene_t scene={0};scene.pixels=source;
@@ -110,6 +111,14 @@ static void manual_geometry(void)
     assert(mt_screenshot_render_row(&scene,0U,row) && row[0]==source[1U] && row[1023U]==source[342U]);
     assert(mt_screenshot_render_row(&scene,767U,row) && row[0]==source[256U*343U+1U]);
     scene.video_multiplier=5U;assert(!mt_screenshot_dimensions(&scene,&w,&h));
+
+    scene.core_id=MT_SPECTRUM_CORE_ID;scene.width=344U;scene.height=280U;scene.video_multiplier=0U;
+    static const unsigned spectrum_scale[]={3U,2U,2U,3U,2U,3U};
+    for (uint8_t mode=0U;mode<6U;++mode) {
+        scene.display_mode=mode;
+        assert(mt_screenshot_dimensions(&scene,&w,&h) &&
+               w==344U*spectrum_scale[mode] && h==280U*spectrum_scale[mode]);
+    }
 }
 static void iigs_geometry(void)
 {

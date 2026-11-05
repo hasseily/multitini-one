@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "multitini_content.h"
 #include "multitini_gameboy_interface.h"
+#include "multitini_c64_interface.h"
+#include "multitini_spectrum_interface.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -43,6 +45,9 @@ int main(void)
     assert(mt_content_classify("flux.G64") == MT_CONTENT_G64);
     assert(mt_content_classify("cart.crt") == MT_CONTENT_CRT);
     assert(mt_content_classify("future.tap") == MT_CONTENT_TAP_FUTURE);
+    assert(mt_content_classify_for_core(MT_C64_CORE_ID, "future.tap") == MT_CONTENT_TAP_FUTURE);
+    assert(mt_content_classify_for_core(MT_SPECTRUM_CORE_ID, "nested/game.TAP") ==
+           MT_CONTENT_SPECTRUM_TAP);
     assert(mt_content_classify("future.d81") == MT_CONTENT_D81_FUTURE);
     assert(mt_content_classify("classic.GB") == MT_CONTENT_GB_CART);
     assert(mt_content_classify("color.gbc") == MT_CONTENT_GBC_CART);
@@ -58,6 +63,16 @@ int main(void)
     assert(strcmp(mt_content_type_name(MT_CONTENT_CRT), "CRT") == 0);
     assert(mt_content_supported_first_release(MT_CONTENT_GBC_CART));
     assert(!mt_content_may_write_first_release(MT_CONTENT_GBC_CART));
+
+    uint8_t tape[] = {3U, 0U, 0xFFU, 0x11U, 0xEEU, 2U, 0U, 0U, 0U};
+    assert(mt_content_inspect(MT_CONTENT_SPECTRUM_TAP, tape, sizeof(tape), &info) ==
+           MT_CONTENT_VALID);
+    assert(info.payload_size == sizeof(tape) && info.payload_offset == 0U && !info.writable);
+    assert(mt_content_inspect(MT_CONTENT_SPECTRUM_TAP, tape, sizeof(tape) - 1U, &info) ==
+           MT_CONTENT_BAD_STRUCTURE);
+    tape[5] = 0U;
+    assert(mt_content_inspect(MT_CONTENT_SPECTRUM_TAP, tape, sizeof(tape), &info) ==
+           MT_CONTENT_BAD_STRUCTURE);
 
     assert(mt_content_inspect(MT_CONTENT_PRG, prg, sizeof(prg), &info) ==
            MT_CONTENT_VALID);

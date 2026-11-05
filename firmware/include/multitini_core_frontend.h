@@ -61,6 +61,9 @@ typedef struct {
     bool amiga_display_available,amiga_display_pending;
     uint8_t amiga_display_requested,amiga_display_applied,amiga_display_mode_count;
     const char *amiga_display_status;
+    bool spectrum_ready;
+    const char *spectrum_boot_error;
+    const char *spectrum_tape_name;
 } mt_core_frontend_state_t;
 
 typedef struct {

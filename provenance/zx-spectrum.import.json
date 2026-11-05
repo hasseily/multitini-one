@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "source": "https://github.com/MiSTer-devel/ZX-Spectrum_MISTer.git",
+  "commit": "8502d492a3ad89c68413b2f0e2e4cf947dab42ba",
+  "purpose": "ULA, Z80 and AY PSG. ZX-Spectrum.sv is reference only.",
+  "exclusions": [
+    "MiSTer platform and generated IP",
+    "system ROMs, media and bitstreams",
+    "NonCommercial upstream keyboard",
+    "other machine variants and expansions"
+  ],
+  "files": [
+    {
+      "path": "ZX-Spectrum.sv",
+      "sha256": "397c0fc13077e01253ee9ce0a07135da248c4f9360a48d3619880a315d144d37",
+      "license": "GPL-2.0-or-later",
+      "license_evidence": "File-local grant"
+    },
+    {
+      "path": "rtl/ula.sv",
+      "sha256": "f0cdd467bce101d7ef4ce2bd0659c8aae8f555c1cf69a6b66f3fb65b117453be",
+      "license": "GPL-3.0-or-later",
+      "license_evidence": "File-local grant"
+    },
+    {
+      "path": "rtl/ym2149.sv",
+      "sha256": "3a5cf477c97f35530b7080fd8412f6aa86bd40c918d3c1d010e8b21fe605a570",
+      "license": "BSD-3-Clause",
+      "license_evidence": "File-local grant"
+    },
+    {
+      "path": "rtl/T80/T80_Pack.vhd",
+      "sha256": "646954fa24baa028c3b349cc20ed87e79aee3fcc0f82de3426df59d7c0cd268c",
+      "license": "BSD-3-Clause",
+      "license_evidence": "File-local grant"
+    },
+    {
+      "path": "rtl/T80/T80_ALU.vhd",
+      "sha256": "823a062b8be873505ac16e627351a5105101243a11483bf8f2446214893b739e",
+      "license": "BSD-3-Clause",
+      "license_evidence": "File-local grant"
+    },
+    {
+      "path": "rtl/T80/T80_MCode.vhd",
+      "sha256": "78454892dea4cb2ea7ded844329d590160435d340b58e3bd39452645c513f45d",
+      "license": "BSD-3-Clause",
+      "license_evidence": "File-local grant"
+    },
+    {
+      "path": "rtl/T80/T80_Reg.vhd",
+      "sha256": "b40f92eb96fc55fa0adc8ca1bbb20d99133ae1dfe3728b146e37ee00ef588783",
+      "license": "BSD-3-Clause",
+      "license_evidence": "File-local grant"
+    },
+    {
+      "path": "rtl/T80/T80.vhd",
+      "sha256": "8e880dce21b9c961960f06144f35ac01f59c3fb32d7906a45466cc1f1dd3fd76",
+      "license": "BSD-3-Clause",
+      "license_evidence": "File-local grant"
+    },
+    {
+      "path": "rtl/T80/T80pa.vhd",
+      "sha256": "e67354e5fed26f92730cfd2f6842bcb795aa384db8f796f28610e2bd7251098b",
+      "license": "BSD-3-Clause",
+      "license_evidence": "File-local grant"
+    }
+  ]
+}

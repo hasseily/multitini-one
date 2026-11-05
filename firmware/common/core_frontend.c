@@ -7,6 +7,7 @@
 #include "multitini_c64_interface.h"
 #include "multitini_gameboy_interface.h"
 #include "multitini_vectrex_interface.h"
+#include "multitini_spectrum_interface.h"
 #include "multitini_genesis_interface.h"
 #include "multitini_nes_interface.h"
 #include "multitini_iigs_interface.h"
@@ -636,7 +637,34 @@ static void build_amiga(mt_core_frontend_t *frontend,const mt_core_frontend_stat
     frontend->input_items[view->input_item_count++]=item("Joysticks","Two USB gamepads","Digital joystick directions and two fire buttons per port.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
     view->save_faulted=state->save_faulted;
 }
+static void build_spectrum(mt_core_frontend_t *frontend,
+                           const mt_core_frontend_state_t *state, mt_menu_view_t *view)
+{
+    frontend->media_items[view->media_item_count++] = item("System ROM",
+        state->spectrum_ready ? "Loaded" : "Load / retry...",
+        state->spectrum_boot_error != NULL ? state->spectrum_boot_error :
+            "Supply a 16 KiB 48K or 32 KiB 128K ROM as roms/spectrum.rom.",
+        MT_MENU_ACTION_SPECTRUM_RELOAD, 0U, true,
+        state->spectrum_ready ? MT_UI_COLOR_SUCCESS : MT_UI_COLOR_WARNING);
+    frontend->media_items[view->media_item_count++] = item("Tape",
+        state->spectrum_tape_name != NULL ? state->spectrum_tape_name : "Choose TAP image...",
+        "Start the Spectrum tape loader, then press F1 to play or pause. F2 rewinds.",
+        MT_MENU_ACTION_BROWSE_PROGRAM, 0U, state->spectrum_ready, MT_UI_COLOR_BLUE);
+    frontend->input_items[view->input_item_count++] = item("Keyboard", "USB keyboard",
+        "F1 plays or pauses the tape. F2 rewinds. F12 opens the Multitini menu.",
+        MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
+    frontend->input_items[view->input_item_count++] = item("Joystick", "Kempston",
+        "Use a USB gamepad for directions and fire.", MT_MENU_ACTION_NONE,
+        0U, false, MT_UI_COLOR_TEXT);
+}
+
 static const core_profile_t profiles[] = {
+    {
+        MT_SPECTRUM_CORE_ID, "Sinclair ZX Spectrum",
+        "USB keyboard and Kempston joystick. F12 opens the Multitini menu.",
+        {0U, 0U, 0U, 0U, CONTENT_MASK(MT_CONTENT_SPECTRUM_TAP)},
+        false, build_spectrum
+    },
     {
         MT_AMIGA_CORE_ID,"Amiga",
         "USB keyboard, mouse and two digital joysticks; F12 opens the menu.",
@@ -750,7 +778,8 @@ bool mt_core_frontend_browser_folders(uint32_t core_id, mt_menu_browser_t browse
             (browser == MT_MENU_BROWSER_REU || browser == MT_MENU_BROWSER_CONFIG ||
              browser == MT_MENU_BROWSER_PROGRAM || browser == MT_MENU_BROWSER_CARTRIDGE ||
              browser == MT_MENU_BROWSER_DRIVE8)) ||
-           ((core_id == MT_VECTREX_CORE_ID || core_id == MT_IIGS_CORE_ID || core_id == MT_AMIGA_CORE_ID) &&
+           ((core_id == MT_VECTREX_CORE_ID || core_id == MT_IIGS_CORE_ID ||
+             core_id == MT_AMIGA_CORE_ID || core_id == MT_SPECTRUM_CORE_ID) &&
             mt_core_frontend_browser_supported(core_id, browser));
 }
 

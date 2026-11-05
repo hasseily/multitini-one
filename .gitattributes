@@ -41,6 +41,7 @@ third_party/c64/patches/** -text -whitespace
 third_party/gameboy/upstream/** -text -whitespace
 third_party/genesis/upstream/** -text -whitespace
 third_party/nes/upstream/** -text -whitespace
+third_party/zx-spectrum/upstream/** -text -whitespace
 third_party/gsbasic/** -text -whitespace
 third_party/vectrex/** -text -whitespace
 third_party/vectrex32/** -text -whitespace
@@ -68,3 +69,4 @@ hdl/core/gameboy/ports/gbc_snd.vhd -whitespace
 hdl/core/genesis/ports/** -whitespace
 hdl/core/amiga/ports/** -whitespace
 hdl/core/amiga/ports/*.hex text eol=lf
+hdl/core/zx_spectrum/ports/** -whitespace

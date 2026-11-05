@@ -9,7 +9,7 @@ module tb_nes_video_normalizer;
     wire start;
     wire [31:0] malformed;
     integer pixels=0,frames=0,expected=0;
-    multitini_nes_video_normalizer dut(.clk(clk),.resetn(resetn),.ready(ready),
+    multitini_fixed_raster_normalizer dut(.clk(clk),.resetn(resetn),.ready(ready),
         .pixel_ce(ce),.pixel_x(x),.pixel_y(y),.red(r),.green(g),.blue(b),
         .scan_x(ox),.scan_y(oy),.rgb565(rgb),.frame_start(start),.malformed_frames(malformed));
     function automatic [15:0] pattern(input integer xx,yy);
@@ -32,6 +32,7 @@ module tb_nes_video_normalizer;
             r={5'(xx),3'd0};g={6'(yy),2'd0};b={5'(xx^yy),3'd0};
             @(negedge clk);ce=0;
             repeat((xx%3)+1)@(negedge clk);
+            #1; // Let the falling-edge scoreboard retire the last output.
         end
     endtask
     task full_frame;
@@ -44,7 +45,7 @@ module tb_nes_video_normalizer;
         pixel(40,10);pixel(41,10);
         if(pixels || frames)$fatal(1,"mid-raster startup emitted pixels");
         full_frame();full_frame();
-        if(pixels!=122880 || malformed)$fatal(1,"lost complete native frame");
+        if(pixels!=122880 || malformed)$fatal(1,"lost complete native frame pixels=%0d malformed=%0d",pixels,malformed);
         pixel(0,0);pixel(1,0);saved=pixels;
         pixel(3,0);pixel(4,0);
         if(pixels!=saved)$fatal(1,"out-of-order raster was not suppressed");

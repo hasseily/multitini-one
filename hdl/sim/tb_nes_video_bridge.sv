@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns/1ps
-module tb_nes_video_bridge;
+module tb_nes_video_bridge #(
+    parameter integer WIDTH=256, HEIGHT=240, COORD_BITS=8
+);
+    localparam integer STRIDE=((WIDTH+63)/64)*64;
+    localparam integer H_TOTAL=WIDTH+80, V_TOTAL=HEIGHT+30;
     reg source_clk=0,control_clk=0,pixel_clk=0,resetn=0;
     reg pixel_resetn=0,pixel_clock_running=1;
     always #5 source_clk=~source_clk;
@@ -9,11 +13,7 @@ module tb_nes_video_bridge;
     reg source_ready=0,display_pause=0,stall=0,inject_error=0,truncate=0;
     integer sx=0,sy=0,phase=0;
     reg [11:0] scan_x=0,scan_y=0;
-    wire source_valid=phase==0 && sx<256 && sy<240 && (!truncate || sy<200);
-    wire source_de=sx<256 && sy<240 && (!truncate || sy<200);
-    // Deliberately begin vsync between pixel enables. The ingress register
-    // must transport field boundaries even while no native pixel is accepted.
-    wire source_vsync=(sy==250 && phase>=3) || sy==251;
+    wire source_valid=phase==0 && sx<WIDTH && sy<HEIGHT && (!truncate || sy<HEIGHT-40);
     wire [7:0] source_r={5'(sx),3'd0},source_g={6'(sy),2'd0},source_b={5'(sx^sy),3'd0};
     wire [15:0] machine_rgb565;
     wire machine_active,display_quiescent;
@@ -57,17 +57,18 @@ module tb_nes_video_bridge;
     end
     cdc_bit_sync source_ready_sync(.clk(control_clk),.resetn(resetn),
         .din(source_ready_launch),.dout(source_ready_control));
-    multitini_nes_video_bridge dut(
+    multitini_fixed_raster_bridge #(.WIDTH(WIDTH),.HEIGHT(HEIGHT),.COORD_BITS(COORD_BITS)) dut(
         .source_clk(source_clk),.source_resetn(resetn),.source_ready(source_ready),
         .source_ready_control(source_ready_control),
-        .source_valid(source_valid),.source_x(8'(sx)),.source_y(8'(sy)),
+        .source_valid(source_valid),.source_x(COORD_BITS'(sx)),.source_y(COORD_BITS'(sy)),
         .source_r(source_r),.source_g(source_g),.source_b(source_b),
         .control_clk(control_clk),.control_resetn(resetn),.pixel_clk(pixel_clk),.pixel_resetn(pixel_resetn),.shared_pixel_resetn(resetn),
         .shared_pixel_running(shared_pixel_running),
-        .diagnostic_request(1'b0),.scan_x(scan_x),.scan_y(scan_y),.vblank_start(scan_x==0 && scan_y==250),
-        .display_view_x(12'd32),.display_view_y(12'd8),.display_view_width(12'd256),.display_view_height(12'd240),
+        .diagnostic_request(1'b0),.scan_x(scan_x),.scan_y(scan_y),.vblank_start(scan_x==0 && scan_y==12'(HEIGHT+10)),
+        .display_view_x(12'd32),.display_view_y(12'd8),.display_view_width(12'(WIDTH)),.display_view_height(12'(HEIGHT)),
         .display_scale_num(4'd1),.display_scale_den(4'd1),.display_pause(display_pause),.display_quiescent(display_quiescent),
-        .display_h_active(12'd320),.display_v_active(12'd256),.display_h_total(12'd336),.display_v_total(12'd270),
+        .display_h_active(12'(WIDTH+64)),.display_v_active(12'(HEIGHT+16)),
+        .display_h_total(12'(H_TOTAL)),.display_v_total(12'(V_TOTAL)),
         .machine_active(machine_active),.machine_rgb565(machine_rgb565),.viewport_x(),.viewport_y(),.viewport_width(),.viewport_height(),
         .capture_drops(capture_drops),.capture_errors(capture_errors),.read_errors(read_errors),.underruns(underruns),
         .araddr(araddr),.arlen(arlen),.arsize(arsize),.arburst(arburst),.arvalid(arvalid),.arready(arready),
@@ -77,11 +78,11 @@ module tb_nes_video_bridge;
     always @(posedge source_clk)if(resetn)begin
         if(phase==7)begin
             phase<=0;
-            if(sx==335)begin sx<=0;sy<=sy==259 ? 0 : sy+1;end else sx<=sx+1;
+            if(sx==H_TOTAL-1)begin sx<=0;sy<=sy==HEIGHT+19 ? 0 : sy+1;end else sx<=sx+1;
         end else phase<=phase+1;
     end
     always @(posedge pixel_clk)if(resetn && pixel_resetn)begin
-        if(scan_x==335)begin scan_x<=0;scan_y<=scan_y==269 ? 0 : scan_y+1'b1;end
+        if(scan_x==12'(H_TOTAL-1))begin scan_x<=0;scan_y<=scan_y==12'(V_TOTAL-1) ? 0 : scan_y+1'b1;end
         else scan_x<=scan_x+1'b1;
     end else begin scan_x<=0;scan_y<=0;end
     function automatic [15:0] pattern(input integer x,y);
@@ -101,8 +102,8 @@ module tb_nes_video_bridge;
         if(wvalid && wready)begin
             if(wstrb!=255 || wlast!=(write_beat==15))$fatal(1,"Malformed source write");
             for(lane=0;lane<4;lane=lane+1)begin
-                index=((write_word+write_beat)%131072)*4+lane;x=index%256;y=index/256;
-                if(y>=240 || wdata[lane*16+:16]!==pattern(x,y))
+                index=((write_word+write_beat)%131072)*4+lane;x=index%STRIDE;y=index/STRIDE;
+                if(y>=HEIGHT || wdata[lane*16+:16] !== (x<WIDTH ? pattern(x,y) : 16'd0))
                     $fatal(1,"Source DDR pixel mismatch %0d,%0d got%h",x,y,wdata[lane*16+:16]);
             end
             memory[write_word+write_beat]<=wdata;write_beat=write_beat+1;
@@ -145,7 +146,7 @@ module tb_nes_video_bridge;
             $fatal(1,"Reader started while output was reset");
         @(negedge pixel_clk);pixel_resetn=1;
         wait(shared_pixel_running);
-        wait(dut.producer>=2 && checked>256*240);
+        wait(dut.producer>=2 && checked>WIDTH*HEIGHT);
         $display("NES CDC healthy scanout at %0t",$time);
         if(capture_errors || read_errors || underruns)$fatal(1,"Errors during healthy source scanout");
         // A live output switch drains source writes and frame reads together.
@@ -177,13 +178,13 @@ module tb_nes_video_bridge;
         if(dut.active_valid)$fatal(1,"Reset retained a display ownership claim");
         // Truncated source fields must not splice together into a publication.
         truncate=1;source_ready=1;
-        repeat(3)begin wait(sy==252);wait(sy==253);end
+        repeat(3)begin wait(sy==HEIGHT+12);wait(sy==HEIGHT+13);end
         display_pause=1;quiet();
         if(dut.producer!=published)$fatal(1,"Truncated fields spliced into a published frame");
         truncate=0;display_pause=0;wait(dut.producer>published);display_pause=1;quiet();
         if(read_errors!=0)$fatal(1,"Reader errors after recovery");
-        $display("PASS NES source DDR: %0d displayed pixels, %0d writes/%0d reads, shared-liveness startup, stopped-clock drain, ring ownership, AXI backpressure, error rejection/recovery",checked,writes,reads);
+        $display("PASS source DDR %0dx%0d stride %0d: %0d displayed pixels, %0d writes/%0d reads, shared-liveness startup, stopped-clock drain, ring ownership, AXI backpressure, error rejection/recovery",WIDTH,HEIGHT,STRIDE,checked,writes,reads);
         $finish;
     end
-    initial begin #150000000;$fatal(1,"Source DDR timeout producer%0d errors%0d checked%0d pause%0d enabled%0d source%0d capture%0d reader%0d pending%0d active%0d shared%0d",dut.producer,capture_errors,checked,display_pause,dut.enabled,source_ready,dut.capture_i.state,dut.reader_i.state,dut.reader_i.pending,dut.active_valid,shared_pixel_running);end
+    initial begin #220000000;$fatal(1,"Source DDR timeout producer%0d errors%0d checked%0d pause%0d enabled%0d source%0d capture%0d reader%0d pending%0d active%0d shared%0d",dut.producer,capture_errors,checked,display_pause,dut.enabled,source_ready,dut.capture_i.state,dut.reader_i.state,dut.reader_i.pending,dut.active_valid,shared_pixel_running);end
 endmodule
