@@ -71,7 +71,7 @@ class ArtifactTests(unittest.TestCase):
         self.stack.enter_context(patch.object(package, "ROOT", self.root))
         self.stack.enter_context(patch.object(phos, "ROOT", self.root))
         self.stack.enter_context(patch.object(package.hardware_inputs, "inputs",
-            lambda machine: [self.root / name for name in self.sources]))
+            lambda machine, *, amiga_ap68040=False: [self.root / name for name in self.sources]))
         # Source/settings/identity/XSA checks are real; normal signoff parsing is
         # separately exercised on the seven real routed images in preflight.
         self.stack.enter_context(patch.object(package, "timing", return_value={"status": "fixture-PASS"}))

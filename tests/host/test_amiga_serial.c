@@ -32,7 +32,7 @@ static bool profile_native_pending;
 static char profile_output[16000];
 static size_t profile_output_length;
 static mt_amiga_config_t cpu_config={MT_AMIGA_CPU_68020_TURBO,0U,0U,0U,8U,MT_AMIGA_IDE_AUTO};
-static bool cpu14_available;
+static bool cpu14_available,ap68040;
 static bool fast_ide_available;
 static unsigned cpu_changes;
 static unsigned config_reads;
@@ -40,7 +40,8 @@ static uint32_t config_readback=0x166bU;
 static char ide_output[4096];
 static size_t ide_output_length;
 const mt_amiga_config_t *amiga_content_service_config(void) { return &cpu_config; }
-bool amiga_content_service_aga_pal(void) { return false; }
+bool amiga_content_service_aga_pal(void) { return ap68040; }
+bool amiga_content_service_ap68040(void) { return ap68040; }
 bool amiga_content_service_cpu14_available(void) { return cpu14_available; }
 bool amiga_content_service_cpu14_fallback(void) { return false; }
 bool amiga_content_service_fast_ide_available(void) { return fast_ide_available; }
@@ -294,6 +295,9 @@ int main(void)
     assert(amiga_serial_command("amigacpu 14 extra") && amiga_serial_command("amigacpu 140") && cpu_changes==3U);
     external=true;assert(amiga_serial_command("amigacpu stock") && cpu_changes==3U);external=false;
     assert(!amiga_serial_command("amigacpustock"));
+    ap68040=true;
+    assert(amiga_serial_command("amigacpu stock") && cpu_changes==3U && cpu_config.cpu==2U);
+    ap68040=false;
     /* Status must distinguish ARM policy/expectation from actual native
      * readback; FAST capability works independently of CPU14. */
     cpu14_available=false;const unsigned old_config_reads=config_reads;

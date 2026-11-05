@@ -30,8 +30,9 @@ def selection_plan(images, reuse, build_id, output, reuse_from=None):
         machine, psram, pal = MATRIX[name]
         entry = {"machine": machine, "action": "build"}
         candidate = reuse.get(name, reuse_from / name if reuse_from else None)
-        amiga_variant = dict(amiga_aga_pal=name in {"amiga-aga", "amiga-aga-040"},
-                             amiga_ap68040=name == "amiga-aga-040")
+        amiga_variant = {"amiga_aga_pal": True} if name in {"amiga-aga", "amiga-aga-040"} else {}
+        if name == "amiga-aga-040":
+            amiga_variant["amiga_ap68040"] = True
         if candidate is not None:
             try:
                 artifact = core_artifacts.inspect_artifact(candidate, machine,

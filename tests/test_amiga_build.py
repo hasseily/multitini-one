@@ -79,10 +79,19 @@ class AmigaBuildTests(unittest.TestCase):
                     "current_input_match": True, "build_id": "0x4D000801", "abi": "0.24"}) as inspect:
                 plan = build_phos1.selection_plan(["amiga"], {"amiga": candidate},
                                                  "4D000802", root / "new")
-            inspect.assert_called_once_with(candidate, "AMIGA", gbc_psram=False, genesis_pal=False,
-                                            amiga_aga_pal=False, amiga_ap68040=False)
+            inspect.assert_called_once_with(candidate, "AMIGA", gbc_psram=False, genesis_pal=False)
             self.assertEqual(plan["images"]["amiga"]["action"], "reuse")
             self.assertEqual(plan["images"]["amiga"]["artifact"]["build_id"], "0x4D000801")
+
+    def test_68040_reuse_requires_aga_and_68040(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / "build") as directory:
+            root = Path(directory)
+            with mock.patch("core_artifacts.inspect_artifact", return_value={"current_input_match": True}) as inspect:
+                build_phos1.selection_plan(["amiga-aga-040"], {"amiga-aga-040": root},
+                                           "4D000840", root / "new")
+            inspect.assert_called_once_with(root, "AMIGA", gbc_psram=False, genesis_pal=False,
+                                            amiga_aga_pal=True, amiga_ap68040=True)
+        self.assertEqual(package.AMIGA_040_VARIANT[0], "aga-040-pal")
 
     def test_source_capture_retains_upstream_and_port_inputs(self):
         paths = {path.relative_to(ROOT).as_posix() for path in capture.inputs("AMIGA")}
