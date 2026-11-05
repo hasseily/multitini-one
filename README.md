@@ -70,7 +70,8 @@ See the [M0.5.3 record](docs/APPLE_IIGS_M053_BUILD.md) and
 The retained M0.5.2 fixes correct lost RTC control writes at stock speed,
 and stale interrupt-vector ROM bytes after the first System 6 disk reads.
 It also adds writable 800 KiB PO/2MG floppies in the 3.5-inch drive and
-140 KiB DOS-order DSK files in the 5.25-inch drive. Both drives retain WOZ2.
+140 KiB DOS-order DSK files in the 5.25-inch drive. The 5.25-inch drive also
+accepts 140 KiB ProDOS-order PO files. Both drives retain WOZ2.
 The IWM fixes fractional bit-cell carry and byte-latch expiry in production.
 The [M0.5.2 build record](docs/APPLE_IIGS_M052_BUILD.md) describes the reproduced
 failures, media conversion and qualification limits.

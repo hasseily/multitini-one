@@ -61,6 +61,7 @@ mt_content_validation_t mt_iigs_media_inspect(unsigned drive,const char *name,
     if (size==0U) return MT_CONTENT_TOO_SMALL;
     if (size>INT64_MAX) return MT_CONTENT_WRONG_SIZE;
     const bool hdd=mt_iigs_drive_hdd_unit(drive)<MT_IIGS_HDD_COUNT;
+    const bool po=extension(name,"po");
     if (extension(name,"woz")) {
         if (hdd) return MT_CONTENT_UNSUPPORTED_VERSION;
         if (size>UINT32_MAX) return MT_CONTENT_WRONG_SIZE;
@@ -89,10 +90,11 @@ mt_content_validation_t mt_iigs_media_inspect(unsigned drive,const char *name,
             (uint64_t)offset+length>size || blocks!=length/512U)
             return MT_CONTENT_BAD_STRUCTURE;
         r.offset=offset; r.size=length; r.writable=(le32(p+16U)&UINT32_C(0x80000000))==0U;
-    } else if (drive==3U && extension(name,"dsk")) {
+    } else if (drive==3U && (extension(name,"dsk") || po)) {
         if (size!=143360U) return MT_CONTENT_WRONG_SIZE;
-        r.kind=MT_IIGS_MEDIA_WOZ; r.raw_format=MT_IIGS_RAW_DOS525;
-    } else if (!extension(name,"hdv") && !extension(name,"po")) {
+        r.kind=MT_IIGS_MEDIA_WOZ;
+        r.raw_format=po ? MT_IIGS_RAW_PRODOS525:MT_IIGS_RAW_DOS525;
+    } else if (!extension(name,"hdv") && !po) {
         return MT_CONTENT_UNSUPPORTED_VERSION;
     }
     if (drive==2U && r.kind!=MT_IIGS_MEDIA_WOZ) {
@@ -126,15 +128,17 @@ static uint8_t ungcr(uint8_t value)
     for(unsigned i=0U;i<64U;++i)if(gcr62[i]==value)return (uint8_t)i;
     return 0xffU;
 }
+static bool floppy_525(uint8_t format)
+{ return format==MT_IIGS_RAW_DOS525 || format==MT_IIGS_RAW_PRODOS525; }
 static unsigned floppy_tracks(uint8_t format)
-{ return format==MT_IIGS_RAW_DOS525 ? 35U:format==MT_IIGS_RAW_PRODOS35 ? 160U:0U; }
+{ return floppy_525(format) ? 35U:format==MT_IIGS_RAW_PRODOS35 ? 160U:0U; }
 static unsigned floppy_slot_blocks(uint8_t format)
-{ return format==MT_IIGS_RAW_DOS525 ? 13U:20U; }
+{ return floppy_525(format) ? 13U:20U; }
 bool mt_iigs_floppy_track(uint8_t format,unsigned track,mt_iigs_floppy_track_t *info)
 {
     if(info==NULL || track>=floppy_tracks(format))return false;
     mt_iigs_floppy_track_t t;
-    if(format==MT_IIGS_RAW_DOS525) {
+    if(floppy_525(format)) {
         t.raw_offset=track*4096U; t.raw_bytes=4096U; t.bit_count=52224U;
     } else {
         const unsigned cylinder=track/2U, zone=cylinder/16U, sectors=12U-zone;
@@ -165,7 +169,7 @@ bool mt_iigs_floppy_header(uint8_t format,bool writable,uint8_t header[MT_IIGS_F
     header[22]=(uint8_t)(writable ? 0U:1U); header[24]=1U;
     memset(header+25U,' ',32U); memcpy(header+25U,"Multitini raw floppy",20U);
     header[57]=format==MT_IIGS_RAW_PRODOS35 ? 2U:1U;
-    header[58]=format==MT_IIGS_RAW_DOS525 ? 1U:0U;
+    header[58]=floppy_525(format) ? 1U:0U;
     header[59]=format==MT_IIGS_RAW_PRODOS35 ? 16U:32U;
     put16(header+64U,floppy_slot_blocks(format));
     memcpy(header+80U,"TMAP",4U); put32(header+84U,160U); memset(header+88U,0xff,160U);
@@ -199,6 +203,12 @@ static void prologue(bit_writer_t *w,unsigned last)
 { emit(w,0xd5U,8U); emit(w,0xaaU,8U); emit(w,last,8U); }
 static void epilogue(bit_writer_t *w,unsigned last)
 { emit(w,0xdeU,8U); emit(w,0xaaU,8U); emit(w,last,8U); }
+static unsigned floppy_525_file_sector(uint8_t format,unsigned physical)
+{
+    /* Sector 15 is last in both orders. The other sectors wrap at 15. */
+    const unsigned step=format==MT_IIGS_RAW_PRODOS525 ? 8U:7U;
+    return physical==15U ? 15U:(physical*step)%15U;
+}
 static uint8_t swap_low(uint8_t value)
 { return (uint8_t)(((value&1U)<<1U)|((value&2U)>>1U)); }
 static void encode256(const uint8_t *input,uint8_t output[343])
@@ -294,8 +304,8 @@ bool mt_iigs_floppy_encode(uint8_t format,unsigned track,const uint8_t *raw,
     const bool sony=format==MT_IIGS_RAW_PRODOS35;
     const unsigned sectors=sony ? t.raw_bytes/512U:16U;
     sync_bytes(&w,sony ? 148U:48U);
-    /* 4:1 interleave for the IIgs 3.5-inch driver. DOS uses sector addresses
-     * 0..15 with the standard DOS-order file permutation. */
+    /* 4:1 interleave for the IIgs 3.5-inch driver. The 5.25-inch track uses
+     * ascending physical sector addresses for both file orders. */
     unsigned order[16]={0},entry=0U;
     for(unsigned n=0U;n<sectors;++n) {
         while(order[entry]!=0U)entry=(entry+1U)%sectors;
@@ -319,7 +329,7 @@ bool mt_iigs_floppy_encode(uint8_t format,unsigned track,const uint8_t *raw,
             emit(&w,gcr62[number],8U); memset(tagged,0,12U); memcpy(tagged+12U,raw+number*512U,512U);
             encode524(tagged,body);
         } else {
-            const unsigned file_sector=number==15U ? 15U:(number*7U)%15U;
+            const unsigned file_sector=floppy_525_file_sector(format,number);
             encode256(raw+file_sector*256U,body);
         }
         for(unsigned i=0U;i<(sony ? 703U:343U);++i)emit(&w,body[i],8U);
@@ -386,7 +396,7 @@ bool mt_iigs_floppy_decode(uint8_t format,unsigned track,const uint8_t *bits,
             memcpy(raw+number*512U,decoded+12U,512U);
         } else {
             if(!decode256(body,decoded))continue;
-            const unsigned file_sector=number==15U ? 15U:(number*7U)%15U;
+            const unsigned file_sector=floppy_525_file_sector(format,number);
             memcpy(raw+file_sector*256U,decoded,256U);
         }
         found|=1U<<number;

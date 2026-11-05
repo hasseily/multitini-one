@@ -3653,6 +3653,14 @@ static int collect_menu_file(void *context, const char *name, size_t size,
                    mt_core_frontend_accepts_drive_content(supervisor.active.package.core_id,
                                                           browser, iigs_browser_drive, type));
     if (!accepted) return 0;
+    /* The shared IIgs block-disk class also includes HDV and 2MG. Only
+     * 140 KiB PO images in that class belong in the 5.25-inch browser. */
+    if (!is_directory && browser==MT_MENU_BROWSER_DRIVE8 && supervisor.has_active &&
+        supervisor.active.package.core_id==MT_IIGS_CORE_ID && iigs_browser_drive==3U &&
+        type==MT_CONTENT_IIGS_HDD &&
+        (size!=143360U || extension==NULL ||
+         (extension[1]!='p' && extension[1]!='P') || (extension[2]!='o' && extension[2]!='O') ||
+         extension[3]!='\0')) return 0;
     name_size = strlen(name);
     if (name_size == 0U || name_size >= MT_MENU_FILE_NAME_MAX) return 0;
     /* Documents cannot crowd usable media or folders out of a full list. */
@@ -4127,7 +4135,8 @@ static int supervisor_activate(void *context,
         iigs_service_initialized=true;
         iigs_content_service_set_timestamp(iigs_clock_timestamp());
         const int boot=iigs_boot_with_input();
-        if(boot!=0)xil_printf("[IIgs] ROM/media activation: %s\r\n",iigs_content_service_error());
+        if(boot!=0 || iigs_content_service_faulted())
+            xil_printf("[IIgs] ROM/media activation: %s\r\n",iigs_content_service_error());
         last_settings_restore_ok=restore_selection_settings(selection);
         /* Keep the ROM selector and retry controls available for user ROMs. */
         return 0;
@@ -5973,6 +5982,7 @@ static void handle_menu_action(mt_menu_action_t action)
         else set_supervisor_status(action.file_index==2U ? "Apple IIgs media recovered":action.file_index==0U ? "Apple IIgs PRAM saved":"Apple IIgs PRAM restored");
     } else if(action.kind==MT_MENU_ACTION_IIGS_RELOAD) {
         if(iigs_boot_with_input()!=0)set_supervisor_error(iigs_content_service_error());
+        else if(iigs_content_service_faulted())set_supervisor_warning(iigs_content_service_error());
         else set_supervisor_status("Apple IIgs ROMs loaded");
     } else if (action.kind == MT_MENU_ACTION_BROWSE_DISK_PROGRAM) {
         open_menu_browser(MT_MENU_BROWSER_DISK_PROGRAM);
@@ -6674,6 +6684,7 @@ static void handle_menu_action(mt_menu_action_t action)
             else return;
             usb_hid_service_set_core_ready(false);
             if(iigs_content_service_configure(&changed)!=0)set_supervisor_error(iigs_content_service_error());
+            else if(iigs_content_service_faulted())set_supervisor_warning(iigs_content_service_error());
             else set_supervisor_status("Apple IIgs settings saved");
             usb_hid_service_set_core_ready(iigs_content_service_ready());
             if(dac_ready)set_audio(!iigs_content_service_ready(),false);

@@ -200,7 +200,8 @@ explicit error rather than truncating a path or mounting another file.
 
 Eight SmartPort HDDs accept raw HDV/PO and ProDOS-ordered 2MG payloads. The 3.5-inch drive
 also accepts exactly 800 KiB PO and ProDOS 2MG payloads; the 5.25-inch drive
-accepts exactly 140 KiB DOS-order DSK files. Both drives retain native WOZ2.
+accepts exactly 140 KiB DOS-order DSK and ProDOS-order PO files. Both drives
+retain native WOZ2.
 The firmware presents sector images as generated WOZ2 GCR tracks, preserving
 2MG headers, trailing container bytes and write protection. A `.gsraw` sidecar
 retains changed tracks through interrupted writes; keep it beside its image.

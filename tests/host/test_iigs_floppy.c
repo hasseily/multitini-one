@@ -40,23 +40,49 @@ static void check_track(uint8_t format,unsigned track)
     }
     assert(!mt_iigs_floppy_decode(format,track==0U ? 1U:0U,bits,decoded));
     /* Destroy a data checksum, leaving all other sectors untouched. */
-    const unsigned address_end=format==MT_IIGS_RAW_DOS525 ? 480U+14U*8U+60U:1480U+11U*8U+50U;
-    const unsigned checksum=address_end+(format==MT_IIGS_RAW_DOS525 ? (3U+342U)*8U:(4U+699U)*8U);
+    const bool sony=format==MT_IIGS_RAW_PRODOS35;
+    const unsigned address_end=sony ? 1480U+11U*8U+50U:480U+14U*8U+60U;
+    const unsigned checksum=address_end+(sony ? (4U+699U)*8U:(3U+342U)*8U);
     for(unsigned i=0U;i<8U;++i)bits[(checksum+i)/8U]&=(uint8_t)~(0x80U>>((checksum+i)%8U));
     assert(!mt_iigs_floppy_decode(format,track,bits,decoded));
+}
+static void check_525_sector_order(uint8_t format,const uint8_t file_sector[16])
+{
+    static const uint8_t gcr[16]={
+        0x96,0x97,0x9a,0x9b,0x9d,0x9e,0x9f,0xa6,0xa7,0xab,0xac,0xad,0xae,0xaf,0xb2,0xb3
+    };
+    for(unsigned i=0U;i<4096U;++i)original[i]=(uint8_t)((i/256U)<<2U);
+    assert(mt_iigs_floppy_encode(format,0U,original,bits));
+    for(unsigned physical=0U;physical<16U;++physical) {
+        const unsigned address=480U+physical*3234U;
+        const unsigned data=address+14U*8U+60U;
+        assert(read_byte(bits,address)==0xd5U && read_byte(bits,address+8U)==0xaaU);
+        const unsigned sector_high=read_byte(bits,address+7U*8U);
+        const unsigned sector_low=read_byte(bits,address+8U*8U);
+        assert((((sector_high<<1U)|1U)&sector_low)==physical);
+        assert(read_byte(bits,address+14U*8U)==0xffU);
+        assert(read_byte(bits,data)==0xd5U && read_byte(bits,data+16U)==0xadU);
+        /* The first 86 GCR codes carry zero low bits. The next code carries
+         * the file sector marker, so check its actual position on the wire. */
+        assert(read_byte(bits,data+(3U+86U)*8U)==gcr[file_sector[physical]]);
+    }
 }
 static void unit_tests(void)
 {
     mt_iigs_floppy_track_t t;
     assert(!mt_iigs_floppy_track(MT_IIGS_RAW_NONE,0U,&t));
     assert(!mt_iigs_floppy_track(MT_IIGS_RAW_DOS525,35U,&t));
+    assert(!mt_iigs_floppy_track(MT_IIGS_RAW_PRODOS525,35U,&t));
     assert(!mt_iigs_floppy_track(MT_IIGS_RAW_PRODOS35,160U,&t));
     assert(mt_iigs_floppy_woz_size(MT_IIGS_RAW_NONE)==0U);
-    for(uint8_t format=MT_IIGS_RAW_DOS525;format<=MT_IIGS_RAW_PRODOS35;++format) {
+    const uint8_t formats[]={MT_IIGS_RAW_DOS525,MT_IIGS_RAW_PRODOS525,MT_IIGS_RAW_PRODOS35};
+    for(unsigned f=0U;f<sizeof(formats)/sizeof(formats[0]);++f) {
+        const uint8_t format=formats[f];
+        const bool sony=format==MT_IIGS_RAW_PRODOS35;
         assert(mt_iigs_floppy_header(format,false,header));
         assert(memcmp(header,"WOZ2\xff\x0a\x0d\x0a",8U)==0 && header[22]==1U);
-        assert(header[59]==(format==MT_IIGS_RAW_DOS525 ? 32U:16U));
-        const unsigned tracks=format==MT_IIGS_RAW_DOS525 ? 35U:160U;
+        assert(header[59]==(sony ? 16U:32U));
+        const unsigned tracks=sony ? 160U:35U;
         unsigned end=0U;
         for(unsigned track=0U;track<tracks;++track) {
             assert(mt_iigs_floppy_track(format,track,&t));
@@ -64,15 +90,14 @@ static void unit_tests(void)
             for(unsigned i=0U;i<t.raw_bytes;++i)original[i]=(uint8_t)(i*19U+(i>>7U)*track+track*37U);
             check_track(format,track);
         }
-        assert(end==(format==MT_IIGS_RAW_DOS525 ? 143360U:819200U));
+        assert(end==(sony ? 819200U:143360U));
     }
-    /* Independent known framing and DOS sector permutation. GCR address
-     * sector1 must encode file sector7, with a genuine 10-bit sync gap. */
-    for(unsigned i=0U;i<4096U;++i)original[i]=(uint8_t)(i/256U);
-    assert(mt_iigs_floppy_encode(MT_IIGS_RAW_DOS525,0U,original,bits));
-    assert(read_byte(bits,480U)==0xd5U && read_byte(bits,480U+8U)==0xaaU);
-    assert(read_byte(bits,480U+14U*8U)==0xffU);
-    puts("195 raw floppy tracks, five zones, circular bit alignment and corrupt fields passed");
+    /* Standard physical address to sector-image orders. */
+    static const uint8_t dos_order[16]={0,7,14,6,13,5,12,4,11,3,10,2,9,1,8,15};
+    static const uint8_t prodos_order[16]={0,8,1,9,2,10,3,11,4,12,5,13,6,14,7,15};
+    check_525_sector_order(MT_IIGS_RAW_DOS525,dos_order);
+    check_525_sector_order(MT_IIGS_RAW_PRODOS525,prodos_order);
+    puts("230 raw floppy tracks, DOS/ProDOS wire order, circular bit alignment and corrupt fields passed");
 }
 static void image_test(unsigned drive,const char *filename)
 {
@@ -82,7 +107,7 @@ static void image_test(unsigned drive,const char *filename)
     mt_iigs_media_info_t info;
     assert(mt_iigs_media_inspect(drive,filename,header,512U,(uint64_t)size,&info)==MT_CONTENT_VALID);
     assert(info.raw_format!=MT_IIGS_RAW_NONE);
-    const unsigned tracks=info.raw_format==MT_IIGS_RAW_DOS525 ? 35U:160U;
+    const unsigned tracks=info.raw_format==MT_IIGS_RAW_PRODOS35 ? 160U:35U;
     for(unsigned track=0U;track<tracks;++track) {
         mt_iigs_floppy_track_t t; assert(mt_iigs_floppy_track(info.raw_format,track,&t));
         assert(fseek(f,(long)(info.offset+t.raw_offset),SEEK_SET)==0);

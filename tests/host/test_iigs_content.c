@@ -26,7 +26,7 @@ static void test_nested_browser(void)
     assert(!mt_media_browser_up(&browser));
     for(unsigned drive=0U;drive<MT_IIGS_DRIVE_COUNT;++drive) {
         assert(mt_core_frontend_accepts_drive_content(MT_IIGS_CORE_ID,MT_MENU_BROWSER_DRIVE8,drive,MT_CONTENT_IIGS_HDD)==
-            (mt_iigs_drive_hdd_unit(drive)<MT_IIGS_HDD_COUNT || drive==MT_IIGS_FLOPPY35_DRIVE));
+            (mt_iigs_drive_hdd_unit(drive)<MT_IIGS_HDD_COUNT || drive==2U || drive==3U));
         assert(mt_core_frontend_accepts_drive_content(MT_IIGS_CORE_ID,MT_MENU_BROWSER_DRIVE8,drive,MT_CONTENT_IIGS_FLOPPY)==(drive==3U));
         assert(mt_core_frontend_accepts_drive_content(MT_IIGS_CORE_ID,MT_MENU_BROWSER_DRIVE8,drive,MT_CONTENT_IIGS_WOZ)==(drive==2U || drive==3U));
         assert(!mt_core_frontend_accepts_drive_content(MT_IIGS_CORE_ID,MT_MENU_BROWSER_DRIVE8,drive,MT_CONTENT_PRG));
@@ -85,6 +85,15 @@ int main(void)
     assert(mt_iigs_media_inspect(3U,"disk.dsk",h,sizeof(h),143360U,&media)==MT_CONTENT_VALID);
     assert(media.raw_format==MT_IIGS_RAW_DOS525 && media.kind==MT_IIGS_MEDIA_WOZ);
     assert(mt_iigs_media_inspect(3U,"disk.dsk",h,sizeof(h),143361U,&media)==MT_CONTENT_WRONG_SIZE);
+    assert(mt_content_classify("disk.PO")==MT_CONTENT_IIGS_HDD);
+    assert(mt_iigs_media_inspect(3U,"disk.PO",h,sizeof(h),143360U,&media)==MT_CONTENT_VALID);
+    assert(media.raw_format==MT_IIGS_RAW_PRODOS525 && media.kind==MT_IIGS_MEDIA_WOZ &&
+        media.size==143360U && media.offset==0U && media.writable);
+    assert(mt_iigs_media_inspect(3U,"disk.po",h,sizeof(h),143359U,&media)==MT_CONTENT_WRONG_SIZE);
+    assert(mt_iigs_media_inspect(3U,"disk.po",h,sizeof(h),819200U,&media)==MT_CONTENT_WRONG_SIZE);
+    assert(mt_iigs_media_inspect(2U,"disk.po",h,sizeof(h),143360U,&media)==MT_CONTENT_WRONG_SIZE);
+    assert(mt_iigs_media_inspect(0U,"disk.po",h,sizeof(h),143360U,&media)==MT_CONTENT_VALID);
+    assert(media.raw_format==MT_IIGS_RAW_NONE && media.kind==MT_IIGS_MEDIA_BLOCK32);
     assert(mt_iigs_media_inspect(2U,"disk.dsk",h,sizeof(h),143360U,&media)==MT_CONTENT_UNSUPPORTED_VERSION);
     assert(mt_iigs_media_inspect(0U,"disk.dsk",h,sizeof(h),143360U,&media)==MT_CONTENT_UNSUPPORTED_VERSION);
     assert(mt_iigs_media_inspect(3U,"disk.nib",h,sizeof(h),232960U,&media)==MT_CONTENT_UNSUPPORTED_VERSION);

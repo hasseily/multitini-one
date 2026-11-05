@@ -284,7 +284,7 @@ static int raw_sector(gs_drive_t *d,uint32_t lba,bool writing)
         if(!mt_iigs_floppy_header(d->info.raw_format,d->info.writable,raw_header))return fail("Invalid raw floppy format");
         memcpy(sector,raw_header+lba*512U,512U); return 0;
     }
-    const unsigned slots=d->info.raw_format==MT_IIGS_RAW_DOS525 ? 13U:20U;
+    const unsigned slots=d->info.raw_format==MT_IIGS_RAW_PRODOS35 ? 20U:13U;
     const unsigned track=(lba-3U)/slots,block=(lba-3U)%slots;
     mt_iigs_floppy_track_t t;
     if(!mt_iigs_floppy_track(d->info.raw_format,track,&t))return fail("Invalid raw floppy track");
@@ -478,28 +478,39 @@ static int mount_wire(unsigned slot,uint8_t kind,uint64_t bytes,uint32_t gen,boo
         return fail("Update IIgs core/ROM for SmartPort disks");
     return r==MT_LINK_OK ? 0:fail(mt_link_result_name(r));
 }
-static int mount_internal(unsigned drive,const char *name,bool remember)
+typedef enum { GS_MOUNT_OK,GS_MOUNT_FILE_ERROR,GS_MOUNT_LINK_ERROR } gs_mount_result_t;
+static gs_mount_result_t mount_internal(unsigned drive,const char *name)
 {
-    if(drive>=MT_IIGS_DRIVE_COUNT || !safe_name(name))return fail("Invalid Apple IIgs disk name");
-    if(require_safe_media()!=0)return -1;
+    if(drive>=MT_IIGS_DRIVE_COUNT || !safe_name(name)) {
+        (void)fail("Invalid Apple IIgs disk name");
+        return GS_MOUNT_FILE_ERROR;
+    }
+    if(require_safe_media()!=0)return GS_MOUNT_LINK_ERROR;
     gs_drive_t *d=&drives[drive];
-    if(d->mounted && iigs_content_service_eject(drive)!=0)return -1;
-    if(!path(d->path,name) || strlen(d->path)+9U>GS_PATH)
-        return fail("Disk path too long");
+    if(d->mounted && iigs_content_service_eject(drive)!=0)return GS_MOUNT_LINK_ERROR;
+    if(!path(d->path,name) || strlen(d->path)+9U>GS_PATH) {
+        (void)fail("Disk path too long");
+        return GS_MOUNT_FILE_ERROR;
+    }
     const size_t path_length=strlen(d->path);
+    if(path_length+11U>GS_PATH) {
+        (void)fail("Disk recovery path too long");
+        return GS_MOUNT_FILE_ERROR;
+    }
     memcpy(d->journal,d->path,path_length); memcpy(d->journal+path_length,".gsj",5U);
     memcpy(d->recovery,d->journal,path_length+4U); memcpy(d->recovery+path_length+4U,".mtj",5U);
-    if(path_length+11U>GS_PATH)return fail("Disk recovery path too long");
     memcpy(d->raw_journal,d->path,path_length); memcpy(d->raw_journal+path_length,".gsraw",7U);
     memcpy(d->raw_recovery,d->raw_journal,path_length+6U); memcpy(d->raw_recovery+path_length+6U,".mtj",5U);
     d->cached_track=-1; d->raw_pending=false; d->raw_received=0U;
+    gs_mount_result_t failure=GS_MOUNT_FILE_ERROR;
     mt_sd_result_t r=mt_sd_file_open(d->path,"r+b",&d->file);
     bool ro=false;
     if(r.status!=MT_SD_OK) { ro=true; r=mt_sd_file_open(d->path,"rb",&d->file); }
-    if(r.status!=MT_SD_OK)return sd_fail(r);
+    if(r.status!=MT_SD_OK) { (void)sd_fail(r); return GS_MOUNT_FILE_ERROR; }
     r=mt_sd_file_seek(d->file,0,SEEK_END);
     const int64_t end=mt_sd_file_tell(d->file);
-    if(r.status!=MT_SD_OK || end<=0)goto failed;
+    if(r.status!=MT_SD_OK)goto failed;
+    if(end<=0) { (void)fail("Invalid Apple IIgs disk size"); goto close_failed; }
     d->file_size=(uint64_t)end;
     r=mt_sd_file_seek(d->file,0,SEEK_SET); if(r.status!=MT_SD_OK)goto failed;
     r=mt_sd_file_read(d->file,sector,sizeof(sector)); if(r.status!=MT_SD_OK)goto failed;
@@ -527,17 +538,22 @@ static int mount_internal(unsigned drive,const char *name,bool remember)
     if(d->info.raw_format!=MT_IIGS_RAW_NONE && d->info.writable && raw_recover(d)!=0)goto close_failed;
     d->wire_size=d->info.raw_format==MT_IIGS_RAW_NONE ? d->info.size:mt_iigs_floppy_woz_size(d->info.raw_format);
     d->generation=generation();
+    failure=GS_MOUNT_LINK_ERROR;
     if(mount_wire(mt_iigs_drive_wire_slot(drive),d->info.kind,d->wire_size,d->generation,!d->info.writable)!=0)goto close_failed;
     d->mounted=true; (void)snprintf(d->name,sizeof(d->name),"%s",name);
-    if(remember) { (void)snprintf(remembered[drive],GS_NAME,"%s",name); return settings_save(); }
-    return 0;
+    return GS_MOUNT_OK;
 failed:
     (void)sd_fail(r);
 close_failed:
-    (void)mt_sd_file_close(d->file); d->file=NULL; return -1;
+    (void)mt_sd_file_close(d->file); d->file=NULL; return failure;
 }
 int iigs_content_service_mount(unsigned drive,const char *name)
-{ faulted=false; error[0]='\0'; return mount_internal(drive,name,true); }
+{
+    faulted=false; error[0]='\0';
+    if(mount_internal(drive,name)!=GS_MOUNT_OK)return -1;
+    (void)snprintf(remembered[drive],GS_NAME,"%s",name);
+    return settings_save();
+}
 static int eject_internal(unsigned drive,bool forget)
 {
     gs_drive_t *d=&drives[drive];
@@ -611,12 +627,16 @@ int iigs_content_service_prepare_reset(void)
 int iigs_content_service_resume_after_reset(void)
 {
     if(!reset_pending)return 0;
-    faulted=false;
+    faulted=false; error[0]='\0';
+    /* A remembered image can fail validation or journal recovery before it
+     * is handed to the FPGA. Leave it ejected and retain its path and error
+     * so the other drives and the IIgs can still start. */
+    for(unsigned i=0U;i<MT_IIGS_DRIVE_COUNT;++i)
+        if(!drives[i].mounted && remembered[i][0]!='\0' &&
+            mount_internal(i,remembered[i])==GS_MOUNT_LINK_ERROR)return -1;
     pram_generation=generation();
     if(mount_wire(MT_IIGS_PRAM_SLOT,MT_IIGS_MEDIA_PRAM,sizeof(pram),pram_generation,false)!=0)return -1;
     pram_mounted=true;
-    for(unsigned i=0U;i<MT_IIGS_DRIVE_COUNT;++i)
-        if(remembered[i][0]!='\0' && mount_internal(i,remembered[i],false)!=0)return -1;
     reset_pending=false; return 0;
 }
 int iigs_content_service_shutdown(void)
@@ -715,7 +735,7 @@ int iigs_content_service_boot(void)
     for(uint32_t poll=0U;poll<GS_POLLS;++poll) {
         tick(); const uint32_t status=link->read32(link->context,MT_REG_STATUS);
         if((status&MT_STATUS_CORE_LOAD_ERROR)!=0U)return fail("Apple IIgs ROM load rejected");
-        if((status&MT_STATUS_CORE_READY)!=0U) { ready=true; error[0]='\0'; return 0; }
+        if((status&MT_STATUS_CORE_READY)!=0U) { ready=true; return 0; }
     }
     return fail("Apple IIgs ready timeout");
 }

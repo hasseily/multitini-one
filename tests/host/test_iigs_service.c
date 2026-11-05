@@ -797,7 +797,7 @@ static uint8_t encoded[MT_IIGS_FLOPPY_TRACK_BYTES];
 static test_file_t *raw_disk(const char *name,uint8_t format,unsigned offset)
 {
     test_file_t *f=disk(name);
-    const unsigned size=format==MT_IIGS_RAW_DOS525 ? 143360U:819200U;
+    const unsigned size=format==MT_IIGS_RAW_PRODOS35 ? 819200U:143360U;
     f->size=size+offset+(offset==0U ? 0U:24U);
     for(unsigned i=0U;i<f->size;++i)f->data[i]=(uint8_t)(i*31U+(i>>9U)*17U);
     if(offset!=0U) {
@@ -886,13 +886,14 @@ static uint32_t metadata_le32(const uint8_t *p)
 { return (uint32_t)p[0]|(uint32_t)p[1]<<8U|(uint32_t)p[2]<<16U|(uint32_t)p[3]<<24U; }
 static void test_raw_metadata_transport(void)
 {
-    const uint8_t formats[]={MT_IIGS_RAW_DOS525,MT_IIGS_RAW_PRODOS35,MT_IIGS_RAW_PRODOS35};
-    const char *const names[]={"metadata.dsk","metadata.po","metadata.2mg"};
-    for(unsigned test=0U;test<3U;++test) {
+    const uint8_t formats[]={MT_IIGS_RAW_DOS525,MT_IIGS_RAW_PRODOS35,MT_IIGS_RAW_PRODOS35,MT_IIGS_RAW_PRODOS525};
+    const char *const names[]={"metadata.dsk","metadata.po","metadata.2mg","metadata525.po"};
+    for(unsigned test=0U;test<sizeof(formats)/sizeof(formats[0]);++test) {
         const uint8_t format=formats[test];
-        const unsigned slot=format==MT_IIGS_RAW_DOS525 ? 3U:2U;
-        const unsigned tracks=format==MT_IIGS_RAW_DOS525 ? 35U:160U;
-        const unsigned slots=format==MT_IIGS_RAW_DOS525 ? 13U:20U;
+        const bool sony=format==MT_IIGS_RAW_PRODOS35;
+        const unsigned slot=sony ? 2U:3U;
+        const unsigned tracks=sony ? 160U:35U;
+        const unsigned slots=sony ? 20U:13U;
         reset();(void)raw_disk(names[test],format,test==2U ? 128U:0U);
         assert(iigs_content_service_mount(slot,names[test])==0);
         uint8_t delivered[MT_IIGS_FLOPPY_HEADER_BYTES];
@@ -911,23 +912,24 @@ static void test_raw_metadata_transport(void)
                 for(unsigned b=0U;b<8U;++b)assert(entry[b]==0U);
                 continue;
             }
-            const unsigned bits=format==MT_IIGS_RAW_DOS525 ? 52224U:1480U+(12U-track/32U)*6358U;
+            const unsigned bits=sony ? 1480U+(12U-track/32U)*6358U:52224U;
             const unsigned first_block=(unsigned)entry[0]|(unsigned)entry[1]<<8U;
             const unsigned block_count=(unsigned)entry[2]|(unsigned)entry[3]<<8U;
             assert(first_block==3U+track*slots && block_count==(bits+4095U)/4096U &&
                 metadata_le32(entry+4U)==bits && first_block+block_count<=3U+tracks*slots);
-            if(format==MT_IIGS_RAW_PRODOS35)assert(delivered[88U+track]==track);
+            if(sony)assert(delivered[88U+track]==track);
             else assert(delivered[88U+track*4U]==track);
         }
     }
 }
 static void test_raw_floppy_transport(void)
 {
-    const uint8_t formats[]={MT_IIGS_RAW_DOS525,MT_IIGS_RAW_PRODOS35,MT_IIGS_RAW_PRODOS35};
-    const char *const names[]={"Games/DOS.dsk","Games/Sony.po","Games/Sony.2mg"};
-    for(unsigned test=0U;test<3U;++test) {
-        const unsigned slot=test==0U ? 3U:2U,offset=test==2U ? 128U:0U;
+    const uint8_t formats[]={MT_IIGS_RAW_DOS525,MT_IIGS_RAW_PRODOS35,MT_IIGS_RAW_PRODOS35,MT_IIGS_RAW_PRODOS525};
+    const char *const names[]={"Games/DOS.dsk","Games/Sony.po","Games/Sony.2mg","Games/ProDOS.po"};
+    for(unsigned test=0U;test<sizeof(formats)/sizeof(formats[0]);++test) {
         const uint8_t format=formats[test];
+        const bool sony=format==MT_IIGS_RAW_PRODOS35;
+        const unsigned slot=sony ? 2U:3U,offset=test==2U ? 128U:0U;
         reset();test_file_t *f=raw_disk(names[test],format,offset);
         if(test==2U)store32(f->data+28U,0U); /* Preserve the WOOF header variant. */
         uint8_t container[128],tail[24];
@@ -937,7 +939,7 @@ static void test_raw_floppy_transport(void)
         request(slot,0U,false);iigs_content_service_poll();
         assert(completion_status==MT_RESPONSE_OK && memcmp(stream_data,"WOZ2",4U)==0);
         assert(stream_data[21]==(slot==2U ? 2U:1U));
-        const unsigned track=test==0U ? 17U:137U;
+        const unsigned track=sony ? 137U:17U;
         mt_iigs_floppy_track_t t;assert(mt_iigs_floppy_track(format,track,&t));
         raw_prepare(f,format,track,offset);
         uint8_t original_bits[MT_IIGS_FLOPPY_TRACK_BYTES];
@@ -997,14 +999,47 @@ static void test_raw_floppy_recovery(void)
     assert(memcmp(f->data,raw_changed,t.raw_bytes)==0);
     assert(file_find(TEST_MEDIA_ROOT "/retry.po.gsraw",false)==NULL && file_find(TEST_MEDIA_ROOT "/retry.po.gsj",false)==NULL);
 
-    reset();f=raw_disk("short.dsk",MT_IIGS_RAW_DOS525,0U);
+    start_accelerated();f=raw_disk("short.dsk",MT_IIGS_RAW_DOS525,0U);
     assert(iigs_content_service_mount(3U,"short.dsk")==0);
+    (void)disk("healthy.hdv");assert(iigs_content_service_mount(4U,"healthy.hdv")==0);
     assert(mt_iigs_floppy_track(MT_IIGS_RAW_DOS525,0U,&t));raw_prepare(f,MT_IIGS_RAW_DOS525,0U,0U);
     raw_send(3U,&t,0U);assert(completion_status==MT_RESPONSE_OK);
+    uint8_t original_disk[143360U],original_journal[64U+MT_IIGS_FLOPPY_TRACK_BYTES];
+    test_file_t *const journal=file_find(TEST_MEDIA_ROOT "/short.dsk.gsraw",false);
+    assert(f->size==sizeof(original_disk) && journal!=NULL && journal->size==sizeof(original_journal));
+    memcpy(original_disk,f->data,sizeof(original_disk));
+    memcpy(original_journal,journal->data,sizeof(original_journal));
     simulate_power_cut();assert(iigs_content_service_mount(3U,"short.dsk")!=0);
     assert(strstr(iigs_content_service_error(),"cannot decode")!=NULL);
     assert(memcmp(f->data,raw_source,t.raw_bytes)==0 && file_find(TEST_MEDIA_ROOT "/short.dsk.gsraw",false)!=NULL);
     for(unsigned h=0U;h<FILES;++h)assert(!handles[h].open);
+
+    /* An undecodable remembered floppy must not keep the core in reset or
+     * stop the remaining drives from mounting. Preserve its recovery data. */
+    const unsigned healthy_slot=mt_iigs_drive_wire_slot(4U);
+    assert(iigs_content_service_boot()==0 && iigs_content_service_ready());
+    assert(!core_reset_asserted && reset_releases==2U && mount_event[healthy_slot]<release_event);
+    assert(iigs_content_service_faulted() && strstr(iigs_content_service_error(),"cannot decode")!=NULL);
+    assert(iigs_content_service_name(3U)==NULL && strcmp(iigs_content_service_name(4U),"healthy.hdv")==0);
+    const unsigned bad_slot=mt_iigs_drive_wire_slot(3U);
+    const unsigned prior_mount=mount_event[bad_slot];
+    assert(iigs_content_service_mount(3U,"short.dsk")!=0);
+    assert(strstr(iigs_content_service_error(),"cannot decode")!=NULL);
+    assert(iigs_content_service_ready() && !core_reset_asserted && mount_event[bad_slot]==prior_mount);
+    assert(iigs_content_service_name(3U)==NULL && strcmp(iigs_content_service_name(4U),"healthy.hdv")==0);
+    request(healthy_slot,0U,false);iigs_content_service_poll();assert(completion_status==MT_RESPONSE_OK);
+    mt_iigs_config_t c=*iigs_content_service_config();c.card=2U;pram_eject_write=true;
+    assert(iigs_content_service_configure(&c)==0 && iigs_content_service_ready());
+    assert(!core_reset_asserted && reset_releases==3U && mount_event[healthy_slot]<release_event);
+    assert(config_stream[1]==0U && config_stream[2]==2U);
+    assert(iigs_content_service_faulted() && strstr(iigs_content_service_error(),"cannot decode")!=NULL);
+    assert(iigs_content_service_name(3U)==NULL && strcmp(iigs_content_service_name(4U),"healthy.hdv")==0);
+    const test_file_t *const saved=file_find(TEST_MEDIA_ROOT "/gs-settings.bin",false);
+    assert(saved!=NULL && saved->data[10]==2U);
+    assert(strcmp((const char *)saved->data+24U+3U*(MT_IIGS_MEDIA_NAME_MAX+1U),"short.dsk")==0);
+    assert(f->size==sizeof(original_disk) && memcmp(f->data,original_disk,sizeof(original_disk))==0);
+    assert(file_find(TEST_MEDIA_ROOT "/short.dsk.gsraw",false)==journal && journal->size==sizeof(original_journal));
+    assert(memcmp(journal->data,original_journal,sizeof(original_journal))==0);
 
     /* A complete changed sector can be recovered even if power interrupts
      * transfer of unchanged final padding blocks. */

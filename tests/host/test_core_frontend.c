@@ -376,14 +376,14 @@ static void test_iigs_drive_formats(void)
     state.services_ready = true;
     mt_core_frontend_apply(&frontend, &state, &view);
     check(strstr(view.media_items[2].help, "800 KiB PO or 2MG") != NULL &&
-          strstr(view.media_items[3].help, "140 KiB DOS-order DSK") != NULL,
+          strstr(view.media_items[3].help, "140 KiB DOS-order DSK or ProDOS-order PO") != NULL,
           "floppy chooser explains accepted sector sizes and ordering");
     for(unsigned drive=0U;drive<=MT_IIGS_DRIVE_COUNT;++drive) {
         for(unsigned type=0U;type<=MT_CONTENT_IIGS_FLOPPY;++type) {
             const bool expected=drive<MT_IIGS_DRIVE_COUNT &&
                 (mt_iigs_drive_hdd_unit(drive)<MT_IIGS_HDD_COUNT ? type==MT_CONTENT_IIGS_HDD:
-                 type==MT_CONTENT_IIGS_WOZ ||
-                 (drive==2U ? type==MT_CONTENT_IIGS_HDD:type==MT_CONTENT_IIGS_FLOPPY));
+                 type==MT_CONTENT_IIGS_WOZ || type==MT_CONTENT_IIGS_HDD ||
+                 (drive==3U && type==MT_CONTENT_IIGS_FLOPPY));
             check(mt_core_frontend_accepts_drive_content(MT_IIGS_CORE_ID,
                 MT_MENU_BROWSER_DRIVE8,drive,(mt_content_type_t)type)==expected,
                 "IIgs drive filters permit its formats and reject other machines");

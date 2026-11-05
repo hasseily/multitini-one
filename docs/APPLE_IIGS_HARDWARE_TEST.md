@@ -139,7 +139,8 @@ cold reset. Command/OpenApple uses Alt; Option/SolidApple uses the Windows key.
    two images with the same basename in different folders. Confirm remembered
    full relative paths and recovery journals survive restart.
 2. Mount an 800 KiB PO and an 800 KiB ProDOS 2MG in the 3.5-inch drive; mount
-   a 140 KiB DOS-order DSK in the 5.25-inch drive. Also test native matching
+   a 140 KiB DOS-order DSK and a 140 KiB ProDOS-order PO in the 5.25-inch
+   drive. Also test native matching
    WOZ2 media in both drives. For a standalone floppy boot, eject the HDDs and
    the other floppy, mount the boot image and cold-reset. Let drive
    initialization finish. Check boot, seeks, side selection, write

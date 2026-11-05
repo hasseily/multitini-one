@@ -3,7 +3,8 @@
 #define MULTITINI_IIGS_CONTENT_H
 #include "multitini_iigs_interface.h"
 #include "multitini_content.h"
-enum { MT_IIGS_RAW_NONE, MT_IIGS_RAW_DOS525, MT_IIGS_RAW_PRODOS35 };
+/* Raw format IDs are stored in .gsraw journals. Append new values. */
+enum { MT_IIGS_RAW_NONE, MT_IIGS_RAW_DOS525, MT_IIGS_RAW_PRODOS35, MT_IIGS_RAW_PRODOS525 };
 typedef struct {
     uint64_t offset, size;
     uint8_t kind;

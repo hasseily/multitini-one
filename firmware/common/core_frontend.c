@@ -522,7 +522,7 @@ static void build_iigs(mt_core_frontend_t *frontend,
         frontend->media_items[view->media_item_count++]=item(labels[d],name!=NULL ? name:"Choose disk...",
             name!=NULL ? "Flush writes and eject this disk.":mt_iigs_drive_hdd_unit(d)<MT_IIGS_HDD_COUNT ? "Mount HDV, ProDOS-order PO or ProDOS 2MG; capacity is checked before mounting.":
                 d==2U ? "Mount an 800 KiB PO or 2MG, or a 3.5-inch WOZ2.":
-                "Mount a 140 KiB DOS-order DSK, or a 5.25-inch WOZ2.",
+                "Mount a 140 KiB DOS-order DSK or ProDOS-order PO, or a 5.25-inch WOZ2.",
             name!=NULL ? MT_MENU_ACTION_EJECT_IIGS_DRIVE:MT_MENU_ACTION_BROWSE_IIGS_DRIVE,d,true,name!=NULL ? MT_UI_COLOR_SUCCESS:MT_UI_COLOR_BLUE);
     }
     frontend->media_items[view->media_item_count++]=item("System ROMs",state->iigs_ready ? "Loaded":"Load / retry...",
@@ -762,8 +762,8 @@ bool mt_core_frontend_accepts_drive_content(uint32_t core_id, mt_menu_browser_t 
     if(core_id==MT_IIGS_CORE_ID && browser==MT_MENU_BROWSER_DRIVE8) {
         if(drive>=MT_IIGS_DRIVE_COUNT) return false;
         if(mt_iigs_drive_hdd_unit(drive)<MT_IIGS_HDD_COUNT) return type==MT_CONTENT_IIGS_HDD;
-        return type==MT_CONTENT_IIGS_WOZ ||
-            (drive==2U ? type==MT_CONTENT_IIGS_HDD:type==MT_CONTENT_IIGS_FLOPPY);
+        return type==MT_CONTENT_IIGS_WOZ || type==MT_CONTENT_IIGS_HDD ||
+            (drive==3U && type==MT_CONTENT_IIGS_FLOPPY);
     }
     return mt_core_frontend_accepts_content(core_id,browser,type);
 }
