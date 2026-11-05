@@ -46,6 +46,13 @@ int main(void)
     assert(native.configs[3]==0x18U && native.configs[4]==0x23U && native.configs[8]==0x27U);
     config.cpu=MT_AMIGA_CPU_68020_14;
     assert(mt_amiga_native_configure(&link,&config,true,5U)==MT_LINK_BAD_ARGUMENT);
+    config.cpu=MT_AMIGA_CPU_AP68040_2X;
+    assert(mt_amiga_native_configure(&link,&config,false,5U)==MT_LINK_BAD_ARGUMENT);
+    native.status&=~MT_AMIGA_HOST_AP68040_2X;
+    assert(mt_amiga_native_configure(&link,&config,true,5U)==MT_LINK_ABI_MISMATCH);
+    native.status|=MT_AMIGA_HOST_AP68040_2X;
+    assert(mt_amiga_native_configure(&link,&config,true,5U)==MT_LINK_OK &&
+           native.configs[3]==0x19U && native.configs[4]==0x1fU && native.configs[8]==7U);
     native.hold=true;assert(mt_amiga_host_access(&link,0U,0U,2U,NULL)==MT_LINK_TIMEOUT);native.hold=false;
     native.error=true;assert(mt_amiga_host_access(&link,0U,0U,2U,NULL)==MT_LINK_REMOTE_ERROR);native.error=false;native.status=0U;
     native.no_toggle=true;assert(mt_amiga_host_access(&link,0U,0U,2U,NULL)==MT_LINK_TIMEOUT);

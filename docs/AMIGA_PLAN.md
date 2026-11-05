@@ -133,7 +133,10 @@ Use `--image amiga-aga-040` to build the AP68040 image and
 and Amiga media directory. It saves its disk mounts and options separately
 in `media/amiga-040-settings.bin`. Use a Workbench disk with 68040 support.
 Install firmware that recognizes the `aga-040-pal` variant with the package.
-The CPU runs at 28.375 MHz and uses direct 32-bit reads for Kickstart.
+The CPU uses direct 32-bit reads for Kickstart. On dual-clock AP68040 images,
+**Options → CPU speed** toggles **28 MHz** (28.375 MHz) and **56.75 MHz**.
+Changing speed flushes disks and restarts Amiga. The chipset and the CPU
+external bus run at 28.375 MHz in both modes.
 
 ## Qualification
 

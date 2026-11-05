@@ -106,6 +106,8 @@ static void wr(void *ctx,uint32_t offset,uint32_t value)
         regs[offset/4U]=value;return;
     }
     const unsigned op=value>>24U,address=(value>>16U)&31U;const uint16_t data=(uint16_t)value;uint16_t answer=0U;
+    if(op==MT_AMIGA_HOST_READ_CONFIG && staged_config[4]==MT_AMIGA_CPU_AP68040_2X)
+        answer=MT_AMIGA_NATIVE_AP68040_2X;
     if(op==MT_AMIGA_HOST_CLEAR_ERROR) { native_error_latch=false;rtc_stage=0U;++rtc_discards; }
     if(op==MT_AMIGA_HOST_SELECT) { select_pins=data;io_phase=0U;uio_reg=255U; }
     else if(op==MT_AMIGA_HOST_TRANSFER) {
@@ -481,15 +483,31 @@ int main(void)
     amiga_content_service_init(&link,ROOT,true,progress,NULL);
     assert(amiga_content_service_config()->cpu==MT_AMIGA_CPU_68020_TURBO);
     assert(amiga_content_service_shutdown()==0);
+    cpu14_capable=false;
     amiga_content_service_init(&link,ROOT,MT_AMIGA_AGA_040,progress,NULL);
     assert(amiga_content_service_ap68040() && amiga_content_service_aga_pal());
     assert(amiga_content_service_boot()==0 && rom_first==0xa2U && staged_config[11]==1U);
     assert(native_config[4]==0x1fU && amiga_content_service_name(2U)==NULL);
     assert(amiga_content_service_mount(2U,"System.hdf")==0);
-    assert(find(ROOT "/amiga-040-settings.bin",false)!=NULL);
+    file_t *ap_settings=find(ROOT "/amiga-040-settings.bin",false);
+    assert(ap_settings!=NULL && !amiga_content_service_ap68040_2x_available());
+    cpu14_capable=true; /* Same optional-speed capability bit on AP68040. */
+    mt_amiga_config_t ap_config=*amiga_content_service_config();
+    ap_config.cpu=MT_AMIGA_CPU_AP68040_2X;
+    assert(amiga_content_service_ap68040_2x_available() && amiga_content_service_configure(&ap_config)==0);
+    assert(staged_config[4]==MT_AMIGA_CPU_AP68040_2X && ap_settings->data[12]==MT_AMIGA_CPU_AP68040_2X);
     assert(amiga_content_service_shutdown()==0);
+    cpu14_capable=false;
     amiga_content_service_init(&link,ROOT,MT_AMIGA_AGA_040,progress,NULL);
     assert(amiga_content_service_boot()==0 && strcmp(amiga_content_service_name(2U),"System.hdf")==0);
+    assert(staged_config[4]==MT_AMIGA_CPU_68020_TURBO && ap_settings->data[12]==MT_AMIGA_CPU_AP68040_2X);
+    assert(amiga_content_service_shutdown()==0);
+    cpu14_capable=true;
+    amiga_content_service_init(&link,ROOT,MT_AMIGA_AGA_040,progress,NULL);
+    assert(amiga_content_service_boot()==0 && staged_config[4]==MT_AMIGA_CPU_AP68040_2X);
+    ap_config.cpu=MT_AMIGA_CPU_68020_TURBO;
+    assert(amiga_content_service_configure(&ap_config)==0 && staged_config[4]==MT_AMIGA_CPU_68020_TURBO);
+    assert(ap_settings->data[12]==MT_AMIGA_CPU_68020_TURBO);
     assert(amiga_content_service_shutdown()==0);
     amiga_content_service_init(&link,ROOT,MT_AMIGA_AGA,progress,NULL);
     assert(!amiga_content_service_ap68040());

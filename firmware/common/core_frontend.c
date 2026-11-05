@@ -585,16 +585,21 @@ static void build_amiga(mt_core_frontend_t *frontend,const mt_core_frontend_stat
         "Load your 256 KiB, 512 KiB or 1 MiB roms/kick.rom.",MT_MENU_ACTION_AMIGA_RELOAD,0U,true,state->amiga_ready ? MT_UI_COLOR_SUCCESS:MT_UI_COLOR_WARNING);
     frontend->media_items[view->media_item_count++]=item("Retry media",state->save_faulted ? "I/O error; retry":"No errors",
         "Retry a retained disk journal or failed transfer.",MT_MENU_ACTION_AMIGA_RETRY,0U,state->save_faulted,MT_UI_COLOR_BLUE);
-    const char *const cpu=state->amiga_ap68040 ? "68040 28.375 MHz":state->amiga_config.cpu==MT_AMIGA_CPU_STOCK ?
+    const char *const cpu=state->amiga_ap68040 ?
+        (state->amiga_config.cpu==MT_AMIGA_CPU_AP68040_2X ? "56.75 MHz":"28 MHz"):
+        state->amiga_config.cpu==MT_AMIGA_CPU_STOCK ?
         (state->amiga_aga_pal ? "68EC020 stock":"68000 stock"):
         state->amiga_config.cpu==MT_AMIGA_CPU_68020_14 ? "68020 14 MHz":"68020 28 MHz";
-    frontend->core_options[view->core_option_count++]=item("CPU",cpu,
-        state->amiga_ap68040 ? "AP68040 uses a fixed CPU clock.":
+    frontend->core_options[view->core_option_count++]=item(state->amiga_ap68040 ? "CPU speed":"CPU",cpu,
+        state->amiga_ap68040 ? (state->amiga_ap68040_2x_available ?
+            "Switch between 28 MHz and 56.75 MHz. Changing speed saves disks and restarts Amiga.":
+            "56.75 MHz requires an updated AP68040 FPGA image."):
         state->amiga_aga_pal ? "68EC020 stock or 68020 accelerated. Changing CPU saves disks and restarts.":
         state->amiga_cpu14_fallback ? "14 MHz unavailable on this core; using 28 MHz. Saved preference retained.":
         state->amiga_cpu14_available ? "Stock 68000, 68020 14 MHz, 68020 28 MHz. Changing CPU saves disks and restarts.":
         "Stock 68000 or 68020 28 MHz. 14 MHz requires an updated core. Changing CPU saves disks and restarts.",
-        MT_MENU_ACTION_TOGGLE_CORE_OPTION,0U,!state->amiga_ap68040,MT_UI_COLOR_BLUE);
+        MT_MENU_ACTION_TOGGLE_CORE_OPTION,0U,
+        !state->amiga_ap68040 || (state->amiga_ap68040_2x_available && !state->amiga_display_pending),MT_UI_COLOR_BLUE);
     const char *const requested=mt_amiga_display_mode_name(state->amiga_display_requested);
     const bool verified=state->amiga_display_applied<MT_AMIGA_DISPLAY_MODES;
     const char *const applied=verified ? mt_amiga_display_mode_name(state->amiga_display_applied):"unverified";

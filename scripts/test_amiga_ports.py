@@ -114,11 +114,11 @@ def main() -> int:
         raise SystemExit("AGA fetch coherence check did not report success")
     profiles = [("stock",0),("turbo",3),("half",7),("aga_stock",7),("aga_turbo",3)] if args.cpu else []
     if args.ap68040:
-        profiles.append(("aga_040",3))
+        profiles.extend((("aga_040",3),("aga_040_2x",3)))
     if profiles:
         for profile,mode in profiles:
             snapshot=f"amiga_cpu_{profile}"
-            relax = ["--relax"] if profile == "aga_040" else []
+            relax = ["--relax"] if profile.startswith("aga_040") else []
             run("xelab",relax+[f"work.tb_amiga_cpu_{profile}","-s",snapshot,"--debug","typical","--timescale","1ns/1ps","--mt","auto"])
             run("xsim",[snapshot,"--runall"])
             log=(build / "xsim.stdout.log").read_text()

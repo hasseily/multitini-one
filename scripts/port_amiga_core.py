@@ -257,6 +257,8 @@ def cpu() -> str:
     text = (SOURCE / "rtl/cpu_wrapper.v").read_text()
     text = replace_once(text, "module cpu_wrapper\n",
                         "module cpu_wrapper #(parameter USE_AP68040 = 1'b0)\n")
+    text = replace_once(text, "\tinput             reset,",
+                        "\tinput             ap_clk, ap_bclk,\n\tinput             reset,")
     text = replace_once(text, "if(cpucfg[1:0]) begin", "if(USE_AP68040 || cpucfg[1:0]) begin")
     text = replace_once(text, "ec020      = (cpucfg", "ec020      = !USE_AP68040 & (cpucfg")
     text = replace_once(text, "sel_nmi_vector = ((", "sel_nmi_vector = !USE_AP68040 && ((")
@@ -272,7 +274,8 @@ def cpu() -> str:
     text = text[:start] + """generate if (USE_AP68040) begin : ap040
     wire [7:0] fast_top = !z2ram_ena ? 8'h20 : fastramcfg == 3'd2 ? 8'h60 : 8'ha0;
     multitini_amiga_ap68040 bridge (
-        .clk(clk), .reset_n(reset), .ipl_n(chip_ipl), .fast_top(fast_top),
+        .clk(clk), .cpu_clk(ap_clk), .cpu_bclk(ap_bclk),
+        .reset_n(reset), .ipl_n(chip_ipl), .fast_top(fast_top),
         .wide_selected(ramlong1), .ready(clkena_p_throttled),
         .data_in(cpu_din), .data_next(ramdout_hi),
         .address(cpu_addr_p), .data_out(cpu_dout_p), .data_low(cpu_dout_lo_p),

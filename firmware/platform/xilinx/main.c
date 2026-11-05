@@ -3425,6 +3425,7 @@ static mt_menu_view_t supervisor_menu_view(void)
         state.amiga_config=*amiga_content_service_config();state.save_faulted=amiga_content_service_faulted();
         state.amiga_aga_pal=amiga_content_service_aga_pal();
         state.amiga_ap68040=amiga_content_service_ap68040();
+        state.amiga_ap68040_2x_available=amiga_content_service_ap68040_2x_available();
         state.amiga_cpu14_available=amiga_content_service_cpu14_available();
         state.amiga_cpu14_fallback=amiga_content_service_cpu14_fallback();
         state.amiga_fast_ide_available=amiga_content_service_fast_ide_available();
@@ -4551,28 +4552,38 @@ static bool amiga_cpu_command(const char *line)
     if(strcmp(line,"amigacpu")==0 || strcmp(line,"amigacpu status")==0) {
         const mt_amiga_config_t *c=amiga_content_service_config();
         xil_printf("[Amiga CPU] active=%s cpu14_available=%u saved14_fallback=%u\r\n",
-            amiga_content_service_ap68040() ? "68040 28.375 MHz":
+            amiga_content_service_ap68040() ?
+                (c->cpu==MT_AMIGA_CPU_AP68040_2X ? "68040 56.75 MHz":"68040 28 MHz"):
                 c->cpu==MT_AMIGA_CPU_STOCK ? (amiga_content_service_aga_pal() ? "68EC020 stock":"68000 stock"):
                 c->cpu==MT_AMIGA_CPU_68020_14 ? "68020 14 MHz":"68020 28 MHz",
             amiga_content_service_cpu14_available()?1U:0U,amiga_content_service_cpu14_fallback()?1U:0U);
         if(amiga_content_service_cpu14_available() || amiga_content_service_aga_pal()) {
             uint32_t native=0U;
             const mt_link_result_t result=mt_amiga_host_access(&shell_link,MT_AMIGA_HOST_READ_CONFIG,0U,100000U,&native);
-            if(result==MT_LINK_OK)xil_printf("[Amiga CPU] native_cpucfg=%02x native_memcfg=%02x aga_pal=%u\r\n",
-                (unsigned)(native&31U),(unsigned)((native>>5U)&127U),(unsigned)((native>>13U)&1U));
+            if(result==MT_LINK_OK)xil_printf("[Amiga CPU] native_cpucfg=%02x native_memcfg=%02x aga_pal=%u cpu_2x=%u\r\n",
+                (unsigned)(native&31U),(unsigned)((native>>5U)&127U),(unsigned)((native>>13U)&1U),
+                (native&MT_AMIGA_NATIVE_AP68040_2X)!=0U ? 1U:0U);
             else xil_printf("[Amiga CPU] native readback failed: %s\r\n",mt_link_result_name(result));
         } else xil_printf("[Amiga CPU] native readback unsupported by this core\r\n");
         return true;
     }
     if(strncmp(line,"amigacpu ",9U)!=0)return false;
-    if(amiga_content_service_ap68040()) {
-        xil_printf("[Amiga CPU] AP68040 runs at 28.375 MHz\r\n");return true;
-    }
     mt_amiga_config_t changed=*amiga_content_service_config();
-    if(strcmp(line+9U,"stock")==0)changed.cpu=MT_AMIGA_CPU_STOCK;
-    else if(strcmp(line+9U,"14")==0)changed.cpu=MT_AMIGA_CPU_68020_14;
-    else if(strcmp(line+9U,"28")==0)changed.cpu=MT_AMIGA_CPU_68020_TURBO;
-    else { xil_printf("usage: :amigacpu [status|stock|14|28]\r\n");return true; }
+    if(amiga_content_service_ap68040()) {
+        if(strcmp(line+9U,"28")==0)changed.cpu=MT_AMIGA_CPU_68020_TURBO;
+        else if(strcmp(line+9U,"56.75")==0 && amiga_content_service_ap68040_2x_available())
+            changed.cpu=MT_AMIGA_CPU_AP68040_2X;
+        else {
+            xil_printf(amiga_content_service_ap68040_2x_available() ?
+                "usage: :amigacpu [status|28|56.75]\r\n":"[Amiga CPU] 56.75 MHz requires an updated AP68040 core\r\n");
+            return true;
+        }
+    } else {
+        if(strcmp(line+9U,"stock")==0)changed.cpu=MT_AMIGA_CPU_STOCK;
+        else if(strcmp(line+9U,"14")==0)changed.cpu=MT_AMIGA_CPU_68020_14;
+        else if(strcmp(line+9U,"28")==0)changed.cpu=MT_AMIGA_CPU_68020_TURBO;
+        else { xil_printf("usage: :amigacpu [status|stock|14|28]\r\n");return true; }
+    }
     if(changed.cpu==MT_AMIGA_CPU_68020_14 && !amiga_content_service_cpu14_available()) {
         set_supervisor_warning("14 MHz requires an updated Amiga core");return true;
     }
@@ -6614,8 +6625,13 @@ static void handle_menu_action(mt_menu_action_t action)
         if(supervisor.has_active && supervisor.active.package.core_id==MT_AMIGA_CORE_ID) {
             mt_amiga_config_t changed=*amiga_content_service_config();
             if(action.file_index==0U) {
-                if(amiga_content_service_ap68040())return;
-                changed.cpu=changed.cpu==MT_AMIGA_CPU_STOCK ?
+                if(amiga_content_service_ap68040()) {
+                    if(!amiga_content_service_ap68040_2x_available())return;
+                    if(usb_sd_modal || mt_sd_storage_external_active() || mt_screenshot_service_busy() || amiga_display_service_pending()) {
+                        set_supervisor_warning("CPU change unavailable while storage/display is busy");return;
+                    }
+                    changed.cpu=changed.cpu==MT_AMIGA_CPU_AP68040_2X ? MT_AMIGA_CPU_68020_TURBO:MT_AMIGA_CPU_AP68040_2X;
+                } else changed.cpu=changed.cpu==MT_AMIGA_CPU_STOCK ?
                     (amiga_content_service_cpu14_available() ? MT_AMIGA_CPU_68020_14:MT_AMIGA_CPU_68020_TURBO):
                     changed.cpu==MT_AMIGA_CPU_68020_14 ? MT_AMIGA_CPU_68020_TURBO:MT_AMIGA_CPU_STOCK;
             }

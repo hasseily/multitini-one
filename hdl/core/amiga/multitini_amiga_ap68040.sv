@@ -2,7 +2,7 @@
 // Adapt the 040 external bus to the native Minimig wrapper. Fast RAM and
 // direct Kickstart reads accept aligned longwords through the DDR cache.
 module multitini_amiga_ap68040 (
-    input wire clk, reset_n,
+    input wire clk, cpu_clk, cpu_bclk, reset_n,
     input wire [2:0] ipl_n,
     input wire [7:0] fast_top,
     input wire wide_selected, ready,
@@ -17,8 +17,9 @@ module multitini_amiga_ap68040 (
     wire [31:0] a, d;
     wire [1:0] size, tt;
     wire [2:0] tm;
-    wire ts_n, rw_n, a_oe;
-    logic [31:0] base, read_data;
+    wire ts_n, rw_n, a_oe, cpu_reset_out_n;
+    logic [31:0] base, read_data, write_data;
+    logic native_reset_out_n=1'b1;
     logic [15:0] first_word;
     logic [1:0] size_q;
     logic read_q, second_word, interrupt_ack, transfer_error;
@@ -33,14 +34,19 @@ module multitini_amiga_ap68040 (
     assign wide_candidate = active && long_access && !second_word;
     assign uds_n = !active || (size_q == 2'b01 && base[0]);
     assign lds_n = !active || (size_q == 2'b01 && !base[0]);
-    assign data_out = address[1] ? d[15:0] : d[31:16];
-    assign data_low = d[15:0];
+    assign data_out = address[1] ? write_data[15:0] : write_data[31:16];
+    assign data_low = write_data[15:0];
+    // RSTO is a bus-clock pulse. Register it at the native boundary
+    // before its fan-out into chipset reset and memory request logic.
+    always_ff @(posedge clk) native_reset_out_n <= cpu_reset_out_n;
+    assign reset_out_n = native_reset_out_n;
 
     always_ff @(posedge clk or negedge reset_n) begin
         if (!reset_n) begin
             state <= IDLE;
             base <= 0;
             read_data <= 0;
+            write_data <= 0;
             first_word <= 0;
             size_q <= 0;
             read_q <= 1;
@@ -52,6 +58,7 @@ module multitini_amiga_ap68040 (
                 state <= IDLE;
                 if (!ts_n && a_oe) begin
                     base <= a;
+                    write_data <= d;
                     size_q <= size;
                     read_q <= rw_n;
                     second_word <= 0;
@@ -87,7 +94,7 @@ module multitini_amiga_ap68040 (
     end
 
     ap68040 #(.DC_WRITETHROUGH(1'b1)) cpu (
-        .clk(clk), .bclk_en(1'b1), .rsti_n(reset_n), .rsto_n(reset_out_n),
+        .clk(cpu_clk), .bclk_en(cpu_bclk), .rsti_n(reset_n), .rsto_n(cpu_reset_out_n),
         .amiga_fast_top(fast_top),
         .a_o(a), .a_oe(a_oe), .d_o(d), .d_i(read_data), .ts_n(ts_n),
         .rw_n(rw_n), .siz(size), .tt(tt), .tm(tm),

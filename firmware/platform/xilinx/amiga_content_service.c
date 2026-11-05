@@ -218,14 +218,15 @@ static void settings_load(void)
     mt_amiga_config_t candidate;
     bool valid=r.size==sizeof(settings_wire) && memcmp(settings_wire,"MTAMSET1",8U)==0 &&
         expected==crc32(settings_wire,sizeof(settings_wire)) && mt_amiga_config_decode(settings_wire+8U,&candidate);
-    if(valid && aga_pal && candidate.cpu==MT_AMIGA_CPU_68020_14)valid=false;
+    if(valid && ((aga_pal && candidate.cpu==MT_AMIGA_CPU_68020_14) ||
+                 (!ap68040 && candidate.cpu==MT_AMIGA_CPU_AP68040_2X)))valid=false;
     for(unsigned i=0U;valid && i<MT_AMIGA_DRIVE_COUNT;++i) {
         const char *name=(const char *)settings_wire+24U+i*AM_NAME;
         valid=memchr(name,0,AM_NAME)!=NULL && (*name=='\0' || mt_amiga_media_path_valid(name));
     }
     if(!valid) { settings_invalid=true;(void)fail("Amiga settings checksum or values invalid");return; }
     config=candidate;for(unsigned i=0U;i<MT_AMIGA_DRIVE_COUNT;++i)memcpy(remembered[i],settings_wire+24U+i*AM_NAME,AM_NAME);
-    if(ap68040)config.cpu=MT_AMIGA_CPU_68020_TURBO;
+    if(ap68040 && config.cpu==MT_AMIGA_CPU_STOCK)config.cpu=MT_AMIGA_CPU_68020_TURBO;
 }
 static int apply_journal(am_drive_t *d)
 {
@@ -595,6 +596,10 @@ void amiga_content_service_init(mt_core_link_t *l,const char *media_root,mt_amig
         config.cpu=MT_AMIGA_CPU_68020_TURBO;
         (void)snprintf(error,sizeof(error),"14 MHz unavailable on this core; using 28 MHz; preference retained");
     }
+    if(config.cpu==MT_AMIGA_CPU_AP68040_2X && !amiga_content_service_ap68040_2x_available()) {
+        config.cpu=MT_AMIGA_CPU_68020_TURBO;
+        (void)snprintf(error,sizeof(error),"56.75 MHz unavailable on this core; using 28 MHz; preference retained");
+    }
 }
 int amiga_content_service_boot(void)
 {
@@ -615,6 +620,13 @@ int amiga_content_service_boot(void)
     for(size_t i=r.size;i<sizeof(rom);++i)rom[i]=rom[i%r.size];
     const mt_link_result_t staged=mt_amiga_stage(link,&config,aga_pal,rom,sizeof(rom),AM_POLLS,progress,progress_context);
     if(staged!=MT_LINK_OK)return fail(mt_link_result_name(staged));
+    if(amiga_content_service_ap68040_2x_available()) {
+        uint32_t native=0U;
+        const mt_link_result_t read=mt_amiga_host_access(link,MT_AMIGA_HOST_READ_CONFIG,0U,AM_POLLS,&native);
+        if(read!=MT_LINK_OK)return fail(mt_link_result_name(read));
+        if(((native&MT_AMIGA_NATIVE_AP68040_2X)!=0U)!=(config.cpu==MT_AMIGA_CPU_AP68040_2X))
+            return fail("AP68040 clock setting did not take effect");
+    }
     for(unsigned i=0U;i<MT_AMIGA_DRIVE_COUNT;++i)if(drives[i].file==NULL && remembered[i][0]!='\0') {
         char saved[AM_NAME];memcpy(saved,remembered[i],AM_NAME);
         if(amiga_content_service_mount(i,saved)!=0)return -1;
@@ -807,13 +819,15 @@ int amiga_content_service_configure(const mt_amiga_config_t *candidate)
 {
     if(!mt_amiga_config_valid(candidate) || (aga_pal && candidate->cpu==MT_AMIGA_CPU_68020_14))
         return fail("Amiga configuration invalid");
-    if(ap68040 && candidate->cpu!=MT_AMIGA_CPU_68020_TURBO)
-        return fail("AP68040 CPU mode is fixed");
+    if(ap68040 && candidate->cpu==MT_AMIGA_CPU_STOCK)
+        return fail("AP68040 requires 28 MHz or 56.75 MHz");
+    if(candidate->cpu==MT_AMIGA_CPU_AP68040_2X && !amiga_content_service_ap68040_2x_available())
+        return fail("56.75 MHz requires an updated AP68040 core");
     if(candidate->cpu==MT_AMIGA_CPU_68020_14 && !amiga_content_service_cpu14_available())
         return fail("14 MHz requires an updated Amiga core");
     if(amiga_content_service_prepare_reset()!=0)return -1;
     const mt_amiga_config_t previous=config;const uint8_t previous_cpu=preferred_cpu;
-    /* Other option changes retain an unavailable saved14 preference. An
+    /* Other option changes retain an unavailable saved CPU preference. An
      * explicit reapply of the current CPU/profile accepts its actual speed. */
     if(candidate->cpu!=config.cpu || (candidate->ntsc==config.ntsc &&
         candidate->fast_blitter==config.fast_blitter && candidate->floppy_turbo==config.floppy_turbo &&
@@ -825,6 +839,8 @@ int amiga_content_service_configure(const mt_amiga_config_t *candidate)
 const mt_amiga_config_t *amiga_content_service_config(void) { return &config; }
 bool amiga_content_service_aga_pal(void) { return aga_pal; }
 bool amiga_content_service_ap68040(void) { return ap68040; }
+bool amiga_content_service_ap68040_2x_available(void)
+{ return ap68040 && link!=NULL && link->read32!=NULL && (link->read32(link->context,MT_AMIGA_HOST_PORT)&MT_AMIGA_HOST_AP68040_2X)!=0U; }
 int amiga_content_service_ide_bench(unsigned iterations,uint64_t (*timer)(void *),
     void *context,mt_amiga_ide_bench_t *result)
 {

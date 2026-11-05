@@ -451,7 +451,8 @@ def main():
          "Kickstart is a separate user-owned input.\n" if args.include_amiga else "") +
         ("Amiga 1200 AGA PAL provides stock 68EC020 and accelerated 68020 modes.\n"
          "Supply your A1200 Kickstart separately as kick-a1200.rom.\n" if args.include_amiga_aga else "") +
-        ("Amiga 1200 AGA + 68040 runs the AP68040 at 28.375 MHz. Use a Workbench disk with 68040 support.\n"
+        ("Amiga 1200 AGA + 68040 uses a Workbench disk with 68040 support.\n"
+         "Dual-clock AP68040 images offer 28 MHz and 56.75 MHz in Options.\n"
          if args.include_amiga_aga_040 else "") +
         ("Supply your system ROMs using the instructions in each core's roms/ folder.\n"
          if args.public_release else "This is a private local delivery with validated user-supplied boot ROMs.\n")

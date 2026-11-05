@@ -6,6 +6,7 @@ module multitini_amiga_host #(
     parameter integer DISPLAY_TIMEOUT_CYCLES=4194304,
     parameter integer BLOCK_STALL_TIMEOUT_CYCLES=65536,
     parameter bit AGA_PAL=1'b0,
+    parameter bit USE_AP68040=1'b0,
     parameter bit ENABLE_DIAGNOSTICS=1'b1
 )(
     input wire control_clk,control_resetn,write,
@@ -101,10 +102,11 @@ module multitini_amiga_host #(
         if(!control_resetn)req_control<=0;
         else if(req_snapshot_valid)req_control<=req_snapshot;
     // Bit28 advertises the optional framed RTC extension to ARM firmware.
-    // Bits25/24 advertise sector-block transport and selectable68020/14MHz.
+    // Bit25 advertises block transport. Bit24 advertises 14 MHz on ECS
+    // and selectable 56.75 MHz on the AP68040 AGA variant.
     // Bit23 advertises the optional CPU-side fast IDE path/configuration.
     assign status={pending||outstanding||block_legacy_blocked,error,completion_toggle,
-                   4'b1111,!AGA_PAL,1'b1,ENABLE_DIAGNOSTICS,req_control,result};
+                   4'b1111,(!AGA_PAL || USE_AP68040),1'b1,ENABLE_DIAGNOSTICS,req_control,result};
     reg diag_control_valid;
     reg [7:0] diag_action;
     reg [15:0] diag_sequence;

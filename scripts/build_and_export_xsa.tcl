@@ -365,6 +365,51 @@ if {$image_kind eq "AMIGA"} {
     report_timing -delay_type max -to $amiga_ce -max_paths 10 \
         -file [file join $report_dir amiga_clock_enable_setup.rpt]
     puts "AMIGA_NATIVE_CLOCK_PASS period=[get_property PERIOD $amiga_chip_clock] gate=$amiga_gate_ref ce_slack=$amiga_ce_slack"
+    if {[string match {*AMIGA_AP68040=1'b1*} $build_generics]} {
+        foreach {property expected} {CLKOUT1_DIVIDE 15 CLKOUT1_PHASE 0.0 CLKOUT1_DUTY_CYCLE 0.5} {
+            if {abs([get_property $property $amiga_mmcm] - $expected) > 0.000001} {
+                error "AP68040 MMCM $property differs from $expected"
+            }
+        }
+        set fast_root [get_clocks -quiet -filter {NAME =~ *clk_out2*zynq_ps_bd_clk_wiz_c64*}]
+        require_one_object "AP68040 MMCM output" $fast_root
+        set processor_gate [get_cells -quiet -hierarchical -regexp \
+            {.*amiga_machine/ap_clock[.]processor_clock_gate$}]
+        require_one_object "AP68040 clock gate" $processor_gate
+        set processor_clock [get_clocks -quiet -of_objects [get_pins $processor_gate/O]]
+        require_one_object "AP68040 gated clock" $processor_clock
+        set fast_period [get_property PERIOD $processor_clock]
+        if {abs(2.0*$fast_period - $amiga_period) > 0.003 || $processor_clock ne $fast_root} {
+            error "AP68040 processor gate must pass the MMCM's phase-aligned 2x clock"
+        }
+        set processor_gate_ref [get_property REF_NAME $processor_gate]
+        if {$processor_gate_ref eq "BUFGCE" && [get_property CE_TYPE $processor_gate] eq "SYNC"} {
+            set processor_ce [get_pins $processor_gate/CE]
+        } elseif {$processor_gate_ref eq "BUFGCTRL" &&
+                  [get_property XILINX_LEGACY_PRIM $processor_gate] eq "BUFGCE" &&
+                  [get_property CE_TYPE_CE0 $processor_gate] eq "SYNC"} {
+            set processor_ce [get_pins $processor_gate/CE0]
+        } else {
+            error "AP68040 must use the synchronous global clock gate"
+        }
+        set processor_ce_path [get_timing_paths -quiet -delay_type max -to $processor_ce -max_paths 1]
+        require_one_object "AP68040 gate enable timing" $processor_ce_path
+        if {[get_property EXCEPTION $processor_ce_path] ne "" || [get_property SLACK $processor_ce_path] <= 0.0} {
+            error "AP68040 gate enable requires positive, unexcepted setup timing"
+        }
+        set processor_registers [get_cells -quiet -hierarchical -filter \
+            {IS_SEQUENTIAL && NAME =~ *ap040.bridge/cpu/*}]
+        if {![llength $processor_registers]} {error "Missing AP68040 bus timing endpoints"}
+        foreach {source dest direction} [list $processor_registers $amiga_chip_clock "CPU to chipset" \
+            $amiga_chip_clock $processor_registers "chipset to CPU"] {
+            set crossing [get_timing_paths -quiet -delay_type max -from $source -to $dest -max_paths 1]
+            require_one_object "AP68040 related-clock crossing $direction" $crossing
+            if {[get_property EXCEPTION $crossing] ne "" || [get_property SLACK $crossing] <= 0.0} {
+                error "AP68040 bus crossing $direction requires positive, unexcepted timing"
+            }
+        }
+        puts "AP68040_PROCESSOR_CLOCK_PASS period=$fast_period enable_slack=[get_property SLACK $processor_ce_path]"
+    }
 }
 if {$image_kind eq "NES"} {
     require_nes_save_ram implementation

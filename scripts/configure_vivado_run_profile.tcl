@@ -74,6 +74,8 @@ namespace eval multitini_run_profile {
         dict set synth_settings STEPS.SYNTH_DESIGN.ARGS.DIRECTIVE AreaOptimized_medium
         dict set synth_settings STEPS.SYNTH_DESIGN.ARGS.CONTROL_SET_OPT_THRESHOLD 8
         dict set impl_settings STEPS.OPT_DESIGN.ARGS.DIRECTIVE ExploreArea
+        dict set impl_settings STEPS.PLACE_DESIGN.ARGS.DIRECTIVE ExtraNetDelay_high
+        dict set impl_settings STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE AggressiveExplore
     }
     # Other cores keep one shared pass; C64 also targets the CPU half cycles.
     foreach run [list $synth $impl] settings [list $synth_settings $impl_settings] {

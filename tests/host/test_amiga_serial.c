@@ -42,6 +42,7 @@ static size_t ide_output_length;
 const mt_amiga_config_t *amiga_content_service_config(void) { return &cpu_config; }
 bool amiga_content_service_aga_pal(void) { return ap68040; }
 bool amiga_content_service_ap68040(void) { return ap68040; }
+bool amiga_content_service_ap68040_2x_available(void) { return ap68040 && cpu14_available; }
 bool amiga_content_service_cpu14_available(void) { return cpu14_available; }
 bool amiga_content_service_cpu14_fallback(void) { return false; }
 bool amiga_content_service_fast_ide_available(void) { return fast_ide_available; }
@@ -297,6 +298,11 @@ int main(void)
     assert(!amiga_serial_command("amigacpustock"));
     ap68040=true;
     assert(amiga_serial_command("amigacpu stock") && cpu_changes==3U && cpu_config.cpu==2U);
+    cpu14_available=false;
+    assert(amiga_serial_command("amigacpu 56.75") && cpu_changes==3U);
+    cpu14_available=true;
+    assert(amiga_serial_command("amigacpu 56.75") && cpu_changes==4U && cpu_config.cpu==MT_AMIGA_CPU_AP68040_2X);
+    assert(amiga_serial_command("amigacpu 28") && cpu_changes==5U && cpu_config.cpu==MT_AMIGA_CPU_68020_TURBO);
     ap68040=false;
     /* Status must distinguish ARM policy/expectation from actual native
      * readback; FAST capability works independently of CPU14. */

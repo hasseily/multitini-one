@@ -555,9 +555,11 @@ if {$machine eq "C64"} {
     # 150 * 60.25 / 13 / 24.5 = 28.375196232 MHz (+1.28 ppm).
     if {$amiga_ap68040} {
         # 150 * 56.75 / 10 / 30 = 28.375 MHz exactly.
-        set_property -dict [list CONFIG.OVERRIDE_MMCM {true} \
+        set_property -dict [list CONFIG.NUM_OUT_CLKS {2} CONFIG.CLKOUT2_USED {true} \
+            CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {56.750} CONFIG.CLKOUT2_REQUESTED_PHASE {0.000} \
+            CONFIG.OVERRIDE_MMCM {true} \
             CONFIG.MMCM_DIVCLK_DIVIDE {10} CONFIG.MMCM_CLKFBOUT_MULT_F {56.75} \
-            CONFIG.MMCM_CLKOUT0_DIVIDE_F {30}] $c64_wiz
+            CONFIG.MMCM_CLKOUT0_DIVIDE_F {30} CONFIG.MMCM_CLKOUT1_DIVIDE {15}] $c64_wiz
     } else {
         set_property -dict [list CONFIG.OVERRIDE_MMCM {true} \
             CONFIG.MMCM_DIVCLK_DIVIDE {13} CONFIG.MMCM_CLKFBOUT_MULT_F {60.25} \
@@ -590,9 +592,12 @@ connect_bd_net [get_bd_pins $ps/FCLK_CLK0] \
     [get_bd_pins $ps/S_AXI_HP1_ACLK]
 if {$machine eq "C64"} {
     connect_bd_net [get_bd_pins $c64_wiz/clk_out1] [get_bd_pins $ps/S_AXI_HP3_ACLK]
-    connect_bd_net [get_bd_pins $c64_wiz/clk_out2] $c64_cpu_clk
 } else {
     connect_bd_net [get_bd_pins $ps/FCLK_CLK0] [get_bd_pins $ps/S_AXI_HP3_ACLK]
+}
+if {$machine eq "C64" || $amiga_ap68040} {
+    connect_bd_net [get_bd_pins $c64_wiz/clk_out2] $c64_cpu_clk
+} else {
     connect_bd_net [get_bd_pins $c64_wiz/clk_out1] $c64_cpu_clk
 }
 connect_bd_net [get_bd_pins $ps/FCLK_CLK2] \

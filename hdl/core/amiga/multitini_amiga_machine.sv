@@ -9,6 +9,7 @@
 // Paula therefore retain their native clock ratios even during a memory miss.
 module multitini_amiga_machine #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
     input wire clk_service28,
+    input wire clk_service56, cpu_double_speed,
     input wire reset,
     input wire guest_reset,
     input wire run_enable,
@@ -77,6 +78,26 @@ module multitini_amiga_machine #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
     BUFGCE machine_clock_gate(.I(clk_service28),.CE(accepted_native_edge),.O(clk_chip));
     assign chip_tick=accepted_native_edge && !reset;
 
+    wire ap_clk, ap_bclk;
+    if (USE_AP68040) begin : ap_clock
+        // The MMCM's fast rising edges alternate between native rising
+        // and falling edges. A falling-edge toggle on the ungated native
+        // clock tags the next aligned rising edge even during timeline holds.
+        reg native_phase=0, seen_phase=0, bclk=0;
+        always @(negedge clk_service28)native_phase<=!native_phase;
+        always @(posedge clk_service56)seen_phase<=native_phase;
+        wire aligned=native_phase!=seen_phase;
+        // Hold the bus enable across the gated fast edge. The native gate
+        // decision covers its aligned edge and the extra edge following it.
+        always @(negedge clk_service56)bclk<=aligned;
+        BUFGCE processor_clock_gate(.I(clk_service56),
+            .CE(accepted_native_edge && (aligned || cpu_double_speed)),.O(ap_clk));
+        assign ap_bclk=bclk;
+    end else begin : no_ap_clock
+        assign ap_clk=clk_chip;
+        assign ap_bclk=1'b1;
+    end
+
     wire cck;
     wire [9:0] eclk;
     amiga_clk clocks(
@@ -136,6 +157,7 @@ module multitini_amiga_machine #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
 
     cpu_wrapper #(.USE_AP68040(USE_AP68040)) cpu(
         .reset(cpu_reset_n),.reset_out(cpu_reset_out),.clk(clk_chip),
+        .ap_clk(ap_clk),.ap_bclk(ap_bclk),
         .ph1(cpu_ph1),.ph2(cpu_ph2),
         .cpucfg(cpucfg),.cpu_step(cpu_step),.ntsc(ntsc),.fastramcfg(memcfg[6:4]),
         .cachecfg(cachecfg),.bootrom(bootrom),

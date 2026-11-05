@@ -624,9 +624,17 @@ static void test_amiga_resolution(void)
     mt_core_frontend_apply(&frontend,&state,&view);
     check(strcmp(core_row(&view,"CPU")->value,"68020 28 MHz")==0,"A1200 offers acceleration");
     state.amiga_ap68040=true;
-    mt_core_frontend_apply(&frontend,&state,&view);row=core_row(&view,"CPU");
-    check(row!=NULL && !row->enabled && strcmp(row->value,"68040 28.375 MHz")==0,
-          "A1200 68040 reports its actual CPU and fixed clock");
+    state.amiga_display_pending=false;
+    mt_core_frontend_apply(&frontend,&state,&view);row=core_row(&view,"CPU speed");
+    check(row!=NULL && !row->enabled && strcmp(row->value,"28 MHz")==0,
+          "A1200 68040 reports 28 MHz on the fixed-speed image");
+    state.amiga_ap68040_2x_available=true;
+    mt_core_frontend_apply(&frontend,&state,&view);row=core_row(&view,"CPU speed");
+    check(row->enabled && row->argument==0U && strcmp(row->value,"28 MHz")==0,
+          "AP68040 dual-clock image offers the 28 MHz setting");
+    state.amiga_config.cpu=MT_AMIGA_CPU_AP68040_2X;
+    mt_core_frontend_apply(&frontend,&state,&view);row=core_row(&view,"CPU speed");
+    check(row->enabled && strcmp(row->value,"56.75 MHz")==0,"AP68040 Options shows the selected 56.75 MHz");
 }
 int main(void)
 {

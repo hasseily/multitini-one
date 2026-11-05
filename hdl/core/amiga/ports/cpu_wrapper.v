@@ -27,6 +27,7 @@
 
 module cpu_wrapper #(parameter USE_AP68040 = 1'b0)
 (
+	input             ap_clk, ap_bclk,
 	input             reset,
 	output reg        reset_out,
 
@@ -417,7 +418,8 @@ end
 generate if (USE_AP68040) begin : ap040
     wire [7:0] fast_top = !z2ram_ena ? 8'h20 : fastramcfg == 3'd2 ? 8'h60 : 8'ha0;
     multitini_amiga_ap68040 bridge (
-        .clk(clk), .reset_n(reset), .ipl_n(chip_ipl), .fast_top(fast_top),
+        .clk(clk), .cpu_clk(ap_clk), .cpu_bclk(ap_bclk),
+        .reset_n(reset), .ipl_n(chip_ipl), .fast_top(fast_top),
         .wide_selected(ramlong1), .ready(clkena_p_throttled),
         .data_in(cpu_din), .data_next(ramdout_hi),
         .address(cpu_addr_p), .data_out(cpu_dout_p), .data_low(cpu_dout_lo_p),

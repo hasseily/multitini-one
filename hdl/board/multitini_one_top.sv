@@ -2082,7 +2082,7 @@ module multitini_one_top #(
             assign gbc_memory_valid=0,gbc_memory_ready=0,gbc_memory_rdata=0,gbc_memory_rvalid=0,gbc_memory_fault=0;
             (* DONT_TOUCH = "yes" *) multitini_amiga_adapter #(
                 .AGA_PAL(AMIGA_AGA_PAL), .USE_AP68040(AMIGA_AP68040)) machine_adapter (
-                .core_clk(c64_clk), .reset(!c64_aresetn),
+                .core_clk(c64_clk), .cpu_clk2x(c64_cpu_clk), .reset(!c64_aresetn),
                 .core_reset_request(c64_core_reset_request),
                 .pause_request(core_menu_pause),
                 .clear_load_error(c64_load_error_clear),

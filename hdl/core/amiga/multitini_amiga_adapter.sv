@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns/1ps
 module multitini_amiga_adapter #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
-    input wire core_clk,reset,core_reset_request,pause_request,clear_load_error,
+    input wire core_clk,cpu_clk2x,reset,core_reset_request,pause_request,clear_load_error,
     input wire control_clk,control_resetn,host_write,
     input wire host_block_write,host_block_read,
     input wire [15:0] host_block_address,host_block_read_address,
@@ -58,6 +58,7 @@ module multitini_amiga_adapter #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
     wire [127:0] config_bytes;
     wire [23:0] write_addr;wire [7:0] write_data;
     wire native_stopped=core_reset_request || !rom_loaded || !config_valid || load_error;
+    reg cpu_double_speed=0;
     reg [15:0] joy1,joy2;
     reg [2:0] mouse_buttons;
     reg kms_level;
@@ -74,10 +75,12 @@ module multitini_amiga_adapter #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
         if(reset)begin
             native_joy1<=16'hffff;native_joy2<=16'hffff;native_mouse_buttons<=0;
             native_kms_level<=0;native_kbd_mouse_type<=0;native_kbd_mouse_data<=0;native_guest_reset<=1;
+            cpu_double_speed<=0;
         end else begin
             native_joy1<=joy1;native_joy2<=joy2;native_mouse_buttons<=mouse_buttons;
             native_kms_level<=kms_level;native_kbd_mouse_type<=kbd_mouse_type;native_kbd_mouse_data<=kbd_mouse_data;
             native_guest_reset<=native_stopped;
+            if(native_guest_reset)cpu_double_speed<=USE_AP68040 && config_bytes[39:32]==8'd4;
         end
     end
     reg [2:0] input_hold;
@@ -130,7 +133,7 @@ module multitini_amiga_adapter #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
             end
         end
     end
-    multitini_amiga_loader #(.AGA_PAL(AGA_PAL)) loader(
+    multitini_amiga_loader #(.AGA_PAL(AGA_PAL),.USE_AP68040(USE_AP68040)) loader(
         .clk(core_clk),.reset(reset),.clear_error(clear_load_error),
         .load_abort(load_abort),.load_abort_epoch(load_abort_epoch),.load_epoch(load_epoch),
         .load_kind(load_kind),.load_data(load_data),.load_valid(load_valid),.load_first(load_first),.load_last(load_last),
@@ -158,13 +161,13 @@ module multitini_amiga_adapter #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
     wire [10:0] diw_vstart,diw_vstop;
     // The first 040 image reserves fabric for the FPU and caches. The
     // optional native profiling commands return the existing host error.
-    multitini_amiga_host #(.AGA_PAL(AGA_PAL), .ENABLE_DIAGNOSTICS(!USE_AP68040)) host_i(
+    multitini_amiga_host #(.AGA_PAL(AGA_PAL), .USE_AP68040(USE_AP68040), .ENABLE_DIAGNOSTICS(!USE_AP68040)) host_i(
         .control_clk(control_clk),.control_resetn(control_resetn),.write(host_write),.command(host_command),.status(host_status),
         .block_write(host_block_write),.block_read(host_block_read),
         .block_address(host_block_address),.block_read_address(host_block_read_address),
         .block_ram_read_address(host_block_ram_read_address),.block_wstrb(host_block_wstrb),.block_rdata(host_block_rdata),
         .guest_reset(native_stopped),
-        .native_config({2'd0,AGA_PAL,ide_fast,memcfg,cpucfg}),
+        .native_config({1'b0,cpu_double_speed,AGA_PAL,ide_fast,memcfg,cpucfg}),
         .diag_cpu_reset_n(cpu_reset_n),.diag_cpu_wait(cpu_req && !cpu_ready),.diag_cpu_write(cpu_state==2'b11),
         .diag_ide(ide_monitor),.diag_memory(memory_monitor),
         .clk(core_clk),.reset(reset),.chip_tick(chip_tick),
@@ -175,7 +178,8 @@ module multitini_amiga_adapter #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
         .capture_mode(video_capture_mode),.display_switch_pending(video_switch_pending),
         .display_quiescent(video_quiescent));
     multitini_amiga_machine #(.AGA_PAL(AGA_PAL), .USE_AP68040(USE_AP68040)) amiga_machine(
-        .clk_service28(core_clk),.reset(reset),.guest_reset(native_guest_reset),
+        .clk_service28(core_clk),.clk_service56(cpu_clk2x),.cpu_double_speed(cpu_double_speed),
+        .reset(reset),.guest_reset(native_guest_reset),
         .run_enable(memory_run),.clk_chip(chip_clk),.chip_tick(chip_tick),
         .chip_c1(chip_c1),.chip_c3(chip_c3),.chip_clk7_en(chip_clk7_en),.chip_clk7n_en(chip_clk7n_en),
         .chip_addr(chip_addr),.chip_wdata(chip_wdata),.chip_wdata2(chip_wdata2),.chip_oe_n(chip_oe_n),.chip_we_n(chip_we_n),

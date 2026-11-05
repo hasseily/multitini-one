@@ -4,8 +4,15 @@
 // Only the reset timer is shortened. The native bus, clock gate and coherent
 // production memory adapter are unmodified. The DDR responder adds variable
 // latency so the CPU has to survive real timeline holds.
-module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0, USE_AP68040=0);
-    reg clk=0;always #17.62 clk=~clk;
+module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0, USE_AP68040=0, AP_2X=0);
+    reg clk=0,clk_fast=1;
+    initial forever begin
+        #8.81 clk_fast<=0;
+        #8.81 begin clk_fast<=1;clk<=1;end
+        #8.81 clk_fast<=0;
+        #8.81 begin clk_fast<=1;clk<=0;end
+    end
+    reg cpu_double_speed=0;
     reg reset=1,guest_reset=1;
     wire chip_clk,chip_tick,c1,c3,en7,en7n,run_enable;
     wire [23:1] chip_addr;
@@ -45,6 +52,20 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0, USE
     integer completions=0,dma_source_hits=0,dma_source_misses=0;
     integer speed_edges=0,speed_opportunities=0,kernel_steps=0;
     integer wide_chip_writes=0,wide_fast_writes=0;
+    if (USE_AP68040) begin : clock_check
+        integer native_edges=0, bus_edges=0, extra_edges=0;
+        always @(posedge chip_clk)native_edges++;
+        always @(posedge dut.ap_clk)
+            if(dut.ap_bclk)bus_edges++;else extra_edges++;
+        always @(negedge clk)begin
+            #1; // Include the midpoint edge even with delayed clock buffers.
+            if(!reset && (bus_edges!=native_edges ||
+                extra_edges!=(cpu_double_speed ? native_edges : 0)))
+                $fatal(1,"AP68040 clock ratio/hold mismatch 2x=%b native=%0d bus=%0d extra=%0d",
+                    cpu_double_speed,native_edges,bus_edges,extra_edges);
+            native_edges=0;bus_edges=0;extra_edges=0;
+        end
+    end
     reg overlay_read=0,fast_kick_before=0,fast_kick_after=0,kick_alias_read=0,kick_write=0;
     wire [31:0] guest_addr=dut.cpu.cpu_addr;
     wire canonical_kick=guest_addr[31:19]==13'h001f || guest_addr[31:19]==13'h001c;
@@ -105,7 +126,8 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0, USE
     end
 
     multitini_amiga_machine #(.AGA_PAL(AGA_PAL),.USE_AP68040(USE_AP68040)) dut(
-        .clk_service28(clk),.reset(reset),.guest_reset(guest_reset),.run_enable(run_enable),
+        .clk_service28(clk),.clk_service56(clk_fast),.cpu_double_speed(cpu_double_speed),
+        .reset(reset),.guest_reset(guest_reset),.run_enable(run_enable),
         .clk_chip(chip_clk),.chip_tick(chip_tick),.chip_c1(c1),.chip_c3(c3),.chip_clk7_en(en7),.chip_clk7n_en(en7n),
         .chip_addr(chip_addr),.chip_wdata(chip_wdata),.chip_wdata2(chip_wdata2),
         .chip_oe_n(chip_oe_n),.chip_we_n(chip_we_n),.chip_ub_n(chip_ub_n),.chip_lb_n(chip_lb_n),.chip_long(chip_long),
@@ -372,6 +394,7 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0, USE
         repeat(8)@(negedge chip_clk);
     endtask
     initial begin
+        #1 cpu_double_speed=AP_2X;
         repeat(8)@(negedge clk);reset=0;
         repeat(32)@(negedge chip_clk);
         uio_config(8'hf4,CPU_MODE==0 ? 16'h0000 :
@@ -381,6 +404,11 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0, USE
             $fatal(1,"CPU fixture speed selector mismatch");
         if(dut.chipset.chipset_config !== (AGA_PAL ? 6'h18 : 6'h08))
             $fatal(1,"PAL chipset variant mismatch");
+        if(USE_AP68040)begin
+            // Exercise both transitions while the guest remains in reset.
+            repeat(4)@(negedge clk);#2 cpu_double_speed=!AP_2X;
+            repeat(4)@(negedge clk);#2 cpu_double_speed=AP_2X;
+        end
         // Shorten only the four-frame reset delay; retain all production CPU
         // reset handling, native bus state and memory scheduling.
         force dut.chipset.CONTROL1.rst_cnt=3'd4;
@@ -432,3 +460,4 @@ module tb_amiga_cpu_half;tb_amiga_cpu #(.CPU_MODE(7)) test();endmodule
 module tb_amiga_cpu_aga_stock;tb_amiga_cpu #(.CPU_MODE(7),.AGA_PAL(1)) test();endmodule
 module tb_amiga_cpu_aga_turbo;tb_amiga_cpu #(.CPU_MODE(3),.AGA_PAL(1)) test();endmodule
 module tb_amiga_cpu_aga_040;tb_amiga_cpu #(.CPU_MODE(3),.AGA_PAL(1),.USE_AP68040(1)) test();endmodule
+module tb_amiga_cpu_aga_040_2x;tb_amiga_cpu #(.CPU_MODE(3),.AGA_PAL(1),.USE_AP68040(1),.AP_2X(1)) test();endmodule
