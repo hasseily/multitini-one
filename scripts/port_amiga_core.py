@@ -35,6 +35,15 @@ def minimig() -> str:
     text = (SOURCE / "rtl/minimig.v").read_text()
     text = replace_once(text, "module minimig\n", "module minimig #(parameter AGA_PAL = 1'b0)\n")
     text = replace_once(text, "userio USERIO1", "userio #(.AGA_PAL(AGA_PAL)) USERIO1")
+    text = replace_once(text, "//instantiate Denise", """// Denise latches the first word at clk7_en and assembles the fetch at
+// clk7n_en. A cache hit for the next chip slot can replace the raw tail
+// between those edges, so keep all four words from the same slot.
+reg [47:0] denise_chip48;
+always @(posedge clk)
+\tif (clk7_en) denise_chip48 <= chip48;
+
+//instantiate Denise""")
+    text = replace_once(text, ".chip48(chip48),", ".chip48(denise_chip48),")
     text = replace_once(text, "input  [15:0] ramdata_in,", """input  [15:0] ramdata2_in,
 	output reg [15:0] cpu_data2,
 	input  [15:0] ramdata_in,""")
@@ -246,13 +255,51 @@ assign mister_floppy_status=3'b000;
 
 def cpu() -> str:
     text = (SOURCE / "rtl/cpu_wrapper.v").read_text()
+    text = replace_once(text, "module cpu_wrapper\n",
+                        "module cpu_wrapper #(parameter USE_AP68040 = 1'b0)\n")
+    text = replace_once(text, "if(cpucfg[1:0]) begin", "if(USE_AP68040 || cpucfg[1:0]) begin")
+    text = replace_once(text, "ec020      = (cpucfg", "ec020      = !USE_AP68040 & (cpucfg")
+    text = replace_once(text, "sel_nmi_vector = ((", "sel_nmi_vector = !USE_AP68040 && ((")
+    text = replace_once(text, "wire cpu030        = (cpucfg", "wire cpu030        = USE_AP68040 || (cpucfg")
+    text = replace_once(text, "turbokick_d & !cpustate;", """USE_AP68040 ?
+    // The router maps the canonical $E00000 and $F80000 ROM windows to
+    // the loaded image. Gary still handles low overlay reads and aliases.
+    (!bootrom && (&cpu_addr_m[23:22])) : (turbokick_d & !cpustate);""")
+    text = replace_once(text, "long_cand & s21_en & sel_zram &",
+                        "long_cand & s21_en & (sel_zram | (USE_AP68040 & sel_kickram)) &")
+    start = text.index("TG68KdotC_Kernel\n")
+    end = text.index(");", start) + 2
+    text = text[:start] + """generate if (USE_AP68040) begin : ap040
+    wire [7:0] fast_top = !z2ram_ena ? 8'h20 : fastramcfg == 3'd2 ? 8'h60 : 8'ha0;
+    multitini_amiga_ap68040 bridge (
+        .clk(clk), .reset_n(reset), .ipl_n(chip_ipl), .fast_top(fast_top),
+        .wide_selected(ramlong1), .ready(clkena_p_throttled),
+        .data_in(cpu_din), .data_next(ramdout_hi),
+        .address(cpu_addr_p), .data_out(cpu_dout_p), .data_low(cpu_dout_lo_p),
+        .bus_state(cpustate_p), .read_cycle(wr_p), .uds_n(uds_p), .lds_n(lds_p),
+        .wide_candidate(long_cand), .reset_out_n(reset_out_p)
+    );
+    // The 040 handles its own instruction timing, cache, and interrupts.
+    assign {cacr_p, vbr_p, longword, opc_start, opc_out, opc_cond, opc_snd,
+            opc_dbx, cacr_x, mmu_busy, skipfetch, fc_p, cacr_wr, caar} = '0;
+end else begin : tg68
+""" + text[start:end] + "\nend endgenerate" + text[end:]
+    start = text.index("cpu_cycles cycles\n")
+    end = text.index(");", start) + 2
+    text = text[:start] + """generate if (USE_AP68040) begin : ap040_timing
+    assign cyc_hold = 1'b0;
+end else begin : legacy_timing
+""" + text[start:end] + "\nend endgenerate" + text[end:]
     text = replace_once(text, "\tinput       [4:0] cpucfg,", "\tinput       [4:0] cpucfg,\n\toutput            cpu_step,")
     text = replace_once(text, "wire clkena_p_throttled = clkena_p_rest | (ramready & clkena_p_thr);", """// PAL 68020 14 MHz mode uses the existing opposite native bus phases.
 // These alternate accepted 28 MHz edges and include the chipset-ready phase.
 // The wrapper/chip bus stay at 28 MHz and global memory holds freeze both
 // phases together. An independent divide-by-two can miss every ready pulse.
 wire cpu_speed_ce = !cpucfg[3] || ph1n || ph2n;
-wire clkena_p_throttled = (clkena_p_rest | (ramready & clkena_p_thr)) & cpu_speed_ce;
+wire clkena_p_throttled = USE_AP68040 ?
+    (cpu_req && (ramsel_i ? (ramlong1 ? ramready_l : ramready) :
+                           (fastchip_selack ? fastchip_ready : chipready))) :
+    (clkena_p_rest | (ramready & clkena_p_thr)) & cpu_speed_ce;
 assign cpu_step = clkena_p_throttled;""")
     text = replace_once(text, ".ipl_autovector(1)", ".ipl_autovector(1'b1)")
     for pin in ("HALTn","BERRn","BRn","BGACKn"):

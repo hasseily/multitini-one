@@ -29,6 +29,7 @@ hdl/sim/apple_iigs_smartport_rom.cpp text eol=lf
 third_party/appletini/** -whitespace
 third_party/apple-iigs/upstream/** -text -whitespace
 third_party/amiga/upstream/** -text -whitespace
+third_party/amiga/ap68040/** -text -whitespace
 licenses/third_party/CiderPress2/LICENSE -text
 licenses/third_party/CiderPress2/NOTICE -text
 third_party/c64/upstream/** -text -whitespace

@@ -7,7 +7,7 @@
 // Memory lives in the adapter. run_enable stops the entire virtual timeline;
 // fixed chip-DMA deadlines must be met before releasing it. Chip, CIA, CPU and
 // Paula therefore retain their native clock ratios even during a memory miss.
-module multitini_amiga_machine #(parameter bit AGA_PAL=1'b0) (
+module multitini_amiga_machine #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
     input wire clk_service28,
     input wire reset,
     input wire guest_reset,
@@ -125,16 +125,16 @@ module multitini_amiga_machine #(parameter bit AGA_PAL=1'b0) (
     always @(posedge clk_chip or posedge reset)
         if(reset)cpu_retirement_hold<=0;
         else if(!cpu_reset_n || cpu_retirement_hold)cpu_retirement_hold<=0;
-        else if(cpucfg[1] && cpu_ram_sel && native_cpu_ready && cpu_step)cpu_retirement_hold<=1;
+        else if((USE_AP68040 || cpucfg[1]) && cpu_ram_sel && native_cpu_ready && cpu_step)cpu_retirement_hold<=1;
     assign cpu_req=cpu_ram_sel && !cpu_retirement_hold;
-    assign cpu_long=cpucfg[1] && cpu_ram_long;
+    assign cpu_long=(USE_AP68040 || cpucfg[1]) && cpu_ram_long;
     assign cpu_wdata2=cpu_long ? cpu_ram_wdata2 : 16'd0;
     wire z2ram_ena,z3ram_ena0,z3ram_ena1,dcache_sw_en;
     wire [4:0] z3ram_base0;
     wire [3:0] z3ram_base1;
     wire [15:0] chip_cpu_din2;
 
-    cpu_wrapper cpu(
+    cpu_wrapper #(.USE_AP68040(USE_AP68040)) cpu(
         .reset(cpu_reset_n),.reset_out(cpu_reset_out),.clk(clk_chip),
         .ph1(cpu_ph1),.ph2(cpu_ph2),
         .cpucfg(cpucfg),.cpu_step(cpu_step),.ntsc(ntsc),.fastramcfg(memcfg[6:4]),

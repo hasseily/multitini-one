@@ -585,15 +585,16 @@ static void build_amiga(mt_core_frontend_t *frontend,const mt_core_frontend_stat
         "Load your 256 KiB, 512 KiB or 1 MiB roms/kick.rom.",MT_MENU_ACTION_AMIGA_RELOAD,0U,true,state->amiga_ready ? MT_UI_COLOR_SUCCESS:MT_UI_COLOR_WARNING);
     frontend->media_items[view->media_item_count++]=item("Retry media",state->save_faulted ? "I/O error; retry":"No errors",
         "Retry a retained disk journal or failed transfer.",MT_MENU_ACTION_AMIGA_RETRY,0U,state->save_faulted,MT_UI_COLOR_BLUE);
-    const char *const cpu=state->amiga_config.cpu==MT_AMIGA_CPU_STOCK ?
+    const char *const cpu=state->amiga_ap68040 ? "68040 28.375 MHz":state->amiga_config.cpu==MT_AMIGA_CPU_STOCK ?
         (state->amiga_aga_pal ? "68EC020 stock":"68000 stock"):
         state->amiga_config.cpu==MT_AMIGA_CPU_68020_14 ? "68020 14 MHz":"68020 28 MHz";
     frontend->core_options[view->core_option_count++]=item("CPU",cpu,
+        state->amiga_ap68040 ? "AP68040 uses a fixed CPU clock.":
         state->amiga_aga_pal ? "68EC020 stock or 68020 accelerated. Changing CPU saves disks and restarts.":
         state->amiga_cpu14_fallback ? "14 MHz unavailable on this core; using 28 MHz. Saved preference retained.":
         state->amiga_cpu14_available ? "Stock 68000, 68020 14 MHz, 68020 28 MHz. Changing CPU saves disks and restarts.":
         "Stock 68000 or 68020 28 MHz. 14 MHz requires an updated core. Changing CPU saves disks and restarts.",
-        MT_MENU_ACTION_TOGGLE_CORE_OPTION,0U,true,MT_UI_COLOR_BLUE);
+        MT_MENU_ACTION_TOGGLE_CORE_OPTION,0U,!state->amiga_ap68040,MT_UI_COLOR_BLUE);
     const char *const requested=mt_amiga_display_mode_name(state->amiga_display_requested);
     const bool verified=state->amiga_display_applied<MT_AMIGA_DISPLAY_MODES;
     const char *const applied=verified ? mt_amiga_display_mode_name(state->amiga_display_applied):"unverified";
@@ -623,7 +624,7 @@ static void build_amiga(mt_core_frontend_t *frontend,const mt_core_frontend_stat
         state->amiga_fast_ide_expected ? "Auto / Fast":"Auto / Classic",
         !state->amiga_fast_ide_available ? "Fast IDE requires an updated core. Saved policy retained; Classic is active. Changing mode restarts Amiga; save your work first.":
         state->amiga_config.cpu==MT_AMIGA_CPU_STOCK ? "Stock CPU mode uses Classic IDE. Auto enables Fast IDE with acceleration. Changing mode restarts Amiga.":
-        "Auto enables Fast IDE for 68020; Classic retains Gayle compatibility. Changing mode restarts Amiga; save your work first.",
+        "Auto enables Fast IDE in accelerated CPU modes. Classic retains Gayle compatibility. Changing mode restarts Amiga.",
         MT_MENU_ACTION_TOGGLE_CORE_OPTION,4U,!state->amiga_display_pending,MT_UI_COLOR_BLUE);
     frontend->input_items[view->input_item_count++]=item("Keyboard","USB keyboard","Windows keys are Amiga keys; Menu is Right Amiga; Ctrl + both Amiga restarts. F12 opens this menu.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
     frontend->input_items[view->input_item_count++]=item("Mouse","USB mouse","Relative movement and three mouse buttons.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);

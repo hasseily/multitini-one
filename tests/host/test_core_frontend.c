@@ -623,6 +623,10 @@ static void test_amiga_resolution(void)
     state.amiga_config.cpu=MT_AMIGA_CPU_68020_TURBO;
     mt_core_frontend_apply(&frontend,&state,&view);
     check(strcmp(core_row(&view,"CPU")->value,"68020 28 MHz")==0,"A1200 offers acceleration");
+    state.amiga_ap68040=true;
+    mt_core_frontend_apply(&frontend,&state,&view);row=core_row(&view,"CPU");
+    check(row!=NULL && !row->enabled && strcmp(row->value,"68040 28.375 MHz")==0,
+          "A1200 68040 reports its actual CPU and fixed clock");
 }
 int main(void)
 {

@@ -8,6 +8,7 @@ module multitini_one_top #(
     parameter logic [7:0] C64_TURBO_TIMING_REVISION = 8'd1,
     parameter bit GENESIS_PAL_MODE = 1'b0,
     parameter bit AMIGA_AGA_PAL = 1'b0,
+    parameter bit AMIGA_AP68040 = 1'b0,
     // 0 = C64, 1 = GBC, 2 = supervisor, 3 = Vectrex, 4 = Genesis, 5 = Apple IIgs, 6 = NES, 7 = Amiga ECS.
     parameter integer ACTIVE_MACHINE = 2,
     parameter bit ENABLE_GBC_PSRAM = 1'b0
@@ -2079,7 +2080,8 @@ module multitini_one_top #(
             assign gbc_cart_size=0,gbc_cart_loaded=0;
             assign gbc_memory_addr=0,gbc_memory_write=0,gbc_memory_wdata=0,gbc_memory_wstrb=0;
             assign gbc_memory_valid=0,gbc_memory_ready=0,gbc_memory_rdata=0,gbc_memory_rvalid=0,gbc_memory_fault=0;
-            (* DONT_TOUCH = "yes" *) multitini_amiga_adapter #(.AGA_PAL(AMIGA_AGA_PAL)) machine_adapter (
+            (* DONT_TOUCH = "yes" *) multitini_amiga_adapter #(
+                .AGA_PAL(AMIGA_AGA_PAL), .USE_AP68040(AMIGA_AP68040)) machine_adapter (
                 .core_clk(c64_clk), .reset(!c64_aresetn),
                 .core_reset_request(c64_core_reset_request),
                 .pause_request(core_menu_pause),
@@ -2471,6 +2473,7 @@ module multitini_one_top #(
     multitini_video_framebuffer #(
         .DYNAMIC_DISPLAY(1'b1),
         .SHARED_PIXEL_RESET(1'b1),
+        .ENABLE_FRAME_EFFECTS(!AMIGA_AP68040),
         .ALT_WIDTH(ACTIVE_MACHINE==7 ? 724 : NATIVE_FRAME_WIDTH),.ALT_HEIGHT(ACTIVE_MACHINE==7 ? 566 : NATIVE_FRAME_HEIGHT),
         .WIDE_WIDTH(ACTIVE_MACHINE==7 ? 1280 : NATIVE_FRAME_WIDTH),.WIDE_HEIGHT(ACTIVE_MACHINE==7 ? 512 : NATIVE_FRAME_HEIGHT),
         .WIDE_SLOT_SHIFT(ACTIVE_MACHINE==7 ? 21 : 20),

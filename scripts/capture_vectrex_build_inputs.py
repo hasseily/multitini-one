@@ -19,8 +19,10 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def inputs(machine: str) -> list[Path]:
+def inputs(machine: str, *, amiga_ap68040: bool = False) -> list[Path]:
     selected = {"common", machine.lower()}
+    if amiga_ap68040:
+        selected.add("amiga_ap68040")
     paths = {
         ROOT / "hdl/hdl_sources.txt",
         ROOT / "scripts/create_project.tcl",
@@ -179,7 +181,8 @@ def inputs(machine: str) -> list[Path]:
         # Preserve exact imported originals and every portable transformation;
         # user Kickstart and media files remain outside public source bundles.
         paths.update(path for path in (ROOT / "third_party/amiga").rglob("*")
-                     if path.is_file() and "__pycache__" not in path.parts)
+                     if path.is_file() and "__pycache__" not in path.parts
+                     and (amiga_ap68040 or "ap68040" not in path.parts))
         paths.update(path for path in (ROOT / "software/amiga").rglob("*")
                      if path.is_file() and "__pycache__" not in path.parts)
         paths.update((ROOT / "scripts").glob("*amiga*.py"))
@@ -238,6 +241,7 @@ def main() -> int:
     parser.add_argument("--gbc-psram", action="store_true")
     parser.add_argument("--genesis-pal", action="store_true")
     parser.add_argument("--amiga-aga-pal", action="store_true")
+    parser.add_argument("--amiga-ap68040", action="store_true")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--verify", action="store_true")
     args = parser.parse_args()
@@ -248,7 +252,7 @@ def main() -> int:
         record = json.loads(output.read_text())
         expected = record["files"]
         current = {str(path.relative_to(ROOT).as_posix()): digest(path)
-                   for path in inputs(record["machine"])}
+                   for path in inputs(record["machine"], amiga_ap68040=record["configuration"].get("amiga_ap68040", False))}
         if current != expected:
             changed = sorted(path for path in set(current) | set(expected)
                              if current.get(path) != expected.get(path))
@@ -267,6 +271,8 @@ def main() -> int:
         parser.error("--genesis-pal requires --machine GENESIS")
     if args.amiga_aga_pal and args.machine != "AMIGA":
         parser.error("--amiga-aga-pal requires --machine AMIGA")
+    if args.amiga_ap68040 and not args.amiga_aga_pal:
+        parser.error("--amiga-ap68040 requires --amiga-aga-pal")
     if args.c64_timing_policy != "default" and args.machine != "C64":
         parser.error("--c64-timing-policy requires --machine C64")
     record = {
@@ -280,13 +286,15 @@ def main() -> int:
         "captured_utc": datetime.now(timezone.utc).isoformat(),
         "git_head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
         "files": {path.relative_to(ROOT).as_posix(): digest(path)
-                  for path in inputs(args.machine)},
+                  for path in inputs(args.machine, amiga_ap68040=args.amiga_ap68040)},
         "note": "Source bytes, not a clean-commit assertion; retain the matching source archive with the image.",
     }
     if args.machine == "C64":
         record["configuration"]["c64_timing_policy"] = args.c64_timing_policy
     if args.amiga_aga_pal:
         record["configuration"]["amiga_aga_pal"] = True
+    if args.amiga_ap68040:
+        record["configuration"]["amiga_ap68040"] = True
     output.parent.mkdir(parents=True, exist_ok=True)
     archive_inputs(output, record)
     output.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")

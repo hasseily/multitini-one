@@ -24,7 +24,8 @@ module multitini_video_frame_engine #(
     parameter [31:0] HISTORY_BASE=32'h22800000,
     parameter [31:0] WIDE_CAPTURE_BASE=CAPTURE_BASE,WIDE_OUTPUT_BASE=OUTPUT_BASE,WIDE_HISTORY_BASE=HISTORY_BASE,
     parameter integer HISTORY_BYTES=2097152,WIDE_HISTORY_BYTES=HISTORY_BYTES,
-    parameter integer FIFO_DEPTH=64
+    parameter integer FIFO_DEPTH=64,
+    parameter bit ENABLE_FRAME_EFFECTS=1'b1
 ) (
     input wire source_alt,
     input wire [1:0] source_profile,
@@ -245,7 +246,7 @@ module multitini_video_frame_engine #(
     wire [7:0] decayed_r=p1_r[13:6],decayed_g=p1_g[13:6],decayed_b=p1_b[13:6];
     wire extinct=decayed_r<4 && decayed_g<4 && decayed_b<4;
     wire [7:0] prior_r=extinct?8'd0:decayed_r,prior_g=extinct?8'd0:decayed_g,prior_b=extinct?8'd0:decayed_b;
-    wire filter_in_ready,filter_out_valid,filter_out_ready,filter_busy,filter_done;
+    wire filter_in_ready,filter_out_valid,filter_out_ready,filter_done;
     wire [15:0] filter_out_rgb;
     reg filter_finished;
     wire history_flush=persist_pixels[0] || persist_pixels==PIXELS-1;
@@ -258,14 +259,21 @@ module multitini_video_frame_engine #(
                       (!use_history || !old_empty) && p0_ready;
     assign source_pop=input_accept && (source_lane==3 || input_x==active_width-1);
     assign old_pop=input_accept && use_history && (input_pixels[0] || input_pixels==PIXELS-1);
-    multitini_video_frame_filter #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.WIDTH(WIDTH),.HEIGHT(HEIGHT),
-        .ALT_WIDTH(ALT_WIDTH),.ALT_HEIGHT(ALT_HEIGHT),.WIDE_WIDTH(WIDE_WIDTH),.WIDE_HEIGHT(WIDE_HEIGHT),
-        .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN)) filter(
-        .display_scale_num(display_scale_num),.display_scale_den(display_scale_den),
-        .source_alt(alt),.source_profile(selected_profile),.clk(clk),.resetn(resetn),.start(begin_job),.options(options),
-        .in_valid(p2_valid && history_pack_ready),.in_ready(filter_in_ready),.in_rgb(p2_rgb),
-        .out_valid(filter_out_valid),.out_ready(filter_out_ready),.out_rgb565(filter_out_rgb),
-        .busy(filter_busy),.done(filter_done));
+    if (ENABLE_FRAME_EFFECTS) begin : spatial_effects
+        multitini_video_frame_filter #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.WIDTH(WIDTH),.HEIGHT(HEIGHT),
+            .ALT_WIDTH(ALT_WIDTH),.ALT_HEIGHT(ALT_HEIGHT),.WIDE_WIDTH(WIDE_WIDTH),.WIDE_HEIGHT(WIDE_HEIGHT),
+            .SCALE_NUM(SCALE_NUM),.SCALE_DEN(SCALE_DEN)) filter(
+            .display_scale_num(display_scale_num),.display_scale_den(display_scale_den),
+            .source_alt(alt),.source_profile(selected_profile),.clk(clk),.resetn(resetn),.start(begin_job),.options(options),
+            .in_valid(p2_valid && history_pack_ready),.in_ready(filter_in_ready),.in_rgb(p2_rgb),
+            .out_valid(filter_out_valid),.out_ready(filter_out_ready),.out_rgb565(filter_out_rgb),
+            .busy(),.done(filter_done));
+    end else begin : spatial_bypass
+        assign filter_in_ready=filter_out_ready;
+        assign filter_out_valid=p2_valid && history_pack_ready;
+        assign filter_out_rgb={p2_rgb[7:3],p2_rgb[15:10],p2_rgb[23:19]};
+        assign filter_done=persist_accept && persist_pixels==PIXELS-1;
+    end
     reg [31:0] history_pack;
     assign new_push=persist_accept && history_flush;
     assign new_input=persist_pixels[0]?{8'hff,8'd0,p2_rgb,history_pack}:

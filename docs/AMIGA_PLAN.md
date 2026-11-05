@@ -127,6 +127,14 @@ retains each artifact's original identity and source archives. These source and
 SD-data labels do not rebuild or relabel retained FPGA or ARM binaries.
 Use `--include-amiga-aga` to package both variants.
 
+Use `--image amiga-aga-040` to build the AP68040 image and
+`--include-amiga-aga-040` to package it as a third Amiga variant. Select
+**Amiga 1200 AGA + 68040** under Amiga. It uses the shared A1200 Kickstart
+and Amiga media directory. It saves its disk mounts and options separately
+in `media/amiga-040-settings.bin`. Use a Workbench disk with 68040 support.
+Install firmware that recognizes the `aga-040-pal` variant with the package.
+The CPU runs at 28.375 MHz and uses direct 32-bit reads for Kickstart.
+
 ## Qualification
 
 The host build/packaging tests, coherent-memory, loader and host-transport

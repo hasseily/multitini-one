@@ -260,7 +260,7 @@ def verify_c64_release_settings(source):
 
 
 def verify_hardware(directory, machine, *, ntsc=False, build_id=None, genesis_pal=False,
-                    gbc_psram=True, amiga_aga_pal=False, reuse=False):
+                    gbc_psram=True, amiga_aga_pal=False, amiga_ap68040=False, reuse=False):
     expected_build_id = BUILD_ID if build_id is None else build_id
     require(re.fullmatch(r"[0-9A-Fa-f]{8}", expected_build_id) is not None, "Invalid expected FPGA build ID")
     record = json.loads((directory / "source-inputs.json").read_text())
@@ -274,9 +274,11 @@ def verify_hardware(directory, machine, *, ntsc=False, build_id=None, genesis_pa
         require(configuration["genesis_pal"] is genesis_pal, "Wrong Genesis clock variant")
     if machine == "AMIGA":
         require(configuration.get("amiga_aga_pal", False) is amiga_aga_pal, "Wrong Amiga chipset variant")
+        require(configuration.get("amiga_ap68040", False) is amiga_ap68040, "Wrong Amiga CPU variant")
     if not reuse:
         verify_sources(record["files"])
-        require(set(record["files"]) == {p.relative_to(ROOT).as_posix() for p in hardware_inputs.inputs(machine)},
+        require(set(record["files"]) == {p.relative_to(ROOT).as_posix()
+                for p in hardware_inputs.inputs(machine, amiga_ap68040=amiga_ap68040)},
                 "Incomplete FPGA source capture")
     verify_hardware_source_archive(directory, record["files"])
     if machine == "C64":
@@ -304,6 +306,8 @@ def verify_hardware(directory, machine, *, ntsc=False, build_id=None, genesis_pa
         require(f"GENESIS_PAL_MODE=1'b{int(genesis_pal)}" in generics, "Wrong Genesis PAL generic")
     if machine == "AMIGA" and (amiga_aga_pal or "AMIGA_AGA_PAL=" in generics):
         require(f"AMIGA_AGA_PAL=1'b{int(amiga_aga_pal)}" in generics, "Wrong Amiga AGA generic")
+    if machine == "AMIGA" and (amiga_ap68040 or "AMIGA_AP68040=" in generics):
+        require(f"AMIGA_AP68040=1'b{int(amiga_ap68040)}" in generics, "Wrong Amiga AP68040 generic")
     psram = machine in {"C64", "VECTREX", "GENESIS", "NES"} or configuration["gbc_psram"]
     require(f"ENABLE_GBC_PSRAM=1'b{int(configuration['gbc_psram'])}" in generics, "Wrong GBC PSRAM generic")
     xsa = directory / "multitini_one.xsa"

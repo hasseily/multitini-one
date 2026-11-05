@@ -79,20 +79,29 @@ class AmigaBuildTests(unittest.TestCase):
                     "current_input_match": True, "build_id": "0x4D000801", "abi": "0.24"}) as inspect:
                 plan = build_phos1.selection_plan(["amiga"], {"amiga": candidate},
                                                  "4D000802", root / "new")
-            inspect.assert_called_once_with(candidate, "AMIGA", gbc_psram=False, genesis_pal=False)
+            inspect.assert_called_once_with(candidate, "AMIGA", gbc_psram=False, genesis_pal=False,
+                                            amiga_aga_pal=False, amiga_ap68040=False)
             self.assertEqual(plan["images"]["amiga"]["action"], "reuse")
             self.assertEqual(plan["images"]["amiga"]["artifact"]["build_id"], "0x4D000801")
 
     def test_source_capture_retains_upstream_and_port_inputs(self):
         paths = {path.relative_to(ROOT).as_posix() for path in capture.inputs("AMIGA")}
         self.assertIn("scripts/build_core_amiga.py", paths)
-        for source in (ROOT / "third_party/amiga").rglob("*"):
+        for source in (ROOT / "third_party/amiga/upstream").rglob("*"):
             if source.is_file() and "__pycache__" not in source.parts:
                 self.assertIn(source.relative_to(ROOT).as_posix(), paths)
         for source in (ROOT / "software/amiga").rglob("*"):
             if source.is_file() and "__pycache__" not in source.parts:
                 self.assertIn(source.relative_to(ROOT).as_posix(), paths)
         self.assertFalse(any(path.startswith("build/") or path.endswith("kick.rom") for path in paths))
+        ap_paths = {path.relative_to(ROOT).as_posix() for path in capture.inputs("AMIGA", amiga_ap68040=True)}
+        self.assertTrue(paths < ap_paths)
+        for source in (ROOT / "third_party/amiga/ap68040").rglob("*"):
+            if source.is_file() and "__pycache__" not in source.parts:
+                name = source.relative_to(ROOT).as_posix()
+                self.assertIn(name, ap_paths)
+                self.assertNotIn(name, paths)
+        self.assertIn("hdl/core/amiga/multitini_amiga_ap68040.sv", ap_paths)
 
 
 class AmigaContentTests(unittest.TestCase):

@@ -374,6 +374,27 @@ core/amiga/multitini_amiga_adapter.sv
 board/multitini_amiga_video_normalizer.sv
 board/multitini_amiga_video_bridge.sv
 board/multitini_amiga_timing.xdc
+
+[amiga_ap68040]
+../third_party/amiga/ap68040/rtl/ap68040_pkg.sv
+../third_party/amiga/ap68040/rtl/gen/ap68040_upkg.sv
+../third_party/amiga/ap68040/rtl/ap68040_alu.sv
+../third_party/amiga/ap68040/rtl/ap68040_alu_slow.sv
+../third_party/amiga/ap68040/rtl/ap68040_muldiv.sv
+../third_party/amiga/ap68040/rtl/ap68040_biu.sv
+core/amiga/ap68040/ap68040_ram.sv
+core/amiga/ap68040/ap68040_atc.sv
+core/amiga/ap68040/ap68040_dmu.sv
+../third_party/amiga/ap68040/rtl/ap68040_predec.sv
+core/amiga/ap68040/ap68040_fetch.sv
+core/amiga/ap68040/ap68040_decode.sv
+core/amiga/ap68040/ap68040_useq.sv
+../third_party/amiga/ap68040/rtl/fpu/ap040_fpu.v | SYSTEMVERILOG
+core/amiga/ap68040/ap68040_fpif.sv
+core/amiga/ap68040/ap68040_backend.sv
+../third_party/amiga/ap68040/rtl/ap68040_snoop.sv
+core/amiga/ap68040/ap68040.sv
+core/amiga/multitini_amiga_ap68040.sv
 [common]
 ../third_party/appletini/constraints/multitini_pins.xdc
 board/multitini_psram_iob.xdc

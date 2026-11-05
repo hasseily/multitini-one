@@ -134,7 +134,15 @@ proc require_file {path} {
     return [file normalize $path]
 }
 
-proc add_manifest_sources {repo_root machine} {
+set amiga_ap68040 0
+if {[info exists ::env(MULTITINI_AMIGA_AP68040)]} {
+    set amiga_ap68040 [string trim $::env(MULTITINI_AMIGA_AP68040)]
+    if {$machine ne "AMIGA" || !$amiga_aga_pal || $amiga_ap68040 ni {0 1}} {
+        error "MULTITINI_AMIGA_AP68040 requires the Amiga AGA PAL image"
+    }
+}
+
+proc add_manifest_sources {repo_root machine amiga_ap68040} {
     set manifest [require_file [file join $repo_root hdl hdl_sources.txt]]
     set stream [open $manifest r]
     set lines [split [read -nonewline $stream] "\n"]
@@ -148,12 +156,13 @@ proc add_manifest_sources {repo_root machine} {
         }
         if {[regexp {^\[([A-Za-z0-9_]+)\]$} $relative -> section]} {
             set active_section [string toupper $section]
-            if {$active_section ni {COMMON C64 GBC VECTREX GENESIS APPLE_IIGS NES AMIGA}} {
+            if {$active_section ni {COMMON C64 GBC VECTREX GENESIS APPLE_IIGS NES AMIGA AMIGA_AP68040}} {
                 error "Unknown source-manifest section: $relative"
             }
             continue
         }
-        if {$active_section ne "COMMON" && $active_section ne $machine} {
+        if {$active_section ne "COMMON" && $active_section ne $machine &&
+            !($active_section eq "AMIGA_AP68040" && $amiga_ap68040)} {
             continue
         }
         set fields [split $relative "|"]
@@ -318,16 +327,20 @@ create_project $project_name $project_dir -part $part_name -force
 set_property target_language Verilog [current_project]
 set_property simulator_language Mixed [current_project]
 set_property default_lib work [current_project]
-add_manifest_sources $repo_root $machine
+add_manifest_sources $repo_root $machine $amiga_ap68040
 if {$machine eq "APPLE_IIGS"} {
     set_property include_dirs [list \
         [file join $repo_root third_party apple-iigs upstream rtl]] \
         [get_filesets sources_1]
 } elseif {$machine eq "AMIGA"} {
-    set_property include_dirs [list \
+    set include_dirs [list \
         [file join $repo_root third_party amiga upstream rtl] \
-        [file join $repo_root third_party amiga upstream rtl tg68k]] \
-        [get_filesets sources_1]
+        [file join $repo_root third_party amiga upstream rtl tg68k]]
+    if {$amiga_ap68040} {
+        set ap_rtl [file join $repo_root third_party amiga ap68040 rtl]
+        lappend include_dirs $ap_rtl [file join $ap_rtl fpu]
+    }
+    set_property include_dirs $include_dirs [get_filesets sources_1]
 }
 set psram_timing_file [require_file \
     [file join $repo_root hdl board multitini_psram_timing.xdc]]
@@ -540,9 +553,16 @@ if {$machine eq "C64"} {
     # The one fractional output directly supplies PAL 28 MHz; the wrapper
     # gates a sibling copy rather than dividing a fabric flip-flop clock.
     # 150 * 60.25 / 13 / 24.5 = 28.375196232 MHz (+1.28 ppm).
-    set_property -dict [list CONFIG.OVERRIDE_MMCM {true} \
-        CONFIG.MMCM_DIVCLK_DIVIDE {13} CONFIG.MMCM_CLKFBOUT_MULT_F {60.25} \
-        CONFIG.MMCM_CLKOUT0_DIVIDE_F {24.5}] $c64_wiz
+    if {$amiga_ap68040} {
+        # 150 * 56.75 / 10 / 30 = 28.375 MHz exactly.
+        set_property -dict [list CONFIG.OVERRIDE_MMCM {true} \
+            CONFIG.MMCM_DIVCLK_DIVIDE {10} CONFIG.MMCM_CLKFBOUT_MULT_F {56.75} \
+            CONFIG.MMCM_CLKOUT0_DIVIDE_F {30}] $c64_wiz
+    } else {
+        set_property -dict [list CONFIG.OVERRIDE_MMCM {true} \
+            CONFIG.MMCM_DIVCLK_DIVIDE {13} CONFIG.MMCM_CLKFBOUT_MULT_F {60.25} \
+            CONFIG.MMCM_CLKOUT0_DIVIDE_F {24.5}] $c64_wiz
+    }
 }
 
 set control_reset [create_bd_cell -type ip \
@@ -664,7 +684,7 @@ if {[info exists ::env(MULTITINI_BUILD_ID)]} {
 }
 set c64_turbo_revision [expr {$machine eq "C64" && !$c64_ntsc_mode ? 2 : 1}]
 set_property generic \
-    "SHELL_BUILD_ID=32'h${git_id} C64_NTSC_MODE=1'b${c64_ntsc_mode} C64_TURBO_TIMING_REVISION=${c64_turbo_revision} ACTIVE_MACHINE=${active_machine} ENABLE_GBC_PSRAM=1'b${enable_gbc_psram} GENESIS_PAL_MODE=1'b${genesis_pal_mode} AMIGA_AGA_PAL=1'b${amiga_aga_pal}" \
+    "SHELL_BUILD_ID=32'h${git_id} C64_NTSC_MODE=1'b${c64_ntsc_mode} C64_TURBO_TIMING_REVISION=${c64_turbo_revision} ACTIVE_MACHINE=${active_machine} ENABLE_GBC_PSRAM=1'b${enable_gbc_psram} GENESIS_PAL_MODE=1'b${genesis_pal_mode} AMIGA_AGA_PAL=1'b${amiga_aga_pal} AMIGA_AP68040=1'b${amiga_ap68040}" \
     [get_filesets sources_1]
 update_compile_order -fileset sources_1
 source [file join $script_dir configure_vivado_run_profile.tcl]

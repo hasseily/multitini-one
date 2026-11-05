@@ -2,6 +2,13 @@
   "schema_version": 1,
   "sources": [
     {
+      "name": "AP68040",
+      "url": "https://github.com/apolkosnik/AP68040.git",
+      "commit": "b16aa6a43d8e92190f1669859884485b3b4ea14b",
+      "license": "GPL-2.0-or-later",
+      "use": "Pipelined 68040 for the separate Amiga AGA image. Pinned RTL and microcode generator retained in third_party/amiga/ap68040. Deterministic Vivado memory and Amiga cache adaptations are produced by scripts/port_amiga_ap68040.py."
+    },
+    {
       "name": "CiderPress2 floppy sector codec",
       "url": "https://github.com/fadden/CiderPress2.git",
       "commit": "7a055a200e31f752f3a92bb9fe6ae6f67cd55534",

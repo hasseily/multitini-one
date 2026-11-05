@@ -4,7 +4,7 @@
 // Only the reset timer is shortened. The native bus, clock gate and coherent
 // production memory adapter are unmodified. The DDR responder adds variable
 // latency so the CPU has to survive real timeline holds.
-module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0);
+module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0, USE_AP68040=0);
     reg clk=0;always #17.62 clk=~clk;
     reg reset=1,guest_reset=1;
     wire chip_clk,chip_tick,c1,c3,en7,en7n,run_enable;
@@ -32,6 +32,7 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0);
     reg [63:0] held_data;
     reg [7:0] held_mask;
     reg [63:0] chip_store=0,fast_store=0,blit_store=0,repeat_store=0,pair_store=0;
+    reg [63:0] kick_store=0;
     reg replace_second_word=0;
     assign chip_rdata2=replace_second_word ? 16'hbad2 : chip_mem_rdata2;
     // Model another DMA response taking ownership of the raw RAM data just
@@ -43,7 +44,30 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0);
     integer transactions=0,holds=0,cycles;
     integer completions=0,dma_source_hits=0,dma_source_misses=0;
     integer speed_edges=0,speed_opportunities=0,kernel_steps=0;
-    integer wide_chip_writes=0;
+    integer wide_chip_writes=0,wide_fast_writes=0;
+    reg overlay_read=0,fast_kick_before=0,fast_kick_after=0,kick_alias_read=0,kick_write=0;
+    wire [31:0] guest_addr=dut.cpu.cpu_addr;
+    wire canonical_kick=guest_addr[31:19]==13'h001f || guest_addr[31:19]==13'h001c;
+    always @(posedge chip_clk)if(USE_AP68040 && cpu_reset_n && dut.cpu_step && dut.cpu.cpu_req)begin
+        if(dut.chipset.ovl && guest_addr<8)begin
+            if(cpu_req)$fatal(1,"AP68040 bypassed the reset overlay");
+            overlay_read<=1;
+        end
+        if(canonical_kick && cpu_state==2'b10)begin
+            if(!cpu_req || (dut.cpu.long_cand && !cpu_long))
+                $fatal(1,"AP68040 Kickstart read did not use the expected DDR width");
+            if(dut.chipset.ovl)fast_kick_before<=1;
+            else fast_kick_after<=1;
+        end
+        if(guest_addr[31:19]==13'h0016 && cpu_state==2'b10)begin
+            if(cpu_req)$fatal(1,"AP68040 bypassed the chipset ROM alias");
+            kick_alias_read<=1;
+        end
+        if(canonical_kick && cpu_state==2'b11)begin
+            if(cpu_req)$fatal(1,"AP68040 routed a ROM write to DDR");
+            kick_write<=1;
+        end
+    end
     reg previous_speed_ce=0,speed_phase_valid=0;
     always @(posedge chip_clk)begin
         if(!cpu_reset_n)begin
@@ -51,6 +75,7 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0);
             speed_phase_valid=0;previous_speed_ce=0;
         end else if(CPU_MODE!=0)begin
             if(chip_long && !chip_we_n)wide_chip_writes=wide_chip_writes+1;
+            if(cpu_req && cpu_long && cpu_ready && cpu_state==3)wide_fast_writes=wide_fast_writes+1;
             speed_edges=speed_edges+1;
             if(dut.cpu.cpu_speed_ce)speed_opportunities=speed_opportunities+1;
             if(dut.cpu_step)kernel_steps=kernel_steps+1;
@@ -79,7 +104,7 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0);
         $display("TG consume addr=%h state=%b din=%h chipaddr=%h chipdata=%h ready=%b",dut.cpu.cpu_addr,cpu_state,dut.cpu.cpu_din,{chip_addr,1'b0},chip_rdata,dut.cpu.chipready);
     end
 
-    multitini_amiga_machine #(.AGA_PAL(AGA_PAL)) dut(
+    multitini_amiga_machine #(.AGA_PAL(AGA_PAL),.USE_AP68040(USE_AP68040)) dut(
         .clk_service28(clk),.reset(reset),.guest_reset(guest_reset),.run_enable(run_enable),
         .clk_chip(chip_clk),.chip_tick(chip_tick),.chip_c1(c1),.chip_c3(c3),.chip_clk7_en(en7),.chip_clk7n_en(en7n),
         .chip_addr(chip_addr),.chip_wdata(chip_wdata),.chip_wdata2(chip_wdata2),
@@ -262,7 +287,35 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0);
             151:romword=16'h23c0; // move.l d0,$1018
             152:romword=16'h0000;
             153:romword=16'h1018;
-            154:romword=16'h60fe;
+            154:romword=USE_AP68040 ? 16'h23fc : 16'h60fe; // move.l #$cafef00d,$08001018
+            155:romword=16'hcafe;
+            156:romword=16'hf00d;
+            157:romword=16'h0800;
+            158:romword=16'h1018;
+            159:romword=16'h2039; // move.l $08001018,d0
+            160:romword=16'h0800;
+            161:romword=16'h1018;
+            162:romword=16'h4680; // not.l d0
+            163:romword=16'h23c0; // move.l d0,$101c
+            164:romword=16'h0000;
+            165:romword=16'h101c;
+            166:romword=16'h33fc; // move.w #$dead,$e00000
+            167:romword=16'hdead;
+            168:romword=16'h00e0;
+            169:romword=16'h0000;
+            170:romword=16'h2039; // move.l $e00000,d0
+            171:romword=16'h00e0;
+            172:romword=16'h0000;
+            173:romword=16'h23c0; // move.l d0,$1020
+            174:romword=16'h0000;
+            175:romword=16'h1020;
+            176:romword=16'h2039; // move.l $b00000,d0
+            177:romword=16'h00b0;
+            178:romword=16'h0000;
+            179:romword=16'h23c0; // move.l d0,$1024
+            180:romword=16'h0000;
+            181:romword=16'h1024;
+            182:romword=16'h60fe;
             default:romword=16'h4e71;
         endcase
     endfunction
@@ -274,7 +327,9 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0);
             else if(address==24'h001008)read_line=blit_store;
             else if(address==24'h001010)read_line=repeat_store;
             else if(address==24'h001018)read_line=pair_store;
+            else if(address==24'h001020)read_line=kick_store;
             else if(address==24'ha00000)read_line=fast_store;
+            else if(address==24'h600000)read_line=64'h00000000df9b5713;
             else if(address>=24'h780000 && address<24'h800000)
                 for(n=0;n<4;n=n+1)begin
                     word_value=romword((address-24'h780000)/2+n);
@@ -295,6 +350,7 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0);
                         else if(held_addr==24'h001008)blit_store[lane*8+:8]<=held_data[lane*8+:8];
                         else if(held_addr==24'h001010)repeat_store[lane*8+:8]<=held_data[lane*8+:8];
                         else if(held_addr==24'h001018)pair_store[lane*8+:8]<=held_data[lane*8+:8];
+                        else if(held_addr==24'h001020)kick_store[lane*8+:8]<=held_data[lane*8+:8];
                         else if(held_addr==24'ha00000)fast_store[lane*8+:8]<=held_data[lane*8+:8];
                     end
                 end
@@ -348,9 +404,16 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0);
                fast_store[31:0]==32'hd4c3b2a1 && repeat_store[31:0]==32'hd4c3b2a1 &&
                blit_store==64'h3412341234123412 &&
                (AGA_PAL ? (repeat_store[47:32]==16'hf800 && dut.chipset.DENISE1.bplm0.fmode[1:0]==2'b11 &&
-                pair_store[31:0]==32'h78563412 && replace_second_word) :
+                pair_store[31:0]==32'h78563412 &&
+                (USE_AP68040 ? (pair_store[63:32]==32'hffffffff && kick_store==64'hdf9b5713df9b5713) :
+                 replace_second_word)) :
                 dut.chipset.DENISE1.clut0.clut.mem[0]===32'h0f000f00))begin
-                if(AGA_PAL && wide_chip_writes==0)$fatal(1,"AGA CPU never issued a 32-bit chip RAM write");
+                if(AGA_PAL && !USE_AP68040 && wide_chip_writes==0)$fatal(1,"AGA CPU never issued a 32-bit chip RAM write");
+                if(USE_AP68040)begin
+                    if(wide_fast_writes==0)$fatal(1,"AP68040 never issued a 32-bit Fast RAM write");
+                    if(!overlay_read || !fast_kick_before || !fast_kick_after || !kick_alias_read || !kick_write)
+                        $fatal(1,"AP68040 did not exercise Kickstart, reset overlay, alias, and write routing");
+                end
                 if(holds<20 || transactions<10 || dma_source_hits<1 || dma_source_misses<1)$fatal(1,"CPU fixture did not exercise variable DDR latency");
                 if(CPU_MODE!=0 && (kernel_steps<30 || speed_edges<100))$fatal(1,"CPU speed proof did not execute sufficient kernel steps");
                 if(CPU_MODE==7 && !AGA_PAL && (speed_opportunities*2-speed_edges>1 || speed_edges-speed_opportunities*2>1))
@@ -368,3 +431,4 @@ module tb_amiga_cpu_turbo;tb_amiga_cpu #(.CPU_MODE(3)) test();endmodule
 module tb_amiga_cpu_half;tb_amiga_cpu #(.CPU_MODE(7)) test();endmodule
 module tb_amiga_cpu_aga_stock;tb_amiga_cpu #(.CPU_MODE(7),.AGA_PAL(1)) test();endmodule
 module tb_amiga_cpu_aga_turbo;tb_amiga_cpu #(.CPU_MODE(3),.AGA_PAL(1)) test();endmodule
+module tb_amiga_cpu_aga_040;tb_amiga_cpu #(.CPU_MODE(3),.AGA_PAL(1),.USE_AP68040(1)) test();endmodule

@@ -1095,3 +1095,44 @@ tools/iigs-mmu-probe/LICENSE,Multitini One,,GPL-3.0-only,source-reviewed,Unmodif
 hdl/sim/apple_iigs_mmu_rom3_capture.vh,Multitini One,,GPL-3.0-only,source-reviewed,Original production-MMU regression against physical ROM03 observations
 hdl/sim/fixtures/iigs_mmu_rom03.json,Multitini One,,GPL-3.0-only,source-reviewed,Original captured MMU behavior data and selection classifications; no Apple ROM bytes
 scripts/test_apple_iigs_interrupts.py,Multitini One,,GPL-3.0-only,sim-tested,Original source-capturing native IRQ/RTI regression runner; no system ROM or disk inputs
+third_party/amiga/ap68040/LICENSE,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/README.md,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/ap68040.sv,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/ap68040_alu.sv,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/ap68040_alu_slow.sv,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/ap68040_atc.sv,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/ap68040_backend.sv,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/ap68040_biu.sv,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/ap68040_decode.sv,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/ap68040_dmu.sv,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/ap68040_fetch.sv,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/ap68040_fpif.sv,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/ap68040_muldiv.sv,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/ap68040_pkg.sv,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/ap68040_predec.sv,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/ap68040_ram.sv,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/ap68040_snoop.sv,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/ap68040_useq.sv,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/fpu/ap040_defs.svh,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/fpu/ap040_fpu.v,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/gen/ap68040_attr_rom.svh,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/gen/ap68040_dec_pla.svh,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/gen/ap68040_pd_alt.svh,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/gen/ap68040_pd_rom.svh,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/gen/ap68040_ucode_init.svh,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/gen/ap68040_ucode_rom.svh,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/rtl/gen/ap68040_upkg.sv,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+third_party/amiga/ap68040/tools/ucode.py,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Pinned source and upstream notice
+hdl/core/amiga/ap68040/ap68040.sv,AP68040 and Multitini One,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,ported,Reproduced by scripts/port_amiga_ap68040.py
+hdl/core/amiga/ap68040/ap68040_decode.sv,AP68040 and Multitini One,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,ported,Reproduced by scripts/port_amiga_ap68040.py
+hdl/core/amiga/ap68040/ap68040_dmu.sv,AP68040 and Multitini One,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,ported,Reproduced by scripts/port_amiga_ap68040.py
+hdl/core/amiga/ap68040/ap68040_fetch.sv,AP68040 and Multitini One,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,ported,Reproduced by scripts/port_amiga_ap68040.py
+hdl/core/amiga/ap68040/ap68040_ram.sv,AP68040 and Multitini One,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,ported,Reproduced by scripts/port_amiga_ap68040.py
+hdl/core/amiga/ap68040/ap68040_useq.sv,AP68040 and Multitini One,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,ported,Reproduced by scripts/port_amiga_ap68040.py
+hdl/core/amiga/multitini_amiga_ap68040.sv,Multitini One,,GPL-3.0-only,source-reviewed,AP68040 Amiga integration
+scripts/port_amiga_ap68040.py,Multitini One,,GPL-3.0-only,source-reviewed,AP68040 Amiga integration
+scripts/package_amiga_040.py,Multitini One,,GPL-3.0-only,source-reviewed,Independent timing-gated AP68040 core package
+hdl/core/amiga/ap68040/ap68040_atc.sv,AP68040 and Multitini One,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,ported,Reproduced by scripts/port_amiga_ap68040.py
+hdl/core/amiga/ap68040/ap68040_backend.sv,AP68040 and Multitini One,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,ported,Reproduced by scripts/port_amiga_ap68040.py
+hdl/core/amiga/ap68040/ap68040_fpif.sv,AP68040 and Multitini One,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,ported,Reproduced by scripts/port_amiga_ap68040.py
+third_party/amiga/ap68040/tools/isa.py,AP68040,b16aa6a43d8e92190f1669859884485b3b4ea14b,GPL-2.0-or-later,imported,Microcode generator dependency

@@ -32,7 +32,7 @@ static uint8_t pfs_handler[MT_AMIGA_PFS_HANDLER_MAX];
 static size_t pfs_handler_bytes;
 static uint16_t mfm[MT_AMIGA_MFM_SECTOR_WORDS],write_mfm[2][MT_AMIGA_MFM_SECTOR_WORDS];
 static bool ready,faulted,paused,settings_invalid,bulk_failed;
-static bool aga_pal;
+static bool aga_pal,ap68040;
 static mt_amiga_rtc_t rtc;
 static mt_clock_time_t cached_clock;
 static bool cached_clock_valid;
@@ -186,8 +186,11 @@ static int ide_presence(void)
 }
 static bool settings_paths(char target[AM_PATH],char journal[AM_PATH])
 {
-    return path(target,aga_pal ? "amiga-aga-settings.bin":"amiga-settings.bin") &&
-        path(journal,aga_pal ? "amiga-aga-settings.bin.mtj":"amiga-settings.bin.mtj");
+    const char *const name=ap68040 ? "amiga-040-settings.bin":
+        aga_pal ? "amiga-aga-settings.bin":"amiga-settings.bin";
+    const char *const recovery=ap68040 ? "amiga-040-settings.bin.mtj":
+        aga_pal ? "amiga-aga-settings.bin.mtj":"amiga-settings.bin.mtj";
+    return path(target,name) && path(journal,recovery);
 }
 static int settings_save(void)
 {
@@ -222,6 +225,7 @@ static void settings_load(void)
     }
     if(!valid) { settings_invalid=true;(void)fail("Amiga settings checksum or values invalid");return; }
     config=candidate;for(unsigned i=0U;i<MT_AMIGA_DRIVE_COUNT;++i)memcpy(remembered[i],settings_wire+24U+i*AM_NAME,AM_NAME);
+    if(ap68040)config.cpu=MT_AMIGA_CPU_68020_TURBO;
 }
 static int apply_journal(am_drive_t *d)
 {
@@ -567,7 +571,7 @@ static int ata_poll(void)
     if(ata.left==0U)ata.active=false;
     return r;
 }
-void amiga_content_service_init(mt_core_link_t *l,const char *media_root,bool use_aga,mt_link_progress_fn p,void *context)
+void amiga_content_service_init(mt_core_link_t *l,const char *media_root,mt_amiga_model_t model,mt_link_progress_fn p,void *context)
 {
     invalidate_read_cache();
     profile_invalidate(MT_AMIGA_PROFILE_LIFECYCLE);
@@ -577,8 +581,9 @@ void amiga_content_service_init(mt_core_link_t *l,const char *media_root,bool us
     pfs_handler_bytes=0U;
     mt_amiga_rtc_init(&rtc);cached_clock_valid=false;clock_now_ms=0U;
     mt_amiga_config_defaults(&config);
-    aga_pal=use_aga;
-    if(aga_pal)config.cpu=MT_AMIGA_CPU_STOCK;
+    aga_pal=model!=MT_AMIGA_ECS;
+    ap68040=model==MT_AMIGA_AGA_040;
+    if(model==MT_AMIGA_AGA)config.cpu=MT_AMIGA_CPU_STOCK;
     preferred_cpu=config.cpu;
     const size_t n=media_root!=NULL ? strlen(media_root):0U;
     if(n<6U || n>=sizeof(root) || strcmp(media_root+n-6U,"/media")!=0) { (void)fail("Amiga package requires /media content root");return; }
@@ -802,6 +807,8 @@ int amiga_content_service_configure(const mt_amiga_config_t *candidate)
 {
     if(!mt_amiga_config_valid(candidate) || (aga_pal && candidate->cpu==MT_AMIGA_CPU_68020_14))
         return fail("Amiga configuration invalid");
+    if(ap68040 && candidate->cpu!=MT_AMIGA_CPU_68020_TURBO)
+        return fail("AP68040 CPU mode is fixed");
     if(candidate->cpu==MT_AMIGA_CPU_68020_14 && !amiga_content_service_cpu14_available())
         return fail("14 MHz requires an updated Amiga core");
     if(amiga_content_service_prepare_reset()!=0)return -1;
@@ -817,6 +824,7 @@ int amiga_content_service_configure(const mt_amiga_config_t *candidate)
 }
 const mt_amiga_config_t *amiga_content_service_config(void) { return &config; }
 bool amiga_content_service_aga_pal(void) { return aga_pal; }
+bool amiga_content_service_ap68040(void) { return ap68040; }
 int amiga_content_service_ide_bench(unsigned iterations,uint64_t (*timer)(void *),
     void *context,mt_amiga_ide_bench_t *result)
 {

@@ -3,8 +3,10 @@
 #define MULTITINI_AMIGA_CONTENT_SERVICE_H
 #include "multitini_amiga_boot.h"
 #include "multitini_amiga_rtc.h"
-void amiga_content_service_init(mt_core_link_t *,const char *media_root,bool aga_pal,mt_link_progress_fn,void *);
+typedef enum { MT_AMIGA_ECS, MT_AMIGA_AGA, MT_AMIGA_AGA_040 } mt_amiga_model_t;
+void amiga_content_service_init(mt_core_link_t *,const char *media_root,mt_amiga_model_t,mt_link_progress_fn,void *);
 bool amiga_content_service_aga_pal(void);
+bool amiga_content_service_ap68040(void);
 int amiga_content_service_boot(void);
 void amiga_content_service_poll(void);
 mt_link_result_t amiga_content_service_set_clock(const mt_clock_time_t *,uint32_t now_ms);

@@ -3424,6 +3424,7 @@ static mt_menu_view_t supervisor_menu_view(void)
         state.services_ready=true;state.amiga_ready=amiga_content_service_ready();
         state.amiga_config=*amiga_content_service_config();state.save_faulted=amiga_content_service_faulted();
         state.amiga_aga_pal=amiga_content_service_aga_pal();
+        state.amiga_ap68040=amiga_content_service_ap68040();
         state.amiga_cpu14_available=amiga_content_service_cpu14_available();
         state.amiga_cpu14_fallback=amiga_content_service_cpu14_fallback();
         state.amiga_fast_ide_available=amiga_content_service_fast_ide_available();
@@ -4103,8 +4104,10 @@ static int supervisor_activate(void *context,
     (void)context;
     usb_hid_service_set_active_core(selection->package.core_id);
     if(selection->package.core_id==MT_AMIGA_CORE_ID) {
-        const bool aga_pal=strcmp(selection->package.variants[selection->variant_index].id,"aga-pal")==0;
-        amiga_content_service_init(&shell_link,selection->package.content_root,aga_pal,iigs_transfer_progress,NULL);
+        const char *const variant=selection->package.variants[selection->variant_index].id;
+        const mt_amiga_model_t model=strcmp(variant,"aga-040-pal")==0 ? MT_AMIGA_AGA_040:
+            strcmp(variant,"aga-pal")==0 ? MT_AMIGA_AGA:MT_AMIGA_ECS;
+        amiga_content_service_init(&shell_link,selection->package.content_root,model,iigs_transfer_progress,NULL);
         amiga_service_initialized=true;amiga_fault_displayed=false;
         amiga_display_service_init(&shell_link,selection->package.content_root,amiga_apply_display,NULL);
         (void)amiga_content_service_set_clock(board_clock_valid ? &board_clock:NULL,(uint32_t)monotonic_ms(NULL));
@@ -4548,7 +4551,8 @@ static bool amiga_cpu_command(const char *line)
     if(strcmp(line,"amigacpu")==0 || strcmp(line,"amigacpu status")==0) {
         const mt_amiga_config_t *c=amiga_content_service_config();
         xil_printf("[Amiga CPU] active=%s cpu14_available=%u saved14_fallback=%u\r\n",
-            c->cpu==MT_AMIGA_CPU_STOCK ? (amiga_content_service_aga_pal() ? "68EC020 stock":"68000 stock"):
+            amiga_content_service_ap68040() ? "68040 28.375 MHz":
+                c->cpu==MT_AMIGA_CPU_STOCK ? (amiga_content_service_aga_pal() ? "68EC020 stock":"68000 stock"):
                 c->cpu==MT_AMIGA_CPU_68020_14 ? "68020 14 MHz":"68020 28 MHz",
             amiga_content_service_cpu14_available()?1U:0U,amiga_content_service_cpu14_fallback()?1U:0U);
         if(amiga_content_service_cpu14_available() || amiga_content_service_aga_pal()) {
@@ -4561,6 +4565,9 @@ static bool amiga_cpu_command(const char *line)
         return true;
     }
     if(strncmp(line,"amigacpu ",9U)!=0)return false;
+    if(amiga_content_service_ap68040()) {
+        xil_printf("[Amiga CPU] AP68040 runs at 28.375 MHz\r\n");return true;
+    }
     mt_amiga_config_t changed=*amiga_content_service_config();
     if(strcmp(line+9U,"stock")==0)changed.cpu=MT_AMIGA_CPU_STOCK;
     else if(strcmp(line+9U,"14")==0)changed.cpu=MT_AMIGA_CPU_68020_14;
@@ -6606,9 +6613,12 @@ static void handle_menu_action(mt_menu_action_t action)
         }
         if(supervisor.has_active && supervisor.active.package.core_id==MT_AMIGA_CORE_ID) {
             mt_amiga_config_t changed=*amiga_content_service_config();
-            if(action.file_index==0U)changed.cpu=changed.cpu==MT_AMIGA_CPU_STOCK ?
-                (amiga_content_service_cpu14_available() ? MT_AMIGA_CPU_68020_14:MT_AMIGA_CPU_68020_TURBO):
-                changed.cpu==MT_AMIGA_CPU_68020_14 ? MT_AMIGA_CPU_68020_TURBO:MT_AMIGA_CPU_STOCK;
+            if(action.file_index==0U) {
+                if(amiga_content_service_ap68040())return;
+                changed.cpu=changed.cpu==MT_AMIGA_CPU_STOCK ?
+                    (amiga_content_service_cpu14_available() ? MT_AMIGA_CPU_68020_14:MT_AMIGA_CPU_68020_TURBO):
+                    changed.cpu==MT_AMIGA_CPU_68020_14 ? MT_AMIGA_CPU_68020_TURBO:MT_AMIGA_CPU_STOCK;
+            }
             else if(action.file_index==1U)return;
             else if(action.file_index==2U)changed.fast_mib=changed.fast_mib==4U ? 8U:4U;
             else if(action.file_index==3U)changed.floppy_turbo^=1U;

@@ -192,12 +192,23 @@ if {$image_kind eq "GENESIS" && [string match {*GENESIS_PAL_MODE=1'b1*} $build_g
 if {$image_kind eq "AMIGA" && [string match {*AMIGA_AGA_PAL=1'b1*} $build_generics]} {
     lappend capture_command --amiga-aga-pal
 }
+if {$image_kind eq "AMIGA" && [string match {*AMIGA_AP68040=1'b1*} $build_generics]} {
+    lappend capture_command --amiga-ap68040
+}
 puts [exec {*}$capture_command]
 
 reset_run synth_1
 launch_runs synth_1 -jobs $jobs
 wait_on_run synth_1
 require_complete_run synth_1
+if {$image_kind eq "AMIGA" && [string match {*AMIGA_AP68040=1'b1*} $build_generics]} {
+    set synth_log [open [file join [get_property DIRECTORY [get_runs synth_1]] runme.log] r]
+    set synth_text [read $synth_log]
+    close $synth_log
+    if {[regexp -line {\[Synth 8-(11241|605)\].*[/\\]ap68040[/\\]} $synth_text implicit]} {
+        error "AP68040 elaborated an implicit net: $implicit"
+    }
+}
 if {$image_kind eq "NES"} {
     open_run synth_1
     require_nes_save_ram synthesis
@@ -269,8 +280,13 @@ if {$image_kind eq "AMIGA"} {
     set amiga_mmcm [get_cells -hierarchical -quiet -filter \
         {REF_NAME == MMCME2_ADV && NAME =~ *clk_wiz_c64*}]
     require_one_object "Amiga service MMCM" $amiga_mmcm
-    foreach {property expected} {CLKFBOUT_MULT_F 60.25 DIVCLK_DIVIDE 13 CLKOUT0_DIVIDE_F 24.5
-                                CLKOUT0_PHASE 0.0 CLKOUT0_DUTY_CYCLE 0.5} {
+    if {[string match {*AMIGA_AP68040=1'b1*} $build_generics]} {
+        lassign {56.75 10 30 28.375} amiga_m amiga_d amiga_o amiga_mhz
+    } else {
+        lassign {60.25 13 24.5 28.375160} amiga_m amiga_d amiga_o amiga_mhz
+    }
+    foreach {property expected} [list CLKFBOUT_MULT_F $amiga_m DIVCLK_DIVIDE $amiga_d CLKOUT0_DIVIDE_F $amiga_o \
+                                     CLKOUT0_PHASE 0.0 CLKOUT0_DUTY_CYCLE 0.5] {
         if {abs([get_property $property $amiga_mmcm] - $expected) > 0.000001} {
             error "Amiga MMCM $property differs from the reviewed value $expected"
         }
@@ -282,14 +298,14 @@ if {$image_kind eq "AMIGA"} {
         error "Amiga MMCM requires the reviewed 150 MHz PS clock"
     }
     set amiga_period [get_property PERIOD $amiga_clock]
-    set amiga_derived_period [expr {$amiga_parent_period * 13.0 * 24.5 / 60.25}]
+    set amiga_derived_period [expr {$amiga_parent_period * $amiga_d * $amiga_o / $amiga_m}]
     # Parent/generated clock periods have picosecond precision. Bound that
     # rounding separately from the exact MMCM divider properties above.
     if {abs($amiga_period - $amiga_derived_period) > 0.006 ||
-        abs($amiga_period - 1000.0 / 28.375160) > 0.007} {
+        abs($amiga_period - 1000.0 / $amiga_mhz) > 0.007} {
         error "Amiga service clock differs from its reviewed MMCM ratio: $amiga_period ns"
     }
-    puts "AMIGA_CLOCK_RATIO_PASS parent=$amiga_parent M=60.25 D=13 O_SERVICE=24.5 service_period=$amiga_period"
+    puts "AMIGA_CLOCK_RATIO_PASS parent=$amiga_parent M=$amiga_m D=$amiga_d O_SERVICE=$amiga_o service_period=$amiga_period"
     set amiga_chip_clock [get_clocks -quiet amiga_chip]
     require_one_object "Amiga gated native clock" $amiga_chip_clock
     if {![get_property IS_GENERATED $amiga_chip_clock] ||

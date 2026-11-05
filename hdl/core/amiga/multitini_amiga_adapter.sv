@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns/1ps
-module multitini_amiga_adapter #(parameter bit AGA_PAL=1'b0) (
+module multitini_amiga_adapter #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
     input wire core_clk,reset,core_reset_request,pause_request,clear_load_error,
     input wire control_clk,control_resetn,host_write,
     input wire host_block_write,host_block_read,
@@ -156,7 +156,9 @@ module multitini_amiga_adapter #(parameter bit AGA_PAL=1'b0) (
     wire [4:0] display_read_address;
     wire [8:0] diw_hstart,diw_hstop;
     wire [10:0] diw_vstart,diw_vstop;
-    multitini_amiga_host #(.AGA_PAL(AGA_PAL)) host_i(
+    // The first 040 image reserves fabric for the FPU and caches. The
+    // optional native profiling commands return the existing host error.
+    multitini_amiga_host #(.AGA_PAL(AGA_PAL), .ENABLE_DIAGNOSTICS(!USE_AP68040)) host_i(
         .control_clk(control_clk),.control_resetn(control_resetn),.write(host_write),.command(host_command),.status(host_status),
         .block_write(host_block_write),.block_read(host_block_read),
         .block_address(host_block_address),.block_read_address(host_block_read_address),
@@ -172,7 +174,7 @@ module multitini_amiga_adapter #(parameter bit AGA_PAL=1'b0) (
         .display_read_address(display_read_address),.display_read_data(display_read_data),
         .capture_mode(video_capture_mode),.display_switch_pending(video_switch_pending),
         .display_quiescent(video_quiescent));
-    multitini_amiga_machine #(.AGA_PAL(AGA_PAL)) amiga_machine(
+    multitini_amiga_machine #(.AGA_PAL(AGA_PAL), .USE_AP68040(USE_AP68040)) amiga_machine(
         .clk_service28(core_clk),.reset(reset),.guest_reset(native_guest_reset),
         .run_enable(memory_run),.clk_chip(chip_clk),.chip_tick(chip_tick),
         .chip_c1(chip_c1),.chip_c3(chip_c3),.chip_clk7_en(chip_clk7_en),.chip_clk7n_en(chip_clk7n_en),

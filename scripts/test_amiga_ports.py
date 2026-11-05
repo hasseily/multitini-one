@@ -30,11 +30,19 @@ def machine_sources() -> list[Path]:
     return result
 
 
+def ap68040_sources() -> list[Path]:
+    manifest = (ROOT / "hdl/hdl_sources.txt").read_text()
+    section = manifest.split("[amiga_ap68040]", 1)[1].split("[", 1)[0]
+    return [(ROOT / "hdl" / line.split("|")[0].strip()).resolve()
+            for line in section.splitlines() if line.strip() and not line.startswith("#")]
+
+
 def main() -> int:
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir",type=Path,default=ROOT / "build/amiga-ports-test")
     parser.add_argument("--vivado",type=Path,default=Path("C:/Xilinx/2025.2/Vivado"))
     parser.add_argument("--cpu",action="store_true",help="Execute original stock and accelerated CPU diagnostics through production memory")
+    parser.add_argument("--ap68040",action="store_true",help="Run the AGA AP68040 diagnostic")
     parser.add_argument("--interface-delay",action="store_true",help="Model 1 ns service data/control delay and 0.1 ns native clock insertion in generated test fixtures")
     args=parser.parse_args()
     build=args.build_dir.resolve()
@@ -45,7 +53,13 @@ def main() -> int:
     vhdlbase=ROOT / "third_party/amiga/upstream/rtl/tg68k"
     vhdl=[vhdlbase / name for name in ("TG68K_Pack.vhd","TG68K_ALU.vhd","TG68K_MMU030.vhd","TG68KdotC_Kernel.vhd","TG68K.vhd")]
     sources=machine_sources()+[ROOT / "hdl/sim/tb_amiga_ports.sv"]
-    if args.cpu:sources += [ROOT / "hdl/core/amiga/multitini_amiga_memory.sv",ROOT / "hdl/sim/tb_amiga_cpu.sv"]
+    if args.cpu or args.ap68040:
+        sources += [ROOT / "hdl/core/amiga/multitini_amiga_memory.sv",ROOT / "hdl/sim/tb_amiga_cpu.sv"]
+    include_dirs = ["-i", str(ROOT / "third_party/amiga/upstream/rtl")]
+    if args.ap68040:
+        sources = ap68040_sources() + sources
+        ap_rtl = ROOT / "third_party/amiga/ap68040/rtl"
+        include_dirs += ["-i", str(ap_rtl), "-i", str(ap_rtl / "fpu")]
     fixture_sources=list(sources)
     if args.interface_delay:
         ports=ROOT / "hdl/sim/tb_amiga_ports.sv"
@@ -54,7 +68,7 @@ def main() -> int:
         if text.count("assign O=I && enabled;")!=1:raise SystemExit("Clock model changed")
         delayed_ports.write_text(text.replace("assign O=I && enabled;","assign #0.1 O=I && enabled;"))
         sources[sources.index(ports)]=delayed_ports
-        if args.cpu:
+        if args.cpu or args.ap68040:
             cpu=ROOT / "hdl/sim/tb_amiga_cpu.sv"
             delayed_cpu=build / "tb_amiga_cpu_delayed.sv"
             text=cpu.read_text()
@@ -83,16 +97,29 @@ def main() -> int:
             raise SystemExit(result.returncode)
         print(f"{name}: passed")
     run("xvhdl",["--2008","--work","work"]+[str(p) for p in vhdl])
-    run("xvlog",["--sv","--work","work","-i",str(ROOT / "third_party/amiga/upstream/rtl")]+[str(p) for p in sources])
+    sv_options = ["--sv", "--work", "work"]
+    if args.ap68040:
+        sv_options.append("--relax")  # Upstream AP68040 permits forward references.
+    run("xvlog",sv_options+include_dirs+[str(p) for p in sources])
     run("xelab",["work.tb_amiga_ports","-s","amiga_ports","--debug","typical","--timescale","1ns/1ps","--mt","auto"])
     run("xsim",["amiga_ports","--runall"])
     log=(build / "xsim.stdout.log").read_text()
     if "PASS Amiga portable RAM" not in log or "Fatal:" in log:
         raise SystemExit("Amiga smoke did not report success")
-    if args.cpu:
-        for profile,mode in (("stock",0),("turbo",3),("half",7),("aga_stock",7),("aga_turbo",3)):
+    run("xelab",["work.tb_amiga_aga_fetch","-s","amiga_aga_fetch","--timescale","1ns/1ps"])
+    run("xsim",["amiga_aga_fetch","--runall"])
+    log=(build / "xsim.stdout.log").read_text()
+    (build / "amiga_aga_fetch.log").write_text(log)
+    if "PASS AGA bitplane and sprite fetches" not in log or "Fatal:" in log:
+        raise SystemExit("AGA fetch coherence check did not report success")
+    profiles = [("stock",0),("turbo",3),("half",7),("aga_stock",7),("aga_turbo",3)] if args.cpu else []
+    if args.ap68040:
+        profiles.append(("aga_040",3))
+    if profiles:
+        for profile,mode in profiles:
             snapshot=f"amiga_cpu_{profile}"
-            run("xelab",[f"work.tb_amiga_cpu_{profile}","-s",snapshot,"--debug","typical","--timescale","1ns/1ps","--mt","auto"])
+            relax = ["--relax"] if profile == "aga_040" else []
+            run("xelab",relax+[f"work.tb_amiga_cpu_{profile}","-s",snapshot,"--debug","typical","--timescale","1ns/1ps","--mt","auto"])
             run("xsim",[snapshot,"--runall"])
             log=(build / "xsim.stdout.log").read_text()
             (build / f"{snapshot}.log").write_text(log)

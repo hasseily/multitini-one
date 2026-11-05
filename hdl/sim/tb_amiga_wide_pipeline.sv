@@ -5,6 +5,7 @@
 // validated before reads from its completed immutable slot are permitted.
 module tb_amiga_wide_pipeline;
  parameter bit OMIT_VIRTUAL_CAPTURE=0;
+ parameter bit BYPASS_FRAME_EFFECTS=0;
  localparam integer WIDTH=1280,HEIGHT=512,STRIDE=2560,FRAME_BYTES=1310720;
  localparam integer HISTORY_BYTES=2621440,H_TOTAL=1344,V_TOTAL=806;
  reg clk=0,pixel_clk=0,resetn=0;
@@ -49,7 +50,7 @@ module tb_amiga_wide_pipeline;
  wire[1:0]awvalid,wvalid,wlast,bready,arvalid,rready;
  reg[1:0]awready=0,wready=0,arready=0,bvalid=0,rvalid=0,rlast=0;
  wire[63:0]wdata[0:1];wire[7:0]wstrb[0:1];reg[63:0]rdata[0:1];
- multitini_video_framebuffer #(.DYNAMIC_DISPLAY(1),.WIDTH(640),.HEIGHT(512),
+ multitini_video_framebuffer #(.DYNAMIC_DISPLAY(1),.ENABLE_FRAME_EFFECTS(!BYPASS_FRAME_EFFECTS),.WIDTH(640),.HEIGHT(512),
   .ALT_WIDTH(724),.ALT_HEIGHT(566),.WIDE_WIDTH(1280),.WIDE_HEIGHT(512),
   .WIDE_SLOT_SHIFT(21),.WIDE_CAPTURE_BASE(32'h22000000),.WIDE_OUTPUT_BASE(32'h22800000),
   .WIDE_HISTORY_BASE(32'h23000000),.WIDE_HISTORY_BYTES(4194304),

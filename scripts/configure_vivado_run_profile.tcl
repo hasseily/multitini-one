@@ -50,8 +50,9 @@ namespace eval multitini_run_profile {
     # Other machines retain the shared defaults above.
     set source_sets [get_filesets sources_1]
     if {[llength $source_sets] != 1} {error "Expected one top-level source fileset"}
-    set c64_profile [regexp {(^|[[:space:]])ACTIVE_MACHINE=0($|[[:space:]])} \
-        [get_property GENERIC $source_sets]]
+    set top_generics [get_property GENERIC $source_sets]
+    set c64_profile [regexp {(^|[[:space:]])ACTIVE_MACHINE=0($|[[:space:]])} $top_generics]
+    set ap68040_profile [regexp {(^|[[:space:]])AMIGA_AP68040=1'b1($|[[:space:]])} $top_generics]
     if {$c64_profile} {
         set control_merge [file join $helper_dir optimize_c64_control_sets.tcl]
         if {![file isfile $control_merge]} {error "Missing C64 run hook: $control_merge"}
@@ -67,6 +68,12 @@ namespace eval multitini_run_profile {
         }
         dict set impl_settings STEPS.PLACE_DESIGN.TCL.PRE $placement_margin
         dict set impl_settings STEPS.ROUTE_DESIGN.TCL.POST $cpu_finish
+    } elseif {$ap68040_profile} {
+        # Preserve the timing-driven placer for the control and video domains.
+        # Moderate area synthesis leaves room for it in this dense image.
+        dict set synth_settings STEPS.SYNTH_DESIGN.ARGS.DIRECTIVE AreaOptimized_medium
+        dict set synth_settings STEPS.SYNTH_DESIGN.ARGS.CONTROL_SET_OPT_THRESHOLD 8
+        dict set impl_settings STEPS.OPT_DESIGN.ARGS.DIRECTIVE ExploreArea
     }
     # Other cores keep one shared pass; C64 also targets the CPU half cycles.
     foreach run [list $synth $impl] settings [list $synth_settings $impl_settings] {
@@ -89,5 +96,5 @@ namespace eval multitini_run_profile {
     foreach run [get_runs -filter {IS_SYNTHESIS && SRCSET != sources_1}] {
         set_if_changed $run STEPS.SYNTH_DESIGN.TCL.PRE $threads_hook
     }
-    puts "Vivado profile: automatic checkpoints enabled, OPT [dict get $impl_settings STEPS.OPT_DESIGN.ARGS.DIRECTIVE], PLACE [dict get $impl_settings STEPS.PLACE_DESIGN.ARGS.DIRECTIVE], PHYS Explore, ROUTE Explore, routed PHYS AggressiveExplore[expr {$c64_profile ? ", C64 pixel/CPU placement margin" : ""}]"
+    puts "Vivado profile: SYNTH [dict get $synth_settings STEPS.SYNTH_DESIGN.ARGS.DIRECTIVE], OPT [dict get $impl_settings STEPS.OPT_DESIGN.ARGS.DIRECTIVE], PLACE [dict get $impl_settings STEPS.PLACE_DESIGN.ARGS.DIRECTIVE], PHYS enabled=[dict get $impl_settings STEPS.PHYS_OPT_DESIGN.IS_ENABLED], ROUTE Explore, routed PHYS AggressiveExplore[expr {$c64_profile ? ", C64 pixel/CPU placement margin" : ""}]"
 }

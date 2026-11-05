@@ -478,6 +478,7 @@ wire 			floppy_speed;
 wire        blit_nasty;
 wire [2:0] cachecfg_pre;
 wire shres;
+reg [47:0] denise_chip48;
 wire [3:0] porta_out;
 wire cpu_long_en;
 reg ovl;
@@ -866,6 +867,13 @@ userio #(.AGA_PAL(AGA_PAL)) USERIO1
 assign ce_pix = (shres & |chipset_config[4:3]) | (hires & clk7n_en) | clk7_en;
 assign res = {shres & |chipset_config[4:3], hires};
 
+// Denise latches the first word at clk7_en and assembles the fetch at
+// clk7n_en. A cache hit for the next chip slot can replace the raw tail
+// between those edges, so keep all four words from the same slot.
+
+always @(posedge clk)
+	if (clk7_en) denise_chip48 <= chip48;
+
 //instantiate Denise
 denise DENISE1
 (		
@@ -882,7 +890,7 @@ denise DENISE1
 	.bitplane_fetch_unit_start(bitplane_fetch_unit_start),
 	.reg_address_in(reg_address),
 	.data_in(custom_data_in),
-	.chip48(chip48),
+	.chip48(denise_chip48),
 	.data_out(denise_data_out),
 	.blank(~_hsync|vblank),
 	.red(red),

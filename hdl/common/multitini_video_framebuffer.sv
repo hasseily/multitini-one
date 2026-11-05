@@ -13,7 +13,8 @@ module multitini_video_framebuffer #(
     parameter [31:0] WIDE_CAPTURE_BASE=CAPTURE_BASE,WIDE_OUTPUT_BASE=OUTPUT_BASE,WIDE_HISTORY_BASE=HISTORY_BASE,
     parameter integer HISTORY_BYTES=2097152,WIDE_HISTORY_BYTES=HISTORY_BYTES,
     parameter integer SCALE_NUM=4,SCALE_DEN=1,
-    parameter bit SHARED_PIXEL_RESET=1'b0
+    parameter bit SHARED_PIXEL_RESET=1'b0,
+    parameter bit ENABLE_FRAME_EFFECTS=1'b1
 )(
     input wire source_alt,pixel_source_alt,
     input wire [1:0] source_profile,pixel_source_profile,
@@ -208,7 +209,8 @@ module multitini_video_framebuffer #(
 
     multitini_video_frame_scheduler scheduler_i(
         .clk(clk),.resetn(resetn),.enable(control[2] && !paused),.clear_errors(clear_errors),
-        .options(options),.frame_tick(frame_tick),.capture_producer(producer),
+        .options(ENABLE_FRAME_EFFECTS ? options : 8'd0),
+        .frame_tick(frame_tick),.capture_producer(producer),
         .capture_consumer(hardware_consumer),.reader_submit_ready(submit_ready),
         .reader_active_valid(active_valid),.reader_active_value(active_value),.reader_quiescent(reader_quiet),
         .display_submit(hardware_submit),.display_value(hardware_value),
@@ -218,7 +220,8 @@ module multitini_video_framebuffer #(
         .transport_error(transport_error),.busy(scheduler_busy),.quiescent(scheduler_quiet),
         .processed_frames(processed_frames),.deadline_misses(deadline_misses),.sticky_error(scheduler_error));
 
-    multitini_video_frame_engine #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.WIDTH(WIDTH),.HEIGHT(HEIGHT),
+    multitini_video_frame_engine #(.DYNAMIC_DISPLAY(DYNAMIC_DISPLAY),.ENABLE_FRAME_EFFECTS(ENABLE_FRAME_EFFECTS),
+        .WIDTH(WIDTH),.HEIGHT(HEIGHT),
         .ALT_WIDTH(ALT_WIDTH),.ALT_HEIGHT(ALT_HEIGHT),.WIDE_WIDTH(WIDE_WIDTH),.WIDE_HEIGHT(WIDE_HEIGHT),
         .SLOT_SHIFT(SLOT_SHIFT),.WIDE_SLOT_SHIFT(WIDE_SLOT_SHIFT),
         .CAPTURE_BASE(CAPTURE_BASE),.OUTPUT_BASE(OUTPUT_BASE),.HISTORY_BASE(HISTORY_BASE),

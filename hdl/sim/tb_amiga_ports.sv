@@ -128,3 +128,57 @@ module tb_amiga_ports;
     end
     initial begin #1000000;$fatal(1,"Amiga source smoke timeout");end
 endmodule
+
+module tb_amiga_aga_fetch;
+    reg clk=0;
+    always #17.62 clk=~clk;
+    reg reset=1;
+    reg [1:0] phase=0;
+    always @(posedge clk)phase<=phase+1'b1;
+    wire en7=phase==1;
+    wire en7n=phase==3;
+    reg [8:1] reg_address=8'hff;
+    reg [15:0] first_word=0;
+    reg [47:0] tail=0;
+
+    minimig #(.AGA_PAL(1'b1)) dut(
+        .clk(clk),.clk7_en(en7),.clk7n_en(en7n),.c1(phase[1]),
+        .c3(phase==0 || phase==3),.cck(1'b0),.eclk(10'd0),
+        .rst_ext(reset),._cpu_reset_in(1'b1),.chip48(tail));
+
+    // Replace the raw memory output on the intervening phase, as the next
+    // chipset request does when it hits the service-clock cache.
+    task automatic transfer(input [8:1] address,input [63:0] value);
+        begin
+            @(negedge clk);
+            while(!en7)@(negedge clk);
+            reg_address=address;
+            first_word=value[63:48];
+            tail=value[47:0];
+            @(negedge clk);
+            reg_address=8'hff;
+            first_word=16'hdead;
+            @(negedge clk);
+            tail=48'h1111_2222_3333;
+            @(posedge clk);#2;
+        end
+    endtask
+
+    initial begin
+        force dut.reset=reset;
+        force dut.chipset_config=6'h18;
+        force dut.reg_address=reg_address;
+        force dut.custom_data_in=first_word;
+        repeat(8)@(negedge clk);
+        reset=0;
+        transfer(8'hfe,64'h000f_0000_0000_0000); // FMODE: 64-bit bitplanes and sprites
+        transfer(8'h88,64'h7654_3210_abcd_ef98); // BPL1DAT
+        transfer(8'ha2,64'h1357_2468_9abc_def0); // SPR0DATA
+        if(dut.DENISE1.bplm0.bpl1dat!==64'h7654_3210_abcd_ef98 ||
+           dut.DENISE1.sprm0.sps0.datla!==64'h1357_2468_9abc_def0)
+            $fatal(1,"AGA fetch combined adjacent slots: bitplane=%h sprite=%h",
+                dut.DENISE1.bplm0.bpl1dat,dut.DENISE1.sprm0.sps0.datla);
+        $display("PASS AGA bitplane and sprite fetches retain their 64-bit data across a later cache hit");
+        $finish;
+    end
+endmodule

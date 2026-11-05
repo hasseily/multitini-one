@@ -9,6 +9,7 @@ def main():
  p=argparse.ArgumentParser(description=__doc__)
  p.add_argument('--build-dir',type=Path,default=ROOT/'build/amiga-wide-pipeline')
  p.add_argument('--mutation-clipped-capture',action='store_true')
+ p.add_argument('--bypass-frame-effects',action='store_true')
  a=p.parse_args();out=a.build_dir.resolve()
  if not out.is_relative_to(ROOT/'build'):p.error('Use project build evidence')
  out.mkdir(parents=True,exist_ok=True)
@@ -21,6 +22,7 @@ def main():
  guard=[sys.executable,str(ROOT/'scripts/run_native_tool.py'),'--'] if os.name=='nt' else []
  commands=[('compile',[tool('iverilog'),'-g2012','-Wall','-Wimplicit','-s','tb_amiga_wide_pipeline',
   '-P','tb_amiga_wide_pipeline.OMIT_VIRTUAL_CAPTURE='+str(int(a.mutation_clipped_capture)),
+  '-P','tb_amiga_wide_pipeline.BYPASS_FRAME_EFFECTS='+str(int(a.bypass_frame_effects)),
   '-o',str(out/'test.vvp')]+[str(ROOT/n) for n in sources]),('simulate',[tool('vvp'),str(out/'test.vvp')])]
  try:
   for name,cmd in commands:

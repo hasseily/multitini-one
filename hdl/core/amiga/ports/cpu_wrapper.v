@@ -25,7 +25,7 @@
 //--------------------------------------------------------------------------//
 //--------------------------------------------------------------------------//
 
-module cpu_wrapper
+module cpu_wrapper #(parameter USE_AP68040 = 1'b0)
 (
 	input             reset,
 	output reg        reset_out,
@@ -229,11 +229,11 @@ reg       ac_cdtv;
 reg [2:0] ac_memcard;
 reg [3:0] autocfg_data;
 wire sel_autoconfig;
-assign ec020 = (cpucfg[1:0] == 2'b11) & cpucfg[2];
+assign ec020 = !USE_AP68040 & (cpucfg[1:0] == 2'b11) & cpucfg[2];
 assign ec030 = (cpucfg[1:0] == 2'b10) & cpucfg[2];
 assign cpu_addr_m = ec020 ? {8'd0, cpu_addr_p[23:0]} : cpu_addr_p;
 assign ramsel_i = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram | sel_dd | sel_rtg);
-assign sel_nmi_vector = ((cpu_addr[31:1] == nmi_addr[31:1]) || (cpu_addr[31:1] == nmi_addr2[31:1])) && (cpustate == 2);
+assign sel_nmi_vector = !USE_AP68040 && ((cpu_addr[31:1] == nmi_addr[31:1]) || (cpu_addr[31:1] == nmi_addr2[31:1])) && (cpustate == 2);
 assign zram_sel = |ramaddr[28:26];
 assign ramdat_sel = {ramsel_i & zram_sel, ramsel_i & (~zram_sel | sel_rtg)};
 assign cpu_din_o = fastchip_selack ? fastchip_dout :
@@ -245,13 +245,19 @@ assign cpu_din = (ramdat_sel == 1) ? ramdout :
 assign cacr_m = {cacr_p[3:1], cacr_p[0] | ec020 | (cpucfg[1:0] == 2'b10)};
 assign cpu_req = (cpustate != 1);
 assign cchip = turbochip_d & !cpustate;
-assign ckick = turbokick_d & !cpustate;
-assign cpu030 = (cpucfg[1:0] == 2'b10);
+assign ckick = USE_AP68040 ?
+    // The router maps the canonical $E00000 and $F80000 ROM windows to
+    // the loaded image. Gary still handles low overlay reads and aliases.
+    (!bootrom && (&cpu_addr_m[23:22])) : (turbokick_d & !cpustate);
+assign cpu030 = USE_AP68040 || (cpucfg[1:0] == 2'b10);
 assign stock_speed = cpucfg[2] & (cpucfg[1:0] == 2'b11);
 assign skip_rd = skipfetch & (cpustate_p == 2) & ~ramsel_i & ~fastchip_selack;
 assign req_gate = cyc_hold & ~inflight;
 assign cpu_speed_ce = !cpucfg[3] || ph1n || ph2n;
-assign clkena_p_throttled = (clkena_p_rest | (ramready & clkena_p_thr)) & cpu_speed_ce;
+assign clkena_p_throttled = USE_AP68040 ?
+    (cpu_req && (ramsel_i ? (ramlong1 ? ramready_l : ramready) :
+                           (fastchip_selack ? fastchip_ready : chipready))) :
+    (clkena_p_rest | (ramready & clkena_p_thr)) & cpu_speed_ce;
 assign c32 = chip32_en & longword & ~uds_in & ~lds_in & ~|cpu_addr_m[1:0] & ~|cpu_addr_m[31:21] &
            ~sel_nmi_vector & ~ramsel_i & ~fastchip_selack & ~cdtv_selack;
 assign ifch = ic_ena & ~|cpustate_p & ~|cpu_addr_m[23:21];
@@ -335,7 +341,7 @@ assign fastchip_rnw = wr;
 
 
 always @* begin
-	if(cpucfg[1:0]) begin
+	if(USE_AP68040 || cpucfg[1:0]) begin
 		cpu_dout     = cpu_dout_p;
 		cpu_addr     = cpu_addr_m;
 		cpustate     = cpustate_p;
@@ -408,6 +414,20 @@ end
 
 
 
+generate if (USE_AP68040) begin : ap040
+    wire [7:0] fast_top = !z2ram_ena ? 8'h20 : fastramcfg == 3'd2 ? 8'h60 : 8'ha0;
+    multitini_amiga_ap68040 bridge (
+        .clk(clk), .reset_n(reset), .ipl_n(chip_ipl), .fast_top(fast_top),
+        .wide_selected(ramlong1), .ready(clkena_p_throttled),
+        .data_in(cpu_din), .data_next(ramdout_hi),
+        .address(cpu_addr_p), .data_out(cpu_dout_p), .data_low(cpu_dout_lo_p),
+        .bus_state(cpustate_p), .read_cycle(wr_p), .uds_n(uds_p), .lds_n(lds_p),
+        .wide_candidate(long_cand), .reset_out_n(reset_out_p)
+    );
+    // The 040 handles its own instruction timing, cache, and interrupts.
+    assign {cacr_p, vbr_p, longword, opc_start, opc_out, opc_cond, opc_snd,
+            opc_dbx, cacr_x, mmu_busy, skipfetch, fc_p, cacr_wr, caar} = '0;
+end else begin : tg68
 TG68KdotC_Kernel
 #(
 	.sr_read(2),        // 0=>user,   1=>privileged,    2=>switchable with CPU(0)
@@ -458,6 +478,7 @@ cpu_inst_p
   .d_cache_out(),
   .vbr_out(vbr_p)
 );
+end endgenerate
 
 
 
@@ -529,6 +550,9 @@ end
 
 
 
+generate if (USE_AP68040) begin : ap040_timing
+    assign cyc_hold = 1'b0;
+end else begin : legacy_timing
 cpu_cycles cycles
 (
 	.clk(clk),
@@ -550,6 +574,7 @@ cpu_cycles cycles
 	.cacr_clr(ec020 ? cacr_wr & cacr_x[3] : cacr_p[3]),
 	.hold(cyc_hold)
 );
+end endgenerate
 
 // the Action Replay hides at the first instruction fetched from outside it:
 // a fetch the CPU takes (TG68K: busstate 0 acknowledged; the 68000: AS with
@@ -581,7 +606,7 @@ assign clkena_p_rest = (~cpu_req | chipready | fastchip_ready) & clkena_p_thr;
 assign cpu_step = clkena_p_throttled;
 
 assign s21_en    = cpu030;
-assign ramlong1  = long_cand & s21_en & sel_zram & ~sel_rtg & ~sel_dd & ~req_gate;
+assign ramlong1  = long_cand & s21_en & (sel_zram | (USE_AP68040 & sel_kickram)) & ~sel_rtg & ~sel_dd & ~req_gate;
 assign ramdin_lo = cpu_dout_lo_p;
 assign long_ack  = ramlong1 & ramready_l;
 

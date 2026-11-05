@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Build Amiga ECS or AGA with sealed sources and routed timing gates.
+"""Build Amiga ECS, AGA, or AGA + AP68040 with routed timing gates.
 
 Only Amiga is built by default. Other images require an explicit --image.
 """
@@ -14,6 +14,7 @@ build_phos1.MATRIX["apple-iigs"] = ("APPLE_IIGS", False, False)
 build_phos1.MATRIX["nes"] = ("NES", False, False)
 build_phos1.MATRIX["amiga"] = ("AMIGA", False, False)
 build_phos1.MATRIX["amiga-aga"] = ("AMIGA", False, False)
+build_phos1.MATRIX["amiga-aga-040"] = ("AMIGA", False, False)
 os.environ.setdefault("MULTITINI_VIVADO_JOBS", "1")
 
 if __name__ == "__main__":
