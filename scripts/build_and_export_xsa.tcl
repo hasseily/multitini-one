@@ -428,10 +428,17 @@ if {$image_kind eq "ZX_SPECTRUM"} {
     require_one_object "Spectrum MMCM parent clock" $spectrum_parent
     set spectrum_parent_period [get_property PERIOD $spectrum_parent]
     set spectrum_period [get_property PERIOD $spectrum_clock]
+    # Vivado quantizes both periods at 1 ps. Scale the parent error by
+    # the exact MMCM ratio before comparing the child to nominal 56 MHz.
+    set spectrum_ratio [expr {5.0 * 15.0 / 28.0}]
+    set spectrum_period_tick 0.001
+    set spectrum_nominal_tolerance [expr {$spectrum_period_tick * (1.0 + $spectrum_ratio)}]
     if {$spectrum_parent ne "clk_fpga_2" || abs($spectrum_parent_period - 1000.0 / 150.0) > 0.001 ||
-        abs($spectrum_period - $spectrum_parent_period * 5.0 * 15.0 / 28.0) > 0.002 ||
-        abs($spectrum_period - 1000.0 / 56.0) > 0.002} {
-        error "Spectrum machine clock does not match its reviewed 150 MHz to 56 MHz ratio"
+        ![get_property IS_GENERATED $spectrum_clock] ||
+        [get_property MASTER_CLOCK $spectrum_clock] ne $spectrum_parent ||
+        abs($spectrum_period - $spectrum_parent_period * $spectrum_ratio) > $spectrum_period_tick ||
+        abs($spectrum_period - 1000.0 / 56.0) > $spectrum_nominal_tolerance} {
+        error "Spectrum machine clock does not match its reviewed ratio: parent=$spectrum_parent $spectrum_parent_period ns, child=$spectrum_period ns"
     }
     set spectrum_registers [get_pins -hierarchical -quiet \
         -filter {NAME =~ *g_zx_spectrum_machine*machine_adapter*/C}]
@@ -439,7 +446,7 @@ if {$image_kind eq "ZX_SPECTRUM"} {
         [get_clocks -quiet -of_objects $spectrum_registers] ne $spectrum_clock} {
         error "Spectrum machine state must use the single reviewed root clock"
     }
-    puts "ZX_SPECTRUM_CLOCK_RATIO_PASS parent=$spectrum_parent M=28 D=5 O=15 period=$spectrum_period"
+    puts "ZX_SPECTRUM_CLOCK_RATIO_PASS parent=$spectrum_parent parent_period=$spectrum_parent_period M=28 D=5 O=15 period=$spectrum_period"
 }
 if {$image_kind eq "NES"} {
     require_nes_save_ram implementation
