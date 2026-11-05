@@ -1,5 +1,19 @@
 # Apple IIgs hardware test
 
+## IWMTEST on FPGA `4D000615`
+
+On 2026-11-05 the owner reported that all IWMTEST checks passed on the board
+with FPGA `4D000615`. IWMTEST was in the first hard-drive slot, the `RD` WOZ
+was in the 3.5-inch drive, and drive speed was Normal.
+
+An earlier run returned `$80` for status `$05`, `$07`, `$0D`, and `$0F`.
+IWMTEST runs those four probes before its Sony drive setup, so they inherit
+the current sense routing. A replay on the `4D000615` RTL reproduced all
+four `$80` values with the Sony drive unselected and returned the expected
+`$00` for each probe after selecting it.
+
+## M0.6.1 hardware procedure
+
 Install the complete `build/firmware-iigs-hgr-m061/sd/` contents, preserving existing
 media and settings. Update Multitini with its included `FIRMWARE-MULTITINI.BIN` using
 Golden B2. Use the package's matching supervisor, FSBL and core configuration.

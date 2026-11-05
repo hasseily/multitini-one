@@ -885,6 +885,22 @@ def generate_woz() -> str:
     # replacement honors CE rather than ignoring the Quartus BRAM enables.
     text = replace(text, "        .clock_a(clk),", "        .clock_a(clk),\n        .enable_a(1'b1),", count=text.count("        .clock_a(clk),"))
     text = replace(text, "        .clock_b(clk),", "        .clock_b(clk),\n        .enable_b(1'b1),", count=text.count("        .clock_b(clk),"))
+    text = replace(text, "    wire [15:0] bram_addr_b = bit_we ? bit_wr_addr : bit_addr;",
+                   "    // TMAP and FLUX each have 160 entries. Leave cached tracks and any\n"
+                   "    // pending save intact if the mechanism reports an out-of-range index.\n"
+                   "    wire track_id_in_map = track_id < 8'd160;\n"
+                   "    wire mapped_bit_we = bit_we && track_id_in_map;\n"
+                   "    wire [15:0] bram_addr_b = mapped_bit_we ? bit_wr_addr : bit_addr;")
+    text = replace(text, ".wren_b(bit_we &&", ".wren_b(mapped_bit_we &&", count=2)
+    text = replace(text, "assign track_data_valid = woz_valid && track_data_valid_match;",
+                   "assign track_data_valid = woz_valid && track_id_in_map && track_data_valid_match;")
+    text = replace(text, "ready <= woz_valid && (state == S_IDLE)",
+                   "ready <= woz_valid && track_id_in_map && (state == S_IDLE)", count=2)
+    text = replace(text, "if (bit_we)", "if (mapped_bit_we)", count=2)
+    text = replace(text, "if (!both_sides_cached && (settle_counter >= SETTLE_THRESHOLD))",
+                   "if (track_id_in_map && !both_sides_cached && (settle_counter >= SETTLE_THRESHOLD))")
+    text = replace(text, "if ((track_id != current_track_id_side0) && (settle_counter >= settle_lim))",
+                   "if (track_id_in_map && (track_id != current_track_id_side0) && (settle_counter >= settle_lim))")
     return normalize(text)
 
 def generate_iir() -> str:
@@ -976,6 +992,246 @@ def generate_flux_drive() -> str:
     # Fractions remain below 1000; their sum with a step needs eleven bits.
     text = replace(text, "task automatic load_bit_timers;\n        reg [9:0] tmp;",
                    "task automatic load_bit_timers;\n        reg [10:0] tmp;")
+    text = replace(text, "if ({1'b0, head_phase} < max_phase)",
+                   "if ({1'b0, head_phase} + 10'd4 <= max_phase)")
+    text = replace(text, "// 1=stepping in progress", "// 1=step command acknowledgement active")
+    text = replace(text, """    // Disk stepping status used by STAT35 ($04).
+    // Apple docs: step one track takes ~12ms; bit is 0 while stepping, 1 when idle.
+    localparam [17:0] STEP_BUSY_CYCLES = 18'd168000; // ~12ms at 14MHz
+    reg [17:0] step_busy_cnt;
+    wire      step_busy = (step_busy_cnt != 18'd0);""",
+                   """    // STAT35 ($04) acknowledges a step with a short active-low pulse.
+    // Model about 28 us for the IWMTest polling window, independently of
+    // the mechanical track-zero sensor settling time.
+    localparam [8:0] STEP_BUSY_CYCLES = 9'd400;
+    reg [8:0] step_busy_cnt;
+    wire      step_busy = (step_busy_cnt != 9'd0);""")
+    text = replace(text, "            // Apple docs: \"bit is 0 while stepping, 1 when idle.\"\n", "")
+    text = replace(text, "// /STEP: 0=stepping, 1=idle", "// /STEP: 0=acknowledging, 1=idle")
+    text = replace(text, "// Indicate head is stepping; ROM polls STAT35 $04 until it returns high.",
+                   "// Acknowledge the step command, including at an end stop.")
+    text = replace(text, "    output wire        AT_TRACK0_OUT,        // head at track 0\n",
+                   "    output wire        AT_TRACK0_OUT,        // head at track 0\n"
+                   "    output wire        TACH_N_OUT,           // Sony /TACH, high when stopped\n")
+    text = replace(text, "    wire       at_track0 = (head_phase[8:2] == 7'd0);", """    // Apple 669-0452-A: 60 pulses per revolution at 394, 429, 472,
+    // 525, and 590 RPM in the five 16-cylinder zones. Each half period
+    // is 14,318,180 / (2 * RPM) virtual native ticks, rounded to nearest.
+    // Keep spindle sense independent of head selection and track-buffer data.
+    reg [14:0] tach_half_period;
+    always @(*) begin
+        case (head_phase[8:6])
+            3'd0: tach_half_period = 15'd18170;
+            3'd1: tach_half_period = 15'd16688;
+            3'd2: tach_half_period = 15'd15168;
+            3'd3: tach_half_period = 15'd13636;
+            default: tach_half_period = 15'd12134;
+        endcase
+    end
+    reg [14:0] tach_ticks;
+    reg tach_n;
+    wire tach_running = IS_35_INCH && DISK_MOUNTED && motor_spinning;
+    always @(posedge CLK_14M or posedge RESET) begin
+        if (RESET) begin
+            tach_ticks <= 15'd0;
+            tach_n <= 1'b1;
+        end else begin
+            if (!tach_running) begin
+                tach_ticks <= 15'd0;
+                tach_n <= 1'b1;
+            end else if (tach_ticks == 15'd0) begin
+                tach_ticks <= tach_half_period - 15'd1;
+                tach_n <= ~tach_n;
+            end else begin
+                tach_ticks <= tach_ticks - 15'd1;
+            end
+        end
+    end
+    assign TACH_N_OUT = tach_running ? tach_n : 1'b1;
+
+    wire       at_track0 = (head_phase[8:2] == 7'd0);""")
+    text = replace(text, "    wire       at_track0 = (head_phase[8:2] == 7'd0);",
+                   """    // Apple 3.5 Drive Service Source gives a 6 ms maximum track-to-track
+    // seek. Delay the home sensor on arrival without delaying track loading.
+    localparam [16:0] TRACK0_SETTLE_CYCLES = 17'd85909;
+    reg [16:0] track0_settle_cnt;
+    wire       at_track0 = (head_phase[8:2] == 7'd0) && (track0_settle_cnt == 17'd0);""")
+    start = text.index('    // Motor state\n')
+    end = text.index('    // Head position', start)
+    text = text[:start] + """    // Motor state
+    reg         motor_spinning;         // Physical motor rotation state
+    reg [18:0]  sony_spindown_counter;  // 3.5" spindle coast-down timer
+
+    // Model the Sony speed-lock delays expected by IWMTest on a stock IIgs.
+    // A stopped spindle takes about 196 ms to lock. Restarting during the
+    // short coast takes about 84 ms. Use fixed 28-tick units so neither delay
+    // depends on the track encoding, side, or whether track data is loaded.
+    parameter [17:0] SPINUP_BIT_COUNT = 18'd100000;
+    localparam [17:0] SONY_WARM_SPINUP_BITS = 18'd43000;
+    reg         prev_sony_motor_on;
+    reg [17:0]  spinup_bits_left;
+    reg         drive_ready;
+    reg [5:0]   spinup_timer;
+    reg         sony_warm_relock;
+    wire        sony_restart_warm = (sony_spindown_counter != 19'd0) && (drive_ready || sony_warm_relock);
+
+""" + text[end:]
+    start = text.index('    reg         sony_motor_on;\n')
+    end = text.index('\n    // Disk change latch', start)
+    text = text[:start] + """    reg         sony_motor_on;
+    wire        sony_selected = IS_35_INCH && SEL35 && (DRIVE_SELECT == DRIVE_SLOT);
+    reg         prev_sony_selected;
+""" + text[end:]
+    start = text.index("            sony_motor_on <= 1'b0;")
+    end = text.index('            // Track disk removal/insertion', start)
+    text = text[:start] + """            sony_motor_on <= 1'b0;         // Default: motor off
+            prev_sony_selected <= 1'b0;
+            EJECT_REQ <= 1'b0;
+            disk_switched <= 1'b1;  // Normal at reset; mount/unmount edge detection (below) handles real changes
+            prev_disk_mounted <= 1'b0;
+            first_mount_done <= 1'b0;
+            step_busy_cnt <= 9'd0;
+            track0_settle_cnt <= 17'd0;
+        end else begin
+            EJECT_REQ <= 1'b0;
+
+            if (step_busy_cnt != 9'd0)
+                step_busy_cnt <= step_busy_cnt - 9'd1;
+            if (track0_settle_cnt != 17'd0)
+                track0_settle_cnt <= track0_settle_cnt - 17'd1;
+
+            prev_sony_selected <= sony_selected;
+
+""" + text[end:]
+    start = text.index('            prev_lstrb <= lstrb;\n')
+    end = text.index('            if (motor_spinning) begin  // Only step', start)
+    text = text[:start] + """            prev_lstrb <= lstrb;
+
+            // Redirecting an enabled drive clears the previous Sony motor command.
+            // A plain IWM disable preserves it across ROM command boundaries.
+            if (SW_MOTOR_ON && prev_sony_selected && !sony_selected)
+                sony_motor_on <= 1'b0;
+
+""" + text[end:]
+    start = text.index('    // Motor State Machine\n')
+    end = text.index('    // Disk Rotation and Flux Generation\n', start)
+    text = text[:start] + """    // Motor State Machine
+    //=========================================================================
+    // iwm_woz handles Disk II inertia. Sony spindle coast and ready timing
+    // follow the Sony motor command, independently of IWM enable and SEL35.
+
+    always @(posedge CLK_14M or posedge RESET) begin
+        if (RESET) begin
+            motor_spinning <= 1'b0;
+            sony_spindown_counter <= 19'd0;
+            prev_sony_motor_on <= 1'b0;
+            spinup_bits_left <= 18'd0;
+            drive_ready <= 1'b0;
+            spinup_timer <= BIT_CELL_35;
+            sony_warm_relock <= 1'b0;
+        end else begin
+            prev_sony_motor_on <= sony_motor_on;
+
+            if (IS_35_INCH) begin
+                // 3.5" Sony drives: motor_spinning controls flux generation
+                // IIgs ROM controls motor via the 0x8/0x9 LSTRB command.
+                // Note: SEL35 (DISK35[6]) is a selection/control line used by the ROM at
+                // command boundaries. The physical spindle keeps rotating based on the
+                // Sony motor command; do not gate rotation on SEL35 or we will "freeze"
+                // angular position during deselect windows and break subsequent prologue scans.
+                if (!DISK_MOUNTED) begin
+                    motor_spinning <= 1'b0;
+                    sony_spindown_counter <= 19'd0;
+                end else if (sony_motor_on) begin
+                    motor_spinning <= 1'b1;
+                    sony_spindown_counter <= SONY_SPINDOWN_CYCLES;
+                end else if (sony_spindown_counter != 19'd0) begin
+                    motor_spinning <= 1'b1;
+                    sony_spindown_counter <= sony_spindown_counter - 19'd1;
+                end else begin
+                    motor_spinning <= 1'b0;
+                end
+`ifdef DEBUG_VERBOSE
+                if (((DISK_MOUNTED && (sony_motor_on || (sony_spindown_counter != 19'd0))) ? 1'b1 : 1'b0) != motor_spinning) begin
+                    $display("FLUX_DRIVE[%0d]: motor_spinning %0d -> %0d (sony_motor_on=%0d DISK_MOUNTED=%0d spindown=%0d)",
+                             DRIVE_ID, motor_spinning,
+                             ((DISK_MOUNTED && (sony_motor_on || (sony_spindown_counter != 19'd0))) ? 1'b1 : 1'b0),
+                             sony_motor_on, DISK_MOUNTED, sony_spindown_counter);
+                end
+`endif
+            end else begin
+                // 5.25" drives: controlled by IWM enable line + inertia (handled in iwm_woz)
+                motor_spinning <= MOTOR_ON;
+            end
+
+            if (!IS_35_INCH) begin
+                // Disk II has no /READY line. MOTOR_ON already includes inertia.
+                drive_ready <= motor_spinning && DISK_MOUNTED;
+            end else if (!DISK_MOUNTED || (!sony_motor_on && !motor_spinning)) begin
+                drive_ready <= 1'b0;
+                spinup_bits_left <= 18'd0;
+                sony_warm_relock <= 1'b0;
+            end else if (sony_motor_on) begin
+                if (!prev_sony_motor_on || !motor_spinning) begin
+                    // Reacquire speed lock on a new command, even if the
+                    // spindle is still rotating at speed during coast.
+                    sony_warm_relock <= sony_restart_warm;
+                    spinup_bits_left <= sony_restart_warm ? SONY_WARM_SPINUP_BITS : SPINUP_BIT_COUNT;
+                    spinup_timer <= BIT_CELL_35;
+                    drive_ready <= 1'b0;
+                end else if (!drive_ready) begin
+                    if (spinup_timer == 6'd1) begin
+                        spinup_timer <= BIT_CELL_35;
+                        if (spinup_bits_left <= 18'd1) begin
+                            drive_ready <= 1'b1;
+                        end else begin
+                            spinup_bits_left <= spinup_bits_left - 18'd1;
+                        end
+                    end else begin
+                        spinup_timer <= spinup_timer - 6'd1;
+                    end
+                end
+            end
+            // If already locked, keep data available during spindle coast.
+        end
+    end
+
+    //=========================================================================
+""" + text[end:]
+    text = replace(text, '    assign DRIVE_READY = drive_ready;           // Ready after 2 rotation spinup',
+                   '    assign DRIVE_READY = drive_ready;')
+    text = replace(text, '    wire        drive_ready_rising = drive_ready && !prev_drive_ready && (TRACK_BIT_COUNT > 0);',
+                   '    wire        drive_ready_rising = drive_ready && !prev_drive_ready && !sony_warm_relock && (TRACK_BIT_COUNT > 0);')
+    text = replace(text, """                                if (head_phase >= 9'd4)
+                                    head_phase <= head_phase - 9'd4;
+                                else
+                                    head_phase <= 9'd0;""",
+                   """                                if (head_phase >= 9'd4) begin
+                                    head_phase <= head_phase - 9'd4;
+                                    if (head_phase == 9'd4)
+                                        track0_settle_cnt <= TRACK0_SETTLE_CYCLES;
+                                end else begin
+                                    head_phase <= 9'd0;
+                                end""")
+    start = text.index('            // Reset bit_position when drive becomes ready')
+    end = text.index("                bit_position <= 17'd0;", start)
+    text = text[:start] + """            // Reset bit_position after cold spinup. Warm speed relock keeps
+            // the angular position of the spindle that continued rotating.
+            // This ensures the decoder starts at a known position when the state machine activates.
+            // Without this reset, bit_position accumulates during spinup (~170000 bits) and the
+            // decoder starts mid-track, never seeing the D5 AA prologue markers at the track start.
+            //
+            // NOTE: For FPGA BRAM with 1-cycle read latency, we start bit_timer at bit_cell_cycles-1
+            // instead of bit_cell_cycles. This gives BRAM one cycle to load the initial byte before
+            // the first flux check (which happens when bit_timer == bit_cell_cycles).
+            //
+            // MOTOR RESTART HANDLING:
+            // When motor_spinning restarts (0→1) while drive_ready is ALREADY true (common with
+            // 3.5" drives during GS/OS loading due to SEL35 toggling), we need to wait for
+            // fresh BRAM data. The first flux check after restart would otherwise use stale data.
+            if (drive_ready_rising) begin
+""" + text[end:]
+    text = replace(text, "4'hE: sense_35 = ~drive_ready;              // Treat as /READY as well (safe)",
+                   "4'hE: sense_35 = TACH_N_OUT;                // /TACH: spindle-speed pulses")
     return normalize(text)
 
 
@@ -990,6 +1246,21 @@ def generate_iwm_flux() -> str:
                    "flux_edge_log_count <= flux_edge_log_count + 1'd1;\n            end\n`endif\n\n            // Latch mode hold counter")
     text = replace(text, "\n            end\n`endif\n\n            // Latch flux edges that arrive in EDGE_1",
                    "\n            end\n\n            // Latch flux edges that arrive in EDGE_1")
+    text = replace(text, "    wire       write_accepts_immediately =",
+                   "    wire       restart_after_underrun = !IS_35_INCH || !is_async;\n"
+                   "    wire       write_accepts_immediately =")
+    text = replace(text, "(rw_state == SW_UNDERRUN));",
+                   "((rw_state == SW_UNDERRUN) && restart_after_underrun));")
+    text = replace(text, "end else if (write_byte_available) begin\n"
+                   "                            // CPU wrote new data while in underrun",
+                   "end else if (write_byte_available && restart_after_underrun) begin\n"
+                   "                            // CPU wrote new data while in underrun")
+    text = replace(text, "                                         debug_cycle, current_write_data, current_write_gen);\n"
+                   "                            end\n`endif\n                        end else begin\n",
+                   "                                         debug_cycle, current_write_data, current_write_gen);\n"
+                   "                            end\n`endif\n                        end else begin\n"
+                   "                            // In Sony async mode underrun stops the shifter until Q7 is\n"
+                   "                            // cleared. A data write can fill the latch but cannot restart it.\n")
     return normalize(text)
 
 
@@ -1015,6 +1286,60 @@ def generate_iwm_woz() -> str:
     text = replace(text, "    wire mode_write_active = bus_wr && !iwm_active && immediate_q7 && immediate_q6 && bus_addr[0];",
                    "    wire mode_write_active = bus_wr && !iwm_active && immediate_q7 && immediate_q6 && bus_addr[0] &&\n"
                    "                             !(bus_addr[3:1] == 3'b100);")
+    text = replace(text, "            4'h8: drive35_computed_sense",
+                   "            4'h5, 4'h7, 4'hD, 4'hF:\n"
+                   "                  drive35_computed_sense = smartport_mode_sense;  // DD GCR drive present\n"
+                   "            4'h6: drive35_computed_sense = smartport_mode_sense || (DISK_READY[2] && !WOZ_TRACK3_WP);\n"
+                   "            4'h8: drive35_computed_sense")
+    text = replace(text, "            4'h8: drive35_2_computed_sense",
+                   "            4'h5, 4'h6, 4'h7, 4'hD, 4'hF:\n"
+                   "                  drive35_2_computed_sense = smartport_mode_sense; // DD GCR drive with no writable media\n"
+                   "            4'h8: drive35_2_computed_sense")
+    for drive in ("drive35", "drive35_2"):
+        text = replace(text, f"    wire        {drive}_at_track0;\n",
+                       f"    wire        {drive}_at_track0;\n    wire        {drive}_tach_n;\n")
+        text = replace(text, f"        .AT_TRACK0_OUT({drive}_at_track0),\n",
+                       f"        .AT_TRACK0_OUT({drive}_at_track0),\n        .TACH_N_OUT({drive}_tach_n),\n")
+        text = replace(text, f"4'hE: {drive}_computed_sense = smartport_mode_sense ? 1'b1 : ~{drive}_ready;",
+                       f"4'hE: {drive}_computed_sense = smartport_mode_sense || {drive}_tach_n;")
+    text = replace(text, "        .AT_TRACK0_OUT(),\n",
+                   "        .AT_TRACK0_OUT(),\n        .TACH_N_OUT(),\n")
+    start = text.index('    // MAME delays motor-off')
+    end = text.index('    reg        iwm_active;', start)
+    text = text[:start] + """    // The IWM motor-off timer uses FCLK (half the controller clock).
+    // LATCH mode selects the short interval measured on the Rev B IWM.
+    localparam [23:0] IWM_DELAY_CYCLES = 24'd16645630;       // 8,322,815 FCLK
+    localparam [23:0] IWM_LATCH_DELAY_CYCLES = 24'd8126;     //     4,063 FCLK
+""" + text[end:]
+    start = text.index('            // IWM "active" timing')
+    end = text.index('        end  // end of else (not reset)', start)
+    text = text[:start] + """            // Only a motor command transition arms or cancels the delayed off.
+            if (cpu_access_edge && access_motor && (bus_addr[0] != drive_on)) begin
+                if (bus_addr[0]) begin
+                    iwm_active <= 1'b1;
+                    iwm_delay_cnt <= 24'd0;
+                end else if (mode_reg[2]) begin
+                    iwm_active <= 1'b0;
+                    iwm_delay_cnt <= 24'd0;
+                end else begin
+                    iwm_delay_cnt <= mode_reg[0] ? IWM_LATCH_DELAY_CYCLES : IWM_DELAY_CYCLES;
+                end
+            end else if (!drive_on && iwm_active) begin
+                iwm_delay_cnt <= iwm_delay_cnt - 1'd1;
+                if (iwm_delay_cnt == 24'd1)
+                    iwm_active <= 1'b0;
+            end
+""" + text[end:]
+    start = text.index("            4'h8: drive35_computed_sense")
+    end = text.index("            4'hA: drive35_computed_sense", start)
+    text = text[:start] + """            4'h8: drive35_computed_sense = smartport_mode_sense || !is_35_inch || !iwm_active ||
+                                          !drive35_motor_on_sense;
+""" + text[end:]
+    start = text.index("            4'h8: drive35_2_computed_sense")
+    end = text.index("            4'hA: drive35_2_computed_sense", start)
+    text = text[:start] + """            4'h8: drive35_2_computed_sense = smartport_mode_sense || !is_35_inch || !iwm_active ||
+                                            !drive35_2_motor_on_sense;
+""" + text[end:]
     # Export media presence of the drive software has selected: $C031 bit 6
     # picks the family and $C0EA/$C0EB the drive. The machine gates its 2 ms
     # IWM access hold on it, so polls of an empty drive stay accelerated.

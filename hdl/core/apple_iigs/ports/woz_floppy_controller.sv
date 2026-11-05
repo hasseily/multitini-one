@@ -178,7 +178,11 @@ module woz_floppy_controller #(
     // The read-modify-write in flux_drive latches BRAM_ADDR at read time (cycle N), but by
     // write time (cycle N+1) bit_position has advanced so bit_addr may point to a different byte.
     // Using the latched address ensures the modified byte is written back to the correct location.
-    wire [15:0] bram_addr_b = bit_we ? bit_wr_addr : bit_addr;
+    // TMAP and FLUX each have 160 entries. Leave cached tracks and any
+    // pending save intact if the mechanism reports an out-of-range index.
+    wire track_id_in_map = track_id < 8'd160;
+    wire mapped_bit_we = bit_we && track_id_in_map;
+    wire [15:0] bram_addr_b = mapped_bit_we ? bit_wr_addr : bit_addr;
 
     // Dual port RAM for Track Data (Side 0) — used by both 3.5" and 5.25"
     bram #(.width_a(8), .widthad_a(BRAM_ADDR_WIDTH)) track_ram_side0 (
@@ -192,7 +196,7 @@ module woz_floppy_controller #(
         .clock_b(clk),
         .enable_b(CLOCK_ENABLE && BIT_CLOCK_ENABLE),
         .address_b(bram_addr_b[BRAM_ADDR_WIDTH-1:0]),
-        .wren_b(bit_we && (!IS_35_INCH || (track_id[0] == 1'b0))),
+        .wren_b(mapped_bit_we && (!IS_35_INCH || (track_id[0] == 1'b0))),
         .data_b(bit_data_in),
         .q_b(bit_data0)
     );
@@ -211,7 +215,7 @@ module woz_floppy_controller #(
                 .clock_b(clk),
         .enable_b(CLOCK_ENABLE && BIT_CLOCK_ENABLE),
                 .address_b(bram_addr_b),
-                .wren_b(bit_we && (track_id[0] == 1'b1)),
+                .wren_b(mapped_bit_we && (track_id[0] == 1'b1)),
                 .data_b(bit_data_in),
                 .q_b(bit_data1)
             );
@@ -254,7 +258,7 @@ module woz_floppy_controller #(
     // Use track_id[0] (not stable_side) for side selection to avoid 1-cycle phase mismatch:
     // track_id already encodes the side, so this stays in sync regardless of stable_side timing.
     wire track_data_valid_match = (IS_35_INCH && track_id[0]) ? track_side1_match : track_side0_match;
-    assign track_data_valid = woz_valid && track_data_valid_match;
+    assign track_data_valid = woz_valid && track_id_in_map && track_data_valid_match;
     // During loading, use the pending track's bit_count IF we're loading the stable_side.
     // If we're loading the other side, keep using selected_bit_count to avoid glitches.
     wire loading_matches_stable = (!IS_35_INCH) || (load_side == stable_side);
@@ -547,10 +551,10 @@ module woz_floppy_controller #(
 
             // Default: ready when the selected side is cached for the current track_id
             if (IS_35_INCH) begin
-                ready <= woz_valid && (state == S_IDLE) &&
+                ready <= woz_valid && track_id_in_map && (state == S_IDLE) &&
                          ((track_id[0] ? current_track_id_side1 : current_track_id_side0) == track_id);
             end else begin
-                ready <= woz_valid && (state == S_IDLE) && (current_track_id_side0 == track_id);
+                ready <= woz_valid && track_id_in_map && (state == S_IDLE) && (current_track_id_side0 == track_id);
             end
 
 	            // Mount detection
@@ -632,7 +636,7 @@ module woz_floppy_controller #(
 	            prev_mounted <= img_mounted;
 
             // Set per-side dirty flag on bit writes
-            if (bit_we) begin
+            if (mapped_bit_we) begin
                 if (IS_35_INCH && track_id[0])
                     dirty_side1 <= 1;
                 else
@@ -736,7 +740,7 @@ module woz_floppy_controller #(
                     // This handles the case where the ROM writes volume structures to track 0
                     // then reads them back without changing tracks or stopping the motor.
                     // Without this, the dirty BRAM data is never saved to the WOZ file.
-                    if (bit_we)
+                    if (mapped_bit_we)
                         dirty_flush_timer <= DIRTY_FLUSH_DELAY;
                     else if (dirty_flush_timer > 0)
                         dirty_flush_timer <= dirty_flush_timer - 1'd1;
@@ -837,7 +841,7 @@ module woz_floppy_controller #(
 
                         // Only start loading if track is not cached AND head has settled
                         // This prevents thrashing during fast seeks (boot)
-                        if (!both_sides_cached && (settle_counter >= SETTLE_THRESHOLD)) begin
+                        if (track_id_in_map && !both_sides_cached && (settle_counter >= SETTLE_THRESHOLD)) begin
                             $display("WOZ_SETTLE: Settled after %0d cycles, starting load for physical track %0d",
                                      settle_counter, requested_physical);
                             // Physical track change - need to load both sides
@@ -893,7 +897,7 @@ module woz_floppy_controller #(
                     end else begin
                         // 5.25" SINGLE-SIDED:
                         // Only one side, simpler logic. Also use settling time.
-                        if ((track_id != current_track_id_side0) && (settle_counter >= settle_lim)) begin
+                        if (track_id_in_map && (track_id != current_track_id_side0) && (settle_counter >= settle_lim)) begin
                             $display("WOZ_SETTLE: 5.25\" settled after %0d cycles, starting load for track %0d",
                                      settle_counter, track_id);
                             pending_track_id <= track_id;

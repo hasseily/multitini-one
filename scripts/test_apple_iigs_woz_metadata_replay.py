@@ -21,6 +21,7 @@ def main():
         raise ValueError("Select a fresh repository build directory")
     build.mkdir(parents=True)
     sources = [ROOT / "hdl/core/apple_iigs/ports/bram.sv",
+               ROOT / "hdl/core/apple_iigs/ports/flux_drive.sv",
                ROOT / "hdl/core/apple_iigs/ports/woz_floppy_controller.sv",
                ROOT / "hdl/sim/tb_apple_iigs_woz_metadata_replay.sv"]
     inputs = sources + [Path(__file__).resolve()]
@@ -56,9 +57,9 @@ def main():
          include / "verilated_threads.cpp", "-o", executable], "compile")
     cases = {}
     for mode in range(3):
-        for replay in range(2):
-            name = f"mode{mode}-replay{replay}"
-            text = run([executable, f"+MODE={mode}", f"+REPLAY={replay}"], name)
+        for replay, flux in ((0, 0), (1, 0), (0, 1)):
+            name = f"mode{mode}-replay{replay}-flux{flux}"
+            text = run([executable, f"+MODE={mode}", f"+REPLAY={replay}", f"+FLUX={flux}"], name)
             if text.count("PASS:") != 1:
                 raise ValueError(name + " did not pass")
             cases[name] = next(line for line in text.splitlines() if line.startswith("PASS:"))
