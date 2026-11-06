@@ -26,6 +26,13 @@ set c64_video_standard "PAL"
 set c64_ntsc_mode 0
 set genesis_pal_mode 0
 set amiga_aga_pal 0
+set atari_320xe 0
+if {[info exists ::env(MULTITINI_ATARI_320XE)]} {
+    set atari_320xe [string trim $::env(MULTITINI_ATARI_320XE)]
+    if {$machine ne "ATARI_XT" || $atari_320xe ni {0 1}} {
+        error "MULTITINI_ATARI_320XE must be 0 or 1 and requires ATARI_XT"
+    }
+}
 if {[info exists ::env(MULTITINI_AMIGA_AGA_PAL)]} {
     set amiga_aga_pal [string trim $::env(MULTITINI_AMIGA_AGA_PAL)]
     if {$machine ne "AMIGA" || $amiga_aga_pal ni {0 1}} {
@@ -708,9 +715,12 @@ if {[info exists ::env(MULTITINI_BUILD_ID)]} {
     }
 }
 set c64_turbo_revision [expr {$machine eq "C64" && !$c64_ntsc_mode ? 2 : 1}]
-set_property generic \
-    "SHELL_BUILD_ID=32'h${git_id} C64_NTSC_MODE=1'b${c64_ntsc_mode} C64_TURBO_TIMING_REVISION=${c64_turbo_revision} ACTIVE_MACHINE=${active_machine} ENABLE_GBC_PSRAM=1'b${enable_gbc_psram} GENESIS_PAL_MODE=1'b${genesis_pal_mode} AMIGA_AGA_PAL=1'b${amiga_aga_pal} AMIGA_AP68040=1'b${amiga_ap68040}" \
-    [get_filesets sources_1]
+set build_generics "SHELL_BUILD_ID=32'h${git_id} C64_NTSC_MODE=1'b${c64_ntsc_mode} C64_TURBO_TIMING_REVISION=${c64_turbo_revision} ACTIVE_MACHINE=${active_machine} ENABLE_GBC_PSRAM=1'b${enable_gbc_psram} GENESIS_PAL_MODE=1'b${genesis_pal_mode} AMIGA_AGA_PAL=1'b${amiga_aga_pal} AMIGA_AP68040=1'b${amiga_ap68040}"
+if {$machine eq "ATARI_XT"} {
+    lappend build_generics "ATARI_320XE=1'b${atari_320xe}"
+    puts "ATARI_320XE=$atari_320xe"
+}
+set_property generic $build_generics [get_filesets sources_1]
 update_compile_order -fileset sources_1
 source [file join $script_dir configure_vivado_run_profile.tcl]
 

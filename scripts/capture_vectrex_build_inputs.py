@@ -266,6 +266,7 @@ def main() -> int:
     parser.add_argument("--genesis-pal", action="store_true")
     parser.add_argument("--amiga-aga-pal", action="store_true")
     parser.add_argument("--amiga-ap68040", action="store_true")
+    parser.add_argument("--atari-320xe", action="store_true")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--verify", action="store_true")
     args = parser.parse_args()
@@ -297,6 +298,8 @@ def main() -> int:
         parser.error("--amiga-aga-pal requires --machine AMIGA")
     if args.amiga_ap68040 and not args.amiga_aga_pal:
         parser.error("--amiga-ap68040 requires --amiga-aga-pal")
+    if args.atari_320xe and args.machine != "ATARI_XT":
+        parser.error("--atari-320xe requires --machine ATARI_XT")
     if args.c64_timing_policy != "default" and args.machine != "C64":
         parser.error("--c64-timing-policy requires --machine C64")
     record = {
@@ -319,6 +322,8 @@ def main() -> int:
         record["configuration"]["amiga_aga_pal"] = True
     if args.amiga_ap68040:
         record["configuration"]["amiga_ap68040"] = True
+    if args.atari_320xe:
+        record["configuration"]["atari_320xe"] = True
     output.parent.mkdir(parents=True, exist_ok=True)
     archive_inputs(output, record)
     output.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")

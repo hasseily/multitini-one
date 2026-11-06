@@ -174,6 +174,45 @@ class ArtifactTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "configuration changed|settings changed"):
             self.inspect()
 
+    def test_atari_ram_variant_keeps_old_stock_and_requires_mapped_expansion(self):
+        self.record["machine"] = "ATARI_XT"
+        self.record["configuration"]["c64_video_standard"] = None
+        self.sources["hdl/hdl_sources.txt"] = self.sources["hdl/hdl_sources.txt"].replace(b"[c64]", b"[atari_xt]")
+        Path(str(self.bit) + ".kind").write_text("ATARI_XT\n")
+        manifest = self.directory / "reports/build_manifest.txt"
+        stock = manifest.read_text().replace("image_kind=C64", "image_kind=ATARI_XT").replace("ACTIVE_MACHINE=0", "ACTIVE_MACHINE=9")
+        manifest.write_text(stock)
+        for name in ("generate.tcl", "build.tcl"):
+            script = self.directory / name
+            script.write_text(script.read_text().replace("{C64}", "{ATARI_XT}"))
+        self.seal_sources()
+        artifacts.inspect_artifact(self.directory, "ATARI_XT")
+        with self.assertRaisesRegex(ValueError, "Wrong Atari RAM variant"):
+            artifacts.inspect_artifact(self.directory, "ATARI_XT", atari_320xe=True)
+
+        self.record["configuration"]["atari_320xe"] = True
+        manifest.write_text(stock.rstrip() + " ATARI_320XE=1'b1\n")
+        for name in ("generate.tcl", "build.tcl"):
+            with (self.directory / name).open("a") as script:
+                script.write("set ::env(MULTITINI_ATARI_320XE) {1}\n")
+        self.seal_sources()
+        with self.assertRaisesRegex(ValueError, "mapped 320 KiB RAM qualification"):
+            artifacts.inspect_artifact(self.directory, "ATARI_XT", atari_320xe=True)
+        with (self.directory / "build.log").open("a") as log:
+            log.write("\nATARI_320XE_RAM_PASS stage=synthesis array=ram ramb36=16 ramb18=0\n"
+                      "ATARI_320XE_RAM_PASS stage=synthesis array=expanded_ram ramb36=64 ramb18=0\n"
+                      "ATARI_320XE_RAM_PASS stage=implementation array=ram ramb36=16 ramb18=0\n"
+                      "ATARI_320XE_RAM_PASS stage=implementation array=expanded_ram ramb36=64 ramb18=0\n")
+        with self.assertRaisesRegex(ValueError, "per-bank RAM qualification"):
+            artifacts.inspect_artifact(self.directory, "ATARI_XT", atari_320xe=True)
+        with (self.directory / "build.log").open("a") as log:
+            for stage in ("synthesis", "implementation"):
+                for bank in range(16):
+                    log.write(f"ATARI_320XE_BANK_PASS stage={stage} bank={bank} ramb36=4 ramb18=0\n")
+        self.assertTrue(artifacts.inspect_artifact(self.directory, "ATARI_XT", atari_320xe=True)["atari_320xe"])
+        with self.assertRaisesRegex(ValueError, "Wrong Atari RAM variant"):
+            artifacts.inspect_artifact(self.directory, "ATARI_XT")
+
     def test_consistent_archives_cannot_omit_hdl_closure(self):
         del self.sources["hdl/core/demo.sv"]
         self.seal_sources()

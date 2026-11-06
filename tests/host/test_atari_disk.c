@@ -128,10 +128,13 @@ static size_t fixture(uint8_t data[512])
 {
     const uint8_t first_init[] = {0xa9, 0x11, 0x8d, 0x00, 0x60, 0x60};
     const uint8_t second_init[] = {0xee, 0x00, 0x60, 0x60};
-    const uint8_t run[] = {0xad, 0x00, 0x60, 0x8d, 0x01, 0x60, 0x4c, 0x16, 0xa0};
+    const uint8_t run[] = {0xad, 0x00, 0x60, 0x48, 0xa9, 0xa5, 0x68, 0x8d, 0x01, 0x60, 0x60};
     const uint8_t first_address[] = {0x00, 0x07};
     const uint8_t second_address[] = {0x00, 0xa0};
-    const uint8_t run_address[] = {0x10, 0xa0};
+    const uint8_t run_address[] = {0x10, 0x01};
+    uint8_t low_stack[96];
+    memset(low_stack, 0xa5, sizeof(low_stack));
+    memcpy(low_stack, run, sizeof(run));
     uint8_t payload[257];
     for (size_t i = 0U; i < sizeof(payload); ++i) payload[i] = (uint8_t)(i ^ 0x5aU);
     data[0] = data[1] = 0xffU;
@@ -140,11 +143,11 @@ static size_t fixture(uint8_t data[512])
     segment(data, &size, 0x02e2U, first_address, sizeof(first_address));
     data[size++] = 0xffU;
     data[size++] = 0xffU;
+    segment(data, &size, 0x0110U, low_stack, sizeof(low_stack));
     segment(data, &size, 0x1fffU, payload, sizeof(payload));
     segment(data, &size, 0xa000U, second_init, sizeof(second_init));
     segment(data, &size, 0x02e2U, second_address, sizeof(second_address));
     segment(data, &size, 0x02e0U, first_address, sizeof(first_address));
-    segment(data, &size, 0xa010U, run, sizeof(run));
     segment(data, &size, 0x02e0U, run_address, sizeof(run_address));
     return size;
 }
@@ -164,13 +167,13 @@ static void test_xex(const char *output)
           sector[0] == 0U && sector[2] == 0U && sector[3] == 0x08U && source.reads == previous_reads,
           "the boot header contains the relocated address and needs no file I/O");
     const uint16_t boot_sectors = sector[1];
-    check(boot_sectors != 0U && xex.sector_count == boot_sectors + 3U, "virtual disk sector count");
+    check(boot_sectors != 0U && xex.sector_count == boot_sectors + 4U, "virtual disk sector count");
     check(mt_atari_xex_read_sector(&xex, read_at, &source, (uint16_t)(boot_sectors + 2U), sector) == MT_ATARI_DISK_OK &&
           source.last_offset == 128U && source.last_length == 128U && memcmp(sector, data + 128U, 128U) == 0,
           "virtual data sectors support direct random reads");
     check(mt_atari_xex_read_sector(&xex, read_at, &source, xex.sector_count, sector) == MT_ATARI_DISK_OK &&
-          source.last_offset == 256U && source.last_length == size - 256U &&
-          memcmp(sector, data + 256U, size - 256U) == 0 && sector[127] == 0U,
+          source.last_offset == 384U && source.last_length == size - 384U &&
+          memcmp(sector, data + 384U, size - 384U) == 0 && sector[127] == 0U,
           "final sector reads only remaining data and zero pads");
     check(mt_atari_xex_read_sector(&xex, read_at, &source, 0U, sector) == MT_ATARI_DISK_INVALID &&
           mt_atari_xex_read_sector(&xex, read_at, &source, (uint16_t)(xex.sector_count + 1U), sector) == MT_ATARI_DISK_INVALID,
@@ -215,11 +218,32 @@ static void test_xex(const char *output)
           "the virtual disk cannot exceed the SIO address space");
 }
 
+static void test_xex_stack_boundary(void)
+{
+    uint8_t data[8] = {0xff, 0xff};
+    const uint8_t payload[] = {0xea, 0xea};
+    source_t source = {.data = data, .size = sizeof(data)};
+    mt_atari_xex_t xex;
+    size_t size = 2U;
+    segment(data, &size, 0x017fU, payload, 1U);
+    check(mt_atari_xex_open((uint32_t)size, read_at, &source, &xex) == MT_ATARI_DISK_OK,
+          "the last byte of the lower stack page is usable");
+    size = 2U;
+    segment(data, &size, 0x017fU, payload, 2U);
+    check(mt_atari_xex_open((uint32_t)size, read_at, &source, &xex) == MT_ATARI_DISK_UNSUPPORTED,
+          "a segment straddling the live stack boundary is rejected");
+    size = 2U;
+    segment(data, &size, 0x0180U, payload, 1U);
+    check(mt_atari_xex_open((uint32_t)size, read_at, &source, &xex) == MT_ATARI_DISK_UNSUPPORTED,
+          "the first byte of the live stack area is reserved");
+}
+
 int main(int argc, char *argv[])
 {
     check(argc <= 2, "optional argument is an output ATR fixture path");
     test_atr();
     test_xex(argc == 2 ? argv[1] : NULL);
+    test_xex_stack_boundary();
     puts("PASS: ATR geometry and bounded streaming XEX boot sectors");
     return EXIT_SUCCESS;
 }

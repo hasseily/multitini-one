@@ -74,6 +74,7 @@ module multitini_atari_xt_machine #(
     // $D0xx.  A SWITCH rather than a replacement because the baseline is the
     // regression floor and must stay runnable on demand.
     parameter bit USE_ANTIC2 = 1'b0,
+    parameter bit USE_320XE = 1'b0,
     parameter int unsigned CLK_HZ  = 100_000_000,
     parameter int unsigned PHI2_HZ = 1_785_714
 ) (
@@ -113,6 +114,7 @@ module multitini_atari_xt_machine #(
     input  wire [7:0]  antic_rdata,
     output wire        antic_rom_hit,
     output wire [14:0] antic_rom_addr,
+    output wire [5:0]  extended_portb,
 
     // ---- interrupts ------------------------------------------------------
     input  wire        irq_n,
@@ -210,13 +212,20 @@ module multitini_atari_xt_machine #(
     // convention bank_translator uses; the test drives DDR to $FF first.
     // External, preloaded XL ROMs are visible to both masters from reset.
     // ANTIC needs the OS character generator when CHBASE points into ROM.
-    wire [7:0] portb_bank;
+    // Multitini One modification, 2026-11-06: use the effective PIA pins
+    // to control Compy Shop RAM and ROM. Retain the stock XL latch decode.
+    wire [7:0] portb_latch, portb_pins;
+    wire [7:0] portb_bank = USE_320XE ? portb_pins : portb_latch;
+    // Compy Shop reuses PB7 as a bank bit whenever either window is enabled.
+    wire self_test_on = portb_bank[0] && !portb_bank[7] &&
+        (!USE_320XE || (&portb_bank[5:4]));
+    assign extended_portb = portb_pins[7:2];
     function automatic [15:0] xl_rom(input [15:0] addr);
         if (portb_bank[0] && addr[15:14] == 2'b11 && addr[15:11] != 5'b11010)
             xl_rom = {1'b1, 1'b0, addr[13:0]};
         else if (!portb_bank[1] && addr[15:13] == 3'b101)
             xl_rom = {1'b1, 2'b10, addr[12:0]};
-        else if (portb_bank[0] && !portb_bank[7] && addr[15:11] == 5'b01010)
+        else if (self_test_on && addr[15:11] == 5'b01010)
             xl_rom = {1'b1, 4'b0010, addr[10:0]};
         else xl_rom = 16'd0;
     endfunction
@@ -385,7 +394,7 @@ module multitini_atari_xt_machine #(
         .raddr(c_addr), .rdata(pia_rdata),
         .joy_porta_in(joy_porta), .joy_portb_in(8'hFF),
         .joy_porta_oe(), .joy_portb_oe(),
-        .portb_out_q(portb_bank),
+        .portb_out_q(portb_latch), .portb_pins_q(portb_pins),
         .pia_irq_n(pia_irq_n), .cb2_line(sio_command_n)
     );
 

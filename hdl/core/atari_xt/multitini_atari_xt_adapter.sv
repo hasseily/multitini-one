@@ -4,7 +4,8 @@
 `timescale 1ns/1ps
 
 module multitini_atari_xt_adapter #(
-    parameter string PALETTE_FILE = "atari_ntsc.hex"
+    parameter string PALETTE_FILE = "atari_ntsc.hex",
+    parameter bit EXTENDED_RAM = 1'b0
 ) (
     input  wire              core_clk, reset, core_reset_request, pause_request, clear_load_error,
     input  wire [15:0]       input_code, input_value,
@@ -185,6 +186,62 @@ module multitini_atari_xt_adapter #(
     wire [15:0] cpu_rom_read_addr = cpu_cart_hit ? cpu_cart_addr : {1'b0, cpu_rom_addr};
     wire [15:0] antic_rom_read_addr = antic_cart_hit ? antic_cart_addr : {1'b0, antic_rom_addr};
 
+    // XL OS checks COLDST even when its warm-start signature survives in RAM.
+    // Set it on the CPU RAM port while the guest is held in reset so restarting
+    // with a different disk runs the boot loader instead of the old DOS vector.
+    wire cold_ram_init = reset || core_reset_request;
+    wire [15:0] cpu_guest_addr = cold_ram_init ? 16'h0244 : cpu_addr;
+    wire [7:0] cpu_ram_write_data = cold_ram_init ? 8'h01 : cpu_out;
+    wire cpu_ram_write = cold_ram_init ||
+        (cpu_write && ready && !cpu_rom_hit && !cpu_cart_hit && !cpu_io);
+    wire [5:0] extended_portb;
+    wire [7:0] cpu_ram_data, antic_ram_data;
+    wire cpu_extended;
+
+    if (EXTENDED_RAM) begin : g_expanded
+        // Compy Shop adds sixteen 16 KiB banks at $4000–$7FFF. PORTB
+        // bits 7, 6, 3 and 2 select the bank. Bits 4 and 5 enable the
+        // CPU and ANTIC windows independently when low.
+        wire [3:0] bank = {extended_portb[5:4], extended_portb[1:0]};
+        wire antic_extended = !extended_portb[3] && antic_addr[15:14] == 2'b01;
+        wire [7:0] cpu_expanded_q [0:15];
+        wire [7:0] antic_expanded_q [0:15];
+        reg [3:0] bank_q;
+        reg cpu_extended_q, antic_extended_q;
+
+        assign cpu_extended = !extended_portb[2] && cpu_guest_addr[15:14] == 2'b01;
+        assign cpu_ram_data = cpu_extended_q ? cpu_expanded_q[bank_q] : cpu_ram_q;
+        assign antic_ram_data = antic_extended_q ? antic_expanded_q[bank_q] : antic_ram_q;
+        always @(posedge core_clk) begin
+            bank_q <= bank;
+            cpu_extended_q <= cpu_extended;
+            antic_extended_q <= antic_extended;
+        end
+
+        // Infer the banks separately to keep the BRAM depth within a
+        // single bank. The read data and bank select have the same latency.
+        for (genvar index = 0; index < 16; index = index + 1) begin : g_bank
+            (* ram_style = "block" *) reg [7:0] expanded_ram [0:16383];
+            reg [7:0] cpu_bank_q, antic_bank_q;
+            wire selected = bank == 4'(index);
+            always @(posedge core_clk) begin
+                if (selected && cpu_extended) begin
+                    if (cpu_ram_write)
+                        expanded_ram[cpu_guest_addr[13:0]] <= cpu_ram_write_data;
+                    cpu_bank_q <= expanded_ram[cpu_guest_addr[13:0]];
+                end
+                if (selected && antic_extended)
+                    antic_bank_q <= expanded_ram[antic_addr[13:0]];
+            end
+            assign cpu_expanded_q[index] = cpu_bank_q;
+            assign antic_expanded_q[index] = antic_bank_q;
+        end
+    end else begin : g_stock
+        assign cpu_extended = 1'b0;
+        assign cpu_ram_data = cpu_ram_q;
+        assign antic_ram_data = antic_ram_q;
+    end
+
     always @(posedge core_clk) begin
         if (rom_write) begin
             cpu_rom[rom_load_addr] <= load_data;
@@ -195,19 +252,19 @@ module multitini_atari_xt_adapter #(
         cpu_rom_select <= cpu_rom_hit || cpu_cart_hit;
         antic_rom_select <= antic_rom_hit || antic_cart_hit;
         cpu_open_bus <= cpu_io;
-        if (cpu_write && ready && !cpu_rom_hit && !cpu_cart_hit && !cpu_io) ram[cpu_addr] <= cpu_out;
-        cpu_ram_q <= ram[cpu_addr];
+        if (cpu_ram_write && !cpu_extended) ram[cpu_guest_addr] <= cpu_ram_write_data;
+        cpu_ram_q <= ram[cpu_guest_addr];
         antic_ram_q <= ram[antic_addr];
     end
 
-    multitini_atari_xt_machine #(.USE_ANTIC2(1'b1)) machine (
+    multitini_atari_xt_machine #(.USE_ANTIC2(1'b1), .USE_320XE(EXTENDED_RAM)) machine (
         .clk(core_clk), .rst(machine_reset), .cold(machine_reset), .hold_cpu(pause_request),
         .tick(tick), .px_tick(pixel_tick), .tune(16'd0),
         .cpu_addr(cpu_addr), .cpu_wdata(cpu_out), .cpu_we(cpu_write),
-        .cpu_rdata(cpu_rom_select ? cpu_rom_q : cpu_open_bus ? 8'hff : cpu_ram_q),
+        .cpu_rdata(cpu_rom_select ? cpu_rom_q : cpu_open_bus ? 8'hff : cpu_ram_data),
         .rom_hit(cpu_rom_hit), .rom_addr(cpu_rom_addr),
-        .antic_addr(antic_addr), .antic_rdata(antic_rom_select ? antic_rom_q : antic_ram_q),
-        .antic_rom_hit(antic_rom_hit), .antic_rom_addr(antic_rom_addr),
+        .antic_addr(antic_addr), .antic_rdata(antic_rom_select ? antic_rom_q : antic_ram_data),
+        .antic_rom_hit(antic_rom_hit), .antic_rom_addr(antic_rom_addr), .extended_portb(extended_portb),
         .irq_n(1'b1), .trig0({7'd0, trigger_n[0]}), .trig1({7'd0, trigger_n[1]}),
         // XL/XE TRIG3 reads RD5 directly. RD5 is high when a cartridge
         // supplies the upper cartridge window and low for built-in BASIC.

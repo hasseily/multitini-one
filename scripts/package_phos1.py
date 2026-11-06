@@ -28,6 +28,7 @@ SPECTRUM_CORE_SPEC = ("zx-spectrum", "ZX Spectrum", "0x5A585350",
                       [("pal", "ZX Spectrum 48K / 128K PAL", "zx-spectrum")])
 ATARI_XT_CORE_SPEC = ("atari-800xl", "Atari 800XL", "0x41383030",
                      [("ntsc", "Atari 800XL NTSC", "atari-800xl")])
+ATARI_320XE_VARIANT = ("320xe-ntsc", "Atari Compy Shop NTSC (320 KiB)", "atari-320xe")
 GS_GUIDES = ("APPLE_IIGS_HARDWARE_TEST.md", "APPLE_IIGS_CPU_VALIDATION.md",
              "APPLE_IIGS_PLAN.md", "APPLE_IIGS_ACCELERATION.md", "APPLE_IIGS_SMARTPORT.md",
              "APPLE_IIGS_LEGACY_VIDEO.md",
@@ -94,6 +95,11 @@ def verify_image_set(args, cpu):
                                         gbc_psram=psram, genesis_pal=pal, ntsc=name == "c64-ntsc",
                                         amiga_aga_pal=name in {"amiga-aga", "amiga-aga-040"},
                                         amiga_ap68040=name == "amiga-aga-040", reuse=name in reuse)
+        if machine == "ATARI_XT":
+            core_artifacts.verify_atari_variant(directories[name], build["record"],
+                                                atari_320xe=name == "atari-320xe")
+            if name == "atari-320xe":
+                build["identity"]["atari_320xe"] = True
         build["source_tar"] = verify_source_tar(directories[name], build["record"])
         core_artifacts.require_runtime_abi(build["identity"], 0, args.abi_minor)
         if machine == "APPLE_IIGS":
@@ -265,6 +271,8 @@ def main():
                         help="Include the timing-qualified ZX Spectrum image and ROM/TAP setup directories")
     parser.add_argument("--include-atari-xt", action="store_true",
                         help="Include the NTSC Atari 800XL and instructions for user ROMs")
+    parser.add_argument("--include-atari-320xe", action="store_true",
+                        help="Include the 64 KiB Atari 800XL and 320 KiB Compy Shop variants")
     parser.add_argument("--include-amiga", action="store_true", help="Include the timing-qualified Amiga ECS image and empty ROM/media directories")
     parser.add_argument("--include-amiga-aga", action="store_true",
                         help="Include the Amiga 600 ECS PAL and Amiga 1200 AGA PAL variants")
@@ -291,8 +299,11 @@ def main():
         MATRIX['nes']=('NES',False,False)
     if args.include_zx_spectrum:
         MATRIX['zx-spectrum'] = ('ZX_SPECTRUM', False, False)
+    args.include_atari_xt = args.include_atari_xt or args.include_atari_320xe
     if args.include_atari_xt:
         MATRIX['atari-800xl'] = ('ATARI_XT', False, False)
+    if args.include_atari_320xe:
+        MATRIX['atari-320xe'] = ('ATARI_XT', False, False)
     args.include_amiga_aga = args.include_amiga_aga or args.include_amiga_aga_040
     args.include_amiga = args.include_amiga or args.include_amiga_aga
     if args.include_amiga:
@@ -418,7 +429,10 @@ def main():
         core_specs += (SPECTRUM_CORE_SPEC,)
         prepare_spectrum_content(out)
     if args.include_atari_xt:
-        core_specs += (ATARI_XT_CORE_SPEC,)
+        ident, label, core_id, variants = ATARI_XT_CORE_SPEC
+        if args.include_atari_320xe:
+            variants = [*variants, ATARI_320XE_VARIANT]
+        core_specs += ((ident, label, core_id, variants),)
         delivery_guides.update(prepare_atari_xt_content(out))
         for guide in sorted((ROOT / "docs").glob("ZX_SPECTRUM*.md")):
             target = out / "docs" / guide.name
@@ -442,6 +456,8 @@ def main():
         ide_notice = (ROOT / "third_party/amiga/upstream/rtl/ide.v").read_text().split("module ide", 1)[0]
         (out / "licenses/amiga/IDE-BSD-2-Clause.txt").write_text(ide_notice, encoding="utf-8")
         for guide in sorted((ROOT / "docs").glob("AMIGA_*.md")):
+            if guide.relative_to(ROOT).as_posix() not in source:
+                continue
             target = out / "docs" / guide.name
             package.copy(guide, target)
             delivery_guides["docs/" + guide.name] = package.describe(target)
@@ -508,6 +524,8 @@ def main():
          "Original source at https://github.com/ThrudTheBarbarian/fpga-xt\n"
          "See licenses/ATARI-XT-LICENSE and the exact source captures under evidence/.\n"
          if args.include_atari_xt else "") +
+        ("Select Atari Compy Shop NTSC (320 KiB) in Cores for expanded RAM. Both Atari variants share ROMs and media.\n"
+         if args.include_atari_320xe else "") +
         ("Amiga: Amiga 600 ECS PAL supplies stock/accelerated CPU modes, 2 MiB chip RAM, 8 MiB fast RAM,\n"
          "two DD floppy drives and two IDE disks. See docs/AMIGA_PLAN.md.\n"
          "Kickstart is a separate user-owned input.\n" if args.include_amiga else "") +

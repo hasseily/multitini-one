@@ -115,9 +115,10 @@ mt_atari_disk_result_t mt_atari_xex_open(uint32_t file_size, mt_atari_disk_read_
             run_address = start;
             first_segment = false;
         }
-        /* Preserve the running OS's stack and disk control block. Writes to
-         * the mapped hardware window are meaningful, unlike writes to ROM. */
-        if ((start <= 0x01ffU && end >= 0x0100U) || (start <= 0x030bU && end >= 0x0300U) ||
+        /* The stock XL boot and SIO stack grows down from $01FF. Reserve
+         * its upper half and the disk control block. Writes to the mapped
+         * hardware window are meaningful, unlike writes to ROM. */
+        if ((start <= 0x01ffU && end >= 0x0180U) || (start <= 0x030bU && end >= 0x0300U) ||
             (end >= 0xc000U && !(start >= 0xd000U && end < 0xd800U)))
             unsupported = true;
         for (unsigned page = start >> 8U; page <= (end >> 8U) && page < XEX_END_LOADER_PAGE; ++page)

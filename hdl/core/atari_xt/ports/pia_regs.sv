@@ -96,6 +96,7 @@ module multitini_atari_xt_pia (
     // PORTB output latch — drives bank_translator's PORTB[3:2] /
     // PORTB[4] regardless of PBCTL[2] (130XE banking semantics).
     output wire [7:0]  portb_out_q,
+    output wire [7:0]  portb_pins_q,
 
     // /IRQ to the CPU: IRQA2/IRQB2 flag set while the matching CA2/CB2
     // is in input mode with the interrupt enabled (CTL[5]=0, CTL[3]=1).
@@ -118,6 +119,9 @@ module multitini_atari_xt_pia (
     logic [7:0] pactl_q,     pbctl_q;
 
     assign portb_out_q = portb_out_latch_q;
+    // Multitini One modification, 2026-11-06: banking sees PORTB pin levels
+    // even while PBCTL selects access to the data direction register.
+    assign portb_pins_q = portb_out_latch_q | ~portb_ddr_q;
 
     // Bidirectional joystick-pin driving signals. The OE follows the
     // DDR latch only when the matching control register is in port

@@ -24,7 +24,7 @@ third_party/atari-xt/upstream/hdl/gtia_obj_walk.sv,Atari-XT by ThrudTheBarbarian
 third_party/atari-xt/upstream/hdl/gtia_priority.sv,Atari-XT by ThrudTheBarbarian,a4340eb034503c6189197480bccc55564e7708a5,LicenseRef-CERN-OHL-S-2.0-with-attribution,imported,Exact pinned Atari-XT source with upstream license and attribution retained
 third_party/atari-xt/upstream/hdl/gtia_collide.sv,Atari-XT by ThrudTheBarbarian,a4340eb034503c6189197480bccc55564e7708a5,LicenseRef-CERN-OHL-S-2.0-with-attribution,imported,Exact pinned Atari-XT source with upstream license and attribution retained
 third_party/atari-xt/upstream/hdl/gtia_special.sv,Atari-XT by ThrudTheBarbarian,a4340eb034503c6189197480bccc55564e7708a5,LicenseRef-CERN-OHL-S-2.0-with-attribution,imported,Exact pinned Atari-XT source with upstream license and attribution retained
-third_party/atari-xt/upstream/hdl/antic2.sv,Atari-XT by ThrudTheBarbarian,a4340eb034503c6189197480bccc55564e7708a5,LicenseRef-CERN-OHL-S-2.0-with-attribution,imported,Exact pinned Atari-XT source with upstream license and attribution retained
+third_party/atari-xt/upstream/hdl/antic2.sv,Atari-XT by ThrudTheBarbarian,a4340eb034503c6189197480bccc55564e7708a5,LicenseRef-CERN-OHL-S-2.0-with-attribution,reference,Exact pinned Atari-XT source with upstream license and attribution retained
 third_party/atari-xt/upstream/hdl/antic2_seq.sv,Atari-XT by ThrudTheBarbarian,a4340eb034503c6189197480bccc55564e7708a5,LicenseRef-CERN-OHL-S-2.0-with-attribution,imported,Exact pinned Atari-XT source with upstream license and attribution retained
 third_party/atari-xt/upstream/hdl/antic2_regs.sv,Atari-XT by ThrudTheBarbarian,a4340eb034503c6189197480bccc55564e7708a5,LicenseRef-CERN-OHL-S-2.0-with-attribution,imported,Exact pinned Atari-XT source with upstream license and attribution retained
 third_party/atari-xt/upstream/hdl/antic2_line.sv,Atari-XT by ThrudTheBarbarian,a4340eb034503c6189197480bccc55564e7708a5,LicenseRef-CERN-OHL-S-2.0-with-attribution,imported,Exact pinned Atari-XT source with upstream license and attribution retained
@@ -43,13 +43,15 @@ third_party/atari-xt/upstream/hdl/xt6502f/xt6502f.sv,Atari-XT by ThrudTheBarbari
 third_party/atari-xt/upstream/hdl/palette_lut.sv,Atari-XT by ThrudTheBarbarian,a4340eb034503c6189197480bccc55564e7708a5,LicenseRef-CERN-OHL-S-2.0-with-attribution,imported,Exact pinned Atari-XT source with upstream license and attribution retained
 third_party/atari-xt/upstream/hdl/palette/atari_ntsc.hex,Atari-XT by ThrudTheBarbarian,a4340eb034503c6189197480bccc55564e7708a5,LicenseRef-CERN-OHL-S-2.0-with-attribution,imported,Exact pinned Atari-XT source with upstream license and attribution retained
 hdl/core/atari_xt/ports/a8_core.sv,Atari-XT and Multitini One,a4340eb034503c6189197480bccc55564e7708a5,LicenseRef-CERN-OHL-S-2.0-with-attribution,generated,Deterministic port of Atari-XT machine harness with external ROM decode and controller audio and SIO wiring
-hdl/core/atari_xt/ports/pia_regs.sv,Atari-XT and Multitini One,a4340eb034503c6189197480bccc55564e7708a5,LicenseRef-CERN-OHL-S-2.0-with-attribution,generated,Expose the PIA COMMAND output for standard-speed SIO
+hdl/core/atari_xt/ports/antic2.sv,Atari-XT and Multitini One,a4340eb034503c6189197480bccc55564e7708a5,LicenseRef-CERN-OHL-S-2.0-with-attribution,generated,Limit player and missile DMA reads and cycle steals to visible lines
+hdl/core/atari_xt/ports/pia_regs.sv,Atari-XT and Multitini One,a4340eb034503c6189197480bccc55564e7708a5,LicenseRef-CERN-OHL-S-2.0-with-attribution,generated,Expose the PIA COMMAND output for SIO and effective PORTB pins for XE banking
 hdl/core/atari_xt/ports/pokey.sv,Atari-XT and Multitini One,a4340eb034503c6189197480bccc55564e7708a5,LicenseRef-CERN-OHL-S-2.0-with-attribution,generated,Expose POKEY serial output and serial input readiness for standard-speed SIO
 hdl/core/atari_xt/ports/pokey_serial.sv,Atari-XT and Multitini One,a4340eb034503c6189197480bccc55564e7708a5,LicenseRef-CERN-OHL-S-2.0-with-attribution,generated,Expose completed POKEY transmit bytes
 hdl/core/atari_xt/multitini_atari_xt_adapter.sv,Multitini One,,GPL-3.0-only,source-reviewed,Private Atari-XT integration adapter and FPGA-local ROM RAM audio and video wiring
 hdl/core/atari_xt/multitini_atari_xt_keyboard.sv,Multitini One,,GPL-3.0-only,source-reviewed,Original PS/2 to Atari machine-visible keyboard and joystick translation
 hdl/core/atari_xt/multitini_atari_xt_sio.sv,Multitini One,,GPL-3.0-only,source-reviewed,Standard-speed virtual SIO command and POKEY receive transport
 hdl/sim/tb_atari_xt.sv,Multitini One,,GPL-3.0-only,source-reviewed,Private synthetic OS ROM and machine interface simulation
+hdl/sim/tb_atari_xt_pm_dma.sv,Multitini One,,GPL-3.0-only,source-reviewed,ANTIC2 player and missile DMA scanline timing simulation
 hdl/sim/tb_atari_xt_sio.sv,Multitini One,,GPL-3.0-only,source-reviewed,PIA and POKEY virtual SIO timing and flow-control simulation
 scripts/port_atari_xt_core.py,Multitini One,,GPL-3.0-only,source-reviewed,Pinned Atari-XT import and reproducible machine top port
 scripts/test_atari_xt.py,Multitini One,,GPL-3.0-only,source-reviewed,Private Atari-XT mixed machine simulation runner

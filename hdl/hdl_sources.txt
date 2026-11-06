@@ -289,7 +289,7 @@ core/zx_spectrum/multitini_zx_spectrum_adapter.sv
 ../third_party/atari-xt/upstream/hdl/gtia_priority.sv
 ../third_party/atari-xt/upstream/hdl/gtia_collide.sv
 ../third_party/atari-xt/upstream/hdl/gtia_special.sv
-../third_party/atari-xt/upstream/hdl/antic2.sv
+core/atari_xt/ports/antic2.sv
 ../third_party/atari-xt/upstream/hdl/antic2_seq.sv
 ../third_party/atari-xt/upstream/hdl/antic2_regs.sv
 ../third_party/atari-xt/upstream/hdl/antic2_line.sv

@@ -66,7 +66,7 @@ def boot(atr, rom=None, fail_read=False):
                 memory[buffer:buffer + length] = (0x08, 0xFF, 0xE0, 0)
             else:
                 assert command == 0x52 and length == SECTOR_SIZE
-                if fail_read:
+                if fail_read and sector == boot_sectors + 2:
                     result = 0x8A
                 else:
                     offset = (sector - 1) * SECTOR_SIZE
@@ -77,10 +77,12 @@ def boot(atr, rom=None, fail_read=False):
             cpu.FlagsNZ(result)
             cpu.pc = (cpu.stPopWord() + 1) & 0xFFFF
         elif cpu.pc == TEST_RETURN:
-            assert fail_read and cpu.p & cpu.CARRY and cpu.sp == 0xFF
-            assert memory[0x6000:0x6002] == [0, 0]
-            return
-        elif memory[0x6001] != 0:
+            assert cpu.sp == 0xFF
+            if fail_read:
+                assert cpu.p & cpu.CARRY and memory[0x6000:0x6002] == [0x11, 0]
+                assert memory[0x016F] == 0xA5  # The low-stack segment was loaded before the failure.
+                return
+            assert not cpu.p & cpu.CARRY
             break
         else:
             cpu.step()
@@ -88,6 +90,8 @@ def boot(atr, rom=None, fail_read=False):
         raise AssertionError(f"boot did not finish (PC={cpu.pc:04X}, SIO={requests})")
 
     assert memory[0x6000:0x6002] == [0x12, 0x12]  # Both INITs once, then the final RUN.
+    assert u16(memory, 0x02E0) == 0x0110
+    assert memory[0x011B:0x0170] == [0xA5] * (0x0170 - 0x011B)
     assert memory[0x1FFF:0x2100] == [(index & 0xFF) ^ 0x5A for index in range(257)]
     assert memory[PORTB] == 0xFF and memory[0x03F8] == 1
     first_read = boot_sectors + 1 if rom is None else 1
@@ -106,7 +110,7 @@ def main():
         atr = fixture.read_bytes()
     boot(atr)
     boot(atr, fail_read=True)
-    print("PASS: 6502 bootstrap relocation, both INITAD callbacks, final RUNAD and SIO read failure")
+    print("PASS: relocation, both INITAD callbacks, low-stack RUNAD/RTS and SIO read failure")
     if args.xl_rom:
         rom = args.xl_rom.read_bytes()
         if hashlib.md5(rom).hexdigest() != STOCK_XL_MD5:

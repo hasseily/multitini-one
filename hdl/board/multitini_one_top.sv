@@ -9,6 +9,7 @@ module multitini_one_top #(
     parameter bit GENESIS_PAL_MODE = 1'b0,
     parameter bit AMIGA_AGA_PAL = 1'b0,
     parameter bit AMIGA_AP68040 = 1'b0,
+    parameter bit ATARI_320XE = 1'b0,
     // 0 = C64, 1 = GBC, 2 = supervisor, 3 = Vectrex, 4 = Genesis, 5 = Apple IIgs, 6 = NES, 7 = Amiga ECS.
     parameter integer ACTIVE_MACHINE = 2,
     parameter bit ENABLE_GBC_PSRAM = 1'b0
@@ -2320,7 +2321,8 @@ module multitini_one_top #(
                 wire sio_event_valid,sio_event_ready,sio_reply_valid,sio_reply_ready,sio_reset;
                 wire [17:0] sio_event_data;
                 wire [16:0] sio_reply_data;
-                (* DONT_TOUCH = "yes" *) multitini_atari_xt_adapter machine_adapter(
+                (* DONT_TOUCH = "yes" *) multitini_atari_xt_adapter #(
+                    .EXTENDED_RAM(ATARI_320XE)) machine_adapter(
                     .core_clk(c64_clk),.reset(!c64_aresetn),
                     .core_reset_request(c64_core_reset_request),.pause_request(core_menu_pause),
                     .clear_load_error(c64_load_error_clear),

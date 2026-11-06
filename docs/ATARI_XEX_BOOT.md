@@ -24,8 +24,10 @@ file can use RAM at `$A000`–`$BFFF`.
 
 The bootstrap and its sector buffer need two consecutive free RAM pages
 between `$0700` and `$97FF`. Firmware selects the first available location
-after scanning the segment headers. An executable that leaves no space, or
-loads over the OS stack, disk control block or mapped ROM, is rejected.
+after scanning the segment headers. XEX files can load into `$0100`–`$017F`.
+The loader reserves `$0180`–`$01FF` for its stack and the stock OS stack.
+An executable that leaves no space or overlaps that reserved range, the disk
+control block or mapped ROM is rejected.
 Initialization code must return with `RTS` and keep the loader and OS disk
 services usable. XEX boot supplies a disk transport and loader without a
 guest DOS file system.

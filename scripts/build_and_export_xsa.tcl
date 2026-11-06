@@ -83,6 +83,42 @@ proc require_nes_save_ram {stage} {
     puts "NES_SAVE_RAM_PASS stage=$stage memory_primitives=[llength $storage] storage_bits=$storage_bits storage_flipflops=[llength $registers]"
 }
 
+proc require_atari_bram_capacity {stage memory storage expected} {
+    set ramb36 [llength [filter $storage {REF_NAME == RAMB36E1}]]
+    set ramb18 [llength [filter $storage {REF_NAME == RAMB18E1}]]
+    if {2*$ramb36 + $ramb18 != 2*$expected || [llength $storage] != $ramb36 + $ramb18} {
+        error "Atari 320XE $stage $memory requires $expected BRAM36 equivalents and no other storage: RAMB36=$ramb36 RAMB18=$ramb18 total=[llength $storage]"
+    }
+    return [list $ramb36 $ramb18]
+}
+
+proc require_atari_320xe_ram {stage} {
+    set base [get_cells -hierarchical -quiet -filter \
+        {NAME =~ *g_atari_xt.machine_adapter/ram_reg* && (REF_NAME =~ RAM* || REF_NAME =~ FD*)}]
+    lassign [require_atari_bram_capacity $stage ram $base 16] ramb36 ramb18
+    puts "ATARI_320XE_RAM_PASS stage=$stage array=ram ramb36=$ramb36 ramb18=$ramb18"
+
+    set expansion [get_cells -hierarchical -quiet -filter \
+        {NAME =~ *g_atari_xt.machine_adapter/g_expanded.*expanded_ram_reg* && (REF_NAME =~ RAM* || REF_NAME =~ FD*)}]
+    set cascaded [filter $expansion {REF_NAME == RAMB36E1 && (RAM_EXTENSION_A != NONE || RAM_EXTENSION_B != NONE)}]
+    if {[llength $cascaded]} {error "Atari 320XE $stage expansion BRAMs must not cascade: $cascaded"}
+    set banks [dict create]
+    foreach cell $expansion {
+        set name [get_property NAME $cell]
+        if {![regexp {/g_expanded[.]g_bank\[([0-9]+)\][.]expanded_ram_reg} $name -> bank]} {
+            error "Atari 320XE $stage found unmapped expansion bank: $name"
+        }
+        dict lappend banks $bank $cell
+    }
+    if {[dict size $banks] != 16} {error "Atari 320XE $stage must map exactly 16 expansion banks"}
+    for {set bank 0} {$bank < 16} {incr bank} {
+        lassign [require_atari_bram_capacity $stage "bank $bank" [dict get $banks $bank] 4] ramb36 ramb18
+        puts "ATARI_320XE_BANK_PASS stage=$stage bank=$bank ramb36=$ramb36 ramb18=$ramb18"
+    }
+    lassign [require_atari_bram_capacity $stage expanded_ram $expansion 64] ramb36 ramb18
+    puts "ATARI_320XE_RAM_PASS stage=$stage array=expanded_ram ramb36=$ramb36 ramb18=$ramb18"
+}
+
 proc require_iigs_phase_fanin {description pins marker} {
     if {[llength $pins] == 0} {error "IIgs phase gate has no $description pins"}
     foreach pin $pins {
@@ -153,6 +189,7 @@ if {[string match "*ACTIVE_MACHINE=2*" $build_generics]} {
 } else {
     error "Build generic has no recognized ACTIVE_MACHINE value: $build_generics"
 }
+set atari_320xe [expr {$image_kind eq "ATARI_XT" && {ATARI_320XE=1'b1} in $build_generics}]
 set psram_active [expr {
     [string match "*ACTIVE_MACHINE=0*" $build_generics] ||
     [string match "*ACTIVE_MACHINE=3*" $build_generics] ||
@@ -199,6 +236,9 @@ if {$image_kind eq "AMIGA" && [string match {*AMIGA_AGA_PAL=1'b1*} $build_generi
 if {$image_kind eq "AMIGA" && [string match {*AMIGA_AP68040=1'b1*} $build_generics]} {
     lappend capture_command --amiga-ap68040
 }
+if {$atari_320xe} {
+    lappend capture_command --atari-320xe
+}
 puts [exec {*}$capture_command]
 
 reset_run synth_1
@@ -221,6 +261,10 @@ if {$image_kind eq "NES"} {
     open_run synth_1
     require_c64_local_ram synthesis
     close_design
+} elseif {$atari_320xe} {
+    open_run synth_1
+    require_atari_320xe_ram synthesis
+    close_design
 }
 
 reset_run impl_1
@@ -228,6 +272,10 @@ launch_runs impl_1 -to_step write_bitstream -jobs $jobs
 wait_on_run impl_1
 require_complete_run impl_1
 open_run impl_1
+
+if {$atari_320xe} {
+    require_atari_320xe_ram implementation
+}
 
 if {$image_kind eq "C64"} {
     require_c64_local_ram implementation

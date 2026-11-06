@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import sys
 
-from port_atari_xt_core import HDL, ROOT, SERIAL_PORTS, UPSTREAM
+from port_atari_xt_core import HDL, PORT_CHANGES, ROOT, UPSTREAM
 
 
 def main() -> None:
@@ -15,13 +15,13 @@ def main() -> None:
     build = ROOT / "build/test-atari-xt"
     build.mkdir(parents=True, exist_ok=True)
     machine = ROOT / "hdl/core/atari_xt"
-    sources = [UPSTREAM / "hdl" / path for path in HDL if path.endswith(".sv") and path not in SERIAL_PORTS]
-    sources.extend(machine / "ports" / name for name in SERIAL_PORTS)
+    sources = [UPSTREAM / "hdl" / path for path in HDL if path.endswith(".sv") and path not in PORT_CHANGES]
+    sources.extend(machine / "ports" / name for name in PORT_CHANGES)
     sources.extend(machine / name for name in (
         "ports/a8_core.sv", "multitini_atari_xt_keyboard.sv", "multitini_atari_xt_sio.sv",
         "multitini_atari_xt_adapter.sv"
     ))
-    benches = ("tb_atari_xt", "tb_atari_xt_sio")
+    benches = ("tb_atari_xt", "tb_atari_xt_sio", "tb_atari_xt_pm_dma")
     sources.extend(ROOT / "hdl/sim" / f"{name}.sv" for name in benches)
     shutil.copyfile(UPSTREAM / "hdl/palette/atari_ntsc.hex", build / "atari_ntsc.hex")
 
@@ -41,7 +41,7 @@ def main() -> None:
         return result.stdout
 
     run("xvlog", "--sv", "--relax", *sources)
-    for bench in benches:
+    for bench in (*benches, "tb_atari_320xe"):
         snapshot = f"sim_{bench}"
         run("xelab", "--relax", "--timescale", "1ns/1ps", "--mt", "off", "-s", snapshot, f"work.{bench}",
             label=f"{bench}-xelab")

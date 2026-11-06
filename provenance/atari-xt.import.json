@@ -4,7 +4,7 @@
   "commit": "a4340eb034503c6189197480bccc55564e7708a5",
   "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution",
   "attribution": "This private prototype incorporates and adapts Atari-XT by ThrudTheBarbarian.",
-  "purpose": "SALLY fidelity CPU, ANTIC2/GTIA, PIA, POKEY and NTSC palette for 64K XL mode.",
+  "purpose": "SALLY fidelity CPU, ANTIC2/GTIA, PIA, POKEY and NTSC palette for XL and XE modes.",
   "exclusions": [
     "Atari-XT platform and OS",
     "system ROMs",
@@ -15,7 +15,9 @@
     "Wire the same subcycle parameters to CPU and chipset.",
     "Map externally loaded XL ROMs at reset and on ANTIC reads.",
     "Expose PORTA directions, POKEY keyboard and PCM channel levels.",
-    "Expose PIA CB2 and completed POKEY serial frames and accept standard-speed SIO replies."
+    "Expose PIA CB2 and completed POKEY serial frames and accept standard-speed SIO replies.",
+    "Limit ANTIC2 player/missile DMA reads and CPU steals to visible lines.",
+    "Expose effective PORTB pins for separate Compy Shop CPU and ANTIC RAM mapping."
   ],
   "files": [
     {

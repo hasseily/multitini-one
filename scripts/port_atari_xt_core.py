@@ -67,10 +67,13 @@ def port_machine(data: bytes) -> bytes:
     source = data.decode().replace("\r\n", "\n")
     substitutions = (
         ("module a8_core #(", "module multitini_atari_xt_machine #("),
+        ("    parameter bit USE_ANTIC2 = 1'b0,",
+         "    parameter bit USE_ANTIC2 = 1'b0,\n    parameter bit USE_320XE = 1'b0,"),
         ("    input  wire        cold,", "    input  wire        cold,\n    input  wire        hold_cpu,"),
         ("    input  wire [7:0]  antic_rdata,", """    input  wire [7:0]  antic_rdata,
     output wire        antic_rom_hit,
-    output wire [14:0] antic_rom_addr,"""),
+    output wire [14:0] antic_rom_addr,
+    output wire [5:0]  extended_portb,"""),
         ("    input  wire [7:0]  consol_keys,", """    input  wire [7:0]  consol_keys,
     input  wire [7:0]  joy_porta,
     input  wire        kbd_event_valid, kbd_release, break_key_pulse,
@@ -95,6 +98,7 @@ def port_machine(data: bytes) -> bytes:
         ("    wire pokey_re = c_rw && cs_pokey", "    wire pokey_re = c_rdy && c_rw && cs_pokey"),
         ("assign c_rdy = halt_n && wsync_ok;", "assign c_rdy = !hold_cpu && halt_n && wsync_ok;"),
         ("    pia_regs u_pia (", "    multitini_atari_xt_pia u_pia ("),
+        (".portb_out_q(portb_bank),", ".portb_out_q(portb_latch), .portb_pins_q(portb_pins),"),
         ("        .pia_irq_n(pia_irq_n)", "        .pia_irq_n(pia_irq_n), .cb2_line(sio_command_n)"),
         ("    pokey #(.CLK_BUS_HZ(CLK_HZ)) u_pokey (", """    wire [7:0] skctl;
     assign sio_rx_mode = skctl[4] && (|skctl[1:0]);
@@ -112,13 +116,20 @@ def port_machine(data: bytes) -> bytes:
     rom_end = source.index("    wire [7:0] reg_rdata;", rom_start)
     source = source[:rom_start] + """    // External, preloaded XL ROMs are visible to both masters from reset.
     // ANTIC needs the OS character generator when CHBASE points into ROM.
-    wire [7:0] portb_bank;
+    // Multitini One modification, 2026-11-06: use the effective PIA pins
+    // to control Compy Shop RAM and ROM. Retain the stock XL latch decode.
+    wire [7:0] portb_latch, portb_pins;
+    wire [7:0] portb_bank = USE_320XE ? portb_pins : portb_latch;
+    // Compy Shop reuses PB7 as a bank bit whenever either window is enabled.
+    wire self_test_on = portb_bank[0] && !portb_bank[7] &&
+        (!USE_320XE || (&portb_bank[5:4]));
+    assign extended_portb = portb_pins[7:2];
     function automatic [15:0] xl_rom(input [15:0] addr);
         if (portb_bank[0] && addr[15:14] == 2'b11 && addr[15:11] != 5'b11010)
             xl_rom = {1'b1, 1'b0, addr[13:0]};
         else if (!portb_bank[1] && addr[15:13] == 3'b101)
             xl_rom = {1'b1, 2'b10, addr[12:0]};
-        else if (portb_bank[0] && !portb_bank[7] && addr[15:11] == 5'b01010)
+        else if (self_test_on && addr[15:11] == 5'b01010)
             xl_rom = {1'b1, 4'b0010, addr[10:0]};
         else xl_rom = 16'd0;
     endfunction
@@ -140,10 +151,28 @@ def port_machine(data: bytes) -> bytes:
     return generated_source("a8_core.sv", source)
 
 
-SERIAL_PORTS = {
+PORT_CHANGES = {
+    "antic2.sv": (
+        ("    antic_dma_sched u_sched (", """    // Multitini One modification, 2026-11-06: restrict P/M DMA to visible
+    // scanlines (Altirra Hardware Reference Manual, section 4.13). Share the
+    // gate between the CPU steals and memory requests. The GTIA phantom bus
+    // latch uses the original DMACTL.
+    wire [7:0] pm_dmactl = {dmactl[7:4], dmactl[3:2] & {2{px_active}}, dmactl[1:0]};
+
+    antic_dma_sched u_sched ("""),
+        (".missile_dma_en(dmactl[2] || dmactl[3])", ".missile_dma_en(pm_dmactl[2] || pm_dmactl[3])"),
+        (".player_dma_en(dmactl[3])", ".player_dma_en(pm_dmactl[3])"),
+        (".dmactl(dmactl), .pmbase(pmbase)", ".dmactl(pm_dmactl), .pmbase(pmbase)"),
+    ),
     "pia_regs.sv": (
         ("module pia_regs (", "module multitini_atari_xt_pia ("),
         ("output wire        pia_irq_n", "output wire        pia_irq_n,\n    output wire        cb2_line"),
+        ("    output wire [7:0]  portb_out_q,",
+         "    output wire [7:0]  portb_out_q,\n    output wire [7:0]  portb_pins_q,"),
+        ("    assign portb_out_q = portb_out_latch_q;", """    assign portb_out_q = portb_out_latch_q;
+    // Multitini One modification, 2026-11-06: banking sees PORTB pin levels
+    // even while PBCTL selects access to the data direction register.
+    assign portb_pins_q = portb_out_latch_q | ~portb_ddr_q;"""),
         ("    wire read_porta", "    assign cb2_line = cb2_line_q;\n\n    wire read_porta"),
     ),
     "pokey.sv": (
@@ -205,18 +234,20 @@ def main() -> None:
     manifest = {
         "schema_version": 1, "source": URL, "commit": PIN, "license": LICENSE,
         "attribution": "This private prototype incorporates and adapts Atari-XT by ThrudTheBarbarian.",
-        "purpose": "SALLY fidelity CPU, ANTIC2/GTIA, PIA, POKEY and NTSC palette for 64K XL mode.",
+        "purpose": "SALLY fidelity CPU, ANTIC2/GTIA, PIA, POKEY and NTSC palette for XL and XE modes.",
         "exclusions": ["Atari-XT platform and OS", "system ROMs", "media", "binary FPGA images"],
         "modifications": ["Wire the same subcycle parameters to CPU and chipset.",
                           "Map externally loaded XL ROMs at reset and on ANTIC reads.",
                           "Expose PORTA directions, POKEY keyboard and PCM channel levels.",
-                          "Expose PIA CB2 and completed POKEY serial frames and accept standard-speed SIO replies."],
+                          "Expose PIA CB2 and completed POKEY serial frames and accept standard-speed SIO replies.",
+                          "Limit ANTIC2 player/missile DMA reads and CPU steals to visible lines.",
+                          "Expose effective PORTB pins for separate Compy Shop CPU and ANTIC RAM mapping."],
         "files": records,
     }
     write_or_check(MANIFEST, (json.dumps(manifest, indent=2) + "\n").encode(),
                    args.check or args.import_checkout is None)
     write_or_check(PORT, port_machine((UPSTREAM / "hdl/a8_core.sv").read_bytes()), args.check)
-    for name, changes in SERIAL_PORTS.items():
+    for name, changes in PORT_CHANGES.items():
         source = (UPSTREAM / "hdl" / name).read_text(encoding="utf-8")
         write_or_check(PORT.parent / name, generated_source(name, apply_exact_changes(source, changes)), args.check)
 
