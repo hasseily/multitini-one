@@ -26,6 +26,8 @@ AMIGA_040_VARIANT = ("aga-040-pal", "Amiga 1200 AGA + 68040", "amiga-aga-040")
 AMIGA_ROM_README = Path("sd/multitini/cores/amiga/roms/readme.txt")
 SPECTRUM_CORE_SPEC = ("zx-spectrum", "ZX Spectrum", "0x5A585350",
                       [("pal", "ZX Spectrum 48K / 128K PAL", "zx-spectrum")])
+ATARI_XT_CORE_SPEC = ("atari-800xl", "Atari 800XL", "0x41383030",
+                     [("ntsc", "Atari 800XL NTSC", "atari-800xl")])
 GS_GUIDES = ("APPLE_IIGS_HARDWARE_TEST.md", "APPLE_IIGS_CPU_VALIDATION.md",
              "APPLE_IIGS_PLAN.md", "APPLE_IIGS_ACCELERATION.md", "APPLE_IIGS_SMARTPORT.md",
              "APPLE_IIGS_LEGACY_VIDEO.md",
@@ -225,6 +227,21 @@ def prepare_spectrum_content(out):
         encoding="utf-8")
 
 
+def prepare_atari_xt_content(out):
+    core = Path("sd/multitini/cores/atari-800xl")
+    readme = core / "roms/readme.txt"
+    package.copy(ROOT / readme, out / readme)
+    media = out / core / "media"
+    media.mkdir(parents=True, exist_ok=True)
+    (media / "README.txt").write_text(
+        "Place standard Atari 8 KiB and 16 KiB cartridges here. Nested directories are supported.\n",
+        encoding="utf-8")
+    package.copy(ROOT / "third_party/atari-xt/upstream/LICENSE", out / "licenses/ATARI-XT-LICENSE")
+    guide = "docs/ATARI_800XL.md"
+    package.copy(ROOT / guide, out / guide)
+    return {guide: package.describe(out / guide)}
+
+
 def main():
     # Large evidence inventories exceed Windows' command-line limit. argparse
     # response files keep each argument on its own line, including spaced paths.
@@ -243,6 +260,8 @@ def main():
     parser.add_argument("--include-nes", action="store_true", help="Include the NES machine and empty cartridge directory")
     parser.add_argument("--include-zx-spectrum", action="store_true",
                         help="Include the timing-qualified ZX Spectrum image and ROM/TAP setup directories")
+    parser.add_argument("--include-atari-xt", action="store_true",
+                        help="Include the NTSC Atari 800XL and instructions for user ROMs")
     parser.add_argument("--include-amiga", action="store_true", help="Include the timing-qualified Amiga ECS image and empty ROM/media directories")
     parser.add_argument("--include-amiga-aga", action="store_true",
                         help="Include the Amiga 600 ECS PAL and Amiga 1200 AGA PAL variants")
@@ -269,6 +288,8 @@ def main():
         MATRIX['nes']=('NES',False,False)
     if args.include_zx_spectrum:
         MATRIX['zx-spectrum'] = ('ZX_SPECTRUM', False, False)
+    if args.include_atari_xt:
+        MATRIX['atari-800xl'] = ('ATARI_XT', False, False)
     args.include_amiga_aga = args.include_amiga_aga or args.include_amiga_aga_040
     args.include_amiga = args.include_amiga or args.include_amiga_aga
     if args.include_amiga:
@@ -297,7 +318,8 @@ def main():
     identity = bytes.fromhex(args.build_id).decode("ascii", errors="replace")
     if not re.fullmatch(r"[A-Z0-9]+", identity):
         identity = "0x" + args.build_id
-    if args.include_apple_iigs or args.include_nes or args.include_amiga or args.include_zx_spectrum:
+    if (args.include_apple_iigs or args.include_nes or args.include_amiga or
+            args.include_zx_spectrum or args.include_atari_xt):
         version = re.search(r'^#define MT_FIRMWARE_VERSION\s+"([^"]+)"',
                             (ROOT / "firmware/include/multitini_version.h").read_text(), re.M)
         package.require(version is not None, "Missing firmware release version")
@@ -392,6 +414,9 @@ def main():
     if args.include_zx_spectrum:
         core_specs += (SPECTRUM_CORE_SPEC,)
         prepare_spectrum_content(out)
+    if args.include_atari_xt:
+        core_specs += (ATARI_XT_CORE_SPEC,)
+        delivery_guides.update(prepare_atari_xt_content(out))
         for guide in sorted((ROOT / "docs").glob("ZX_SPECTRUM*.md")):
             target = out / "docs" / guide.name
             package.copy(guide, target)
@@ -473,6 +498,12 @@ def main():
            "No NES BIOS or cartridges are included; see docs/NES_PLAN.md.\n" if args.include_nes else "") +
         ("ZX Spectrum provides PAL 48K / 128K modes and read-only TAP playback.\n"
          "Supply spectrum.rom and TAP files separately.\n" if args.include_zx_spectrum else "") +
+        ("Atari 800XL provides NTSC video and standard 8 KiB and 16 KiB cartridges.\n"
+         "Supply atarixl.rom and ataribas.rom. See docs/ATARI_800XL.md.\n"
+         "This release uses and adapts Atari-XT by ThrudTheBarbarian.\n"
+         "Original source at https://github.com/ThrudTheBarbarian/fpga-xt\n"
+         "See licenses/ATARI-XT-LICENSE and the exact source captures under evidence/.\n"
+         if args.include_atari_xt else "") +
         ("Amiga: Amiga 600 ECS PAL supplies stock/accelerated CPU modes, 2 MiB chip RAM, 8 MiB fast RAM,\n"
          "two DD floppy drives and two IDE disks. See docs/AMIGA_PLAN.md.\n"
          "Kickstart is a separate user-owned input.\n" if args.include_amiga else "") +
@@ -531,8 +562,11 @@ def main():
                         "Staged IIgs SmartPort ROM differs from the source-built bootstrap")
     files = {p.relative_to(out).as_posix(): package.describe(p) for p in sorted(out.rglob("*")) if p.is_file()}
     classification = "Public firmware release package" if args.public_release else "Private local ROM delivery"
+    if args.public_release and re.fullmatch(r"M\d+\.\d+\.\d+dev\d+", identity):
+        classification = "ROM-free development package"
     package.write_json(out / "manifest.json", {"classification": classification + "; board acceptance pending",
-        "created_utc": datetime.now(timezone.utc).isoformat(), "firmware_id": "0x" + args.build_id, "suffix": "-" + args.suffix,
+        "created_utc": datetime.now(timezone.utc).isoformat(), "firmware_version": identity,
+        "firmware_id": "0x" + args.build_id, "suffix": "-" + args.suffix,
         "abi": package.ABI, "git_head": package.git("rev-parse", "HEAD").strip(),
         "dirty_source_snapshot": bool(package.git("status", "--porcelain").strip()),
         "source_files": len(source), "images": image_records(builds),
