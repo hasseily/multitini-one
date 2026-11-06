@@ -76,6 +76,7 @@ int amiga_content_service_profile_start(uint64_t (*timer)(void *),void *context)
 void amiga_content_service_profile_stop(void);
 void amiga_content_service_profile_snapshot(mt_amiga_ide_profile_t *out);
 const char *amiga_content_service_name(unsigned drive);
+bool amiga_content_service_read_only(unsigned drive);
 const char *amiga_content_service_error(void);
 bool amiga_content_service_ready(void);
 bool amiga_content_service_faulted(void);

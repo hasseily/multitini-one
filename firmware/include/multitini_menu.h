@@ -29,6 +29,7 @@
 #define MT_MENU_FILE_TEXT UINT32_C(0x20000000)
 /* A Mount & Run row that loads its D64 program with the drive's LOAD"*". */
 #define MT_MENU_FILE_FIRST_PROGRAM UINT32_C(0x10000000)
+#define MT_MENU_FILE_READ_ONLY UINT32_C(0x08000000)
 #define MT_MENU_TEXT_COLUMNS 95U
 #define MT_MENU_TEXT_ROWS 40U
 /* The content list leaves room for the shared header, help and footer. */
@@ -139,6 +140,7 @@ typedef struct {
     mt_menu_action_kind_t action;
     size_t argument;
     bool enabled;
+    bool value_read_only;
     mt_ui_color_t value_color;
     mt_menu_control_t control;
     uint32_t control_value;

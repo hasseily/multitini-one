@@ -10,6 +10,7 @@ typedef struct {
     uint8_t kind;
     bool writable;
     uint8_t raw_format;
+    bool woz1;
 } mt_iigs_media_info_t;
 #define MT_IIGS_FLOPPY_HEADER_BYTES 1536U
 #define MT_IIGS_FLOPPY_TRACK_BYTES 10240U

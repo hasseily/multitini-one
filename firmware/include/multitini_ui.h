@@ -8,6 +8,9 @@
 
 #include "multitini_regs.h"
 
+/* Padlock in the shared overlay font. */
+#define MT_UI_GLYPH_LOCK '\x7f'
+
 typedef enum {
     MT_UI_COLOR_BACKGROUND = 0,
     MT_UI_COLOR_PANEL,

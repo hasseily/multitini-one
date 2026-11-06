@@ -68,6 +68,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "ff.h"
 #include "platform.h"
 #include "sleep.h"
 #include "xdevcfg_hw.h"
@@ -3339,6 +3340,7 @@ static mt_menu_view_t supervisor_menu_view(void)
         state.drive8_ready = c64_drive_ready;
         state.drive8_mounted = c64_d64_service_mounted();
         state.drive8_d64_mounted = c64_d64_service_mounted_d64();
+        state.drive8_read_only = c64_d64_service_mounted_read_only();
         state.drive8_name = c64_d64_service_mounted_name();
         state.cartridge_attached = c64_content_service_crt_attached();
         state.cartridge_name = c64_content_service_crt_name();
@@ -3467,7 +3469,10 @@ static mt_menu_view_t supervisor_menu_view(void)
         state.amiga_display_requested=amiga_display_service_requested();
         state.amiga_display_applied=amiga_display_service_applied();
         state.amiga_display_status=amiga_display_service_status();
-        for(unsigned d=0U;d<MT_AMIGA_DRIVE_COUNT;++d)state.amiga_drive_name[d]=amiga_content_service_name(d);
+        for(unsigned d=0U;d<MT_AMIGA_DRIVE_COUNT;++d) {
+            state.amiga_drive_name[d]=amiga_content_service_name(d);
+            state.amiga_drive_read_only[d]=amiga_content_service_read_only(d);
+        }
     } else if(supervisor.has_active && supervisor.active.package.core_id==MT_IIGS_CORE_ID &&
         iigs_service_initialized) {
         state.services_ready=true;
@@ -3477,7 +3482,10 @@ static mt_menu_view_t supervisor_menu_view(void)
         state.iigs_fast_floppy_supported=iigs_content_service_fast_floppy_supported();
         state.iigs_mouse_sensitivity=iigs_content_service_mouse_sensitivity();
         state.save_faulted=iigs_content_service_faulted();
-        for(unsigned d=0U;d<MT_IIGS_DRIVE_COUNT;++d)state.iigs_drive_name[d]=iigs_content_service_name(d);
+        for(unsigned d=0U;d<MT_IIGS_DRIVE_COUNT;++d) {
+            state.iigs_drive_name[d]=iigs_content_service_name(d);
+            state.iigs_drive_read_only[d]=iigs_content_service_read_only(d);
+        }
     } else if (supervisor.has_active &&
                supervisor.active.package.core_id == MT_VECTREX_CORE_ID &&
                vectrex_service_initialized) {
@@ -3658,10 +3666,10 @@ static bool is_text_document(const char *name)
         (name[2] == 'x' || name[2] == 'X') && (name[3] == 't' || name[3] == 'T');
 }
 
-static int collect_menu_file(void *context, const char *name, size_t size,
-                             bool is_directory)
+static mt_menu_file_t *collect_menu_file_entry(mt_menu_browser_t browser,
+                                               const char *name, size_t size,
+                                               bool is_directory)
 {
-    const mt_menu_browser_t browser = *(const mt_menu_browser_t *)context;
     const mt_content_type_t type = mt_content_classify_for_core(
         supervisor.has_active ? supervisor.active.package.core_id : 0U, name);
     size_t name_size;
@@ -3669,7 +3677,7 @@ static int collect_menu_file(void *context, const char *name, size_t size,
     const bool document = !is_directory && is_text_document(name);
     const bool folders = mt_core_frontend_browser_folders(
         supervisor.has_active ? supervisor.active.package.core_id:0U,browser);
-    if (!mt_media_browser_visible_component(name)) return 0;
+    if (!mt_media_browser_visible_component(name)) return NULL;
     const char *extension = strrchr(name, '.');
     const bool config = extension && strlen(extension) == 4 &&
                         (extension[1] == 'c' || extension[1] == 'C') &&
@@ -3683,7 +3691,7 @@ static int collect_menu_file(void *context, const char *name, size_t size,
                   (supervisor.has_active && browser != MT_MENU_BROWSER_DOCUMENTS &&
                    mt_core_frontend_accepts_drive_content(supervisor.active.package.core_id,
                                                           browser, iigs_browser_drive, type));
-    if (!accepted) return 0;
+    if (!accepted) return NULL;
     /* The shared IIgs block-disk class also includes HDV and 2MG. Only
      * 140 KiB PO images in that class belong in the 5.25-inch browser. */
     if (!is_directory && browser==MT_MENU_BROWSER_DRIVE8 && supervisor.has_active &&
@@ -3691,25 +3699,31 @@ static int collect_menu_file(void *context, const char *name, size_t size,
         type==MT_CONTENT_IIGS_HDD &&
         (size!=143360U || extension==NULL ||
          (extension[1]!='p' && extension[1]!='P') || (extension[2]!='o' && extension[2]!='O') ||
-         extension[3]!='\0')) return 0;
+         extension[3]!='\0')) return NULL;
     name_size = strlen(name);
-    if (name_size == 0U || name_size >= MT_MENU_FILE_NAME_MAX) return 0;
+    if (name_size == 0U || name_size >= MT_MENU_FILE_NAME_MAX) return NULL;
     /* Documents cannot crowd usable media or folders out of a full list. */
     if (supervisor_menu_file_count >= MT_MENU_MAX_FILES) {
         size_t index;
-        if (document) return 0;
+        if (document) return NULL;
         for (index = supervisor_menu_file_count; index > 0U; --index)
             if ((supervisor_menu_files[index - 1U].cookie & MT_MENU_FILE_TEXT) != 0U) break;
-        if (index == 0U) return 0;
+        if (index == 0U) return NULL;
         --supervisor_menu_file_count;
         supervisor_menu_files[index - 1U] = supervisor_menu_files[supervisor_menu_file_count];
     }
-    memcpy(supervisor_menu_files[supervisor_menu_file_count].name,
-           name, name_size + 1U);
-    supervisor_menu_files[supervisor_menu_file_count].size = size;
-    supervisor_menu_files[supervisor_menu_file_count].cookie =
-        is_directory ? MT_MENU_FILE_DIRECTORY : document ? MT_MENU_FILE_TEXT : 0U;
-    ++supervisor_menu_file_count;
+    mt_menu_file_t *entry = &supervisor_menu_files[supervisor_menu_file_count++];
+    memcpy(entry->name, name, name_size + 1U);
+    entry->size = size;
+    entry->cookie = is_directory ? MT_MENU_FILE_DIRECTORY : document ? MT_MENU_FILE_TEXT : 0U;
+    return entry;
+}
+
+static int collect_menu_file(void *context, const char *name, size_t size,
+                             bool is_directory)
+{
+    const mt_menu_browser_t browser = *(const mt_menu_browser_t *)context;
+    (void)collect_menu_file_entry(browser, name, size, is_directory);
     return 0;
 }
 
@@ -3815,11 +3829,73 @@ static void add_first_program_row(size_t program)
     ++supervisor_menu_file_count;
 }
 
+static bool iigs_browser_file_read_only(const mt_media_browser_t *directory,
+                                        const mt_sd_info_t *info,
+                                        mt_content_type_t type)
+{
+    const char *extension = strrchr(info->name, '.');
+    const bool two_mg = extension != NULL && strlen(extension) == 4U &&
+        extension[1] == '2' && (extension[2] == 'm' || extension[2] == 'M') &&
+        (extension[3] == 'g' || extension[3] == 'G');
+    if (!two_mg && type != MT_CONTENT_IIGS_WOZ) return false;
+
+    char relative[MT_IIGS_MEDIA_NAME_MAX + 1U], path[512];
+    if (!mt_media_browser_resolve(directory, info->name, relative, sizeof(relative)) ||
+        !mt_media_browser_join(directory->root, relative, path, sizeof(path))) return false;
+
+    uint8_t prefix[80];
+    bool truncated;
+    mt_iigs_media_info_t media;
+    const mt_sd_result_t read = mt_sd_storage_read_file_prefix(path, prefix,
+        sizeof(prefix), &truncated, NULL, NULL);
+    return read.status == MT_SD_OK && mt_iigs_media_inspect(iigs_browser_drive,
+        relative, prefix, read.size, info->size, &media) == MT_CONTENT_VALID && !media.writable;
+}
+
+static bool media_browser_file_read_only(mt_menu_browser_t browser,
+                                         const mt_media_browser_t *directory,
+                                         const mt_sd_info_t *info, size_t display_size)
+{
+    if ((info->attributes & AM_RDO) != 0U) return true;
+
+    const uint32_t core_id = supervisor.active.package.core_id;
+    const mt_content_type_t type = mt_content_classify_for_core(core_id, info->name);
+    if (type == MT_CONTENT_G64 || type == MT_CONTENT_ATARI_XT_ATR ||
+        type == MT_CONTENT_SPECTRUM_TAP) return true;
+    if (type == MT_CONTENT_D64) {
+        const size_t sectors = mt_c64_d64_sector_count(display_size);
+        return sectors != 0U && info->size != sectors * MT_C64_D64_SECTOR_SIZE;
+    }
+    return core_id == MT_IIGS_CORE_ID && browser == MT_MENU_BROWSER_DRIVE8 &&
+        directory != NULL && iigs_browser_file_read_only(directory, info, type);
+}
+
+static mt_sd_status_t list_media_browser_files(const char *path, mt_menu_browser_t browser,
+                                              const mt_media_browser_t *directory)
+{
+    mt_sd_directory_t *handle;
+    mt_sd_result_t listed = mt_sd_directory_open(path, &handle);
+    if (listed.status != MT_SD_OK) return listed.status;
+    for (;;) {
+        mt_sd_info_t info;
+        listed = mt_sd_directory_next(handle, &info);
+        if (listed.status != MT_SD_OK || info.name[0] == '\0') break;
+        const size_t display_size = info.size > (uint64_t)SIZE_MAX ? SIZE_MAX : (size_t)info.size;
+        mt_menu_file_t *entry = collect_menu_file_entry(browser,
+            info.name, display_size, (info.attributes & AM_DIR) != 0U);
+        if (entry != NULL && (entry->cookie & (MT_MENU_FILE_DIRECTORY | MT_MENU_FILE_TEXT)) == 0U &&
+            media_browser_file_read_only(browser, directory, &info, display_size))
+            entry->cookie |= MT_MENU_FILE_READ_ONLY;
+        usb_hid_service_poll_deferred_if_due(1000U);
+    }
+    const mt_sd_result_t closed = mt_sd_directory_close(handle);
+    return listed.status != MT_SD_OK ? listed.status : closed.status;
+}
+
 static void list_vectrex_browser(mt_menu_browser_t browser,
                                  const mt_media_browser_t *directory)
 {
     char path[512];
-    mt_sd_result_t listed;
     if (!mt_media_browser_path(directory, path, sizeof(path))) {
         set_supervisor_error("Media folder path is too long");
         return;
@@ -3832,8 +3908,10 @@ static void list_vectrex_browser(mt_menu_browser_t browser,
         supervisor_menu_files[0].cookie = MT_MENU_FILE_DIRECTORY | MT_MENU_FILE_PARENT;
         supervisor_menu_file_count = 1U;
     }
-    listed = mt_sd_storage_list(path, collect_menu_file, &browser);
-    if (listed.status != MT_SD_OK) {
+    const mt_sd_status_t listed = browser == MT_MENU_BROWSER_DOCUMENTS || browser == MT_MENU_BROWSER_CONFIG ?
+        mt_sd_storage_list(path, collect_menu_file, &browser).status :
+        list_media_browser_files(path, browser, directory);
+    if (listed != MT_SD_OK) {
         /* A partial list must never be interpreted relative to the old path. */
         supervisor_menu_file_count = 0U;
         mt_menu_close_browser(&supervisor_menu);
@@ -3850,7 +3928,6 @@ static void list_vectrex_browser(mt_menu_browser_t browser,
 
 static void open_menu_browser(mt_menu_browser_t browser)
 {
-    mt_sd_result_t list_result;
     if (browser == MT_MENU_BROWSER_DOCUMENTS) {
         mt_media_browser_t directory;
         if (mt_media_browser_init(&directory, "0:/multitini"))
@@ -3892,9 +3969,9 @@ static void open_menu_browser(mt_menu_browser_t browser)
                               "Enter launches via drive; Right loads; Left loads directly");
         return;
     }
-    list_result = mt_sd_storage_list(
-        supervisor.active.package.content_root, collect_menu_file, &browser);
-    if (list_result.status != MT_SD_OK) {
+    const mt_sd_status_t listed = list_media_browser_files(
+        supervisor.active.package.content_root, browser, NULL);
+    if (listed != MT_SD_OK) {
         set_supervisor_error("Could not list the core media folder");
         return;
     }

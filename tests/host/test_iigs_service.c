@@ -27,6 +27,7 @@ static test_file_t files[FILES]; static struct mt_sd_file handles[FILES];
 static uint32_t regs[1024], generations[MT_IIGS_MEDIA_SLOT_COUNT];
 static uint64_t mount_sizes[MT_IIGS_MEDIA_SLOT_COUNT];
 static uint8_t mount_kinds[MT_IIGS_MEDIA_SLOT_COUNT];
+static bool mount_read_only[MT_IIGS_MEDIA_SLOT_COUNT];
 static uint8_t stream_kind, stream_data[512]; static unsigned stream_index,reverse_index;
 static const uint8_t *reverse_data;
 static uint8_t config_stream[MT_IIGS_CONFIG_BYTES];
@@ -278,6 +279,7 @@ static void write_reg(void *c,uint32_t o,uint32_t v)
             generations[a&255U]=regs[MT_REG_COMMAND_ARG2/4U];
             mount_kinds[a&255U]=(uint8_t)(a>>MT_MEDIA_KIND_SHIFT);
             mount_sizes[a&255U]=((a>>MT_MEDIA_KIND_SHIFT)&255U)==MT_IIGS_MEDIA_BLOCK32 ? (uint64_t)b*512U:b;
+            mount_read_only[a&255U]=(a&MT_MEDIA_MOUNT_READ_ONLY)!=0U;
             mount_event[a&255U]=++events;break;
         case MT_COMMAND_MEDIA_EJECT:
             if(media_model.enabled) {
@@ -397,6 +399,7 @@ static void reset(void)
     memset(files,0,sizeof(files));memset(handles,0,sizeof(handles));memset(regs,0,sizeof(regs));
     memset(generations,0,sizeof(generations));memset(mount_sizes,0,sizeof(mount_sizes));
     memset(mount_kinds,0,sizeof(mount_kinds));
+    memset(mount_read_only,0,sizeof(mount_read_only));
     fail_disk_write=fail_journal=fail_settings_journal=deny_writes=early_last=pram_eject_write=eject_pending_test=false;
     pram_restore_pending=fail_sector_transfer=false;
     failed_rom=-1;rom_failure_status=MT_SD_OPEN_FAILED;rom_read_count=rom_stream_count=0U;
@@ -874,13 +877,61 @@ static void test_media_request_rejection_errors(void)
         iigs_content_service_error()[0]=='\0' && strcmp(iigs_content_service_name(2U),"request.po")==0);
 
     reset();(void)raw_disk("readonly.po",MT_IIGS_RAW_PRODOS35,0U);deny_writes=true;
-    assert(iigs_content_service_mount(2U,"readonly.po")==0);
+    assert(iigs_content_service_mount(2U,"readonly.po")==0 && iigs_content_service_read_only(2U));
     request(2U,3U,true);
     assert_request_rejected(MT_RESPONSE_IO_ERROR,"Apple IIgs disk is read-only");
 
     reset();assert(iigs_content_service_boot()==0);
     request(MT_IIGS_PRAM_SLOT,2U,false);
     assert_request_rejected(MT_RESPONSE_INVALID_ARGUMENT,"Apple IIgs PRAM request exceeds image");
+}
+static void test_woz1_transport(void)
+{
+    enum { TRACK_OFFSET=256U, TRACK_SIZE=6656U, DATA_BYTES=6336U };
+    static const char *const journals[]={
+        TEST_MEDIA_ROOT "/legacy.woz.gsj",
+        TEST_MEDIA_ROOT "/legacy.woz.gsj.mtj"
+    };
+    reset();
+    test_file_t *f=disk("legacy.woz");
+    f->size=TRACK_OFFSET+TRACK_SIZE;
+    memset(f->data,0,(size_t)f->size);
+    memcpy(f->data,"WOZ1\xff\x0a\x0d\x0a",8U);
+    memcpy(f->data+12U,"INFO",4U);store32(f->data+16U,60U);
+    f->data[20]=1U;f->data[21]=1U; /* The image's own write-protect bit is clear. */
+    memset(f->data+25U,' ',32U);memcpy(f->data+25U,"Multitini test",14U);
+    memcpy(f->data+80U,"TMAP",4U);store32(f->data+84U,160U);
+    memset(f->data+88U,0xff,160U);f->data[88]=f->data[89]=0U;
+    memcpy(f->data+248U,"TRKS",4U);store32(f->data+252U,TRACK_SIZE);
+    uint8_t *const track=f->data+TRACK_OFFSET;
+    for(unsigned i=0U;i<DATA_BYTES;++i)track[i]=(uint8_t)(i*31U+(i>>9U)*17U);
+    store32(track+6646U,DATA_BYTES|(DATA_BYTES*8U)<<16U);
+    track[6650]=track[6651]=0xffU;
+
+    for(unsigned i=0U;i<sizeof(journals)/sizeof(journals[0]);++i) {
+        test_file_t *pending=file_find(journals[i],true);
+        assert(pending!=NULL);
+        pending->size=i==0U ? 544U:576U;
+        const unsigned recovery_before=recovery_calls;
+        assert(iigs_content_service_mount(3U,"legacy.woz")!=0);
+        assert(generations[3]==0U && disk_writes==0U && recovery_calls==recovery_before);
+        assert(file_find(journals[i],false)==pending);
+        pending->present=false;
+    }
+    assert(iigs_content_service_mount(3U,"legacy.woz")==0);
+    assert(mount_kinds[3]==MT_IIGS_MEDIA_WOZ && mount_sizes[3]==f->size &&
+        mount_read_only[3] && iigs_content_service_read_only(3U));
+    for(unsigned offset=0U;offset<f->size;offset+=512U) {
+        const size_t count=f->size-offset<512U ? (size_t)(f->size-offset):512U;
+        request(3U,offset/512U,false);
+        iigs_content_service_poll();
+        assert(completion_status==MT_RESPONSE_OK && memcmp(stream_data,f->data+offset,count)==0);
+        for(size_t i=count;i<sizeof(stream_data);++i)assert(stream_data[i]==0U);
+    }
+    request(3U,1U,true);
+    assert_request_rejected(MT_RESPONSE_IO_ERROR,"Apple IIgs disk is read-only");
+    regs[MT_REG_MEDIA_REQUEST/4U]=0U; /* The mock retains rejected requests. */
+    assert(iigs_content_service_eject(3U)==0 && !iigs_content_service_read_only(3U));
 }
 static uint32_t metadata_le32(const uint8_t *p)
 { return (uint32_t)p[0]|(uint32_t)p[1]<<8U|(uint32_t)p[2]<<16U|(uint32_t)p[3]<<24U; }
@@ -1341,6 +1392,7 @@ int main(void)
     test_wide_hdd_and_error_recovery();
     test_media_progress_and_completion_retry();
     test_media_request_rejection_errors();
+    test_woz1_transport();
     test_raw_metadata_transport();
     test_raw_floppy_transport();
     test_raw_floppy_recovery();
@@ -1403,6 +1455,7 @@ int main(void)
     reset();f=disk("disk.woz");memset(f->data,0,sizeof(f->data));memcpy(f->data,"WOZ2\xff\x0a\x0d\x0a",8U);
     memcpy(f->data+12U,"INFO",4U);store32(f->data+16U,60U);f->data[20]=2U;f->data[21]=1U;store32(f->data+8U,0x12345678U);
     assert(iigs_content_service_mount(3U,"disk.woz")==0);
+    assert(!mount_read_only[3] && !iigs_content_service_read_only(3U));
     request(3U,1U,true);iigs_content_service_poll();assert(completion_status==MT_RESPONSE_OK && journal_writes==2U);
     assert(f->data[8U]==0U && f->data[9U]==0U && f->data[512U]==0x31U);
     dirty_drives=12U; /* Two motor-on floppy tracks only flush after eject. */

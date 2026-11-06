@@ -59,6 +59,7 @@ void c64_d64_service_list(void);
 void c64_d64_service_dump_status(void);
 bool c64_d64_service_mounted(void);
 bool c64_d64_service_mounted_d64(void);
+bool c64_d64_service_mounted_read_only(void);
 const char *c64_d64_service_mounted_name(void);
 
 /* Inspect and extract programs from the stable in-memory copy of the mounted

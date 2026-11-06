@@ -1193,6 +1193,14 @@ static mt_menu_item_t builtin_item(const mt_menu_t *menu,
     return item;
 }
 
+static void draw_lock(mt_ui_frame_t *frame, size_t column, size_t row,
+                      bool selected, mt_ui_color_t background)
+{
+    const char glyph[] = {MT_UI_GLYPH_LOCK, '\0'};
+    mt_ui_text(frame, column, row, glyph,
+               selected ? MT_UI_COLOR_ACCENT : MT_UI_COLOR_MUTED, background, false);
+}
+
 static void draw_item(mt_ui_frame_t *frame, size_t row, bool selected,
                        const mt_menu_item_t *item)
 {
@@ -1208,6 +1216,7 @@ static void draw_item(mt_ui_frame_t *frame, size_t row, bool selected,
     field(frame, LABEL_X, row, LABEL_W, item->label, label_color, bg);
     mt_ui_text_field(frame, VALUE_X, row, VALUE_W, item->value, color, bg,
                      false, true);
+    if (item->value_read_only) draw_lock(frame, VALUE_X + VALUE_W, row, selected, bg);
     if (item->control != MT_MENU_CONTROL_VALUE) {
         const mt_ui_control_state_t state = item->enabled ? MT_UI_CONTROL_ENABLED : MT_UI_CONTROL_DISABLED;
         if (item->control == MT_MENU_CONTROL_CHECKBOX)
@@ -1308,6 +1317,8 @@ static void render_browser(const mt_menu_t *menu, const mt_menu_view_t *view,
         else format_size(size_text, sizeof(size_text), view->files[index].size);
         mt_ui_fill(frame, ITEM_X, row, ITEM_W, 1U, bg);
         if (selected) mt_ui_fill(frame, ITEM_X, row, 1U, 1U, MT_UI_COLOR_BLUE);
+        if ((view->files[index].cookie & MT_MENU_FILE_READ_ONLY) != 0U)
+            draw_lock(frame, LABEL_X - 1U, row, selected, bg);
         field(frame, LABEL_X, row, NAME_W, view->files[index].name,
               (view->files[index].cookie & MT_MENU_FILE_TEXT) != 0U ? MT_UI_COLOR_WARNING : MT_UI_COLOR_TEXT, bg);
         mt_ui_text_field(frame, SIZE_X, row, SIZE_W, size_text, MT_UI_COLOR_MUTED, bg,
@@ -1323,7 +1334,11 @@ static void render_browser(const mt_menu_t *menu, const mt_menu_view_t *view,
             help_text(frame, text);
         } else if ((view->files[menu->row].cookie & MT_MENU_FILE_TEXT) != 0U)
             help_text(frame, "Enter reads this document. Escape returns to the same file and scroll position.");
-        else help_text(frame, view->files[menu->row].name);
+        else if ((view->files[menu->row].cookie & MT_MENU_FILE_READ_ONLY) != 0U) {
+            char text[MT_MENU_FILE_NAME_MAX + sizeof("Read only. ")];
+            (void)snprintf(text, sizeof(text), "Read only. %s", view->files[menu->row].name);
+            help_text(frame, text);
+        } else help_text(frame, view->files[menu->row].name);
     }
 }
 

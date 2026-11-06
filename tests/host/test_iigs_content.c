@@ -8,6 +8,31 @@
 #include <stdio.h>
 #include <string.h>
 static void store32(uint8_t *p,uint32_t v) { for(unsigned i=0U;i<4U;++i)p[i]=(uint8_t)(v>>(i*8U)); }
+static void test_woz1_inspection(void)
+{
+    uint8_t header[80]={0};
+    mt_iigs_media_info_t media;
+    const uint64_t size=233216U;
+    memcpy(header,"WOZ1\xff\x0a\x0d\x0a",8U);
+    memcpy(header+12U,"INFO",4U);
+    store32(header+16U,60U);
+    header[20]=1U;
+    header[21]=1U;
+
+    assert(mt_iigs_media_inspect(3U,"disk.WOZ",header,sizeof(header),size,&media)==MT_CONTENT_VALID);
+    assert(media.kind==MT_IIGS_MEDIA_WOZ && media.raw_format==MT_IIGS_RAW_NONE &&
+        media.size==size && media.offset==0U && !media.writable);
+    assert(mt_iigs_media_inspect(2U,"disk.woz",header,sizeof(header),size,&media)==MT_CONTENT_UNSUPPORTED_VERSION);
+    assert(mt_iigs_media_inspect(0U,"disk.woz",header,sizeof(header),size,&media)==MT_CONTENT_UNSUPPORTED_VERSION);
+    header[21]=2U;
+    assert(mt_iigs_media_inspect(3U,"disk.woz",header,sizeof(header),size,&media)==MT_CONTENT_BAD_STRUCTURE);
+    header[21]=1U;
+    header[20]=2U;
+    assert(mt_iigs_media_inspect(3U,"disk.woz",header,sizeof(header),size,&media)==MT_CONTENT_BAD_STRUCTURE);
+    header[20]=1U;
+    header[7]=0U;
+    assert(mt_iigs_media_inspect(3U,"disk.woz",header,sizeof(header),size,&media)==MT_CONTENT_BAD_MAGIC);
+}
 static void test_nested_browser(void)
 {
     mt_media_browser_t browser;
@@ -40,6 +65,7 @@ static void test_nested_browser(void)
 }
 int main(void)
 {
+    test_woz1_inspection();
     uint8_t h[512]={0}, wire[16]; mt_iigs_media_info_t media;
     assert(mt_iigs_media_inspect(0U,"disk.hdv",h,sizeof(h),1024U,&media)==MT_CONTENT_VALID);
     assert(media.offset==0U && media.size==1024U && media.writable);

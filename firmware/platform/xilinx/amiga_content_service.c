@@ -893,6 +893,8 @@ bool amiga_content_service_fast_ide_available(void)
 bool amiga_content_service_fast_ide_expected(void)
 { return mt_amiga_fast_ide_enabled(&config,amiga_content_service_fast_ide_available() ? MT_AMIGA_HOST_FAST_IDE:0U); }
 const char *amiga_content_service_name(unsigned drive) { return drive<MT_AMIGA_DRIVE_COUNT && drives[drive].file!=NULL ? drives[drive].name:NULL; }
+bool amiga_content_service_read_only(unsigned drive)
+{ return drive<MT_AMIGA_DRIVE_COUNT && drives[drive].file!=NULL && !drives[drive].writable; }
 const char *amiga_content_service_error(void) { return error; }
 bool amiga_content_service_ready(void) { return ready; }
 bool amiga_content_service_faulted(void) { return faulted; }

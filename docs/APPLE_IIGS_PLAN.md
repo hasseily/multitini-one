@@ -201,11 +201,11 @@ explicit error rather than truncating a path or mounting another file.
 Eight SmartPort HDDs accept raw HDV/PO and ProDOS-ordered 2MG payloads. The 3.5-inch drive
 also accepts exactly 800 KiB PO and ProDOS 2MG payloads; the 5.25-inch drive
 accepts exactly 140 KiB DOS-order DSK and ProDOS-order PO files. Both drives
-retain native WOZ2.
+accept native WOZ2. The 5.25-inch drive also accepts native WOZ1 as read-only.
 The firmware presents sector images as generated WOZ2 GCR tracks, preserving
 2MG headers, trailing container bytes and write protection. A `.gsraw` sidecar
 retains changed tracks through interrupted writes; keep it beside its image.
-NIB and nonrepresentable custom tracks require a native WOZ2 image. The
+NIB and nonrepresentable custom tracks require a native WOZ image. The
 imported WOZ controller retains both 3.5-inch side buffers, track writes,
 flux data and quarter-track mapping.
 

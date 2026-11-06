@@ -15,6 +15,7 @@
 #include <string.h>
 #include <ctype.h>
 
+#include "ff.h"
 #include "xil_printf.h"
 
 #define MT_C64_MEDIA_SLOT_DRIVE8 UINT32_C(0)
@@ -727,8 +728,16 @@ static int mount_image(const char *file_name)
                        mt_content_validation_name(validation));
             return -1;
         }
+        mt_sd_info_t file_info;
+        const mt_sd_result_t stat = mt_sd_file_stat(path, &file_info);
+        if (stat.status != MT_SD_OK) {
+            xil_printf("[C64] drive8 stat %s failed: %s (%u)\r\n", path,
+                       mt_sd_status_name(stat.status), stat.backend_status);
+            return -1;
+        }
         candidate_type = MT_C64_MEDIA_D64;
-        candidate_read_only = d64_has_error_tail(storage_result.size);
+        candidate_read_only = d64_has_error_tail(storage_result.size) ||
+                              (file_info.attributes & AM_RDO) != 0U;
     } else {
         g64_result = mt_c64_g64_open(media_image, storage_result.size,
                                      &candidate_g64);
@@ -988,6 +997,11 @@ bool c64_d64_service_mounted(void)
 bool c64_d64_service_mounted_d64(void)
 {
     return mounted && mounted_type == MT_C64_MEDIA_D64;
+}
+
+bool c64_d64_service_mounted_read_only(void)
+{
+    return mounted && mounted_read_only;
 }
 
 const char *c64_d64_service_mounted_name(void)

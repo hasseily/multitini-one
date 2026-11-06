@@ -297,6 +297,8 @@ int main(void)
     assert(load_error_clears==old_clears+1U);
     assert(amiga_content_service_mount(0U,"../bad.adf")!=0);assert(amiga_content_service_retry()==0);
     assert(amiga_content_service_mount(0U,"Workbench.adf")==0);assert(amiga_content_service_mount(2U,"System.hdf")==0);
+    assert(!amiga_content_service_read_only(0U) && !amiga_content_service_read_only(2U) &&
+           !amiga_content_service_read_only(3U));
     floppy_read=true;floppy_track=7U;transmitted_count=0U;amiga_content_service_poll();floppy_read=false;
     assert(transmitted_count==544U);uint8_t decoded[512];unsigned s=99U;
     assert(mt_amiga_mfm_decode(transmitted,7U,&s,decoded) && s==0U && memcmp(decoded,adf->data+7U*11U*512U,512U)==0);
@@ -355,7 +357,9 @@ int main(void)
     file_t *second=create(ROOT "/Second.hdf",4096U);
     memcpy(second->data,"DOS\1",4U);
     memcpy(second->data+512U,"RDSK",4U);
+    second->readonly=true;
     assert(amiga_content_service_mount(3U,"Second.hdf")==0);
+    assert(amiga_content_service_read_only(3U));
     command(0x20U,1U,0U,1U);amiga_content_service_poll();
     assert(disk_word(0U)==0x444f5301U); /* Existing RDB keeps its physical layout. */
     command(0xecU,1U,0U,1U);amiga_content_service_poll();assert(transmitted[55]==16U && transmitted[56]==63U);

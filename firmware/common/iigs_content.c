@@ -55,7 +55,7 @@ void mt_iigs_config_encode(const mt_iigs_config_t *c, uint8_t wire[MT_IIGS_CONFI
 mt_content_validation_t mt_iigs_media_inspect(unsigned drive,const char *name,
     const uint8_t *p,size_t n,uint64_t size,mt_iigs_media_info_t *info)
 {
-    mt_iigs_media_info_t r={0U,size,MT_IIGS_MEDIA_BLOCK32,true,MT_IIGS_RAW_NONE};
+    mt_iigs_media_info_t r={0U,size,MT_IIGS_MEDIA_BLOCK32,true,MT_IIGS_RAW_NONE,false};
     if (drive>=MT_IIGS_DRIVE_COUNT || name==NULL || p==NULL || info==NULL)
         return MT_CONTENT_INVALID_ARGUMENT;
     if (size==0U) return MT_CONTENT_TOO_SMALL;
@@ -66,13 +66,18 @@ mt_content_validation_t mt_iigs_media_inspect(unsigned drive,const char *name,
         if (hdd) return MT_CONTENT_UNSUPPORTED_VERSION;
         if (size>UINT32_MAX) return MT_CONTENT_WRONG_SIZE;
         if (n<80U) return MT_CONTENT_TOO_SMALL;
-        if (memcmp(p,"WOZ2\xff\x0a\x0d\x0a",8U)!=0)
+        r.woz1=memcmp(p,"WOZ1\xff\x0a\x0d\x0a",8U)==0;
+        if (!r.woz1 && memcmp(p,"WOZ2\xff\x0a\x0d\x0a",8U)!=0)
             return MT_CONTENT_BAD_MAGIC;
+        if (r.woz1 && drive!=MT_IIGS_FLOPPY525_DRIVE) return MT_CONTENT_UNSUPPORTED_VERSION;
         if (memcmp(p+12U,"INFO",4U)!=0 || le32(p+16U)<60U ||
-            (uint64_t)le32(p+16U)+20U>size || p[20]==0U || p[20]>3U)
+            (uint64_t)le32(p+16U)+20U>size || p[20]==0U || p[20]>3U ||
+            (r.woz1 && p[20]!=1U))
             return MT_CONTENT_BAD_STRUCTURE;
         if (p[21]!=(drive==2U ? 2U:1U)) return MT_CONTENT_BAD_STRUCTURE;
-        r.kind=MT_IIGS_MEDIA_WOZ; r.writable=p[22]==0U;
+        /* WOZ1 tracks start within a block. FPGA write-back starts at the
+         * block boundary and would overwrite bytes preceding the track. */
+        r.kind=MT_IIGS_MEDIA_WOZ; r.writable=!r.woz1 && p[22]==0U;
     } else if (extension(name,"2mg")) {
         uint32_t offset,blocks;
         uint64_t length;

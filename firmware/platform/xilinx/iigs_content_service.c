@@ -502,6 +502,7 @@ static gs_mount_result_t mount_internal(unsigned drive,const char *name)
     memcpy(d->raw_journal,d->path,path_length); memcpy(d->raw_journal+path_length,".gsraw",7U);
     memcpy(d->raw_recovery,d->raw_journal,path_length+6U); memcpy(d->raw_recovery+path_length+6U,".mtj",5U);
     d->cached_track=-1; d->raw_pending=false; d->raw_received=0U;
+    d->journal_pending=false;
     gs_mount_result_t failure=GS_MOUNT_FILE_ERROR;
     mt_sd_result_t r=mt_sd_file_open(d->path,"r+b",&d->file);
     bool ro=false;
@@ -516,6 +517,7 @@ static gs_mount_result_t mount_internal(unsigned drive,const char *name)
     r=mt_sd_file_read(d->file,sector,sizeof(sector)); if(r.status!=MT_SD_OK)goto failed;
     const mt_content_validation_t v=mt_iigs_media_inspect(drive,name,sector,r.size,d->file_size,&d->info);
     if(v!=MT_CONTENT_VALID) { (void)fail(mt_content_validation_name(v)); goto close_failed; }
+    ro=ro || d->info.woz1;
     if(ro)d->info.writable=false;
     if(!ro && (d->info.raw_format==MT_IIGS_RAW_NONE || d->info.writable) && apply_journal(d)!=0)goto close_failed;
     d->woz_crc_disabled=d->info.kind!=MT_IIGS_MEDIA_WOZ || le32(sector+8U)==0U;
@@ -797,6 +799,8 @@ uint32_t iigs_content_service_speed_mask(void) { return speed_mask; }
 bool iigs_content_service_fast_floppy_supported(void) { return fast_floppy_supported; }
 void iigs_content_service_set_timestamp(uint32_t timestamp) { config.timestamp=timestamp; }
 const char *iigs_content_service_name(unsigned d) { return d<MT_IIGS_DRIVE_COUNT && drives[d].mounted ? drives[d].name:NULL; }
+bool iigs_content_service_read_only(unsigned d)
+{ return d<MT_IIGS_DRIVE_COUNT && drives[d].mounted && !drives[d].info.writable; }
 const char *iigs_content_service_error(void) { return error; }
 void iigs_content_service_activity(unsigned d,uint32_t *reads,uint32_t *writes)
 {

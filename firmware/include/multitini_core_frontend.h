@@ -18,6 +18,7 @@ typedef struct {
     bool drive8_ready;
     bool drive8_mounted;
     bool drive8_d64_mounted;
+    bool drive8_read_only;
     const char *drive8_name;
     bool cartridge_attached;
     const char *cartridge_name;
@@ -48,12 +49,14 @@ typedef struct {
     mt_c64_sid_model_t c64_sid;
     uint8_t genesis_three_button_mask;
     const char *iigs_drive_name[MT_IIGS_DRIVE_COUNT];
+    bool iigs_drive_read_only[MT_IIGS_DRIVE_COUNT];
     mt_iigs_config_t iigs_config;
     uint32_t iigs_speed_mask;
     bool iigs_fast_floppy_supported;
     uint16_t iigs_mouse_sensitivity;
     bool iigs_ready;
     const char *amiga_drive_name[MT_AMIGA_DRIVE_COUNT];
+    bool amiga_drive_read_only[MT_AMIGA_DRIVE_COUNT];
     mt_amiga_config_t amiga_config;
     bool amiga_ready;
     bool amiga_aga_pal,amiga_ap68040,amiga_ap68040_2x_available,amiga_cpu14_available,amiga_cpu14_fallback;

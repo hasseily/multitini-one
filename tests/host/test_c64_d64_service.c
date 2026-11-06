@@ -4,6 +4,7 @@
 #include "multitini_c64_interface.h"
 #include "multitini_regs.h"
 #include "sd_storage.h"
+#include "ff.h"
 
 #include <assert.h>
 #include <stdarg.h>
@@ -68,6 +69,7 @@ typedef struct {
     char read_path[512U];
     size_t replaced_size;
     uint8_t replaced_first_byte;
+    bool read_only;
 } fake_sd_t;
 
 static fake_sd_t fake_sd;
@@ -367,6 +369,14 @@ mt_sd_result_t mt_sd_storage_read_file_max(const char *path, uint8_t *dst,
     return result;
 }
 
+mt_sd_result_t mt_sd_file_stat(const char *path, mt_sd_info_t *info)
+{
+    assert(strcmp(path, fake_sd.read_path) == 0);
+    *info = (mt_sd_info_t){0};
+    if (fake_sd.read_only) info->attributes = AM_RDO;
+    return (mt_sd_result_t){MT_SD_OK, 0U, 0U};
+}
+
 mt_sd_result_t mt_sd_storage_journal_recover(const char *path,
                                              const char *journal_path,
                                              uint8_t *recovery_buffer,
@@ -469,6 +479,7 @@ static void test_mounted_d64_program_access(void)
     setup(&shell, &link);
     assert(c64_d64_service_mount_default() == 0);
     assert(c64_d64_service_mounted_d64());
+    assert(!c64_d64_service_mounted_read_only());
     assert(c64_d64_service_list_prgs(capture_prg, &capture, &count) ==
            MT_C64_D64_OK);
     assert(count == 1U && capture.calls == 1U);
@@ -629,9 +640,28 @@ static void test_error_tail_is_read_only(void)
 
     setup(&shell, &link);
     assert(c64_d64_service_mount("error.d64") == 0);
+    assert(c64_d64_service_mounted_read_only());
     assert((shell.mount_flags & MT_MEDIA_MOUNT_READ_ONLY) != 0U);
     assert((shell.mount_flags & MT_MEDIA_KIND_MASK) ==
            ((uint32_t)MT_LOAD_C64_D64 << MT_MEDIA_KIND_SHIFT));
+}
+
+static void test_fat_read_only_d64(void)
+{
+    fake_shell_t shell;
+    mt_core_link_t link;
+
+    setup(&shell, &link);
+    assert(!c64_d64_service_mounted_read_only());
+    fake_sd.read_only = true;
+    assert(c64_d64_service_mount_default() == 0);
+    assert(c64_d64_service_mounted_d64());
+    assert(c64_d64_service_mounted_read_only());
+    assert((shell.mount_flags & MT_MEDIA_MOUNT_READ_ONLY) != 0U);
+    prepare_reverse_write(&shell);
+    c64_d64_service_poll();
+    assert(shell.complete_status == MT_RESPONSE_INVALID_ARGUMENT);
+    assert(shell.reverse_index == 0U && fake_sd.replace_count == 0U);
 }
 
 static void test_g64_read_only_track(void)
@@ -641,6 +671,7 @@ static void test_g64_read_only_track(void)
 
     setup(&shell, &link);
     assert(c64_d64_service_mount("disk.g64") == 0);
+    assert(c64_d64_service_mounted_read_only());
     assert(fake_sd.recover_count == 0U);
     assert((shell.mount_flags & MT_MEDIA_MOUNT_READ_ONLY) != 0U);
     assert((shell.mount_flags & MT_MEDIA_KIND_MASK) ==
@@ -863,6 +894,7 @@ int main(void)
     test_dirty_eject_failure_and_retry();
     test_retry_does_not_cancel_healthy_write();
     test_error_tail_is_read_only();
+    test_fat_read_only_d64();
     test_g64_read_only_track();
     test_reset_barrier_remounts();
     test_reset_resume_waits_for_fpga_mount();

@@ -98,6 +98,7 @@ static void test_c64_capabilities(void)
     state.abi_minor = 9U;
     state.drive8_ready = true;
     state.drive8_mounted = true;
+    state.drive8_read_only = true;
     state.drive8_name = "Test.g64";
     state.cartridge_attached = true;
     state.cartridge_name = "Test.crt";
@@ -107,12 +108,14 @@ static void test_c64_capabilities(void)
     mt_core_frontend_apply(&frontend, &state, &view);
     check(view.media_items[0].enabled &&
           view.media_items[0].action == MT_MENU_ACTION_EJECT_DRIVE8 &&
-          strcmp(view.media_items[0].value, "Test.g64") == 0,
+          strcmp(view.media_items[0].value, "Test.g64") == 0 &&
+          view.media_items[0].value_read_only,
           "mounted disk keeps the safe eject action");
     check(!view.media_items[1].enabled,
           "G64 mount does not enable the D64 program browser");
     check(view.media_items[2].action == MT_MENU_ACTION_DETACH_CARTRIDGE &&
-          strcmp(view.media_items[2].value, "Test.crt") == 0,
+          strcmp(view.media_items[2].value, "Test.crt") == 0 &&
+          !view.media_items[2].value_read_only,
           "attached cartridge keeps the detach action");
     check(strcmp(view.input_items[0].value, "US symbolic") == 0 &&
           strcmp(view.input_items[1].label, "Keyboard joystick") == 0 &&
@@ -120,9 +123,11 @@ static void test_c64_capabilities(void)
           strcmp(view.core_options[1].value, "Smart 2x") == 0,
           "profile reflects current input and CPU settings");
     state.drive8_d64_mounted = true;
+    state.drive8_read_only = false;
     mt_core_frontend_apply(&frontend, &state, &view);
     check(view.media_items[1].enabled &&
-          view.media_items[1].action == MT_MENU_ACTION_BROWSE_DISK_PROGRAM,
+          view.media_items[1].action == MT_MENU_ACTION_BROWSE_DISK_PROGRAM &&
+          !view.media_items[0].value_read_only,
           "D64 mount enables its existing launch path");
 
     state.c64_expansion_caps = MT_C64_EXPANSION_CAPS_VALID | MT_C64_EXPANSION_CAPS_DUAL_SID | MT_C64_EXPANSION_CAPS_REU_16MB;
@@ -380,6 +385,17 @@ static void test_iigs_drive_formats(void)
     check(strstr(view.media_items[2].help, "800 KiB PO or 2MG") != NULL &&
           strstr(view.media_items[3].help, "140 KiB DOS-order DSK or ProDOS-order PO") != NULL,
           "floppy chooser explains accepted sector sizes and ordering");
+    state.iigs_drive_name[2] = "writable.woz";
+    state.iigs_drive_name[3] = "legacy.woz";
+    state.iigs_drive_read_only[3] = true;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(!view.media_items[2].value_read_only && view.media_items[3].value_read_only &&
+          view.media_items[3].action == MT_MENU_ACTION_EJECT_IIGS_DRIVE &&
+          strcmp(view.media_items[3].value, "legacy.woz") == 0,
+          "mounted read-only disks show a lock and remain ejectable");
+    state.iigs_drive_name[3] = NULL;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(!view.media_items[3].value_read_only, "empty drive has no lock");
     for(unsigned drive=0U;drive<=MT_IIGS_DRIVE_COUNT;++drive) {
         for(unsigned type=0U;type<=MT_CONTENT_IIGS_FLOPPY;++type) {
             const bool expected=drive<MT_IIGS_DRIVE_COUNT &&
@@ -565,8 +581,15 @@ static void test_amiga_resolution(void)
     mt_menu_view_t view={0};
     state.core_id=MT_AMIGA_CORE_ID;state.services_ready=true;state.amiga_config.cpu=MT_AMIGA_CPU_STOCK;
     state.amiga_display_applied=UINT8_MAX;
+    state.amiga_drive_name[0]="Workbench.adf";
+    state.amiga_drive_name[3]="System.hdf";
+    state.amiga_drive_read_only[0]=state.amiga_drive_read_only[1]=true;
     mt_core_frontend_apply(&frontend,&state,&view);
     check(strcmp(view.core_description,"Amiga")==0,"Amiga core has its stable user-facing name");
+    check(view.media_items[0].value_read_only && !view.media_items[1].value_read_only &&
+          !view.media_items[3].value_read_only && !view.media_items[4].value_read_only &&
+          view.media_items[0].action==MT_MENU_ACTION_EJECT_AMIGA_DRIVE,
+          "Amiga shows the lock on a protected mounted disk and keeps eject available");
     const mt_menu_item_t *row=core_row(&view,"Resolution");
     check(row!=NULL && !row->enabled && strstr(row->value,"Unavailable")!=NULL &&
           strstr(row->help,"MTDisplay")!=NULL,"legacy/helper-absent resolution is disabled with installation help");
@@ -646,11 +669,12 @@ static void test_spectrum_profile(void)
     mt_core_frontend_apply(&frontend, &state, &view);
     check(view.media_item_count == 2U && view.media_items[0].enabled &&
           view.media_items[0].action == MT_MENU_ACTION_SPECTRUM_RELOAD &&
-          !view.media_items[1].enabled, "Spectrum exposes ROM retry before tape loading");
+          !view.media_items[1].enabled && !view.media_items[1].value_read_only,
+          "Spectrum exposes ROM retry before tape loading");
     state.spectrum_ready = true;
     state.spectrum_tape_name = "Games/Example.TAP";
     mt_core_frontend_apply(&frontend, &state, &view);
-    check(view.media_items[1].enabled &&
+    check(view.media_items[1].enabled && view.media_items[1].value_read_only &&
           strcmp(view.media_items[1].value, state.spectrum_tape_name) == 0 &&
           mt_core_frontend_browser_folders(MT_SPECTRUM_CORE_ID, MT_MENU_BROWSER_PROGRAM) &&
           mt_core_frontend_accepts_content(MT_SPECTRUM_CORE_ID, MT_MENU_BROWSER_PROGRAM,
@@ -681,14 +705,14 @@ static void test_atari_xt_profile(void)
     state.atari_xt_sio_available = true;
     mt_core_frontend_apply(&frontend, &state, &view);
     check(view.media_items[3].enabled && view.media_items[3].action == MT_MENU_ACTION_BROWSE_DRIVE8 &&
-          !view.media_items[4].enabled && !view.media_items[5].enabled &&
+          !view.media_items[3].value_read_only && !view.media_items[4].enabled && !view.media_items[5].enabled &&
           view.media_items[6].enabled && view.media_items[6].action == MT_MENU_ACTION_BROWSE_PROGRAM,
           "Atari enables mount and run with SIO, and guards empty D1");
     state.atari_xt_disk_name = "Games/Boot.ATR";
     mt_core_frontend_apply(&frontend, &state, &view);
-    check(view.media_items[4].enabled && view.media_items[5].enabled &&
+    check(view.media_items[3].value_read_only && view.media_items[4].enabled && view.media_items[5].enabled &&
           strcmp(view.media_items[3].value, state.atari_xt_disk_name) == 0,
-          "Atari shows the mounted disk with boot and eject controls");
+          "Atari shows the mounted read-only disk with boot and eject controls");
     check(mt_core_frontend_browser_folders(MT_ATARI_XT_CORE_ID, MT_MENU_BROWSER_CARTRIDGE) &&
           mt_core_frontend_accepts_content(MT_ATARI_XT_CORE_ID, MT_MENU_BROWSER_CARTRIDGE,
                                           MT_CONTENT_ATARI_XT_CART) &&

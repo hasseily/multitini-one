@@ -165,17 +165,21 @@ static void build_c64(mt_core_frontend_t *frontend,
     const bool ua_blocked = state->cartridge_attached &&
         (!coexist || !(state->c64_cartridge_policy & MT_C64_CRT_ALLOW_ULTIMATE_AUDIO));
     const bool uci_blocked = coexist && !state->c64_uci_active;
-    frontend->media_items[view->media_item_count++] = item(
+    const bool read_only = state->drive8_mounted && state->drive8_read_only;
+    mt_menu_item_t *const drive = &frontend->media_items[view->media_item_count++];
+    *drive = item(
         "Drive 8", state->drive8_mounted ? attached_name(state->drive8_name) :
             (state->drive8_ready ? "Choose disk..." : "Drive ROM required"),
         state->drive8_mounted ?
-            "Enter flushes pending writes and ejects the mounted disk." :
+            (read_only ? "Read-only disk. Enter ejects it." :
+                "Enter flushes pending writes and ejects the mounted disk.") :
             "Mount a D64 or G64 disk image in drive 8.",
         state->drive8_mounted ? MT_MENU_ACTION_EJECT_DRIVE8 :
                                MT_MENU_ACTION_BROWSE_DRIVE8,
         0U, state->drive8_ready || state->drive8_mounted,
         state->drive8_mounted ? MT_UI_COLOR_SUCCESS :
             (state->drive8_ready ? MT_UI_COLOR_BLUE : MT_UI_COLOR_WARNING));
+    drive->value_read_only = read_only;
     if (state->abi_minor >= 9U) {
         frontend->media_items[view->media_item_count++] = item(
             "Mount & Run", state->drive8_d64_mounted ? "Choose program..." :
@@ -521,11 +525,15 @@ static void build_iigs(mt_core_frontend_t *frontend,
         (speed_mask&(UINT32_C(1)<<state->iigs_config.speed))!=0U;
     for(unsigned d=0U;d<MT_IIGS_DRIVE_COUNT;++d) {
         const char *name=state->iigs_drive_name[d];
-        frontend->media_items[view->media_item_count++]=item(labels[d],name!=NULL ? name:"Choose disk...",
-            name!=NULL ? "Flush writes and eject this disk.":mt_iigs_drive_hdd_unit(d)<MT_IIGS_HDD_COUNT ? "Mount HDV, ProDOS-order PO or ProDOS 2MG; capacity is checked before mounting.":
+        const bool read_only=name!=NULL && state->iigs_drive_read_only[d];
+        mt_menu_item_t *const drive=&frontend->media_items[view->media_item_count++];
+        *drive=item(labels[d],name!=NULL ? name:"Choose disk...",
+            name!=NULL ? (read_only ? "Read-only disk. Enter ejects it." : "Flush writes and eject this disk."):
+                mt_iigs_drive_hdd_unit(d)<MT_IIGS_HDD_COUNT ? "Mount HDV, ProDOS-order PO or ProDOS 2MG; capacity is checked before mounting.":
                 d==2U ? "Mount an 800 KiB PO or 2MG, or a 3.5-inch WOZ2.":
-                "Mount a 140 KiB DOS-order DSK or ProDOS-order PO, or a 5.25-inch WOZ2.",
+                "Mount 140 KiB DOS-order DSK or ProDOS-order PO, WOZ2, or read-only WOZ1.",
             name!=NULL ? MT_MENU_ACTION_EJECT_IIGS_DRIVE:MT_MENU_ACTION_BROWSE_IIGS_DRIVE,d,true,name!=NULL ? MT_UI_COLOR_SUCCESS:MT_UI_COLOR_BLUE);
+        drive->value_read_only=read_only;
     }
     frontend->media_items[view->media_item_count++]=item("System ROMs",state->iigs_ready ? "Loaded":"Load / retry...",
         "Load user-supplied system, character and ADB ROMs from the roms folder.",MT_MENU_ACTION_IIGS_RELOAD,0U,true,state->iigs_ready ? MT_UI_COLOR_SUCCESS:MT_UI_COLOR_WARNING);
@@ -580,9 +588,13 @@ static void build_amiga(mt_core_frontend_t *frontend,const mt_core_frontend_stat
     static const char *const labels[]={"DF0: DD floppy","DF1: DD floppy","IDE master","IDE slave"};
     for(unsigned d=0U;d<MT_AMIGA_DRIVE_COUNT;++d) {
         const char *name=state->amiga_drive_name[d];
-        frontend->media_items[view->media_item_count++]=item(labels[d],name!=NULL ? name:"Choose disk...",
-            name!=NULL ? "Finish disk writes and eject this image.":d<2U ? "Mount an 880 KiB DD ADF image.":"Mount a raw HDF hard disk with 512-byte sectors.",
+        const bool read_only=name!=NULL && state->amiga_drive_read_only[d];
+        mt_menu_item_t *const drive=&frontend->media_items[view->media_item_count++];
+        *drive=item(labels[d],name!=NULL ? name:"Choose disk...",
+            name!=NULL ? (read_only ? "Read-only disk. Enter ejects it.":"Finish disk writes and eject this image."):
+                d<2U ? "Mount an 880 KiB DD ADF image.":"Mount a raw HDF hard disk with 512-byte sectors.",
             name!=NULL ? MT_MENU_ACTION_EJECT_AMIGA_DRIVE:MT_MENU_ACTION_BROWSE_AMIGA_DRIVE,d,true,name!=NULL ? MT_UI_COLOR_SUCCESS:MT_UI_COLOR_BLUE);
+        drive->value_read_only=read_only;
     }
     frontend->media_items[view->media_item_count++]=item("Kickstart ROM",state->amiga_ready ? "Loaded":"Load / retry...",
         state->amiga_aga_pal ? "Load your A1200 ROM from roms/kick-a1200.rom." :
@@ -649,10 +661,14 @@ static void build_spectrum(mt_core_frontend_t *frontend,
             "Supply a 16 KiB 48K or 32 KiB 128K ROM as roms/spectrum.rom.",
         MT_MENU_ACTION_SPECTRUM_RELOAD, 0U, true,
         state->spectrum_ready ? MT_UI_COLOR_SUCCESS : MT_UI_COLOR_WARNING);
-    frontend->media_items[view->media_item_count++] = item("Tape",
+    mt_menu_item_t *const tape = &frontend->media_items[view->media_item_count++];
+    *tape = item("Tape",
         state->spectrum_tape_name != NULL ? state->spectrum_tape_name : "Choose TAP image...",
-        "Start the Spectrum tape loader, then press F1 to play or pause. F2 rewinds.",
+        state->spectrum_tape_name != NULL ?
+            "Read-only tape. Start the tape loader, then press F1 to play or pause. F2 rewinds." :
+            "Start the Spectrum tape loader, then press F1 to play or pause. F2 rewinds.",
         MT_MENU_ACTION_BROWSE_PROGRAM, 0U, state->spectrum_ready, MT_UI_COLOR_BLUE);
+    tape->value_read_only = state->spectrum_tape_name != NULL;
     frontend->input_items[view->input_item_count++] = item("Keyboard", "USB keyboard",
         "F1 plays or pauses the tape. F2 rewinds. F12 opens the Multitini menu.",
         MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
@@ -682,11 +698,14 @@ static void build_atari_xt(mt_core_frontend_t *frontend,
         MT_MENU_ACTION_DETACH_CARTRIDGE, 0U,
         state->atari_xt_roms_loaded && (state->cartridge_attached || state->atari_xt_cart_uncertain),
         MT_UI_COLOR_BLUE);
-    frontend->media_items[view->media_item_count++] = item("Disk D1:",
+    mt_menu_item_t *const disk = &frontend->media_items[view->media_item_count++];
+    *disk = item("Disk D1:",
         mounted ? state->atari_xt_disk_name : "Choose ATR disk...",
+        mounted ? "Read-only disk. Select Boot D1: to restart from it." :
         state->atari_xt_sio_available ? "Mount a read-only ATR disk. Select Boot D1: to restart from it." :
             "Update the Atari FPGA core to use ATR disks and XEX programs.",
         MT_MENU_ACTION_BROWSE_DRIVE8, 0U, disk_enabled, MT_UI_COLOR_BLUE);
+    disk->value_read_only = mounted;
     frontend->media_items[view->media_item_count++] = item("Boot D1:", NULL,
         "Restart from the mounted disk and eject any inserted cartridge.",
         MT_MENU_ACTION_ATARI_XT_BOOT_DISK, 0U, disk_enabled && mounted, MT_UI_COLOR_BLUE);

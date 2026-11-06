@@ -166,6 +166,13 @@ static void test_generic_items_and_focus(void)
     (void)press(&menu, &view, MT_MENU_HID_ESCAPE);
     check(menu.browser == MT_MENU_BROWSER_NONE && menu.row == 1U && menu.visible,
           "Escape returns to the originating media item");
+    items[1].value_read_only = true;
+    mt_menu_render(&menu, &view, &frame);
+    char text[MT_UI_COLUMNS + 1U];
+    row_text(&frame, 13U, text);
+    char *value = strstr(text, "Custom value");
+    check(value != NULL && value[sizeof("Custom value") - 1U] == MT_UI_GLYPH_LOCK,
+          "mounted read-only media shows a lock next to its name");
     view.media_item_count = 0U;
     menu.row = SIZE_MAX;
     check(press(&menu, &view, MT_MENU_HID_ENTER).kind == MT_MENU_ACTION_NONE &&
@@ -196,6 +203,7 @@ static void test_browser(void)
     }
     strcpy(files[143].name, "A very long cartridge name that must never overwrite "
                             "the size or the panel margin.gbc");
+    files[143].cookie = MT_MENU_FILE_READ_ONLY;
     view.files = files;
     view.file_count = 144U;
     view.content_root = "0:/multitini/cores/example/media";
@@ -224,13 +232,17 @@ static void test_browser(void)
     check(contains(&frame, "144 / 144") && contains(&frame, "4.0 MiB"),
           "browser position and sizes render");
     row_text(&frame, 11U + MT_MENU_LIST_ROWS - 1U, text);
-    check(strstr(text, "...") != NULL && strstr(text, "4.0 MiB") != NULL,
-          "long filename clips independently from size");
+    check(strchr(text, MT_UI_GLYPH_LOCK) != NULL && strstr(text, "...") != NULL &&
+          strstr(text, "4.0 MiB") != NULL, "read-only row shows a lock, clipped filename and size");
+    row_text(&frame, 11U + MT_MENU_LIST_ROWS - 2U, text);
+    check(strchr(text, MT_UI_GLYPH_LOCK) == NULL, "writable file has no lock");
+    row_text(&frame, 11U + MT_MENU_LIST_ROWS - 1U, text);
     check(text[MT_UI_COLUMNS - 3U] == ' ' &&
           text[MT_UI_COLUMNS - 2U] == ' ' && text[MT_UI_COLUMNS - 1U] == ' ',
           "text remains inside right margin");
-    check(contains(&frame, "panel margin.gbc"),
-          "full selected filename remains available in help");
+    check(contains(&frame, "Read only.") && contains(&frame, "panel") &&
+          contains(&frame, "margin.gbc"),
+          "selected file help shows read-only status and the full filename");
     action = press(&menu, &view, MT_MENU_HID_ENTER);
     check(action.kind == MT_MENU_ACTION_LOAD_CONTENT && action.file_index == 143U,
           "browser action identifies original file index");
