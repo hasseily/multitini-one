@@ -2,6 +2,8 @@
 
 This build uses and adapts Atari-XT by ThrudTheBarbarian. The [original source](https://github.com/ThrudTheBarbarian/fpga-xt) is pinned in `provenance/atari-xt.import.json`. The upstream license is in `third_party/atari-xt/upstream/LICENSE`. About → Credits repeats the attribution.
 
+Multitini modified Atari-XT's `a8_core.sv` on 2026-11-06. The port aligns CPU and chipset subcycles, maps SD-loaded ROMs for CPU and ANTIC reads, and exposes the Atari joystick and POKEY keyboard and audio interfaces.
+
 The core models a 64 KiB NTSC Atari 800XL. It uses Atari-XT's fidelity 6502, ANTIC2, GTIA, PIA and POKEY. The shell displays a 384 × 240 raster and sends the four-channel mono POKEY mix to both audio outputs. The guest clock follows Atari-XT's 56-cycle division of the 100 MHz fabric clock, giving about 1.786 MHz.
 
 ## SD setup
