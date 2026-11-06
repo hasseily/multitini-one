@@ -21,6 +21,8 @@ import zlib
 ROOT = Path(__file__).resolve().parents[1]
 ABI_SOURCE = "hdl/generated/multitini_regs_pkg.sv"
 CONFIG_NAMES = {"source-inputs.json", "generate.tcl", "build.tcl"}
+IIGS_REFERENCE_PATH = "build/reference/iigs-615.dcp"
+IIGS_REFERENCE_SHA256 = "5eea207f7ee205f09105cad6a3a27a7d4252c37bb02df9f27bcd3c0491b54d6e"
 
 
 def require(condition, message):
@@ -41,11 +43,17 @@ def safe_source_name(name):
     require(isinstance(name, str) and name and "\\" not in name,
             "Unsafe archived source path")
     path = PurePosixPath(name)
+    root = path.parts[0].rstrip(" .").casefold() if path.parts else ""
     require(not path.is_absolute() and ".." not in path.parts and
             path.as_posix() == name and ":" not in name and
-            path.parts[0] not in {"build", ".git", ".aws", ".codex", ".agents"} and
-            not path.parts[0].startswith("build-"), "Unsafe archived source path: " + name)
+            root and root not in {"build", ".git", ".aws", ".codex", ".agents"} and
+            not root.startswith("build-"), "Unsafe archived source path: " + name)
     return path
+
+
+def has_pinned_iigs_reference(record):
+    return (record.get("machine") == "APPLE_IIGS" and
+            record["files"].get(IIGS_REFERENCE_PATH) == IIGS_REFERENCE_SHA256)
 
 
 def parse_reuse_images(values, allowed_names):
@@ -67,7 +75,10 @@ def audit_source_archives(directory, record):
     files = record.get("files")
     require(isinstance(files, dict) and files, "Empty archived source inventory")
     for name, expected in files.items():
-        safe_source_name(name)
+        # The routed 615 checkpoint is a consumed implementation input. Keep
+        # its exact original archive path without admitting other build output.
+        if name != IIGS_REFERENCE_PATH or not has_pinned_iigs_reference(record):
+            safe_source_name(name)
         require(isinstance(expected, str) and re.fullmatch(r"[0-9a-f]{64}", expected),
                 "Invalid archived source hash: " + name)
     archive = record.get("archive", {})

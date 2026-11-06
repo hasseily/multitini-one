@@ -319,8 +319,18 @@ def verify_hardware(directory, machine, *, ntsc=False, build_id=None, genesis_pa
     log = (directory / "build.log").read_text(errors="replace").replace("\\", "/")
     export_path = xsa.as_posix()
     if reuse:
+        wrapper = directory / "build.tcl"
+        repair = directory / "reports/repair/signoff.tcl"
+        if core_artifacts.has_pinned_iigs_reference(record) and repair.is_file():
+            receipt = json.loads(repair.with_name("repair-provenance.json").read_text())
+            require(receipt["image"] == original_build_id and
+                    receipt["evidence"][repair.name] == describe(repair) and
+                    receipt["files"]["source-inputs.zip"] == describe(directory / "source-inputs.zip") and
+                    receipt["files"]["routed_bit"] == describe(bit) and receipt["files"]["xsa"] == describe(xsa),
+                    "Routed repair provenance differs from selected artifact")
+            wrapper = repair
         archived_dirs = re.findall(r"^set ::env\(MULTITINI_VIVADO_DIR\) \{([^\r\n]+)\}\s*$",
-                                  (directory / "build.tcl").read_text(), re.MULTILINE)
+                                  wrapper.read_text(), re.MULTILINE)
         require(len(archived_dirs) == 1, "Missing or ambiguous archived Vivado build directory")
         export_path = archived_dirs[0].replace("\\", "/").rstrip("/") + "/" + xsa.name
     require("Timing gates passed and XSA exported: " + export_path in log.splitlines(),

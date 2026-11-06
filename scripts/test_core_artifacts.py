@@ -20,6 +20,11 @@ import package_cpu1_video_test as package
 import package_phos1 as phos
 
 
+IIGS_REFERENCE_PATH = "build/reference/iigs-615.dcp"
+IIGS_REFERENCE_SHA256 = "5eea207f7ee205f09105cad6a3a27a7d4252c37bb02df9f27bcd3c0491b54d6e"
+IIGS_REFERENCE_FIXTURE = b"pinned IIgs implementation checkpoint fixture"
+
+
 class ArtifactTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -174,6 +179,89 @@ class ArtifactTests(unittest.TestCase):
         self.seal_sources()
         with self.assertRaisesRegex(ValueError, "HDL closure"):
             self.inspect()
+
+    def mock_iigs_checkpoint_digest(self, module=artifacts):
+        digest = module.digest
+        return patch.object(module, "digest", side_effect=lambda data:
+                            IIGS_REFERENCE_SHA256 if data == IIGS_REFERENCE_FIXTURE else digest(data))
+
+    def test_pinned_iigs_reference_allowed_only_as_archived_input(self):
+        self.record["machine"] = "APPLE_IIGS"
+        self.sources[IIGS_REFERENCE_PATH] = IIGS_REFERENCE_FIXTURE
+        with self.mock_iigs_checkpoint_digest():
+            self.seal_sources()
+            audit = artifacts.audit_source_archives(self.directory, self.record)
+            self.assertEqual(audit["abi"], "0.20")
+
+            self.sources["hdl/hdl_sources.txt"] += f"[apple_iigs]\n../{IIGS_REFERENCE_PATH}\n".encode()
+            self.seal_sources()
+            with self.assertRaisesRegex(ValueError, "Unsafe archived source path"):
+                artifacts.audit_source_archives(self.directory, self.record)
+
+    def test_iigs_reference_rejected_for_wrong_machine_or_digest(self):
+        with self.mock_iigs_checkpoint_digest():
+            for machine, data in (("C64", IIGS_REFERENCE_FIXTURE), ("APPLE_IIGS", b"different checkpoint")):
+                with self.subTest(machine=machine):
+                    self.record["machine"] = machine
+                    self.sources[IIGS_REFERENCE_PATH] = data
+                    self.seal_sources()
+                    with self.assertRaises(ValueError):
+                        artifacts.audit_source_archives(self.directory, self.record)
+
+    def test_iigs_reference_permission_does_not_cover_other_build_paths(self):
+        self.record["machine"] = "APPLE_IIGS"
+        with self.mock_iigs_checkpoint_digest():
+            for name in ("build/reference/other.dcp", "Build/reference/iigs-615.dcp",
+                         "build./reference/iigs-615.dcp", "build /reference/iigs-615.dcp",
+                         "build/reference/IIGS-615.dcp"):
+                self.sources[name] = IIGS_REFERENCE_FIXTURE
+                self.seal_sources()
+                del self.sources[name]
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, "Unsafe archived source path"):
+                    artifacts.audit_source_archives(self.directory, self.record)
+
+    def test_relocated_iigs_signoff_requires_exact_marker_and_repair_receipt(self):
+        self.record["machine"] = "APPLE_IIGS"
+        self.sources[IIGS_REFERENCE_PATH] = IIGS_REFERENCE_FIXTURE
+        reference = self.root / IIGS_REFERENCE_PATH
+        reference.parent.mkdir(parents=True)
+        reference.write_bytes(IIGS_REFERENCE_FIXTURE)
+        for name in ("generate.tcl", "build.tcl"):
+            path = self.directory / name
+            path.write_text(path.read_text().replace("{C64}", "{APPLE_IIGS}"))
+        manifest = self.directory / "reports/build_manifest.txt"
+        manifest.write_text(manifest.read_text().replace("image_kind=C64", "image_kind=APPLE_IIGS")
+                            .replace("ACTIVE_MACHINE=0", "ACTIVE_MACHINE=5"))
+        Path(str(self.bit) + ".kind").write_text("APPLE_IIGS\n")
+        repair = self.directory / "reports/repair/signoff.tcl"
+        repair.parent.mkdir()
+        relocated = self.root / "relocated-signoff"
+        repair.write_text(f"set ::env(MULTITINI_VIVADO_DIR) {{{relocated.as_posix()}}}\n")
+        log = self.directory / "build.log"
+        marker = "Timing gates passed and XSA exported: "
+
+        with self.mock_iigs_checkpoint_digest(), self.mock_iigs_checkpoint_digest(package):
+            self.seal_sources()
+            receipt = repair.with_name("repair-provenance.json")
+            package.write_json(receipt, {
+                "image": "50484F35", "evidence": {repair.name: package.describe(repair)},
+                "files": {"source-inputs.zip": package.describe(self.directory / "source-inputs.zip"),
+                          "routed_bit": package.describe(self.bit),
+                          "xsa": package.describe(self.directory / "multitini_one.xsa")},
+            })
+            log.write_text(marker + (relocated / "multitini_one.xsa").as_posix() + "\n")
+            audit = artifacts.inspect_artifact(self.directory, "APPLE_IIGS")
+            self.assertEqual(audit["build_id"], "0x50484F35")
+
+            log.write_text(marker + (self.directory / "multitini_one.xsa").as_posix() + "\n")
+            with self.assertRaisesRegex(ValueError, "did not reach timing-gated XSA export"):
+                artifacts.inspect_artifact(self.directory, "APPLE_IIGS")
+
+            log.write_text(marker + (relocated / "multitini_one.xsa").as_posix() + "\n")
+            with repair.open("a") as stream:
+                stream.write("# modified after signoff\n")
+            with self.assertRaisesRegex(ValueError, "repair provenance differs"):
+                artifacts.inspect_artifact(self.directory, "APPLE_IIGS")
 
     def test_relative_hdl_dependency_normalizes_inside_repository(self):
         self.sources["third_party/demo/original.sv"] = b"module original; endmodule\n"
