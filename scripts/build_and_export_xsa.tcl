@@ -148,6 +148,8 @@ if {[string match "*ACTIVE_MACHINE=2*" $build_generics]} {
     set image_kind "AMIGA"
 } elseif {[regexp {(^|[[:space:]])ACTIVE_MACHINE=8($|[[:space:]])} $build_generics]} {
     set image_kind "ZX_SPECTRUM"
+} elseif {[regexp {(^|[[:space:]])ACTIVE_MACHINE=9($|[[:space:]])} $build_generics]} {
+    set image_kind "ATARI_XT"
 } else {
     error "Build generic has no recognized ACTIVE_MACHINE value: $build_generics"
 }
@@ -413,40 +415,42 @@ if {$image_kind eq "AMIGA"} {
         puts "AP68040_PROCESSOR_CLOCK_PASS period=$fast_period enable_slack=[get_property SLACK $processor_ce_path]"
     }
 }
-if {$image_kind eq "ZX_SPECTRUM"} {
-    set spectrum_clock [get_clocks -quiet -filter {NAME =~ *clk_out1*zynq_ps_bd_clk_wiz_c64*}]
-    require_one_object "Spectrum machine clock" $spectrum_clock
-    set spectrum_mmcm [get_cells -hierarchical -quiet -filter \
+if {$image_kind in {ZX_SPECTRUM ATARI_XT}} {
+    lassign [dict get {ZX_SPECTRUM {56.0 28 5 15} ATARI_XT {100.0 20 3 10}} $image_kind] native_mhz native_m native_d native_o
+    set native_clock [get_clocks -quiet -filter {NAME =~ *clk_out1*zynq_ps_bd_clk_wiz_c64*}]
+    require_one_object "$image_kind machine clock" $native_clock
+    set native_mmcm [get_cells -hierarchical -quiet -filter \
         {REF_NAME == MMCME2_ADV && NAME =~ *clk_wiz_c64*}]
-    require_one_object "Spectrum machine MMCM" $spectrum_mmcm
-    foreach {property expected} {CLKFBOUT_MULT_F 28 DIVCLK_DIVIDE 5 CLKOUT0_DIVIDE_F 15} {
-        if {abs([get_property $property $spectrum_mmcm] - $expected) > 0.000001} {
-            error "Spectrum MMCM $property differs from the reviewed value $expected"
+    require_one_object "$image_kind machine MMCM" $native_mmcm
+    foreach {property expected} [list CLKFBOUT_MULT_F $native_m DIVCLK_DIVIDE $native_d CLKOUT0_DIVIDE_F $native_o \
+                                    CLKOUT0_PHASE 0.0 CLKOUT0_DUTY_CYCLE 0.5] {
+        if {abs([get_property $property $native_mmcm] - $expected) > 0.000001} {
+            error "$image_kind MMCM $property differs from the reviewed value $expected"
         }
     }
-    set spectrum_parent [get_clocks -quiet -of_objects [get_pins $spectrum_mmcm/CLKIN1]]
-    require_one_object "Spectrum MMCM parent clock" $spectrum_parent
-    set spectrum_parent_period [get_property PERIOD $spectrum_parent]
-    set spectrum_period [get_property PERIOD $spectrum_clock]
+    set native_parent [get_clocks -quiet -of_objects [get_pins $native_mmcm/CLKIN1]]
+    require_one_object "$image_kind MMCM parent clock" $native_parent
+    set native_parent_period [get_property PERIOD $native_parent]
+    set native_period [get_property PERIOD $native_clock]
     # Vivado quantizes both periods at 1 ps. Scale the parent error by
-    # the exact MMCM ratio before comparing the child to nominal 56 MHz.
-    set spectrum_ratio [expr {5.0 * 15.0 / 28.0}]
-    set spectrum_period_tick 0.001
-    set spectrum_nominal_tolerance [expr {$spectrum_period_tick * (1.0 + $spectrum_ratio)}]
-    if {$spectrum_parent ne "clk_fpga_2" || abs($spectrum_parent_period - 1000.0 / 150.0) > 0.001 ||
-        ![get_property IS_GENERATED $spectrum_clock] ||
-        [get_property MASTER_CLOCK $spectrum_clock] ne $spectrum_parent ||
-        abs($spectrum_period - $spectrum_parent_period * $spectrum_ratio) > $spectrum_period_tick ||
-        abs($spectrum_period - 1000.0 / 56.0) > $spectrum_nominal_tolerance} {
-        error "Spectrum machine clock does not match its reviewed ratio: parent=$spectrum_parent $spectrum_parent_period ns, child=$spectrum_period ns"
+    # the exact MMCM ratio before comparing the child to nominal frequency.
+    set native_ratio [expr {double($native_d) * $native_o / $native_m}]
+    set period_tick 0.001
+    set nominal_tolerance [expr {$period_tick * (1.0 + $native_ratio)}]
+    if {$native_parent ne "clk_fpga_2" || abs($native_parent_period - 1000.0 / 150.0) > $period_tick ||
+        ![get_property IS_GENERATED $native_clock] ||
+        [get_property MASTER_CLOCK $native_clock] ne $native_parent ||
+        abs($native_period - $native_parent_period * $native_ratio) > $period_tick ||
+        abs($native_period - 1000.0 / $native_mhz) > $nominal_tolerance} {
+        error "$image_kind machine clock does not match its reviewed ratio: parent=$native_parent $native_parent_period ns, child=$native_period ns"
     }
-    set spectrum_registers [get_pins -hierarchical -quiet \
-        -filter {NAME =~ *g_zx_spectrum_machine*machine_adapter*/C}]
-    if {[llength $spectrum_registers] == 0 ||
-        [get_clocks -quiet -of_objects $spectrum_registers] ne $spectrum_clock} {
-        error "Spectrum machine state must use the single reviewed root clock"
+    set native_registers [get_pins -hierarchical -quiet \
+        -filter {NAME =~ *g_fixed_raster_machine*machine_adapter*/C}]
+    if {[llength $native_registers] == 0 ||
+        [get_clocks -quiet -of_objects $native_registers] ne $native_clock} {
+        error "$image_kind machine state must use the single reviewed root clock"
     }
-    puts "ZX_SPECTRUM_CLOCK_RATIO_PASS parent=$spectrum_parent parent_period=$spectrum_parent_period M=28 D=5 O=15 period=$spectrum_period"
+    puts "${image_kind}_CLOCK_RATIO_PASS parent=$native_parent parent_period=$native_parent_period M=$native_m D=$native_d O=$native_o period=$native_period"
 }
 if {$image_kind eq "NES"} {
     require_nes_save_ram implementation

@@ -300,7 +300,7 @@ def verify_hardware(directory, machine, *, ntsc=False, build_id=None, genesis_pa
     generics = manifest["generic"]
     require(re.search(r"SHELL_BUILD_ID=32'h" + expected_build_id + r"\b", generics, re.I), "Wrong FPGA build ID")
     active = {"C64": 0, "GBC": 1, "SUPERVISOR": 2, "VECTREX": 3, "GENESIS": 4,
-              "APPLE_IIGS": 5, "NES": 6, "AMIGA": 7, "ZX_SPECTRUM": 8}[machine]
+              "APPLE_IIGS": 5, "NES": 6, "AMIGA": 7, "ZX_SPECTRUM": 8, "ATARI_XT": 9}[machine]
     require(re.search(rf"\bACTIVE_MACHINE={active}\b", generics), "Wrong FPGA active machine")
     require(f"C64_NTSC_MODE=1'b{int(ntsc)}" in generics, "Wrong FPGA PAL/NTSC generic")
     if machine == "GENESIS":

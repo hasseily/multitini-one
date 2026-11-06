@@ -2,6 +2,7 @@
 #include "multitini_content.h"
 #include "multitini_gameboy_interface.h"
 #include "multitini_c64_interface.h"
+#include "multitini_atari_xt_interface.h"
 #include "multitini_spectrum_interface.h"
 
 #include <assert.h>
@@ -24,6 +25,80 @@ static void finish_gameboy_header(uint8_t *cart, uint8_t color_flag,
     cart[0x14DU] = checksum;
 }
 
+static void test_atari_xt_cartridges(void)
+{
+    static const struct {
+        size_t payload_size;
+        uint8_t type;
+        uint32_t address;
+        uint8_t checksum[4];
+    } standard[] = {
+        {MT_ATARI_XT_CART_8_BYTES, 1U, UINT32_C(0xA000), {0U, 0x15U, 0x60U, 0U}},
+        {MT_ATARI_XT_CART_16_BYTES, 2U, UINT32_C(0x8000), {0U, 0x2AU, 0xC0U, 0U}}
+    };
+    static uint8_t cart[MT_ATARI_XT_CART_MAX_FILE_BYTES + 1U];
+    const size_t header = MT_ATARI_XT_CART_HEADER_BYTES;
+    mt_content_info_t info = {0};
+
+    assert(mt_content_classify_for_core(MT_ATARI_XT_CORE_ID, "nested/Game.CaR") ==
+           MT_CONTENT_ATARI_XT_CART);
+    assert(mt_content_classify_for_core(MT_ATARI_XT_CORE_ID, "nested/Game.RoM") ==
+           MT_CONTENT_ATARI_XT_RAW_CART);
+    assert(mt_content_classify_for_core(MT_ATARI_XT_CORE_ID, "nested/Game.BiN") ==
+           MT_CONTENT_ATARI_XT_RAW_CART);
+    assert(mt_content_classify_for_core(MT_ATARI_XT_CORE_ID, "nested.car/Game") ==
+           MT_CONTENT_UNKNOWN);
+    assert(mt_content_classify_for_core(MT_C64_CORE_ID, "Game.car") == MT_CONTENT_UNKNOWN);
+    assert(mt_content_classify_for_core(MT_C64_CORE_ID, "Game.rom") == MT_CONTENT_SYSTEM_ROM);
+    assert(mt_content_classify_for_core(MT_C64_CORE_ID, "Game.bin") == MT_CONTENT_UNKNOWN);
+    assert(mt_content_supported_first_release(MT_CONTENT_ATARI_XT_CART));
+    assert(mt_content_supported_first_release(MT_CONTENT_ATARI_XT_RAW_CART));
+    assert(!mt_content_may_write_first_release(MT_CONTENT_ATARI_XT_CART));
+    assert(!mt_content_may_write_first_release(MT_CONTENT_ATARI_XT_RAW_CART));
+
+    for (size_t i = 0U; i < sizeof(standard) / sizeof(standard[0]); ++i) {
+        const size_t payload_size = standard[i].payload_size;
+        const size_t size = header + payload_size;
+        memcpy(cart, "CART", 4U);
+        cart[7] = standard[i].type;
+        memcpy(cart + 8U, standard[i].checksum, 4U);
+        memset(cart + header, 0xAB, payload_size);
+
+        assert(mt_content_inspect(MT_CONTENT_ATARI_XT_CART, cart, size, &info) == MT_CONTENT_VALID);
+        assert(info.payload_offset == header && info.payload_size == payload_size &&
+               info.hardware_type == standard[i].type && info.load_address == standard[i].address &&
+               !info.writable);
+        assert(mt_content_inspect(MT_CONTENT_ATARI_XT_RAW_CART, cart + header, payload_size, &info) ==
+               MT_CONTENT_VALID);
+        assert(info.payload_offset == 0U && info.payload_size == payload_size &&
+               info.hardware_type == standard[i].type && info.load_address == standard[i].address &&
+               !info.writable);
+
+        assert(mt_content_inspect(MT_CONTENT_ATARI_XT_CART, cart, header - 1U, &info) ==
+               MT_CONTENT_TOO_SMALL);
+        assert(mt_content_inspect(MT_CONTENT_ATARI_XT_CART, cart, size - 1U, &info) ==
+               MT_CONTENT_WRONG_SIZE);
+        assert(mt_content_inspect(MT_CONTENT_ATARI_XT_CART, cart, size + 1U, &info) ==
+               MT_CONTENT_WRONG_SIZE);
+        assert(mt_content_inspect(MT_CONTENT_ATARI_XT_CART, cart + header, payload_size, &info) ==
+               MT_CONTENT_BAD_MAGIC);
+        assert(mt_content_inspect(MT_CONTENT_ATARI_XT_RAW_CART, cart, size, &info) ==
+               MT_CONTENT_WRONG_SIZE);
+
+        cart[4] = 1U;
+        assert(mt_content_inspect(MT_CONTENT_ATARI_XT_CART, cart, size, &info) ==
+               MT_CONTENT_UNSUPPORTED_VERSION);
+        cart[4] = 0U;
+        cart[7] = 3U;
+        assert(mt_content_inspect(MT_CONTENT_ATARI_XT_CART, cart, size, &info) ==
+               MT_CONTENT_UNSUPPORTED_VERSION);
+        cart[7] = standard[i].type;
+        cart[size - 1U] ^= 1U;
+        assert(mt_content_inspect(MT_CONTENT_ATARI_XT_CART, cart, size, &info) ==
+               MT_CONTENT_BAD_STRUCTURE);
+    }
+}
+
 int main(void)
 {
     uint8_t prg[] = {0x01U, 0x08U, 0xA9U, 0x00U, 0x60U};
@@ -34,6 +109,8 @@ int main(void)
     uint8_t gbc_boot[MT_SIZE_GBC_BOOT] = {0};
     const uint8_t dummy = 0U;
     mt_content_info_t info = {0};
+
+    test_atari_xt_cartridges();
 
     assert(mt_content_classify(NULL) == MT_CONTENT_UNKNOWN);
     assert(mt_content_classify("") == MT_CONTENT_UNKNOWN);

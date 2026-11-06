@@ -40,9 +40,9 @@ class NesExportSignoffTests(unittest.TestCase):
         # Reconstruct the historical NES checker: later machine additions
         # must remain outside this narrowly authorized revalidation path.
         latest = current
-        current = current.replace(b"([0-8])", b"([0-6])", 1).replace(
+        current = current.replace(b"([0-9])", b"([0-6])", 1).replace(
             b"These images capture native source frames", b"Genesis, IIgs and NES capture their native source frame", 1).replace(
-            b"$active_machine in {4 5 6 7 8}", b"$active_machine in {4 5 6}", 1)
+            b"$active_machine in {4 5 6 7 8 9}", b"$active_machine in {4 5 6}", 1)
         old = current.replace(b"([0-6])", b"([0-5])", 1).replace(
             b"Genesis, IIgs and NES capture", b"Genesis and IIgs capture", 1).replace(
             b"$active_machine in {4 5 6}", b"$active_machine in {4 5}", 1)

@@ -2,6 +2,13 @@
   "schema_version": 1,
   "sources": [
     {
+      "name": "Atari-XT FPGA machine HDL",
+      "url": "https://github.com/ThrudTheBarbarian/fpga-xt",
+      "commit": "a4340eb034503c6189197480bccc55564e7708a5",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution",
+      "use": "This private 800XL prototype adapts Atari-XT by ThrudTheBarbarian. Selected SALLY fidelity CPU, ANTIC/GTIA, PIA, POKEY and NTSC palette. Exact imported files, original source location and port changes are in provenance/atari-xt.import.json. The upstream modified license remains in third_party/atari-xt/upstream/LICENSE."
+    },
+    {
       "name": "Appletini One About credits",
       "url": "https://github.com/hasseily/appletini-one.git",
       "commit": "a5a066931f6f05b116d7b41f53b04bca19f8aae7",

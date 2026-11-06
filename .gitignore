@@ -89,6 +89,8 @@ dfx_runtime.txt
 *.TAP
 *.crt
 *.CRT
+*.car
+*.CAR
 *.prg
 *.PRG
 *.reu

@@ -1,0 +1,236 @@
+{
+  "schema_version": 1,
+  "source": "https://github.com/ThrudTheBarbarian/fpga-xt",
+  "commit": "a4340eb034503c6189197480bccc55564e7708a5",
+  "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution",
+  "attribution": "This private prototype incorporates and adapts Atari-XT by ThrudTheBarbarian.",
+  "purpose": "SALLY fidelity CPU, ANTIC2/GTIA, PIA, POKEY and NTSC palette for 64K XL mode.",
+  "exclusions": [
+    "Atari-XT platform and OS",
+    "system ROMs",
+    "media",
+    "binary FPGA images"
+  ],
+  "modifications": [
+    "Wire the same subcycle parameters to CPU and chipset.",
+    "Map externally loaded XL ROMs at reset and on ANTIC reads.",
+    "Expose PORTA directions, POKEY keyboard and PCM channel levels."
+  ],
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "f625202f153ee8515dbc8507449fbf03f028873a9d12ba68c910aa6d805c4d3b",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "README.md",
+      "sha256": "31d2d0adc73944534e9ea85cb1d885e4c5df3ca98aea3962b66a0b3c70a1101c",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/a8_core.sv",
+      "sha256": "83f7b685cca7e8f9decf4152172729c16a54dde303517feda770fe181f808285",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic_gtia.sv",
+      "sha256": "30f7512a9dcfe5235e3a332475d134aa701d43f70adaa2375c1a33ea5717ec99",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic_scanline.sv",
+      "sha256": "511fcad4cf5a2602fa05aed9c99fcebca3a4aac21b5f68ab3f5579aa2a78b8c2",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic_beam.sv",
+      "sha256": "c87bd5a54f72f858cf4b9d26e14adf6aea54d8765ccddc6cd330007287745150",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic_dl.sv",
+      "sha256": "ca5b9bcb6b30299ba71be2185d05ce9ddfc11a45556111f145920384c3f03fba",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic_pf_geom.sv",
+      "sha256": "629524e4291c3a30023ab2b3cba26d8057ea13b595c52f48b8e0797760dd8382",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic_pf_fetch.sv",
+      "sha256": "2b426e7f86e90bdca6b4ee8944668a8c0179df2ba1a877619c1fd62f6b113eef",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic_line_render.sv",
+      "sha256": "7d692253d8efabdeb5617f9425aa77bbf89222ac2b5de1aab53bfdbdd273b73e",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic_mode_tbl.sv",
+      "sha256": "929e1ab74de280f6ade6e88767083bb0ba2ab64f9f82aada20609ff32144e874",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic_pixel_shift.sv",
+      "sha256": "4dcdb886a7fcc7de4c83a0c1cff26ed67d6958b722ea5288eb90715d6b1e175d",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic_pf_source.sv",
+      "sha256": "3e5c23f29db53a9f738ac62e16e3b0b42b37d6e75e06d98ce3bc90838637fe7e",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic_color_sel.sv",
+      "sha256": "4665e7c21df14465310eb49ff49f77f9b68eda0b871f93e05c5bd263494b9b63",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic_char_ctl.sv",
+      "sha256": "5e9eee681a1374ba4b61c52c2c01016c8dd04e5634771d4db4742441d5f4f989",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic_pm_fetch.sv",
+      "sha256": "7dc428e8ae9ed79f9c505060fddbf986dfe5049594af829150b36961f2003bf7",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic_nmi.sv",
+      "sha256": "83c3d47867360dc48323da5718300d4d37130777fb3ad5793a0590b7d61eb05c",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic_dma_sched.sv",
+      "sha256": "0214131346b3e215f17cc6a9f4ce661aa45170658f58d04342b443f1d9ff51f1",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic_reg_file.sv",
+      "sha256": "ad34dd38cb362b50c6847f1cf978cf47749ab70593f62c242430142c441d06a9",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/gtia_reg_file.sv",
+      "sha256": "85acfc969d5d028e2d689830e37042b7e17ac657bbb9ed108a45c3184961e55d",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/gtia_stage.sv",
+      "sha256": "66721f4ec3ef22422a4b1284b2701e57f43d6a6db895d828b9e5360e320d860c",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/gtia_obj_walk.sv",
+      "sha256": "f85dc6332767107db947767f81a993574ce061d785eab89fa14bb59ad994714d",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/gtia_priority.sv",
+      "sha256": "73fc52db79206f9693be3dc7bbb9278fba517b489e70cd9b91c0bf53559bd198",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/gtia_collide.sv",
+      "sha256": "55c433c141a0a32e62c0221936b50009349b507c4fb86f5fb389b96844ddce95",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/gtia_special.sv",
+      "sha256": "1fbe4e9e18247ec723f6b14e3bc87939a50793f9cceb8194aed831533aa59fb3",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic2.sv",
+      "sha256": "960a7853c5634138a61faf70d396ff016d1d92b00c67104132458a35dfa7f58c",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic2_seq.sv",
+      "sha256": "0e7ab382c08342cb4bfc05aae6df82e504ca611baa322976cf6fe340811c5859",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic2_regs.sv",
+      "sha256": "268179c00875cd86e7ed2e82d1802990485b3d16d03647b0537042dc63acc170",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic2_line.sv",
+      "sha256": "aa26d1a4d4b801e217da0401199730c024bb9e051af9e5ee7530d1e30b307c85",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic2_dl.sv",
+      "sha256": "3c65eb27da763a994590cde76c5cfc52996c0ed7e6c5e22f1b61985a99ff39ca",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic_pf_stream.sv",
+      "sha256": "c9b1fd42f6bcea9bf140330dd8c034d124c2b9622170521185e6a0f6219c7711",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic_pm_dma.sv",
+      "sha256": "a588c3e295f414b2ed75f86c9a606161646bdf5dee05378e145e5175a13071c2",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/antic_emit_win.sv",
+      "sha256": "8c53e607a5bfdaf4ace927a283f90c351386bd90adca802bfb13e1e6c4f3c82b",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/a2_video.sv",
+      "sha256": "8b389478b7f3139d7c0464c123dec56e2385ef8bbba52e7b5cafc88ab55c2d35",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/pia_regs.sv",
+      "sha256": "0388b314aa9e7c5c08d9fe56918ebf91cf16e8a3db469f3cd6bda9b459ecd2d9",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/pokey.sv",
+      "sha256": "1da2618c0d0e30abb2be4fd5d096058023607ff1dd3200e046b4f0c547775a9d",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/pokey_regs.sv",
+      "sha256": "0dba42fb26ca744114418a0ef5480e4b5451c90d6f11e65591f41ba14bbbd04a",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/pokey_audio.sv",
+      "sha256": "69b4bc74336432c2efcff71b6f1ab88960d142d435aaa989778f78f3416d1d66",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/pokey_pot.sv",
+      "sha256": "42c80a403a57745e9f147baea7c55a745be0d644d82bc904bc38b9d6c17fcd73",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/pokey_serial.sv",
+      "sha256": "d10dc640fd47e881a18f4c5b9dc527095cf2333fef6c3f8bdc3c8f0ac2a94f37",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/xt6502f/xt6502f.sv",
+      "sha256": "c070f852c5b67a5f503040e3caa25974aca760c9d116921ee8c40b70fac38ed8",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/palette_lut.sv",
+      "sha256": "773a2b62a88a0feacc841eb4296a58a27429bce7640c55da17860002111318f4",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    },
+    {
+      "path": "hdl/palette/atari_ntsc.hex",
+      "sha256": "cc19ac71e8c9b2e8fcca9f1eb2e909d2255573edbab1a84e4e6e47faa256a3bf",
+      "license": "LicenseRef-CERN-OHL-S-2.0-with-attribution"
+    }
+  ]
+}

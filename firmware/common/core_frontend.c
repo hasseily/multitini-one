@@ -8,6 +8,7 @@
 #include "multitini_gameboy_interface.h"
 #include "multitini_vectrex_interface.h"
 #include "multitini_spectrum_interface.h"
+#include "multitini_atari_xt_interface.h"
 #include "multitini_genesis_interface.h"
 #include "multitini_nes_interface.h"
 #include "multitini_iigs_interface.h"
@@ -658,7 +659,41 @@ static void build_spectrum(mt_core_frontend_t *frontend,
         0U, false, MT_UI_COLOR_TEXT);
 }
 
+static void build_atari_xt(mt_core_frontend_t *frontend,
+                           const mt_core_frontend_state_t *state, mt_menu_view_t *view)
+{
+    frontend->media_items[view->media_item_count++] = item("System ROMs",
+        state->atari_xt_roms_loaded ? "Loaded" : "Load / retry...",
+        state->atari_xt_boot_error != NULL ? state->atari_xt_boot_error :
+            "Place atarixl.rom (16 KiB) and ataribas.rom (8 KiB) in roms/.",
+        MT_MENU_ACTION_ATARI_XT_RELOAD, 0U, true,
+        state->atari_xt_roms_loaded ? MT_UI_COLOR_SUCCESS : MT_UI_COLOR_WARNING);
+    frontend->media_items[view->media_item_count++] = item("Cartridge",
+        state->cartridge_name != NULL ? state->cartridge_name : "Choose cartridge...",
+        "Standard 8 or 16 KiB .car, .rom or .bin. Inserting a cartridge restarts the Atari.",
+        MT_MENU_ACTION_BROWSE_CARTRIDGE, 0U, state->atari_xt_roms_loaded, MT_UI_COLOR_BLUE);
+    frontend->media_items[view->media_item_count++] = item("Eject Cartridge",
+        state->atari_xt_cart_uncertain ? "Recover cartridge slot" : NULL,
+        "Remove the cartridge and restart the Atari.",
+        MT_MENU_ACTION_DETACH_CARTRIDGE, 0U,
+        state->atari_xt_roms_loaded && (state->cartridge_attached || state->atari_xt_cart_uncertain),
+        MT_UI_COLOR_BLUE);
+    frontend->input_items[view->input_item_count++] = item("Keyboard", "USB keyboard",
+        "F1 Start, F2 Select, F3 Option, F4 Help, F5 Break. F12 opens the Multitini menu.",
+        MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
+    frontend->input_items[view->input_item_count++] = item("Joysticks", "Two USB gamepads",
+        "Digital directions and fire. Custom mappings apply for this session.",
+        MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
+}
+
 static const core_profile_t profiles[] = {
+    {
+        MT_ATARI_XT_CORE_ID, "Atari 800XL",
+        "USB keyboard and two Atari joysticks. F12 opens the Multitini menu.",
+        {0U, 0U, 0U, CONTENT_MASK(MT_CONTENT_ATARI_XT_CART) |
+            CONTENT_MASK(MT_CONTENT_ATARI_XT_RAW_CART), 0U},
+        false, build_atari_xt
+    },
     {
         MT_SPECTRUM_CORE_ID, "Sinclair ZX Spectrum",
         "USB keyboard and Kempston joystick. F12 opens the Multitini menu.",
@@ -779,7 +814,8 @@ bool mt_core_frontend_browser_folders(uint32_t core_id, mt_menu_browser_t browse
              browser == MT_MENU_BROWSER_PROGRAM || browser == MT_MENU_BROWSER_CARTRIDGE ||
              browser == MT_MENU_BROWSER_DRIVE8)) ||
            ((core_id == MT_VECTREX_CORE_ID || core_id == MT_IIGS_CORE_ID ||
-             core_id == MT_AMIGA_CORE_ID || core_id == MT_SPECTRUM_CORE_ID) &&
+             core_id == MT_AMIGA_CORE_ID || core_id == MT_SPECTRUM_CORE_ID ||
+             core_id == MT_ATARI_XT_CORE_ID) &&
             mt_core_frontend_browser_supported(core_id, browser));
 }
 

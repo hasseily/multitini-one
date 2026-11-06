@@ -8,6 +8,7 @@
 #include "multitini_nes_content.h"
 #include "multitini_iigs_interface.h"
 #include "multitini_amiga_content.h"
+#include "multitini_atari_xt_interface.h"
 #include "multitini_spectrum_interface.h"
 
 #include <stddef.h>
@@ -87,13 +88,21 @@ mt_content_type_t mt_content_classify_for_core(uint32_t core_id, const char *pat
     const char *extension;
     if (core_id == MT_SPECTRUM_CORE_ID && type == MT_CONTENT_TAP_FUTURE)
         return MT_CONTENT_SPECTRUM_TAP;
+    if (core_id == MT_ATARI_XT_CORE_ID && type == MT_CONTENT_SYSTEM_ROM)
+        return MT_CONTENT_ATARI_XT_RAW_CART;
     if (type != MT_CONTENT_UNKNOWN || path == NULL)
         return type;
     extension = strrchr(path, '.');
-    if (extension == NULL || !extension_is(extension + 1, "bin"))
+    if (extension == NULL)
+        return MT_CONTENT_UNKNOWN;
+    ++extension;
+    if (core_id == MT_ATARI_XT_CORE_ID && extension_is(extension, "car"))
+        return MT_CONTENT_ATARI_XT_CART;
+    if (!extension_is(extension, "bin"))
         return MT_CONTENT_UNKNOWN;
     if (core_id == MT_VECTREX_CORE_ID) return MT_CONTENT_VECTREX_CART;
     if (core_id == MT_GENESIS_CORE_ID) return MT_CONTENT_GENESIS_CART;
+    if (core_id == MT_ATARI_XT_CORE_ID) return MT_CONTENT_ATARI_XT_RAW_CART;
     return MT_CONTENT_UNKNOWN;
 }
 
@@ -107,7 +116,8 @@ bool mt_content_supported_first_release(mt_content_type_t type)
            type == MT_CONTENT_GENESIS_CART || type == MT_CONTENT_GENESIS_SMD ||
            type == MT_CONTENT_IIGS_HDD || type == MT_CONTENT_IIGS_WOZ ||
            type == MT_CONTENT_IIGS_FLOPPY || type == MT_CONTENT_AMIGA_ADF || type == MT_CONTENT_AMIGA_HDF ||
-           type == MT_CONTENT_SPECTRUM_TAP;
+           type == MT_CONTENT_SPECTRUM_TAP || type == MT_CONTENT_ATARI_XT_CART ||
+           type == MT_CONTENT_ATARI_XT_RAW_CART;
 }
 
 bool mt_content_may_write_first_release(mt_content_type_t type)
@@ -140,6 +150,8 @@ const char *mt_content_type_name(mt_content_type_t type)
     case MT_CONTENT_AMIGA_ADF: return "Amiga DD ADF floppy";
     case MT_CONTENT_AMIGA_HDF: return "Amiga IDE hard disk";
     case MT_CONTENT_SPECTRUM_TAP: return "ZX Spectrum TAP";
+    case MT_CONTENT_ATARI_XT_CART: return "Atari XL CAR cartridge";
+    case MT_CONTENT_ATARI_XT_RAW_CART: return "Atari XL raw cartridge";
     case MT_CONTENT_UNKNOWN: return "unknown";
     }
     return "unknown";
@@ -171,6 +183,31 @@ static uint32_t read_be32(const uint8_t *data)
 {
     return ((uint32_t)data[0] << 24) | ((uint32_t)data[1] << 16) |
            ((uint32_t)data[2] << 8) | data[3];
+}
+
+static mt_content_validation_t inspect_atari_xt_cart(const uint8_t *data, size_t size,
+                                                     bool header, mt_content_info_t *info)
+{
+    const size_t offset = header ? MT_ATARI_XT_CART_HEADER_BYTES : 0U;
+    if (size < offset || size == 0U) return MT_CONTENT_TOO_SMALL;
+    if (header && memcmp(data, "CART", 4U) != 0) return MT_CONTENT_BAD_MAGIC;
+    const size_t payload_size = size - offset;
+    const uint32_t standard_type = payload_size == MT_ATARI_XT_CART_8_BYTES ? 1U : 2U;
+    const uint32_t hardware_type = header ? read_be32(data + 4U) : standard_type;
+    if (hardware_type != 1U && hardware_type != 2U) return MT_CONTENT_UNSUPPORTED_VERSION;
+    const size_t expected = hardware_type == 1U ? MT_ATARI_XT_CART_8_BYTES : MT_ATARI_XT_CART_16_BYTES;
+    if (payload_size != expected) return MT_CONTENT_WRONG_SIZE;
+
+    if (header) {
+        uint32_t checksum = 0U;
+        for (size_t i = offset; i < size; ++i) checksum += data[i];
+        if (checksum != read_be32(data + 8U)) return MT_CONTENT_BAD_STRUCTURE;
+    }
+    info->payload_offset = offset;
+    info->payload_size = payload_size;
+    info->hardware_type = (uint16_t)hardware_type;
+    info->load_address = hardware_type == 1U ? UINT32_C(0xA000) : UINT32_C(0x8000);
+    return MT_CONTENT_VALID;
 }
 
 static mt_content_validation_t inspect_prg(const uint8_t *data, size_t size,
@@ -397,6 +434,10 @@ mt_content_validation_t mt_content_inspect(mt_content_type_t type,
         break;
     case MT_CONTENT_SPECTRUM_TAP:
         status = inspect_spectrum_tap(data, size, &result);
+        break;
+    case MT_CONTENT_ATARI_XT_CART:
+    case MT_CONTENT_ATARI_XT_RAW_CART:
+        status = inspect_atari_xt_cart(data, size, type == MT_CONTENT_ATARI_XT_CART, &result);
         break;
     case MT_CONTENT_TAP_FUTURE:
     case MT_CONTENT_IIGS_HDD:

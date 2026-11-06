@@ -9,6 +9,7 @@
 #include "multitini_iigs_interface.h"
 #include "multitini_nes_interface.h"
 #include "multitini_spectrum_interface.h"
+#include "multitini_atari_xt_interface.h"
 #include "multitini_vectrex_interface.h"
 #include "multitini_video_frame.h"
 #include "screenshot_font.h"
@@ -100,7 +101,7 @@ static bool geometry(const mt_screenshot_scene_t *s,geometry_t *g)
     else if(s->core_id==MT_IIGS_CORE_ID || s->core_id==MT_AMIGA_CORE_ID)
         g->num=(m==0U || m==3U || m==5U) && s->width*2U<=g->w && s->height*2U<=g->h ? 2U:1U;
     else if(s->core_id==MT_GENESIS_CORE_ID || s->core_id==MT_NES_CORE_ID) g->num=m==0U || m==5U ? 4U:3U;
-    else if(s->core_id==MT_SPECTRUM_CORE_ID) {
+    else if(s->core_id==MT_SPECTRUM_CORE_ID || s->core_id==MT_ATARI_XT_CORE_ID) {
         for (uint32_t scale = 2U; scale <= 4U; ++scale)
             if (s->width * scale <= g->w && s->height * scale <= g->h) g->num = scale;
     }

@@ -5,6 +5,7 @@
 #include "multitini_iigs_interface.h"
 #include "multitini_amiga_interface.h"
 #include "multitini_spectrum_interface.h"
+#include "multitini_atari_xt_interface.h"
 #include "multitini_nes_interface.h"
 #include "multitini_regs.h"
 #include "multitini_vectrex_interface.h"

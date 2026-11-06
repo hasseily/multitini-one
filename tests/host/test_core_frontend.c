@@ -7,6 +7,7 @@
 #include "multitini_genesis_interface.h"
 #include "multitini_iigs_interface.h"
 #include "multitini_spectrum_interface.h"
+#include "multitini_atari_xt_interface.h"
 #include "multitini_regs.h"
 
 #include <stdio.h>
@@ -659,6 +660,32 @@ static void test_spectrum_profile(void)
           "Spectrum browser displays only its TAP format and keeps nested paths");
 }
 
+static void test_atari_xt_profile(void)
+{
+    mt_core_frontend_t frontend;
+    mt_core_frontend_state_t state = {.core_id = MT_ATARI_XT_CORE_ID, .services_ready = true};
+    mt_menu_view_t view = {0};
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(view.media_item_count == 3U && view.media_items[0].enabled &&
+          view.media_items[0].action == MT_MENU_ACTION_ATARI_XT_RELOAD &&
+          !view.media_items[1].enabled && !view.media_items[2].enabled,
+          "Atari exposes system ROM recovery before cartridge actions");
+    state.atari_xt_roms_loaded = true;
+    state.atari_xt_cart_uncertain = true;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(view.media_items[1].enabled && view.media_items[2].enabled &&
+          view.media_items[2].action == MT_MENU_ACTION_DETACH_CARTRIDGE,
+          "Atari enables cartridge replacement and eject after a partial write");
+    check(mt_core_frontend_browser_folders(MT_ATARI_XT_CORE_ID, MT_MENU_BROWSER_CARTRIDGE) &&
+          mt_core_frontend_accepts_content(MT_ATARI_XT_CORE_ID, MT_MENU_BROWSER_CARTRIDGE,
+                                          MT_CONTENT_ATARI_XT_CART) &&
+          mt_core_frontend_accepts_content(MT_ATARI_XT_CORE_ID, MT_MENU_BROWSER_CARTRIDGE,
+                                          MT_CONTENT_ATARI_XT_RAW_CART) &&
+          !mt_core_frontend_accepts_content(MT_ATARI_XT_CORE_ID, MT_MENU_BROWSER_CARTRIDGE,
+                                           MT_CONTENT_NES_CART),
+          "Atari cartridge browser filters formats and keeps nested paths");
+}
+
 int main(void)
 {
     test_profile_lifecycle();
@@ -673,6 +700,7 @@ int main(void)
     test_iigs_card_speed();
     test_amiga_resolution();
     test_spectrum_profile();
+    test_atari_xt_profile();
     puts("Core front-end profile tests passed");
     return 0;
 }

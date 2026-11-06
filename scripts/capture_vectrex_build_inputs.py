@@ -216,6 +216,17 @@ def inputs(machine: str, *, amiga_ap68040: bool = False) -> list[Path]:
         paths.update((ROOT / "tests").glob("test_zx_spectrum*.py"))
         paths.update((ROOT / "hdl/sim").glob("*zx_spectrum*"))
         paths.update((ROOT / "docs").glob("ZX_SPECTRUM*.md"))
+    if machine == "ATARI_XT":
+        paths.update(path for path in (ROOT / "third_party/atari-xt").rglob("*")
+                     if path.is_file() and "__pycache__" not in path.parts)
+        paths.update(ROOT / name for name in (
+            "scripts/build_phos1.py", "scripts/test_nes_video.py", "scripts/test_display_geometry.py",
+            "hdl/sim/tb_display_geometry.sv", "hdl/sim/tb_nes_video_bridge.sv",
+            "hdl/sim/tb_nes_video_normalizer.sv", "hdl/sim/xilinx_primitives.sv", "hdl/sim/video_fifo_model.sv"))
+        paths.update((ROOT / "scripts").glob("*atari_xt*.py"))
+        paths.update((ROOT / "tests").glob("test_atari_xt*.py"))
+        paths.update((ROOT / "hdl/sim").glob("*atari_xt*"))
+        paths.update((ROOT / "docs").glob("ATARI_XT*.md"))
     section = "common"
     for line in (ROOT / "hdl/hdl_sources.txt").read_text().splitlines():
         line = line.strip()
@@ -248,7 +259,7 @@ def archive_inputs(output: Path, record: dict) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--machine", choices=("C64", "GBC", "VECTREX", "GENESIS", "APPLE_IIGS", "NES", "AMIGA",
-                                               "ZX_SPECTRUM", "SUPERVISOR"))
+                                               "ZX_SPECTRUM", "ATARI_XT", "SUPERVISOR"))
     parser.add_argument("--c64-video-standard", choices=("PAL", "NTSC"), default="PAL")
     parser.add_argument("--c64-timing-policy", choices=("default", "dev8-over-0.050", "dev3-over-0.010"), default="default")
     parser.add_argument("--gbc-psram", action="store_true")

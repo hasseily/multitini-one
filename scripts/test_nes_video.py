@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Exercise the NES raster and the NES/Spectrum shared DDR video transport."""
+"""Exercise the NES raster and shared fixed-raster DDR video transport."""
 from pathlib import Path
 import hashlib
 import json
@@ -37,12 +37,16 @@ def main():
         return {p: hashlib.sha256((ROOT/p).read_bytes()).hexdigest() for p in tracked}
     before = hashes()
     checks = []
-    for name in ('normalizer', 'bridge', 'zx-spectrum-bridge'):
+    native_rasters = {'zx-spectrum-bridge': (344, 280), 'atari-xt-bridge': (384, 240)}
+    for name in ('normalizer', 'bridge', *native_rasters):
         directory = build / name
         directory.mkdir(parents=True, exist_ok=True)
         top = 'tb_nes_video_normalizer' if name == 'normalizer' else 'tb_nes_video_bridge'
         bench = ROOT / ('hdl/sim/' + top + '.sv')
-        parameters = ['-GWIDTH=344', '-GHEIGHT=280', '-GCOORD_BITS=12'] if name == 'zx-spectrum-bridge' else []
+        parameters = []
+        if name in native_rasters:
+            width, height = native_rasters[name]
+            parameters = [f'-GWIDTH={width}', f'-GHEIGHT={height}', '-GCOORD_BITS=12']
         obj = directory/'obj'
         executable = obj/(('V'+top)+('.exe' if os.name == 'nt' else ''))
         commands = [

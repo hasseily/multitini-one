@@ -18,6 +18,7 @@
 #include "multitini_iigs_hid_input.h"
 #include "multitini_amiga_hid_input.h"
 #include "multitini_spectrum_interface.h"
+#include "multitini_atari_xt_interface.h"
 #include "usb_config.h"
 #include "usbh_core.h"
 #include "usbh_hid.h"
@@ -289,6 +290,11 @@ static unsigned controller_player_count(void)
     return g_active_core_id == MT_GBC_CORE_ID || g_active_core_id == MT_IIGS_CORE_ID ? 1U : 2U;
 }
 
+static bool uses_pc_scancodes(uint32_t core_id)
+{
+    return core_id == MT_SPECTRUM_CORE_ID || core_id == MT_ATARI_XT_CORE_ID;
+}
+
 static void resolve_controller_players(void)
 {
     uint8_t occupied = 0U, explicit_owner[2] = {UINT8_MAX, UINT8_MAX};
@@ -325,7 +331,7 @@ static void resolve_controller_players(void)
         /* C64's default first controller uses its selected joystick port. */
         for (unsigned candidate = 0U; candidate < players; ++candidate) {
             unsigned player = candidate;
-            if (g_active_core_id != MT_SPECTRUM_CORE_ID &&
+            if (!uses_pc_scancodes(g_active_core_id) &&
                 g_active_core_id != MT_AMIGA_CORE_ID && g_active_core_id != MT_IIGS_CORE_ID && g_active_core_id != MT_GBC_CORE_ID && g_active_core_id != MT_GENESIS_CORE_ID && g_active_core_id != MT_NES_CORE_ID &&
                 g_active_core_id != MT_VECTREX_CORE_ID && g_c64_input.joystick_port == 2U)
                 player = 1U - candidate;
@@ -1873,11 +1879,11 @@ void usb_hid_service_set_active_core(uint32_t core_id)
     block_amiga_reset();
     g_core_ready = 0U;
     clear_relative_inputs();
-    /* Spectrum uses the shared Set 2 event path with PC key positions. */
-    if (core_id == MT_SPECTRUM_CORE_ID && g_active_core_id != MT_SPECTRUM_CORE_ID) {
+    /* These guests translate the shared Set 2 events from PC key positions. */
+    if (uses_pc_scancodes(core_id) && !uses_pc_scancodes(g_active_core_id)) {
         g_saved_c64_keyboard_layout = g_c64_input.keyboard_layout;
         g_c64_input.keyboard_layout = MT_C64_KEYBOARD_LAYOUT_PS2_PC;
-    } else if (core_id != MT_SPECTRUM_CORE_ID && g_active_core_id == MT_SPECTRUM_CORE_ID) {
+    } else if (!uses_pc_scancodes(core_id) && uses_pc_scancodes(g_active_core_id)) {
         g_c64_input.keyboard_layout = g_saved_c64_keyboard_layout;
     }
     g_active_core_id = core_id;
@@ -2008,7 +2014,7 @@ uint8_t usb_hid_service_joystick_port(void)
 
 int usb_hid_service_set_symbolic_keyboard(bool enabled)
 {
-    if (g_active_core_id == MT_SPECTRUM_CORE_ID) return -1;
+    if (uses_pc_scancodes(g_active_core_id)) return -1;
     return mt_c64_hid_set_keyboard_layout(
         &g_c64_input,
         enabled ? MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC

@@ -115,8 +115,13 @@ switch -- $machine {
         set c64_video_standard "N/A"
         set active_machine 8
     }
+    ATARI_XT {
+        set c64_clock_mhz 100.000000
+        set c64_video_standard "N/A"
+        set active_machine 9
+    }
     default {
-        error "MULTITINI_MACHINE must be SUPERVISOR, C64, GBC, VECTREX, GENESIS, APPLE_IIGS, NES, AMIGA, or ZX_SPECTRUM"
+        error "MULTITINI_MACHINE must be SUPERVISOR, C64, GBC, VECTREX, GENESIS, APPLE_IIGS, NES, AMIGA, ZX_SPECTRUM, or ATARI_XT"
     }
 }
 
@@ -161,7 +166,7 @@ proc add_manifest_sources {repo_root machine amiga_ap68040} {
         }
         if {[regexp {^\[([A-Za-z0-9_]+)\]$} $relative -> section]} {
             set active_section [string toupper $section]
-            if {$active_section ni {COMMON C64 GBC VECTREX GENESIS APPLE_IIGS NES AMIGA AMIGA_AP68040 ZX_SPECTRUM}} {
+            if {$active_section ni {COMMON C64 GBC VECTREX GENESIS APPLE_IIGS NES AMIGA AMIGA_AP68040 ZX_SPECTRUM ATARI_XT}} {
                 error "Unknown source-manifest section: $relative"
             }
             continue
@@ -354,7 +359,7 @@ if {$machine eq "VECTREX"} {
     # input-delay constraints. Do not inherit the tunable PHY's false paths.
     set_property USED_IN_IMPLEMENTATION false [get_files $psram_timing_file]
 }
-if {$machine in {SUPERVISOR APPLE_IIGS AMIGA ZX_SPECTRUM} ||
+if {$machine in {SUPERVISOR APPLE_IIGS AMIGA ZX_SPECTRUM ATARI_XT} ||
     ($machine eq "GBC" && !$enable_gbc_psram)} {
     set psram_iob_file [require_file \
         [file join $repo_root hdl board multitini_psram_iob.xdc]]
@@ -559,6 +564,11 @@ if {$machine eq "C64"} {
     set_property -dict [list CONFIG.OVERRIDE_MMCM {true} \
         CONFIG.MMCM_DIVCLK_DIVIDE {5} CONFIG.MMCM_CLKFBOUT_MULT_F {28} \
         CONFIG.MMCM_CLKOUT0_DIVIDE_F {15}] $c64_wiz
+} elseif {$machine eq "ATARI_XT"} {
+    # 150 * 20 / 3 / 10 supplies the 100 MHz Atari-XT single-clock core.
+    set_property -dict [list CONFIG.OVERRIDE_MMCM {true} \
+        CONFIG.MMCM_DIVCLK_DIVIDE {3} CONFIG.MMCM_CLKFBOUT_MULT_F {20} \
+        CONFIG.MMCM_CLKOUT0_DIVIDE_F {10}] $c64_wiz
 } elseif {$machine eq "AMIGA"} {
     # The one fractional output directly supplies PAL 28 MHz; the wrapper
     # gates a sibling copy rather than dividing a fabric flip-flop clock.
@@ -638,7 +648,7 @@ connect_bd_net [get_bd_pins $video_reset/peripheral_aresetn] $video_aresetn
 
 connect_bd_net [get_bd_pins $c64_wiz/clk_out1] $c64_clk \
     [get_bd_pins $c64_reset/slowest_sync_clk]
-# HP2's ACLK is FCLK0 for the Genesis, NES and Spectrum source rings, and in
+# HP2's ACLK is FCLK0 for the Genesis, NES, Spectrum and Atari source rings, and in
 # every image without an HP2 client. C64 REU and IIgs CPU RAM clock HP2 from the
 # machine clock so their AXI masters need no clock crossing. Either way the
 # firmware drains HP2 before PCAP with the core held in reset: the machine

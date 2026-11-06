@@ -29,7 +29,9 @@ typedef enum {
     MT_CONTENT_C64_REU,
     MT_CONTENT_AMIGA_ADF,
     MT_CONTENT_AMIGA_HDF,
-    MT_CONTENT_SPECTRUM_TAP
+    MT_CONTENT_SPECTRUM_TAP,
+    MT_CONTENT_ATARI_XT_CART,
+    MT_CONTENT_ATARI_XT_RAW_CART
 } mt_content_type_t;
 
 typedef enum {
@@ -63,7 +65,7 @@ typedef struct {
 } mt_content_info_t;
 
 mt_content_type_t mt_content_classify(const char *path);
-/* .bin remains ambiguous globally; machine browsers resolve its meaning. */
+/* Ambiguous extensions are resolved by the machine browser. */
 mt_content_type_t mt_content_classify_for_core(uint32_t core_id, const char *path);
 bool mt_content_supported_first_release(mt_content_type_t type);
 bool mt_content_may_write_first_release(mt_content_type_t type);

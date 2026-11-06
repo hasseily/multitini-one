@@ -41,6 +41,8 @@
 #include "multitini_vectrex_interface.h"
 #include "multitini_spectrum_interface.h"
 #include "spectrum_content_service.h"
+#include "multitini_atari_xt_interface.h"
+#include "atari_xt_content_service.h"
 #include "multitini_version.h"
 #include "multitini_video_effects_frontend.h"
 #include "multitini_xmodem.h"
@@ -159,6 +161,7 @@ static bool nes_save_fault_displayed;
 static bool iigs_service_initialized;
 static bool amiga_service_initialized;
 static const char *spectrum_boot_error;
+static const char *atari_xt_boot_error;
 static bool amiga_fault_displayed;
 static bool iigs_fault_displayed;
 static unsigned iigs_browser_drive;
@@ -464,7 +467,8 @@ static bool core_requires_ddr_drain(void)
 {
     const uint32_t core = shell_read(MT_REG_CORE_ID);
     if (core == MT_GENESIS_CORE_ID || core == MT_NES_CORE_ID || core == MT_IIGS_CORE_ID ||
-        core == MT_AMIGA_CORE_ID || core == MT_SPECTRUM_CORE_ID)
+        core == MT_AMIGA_CORE_ID || core == MT_SPECTRUM_CORE_ID ||
+        core == MT_ATARI_XT_CORE_ID)
         return true;
     if (core != MT_C64_CORE_ID) return false;
     const uint32_t abi = shell_read(MT_REG_ABI_VERSION);
@@ -945,6 +949,7 @@ static int set_core_reset_request(bool asserted)
                                   shell_read(MT_REG_CORE_ID) == MT_NES_CORE_ID ||
                                   shell_read(MT_REG_CORE_ID) == MT_IIGS_CORE_ID ||
                                   shell_read(MT_REG_CORE_ID) == MT_SPECTRUM_CORE_ID ||
+                                  shell_read(MT_REG_CORE_ID) == MT_ATARI_XT_CORE_ID ||
                                   shell_read(MT_REG_CORE_ID) == MT_AMIGA_CORE_ID))
         usb_hid_service_set_core_ready(false);
     if (result != 0 && asserted && !currently_asserted &&
@@ -3396,6 +3401,13 @@ static mt_menu_view_t supervisor_menu_view(void)
         state.spectrum_ready = (shell_read(MT_REG_STATUS) & MT_STATUS_CORE_READY) != 0U;
         state.spectrum_boot_error = spectrum_boot_error;
         state.spectrum_tape_name = spectrum_content_tape_name();
+    } else if (supervisor.has_active && state.core_id == MT_ATARI_XT_CORE_ID) {
+        state.services_ready = true;
+        state.atari_xt_roms_loaded = atari_xt_content_roms_loaded();
+        state.atari_xt_boot_error = atari_xt_boot_error;
+        state.atari_xt_cart_uncertain = atari_xt_content_cart_uncertain();
+        state.cartridge_name = atari_xt_content_cart_name();
+        state.cartridge_attached = state.cartridge_name != NULL;
     } else if (supervisor.has_active &&
                supervisor.active.package.core_id == MT_GBC_CORE_ID &&
                gameboy_service_initialized) {
@@ -4127,6 +4139,24 @@ static const char *spectrum_boot_with_input(const mt_core_selection_t *selection
     return spectrum_boot_error;
 }
 
+static void atari_xt_refresh_av(void)
+{
+    const bool ready = (shell_read(MT_REG_STATUS) & MT_STATUS_CORE_READY) != 0U &&
+        (shell_read(MT_REG_CONTROL) & MT_CONTROL_CORE_RESET_REQUEST) == 0U;
+    usb_hid_service_set_core_ready(ready);
+    if (dac_ready) set_audio(!ready, false);
+    set_video_test(!ready);
+}
+
+static const char *atari_xt_boot_with_input(const mt_core_selection_t *selection)
+{
+    usb_hid_service_set_core_ready(false);
+    atari_xt_boot_error = atari_xt_content_boot(&shell_link, selection->directory,
+                                                iigs_transfer_progress);
+    atari_xt_refresh_av();
+    return atari_xt_boot_error;
+}
+
 static int supervisor_activate(void *context,
                                const mt_core_selection_t *selection)
 {
@@ -4134,6 +4164,13 @@ static int supervisor_activate(void *context,
     bool request_fast_roms;
     (void)context;
     usb_hid_service_set_active_core(selection->package.core_id);
+    if (selection->package.core_id == MT_ATARI_XT_CORE_ID) {
+        atari_xt_content_reset_selection();
+        const char *const error = atari_xt_boot_with_input(selection);
+        last_settings_restore_ok = restore_selection_settings(selection);
+        if (error != NULL) xil_printf("[Atari 800XL] %s\r\n", error);
+        return 0;
+    }
     if (selection->package.core_id == MT_SPECTRUM_CORE_ID) {
         spectrum_content_reset_selection();
         const char *const error = spectrum_boot_with_input(selection);
@@ -4393,6 +4430,7 @@ static bool supervisor_controller_config(void *context, uint32_t core_id, uint8_
         &persistent_settings, core_id, &device->identity);
     if (saved != NULL) { *config = saved->config; return true; }
     if (core_id != MT_SUPERVISOR_CORE_ID && core_id != MT_SPECTRUM_CORE_ID &&
+        core_id != MT_ATARI_XT_CORE_ID &&
         (persistent_settings.legacy_gamepad_pending & (1U << slot)) != 0U) {
         /* Seed the legacy core set before consuming the old global slot map.
          * Keep migration bounded to fit nine slots in the existing wire format. */
@@ -5068,6 +5106,7 @@ static bool menu_action_needs_core_progress(mt_menu_action_t action)
     case MT_MENU_ACTION_EJECT_AMIGA_DRIVE:
     case MT_MENU_ACTION_AMIGA_RELOAD:
     case MT_MENU_ACTION_SPECTRUM_RELOAD:
+    case MT_MENU_ACTION_ATARI_XT_RELOAD:
     case MT_MENU_ACTION_AMIGA_RETRY:
     case MT_MENU_ACTION_AMIGA_DISPLAY:
     case MT_MENU_ACTION_IIGS_PRAM:
@@ -5993,6 +6032,12 @@ static void handle_menu_action(mt_menu_action_t action)
         const char *const error = spectrum_boot_with_input(&supervisor.active);
         if (error != NULL) set_supervisor_error(error);
         else set_supervisor_status("Spectrum ROM loaded");
+    } else if (action.kind == MT_MENU_ACTION_ATARI_XT_RELOAD) {
+        if (!supervisor.has_active || supervisor.active.package.core_id != MT_ATARI_XT_CORE_ID)
+            return;
+        const char *const error = atari_xt_boot_with_input(&supervisor.active);
+        if (error != NULL) set_supervisor_error(error);
+        else set_supervisor_status("Atari system ROMs loaded");
     } else if(action.kind==MT_MENU_ACTION_AMIGA_RELOAD || action.kind==MT_MENU_ACTION_AMIGA_RETRY) {
         usb_hid_service_set_core_ready(false);
         const int result=action.kind==MT_MENU_ACTION_AMIGA_RELOAD ? amiga_content_service_boot():amiga_content_service_retry();
@@ -6128,6 +6173,14 @@ static void handle_menu_action(mt_menu_action_t action)
         }
         if (!usb_hid_service_validate_controller_configs(configs)) {
             set_supervisor_error("Player assignment conflict; choose another player");
+            return;
+        }
+        if (controller_edit_core == MT_ATARI_XT_CORE_ID) {
+            /* Older firmware rejects unfamiliar controller profiles in settings.bin. */
+            (void)usb_hid_service_set_controller_configs(configs);
+            mt_menu_gamepad_saved(&supervisor_menu);
+            supervisor_menu.gamepad_edit = false;
+            set_supervisor_status("Atari controller mappings applied for this session");
             return;
         }
         settings_before_update = persistent_settings;
@@ -6363,7 +6416,25 @@ static void handle_menu_action(mt_menu_action_t action)
             set_supervisor_error("Content load could not start");
             return;
         }
-        if (shell_read(MT_REG_CORE_ID) == MT_SPECTRUM_CORE_ID) {
+        if (shell_read(MT_REG_CORE_ID) == MT_ATARI_XT_CORE_ID) {
+            char name[MT_MEDIA_BROWSER_PATH_MAX + 1U];
+            if (!supervisor.has_active ||
+                (supervisor_menu_files[action.file_index].cookie & MT_MENU_FILE_DIRECTORY) != 0U ||
+                !mt_media_browser_resolve(&vectrex_media_browser,
+                    supervisor_menu_files[action.file_index].name, name, sizeof(name))) {
+                set_supervisor_error("Invalid Atari cartridge path");
+                return;
+            }
+            usb_hid_service_set_core_ready(false);
+            const char *const error = atari_xt_content_insert(&shell_link,
+                supervisor.active.package.content_root, name, iigs_transfer_progress);
+            atari_xt_refresh_av();
+            if (error != NULL) set_supervisor_error(error);
+            else {
+                mt_menu_close_browser(&supervisor_menu);
+                set_supervisor_status("Atari cartridge inserted");
+            }
+        } else if (shell_read(MT_REG_CORE_ID) == MT_SPECTRUM_CORE_ID) {
             char name[MT_MEDIA_BROWSER_PATH_MAX + 1U];
             if (!supervisor.has_active ||
                 (supervisor_menu_files[action.file_index].cookie & MT_MENU_FILE_DIRECTORY) != 0U ||
@@ -6518,7 +6589,13 @@ static void handle_menu_action(mt_menu_action_t action)
         else
             set_supervisor_status("Drive 8 ejected");
     } else if (action.kind == MT_MENU_ACTION_DETACH_CARTRIDGE) {
-        if (shell_read(MT_REG_CORE_ID) == MT_VECTREX_CORE_ID) {
+        if (shell_read(MT_REG_CORE_ID) == MT_ATARI_XT_CORE_ID) {
+            usb_hid_service_set_core_ready(false);
+            const char *const error = atari_xt_content_eject(&shell_link, iigs_transfer_progress);
+            atari_xt_refresh_av();
+            if (error != NULL) set_supervisor_error(error);
+            else set_supervisor_status("Atari cartridge ejected");
+        } else if (shell_read(MT_REG_CORE_ID) == MT_VECTREX_CORE_ID) {
             usb_hid_service_set_core_ready(false);
             const mt_vectrex_content_result_t result = vectrex_content_service_detach();
             if (result.status == MT_VECTREX_CONTENT_OK) {
@@ -6870,6 +6947,14 @@ static void handle_menu_action(mt_menu_action_t action)
     } else if (action.kind == MT_MENU_ACTION_RESET_CORE) {
         if (!supervisor.has_active) {
             set_supervisor_warning("No active core");
+            return;
+        }
+        if (supervisor.active.package.core_id == MT_ATARI_XT_CORE_ID) {
+            usb_hid_service_set_core_ready(false);
+            const char *const error = atari_xt_content_restart(&shell_link, iigs_transfer_progress);
+            atari_xt_refresh_av();
+            if (error != NULL) set_supervisor_error(error);
+            else set_supervisor_status("Atari restarted");
             return;
         }
         if (supervisor.active.package.core_id == MT_VECTREX_CORE_ID &&

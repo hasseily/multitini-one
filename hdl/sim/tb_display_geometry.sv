@@ -51,7 +51,7 @@ module display_geometry_case #(
                 3:begin numerator=m==0 ? 3 : 1;denominator=m==0 ? 2 : 1;end
                 4,6:numerator=(m==0 || m==5) ? 4 : 3;
                 5,7:numerator=(m==0 || m==3 || m==5) && WIDTH*2<=aw && HEIGHT*2<=ah ? 2 : 1;
-                8:begin
+                8,9:begin
                     numerator=aw/WIDTH<ah/HEIGHT ? aw/WIDTH : ah/HEIGHT;
                     if(numerator>4)numerator=4;
                 end
@@ -270,13 +270,14 @@ endmodule
 module tb_display_geometry;
     localparam integer MACHINES=8, DIMENSIONS=18;
     wire [MACHINES*DIMENSIONS-1:0] done;
-    wire pair_done,other_pair_done,default_pair_done,wide_done,virtual_done,spectrum_done;
+    wire pair_done,other_pair_done,default_pair_done,wide_done,virtual_done,spectrum_done,atari_done;
     display_geometry_pair_case pair_check(.done(pair_done));
     display_geometry_pair_case #(.MACHINE(5)) other_pair_check(.done(other_pair_done));
     display_geometry_pair_case #(.WIDE_WIDTH(640),.WIDE_HEIGHT(512)) default_pair_check(.done(default_pair_done));
     display_geometry_wide_case wide_check(.done(wide_done));
     display_geometry_virtual_case virtual_check(.done(virtual_done));
     display_geometry_case #(.MACHINE(8),.WIDTH(344),.HEIGHT(280)) spectrum_check(.done(spectrum_done));
+    display_geometry_case #(.MACHINE(9),.WIDTH(384),.HEIGHT(240)) atari_check(.done(atari_done));
     for(genvar machine=0;machine<MACHINES;machine=machine+1)begin:machines
         for(genvar pair=0;pair<DIMENSIONS;pair=pair+1)begin:dimensions
             // Actual shell/default geometries, then zero, odd-size, subtract
@@ -294,9 +295,10 @@ module tb_display_geometry;
         end
     end
     initial begin
-        wait(&done && pair_done && other_pair_done && default_pair_done && wide_done && virtual_done && spectrum_done);
+        wait(&done && pair_done && other_pair_done && default_pair_done && wide_done && virtual_done && spectrum_done && atari_done);
         $display("PASS display geometry: %0d cases; 16 mode IDs, 8 machines, 18 dimension pairs",MACHINES*DIMENSIONS*16);
         $display("PASS Spectrum geometry: 344x280 raster, 16 mode IDs, centered Auto and manual crop");
+        $display("PASS Atari-XT geometry: 384x240 raster, 16 mode IDs, centered Auto and manual crop");
         $finish;
     end
     initial begin #1000;$fatal(1,"display geometry timeout");end

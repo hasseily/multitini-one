@@ -45,13 +45,15 @@ const char *spectrum_content_boot(mt_core_link_t *link, const char *core_directo
 
     const uint32_t reset_args[4] = {1U, 0U, 0U, 0U};
     const uint32_t run_args[4] = {0U, 0U, 0U, 0U};
+    mt_command_response_t response;
     mt_link_result_t result = mt_core_link_command(link, MT_COMMAND_CORE_RESET, reset_args,
-        POLLS, progress, NULL, NULL);
+        POLLS, progress, NULL, &response);
     if (result != MT_LINK_OK) return mt_link_result_name(result);
     link->write32(link->context, MT_REG_ERROR, MT_ERROR_CORE_LOAD);
     result = mt_core_link_stream(link, MT_LOAD_SPECTRUM_ROM, image, rom.size, POLLS, progress, NULL);
     if (result != MT_LINK_OK) return mt_link_result_name(result);
-    result = mt_core_link_command(link, MT_COMMAND_CORE_RESET, run_args, POLLS, progress, NULL, NULL);
+    result = mt_core_link_command(link, MT_COMMAND_CORE_RESET, run_args, POLLS, progress, NULL,
+        &response);
     if (result != MT_LINK_OK) return mt_link_result_name(result);
 
     for (unsigned poll = 0; poll < POLLS; ++poll) {

@@ -60,7 +60,7 @@ namespace eval multitini_cdc_gate {
     set machines {}
     foreach setting $::multitini_signoff_generics {
         if {[string match {ACTIVE_MACHINE=*} $setting]} {
-            if {![regexp {^ACTIVE_MACHINE=([0-8])$} $setting -> machine]} {
+            if {![regexp {^ACTIVE_MACHINE=([0-9])$} $setting -> machine]} {
                 error "Unreviewed ACTIVE_MACHINE build generic: $setting"
             }
             lappend machines $machine
@@ -76,7 +76,7 @@ namespace eval multitini_cdc_gate {
     # must retain both directions; a partially removed FIFO is never accepted.
     # These images capture native source frames across the machine to
     # control-clock boundary before the common effects pipeline.
-    set expected_fifo_groups [expr {$active_machine in {4 5 6 7 8} ? 4 : 2}]
+    set expected_fifo_groups [expr {$active_machine in {4 5 6 7 8 9} ? 4 : 2}]
     if {$fifo_groups != $expected_fifo_groups &&
         !($fifo_groups == 0 && $active_machine == 2)} {
         error "Capture FIFO Gray crossing census changed: $fifo_groups groups"

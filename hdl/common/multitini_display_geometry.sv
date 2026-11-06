@@ -39,7 +39,7 @@ module multitini_display_geometry #(
         begin
             selected_timing=video_mode(id);
             denominator=1;
-            if(MACHINE==8)begin
+            if(MACHINE==8 || MACHINE==9)begin
                 numerator=1;
                 for(integer candidate=2;candidate<=4;candidate=candidate+1)
                     if(WIDTH*candidate<=selected_timing[$bits(video_mode_t)-1 -: 12] &&
@@ -55,7 +55,7 @@ module multitini_display_geometry #(
             else if(MACHINE==1)numerator=(id==1 || id==2 || id==4) ? 5 : 6;
             else numerator=id==0 ? 4 : (id==1 || id==2 || id==4) ? 2 : 3;
             if(MACHINE==3)begin width=id==0 ? WIDTH*3/2 : WIDTH;height=id==0 ? HEIGHT*3/2 : HEIGHT;end
-            else if(MACHINE==5 || MACHINE==7 || MACHINE==8)begin
+            else if(MACHINE==5 || MACHINE==7 || MACHINE==8 || MACHINE==9)begin
                 width=12'(WIDTH*numerator);
                 height=12'(HEIGHT*numerator);
             end

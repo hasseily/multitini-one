@@ -17,7 +17,7 @@ class BuildInputTests(unittest.TestCase):
         entries = []
         sections = {name: [] for name in
                     ("common", "c64", "gbc", "vectrex", "genesis", "apple_iigs", "nes",
-                     "amiga", "amiga_ap68040", "zx_spectrum")}
+                     "amiga", "amiga_ap68040", "zx_spectrum", "atari_xt")}
         languages = {}
         active_section = "common"
         manifest = ROOT / "hdl" / "hdl_sources.txt"
@@ -360,7 +360,7 @@ class BuildInputTests(unittest.TestCase):
             'set machine "SUPERVISOR"',
             "set active_machine 2",
             "MULTITINI_C64_VIDEO_STANDARD must be PAL or NTSC",
-            "MULTITINI_MACHINE must be SUPERVISOR, C64, GBC, VECTREX, GENESIS, APPLE_IIGS, NES, AMIGA, or ZX_SPECTRUM",
+            "MULTITINI_MACHINE must be SUPERVISOR, C64, GBC, VECTREX, GENESIS, APPLE_IIGS, NES, AMIGA, ZX_SPECTRUM, or ATARI_XT",
             "MULTITINI_GENESIS_PAL must be 0 or 1",
             "GENESIS_PAL_MODE=1'b${genesis_pal_mode}",
             "CONFIG.PCW_USE_S_AXI_HP2 {1}",
