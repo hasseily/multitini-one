@@ -2,7 +2,7 @@
   "schema_version": 1,
   "abi": {
     "major": 0,
-    "minor": 27
+    "minor": 28
   },
   "magic": "0x4D543031",
   "shell_id": "0x4D544F4E",
@@ -685,6 +685,27 @@
       "offset": "0x1D8",
       "access": "ro",
       "reset": "0x0000003F"
+    },
+    {
+      "name": "ATARI_SIO_STATUS",
+      "offset": "0x1E0",
+      "access": "rw1c",
+      "reset": "0x00000000",
+      "description": "Atari SIO transport signature and queue status. Atari images return 0x53490008 at reset. Clear TX_FAULT with bit 2 in byte lane 0."
+    },
+    {
+      "name": "ATARI_SIO_RX",
+      "offset": "0x1E4",
+      "access": "ro",
+      "reset": "0x00000000",
+      "description": "One event popped per read. Valid bit 31, epoch bits 17:10, kind bits 9:8, byte bits 7:0. Empty reads return zero."
+    },
+    {
+      "name": "ATARI_SIO_TX",
+      "offset": "0x1E8",
+      "access": "wo",
+      "reset": "0x00000000",
+      "description": "Whole-word reply push when TX_READY. Reserved bits 31:17 zero, spacing bit 16, epoch bits 15:8, byte bits 7:0."
     }
   ],
   "bitfields": {
@@ -728,6 +749,18 @@
       "MOUNTED": 0,
       "DIRTY": 1,
       "EJECT_PENDING": 2
+    },
+    "ATARI_SIO_STATUS": {
+      "RX_VALID": 0,
+      "TX_READY": 1,
+      "TX_FAULT": 2,
+      "RESET_ACTIVE": 3
+    },
+    "ATARI_SIO_RX": {
+      "VALID": 31
+    },
+    "ATARI_SIO_TX": {
+      "GAP": 16
     },
     "UI_COMMIT": {
       "VISIBLE": 0,
@@ -1034,6 +1067,15 @@
     "C64_SID_STATUS_REJECT_REASON_MASK": "0x00007C00",
     "C64_SID_STATUS_REJECT_INDEX_MASK": "0x003F0000",
     "C64_UCI315_MIN_ABI_MINOR": 27,
+    "ATARI_SIO_STATUS_SIGNATURE": "0x53490000",
+    "ATARI_SIO_STATUS_SIGNATURE_MASK": "0xFFFF0000",
+    "ATARI_SIO_RX_KIND_SHIFT": 8,
+    "ATARI_SIO_RX_EPOCH_SHIFT": 10,
+    "ATARI_SIO_TX_EPOCH_SHIFT": 8,
+    "ATARI_SIO_RX_KIND_TX": 0,
+    "ATARI_SIO_RX_KIND_ASSERT": 1,
+    "ATARI_SIO_RX_KIND_RELEASE": 2,
+    "ATARI_SIO_RX_KIND_RESYNC": 3,
     "C64_EXPANSION_CAPS_PALETTE": "0x8000",
     "C64_EXPANSION_CAPS_UCI_UNLOCK": "0x10000",
     "C64_EXPANSION_CAPS_DRIVE_POWER": "0x20000",

@@ -91,6 +91,10 @@ dfx_runtime.txt
 *.CRT
 *.car
 *.CAR
+*.atr
+*.ATR
+*.xex
+*.XEX
 *.prg
 *.PRG
 *.reu

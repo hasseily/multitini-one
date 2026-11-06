@@ -649,6 +649,11 @@ module multitini_one_top #(
     wire display_locked,display_frame_tick;
     wire display_wr_select=reg_wr_addr>=16'h01d0 && reg_wr_addr<16'h01dc;
     wire display_rd_select=reg_rd_addr>=16'h01d0 && reg_rd_addr<16'h01dc;
+    wire atari_sio_wr_select=reg_wr_addr=={4'd0,MT_REG_ATARI_SIO_STATUS} ||
+        reg_wr_addr=={4'd0,MT_REG_ATARI_SIO_TX};
+    wire atari_sio_rd_select=reg_rd_addr=={4'd0,MT_REG_ATARI_SIO_STATUS} ||
+        reg_rd_addr=={4'd0,MT_REG_ATARI_SIO_RX} || reg_rd_addr=={4'd0,MT_REG_ATARI_SIO_TX};
+    wire [31:0] atari_sio_rdata;
     wire [31:0] display_rd_data=reg_rd_addr==16'h01d0 ? {25'd0,display_requested_multiplier,display_requested_mode} :
         reg_rd_addr==16'h01d4 ? {21'd0,display_hold,(display_error || display_bad_write),(display_busy || display_request),1'b0,display_active_multiplier,display_active_mode} :
         reg_rd_addr==16'h01d8 ? 32'h0000003f : 0;
@@ -897,8 +902,10 @@ module multitini_one_top #(
     );
 
     always_comb begin
-        control_wr_en = reg_wr_en && reg_wr_addr < 16'h1000 && !framebuffer_wr_select && !display_wr_select;
-        control_rd_en = reg_rd_en && reg_rd_addr < 16'h1000 && !framebuffer_rd_select && !display_rd_select;
+        control_wr_en = reg_wr_en && reg_wr_addr < 16'h1000 && !framebuffer_wr_select &&
+            !display_wr_select && !atari_sio_wr_select;
+        control_rd_en = reg_rd_en && reg_rd_addr < 16'h1000 && !framebuffer_rd_select &&
+            !display_rd_select && !atari_sio_rd_select;
         ui_vram_wr_en = reg_wr_en &&
             ((reg_wr_addr >= MT_UI_VRAM_BANK0_OFFSET &&
               reg_wr_addr < MT_UI_VRAM_BANK0_OFFSET + MT_UI_VRAM_BANK_BYTES) ||
@@ -911,6 +918,7 @@ module multitini_one_top #(
               reg_wr_addr < MT_UI_LEGACY_VRAM_BANK1_OFFSET +
                             MT_UI_LEGACY_VRAM_BANK_BYTES));
         reg_rd_data = amiga_host_rd_select ? amiga_host_status : amiga_block_rd_select ? amiga_block_rdata : uci_buffer_rd_select ? uci_buffer_data : display_rd_select ? display_rd_data : framebuffer_rd_select ? framebuffer_rd_data :
+                      atari_sio_rd_select ? atari_sio_rdata :
                       reg_rd_addr < 16'h1000 ? control_rd_data : 32'd0;
         // Firmware holds the machine reset before PCAP. Its shared DMA
         // quiescence read also drains autonomous source rings, IIgs RAM and
@@ -2309,6 +2317,9 @@ module multitini_one_top #(
                     .audio_l(c64_audio_l),.audio_r(c64_audio_r),.audio_valid(c64_audio_valid));
             end else begin : g_atari_xt
                 assign c64_core_id=32'h41383030;
+                wire sio_event_valid,sio_event_ready,sio_reply_valid,sio_reply_ready,sio_reset;
+                wire [17:0] sio_event_data;
+                wire [16:0] sio_reply_data;
                 (* DONT_TOUCH = "yes" *) multitini_atari_xt_adapter machine_adapter(
                     .core_clk(c64_clk),.reset(!c64_aresetn),
                     .core_reset_request(c64_core_reset_request),.pause_request(core_menu_pause),
@@ -2322,7 +2333,18 @@ module multitini_one_top #(
                     .ready(c64_ready),.load_error(c64_load_error),.rom_loaded(c64_rom_loaded),
                     .video_r(c64_video_r),.video_g(c64_video_g),.video_b(c64_video_b),
                     .video_x(native_x),.video_y(native_y),.video_valid(c64_video_valid),
-                    .audio_l(c64_audio_l),.audio_r(c64_audio_r),.audio_valid(c64_audio_valid));
+                    .audio_l(c64_audio_l),.audio_r(c64_audio_r),.audio_valid(c64_audio_valid),
+                    .sio_event_valid(sio_event_valid),.sio_event_data(sio_event_data),.sio_event_ready(sio_event_ready),
+                    .sio_reply_valid(sio_reply_valid),.sio_reply_data(sio_reply_data),.sio_reply_ready(sio_reply_ready),
+                    .sio_reset(sio_reset));
+                multitini_atari_sio_transport sio_transport(
+                    .control_clk(control_clk),.control_resetn(control_aresetn),
+                    .reg_wr_en(reg_wr_en && atari_sio_wr_select),.reg_rd_en(reg_rd_en && atari_sio_rd_select),
+                    .reg_wr_addr(reg_wr_addr[11:0]),.reg_rd_addr(reg_rd_addr[11:0]),
+                    .reg_wr_strb(reg_wr_strb),.reg_wr_data(reg_wr_data),.reg_rd_data(atari_sio_rdata),
+                    .core_clk(c64_clk),.core_resetn(c64_aresetn),.guest_reset(sio_reset),
+                    .event_valid(sio_event_valid),.event_data(sio_event_data),.event_ready(sio_event_ready),
+                    .reply_valid(sio_reply_valid),.reply_data(sio_reply_data),.reply_ready(sio_reply_ready));
             end
 
             multitini_fixed_raster_bridge #(.WIDTH(NATIVE_FRAME_WIDTH),.HEIGHT(NATIVE_FRAME_HEIGHT),
@@ -2436,6 +2458,9 @@ module multitini_one_top #(
         end
     endgenerate
 
+    generate if(ACTIVE_MACHINE!=9)begin : g_no_atari_sio
+        assign atari_sio_rdata=32'd0;
+    end endgenerate
     generate if(!NATIVE_SOURCE_DDR)begin : g_no_source_ddr
         assign genesis_source_quiescent=1'b1;
     end endgenerate

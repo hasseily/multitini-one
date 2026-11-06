@@ -662,6 +662,8 @@ static void build_spectrum(mt_core_frontend_t *frontend,
 static void build_atari_xt(mt_core_frontend_t *frontend,
                            const mt_core_frontend_state_t *state, mt_menu_view_t *view)
 {
+    const bool disk_enabled = state->atari_xt_sio_available && state->atari_xt_roms_loaded;
+    const bool mounted = state->atari_xt_disk_name != NULL;
     frontend->media_items[view->media_item_count++] = item("System ROMs",
         state->atari_xt_roms_loaded ? "Loaded" : "Load / retry...",
         state->atari_xt_boot_error != NULL ? state->atari_xt_boot_error :
@@ -678,6 +680,20 @@ static void build_atari_xt(mt_core_frontend_t *frontend,
         MT_MENU_ACTION_DETACH_CARTRIDGE, 0U,
         state->atari_xt_roms_loaded && (state->cartridge_attached || state->atari_xt_cart_uncertain),
         MT_UI_COLOR_BLUE);
+    frontend->media_items[view->media_item_count++] = item("Disk D1:",
+        mounted ? state->atari_xt_disk_name : "Choose ATR disk...",
+        state->atari_xt_sio_available ? "Mount a read-only ATR disk. Select Boot D1: to restart from it." :
+            "Update the Atari FPGA core to use ATR disks and XEX programs.",
+        MT_MENU_ACTION_BROWSE_DRIVE8, 0U, disk_enabled, MT_UI_COLOR_BLUE);
+    frontend->media_items[view->media_item_count++] = item("Boot D1:", NULL,
+        "Restart from the mounted disk and eject any inserted cartridge.",
+        MT_MENU_ACTION_ATARI_XT_BOOT_DISK, 0U, disk_enabled && mounted, MT_UI_COLOR_BLUE);
+    frontend->media_items[view->media_item_count++] = item("Eject D1:", NULL,
+        "Remove the mounted disk without restarting the Atari.",
+        MT_MENU_ACTION_EJECT_DRIVE8, 0U, disk_enabled && mounted, MT_UI_COLOR_BLUE);
+    frontend->media_items[view->media_item_count++] = item("Run XEX", "Choose executable...",
+        "Boot a read-only loader disk in D1: and eject any inserted cartridge.",
+        MT_MENU_ACTION_BROWSE_PROGRAM, 0U, disk_enabled, MT_UI_COLOR_BLUE);
     frontend->input_items[view->input_item_count++] = item("Keyboard", "USB keyboard",
         "F1 Start, F2 Select, F3 Option, F4 Help, F5 Break. F12 opens the Multitini menu.",
         MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
@@ -690,8 +706,8 @@ static const core_profile_t profiles[] = {
     {
         MT_ATARI_XT_CORE_ID, "Atari 800XL",
         "USB keyboard and two Atari joysticks. F12 opens the Multitini menu.",
-        {0U, 0U, 0U, CONTENT_MASK(MT_CONTENT_ATARI_XT_CART) |
-            CONTENT_MASK(MT_CONTENT_ATARI_XT_RAW_CART), 0U},
+        {0U, CONTENT_MASK(MT_CONTENT_ATARI_XT_ATR), 0U, CONTENT_MASK(MT_CONTENT_ATARI_XT_CART) |
+            CONTENT_MASK(MT_CONTENT_ATARI_XT_RAW_CART), CONTENT_MASK(MT_CONTENT_ATARI_XT_XEX)},
         false, build_atari_xt
     },
     {

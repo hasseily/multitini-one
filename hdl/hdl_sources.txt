@@ -298,18 +298,20 @@ core/zx_spectrum/multitini_zx_spectrum_adapter.sv
 ../third_party/atari-xt/upstream/hdl/antic_pm_dma.sv
 ../third_party/atari-xt/upstream/hdl/antic_emit_win.sv
 ../third_party/atari-xt/upstream/hdl/a2_video.sv
-../third_party/atari-xt/upstream/hdl/pia_regs.sv
-../third_party/atari-xt/upstream/hdl/pokey.sv
 ../third_party/atari-xt/upstream/hdl/pokey_regs.sv
 ../third_party/atari-xt/upstream/hdl/pokey_audio.sv
 ../third_party/atari-xt/upstream/hdl/pokey_pot.sv
-../third_party/atari-xt/upstream/hdl/pokey_serial.sv
 ../third_party/atari-xt/upstream/hdl/xt6502f/xt6502f.sv
 ../third_party/atari-xt/upstream/hdl/palette_lut.sv
 ../third_party/atari-xt/upstream/hdl/palette/atari_ntsc.hex
+core/atari_xt/ports/pia_regs.sv
+core/atari_xt/ports/pokey_serial.sv
+core/atari_xt/ports/pokey.sv
 core/atari_xt/ports/a8_core.sv
 core/atari_xt/multitini_atari_xt_keyboard.sv
+core/atari_xt/multitini_atari_xt_sio.sv
 core/atari_xt/multitini_atari_xt_adapter.sv
+board/multitini_atari_sio_transport.sv
 
 [common]
 board/multitini_fixed_raster_normalizer.sv

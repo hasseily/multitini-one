@@ -126,6 +126,12 @@ module multitini_atari_xt_machine #(
     input  wire [7:0]  kbd_event_code,
     output wire [3:0]  audio_ch1, audio_ch2, audio_ch3, audio_ch4,
 
+    // Stock SIO byte transport. POKEY still owns TX and CPU IRQ timing.
+    output wire        sio_command_n, sio_tx_valid, sio_rx_mode, sio_rx_read,
+    output wire [7:0]  sio_tx_data,
+    input  wire        sio_rx_valid, sio_rx_busy, sio_rx_overrun,
+    input  wire [7:0]  sio_rx_data,
+
     // ---- the scanline out ------------------------------------------------
     output wire        lb_wr,
     output wire [7:0]  lb_color,
@@ -366,24 +372,27 @@ module multitini_atari_xt_machine #(
     // combinational read port, and a read STROBE so KBCODE's read-clears-latch
     // and RANDOM's advance see the access.
     //
-    // The wrapper supplies keyboard events and samples the four audio channels.
+    // The wrapper supplies keyboard and serial events and samples audio.
     wire pokey_re = c_rdy && c_rw && cs_pokey && (c_sub == 8'(SUB_DATA));
 
     // THE PIA ($D300-$D37F, mirrored to $D3FF).  It was written but never
     // wired: a8_core had no $D3xx decode at all, so every PIA read returned
     // open bus $FF -- which is exactly what pia_basic (wants $00) and pia_irq
     // (wants $3F) were reporting.  PORTA also sees the controller directions.
-    pia_regs u_pia (
+    multitini_atari_xt_pia u_pia (
         .clk(clk), .rst(rst),
         .we(cpu_we && cs_pia), .waddr(c_addr), .wdata(c_dout),
         .raddr(c_addr), .rdata(pia_rdata),
         .joy_porta_in(joy_porta), .joy_portb_in(8'hFF),
         .joy_porta_oe(), .joy_portb_oe(),
         .portb_out_q(portb_bank),
-        .pia_irq_n(pia_irq_n)
+        .pia_irq_n(pia_irq_n), .cb2_line(sio_command_n)
     );
 
-    pokey #(.CLK_BUS_HZ(CLK_HZ)) u_pokey (
+    wire [7:0] skctl;
+    assign sio_rx_mode = skctl[4] && (|skctl[1:0]);
+    assign sio_rx_read = pokey_re && c_addr[3:0] == 4'hd;
+    multitini_atari_xt_pokey #(.CLK_BUS_HZ(CLK_HZ)) u_pokey (
         .clk(clk), .rst(rst), .cold_boot(cold),
         .phi2_tick(tick),
         .we(cpu_we && cs_pokey), .waddr(c_addr[7:0]), .wdata(c_dout),
@@ -398,11 +407,12 @@ module multitini_atari_xt_machine #(
         .bridge_potgo_pulse(), .bridge_fast_scan(),
         .ch1_out(audio_ch1), .ch2_out(audio_ch2), .ch3_out(audio_ch3), .ch4_out(audio_ch4),
         .ser_out_complete(1'b1), .ser_out_ready_pulse(1'b0),
-        .ser_in_byte_pulse(1'b0), .ser_in_byte(8'h00),
+        .ser_in_byte_pulse(sio_rx_valid), .ser_in_byte(sio_rx_data),
         .break_key_pulse(break_key_pulse), .ser_framing_err(1'b0),
-        .ser_input_overrun(1'b0), .ser_input_busy(1'b0),
+        .ser_input_overrun(sio_rx_overrun), .ser_input_busy(sio_rx_busy),
         .irq_n(pokey_irq_n),
-        .serout_byte(), .serout_strobe(), .skctl_out()
+        .serout_byte(), .serout_strobe(), .skctl_out(skctl),
+        .tx_complete_byte(sio_tx_data), .tx_complete_valid(sio_tx_valid)
     );
 
     // ---- the halt composition -----------------------------------------------

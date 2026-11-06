@@ -43,6 +43,7 @@
 #include "spectrum_content_service.h"
 #include "multitini_atari_xt_interface.h"
 #include "atari_xt_content_service.h"
+#include "atari_xt_disk_service.h"
 #include "multitini_version.h"
 #include "multitini_video_effects_frontend.h"
 #include "multitini_xmodem.h"
@@ -162,6 +163,7 @@ static bool iigs_service_initialized;
 static bool amiga_service_initialized;
 static const char *spectrum_boot_error;
 static const char *atari_xt_boot_error;
+static bool atari_xt_sio_available;
 static bool amiga_fault_displayed;
 static bool iigs_fault_displayed;
 static unsigned iigs_browser_drive;
@@ -534,6 +536,8 @@ static void service_runtime(void)
     const bool c64_active = shell_is_c64();
     const bool gameboy_active =
         shell_read(MT_REG_CORE_ID) == MT_GBC_CORE_ID;
+    if (atari_xt_sio_available && shell_read(MT_REG_CORE_ID) == MT_ATARI_XT_CORE_ID)
+        atari_xt_disk_poll(&shell_link);
     (void)service_fatfs_time();
     if(shell_read(MT_REG_CORE_ID)==MT_AMIGA_CORE_ID && amiga_service_initialized) {
         static mt_link_result_t last_rtc_result;
@@ -883,6 +887,8 @@ static int set_core_reset_request(bool asserted)
         return -1;
     }
     if (!hide_menu_for_core_action()) return -1;
+    if (asserted && shell_read(MT_REG_CORE_ID) == MT_ATARI_XT_CORE_ID && !atari_xt_disk_quiesce())
+        return -1;
     if (asserted && !currently_asserted && c64_active && retry_c64_uci() != 0)
         return -1;
     if (asserted && !currently_asserted && c64_active &&
@@ -3406,6 +3412,8 @@ static mt_menu_view_t supervisor_menu_view(void)
         state.atari_xt_roms_loaded = atari_xt_content_roms_loaded();
         state.atari_xt_boot_error = atari_xt_boot_error;
         state.atari_xt_cart_uncertain = atari_xt_content_cart_uncertain();
+        state.atari_xt_sio_available = atari_xt_sio_available;
+        state.atari_xt_disk_name = atari_xt_disk_name();
         state.cartridge_name = atari_xt_content_cart_name();
         state.cartridge_attached = state.cartridge_name != NULL;
     } else if (supervisor.has_active &&
@@ -4157,14 +4165,43 @@ static const char *atari_xt_boot_with_input(const mt_core_selection_t *selection
     return atari_xt_boot_error;
 }
 
+static const char *atari_xt_restart_with_input(bool boot_disk)
+{
+    if (boot_disk && atari_xt_disk_name() == NULL) return "Mount an Atari disk first";
+    usb_hid_service_set_core_ready(false);
+    const char *const error = boot_disk &&
+        (atari_xt_content_cart_name() != NULL || atari_xt_content_cart_uncertain()) ?
+        atari_xt_content_eject(&shell_link, iigs_transfer_progress) :
+        atari_xt_content_restart(&shell_link, iigs_transfer_progress);
+    atari_xt_refresh_av();
+    return error;
+}
+
+static const char *atari_xt_mount_browser_file(size_t index, mt_content_type_t type)
+{
+    char name[MT_MEDIA_BROWSER_PATH_MAX + 1U];
+    if (!supervisor.has_active || index >= supervisor_menu_file_count ||
+        (supervisor_menu_files[index].cookie & (MT_MENU_FILE_DIRECTORY | MT_MENU_FILE_TEXT)) != 0U ||
+        !mt_media_browser_resolve(&vectrex_media_browser,
+            supervisor_menu_files[index].name, name, sizeof(name)))
+        return "Invalid Atari media path";
+    if (!atari_xt_content_roms_loaded()) return "Load the Atari system ROMs first";
+    if (mt_content_classify_for_core(MT_ATARI_XT_CORE_ID, name) != type)
+        return type == MT_CONTENT_ATARI_XT_ATR ? "Choose an ATR disk" : "Choose an XEX program";
+    return atari_xt_disk_mount(&shell_link, supervisor.active.package.content_root, name);
+}
+
 static int supervisor_activate(void *context,
                                const mt_core_selection_t *selection)
 {
     const mt_core_settings_profile_t *profile;
     bool request_fast_roms;
     (void)context;
+    atari_xt_sio_available = false;
     usb_hid_service_set_active_core(selection->package.core_id);
     if (selection->package.core_id == MT_ATARI_XT_CORE_ID) {
+        atari_xt_sio_available = atari_xt_disk_available(&shell_link);
+        (void)atari_xt_disk_eject();
         atari_xt_content_reset_selection();
         const char *const error = atari_xt_boot_with_input(selection);
         last_settings_restore_ok = restore_selection_settings(selection);
@@ -5096,17 +5133,19 @@ static bool hide_menu_for_core_action(void)
 static bool menu_action_needs_core_progress(mt_menu_action_t action)
 {
     switch (action.kind) {
-    case MT_MENU_ACTION_SWITCH_CORE:
     case MT_MENU_ACTION_MOUNT_DRIVE8:
+    case MT_MENU_ACTION_EJECT_DRIVE8:
+        return shell_read(MT_REG_CORE_ID) != MT_ATARI_XT_CORE_ID;
+    case MT_MENU_ACTION_SWITCH_CORE:
     case MT_MENU_ACTION_MOUNT_AND_RUN:
     case MT_MENU_ACTION_LOAD_DISK_PROGRAM:
     case MT_MENU_ACTION_DIRECT_DISK_PROGRAM:
-    case MT_MENU_ACTION_EJECT_DRIVE8:
     case MT_MENU_ACTION_EJECT_IIGS_DRIVE:
     case MT_MENU_ACTION_EJECT_AMIGA_DRIVE:
     case MT_MENU_ACTION_AMIGA_RELOAD:
     case MT_MENU_ACTION_SPECTRUM_RELOAD:
     case MT_MENU_ACTION_ATARI_XT_RELOAD:
+    case MT_MENU_ACTION_ATARI_XT_BOOT_DISK:
     case MT_MENU_ACTION_AMIGA_RETRY:
     case MT_MENU_ACTION_AMIGA_DISPLAY:
     case MT_MENU_ACTION_IIGS_PRAM:
@@ -6038,6 +6077,11 @@ static void handle_menu_action(mt_menu_action_t action)
         const char *const error = atari_xt_boot_with_input(&supervisor.active);
         if (error != NULL) set_supervisor_error(error);
         else set_supervisor_status("Atari system ROMs loaded");
+    } else if (action.kind == MT_MENU_ACTION_ATARI_XT_BOOT_DISK) {
+        if (shell_read(MT_REG_CORE_ID) != MT_ATARI_XT_CORE_ID) return;
+        const char *const error = atari_xt_restart_with_input(true);
+        if (error != NULL) set_supervisor_error(error);
+        else set_supervisor_status("Atari booting from D1:");
     } else if(action.kind==MT_MENU_ACTION_AMIGA_RELOAD || action.kind==MT_MENU_ACTION_AMIGA_RETRY) {
         usb_hid_service_set_core_ready(false);
         const int result=action.kind==MT_MENU_ACTION_AMIGA_RELOAD ? amiga_content_service_boot():amiga_content_service_retry();
@@ -6238,6 +6282,15 @@ static void handle_menu_action(mt_menu_action_t action)
     } else if (action.kind == MT_MENU_ACTION_MOUNT_DRIVE8) {
         int status;
         char c64_relative[MT_MEDIA_BROWSER_PATH_MAX + 1U];
+        if (shell_read(MT_REG_CORE_ID) == MT_ATARI_XT_CORE_ID) {
+            const char *const error = atari_xt_mount_browser_file(action.file_index, MT_CONTENT_ATARI_XT_ATR);
+            if (error != NULL) set_supervisor_error(error);
+            else {
+                mt_menu_close_browser(&supervisor_menu);
+                set_supervisor_status("ATR mounted read-only. Select Boot D1: to restart.");
+            }
+            return;
+        }
         if(shell_read(MT_REG_CORE_ID)==MT_AMIGA_CORE_ID) {
             char relative[MT_AMIGA_MEDIA_NAME_MAX+1U];
             if(action.file_index>=supervisor_menu_file_count)return;
@@ -6417,6 +6470,16 @@ static void handle_menu_action(mt_menu_action_t action)
             return;
         }
         if (shell_read(MT_REG_CORE_ID) == MT_ATARI_XT_CORE_ID) {
+            if (supervisor_menu.browser == MT_MENU_BROWSER_PROGRAM) {
+                const char *error = atari_xt_mount_browser_file(action.file_index, MT_CONTENT_ATARI_XT_XEX);
+                if (error == NULL) {
+                    mt_menu_close_browser(&supervisor_menu);
+                    error = atari_xt_restart_with_input(true);
+                }
+                if (error != NULL) set_supervisor_error(error);
+                else set_supervisor_status("Atari booting XEX from D1:");
+                return;
+            }
             char name[MT_MEDIA_BROWSER_PATH_MAX + 1U];
             if (!supervisor.has_active ||
                 (supervisor_menu_files[action.file_index].cookie & MT_MENU_FILE_DIRECTORY) != 0U ||
@@ -6582,6 +6645,10 @@ static void handle_menu_action(mt_menu_action_t action)
             }
         }
     } else if (action.kind == MT_MENU_ACTION_EJECT_DRIVE8) {
+        if (shell_read(MT_REG_CORE_ID) == MT_ATARI_XT_CORE_ID) {
+            set_supervisor_outcome(atari_xt_disk_eject(), "Atari disk ejected", "Could not close Atari disk");
+            return;
+        }
         if (c64_d64_service_eject() != 0)
             set_supervisor_error("Drive 8 eject failed");
         else if (!remember_active_drive8(NULL))
@@ -6950,9 +7017,7 @@ static void handle_menu_action(mt_menu_action_t action)
             return;
         }
         if (supervisor.active.package.core_id == MT_ATARI_XT_CORE_ID) {
-            usb_hid_service_set_core_ready(false);
-            const char *const error = atari_xt_content_restart(&shell_link, iigs_transfer_progress);
-            atari_xt_refresh_av();
+            const char *const error = atari_xt_restart_with_input(false);
             if (error != NULL) set_supervisor_error(error);
             else set_supervisor_status("Atari restarted");
             return;

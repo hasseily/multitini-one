@@ -25,6 +25,8 @@ module tb_atari_xt;
         .load_epoch(load_epoch), .load_offset(load_offset), .load_total(load_total),
         .load_abort(load_abort), .load_abort_epoch(load_abort_epoch), .load_ready(load_ready),
         .ready(ready), .load_error(load_error), .rom_loaded(rom_loaded),
+        .sio_reset(), .sio_event_valid(), .sio_event_data(), .sio_event_ready(1'b1),
+        .sio_reply_valid(1'b0), .sio_reply_data(17'd0), .sio_reply_ready(),
         .video_r(red), .video_g(green), .video_b(blue), .video_x(video_x), .video_y(video_y),
         .video_valid(video_valid), .audio_l(audio_l), .audio_r(audio_r), .audio_valid(audio_valid)
     );

@@ -96,8 +96,11 @@ mt_content_type_t mt_content_classify_for_core(uint32_t core_id, const char *pat
     if (extension == NULL)
         return MT_CONTENT_UNKNOWN;
     ++extension;
-    if (core_id == MT_ATARI_XT_CORE_ID && extension_is(extension, "car"))
-        return MT_CONTENT_ATARI_XT_CART;
+    if (core_id == MT_ATARI_XT_CORE_ID) {
+        if (extension_is(extension, "car")) return MT_CONTENT_ATARI_XT_CART;
+        if (extension_is(extension, "atr")) return MT_CONTENT_ATARI_XT_ATR;
+        if (extension_is(extension, "xex")) return MT_CONTENT_ATARI_XT_XEX;
+    }
     if (!extension_is(extension, "bin"))
         return MT_CONTENT_UNKNOWN;
     if (core_id == MT_VECTREX_CORE_ID) return MT_CONTENT_VECTREX_CART;
@@ -117,7 +120,8 @@ bool mt_content_supported_first_release(mt_content_type_t type)
            type == MT_CONTENT_IIGS_HDD || type == MT_CONTENT_IIGS_WOZ ||
            type == MT_CONTENT_IIGS_FLOPPY || type == MT_CONTENT_AMIGA_ADF || type == MT_CONTENT_AMIGA_HDF ||
            type == MT_CONTENT_SPECTRUM_TAP || type == MT_CONTENT_ATARI_XT_CART ||
-           type == MT_CONTENT_ATARI_XT_RAW_CART;
+           type == MT_CONTENT_ATARI_XT_RAW_CART || type == MT_CONTENT_ATARI_XT_ATR ||
+           type == MT_CONTENT_ATARI_XT_XEX;
 }
 
 bool mt_content_may_write_first_release(mt_content_type_t type)
@@ -152,6 +156,8 @@ const char *mt_content_type_name(mt_content_type_t type)
     case MT_CONTENT_SPECTRUM_TAP: return "ZX Spectrum TAP";
     case MT_CONTENT_ATARI_XT_CART: return "Atari XL CAR cartridge";
     case MT_CONTENT_ATARI_XT_RAW_CART: return "Atari XL raw cartridge";
+    case MT_CONTENT_ATARI_XT_ATR: return "Atari ATR disk";
+    case MT_CONTENT_ATARI_XT_XEX: return "Atari XEX executable";
     case MT_CONTENT_UNKNOWN: return "unknown";
     }
     return "unknown";
@@ -443,6 +449,8 @@ mt_content_validation_t mt_content_inspect(mt_content_type_t type,
     case MT_CONTENT_IIGS_HDD:
     case MT_CONTENT_IIGS_WOZ:
     case MT_CONTENT_IIGS_FLOPPY:
+    case MT_CONTENT_ATARI_XT_ATR:
+    case MT_CONTENT_ATARI_XT_XEX:
     case MT_CONTENT_D81_FUTURE:
     case MT_CONTENT_UNKNOWN:
         status = MT_CONTENT_UNSUPPORTED_VERSION;

@@ -666,7 +666,7 @@ static void test_atari_xt_profile(void)
     mt_core_frontend_state_t state = {.core_id = MT_ATARI_XT_CORE_ID, .services_ready = true};
     mt_menu_view_t view = {0};
     mt_core_frontend_apply(&frontend, &state, &view);
-    check(view.media_item_count == 3U && view.media_items[0].enabled &&
+    check(view.media_item_count == 7U && view.media_items[0].enabled &&
           view.media_items[0].action == MT_MENU_ACTION_ATARI_XT_RELOAD &&
           !view.media_items[1].enabled && !view.media_items[2].enabled,
           "Atari exposes system ROM recovery before cartridge actions");
@@ -676,6 +676,19 @@ static void test_atari_xt_profile(void)
     check(view.media_items[1].enabled && view.media_items[2].enabled &&
           view.media_items[2].action == MT_MENU_ACTION_DETACH_CARTRIDGE,
           "Atari enables cartridge replacement and eject after a partial write");
+    check(!view.media_items[3].enabled && !view.media_items[6].enabled,
+          "Atari media stays disabled on an older cartridge-only image");
+    state.atari_xt_sio_available = true;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(view.media_items[3].enabled && view.media_items[3].action == MT_MENU_ACTION_BROWSE_DRIVE8 &&
+          !view.media_items[4].enabled && !view.media_items[5].enabled &&
+          view.media_items[6].enabled && view.media_items[6].action == MT_MENU_ACTION_BROWSE_PROGRAM,
+          "Atari enables mount and run with SIO, and guards empty D1");
+    state.atari_xt_disk_name = "Games/Boot.ATR";
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(view.media_items[4].enabled && view.media_items[5].enabled &&
+          strcmp(view.media_items[3].value, state.atari_xt_disk_name) == 0,
+          "Atari shows the mounted disk with boot and eject controls");
     check(mt_core_frontend_browser_folders(MT_ATARI_XT_CORE_ID, MT_MENU_BROWSER_CARTRIDGE) &&
           mt_core_frontend_accepts_content(MT_ATARI_XT_CORE_ID, MT_MENU_BROWSER_CARTRIDGE,
                                           MT_CONTENT_ATARI_XT_CART) &&
@@ -684,6 +697,15 @@ static void test_atari_xt_profile(void)
           !mt_core_frontend_accepts_content(MT_ATARI_XT_CORE_ID, MT_MENU_BROWSER_CARTRIDGE,
                                            MT_CONTENT_NES_CART),
           "Atari cartridge browser filters formats and keeps nested paths");
+    check(mt_core_frontend_browser_folders(MT_ATARI_XT_CORE_ID, MT_MENU_BROWSER_DRIVE8) &&
+          mt_core_frontend_browser_folders(MT_ATARI_XT_CORE_ID, MT_MENU_BROWSER_PROGRAM) &&
+          mt_core_frontend_accepts_content(MT_ATARI_XT_CORE_ID, MT_MENU_BROWSER_DRIVE8,
+                                          MT_CONTENT_ATARI_XT_ATR) &&
+          mt_core_frontend_accepts_content(MT_ATARI_XT_CORE_ID, MT_MENU_BROWSER_PROGRAM,
+                                          MT_CONTENT_ATARI_XT_XEX) &&
+          !mt_core_frontend_accepts_content(MT_ATARI_XT_CORE_ID, MT_MENU_BROWSER_CARTRIDGE,
+                                           MT_CONTENT_ATARI_XT_XEX),
+          "Atari keeps disk, executable and cartridge browsers separate");
 }
 
 int main(void)

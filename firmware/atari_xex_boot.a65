@@ -1,0 +1,163 @@
+; SPDX-License-Identifier: GPL-3.0-only
+; Boot from D1 with the XL OS disk loader, then read the XEX file from
+; consecutive 128-byte sectors with the standard SIO device control block.
+; The host validates the file and places this code and buffer outside every
+; load segment. Only the guest reads and executes INITAD and RUNAD.
+
+BOOT_BYTES = 128
+PORTB = $d301
+BASICF = $03f8
+RUNAD = $02e0
+INITAD = $02e2
+DCB = $0300
+SIOV = $e459
+
+* = LOAD_ADDRESS
+boot_start:
+    !byte 0, (boot_end - boot_start) / BOOT_BYTES
+    !word boot_start, boot_init
+    jmp start
+file_length:
+    !byte 0, 0, 0
+default_run:
+    !word 0
+
+boot_init:
+    rts
+
+start:
+    cld
+    tsx
+    stx boot_stack
+    lda PORTB
+    ora #$02
+    sta PORTB
+    lda #1
+    sta BASICF
+    lda default_run
+    sta RUNAD
+    lda default_run + 1
+    sta RUNAD + 1
+
+next_segment:
+    lda file_length
+    ora file_length + 1
+    ora file_length + 2
+    beq run_program
+    jsr read_word
+    cpx #$ff
+    bne segment_start
+    cmp #$ff
+    beq next_segment
+segment_start:
+    sta write_byte + 1
+    stx write_byte + 2
+    jsr read_word
+    sta end_address
+    stx end_address + 1
+    lda #$d7               ; Unmapped page marks an unset INITAD high byte.
+    sta INITAD + 1
+copy:
+    jsr read_byte
+write_byte:
+    sta $ffff              ; Self-modifying store leaves guest zero page free.
+    lda write_byte + 1
+    cmp end_address
+    bne advance
+    lda write_byte + 2
+    cmp end_address + 1
+    beq segment_done
+advance:
+    inc write_byte + 1
+    bne copy
+    inc write_byte + 2
+    jmp copy
+segment_done:
+    lda INITAD + 1
+    cmp #$d7
+    beq next_segment
+    sec
+    jsr init_vector
+    cld                    ; INIT code may leave decimal mode set.
+    jmp next_segment
+
+init_vector:
+    jmp (INITAD)
+run_program:
+    jsr run_vector
+    clc                    ; A program that returns also completes disk boot.
+    rts
+run_vector:
+    jmp (RUNAD)
+
+read_word:
+    jsr read_byte
+    pha
+    jsr read_byte
+    tax
+    pla
+    rts
+
+read_byte:
+    lda file_length
+    ora file_length + 1
+    ora file_length + 2
+    beq read_failed
+    ldx buffer_index
+    cpx #BOOT_BYTES
+    bcc buffered
+    jsr read_sector
+    ldx #0
+buffered:
+    lda sector_buffer,x
+    inx
+    stx buffer_index
+    pha
+    lda file_length
+    bne dec_low
+    lda file_length + 1
+    bne dec_middle
+    dec file_length + 2
+dec_middle:
+    dec file_length + 1
+dec_low:
+    dec file_length
+    pla
+    rts
+
+read_sector:
+    ldx #11
+copy_dcb:
+    lda dcb_template,x
+    sta DCB,x
+    dex
+    bpl copy_dcb
+    jsr SIOV
+    tya
+    bmi read_failed
+    inc next_sector
+    bne read_done
+    inc next_sector + 1
+read_done:
+    rts
+
+read_failed:
+    ldx boot_stack
+    txs                    ; Exit to the OS even from a nested read_word.
+    sec
+    rts
+
+boot_stack:   !byte 0
+end_address:  !word 0
+buffer_index: !byte BOOT_BYTES
+dcb_template:
+    !byte $31, 1, $52, $40
+    !word sector_buffer
+    !byte 7, 0
+    !word BOOT_BYTES
+next_sector:
+    !word (boot_end - boot_start) / BOOT_BYTES + 1
+
+    !fill (BOOT_BYTES - (* & (BOOT_BYTES - 1))) & (BOOT_BYTES - 1), 0
+boot_end:
+sector_buffer = boot_end

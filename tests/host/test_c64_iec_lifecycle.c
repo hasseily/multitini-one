@@ -40,6 +40,7 @@ static bool save_persistent_settings(void) {++saves; return save_ok;}
 /* Ambiguous native-token recovery is exercised by test_c64_reload_runtime.
  * It must never be selected by these normal reset/IEC scenarios. */
 static int quiesce_c64_for_reload(void) {assert(0);return -1;}
+static bool atari_xt_disk_quiesce(void) {assert(0);return false;}
 static void c64_uci_service_reset(void) {}
 static void mt_net_service_guest_reset(void) {}
 static void mt_net_service_shutdown(void) {}

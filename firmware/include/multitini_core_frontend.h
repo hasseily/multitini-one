@@ -66,6 +66,8 @@ typedef struct {
     const char *spectrum_tape_name;
     bool atari_xt_roms_loaded;
     bool atari_xt_cart_uncertain;
+    bool atari_xt_sio_available;
+    const char *atari_xt_disk_name;
     const char *atari_xt_boot_error;
 } mt_core_frontend_state_t;
 

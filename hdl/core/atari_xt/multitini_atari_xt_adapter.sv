@@ -16,6 +16,12 @@ module multitini_atari_xt_adapter #(
     output wire              load_ready, ready,
     output reg               load_error,
     output wire [2:0]        rom_loaded,
+    output wire              sio_reset, sio_event_valid,
+    output wire [17:0]       sio_event_data,
+    input  wire              sio_event_ready,
+    input  wire              sio_reply_valid,
+    input  wire [16:0]       sio_reply_data,
+    output wire              sio_reply_ready,
     output wire [7:0]        video_r, video_g, video_b,
     output reg  [11:0]       video_x, video_y,
     output reg               video_valid,
@@ -136,6 +142,19 @@ module multitini_atari_xt_adapter #(
     wire pixel_write, line_start;
     wire [7:0] color_code;
     wire [8:0] line;
+    wire command_n, serial_tx_valid, serial_rx_mode, serial_rx_read;
+    wire serial_rx_valid, serial_rx_busy, serial_rx_overrun;
+    wire [7:0] serial_tx_data, serial_rx_data;
+
+    assign sio_reset = machine_reset;
+    multitini_atari_xt_sio sio (
+        .clk(core_clk), .reset(reset), .machine_reset(machine_reset), .paused(pause_request),
+        .command_n(command_n), .tx_valid(serial_tx_valid), .tx_data(serial_tx_data),
+        .rx_mode(serial_rx_mode), .rx_read(serial_rx_read), .rx_valid(serial_rx_valid),
+        .rx_busy(serial_rx_busy), .rx_overrun(serial_rx_overrun), .rx_data(serial_rx_data),
+        .event_valid(sio_event_valid), .event_data(sio_event_data), .event_ready(sio_event_ready),
+        .reply_valid(sio_reply_valid), .reply_data(sio_reply_data), .reply_ready(sio_reply_ready)
+    );
 
     multitini_atari_xt_keyboard keyboard (
         .clk(core_clk), .reset(machine_reset),
@@ -190,6 +209,9 @@ module multitini_atari_xt_adapter #(
         .consol_keys(consol), .joy_porta(porta),
         .kbd_event_valid(key_make), .kbd_release(key_release), .break_key_pulse(key_break), .kbd_event_code(key_code),
         .audio_ch1(channel1), .audio_ch2(channel2), .audio_ch3(channel3), .audio_ch4(channel4),
+        .sio_command_n(command_n), .sio_tx_valid(serial_tx_valid), .sio_tx_data(serial_tx_data),
+        .sio_rx_mode(serial_rx_mode), .sio_rx_read(serial_rx_read), .sio_rx_valid(serial_rx_valid),
+        .sio_rx_busy(serial_rx_busy), .sio_rx_overrun(serial_rx_overrun), .sio_rx_data(serial_rx_data),
         .lb_wr(pixel_write), .lb_color(color_code), .lb_line_start(line_start),
         .dma_steal(), .rdy_n(), .nmi_n(), .sync(), .dbg_pc(), .dbg_a(), .dbg_x(),
         .dbg_y(), .dbg_s(), .dbg_p(), .hcount(), .line(line)

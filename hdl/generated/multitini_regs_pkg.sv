@@ -3,7 +3,7 @@
 `timescale 1ns / 1ps
 package multitini_regs_pkg;
     localparam logic [15:0] MT_ABI_MAJOR = 16'd0;
-    localparam logic [15:0] MT_ABI_MINOR = 16'd27;
+    localparam logic [15:0] MT_ABI_MINOR = 16'd28;
     localparam logic [31:0] MT_ABI_VERSION = {MT_ABI_MAJOR, MT_ABI_MINOR};
     localparam logic [31:0] MT_MAGIC = 32'h4D543031;
     localparam logic [31:0] MT_SHELL_ID = 32'h4D544F4E;
@@ -116,6 +116,9 @@ package multitini_regs_pkg;
     localparam logic [11:0] MT_REG_DISPLAY_REQUEST = 12'h1D0;
     localparam logic [11:0] MT_REG_DISPLAY_STATUS = 12'h1D4;
     localparam logic [11:0] MT_REG_DISPLAY_MODES = 12'h1D8;
+    localparam logic [11:0] MT_REG_ATARI_SIO_STATUS = 12'h1E0;
+    localparam logic [11:0] MT_REG_ATARI_SIO_RX = 12'h1E4;
+    localparam logic [11:0] MT_REG_ATARI_SIO_TX = 12'h1E8;
 
     localparam logic [31:0] MT_CONTROL_CORE_RESET_REQUEST = 32'h00000001;
     localparam logic [31:0] MT_CONTROL_VIDEO_TEST_ENABLE = 32'h00000002;
@@ -151,6 +154,15 @@ package multitini_regs_pkg;
     localparam logic [31:0] MT_MEDIA_STATE_MOUNTED = 32'h00000001;
     localparam logic [31:0] MT_MEDIA_STATE_DIRTY = 32'h00000002;
     localparam logic [31:0] MT_MEDIA_STATE_EJECT_PENDING = 32'h00000004;
+
+    localparam logic [31:0] MT_ATARI_SIO_STATUS_RX_VALID = 32'h00000001;
+    localparam logic [31:0] MT_ATARI_SIO_STATUS_TX_READY = 32'h00000002;
+    localparam logic [31:0] MT_ATARI_SIO_STATUS_TX_FAULT = 32'h00000004;
+    localparam logic [31:0] MT_ATARI_SIO_STATUS_RESET_ACTIVE = 32'h00000008;
+
+    localparam logic [31:0] MT_ATARI_SIO_RX_VALID = 32'h80000000;
+
+    localparam logic [31:0] MT_ATARI_SIO_TX_GAP = 32'h00010000;
 
     localparam logic [31:0] MT_UI_COMMIT_VISIBLE = 32'h00000001;
     localparam logic [31:0] MT_UI_COMMIT_BANK = 32'h00000002;
@@ -440,6 +452,15 @@ package multitini_regs_pkg;
     localparam logic [31:0] MT_C64_SID_STATUS_REJECT_REASON_MASK = 32'h00007C00;
     localparam logic [31:0] MT_C64_SID_STATUS_REJECT_INDEX_MASK = 32'h003F0000;
     localparam logic [31:0] MT_C64_UCI315_MIN_ABI_MINOR = 32'h0000001B;
+    localparam logic [31:0] MT_ATARI_SIO_STATUS_SIGNATURE = 32'h53490000;
+    localparam logic [31:0] MT_ATARI_SIO_STATUS_SIGNATURE_MASK = 32'hFFFF0000;
+    localparam logic [31:0] MT_ATARI_SIO_RX_KIND_SHIFT = 32'h00000008;
+    localparam logic [31:0] MT_ATARI_SIO_RX_EPOCH_SHIFT = 32'h0000000A;
+    localparam logic [31:0] MT_ATARI_SIO_TX_EPOCH_SHIFT = 32'h00000008;
+    localparam logic [31:0] MT_ATARI_SIO_RX_KIND_TX = 32'h00000000;
+    localparam logic [31:0] MT_ATARI_SIO_RX_KIND_ASSERT = 32'h00000001;
+    localparam logic [31:0] MT_ATARI_SIO_RX_KIND_RELEASE = 32'h00000002;
+    localparam logic [31:0] MT_ATARI_SIO_RX_KIND_RESYNC = 32'h00000003;
     localparam logic [31:0] MT_C64_EXPANSION_CAPS_PALETTE = 32'h00008000;
     localparam logic [31:0] MT_C64_EXPANSION_CAPS_UCI_UNLOCK = 32'h00010000;
     localparam logic [31:0] MT_C64_EXPANSION_CAPS_DRIVE_POWER = 32'h00020000;

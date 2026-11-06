@@ -234,12 +234,15 @@ def prepare_atari_xt_content(out):
     media = out / core / "media"
     media.mkdir(parents=True, exist_ok=True)
     (media / "README.txt").write_text(
-        "Place standard Atari 8 KiB and 16 KiB cartridges here. Nested directories are supported.\n",
+        "Place standard Atari cartridges, ATR disk images and XEX executables here.\n"
+        "Use the Media tab to mount a read-only ATR in D1: or launch an XEX.\n",
         encoding="utf-8")
     package.copy(ROOT / "third_party/atari-xt/upstream/LICENSE", out / "licenses/ATARI-XT-LICENSE")
-    guide = "docs/ATARI_800XL.md"
-    package.copy(ROOT / guide, out / guide)
-    return {guide: package.describe(out / guide)}
+    guides = {}
+    for guide in ("docs/ATARI_800XL.md", "docs/ATARI_XEX_BOOT.md"):
+        package.copy(ROOT / guide, out / guide)
+        guides[guide] = package.describe(out / guide)
+    return guides
 
 
 def main():
@@ -499,6 +502,7 @@ def main():
         ("ZX Spectrum provides PAL 48K / 128K modes and read-only TAP playback.\n"
          "Supply spectrum.rom and TAP files separately.\n" if args.include_zx_spectrum else "") +
         ("Atari 800XL provides NTSC video and standard 8 KiB and 16 KiB cartridges.\n"
+         "Mount ATR disks read-only in D1: or launch XEX executables through the Media tab.\n"
          "Supply atarixl.rom and ataribas.rom. See docs/ATARI_800XL.md.\n"
          "This release uses and adapts Atari-XT by ThrudTheBarbarian.\n"
          "Original source at https://github.com/ThrudTheBarbarian/fpga-xt\n"

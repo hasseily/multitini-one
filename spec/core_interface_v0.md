@@ -36,6 +36,26 @@ The legacy 80x36 overlay retains its previous execution behavior. Older firmware
 does not request dense mode and cannot hide its menu before blocking native
 loads. New firmware always requests dense mode and requires ABI 0.11 packages.
 
+## Atari SIO transport
+
+ABI 0.28 adds a byte transport for stock Atari SIO at `0x1E0`–`0x1E8`.
+Firmware must check the active core and match `ATARI_SIO_STATUS[31:16]` to
+`0x5349`. Images without the transport return zero.
+
+| Offset | Register | Contract |
+| --- | --- | --- |
+| `0x1E0` | `ATARI_SIO_STATUS` | Bit 0 RX valid, bit 1 TX ready, bit 2 sticky TX fault, bit 3 guest reset or queue recovery. Write bit 2 in byte lane 0 to clear TX fault. |
+| `0x1E4` | `ATARI_SIO_RX` | A word read consumes one queued event. Bit 31 marks valid. Bits 17:10 hold the transaction epoch, bits 9:8 the event kind, and bits 7:0 the byte. An empty read returns zero. |
+| `0x1E8` | `ATARI_SIO_TX` | A full-word write queues one reply when TX ready. Bit 16 requests at least 1 ms until byte completion, measured from the last completion or COMMAND release. Bits 15:8 hold the transaction epoch and bits 7:0 hold the byte. Reserved bits 31:17 must be zero. |
+
+Event kinds 0, 1, 2 and 3 report a completed POKEY transmit byte,
+COMMAND assertion, COMMAND release and transport resynchronization. A new
+COMMAND assertion starts a new epoch. Send replies with the matching epoch.
+The adapter discards replies from older epochs. Guest reset clears the two
+512-entry queues and the sticky fault. Both queue flags are low during reset.
+Invalid reply writes while the transport is active raise TX fault and leave
+the queue intact. Writes during reset are ignored.
+
 ## C64 expansion capabilities
 
 ABI 0.23 adds `C64_EXPANSION_CONFIG` at `0x0D0` and read-only

@@ -14,7 +14,8 @@
   "modifications": [
     "Wire the same subcycle parameters to CPU and chipset.",
     "Map externally loaded XL ROMs at reset and on ANTIC reads.",
-    "Expose PORTA directions, POKEY keyboard and PCM channel levels."
+    "Expose PORTA directions, POKEY keyboard and PCM channel levels.",
+    "Expose PIA CB2 and completed POKEY serial frames and accept standard-speed SIO replies."
   ],
   "files": [
     {

@@ -17,6 +17,8 @@ add_library(multitini_common STATIC
     firmware/common/amiga_hid_input.c
     firmware/common/amiga_rtc.c
     firmware/common/ak4493.c
+    firmware/common/atari_disk.c
+    firmware/common/atari_sio.c
     firmware/common/clock.c
     firmware/common/c64_boot.c
     firmware/common/c64_content.c
@@ -83,6 +85,12 @@ if(NOT MSVC AND NOT CMAKE_C_SIMULATE_ID STREQUAL "MSVC")
 endif()
 
 enable_testing()
+add_executable(test_atari_disk tests/host/test_atari_disk.c)
+target_link_libraries(test_atari_disk PRIVATE multitini_common)
+add_test(NAME atari_disk COMMAND test_atari_disk)
+add_executable(test_atari_sio tests/host/test_atari_sio.c)
+target_link_libraries(test_atari_sio PRIVATE multitini_common)
+add_test(NAME atari_sio COMMAND test_atari_sio)
 foreach(component amiga_content amiga_boot amiga_bulk amiga_hid amiga_rtc amiga_display amiga_diag)
     add_executable(test_${component} tests/host/test_${component}.c)
     target_link_libraries(test_${component} PRIVATE multitini_common)
@@ -101,6 +109,12 @@ add_executable(test_atari_xt_content_service
 target_include_directories(test_atari_xt_content_service PRIVATE firmware/platform/xilinx tests/xilinx_stubs)
 target_link_libraries(test_atari_xt_content_service PRIVATE multitini_common)
 add_test(NAME atari_xt_content_service COMMAND test_atari_xt_content_service)
+add_executable(test_atari_xt_disk_service
+    tests/host/test_atari_xt_disk_service.c
+    firmware/platform/xilinx/atari_xt_disk_service.c)
+target_include_directories(test_atari_xt_disk_service PRIVATE firmware/platform/xilinx)
+target_link_libraries(test_atari_xt_disk_service PRIVATE multitini_common)
+add_test(NAME atari_xt_disk_service COMMAND test_atari_xt_disk_service)
 add_executable(test_amiga_service tests/host/test_amiga_service.c firmware/platform/xilinx/amiga_content_service.c)
 target_include_directories(test_amiga_service PRIVATE firmware/platform/xilinx)
 target_link_libraries(test_amiga_service PRIVATE multitini_common)
