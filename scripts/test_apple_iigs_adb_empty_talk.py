@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Verify empty keyboard TALK completes and releases a Doom-style ADB poller."""
+"""Verify empty ADB TALK, Doom-style polling and C010 held-key status."""
 from __future__ import annotations
 import argparse
 import hashlib
@@ -86,8 +86,8 @@ def main() -> int:
     else:
         run([tool("make"), "-C", directory, "-f", "V" + top + ".mk", "-j8"], "compile")
     output = run([executable], "simulate", args.upstream_negative_control)
-    if not args.upstream_negative_control and output.count("PASS ") != 5:
-        raise ValueError("All five empty-TALK protocol checks must pass")
+    if not args.upstream_negative_control and output.count("PASS ") != 8:
+        raise ValueError("All eight ADB checks must pass")
     if hashes() != before:
         raise ValueError("ADB regression inputs changed during validation; rerun")
     (build / "validation.json").write_text(json.dumps({"schema_version": 1, "result": "PASS",
@@ -96,7 +96,10 @@ def main() -> int:
                    "Header remains stable for eight read clocks and acknowledges on falling edge",
                    "Absent address and nonempty keyboard response are unchanged",
                    "Doom-style polling accepts a key after four mouse reports and an empty backup TALK",
-                   "A key arriving on the empty-TALK clock retains its service request"],
+                   "A key arriving on the empty-TALK clock retains its service request",
+                   "C010 reports a held character on both read paths after C000 strobe clears",
+                   "ROM01 and ROM03 handle both two-key release orders",
+                   "C010 holds AKD while characters are queued and advances once per strobe"],
         "limits": ["Directed ADB simulation; no complete game, timing closure, or hardware claim."]}, indent=2) + "\n")
     print("PASS: original upstream ADB fails the empty-TALK data-full assertion" if args.upstream_negative_control else output.strip())
     return 0

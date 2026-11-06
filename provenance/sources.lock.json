@@ -149,6 +149,34 @@
       "use": "Exact machine logic and CPU subset; all Apple firmware supplied at runtime, inferred RAM and narrowly generated Multitini ports."
     },
     {
+      "name": "MiSTer Apple IIgs WOZ writeback and SCC WR0 fixes",
+      "url": "https://github.com/MiSTer-devel/Apple-IIgs_MiSTer.git",
+      "commit": "6f745a8ddc5800072e314001f19f2d6f2e51667f",
+      "license": "GPL-3.0-or-later",
+      "use": "Selected unmapped-track writeback guard and guest SCC register-pointer fix, adapted in scripts/port_apple_iigs_core.py."
+    },
+    {
+      "name": "MiSTer Apple IIgs ADB any-key-down fix",
+      "url": "https://github.com/MiSTer-devel/Apple-IIgs_MiSTer.git",
+      "commit": "a693ac09a808f6f54d65c29957a258b6f135069a",
+      "license": "GPL-3.0-or-later",
+      "use": "ROM-specific $C010 any-key-down behavior adapted in scripts/port_apple_iigs_core.py."
+    },
+    {
+      "name": "MiSTer Apple IIgs ES5503 oscillator interrupt fix",
+      "url": "https://github.com/MiSTer-devel/Apple-IIgs_MiSTer.git",
+      "commit": "aa2cc3e96b75751e40f942dc2a57f0ab9518234a",
+      "license": "GPL-3.0-or-later",
+      "use": "Oldest-first oscillator interrupt queue adapted in scripts/port_apple_iigs_core.py."
+    },
+    {
+      "name": "MiSTer Apple IIgs SCC register reset fix",
+      "url": "https://github.com/MiSTer-devel/Apple-IIgs_MiSTer.git",
+      "commit": "538ce67e52322501d88cef3db270b233babd8321",
+      "license": "GPL-3.0-or-later",
+      "use": "Synchronous decoded SCC register resets adapted in scripts/port_apple_iigs_core.py."
+    },
+    {
       "name": "Appletini USB0 mass storage",
       "url": "https://github.com/hasseily/appletini-one",
       "commit": "7b972bfda432657444d55a3eaaccf4b1d8e06699",

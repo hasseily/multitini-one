@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// IIgs host-side empty keyboard TALK completion and Doom-style polling.
+// IIgs host-side empty TALK, Doom-style polling and $C010 held-key status.
 `timescale 1ns/1ps
 module tb_apple_iigs_adb_empty_talk;
- reg clk=0,reset=1,strobe=0,rw=1;
+ reg clk=0,reset=1,strobe=0,rw=1,rom_select=0;
  always #5 clk=~clk;
  reg [7:0] addr=0,din=0;
  reg [10:0] ps2_key=0;
@@ -13,7 +13,7 @@ module tb_apple_iigs_adb_empty_talk;
   .CLK_14M(clk),.cen(1'b1),.reset(reset),.cold_reset(1'b1),.addr(addr),.rw(rw),.din(din),.dout(registered_dout),.dout_comb(dout),
   .irq(general_irq),.kbd_srq_irq(irq),.strobe(strobe),.ps2_key(ps2_key),.ps2_mouse(ps2_mouse),.vbl_count(9'b0),
   .CLR80COL(),.STORE80(),.RAMRD(),.RAMWRT(),.ALTZP(),.capslock(),.selftest_override(1'b0),
-  .open_apple(),.closed_apple(),.apple_shift(),.apple_ctrl(),.akd(),.K(),.reset_key_pressed(),.rom_select(1'b0));
+  .open_apple(),.closed_apple(),.apple_shift(),.apple_ctrl(),.akd(),.K(),.reset_key_pressed(),.rom_select(rom_select));
  task wr(input [7:0] a,input [7:0] d);
   @(negedge clk);addr=a;din=d;rw=0;strobe=1;
   repeat(3)@(negedge clk);
@@ -46,9 +46,32 @@ module tb_apple_iigs_adb_empty_talk;
   if(status[5]!==expected || registered_dout[5]!==expected)
    $fatal(1,"C027 data full expected=%d comb=%02x reg=%02x",expected,status,registered_dout);
  endtask
- task inject_key;
-  @(negedge clk);ps2_key={~ps2_key[10],1'b1,9'h076};
+ task send_key(input [8:0] scancode,input bit down);
+  @(negedge clk);ps2_key={~ps2_key[10],down,scancode};
   repeat(5)@(negedge clk);
+ endtask
+ task inject_key;
+  send_key(9'h076,1'b1);
+ endtask
+ task reset_keyboard(input bit rom01);
+  @(negedge clk);reset=1;rom_select=rom01;ps2_key=0;addr=0;rw=1;strobe=0;
+  repeat(8)@(negedge clk);
+  reset=0;
+  repeat(5)@(negedge clk);
+ endtask
+ task check_c010(input [7:0] expected,input [3:0] fifo_after);
+  @(negedge clk);addr=8'h10;rw=1;strobe=1;
+  #1;
+  if(dout!==expected)
+   $fatal(1,"C010 before commit ROM01=%b expected=%02x comb=%02x",rom_select,expected,dout);
+  @(negedge clk);
+  if(registered_dout!==expected)
+   $fatal(1,"C010 committed ROM01=%b expected=%02x reg=%02x",rom_select,expected,registered_dout);
+  repeat(3)@(negedge clk);
+  if(dut.kbd_fifo_count!==fifo_after)
+   $fatal(1,"C010 held strobe advanced FIFO incorrectly: expected=%d actual=%d",fifo_after,dut.kbd_fifo_count);
+  strobe=0;addr=8'h00;
+  repeat(3)@(negedge clk);
  endtask
  task inject_mouse;
   @(negedge clk);ps2_mouse={~ps2_mouse[24],8'h01,8'h02,8'h00};
@@ -138,6 +161,44 @@ module tb_apple_iigs_adb_empty_talk;
   key_seen=0;doom_poll();check_status(0);
   if(!key_seen || doom_adbTalk || irq || general_irq)$fatal(1,"simultaneous key failed to drain");
   $display("PASS key arriving on the empty TALK clock retains SRQ and drains next");
+
+  for(integer rom01=0;rom01<2;rom01++)begin
+   reset_keyboard(rom01[0]);
+   send_key(9'h01c,1'b1); // A
+   check_c010(8'he1,0);
+   rd(8'h00,value);
+   if(value!==8'h61)$fatal(1,"C010 did not clear C000 strobe: %02x",value);
+   repeat(4)check_c010(8'he1,0);
+   send_key(9'h01c,1'b0);
+   check_c010(8'h61,0);
+   send_key(9'h012,1'b1); // Shift is a modifier, not a character.
+   check_c010(8'h61,0);
+  end
+  $display("PASS C010 reports held character across strobe clears and ignores a lone modifier");
+
+  for(integer rom01=0;rom01<2;rom01++)begin
+   reset_keyboard(rom01[0]);
+   send_key(9'h01c,1'b1);check_c010(8'he1,0);
+   send_key(9'h032,1'b1);check_c010(8'he2,0); // B, most recent
+   send_key(9'h01c,1'b0);check_c010(8'he2,0);
+   send_key(9'h032,1'b0);check_c010(8'h62,0);
+
+   send_key(9'h01c,1'b1);check_c010(8'he1,0);
+   send_key(9'h032,1'b1);check_c010(8'he2,0);
+   send_key(9'h032,1'b0);check_c010(rom01[0] ? 8'he2 : 8'h62,0);
+   send_key(9'h01c,1'b0);check_c010(8'h62,0);
+  end
+  $display("PASS C010 release order follows ROM01 and ROM03 held-key rules");
+
+  reset_keyboard(1'b0);
+  send_key(9'h01c,1'b1); // A
+  send_key(9'h032,1'b1); // B
+  send_key(9'h021,1'b1); // C
+  send_key(9'h021,1'b0);
+  check_c010(8'he3,2);
+  check_c010(8'he2,1);
+  check_c010(8'h63,0);
+  $display("PASS C010 keeps AKD through queued characters and advances FIFO once per strobe");
   $finish;
  end
  initial begin #200000;$fatal(1,"timeout");end

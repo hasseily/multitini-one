@@ -631,6 +631,51 @@ def generate_adb() -> str:
                         "    // header was read (flag set in the C026 IDLE read block). Doing this on the",
                    "    // Acknowledge the header on its read strobe FALLING edge, entering DATA\n"
                    "    // only when payload bytes remain. Doing this on the")
+    # MiSTer Apple IIgs a693ac09a808f6f54d65c29957a258b6f135069a.
+    # The CPU samples the combinational C010 value before clearing the C000 strobe.
+    text = replace(text, "reg kbd_strobe;                          // Keyboard strobe bit\n", """reg kbd_strobe;                          // Keyboard strobe bit
+
+// Any-key-down ($C010 bit 7) follows the ADB firmware. Once there is no
+// queued character waiting, ROM03 clears AKD on release of the newest
+// character key and ROM01 clears it once no character key is held.
+reg [127:0] akd_held;
+reg [6:0] akd_last_key;
+reg akd_last_released;
+""")
+    text = replace(text, """    default: begin
+      // Use registered dout for other addresses""", """    8'h10: begin  // $C010 - any-key-down and the last character
+      if (rw) dout_comb_reg = {akd, K[6:0]};
+    end
+    default: begin
+      // Use registered dout for other addresses""")
+    text = replace(text, "    akd <= 1'b0;\n", """    akd <= 1'b0;
+    akd_held <= 128'd0;
+    akd_last_key <= 7'd0;
+    akd_last_released <= 1'b1;
+""")
+    text = replace(text, "    // PS/2 keyboard event processing\n", """    // The FIFO counts the current character as well as any waiting behind it.
+    // A character press below takes precedence over a pending release.
+    if (akd && kbd_fifo_count <= 4'd1 &&
+        (rom_select ? (akd_held == 128'd0) : akd_last_released))
+      akd <= 1'b0;
+
+    // PS/2 keyboard event processing
+""")
+    text = replace(text, "            // IIgs Ctrl-OpenApple-Esc -> Desk Manager (Control Panel CDA).\n", """            if (temp_iie_char != 8'hFF) begin
+              akd <= 1'b1;
+              akd_held[temp_apple_key[6:0]] <= 1'b1;
+              akd_last_key <= temp_apple_key[6:0];
+              akd_last_released <= 1'b0;
+            end
+
+            // IIgs Ctrl-OpenApple-Esc -> Desk Manager (Control Panel CDA).
+""")
+    text = replace(text, "              akd <= 1'b1;  // Any key down\n", "")
+    text = replace(text, "            akd <= 1'b0;  // Clear any key down\n", """            akd_held[temp_apple_key[6:0]] <= 1'b0;
+            if (temp_apple_key[6:0] == akd_last_key)
+              akd_last_released <= 1'b1;
+""")
+    text = replace(text, "          dout <= K;  // Return K value on read", "          dout <= {akd, K[6:0]};")
     return normalize(text)
 
 def generate_hdd() -> str:
@@ -941,7 +986,11 @@ def generate_woz() -> str:
                    "    // TMAP and FLUX each have 160 entries. Leave cached tracks and any\n"
                    "    // pending save intact if the mechanism reports an out-of-range index.\n"
                    "    wire track_id_in_map = track_id < 8'd160;\n"
-                   "    wire mapped_bit_we = bit_we && track_id_in_map;\n"
+                   "    // MiSTer #10: a TMAP=$FF entry has no backing blocks. Accept writes\n"
+                   "    // only for the requested, cached side with a valid backing track.\n"
+                   "    wire [15:0] write_block_count = (IS_35_INCH && track_id[0]) ?\n"
+                   "        trk_block_count_side1 : trk_block_count_side0;\n"
+                   "    wire mapped_bit_we = bit_we && track_data_valid && (write_block_count != 16'd0);\n"
                    "    wire [15:0] bram_addr_b = mapped_bit_we ? bit_wr_addr : bit_addr;")
     text = replace(text, ".wren_b(bit_we &&", ".wren_b(mapped_bit_we &&", count=2)
     text = replace(text, "assign track_data_valid = woz_valid && track_data_valid_match;",
@@ -953,6 +1002,12 @@ def generate_woz() -> str:
                    "if (track_id_in_map && !both_sides_cached && (settle_counter >= SETTLE_THRESHOLD))")
     text = replace(text, "if ((track_id != current_track_id_side0) && (settle_counter >= settle_lim))",
                    "if (track_id_in_map && (track_id != current_track_id_side0) && (settle_counter >= settle_lim))")
+    for side in (0, 1):
+        empty_track = (f"                                     current_track_id_side{side} <= pending_track_id;\n"
+                       f"                                     bit_count_side{side} <= 32'd0;")
+        text = replace(text, empty_track, empty_track +
+                       f"\n                                     trk_start_block_side{side} <= 16'd0;"
+                       f"\n                                     trk_block_count_side{side} <= 16'd0;")
     return normalize(text)
 
 def generate_iir() -> str:
@@ -966,9 +1021,35 @@ def generate_iir() -> str:
     return normalize(text)
 
 def generate_es5503() -> str:
-    text=upstream("rtl/es5503.v")
-    text=replace(text, "module es5503\n", NOTICE+"module es5503\n")
-    text=replace(text, "    output [3:0]      ca,", "    output reg [3:0]  ca,")
+    text = upstream("rtl/es5503.v")
+    text = replace(text, "module es5503\n", NOTICE +
+                   "// DOC interrupt FIFO from MiSTer IIgs aa2cc3e (slaapliedje).\n"
+                   "module es5503\n")
+    text = replace(text, "    output [3:0]      ca,", "    output reg [3:0]  ca,")
+    text = replace(text, "   reg [4:0]\t     irq_stack [31:0];\n   reg [4:0]\t     irq_sp;",
+                   """   reg [4:0]          irq_fifo [31:0];
+   reg [4:0]          irq_head;
+   reg [4:0]          irq_tail;
+   reg [4:0]          irq_last;""")
+    text = replace(text, """\t\t   if (irq && host_en) begin
+\t\t      data_out <= {~irq, 1'b1, irq_stack[irq_sp - 1], 1'b1};
+\t\t      irq_pending[irq_stack[irq_sp - 1]] <= 1'b0;
+\t\t      irq_sp <= irq_sp - 1'd1;
+\t\t   end else begin
+\t\t      data_out <= {~irq, 1'b1, irq_stack[0], 1'b1};
+\t\t   end""", """\t\t   data_out <= {~irq, 1'b1, irq ? irq_fifo[irq_head] : irq_last, 1'b1};
+\t\t   // The GLU captures data_out one clock before host_en. If a
+\t\t   // new IRQ arrived on that edge while the FIFO was empty,
+\t\t   // the captured byte showed empty and must not dequeue it.
+\t\t   if (irq && host_en && !data_out[7]) begin
+\t\t      irq_pending[irq_fifo[irq_head]] <= 1'b0;
+\t\t      irq_last <= irq_fifo[irq_head];
+\t\t      irq_head <= irq_head + 1'd1;
+\t\t   end""")
+    text = replace(text, "irq_stack[irq_sp] <= current_osc;\n\t\t  irq_sp <= irq_sp + 1'd1;",
+                   "irq_fifo[irq_tail] <= current_osc;\n\t\t  irq_tail <= irq_tail + 1'd1;")
+    text = replace(text, "irq_sp <= 0;\n\t irq_stack[0] <= 5'h1f;",
+                   "irq_head <= 0;\n\t irq_tail <= 0;\n\t irq_last <= 5'h1f;")
     return normalize(text)
 
 def generate_cpu() -> str:
@@ -1005,6 +1086,24 @@ def generate_mcode() -> str:
 """
     text=replace(text,original,port)
     return normalize(text)
+
+def generate_scc() -> str:
+    text = upstream("rtl/scc8530.v")
+    text = replace(text, "module scc\n", NOTICE +
+                   "// From MiSTer IIgs: WR0 pointer zero (6f745a8) and synchronous WR9 decodes (538ce67).\n"
+                   "module scc\n")
+    # A WR0 command with pointer zero leaves the next access at WR0/RR0.
+    for channel in ("a", "b"):
+        text = replace(text, f"scc_state_{channel} <= 1;  // Transition to REGISTER state",
+                       f"scc_state_{channel} <= (wdata[2:0] != 3'd0) || (wdata[5:3] == 3'b001);")
+        text = replace(text, f"always@(posedge clk or posedge reset or posedge reset_{channel}) begin",
+                       "always@(posedge clk) begin")
+    text = replace(text, " state=READY->REGISTER", " state=READY", count=2)
+    # WR9 bus decodes can pulse as the pointer and chip select change.
+    text = replace(text, "always@(posedge clk or posedge reset) begin",
+                   "always@(posedge clk) begin", count=11)
+    return normalize(text)
+
 
 def generate_uart(name: str) -> str:
     # The upstream file deliberately declares `default_nettype none but
@@ -1880,7 +1979,8 @@ def outputs() -> dict[str, str]:
             "clock_divider.sv": generate_clock_divider(),
             "runtime_rom.sv": generate_runtime_rom(), "twgs_card.sv": normalize(generate_twgs()),
             "woz_floppy_controller.sv": generate_woz(), "iir_filter.sv": generate_iir(),
-            "es5503.sv": generate_es5503(), "rxuart.sv": generate_uart("rxuart"), "txuart.sv": generate_uart("txuart"),
+            "es5503.sv": generate_es5503(), "scc8530.sv": generate_scc(),
+            "rxuart.sv": generate_uart("rxuart"), "txuart.sv": generate_uart("txuart"),
             "P65C816.sv": generate_cpu(), "mcode.sv": generate_mcode(),
             "zipgs_regs.sv": generate_zipgs(), "sound.sv": generate_sound(), "soundglu.sv": generate_soundglu(),
             "flux_drive.sv": generate_flux_drive(), "iwm_flux.sv": generate_iwm_flux(),

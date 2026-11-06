@@ -62,6 +62,7 @@ module tb_apple_iigs_woz_metadata_replay;
         integer request,source;
         forever begin
             @(negedge clk);
+            if(!reset && wr)$fatal(1,"unexpected WOZ writeback LBA=%0d track=%0d",lba,track);
             if(!reset && rd && !ack)begin
                 request=lba;
                 if(request>=(flux ? 5:163))begin
@@ -107,6 +108,8 @@ module tb_apple_iigs_woz_metadata_replay;
             image[261+t*8]=16; //4096 bits.
             for(integer b=0;b<512;b++)image[(3+t)*512+b]=(t^b^8'ha5)&255;
         end
+        image[88+34]=8'hff;
+        image[88+35]=8'hff;
         if(flux)begin
             // Compact WOZ 2.1 fixture. All tracks share one flux payload, so
             // the parser reaches FLUX without invoking the large-TRKS skip.
@@ -125,7 +128,7 @@ module tb_apple_iigs_woz_metadata_replay;
         if(limit==1000000)$fatal(1,"initial track did not load mode=%0d replay=%0d state=%0d",mode,replay,dut.state);
         if(!replay)begin
             for(integer i=0;i<160;i++)begin
-                if(dut.meta_ram.mem[i]!== (flux ? 8'hff:i[7:0]))$fatal(1,"TMAP mismatch index=%0d",i);
+                if(dut.meta_ram.mem[i]!==image[88+i])$fatal(1,"TMAP mismatch index=%0d",i);
                 for(integer b=0;b<8;b++)
                     if(dut.meta_ram.mem[256+i*8+b]!==image[256+i*8+b])
                         $fatal(1,"TRKS mismatch index=%0d byte=%0d",i,b);
@@ -163,6 +166,31 @@ module tb_apple_iigs_woz_metadata_replay;
         enabled_edges(8);
         if(!ready || !valid || bit_data!==(flux ? 8'ha5:8'h84) || reads!=reads_before)
             $fatal(1,"out-of-range track disturbed the other cached side");
+
+        if(!flux)begin
+            // Both sides of the next cylinder have valid indices but no backing blocks.
+            // Write to each side, request the same flush used for eject, then seek back.
+            for(integer empty=34;empty<=35;empty++)begin
+                track=8'(empty);
+                enabled_edges(2);
+                limit=0;
+                while(!(ready && valid) && limit<1000000)begin @(negedge clk);limit++;end
+                if(limit==1000000 || reads!=reads_before)
+                    $fatal(1,"unmapped track %0d issued a read or failed to settle",empty);
+                bit_we=1;
+                enabled_edges(8);
+                bit_we=0;force_flush=1;
+                enabled_edges(16);
+                if(dirty || busy || wr)$fatal(1,"unmapped track %0d accepted a write",empty);
+                force_flush=0;
+            end
+            track=32;
+            enabled_edges(2);
+            limit=0;
+            while(!(ready && valid) && limit<1000000)begin @(negedge clk);limit++;end
+            if(limit==1000000 || bit_data!==8'h85)
+                $fatal(1,"unmapped track write disturbed the previous track");
+        end
 
         // Exercise the actual Sony strobe decoder in both directions, without
         // forcing the head position or relying on the WOZ lookup guard.

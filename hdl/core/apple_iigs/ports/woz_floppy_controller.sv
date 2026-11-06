@@ -181,7 +181,11 @@ module woz_floppy_controller #(
     // TMAP and FLUX each have 160 entries. Leave cached tracks and any
     // pending save intact if the mechanism reports an out-of-range index.
     wire track_id_in_map = track_id < 8'd160;
-    wire mapped_bit_we = bit_we && track_id_in_map;
+    // MiSTer #10: a TMAP=$FF entry has no backing blocks. Accept writes
+    // only for the requested, cached side with a valid backing track.
+    wire [15:0] write_block_count = (IS_35_INCH && track_id[0]) ?
+        trk_block_count_side1 : trk_block_count_side0;
+    wire mapped_bit_we = bit_we && track_data_valid && (write_block_count != 16'd0);
     wire [15:0] bram_addr_b = mapped_bit_we ? bit_wr_addr : bit_addr;
 
     // Dual port RAM for Track Data (Side 0) — used by both 3.5" and 5.25"
@@ -988,12 +992,16 @@ module woz_floppy_controller #(
                                  if (IS_35_INCH && pending_track_id[0]) begin
                                      current_track_id_side1 <= pending_track_id;
                                      bit_count_side1 <= 32'd0;
+                                     trk_start_block_side1 <= 16'd0;
+                                     trk_block_count_side1 <= 16'd0;
                                      is_flux_side1 <= 1'b0;
                                      flux_size_side1 <= 32'd0;
                                      flux_total_ticks_side1 <= 32'd0;
                                  end else begin
                                      current_track_id_side0 <= pending_track_id;
                                      bit_count_side0 <= 32'd0;
+                                     trk_start_block_side0 <= 16'd0;
+                                     trk_block_count_side0 <= 16'd0;
                                      is_flux_side0 <= 1'b0;
                                      flux_size_side0 <= 32'd0;
                                      flux_total_ticks_side0 <= 32'd0;
