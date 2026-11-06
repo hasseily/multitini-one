@@ -6,7 +6,7 @@ void mt_iigs_hid_init(mt_iigs_hid_input_t *in,mt_c64_hid_emit_fn emit,void *cont
     memset(in,0,sizeof(*in)); in->emit=emit; in->context=context;
     in->mouse_scale_quarters=4U;
     mt_c64_hid_input_init(&in->keyboard,emit,context);
-    in->keyboard.keyboard_layout=MT_C64_KEYBOARD_LAYOUT_PS2_PC;
+    in->keyboard.keyboard_layout=MT_C64_KEYBOARD_LAYOUT_PS2_IIGS;
     in->emitted_buttons=UINT16_MAX; in->emitted_xy=0U;
     for(unsigned i=0U;i<MT_C64_HID_SLOT_COUNT;++i)in->xy[i]=0x8080U;
 }

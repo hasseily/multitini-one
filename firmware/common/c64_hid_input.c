@@ -326,8 +326,10 @@ static uint8_t slot_mapped_nonmodifier_count(
     return count;
 }
 
-static bool scan_is_modifier(uint16_t scan_bit)
+static bool scan_is_modifier(uint16_t scan_bit, mt_c64_keyboard_layout_t layout)
 {
+    if (layout == MT_C64_KEYBOARD_LAYOUT_PS2_IIGS && scan_bit == 0x11fU)
+        return true; /* IIgs Option (Closed Apple). */
     switch ((uint8_t)(scan_bit & UINT16_C(0x00FF))) {
     case 0x0DU: /* Commodore */
     case 0x11U: /* Alt -> Commodore */
@@ -428,7 +430,8 @@ int mt_c64_hid_set_keyboard_layout(mt_c64_hid_input_t *input,
     if (input == NULL ||
         (layout != MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC &&
          layout != MT_C64_KEYBOARD_LAYOUT_POSITIONAL &&
-         layout != MT_C64_KEYBOARD_LAYOUT_PS2_PC)) {
+         layout != MT_C64_KEYBOARD_LAYOUT_PS2_PC &&
+         layout != MT_C64_KEYBOARD_LAYOUT_PS2_IIGS)) {
         return -1;
     }
     input->keyboard_layout = layout;
@@ -497,12 +500,23 @@ int mt_c64_hid_input_poll(mt_c64_hid_input_t *input)
                  (usage == UINT16_C(0xE1) || usage == UINT16_C(0xE5)))) {
                 continue;
             }
-            mapped = input->keyboard_layout ==
-                             MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC
-                         ? symbolic_mapping((uint8_t)usage, shifted,
-                                            allow_transform, &mapping)
-                         : input->keyboard_layout == MT_C64_KEYBOARD_LAYOUT_PS2_PC ?
-                             pc_mapping((uint8_t)usage,&mapping):positional_mapping((uint8_t)usage, &mapping);
+            switch (input->keyboard_layout) {
+            case MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC:
+                mapped = symbolic_mapping((uint8_t)usage, shifted, allow_transform, &mapping);
+                break;
+            case MT_C64_KEYBOARD_LAYOUT_PS2_PC:
+                mapped = pc_mapping((uint8_t)usage, &mapping);
+                break;
+            case MT_C64_KEYBOARD_LAYOUT_PS2_IIGS:
+                /* Merge Right Alt and both GUI keys into the ADB Option alias.
+                 * The shared scan bitmap keeps it down until every alias is released. */
+                mapped = pc_mapping(usage == 0xe6U || usage == 0xe7U ? 0xe3U : (uint8_t)usage,
+                                    &mapping);
+                break;
+            default:
+                mapped = positional_mapping((uint8_t)usage, &mapping);
+                break;
+            }
             if (!mapped) continue;
             if (input->keyboard_layout ==
                 MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC) {
@@ -534,7 +548,7 @@ int mt_c64_hid_input_poll(mt_c64_hid_input_t *input)
             const bool emitted = bitmap_get(input->emitted_scans, scan_bit);
             uint16_t value;
             if (desired == emitted || desired != desired_state ||
-                scan_is_modifier(scan_bit) != modifier_phase) {
+                scan_is_modifier(scan_bit, input->keyboard_layout) != modifier_phase) {
                 continue;
             }
             value = (uint16_t)(desired ? 1U : 0U);

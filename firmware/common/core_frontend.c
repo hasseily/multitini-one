@@ -533,7 +533,9 @@ static void build_iigs(mt_core_frontend_t *frontend,
     frontend->media_items[view->media_item_count++]=item("Load PRAM","Restore saved","Restore saved control-panel settings and warm-reset the machine.",MT_MENU_ACTION_IIGS_PRAM,1U,state->iigs_ready,MT_UI_COLOR_BLUE);
     frontend->media_items[view->media_item_count++]=item("Retry media",state->save_faulted ? "I/O error; retry":"No errors",
         "Retry a failed SD read or durable disk write without losing its sector.",MT_MENU_ACTION_IIGS_PRAM,2U,state->save_faulted,MT_UI_COLOR_BLUE);
-    frontend->input_items[view->input_item_count++]=item("Keyboard","USB keyboard","F12 opens this menu; Ctrl+F11 resets; Windows keys are Apple keys.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
+    frontend->input_items[view->input_item_count++]=item("Keyboard","USB keyboard",
+        "Left Alt is Open Apple. Right Alt and Windows keys are Closed Apple. F12 opens this menu. Ctrl+F11 resets.",
+        MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
     frontend->input_items[view->input_item_count++]=item("Mouse","USB boot mouse","Mouse movement and buttons reach the Apple IIgs ADB controller.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
     frontend->input_items[view->input_item_count++]=item("Joystick","USB analog gamepad","Stick and three fire buttons; configure bindings in Controllers.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
     const bool zipgs=state->iigs_config.card==0U;

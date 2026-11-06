@@ -488,7 +488,7 @@ def generate_vgc() -> str:
                    "output [7:0] shr_bus_byte\n);\n\n"
                    "// Declare mode nets before their first use. Vivado otherwise loses\n"
                    "// these drivers and removes HGR/DHGR logic despite correct RTL simulation.\n"
-                   "wire GR;\nwire lores_mode;\nwire dhires_mode;")
+                   "wire GR;\nwire lores_mode;\nwire lores80_mode;\nwire dhires_mode;")
     for mode in ("GR", "lores_mode", "dhires_mode"):
         text = replace(text, f"wire {mode} =", f"assign {mode} =")
     text = replace(text, 'rom #(.memfile("chr.mem"),.AW(12)) charrom(\n',
@@ -507,6 +507,58 @@ def generate_vgc() -> str:
                    "\t// The prefetch tick still sees the old palette byte; it is not a pixel.\n"
                    "\tif (SHRG && !scb[7] && H == BL) last_pixel <= video_data[7:4];\n\n"
                    "\t// Clear SHRG pixel registers during left border to ensure clean start")
+    start = text.index("// Group latch phase:")
+    end = text.index("wire [3:0]  dhr_color", start)
+    text = text[:start] + """// The registered DHR stream starts at BLE-1. Decode four pixels when
+// stream bit 4k+5 arrives, with zero padding at either end of the line.
+localparam [1:0] DHR_PHASE = 2'b00;
+
+reg [10:0] dhr_win;
+reg [15:0] dhr_hold;
+reg [1:0]  dhr_nib;
+wire dhr_sample = (H < BRE-10'd1) && graphics_pixel;
+always @(posedge clk_vid) if (ce_pix) begin
+    if (H < BLE-10'd1 || H >= BRE+10'd5) begin
+        dhr_win <= 11'd0;
+        dhr_nib <= 2'd0;
+    end else begin
+        dhr_win <= {dhr_win[9:0], dhr_sample};
+        if (H[1:0] == DHR_PHASE && H >= BLE+10'd4 && H <= BRE) begin
+            dhr_hold <= dhr_lut[{dhr_win[9:0], dhr_sample}];
+            dhr_nib <= 2'd0;
+        end else begin
+            dhr_nib <= dhr_nib + 2'd1;
+        end
+    end
+end
+""" + text[end:]
+    text = replace(text, "// Other GFX modes trail by 5px (apple2_shift_reg).\n"
+                         "wire [9:0] gfx_lb = dhires_mode ? (DHRG_MONO ? BLE-10'd1 : BLE + 10'd4) : (BLE + 10'd5);\n"
+                         "wire [9:0] gfx_rb = dhires_mode ? (DHRG_MONO ? BRE-10'd2 : BRE + 10'd3) : (BRE + 10'd4);",
+                   "// Registered color decode and standard hires both start at BLE+5.\n"
+                   "// Lores uses a palette index directly and starts at BLE.\n"
+                   "wire [9:0] gfx_lb = lores_mode ? BLE : (dhires_mode && DHRG_MONO ? BLE-10'd1 : BLE+10'd5);\n"
+                   "wire [9:0] gfx_rb = lores_mode ? BRE-10'd1 : (dhires_mode && DHRG_MONO ? BRE-10'd2 : BRE+10'd4);")
+    text = replace(text, "assign lores_mode = (line_type_w == LORES40_LINE) | (line_type_w == LORES80_LINE);",
+                   "assign lores80_mode = line_type_w == LORES80_LINE;\n"
+                   "assign lores_mode = (line_type_w == LORES40_LINE) | lores80_mode;\n\n"
+                   "function automatic [3:0] lores_color(input [7:0] data, input high, input aux_color);\n"
+                   "    reg [3:0] color;\n"
+                   "    begin\n"
+                   "        color = high ? data[7:4] : data[3:0];\n"
+                   "        lores_color = aux_color ? {color[2:0], color[3]} : color;\n"
+                   "    end\n"
+                   "endfunction")
+    text = replace(text, "((line_is_80 && (xpos == 3)) || (!line_is_80 && (xpos == 12)))))",
+                   "((line_is_80 && (xpos == (lores80_mode ? 4'd5 : 4'd3))) ||\n"
+                   "                    (!line_is_80 && (xpos == 12)))))")
+    text = replace(text, "// This is the ONLY place where we load during the init block\n",
+                   "// A mode change can leave a pending reload from the previous line.\n"
+                   "\t\t\t\tbuffer_needs_reload <= 1'b0;\n")
+    text = replace(text, "graphics_color <= window_y_w[2] ? video_data[7:4] : video_data[3:0];",
+                   "graphics_color <= lores_color(video_data, window_y_w[2], lores80_mode && aux[16]);", 2)
+    text = replace(text, "wire use_aux_bank = (text80_mode | dhires_mode)",
+                   "wire use_aux_bank = (text80_mode | lores80_mode | dhires_mode)")
     return normalize(text)
 
 def generate_adb() -> str:

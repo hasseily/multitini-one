@@ -61,6 +61,7 @@ output [7:0] shr_bus_byte
 // these drivers and removes HGR/DHGR logic despite correct RTL simulation.
 wire GR;
 wire lores_mode;
+wire lores80_mode;
 wire dhires_mode;
 
 // Counter values for the border boundaries
@@ -470,29 +471,26 @@ function automatic [11:0] dhr_pal(input [3:0] c);
     endcase
 endfunction
 
-// Group latch phase: the reference preloads 3-phase_offset bits (DHR
-// phase_offset=1 -> 2), making lookups land on stream index 4k+5 -- but our
-// graphics_pixel is registered (one tick behind graphics_pix_shift[0]), so
-// the matching H phase is one later, wrapping to H[1:0] == 0. Verified
-// against the real Prince of Persia title screen (phase sweep: 1,2,3 all
-// produce rotated hues; 0 matches orange dome / dark blue tapestry / red
-// borders exactly).
+// The registered DHR stream starts at BLE-1. Decode four pixels when
+// stream bit 4k+5 arrives, with zero padding at either end of the line.
 localparam [1:0] DHR_PHASE = 2'b00;
 
 reg [10:0] dhr_win;
 reg [15:0] dhr_hold;
 reg [1:0]  dhr_nib;
+wire dhr_sample = (H < BRE-10'd1) && graphics_pixel;
 always @(posedge clk_vid) if (ce_pix) begin
-    if (H < BLE || H >= BRE + 10'd8) begin
-        dhr_win  <= 11'd0;
-        dhr_nib  <= 2'd0;
+    if (H < BLE-10'd1 || H >= BRE+10'd5) begin
+        dhr_win <= 11'd0;
+        dhr_nib <= 2'd0;
     end else begin
-        dhr_win <= {dhr_win[9:0], graphics_pixel};
-        if (H[1:0] == DHR_PHASE && H >= BLE + 10'd5) begin
-            dhr_hold <= dhr_lut[{dhr_win[9:0], graphics_pixel}];
-            dhr_nib  <= 2'd0;
-        end else
-            dhr_nib  <= dhr_nib + 2'd1;
+        dhr_win <= {dhr_win[9:0], dhr_sample};
+        if (H[1:0] == DHR_PHASE && H >= BLE+10'd4 && H <= BRE) begin
+            dhr_hold <= dhr_lut[{dhr_win[9:0], dhr_sample}];
+            dhr_nib <= 2'd0;
+        end else begin
+            dhr_nib <= dhr_nib + 2'd1;
+        end
     end
 end
 wire [3:0]  dhr_color = (dhr_nib == 2'd0) ? dhr_hold[15:12] :
@@ -504,9 +502,10 @@ wire [11:0] dhr_rgb   = dhr_pal(dhr_color);
 // at BLE-2/BLE-1, pre-shifted preload from bit 2), stream bit j displays at
 // H = BLE-1+j -- window [BLE-1, BRE-2] = the full 560px. The color decode
 // consumes the same corrected stream with its 6px LUT latency next to it.
-// Other GFX modes trail by 5px (apple2_shift_reg).
-wire [9:0] gfx_lb = dhires_mode ? (DHRG_MONO ? BLE-10'd1 : BLE + 10'd4) : (BLE + 10'd5);
-wire [9:0] gfx_rb = dhires_mode ? (DHRG_MONO ? BRE-10'd2 : BRE + 10'd3) : (BRE + 10'd4);
+// Registered color decode and standard hires both start at BLE+5.
+// Lores uses a palette index directly and starts at BLE.
+wire [9:0] gfx_lb = lores_mode ? BLE : (dhires_mode && DHRG_MONO ? BLE-10'd1 : BLE+10'd5);
+wire [9:0] gfx_rb = lores_mode ? BRE-10'd1 : (dhires_mode && DHRG_MONO ? BRE-10'd2 : BRE+10'd4);
 // ---------------------------------------------------------------------------
 
 // Apple II color generation logic
@@ -753,7 +752,16 @@ reg buffer_needs_reload;         // Flag to reload buffer when chram_x increment
 // Color artifacting for hires mode (simplified version of apple2hack logic)
 
 // Current mode detection using existing line_type_w
-assign lores_mode = (line_type_w == LORES40_LINE) | (line_type_w == LORES80_LINE);
+assign lores80_mode = line_type_w == LORES80_LINE;
+assign lores_mode = (line_type_w == LORES40_LINE) | lores80_mode;
+
+function automatic [3:0] lores_color(input [7:0] data, input high, input aux_color);
+    reg [3:0] color;
+    begin
+        color = high ? data[7:4] : data[3:0];
+        lores_color = aux_color ? {color[2:0], color[3]} : color;
+    end
+endfunction
 wire hires_mode = (line_type_w == HIRES40_LINE) | (line_type_w == HIRES80_LINE);
 wire graphics_mode = lores_mode | hires_mode;
 
@@ -787,7 +795,8 @@ assign ldps_load = (SHRG) ?
                    ((H >= (BL-4) && H < BL) || (H >= BL && ((EIGHTYCOL && (xpos == 3)) || (!EIGHTYCOL && (xpos == 12))))) :
                    // Apple II mode timing (line_is_80: text80/lores80/dhires use the
                    // 80-col cadence; HIRES40+EIGHTYCOL=1 stays on the 40-col cadence)
-                   ((H >= (BLE-4) && H < BLE) || (H >= BLE && ((line_is_80 && (xpos == 3)) || (!line_is_80 && (xpos == 12)))));
+                   ((H >= (BLE-4) && H < BLE) || (H >= BLE && ((line_is_80 && (xpos == (lores80_mode ? 4'd5 : 4'd3))) ||
+                    (!line_is_80 && (xpos == 12)))));
 
 reg [3:0] xpos;
 reg [16:0] aux;
@@ -839,7 +848,8 @@ begin
 				end
 			end else if (H == (BLE-1)) begin
 				// Pre-load the shift register at H=71 so first pixel is ready at H=72
-				// This is the ONLY place where we load during the init block
+				// A mode change can leave a pending reload from the previous line.
+				buffer_needs_reload <= 1'b0;
 				if (hires_mode) begin
 					// Double hi-res: pre-shifted by 2 -- bits 0 and 1 of the first
 					// aux byte are emitted directly through graphics_pixel below
@@ -852,7 +862,7 @@ begin
 					graphics_color <= {3'b0, video_data[7]};
 				end else if (lores_mode) begin
 					graphics_pix_shift <= {expandLores40(video_data, window_y_w[2]), 1'b0};
-					graphics_color <= window_y_w[2] ? video_data[7:4] : video_data[3:0];
+					graphics_color <= lores_color(video_data, window_y_w[2], lores80_mode && aux[16]);
 				end
 			end
 		end
@@ -892,7 +902,7 @@ begin
 					if (lores_mode) begin
 						// Lores: expand nibbles based on line position
 						graphics_pix_shift <= {expandLores40(video_data, window_y_w[2]), 1'b0};
-						graphics_color <= window_y_w[2] ? video_data[7:4] : video_data[3:0];
+						graphics_color <= lores_color(video_data, window_y_w[2], lores80_mode && aux[16]);
 `ifdef VGC_DEBUG
 						if (H >= BL && H <= 100 && V == BT)
 							$display("  LORES RELOAD: H=%d video_data=%h expanded=%b color=%h", H, video_data, {expandLores40(video_data, window_y_w[2]), 1'b0}, window_y_w[2] ? video_data[7:4] : video_data[3:0]);
@@ -1108,7 +1118,7 @@ wire [22:0] video_addr_ii_base = {7'b0, lineaddr_result} + {17'b0, (dhires_mode 
 // 80-column modes (text80 and double hi-res) need aux memory bank switching
 wire text80_mode = (!GR & EIGHTYCOL);
 assign dhires_mode = (GR & HIRES_MODE & EIGHTYCOL & !AN3);  // Double Hi-Res mode
-wire use_aux_bank = (text80_mode | dhires_mode) & (dhires_mode ? aux_bank_early : aux[16]);
+wire use_aux_bank = (text80_mode | lores80_mode | dhires_mode) & (dhires_mode ? aux_bank_early : aux[16]);
 // text80 floating-bus fetch: the real Mega II shows the pair's MAIN byte to
 // the CPU ("col80 is a nop" for the FLOATBUS capture), but our schedule has
 // the aux byte on video_data at the CPU sample tick (xpos 0 of the aux

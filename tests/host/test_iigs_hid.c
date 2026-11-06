@@ -8,6 +8,59 @@ static int emit(void *ctx,uint16_t code,uint16_t value)
 { (void)ctx; if(reject)return -1; assert(count<512U); codes[count]=code; values[count++]=value; return 0; }
 static bool find(uint16_t code,uint16_t value)
 { for(unsigned i=0U;i<count;++i)if(codes[i]==code && values[i]==value)return true; return false; }
+static void test_apple_modifiers(void)
+{
+    const uint8_t left_ctrl = 0x01U, left_alt = 0x04U, right_alt = 0x40U;
+    const uint8_t left_gui = 0x08U, right_gui = 0x80U;
+    const uint8_t f11[] = {0x44U};
+    mt_iigs_hid_input_t in;
+    mt_iigs_hid_init(&in, emit, NULL);
+    assert(mt_iigs_hid_poll(&in) == 0);
+    const uint8_t zero[] = {0x27U};
+    const struct { uint8_t modifier; uint16_t scan, state; } apples[] = {
+        {left_alt, 0x11U, 0U}, {right_alt, 0x1fU, 2U}
+    };
+    for (size_t i = 0U; i < sizeof(apples) / sizeof(apples[0]); ++i) {
+        count = 0U;
+        assert(mt_iigs_hid_keyboard_report(&in, 0U, apples[i].modifier, zero, 1U) == 0);
+        assert(count == 2U && codes[0] == apples[i].scan && values[0] == apples[i].state + 1U &&
+               codes[1] == 0x45U && values[1] == 1U);
+        count = 0U;
+        assert(mt_iigs_hid_keyboard_report(&in, 0U, 0U, NULL, 0U) == 0);
+        assert(count == 2U && codes[0] == 0x45U && values[0] == 0U &&
+               codes[1] == apples[i].scan && values[1] == apples[i].state);
+    }
+    count = 0U;
+
+    /* ADB sees Command (11), Control (14) and Option (E0 1F) before Reset. */
+    assert(mt_iigs_hid_keyboard_report(&in, 0U, left_ctrl | left_alt | right_alt, f11, 1U) == 0);
+    assert(count == 4U && codes[0] == 0x11U && values[0] == 1U &&
+           codes[1] == 0x14U && values[1] == 1U && codes[2] == 0x1fU && values[2] == 3U &&
+           codes[3] == 0x78U && values[3] == 1U);
+    count = 0U;
+    assert(mt_iigs_hid_keyboard_report(&in, 0U, right_alt, NULL, 0U) == 0);
+    assert(count == 3U && codes[0] == 0x78U && values[0] == 0U &&
+           codes[1] == 0x11U && values[1] == 0U && codes[2] == 0x14U && values[2] == 0U);
+
+    /* Either Windows key can keep the same Option state across a release. */
+    count = 0U;
+    assert(mt_iigs_hid_keyboard_report(&in, 0U, right_alt | left_gui, NULL, 0U) == 0);
+    assert(mt_iigs_hid_keyboard_report(&in, 1U, right_gui, NULL, 0U) == 0);
+    assert(mt_iigs_hid_disconnect(&in, 0U) == 0 && count == 0U);
+    assert(mt_iigs_hid_keyboard_report(&in, 1U, 0U, NULL, 0U) == 0);
+    assert(count == 1U && codes[0] == 0x1fU && values[0] == 2U);
+
+    /* A direct HID usage in the key array uses the same mapping and ordering. */
+    const uint8_t option_a[] = {0xe6U, 0x04U};
+    count = 0U;
+    assert(mt_iigs_hid_keyboard_report(&in, 0U, 0U, option_a, 2U) == 0);
+    assert(count == 2U && codes[0] == 0x1fU && values[0] == 3U &&
+           codes[1] == 0x1cU && values[1] == 1U);
+    count = 0U;
+    assert(mt_iigs_hid_disconnect(&in, 0U) == 0);
+    assert(count == 2U && codes[0] == 0x1cU && values[0] == 0U &&
+           codes[1] == 0x1fU && values[1] == 2U);
+}
 static void route_controls(mt_iigs_hid_input_t *in,const mt_controller_config_t *config,
     const mt_gamepad_state_t *raw,uint16_t expected_xy,uint16_t expected_buttons)
 {
@@ -156,6 +209,6 @@ int main(void)
     assert(mt_iigs_hid_poll(&in)==0 && find(0x4000U,0x7f08U));
     assert(mt_iigs_hid_poll(&in)==0); assert(mt_iigs_hid_poll(&in)==0);
     count=0U; assert(mt_iigs_hid_poll(&in)==0 && count==0U);
-    test_joystick_coordinates();test_mouse_sensitivity();
+    test_apple_modifiers();test_joystick_coordinates();test_mouse_sensitivity();
     puts("Apple IIgs keyboard, joystick, mouse sensitivity, retry and release checks passed"); return 0;
 }

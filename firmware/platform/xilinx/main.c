@@ -1413,7 +1413,8 @@ static void print_help(void)
         xil_printf("F12 opens the Multitini menu\r\n");
         xil_printf("Apple IIgs: :disk or :dir status, :diskretry or :saveretry retry SD I/O\r\n");
         xil_printf("Mount/eject/ROM/PRAM actions are in Media; controllers are in Input\r\n");
-        xil_printf("Keyboard: Ctrl+F11 warm reset, Ctrl+Alt+F11 cold reset\r\n");
+        xil_printf("Keyboard: Left Alt Open Apple, Right Alt Closed Apple\r\n");
+        xil_printf("Ctrl+F11 warm reset, Ctrl+Left Alt+F11 cold reset\r\n");
         xil_printf("Recovery: :reboot to golden, :selfupdate stage BOOT.BIN\r\n");
         return;
     }

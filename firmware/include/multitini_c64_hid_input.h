@@ -16,6 +16,7 @@ typedef enum {
     MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC = 0,
     MT_C64_KEYBOARD_LAYOUT_POSITIONAL = 1,
     MT_C64_KEYBOARD_LAYOUT_PS2_PC = 2, /* Native PC keys for other PS/2 cores. */
+    MT_C64_KEYBOARD_LAYOUT_PS2_IIGS = 3, /* PC keys with IIgs Apple modifiers. */
 } mt_c64_keyboard_layout_t;
 
 typedef struct {

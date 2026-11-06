@@ -54,9 +54,10 @@ def main():
 
     receipt = {"schema": 1, "status": "FAIL", "passed": False, "source_sha256": hashes,
                "commands": commands, "cases": CASES, "checked_pixels": 9198,
+               "checked_edge_pixels": 2282,
                "limits": ["Out-of-context synthesized VGC functional simulation; no SDF or routed timing.",
                           "Synthetic ROM/video RAM; no CPU, MMU, DDR, disk or physical-hardware acceptance.",
-                          "Checks settled scanline interiors; full-frame edges are covered separately."]}
+                          "Checks legacy scanline boundaries and settled legacy/SHR interiors."]}
     try:
         run("synthesize", [args.vivado_bin / ("vivado" + suffix), "-mode", "batch", "-source",
                            ROOT / "scripts/synth_apple_iigs_legacy_video.tcl", "-tclargs", out],
@@ -67,6 +68,8 @@ def main():
                           "work.tb_apple_iigs_legacy_video", "work.glbl", "-s", "legacy_video"])
         log = run("simulate", [args.vivado_bin / ("xsim" + suffix), "legacy_video", "-runall",
                                "-onfinish", "quit"], "PASS LEGACY_VIDEO_COMPLETE cases=18 samples=9198")
+        if "PASS LEGACY_VIDEO_EDGES samples=2282" not in log:
+            raise RuntimeError("Missing exact legacy edge checks")
         actual = re.findall(r"^PASS LEGACY_VIDEO_CASE (\S+) samples=511$", log, re.MULTILINE)
         if actual != CASES:
             raise RuntimeError(f"Missing or duplicate mode checks: {actual}")
@@ -74,7 +77,7 @@ def main():
             raise RuntimeError("Source inputs changed during verification")
         receipt.update(status="PASS", passed=True, outputs={name: sha(out / name) for name in
                        ["synthesized.v", "synthesized.dcp", "utilization.rpt", "simulate-console.log"]})
-        print("PASS mapped IIgs video: 18 cases, 9198 exact pixels")
+        print("PASS mapped IIgs video: 9198 interior pixels and 2282 edge-pattern pixels")
     except Exception as exc:
         receipt["error"] = str(exc)
         raise
