@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "multitini_display.h"
 #include "multitini_menu.h"
+#include "about_credits.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -19,7 +20,10 @@ enum {
     HEADER_ACTIVE_X = MT_UI_COLUMNS / 2 + 6,
     HEADER_ACTIVE_W = MT_UI_COLUMNS - HEADER_ACTIVE_X - 4,
     LIST_Y = 11, HELP_Y = MT_UI_ROWS - 8,
-    STATUS_Y = MT_UI_ROWS - 4, FOOTER_Y = MT_UI_ROWS - 2
+    STATUS_Y = MT_UI_ROWS - 4, FOOTER_Y = MT_UI_ROWS - 2,
+    ABOUT_CREDITS_Y = LIST_Y + 20,
+    ABOUT_RANGE_Y = HELP_Y - 2,
+    ABOUT_VISIBLE_CREDITS = ABOUT_RANGE_Y - ABOUT_CREDITS_Y - 1
 };
 
 _Static_assert(LIST_Y + MT_MENU_LIST_ROWS < HELP_Y,
@@ -374,9 +378,10 @@ static mt_menu_action_t activate(const mt_menu_t *menu, const mt_menu_view_t *vi
     } else {
         size_t count;
         const mt_menu_item_t *items = page_items(menu->page, view, &count);
-        if (menu->row < count && items[menu->row].enabled) {
-            action.kind = items[menu->row].action;
-            action.file_index = items[menu->row].argument;
+        const size_t row = menu->page == MT_MENU_PAGE_ABOUT ? MT_MENU_ABOUT_VERSION_ITEMS : menu->row;
+        if (row < count && items[row].enabled) {
+            action.kind = items[row].action;
+            action.file_index = items[row].argument;
         }
     }
     return action;
@@ -654,6 +659,82 @@ static mt_menu_action_t gamepad_key(mt_menu_t *menu, const mt_menu_view_t *view,
     return action;
 }
 
+/* Use the same wrapping to count and render the fixed-width credits. */
+static size_t about_text_rows(const char *const *lines, size_t count,
+                              mt_ui_frame_t *frame, size_t y, size_t first, size_t visible)
+{
+    size_t row = 0U;
+    for (size_t i = 0U; i < count; ++i) {
+        const char *text = lines[i];
+        do {
+            size_t take = strlen(text);
+            if (take > CONTENT_W) {
+                take = CONTENT_W;
+                while (take != 0U && text[take] != ' ') --take;
+                if (take == 0U) take = CONTENT_W;
+            }
+            if (frame != NULL && row >= first && row - first < visible) {
+                char line[CONTENT_W + 1U];
+                memcpy(line, text, take);
+                line[take] = '\0';
+                mt_ui_text_field(frame, LABEL_X, y + row - first, CONTENT_W, line,
+                    MT_UI_COLOR_TEXT, MT_UI_COLOR_PANEL, false, false);
+            }
+            ++row;
+            text += take;
+            while (*text == ' ') ++text;
+        } while (*text != '\0');
+    }
+    return row;
+}
+
+static size_t about_max_top(size_t total)
+{
+    return total > ABOUT_VISIBLE_CREDITS ? total - ABOUT_VISIBLE_CREDITS : 0U;
+}
+
+static void reset_about_credits(mt_menu_t *menu)
+{
+    menu->about_credits_active = false;
+    menu->about_credits_top = 0U;
+}
+
+static bool about_key(mt_menu_t *menu, uint8_t key)
+{
+    if (!menu->about_credits_active) {
+        if (key != MT_MENU_HID_DOWN && key != MT_MENU_HID_PAGE_DOWN &&
+            key != MT_MENU_HID_PAGE_UP && key != MT_MENU_HID_END)
+            return key != MT_MENU_HID_ENTER && key != MT_MENU_HID_ESCAPE &&
+                   key != MT_MENU_HID_TAB;
+        menu->about_credits_active = true;
+        menu->about_credits_top = 0U;
+        if (key != MT_MENU_HID_END) return true;
+    }
+
+    if (key == MT_MENU_HID_TAB || key == MT_MENU_HID_ESCAPE ||
+        key == MT_MENU_HID_BACKSPACE || key == MT_MENU_HID_ENTER ||
+        (key == MT_MENU_HID_UP && menu->about_credits_top == 0U)) {
+        reset_about_credits(menu);
+        return key != MT_MENU_HID_TAB;
+    }
+
+    const size_t maximum = about_max_top(about_text_rows(about_credits,
+        sizeof(about_credits) / sizeof(about_credits[0]), NULL, 0U, 0U, 0U));
+    size_t top = menu->about_credits_top > maximum ? maximum : menu->about_credits_top;
+    const size_t page = ABOUT_VISIBLE_CREDITS - 1U;
+    switch (key) {
+    case MT_MENU_HID_UP: if (top != 0U) --top; break;
+    case MT_MENU_HID_DOWN: if (top < maximum) ++top; break;
+    case MT_MENU_HID_PAGE_UP: top = top > page ? top - page : 0U; break;
+    case MT_MENU_HID_PAGE_DOWN: top += maximum - top < page ? maximum - top : page; break;
+    case MT_MENU_HID_HOME: top = 0U; break;
+    case MT_MENU_HID_END: top = maximum; break;
+    default: break;
+    }
+    menu->about_credits_top = top;
+    return true;
+}
+
 mt_menu_action_t mt_menu_key_with_modifiers(mt_menu_t *menu,
                                            const mt_menu_view_t *view,
                                            uint8_t hid_usage, bool pressed,
@@ -700,6 +781,7 @@ mt_menu_action_t mt_menu_key_with_modifiers(mt_menu_t *menu,
             mt_text_reader_close(view->text_reader);
         menu->clock_edit = false;
         menu->gamepad_edit = false;
+        reset_about_credits(menu);
         menu->visible = !menu->visible;
         return action;
     }
@@ -739,6 +821,8 @@ mt_menu_action_t mt_menu_key_with_modifiers(mt_menu_t *menu,
         }
         return action;
     }
+    if (menu->page == MT_MENU_PAGE_ABOUT && menu->browser == MT_MENU_BROWSER_NONE &&
+        about_key(menu, hid_usage)) return action;
     if (hid_usage == MT_MENU_HID_ESCAPE) {
         if (menu->browser != MT_MENU_BROWSER_NONE) mt_menu_close_browser(menu);
         else if(menu->core_subpage){menu->core_subpage=false;menu->row=0;menu->first_row=0;}
@@ -877,7 +961,7 @@ static const char *page_caption(mt_menu_page_t page)
         "Controls for the active system.",
         "Settings supplied by the active core.",
         "Board status, clock, documents and recovery.",
-        "Firmware, FPGA and live board status."
+        "Versions, contributors and project credits."
     };
     return (unsigned)page < (unsigned)MT_MENU_PAGE_COUNT ? captions[page] : "";
 }
@@ -1257,6 +1341,56 @@ static void render_settings(const mt_menu_t *menu, const mt_menu_view_t *view,
     }
 }
 
+static void render_about(const mt_menu_t *menu, const mt_menu_view_t *view,
+                         mt_ui_frame_t *frame)
+{
+    size_t count;
+    const mt_menu_item_t *items = page_items(MT_MENU_PAGE_ABOUT, view, &count);
+    field(frame, ITEM_X, LIST_Y, ITEM_W, "Versions", MT_UI_COLOR_BLUE, MT_UI_COLOR_PANEL);
+    for (size_t i = 0U; i < count && i < MT_MENU_ABOUT_VERSION_ITEMS; ++i) {
+        field(frame, LABEL_X, LIST_Y + 2U + i, LABEL_W, items[i].label,
+            MT_UI_COLOR_MUTED, MT_UI_COLOR_PANEL);
+        field(frame, VALUE_X, LIST_Y + 2U + i, VALUE_W, items[i].value,
+            MT_UI_COLOR_TEXT, MT_UI_COLOR_PANEL);
+    }
+    const bool update_available = count > MT_MENU_ABOUT_VERSION_ITEMS;
+    if (update_available)
+        draw_item(frame, LIST_Y + 7U, !menu->about_credits_active,
+            &items[MT_MENU_ABOUT_VERSION_ITEMS]);
+
+    field(frame, ITEM_X, LIST_Y + 9U, ITEM_W, "Contributors",
+        MT_UI_COLOR_BLUE, MT_UI_COLOR_PANEL);
+    (void)about_text_rows(about_contributors, sizeof(about_contributors) / sizeof(about_contributors[0]),
+        frame, LIST_Y + 11U, 0U, 2U);
+
+    field(frame, ITEM_X, LIST_Y + 14U, ITEM_W, "Third-party codebases and inspiration",
+        MT_UI_COLOR_BLUE, MT_UI_COLOR_PANEL);
+    (void)about_text_rows(about_intro, sizeof(about_intro) / sizeof(about_intro[0]),
+        frame, LIST_Y + 16U, 0U, 2U);
+    mt_ui_text_field(frame, LABEL_X, LIST_Y + 18U, CONTENT_W, about_signature,
+        MT_UI_COLOR_MUTED, MT_UI_COLOR_PANEL, false, true);
+
+    const size_t credit_count = sizeof(about_credits) / sizeof(about_credits[0]);
+    const size_t total = about_text_rows(about_credits, credit_count, NULL, 0U, 0U, 0U);
+    const size_t maximum = about_max_top(total);
+    const size_t top = menu->about_credits_top > maximum ? maximum : menu->about_credits_top;
+    (void)about_text_rows(about_credits, credit_count, frame, ABOUT_CREDITS_Y,
+        top, ABOUT_VISIBLE_CREDITS);
+    const size_t last = total - top < ABOUT_VISIBLE_CREDITS ? total : top + ABOUT_VISIBLE_CREDITS;
+    char range[CONTENT_W + 1U];
+    (void)snprintf(range, sizeof(range), "Credits %u-%u of %u%s",
+        (unsigned)(total == 0U ? 0U : top + 1U), (unsigned)last, (unsigned)total,
+        menu->about_credits_active ? "" : " - Down or Page Down to scroll");
+    field(frame, LABEL_X, ABOUT_RANGE_Y, CONTENT_W, range,
+        menu->about_credits_active ? MT_UI_COLOR_BLUE : MT_UI_COLOR_MUTED, MT_UI_COLOR_PANEL);
+    if (menu->about_credits_active)
+        help_text(frame, "Up/Down scrolls a line. Page Up/Page Down scrolls a page. Enter or Esc returns to Versions.");
+    else if (update_available)
+        help_text(frame, items[MT_MENU_ABOUT_VERSION_ITEMS].help);
+    else
+        help_text(frame, "Firmware, FPGA, interface and Golden Boot versions reflect the running system.");
+}
+
 static void render_document(const mt_menu_view_t *view, mt_ui_frame_t *frame)
 {
     const mt_text_reader_t *const reader = view->text_reader;
@@ -1443,6 +1577,7 @@ void mt_menu_render(const mt_menu_t *menu, const mt_menu_view_t *view,
     normalized = *menu;
     normalize(&normalized, view);
     menu = &normalized;
+    const bool about = menu->page == MT_MENU_PAGE_ABOUT && menu->browser == MT_MENU_BROWSER_NONE;
     core = active_core(view);
     if (core < core_count(view)) {
         size_t index;
@@ -1494,6 +1629,7 @@ void mt_menu_render(const mt_menu_t *menu, const mt_menu_view_t *view,
     mt_ui_fill(frame, BODY_X, HELP_Y, BODY_W, 3U, MT_UI_COLOR_RAISED);
     mt_ui_fill(frame, BODY_X, HELP_Y, 1U, 3U, MT_UI_COLOR_BLUE);
     field(frame, LABEL_X, HELP_Y, CONTENT_W,
+          about ? (menu->about_credits_active ? "CREDITS" : "ABOUT THIS SYSTEM") :
           menu->browser == MT_MENU_BROWSER_NONE ?
           "ABOUT THIS ITEM" : (has_directories(view) ? "SELECTED ITEM" : "SELECTED FILE"), MT_UI_COLOR_BLUE,
           MT_UI_COLOR_RAISED);
@@ -1502,7 +1638,7 @@ void mt_menu_render(const mt_menu_t *menu, const mt_menu_view_t *view,
           menu->browser == MT_MENU_BROWSER_NONE ?
           mt_menu_page_name(menu->page) : browser_title(menu->browser),
           MT_UI_COLOR_TEXT, MT_UI_COLOR_PANEL);
-    if (count != 0U) {
+    if (count != 0U && !about) {
         (void)snprintf(text, sizeof(text), "%u / %u",
                        (unsigned)(menu->row + 1U), (unsigned)count);
         mt_ui_text_field(frame, SIZE_X, 6U, SIZE_W, text, MT_UI_COLOR_MUTED,
@@ -1525,6 +1661,8 @@ void mt_menu_render(const mt_menu_t *menu, const mt_menu_view_t *view,
         render_browser(menu, view, frame, menu->first_row);
     else if (menu->page == MT_MENU_PAGE_CORES)
         render_cores(menu, view, frame, menu->first_row);
+    else if (about)
+        render_about(menu, view, frame);
     else
         render_settings(menu, view, frame, menu->first_row);
     /* Persistent faults take priority over transient success messages. */
@@ -1556,6 +1694,10 @@ void mt_menu_render(const mt_menu_t *menu, const mt_menu_view_t *view,
         menu->gamepad_test ? "[Esc/Enter] Back  [F12] Menu  [PrtScr] Core screenshot  [Shift+PrtScr] Screen screenshot" :
         menu->gamepad_edit ? "[Enter] Change/Open  [Delete] Clear  [Esc] Back/Cancel  [F12] Menu  [PrtScr] Game  [Shift+PrtScr] Screen" :
         menu->clock_edit ? "[Up/Down] Field  [Left/Right] Adjust  [Enter] Next/Save  [Esc] Cancel" :
+        about && menu->about_credits_active ?
+        "[D-pad/Up/Down] Scroll  [PgUp/PgDn] Page  [A/Enter or B/Esc] Versions  [Tab] Section  [F12] Close" :
+        about ?
+        "[L/R or Shift+Tab/Tab] Tab  [Down/PgDn] Credits  [B/Esc or F12] Close" :
         menu->browser != MT_MENU_BROWSER_NONE && has_directories(view) ?
         "[Enter] Open/Load  [Right] Open folder  [Left/Backspace] Up  [PgUp/Dn] Page  [Esc] Back" :
         menu->browser == MT_MENU_BROWSER_DISK_PROGRAM ?

@@ -2,6 +2,13 @@
   "schema_version": 1,
   "sources": [
     {
+      "name": "Appletini One About credits",
+      "url": "https://github.com/hasseily/appletini-one.git",
+      "commit": "a5a066931f6f05b116d7b41f53b04bca19f8aae7",
+      "license": "GPL-3.0-only",
+      "use": "Contributor roles, project origin, introductory text and signature adapted from ps_sources/frontend/config_menu.c and config_menu_help.c for the Multitini About page."
+    },
+    {
       "name": "MiSTer ZX Spectrum",
       "url": "https://github.com/MiSTer-devel/ZX-Spectrum_MISTer.git",
       "commit": "8502d492a3ad89c68413b2f0e2e4cf947dab42ba",

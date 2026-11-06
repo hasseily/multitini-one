@@ -1,4 +1,5 @@
 path,origin,commit,license,status,notes
+firmware/common/about_credits.h,Appletini One and Multitini One,a5a066931f6f05b116d7b41f53b04bca19f8aae7,GPL-3.0-only,source-reviewed,About contributors and introductory text from Appletini config_menu.c and config_menu_help.c with Multitini project credits
 third_party/zx-spectrum/upstream/ZX-Spectrum.sv,MiSTer ZX Spectrum,8502d492a3ad89c68413b2f0e2e4cf947dab42ba,GPL-2.0-or-later,reference,Exact upstream machine top; reference only
 third_party/zx-spectrum/upstream/rtl/ula.sv,MiSTer ZX Spectrum,8502d492a3ad89c68413b2f0e2e4cf947dab42ba,GPL-3.0-or-later,imported,Exact upstream ULA with file-local grant
 third_party/zx-spectrum/upstream/rtl/ym2149.sv,MiSTer ZX Spectrum,8502d492a3ad89c68413b2f0e2e4cf947dab42ba,BSD-3-Clause,imported,Exact upstream PSG with file-local grant

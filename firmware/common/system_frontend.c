@@ -125,20 +125,25 @@ void mt_system_frontend_apply(mt_system_frontend_t *frontend,
     if (view->save_faulted || view->settings_faulted || view->save_dirty)
         frontend->items[12].value_color = MT_UI_COLOR_WARNING;
     if (snapshot->usb_last_error != 0) frontend->items[10].value_color = MT_UI_COLOR_WARNING;
-    /* About shows the installed Golden version directly below Interface.
-     * Keep value pointers into the same cache and updater actions in System. */
+    /* Share version values and the optional updater between the two pages. */
     memcpy(frontend->about_items, frontend->items + 4U,
         3U * sizeof(frontend->items[0]));
     frontend->about_items[3] = frontend->items[18];
-    memcpy(frontend->about_items + 4U, frontend->items + 7U,
-        7U * sizeof(frontend->items[0]));
-    memmove(frontend->items + 4U, frontend->items + 14U,
-        4U * sizeof(frontend->items[0]));
-    memmove(frontend->items + 8U, frontend->items + 19U,
-        2U * sizeof(frontend->items[0]));
-    view->system_items = frontend->items;
-    view->system_item_count = sizeof(labels) / sizeof(labels[0]) - MT_MENU_MAX_ABOUT_ITEMS -
+    frontend->about_items[MT_MENU_ABOUT_VERSION_ITEMS] = frontend->items[20];
+    view->about_items = frontend->about_items;
+    view->about_item_count = MT_MENU_ABOUT_VERSION_ITEMS +
+        (snapshot->golden_update_present ? 1U : 0U);
+
+    /* Keep the existing System actions in order. Place live diagnostics
+     * after them, with their original descriptions and cached values. */
+    mt_menu_item_t diagnostics[7];
+    memcpy(diagnostics, frontend->items + 7U, sizeof(diagnostics));
+    static const size_t system_actions[] = {0U, 1U, 2U, 3U, 14U, 15U, 16U, 17U, 19U, 20U};
+    view->system_item_count = sizeof(system_actions) / sizeof(system_actions[0]) -
         (snapshot->golden_update_present ? 0U : 1U);
+    for (i = 0U; i < view->system_item_count; ++i)
+        frontend->items[i] = frontend->items[system_actions[i]];
+    view->system_items = frontend->items;
     frontend->items[view->system_item_count++] = (mt_menu_item_t){
         .label = "Drive activity",
         .value = view->settings_drive_activity ? "On" : "Off",
@@ -167,8 +172,8 @@ void mt_system_frontend_apply(mt_system_frontend_t *frontend,
                              .value_color = MT_UI_COLOR_BLUE};
         view->system_item_count = n;
     }
-    view->about_items = frontend->about_items;
-    view->about_item_count = MT_MENU_MAX_ABOUT_ITEMS;
+    memcpy(frontend->items + view->system_item_count, diagnostics, sizeof(diagnostics));
+    view->system_item_count += sizeof(diagnostics) / sizeof(diagnostics[0]);
     view->clock_available = snapshot->clock_available;
     view->clock_valid = snapshot->clock_valid;
     view->clock = snapshot->clock;
