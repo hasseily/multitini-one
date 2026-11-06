@@ -9,7 +9,7 @@ block is treated as padding after three consecutive boot sectors. The reader
 calculates each file offset directly and preserves the header's write-protect
 flag for the caller.
 
-For XEX, firmware presents a read-only D1 disk. Its first two sectors contain
+For XEX, firmware presents a read-only D1 disk. Its first three sectors contain
 an original Multitini 6502 bootstrap. Each subsequent sector reads 128 bytes
 directly from the XEX file, with zero padding at the end of the final sector.
 The guest's OS boots from the disk and the bootstrap uses the stock `SIOV`
@@ -21,6 +21,8 @@ segments in file order, calls each `INITAD` when its segment finishes and
 uses the final `RUNAD`. When a file supplies no `RUNAD`, it starts at its
 first segment's load address. The bootstrap banks out built-in BASIC so the
 file can use RAM at `$A000`–`$BFFF`.
+The bootstrap enters `RUNAD` early in a video frame. This gives the program
+time to install its own interrupt handler before vertical blank.
 
 The bootstrap and its sector buffer need two consecutive free RAM pages
 between `$0700` and `$97FF`. Firmware selects the first available location

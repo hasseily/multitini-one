@@ -11,6 +11,7 @@ RUNAD = $02e0
 INITAD = $02e2
 DCB = $0300
 SIOV = $e459
+VCOUNT = $d40b
 
 * = LOAD_ADDRESS
 boot_start:
@@ -84,6 +85,15 @@ segment_done:
 init_vector:
     jmp (INITAD)
 run_program:
+    ; Give programs that replace the OS NMI handler time before the
+    ; next vertical blank. Keep the guest's NMI enables and entry flags.
+    php
+wait_early_frame:
+    lda VCOUNT
+    cmp #$20
+    bcs wait_early_frame
+    lda #0
+    plp
     jsr run_vector
     clc                    ; A program that returns also completes disk boot.
     rts

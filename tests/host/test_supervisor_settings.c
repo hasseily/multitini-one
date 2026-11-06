@@ -2,8 +2,10 @@
 #include "supervisor_settings.h"
 #include "multitini_vectrex_interface.h"
 #include "multitini_c64_interface.h"
+#include "multitini_atari_xt_interface.h"
 #include "multitini_gameboy_interface.h"
 #include "multitini_genesis_interface.h"
+#include "multitini_spectrum_interface.h"
 
 #include <assert.h>
 #include <stdbool.h>
@@ -35,6 +37,13 @@ static bool disappear_on_retry;
 static mt_sd_status_t retry_status;
 static uint8_t turbo_file[MT_TURBO_CONTROLS_WIRE_SIZE];
 static bool turbo_exists;
+static uint8_t atari_file[MT_SETTINGS_WIRE_SIZE];
+static bool atari_exists;
+static mt_sd_status_t atari_recover_status;
+static mt_sd_status_t atari_read_status;
+static mt_sd_status_t atari_write_status;
+static uint8_t spectrum_file[MT_SETTINGS_WIRE_SIZE];
+static bool spectrum_exists;
 bool mt_schema10_roundtrip(const uint8_t *input, uint8_t *output);
 
 static void store_u32_le(uint8_t *destination, uint32_t value)
@@ -107,6 +116,16 @@ mt_sd_result_t mt_sd_storage_journal_recover(const char *path,
         assert(capacity == sizeof turbo_file);
         return sd_result(recover_status, 0U);
     }
+    if (strcmp(path, MT_ATARI_CONTROLS_PATH) == 0) {
+        assert(strcmp(journal_path, MT_ATARI_CONTROLS_JOURNAL_PATH) == 0);
+        assert(recovery_buffer != NULL && capacity == sizeof(atari_file));
+        return sd_result(atari_recover_status, 0U);
+    }
+    if (strcmp(path, MT_SPECTRUM_CONTROLS_PATH) == 0) {
+        assert(strcmp(journal_path, MT_SPECTRUM_CONTROLS_JOURNAL_PATH) == 0);
+        assert(recovery_buffer != NULL && capacity == sizeof(spectrum_file));
+        return sd_result(MT_SD_OK, 0U);
+    }
     assert(strcmp(path, MT_SETTINGS_PATH) == 0);
     assert(strcmp(journal_path, MT_SETTINGS_JOURNAL_PATH) == 0);
     assert(recovery_buffer != NULL);
@@ -123,6 +142,20 @@ mt_sd_result_t mt_sd_storage_read_file_optional_exact(
         *found = turbo_exists;
         if (turbo_exists) memcpy(destination, turbo_file, sizeof turbo_file);
         return sd_result(read_status, turbo_exists ? sizeof turbo_file : 0U);
+    }
+    if (strcmp(path, MT_ATARI_CONTROLS_PATH) == 0) {
+        assert(destination != NULL && found != NULL && expected_size == sizeof(atari_file));
+        *found = false;
+        if (atari_read_status != MT_SD_OK || !atari_exists) return sd_result(atari_read_status, 0U);
+        memcpy(destination, atari_file, sizeof(atari_file));
+        *found = true;
+        return sd_result(MT_SD_OK, sizeof(atari_file));
+    }
+    if (strcmp(path, MT_SPECTRUM_CONTROLS_PATH) == 0) {
+        assert(destination != NULL && found != NULL && expected_size == sizeof(spectrum_file));
+        *found = spectrum_exists;
+        if (spectrum_exists) memcpy(destination, spectrum_file, sizeof(spectrum_file));
+        return sd_result(MT_SD_OK, spectrum_exists ? sizeof(spectrum_file) : 0U);
     }
     assert(strcmp(path, MT_SETTINGS_PATH) == 0);
     assert(destination != NULL && found != NULL);
@@ -154,6 +187,22 @@ mt_sd_result_t mt_sd_storage_journal_replace(const char *path,
         memcpy(turbo_file, source, size); turbo_exists = true;
         return sd_result(MT_SD_OK, size);
     }
+    if (strcmp(path, MT_ATARI_CONTROLS_PATH) == 0) {
+        assert(strcmp(journal_path, MT_ATARI_CONTROLS_JOURNAL_PATH) == 0);
+        assert(source != NULL && size == sizeof(atari_file));
+        if (atari_write_status != MT_SD_OK) return sd_result(atari_write_status, 0U);
+        memcpy(atari_file, source, size);
+        atari_exists = true;
+        return sd_result(MT_SD_OK, size);
+    }
+    if (strcmp(path, MT_SPECTRUM_CONTROLS_PATH) == 0) {
+        assert(strcmp(journal_path, MT_SPECTRUM_CONTROLS_JOURNAL_PATH) == 0);
+        assert(source != NULL && size == sizeof(spectrum_file));
+        if (write_status != MT_SD_OK) return sd_result(write_status, 0U);
+        memcpy(spectrum_file, source, size);
+        spectrum_exists = true;
+        return sd_result(MT_SD_OK, size);
+    }
     assert(strcmp(path, MT_SETTINGS_PATH) == 0);
     assert(strcmp(journal_path, MT_SETTINGS_JOURNAL_PATH) == 0);
     assert(source != NULL && size == MT_SETTINGS_WIRE_SIZE);
@@ -175,6 +224,11 @@ static void reset_fake(void)
     disappear_on_retry = false;
     retry_status = MT_SD_OK;
     memset(stored_file, 0, sizeof(stored_file));
+    atari_exists = false;
+    atari_recover_status = MT_SD_OK;
+    atari_read_status = MT_SD_OK;
+    atari_write_status = MT_SD_OK;
+    spectrum_exists = false;
 }
 
 static void test_vectrex_cartridge_paths(void)
@@ -1042,6 +1096,157 @@ static void test_c64_turbo_storage(void)
     assert(loaded.controller_profiles[0].config.extra_binding[1] == 0);
 }
 
+static void test_atari_controller_storage(void)
+{
+    mt_supervisor_settings_t c64, atari, reloaded;
+    mt_controller_config_t c64_config, atari_config;
+    const mt_controller_device_t pad = controller_device(1U, 43U);
+    const mt_controller_settings_profile_t *profile;
+    uint8_t shared_wire[MT_SETTINGS_WIRE_SIZE];
+    uint8_t atari_wire[MT_SETTINGS_WIRE_SIZE];
+
+    reset_fake();
+    mt_supervisor_settings_defaults(&c64);
+    assert(mt_supervisor_settings_remember_core(&c64, "c64", "pal"));
+    assert(mt_supervisor_settings_remember_drive8(&c64, "c64", "Keep.d64"));
+    mt_controls_default(MT_C64_CORE_ID, &pad, &c64_config);
+    c64_config.binding[MT_CONTROL_A] = 12U;
+    c64_config.assignment = MT_CONTROLLER_PORT2;
+    assert(mt_supervisor_settings_remember_controller(&c64, MT_C64_CORE_ID, &pad.identity, &c64_config));
+    assert(mt_supervisor_settings_save(&c64).status == MT_SETTINGS_OK);
+    assert_schema10_downgrade();
+    convert_stored_to_legacy(9U);
+    const size_t legacy_size = stored_size;
+    memcpy(shared_wire, stored_file, legacy_size);
+
+    assert(mt_supervisor_atari_controls_load(&atari).status == MT_SETTINGS_MISSING);
+    assert(atari.controller_profile_count == 0U);
+    mt_controls_default(MT_ATARI_XT_CORE_ID, &pad, &atari_config);
+    atari_config.binding[MT_CONTROL_A] = 23U;
+    atari_config.assignment = MT_CONTROLLER_PORT1;
+    assert(mt_supervisor_settings_remember_controller(&atari, MT_ATARI_XT_CORE_ID, &pad.identity, &atari_config));
+    assert(mt_supervisor_atari_controls_save(&atari).status == MT_SETTINGS_OK);
+    assert(stored_size == legacy_size && memcmp(stored_file, shared_wire, legacy_size) == 0);
+    memcpy(atari_wire, atari_file, sizeof(atari_wire));
+
+    assert(mt_supervisor_atari_controls_load(&reloaded).status == MT_SETTINGS_OK);
+    profile = mt_supervisor_settings_find_controller(&reloaded, MT_ATARI_XT_CORE_ID, &pad.identity);
+    assert(profile != NULL && profile->config.binding[MT_CONTROL_A] == 23U &&
+           profile->config.assignment == MT_CONTROLLER_PORT1);
+    assert(mt_supervisor_settings_find_controller(&reloaded, MT_C64_CORE_ID, &pad.identity) == NULL);
+    assert(mt_supervisor_settings_load(&reloaded).status == MT_SETTINGS_OK);
+    profile = mt_supervisor_settings_find_controller(&reloaded, MT_C64_CORE_ID, &pad.identity);
+    assert(profile != NULL && profile->config.binding[MT_CONTROL_A] == 12U &&
+           profile->config.assignment == MT_CONTROLLER_PORT2);
+    assert(mt_supervisor_settings_find_controller(&reloaded, MT_ATARI_XT_CORE_ID, &pad.identity) == NULL);
+    const mt_core_settings_profile_t *media = mt_supervisor_settings_find(&reloaded, "c64");
+    assert(media != NULL && strcmp(media->drive8_name, "Keep.d64") == 0);
+
+    atari_recover_status = MT_SD_JOURNAL_INVALID;
+    assert(mt_supervisor_atari_controls_load(&reloaded).status == MT_SETTINGS_RECOVERY_FAILED);
+    assert(reloaded.controller_profile_count == 0U);
+    assert(mt_supervisor_settings_load(&reloaded).status == MT_SETTINGS_OK);
+    atari_recover_status = MT_SD_OK;
+    atari_read_status = MT_SD_READ_FAILED;
+    assert(mt_supervisor_atari_controls_load(&reloaded).status == MT_SETTINGS_READ_FAILED);
+    assert(mt_supervisor_settings_load(&reloaded).status == MT_SETTINGS_OK);
+    atari_read_status = MT_SD_OK;
+    atari_file[24U] ^= 1U;
+    assert(mt_supervisor_atari_controls_load(&reloaded).status == MT_SETTINGS_CORRUPT);
+    assert(reloaded.controller_profile_count == 0U);
+    assert(mt_supervisor_settings_load(&reloaded).status == MT_SETTINGS_OK);
+    atari_file[24U] ^= 1U;
+
+    atari_config.binding[MT_CONTROL_A] = 7U;
+    assert(mt_supervisor_settings_remember_controller(&atari, MT_ATARI_XT_CORE_ID, &pad.identity, &atari_config));
+    atari_write_status = MT_SD_WRITE_FAILED;
+    assert(mt_supervisor_atari_controls_save(&atari).status == MT_SETTINGS_WRITE_FAILED);
+    assert(stored_size == legacy_size && memcmp(stored_file, shared_wire, legacy_size) == 0);
+    assert(memcmp(atari_file, atari_wire, sizeof(atari_wire)) == 0);
+
+    c64_config.binding[MT_CONTROL_A] = 10U;
+    assert(mt_supervisor_settings_remember_controller(&c64, MT_C64_CORE_ID, &pad.identity, &c64_config));
+    assert(mt_supervisor_settings_save(&c64).status == MT_SETTINGS_OK);
+    assert_schema10_downgrade();
+    assert(memcmp(atari_file, atari_wire, sizeof(atari_wire)) == 0);
+    assert(mt_supervisor_settings_load(&reloaded).status == MT_SETTINGS_OK);
+    profile = mt_supervisor_settings_find_controller(&reloaded, MT_C64_CORE_ID, &pad.identity);
+    assert(profile != NULL && profile->config.binding[MT_CONTROL_A] == 10U);
+    assert(mt_supervisor_atari_controls_load(&reloaded).status == MT_SETTINGS_OK);
+    profile = mt_supervisor_settings_find_controller(&reloaded, MT_ATARI_XT_CORE_ID, &pad.identity);
+    assert(profile != NULL && profile->config.binding[MT_CONTROL_A] == 23U);
+}
+
+static void test_machine_controller_migration(void)
+{
+    mt_supervisor_settings_t shared, atari, spectrum, reloaded;
+    mt_controller_config_t config;
+    const mt_controller_device_t pad = controller_device(1U, 43U);
+    const mt_controller_device_t other = controller_device(2U, 44U);
+    const mt_controller_settings_profile_t *profile;
+    uint8_t roundtrip[MT_SETTINGS_WIRE_SIZE];
+
+    reset_fake();
+    mt_supervisor_settings_defaults(&shared);
+    mt_controls_default(MT_GENESIS_CORE_ID, &pad, &config);
+    assert(mt_supervisor_settings_remember_controller(&shared, MT_GENESIS_CORE_ID, &pad.identity, &config));
+    mt_controls_default(MT_ATARI_XT_CORE_ID, &pad, &config);
+    assert(mt_supervisor_settings_remember_controller(&shared, MT_ATARI_XT_CORE_ID, &pad.identity, &config));
+    assert(mt_supervisor_settings_save(&shared).status == MT_SETTINGS_OK);
+    assert(!mt_schema10_roundtrip(stored_file, roundtrip));
+    assert(mt_supervisor_atari_controls_load(&atari).status == MT_SETTINGS_MISSING);
+    assert(mt_supervisor_settings_merge_controllers(&atari, &shared, MT_ATARI_XT_CORE_ID));
+    assert(mt_supervisor_atari_controls_save(&atari).status == MT_SETTINGS_OK);
+    assert(mt_supervisor_settings_remove_controllers(&shared, MT_ATARI_XT_CORE_ID));
+
+    mt_controls_default(MT_SPECTRUM_CORE_ID, &pad, &config);
+    config.assignment = MT_CONTROLLER_PORT1;
+    config.binding[MT_CONTROL_A] = 12U;
+    assert(mt_supervisor_settings_remember_controller(&shared, MT_SPECTRUM_CORE_ID, &pad.identity, &config));
+    config.assignment = MT_CONTROLLER_PORT2;
+    assert(mt_supervisor_settings_remember_controller(&shared, MT_SPECTRUM_CORE_ID, &other.identity, &config));
+    assert(mt_supervisor_settings_save(&shared).status == MT_SETTINGS_OK);
+    assert(!mt_schema10_roundtrip(stored_file, roundtrip));
+
+    assert(mt_supervisor_spectrum_controls_load(&spectrum).status == MT_SETTINGS_MISSING);
+    assert(!mt_supervisor_settings_merge_controllers(NULL, &shared, MT_SPECTRUM_CORE_ID));
+    assert(!mt_supervisor_settings_merge_controllers(&spectrum, NULL, MT_SPECTRUM_CORE_ID));
+    assert(!mt_supervisor_settings_remove_controllers(NULL, MT_SPECTRUM_CORE_ID));
+    spectrum.controller_profile_count = MT_SETTINGS_MAX_CONTROLLER_PROFILES + 1U;
+    assert(!mt_supervisor_settings_merge_controllers(&spectrum, &shared, MT_SPECTRUM_CORE_ID));
+    assert(!mt_supervisor_settings_merge_controllers(&shared, &spectrum, MT_SPECTRUM_CORE_ID));
+    assert(!mt_supervisor_settings_remove_controllers(&spectrum, MT_SPECTRUM_CORE_ID));
+    spectrum.controller_profile_count = 0U;
+    config.assignment = MT_CONTROLLER_PORT1;
+    config.binding[MT_CONTROL_A] = 23U;
+    assert(mt_supervisor_settings_remember_controller(&spectrum, MT_SPECTRUM_CORE_ID, &pad.identity, &config));
+    assert(mt_supervisor_settings_merge_controllers(&spectrum, &shared, MT_SPECTRUM_CORE_ID));
+    write_status = MT_SD_WRITE_FAILED;
+    assert(mt_supervisor_spectrum_controls_save(&spectrum).status == MT_SETTINGS_WRITE_FAILED);
+    assert(!spectrum_exists && !mt_schema10_roundtrip(stored_file, roundtrip));
+    write_status = MT_SD_OK;
+    assert(mt_supervisor_spectrum_controls_save(&spectrum).status == MT_SETTINGS_OK);
+    assert(mt_supervisor_settings_remove_controllers(&shared, MT_SPECTRUM_CORE_ID));
+    assert(!mt_supervisor_settings_remove_controllers(&shared, MT_SPECTRUM_CORE_ID));
+    assert(mt_supervisor_settings_save(&shared).status == MT_SETTINGS_OK);
+    assert_schema10_downgrade();
+
+    assert(mt_supervisor_settings_load(&reloaded).status == MT_SETTINGS_OK);
+    assert(reloaded.controller_profile_count == 1U);
+    assert(mt_supervisor_settings_find_controller(&reloaded, MT_GENESIS_CORE_ID, &pad.identity) != NULL);
+    assert(mt_supervisor_atari_controls_load(&reloaded).status == MT_SETTINGS_OK);
+    assert(reloaded.controller_profile_count == 1U);
+    assert(mt_supervisor_settings_find_controller(&reloaded, MT_ATARI_XT_CORE_ID, &pad.identity) != NULL);
+    assert(mt_supervisor_spectrum_controls_load(&reloaded).status == MT_SETTINGS_OK);
+    assert(reloaded.controller_profile_count == 2U);
+    profile = mt_supervisor_settings_find_controller(&reloaded, MT_SPECTRUM_CORE_ID, &pad.identity);
+    assert(profile != NULL && profile->config.binding[MT_CONTROL_A] == 23U &&
+        profile->config.assignment == MT_CONTROLLER_PORT1);
+    profile = mt_supervisor_settings_find_controller(&reloaded, MT_SPECTRUM_CORE_ID, &other.identity);
+    assert(profile != NULL && profile->config.binding[MT_CONTROL_A] == 12U &&
+        profile->config.assignment == MT_CONTROLLER_PORT2);
+}
+
 int main(void)
 {
     test_c64_relative_media_settings();
@@ -1178,5 +1383,7 @@ int main(void)
     test_video_multiplier();
     test_c64_expansion_settings();
     test_c64_turbo_storage();
+    test_atari_controller_storage();
+    test_machine_controller_migration();
     return 0;
 }

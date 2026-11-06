@@ -246,6 +246,8 @@ static size_t supervisor_d64_prg_count;
 static uint8_t supervisor_disk_prg_buffer[MT_SIZE_C64_PRG_MAX];
 static mt_core_frontend_t supervisor_frontend;
 static mt_supervisor_settings_t persistent_settings;
+static mt_supervisor_settings_t atari_controller_settings;
+static mt_supervisor_settings_t spectrum_controller_settings;
 static mt_supervisor_settings_t settings_before_update;
 static mt_controller_device_t controller_edit_devices[MT_GAMEPAD_SLOTS];
 static uint32_t controller_edit_core;
@@ -4535,20 +4537,29 @@ static void supervisor_controller_action(void *context, unsigned action)
     }
 }
 
+static mt_supervisor_settings_t *controller_settings_for_core(uint32_t core_id)
+{
+    if (core_id == MT_ATARI_XT_CORE_ID) return &atari_controller_settings;
+    if (core_id == MT_SPECTRUM_CORE_ID) return &spectrum_controller_settings;
+    return &persistent_settings;
+}
+
 static bool supervisor_controller_config(void *context, uint32_t core_id, uint8_t slot,
     const mt_controller_device_t *device, mt_controller_config_t *config)
 {
     static const uint32_t cores[] = {MT_C64_CORE_ID, MT_GBC_CORE_ID, MT_GENESIS_CORE_ID, MT_VECTREX_CORE_ID, MT_IIGS_CORE_ID, MT_NES_CORE_ID, MT_AMIGA_CORE_ID};
     (void)context;
     if (slot >= MT_GAMEPAD_SLOTS || device == NULL || config == NULL) return false;
+    const mt_supervisor_settings_t *controller_settings = controller_settings_for_core(core_id);
     const mt_controller_settings_profile_t *saved = mt_supervisor_settings_find_controller(
-        &persistent_settings, core_id, &device->identity);
+        controller_settings, core_id, &device->identity);
+    if (saved == NULL && controller_settings != &persistent_settings)
+        saved = mt_supervisor_settings_find_controller(&persistent_settings, core_id, &device->identity);
     if (saved != NULL) { *config = saved->config; return true; }
     if (core_id != MT_SUPERVISOR_CORE_ID && core_id != MT_SPECTRUM_CORE_ID &&
         core_id != MT_ATARI_XT_CORE_ID &&
         (persistent_settings.legacy_gamepad_pending & (1U << slot)) != 0U) {
-        /* Seed the legacy core set before consuming the old global slot map.
-         * Keep migration bounded to fit nine slots in the existing wire format. */
+        /* Seed the legacy core set before consuming the old global slot map. */
         const size_t previous_count = persistent_settings.controller_profile_count;
         bool migrated = true;
         for (unsigned i = 0U; i < sizeof(cores) / sizeof(cores[0]); ++i) {
@@ -4569,6 +4580,20 @@ static bool supervisor_controller_config(void *context, uint32_t core_id, uint8_
     }
     mt_controls_default(core_id, device, config);
     return true;
+}
+
+static void log_controller_settings_load(const char *machine, mt_settings_result_t result)
+{
+    if (result.status != MT_SETTINGS_OK && result.status != MT_SETTINGS_MISSING)
+        xil_printf("[settings] %s controller load=%s sd=%s backend=%u\r\n", machine,
+                   mt_settings_status_name(result.status), mt_sd_status_name(result.sd.status),
+                   result.sd.backend_status);
+}
+
+static void load_machine_controller_settings(void)
+{
+    log_controller_settings_load("Atari", mt_supervisor_atari_controls_load(&atari_controller_settings));
+    log_controller_settings_load("Spectrum", mt_supervisor_spectrum_controls_load(&spectrum_controller_settings));
 }
 
 static int usb_sd_quiesce(void *context)
@@ -4630,6 +4655,7 @@ static int usb_sd_restart(void *context)
     usb_sd_restart_failed=false;
     mt_core_catalog_sd_scan(&core_catalog);
     const mt_settings_result_t settings=mt_supervisor_settings_load(&persistent_settings);
+    load_machine_controller_settings();
     if (!mt_supervisor_turbo_controls_load(&persistent_settings))
         xil_printf("[settings] turbo bindings unavailable; left unassigned\r\n");
     settings_faulted=settings.status!=MT_SETTINGS_OK && settings.status!=MT_SETTINGS_MISSING;
@@ -6297,31 +6323,82 @@ static void handle_menu_action(mt_menu_action_t action)
             set_supervisor_error("Player assignment conflict; choose another player");
             return;
         }
-        if (controller_edit_core == MT_ATARI_XT_CORE_ID) {
-            /* Older firmware rejects unfamiliar controller profiles in settings.bin. */
-            (void)usb_hid_service_set_controller_configs(configs);
-            mt_menu_gamepad_saved(&supervisor_menu);
-            supervisor_menu.gamepad_edit = false;
-            set_supervisor_status("Atari controller mappings applied for this session");
+        mt_supervisor_settings_t *controller_settings = controller_settings_for_core(controller_edit_core);
+        const bool separate = controller_settings != &persistent_settings;
+        const bool c64 = controller_edit_core == MT_C64_CORE_ID;
+        uint16_t previous_turbo[MT_GAMEPAD_SLOTS][3] = {{0U}};
+        bool turbo_changed = false;
+        settings_before_update = *controller_settings;
+        if (separate && !mt_supervisor_settings_merge_controllers(controller_settings,
+            &persistent_settings, controller_edit_core)) {
+            *controller_settings = settings_before_update;
+            set_supervisor_error("Controller profile storage is full or invalid");
             return;
         }
-        settings_before_update = persistent_settings;
         for (uint8_t slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot) {
             if (!controller_edit_devices[slot].connected) continue;
-            if (!mt_supervisor_settings_remember_controller(&persistent_settings, controller_edit_core,
+            if (c64) {
+                const mt_controller_settings_profile_t *previous = mt_supervisor_settings_find_controller(
+                    &settings_before_update, controller_edit_core, &controller_edit_devices[slot].identity);
+                if (previous != NULL)
+                    memcpy(previous_turbo[slot], previous->config.extra_binding, sizeof(previous_turbo[slot]));
+                if (memcmp(previous_turbo[slot], supervisor_menu.gamepad_config[slot].extra_binding,
+                    sizeof(previous_turbo[slot])) != 0) turbo_changed = true;
+            }
+            if (!mt_supervisor_settings_remember_controller(controller_settings, controller_edit_core,
                 &controller_edit_devices[slot].identity, &supervisor_menu.gamepad_config[slot])) {
-                persistent_settings = settings_before_update;
+                *controller_settings = settings_before_update;
                 set_supervisor_error("Controller profile storage is full or invalid");
                 return;
             }
         }
-        if (save_persistent_settings() && mt_supervisor_turbo_controls_save(&persistent_settings)) {
+        bool saved;
+        if (separate) {
+            const mt_settings_result_t result = controller_edit_core == MT_ATARI_XT_CORE_ID ?
+                mt_supervisor_atari_controls_save(controller_settings) :
+                mt_supervisor_spectrum_controls_save(controller_settings);
+            saved = result.status == MT_SETTINGS_OK;
+        } else {
+            saved = save_persistent_settings();
+        }
+        if (saved && turbo_changed && !mt_supervisor_turbo_controls_save(controller_settings)) {
+            /* The shared file has committed. Keep those bindings and leave the
+             * editor open with the requested turbo bindings for a retry. */
+            for (uint8_t slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot) {
+                if (!controller_edit_devices[slot].connected) continue;
+                mt_controller_config_t committed = supervisor_menu.gamepad_config[slot];
+                memcpy(committed.extra_binding, previous_turbo[slot], sizeof(previous_turbo[slot]));
+                supervisor_menu.gamepad_original[slot] = committed;
+                (void)mt_supervisor_settings_remember_controller(controller_settings, controller_edit_core,
+                    &controller_edit_devices[slot].identity, &committed);
+                mt_controller_device_t device;
+                if (usb_hid_service_controller_device(slot, &device) &&
+                    mt_controls_identity_equal(&device.identity, &controller_edit_devices[slot].identity))
+                    configs[slot] = committed;
+            }
+            (void)usb_hid_service_set_controller_configs(configs);
+            set_supervisor_error("Controls saved; turbo write failed. Retry Save changes");
+            return;
+        }
+        if (saved) {
+            bool legacy_cleanup_pending = false;
+            if (separate) {
+                settings_before_update = persistent_settings;
+                if (mt_supervisor_settings_remove_controllers(&persistent_settings, controller_edit_core) &&
+                    !save_persistent_settings()) {
+                    persistent_settings = settings_before_update;
+                    legacy_cleanup_pending = true;
+                }
+            }
             (void)usb_hid_service_set_controller_configs(configs);
             mt_menu_gamepad_saved(&supervisor_menu);
             supervisor_menu.gamepad_edit = false;
-            set_supervisor_status("Controller settings saved for this core");
+            if (legacy_cleanup_pending)
+                set_supervisor_error("Controller settings saved; old settings cleanup failed");
+            else
+                set_supervisor_status("Controller settings saved for this core");
         } else {
-            persistent_settings = settings_before_update;
+            *controller_settings = settings_before_update;
             set_supervisor_error("SD write failed; changes kept here. Retry Save changes");
         }
     } else if (action.kind == MT_MENU_ACTION_SET_CLOCK) {
@@ -7350,6 +7427,7 @@ static void initialize_supervisor_menu(void)
                standby_ready ? 1U : 0U);
 
     load_result = mt_supervisor_settings_load(&persistent_settings);
+    load_machine_controller_settings();
     if (!mt_supervisor_turbo_controls_load(&persistent_settings))
         xil_printf("[settings] turbo bindings unavailable; left unassigned\r\n");
     settings_missing_on_boot = load_result.status == MT_SETTINGS_MISSING;

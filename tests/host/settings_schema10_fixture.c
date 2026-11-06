@@ -1,8 +1,21 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* Exact schema-10 codec at the pin in fixtures/settings_schema10_reference.json.
- * Namespacing only: the original decoder/encoder bytes remain unchanged.
+ * The original decoder/encoder bytes remain unchanged.
  * Current in-memory types have additive fields; none changes the wire layout.
  * Re-encoding independently verifies every old field, not just acceptance. */
+#include "multitini_controls.h"
+#include "multitini_atari_xt_interface.h"
+#include "multitini_spectrum_interface.h"
+
+static uint32_t schema10_controls_action_mask(uint32_t core)
+{
+    /* The codec delegates core ID validation to controls.c. The pinned
+     * firmware predates these cores, unlike the test's linked controls.c. */
+    if (core == MT_ATARI_XT_CORE_ID || core == MT_SPECTRUM_CORE_ID) return 0U;
+    return mt_controls_action_mask(core);
+}
+
+#define mt_controls_action_mask schema10_controls_action_mask
 #define mt_settings_status_name schema10_mt_settings_status_name
 #define mt_supervisor_settings_defaults schema10_mt_supervisor_settings_defaults
 #define mt_supervisor_settings_find schema10_mt_supervisor_settings_find

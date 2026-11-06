@@ -458,6 +458,37 @@ bool mt_supervisor_settings_remember_controller(
     return true;
 }
 
+bool mt_supervisor_settings_merge_controllers(mt_supervisor_settings_t *settings,
+    const mt_supervisor_settings_t *legacy, uint32_t core_id)
+{
+    if (settings == NULL || legacy == NULL || mt_controls_action_mask(core_id) == 0U ||
+        settings->controller_profile_count > MT_SETTINGS_MAX_CONTROLLER_PROFILES ||
+        legacy->controller_profile_count > MT_SETTINGS_MAX_CONTROLLER_PROFILES) return false;
+    for (size_t index = 0U; index < legacy->controller_profile_count; ++index) {
+        const mt_controller_settings_profile_t *profile = &legacy->controller_profiles[index];
+        if (profile->core_id == core_id &&
+            mt_supervisor_settings_find_controller(settings, core_id, &profile->identity) == NULL &&
+            !mt_supervisor_settings_remember_controller(settings, core_id, &profile->identity,
+                &profile->config)) return false;
+    }
+    return true;
+}
+
+bool mt_supervisor_settings_remove_controllers(mt_supervisor_settings_t *settings,
+    uint32_t core_id)
+{
+    if (settings == NULL || mt_controls_action_mask(core_id) == 0U ||
+        settings->controller_profile_count > MT_SETTINGS_MAX_CONTROLLER_PROFILES) return false;
+    size_t retained = 0U;
+    for (size_t index = 0U; index < settings->controller_profile_count; ++index) {
+        if (settings->controller_profiles[index].core_id == core_id) continue;
+        settings->controller_profiles[retained++] = settings->controller_profiles[index];
+    }
+    const bool removed = retained != settings->controller_profile_count;
+    settings->controller_profile_count = retained;
+    return removed;
+}
+
 static bool settings_valid(const mt_supervisor_settings_t *settings)
 {
     size_t index;
@@ -838,8 +869,8 @@ static bool decode_settings(mt_supervisor_settings_t *settings, size_t wire_size
     return true;
 }
 
-mt_settings_result_t mt_supervisor_settings_load(
-    mt_supervisor_settings_t *settings)
+static mt_settings_result_t load_settings(mt_supervisor_settings_t *settings,
+                                          const char *path, const char *journal_path)
 {
     mt_sd_result_t sd;
     bool found = false;
@@ -849,12 +880,12 @@ mt_settings_result_t mt_supervisor_settings_load(
     }
     mt_supervisor_settings_defaults(settings);
     sd = mt_sd_storage_journal_recover(
-        MT_SETTINGS_PATH, MT_SETTINGS_JOURNAL_PATH, settings_wire,
+        path, journal_path, settings_wire,
         sizeof(settings_wire));
     if (sd.status != MT_SD_OK)
         return settings_result(MT_SETTINGS_RECOVERY_FAILED, sd);
     sd = mt_sd_storage_read_file_optional_exact(
-        MT_SETTINGS_PATH, settings_wire, sizeof(settings_wire), &found);
+        path, settings_wire, sizeof(settings_wire), &found);
     /* Re-open only the known older length. The SD service still enforces
      * exact reads, and decoding verifies the schema/length pair and CRC. */
     if (sd.status == MT_SD_SIZE_MISMATCH &&
@@ -863,7 +894,7 @@ mt_settings_result_t mt_supervisor_settings_load(
          sd.size == MT_SETTINGS_V6_WIRE_SIZE || sd.size == MT_SETTINGS_V7_WIRE_SIZE ||
          sd.size == MT_SETTINGS_V9_WIRE_SIZE)) {
         sd = mt_sd_storage_read_file_optional_exact(
-            MT_SETTINGS_PATH, settings_wire, sd.size,
+            path, settings_wire, sd.size,
             &found);
     }
     if (sd.status != MT_SD_OK)
@@ -876,8 +907,8 @@ mt_settings_result_t mt_supervisor_settings_load(
     return settings_result(MT_SETTINGS_OK, sd);
 }
 
-mt_settings_result_t mt_supervisor_settings_save(
-    const mt_supervisor_settings_t *settings)
+static mt_settings_result_t save_settings(const mt_supervisor_settings_t *settings,
+                                          const char *path, const char *journal_path)
 {
     mt_sd_result_t sd;
     if (!encode_settings(settings)) {
@@ -885,10 +916,42 @@ mt_settings_result_t mt_supervisor_settings_save(
                                empty_sd_result());
     }
     sd = mt_sd_storage_journal_replace(
-        MT_SETTINGS_PATH, MT_SETTINGS_JOURNAL_PATH, settings_wire,
+        path, journal_path, settings_wire,
         sizeof(settings_wire));
     return settings_result(sd.status == MT_SD_OK ? MT_SETTINGS_OK :
                            MT_SETTINGS_WRITE_FAILED, sd);
+}
+
+mt_settings_result_t mt_supervisor_settings_load(mt_supervisor_settings_t *settings)
+{
+    return load_settings(settings, MT_SETTINGS_PATH, MT_SETTINGS_JOURNAL_PATH);
+}
+
+mt_settings_result_t mt_supervisor_settings_save(const mt_supervisor_settings_t *settings)
+{
+    return save_settings(settings, MT_SETTINGS_PATH, MT_SETTINGS_JOURNAL_PATH);
+}
+
+/* Older firmware rejects the whole shared file if it finds a controller
+ * record for an unknown core. Use the same format and separate journals. */
+mt_settings_result_t mt_supervisor_atari_controls_load(mt_supervisor_settings_t *settings)
+{
+    return load_settings(settings, MT_ATARI_CONTROLS_PATH, MT_ATARI_CONTROLS_JOURNAL_PATH);
+}
+
+mt_settings_result_t mt_supervisor_atari_controls_save(const mt_supervisor_settings_t *settings)
+{
+    return save_settings(settings, MT_ATARI_CONTROLS_PATH, MT_ATARI_CONTROLS_JOURNAL_PATH);
+}
+
+mt_settings_result_t mt_supervisor_spectrum_controls_load(mt_supervisor_settings_t *settings)
+{
+    return load_settings(settings, MT_SPECTRUM_CONTROLS_PATH, MT_SPECTRUM_CONTROLS_JOURNAL_PATH);
+}
+
+mt_settings_result_t mt_supervisor_spectrum_controls_save(const mt_supervisor_settings_t *settings)
+{
+    return save_settings(settings, MT_SPECTRUM_CONTROLS_PATH, MT_SPECTRUM_CONTROLS_JOURNAL_PATH);
 }
 
 const char *mt_settings_status_name(mt_settings_status_t status)

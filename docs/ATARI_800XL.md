@@ -22,4 +22,4 @@ Put files under `multitini/cores/atari-800xl/media/`. The Media tab has separate
 
 Disk writes, additional SIO drives, cassette, banked cartridges, and PAL remain outside this implementation.
 
-F1 is Start, F2 Select, F3 Option, F4 Help, and F5 Break. F12 opens the Multitini menu. Each of the two gamepad ports provides four directions and one fire button. Custom gamepad mappings apply for the current session so the shared SD settings remain readable by earlier firmware.
+F1 is Start, F2 Select, F3 Option, F4 Help, and F5 Break. F12 opens the Multitini menu. Each of the two gamepad ports provides four directions and one fire button. Choose **Save changes** in **Controllers** to keep the mappings across restarts. Atari stores them in `multitini/atari_controls.bin` on the SD card.

@@ -15,6 +15,10 @@
 
 #define MT_SETTINGS_PATH "0:/multitini/settings.bin"
 #define MT_SETTINGS_JOURNAL_PATH "0:/multitini/settings.bin.mtj"
+#define MT_ATARI_CONTROLS_PATH "0:/multitini/atari_controls.bin"
+#define MT_ATARI_CONTROLS_JOURNAL_PATH "0:/multitini/atari_controls.bin.mtj"
+#define MT_SPECTRUM_CONTROLS_PATH "0:/multitini/spectrum_controls.bin"
+#define MT_SPECTRUM_CONTROLS_JOURNAL_PATH "0:/multitini/spectrum_controls.bin.mtj"
 #define MT_TURBO_CONTROLS_PATH "0:/multitini/turbo_controls.bin"
 #define MT_TURBO_CONTROLS_JOURNAL_PATH "0:/multitini/turbo_controls.bin.mtj"
 #define MT_TURBO_CONTROLS_WIRE_SIZE (24U + MT_SETTINGS_MAX_CONTROLLER_PROFILES * 30U)
@@ -141,6 +145,10 @@ bool mt_supervisor_settings_remember_controller(
     mt_supervisor_settings_t *settings, uint32_t core_id,
     const mt_controller_identity_t *identity,
     const mt_controller_config_t *config);
+bool mt_supervisor_settings_merge_controllers(mt_supervisor_settings_t *settings,
+    const mt_supervisor_settings_t *legacy, uint32_t core_id);
+bool mt_supervisor_settings_remove_controllers(mt_supervisor_settings_t *settings,
+    uint32_t core_id);
 
 mt_settings_result_t mt_supervisor_settings_load(
     mt_supervisor_settings_t *settings);
@@ -149,6 +157,10 @@ mt_settings_result_t mt_supervisor_settings_save(
 /* Separate journal: old schema-10 firmware ignores these new bindings. */
 bool mt_supervisor_turbo_controls_load(mt_supervisor_settings_t *settings);
 bool mt_supervisor_turbo_controls_save(const mt_supervisor_settings_t *settings);
+mt_settings_result_t mt_supervisor_atari_controls_load(mt_supervisor_settings_t *settings);
+mt_settings_result_t mt_supervisor_atari_controls_save(const mt_supervisor_settings_t *settings);
+mt_settings_result_t mt_supervisor_spectrum_controls_load(mt_supervisor_settings_t *settings);
+mt_settings_result_t mt_supervisor_spectrum_controls_save(const mt_supervisor_settings_t *settings);
 /* Missing/stale companion records use the legacy preset without changing
  * settings.bin. A malformed companion returns false and is never overwritten. */
 bool mt_supervisor_sid_map_load(const char *core_id, uint8_t legacy_mode,

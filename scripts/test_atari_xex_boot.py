@@ -15,12 +15,25 @@ SECTOR_SIZE = 128
 DCB = 0x0300
 SIOV = 0xE459
 PORTB = 0xD301
+VCOUNT = 0xD40B
 TEST_RETURN = 0x4000
 STOCK_XL_DISK_BOOT = 0xC58B
 STOCK_XL_MD5 = "06daac977823773a3eea3422fd26a703"
 
 
 class AtariMemory(list):
+    def __init__(self):
+        super().__init__([0] * 65536)
+        self.vcount_reads = 0
+
+    def __getitem__(self, address):
+        if address == VCOUNT:
+            scan = (0x70, 0x7B, 0x82, 0x00)
+            value = scan[min(self.vcount_reads, len(scan) - 1)]
+            self.vcount_reads += 1
+            return value
+        return super().__getitem__(address)
+
     def __setitem__(self, address, value):
         if isinstance(address, int) and 0xA000 <= address < 0xC000 and (self[PORTB] & 2) == 0:
             return  # BASIC occupies this window until PORTB disables it.
@@ -38,7 +51,7 @@ def boot(atr, rom=None, fail_read=False):
     boot_sectors = first[1]
     assert first[0] == 0 and load_address == 0x0800
 
-    memory = AtariMemory([0] * 65536)
+    memory = AtariMemory()
     if rom is None:
         program = disk[:boot_sectors * SECTOR_SIZE]
         memory[load_address:load_address + len(program)] = program
@@ -91,6 +104,7 @@ def boot(atr, rom=None, fail_read=False):
 
     assert memory[0x6000:0x6002] == [0x12, 0x12]  # Both INITs once, then the final RUN.
     assert u16(memory, 0x02E0) == 0x0110
+    assert memory.vcount_reads >= 4  # RUNAD waited through vertical blank for the next frame.
     assert memory[0x011B:0x0170] == [0xA5] * (0x0170 - 0x011B)
     assert memory[0x1FFF:0x2100] == [(index & 0xFF) ^ 0x5A for index in range(257)]
     assert memory[PORTB] == 0xFF and memory[0x03F8] == 1
@@ -110,7 +124,7 @@ def main():
         atr = fixture.read_bytes()
     boot(atr)
     boot(atr, fail_read=True)
-    print("PASS: relocation, both INITAD callbacks, low-stack RUNAD/RTS and SIO read failure")
+    print("PASS: relocation, both INITAD callbacks, early-frame low-stack RUNAD/RTS and SIO read failure")
     if args.xl_rom:
         rom = args.xl_rom.read_bytes()
         if hashlib.md5(rom).hexdigest() != STOCK_XL_MD5:
