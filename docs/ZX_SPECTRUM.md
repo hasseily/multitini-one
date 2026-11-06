@@ -49,7 +49,10 @@ hashes and reproducible ULA and PSG changes. With Vivado on `PATH`, run
 `python scripts/test_zx_spectrum.py` for the mixed-language simulation. A
 source-built diagnostic program exercises Z80 execution, RAM banking, audio,
 keyboard, controller input, both raster geometries, and tape pulse timing and
-load rejection. Build the image with `python scripts/build_core_zx_spectrum.py`.
+load rejection. Run `python scripts/test_zx_spectrum.py --mapped-rom` to test
+the synthesized ROM loader and CPU reads in both banks, or pass `--checkpoint`
+with a routed design checkpoint to test the mapped adapter from that build.
+Build the image with `python scripts/build_core_zx_spectrum.py`.
 
 Physical acceptance requires booting a supplied ROM for each model, checking
 the border and audio, loading a TAP through the ROM tape loader, and switching

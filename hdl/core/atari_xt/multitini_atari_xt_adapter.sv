@@ -166,7 +166,10 @@ module multitini_atari_xt_adapter #(
     // CPU and ANTIC each see a one-clock read port. Keep the RAM underneath
     // ROM and cartridge apertures untouched while those windows are enabled.
     (* ram_style = "block" *) reg [7:0] ram [0:65535];
-    (* ram_style = "block" *) reg [7:0] rom [0:40959];
+    // Each ROM copy has a dedicated loader write port. A shared CPU read and
+    // loader write address was optimized to the CPU address in the routed design.
+    (* ram_style = "block" *) reg [7:0] cpu_rom [0:40959];
+    (* ram_style = "block" *) reg [7:0] antic_rom [0:40959];
     reg [7:0] cpu_ram_q, antic_ram_q, cpu_rom_q, antic_rom_q;
     reg cpu_rom_select, antic_rom_select, cpu_open_bus;
     wire cpu_cart_hit = cart_valid && (cpu_addr[15:13] == 3'b101 ||
@@ -179,13 +182,16 @@ module multitini_atari_xt_adapter #(
     wire [15:0] rom_load_addr = loader_base + load_offset[15:0];
     wire [15:0] cpu_cart_addr = 16'h6000 + {2'b00, cart_16k && cpu_addr[13], cpu_addr[12:0]};
     wire [15:0] antic_cart_addr = 16'h6000 + {2'b00, cart_16k && antic_addr[13], antic_addr[12:0]};
-    wire [15:0] rom_port_a = rom_write ? rom_load_addr : cpu_cart_hit ? cpu_cart_addr : {1'b0, cpu_rom_addr};
-    wire [15:0] rom_port_b = antic_cart_hit ? antic_cart_addr : {1'b0, antic_rom_addr};
+    wire [15:0] cpu_rom_read_addr = cpu_cart_hit ? cpu_cart_addr : {1'b0, cpu_rom_addr};
+    wire [15:0] antic_rom_read_addr = antic_cart_hit ? antic_cart_addr : {1'b0, antic_rom_addr};
 
     always @(posedge core_clk) begin
-        if (rom_write) rom[rom_port_a] <= load_data;
-        cpu_rom_q <= rom[rom_port_a];
-        antic_rom_q <= rom[rom_port_b];
+        if (rom_write) begin
+            cpu_rom[rom_load_addr] <= load_data;
+            antic_rom[rom_load_addr] <= load_data;
+        end
+        cpu_rom_q <= cpu_rom[cpu_rom_read_addr];
+        antic_rom_q <= antic_rom[antic_rom_read_addr];
         cpu_rom_select <= cpu_rom_hit || cpu_cart_hit;
         antic_rom_select <= antic_rom_hit || antic_cart_hit;
         cpu_open_bus <= cpu_io;

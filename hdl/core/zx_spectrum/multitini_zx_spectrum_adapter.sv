@@ -160,10 +160,12 @@ module multitini_zx_spectrum_adapter (
     wire [2:0] cpu_bank = cpu_addr[15] ? (cpu_addr[14] ? paging[2:0] : 3'd2) : 3'd5;
     wire [16:0] ram_addr = {cpu_bank, cpu_addr[13:0]};
     wire [16:0] screen_addr = {1'b1, vram_addr[14], 1'b1, vram_addr[13:0]};
-    wire [14:0] rom_addr = rom_write ? load_offset[14:0] : {paging[4], cpu_addr[13:0]};
+    // Separate loader and CPU addresses keep writes independent of the held Z80.
     always @(posedge core_clk) begin
-        if (rom_write) rom[rom_addr] <= load_data;
-        rom_data <= rom[rom_addr];
+        if (rom_write) rom[load_offset[14:0]] <= load_data;
+    end
+    always @(posedge core_clk) begin
+        if (!rom_write) rom_data <= rom[{paging[4], cpu_addr[13:0]}];
         if (!machine_reset && !nMREQ && !nWR && |cpu_addr[15:14]) ram[ram_addr] <= cpu_out;
         ram_data <= ram[ram_addr];
         vram_data <= ram[screen_addr];
