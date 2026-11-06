@@ -23,7 +23,9 @@ RESTRICTED_SUFFIXES = {
 SOURCE_SUFFIXES = {".c", ".cpp", ".h", ".hpp", ".py", ".sv", ".tcl", ".v", ".vhd", ".vhdl", ".xdc"}
 GENERATED_PREFIXES = ("build/", "build-", "project/", "vitis_workspace/", ".Xil/")
 FONT_PATH = "hdl/common/multitini_font7x8.mem"
-FONT_SHA256 = "be62a9d5ced50db55482084b61a6afd8ceec7e8a40f5cdd8506931718060e389"
+FONT_SHA256 = "27d38dc375d1c660cb3ecb249be01c44aa43db9bb3029cf2de82600d753af23a"
+ATARI_NTSC_PALETTE_PATH = "third_party/atari-xt/upstream/hdl/palette/atari_ntsc.hex"
+ATARI_NTSC_PALETTE_SHA256 = "cc19ac71e8c9b2e8fcca9f1eb2e909d2255573edbab1a84e4e6e47faa256a3bf"
 C64_ROM_PATHS = (
     "third_party/c64/ROMs/basic.901226-01.bin",
     "third_party/c64/ROMs/kernal.901227-03.bin",
@@ -44,8 +46,10 @@ ALLOWED_RESTRICTED_FILES = {
     # readmemh representation. Both are pinned and covered by the MIT notice.
     "third_party/gameboy/upstream/BootROMs/cgb_boot.mif",
     "hdl/core/gameboy/boot/cgb_boot.mem",
-    # GPL font derived from Appletini fb16 at the commit in licenses/files.csv.
+    # GPL font derived from Appletini fb16 with the Multitini read-only icon.
     FONT_PATH,
+    # Licensed Atari-XT color lookup table pinned in atari-xt.import.json.
+    ATARI_NTSC_PALETTE_PATH,
     *AMIGA_CPU_TABLES,
 }
 
@@ -183,6 +187,12 @@ def main() -> int:
         errors.append(f"pinned overlay font is absent: {FONT_PATH}")
     elif sha256(font) != FONT_SHA256:
         errors.append(f"pinned overlay font changed: {FONT_PATH}")
+
+    palette = ROOT / ATARI_NTSC_PALETTE_PATH
+    if not palette.is_file():
+        errors.append(f"pinned Atari-XT NTSC palette is absent: {ATARI_NTSC_PALETTE_PATH}")
+    elif sha256(palette) != ATARI_NTSC_PALETTE_SHA256:
+        errors.append(f"pinned Atari-XT NTSC palette changed: {ATARI_NTSC_PALETTE_PATH}")
 
     try:
         lock = json.loads((ROOT / "provenance" / "sources.lock.json").read_text(encoding="utf-8"))
