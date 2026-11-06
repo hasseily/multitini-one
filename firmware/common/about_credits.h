@@ -20,7 +20,6 @@ static const char *const about_credits[] = {
     "This build uses and adapts Atari-XT by ThrudTheBarbarian.",
     "https://github.com/ThrudTheBarbarian/fpga-xt",
     "",
-    "Appletini project origin - John \"Elltwo\" Flanagan",
     "Appletini ONE - board design and shared platform code",
     "MiSTer FPGA - Sorgelig and the MiSTer community",
     "",

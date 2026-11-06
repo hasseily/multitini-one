@@ -21,9 +21,18 @@ enum {
     HEADER_ACTIVE_W = MT_UI_COLUMNS - HEADER_ACTIVE_X - 4,
     LIST_Y = 11, HELP_Y = MT_UI_ROWS - 8,
     STATUS_Y = MT_UI_ROWS - 4, FOOTER_Y = MT_UI_ROWS - 2,
-    ABOUT_CREDITS_Y = LIST_Y + 20,
-    ABOUT_RANGE_Y = HELP_Y - 2,
-    ABOUT_VISIBLE_CREDITS = ABOUT_RANGE_Y - ABOUT_CREDITS_Y - 1
+    ABOUT_VERSIONS_Y = 8, ABOUT_FIELDS_OFFSET = 2, ABOUT_SECTION_GAP = 1,
+    ABOUT_HARDWARE_Y = ABOUT_VERSIONS_Y + ABOUT_FIELDS_OFFSET +
+        MT_MENU_ABOUT_VERSION_ITEMS + ABOUT_SECTION_GAP,
+    ABOUT_CONTRIBUTORS_Y = ABOUT_HARDWARE_Y + ABOUT_FIELDS_OFFSET +
+        MT_MENU_ABOUT_HARDWARE_ITEMS + ABOUT_SECTION_GAP,
+    ABOUT_CONTRIBUTOR_ROWS = sizeof(about_contributors) / sizeof(about_contributors[0]),
+    ABOUT_INTRO_ROWS = sizeof(about_intro) / sizeof(about_intro[0]),
+    ABOUT_THIRD_PARTY_Y = ABOUT_CONTRIBUTORS_Y + ABOUT_FIELDS_OFFSET +
+        ABOUT_CONTRIBUTOR_ROWS + ABOUT_SECTION_GAP,
+    ABOUT_SIGNATURE_Y = ABOUT_THIRD_PARTY_Y + ABOUT_FIELDS_OFFSET + ABOUT_INTRO_ROWS,
+    ABOUT_CREDITS_Y = ABOUT_SIGNATURE_Y + 2,
+    ABOUT_RANGE_Y = HELP_Y - 2
 };
 
 _Static_assert(LIST_Y + MT_MENU_LIST_ROWS < HELP_Y,
@@ -378,7 +387,7 @@ static mt_menu_action_t activate(const mt_menu_t *menu, const mt_menu_view_t *vi
     } else {
         size_t count;
         const mt_menu_item_t *items = page_items(menu->page, view, &count);
-        const size_t row = menu->page == MT_MENU_PAGE_ABOUT ? MT_MENU_ABOUT_VERSION_ITEMS : menu->row;
+        const size_t row = menu->page == MT_MENU_PAGE_ABOUT ? MT_MENU_ABOUT_UPDATE_ITEM : menu->row;
         if (row < count && items[row].enabled) {
             action.kind = items[row].action;
             action.file_index = items[row].argument;
@@ -688,9 +697,14 @@ static size_t about_text_rows(const char *const *lines, size_t count,
     return row;
 }
 
-static size_t about_max_top(size_t total)
+static size_t about_visible_credits(size_t first_row)
 {
-    return total > ABOUT_VISIBLE_CREDITS ? total - ABOUT_VISIBLE_CREDITS : 0U;
+    return ABOUT_RANGE_Y - first_row - 1U;
+}
+
+static size_t about_max_top(size_t total, size_t visible)
+{
+    return total > visible ? total - visible : 0U;
 }
 
 static void reset_about_credits(mt_menu_t *menu)
@@ -699,7 +713,7 @@ static void reset_about_credits(mt_menu_t *menu)
     menu->about_credits_top = 0U;
 }
 
-static bool about_key(mt_menu_t *menu, uint8_t key)
+static bool about_key(mt_menu_t *menu, const mt_menu_view_t *view, uint8_t key)
 {
     if (!menu->about_credits_active) {
         if (key != MT_MENU_HID_DOWN && key != MT_MENU_HID_PAGE_DOWN &&
@@ -718,10 +732,13 @@ static bool about_key(mt_menu_t *menu, uint8_t key)
         return key != MT_MENU_HID_TAB;
     }
 
+    size_t count;
+    (void)page_items(MT_MENU_PAGE_ABOUT, view, &count);
+    const size_t visible = about_visible_credits(ABOUT_CREDITS_Y + (count > MT_MENU_ABOUT_UPDATE_ITEM));
     const size_t maximum = about_max_top(about_text_rows(about_credits,
-        sizeof(about_credits) / sizeof(about_credits[0]), NULL, 0U, 0U, 0U));
+        sizeof(about_credits) / sizeof(about_credits[0]), NULL, 0U, 0U, 0U), visible);
     size_t top = menu->about_credits_top > maximum ? maximum : menu->about_credits_top;
-    const size_t page = ABOUT_VISIBLE_CREDITS - 1U;
+    const size_t page = visible - 1U;
     switch (key) {
     case MT_MENU_HID_UP: if (top != 0U) --top; break;
     case MT_MENU_HID_DOWN: if (top < maximum) ++top; break;
@@ -822,7 +839,7 @@ mt_menu_action_t mt_menu_key_with_modifiers(mt_menu_t *menu,
         return action;
     }
     if (menu->page == MT_MENU_PAGE_ABOUT && menu->browser == MT_MENU_BROWSER_NONE &&
-        about_key(menu, hid_usage)) return action;
+        about_key(menu, view, hid_usage)) return action;
     if (hid_usage == MT_MENU_HID_ESCAPE) {
         if (menu->browser != MT_MENU_BROWSER_NONE) mt_menu_close_browser(menu);
         else if(menu->core_subpage){menu->core_subpage=false;menu->row=0;menu->first_row=0;}
@@ -960,8 +977,8 @@ static const char *page_caption(mt_menu_page_t page)
         "Color and display effects. Saved separately for each core.",
         "Controls for the active system.",
         "Settings supplied by the active core.",
-        "Board status, clock, documents and recovery.",
-        "Versions, contributors and project credits."
+        "Board controls, clock, documents and recovery.",
+        ""
     };
     return (unsigned)page < (unsigned)MT_MENU_PAGE_COUNT ? captions[page] : "";
 }
@@ -1346,37 +1363,42 @@ static void render_about(const mt_menu_t *menu, const mt_menu_view_t *view,
 {
     size_t count;
     const mt_menu_item_t *items = page_items(MT_MENU_PAGE_ABOUT, view, &count);
-    field(frame, ITEM_X, LIST_Y, ITEM_W, "Versions", MT_UI_COLOR_BLUE, MT_UI_COLOR_PANEL);
-    for (size_t i = 0U; i < count && i < MT_MENU_ABOUT_VERSION_ITEMS; ++i) {
-        field(frame, LABEL_X, LIST_Y + 2U + i, LABEL_W, items[i].label,
+    const bool update_available = count > MT_MENU_ABOUT_UPDATE_ITEM;
+    const size_t hardware_y = ABOUT_HARDWARE_Y + update_available;
+    field(frame, ITEM_X, ABOUT_VERSIONS_Y, ITEM_W, "Versions", MT_UI_COLOR_BLUE, MT_UI_COLOR_PANEL);
+    field(frame, ITEM_X, hardware_y, ITEM_W, "Hardware", MT_UI_COLOR_BLUE, MT_UI_COLOR_PANEL);
+    for (size_t i = 0U; i < count && i < MT_MENU_ABOUT_UPDATE_ITEM; ++i) {
+        const size_t row = i < MT_MENU_ABOUT_VERSION_ITEMS ? ABOUT_VERSIONS_Y + i :
+            hardware_y + i - MT_MENU_ABOUT_VERSION_ITEMS;
+        field(frame, LABEL_X, row + ABOUT_FIELDS_OFFSET, LABEL_W, items[i].label,
             MT_UI_COLOR_MUTED, MT_UI_COLOR_PANEL);
-        field(frame, VALUE_X, LIST_Y + 2U + i, VALUE_W, items[i].value,
-            MT_UI_COLOR_TEXT, MT_UI_COLOR_PANEL);
+        field(frame, VALUE_X, row + ABOUT_FIELDS_OFFSET, VALUE_W, items[i].value,
+            items[i].value_color, MT_UI_COLOR_PANEL);
     }
-    const bool update_available = count > MT_MENU_ABOUT_VERSION_ITEMS;
     if (update_available)
-        draw_item(frame, LIST_Y + 7U, !menu->about_credits_active,
-            &items[MT_MENU_ABOUT_VERSION_ITEMS]);
+        draw_item(frame, ABOUT_HARDWARE_Y - ABOUT_SECTION_GAP, !menu->about_credits_active,
+            &items[MT_MENU_ABOUT_UPDATE_ITEM]);
 
-    field(frame, ITEM_X, LIST_Y + 9U, ITEM_W, "Contributors",
+    field(frame, ITEM_X, ABOUT_CONTRIBUTORS_Y + update_available, ITEM_W, "Contributors",
         MT_UI_COLOR_BLUE, MT_UI_COLOR_PANEL);
-    (void)about_text_rows(about_contributors, sizeof(about_contributors) / sizeof(about_contributors[0]),
-        frame, LIST_Y + 11U, 0U, 2U);
+    (void)about_text_rows(about_contributors, ABOUT_CONTRIBUTOR_ROWS, frame,
+        ABOUT_CONTRIBUTORS_Y + ABOUT_FIELDS_OFFSET + update_available, 0U, ABOUT_CONTRIBUTOR_ROWS);
 
-    field(frame, ITEM_X, LIST_Y + 14U, ITEM_W, "Third-party codebases and inspiration",
+    field(frame, ITEM_X, ABOUT_THIRD_PARTY_Y + update_available, ITEM_W, "Third-party codebases and inspiration",
         MT_UI_COLOR_BLUE, MT_UI_COLOR_PANEL);
-    (void)about_text_rows(about_intro, sizeof(about_intro) / sizeof(about_intro[0]),
-        frame, LIST_Y + 16U, 0U, 2U);
-    mt_ui_text_field(frame, LABEL_X, LIST_Y + 18U, CONTENT_W, about_signature,
+    (void)about_text_rows(about_intro, ABOUT_INTRO_ROWS, frame,
+        ABOUT_THIRD_PARTY_Y + ABOUT_FIELDS_OFFSET + update_available, 0U, ABOUT_INTRO_ROWS);
+    mt_ui_text_field(frame, LABEL_X, ABOUT_SIGNATURE_Y + update_available, CONTENT_W, about_signature,
         MT_UI_COLOR_MUTED, MT_UI_COLOR_PANEL, false, true);
 
+    const size_t credits_y = ABOUT_CREDITS_Y + update_available;
+    const size_t visible = about_visible_credits(credits_y);
     const size_t credit_count = sizeof(about_credits) / sizeof(about_credits[0]);
     const size_t total = about_text_rows(about_credits, credit_count, NULL, 0U, 0U, 0U);
-    const size_t maximum = about_max_top(total);
+    const size_t maximum = about_max_top(total, visible);
     const size_t top = menu->about_credits_top > maximum ? maximum : menu->about_credits_top;
-    (void)about_text_rows(about_credits, credit_count, frame, ABOUT_CREDITS_Y,
-        top, ABOUT_VISIBLE_CREDITS);
-    const size_t last = total - top < ABOUT_VISIBLE_CREDITS ? total : top + ABOUT_VISIBLE_CREDITS;
+    (void)about_text_rows(about_credits, credit_count, frame, credits_y, top, visible);
+    const size_t last = total - top < visible ? total : top + visible;
     char range[CONTENT_W + 1U];
     (void)snprintf(range, sizeof(range), "Credits %u-%u of %u%s",
         (unsigned)(total == 0U ? 0U : top + 1U), (unsigned)last, (unsigned)total,
@@ -1386,7 +1408,7 @@ static void render_about(const mt_menu_t *menu, const mt_menu_view_t *view,
     if (menu->about_credits_active)
         help_text(frame, "Up/Down scrolls a line. Page Up/Page Down scrolls a page. Enter or Esc returns to Versions.");
     else if (update_available)
-        help_text(frame, items[MT_MENU_ABOUT_VERSION_ITEMS].help);
+        help_text(frame, items[MT_MENU_ABOUT_UPDATE_ITEM].help);
     else
         help_text(frame, "Firmware, FPGA, interface and Golden Boot versions reflect the running system.");
 }

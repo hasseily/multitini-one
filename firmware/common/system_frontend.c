@@ -125,19 +125,17 @@ void mt_system_frontend_apply(mt_system_frontend_t *frontend,
     if (view->save_faulted || view->settings_faulted || view->save_dirty)
         frontend->items[12].value_color = MT_UI_COLOR_WARNING;
     if (snapshot->usb_last_error != 0) frontend->items[10].value_color = MT_UI_COLOR_WARNING;
-    /* Share version values and the optional updater between the two pages. */
+    /* Copy the About fields before compacting the System actions. */
     memcpy(frontend->about_items, frontend->items + 4U,
         3U * sizeof(frontend->items[0]));
     frontend->about_items[3] = frontend->items[18];
-    frontend->about_items[MT_MENU_ABOUT_VERSION_ITEMS] = frontend->items[20];
+    memcpy(frontend->about_items + MT_MENU_ABOUT_VERSION_ITEMS, frontend->items + 7U,
+        MT_MENU_ABOUT_HARDWARE_ITEMS * sizeof(frontend->items[0]));
+    frontend->about_items[MT_MENU_ABOUT_UPDATE_ITEM] = frontend->items[20];
     view->about_items = frontend->about_items;
-    view->about_item_count = MT_MENU_ABOUT_VERSION_ITEMS +
+    view->about_item_count = MT_MENU_ABOUT_UPDATE_ITEM +
         (snapshot->golden_update_present ? 1U : 0U);
 
-    /* Keep the existing System actions in order. Place live diagnostics
-     * after them, with their original descriptions and cached values. */
-    mt_menu_item_t diagnostics[7];
-    memcpy(diagnostics, frontend->items + 7U, sizeof(diagnostics));
     static const size_t system_actions[] = {0U, 1U, 2U, 3U, 14U, 15U, 16U, 17U, 19U, 20U};
     view->system_item_count = sizeof(system_actions) / sizeof(system_actions[0]) -
         (snapshot->golden_update_present ? 0U : 1U);
@@ -172,8 +170,6 @@ void mt_system_frontend_apply(mt_system_frontend_t *frontend,
                              .value_color = MT_UI_COLOR_BLUE};
         view->system_item_count = n;
     }
-    memcpy(frontend->items + view->system_item_count, diagnostics, sizeof(diagnostics));
-    view->system_item_count += sizeof(diagnostics) / sizeof(diagnostics[0]);
     view->clock_available = snapshot->clock_available;
     view->clock_valid = snapshot->clock_valid;
     view->clock = snapshot->clock;

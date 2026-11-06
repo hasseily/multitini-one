@@ -43,23 +43,37 @@ static void expect_value(const mt_menu_view_t *view, const char *label,
     }
 }
 
-static size_t frame_text_column(const mt_ui_frame_t *frame, const char *needle)
+static void frame_read_row(const mt_ui_frame_t *frame, size_t row, char line[MT_UI_COLUMNS + 1U])
 {
-    size_t y, x;
+    for (size_t column = 0U; column < MT_UI_COLUMNS; ++column)
+        line[column] = mt_ui_character(frame, column, row);
+    line[MT_UI_COLUMNS] = '\0';
+}
+
+static size_t frame_text_row(const mt_ui_frame_t *frame, const char *needle, size_t *column)
+{
     char line[MT_UI_COLUMNS + 1U];
-    for (y = 0U; y < MT_UI_ROWS; ++y) {
-        for (x = 0U; x < MT_UI_COLUMNS; ++x)
-            line[x] = mt_ui_character(frame, x, y);
-        line[MT_UI_COLUMNS] = '\0';
+    for (size_t row = 0U; row < MT_UI_ROWS; ++row) {
+        frame_read_row(frame, row, line);
         const char *const text = strstr(line, needle);
-        if (text != NULL) return (size_t)(text - line);
+        if (text != NULL) {
+            if (column != NULL) *column = (size_t)(text - line);
+            return row;
+        }
     }
-    return MT_UI_COLUMNS;
+    return MT_UI_ROWS;
 }
 
 static bool frame_contains(const mt_ui_frame_t *frame, const char *needle)
 {
-    return frame_text_column(frame, needle) < MT_UI_COLUMNS;
+    return frame_text_row(frame, needle, NULL) < MT_UI_ROWS;
+}
+
+static void expect_blank_about_row(const mt_ui_frame_t *frame, size_t first_column, size_t row)
+{
+    check(row < MT_UI_ROWS, "the About separator is visible");
+    for (size_t column = first_column; column < MT_UI_COLUMNS; ++column)
+        check(mt_ui_character(frame, column, row) == ' ', "the About separator has no text");
 }
 
 static mt_menu_t focus_item(const mt_menu_view_t *view, const char *label)
@@ -98,7 +112,7 @@ static void test_actions_and_standby(void)
     view.status_text = "Status owned by runtime";
     view.content_root = "/core/content";
     mt_system_frontend_apply(&frontend, &snapshot, &view);
-    check(view.system_items == frontend.items && view.system_item_count == 17U,
+    check(view.system_items == frontend.items && view.system_item_count == 10U,
           "System descriptors fill the shared view");
     check(item(&view, "Drive activity")->control == MT_MENU_CONTROL_CHECKBOX &&
           item(&view, "Drive activity")->control_value == 0U &&
@@ -348,13 +362,13 @@ static void test_golden_update_confirmation(void)
     mt_menu_t menu;
     mt_system_frontend_apply(&frontend, &snapshot, &view);
     expect_value(&view, "Golden Boot", "Unknown");
-    check(view.system_item_count == 17U,
+    check(view.system_item_count == 10U,
           "absent BOOT.BIN does not display an update action");
     snapshot.golden_version = "B1.2.0";
     snapshot.golden_update_present = true;
     mt_system_frontend_apply(&frontend, &snapshot, &view);
     expect_value(&view, "Golden Boot", "B1.2.0");
-    check(view.system_item_count == 18U && !snapshot.multiboot_ready &&
+    check(view.system_item_count == 11U && !snapshot.multiboot_ready &&
           item(&view, "Update Golden Boot...")->enabled,
           "an SD BOOT.BIN enables update even with Golden 1.x");
     menu = focus_item(&view, "Update Golden Boot...");
@@ -398,45 +412,81 @@ static void test_golden_update_confirmation(void)
     expect_value(&view, "Golden Boot", "Unknown");
 }
 
-static void test_about_versions_and_credits(void)
+static void test_about_layout_and_credits(void)
 {
-    static const char *const about[] = {"Firmware build", "FPGA build", "Interface", "Golden Boot"};
+    static const char *const about[] = {
+        "Firmware build", "FPGA build", "Interface", "Golden Boot", "Uptime", "Board temperature",
+        "USB devices", "USB errors", "SD core catalog", "Saved data", "Audio output"
+    };
     static const char *const system[] = {
         "Restart active core", "Autoboot current core", "Read documents", "Date and time",
         "Restart USB", "Golden updater", "Startup firmware", "Switch to Appletini",
-        "USB SD card", "Update Golden Boot...", "Drive activity", "Uptime", "Board temperature",
-        "USB devices", "USB errors", "SD core catalog", "Saved data", "Audio output"
+        "USB SD card", "Update Golden Boot...", "Drive activity"
     };
+    static const char third_party[] = "Third-party codebases and inspiration";
     static const char signature[] = "Rikkles && KKR75 - Yarze, Lebanon";
+    const size_t about_count = sizeof(about) / sizeof(about[0]);
     mt_system_frontend_t frontend;
     mt_system_snapshot_t snapshot = {.firmware_version = "M0.8.2dev2", .firmware_build = UINT32_C(0x4D000849),
         .shell_build = UINT32_C(0x4D000848), .abi = 27U, .golden_version = "B2.1.0"};
     mt_menu_view_t view = {0};
     mt_ui_frame_t frame;
     mt_system_frontend_apply(&frontend, &snapshot, &view);
-    check(view.about_items == frontend.about_items && view.about_item_count == 4U,
-          "About shows four version descriptors without an available update");
-    for (size_t i = 0U; i < sizeof(about) / sizeof(about[0]); ++i) {
+    check(view.about_items == frontend.about_items && view.about_item_count == about_count,
+          "About shows version and hardware descriptors without an available update");
+    for (size_t i = 0U; i < about_count; ++i) {
         const mt_menu_item_t *const current = &view.about_items[i];
         check(strcmp(current->label, about[i]) == 0 && current->help != NULL && current->help[0] != '\0',
-              "About places Golden Boot below Interface and retains contextual help");
+              "About orders versions and diagnostics and retains contextual help");
         check(!current->enabled && current->action == MT_MENU_ACTION_NONE,
-              "version rows remain informational");
+              "version and hardware rows remain informational");
     }
     mt_menu_t menu = focus_item(&view, "Date and time");
     (void)mt_menu_key(&menu, &view, MT_MENU_HID_TAB, true);
     check(menu.page == MT_MENU_PAGE_ABOUT && !menu.about_credits_active && menu.about_credits_top == 0U,
           "About follows System in tab navigation");
     mt_menu_render(&menu, &view, &frame);
-    for (size_t i = 0U; i < sizeof(about) / sizeof(about[0]); ++i)
-        check(frame_contains(&frame, about[i]) && frame_contains(&frame, view.about_items[i].value),
-              "the About renderer shows every version label and current value");
-    check(frame_contains(&frame, "Versions") && frame_contains(&frame, "Contributors") &&
-          frame_contains(&frame, "Third-party codebases and inspiration") &&
-          !frame_contains(&frame, "Board temperature"), "About renders credits and versions separately from live diagnostics");
-    const size_t signature_column = frame_text_column(&frame, signature);
-    check(signature_column > MT_UI_COLUMNS / 2U && signature_column + sizeof(signature) <= MT_UI_COLUMNS + 1U,
+    size_t content_column = 0U;
+    const size_t versions_row = frame_text_row(&frame, "Versions", &content_column);
+    const size_t hardware_row = frame_text_row(&frame, "Hardware", NULL);
+    const size_t contributors_row = frame_text_row(&frame, "Contributors", NULL);
+    const size_t third_party_row = frame_text_row(&frame, third_party, NULL);
+    check(versions_row < hardware_row && hardware_row < contributors_row &&
+          contributors_row < third_party_row && third_party_row < MT_UI_ROWS,
+          "About orders Versions, Hardware, Contributors and third-party credits");
+    expect_blank_about_row(&frame, content_column, versions_row + 1U);
+    expect_blank_about_row(&frame, content_column, hardware_row + 1U);
+    for (size_t i = 0U; i < about_count; ++i) {
+        const size_t field_row = i < 4U ? versions_row + 2U + i : hardware_row + 2U + i - 4U;
+        char line[MT_UI_COLUMNS + 1U];
+        check(field_row < MT_UI_ROWS, "the About field is visible");
+        frame_read_row(&frame, field_row, line);
+        check(strstr(line, about[i]) != NULL && strstr(line, view.about_items[i].value) != NULL,
+              "About renders consecutive version and hardware labels and their values");
+    }
+    check(hardware_row == frame_text_row(&frame, "Golden Boot", NULL) + 2U &&
+          contributors_row == frame_text_row(&frame, "Audio output", NULL) + 2U,
+          "one row separates Versions from Hardware and Hardware from Contributors");
+    expect_blank_about_row(&frame, content_column, hardware_row - 1U);
+    expect_blank_about_row(&frame, content_column, contributors_row - 1U);
+    expect_blank_about_row(&frame, content_column, contributors_row + 1U);
+    check(frame_text_row(&frame, "Hardware - Karl", NULL) == contributors_row + 2U &&
+          frame_text_row(&frame, "Firmware - Henri", NULL) == contributors_row + 3U &&
+          third_party_row == contributors_row + 5U,
+          "Contributors lists both entries before the one-row gap above third-party credits");
+    expect_blank_about_row(&frame, content_column, third_party_row - 1U);
+    expect_blank_about_row(&frame, content_column, third_party_row + 1U);
+    check(frame_text_row(&frame, "The firmware is open-source", NULL) == third_party_row + 2U &&
+          frame_text_row(&frame, "github.com/hasseily/multitini-one", NULL) == third_party_row + 3U,
+          "the existing introduction and project link follow the third-party heading");
+    size_t signature_column = 0U;
+    const size_t signature_row = frame_text_row(&frame, signature, &signature_column);
+    check(signature_row == third_party_row + 4U && signature_row < MT_UI_ROWS &&
+          signature_column > MT_UI_COLUMNS / 2U && signature_column + sizeof(signature) <= MT_UI_COLUMNS + 1U,
           "About signature is visible at the right edge");
+    check(!frame_contains(&frame, "Versions, contributors and project credits.") &&
+          !frame_contains(&frame, "Appletini project origin"),
+          "About omits the redundant caption and the origin credit");
     check(mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true).kind == MT_MENU_ACTION_NONE,
           "no About action is available without BOOT.BIN");
 
@@ -445,9 +495,14 @@ static void test_about_versions_and_credits(void)
     (void)mt_menu_key(&menu, &view, MT_MENU_HID_PAGE_DOWN, true);
     check(menu.about_credits_top > 0U, "Page Down scrolls the credits list");
     mt_menu_render(&menu, &view, &frame);
-    check(frame_contains(&frame, "Contributors") && frame_contains(&frame, "Third-party codebases and inspiration") &&
-          frame_contains(&frame, snapshot.golden_version) && frame_text_column(&frame, signature) == signature_column,
-          "scrolling keeps the version and contributor sections, credits heading, and signature fixed");
+    size_t scrolled_signature_column = 0U;
+    check(frame_text_row(&frame, "Versions", NULL) == versions_row &&
+          frame_text_row(&frame, "Hardware", NULL) == hardware_row &&
+          frame_text_row(&frame, "Contributors", NULL) == contributors_row &&
+          frame_text_row(&frame, third_party, NULL) == third_party_row &&
+          frame_text_row(&frame, signature, &scrolled_signature_column) == signature_row &&
+          scrolled_signature_column == signature_column,
+          "scrolling keeps the sections, credits heading and signature fixed");
     (void)mt_menu_key(&menu, &view, MT_MENU_HID_PAGE_UP, true);
     check(menu.about_credits_top == 0U, "Page Up reaches the first credits page");
     (void)mt_menu_key(&menu, &view, MT_MENU_HID_UP, true);
@@ -470,20 +525,26 @@ static void test_about_versions_and_credits(void)
 
     snapshot.golden_update_present = true;
     mt_system_frontend_apply(&frontend, &snapshot, &view);
-    check(view.about_item_count == 5U && view.about_items[4].action == MT_MENU_ACTION_UPDATE_GOLDEN &&
-          view.about_items[4].enabled, "About offers the Golden update only when BOOT.BIN is present");
+    check(view.about_item_count == about_count + 1U &&
+          view.about_items[about_count].action == MT_MENU_ACTION_UPDATE_GOLDEN &&
+          view.about_items[about_count].enabled, "About offers the Golden update only when BOOT.BIN is present");
     check(view.system_item_count == sizeof(system) / sizeof(system[0]),
-          "System retains its actions and gains seven live diagnostics");
+          "System shows all its actions with BOOT.BIN present");
     for (size_t i = 0U; i < view.system_item_count; ++i)
         check(strcmp(view.system_items[i].label, system[i]) == 0,
-              "System keeps its existing actions in order and appends live diagnostics");
+              "System keeps its existing action order");
     (void)mt_menu_key(&menu, &view, MT_MENU_HID_END, true);
     mt_menu_render(&menu, &view, &frame);
-    check(menu.row == view.system_item_count - 1U && frame_contains(&frame, "Audio output") &&
-          frame_contains(&frame, item(&view, "Audio output")->value),
-          "System navigation exposes the final diagnostic beyond the first page");
-    menu.page = MT_MENU_PAGE_ABOUT;
-    menu.row = 4U;
+    check(menu.row == view.system_item_count - 1U && frame_contains(&frame, "Drive activity"),
+          "System navigation reaches the final action");
+    (void)mt_menu_key(&menu, &view, MT_MENU_HID_TAB, true);
+    mt_menu_render(&menu, &view, &frame);
+    check(menu.page == MT_MENU_PAGE_ABOUT &&
+          frame_text_row(&frame, "Update Golden Boot...", NULL) ==
+              frame_text_row(&frame, "Golden Boot", NULL) + 1U &&
+          frame_text_row(&frame, "Hardware", NULL) == hardware_row + 1U,
+          "the Golden update follows the installed version and moves Hardware down one row");
+    expect_blank_about_row(&frame, content_column, hardware_row);
     (void)mt_menu_key(&menu, &view, MT_MENU_HID_DOWN, true);
     check(menu.about_credits_active &&
           mt_menu_key(&menu, &view, MT_MENU_HID_ENTER, true).kind == MT_MENU_ACTION_NONE &&
@@ -502,7 +563,7 @@ int main(void)
     test_rendered_system_page();
     test_multiboot_availability();
     test_golden_update_confirmation();
-    test_about_versions_and_credits();
+    test_about_layout_and_credits();
     mt_system_frontend_t frontend;
     mt_system_snapshot_t snapshot = {.network_available = true, .network_status = "DHCP 192.0.2.5"};
     mt_menu_view_t view = {0};
@@ -518,6 +579,6 @@ int main(void)
     snapshot.network_available = false;
     mt_system_frontend_apply(&frontend, &snapshot, &view);
     check(view.system_item_count + 2 == with_network, "Older FPGA images hide network actions");
-    puts("PASS: System actions and diagnostics, About versions, credits navigation and Golden update");
+    puts("PASS: System actions, About diagnostics and credits, and Golden update");
     return 0;
 }
