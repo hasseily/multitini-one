@@ -28,7 +28,12 @@ static uint8_t amiga_key(uint8_t hid)
     }
 }
 void mt_amiga_hid_init(mt_amiga_hid_input_t *in,mt_c64_hid_emit_fn emit,void *context)
-{ memset(in,0,sizeof(*in)); memset(in->player,0xff,sizeof(in->player)); in->emit=emit;in->context=context;in->reset_enabled=true; }
+{
+    memset(in,0,sizeof(*in));memset(in->player,0xff,sizeof(in->player));
+    in->emit=emit;in->context=context;in->reset_enabled=true;in->joystick_emitted_valid=3U;
+}
+void mt_amiga_hid_set_cd32_buttons(mt_amiga_hid_input_t *in,bool enabled)
+{ if(in!=NULL)in->cd32_buttons=enabled; }
 static bool reset_chord(const uint8_t keys[16])
 { return (keys[0x63U>>3U]&(1U<<(0x63U&7U)))!=0U &&
     (keys[0x66U>>3U]&(1U<<(0x66U&7U)))!=0U &&
@@ -63,8 +68,11 @@ int mt_amiga_hid_assigned_report(mt_amiga_hid_input_t *in,uint8_t slot,uint8_t p
     if((directions&3U)==3U)directions&=(uint8_t)~3U;
     if((directions&12U)==12U)directions&=(uint8_t)~12U;
     in->player[slot]=player;
+    /* Controls orders red, blue, green, yellow. Minimig's native bits are
+     * red, blue, yellow, green at 4 through 7. */
     in->joystick[slot]=(uint8_t)(((directions&8U)>>3U)|((directions&4U)>>1U)|
-        ((directions&2U)<<1U)|((directions&1U)<<3U)|((buttons&3U)<<4U));
+        ((directions&2U)<<1U)|((directions&1U)<<3U)|((buttons&3U)<<4U)|
+        ((buttons&4U)<<5U)|((buttons&8U)<<3U));
     return mt_amiga_hid_poll(in);
 }
 void mt_amiga_hid_mouse_report(mt_amiga_hid_input_t *in,int16_t x,int16_t y,uint8_t buttons)
@@ -100,9 +108,12 @@ int mt_amiga_hid_poll(mt_amiga_hid_input_t *in)
         if(in->emit(in->context,MT_AMIGA_INPUT_KEYBOARD,(uint16_t)(k|(pressed ? 0U:128U)))!=0)return -1;
         in->emitted_keys[byte]^=mask;
     }
-    for(unsigned p=0U;p<2U;++p)if(joystick[p]!=in->emitted_joystick[p]) {
-        if(in->emit(in->context,(uint16_t)(MT_AMIGA_INPUT_JOYSTICK|p),joystick[p])!=0)return -1;
-        in->emitted_joystick[p]=joystick[p];
+    for(unsigned p=0U;p<2U;++p) {
+        const uint8_t mask=(uint8_t)(1U<<p);
+        const uint8_t value=joystick[p]&(in->cd32_buttons ? 0xffU:0x3fU);
+        if((in->joystick_emitted_valid&mask)!=0U && in->emitted_joystick[p]==value)continue;
+        if(in->emit(in->context,(uint16_t)(MT_AMIGA_INPUT_JOYSTICK|p),value)!=0)return -1;
+        in->emitted_joystick[p]=value;in->joystick_emitted_valid|=mask;
     }
     int32_t *motion[2]={&in->mouse_x,&in->mouse_y};
     for(unsigned a=0U;a<2U;++a)if(*motion[a]!=0) {
@@ -122,4 +133,4 @@ int mt_amiga_hid_release_all(mt_amiga_hid_input_t *in)
 { if(in==NULL)return -1;in->reset_pending=false;in->reset_latched=false;memset(in->keys,0,sizeof(in->keys));memset(in->joystick,0,sizeof(in->joystick));
     in->mouse_buttons=0U;mt_amiga_hid_clear_mouse_motion(in);return mt_amiga_hid_poll(in); }
 void mt_amiga_hid_reassert(mt_amiga_hid_input_t *in)
-{ if(in!=NULL) { memset(in->emitted_keys,0,sizeof(in->emitted_keys));memset(in->emitted_joystick,0xff,2U);in->emitted_mouse_buttons=255U; } }
+{ if(in!=NULL) { memset(in->emitted_keys,0,sizeof(in->emitted_keys));in->joystick_emitted_valid=0U;in->emitted_mouse_buttons=255U; } }

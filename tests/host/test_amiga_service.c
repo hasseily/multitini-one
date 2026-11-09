@@ -22,7 +22,7 @@ static bool rtc_capable=true,rtc_fail_middle,rtc_seed_held;
 static uint32_t rtc_low,rtc_middle;
 static uint64_t rtc_value;
 static unsigned rtc_stage,rtc_commits,rtc_discards;
-static bool bulk_capable,bulk_timeout,cpu14_capable,fast_ide_capable;
+static bool bulk_capable,bulk_timeout,cpu14_capable,fast_ide_capable,fast_ram_16_capable;
 static uint8_t staged_config[MT_AMIGA_CONFIG_BYTES];
 static uint32_t bulk_stage[128],bulk_status;
 static unsigned bulk_commands,legacy_data_words;
@@ -81,6 +81,7 @@ static uint32_t rd(void *ctx,uint32_t offset)
     if(offset==MT_AMIGA_HOST_PORT)return native_status|((uint32_t)ide_request<<16U)|
         (rtc_capable ? MT_AMIGA_HOST_RTC:0U)|(bulk_capable ? MT_AMIGA_HOST_BULK:0U)|(cpu14_capable ? MT_AMIGA_HOST_CPU14:0U)|
         (fast_ide_capable ? MT_AMIGA_HOST_FAST_IDE:0U);
+    if(offset==MT_AMIGA_HOST_CAPABILITIES)return fast_ram_16_capable ? MT_AMIGA_HOST_FAST_RAM_16M:0U;
     if(offset==MT_AMIGA_BULK_STATUS)return bulk_status;
     if(offset==MT_AMIGA_BULK_PROGRESS)return 256U;
     if(offset>=MT_AMIGA_BULK_DATA && offset<MT_AMIGA_BULK_DATA+512U)return bulk_stage[(offset-MT_AMIGA_BULK_DATA)/4U];
@@ -512,11 +513,30 @@ int main(void)
     ap_config.cpu=MT_AMIGA_CPU_68020_TURBO;
     assert(amiga_content_service_configure(&ap_config)==0 && staged_config[4]==MT_AMIGA_CPU_68020_TURBO);
     assert(ap_settings->data[12]==MT_AMIGA_CPU_68020_TURBO);
+    ap_config.fast_mib=16U;
+    assert(!amiga_content_service_fast_ram_16_available() && amiga_content_service_configure(&ap_config)!=0);
+    assert(amiga_content_service_config()->fast_mib==8U && ap_settings->data[16]==8U && !amiga_content_service_faulted());
+    fast_ram_16_capable=true;
+    assert(amiga_content_service_fast_ram_16_available() && amiga_content_service_configure(&ap_config)==0);
+    assert(staged_config[8]==16U && native_config[5]==0x43U && ap_settings->data[16]==16U);
+    assert(amiga_content_service_shutdown()==0);
+    fast_ram_16_capable=false;
+    amiga_content_service_init(&link,ROOT,MT_AMIGA_AGA_040,progress,NULL);
+    assert(amiga_content_service_boot()==0 && strcmp(amiga_content_service_name(2U),"System.hdf")==0);
+    assert(staged_config[8]==8U && native_config[5]==0x33U && ap_settings->data[16]==16U);
+    mt_amiga_config_t fallback=*amiga_content_service_config();fallback.floppy_turbo^=1U;
+    assert(amiga_content_service_configure(&fallback)==0 && ap_settings->data[16]==16U);
+    assert(amiga_content_service_shutdown()==0);
+    fast_ram_16_capable=true;
+    amiga_content_service_init(&link,ROOT,MT_AMIGA_AGA_040,progress,NULL);
+    assert(amiga_content_service_boot()==0 && staged_config[8]==16U && native_config[5]==0x43U);
     assert(amiga_content_service_shutdown()==0);
     amiga_content_service_init(&link,ROOT,MT_AMIGA_AGA,progress,NULL);
-    assert(!amiga_content_service_ap68040());
+    assert(!amiga_content_service_ap68040() && !amiga_content_service_fast_ram_16_available());
     assert(amiga_content_service_boot()==0 && amiga_content_service_name(2U)==NULL);
+    assert(amiga_content_service_configure(&ap_config)!=0 && staged_config[8]==8U);
     assert(amiga_content_service_shutdown()==0);
+    fast_ram_16_capable=false;
     cpu14_capable=true;amiga_content_service_init(&link,ROOT,false,progress,NULL);
     assert(amiga_content_service_boot()==0 && native_config[4]==0x5fU && !amiga_content_service_cpu14_fallback());
     mt_amiga_ide_bench_t benchmark;uint16_t saved_fifo[256];memcpy(saved_fifo,fifo,sizeof(saved_fifo));

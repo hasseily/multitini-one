@@ -2,9 +2,13 @@
 #include "multitini_amiga_boot.h"
 #include <assert.h>
 #include <string.h>
-typedef struct { uint32_t status;unsigned selected,reg,transfers;uint16_t configs[16];bool hold,error,no_toggle; } native_t;
+typedef struct { uint32_t status,capabilities;unsigned selected,reg,transfers;uint16_t configs[16];bool hold,error,no_toggle; } native_t;
 static uint32_t rd(void *ctx,uint32_t offset)
-{ native_t *n=ctx;assert(offset==MT_AMIGA_HOST_PORT);return n->hold ? MT_AMIGA_HOST_BUSY:n->status; }
+{
+    native_t *n=ctx;
+    if(offset==MT_AMIGA_HOST_CAPABILITIES)return n->capabilities;
+    assert(offset==MT_AMIGA_HOST_PORT);return n->hold ? MT_AMIGA_HOST_BUSY:n->status;
+}
 static void wr(void *ctx,uint32_t offset,uint32_t value)
 {
     native_t *n=ctx;assert(offset==MT_AMIGA_HOST_PORT);
@@ -25,6 +29,11 @@ int main(void)
     assert(mt_amiga_native_configure(&link,&config,false,5U)==MT_LINK_OK);
     assert(native.selected==0U && native.transfers==20U);
     assert(native.configs[3]==9U && native.configs[4]==0x1fU && native.configs[5]==0x33U && native.configs[7]==4U && native.configs[8]==0x27U);
+    assert(native.configs[9]==0U);
+    native.capabilities=MT_AMIGA_HOST_CD32_BUTTONS;
+    assert(mt_amiga_native_configure(&link,&config,false,5U)==MT_LINK_OK && native.configs[9]==4U);
+    assert(mt_amiga_native_configure(&link,&config,true,5U)==MT_LINK_OK && native.configs[9]==4U);
+    native.capabilities=0U;
     native.status|=MT_AMIGA_HOST_FAST_IDE;
     assert(mt_amiga_native_configure(&link,&config,false,5U)==MT_LINK_OK && native.configs[8]==7U);
     config.ide_compat=MT_AMIGA_IDE_CLASSIC;
@@ -53,6 +62,12 @@ int main(void)
     native.status|=MT_AMIGA_HOST_AP68040_2X;
     assert(mt_amiga_native_configure(&link,&config,true,5U)==MT_LINK_OK &&
            native.configs[3]==0x19U && native.configs[4]==0x1fU && native.configs[8]==7U);
+    config.fast_mib=16U;
+    assert(mt_amiga_native_configure(&link,&config,true,5U)==MT_LINK_ABI_MISMATCH);
+    native.capabilities=MT_AMIGA_HOST_FAST_RAM_16M;
+    assert(mt_amiga_native_configure(&link,&config,false,5U)==MT_LINK_BAD_ARGUMENT);
+    assert(mt_amiga_native_configure(&link,&config,true,5U)==MT_LINK_OK && native.configs[5]==0x43U);
+    assert(native.configs[9]==0U);
     native.hold=true;assert(mt_amiga_host_access(&link,0U,0U,2U,NULL)==MT_LINK_TIMEOUT);native.hold=false;
     native.error=true;assert(mt_amiga_host_access(&link,0U,0U,2U,NULL)==MT_LINK_REMOTE_ERROR);native.error=false;native.status=0U;
     native.no_toggle=true;assert(mt_amiga_host_access(&link,0U,0U,2U,NULL)==MT_LINK_TIMEOUT);

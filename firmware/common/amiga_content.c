@@ -4,7 +4,8 @@
 bool mt_amiga_config_valid(const mt_amiga_config_t *c)
 { return c!=NULL && (c->cpu==MT_AMIGA_CPU_STOCK || c->cpu==MT_AMIGA_CPU_68020_TURBO ||
     c->cpu==MT_AMIGA_CPU_68020_14 || c->cpu==MT_AMIGA_CPU_AP68040_2X) && c->ntsc==0U &&
-    c->fast_blitter==0U && c->floppy_turbo<=1U && (c->fast_mib==4U || c->fast_mib==8U) && c->ide_compat<=MT_AMIGA_IDE_CLASSIC; }
+    c->fast_blitter==0U && c->floppy_turbo<=1U &&
+    (c->fast_mib==4U || c->fast_mib==8U || c->fast_mib==16U) && c->ide_compat<=MT_AMIGA_IDE_CLASSIC; }
 bool mt_amiga_fast_ide_enabled(const mt_amiga_config_t *c,uint32_t host_status)
 { return mt_amiga_config_valid(c) && c->cpu!=MT_AMIGA_CPU_STOCK && c->ide_compat==MT_AMIGA_IDE_AUTO &&
     (host_status&MT_AMIGA_HOST_FAST_IDE)!=0U; }

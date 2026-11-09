@@ -50,21 +50,27 @@ def ram(text):
 
 
 def amiga_cache_ports(name, text):
-    # Chip RAM is shared with DMA. Cache only the configured Zorro II RAM
-    # aperture, after address translation and before selecting a bus size.
+    # Chip RAM is shared with DMA. Cache only configured Fast RAM after
+    # address translation and before selecting a bus size.
     text = replace_once(text, "\tinput  logic        clk,",
-                        "\tinput  logic [7:0]  amiga_fast_top,\n\tinput  logic        clk,")
+                        "\tinput  logic [7:0]  amiga_fast_top,\n"
+                        "\tinput  logic        amiga_fast16_enabled,\n"
+                        "\tinput  logic [7:0]  amiga_fast16_base,\n\tinput  logic        clk,")
     if name == "ap68040.sv":
         for instance in ("dmu", "fetch"):
             text = replace_once(text, f" {instance} (",
-                                f" {instance} (\n\t.amiga_fast_top(amiga_fast_top),")
+                                f" {instance} (\n\t.amiga_fast_top(amiga_fast_top),"
+                                "\n\t.amiga_fast16_enabled(amiga_fast16_enabled),"
+                                "\n\t.amiga_fast16_base(amiga_fast16_base),")
     elif name == "ap68040_dmu.sv":
-        text = replace_once(text, "\ttg = x.pa[31:10];", """	if (x.pa[31:24] != 0 || x.pa[23:16] < 8'h20 || x.pa[23:16] >= amiga_fast_top)
+        text = replace_once(text, "\ttg = x.pa[31:10];", """	if (!(amiga_fast16_enabled && x.pa[31:24] == amiga_fast16_base) &&
+	    (x.pa[31:24] != 0 || x.pa[23:16] < 8'h20 || x.pa[23:16] >= amiga_fast_top))
 		x.cm = 2'b11;
 	tg = x.pa[31:10];""")
     else:
         text = replace_once(text, "\tx_cach = x_ok && ic_en && !x_cm[1];",
-                            """	if (x_pa[31:24] != 0 || x_pa[23:16] < 8'h20 || x_pa[23:16] >= amiga_fast_top)
+                            """	if (!(amiga_fast16_enabled && x_pa[31:24] == amiga_fast16_base) &&
+	    (x_pa[31:24] != 0 || x_pa[23:16] < 8'h20 || x_pa[23:16] >= amiga_fast_top))
 		x_cm = 2'b11;
 	x_cach = x_ok && ic_en && !x_cm[1];""")
     return text

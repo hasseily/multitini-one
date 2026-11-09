@@ -141,10 +141,16 @@ static mt_link_result_t uio(mt_core_link_t *link,uint8_t reg,uint16_t value,uint
     const mt_link_result_t deselect=mt_amiga_host_access(link,MT_AMIGA_HOST_SELECT,0U,polls,NULL);
     return r==MT_LINK_OK ? deselect:r;
 }
-static mt_link_result_t cpu_mode_check(mt_core_link_t *link,const mt_amiga_config_t *c,bool aga_pal)
+bool mt_amiga_fast_ram_16_available(const mt_core_link_t *link)
+{
+    return link!=NULL && link->read32!=NULL &&
+        (link->read32(link->context,MT_AMIGA_HOST_CAPABILITIES)&MT_AMIGA_HOST_FAST_RAM_16M)!=0U;
+}
+static mt_link_result_t profile_check(mt_core_link_t *link,const mt_amiga_config_t *c,bool aga_pal)
 {
     if(!mt_amiga_config_valid(c) || (aga_pal && c->cpu==MT_AMIGA_CPU_68020_14) ||
-       (!aga_pal && c->cpu==MT_AMIGA_CPU_AP68040_2X))return MT_LINK_BAD_ARGUMENT;
+       (!aga_pal && (c->cpu==MT_AMIGA_CPU_AP68040_2X || c->fast_mib==16U)))return MT_LINK_BAD_ARGUMENT;
+    if(c->fast_mib==16U && !mt_amiga_fast_ram_16_available(link))return MT_LINK_ABI_MISMATCH;
     const uint32_t required=c->cpu==MT_AMIGA_CPU_68020_14 ? MT_AMIGA_HOST_CPU14:
         c->cpu==MT_AMIGA_CPU_AP68040_2X ? MT_AMIGA_HOST_AP68040_2X:0U;
     if(required!=0U && (link==NULL || link->read32==NULL ||
@@ -153,17 +159,20 @@ static mt_link_result_t cpu_mode_check(mt_core_link_t *link,const mt_amiga_confi
 }
 mt_link_result_t mt_amiga_native_configure(mt_core_link_t *link,const mt_amiga_config_t *c,bool aga_pal,uint32_t polls)
 {
-    const mt_link_result_t profile=cpu_mode_check(link,c,aga_pal);
+    const mt_link_result_t profile=profile_check(link,c,aga_pal);
     if(profile!=MT_LINK_OK)return profile;
     const uint16_t cpu=c->cpu==MT_AMIGA_CPU_68020_14 ? 0x5fU:
         c->cpu!=MT_AMIGA_CPU_STOCK ? 0x1fU:aga_pal ? 0x23U:0U;
     const uint16_t chipset=(uint16_t)((aga_pal ? 0x18U:8U)|(c->ntsc<<1U)|(c->cpu!=MT_AMIGA_CPU_STOCK ? 1U:0U));
-    const uint16_t memory=(uint16_t)(3U|((c->fast_mib==8U ? 3U:2U)<<4U));
+    const uint16_t fast=c->fast_mib==16U ? 4U:c->fast_mib==8U ? 3U:2U;
+    const uint16_t memory=(uint16_t)(3U|(fast<<4U));
     const uint32_t capabilities=link!=NULL && link->read32!=NULL ? link->read32(link->context,MT_AMIGA_HOST_PORT):0U;
     const uint16_t ide=mt_amiga_fast_ide_enabled(c,capabilities) ? 7U:0x27U;
+    const bool cd32=link!=NULL && link->read32!=NULL &&
+        (link->read32(link->context,MT_AMIGA_HOST_CAPABILITIES)&MT_AMIGA_HOST_CD32_BUTTONS)!=0U;
     const uint8_t regs[]={3U,4U,5U,6U,7U,8U,9U,10U,11U,12U};
     const uint16_t values[]={chipset,cpu,memory,0U,
-        (uint16_t)(4U|c->floppy_turbo),ide,0U,0U,0U,0U};
+        (uint16_t)(4U|c->floppy_turbo),ide,cd32 ? 4U:0U,0U,0U,0U};
     for(unsigned i=0U;i<sizeof(regs);++i) {
         const mt_link_result_t r=uio(link,regs[i],values[i],polls);
         if(r!=MT_LINK_OK)return r;
@@ -174,7 +183,7 @@ mt_link_result_t mt_amiga_stage(mt_core_link_t *link,const mt_amiga_config_t *c,
     uint32_t polls,mt_link_progress_fn progress,void *context)
 {
     if(rom==NULL || bytes!=MT_AMIGA_ROM_BYTES || polls==0U)return MT_LINK_BAD_ARGUMENT;
-    const mt_link_result_t profile=cpu_mode_check(link,c,aga_pal);
+    const mt_link_result_t profile=profile_check(link,c,aga_pal);
     if(profile!=MT_LINK_OK)return profile;
     const uint32_t args[4]={1U,0U,0U,0U}; mt_command_response_t response;
     mt_link_result_t r=mt_core_link_command(link,MT_COMMAND_CORE_RESET,args,polls,progress,context,&response);

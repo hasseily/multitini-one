@@ -24,7 +24,7 @@ static mt_core_link_t *link;
 static mt_link_progress_fn progress;
 static void *progress_context;
 static mt_amiga_config_t config;
-static uint8_t preferred_cpu;
+static uint8_t preferred_cpu,preferred_fast_mib;
 static am_drive_t drives[MT_AMIGA_DRIVE_COUNT];
 static char root[256],rom_root[256],error[160],remembered[MT_AMIGA_DRIVE_COUNT][AM_NAME];
 static uint8_t rom[MT_AMIGA_ROM_BYTES],sector[512],journal_wire[544],settings_wire[AM_SETTINGS];
@@ -197,7 +197,7 @@ static int settings_save(void)
     if(settings_invalid)return fail("Amiga settings invalid; retain file for recovery");
     char target[AM_PATH],journal[AM_PATH];if(!settings_paths(target,journal))return fail("Amiga settings path too long");
     memset(settings_wire,0,sizeof(settings_wire));memcpy(settings_wire,"MTAMSET1",8U);
-    mt_amiga_config_t saved=config;saved.cpu=preferred_cpu;
+    mt_amiga_config_t saved=config;saved.cpu=preferred_cpu;saved.fast_mib=preferred_fast_mib;
     mt_amiga_config_encode(&saved,settings_wire+8U);
     for(unsigned i=0U;i<MT_AMIGA_DRIVE_COUNT;++i)memcpy(settings_wire+24U+i*AM_NAME,remembered[i],AM_NAME);
     /* AM01 reserved bytes12..15 are checksum storage in the enclosing file. */
@@ -219,7 +219,7 @@ static void settings_load(void)
     bool valid=r.size==sizeof(settings_wire) && memcmp(settings_wire,"MTAMSET1",8U)==0 &&
         expected==crc32(settings_wire,sizeof(settings_wire)) && mt_amiga_config_decode(settings_wire+8U,&candidate);
     if(valid && ((aga_pal && candidate.cpu==MT_AMIGA_CPU_68020_14) ||
-                 (!ap68040 && candidate.cpu==MT_AMIGA_CPU_AP68040_2X)))valid=false;
+                 (!ap68040 && (candidate.cpu==MT_AMIGA_CPU_AP68040_2X || candidate.fast_mib==16U))))valid=false;
     for(unsigned i=0U;valid && i<MT_AMIGA_DRIVE_COUNT;++i) {
         const char *name=(const char *)settings_wire+24U+i*AM_NAME;
         valid=memchr(name,0,AM_NAME)!=NULL && (*name=='\0' || mt_amiga_media_path_valid(name));
@@ -586,12 +586,15 @@ void amiga_content_service_init(mt_core_link_t *l,const char *media_root,mt_amig
     ap68040=model==MT_AMIGA_AGA_040;
     if(model==MT_AMIGA_AGA)config.cpu=MT_AMIGA_CPU_STOCK;
     preferred_cpu=config.cpu;
+    preferred_fast_mib=config.fast_mib;
     const size_t n=media_root!=NULL ? strlen(media_root):0U;
     if(n<6U || n>=sizeof(root) || strcmp(media_root+n-6U,"/media")!=0) { (void)fail("Amiga package requires /media content root");return; }
     memcpy(root,media_root,n+1U);memcpy(rom_root,media_root,n-5U);memcpy(rom_root+n-5U,"roms",5U);
     for(unsigned i=0U;i<MT_AMIGA_DRIVE_COUNT;++i) { drives[i].read_track=160U;drives[i].write_track=160U; }
     settings_load();
     preferred_cpu=config.cpu;
+    preferred_fast_mib=config.fast_mib;
+    if(config.fast_mib==16U && !amiga_content_service_fast_ram_16_available())config.fast_mib=8U;
     if(config.cpu==MT_AMIGA_CPU_68020_14 && !amiga_content_service_cpu14_available()) {
         config.cpu=MT_AMIGA_CPU_68020_TURBO;
         (void)snprintf(error,sizeof(error),"14 MHz unavailable on this core; using 28 MHz; preference retained");
@@ -825,15 +828,23 @@ int amiga_content_service_configure(const mt_amiga_config_t *candidate)
         return fail("56.75 MHz requires an updated AP68040 core");
     if(candidate->cpu==MT_AMIGA_CPU_68020_14 && !amiga_content_service_cpu14_available())
         return fail("14 MHz requires an updated Amiga core");
+    if(candidate->fast_mib==16U && !amiga_content_service_fast_ram_16_available()) {
+        (void)snprintf(error,sizeof(error),"16 MiB Fast RAM requires an updated AP68040 core");
+        return -1;
+    }
     if(amiga_content_service_prepare_reset()!=0)return -1;
-    const mt_amiga_config_t previous=config;const uint8_t previous_cpu=preferred_cpu;
+    const mt_amiga_config_t previous=config;
+    const uint8_t previous_cpu=preferred_cpu,previous_fast_mib=preferred_fast_mib;
     /* Other option changes retain an unavailable saved CPU preference. An
      * explicit reapply of the current CPU/profile accepts its actual speed. */
     if(candidate->cpu!=config.cpu || (candidate->ntsc==config.ntsc &&
         candidate->fast_blitter==config.fast_blitter && candidate->floppy_turbo==config.floppy_turbo &&
         candidate->fast_mib==config.fast_mib && candidate->ide_compat==config.ide_compat))preferred_cpu=candidate->cpu;
+    if(candidate->fast_mib!=config.fast_mib)preferred_fast_mib=candidate->fast_mib;
     config=*candidate;
-    if(settings_save()!=0) { config=previous;preferred_cpu=previous_cpu;return -1; }
+    if(settings_save()!=0) {
+        config=previous;preferred_cpu=previous_cpu;preferred_fast_mib=previous_fast_mib;return -1;
+    }
     return amiga_content_service_boot();
 }
 const mt_amiga_config_t *amiga_content_service_config(void) { return &config; }
@@ -841,6 +852,8 @@ bool amiga_content_service_aga_pal(void) { return aga_pal; }
 bool amiga_content_service_ap68040(void) { return ap68040; }
 bool amiga_content_service_ap68040_2x_available(void)
 { return ap68040 && link!=NULL && link->read32!=NULL && (link->read32(link->context,MT_AMIGA_HOST_PORT)&MT_AMIGA_HOST_AP68040_2X)!=0U; }
+bool amiga_content_service_fast_ram_16_available(void)
+{ return ap68040 && mt_amiga_fast_ram_16_available(link); }
 int amiga_content_service_ide_bench(unsigned iterations,uint64_t (*timer)(void *),
     void *context,mt_amiga_ide_bench_t *result)
 {

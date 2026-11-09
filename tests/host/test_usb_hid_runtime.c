@@ -23,11 +23,15 @@ static unsigned hid_protocol_calls[2];
 static uint8_t hid_last_protocol;
 static uint8_t serial_suffix = '1';
 static uint32_t input_regs[MT_REGISTER_SPAN / 4U];
+static uint32_t input_amiga_caps;
 static uint16_t routed_code, routed_value;
 static unsigned routed_events;
 static unsigned routed_amiga_keys;
 static uint32_t input_read(void *context, uint32_t offset)
-{ (void)context; return input_regs[offset / 4U]; }
+{
+    (void)context;
+    return offset == MT_AMIGA_HOST_CAPABILITIES ? input_amiga_caps : input_regs[offset / 4U];
+}
 static void input_write(void *context, uint32_t offset, uint32_t value)
 {
     (void)context;
@@ -1506,6 +1510,7 @@ static void test_amiga_input_transport(void)
     usb_hid_service_init(&link);
     usb_hid_service_set_active_core(MT_AMIGA_CORE_ID);
     input_regs[MT_REG_STATUS/4U]=0U;
+    input_amiga_caps=0U;
     const unsigned before_ready_events=routed_events,before_ready_keys=routed_amiga_keys;
     const uint8_t held[]={4U};
     usb_hid_service_set_core_ready(true);assert(g_core_ready==0U);
@@ -1564,10 +1569,26 @@ static void test_amiga_input_transport(void)
     buttons(first,1U);buttons(second,2U);
     assert(g_amiga_input.emitted_joystick[0]==0x10U && g_amiga_input.emitted_joystick[1]==0x20U);
     assert(routed_code==0x6201U && routed_value==0x20U);
+    buttons(first,15U);buttons(second,15U);
+    assert(g_amiga_input.emitted_joystick[0]==0x30U && g_amiga_input.emitted_joystick[1]==0x30U);
+    input_amiga_caps=MT_AMIGA_HOST_CD32_BUTTONS;
+    usb_hid_service_set_core_ready(false);usb_hid_service_set_core_ready(true);
+    assert(g_amiga_input.emitted_joystick[0]==0xf0U && g_amiga_input.emitted_joystick[1]==0xf0U);
+    buttons(first,4U);buttons(second,8U);
+    assert(g_amiga_input.emitted_joystick[0]==0x80U && g_amiga_input.emitted_joystick[1]==0x40U);
+    assert(routed_code==0x6201U && routed_value==0x40U);
+    buttons(first,15U);buttons(second,15U);
     usb_hid_service_set_menu_capture(true);
     assert(g_amiga_input.emitted_joystick[0]==0U && g_amiga_input.emitted_joystick[1]==0U);
     buttons(first,0U);buttons(second,0U);usb_hid_service_set_menu_capture(false);
-    usb_gamepad_input_disconnect(first);usb_gamepad_input_disconnect(second);
+    buttons(first,15U);buttons(second,15U);
+    usb_gamepad_input_disconnect(first);
+    assert(g_amiga_input.emitted_joystick[0]==0U && g_amiga_input.emitted_joystick[1]==0xf0U);
+    input_amiga_caps=0U;
+    usb_hid_service_set_core_ready(false);usb_hid_service_set_core_ready(true);
+    assert(g_amiga_input.emitted_joystick[1]==0x30U);
+    usb_gamepad_input_disconnect(second);
+    assert(g_amiga_input.emitted_joystick[1]==0U);
     /* Existing boot-mouse path delivers relative movement without mapping
      * mouse buttons into joystick fire. */
     mt_amiga_hid_mouse_report(&g_amiga_input,5,-3,1U);

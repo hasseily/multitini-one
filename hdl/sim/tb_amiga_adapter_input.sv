@@ -32,6 +32,9 @@ module multitini_amiga_machine #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
     input wire [15:0] cpu_rdata2,
     input wire cpu_ready,
     input wire cpu_ready_long,
+    output wire cpu_line,
+    input wire cpu_line_ready,
+    input wire [127:0] cpu_line_data,
     input wire io_uio,io_fpga,io_strobe,
     input wire [15:0] io_din,
     output wire io_wait,
@@ -75,6 +78,7 @@ module multitini_amiga_machine #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
     assign chip_c1=0,chip_c3=0,chip_clk7_en=0,chip_clk7n_en=0;
     assign chip_addr=0,chip_wdata=0,chip_wdata2=0,chip_oe_n=1,chip_we_n=1,chip_ub_n=1,chip_lb_n=1,chip_long=0;
     assign cpu_req=0,cpu_addr=0,cpu_wdata=0,cpu_state=1,cpu_ub_n=1,cpu_lb_n=1,cpu_long=0,cpu_wdata2=0;
+    assign cpu_line=1'b0;
     assign io_wait=0,io_dout=0,ide_req=0,ide_rdata=0,ide_monitor=0;
     assign rgb=0,hsync_n=1,vsync_n=1,hblank=1,vblank=1,field=0,lace=0,ce_pix=0,res=0,ntsc=0;
     assign audio_l=0,audio_r=0,cpucfg=0,memcfg=0,ide_fast=0,fdd_led=0,hdd_led=0;
@@ -180,6 +184,15 @@ module tb_amiga_adapter_input;
         @(negedge core_clk);input_valid=0;dut.amiga_machine.fixture_cpu_ready=1;
         repeat(100)tick;
         if(dut.input_count || !input_ready || dut.joy1!=16'hffc0)$fatal(1,"full queue lost ordering/final joystick level:%h",dut.joy1);
+        // Both ports keep the upper four-button payload bits, ignoring reserved bits.
+        input_event(16'h6200,16'hff40);input_event(16'h6201,16'hff80);
+        repeat(12)tick;
+        if(dut.native_joy1!==16'hffbf || dut.native_joy2!==16'hff7f)
+            $fatal(1,"extended joystick levels were lost or reserved bits leaked");
+        input_event(16'h6200,16'd0);input_event(16'h6201,16'd0);
+        repeat(12)tick;
+        if(dut.native_joy1!==16'hffff || dut.native_joy2!==16'hffff)
+            $fatal(1,"extended joystick releases did not reach the native port");
         $display("PASS AMIGA adapter input FIFO:native reset retention,ordered keyboard/mouse,8ms native pacing,4edge hold,stale reset flush,64event backpressure");
         $finish;
     end

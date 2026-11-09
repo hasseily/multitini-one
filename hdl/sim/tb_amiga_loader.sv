@@ -21,6 +21,16 @@ module tb_amiga_loader;
         .load_first(load_first),.load_last(load_last),.load_offset(load_offset),
         .load_total(load_total),.error(aga_error),.config_valid(aga_config_valid),
         .write_ready(1'b1),.write_done(1'b0),.memory_fault(1'b0));
+    wire ap_error,ap_config_valid;
+    wire [127:0] ap_config_bytes;
+    multitini_amiga_loader #(.AGA_PAL(1'b1),.USE_AP68040(1'b1)) ap(
+        .clk(clk),.reset(reset),.clear_error(clear_error),.load_abort(1'b0),
+        .load_abort_epoch(1'b0),.load_epoch(load_epoch),.load_kind(load_kind),
+        .load_data(load_data),.load_valid(load_valid && load_kind==8'h60),
+        .load_first(load_first),.load_last(load_last),.load_offset(load_offset),
+        .load_total(load_total),.error(ap_error),.config_valid(ap_config_valid),
+        .config_bytes(ap_config_bytes),
+        .write_ready(1'b1),.write_done(1'b0),.memory_fault(1'b0));
     integer writes=0,cycle=0,expected_offset=0;
     reg auto_done=1,check_rom=0,backpressure=1;
     reg [23:0] expected_address;
@@ -74,12 +84,12 @@ module tb_amiga_loader;
         begin @(negedge clk);reset=1;load_valid=0;load_abort=0;memory_fault=0;write_done=0;auto_done=1;backpressure=1;
             repeat(4)tick;@(negedge clk);reset=0;repeat(3)tick;end
     endtask
-    task ide_config(input [7:0] policy,input bit reserved_bad);
+    task ide_config(input [7:0] policy,input bit aga_variant,input [7:0] fastmem);
         reg [127:0] bytes;integer n;
         begin
             bytes=0;bytes[31:0]=32'h31304d41;bytes[39:32]=2;
-            bytes[71:64]=8;bytes[79:72]=2;bytes[87:80]=policy;
-            bytes[95:88]=reserved_bad;
+            bytes[71:64]=fastmem;bytes[79:72]=2;bytes[87:80]=policy;
+            bytes[95:88]=aga_variant;
             for(n=0;n<16;n=n+1)send_byte(8'h60,n,16,bytes[n*8+:8],n==0,n==15,1);
             tick;
         end
@@ -94,13 +104,19 @@ module tb_amiga_loader;
         if(!config_valid || error || config_bytes[39:32]!=2 || config_bytes[71:64]!=4)$fatal(1,"turbo AM01 config rejected");
         config_record(3,0,0,0,8);
         if(!config_valid || error || config_bytes[39:32]!=3)$fatal(1,"14 MHz 68020 AM01 config rejected");
-        ide_config(1,0);
+        ide_config(1,0,8);
         if(!config_valid || error || config_bytes[87:80]!=1)$fatal(1,"Classic IDE policy rejected");
-        ide_config(2,0);
+        ide_config(2,0,8);
         if(config_valid || !error)$fatal(1,"Unknown IDE policy accepted");
-        clear;ide_config(0,1);
+        clear;ide_config(0,1,8);
         if(config_valid || !error)$fatal(1,"ECS loader accepted AGA config");
         if(!aga_config_valid || aga_error)$fatal(1,"AGA loader rejected AGA config");
+        clear;ide_config(0,1,16);
+        if(aga_config_valid || !aga_error)$fatal(1,"non-040 AGA loader accepted 16 MiB Fast RAM");
+        if(!ap_config_valid || ap_error || ap_config_bytes[71:64]!=16)
+            $fatal(1,"AGA 040 loader rejected 16 MiB Fast RAM");
+        clear;config_record(2,0,0,0,16);
+        if(config_valid || !error)$fatal(1,"ECS loader accepted 16 MiB Fast RAM");
         clear;
         config_record(4,0,0,0,8);
         if(config_valid || !error)$fatal(1,"unknown CPU mode accepted");

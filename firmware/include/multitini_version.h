@@ -5,8 +5,8 @@
 #include <stdint.h>
 
 /* Multitini releases use M<major>.<minor>.<patch>, with an optional dev suffix.
- * The numeric identity packs 'M', major, minor and patch into four bytes. */
-#define MT_FIRMWARE_VERSION "M0.8.2"
-#define MT_FIRMWARE_BUILD_ID UINT32_C(0x4D000802)
+ * Development builds can use a separate numeric identity. */
+#define MT_FIRMWARE_VERSION "M0.8.3dev2"
+#define MT_FIRMWARE_BUILD_ID UINT32_C(0x4D000871)
 
 #endif

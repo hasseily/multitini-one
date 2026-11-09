@@ -58,6 +58,8 @@ module ap68040_fetch
 	parameter bit DEBUG = 0          // the debug outputs' logic (0: they stay at zero)
 )(
 	input  logic [7:0]  amiga_fast_top,
+	input  logic        amiga_fast16_enabled,
+	input  logic [7:0]  amiga_fast16_base,
 	input  logic        clk,
 	input  logic        nreset,
 
@@ -427,7 +429,8 @@ always_comb begin
 		else x_ok = 1'b1;
 	end
 	else x_walk = 1'b1;
-	if (x_pa[31:24] != 0 || x_pa[23:16] < 8'h20 || x_pa[23:16] >= amiga_fast_top)
+	if (!(amiga_fast16_enabled && x_pa[31:24] == amiga_fast16_base) &&
+	    (x_pa[31:24] != 0 || x_pa[23:16] < 8'h20 || x_pa[23:16] >= amiga_fast_top))
 		x_cm = 2'b11;
 	x_cach = x_ok && ic_en && !x_cm[1];
 	// the tags compare with both candidate addresses, the logical one (a

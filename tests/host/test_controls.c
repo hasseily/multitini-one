@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "multitini_controls.h"
+#include "multitini_amiga_interface.h"
 #include "multitini_c64_interface.h"
 #include "multitini_gameboy_interface.h"
 #include "multitini_genesis_interface.h"
@@ -46,7 +47,7 @@ static mt_controller_config_t empty_config(uint32_t core)
 
 static void test_defaults_and_validation(void)
 {
-    const uint32_t cores[] = { MT_C64_CORE_ID, MT_GBC_CORE_ID, MT_GENESIS_CORE_ID, MT_VECTREX_CORE_ID };
+    const uint32_t cores[] = { MT_C64_CORE_ID, MT_GBC_CORE_ID, MT_GENESIS_CORE_ID, MT_VECTREX_CORE_ID, MT_AMIGA_CORE_ID };
     for (unsigned model = MT_CONTROLLER_TRANSPORT_HID; model <= MT_CONTROLLER_TRANSPORT_PS4; ++model) {
         mt_controller_device_t pad = device(model);
         for (unsigned index = 0U; index < sizeof(cores) / sizeof(cores[0]); ++index) {
@@ -63,6 +64,14 @@ static void test_defaults_and_validation(void)
             for (unsigned action = 0U; action < MT_CONTROL_COUNT; ++action) {
                 check(mt_controls_action_name(cores[index], action)[0] != '\0', "every action has a readable label");
                 if ((mask & BIT(action)) == 0U) check(config.binding[action] == 0U, "unsupported actions remain unassigned");
+            }
+            if (cores[index] == MT_AMIGA_CORE_ID) {
+                for (unsigned action = MT_CONTROL_A; action <= MT_CONTROL_X; ++action)
+                    check(config.binding[action] == MT_CONTROL_SOURCE_BUTTON + action - MT_CONTROL_A,
+                          "Amiga defaults bind all four CD32 actions");
+                config.binding[MT_CONTROL_C] = 0U;
+                config.binding[MT_CONTROL_X] = 0U;
+                check(mt_controls_config_valid(cores[index], &config), "saved two-button Amiga controls still validate");
             }
             config.binding[MT_CONTROL_A] = MT_CONTROL_SOURCE_COUNT;
             check(!mt_controls_config_valid(cores[index], &config), "out-of-range input source is rejected");

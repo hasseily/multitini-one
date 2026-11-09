@@ -37,7 +37,8 @@ uint32_t mt_controls_action_mask(uint32_t core)
     case MT_GENESIS_CORE_ID: return UINT16_C(0x0fff) | menu;
     case MT_VECTREX_CORE_ID: return UINT16_C(0x00ff) | BIT(MT_CONTROL_AXIS_X) | BIT(MT_CONTROL_AXIS_Y) | menu;
     case MT_IIGS_CORE_ID: return UINT16_C(0x007f) | BIT(MT_CONTROL_AXIS_X) | BIT(MT_CONTROL_AXIS_Y) | menu;
-    case MT_AMIGA_CORE_ID: return UINT16_C(0x003f) | menu;
+    case MT_AMIGA_CORE_ID: return directions | BIT(MT_CONTROL_A) | BIT(MT_CONTROL_B) |
+        BIT(MT_CONTROL_C) | BIT(MT_CONTROL_X) | menu;
     case MT_SPECTRUM_CORE_ID:
         return directions | BIT(MT_CONTROL_A) | menu;
     case MT_ATARI_XT_CORE_ID:
@@ -61,6 +62,10 @@ const char *mt_controls_action_name(uint32_t core, unsigned action)
     if (core == MT_VECTREX_CORE_ID && action >= MT_CONTROL_A && action <= MT_CONTROL_X) {
         static const char *const vec[] = { "Button 1", "Button 2", "Button 3", "Button 4" };
         return vec[action - MT_CONTROL_A];
+    }
+    if (core == MT_AMIGA_CORE_ID && action >= MT_CONTROL_A && action <= MT_CONTROL_X) {
+        static const char *const amiga[] = { "Fire 1 / Red", "Fire 2 / Blue", "Fire 3 / Green", "Fire 4 / Yellow" };
+        return amiga[action - MT_CONTROL_A];
     }
     if (core == MT_GENESIS_CORE_ID && action == MT_CONTROL_SELECT) return "Mode";
     if ((core == MT_SPECTRUM_CORE_ID || core == MT_ATARI_XT_CORE_ID) &&

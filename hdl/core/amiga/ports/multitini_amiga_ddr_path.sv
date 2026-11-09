@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 `timescale 1ns/1ps
-// Dedicated IIgs RAM/ROM aperture on HP2 (memory interface v2).
+// Dedicated Amiga RAM/ROM apertures on HP2 (memory interface v2).
 //
-// HP2's ACLK is the machine clock in the IIgs image, so this AXI3 master runs
+// HP2's ACLK is the machine clock in the Amiga image, so this AXI3 master runs
 // directly on core_clk and the data path has no clock crossing. One
 // transaction is outstanding at a time:
 // - memory_burst=0 read: one 64-bit beat (ARLEN=0) for core_memory_addr[23:3].
@@ -37,13 +37,13 @@
 // reached the machine, the core stopped issuing, and every posted write and
 // AXI transaction then drained.
 // Multitini ECS port; reproduced by scripts/port_amiga_core.py.
-// Shared original Multitini DDR path; only the module name differs.
+// Adapt the IIgs AXI protocol to the Amiga DDR banks.
 module multitini_amiga_ddr_path (
     input wire core_clk,core_resetn,control_clk,control_resetn,
     // Core reset request: the control-domain register bit and its machine-
     // domain synchronized copy (the one that holds the adapter in reset).
     input wire control_reset_request,core_reset_request,
-    input wire [23:0] core_memory_addr,
+    input wire [24:0] core_memory_addr,
     input wire core_memory_write,
     input wire [63:0] core_memory_wdata,
     input wire [7:0] core_memory_wstrb,
@@ -68,7 +68,7 @@ module multitini_amiga_ddr_path (
     output wire wlast,wvalid,input wire wready,
     input wire [1:0] bresp,input wire bvalid,output wire bready
 );
-    localparam [31:0] APERTURE=32'h24000000;
+    wire [7:0] memory_bank=core_memory_addr[24] ? 8'h26 : 8'h24;
     localparam [1:0] IDLE=2'd0,READ=2'd1,WRITE=2'd2,READ_PAD=2'd3;
     // Machine cycles the synchronized reset request must be held before the
     // core counts as stopped. The adapter publishes machine_reset on the next
@@ -117,12 +117,11 @@ module multitini_amiga_ddr_path (
                 end else if(core_memory_valid)begin
                     data_q<=core_memory_wdata;strobe_q<=core_memory_wstrb;beat<=0;
                     if(core_memory_write)begin
-                        address_q<=APERTURE|{8'd0,core_memory_addr[23:3],3'b000};
+                        address_q<={memory_bank,core_memory_addr[23:3],3'b000};
                         burst_q<=0;aw_pending<=1;w_pending<=1;state<=WRITE;
                     end else begin
-                        address_q<=APERTURE|(core_memory_burst ?
-                            {8'd0,core_memory_addr[23:5],5'b00000} :
-                            {8'd0,core_memory_addr[23:3],3'b000});
+                        address_q<=core_memory_burst ? {memory_bank,core_memory_addr[23:5],5'b00000} :
+                                                           {memory_bank,core_memory_addr[23:3],3'b000};
                         burst_q<=core_memory_burst;ar_pending<=1;state<=READ;
                     end
                 end

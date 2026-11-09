@@ -637,7 +637,10 @@ static void build_amiga(mt_core_frontend_t *frontend,const mt_core_frontend_stat
     frontend->core_options[view->core_option_count++]=item("Chipset",
         state->amiga_aga_pal ? "AGA PAL / 2 MiB chip RAM":"ECS PAL / 2 MiB chip RAM",
         "CPU speed is independent of the PAL chipset clock.",MT_MENU_ACTION_NONE,1U,false,MT_UI_COLOR_TEXT);
-    frontend->core_options[view->core_option_count++]=item("Fast RAM",state->amiga_config.fast_mib==4U ? "4 MiB":"8 MiB",
+    const char *const fast_ram=state->amiga_config.fast_mib==16U ? "16 MiB":
+        state->amiga_config.fast_mib==4U ? "4 MiB":"8 MiB";
+    frontend->core_options[view->core_option_count++]=item("Fast RAM",fast_ram,
+        state->amiga_fast_ram_16_available ? "Select 4, 8 or 16 MiB. Changing size restarts Amiga.":
         "Zorro II fast memory; chipset always has 2 MiB chip RAM.",MT_MENU_ACTION_TOGGLE_CORE_OPTION,2U,true,MT_UI_COLOR_BLUE);
     frontend->core_options[view->core_option_count++]=item("Floppy speed",state->amiga_config.floppy_turbo ? "Fast":"Normal",
         "Normal DD drive timing provides the widest compatibility.",MT_MENU_ACTION_TOGGLE_CORE_OPTION,3U,true,MT_UI_COLOR_BLUE);
@@ -649,7 +652,7 @@ static void build_amiga(mt_core_frontend_t *frontend,const mt_core_frontend_stat
         MT_MENU_ACTION_TOGGLE_CORE_OPTION,4U,!state->amiga_display_pending,MT_UI_COLOR_BLUE);
     frontend->input_items[view->input_item_count++]=item("Keyboard","USB keyboard","Windows keys are Amiga keys; Menu is Right Amiga; Ctrl + both Amiga restarts. F12 opens this menu.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
     frontend->input_items[view->input_item_count++]=item("Mouse","USB mouse","Relative movement and three mouse buttons.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
-    frontend->input_items[view->input_item_count++]=item("Joysticks","Two USB gamepads","Digital joystick directions and two fire buttons per port.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
+    frontend->input_items[view->input_item_count++]=item("Joysticks","Two USB gamepads","Configure directions and fire buttons in Controllers.",MT_MENU_ACTION_NONE,0U,false,MT_UI_COLOR_TEXT);
     view->save_faulted=state->save_faulted;
 }
 static void build_spectrum(mt_core_frontend_t *frontend,

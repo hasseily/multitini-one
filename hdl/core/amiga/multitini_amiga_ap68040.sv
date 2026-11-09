@@ -5,8 +5,13 @@ module multitini_amiga_ap68040 (
     input wire clk, cpu_clk, cpu_bclk, reset_n,
     input wire [2:0] ipl_n,
     input wire [7:0] fast_top,
-    input wire wide_selected, ready,
+    input wire fast16_enabled,
+    input wire [7:0] fast16_base,
+    input wire wide_selected, fast_ram_selected, ready,
     input wire [15:0] data_in, data_next,
+    input wire line_ready,
+    input wire [127:0] line_in,
+    output wire line_request,
     output wire [31:0] address,
     output wire [15:0] data_out, data_low,
     output wire [1:0] bus_state,
@@ -22,11 +27,21 @@ module multitini_amiga_ap68040 (
     logic native_reset_out_n=1'b1;
     logic [15:0] first_word;
     logic [1:0] size_q;
-    logic read_q, second_word, interrupt_ack, transfer_error;
+    logic [1:0] burst_left;
+    logic read_q, second_word, interrupt_ack, transfer_error, line_replay;
+    logic [127:0] held_line;
     wire active = state == REQUEST;
     wire reply = state == RESPOND;
     wire long_access = size_q == 2'b00 || size_q == 2'b11;
     wire wide = wide_candidate && wide_selected;
+    wire high_mapped = fast16_enabled && a[31:24] == fast16_base;
+    // The Zorro III bank has a separate read-only line reply. The legacy
+    // Fast RAM paths still acknowledge each longword through the old port.
+    assign line_request = wide && fast16_enabled && base[31:24] == fast16_base &&
+                          read_q && size_q == 2'b11;
+    function automatic [31:0] line_word(input [127:0] line, input [1:0] offset);
+        return line[127 - 32*offset -: 32];
+    endfunction
 
     assign address = base | (second_word ? 32'd2 : 32'd0);
     assign read_cycle = read_q;
@@ -49,24 +64,39 @@ module multitini_amiga_ap68040 (
             write_data <= 0;
             first_word <= 0;
             size_q <= 0;
+            burst_left <= 0;
             read_q <= 1;
             second_word <= 0;
             interrupt_ack <= 0;
             transfer_error <= 0;
+            line_replay <= 0;
+            held_line <= 0;
         end else case (state)
             IDLE, RESPOND: begin
                 state <= IDLE;
-                if (!ts_n && a_oe) begin
+                if (reply && burst_left != 0) begin
+                    // AP68040 takes the critical longword first and then
+                    // wraps within the same aligned 16-byte cache line.
+                    base[3:2] <= base[3:2] + 2'd1;
+                    burst_left <= burst_left - 2'd1;
+                    if (line_replay) begin
+                        // The held line permits a response on every native
+                        // bus edge. No extra memory request is issued.
+                        read_data <= line_word(held_line, base[3:2] + 2'd1);
+                        state <= RESPOND;
+                    end else state <= REQUEST;
+                end else if (!ts_n && a_oe) begin
                     base <= a;
                     write_data <= d;
                     size_q <= size;
                     read_q <= rw_n;
                     second_word <= 0;
+                    line_replay <= 0;
                     interrupt_ack <= tt == 2'b11 && tm != 3'd0;
                     // Amiga supplies an autovector. A breakpoint cycle has
                     // no external responder and terminates with a bus error.
                     transfer_error <= tt == 2'b11 && tm == 3'd0;
-                    if (tt == 2'b11 || a[31:24] != 0) begin
+                    if (tt == 2'b11 || (a[31:24] != 0 && !high_mapped)) begin
                         // Kickstart probes above the motherboard's 24-bit bus
                         // for expansion memory. Acknowledge the unmapped cycle
                         // without touching its low-address alias.
@@ -75,12 +105,24 @@ module multitini_amiga_ap68040 (
                     end else state <= REQUEST;
                 end
             end
-            REQUEST: if (ready) begin
+            REQUEST: if (line_request) begin
+                if (line_ready) begin
+                    held_line <= line_in;
+                    read_data <= line_word(line_in, base[3:2]);
+                    burst_left <= 2'd3;
+                    line_replay <= 1;
+                    state <= RESPOND;
+                end
+            end else if (ready) begin
                 if (long_access && !wide && !second_word) begin
                     first_word <= data_in;
                     second_word <= 1;
                     state <= WORD_GAP;
                 end else begin
+                    if (size_q == 2'b11 && read_q && wide && fast_ram_selected) begin
+                        burst_left <= 2'd3;
+                        size_q <= 2'b00;
+                    end
                     if (wide) read_data <= {data_in, data_next};
                     else if (second_word) read_data <= {first_word, data_in};
                     else if (base[1]) read_data <= {16'd0, data_in};
@@ -96,12 +138,12 @@ module multitini_amiga_ap68040 (
     ap68040 #(.DC_WRITETHROUGH(1'b1)) cpu (
         .clk(cpu_clk), .bclk_en(cpu_bclk), .rsti_n(reset_n), .rsto_n(cpu_reset_out_n),
         .amiga_fast_top(fast_top),
+        .amiga_fast16_enabled(fast16_enabled), .amiga_fast16_base(fast16_base),
         .a_o(a), .a_oe(a_oe), .d_o(d), .d_i(read_data), .ts_n(ts_n),
         .rw_n(rw_n), .siz(size), .tt(tt), .tm(tm),
         .ta_n(!(reply && !transfer_error)), .tea_n(!(reply && transfer_error)),
-        // Terminate a line as four explicit longword transactions. The
-        // memory controller can serve the remaining words from its line fill.
-        .tbi_n(1'b0), .tci_n(1'b1), .ipl_n(ipl_n),
+        // Keep writes and non-Fast-RAM cycles as separate longword transfers.
+        .tbi_n(reply && burst_left != 0), .tci_n(1'b1), .ipl_n(ipl_n),
         .avec_n(!(reply && interrupt_ack)),
         .bg_n(1'b0), .bb_n_i(1'b1), .cdis_n(1'b1), .mdis_n(1'b1),
         .a_i(32'd0), .ts_n_i(1'b1), .rw_n_i(1'b1),

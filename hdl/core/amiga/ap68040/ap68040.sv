@@ -31,6 +31,8 @@ module ap68040
 )(
 
 	input  logic [7:0]  amiga_fast_top,
+	input  logic        amiga_fast16_enabled,
+	input  logic [7:0]  amiga_fast16_base,
 	input  logic        clk,
 	input  logic        bclk_en,
 	input  logic        rsti_n,
@@ -362,6 +364,8 @@ ap68040_backend #(.FPU_REVISION(FPU_REVISION), .FPU_PIPE(FPU_PIPE), .EARLY_RES(E
 );
 ap68040_dmu #(.DC1_ATC(DC1_ATC), .DC_WRITETHROUGH(DC_WRITETHROUGH)) dmu (
 	.amiga_fast_top(amiga_fast_top),
+	.amiga_fast16_enabled(amiga_fast16_enabled),
+	.amiga_fast16_base(amiga_fast16_base),
 	.clk(clk), .nreset(nreset),
 	.adv_ag(adv_ag), .dm_req(dm_req), .dm_va(dm_va), .dm_mem(dm_mem),
 	.dm_msz(dm_msz), .dm_fc(dm_fc), .dm_lock(dm_lock), .dm_locke(dm_locke), .dm_wi(dm_wi),
@@ -397,6 +401,8 @@ ap68040_dmu #(.DC1_ATC(DC1_ATC), .DC_WRITETHROUGH(DC_WRITETHROUGH)) dmu (
 );
 ap68040_fetch #(.DEBUG(DEBUG)) fetch (
 	.amiga_fast_top(amiga_fast_top),
+	.amiga_fast16_enabled(amiga_fast16_enabled),
+	.amiga_fast16_base(amiga_fast16_base),
 	.clk(clk), .nreset(nreset),
 	.redir_v(redir_v), .redir_pc(redir_pc),
 	.d_redir_v(d_redir_v), .d_redir_pc(d_redir_pc),

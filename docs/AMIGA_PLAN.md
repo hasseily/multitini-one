@@ -94,7 +94,7 @@ Place DD ADF floppy images and HDF hard disk images under `media/`. The
 firmware must preserve dirty data and recovery journals when a write fails,
 and flush before eject, reset, core switching or USB SD export.
 
-This target does not promise RTG, CD32/CDTV, HRTmon, physical or flux
+This target does not promise RTG, CD32/CDTV boot profiles, HRTmon, physical or flux
 floppy interfaces, Ethernet, shared-folder or MiSTer Linux services. The
 retained upstream README describes the upstream product and is not the
 feature contract for this port.
@@ -137,6 +137,28 @@ The CPU uses direct 32-bit reads for Kickstart. On dual-clock AP68040 images,
 **Options → CPU speed** toggles **28 MHz** (28.375 MHz) and **56.75 MHz**.
 Changing speed flushes disks and restarts Amiga. The chipset and the CPU
 external bus run at 28.375 MHz in both modes.
+
+On 68040 images that report the new Fast RAM capability, **Options → Fast
+RAM** also offers **16 MiB**. The 16 MiB setting presents one contiguous
+Zorro III memory bank to Kickstart. Its backing store is
+`0x26000000–0x26FFFFFF` in board DDR. The 4 and 8 MiB settings use Zorro II
+and the original DDR aperture. Changing the size flushes disks and restarts
+Amiga. With newer firmware and an older FPGA image, a saved 16 MiB selection
+runs at 8 MiB until an image with the capability is loaded again.
+
+The 68040 bridge supports four-word read bursts for cache-line fills from
+Fast RAM. It returns the requested longword first and wraps within the
+16-byte line. Chipset accesses and writes use their existing transfers.
+With 16 MiB selected, the bridge can return the four words on consecutive
+bus edges from a registered reply. After two sequential DDR lines, the
+memory controller can fetch one line ahead. Speculative reads use a separate
+buffer so chip writes can still use the shared cache. A chip miss that arrives
+during a speculative burst uses the normal native clock hold until DDR is
+available. Physical timing and game speed require board tests.
+
+The controller bindings provide Red, Blue, Green and Yellow on each port
+through the CD32 pad protocol when the image reports that capability. Red
+and Blue also serve as the two direct joystick fire buttons.
 
 ## Qualification
 

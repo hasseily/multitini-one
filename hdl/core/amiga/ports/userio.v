@@ -26,7 +26,7 @@
 
 
 
-module userio #(parameter AGA_PAL = 1'b0)
+module userio #(parameter AGA_PAL = 1'b0, USE_AP68040 = 1'b0)
 (
 	input             clk,        // bus clock
 	input             reset,      // reset
@@ -510,8 +510,11 @@ always @(posedge clk) begin
 			cpu_cfg <= t_cpu_config[1:0]==2'b11 && !t_cpu_config[5] ? 5'h03 : 5'h07;
 		else
 			cpu_cfg <= {1'b0, (t_cpu_config[1:0]==2'b11) & t_cpu_config[6], (t_cpu_config[1:0]==2'b11) & t_cpu_config[5], {2{t_cpu_config[1:0]==2'b11}}}; // bit3 selects alternate-edge 68020 execution
-		memory_config[5:0] <= {(t_memory_config[5:4]==2'd2 ? 2'd2 : 2'd3), 2'b00, 2'b11}; // 2MiB Chip; 4/8MiB Fast
-		memory_config[7] <= 1'b0;
+		// The host's $43 selects the 16 MiB card on AGA + 68040. Bit 6
+		// remains disabled in the native register, where it controls HRTMon.
+		memory_config[5:0] <= {((AGA_PAL && USE_AP68040 && t_memory_config == 8'h43) ? 2'd0 :
+		                        t_memory_config[5:4] == 2'd2 ? 2'd2 : 2'd3), 4'h3};
+		memory_config[7] <= AGA_PAL && USE_AP68040 && t_memory_config == 8'h43;
 	end
 	
 	ide_config <= ide_cfg;

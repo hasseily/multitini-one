@@ -660,6 +660,13 @@ static void test_amiga_resolution(void)
     state.amiga_config.cpu=MT_AMIGA_CPU_AP68040_2X;
     mt_core_frontend_apply(&frontend,&state,&view);row=core_row(&view,"CPU speed");
     check(row->enabled && strcmp(row->value,"56.75 MHz")==0,"AP68040 Options shows the selected 56.75 MHz");
+    row=core_row(&view,"Fast RAM");
+    check(row->enabled && strcmp(row->value,"8 MiB")==0 && strstr(row->help,"Zorro II")!=NULL,
+          "older AP68040 keeps its 4 and 8 MiB choices");
+    state.amiga_fast_ram_16_available=true;state.amiga_config.fast_mib=16U;
+    mt_core_frontend_apply(&frontend,&state,&view);row=core_row(&view,"Fast RAM");
+    check(row->enabled && row->argument==2U && strcmp(row->value,"16 MiB")==0 &&
+          strstr(row->help,"restarts")!=NULL,"updated AP68040 offers 16 MiB and explains the restart");
 }
 static void test_spectrum_profile(void)
 {

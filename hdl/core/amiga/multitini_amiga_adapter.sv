@@ -16,7 +16,7 @@ module multitini_amiga_adapter #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
     input wire [7:0] load_data,load_kind,
     input wire load_valid,load_first,load_last,load_epoch,load_abort,load_abort_epoch,
     input wire [31:0] load_offset,load_total,output wire load_ready,
-    output wire [23:0] memory_addr,output wire memory_write,
+    output wire [24:0] memory_addr,output wire memory_write,
     output wire [63:0] memory_wdata,output wire [7:0] memory_wstrb,
     output wire memory_burst,memory_valid,memory_busy,input wire memory_ready,
     input wire [63:0] memory_rdata,input wire memory_rvalid,memory_fault,
@@ -39,6 +39,8 @@ module multitini_amiga_adapter #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
     wire cpu_req,cpu_ub_n,cpu_lb_n,cpu_long,cpu_ready,cpu_reset_n;
     wire [28:1] cpu_addr;
     wire [15:0] cpu_wdata,cpu_wdata2,cpu_rdata,cpu_rdata2;
+    wire cpu_line,cpu_line_ready;
+    wire [127:0] cpu_line_data;
     wire [1:0] cpu_state;
     wire io_uio,io_fpga,io_strobe,io_wait;
     wire [15:0] io_din,io_dout,ide_wdata,ide_rdata;
@@ -122,8 +124,9 @@ module multitini_amiga_adapter #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
                     16'h6100:begin kms_level<=!kms_level;kbd_mouse_type<=0;kbd_mouse_data<=next_input[7:0];input_hold<=4;end
                     16'h6101:begin kms_level<=!kms_level;kbd_mouse_type<=1;kbd_mouse_data<=next_input[7:0];input_hold<=4;end
                     16'h6102:mouse_buttons<=next_input[2:0];
-                    16'h6200:joy1<={10'h3ff,~next_input[5:0]};
-                    16'h6201:joy2<={10'h3ff,~next_input[5:0]};
+                    // Directions, Red, Blue, Yellow and Green are active high in the input packet.
+                    16'h6200:joy1<={8'hff,~next_input[7:0]};
+                    16'h6201:joy2<={8'hff,~next_input[7:0]};
                     default:begin end
                 endcase
             end
@@ -141,7 +144,7 @@ module multitini_amiga_adapter #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
         .rom_loaded(rom_loaded),.config_valid(config_valid),.config_bytes(config_bytes),
         .write_valid(write_valid),.write_addr(write_addr),.write_data(write_data),
         .write_ready(write_ready),.write_done(write_done),.memory_fault(memory_fault));
-    multitini_amiga_memory memory_i(
+    multitini_amiga_memory #(.USE_AP68040(USE_AP68040)) memory_i(
         .clk(core_clk),.reset(reset),.chip_c1(chip_c1 && !native_stopped),.chip_addr(chip_addr),
         .chip_wdata(chip_wdata),.chip_wdata2(chip_wdata2),.chip_oe_n(chip_oe_n),.chip_we_n(chip_we_n),
         .chip_ub_n(chip_ub_n),.chip_lb_n(chip_lb_n),.chip_long(chip_long),
@@ -149,6 +152,8 @@ module multitini_amiga_adapter #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
         .cpu_req(cpu_req && cpu_reset_n && !native_stopped),.cpu_addr(cpu_addr),.cpu_wdata(cpu_wdata),.cpu_state(cpu_state),
         .cpu_ub_n(cpu_ub_n),.cpu_lb_n(cpu_lb_n),.cpu_long(cpu_long),.cpu_wdata2(cpu_wdata2),
         .cpu_rdata(cpu_rdata),.cpu_rdata2(cpu_rdata2),.cpu_ready(cpu_ready),
+        .cpu_line(cpu_line),.cpu_line_stop(native_stopped || !cpu_reset_n),
+        .cpu_line_ready(cpu_line_ready),.cpu_line_data(cpu_line_data),
         .load_valid(write_valid),.load_addr(write_addr),.load_data(write_data),.load_ready(write_ready),.load_done(write_done),
         .run_enable(memory_run),.busy(memory_busy),.fault(memory_error),.monitor(memory_monitor),
         .memory_addr(memory_addr),.memory_write(memory_write),.memory_wdata(memory_wdata),.memory_wstrb(memory_wstrb),
@@ -187,6 +192,7 @@ module multitini_amiga_adapter #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
         .chip_rdata(chip_rdata),.chip_rdata2(chip_rdata2),.chip_rdata48(chip_rdata48),
         .cpu_req(cpu_req),.cpu_addr(cpu_addr),.cpu_wdata(cpu_wdata),.cpu_state(cpu_state),.cpu_ub_n(cpu_ub_n),.cpu_lb_n(cpu_lb_n),
         .cpu_long(cpu_long),.cpu_wdata2(cpu_wdata2),.cpu_rdata(cpu_rdata),.cpu_rdata2(cpu_rdata2),.cpu_ready(cpu_ready),.cpu_ready_long(cpu_ready),
+        .cpu_line(cpu_line),.cpu_line_ready(cpu_line_ready),.cpu_line_data(cpu_line_data),
         .io_uio(io_uio),.io_fpga(io_fpga),.io_strobe(io_strobe),.io_din(io_din),.io_wait(io_wait),.io_dout(io_dout),
         .ide_req(ide_req),.ide_address(ide_address),.ide_write(ide_write),.ide_read(ide_read),.ide_wdata(ide_wdata),.ide_rdata(ide_rdata),.ide_monitor(ide_monitor),
         .joy1(native_joy1),.joy2(native_joy2),.mouse_buttons(native_mouse_buttons),.kms_level(native_kms_level),

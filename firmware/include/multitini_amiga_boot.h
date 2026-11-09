@@ -22,6 +22,7 @@ mt_link_result_t mt_amiga_diag_read(mt_core_link_t *,uint16_t sequence,
  * must not replay this sector or fall back to the word transport. */
 mt_link_result_t mt_amiga_bulk_transfer(mt_core_link_t *,bool capture,
     uint8_t sector[MT_AMIGA_SECTOR_BYTES],uint32_t polls,bool *submitted);
+bool mt_amiga_fast_ram_16_available(const mt_core_link_t *);
 mt_link_result_t mt_amiga_stage(mt_core_link_t *,const mt_amiga_config_t *,bool aga_pal,const uint8_t *rom,
     size_t bytes,uint32_t polls,mt_link_progress_fn,void *);
 mt_link_result_t mt_amiga_native_configure(mt_core_link_t *,const mt_amiga_config_t *,bool aga_pal,uint32_t polls);

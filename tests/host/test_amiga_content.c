@@ -10,6 +10,9 @@ int main(void)
     mt_amiga_config_encode(&config,wire);assert(mt_amiga_config_decode(wire,&decoded));
     const uint8_t legacy_auto[16]={'A','M','0','1',2U,0U,0U,0U,8U,2U,0U,0U,0U,0U,0U,0U};
     assert(memcmp(wire,legacy_auto,sizeof(wire))==0);
+    config.fast_mib=16U;mt_amiga_config_encode(&config,wire);
+    assert(wire[8]==16U && mt_amiga_config_decode(wire,&decoded) && decoded.fast_mib==16U);
+    wire[8]=12U;assert(!mt_amiga_config_decode(wire,&decoded));config.fast_mib=8U;
     assert(!mt_amiga_fast_ide_enabled(&config,0U) && mt_amiga_fast_ide_enabled(&config,MT_AMIGA_HOST_FAST_IDE));
     config.ide_compat=MT_AMIGA_IDE_CLASSIC;mt_amiga_config_encode(&config,wire);
     assert(wire[10]==1U && mt_amiga_config_decode(wire,&decoded) && decoded.ide_compat==1U);

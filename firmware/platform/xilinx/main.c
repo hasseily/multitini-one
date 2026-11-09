@@ -3462,6 +3462,7 @@ static mt_menu_view_t supervisor_menu_view(void)
         state.amiga_aga_pal=amiga_content_service_aga_pal();
         state.amiga_ap68040=amiga_content_service_ap68040();
         state.amiga_ap68040_2x_available=amiga_content_service_ap68040_2x_available();
+        state.amiga_fast_ram_16_available=amiga_content_service_fast_ram_16_available();
         state.amiga_cpu14_available=amiga_content_service_cpu14_available();
         state.amiga_cpu14_fallback=amiga_content_service_cpu14_fallback();
         state.amiga_fast_ide_available=amiga_content_service_fast_ide_available();
@@ -7091,7 +7092,11 @@ static void handle_menu_action(mt_menu_action_t action)
                     changed.cpu==MT_AMIGA_CPU_68020_14 ? MT_AMIGA_CPU_68020_TURBO:MT_AMIGA_CPU_STOCK;
             }
             else if(action.file_index==1U)return;
-            else if(action.file_index==2U)changed.fast_mib=changed.fast_mib==4U ? 8U:4U;
+            else if(action.file_index==2U) {
+                if(changed.fast_mib==4U)changed.fast_mib=8U;
+                else if(changed.fast_mib==8U && amiga_content_service_fast_ram_16_available())changed.fast_mib=16U;
+                else changed.fast_mib=4U;
+            }
             else if(action.file_index==3U)changed.floppy_turbo^=1U;
             else if(action.file_index==4U) {
                 if(usb_sd_modal || mt_sd_storage_external_active() || mt_screenshot_service_busy() || amiga_display_service_pending()) {

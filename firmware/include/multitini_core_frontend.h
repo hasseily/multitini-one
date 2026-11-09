@@ -60,6 +60,7 @@ typedef struct {
     mt_amiga_config_t amiga_config;
     bool amiga_ready;
     bool amiga_aga_pal,amiga_ap68040,amiga_ap68040_2x_available,amiga_cpu14_available,amiga_cpu14_fallback;
+    bool amiga_fast_ram_16_available;
     bool amiga_fast_ide_available,amiga_fast_ide_expected;
     bool amiga_display_available,amiga_display_pending;
     uint8_t amiga_display_requested,amiga_display_applied,amiga_display_mode_count;

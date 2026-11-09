@@ -38,6 +38,9 @@ module multitini_amiga_machine #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
     input wire [15:0] cpu_rdata2,
     input wire cpu_ready,
     input wire cpu_ready_long,
+    output wire cpu_line,
+    input wire cpu_line_ready,
+    input wire [127:0] cpu_line_data,
     input wire io_uio,io_fpga,io_strobe,
     input wire [15:0] io_din,
     output wire io_wait,
@@ -178,7 +181,8 @@ module multitini_amiga_machine #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
         .z2ram_ena(z2ram_ena),.z3ram_base0(z3ram_base0),.z3ram_ena0(z3ram_ena0),
         .z3ram_base1(z3ram_base1),.z3ram_ena1(z3ram_ena1),
         .ramlong1(cpu_ram_long),.ramdin_lo(cpu_ram_wdata2),.ramdout_hi(cpu_rdata2),
-        .ramready_l(cpu_ready_long && !cpu_retirement_hold),.dcache_sw_en(dcache_sw_en));
+        .ramready_l(cpu_ready_long && !cpu_retirement_hold),.dcache_sw_en(dcache_sw_en),
+        .ram_line_req(cpu_line),.ram_line_ready(cpu_line_ready),.ram_line_data(cpu_line_data));
     assign chip_wdata2=chip_cpu_din2;
 
     // The upstream CPU-side IDE path shares the accepted native clock here.
@@ -200,7 +204,7 @@ module multitini_amiga_machine #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
         .read_selected(display_guest_selected),.read_data(display_guest_data),
         .arm_address(display_read_address),.arm_data(display_read_data));
 
-    minimig #(.AGA_PAL(AGA_PAL)) chipset(
+    minimig #(.AGA_PAL(AGA_PAL),.USE_AP68040(USE_AP68040)) chipset(
         .cpu_address(cpu_chip_addr),.cpu_data(chipset_cpu_data),.cpudata_in(cpu_chip_din),
         ._cpu_ipl(cpu_chip_ipl),._cpu_as(cpu_chip_as),._cpu_uds(cpu_chip_uds),
         ._cpu_lds(cpu_chip_lds),.cpu_r_w(cpu_chip_rw),.cpu_long(cpu_chip_long),

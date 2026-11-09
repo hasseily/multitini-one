@@ -19,29 +19,32 @@ module tb_amiga_transport;
     reg [15:0] cpu_wdata2=0;
     wire [15:0] cpu_rdata,cpu_rdata2;
     wire cpu_ready;
+    reg cpu_line=0,cpu_line_stop=0;
+    wire cpu_line_ready;
+    wire [127:0] cpu_line_data;
     reg load_valid=0;
     reg [23:0] load_addr=0;
     reg [7:0] load_data=0;
     wire load_ready,load_done,run_enable,busy,fault;
-    wire [23:0] memory_addr;
+    wire [24:0] memory_addr;
     wire memory_write,memory_valid,memory_burst;
     wire [63:0] memory_wdata;
     wire [7:0] memory_wstrb;
     reg memory_ready=1,memory_rvalid=0,memory_fault=0;
     reg [63:0] memory_rdata=0;
-    multitini_amiga_memory #(.INDEX_BITS(2)) memory_i(.monitor(),.*);
+    multitini_amiga_memory #(.INDEX_BITS(2),.USE_AP68040(1'b1)) memory_i(.monitor(),.*);
 
-    reg [63:0] backing[0:2047];
+    reg [63:0] backing[0:4095];
     reg ddr_pending=0;
     integer delay_left=0,ddr_latency=12,ddr_count=0,write_count=0,read_count=0;
-    reg [23:0] accepted_addr;
+    reg [24:0] accepted_addr;
     reg [63:0] accepted_wdata;
     reg [7:0] accepted_mask;
     reg accepted_write,accepted_burst;
     reg [1:0] accepted_beat;
     integer slot,n;
-    function integer map_line(input [23:0] address);
-        map_line={address[23:21],address[10:3]};
+    function integer map_line(input [24:0] address);
+        map_line={address[24:21],address[10:3]};
     endfunction
     always @(posedge clk) begin
         memory_rvalid<=0;
@@ -106,6 +109,26 @@ module tb_amiga_transport;
             while(!cpu_ready && timeout<1000)begin tick;timeout=timeout+1;end
             if(timeout==1000)$fatal(1,"CPU request timeout");
             @(negedge clk);cpu_req=0;tick;
+        end
+    endtask
+    task cpu_line_access(input [28:0] address);
+        integer timeout;
+        begin
+            @(negedge clk);cpu_addr=address>>1;cpu_state=2;cpu_req=1;cpu_line=1;
+            tick;timeout=0;
+            while(!cpu_line_ready && timeout<1000)begin tick;timeout=timeout+1;end
+            if(timeout==1000)$fatal(1,"CPU line request timeout");
+            @(negedge clk);cpu_req=0;cpu_line=0;tick;
+        end
+    endtask
+    task wait_prefetch;
+        integer timeout;
+        begin
+            timeout=0;
+            while(!(memory_i.speculative && memory_i.state==2) && timeout<1000)begin
+                tick;timeout=timeout+1;
+            end
+            if(timeout==1000)$fatal(1,"No speculative fill after two sequential line reads");
         end
     endtask
     task load_byte(input [23:0] address,input [7:0] value);
@@ -206,7 +229,7 @@ module tb_amiga_transport;
     // The DDR model owns n; these checks run while it is responding.
     integer before_reads,before_writes,waited,max_wait,i;
     initial begin
-        for(n=0;n<2048;n=n+1)backing[n]=0;
+        for(n=0;n<4096;n=n+1)backing[n]=0;
         backing[map_line(24'h000100)]=64'h7766554433221100;
         backing[map_line(24'ha00100)]=64'hfedcba9876543210;
         repeat(5)tick;
@@ -448,7 +471,47 @@ module tb_amiga_transport;
         @(negedge clk);cpu_req=0;tick;while(busy)tick;
         chip_read(24'h0002c0);
         if(chip_rdata!==16'h2222)$fatal(1,"held CPU write repeated after DMA write: %h",chip_rdata);
-        $display("PASS AMIGA memory endian, burst lines, posted merged writes, coherence, Z2 separation, loader, waits and faults");
+        // Equal low addresses must not share cache tags or posted writes
+        // between the 040's expansion bank and the original aperture.
+        cpu_access(29'h000100,1,16'h1234);
+        cpu_access(29'h8000100,1,16'habcd);
+        cpu_access(29'h8800100,1,16'hcdef);
+        cpu_access(29'h8000100,0,0);
+        if(cpu_rdata!==16'habcd)$fatal(1,"040 expansion bank read aliases low DDR");
+        cpu_access(29'h8800100,0,0);
+        if(cpu_rdata!==16'hcdef)$fatal(1,"040 expansion bank upper half aliases lower half");
+        cpu_access(29'h000100,0,0);
+        if(cpu_rdata!==16'h1234)$fatal(1,"040 expansion bank write corrupted low DDR");
+        cpu_access(29'h08300040,1,16'h1357);
+        cpu_access(29'h08300060,1,16'h2468);
+        cpu_access(29'h08300080,1,16'hbad0);
+        cpu_line_access(29'h08300040);
+        if(cpu_line_data[127:112]!==16'h1357)$fatal(1,"040 line read lost a prior posted write");
+        cpu_line_access(29'h08300060);
+        if(cpu_line_data[127:112]!==16'h2468)$fatal(1,"040 second line data mismatch");
+        wait_prefetch;
+        @(negedge clk);chip_addr=24'h0002c0>>1;chip_wdata=16'h468a;
+        chip_c1=1;chip_we_n=0;chip_ub_n=0;chip_lb_n=0;
+        tick;
+        if(!memory_i.chip_done || !run_enable)$fatal(1,"Speculative fill blocked a chip write");
+        @(negedge clk);chip_c1=0;chip_we_n=1;chip_ub_n=1;chip_lb_n=1;
+        cpu_access(29'h08300080,1,16'hdead);
+        cpu_line_access(29'h08300080);
+        if(cpu_line_data[127:112]!==16'hdead)$fatal(1,"Matching store did not cancel a speculative fill");
+        wait_prefetch;
+        @(negedge clk);cpu_line_stop=1;
+        tick;while(busy)tick;
+        if(memory_i.line_present[0]!=0 || memory_i.line_present[1]!=0 || memory_i.prefetch_pending)
+            $fatal(1,"Stopping the guest published or retained a speculative reply");
+        @(negedge clk);cpu_line_stop=0;
+        cpu_line_access(29'h08ffffc0);
+        cpu_line_access(29'h08ffffe0);
+        while(busy)tick;
+        repeat(24)begin
+            tick;
+            if(memory_i.speculative)$fatal(1,"End of Zorro III bank prefetched into low DDR");
+        end
+        $display("PASS AMIGA memory endian, burst lines, posted merged writes, coherence, Z2 separation, 040 expansion bank, loader, waits and faults");
 
         request_snapshot(0,0);
         for(n=0;n<8;n=n+1)begin

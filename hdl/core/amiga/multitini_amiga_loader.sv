@@ -62,7 +62,8 @@ module multitini_amiga_loader #(parameter bit AGA_PAL=1'b0, USE_AP68040=1'b0) (
                                 (AGA_PAL || config_next[39:32]!=3) &&
                                 (!USE_AP68040 || config_next[39:32]!=4)) ||
                                config_next[47:40]!=0 || config_next[55:48]!=0 || config_next[63:56]>1 ||
-                               (config_next[71:64]!=4 && config_next[71:64]!=8) ||
+                               (config_next[71:64]!=4 && config_next[71:64]!=8 &&
+                                (!(AGA_PAL && USE_AP68040) || config_next[71:64]!=16)) ||
                                config_next[79:72]!=2 || config_next[87:80]>1 ||
                                config_next[95:88]!={7'd0,AGA_PAL} || config_next[127:96]!=0)begin error<=1;config_valid<=0;end
                             else begin config_bytes<=config_next;config_valid<=1;end

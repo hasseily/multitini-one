@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Check the production Amiga adapter input queue with a controlled native stub."""
+"""Check the Amiga input queue and the native CD32 serial protocol."""
 from pathlib import Path
 import argparse
 import hashlib
@@ -18,6 +18,8 @@ SOURCES = ["third_party/appletini/hdl/cdc_bit_sync.sv", "hdl/sim/amiga_cdc_model
            "hdl/core/amiga/multitini_amiga_adapter.sv", "hdl/board/multitini_amiga_video_normalizer.sv",
            "hdl/sim/tb_amiga_adapter_input.sv"]
 
+CD32_SOURCES = ["hdl/core/amiga/ports/userio.v", "hdl/sim/tb_amiga_cd32.sv"]
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -29,7 +31,7 @@ def main():
     runtime = Path(os.environ.get("MULTITINI_UCRT_BIN", "C:/msys64/ucrt64/bin"))
     def tool(name):
         return str(runtime / (name + ".exe")) if os.name == "nt" else name
-    tracked = SOURCES + ["scripts/test_amiga_input.py"]
+    tracked = SOURCES + CD32_SOURCES + ["scripts/test_amiga_input.py"]
     def hashes():
         return {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in tracked}
     before = hashes()
@@ -38,6 +40,13 @@ def main():
     commands = [("compile", [tool("iverilog"), "-g2012", "-s", "tb_amiga_adapter_input",
                               "-o", str(executable), *[str(ROOT / source) for source in SOURCES]]),
                 ("simulate", [tool("vvp"), str(executable)])]
+    cd32_executable = output / "cd32.vvp"
+    commands += [("compile-cd32", [tool("iverilog"), "-g2012", "-s", "tb_amiga_cd32",
+                                  "-o", str(cd32_executable),
+                                  *[str(ROOT / source) for source in CD32_SOURCES]]),
+                 ("simulate-cd32", [tool("vvp"), str(cd32_executable)])]
+    markers = {"simulate": "PASS AMIGA adapter input FIFO",
+               "simulate-cd32": "PASS Amiga CD32 serial buttons"}
     for stage, command in commands:
         result = subprocess.run(guard + command, cwd=ROOT, capture_output=True, text=True, timeout=120)
         log = result.stdout + result.stderr
@@ -45,8 +54,8 @@ def main():
         print(log[-12000:], flush=True)
         if result.returncode:
             return result.returncode
-    if "PASS AMIGA adapter input FIFO" not in log:
-        raise RuntimeError("Input simulation did not reach completion")
+        if stage in markers and markers[stage] not in log:
+            raise RuntimeError(f"{stage} did not reach completion")
     if before != hashes():
         raise RuntimeError("Amiga input sources changed during verification")
     (output / "validation.json").write_text(json.dumps({"passed": True,

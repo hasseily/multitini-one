@@ -64,6 +64,8 @@ module ap68040_dmu
 )
 (
 	input  logic [7:0]  amiga_fast_top,
+	input  logic        amiga_fast16_enabled,
+	input  logic [7:0]  amiga_fast16_base,
 	input  logic        clk,
 	input  logic        nreset,
 
@@ -597,7 +599,8 @@ function automatic xres_t xlate(input logic [31:0] la, input logic s, input logi
 		else x.ok = 1'b1;
 	end
 	else x.walk = 1'b1;
-	if (x.pa[31:24] != 0 || x.pa[23:16] < 8'h20 || x.pa[23:16] >= amiga_fast_top)
+	if (!(amiga_fast16_enabled && x.pa[31:24] == amiga_fast16_base) &&
+	    (x.pa[31:24] != 0 || x.pa[23:16] < 8'h20 || x.pa[23:16] >= amiga_fast_top))
 		x.cm = 2'b11;
 	tg = x.pa[31:10];
 	if (x.ok && !x.flt) begin

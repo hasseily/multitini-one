@@ -4,7 +4,10 @@
 // Only the reset timer is shortened. The native bus, clock gate and coherent
 // production memory adapter are unmodified. The DDR responder adds variable
 // latency so the CPU has to survive real timeline holds.
-module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0, USE_AP68040=0, AP_2X=0);
+module tb_amiga_cpu #(
+    parameter integer CPU_MODE=0,
+    parameter bit AGA_PAL=0, USE_AP68040=0, AP_2X=0, FAST16=0
+);
     reg clk=0,clk_fast=1;
     initial forever begin
         #8.81 clk_fast<=0;
@@ -22,17 +25,21 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0, USE
     wire cpu_req,cpu_ub_n,cpu_lb_n,cpu_long,cpu_ready,cpu_reset_n;
     wire [28:1] cpu_addr;
     wire [15:0] cpu_wdata,cpu_wdata2,cpu_rdata,cpu_rdata2;
+    wire cpu_line,cpu_line_ready;
+    wire [127:0] cpu_line_data;
+    reg fast16_line_reply=0;
+    always @(posedge chip_clk)if(cpu_line && cpu_line_ready)fast16_line_reply<=1;
     wire [1:0] cpu_state;
     reg io_uio=0,io_strobe=0;reg [15:0] io_din=0;
     wire [4:0] cpucfg;
-    wire [23:0] memory_addr;
+    wire [24:0] memory_addr;
     wire memory_write,memory_valid,memory_busy,memory_fault,memory_burst;
     wire [63:0] memory_wdata;
     wire [7:0] memory_wstrb;
     reg [63:0] response_data=0;
     reg response_valid=0,response_busy=0;
     reg [7:0] response_delay=0;
-    reg [23:0] held_addr;
+    reg [24:0] held_addr;
     // Line fills return four ascending beats; every write is one beat.
     reg held_burst=0;reg [1:0] held_beat=0;
     reg held_write;
@@ -40,6 +47,8 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0, USE
     reg [7:0] held_mask;
     reg [63:0] chip_store=0,fast_store=0,blit_store=0,repeat_store=0,pair_store=0;
     reg [63:0] kick_store=0;
+    reg [63:0] fast_top_store=0, fast16_result=0;
+    wire [24:0] fast_store_addr=FAST16 ? 25'h1000000 : 25'h0a00000;
     reg replace_second_word=0;
     assign chip_rdata2=replace_second_word ? 16'hbad2 : chip_mem_rdata2;
     // Model another DMA response taking ownership of the raw RAM data just
@@ -89,6 +98,14 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0, USE
             kick_write<=1;
         end
     end
+    always @(posedge clk)if(FAST16 && cpu_req && !guest_reset)begin
+        if(guest_addr[31:24]==8'h42 ||
+            (guest_addr[31:24]==8'h41 && !dut.cpu.fast16_enabled))
+            $fatal(1,"Unassigned Zorro III address selected Fast RAM");
+        if(guest_addr[31:24]==8'h41 &&
+            cpu_addr!={4'b0100,1'b0,guest_addr[23:1]})
+            $fatal(1,"Zorro III Fast RAM address lost bank or offset");
+    end
     reg previous_speed_ce=0,speed_phase_valid=0;
     always @(posedge chip_clk)begin
         if(!cpu_reset_n)begin
@@ -135,11 +152,12 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0, USE
         .cpu_req(cpu_req),.cpu_addr(cpu_addr),.cpu_wdata(cpu_wdata),.cpu_wdata2(cpu_wdata2),
         .cpu_state(cpu_state),.cpu_ub_n(cpu_ub_n),.cpu_lb_n(cpu_lb_n),.cpu_long(cpu_long),
         .cpu_rdata(cpu_rdata),.cpu_rdata2(cpu_rdata2),.cpu_ready(cpu_ready),.cpu_ready_long(cpu_ready),
+        .cpu_line(cpu_line),.cpu_line_ready(cpu_line_ready),.cpu_line_data(cpu_line_data),
         .io_uio(io_uio),.io_fpga(1'b0),.io_strobe(io_strobe),.io_din(io_din),.io_wait(),.io_dout(),
         .ide_address(5'd0),.ide_read(1'b0),.ide_write(1'b0),.ide_wdata(16'd0),
         .joy1(16'hffff),.joy2(16'hffff),.mouse_buttons(3'd0),.kms_level(1'b0),
         .kbd_mouse_type(2'd0),.kbd_mouse_data(8'd0),.rtc(65'd0),.cpucfg(cpucfg),.cpu_reset_n(cpu_reset_n));
-    multitini_amiga_memory memory_i(
+    multitini_amiga_memory #(.USE_AP68040(USE_AP68040)) memory_i(
         .clk(clk),.reset(reset),.chip_c1(c1 && !guest_reset),.chip_addr(chip_addr),
         .chip_wdata(chip_wdata),.chip_wdata2(chip_wdata2),.chip_oe_n(chip_oe_n),.chip_we_n(chip_we_n),
         .chip_ub_n(chip_ub_n),.chip_lb_n(chip_lb_n),.chip_long(chip_long),
@@ -147,12 +165,90 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0, USE
         .cpu_req(cpu_req && cpu_reset_n && !guest_reset),.cpu_addr(cpu_addr),.cpu_wdata(cpu_wdata),.cpu_wdata2(cpu_wdata2),
         .cpu_state(cpu_state),.cpu_ub_n(cpu_ub_n),.cpu_lb_n(cpu_lb_n),.cpu_long(cpu_long),
         .cpu_rdata(cpu_rdata),.cpu_rdata2(cpu_rdata2),.cpu_ready(cpu_ready),
+        .cpu_line(cpu_line),.cpu_line_stop(guest_reset || !cpu_reset_n),
+        .cpu_line_ready(cpu_line_ready),.cpu_line_data(cpu_line_data),
         .load_valid(1'b0),.load_addr(24'd0),.load_data(8'd0),.load_ready(),.load_done(),
         .run_enable(run_enable),.busy(memory_busy),.fault(memory_fault),
         .memory_addr(memory_addr),.memory_write(memory_write),.memory_wdata(memory_wdata),.memory_wstrb(memory_wstrb),
         .memory_burst(memory_burst),.memory_valid(memory_valid),.memory_ready(!response_busy),.memory_rdata(response_data),
         .memory_rvalid(response_valid),.memory_fault(1'b0));
 
+    function automatic [15:0] fast16_romword(input [19:0] position);
+        case(position)
+            // Read the Zorro III type and extended memory flag as Kickstart
+            // does, using the two nibble lanes of each logical register.
+            184:fast16_romword=16'h1039; // move.b $e80000,d0
+            185:fast16_romword=16'h00e8;
+            186:fast16_romword=16'h0000;
+            187:fast16_romword=16'h0200; // andi.b #$f0,d0
+            188:fast16_romword=16'h00f0;
+            189:fast16_romword=16'h0c00; // cmpi.b #$a0,d0
+            190:fast16_romword=16'h00a0;
+            191:fast16_romword=16'h666c; // bne.s failure
+            192:fast16_romword=16'h1039; // move.b $e80002,d0
+            193:fast16_romword=16'h00e8;
+            194:fast16_romword=16'h0002;
+            195:fast16_romword=16'h0200;
+            196:fast16_romword=16'h00f0;
+            197:fast16_romword=16'h6660; // bne.s failure
+            198:fast16_romword=16'h1039; // move.b $e80008,d0
+            199:fast16_romword=16'h00e8;
+            200:fast16_romword=16'h0008;
+            201:fast16_romword=16'h0200;
+            202:fast16_romword=16'h00f0;
+            203:fast16_romword=16'h0c00; // cmpi.b #$40,d0 (inverted $b0)
+            204:fast16_romword=16'h0040;
+            205:fast16_romword=16'h6650; // bne.s failure
+            206:fast16_romword=16'h1039; // move.b $e8000a,d0
+            207:fast16_romword=16'h00e8;
+            208:fast16_romword=16'h000a;
+            209:fast16_romword=16'h0200;
+            210:fast16_romword=16'h00f0;
+            211:fast16_romword=16'h0c00; // cmpi.b #$f0,d0
+            212:fast16_romword=16'h00f0;
+            213:fast16_romword=16'h6640; // bne.s failure
+            214:fast16_romword=16'h13fc; // move.b #0,$e80048
+            215:fast16_romword=16'h0000;
+            216:fast16_romword=16'h00e8;
+            217:fast16_romword=16'h0048;
+            218:fast16_romword=16'h33fc; // move.w #$4100,$e80044
+            219:fast16_romword=16'h4100;
+            220:fast16_romword=16'h00e8;
+            221:fast16_romword=16'h0044;
+            222:fast16_romword=16'h6000; // bra.w to the cache setup
+            223:fast16_romword=16'h0032;
+            224:fast16_romword=16'h23fc; // move.l #$99aa55cc,$41fffffc
+            225:fast16_romword=16'h99aa;
+            226:fast16_romword=16'h55cc;
+            227:fast16_romword=16'h41ff;
+            228:fast16_romword=16'hfffc;
+            229:fast16_romword=16'h2039; // move.l $41fffffc,d0
+            230:fast16_romword=16'h41ff;
+            231:fast16_romword=16'hfffc;
+            232:fast16_romword=16'h23c0; // move.l d0,$1028
+            233:fast16_romword=16'h0000;
+            234:fast16_romword=16'h1028;
+            235:fast16_romword=16'h23fc; // move.l #$deedbeef,$42000000 (unmapped)
+            236:fast16_romword=16'hdeed;
+            237:fast16_romword=16'hbeef;
+            238:fast16_romword=16'h4200;
+            239:fast16_romword=16'h0000;
+            240:fast16_romword=16'h2039; // move.l $41000000,d0
+            241:fast16_romword=16'h4100;
+            242:fast16_romword=16'h0000;
+            243:fast16_romword=16'h23c0; // move.l d0,$102c
+            244:fast16_romword=16'h0000;
+            245:fast16_romword=16'h102c;
+            248:fast16_romword=16'h203c; // move.l #$80000000,d0
+            249:fast16_romword=16'h8000;
+            250:fast16_romword=16'h0000;
+            251:fast16_romword=16'h4e7b; // movec d0,cacr
+            252:fast16_romword=16'h0002;
+            253:fast16_romword=16'h6000; // bra.w back to word 20
+            254:fast16_romword=16'hfe2c;
+            default:fast16_romword=16'h60fe; // word 246: failure or test complete
+        endcase
+    endfunction
     function automatic [15:0] romword(input [19:0] position);
         case(position)
             0:romword=16'h001f;
@@ -171,17 +267,17 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0, USE
             13:romword=16'h0f00;
             14:romword=16'h00df;
             15:romword=16'hf180;
-            16:romword=16'h33fc;
-            17:romword=16'h2000;
-            18:romword=16'h00e8;
-            19:romword=16'h0048;
+            16:romword=FAST16 ? 16'h6000 : 16'h33fc; // bra.w to word 184
+            17:romword=FAST16 ? 16'h014e : 16'h2000;
+            18:romword=FAST16 ? 16'h4e71 : 16'h00e8;
+            19:romword=FAST16 ? 16'h4e71 : 16'h0048;
             20:romword=16'h23fc;
             21:romword=16'h1234;
             22:romword=16'h5678;
-            23:romword=16'h0020;
+            23:romword=FAST16 ? 16'h4100 : 16'h0020;
             24:romword=16'h0000;
             25:romword=16'h2039;
-            26:romword=16'h0020;
+            26:romword=FAST16 ? 16'h4100 : 16'h0020;
             27:romword=16'h0000;
             28:romword=16'h23c0;
             29:romword=16'h0000;
@@ -189,10 +285,10 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0, USE
             31:romword=16'h23fc;
             32:romword=16'ha1b2;
             33:romword=16'hc3d4;
-            34:romword=16'h0020;
+            34:romword=FAST16 ? 16'h4100 : 16'h0020;
             35:romword=16'h0000;
             36:romword=16'h2039;
-            37:romword=16'h0020;
+            37:romword=FAST16 ? 16'h4100 : 16'h0020;
             38:romword=16'h0000;
             39:romword=16'h23c0;
             40:romword=16'h0000;
@@ -337,11 +433,11 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0, USE
             179:romword=16'h23c0; // move.l d0,$1024
             180:romword=16'h0000;
             181:romword=16'h1024;
-            182:romword=16'h60fe;
-            default:romword=16'h4e71;
+            182:romword=FAST16 ? 16'h6052 : 16'h60fe; // bra.s to word 224
+            default:romword=FAST16 ? fast16_romword(position) : 16'h4e71;
         endcase
     endfunction
-    function automatic [63:0] read_line(input [23:0] address);
+    function automatic [63:0] read_line(input [24:0] address);
         reg [15:0] word_value;integer n;
         begin
             read_line=0;
@@ -350,7 +446,9 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0, USE
             else if(address==24'h001010)read_line=repeat_store;
             else if(address==24'h001018)read_line=pair_store;
             else if(address==24'h001020)read_line=kick_store;
-            else if(address==24'ha00000)read_line=fast_store;
+            else if(address==fast_store_addr)read_line=fast_store;
+            else if(address==25'h1fffff8)read_line=fast_top_store;
+            else if(address==25'h0001028)read_line=fast16_result;
             else if(address==24'h600000)read_line=64'h00000000df9b5713;
             else if(address>=24'h780000 && address<24'h800000)
                 for(n=0;n<4;n=n+1)begin
@@ -373,7 +471,9 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0, USE
                         else if(held_addr==24'h001010)repeat_store[lane*8+:8]<=held_data[lane*8+:8];
                         else if(held_addr==24'h001018)pair_store[lane*8+:8]<=held_data[lane*8+:8];
                         else if(held_addr==24'h001020)kick_store[lane*8+:8]<=held_data[lane*8+:8];
-                        else if(held_addr==24'ha00000)fast_store[lane*8+:8]<=held_data[lane*8+:8];
+                        else if(held_addr==fast_store_addr)fast_store[lane*8+:8]<=held_data[lane*8+:8];
+                        else if(held_addr==25'h1fffff8)fast_top_store[lane*8+:8]<=held_data[lane*8+:8];
+                        else if(held_addr==25'h0001028)fast16_result[lane*8+:8]<=held_data[lane*8+:8];
                     end
                 end
                 response_data<=read_line(held_addr+{held_beat,3'b000});response_valid<=1;
@@ -399,6 +499,7 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0, USE
         repeat(32)@(negedge chip_clk);
         uio_config(8'hf4,CPU_MODE==0 ? 16'h0000 :
             CPU_MODE==7 ? (AGA_PAL ? 16'h0023 : 16'h005f) : 16'h001f);
+        if(FAST16)uio_config(8'hf5,16'h0043);
         if(cpucfg[1:0]!==CPU_MODE[1:0])$fatal(1,"CPU fixture configuration mismatch");
         if(cpucfg[3:2] !== (CPU_MODE==7 ? (AGA_PAL ? 2'b01 : 2'b10) : 2'b00))
             $fatal(1,"CPU fixture speed selector mismatch");
@@ -430,6 +531,8 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0, USE
             if(memory_fault)$fatal(1,"CPU memory adapter fault");
             if(chip_store[15:0]==16'h3412 && chip_store[63:32]==32'h78563412 &&
                fast_store[31:0]==32'hd4c3b2a1 && repeat_store[31:0]==32'hd4c3b2a1 &&
+               (!FAST16 || (fast_top_store[63:32]==32'hcc55aa99 &&
+                            fast16_result==64'hd4c3b2a1cc55aa99)) &&
                blit_store==64'h3412341234123412 &&
                (AGA_PAL ? (repeat_store[47:32]==16'hf800 && dut.chipset.DENISE1.bplm0.fmode[1:0]==2'b11 &&
                 pair_store[31:0]==32'h78563412 &&
@@ -446,6 +549,16 @@ module tb_amiga_cpu #(parameter integer CPU_MODE=0, parameter bit AGA_PAL=0, USE
                 if(CPU_MODE!=0 && (kernel_steps<30 || speed_edges<100))$fatal(1,"CPU speed proof did not execute sufficient kernel steps");
                 if(CPU_MODE==7 && !AGA_PAL && (speed_opportunities*2-speed_edges>1 || speed_edges-speed_opportunities*2>1))
                     $fatal(1,"14 MHz kernel opportunity count is not exactly half the native rate");
+                if(FAST16)begin
+                    if(dut.memcfg[6:4]!=3'd4 || !dut.cpu.fast16_enabled || dut.cpu.fast16_base!=8'h41)
+                        $fatal(1,"Zorro III Fast RAM did not enumerate");
+                    if(!fast16_line_reply)$fatal(1,"Zorro III cache refill did not use the line reply");
+                    guest_reset=1;
+                    wait(!cpu_reset_n);
+                    repeat(4)@(negedge chip_clk);
+                    if(dut.cpu.fast16_enabled)$fatal(1,"Zorro III mapping survived reset");
+                    $display("PASS 16 MiB Zorro III AutoConfig, bounds, and reset");
+                end
                 $display("CPU speed proof mode=%0d native_edges=%0d opportunities=%0d consumed=%0d",CPU_MODE,speed_edges,speed_opportunities,kernel_steps);
                 $display("PASS Amiga CPU mode=%0d real instructions, repeated Chip/Fast RAM, native blitter miss/hit DMA (%0d/%0d), COLOR00 and %0d DDR holds/%0d transactions",CPU_MODE,dma_source_misses,dma_source_hits,holds,transactions);
                 $finish;
@@ -461,3 +574,5 @@ module tb_amiga_cpu_aga_stock;tb_amiga_cpu #(.CPU_MODE(7),.AGA_PAL(1)) test();en
 module tb_amiga_cpu_aga_turbo;tb_amiga_cpu #(.CPU_MODE(3),.AGA_PAL(1)) test();endmodule
 module tb_amiga_cpu_aga_040;tb_amiga_cpu #(.CPU_MODE(3),.AGA_PAL(1),.USE_AP68040(1)) test();endmodule
 module tb_amiga_cpu_aga_040_2x;tb_amiga_cpu #(.CPU_MODE(3),.AGA_PAL(1),.USE_AP68040(1),.AP_2X(1)) test();endmodule
+module tb_amiga_cpu_aga_040_fast16;tb_amiga_cpu #(.CPU_MODE(3),.AGA_PAL(1),.USE_AP68040(1),.FAST16(1)) test();endmodule
+module tb_amiga_cpu_aga_040_fast16_2x;tb_amiga_cpu #(.CPU_MODE(3),.AGA_PAL(1),.USE_AP68040(1),.AP_2X(1),.FAST16(1)) test();endmodule

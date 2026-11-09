@@ -147,7 +147,7 @@
 // SB:
 // 2012-03-23 - fixed sprite enable signal (coppermaster demo)
 
-module minimig #(parameter AGA_PAL = 1'b0)
+module minimig #(parameter AGA_PAL = 1'b0, USE_AP68040 = 1'b0)
 (
 	//m68k pins
 	input  [23:1] cpu_address, // m68k address bus
@@ -813,7 +813,7 @@ paula PAULA1
 
 
 //instantiate user IO
-userio #(.AGA_PAL(AGA_PAL)) USERIO1 
+userio #(.AGA_PAL(AGA_PAL), .USE_AP68040(USE_AP68040)) USERIO1 
 (	
 	.clk(clk),
 	.clk7_en(clk7_en),

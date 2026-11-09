@@ -104,6 +104,9 @@ module cpu_wrapper #(parameter USE_AP68040 = 1'b0)
 	output     [15:0] ramdin_lo,
 	input      [15:0] ramdout_hi,
 	input             ramready_l,
+	output            ram_line_req,
+	input             ram_line_ready,
+	input     [127:0] ram_line_data,
 	output            dcache_sw_en
 );
 // Strict-tool declaration order; no functional change.
@@ -114,7 +117,11 @@ wire   ramsel_i;
 reg [31:0] nmi_addr2;
 wire sel_chipram;
 wire sel_kickram;
-wire sel_zram;
+wire sel_zram, legacy_zram;
+wire [28:1] legacy_ramaddr;
+reg fast16_enabled;
+reg [7:0] fast16_base;
+wire fast16_select;
 wire sel_dd;
 wire sel_rtg;
 wire sel_nmi_vector;
@@ -234,6 +241,7 @@ assign ec020 = !USE_AP68040 & (cpucfg[1:0] == 2'b11) & cpucfg[2];
 assign ec030 = (cpucfg[1:0] == 2'b10) & cpucfg[2];
 assign cpu_addr_m = ec020 ? {8'd0, cpu_addr_p[23:0]} : cpu_addr_p;
 assign ramsel_i = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram | sel_dd | sel_rtg);
+assign fast16_select = USE_AP68040 && fast16_enabled && cpu_addr[31:24] == fast16_base;
 assign sel_nmi_vector = !USE_AP68040 && ((cpu_addr[31:1] == nmi_addr[31:1]) || (cpu_addr[31:1] == nmi_addr2[31:1])) && (cpustate == 2);
 assign zram_sel = |ramaddr[28:26];
 assign ramdat_sel = {ramsel_i & zram_sel, ramsel_i & (~zram_sel | sel_rtg)};
@@ -293,6 +301,14 @@ always @(posedge clk) nmi_addr2 <= vbr + 32'h7e;
 
 
 
+
+assign sel_zram = legacy_zram || fast16_select;
+// The 16 MiB expansion has its own DDR bank. Keep guest base bits out of
+// the bank offset so a different assigned base cannot alias low memory.
+assign ramaddr = fast16_select ? {4'b0100, 1'b0, cpu_addr[23:1]} : legacy_ramaddr;
+
+
+
 memory_router u_memory_router
 (
 	.cpu_addr      (cpu_addr      ),
@@ -309,10 +325,10 @@ memory_router u_memory_router
 	.z3ram_ena1    (z3ram_ena1    ),
 	.sel_chipram   (sel_chipram   ),
 	.sel_kickram   (sel_kickram   ),
-	.sel_zram      (sel_zram      ),
+	.sel_zram      (legacy_zram   ),
 	.sel_dd        (sel_dd        ),
 	.sel_rtg       (sel_rtg       ),
-	.ramaddr       (ramaddr       )
+	.ramaddr       (legacy_ramaddr)
 );
 
 
@@ -420,8 +436,10 @@ generate if (USE_AP68040) begin : ap040
     multitini_amiga_ap68040 bridge (
         .clk(clk), .cpu_clk(ap_clk), .cpu_bclk(ap_bclk),
         .reset_n(reset), .ipl_n(chip_ipl), .fast_top(fast_top),
-        .wide_selected(ramlong1), .ready(clkena_p_throttled),
+        .fast16_enabled(fast16_enabled), .fast16_base(fast16_base),
+        .wide_selected(ramlong1), .fast_ram_selected(sel_zram), .ready(clkena_p_throttled),
         .data_in(cpu_din), .data_next(ramdout_hi),
+        .line_request(ram_line_req), .line_ready(ram_line_ready), .line_in(ram_line_data),
         .address(cpu_addr_p), .data_out(cpu_dout_p), .data_low(cpu_dout_lo_p),
         .bus_state(cpustate_p), .read_cycle(wr_p), .uds_n(uds_p), .lds_n(lds_p),
         .wide_candidate(long_cand), .reset_out_n(reset_out_p)
@@ -430,6 +448,7 @@ generate if (USE_AP68040) begin : ap040
     assign {cacr_p, vbr_p, longword, opc_start, opc_out, opc_cond, opc_snd,
             opc_dbx, cacr_x, mmu_busy, skipfetch, fc_p, cacr_wr, caar} = '0;
 end else begin : tg68
+    assign ram_line_req = 1'b0;
 TG68KdotC_Kernel
 #(
 	.sr_read(2),        // 0=>user,   1=>privileged,    2=>switchable with CPU(0)
@@ -951,6 +970,21 @@ always @(*) begin
 			default: ;
 		endcase
 	end
+	// 16 MiB Zorro III AutoConfig in the Minimig $00E80000 window.
+	else if (USE_AP68040 && ac_memcard == 3'd4) begin
+		case (chip_addr[6:1])
+			6'h00: autocfg_data = 4'ha; // er_Type $A0: Zorro III memory, size code 0
+			6'h01: autocfg_data = 4'h0;
+			6'h02: autocfg_data = 4'he; // inverted product $10 and manufacturer $139C
+			6'h04: autocfg_data = 4'h4; // inverted er_Flags $B0: 16 MiB, full size, shutup
+			6'h08: autocfg_data = 4'he;
+			6'h09: autocfg_data = 4'hc;
+			6'h0a: autocfg_data = 4'h6;
+			6'h0b: autocfg_data = 4'h3;
+			6'h13: autocfg_data = 4'hc; // inverted serial 3
+			default: ;
+		endcase
+	end
 	// Zorro III RAM 128MB/256MB/384MB
 	else if(ac_memcard[2]) begin
 		case (chip_addr[6:1])
@@ -982,6 +1016,8 @@ always @(posedge clk) begin
 		ac_cdtv     <= 1'b0;
 		cdtv_base   <= 8'hE9;
 		z2ram_ena   <= 0;
+		fast16_enabled <= 1'b0;
+		fast16_base <= 8'd0;
 		z3ram_ena0  <= 0;
 		z3ram_ena1  <= 0;
 		z3ram_base0 <= 1;
@@ -1013,6 +1049,17 @@ always @(posedge clk) begin
 			if (chip_addr[6:1] == 6'b100100) begin // Register 0x48 - config, A2065 Ethernet
 				a2065_base <= cpu_dout[7:0];
 				ac_a2065<=0;
+			end
+		end
+		else if (USE_AP68040 && ac_memcard == 3'd4) begin
+			// Kickstart writes the low address byte at $48, then the base
+			// word at $44. A 16 MiB card uses only address bits 31:24.
+			if (chip_addr[6:1] == 6'h22 && cpu_dout[15:8] != 0) begin
+				fast16_base <= cpu_dout[15:8];
+				fast16_enabled <= 1'b1;
+				ac_memcard <= 0;
+			end else if (chip_addr[6:1] == 6'h26) begin
+				ac_memcard <= 0;
 			end
 		end
 		else if(ac_memcard[2]) begin

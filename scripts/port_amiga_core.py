@@ -33,8 +33,8 @@ def remove_instance(text: str, kind: str, instance: str, replacement: str) -> st
 
 def minimig() -> str:
     text = (SOURCE / "rtl/minimig.v").read_text()
-    text = replace_once(text, "module minimig\n", "module minimig #(parameter AGA_PAL = 1'b0)\n")
-    text = replace_once(text, "userio USERIO1", "userio #(.AGA_PAL(AGA_PAL)) USERIO1")
+    text = replace_once(text, "module minimig\n", "module minimig #(parameter AGA_PAL = 1'b0, USE_AP68040 = 1'b0)\n")
+    text = replace_once(text, "userio USERIO1", "userio #(.AGA_PAL(AGA_PAL), .USE_AP68040(USE_AP68040)) USERIO1")
     text = replace_once(text, "//instantiate Denise", """// Denise latches the first word at clk7_en and assembles the fetch at
 // clk7n_en. A cache hit for the next chip slot can replace the raw tail
 // between those edges, so keep all four words from the same slot.
@@ -259,6 +259,9 @@ def cpu() -> str:
                         "module cpu_wrapper #(parameter USE_AP68040 = 1'b0)\n")
     text = replace_once(text, "\tinput             reset,",
                         "\tinput             ap_clk, ap_bclk,\n\tinput             reset,")
+    text = replace_once(text, "\tinput             ramready_l,",
+                        "\tinput             ramready_l,\n\toutput            ram_line_req,\n"
+                        "\tinput             ram_line_ready,\n\tinput     [127:0] ram_line_data,")
     text = replace_once(text, "if(cpucfg[1:0]) begin", "if(USE_AP68040 || cpucfg[1:0]) begin")
     text = replace_once(text, "ec020      = (cpucfg", "ec020      = !USE_AP68040 & (cpucfg")
     text = replace_once(text, "sel_nmi_vector = ((", "sel_nmi_vector = !USE_AP68040 && ((")
@@ -269,6 +272,17 @@ def cpu() -> str:
     (!bootrom && (&cpu_addr_m[23:22])) : (turbokick_d & !cpustate);""")
     text = replace_once(text, "long_cand & s21_en & sel_zram &",
                         "long_cand & s21_en & (sel_zram | (USE_AP68040 & sel_kickram)) &")
+    text = replace_once(text, "wire sel_zram;", """wire sel_zram, legacy_zram;
+wire [28:1] legacy_ramaddr;
+reg fast16_enabled;
+reg [7:0] fast16_base;
+wire fast16_select = USE_AP68040 && fast16_enabled && cpu_addr[31:24] == fast16_base;
+assign sel_zram = legacy_zram || fast16_select;
+// The 16 MiB expansion has its own DDR bank. Keep guest base bits out of
+// the bank offset so a different assigned base cannot alias low memory.
+assign ramaddr = fast16_select ? {4'b0100, 1'b0, cpu_addr[23:1]} : legacy_ramaddr;""")
+    text = replace_once(text, ".sel_zram      (sel_zram      )", ".sel_zram      (legacy_zram   )")
+    text = replace_once(text, ".ramaddr       (ramaddr       )", ".ramaddr       (legacy_ramaddr)")
     start = text.index("TG68KdotC_Kernel\n")
     end = text.index(");", start) + 2
     text = text[:start] + """generate if (USE_AP68040) begin : ap040
@@ -276,8 +290,10 @@ def cpu() -> str:
     multitini_amiga_ap68040 bridge (
         .clk(clk), .cpu_clk(ap_clk), .cpu_bclk(ap_bclk),
         .reset_n(reset), .ipl_n(chip_ipl), .fast_top(fast_top),
-        .wide_selected(ramlong1), .ready(clkena_p_throttled),
+        .fast16_enabled(fast16_enabled), .fast16_base(fast16_base),
+        .wide_selected(ramlong1), .fast_ram_selected(sel_zram), .ready(clkena_p_throttled),
         .data_in(cpu_din), .data_next(ramdout_hi),
+        .line_request(ram_line_req), .line_ready(ram_line_ready), .line_in(ram_line_data),
         .address(cpu_addr_p), .data_out(cpu_dout_p), .data_low(cpu_dout_lo_p),
         .bus_state(cpustate_p), .read_cycle(wr_p), .uds_n(uds_p), .lds_n(lds_p),
         .wide_candidate(long_cand), .reset_out_n(reset_out_p)
@@ -286,6 +302,7 @@ def cpu() -> str:
     assign {cacr_p, vbr_p, longword, opc_start, opc_out, opc_cond, opc_snd,
             opc_dbx, cacr_x, mmu_busy, skipfetch, fc_p, cacr_wr, caar} = '0;
 end else begin : tg68
+    assign ram_line_req = 1'b0;
 """ + text[start:end] + "\nend endgenerate" + text[end:]
     start = text.index("cpu_cycles cycles\n")
     end = text.index(");", start) + 2
@@ -312,12 +329,43 @@ assign cpu_step = clkena_p_throttled;""")
     text = replace_once(text, "ac_cdtv     <= cdtv_mode;", "ac_cdtv     <= 1'b0;")
     text = replace_once(text, "assign toccata_ena = ~ac_toccata & ~cdtv_mode;", "assign toccata_ena = 1'b0;")
     text = replace_once(text, "assign a2065_ena   = ~ac_a2065;", "assign a2065_ena   = 1'b0;")
+    text = replace_once(text, "\t// Zorro III RAM 128MB/256MB/384MB", """\t// 16 MiB Zorro III AutoConfig in the Minimig $00E80000 window.
+\telse if (USE_AP68040 && ac_memcard == 3'd4) begin
+\t\tcase (chip_addr[6:1])
+\t\t\t6'h00: autocfg_data = 4'ha; // er_Type $A0: Zorro III memory, size code 0
+\t\t\t6'h01: autocfg_data = 4'h0;
+\t\t\t6'h02: autocfg_data = 4'he; // inverted product $10 and manufacturer $139C
+\t\t\t6'h04: autocfg_data = 4'h4; // inverted er_Flags $B0: 16 MiB, full size, shutup
+\t\t\t6'h08: autocfg_data = 4'he;
+\t\t\t6'h09: autocfg_data = 4'hc;
+\t\t\t6'h0a: autocfg_data = 4'h6;
+\t\t\t6'h0b: autocfg_data = 4'h3;
+\t\t\t6'h13: autocfg_data = 4'hc; // inverted serial 3
+\t\t\tdefault: ;
+\t\tendcase
+\tend
+\t// Zorro III RAM 128MB/256MB/384MB""")
+    text = replace_once(text, "\t\tz2ram_ena   <= 0;", """\t\tz2ram_ena   <= 0;
+\t\tfast16_enabled <= 1'b0;
+\t\tfast16_base <= 8'd0;""")
+    text = replace_once(text, "\t\telse if(ac_memcard[2]) begin", """\t\telse if (USE_AP68040 && ac_memcard == 3'd4) begin
+\t\t\t// Kickstart writes the low address byte at $48, then the base
+\t\t\t// word at $44. A 16 MiB card uses only address bits 31:24.
+\t\t\tif (chip_addr[6:1] == 6'h22 && cpu_dout[15:8] != 0) begin
+\t\t\t\tfast16_base <= cpu_dout[15:8];
+\t\t\t\tfast16_enabled <= 1'b1;
+\t\t\t\tac_memcard <= 0;
+\t\t\tend else if (chip_addr[6:1] == 6'h26) begin
+\t\t\t\tac_memcard <= 0;
+\t\t\tend
+\t\tend
+\t\telse if(ac_memcard[2]) begin""")
     return NOTICE + text
 
 
 def userio() -> str:
     text = (SOURCE / "rtl/userio.v").read_text()
-    text = replace_once(text, "module userio\n", "module userio #(parameter AGA_PAL = 1'b0)\n")
+    text = replace_once(text, "module userio\n", "module userio #(parameter AGA_PAL = 1'b0, USE_AP68040 = 1'b0)\n")
     text = replace_once(text, "reg [7:0] t_memory_config = 8'b0_0_00_01_01;", "reg [7:0] t_memory_config = 8'h33; // 2MiB Chip + 8MiB Zorro-II Fast")
     text = replace_once(text, "reg [5:0] t_chipset_config = 0;", "reg [5:0] t_chipset_config = 6'h08; // ECS PAL")
     text = replace_once(text, "chipset_config <= t_chipset_config;", "chipset_config <= AGA_PAL ? 6'h18 : 6'h08;")
@@ -326,8 +374,12 @@ def userio() -> str:
 			cpu_cfg <= t_cpu_config[1:0]==2'b11 && !t_cpu_config[5] ? 5'h03 : 5'h07;
 		else
 			cpu_cfg <= {1'b0, (t_cpu_config[1:0]==2'b11) & t_cpu_config[6], (t_cpu_config[1:0]==2'b11) & t_cpu_config[5], {2{t_cpu_config[1:0]==2'b11}}}; // bit3 selects alternate-edge 68020 execution""")
-    text = replace_once(text, "memory_config[5:0] <= t_memory_config[5:0];", "memory_config[5:0] <= {(t_memory_config[5:4]==2'd2 ? 2'd2 : 2'd3), 2'b00, 2'b11}; // 2MiB Chip; 4/8MiB Fast")
-    text = replace_once(text, "memory_config[7] <= t_memory_config[7];", "memory_config[7] <= 1'b0;")
+    text = replace_once(text, "memory_config[5:0] <= t_memory_config[5:0];", """// The host's $43 selects the 16 MiB card on AGA + 68040. Bit 6
+\t\t// remains disabled in the native register, where it controls HRTMon.
+\t\tmemory_config[5:0] <= {((AGA_PAL && USE_AP68040 && t_memory_config == 8'h43) ? 2'd0 :
+\t\t                        t_memory_config[5:4] == 2'd2 ? 2'd2 : 2'd3), 4'h3};""")
+    text = replace_once(text, "memory_config[7] <= t_memory_config[7];",
+                        "memory_config[7] <= AGA_PAL && USE_AP68040 && t_memory_config == 8'h43;")
     text = replace_once(text, "memory_config[6] <= t_memory_config[6];", "memory_config[6] <= 1'b0; // no monitor cartridge")
     text = replace_once(text, "\treg       bootrom_r;", "\treg       bootrom_r=0;")
     text = replace_once(text,"\treg [5:0] ide_cfg = 0;", "")
@@ -502,7 +554,20 @@ def generated() -> dict[str, str]:
         if portable!=original or path.name in result:
             result[path.name]=portable if original.startswith(NOTICE) else NOTICE+portable
     ddr=(ROOT / "hdl/core/apple_iigs/multitini_apple_iigs_ddr_path.sv").read_text()
-    result["multitini_amiga_ddr_path.sv"]=replace_once(ddr,"module multitini_apple_iigs_ddr_path",NOTICE+"// Shared original Multitini DDR path; only the module name differs.\nmodule multitini_amiga_ddr_path")
+    ddr=replace_once(ddr,"module multitini_apple_iigs_ddr_path",NOTICE+"// Adapt the IIgs AXI protocol to the Amiga DDR banks.\nmodule multitini_amiga_ddr_path")
+    ddr=replace_once(ddr,"Dedicated IIgs RAM/ROM aperture", "Dedicated Amiga RAM/ROM apertures")
+    ddr=replace_once(ddr,"in the IIgs image", "in the Amiga image")
+    ddr=replace_once(ddr,"input wire [23:0] core_memory_addr", "input wire [24:0] core_memory_addr")
+    ddr=replace_once(ddr,"localparam [31:0] APERTURE=32'h24000000;",
+                     "wire [7:0] memory_bank=core_memory_addr[24] ? 8'h26 : 8'h24;")
+    ddr=replace_once(ddr,"APERTURE|{8'd0,core_memory_addr[23:3],3'b000}",
+                     "{memory_bank,core_memory_addr[23:3],3'b000}")
+    ddr=replace_once(ddr,"APERTURE|(core_memory_burst ?\n"
+                     "                            {8'd0,core_memory_addr[23:5],5'b00000} :\n"
+                     "                            {8'd0,core_memory_addr[23:3],3'b000})",
+                     "core_memory_burst ? {memory_bank,core_memory_addr[23:5],5'b00000} :\n"
+                     "                                                           {memory_bank,core_memory_addr[23:3],3'b000}")
+    result["multitini_amiga_ddr_path.sv"]=ddr
     return result
 
 

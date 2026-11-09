@@ -228,6 +228,8 @@ module multitini_one_top #(
     wire amiga_host_rd_select=ACTIVE_MACHINE==7 && reg_rd_addr==16'hd000;
     wire amiga_host_wr_select=ACTIVE_MACHINE==7 && reg_wr_addr==16'hd000;
     wire [31:0] amiga_host_status;
+    wire amiga_features_rd_select=ACTIVE_MACHINE==7 && reg_rd_addr==16'hd004;
+    localparam [31:0] AMIGA_FEATURES={30'd0,1'b1,AMIGA_AGA_PAL && AMIGA_AP68040};
     wire amiga_block_rd_select=ACTIVE_MACHINE==7 && reg_rd_addr>=16'hd100 && reg_rd_addr<16'hd400;
     wire amiga_block_wr_select=ACTIVE_MACHINE==7 && reg_wr_addr>=16'hd100 && reg_wr_addr<16'hd400;
     wire [31:0] amiga_block_rdata;
@@ -922,7 +924,8 @@ module multitini_one_top #(
              (reg_wr_addr >= MT_UI_LEGACY_VRAM_BANK1_OFFSET &&
               reg_wr_addr < MT_UI_LEGACY_VRAM_BANK1_OFFSET +
                             MT_UI_LEGACY_VRAM_BANK_BYTES));
-        reg_rd_data = amiga_host_rd_select ? amiga_host_status : amiga_block_rd_select ? amiga_block_rdata : uci_buffer_rd_select ? uci_buffer_data : display_rd_select ? display_rd_data : framebuffer_rd_select ? framebuffer_rd_data :
+        reg_rd_data = amiga_host_rd_select ? amiga_host_status : amiga_features_rd_select ? AMIGA_FEATURES :
+                      amiga_block_rd_select ? amiga_block_rdata : uci_buffer_rd_select ? uci_buffer_data : display_rd_select ? display_rd_data : framebuffer_rd_select ? framebuffer_rd_data :
                       atari_sio_rd_select ? atari_sio_rdata :
                       spectrum_tape_rd_select ? spectrum_tape_rdata :
                       reg_rd_addr < 16'h1000 ? control_rd_data : 32'd0;
@@ -2088,6 +2091,7 @@ module multitini_one_top #(
             wire [11:0] gs_video_y;
             wire amiga_frame_start,amiga_frame_alt,amiga_frame_weave;
             wire [1:0] amiga_frame_profile;
+            wire [24:0] amiga_memory_addr;
             wire gs_video_pal;
             assign c64_rom_loaded={2'd0,gs_rom_loaded};
             assign c64_prg_loaded=0,c64_cart_loaded=0,c64_cart_hardware_type=0,c64_prg_run_busy=0;
@@ -2114,7 +2118,7 @@ module multitini_one_top #(
                 .load_last(c64_load_last), .load_kind(c64_load_kind),
                 .load_offset(c64_load_offset), .load_total(c64_load_total),
                 .load_epoch(c64_load_epoch),.load_abort(c64_load_abort),.load_abort_epoch(c64_load_abort_epoch),
-                .memory_addr(c64_memory_addr),
+                .memory_addr(amiga_memory_addr),
                 .memory_write(c64_memory_write),
                 .memory_wdata(c64_memory_wdata),
                 .memory_wstrb(c64_memory_wstrb),
@@ -2200,7 +2204,7 @@ module multitini_one_top #(
                 .control_clk(control_clk),.control_resetn(control_aresetn),
                 .control_reset_request(|(shell_control & MT_CONTROL_CORE_RESET_REQUEST)),
                 .core_reset_request(c64_core_reset_request),
-                .core_memory_addr(c64_memory_addr),.core_memory_write(c64_memory_write),
+                .core_memory_addr(amiga_memory_addr),.core_memory_write(c64_memory_write),
                 .core_memory_wdata(c64_memory_wdata),.core_memory_wstrb(c64_memory_wstrb),
                 .core_memory_valid(c64_memory_valid),.core_memory_burst(gs_memory_burst),
                 .core_memory_busy(gs_memory_busy),.core_memory_ready(c64_memory_ready),

@@ -73,11 +73,12 @@ def main() -> int:
             delayed_cpu=build / "tb_amiga_cpu_delayed.sv"
             text=cpu.read_text()
             start=text.index("    multitini_amiga_machine #(")
-            end=text.index("    multitini_amiga_memory memory_i(",start)
+            end=text.index("    multitini_amiga_memory ",start)
             block=text[start:end]
             declarations=[]
             for name,width in (("chip_rdata",16),("chip_rdata2",16),("chip_rdata48",48),
-                               ("cpu_rdata",16),("cpu_rdata2",16),("cpu_ready",1),("run_enable",1)):
+                               ("cpu_rdata",16),("cpu_rdata2",16),("cpu_ready",1),
+                               ("cpu_line_ready",1),("cpu_line_data",128),("run_enable",1)):
                 declarations.append(f"    wire [{width-1}:0] delayed_{name}; assign #1 delayed_{name}={name};")
                 block=block.replace(f"({name})",f"(delayed_{name})")
             text=text[:start]+"\n".join(declarations)+"\n"+block+text[end:]
@@ -114,7 +115,7 @@ def main() -> int:
         raise SystemExit("AGA fetch coherence check did not report success")
     profiles = [("stock",0),("turbo",3),("half",7),("aga_stock",7),("aga_turbo",3)] if args.cpu else []
     if args.ap68040:
-        profiles.extend((("aga_040",3),("aga_040_2x",3)))
+        profiles.extend((("aga_040",3),("aga_040_2x",3),("aga_040_fast16",3),("aga_040_fast16_2x",3)))
     if profiles:
         for profile,mode in profiles:
             snapshot=f"amiga_cpu_{profile}"
@@ -125,6 +126,8 @@ def main() -> int:
             (build / f"{snapshot}.log").write_text(log)
             if f"PASS Amiga CPU mode={mode}" not in log or "Fatal:" in log:
                 raise SystemExit(f"Amiga CPU profile {profile} did not report success; see {build / (snapshot + '.log')}")
+            if "fast16" in profile and "PASS 16 MiB Zorro III AutoConfig, bounds, and reset" not in log:
+                raise SystemExit(f"Amiga CPU profile {profile} did not prove the 16 MiB mapping")
     receipt["result"]="passed"
     (build / "report.json").write_text(json.dumps(receipt,indent=2)+"\n")
     print("PASS real Minimig ECS source elaboration and portable host smoke")

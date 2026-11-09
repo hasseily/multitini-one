@@ -640,7 +640,7 @@ static void deliver_gamepad(uint8_t index)
     const uint32_t actions = output.actions;
     const uint8_t directions = (uint8_t)(actions & 15U);
     if(g_active_core_id==MT_AMIGA_CORE_ID) {
-        (void)mt_amiga_hid_assigned_report(&g_amiga_input,index,player,directions,(uint8_t)((actions>>MT_CONTROL_A)&3U));
+        (void)mt_amiga_hid_assigned_report(&g_amiga_input,index,player,directions,(uint8_t)((actions>>MT_CONTROL_A)&15U));
     } else if (g_active_core_id == MT_IIGS_CORE_ID) {
         (void)mt_iigs_hid_assigned_report(&g_iigs_input,index,player,
             (uint8_t)((actions>>MT_CONTROL_A)&7U),output.x,output.y,directions);
@@ -1944,9 +1944,11 @@ void usb_hid_service_set_core_ready(bool ready)
         next!=0U && g_active_core_id==MT_AMIGA_CORE_ID && !g_menu_capture);
     if (next != 0U && g_core_ready == 0U) {
         g_core_ready = 1U;
-        if(g_active_core_id==MT_AMIGA_CORE_ID)
+        if(g_active_core_id==MT_AMIGA_CORE_ID) {
+            const uint32_t caps=g_link->read32(g_link->context,MT_AMIGA_HOST_CAPABILITIES);
+            mt_amiga_hid_set_cd32_buttons(&g_amiga_input,(caps&MT_AMIGA_HOST_CD32_BUTTONS)!=0U);
             mt_amiga_hid_reassert(&g_amiga_input);
-        else if (g_active_core_id == MT_IIGS_CORE_ID)
+        } else if (g_active_core_id == MT_IIGS_CORE_ID)
             mt_iigs_hid_reassert(&g_iigs_input);
         else if (g_active_core_id == MT_VECTREX_CORE_ID)
             mt_vectrex_hid_reassert(&g_vectrex_input);
