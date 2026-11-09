@@ -63,6 +63,7 @@ mt_content_type_t mt_content_classify(const char *path)
     if (extension_is(extension, "g64")) return MT_CONTENT_G64;
     if (extension_is(extension, "crt")) return MT_CONTENT_CRT;
     if (extension_is(extension, "tap")) return MT_CONTENT_TAP_FUTURE;
+    if (extension_is(extension, "tzx")) return MT_CONTENT_SPECTRUM_TZX;
     if (extension_is(extension, "d81")) return MT_CONTENT_D81_FUTURE;
     if (extension_is(extension, "gb")) return MT_CONTENT_GB_CART;
     if (extension_is(extension, "nes")) return MT_CONTENT_NES_CART;
@@ -119,7 +120,8 @@ bool mt_content_supported_first_release(mt_content_type_t type)
            type == MT_CONTENT_GENESIS_CART || type == MT_CONTENT_GENESIS_SMD ||
            type == MT_CONTENT_IIGS_HDD || type == MT_CONTENT_IIGS_WOZ ||
            type == MT_CONTENT_IIGS_FLOPPY || type == MT_CONTENT_AMIGA_ADF || type == MT_CONTENT_AMIGA_HDF ||
-           type == MT_CONTENT_SPECTRUM_TAP || type == MT_CONTENT_ATARI_XT_CART ||
+           type == MT_CONTENT_SPECTRUM_TAP || type == MT_CONTENT_SPECTRUM_TZX ||
+           type == MT_CONTENT_ATARI_XT_CART ||
            type == MT_CONTENT_ATARI_XT_RAW_CART || type == MT_CONTENT_ATARI_XT_ATR ||
            type == MT_CONTENT_ATARI_XT_XEX;
 }
@@ -154,6 +156,7 @@ const char *mt_content_type_name(mt_content_type_t type)
     case MT_CONTENT_AMIGA_ADF: return "Amiga DD ADF floppy";
     case MT_CONTENT_AMIGA_HDF: return "Amiga IDE hard disk";
     case MT_CONTENT_SPECTRUM_TAP: return "ZX Spectrum TAP";
+    case MT_CONTENT_SPECTRUM_TZX: return "ZX Spectrum TZX";
     case MT_CONTENT_ATARI_XT_CART: return "Atari XL CAR cartridge";
     case MT_CONTENT_ATARI_XT_RAW_CART: return "Atari XL raw cartridge";
     case MT_CONTENT_ATARI_XT_ATR: return "Atari ATR disk";
@@ -451,6 +454,7 @@ mt_content_validation_t mt_content_inspect(mt_content_type_t type,
     case MT_CONTENT_IIGS_FLOPPY:
     case MT_CONTENT_ATARI_XT_ATR:
     case MT_CONTENT_ATARI_XT_XEX:
+    case MT_CONTENT_SPECTRUM_TZX: /* Validated by the tape compiler before streaming. */
     case MT_CONTENT_D81_FUTURE:
     case MT_CONTENT_UNKNOWN:
         status = MT_CONTENT_UNSUPPORTED_VERSION;

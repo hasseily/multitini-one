@@ -68,7 +68,10 @@ def port_machine(data: bytes) -> bytes:
     substitutions = (
         ("module a8_core #(", "module multitini_atari_xt_machine #("),
         ("    parameter bit USE_ANTIC2 = 1'b0,",
-         "    parameter bit USE_ANTIC2 = 1'b0,\n    parameter bit USE_320XE = 1'b0,"),
+         "    parameter bit USE_ANTIC2 = 1'b0,\n    parameter bit USE_320XE = 1'b0,\n"
+         "    parameter bit VCOUNT_COMPAT = 1'b0,"),
+        (".LINES(262), .DISPLAY_TOP(8), .DISPLAY_BOTTOM(248)",
+         ".LINES(262), .DISPLAY_TOP(8), .DISPLAY_BOTTOM(248),\n        .VCOUNT_COMPAT(VCOUNT_COMPAT)"),
         ("    input  wire        cold,", "    input  wire        cold,\n    input  wire        hold_cpu,"),
         ("    input  wire [7:0]  antic_rdata,", """    input  wire [7:0]  antic_rdata,
     output wire        antic_rom_hit,
@@ -153,6 +156,16 @@ def port_machine(data: bytes) -> bytes:
 
 PORT_CHANGES = {
     "antic2.sv": (
+        ("    parameter int DISPLAY_BOTTOM = 248",
+         "    parameter int DISPLAY_BOTTOM = 248,\n    parameter bit VCOUNT_COMPAT = 1'b0"),
+        ("    antic2_regs u_regs (", """    // Multitini One modification: optionally hold the last stable VCOUNT
+    // value on the one-cycle rollover spike. Only CPU reads use this value.
+    localparam logic [7:0] VCOUNT_ROLLOVER = 8'(LINES / 2);
+    wire [7:0] cpu_vcount = (VCOUNT_COMPAT && vcount == VCOUNT_ROLLOVER)
+                          ? (VCOUNT_ROLLOVER - 8'd1) : vcount;
+
+    antic2_regs u_regs ("""),
+        (".vcount_in(vcount)", ".vcount_in(cpu_vcount)"),
         ("    antic_dma_sched u_sched (", """    // Multitini One modification, 2026-11-06: restrict P/M DMA to visible
     // scanlines (Altirra Hardware Reference Manual, section 4.13). Share the
     // gate between the CPU steals and memory requests. The GTIA phantom bus
@@ -163,6 +176,10 @@ PORT_CHANGES = {
         (".missile_dma_en(dmactl[2] || dmactl[3])", ".missile_dma_en(pm_dmactl[2] || pm_dmactl[3])"),
         (".player_dma_en(dmactl[3])", ".player_dma_en(pm_dmactl[3])"),
         (".dmactl(dmactl), .pmbase(pmbase)", ".dmactl(pm_dmactl), .pmbase(pmbase)"),
+        ("        .is_display(pf_fetching),",
+         "        // A mode can remain selected during vertical blank. Only visible\n"
+         "        // lines start ordinary playfield fetches. The refresh schedule is separate.\n"
+         "        .is_display(pf_fetching && px_active),"),
     ),
     "pia_regs.sv": (
         ("module pia_regs (", "module multitini_atari_xt_pia ("),
@@ -241,6 +258,8 @@ def main() -> None:
                           "Expose PORTA directions, POKEY keyboard and PCM channel levels.",
                           "Expose PIA CB2 and completed POKEY serial frames and accept standard-speed SIO replies.",
                           "Limit ANTIC2 player/missile DMA reads and CPU steals to visible lines.",
+                          "Prevent ANTIC2 from starting ordinary playfield DMA on vertical blank lines.",
+                          "Allow a build to hide the one-cycle ANTIC2 VCOUNT rollover value from CPU reads.",
                           "Expose effective PORTB pins for separate Compy Shop CPU and ANTIC RAM mapping."],
         "files": records,
     }

@@ -239,6 +239,9 @@ if {$image_kind eq "AMIGA" && [string match {*AMIGA_AP68040=1'b1*} $build_generi
 if {$atari_320xe} {
     lappend capture_command --atari-320xe
 }
+if {{ATARI_VCOUNT_COMPAT=1'b1} in $build_generics} {
+    lappend capture_command --atari-vcount-compat
+}
 puts [exec {*}$capture_command]
 
 reset_run synth_1

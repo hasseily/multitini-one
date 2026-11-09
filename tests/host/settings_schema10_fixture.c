@@ -15,7 +15,16 @@ static uint32_t schema10_controls_action_mask(uint32_t core)
     return mt_controls_action_mask(core);
 }
 
+static bool schema10_controls_config_valid(uint32_t core, const mt_controller_config_t *config)
+{
+    mt_controller_config_t extended = *config;
+    for (unsigned axis = MT_GAMEPAD_AXIS_COUNT; axis < MT_INPUT_AXIS_COUNT; ++axis)
+        extended.axis[axis] = mt_controls_default_axis(axis);
+    return mt_controls_config_valid(core, &extended);
+}
+
 #define mt_controls_action_mask schema10_controls_action_mask
+#define mt_controls_config_valid schema10_controls_config_valid
 #define mt_settings_status_name schema10_mt_settings_status_name
 #define mt_supervisor_settings_defaults schema10_mt_supervisor_settings_defaults
 #define mt_supervisor_settings_find schema10_mt_supervisor_settings_find

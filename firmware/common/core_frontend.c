@@ -655,6 +655,15 @@ static void build_amiga(mt_core_frontend_t *frontend,const mt_core_frontend_stat
 static void build_spectrum(mt_core_frontend_t *frontend,
                            const mt_core_frontend_state_t *state, mt_menu_view_t *view)
 {
+    const uint32_t config = state->spectrum_tape_config;
+    const uint32_t mode = config & MT_SPECTRUM_TAPE_MODE_MASK;
+    const bool speed_supported =
+        (config & MT_SPECTRUM_TAPE_SIGNATURE_MASK) == MT_SPECTRUM_TAPE_SIGNATURE;
+    const bool stock_rom = (config & MT_SPECTRUM_TAPE_STOCK_ROM) != 0U;
+    const bool tzx_supported = speed_supported && (config & MT_SPECTRUM_TAPE_TZX) != 0U;
+    const bool tzx_mounted = mt_content_classify(state->spectrum_tape_name) == MT_CONTENT_SPECTRUM_TZX;
+    const bool instant_selected = speed_supported && mode == MT_SPECTRUM_TAPE_INSTANT;
+    const bool instant = instant_selected && stock_rom && !tzx_mounted;
     frontend->media_items[view->media_item_count++] = item("System ROM",
         state->spectrum_ready ? "Loaded" : "Load / retry...",
         state->spectrum_boot_error != NULL ? state->spectrum_boot_error :
@@ -662,13 +671,27 @@ static void build_spectrum(mt_core_frontend_t *frontend,
         MT_MENU_ACTION_SPECTRUM_RELOAD, 0U, true,
         state->spectrum_ready ? MT_UI_COLOR_SUCCESS : MT_UI_COLOR_WARNING);
     mt_menu_item_t *const tape = &frontend->media_items[view->media_item_count++];
+    const char *tape_help = "Start the Spectrum tape loader, then press F1 to play or pause. F2 rewinds.";
+    if (instant)
+        tape_help = "Start the stock Spectrum tape loader for Instant TAP. F1 plays pulses for custom loaders. F2 rewinds.";
+    else if (tzx_mounted && instant_selected)
+        tape_help = "Press F1 to play TZX at Normal speed. F2 rewinds. Instant works with TAP.";
+    else if (!tzx_supported && state->spectrum_tape_name == NULL)
+        tape_help = "TZX needs an updated Spectrum FPGA. Press F1 to play or pause TAP. F2 rewinds.";
     *tape = item("Tape",
-        state->spectrum_tape_name != NULL ? state->spectrum_tape_name : "Choose TAP image...",
-        state->spectrum_tape_name != NULL ?
-            "Read-only tape. Start the tape loader, then press F1 to play or pause. F2 rewinds." :
-            "Start the Spectrum tape loader, then press F1 to play or pause. F2 rewinds.",
+        state->spectrum_tape_name != NULL ? state->spectrum_tape_name : "Choose TAP or TZX image...",
+        tape_help,
         MT_MENU_ACTION_BROWSE_PROGRAM, 0U, state->spectrum_ready, MT_UI_COLOR_BLUE);
     tape->value_read_only = state->spectrum_tape_name != NULL;
+    const char *const speed = !speed_supported || mode == MT_SPECTRUM_TAPE_NORMAL ? "Normal" :
+        mode == MT_SPECTRUM_TAPE_FAST ? "Fast (8x)" : instant ? "Instant" :
+        tzx_mounted ? "Normal (TZX fallback)" : "Normal (ROM fallback)";
+    frontend->media_items[view->media_item_count++] = item("Tape speed", speed,
+        !speed_supported ? "Update the Spectrum FPGA image to change tape speed." :
+        tzx_supported ? "TZX accepts Normal and Fast (8x). TAP also accepts Instant" :
+        "TAP accepts Normal and Fast (8x), plus Instant with a stock ROM. Update the FPGA for TZX.",
+        MT_MENU_ACTION_SPECTRUM_TAPE_MODE, 0U, state->spectrum_ready && speed_supported,
+        MT_UI_COLOR_BLUE);
     frontend->input_items[view->input_item_count++] = item("Keyboard", "USB keyboard",
         "F1 plays or pauses the tape. F2 rewinds. F12 opens the Multitini menu.",
         MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
@@ -689,29 +712,18 @@ static void build_atari_xt(mt_core_frontend_t *frontend,
         MT_MENU_ACTION_ATARI_XT_RELOAD, 0U, true,
         state->atari_xt_roms_loaded ? MT_UI_COLOR_SUCCESS : MT_UI_COLOR_WARNING);
     frontend->media_items[view->media_item_count++] = item("Cartridge",
+        state->atari_xt_cart_uncertain ? "Recover cartridge slot..." :
         state->cartridge_name != NULL ? state->cartridge_name : "Choose cartridge...",
-        "Standard 8 or 16 KiB .car, .rom or .bin. Inserting a cartridge restarts the Atari.",
+        "Choose an 8 or 16 KiB .car, .rom or .bin, or eject the cartridge. Both restart the Atari.",
         MT_MENU_ACTION_BROWSE_CARTRIDGE, 0U, state->atari_xt_roms_loaded, MT_UI_COLOR_BLUE);
-    frontend->media_items[view->media_item_count++] = item("Eject Cartridge",
-        state->atari_xt_cart_uncertain ? "Recover cartridge slot" : NULL,
-        "Remove the cartridge and restart the Atari.",
-        MT_MENU_ACTION_DETACH_CARTRIDGE, 0U,
-        state->atari_xt_roms_loaded && (state->cartridge_attached || state->atari_xt_cart_uncertain),
-        MT_UI_COLOR_BLUE);
     mt_menu_item_t *const disk = &frontend->media_items[view->media_item_count++];
     *disk = item("Disk D1:",
         mounted ? state->atari_xt_disk_name : "Choose ATR disk...",
-        mounted ? "Read-only disk. Select Boot D1: to restart from it." :
-        state->atari_xt_sio_available ? "Mount a read-only ATR disk. Select Boot D1: to restart from it." :
+        state->atari_xt_sio_available ?
+            "Mount or eject a read-only ATR disk. To boot, use System > Restart active core." :
             "Update the Atari FPGA core to use ATR disks and XEX programs.",
         MT_MENU_ACTION_BROWSE_DRIVE8, 0U, disk_enabled, MT_UI_COLOR_BLUE);
     disk->value_read_only = mounted;
-    frontend->media_items[view->media_item_count++] = item("Boot D1:", NULL,
-        "Restart from the mounted disk and eject any inserted cartridge.",
-        MT_MENU_ACTION_ATARI_XT_BOOT_DISK, 0U, disk_enabled && mounted, MT_UI_COLOR_BLUE);
-    frontend->media_items[view->media_item_count++] = item("Eject D1:", NULL,
-        "Remove the mounted disk without restarting the Atari.",
-        MT_MENU_ACTION_EJECT_DRIVE8, 0U, disk_enabled && mounted, MT_UI_COLOR_BLUE);
     frontend->media_items[view->media_item_count++] = item("Run XEX", "Choose executable...",
         "Boot a read-only loader disk in D1: and eject any inserted cartridge.",
         MT_MENU_ACTION_BROWSE_PROGRAM, 0U, disk_enabled, MT_UI_COLOR_BLUE);
@@ -719,7 +731,7 @@ static void build_atari_xt(mt_core_frontend_t *frontend,
         "F1 Start, F2 Select, F3 Option, F4 Help, F5 Break. F12 opens the Multitini menu.",
         MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
     frontend->input_items[view->input_item_count++] = item("Joysticks", "Two USB gamepads",
-        "Digital directions and fire. Custom mappings apply for this session.",
+        "Digital directions, fire, Start and Select. Use Controllers to change mappings.",
         MT_MENU_ACTION_NONE, 0U, false, MT_UI_COLOR_TEXT);
 }
 
@@ -734,7 +746,7 @@ static const core_profile_t profiles[] = {
     {
         MT_SPECTRUM_CORE_ID, "Sinclair ZX Spectrum",
         "USB keyboard and Kempston joystick. F12 opens the Multitini menu.",
-        {0U, 0U, 0U, 0U, CONTENT_MASK(MT_CONTENT_SPECTRUM_TAP)},
+        {0U, 0U, 0U, 0U, CONTENT_MASK(MT_CONTENT_SPECTRUM_TAP) | CONTENT_MASK(MT_CONTENT_SPECTRUM_TZX)},
         false, build_spectrum
     },
     {

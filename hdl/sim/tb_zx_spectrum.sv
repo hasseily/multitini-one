@@ -6,6 +6,8 @@ module tb_zx_spectrum;
     always #5 clk = !clk;
 
     reg reset = 1, guest_reset = 0, clear_error = 0;
+    reg pause_request = 0, stock_tape_rom = 0;
+    reg [1:0] tape_speed = 0;
     reg [7:0] load_data = 0, load_kind = 0;
     reg load_valid = 0, load_first = 0, load_last = 0, load_epoch = 0;
     reg load_abort = 0, load_abort_epoch = 0;
@@ -17,7 +19,8 @@ module tb_zx_spectrum;
     wire [11:0] video_x, video_y;
     wire signed [23:0] audio_l;
     multitini_zx_spectrum_adapter dut (
-        .core_clk(clk), .reset(reset), .core_reset_request(guest_reset), .pause_request(1'b0),
+        .core_clk(clk), .reset(reset), .core_reset_request(guest_reset), .pause_request(pause_request),
+        .tape_speed(tape_speed), .stock_tape_rom(stock_tape_rom),
         .clear_load_error(clear_error), .input_code(input_code), .input_value(input_value),
         .input_valid(input_valid), .input_ready(), .load_data(load_data), .load_kind(load_kind),
         .load_valid(load_valid), .load_first(load_first), .load_last(load_last),
@@ -98,6 +101,182 @@ module tb_zx_spectrum;
         end
     endtask
 
+    // Source-built stand-in for LD-BYTES. The stock entry has a sentinel
+    // here, and the direct entry calls the byte feeder twice before return.
+    localparam [7:0] direct_program [0:42] = '{
+        8'h31, 8'hff, 8'hbf, 8'h01, 8'hfd, 8'h7f, 8'h3e, 8'h10, 8'hed, 8'h79,
+        8'hcd, 8'h62, 8'h05, 8'h32, 8'h00, 8'h80, 8'h3e, 8'h00, 8'hce, 8'h00, 8'h32, 8'h04, 8'h80,
+        8'hcd, 8'h62, 8'h05, 8'h32, 8'h01, 8'h80, 8'h3e, 8'h00, 8'hce, 8'h00, 8'h32, 8'h05, 8'h80,
+        8'hcd, 8'h62, 8'h05, 8'h32, 8'h02, 8'h80, 8'h76
+    };
+    localparam [7:0] direct_entry [0:12] = '{
+        8'hcd, 8'hca, 8'h05, 8'hd0, 8'h7d, 8'h32, 8'h03, 8'h80,
+        8'hcd, 8'hca, 8'h05, 8'hd0, 8'h7d
+    };
+    localparam [7:0] direct_tap [0:7] = '{8'h03, 8'h00, 8'h00, 8'h11, 8'h22, 8'h01, 8'h00, 8'h33};
+
+    function automatic [7:0] direct_rom_byte(input [13:0] address, input bit basic_bank);
+        if (address == 7 && !basic_bank) return 8'h00;
+        if (address < 43) return direct_program[address];
+        if (address >= 14'h059f && address < 14'h05ac) return direct_entry[address - 14'h059f];
+        case (address)
+            14'h0562: return 8'h3e; // LD A,EE; SCF; RET
+            14'h0563: return 8'hee;
+            14'h0564: return 8'h37;
+            14'h0565: return 8'hc9;
+            14'h05ac: return 8'hc9;
+            14'h05d8: return 8'h37; // Successful stub byte returns with carry set
+            14'h05d9: return 8'hc9;
+            default: return 8'hff;
+        endcase
+    endfunction
+
+    task automatic check_instant(input integer size, input bit stock, basic_bank, expected);
+        @(negedge clk);
+        pause_request = 1;
+        stock_tape_rom = stock;
+        tape_speed = 2;
+        load_epoch = !load_epoch;
+        for (integer i = 0; i < size; i++)
+            send_byte(8'h70, direct_rom_byte(i[13:0], basic_bank), i, size);
+        load_epoch = !load_epoch;
+        for (integer i = 0; i < 8; i++) send_byte(8'h71, direct_tap[i], i, 8);
+        if (load_error || !ready || rom_loaded[1:0] != 2'b11) $fatal(1, "Instant test media load failed");
+        repeat (20) @(negedge clk);
+        pause_request = 0;
+        repeat (25000) @(negedge clk);
+        if (dut.ram[17'h08002] !== 8'hee || dut.instant_active || dut.tape.playing || dut.fast_tape_active)
+            $fatal(1, "Instant test did not return to the stock ROM");
+        if (expected) begin
+            if (dut.ram[17'h08000] !== 8'h11 || dut.ram[17'h08001] !== 8'h33 ||
+                dut.ram[17'h08003] !== 8'h33 || dut.ram[17'h08004] !== 8'h01 ||
+                dut.ram[17'h08005] !== 8'h00 || dut.tape.block_start !== 18'd8)
+                $fatal(1, "Instant byte order, carry handling, or block cursor wrong");
+        end else if (dut.ram[17'h08000] !== 8'hee || dut.ram[17'h08001] !== 8'hee ||
+            dut.tape.block_start !== 18'd0) $fatal(1, "Instant patched an unrecognized ROM bank");
+    endtask
+
+    localparam [7:0] tzx_stream [0:48] = '{
+        8'h06, 8'h01,                                        // Set high
+        8'h01, 8'h01, 8'h00, 8'h02, 8'h00,                   // Two 1-T-state pulses
+        8'h02, 8'h03, 8'h01, 8'h00, 8'h01, 8'h00, 8'h03, 8'h00, // Pulse sequence
+        8'h03, 8'h02, 8'h00, 8'h03, 8'h00, 8'h02, 8'h01, 8'h00, 8'h00, 8'h80, // PWM 10
+        8'h04, 8'h00, 8'h00,                                 // Stop without changing EAR
+        8'h05, 8'h02, 8'h00, 8'h03, 8'h01, 8'h00, 8'h00, 8'hc0, // Direct samples 110
+        8'h06, 8'h01, 8'h04, 8'h02, 8'h00,                   // Set high, 2 ms pause
+        8'h07,                                              // Stop on 48K only
+        8'h06, 8'h01, 8'h01, 8'h05, 8'h00, 8'h01, 8'h00     // High for 5 T-states
+    };
+
+    integer tzx_ticks = 0, last_tzx_tick;
+    bit saw_tzx_underflow = 0, saw_normal_phase_before_stall = 0, saw_fast_resume = 0;
+    always @(posedge clk) begin
+        if (dut.tape_tzx && dut.tape_tick && dut.tape_playing && !pause_request)
+            tzx_ticks <= tzx_ticks + 1;
+        if (dut.tape_underflow) begin
+            saw_tzx_underflow <= 1;
+            if (dut.tape_tick || (dut.tape_tick_due && dut.cpu_p))
+                $fatal(1, "TZX underflow advanced CPU or tape on a missed tick");
+            if (!dut.fast_tape_active && !dut.tape_stalled && !dut.tape_tick_due && dut.ce_cpu_p) begin
+                if (!dut.cpu_p) $fatal(1, "Normal TZX held CPU before the first missed tape tick");
+                saw_normal_phase_before_stall <= 1;
+            end
+        end
+        if (dut.tape_stalled && !dut.tape_tick && dut.cpu_p)
+            $fatal(1, "TZX resumed CPU before the tape tick");
+        if (dut.tape_stalled && dut.tape_tick && dut.fast_tape_active) begin
+            if (!dut.cpu_p) $fatal(1, "Fast TZX did not resume CPU and tape together");
+            saw_fast_resume <= 1;
+        end
+    end
+
+    task automatic play_tape;
+        input_event(16'h0005, 0);
+        input_event(16'h0005, 1);
+    endtask
+
+    task automatic expect_tzx_event(input integer interval, input bit level, active);
+        do @(posedge clk); while (!dut.tape.tzx_player.pop_event);
+        if (interval >= 0 && tzx_ticks != last_tzx_tick + interval)
+            $fatal(1, "TZX timing expected %0d T states, saw %0d", interval, tzx_ticks - last_tzx_tick);
+        last_tzx_tick = tzx_ticks;
+        #1;
+        if (dut.tape_ear !== level || dut.tape_playing !== active)
+            $fatal(1, "TZX level/play state expected %b/%b, saw %b/%b", level, active, dut.tape_ear, dut.tape_playing);
+    endtask
+
+    task automatic check_tzx(input bit fast, model_128);
+        tape_speed = fast ? 2'd1 : 2'd2;
+        stock_tape_rom = 1;
+        load_epoch = !load_epoch;
+        for (integer i = 0; i < 49; i++) send_byte(8'h72, tzx_stream[i], i, 49);
+        if (load_error || !rom_loaded[1] || !dut.tape_tzx || dut.instant_available)
+            $fatal(1, "TZX stream did not commit or exposed Instant TAP");
+        repeat (24) @(negedge clk);
+        if (dut.tape_playing || dut.tape_ear) $fatal(1, "Mounted TZX played without input");
+        play_tape();
+        expect_tzx_event(-1, 1, 1);
+        if (dut.fast_tape_active !== fast) $fatal(1, "Wrong TZX playback speed");
+        expect_tzx_event(1, 0, 1);
+        expect_tzx_event(1, 1, 1);
+        expect_tzx_event(1, 0, 1);
+        expect_tzx_event(1, 1, 1);
+        expect_tzx_event(3, 0, 1);
+        expect_tzx_event(3, 1, 1);
+        expect_tzx_event(3, 0, 1);
+        expect_tzx_event(2, 1, 1);
+        expect_tzx_event(2, 0, 0);
+        repeat (24) @(negedge clk);
+        if (dut.tape_playing || dut.tape_ear) $fatal(1, "TZX zero pause did not stop at current level");
+        play_tape();
+        expect_tzx_event(-1, 1, 1);
+        expect_tzx_event(2, 1, 1);
+        expect_tzx_event(2, 0, 1);
+        expect_tzx_event(2, 1, 1);
+        @(negedge dut.tape_ear);
+        #1;
+        if (tzx_ticks != last_tzx_tick + 3501) $fatal(1, "TZX pause did not hold EAR for 1 ms");
+        if (model_128) expect_tzx_event(7000, 1, 1);
+        else begin
+            expect_tzx_event(7000, 0, 0);
+            play_tape();
+            expect_tzx_event(-1, 1, 1);
+        end
+        expect_tzx_event(5, 0, 0);
+        play_tape();
+        expect_tzx_event(-1, 1, 1);
+        input_event(16'h0006, 0);
+        input_event(16'h0006, 1);
+        repeat (3) @(negedge clk);
+        if (dut.tape_ear || dut.tape_playing || dut.tape.tzx_player.at_end)
+            $fatal(1, "TZX rewind did not reset the transport");
+    endtask
+
+    task automatic check_tzx_underflow(input bit fast);
+        // A chain of zero-time commands exceeds the initial prefetch lead.
+        // Playback must still see two adjacent one-T-state pulses.
+        localparam integer tape_length = 5 + 128 + 5;
+        localparam [7:0] tone [0:4] = '{8'h01, 8'h01, 8'h00, 8'h01, 8'h00};
+        tape_speed = fast ? 2'd1 : 2'd0;
+        load_epoch = !load_epoch;
+        for (integer i = 0; i < tape_length; i++) begin
+            if (i < 5) send_byte(8'h72, tone[i], i, tape_length);
+            else if (i < 133) send_byte(8'h72, i[0] ? 8'h06 : 8'h01, i, tape_length);
+            else send_byte(8'h72, tone[i - 133], i, tape_length);
+        end
+        @(negedge clk);
+        saw_tzx_underflow = 0;
+        saw_normal_phase_before_stall = 0;
+        saw_fast_resume = 0;
+        play_tape();
+        expect_tzx_event(-1, 0, 1);
+        expect_tzx_event(1, 1, 1);
+        expect_tzx_event(1, 0, 0);
+        if (!saw_tzx_underflow) $fatal(1, "TZX underflow path was not exercised");
+        if (fast ? !saw_fast_resume : !saw_normal_phase_before_stall)
+            $fatal(1, "TZX did not exercise the expected CPU phase around a stall");
+    endtask
+
     initial begin
         repeat (20) @(negedge clk);
         reset = 0;
@@ -137,6 +316,26 @@ module tb_zx_spectrum;
         repeat (3) @(negedge clk);
         if (dut.tape_ear || dut.tape.address != 0) $fatal(1, "F2 did not rewind");
 
+        tape_speed = 1;
+        input_event(16'h0005, 0);
+        input_event(16'h0005, 1);
+        wait (dut.fast_tape_active);
+        @(posedge dut.tape_ear);
+        @(negedge dut.tape_ear);
+        begin
+            time start_time;
+            start_time = $time;
+            @(posedge dut.tape_ear);
+            if ($time - start_time != 2168 * 2 * 10) $fatal(1, "Fast TAP pilot period wrong");
+        end
+        input_event(16'h0005, 0);
+        input_event(16'h0005, 1);
+        wait (!dut.fast_tape_active);
+        if (dut.tape.playing) $fatal(1, "Fast TAP did not stop on F1 pause");
+        input_event(16'h0006, 0);
+        input_event(16'h0006, 1);
+        tape_speed = 0;
+
         input_event(16'h0103, 1); // right, player one
         input_event(16'h0204, 1); // fire, player two
         if (dut.joystick !== 5'b10001) $fatal(1, "Kempston mapping wrong");
@@ -159,6 +358,14 @@ module tb_zx_spectrum;
         clear_error = 0;
         boot(32768);
         check_frame();
+        check_tzx(1'b1, 1'b1);
+        check_instant(16384, 1'b1, 1'b0, 1'b1);
+        check_instant(32768, 1'b1, 1'b1, 1'b1);
+        check_instant(32768, 1'b1, 1'b0, 1'b0);
+        check_instant(16384, 1'b0, 1'b0, 1'b0);
+        check_tzx(1'b0, 1'b0);
+        check_tzx_underflow(1'b0);
+        check_tzx_underflow(1'b1);
         $display("PASS ZX Spectrum Z80, paging, raster, audio, input and TAP");
         $finish;
     end

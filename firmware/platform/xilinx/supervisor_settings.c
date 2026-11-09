@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "supervisor_settings.h"
+#include "multitini_atari_xt_interface.h"
 #include "multitini_c64_interface.h"
+#include "multitini_spectrum_interface.h"
 
 #include <string.h>
 
@@ -33,6 +35,7 @@
 #define MT_SETTINGS_CONTROLLER_SIZE 92U
 #define MT_SETTINGS_CONTROLLER_AXES_OFFSET (24U + MT_CONTROL_COUNT * 2U)
 #define MT_SETTINGS_CONTROLLER_ASSIGNMENT_OFFSET (MT_SETTINGS_CONTROLLER_AXES_OFFSET + MT_GAMEPAD_AXIS_COUNT * 5U)
+#define MT_SETTINGS_CONTROLLER_ATARI_BUTTONS_OFFSET (MT_SETTINGS_CONTROLLER_ASSIGNMENT_OFFSET + 1U)
 #define MT_SETTINGS_LEGACY_PAD_MASK ((1U << MT_GAMEPAD_SLOTS) - 1U)
 
 _Static_assert(MT_SETTINGS_EFFECTS_OFFSET + MT_VIDEO_EFFECT_COUNT * 2U ==
@@ -57,6 +60,8 @@ static uint8_t settings_wire[MT_SETTINGS_WIRE_SIZE];
 static mt_supervisor_settings_t settings_decode_candidate;
 static uint8_t turbo_controls_wire[MT_TURBO_CONTROLS_WIRE_SIZE];
 static const uint8_t turbo_controls_magic[8] = {'M','T','T','U','R','B','O','1'};
+static uint8_t axis_tuning_wire[MT_AXIS_TUNING_WIRE_SIZE];
+static const uint8_t axis_tuning_magic[8] = {'M','T','A','X','I','S','0','1'};
 
 static mt_sd_result_t empty_sd_result(void)
 {
@@ -548,11 +553,9 @@ static bool settings_valid(const mt_supervisor_settings_t *settings)
                                        settings->selected_core_id) != NULL;
 }
 
-static void encode_controller(uint8_t *output,
-                              const mt_controller_settings_profile_t *profile)
+static void encode_controller_key(uint8_t *output, const mt_controller_settings_profile_t *profile)
 {
     const mt_controller_identity_t *identity = &profile->identity;
-    const mt_controller_config_t *config = &profile->config;
     store_u32_le(output, profile->core_id);
     store_u16_le(output + 4U, identity->vendor_id);
     store_u16_le(output + 6U, identity->product_id);
@@ -561,6 +564,24 @@ static void encode_controller(uint8_t *output,
     store_u32_le(output + 16U, identity->port_path);
     output[20U] = identity->transport;
     output[21U] = identity->interface_id;
+}
+
+static void decode_controller_identity(mt_controller_identity_t *identity, const uint8_t *input)
+{
+    identity->vendor_id = load_u16_le(input + 4U);
+    identity->product_id = load_u16_le(input + 6U);
+    identity->descriptor_hash = load_u32_le(input + 8U);
+    identity->serial_hash = load_u32_le(input + 12U);
+    identity->port_path = load_u32_le(input + 16U);
+    identity->transport = input[20U];
+    identity->interface_id = input[21U];
+}
+
+static void encode_controller(uint8_t *output,
+                              const mt_controller_settings_profile_t *profile)
+{
+    const mt_controller_config_t *config = &profile->config;
+    encode_controller_key(output, profile);
     for (unsigned action = 0U; action < MT_CONTROL_COUNT; ++action)
         store_u16_le(output + 24U + action * 2U, config->binding[action]);
     for (unsigned axis = 0U; axis < MT_GAMEPAD_AXIS_COUNT; ++axis) {
@@ -572,25 +593,19 @@ static void encode_controller(uint8_t *output,
         store_u16_le(output + offset + 3U, value->sensitivity_percent);
     }
     output[MT_SETTINGS_CONTROLLER_ASSIGNMENT_OFFSET] = config->assignment;
+    output[MT_SETTINGS_CONTROLLER_ATARI_BUTTONS_OFFSET] = config->atari_console_buttons_configured ? 1U : 0U;
 }
 
 static bool decode_controller(mt_controller_settings_profile_t *profile,
                               const uint8_t *input)
 {
-    mt_controller_identity_t *identity = &profile->identity;
     mt_controller_config_t *config = &profile->config;
     if (input[22U] != 0U || input[23U] != 0U ||
-        input[MT_SETTINGS_CONTROLLER_ASSIGNMENT_OFFSET + 1U] != 0U ||
+        input[MT_SETTINGS_CONTROLLER_ATARI_BUTTONS_OFFSET] > 1U ||
         input[MT_SETTINGS_CONTROLLER_ASSIGNMENT_OFFSET + 2U] != 0U ||
         input[MT_SETTINGS_CONTROLLER_ASSIGNMENT_OFFSET + 3U] != 0U) return false;
     profile->core_id = load_u32_le(input);
-    identity->vendor_id = load_u16_le(input + 4U);
-    identity->product_id = load_u16_le(input + 6U);
-    identity->descriptor_hash = load_u32_le(input + 8U);
-    identity->serial_hash = load_u32_le(input + 12U);
-    identity->port_path = load_u32_le(input + 16U);
-    identity->transport = input[20U];
-    identity->interface_id = input[21U];
+    decode_controller_identity(&profile->identity, input);
     for (unsigned action = 0U; action < MT_CONTROL_COUNT; ++action)
         config->binding[action] = load_u16_le(input + 24U + action * 2U);
     for (unsigned axis = 0U; axis < MT_GAMEPAD_AXIS_COUNT; ++axis) {
@@ -601,7 +616,13 @@ static bool decode_controller(mt_controller_settings_profile_t *profile,
         value->deadzone_percent = input[offset + 2U];
         value->sensitivity_percent = load_u16_le(input + offset + 3U);
     }
+    for (unsigned axis = MT_GAMEPAD_AXIS_COUNT; axis < MT_INPUT_AXIS_COUNT; ++axis) {
+        const mt_gamepad_axis_config_t defaults = mt_controls_default_axis(axis);
+        config->axis[axis].source = defaults.source;
+        config->axis[axis].sensitivity_percent = defaults.sensitivity_percent;
+    }
     config->assignment = input[MT_SETTINGS_CONTROLLER_ASSIGNMENT_OFFSET];
+    config->atari_console_buttons_configured = input[MT_SETTINGS_CONTROLLER_ATARI_BUTTONS_OFFSET] != 0U;
     return true;
 }
 
@@ -1026,10 +1047,8 @@ bool mt_supervisor_turbo_controls_load(mt_supervisor_settings_t *settings)
     }
     for (uint32_t i = 0; i < count; ++i) {
         const uint8_t *r = turbo_controls_wire + 24U + i*30U;
-        const mt_controller_identity_t id = {
-            .vendor_id=load_u16_le(r+4), .product_id=load_u16_le(r+6),
-            .descriptor_hash=load_u32_le(r+8), .serial_hash=load_u32_le(r+12),
-            .port_path=load_u32_le(r+16), .transport=r[20], .interface_id=r[21]};
+        mt_controller_identity_t id;
+        decode_controller_identity(&id, r);
         for (size_t n = 0; n < settings->controller_profile_count; ++n) {
             mt_controller_settings_profile_t *p = &settings->controller_profiles[n];
             if (p->core_id == MT_C64_CORE_ID && mt_controls_identity_equal(&p->identity, &id))
@@ -1037,4 +1056,113 @@ bool mt_supervisor_turbo_controls_load(mt_supervisor_settings_t *settings)
         }
     }
     return true;
+}
+
+typedef struct {
+    const char *path;
+    const char *journal_path;
+} axis_tuning_store_t;
+
+static axis_tuning_store_t axis_tuning_store(uint32_t core)
+{
+    if (core == MT_ATARI_XT_CORE_ID)
+        return (axis_tuning_store_t){MT_ATARI_AXIS_TUNING_PATH, MT_ATARI_AXIS_TUNING_JOURNAL_PATH};
+    if (core == MT_SPECTRUM_CORE_ID)
+        return (axis_tuning_store_t){MT_SPECTRUM_AXIS_TUNING_PATH, MT_SPECTRUM_AXIS_TUNING_JOURNAL_PATH};
+    return (axis_tuning_store_t){MT_AXIS_TUNING_PATH, MT_AXIS_TUNING_JOURNAL_PATH};
+}
+
+bool mt_supervisor_axis_tuning_save(const mt_supervisor_settings_t *settings, uint32_t core)
+{
+    if (!settings_valid(settings)) return false;
+    memset(axis_tuning_wire, 0, sizeof(axis_tuning_wire));
+    memcpy(axis_tuning_wire, axis_tuning_magic, sizeof(axis_tuning_magic));
+    store_u32_le(axis_tuning_wire + 8U, 1U);
+    uint32_t count = 0U;
+    for (size_t i = 0U; i < settings->controller_profile_count; ++i) {
+        const mt_controller_settings_profile_t *profile = &settings->controller_profiles[i];
+        bool customized = false;
+        for (unsigned axis = MT_GAMEPAD_AXIS_COUNT; axis < MT_INPUT_AXIS_COUNT; ++axis) {
+            const mt_gamepad_axis_config_t *value = &profile->config.axis[axis];
+            const mt_gamepad_axis_config_t defaults = mt_controls_default_axis(axis);
+            if (value->invert != defaults.invert || value->deadzone_percent != defaults.deadzone_percent ||
+                value->sensitivity_percent != defaults.sensitivity_percent) customized = true;
+        }
+        if (!customized) continue;
+        uint8_t *record = axis_tuning_wire + 24U + count * MT_AXIS_TUNING_RECORD_SIZE;
+        encode_controller_key(record, profile);
+        for (unsigned axis = MT_GAMEPAD_AXIS_COUNT; axis < MT_INPUT_AXIS_COUNT; ++axis) {
+            const mt_gamepad_axis_config_t *value = &profile->config.axis[axis];
+            uint8_t *output = record + 24U + (axis - MT_GAMEPAD_AXIS_COUNT) * 4U;
+            output[0U] = value->invert;
+            output[1U] = value->deadzone_percent;
+            store_u16_le(output + 2U, value->sensitivity_percent);
+        }
+        ++count;
+    }
+    store_u32_le(axis_tuning_wire + 12U, count);
+    const uint32_t crc = crc32_bytes(axis_tuning_wire + 24U, sizeof(axis_tuning_wire) - 24U);
+    store_u32_le(axis_tuning_wire + 16U, crc);
+    store_u32_le(axis_tuning_wire + 20U, ~crc);
+    const axis_tuning_store_t store = axis_tuning_store(core);
+    return mt_sd_storage_journal_replace(store.path, store.journal_path, axis_tuning_wire,
+        sizeof(axis_tuning_wire)).status == MT_SD_OK;
+}
+
+static bool decode_axis_tuning(mt_supervisor_settings_t *settings)
+{
+    const uint32_t count = load_u32_le(axis_tuning_wire + 12U);
+    const uint32_t crc = load_u32_le(axis_tuning_wire + 16U);
+    if (memcmp(axis_tuning_wire, axis_tuning_magic, sizeof(axis_tuning_magic)) != 0 ||
+        load_u32_le(axis_tuning_wire + 8U) != 1U || count > MT_SETTINGS_MAX_CONTROLLER_PROFILES ||
+        load_u32_le(axis_tuning_wire + 20U) != ~crc ||
+        crc32_bytes(axis_tuning_wire + 24U, sizeof(axis_tuning_wire) - 24U) != crc) return false;
+    for (size_t byte = 24U + count * MT_AXIS_TUNING_RECORD_SIZE; byte < sizeof(axis_tuning_wire); ++byte)
+        if (axis_tuning_wire[byte] != 0U) return false;
+
+    /* Validate all records before applying any. A record whose base profile
+     * no longer exists cannot attach itself to a different controller. */
+    const uint8_t *records[MT_SETTINGS_MAX_CONTROLLER_PROFILES] = {0};
+    for (size_t i = 0U; i < count; ++i) {
+        const uint8_t *record = axis_tuning_wire + 24U + i * MT_AXIS_TUNING_RECORD_SIZE;
+        const uint32_t core = load_u32_le(record);
+        mt_controller_identity_t identity;
+        decode_controller_identity(&identity, record);
+        if (mt_controls_action_mask(core) == 0U || identity.transport > MT_CONTROLLER_TRANSPORT_PS4 ||
+            record[22U] != 0U || record[23U] != 0U) return false;
+        for (unsigned axis = MT_GAMEPAD_AXIS_COUNT; axis < MT_INPUT_AXIS_COUNT; ++axis) {
+            const uint8_t *input = record + 24U + (axis - MT_GAMEPAD_AXIS_COUNT) * 4U;
+            const uint16_t gain = load_u16_le(input + 2U);
+            if (input[0U] > 1U || input[1U] > 50U || gain < 25U || gain > 200U) return false;
+        }
+        const mt_controller_settings_profile_t *profile =
+            mt_supervisor_settings_find_controller(settings, core, &identity);
+        if (profile == NULL) continue;
+        const size_t index = (size_t)(profile - settings->controller_profiles);
+        if (records[index] != NULL) return false;
+        records[index] = record;
+    }
+    for (size_t i = 0U; i < settings->controller_profile_count; ++i) {
+        if (records[i] == NULL) continue;
+        for (unsigned axis = MT_GAMEPAD_AXIS_COUNT; axis < MT_INPUT_AXIS_COUNT; ++axis) {
+            mt_gamepad_axis_config_t *value = &settings->controller_profiles[i].config.axis[axis];
+            const uint8_t *input = records[i] + 24U + (axis - MT_GAMEPAD_AXIS_COUNT) * 4U;
+            value->invert = input[0U];
+            value->deadzone_percent = input[1U];
+            value->sensitivity_percent = load_u16_le(input + 2U);
+        }
+    }
+    return true;
+}
+
+bool mt_supervisor_axis_tuning_load(mt_supervisor_settings_t *settings, uint32_t core)
+{
+    if (settings == NULL || settings->controller_profile_count > MT_SETTINGS_MAX_CONTROLLER_PROFILES) return false;
+    const axis_tuning_store_t store = axis_tuning_store(core);
+    if (mt_sd_storage_journal_recover(store.path, store.journal_path, axis_tuning_wire,
+        sizeof(axis_tuning_wire)).status != MT_SD_OK) return false;
+    bool found = false;
+    if (mt_sd_storage_read_file_optional_exact(store.path, axis_tuning_wire,
+        sizeof(axis_tuning_wire), &found).status != MT_SD_OK) return false;
+    return !found || decode_axis_tuning(settings);
 }

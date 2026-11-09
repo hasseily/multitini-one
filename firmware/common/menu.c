@@ -356,6 +356,8 @@ static mt_menu_action_t activate(const mt_menu_t *menu, const mt_menu_view_t *vi
         if (view == NULL || view->files == NULL || menu->row >= view->file_count)
             return action;
         action.kind = directory_row(view, menu->row) ? MT_MENU_ACTION_OPEN_DIRECTORY :
+            (view->files[menu->row].cookie & MT_MENU_FILE_EJECT_DISK) != 0U ? MT_MENU_ACTION_EJECT_DRIVE8 :
+            (view->files[menu->row].cookie & MT_MENU_FILE_EJECT_CARTRIDGE) != 0U ? MT_MENU_ACTION_DETACH_CARTRIDGE :
             (view->files[menu->row].cookie & MT_MENU_FILE_TEXT) != 0U ? MT_MENU_ACTION_OPEN_TEXT :
             menu->browser == MT_MENU_BROWSER_REU ? MT_MENU_ACTION_LOAD_REU :
             menu->browser == MT_MENU_BROWSER_CONFIG ? MT_MENU_ACTION_APPLY_CONFIG :
@@ -523,11 +525,24 @@ static bool gamepad_capture_at_rest(const mt_gamepad_state_t *before,
     return true;
 }
 
+static void update_gamepad_preview_actions(mt_menu_t *menu, const mt_menu_view_t *view)
+{
+    mt_controls_output_t output;
+    mt_controls_evaluate(view->gamepad_core_id,
+        &menu->gamepad_config[menu->gamepad_slot], &view->gamepad_preview,
+        menu->gamepad_preview_actions, &output);
+    menu->gamepad_preview_actions = output.actions;
+}
+
 bool mt_menu_gamepad_update(mt_menu_t *menu, const mt_menu_view_t *view)
 {
     if (menu == NULL || view == NULL || !menu->gamepad_edit || menu->gamepad_slot >= MT_GAMEPAD_SLOTS)
         return false;
-    if (!menu->gamepad_capture) return menu->gamepad_test || menu->gamepad_sticks;
+    if (!menu->gamepad_capture) {
+        if (!menu->gamepad_test && !menu->gamepad_sticks) return false;
+        update_gamepad_preview_actions(menu, view);
+        return true;
+    }
     if (!view->gamepad_devices[menu->gamepad_slot].connected) {
         menu->gamepad_capture = menu->gamepad_wizard = menu->gamepad_conflict = false;
         (void)snprintf(menu->gamepad_notice, sizeof(menu->gamepad_notice), "Controller disconnected. Assignments are preserved; reconnect to continue.");
@@ -556,10 +571,12 @@ bool mt_menu_gamepad_update(mt_menu_t *menu, const mt_menu_view_t *view)
     /* Keep the arming position so slow slider movement can accumulate. */
     if (source == 0U) return false;
     const mt_controller_config_t *config = &menu->gamepad_config[menu->gamepad_slot];
-    if (source >= MT_CONTROL_SOURCE_AXIS_NEG && source < MT_CONTROL_SOURCE_AXIS) {
-        const unsigned direction = (unsigned)source - MT_CONTROL_SOURCE_AXIS_NEG;
-        if (config->axis[direction / 2U].invert != 0U)
-            source = (uint16_t)(MT_CONTROL_SOURCE_AXIS_NEG + (direction ^ 1U));
+    const unsigned axis = mt_controls_source_axis(source);
+    if (axis < MT_INPUT_AXIS_COUNT && !mt_controls_source_is_analog(source) &&
+        config->axis[axis].invert != 0U &&
+        (axis < MT_GAMEPAD_AXIS_COUNT || (view->gamepad_preview.relative_mask & (1U << axis)) == 0U)) {
+        const bool positive = source == mt_controls_axis_source(axis, false, false);
+        source = mt_controls_axis_source(axis, false, positive);
     }
     const uint32_t mask = mt_controls_action_mask(view->gamepad_core_id);
     for (unsigned index = 0U; index < MT_CONTROL_ACTION_COUNT; ++index) {
@@ -587,6 +604,30 @@ static void gamepad_choose_controller(mt_menu_t *menu, const mt_menu_view_t *vie
     }
 }
 
+enum {
+    TUNE_AXIS, TUNE_INVERT, TUNE_DEAD_ZONE, TUNE_SENSITIVITY, TUNE_RESET,
+    TUNE_BACK, TUNE_ROWS
+};
+
+static uint8_t gamepad_next_axis(const mt_menu_t *menu, const mt_menu_view_t *view,
+                                unsigned axis, int step)
+{
+    unsigned available = view->gamepad_devices[menu->gamepad_slot].axis_mask |
+                         view->gamepad_preview.axis_valid_mask;
+    if (available == 0U) available = (1U << MT_GAMEPAD_AXIS_COUNT) - 1U;
+    for (unsigned count = 0U; count < MT_INPUT_AXIS_COUNT; ++count) {
+        axis = (unsigned)((int)axis + step + MT_INPUT_AXIS_COUNT) % MT_INPUT_AXIS_COUNT;
+        if ((available & (1U << axis)) != 0U) return (uint8_t)axis;
+    }
+    return MT_GAMEPAD_AXIS_X;
+}
+
+static bool gamepad_tune_enabled(unsigned row, unsigned axis, bool relative)
+{
+    if (!relative || row == TUNE_AXIS || row == TUNE_BACK) return true;
+    return axis < MT_GAMEPAD_AXIS_COUNT && row != TUNE_DEAD_ZONE;
+}
+
 static mt_menu_action_t gamepad_key(mt_menu_t *menu, const mt_menu_view_t *view, uint8_t key)
 {
     mt_menu_action_t action = no_action();
@@ -594,7 +635,7 @@ static mt_menu_action_t gamepad_key(mt_menu_t *menu, const mt_menu_view_t *view,
     mt_controller_config_t *config = &menu->gamepad_config[menu->gamepad_slot];
     const int step = key == MT_MENU_HID_LEFT ? -1 : 1;
     const unsigned actions = gamepad_action_count(view), commands = 2U + actions;
-    const unsigned rows = menu->gamepad_sticks ? 6U : commands + 7U;
+    const unsigned rows = menu->gamepad_sticks ? TUNE_ROWS : commands + 7U;
     if (menu->gamepad_capture) {
         if (key == MT_MENU_HID_ESCAPE || key == MT_MENU_HID_BACKSPACE) {
             menu->gamepad_capture = menu->gamepad_wizard = menu->gamepad_conflict = false;
@@ -621,17 +662,40 @@ static mt_menu_action_t gamepad_key(mt_menu_t *menu, const mt_menu_view_t *view,
     else if (key == MT_MENU_HID_HOME) menu->gamepad_field = 0U;
     else if (key == MT_MENU_HID_END) menu->gamepad_field = (uint8_t)(rows - 1U);
     else if (menu->gamepad_sticks) {
-        mt_gamepad_axis_config_t *axis = &config->axis[menu->gamepad_control];
-        if (key == MT_MENU_HID_ENTER && menu->gamepad_field == 5U) { menu->gamepad_sticks = false; menu->gamepad_field = (uint8_t)(commands + 2U); }
-        else if (key == MT_MENU_HID_LEFT || key == MT_MENU_HID_RIGHT || key == MT_MENU_HID_ENTER) {
+        const unsigned selected = menu->gamepad_control < MT_INPUT_AXIS_COUNT ?
+            menu->gamepad_control : MT_GAMEPAD_AXIS_X;
+        const bool relative = (view->gamepad_preview.relative_mask & (1U << selected)) != 0U;
+        mt_gamepad_axis_config_t *axis = &config->axis[selected];
+        if (key == MT_MENU_HID_ENTER && menu->gamepad_field == TUNE_BACK) {
+            menu->gamepad_sticks = false;
+            menu->gamepad_field = (uint8_t)(commands + 2U);
+        } else if ((key == MT_MENU_HID_LEFT || key == MT_MENU_HID_RIGHT || key == MT_MENU_HID_ENTER) &&
+                   gamepad_tune_enabled(menu->gamepad_field, selected, relative)) {
             switch (menu->gamepad_field) {
-            case 0U: menu->gamepad_control = (uint8_t)(((int)menu->gamepad_control + step + (int)MT_GAMEPAD_AXIS_COUNT) % (int)MT_GAMEPAD_AXIS_COUNT); break;
-            case 1U: axis->invert ^= 1U; break;
-            case 2U: { const int value = (int)axis->deadzone_percent + step; if (value >= 0 && value <= 50) axis->deadzone_percent = (uint8_t)value; break; }
-            case 3U: { const int value = (int)axis->sensitivity_percent + step * 5; if (value >= 25 && value <= 200) axis->sensitivity_percent = (uint16_t)value; break; }
-            case 4U: axis->invert = 0U; axis->deadzone_percent = 10U; axis->sensitivity_percent = 100U; break;
+            case TUNE_AXIS:
+                menu->gamepad_control = gamepad_next_axis(menu, view, selected, step);
+                break;
+            case TUNE_INVERT: axis->invert ^= 1U; break;
+            case TUNE_DEAD_ZONE: {
+                const int value = (int)axis->deadzone_percent + step;
+                if (value >= 0 && value <= 50) axis->deadzone_percent = (uint8_t)value;
+                break;
+            }
+            case TUNE_SENSITIVITY: {
+                const int value = (int)axis->sensitivity_percent + step * 5;
+                if (value >= 25 && value <= 200) axis->sensitivity_percent = (uint16_t)value;
+                break;
+            }
+            case TUNE_RESET: {
+                const mt_gamepad_axis_config_t defaults = mt_controls_default_axis(selected);
+                axis->invert = defaults.invert;
+                axis->deadzone_percent = defaults.deadzone_percent;
+                axis->sensitivity_percent = defaults.sensitivity_percent;
+                break;
+            }
             default: break;
             }
+            update_gamepad_preview_actions(menu, view);
         }
     } else if (menu->gamepad_field == 0U && (key == MT_MENU_HID_LEFT || key == MT_MENU_HID_RIGHT || key == MT_MENU_HID_ENTER)) gamepad_choose_controller(menu, view, step);
     else if (menu->gamepad_field == 1U && (key == MT_MENU_HID_LEFT || key == MT_MENU_HID_RIGHT || key == MT_MENU_HID_ENTER)) {
@@ -656,8 +720,16 @@ static mt_menu_action_t gamepad_key(mt_menu_t *menu, const mt_menu_view_t *view,
         if (command < 4U && !view->gamepad_devices[menu->gamepad_slot].connected) return action;
         switch (command) {
         case 0U: menu->gamepad_wizard = true; gamepad_start_capture(menu, view, gamepad_action_at(view, 0U)); break;
-        case 1U: menu->gamepad_test = true; break;
-        case 2U: menu->gamepad_sticks = true; menu->gamepad_control = menu->gamepad_field = 0U; break;
+        case 1U:
+            menu->gamepad_test = true;
+            menu->gamepad_preview_actions = 0U;
+            break;
+        case 2U:
+            menu->gamepad_sticks = true;
+            menu->gamepad_control = gamepad_next_axis(menu, view, MT_INPUT_AXIS_COUNT - 1U, 1);
+            menu->gamepad_field = TUNE_AXIS;
+            menu->gamepad_preview_actions = 0U;
+            break;
         case 3U: { const uint8_t assignment = config->assignment; mt_controls_default(view->gamepad_core_id, &view->gamepad_devices[menu->gamepad_slot], config); config->assignment = assignment; break; }
         case 4U: if (mt_menu_gamepad_dirty(menu)) action.kind = MT_MENU_ACTION_SET_GAMEPADS; break;
         case 5U: memcpy(menu->gamepad_config, menu->gamepad_original, sizeof(menu->gamepad_config)); (void)snprintf(menu->gamepad_notice, sizeof(menu->gamepad_notice), "Unsaved changes discarded."); break;
@@ -1307,20 +1379,22 @@ static void render_browser(const mt_menu_t *menu, const mt_menu_view_t *view,
     }
     for (index = first; index < count && index - first < MT_MENU_LIST_ROWS;
          ++index) {
-        char size_text[24];
+        char size_text[24] = {0};
+        const bool eject = (view->files[index].cookie &
+            (MT_MENU_FILE_EJECT_DISK | MT_MENU_FILE_EJECT_CARTRIDGE)) != 0U;
         const bool selected = menu->row == index;
         const size_t row = LIST_Y + index - first;
         const mt_ui_color_t bg = selected ? MT_UI_COLOR_ACTIVE : MT_UI_COLOR_ROW;
         if (directory_row(view, index))
             (void)snprintf(size_text, sizeof(size_text), "%s",
                 (view->files[index].cookie & MT_MENU_FILE_PARENT) != 0U ? "Up" : "Folder");
-        else format_size(size_text, sizeof(size_text), view->files[index].size);
+        else if (!eject) format_size(size_text, sizeof(size_text), view->files[index].size);
         mt_ui_fill(frame, ITEM_X, row, ITEM_W, 1U, bg);
         if (selected) mt_ui_fill(frame, ITEM_X, row, 1U, 1U, MT_UI_COLOR_BLUE);
         if ((view->files[index].cookie & MT_MENU_FILE_READ_ONLY) != 0U)
             draw_lock(frame, LABEL_X - 1U, row, selected, bg);
         field(frame, LABEL_X, row, NAME_W, view->files[index].name,
-              (view->files[index].cookie & MT_MENU_FILE_TEXT) != 0U ? MT_UI_COLOR_WARNING : MT_UI_COLOR_TEXT, bg);
+              eject || (view->files[index].cookie & MT_MENU_FILE_TEXT) != 0U ? MT_UI_COLOR_WARNING : MT_UI_COLOR_TEXT, bg);
         mt_ui_text_field(frame, SIZE_X, row, SIZE_W, size_text, MT_UI_COLOR_MUTED, bg,
                          false, true);
     }
@@ -1332,7 +1406,11 @@ static void render_browser(const mt_menu_t *menu, const mt_menu_view_t *view,
             (void)snprintf(text, sizeof(text), "%s - Enter or Right opens this folder.",
                            view->files[menu->row].name);
             help_text(frame, text);
-        } else if ((view->files[menu->row].cookie & MT_MENU_FILE_TEXT) != 0U)
+        } else if ((view->files[menu->row].cookie & MT_MENU_FILE_EJECT_DISK) != 0U)
+            help_text(frame, "Enter ejects the disk without restarting the Atari.");
+        else if ((view->files[menu->row].cookie & MT_MENU_FILE_EJECT_CARTRIDGE) != 0U)
+            help_text(frame, "Enter ejects an inserted cartridge and restarts the Atari.");
+        else if ((view->files[menu->row].cookie & MT_MENU_FILE_TEXT) != 0U)
             help_text(frame, "Enter reads this document. Escape returns to the same file and scroll position.");
         else if ((view->files[menu->row].cookie & MT_MENU_FILE_READ_ONLY) != 0U) {
             char text[MT_MENU_FILE_NAME_MAX + sizeof("Read only. ")];
@@ -1470,10 +1548,36 @@ static void render_clock(const mt_menu_t *menu, mt_ui_frame_t *frame)
     help_text(frame, "Left/Right changes a value. Up/Down selects a field. Enter advances or saves. Escape cancels without changing the clock.");
 }
 
+static void render_gamepad_output(const mt_menu_t *menu, const mt_menu_view_t *view,
+                                  const mt_controller_config_t *config,
+                                  mt_ui_frame_t *frame, unsigned row)
+{
+    mt_controls_output_t mapped;
+    mt_controls_evaluate(view->gamepad_core_id, config, &view->gamepad_preview,
+                         menu->gamepad_preview_actions, &mapped);
+    char text[ITEM_W * 2U + 1U];
+    size_t used = (size_t)snprintf(text, sizeof(text), "Assigned actions:");
+    const char *separator = " ";
+    for (unsigned index = 0U; index < MT_CONTROL_ACTION_COUNT && used < sizeof(text); ++index) {
+        if ((mapped.actions & (UINT32_C(1) << index)) == 0U) continue;
+        used += (size_t)snprintf(text + used, sizeof(text) - used, "%s%s",
+                                separator, mt_controls_action_name(view->gamepad_core_id, index));
+        separator = ", ";
+    }
+    if (mapped.actions == 0U) (void)snprintf(text + used, sizeof(text) - used, " none");
+    field(frame, ITEM_X, row, ITEM_W, text, MT_UI_COLOR_BLUE, MT_UI_COLOR_PANEL);
+    if (strlen(text) > ITEM_W)
+        field(frame, ITEM_X, row + 1U, ITEM_W, text + ITEM_W, MT_UI_COLOR_BLUE, MT_UI_COLOR_PANEL);
+    if ((mt_controls_action_mask(view->gamepad_core_id) & (UINT32_C(1) << MT_CONTROL_AXIS_X)) != 0U) {
+        (void)snprintf(text, sizeof(text), "Mapped stick: X %d  Y %d", (int)mapped.x, (int)mapped.y);
+        field(frame, ITEM_X, row + 3U, ITEM_W, text, MT_UI_COLOR_BLUE, MT_UI_COLOR_PANEL);
+    }
+}
+
 static void render_gamepad(const mt_menu_t *menu, const mt_menu_view_t *view,
                             mt_ui_frame_t *frame)
 {
-    static const char *const commands[] = {"Set all controls", "Test controller", "Stick and trigger settings", "Restore defaults", "Save changes", "Discard changes", "Back"};
+    static const char *const commands[] = {"Set all controls", "Test controller", "Axis tuning", "Restore defaults", "Save changes", "Discard changes", "Back"};
     const unsigned slot = menu->gamepad_slot < MT_GAMEPAD_SLOTS ? menu->gamepad_slot : 0U;
     const mt_controller_device_t *device = &view->gamepad_devices[slot];
     const mt_controller_config_t *config = &menu->gamepad_config[slot];
@@ -1484,7 +1588,7 @@ static void render_gamepad(const mt_menu_t *menu, const mt_menu_view_t *view,
     const unsigned actions = gamepad_action_count(view), command_start = 2U + actions;
     char text[160], value[80];
     mt_ui_fill(frame, BODY_X, 6U, BODY_W, HELP_Y - 6U, MT_UI_COLOR_PANEL);
-    field(frame, ITEM_X, 6U, ITEM_W, menu->gamepad_test ? "Test controller" : menu->gamepad_sticks ? "Stick and trigger settings" : "Controllers", MT_UI_COLOR_TEXT, MT_UI_COLOR_PANEL);
+    field(frame, ITEM_X, 6U, ITEM_W, menu->gamepad_test ? "Test controller" : menu->gamepad_sticks ? "Axis tuning" : "Controllers", MT_UI_COLOR_TEXT, MT_UI_COLOR_PANEL);
     (void)snprintf(text, sizeof(text), "Controller %u: %s%s  |  Now: %s", slot + 1U, device->name[0] != '\0' ? device->name : "None connected", device->connected ? "" : " (disconnected)", routing);
     field(frame, ITEM_X, 8U, ITEM_W, text, device->connected ? MT_UI_COLOR_TEXT : MT_UI_COLOR_WARNING, MT_UI_COLOR_PANEL);
     if (menu->gamepad_test) {
@@ -1526,39 +1630,47 @@ static void render_gamepad(const mt_menu_t *menu, const mt_menu_view_t *view,
             else (void)snprintf(text, sizeof(text), "%s: not reported", value);
             field(frame, ITEM_X + (index % 2U) * (ITEM_W / 2U), start + 4U + index / 2U, ITEM_W / 2U - 1U, text, MT_UI_COLOR_TEXT, MT_UI_COLOR_PANEL);
         }
-        mt_controls_output_t mapped;
-        mt_controls_evaluate(view->gamepad_core_id, config, &view->gamepad_preview, 0U, &mapped);
-        size_t used = (size_t)snprintf(text, sizeof(text), "Assigned actions:");
-        for (unsigned index = 0U; index < MT_CONTROL_ACTION_COUNT && used < sizeof(text); ++index) {
-            if ((mapped.actions & (UINT32_C(1) << index)) != 0U)
-                used += (size_t)snprintf(text + used, sizeof(text) - used, " %s;", mt_controls_action_name(view->gamepad_core_id, index));
-        }
-        if (mapped.actions == 0U) (void)snprintf(text + used, sizeof(text) - used, " none");
-        field(frame, ITEM_X, start + 10U, ITEM_W, text, MT_UI_COLOR_BLUE, MT_UI_COLOR_PANEL);
-        if (strlen(text) > ITEM_W) field(frame, ITEM_X, start + 11U, ITEM_W, text + ITEM_W, MT_UI_COLOR_BLUE, MT_UI_COLOR_PANEL);
-        if ((mt_controls_action_mask(view->gamepad_core_id) & (UINT32_C(1) << MT_CONTROL_AXIS_X)) != 0U) {
-            (void)snprintf(text, sizeof(text), "Mapped stick: X %d  Y %d", (int)mapped.x, (int)mapped.y);
-            field(frame, ITEM_X, start + 13U, ITEM_W, text, MT_UI_COLOR_BLUE, MT_UI_COLOR_PANEL);
-        }
+        render_gamepad_output(menu, view, config, frame, start + 10U);
         help_text(frame, "Press any controller control to test it. Game and navigation actions are paused. F12 or hold Select+Start for 0.5s to return; keyboard Enter/Escape also returns.");
         return;
     }
     if (menu->gamepad_sticks) {
-        static const char *const labels[] = {"Controller axis", "Reverse direction", "Dead zone", "Sensitivity", "Reset this axis", "Back to assignments"};
-        const unsigned selected = menu->gamepad_control < MT_GAMEPAD_AXIS_COUNT ? menu->gamepad_control : 0U;
+        static const char *const labels[TUNE_ROWS] = {
+            [TUNE_AXIS] = "Controller axis",
+            [TUNE_INVERT] = "Reverse direction",
+            [TUNE_DEAD_ZONE] = "Dead zone",
+            [TUNE_SENSITIVITY] = "Sensitivity",
+            [TUNE_RESET] = "Reset this axis",
+            [TUNE_BACK] = "Back to assignments"
+        };
+        const unsigned selected = menu->gamepad_control < MT_INPUT_AXIS_COUNT ?
+            menu->gamepad_control : MT_GAMEPAD_AXIS_X;
         const mt_gamepad_axis_config_t *axis = &config->axis[selected];
-        for (unsigned index = 0U; index < 6U; ++index) {
-            if (index == 0U) mt_controls_source_name(device, (uint16_t)(MT_CONTROL_SOURCE_AXIS + selected), value, sizeof(value));
-            else if (index == 1U) (void)snprintf(value, sizeof(value), "%s", axis->invert ? "Yes" : "No");
-            else if (index == 2U) (void)snprintf(value, sizeof(value), "%u%%", (unsigned)axis->deadzone_percent);
-            else if (index == 3U) (void)snprintf(value, sizeof(value), "%u%%", (unsigned)axis->sensitivity_percent);
+        const mt_gamepad_state_t *raw = &view->gamepad_preview;
+        const unsigned bit = 1U << selected;
+        const bool relative = (raw->relative_mask & bit) != 0U;
+        for (unsigned index = 0U; index < TUNE_ROWS; ++index) {
+            const bool enabled = gamepad_tune_enabled(index, selected, relative);
+            if (index == TUNE_AXIS)
+                mt_controls_source_name(device, mt_controls_axis_source(selected, true, false), value, sizeof(value));
+            else if (!enabled) (void)snprintf(value, sizeof(value), "Fixed for relative input");
+            else if (index == TUNE_INVERT) (void)snprintf(value, sizeof(value), "%s", axis->invert ? "Yes" : "No");
+            else if (index == TUNE_DEAD_ZONE) (void)snprintf(value, sizeof(value), "%u%%", (unsigned)axis->deadzone_percent);
+            else if (index == TUNE_SENSITIVITY) (void)snprintf(value, sizeof(value), "%u%%", (unsigned)axis->sensitivity_percent);
             else (void)snprintf(value, sizeof(value), "Enter");
-            mt_menu_item_t item = {.label = labels[index], .value = value, .enabled = true, .value_color = MT_UI_COLOR_BLUE};
+            mt_menu_item_t item = {.label = labels[index], .value = value, .enabled = enabled,
+                .value_color = enabled ? MT_UI_COLOR_BLUE : MT_UI_COLOR_MUTED};
             draw_item(frame, LIST_Y + index * 2U, menu->gamepad_field == index, &item);
         }
-        (void)snprintf(text, sizeof(text), "Current value: %d  (%s)", (int)view->gamepad_preview.axis[selected], (view->gamepad_preview.axis_valid_mask & (1U << selected)) != 0U ? "reported" : "not reported");
+        if ((raw->axis_valid_mask & bit) != 0U)
+            (void)snprintf(text, sizeof(text), "Raw %d  |  Tuned %d  (%s)",
+                           (int)raw->axis[selected], (int)mt_controls_tuned_axis(config, raw, selected),
+                           relative ? "relative pulse" : "absolute position");
+        else
+            (void)snprintf(text, sizeof(text), "Waiting for input on this axis.");
         field(frame, ITEM_X, LIST_Y + 14U, ITEM_W, text, MT_UI_COLOR_TEXT, MT_UI_COLOR_PANEL);
-        help_text(frame, "Left/Right adjusts the selected setting. Axis tuning applies to this controller for the active system. Save changes on the assignments page.");
+        render_gamepad_output(menu, view, config, frame, LIST_Y + 16U);
+        help_text(frame, "Left/Right adjusts the setting. Hold Button 3 to navigate with an X/Y D-pad. Save changes on the assignments page.");
         return;
     }
     field(frame, LABEL_X, LIST_Y - 1U, LABEL_W, "Game action / setting", MT_UI_COLOR_MUTED, MT_UI_COLOR_PANEL);

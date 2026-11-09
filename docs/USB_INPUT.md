@@ -16,13 +16,22 @@ New mouse and other generic axis devices start with assignment Off and empty
 bindings. Select a player and assign the desired controls before using them
 as a controller. Their ordinary keyboard and IIgs mouse functions still work.
 They do not acquire a player automatically or use gamepad button shortcuts
-to navigate the menu. Existing gamepad profiles and their six axis tuning
-records retain their saved format and binding numbers.
+to navigate the menu. Existing profiles retain their bindings and saved
+tuning for the six standard axes.
 
 The tester shows ten axes and distinguishes directions reported as a D-pad
 hat from those reported as X/Y. Many SNES-style pads use absolute X/Y for
 their physical D-pad; those readings can be bound normally. Generic absolute
 axes can be captured from their resting position without centering them.
+
+Open **Controls → Controllers → Axis tuning** to adjust dead zone,
+sensitivity, and direction for an absolute axis. Extra absolute Slider,
+Dial, Wheel, and Pan axes start with 0% dead zone and 100% sensitivity.
+The screen shows the raw and tuned values and the actions produced by your
+draft settings. Choose **Save changes** on the assignments page to apply
+them. The selected controller's stick leaves the menu focus alone while you
+preview. Use a keyboard, a D-pad hat, or hold Button 3 (X/Square) to navigate
+with a D-pad that reports X/Y.
 
 IIgs joystick packets carry unsigned paddle coordinates: 0 is left/up, 128
 is center and 255 is right/down. The IIgs adapter converts these to the
@@ -39,8 +48,9 @@ Mouse movement scales by 256 per reported count. Dial, wheel and pan detents
 produce signed 4096 pulses with 20 ms pressed/released phases; bursts queue
 up to 32 pending detents per axis. Pulses expire without another USB report,
 and pending motion is discarded on menu/core transitions or disconnect.
-The extra four axes use fixed unity gain; six-axis tuning and native IIgs
-mouse sensitivity remain separate settings.
+Relative inputs bypass the dead zone. Relative Slider, Dial, Wheel, and Pan
+use fixed unity gain and normal direction. Native IIgs mouse sensitivity uses
+its own setting.
 
 Report protocol preserves mouse wheels, extra buttons and packed 12/16-bit
 coordinates. Boot-capable devices fall back to their basic boot format if

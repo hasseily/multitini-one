@@ -125,6 +125,10 @@ int main(void)
     assert(mt_content_classify_for_core(MT_C64_CORE_ID, "future.tap") == MT_CONTENT_TAP_FUTURE);
     assert(mt_content_classify_for_core(MT_SPECTRUM_CORE_ID, "nested/game.TAP") ==
            MT_CONTENT_SPECTRUM_TAP);
+    assert(mt_content_classify_for_core(MT_SPECTRUM_CORE_ID, "nested/game.TZX") ==
+           MT_CONTENT_SPECTRUM_TZX);
+    assert(mt_content_supported_first_release(MT_CONTENT_SPECTRUM_TZX));
+    assert(!mt_content_may_write_first_release(MT_CONTENT_SPECTRUM_TZX));
     assert(mt_content_classify("future.d81") == MT_CONTENT_D81_FUTURE);
     assert(mt_content_classify("classic.GB") == MT_CONTENT_GB_CART);
     assert(mt_content_classify("color.gbc") == MT_CONTENT_GBC_CART);

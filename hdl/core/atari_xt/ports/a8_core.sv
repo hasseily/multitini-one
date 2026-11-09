@@ -75,6 +75,7 @@ module multitini_atari_xt_machine #(
     // regression floor and must stay runnable on demand.
     parameter bit USE_ANTIC2 = 1'b0,
     parameter bit USE_320XE = 1'b0,
+    parameter bit VCOUNT_COMPAT = 1'b0,
     parameter int unsigned CLK_HZ  = 100_000_000,
     parameter int unsigned PHI2_HZ = 1_785_714
 ) (
@@ -313,7 +314,8 @@ module multitini_atari_xt_machine #(
     end
 
     antic2 #(
-        .LINE_CYCLES(114), .LINES(262), .DISPLAY_TOP(8), .DISPLAY_BOTTOM(248)
+        .LINE_CYCLES(114), .LINES(262), .DISPLAY_TOP(8), .DISPLAY_BOTTOM(248),
+        .VCOUNT_COMPAT(VCOUNT_COMPAT)
     ) u_antic2 (
         .tune(16'h0000),
         .clk(clk), .rst(rst), .tick(tick), .px_tick(px_tick),

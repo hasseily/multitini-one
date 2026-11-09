@@ -403,6 +403,20 @@ static void test_folder_browser(void)
           press(&menu, &view, MT_MENU_HID_RIGHT).kind == MT_MENU_ACTION_LOAD_DISK_PROGRAM &&
           press(&menu, &view, MT_MENU_HID_ENTER).kind == MT_MENU_ACTION_MOUNT_AND_RUN,
           "unflagged D64 rows retain all existing launch actions");
+
+    files[0] = (mt_menu_file_t){.name = "Eject cartridge", .cookie = MT_MENU_FILE_EJECT_CARTRIDGE};
+    files[1] = (mt_menu_file_t){.name = "Game.car", .size = 8192U};
+    mt_menu_open_browser(&menu, MT_MENU_BROWSER_CARTRIDGE);
+    mt_menu_render(&menu, &view, &frame);
+    row_text(&frame, 11U, text);
+    check(strstr(text, "Eject cartridge") != NULL && strstr(text, "0 B") == NULL &&
+          contains(&frame, "restarts the Atari"), "cartridge eject renders as an action");
+    check(press(&menu, &view, MT_MENU_HID_RIGHT).kind == MT_MENU_ACTION_NONE &&
+          press(&menu, &view, MT_MENU_HID_ENTER).kind == MT_MENU_ACTION_DETACH_CARTRIDGE,
+          "Enter dispatches cartridge eject through the existing detach action");
+    (void)press(&menu, &view, MT_MENU_HID_DOWN);
+    check(press(&menu, &view, MT_MENU_HID_ENTER).kind == MT_MENU_ACTION_LOAD_CONTENT,
+          "ordinary Atari cartridges still load from the picker");
 }
 
 static void update_border_view(mt_menu_view_t *view, mt_menu_action_t action)
@@ -835,6 +849,31 @@ static void test_controller_axis_display(void)
     check(contains(&frame, "Left: D-pad + X/Y") && contains(&frame, "Wheel: 0 (relative)") &&
           contains(&frame, "Pan: 0 (relative)"),
           "tester distinguishes simultaneous direction sources and shows expired relative motion");
+
+    menu.gamepad_test = false;
+    menu.gamepad_sticks = true;
+    menu.gamepad_control = MT_INPUT_AXIS_SLIDER;
+    view.gamepad_preview.axis_valid_mask = (uint16_t)((1U << MT_INPUT_AXIS_SLIDER) |
+                                                      (1U << MT_INPUT_AXIS_WHEEL));
+    mt_controls_bind(&menu.gamepad_config[0], MT_CONTROL_LEFT,
+                     mt_controls_axis_source(MT_INPUT_AXIS_SLIDER, false, false));
+    (void)press(&menu, &view, MT_MENU_HID_DOWN);
+    (void)press(&menu, &view, MT_MENU_HID_RIGHT);
+    mt_menu_render(&menu, &view, &frame);
+    check(contains(&frame, "Raw 12345  |  Tuned -12345") &&
+          contains(&frame, "Assigned actions: Left") &&
+          menu.gamepad_original[0].axis[MT_INPUT_AXIS_SLIDER].invert == 0U,
+          "axis tuning previews an extra absolute axis using its unsaved draft");
+
+    (void)press(&menu, &view, MT_MENU_HID_UP);
+    (void)press(&menu, &view, MT_MENU_HID_RIGHT);
+    (void)press(&menu, &view, MT_MENU_HID_DOWN);
+    (void)press(&menu, &view, MT_MENU_HID_RIGHT);
+    mt_menu_render(&menu, &view, &frame);
+    check(menu.gamepad_control == MT_INPUT_AXIS_WHEEL &&
+          menu.gamepad_config[0].axis[MT_INPUT_AXIS_WHEEL].invert == 0U &&
+          contains(&frame, "Fixed for relative input"),
+          "axis tuning skips unreported sources and keeps relative wheel scaling fixed");
 }
 
 int main(void)

@@ -667,9 +667,10 @@ static void test_spectrum_profile(void)
     mt_core_frontend_state_t state = {.core_id = MT_SPECTRUM_CORE_ID, .services_ready = true};
     mt_menu_view_t view = {0};
     mt_core_frontend_apply(&frontend, &state, &view);
-    check(view.media_item_count == 2U && view.media_items[0].enabled &&
+    check(view.media_item_count == 3U && view.media_items[0].enabled &&
           view.media_items[0].action == MT_MENU_ACTION_SPECTRUM_RELOAD &&
-          !view.media_items[1].enabled && !view.media_items[1].value_read_only,
+          !view.media_items[1].enabled && !view.media_items[1].value_read_only &&
+          !view.media_items[2].enabled,
           "Spectrum exposes ROM retry before tape loading");
     state.spectrum_ready = true;
     state.spectrum_tape_name = "Games/Example.TAP";
@@ -679,9 +680,41 @@ static void test_spectrum_profile(void)
           mt_core_frontend_browser_folders(MT_SPECTRUM_CORE_ID, MT_MENU_BROWSER_PROGRAM) &&
           mt_core_frontend_accepts_content(MT_SPECTRUM_CORE_ID, MT_MENU_BROWSER_PROGRAM,
                                           MT_CONTENT_SPECTRUM_TAP) &&
+          mt_core_frontend_accepts_content(MT_SPECTRUM_CORE_ID, MT_MENU_BROWSER_PROGRAM,
+                                          MT_CONTENT_SPECTRUM_TZX) &&
           !mt_core_frontend_accepts_content(MT_SPECTRUM_CORE_ID, MT_MENU_BROWSER_PROGRAM,
-                                           MT_CONTENT_TAP_FUTURE),
-          "Spectrum browser displays only its TAP format and keeps nested paths");
+                                           MT_CONTENT_TAP_FUTURE) &&
+          !mt_core_frontend_accepts_content(MT_C64_CORE_ID, MT_MENU_BROWSER_PROGRAM,
+                                           MT_CONTENT_SPECTRUM_TZX),
+          "Spectrum browser displays TAP and TZX and keeps nested paths");
+    check(!view.media_items[2].enabled && strcmp(view.media_items[2].value, "Normal") == 0,
+          "older Spectrum images retain normal tape playback");
+    state.spectrum_tape_config = MT_SPECTRUM_TAPE_SIGNATURE | MT_SPECTRUM_TAPE_INSTANT;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(view.media_items[2].enabled &&
+          view.media_items[2].action == MT_MENU_ACTION_SPECTRUM_TAPE_MODE &&
+          strcmp(view.media_items[2].value, "Normal (ROM fallback)") == 0,
+          "a custom ROM advertises the Instant preference's normal fallback");
+    state.spectrum_tape_config |= MT_SPECTRUM_TAPE_STOCK_ROM;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(strcmp(view.media_items[2].value, "Instant") == 0 &&
+          strstr(view.media_items[1].help, "stock Spectrum tape loader") != NULL,
+          "a supported stock ROM advertises Instant playback without an F1 start");
+
+    state.spectrum_tape_name = "Games/Example.TZX";
+    state.spectrum_tape_config |= MT_SPECTRUM_TAPE_TZX;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(view.media_items[1].value_read_only &&
+          strcmp(view.media_items[2].value, "Normal (TZX fallback)") == 0 &&
+          strstr(view.media_items[1].help, "F1 to play TZX at Normal speed") != NULL,
+          "TZX uses Normal pulse playback when the Instant preference is selected");
+    state.spectrum_tape_config = MT_SPECTRUM_TAPE_SIGNATURE | MT_SPECTRUM_TAPE_TZX |
+        MT_SPECTRUM_TAPE_STOCK_ROM | MT_SPECTRUM_TAPE_FAST;
+    mt_core_frontend_apply(&frontend, &state, &view);
+    check(strcmp(view.media_items[2].value, "Fast (8x)") == 0 &&
+          strstr(view.media_items[1].help, "F1 to play or pause") != NULL &&
+          strcmp(view.media_items[2].help, "TZX accepts Normal and Fast (8x). TAP also accepts Instant") == 0,
+          "TZX uses the selected Fast pulse speed and the speed help explains the formats");
 }
 
 static void test_atari_xt_profile(void)
@@ -690,29 +723,30 @@ static void test_atari_xt_profile(void)
     mt_core_frontend_state_t state = {.core_id = MT_ATARI_XT_CORE_ID, .services_ready = true};
     mt_menu_view_t view = {0};
     mt_core_frontend_apply(&frontend, &state, &view);
-    check(view.media_item_count == 7U && view.media_items[0].enabled &&
+    check(view.media_item_count == 4U && view.media_items[0].enabled &&
           view.media_items[0].action == MT_MENU_ACTION_ATARI_XT_RELOAD &&
           !view.media_items[1].enabled && !view.media_items[2].enabled,
           "Atari exposes system ROM recovery before cartridge actions");
     state.atari_xt_roms_loaded = true;
     state.atari_xt_cart_uncertain = true;
     mt_core_frontend_apply(&frontend, &state, &view);
-    check(view.media_items[1].enabled && view.media_items[2].enabled &&
-          view.media_items[2].action == MT_MENU_ACTION_DETACH_CARTRIDGE,
-          "Atari enables cartridge replacement and eject after a partial write");
-    check(!view.media_items[3].enabled && !view.media_items[6].enabled,
+    check(view.media_items[1].enabled &&
+          view.media_items[1].action == MT_MENU_ACTION_BROWSE_CARTRIDGE &&
+          strcmp(view.media_items[1].value, "Recover cartridge slot...") == 0,
+          "Atari cartridge picker stays available for recovery after a partial write");
+    check(!view.media_items[2].enabled && !view.media_items[3].enabled,
           "Atari media stays disabled on an older cartridge-only image");
     state.atari_xt_sio_available = true;
     mt_core_frontend_apply(&frontend, &state, &view);
-    check(view.media_items[3].enabled && view.media_items[3].action == MT_MENU_ACTION_BROWSE_DRIVE8 &&
-          !view.media_items[3].value_read_only && !view.media_items[4].enabled && !view.media_items[5].enabled &&
-          view.media_items[6].enabled && view.media_items[6].action == MT_MENU_ACTION_BROWSE_PROGRAM,
-          "Atari enables mount and run with SIO, and guards empty D1");
+    check(view.media_items[2].enabled && view.media_items[2].action == MT_MENU_ACTION_BROWSE_DRIVE8 &&
+          !view.media_items[2].value_read_only &&
+          view.media_items[3].enabled && view.media_items[3].action == MT_MENU_ACTION_BROWSE_PROGRAM,
+          "Atari enables the D1 picker and XEX loader with SIO");
     state.atari_xt_disk_name = "Games/Boot.ATR";
     mt_core_frontend_apply(&frontend, &state, &view);
-    check(view.media_items[3].value_read_only && view.media_items[4].enabled && view.media_items[5].enabled &&
-          strcmp(view.media_items[3].value, state.atari_xt_disk_name) == 0,
-          "Atari shows the mounted read-only disk with boot and eject controls");
+    check(view.media_item_count == 4U && view.media_items[2].value_read_only &&
+          strcmp(view.media_items[2].value, state.atari_xt_disk_name) == 0,
+          "Atari shows the mounted read-only disk in the D1 picker row");
     check(mt_core_frontend_browser_folders(MT_ATARI_XT_CORE_ID, MT_MENU_BROWSER_CARTRIDGE) &&
           mt_core_frontend_accepts_content(MT_ATARI_XT_CORE_ID, MT_MENU_BROWSER_CARTRIDGE,
                                           MT_CONTENT_ATARI_XT_CART) &&

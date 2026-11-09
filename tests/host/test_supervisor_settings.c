@@ -44,7 +44,24 @@ static mt_sd_status_t atari_read_status;
 static mt_sd_status_t atari_write_status;
 static uint8_t spectrum_file[MT_SETTINGS_WIRE_SIZE];
 static bool spectrum_exists;
+static struct {
+    const char *path;
+    const char *journal;
+    uint8_t data[MT_AXIS_TUNING_WIRE_SIZE];
+    bool exists;
+} axis_files[] = {
+    {.path = MT_AXIS_TUNING_PATH, .journal = MT_AXIS_TUNING_JOURNAL_PATH},
+    {.path = MT_ATARI_AXIS_TUNING_PATH, .journal = MT_ATARI_AXIS_TUNING_JOURNAL_PATH},
+    {.path = MT_SPECTRUM_AXIS_TUNING_PATH, .journal = MT_SPECTRUM_AXIS_TUNING_JOURNAL_PATH},
+};
 bool mt_schema10_roundtrip(const uint8_t *input, uint8_t *output);
+
+static size_t axis_file_index(const char *path)
+{
+    for (size_t i = 0U; i < sizeof(axis_files) / sizeof(axis_files[0]); ++i)
+        if (strcmp(path, axis_files[i].path) == 0) return i;
+    return SIZE_MAX;
+}
 
 static void store_u32_le(uint8_t *destination, uint32_t value)
 {
@@ -111,6 +128,12 @@ mt_sd_result_t mt_sd_storage_journal_recover(const char *path,
                                              uint8_t *recovery_buffer,
                                              size_t capacity)
 {
+    const size_t axis_file = axis_file_index(path);
+    if (axis_file != SIZE_MAX) {
+        assert(strcmp(journal_path, axis_files[axis_file].journal) == 0);
+        assert(recovery_buffer != NULL && capacity == MT_AXIS_TUNING_WIRE_SIZE);
+        return sd_result(recover_status, 0U);
+    }
     if (strcmp(path, MT_TURBO_CONTROLS_PATH) == 0) {
         assert(strcmp(journal_path, MT_TURBO_CONTROLS_JOURNAL_PATH) == 0);
         assert(capacity == sizeof turbo_file);
@@ -137,6 +160,13 @@ mt_sd_result_t mt_sd_storage_read_file_optional_exact(
     const char *path, uint8_t *destination, size_t expected_size,
     bool *found)
 {
+    const size_t axis_file = axis_file_index(path);
+    if (axis_file != SIZE_MAX) {
+        assert(destination != NULL && found != NULL && expected_size == MT_AXIS_TUNING_WIRE_SIZE);
+        *found = axis_files[axis_file].exists;
+        if (*found) memcpy(destination, axis_files[axis_file].data, expected_size);
+        return sd_result(read_status, *found ? expected_size : 0U);
+    }
     if (strcmp(path, MT_TURBO_CONTROLS_PATH) == 0) {
         assert(expected_size == sizeof turbo_file);
         *found = turbo_exists;
@@ -180,6 +210,15 @@ mt_sd_result_t mt_sd_storage_journal_replace(const char *path,
                                              const uint8_t *source,
                                              size_t size)
 {
+    const size_t axis_file = axis_file_index(path);
+    if (axis_file != SIZE_MAX) {
+        assert(strcmp(journal_path, axis_files[axis_file].journal) == 0);
+        assert(source != NULL && size == MT_AXIS_TUNING_WIRE_SIZE);
+        if (write_status != MT_SD_OK) return sd_result(write_status, 0U);
+        memcpy(axis_files[axis_file].data, source, size);
+        axis_files[axis_file].exists = true;
+        return sd_result(MT_SD_OK, size);
+    }
     if (strcmp(path, MT_TURBO_CONTROLS_PATH) == 0) {
         assert(strcmp(journal_path, MT_TURBO_CONTROLS_JOURNAL_PATH) == 0);
         assert(size == sizeof turbo_file);
@@ -229,6 +268,8 @@ static void reset_fake(void)
     atari_read_status = MT_SD_OK;
     atari_write_status = MT_SD_OK;
     spectrum_exists = false;
+    for (size_t i = 0U; i < sizeof(axis_files) / sizeof(axis_files[0]); ++i)
+        axis_files[i].exists = false;
 }
 
 static void test_vectrex_cartridge_paths(void)
@@ -1247,6 +1288,66 @@ static void test_machine_controller_migration(void)
         profile->config.assignment == MT_CONTROLLER_PORT2);
 }
 
+static void test_axis_tuning_storage(void)
+{
+    reset_fake();
+    mt_supervisor_settings_t settings, loaded;
+    mt_supervisor_settings_defaults(&settings);
+    const mt_controller_device_t pad = {
+        .identity = {.vendor_id = 0x1234U, .product_id = 0x5678U, .serial_hash = 0x9abU},
+        .home_button = UINT8_MAX,
+    };
+    mt_controller_config_t config;
+    mt_controls_default(MT_C64_CORE_ID, &pad, &config);
+    config.axis[MT_GAMEPAD_AXIS_X].deadzone_percent = 18U;
+    config.axis[MT_INPUT_AXIS_SLIDER].invert = 1U;
+    config.axis[MT_INPUT_AXIS_SLIDER].deadzone_percent = 27U;
+    config.axis[MT_INPUT_AXIS_SLIDER].sensitivity_percent = 150U;
+    assert(mt_supervisor_settings_remember_controller(&settings, MT_C64_CORE_ID, &pad.identity, &config));
+    mt_controls_default(MT_GBC_CORE_ID, &pad, &config);
+    assert(mt_supervisor_settings_remember_controller(&settings, MT_GBC_CORE_ID, &pad.identity, &config));
+    assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
+    assert_schema10_downgrade();
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
+    assert(mt_supervisor_axis_tuning_load(&loaded, MT_C64_CORE_ID));
+    const mt_controller_settings_profile_t *profile = mt_supervisor_settings_find_controller(
+        &loaded, MT_C64_CORE_ID, &pad.identity);
+    assert(profile != NULL && profile->config.axis[MT_GAMEPAD_AXIS_X].deadzone_percent == 18U);
+    assert(profile->config.axis[MT_INPUT_AXIS_SLIDER].deadzone_percent == 0U &&
+           profile->config.axis[MT_INPUT_AXIS_SLIDER].sensitivity_percent == 100U);
+    assert(mt_supervisor_axis_tuning_save(&settings, MT_C64_CORE_ID));
+    assert(mt_supervisor_axis_tuning_load(&loaded, MT_C64_CORE_ID));
+    assert(profile->config.axis[MT_INPUT_AXIS_SLIDER].invert == 1U &&
+           profile->config.axis[MT_INPUT_AXIS_SLIDER].deadzone_percent == 27U &&
+           profile->config.axis[MT_INPUT_AXIS_SLIDER].sensitivity_percent == 150U);
+    profile = mt_supervisor_settings_find_controller(&loaded, MT_GBC_CORE_ID, &pad.identity);
+    assert(profile != NULL && profile->config.axis[MT_INPUT_AXIS_SLIDER].deadzone_percent == 0U);
+
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
+    axis_files[0].data[48U] ^= 1U;
+    assert(!mt_supervisor_axis_tuning_load(&loaded, MT_C64_CORE_ID));
+    profile = mt_supervisor_settings_find_controller(&loaded, MT_C64_CORE_ID, &pad.identity);
+    assert(profile != NULL && profile->config.axis[MT_INPUT_AXIS_SLIDER].invert == 0U);
+    axis_files[0].data[48U] ^= 1U;
+
+    /* Clearing the last customized axis commits an empty companion. */
+    assert(mt_supervisor_axis_tuning_save(&loaded, MT_C64_CORE_ID));
+    assert(mt_supervisor_axis_tuning_load(&loaded, MT_C64_CORE_ID));
+    assert(profile->config.axis[MT_INPUT_AXIS_SLIDER].deadzone_percent == 0U);
+
+    mt_supervisor_settings_defaults(&settings);
+    mt_controls_default(MT_ATARI_XT_CORE_ID, &pad, &config);
+    config.axis[MT_INPUT_AXIS_DIAL].invert = 1U;
+    assert(mt_supervisor_settings_remember_controller(&settings, MT_ATARI_XT_CORE_ID, &pad.identity, &config));
+    assert(mt_supervisor_atari_controls_save(&settings).status == MT_SETTINGS_OK);
+    assert(mt_supervisor_axis_tuning_save(&settings, MT_ATARI_XT_CORE_ID));
+    assert(mt_supervisor_atari_controls_load(&loaded).status == MT_SETTINGS_OK);
+    assert(mt_supervisor_axis_tuning_load(&loaded, MT_ATARI_XT_CORE_ID));
+    profile = mt_supervisor_settings_find_controller(&loaded, MT_ATARI_XT_CORE_ID, &pad.identity);
+    assert(profile != NULL && profile->config.atari_console_buttons_configured &&
+           profile->config.axis[MT_INPUT_AXIS_DIAL].invert == 1U && !axis_files[2].exists);
+}
+
 int main(void)
 {
     test_c64_relative_media_settings();
@@ -1385,5 +1486,6 @@ int main(void)
     test_c64_turbo_storage();
     test_atari_controller_storage();
     test_machine_controller_migration();
+    test_axis_tuning_storage();
     return 0;
 }

@@ -8,6 +8,8 @@
 #define MT_C64_HID_SLOT_COUNT 9U
 #define MT_C64_HID_USAGE_BYTES 32U
 #define MT_C64_HID_SCAN_BYTES 64U
+#define MT_ATARI_HID_START UINT8_C(0x20)
+#define MT_ATARI_HID_SELECT UINT8_C(0x40)
 
 typedef int (*mt_c64_hid_emit_fn)(void *context, uint16_t code,
                                   uint16_t value);
@@ -17,6 +19,7 @@ typedef enum {
     MT_C64_KEYBOARD_LAYOUT_POSITIONAL = 1,
     MT_C64_KEYBOARD_LAYOUT_PS2_PC = 2, /* Native PC keys for other PS/2 cores. */
     MT_C64_KEYBOARD_LAYOUT_PS2_IIGS = 3, /* PC keys with IIgs Apple modifiers. */
+    MT_C64_KEYBOARD_LAYOUT_PS2_ATARI = 4, /* PC keys plus Atari console buttons. */
 } mt_c64_keyboard_layout_t;
 
 typedef struct {

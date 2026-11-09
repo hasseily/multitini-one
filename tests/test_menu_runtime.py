@@ -96,6 +96,7 @@ static mt_gamepad_state_t raw_controllers[MT_GAMEPAD_SLOTS];
 static bool controller_menu_chords[MT_GAMEPAD_SLOTS];
 static uint32_t controller_edit_core;
 static mt_supervisor_settings_t persistent_settings, settings_before_update;
+static mt_supervisor_settings_t atari_controller_settings, spectrum_controller_settings;
 static unsigned screenshot_requests, output_screenshot_requests, config_applies, settings_writes;
 static bool gamepad_preview, save_sd_fail, stored_settings;
 static bool screenshot_busy, screenshot_finish, screenshot_ui_visible, borders_supported;
@@ -277,6 +278,7 @@ static void set_supervisor_error(const char *text) {
 }
 void usb_hid_service_set_menu_capture(bool captured) { (void)captured; }
 void usb_hid_service_set_gamepad_preview(bool preview) { gamepad_preview = preview; }
+void usb_hid_service_set_axis_tuning_slot(uint8_t slot) { (void)slot; }
 void usb_hid_service_set_core_ready(bool ready) {
     core_ready = ready; ++input_changes;
 }
@@ -988,6 +990,7 @@ class MenuRuntimeTests(unittest.TestCase):
             "static void controller_preview_capture(void)",
             "static void supervisor_controller_report(void *context,",
             "static void supervisor_controller_action(void *context,",
+            "static mt_supervisor_settings_t *controller_settings_for_core(",
             "static bool supervisor_controller_config(void *context,",
             "static bool supervisor_keyboard_filter(void *context,",
             "static bool hide_menu_for_core_action(void)\n{",

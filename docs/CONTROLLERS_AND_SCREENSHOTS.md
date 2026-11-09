@@ -26,7 +26,8 @@ The editor shows only the running core's actions.
 - Enter on an action changes one assignment. Delete clears it. Escape cancels
   capture. A conflicting assignment must be explicitly moved or cancelled.
 - **Test controller** shows physical inputs and the actions in the draft map.
-- **Stick and trigger settings** changes deadzone, direction, and sensitivity per source axis.
+- **Axis tuning** changes dead zone, direction, and sensitivity per source axis,
+  with a live preview of raw values, tuned values, and mapped actions.
 - **Save changes** writes and applies the draft. **Discard changes** restores
   the saved configuration. Defaults affect the selected controller and core.
 - F12 always provides keyboard access to the Multitini menu. Identified

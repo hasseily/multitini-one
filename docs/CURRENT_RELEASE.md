@@ -1,5 +1,20 @@
 # Current release
 
+## Multitini M0.8.2
+
+The full public package is `Multitini-082.zip`. It pairs ARM firmware
+`M0.8.2` / `0x4D000802` (runtime ABI 0.28) with the FPGA images selected for
+M0.8.2dev13. Back up the SD card, merge the ZIP's `sd/` contents into the SD
+root, and install `FIRMWARE-MULTITINI.BIN` through Golden Boot. Keep existing
+media, saves and settings. Supply your own system ROMs using the instructions
+under each core's `roms/` directory.
+
+The package uses timing-qualified FPGA images. Board acceptance of the
+assembled release is pending. See the [M0.8.2 release notes](RELEASE_M082.md)
+for changes, installation details and FPGA build IDs.
+
+## Retained September 2026 baseline
+
 The C64 and GBC functional baselines are accepted. This package preserves the
 tested images; promotion does not rebuild firmware, FPGA images, or ROMs.
 
@@ -18,7 +33,7 @@ These build IDs intentionally differ. The supervisor accepts the existing GBC
 package. Build IDs identify artifacts and are not their calendar build dates.
 The current selection was accepted on 2026-09-14.
 
-## Install
+### Install the retained baseline
 
 The assembled package is `build/current/`; its ZIP is
 `build/multitini-current-20260917.zip`. Firmware is also available at the
@@ -45,7 +60,7 @@ drive and starts it. Right performs native LOAD only; type RUN afterward when
 needed. Mount a replacement disk without restarting the game at a disk prompt.
 No game images, writable disks, saves, or user settings are in this package.
 
-## Acceptance and checks
+### Baseline acceptance and checks
 
 The owner confirmed Ultima II starts through Mount & Run, reaches its
 second-disk prompt, and accepts the Player disk. A clean Player image works
@@ -68,7 +83,7 @@ qualification. Detailed launch investigations remain in
 `docs/C64_LAUNCH_20260915.md`, `docs/C64_LAUNCH_20260916.md`, and
 `docs/C64_LAUNCH_20260917.md` in the source repository.
 
-## Reproduce the package
+### Reproduce the retained baseline
 
 `provenance/current_release.json` pins every runtime input by exact source
 path, size, SHA-256, and SD destination. From the repository root:

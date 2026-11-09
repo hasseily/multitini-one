@@ -27,10 +27,17 @@ set c64_ntsc_mode 0
 set genesis_pal_mode 0
 set amiga_aga_pal 0
 set atari_320xe 0
+set atari_vcount_compat 0
 if {[info exists ::env(MULTITINI_ATARI_320XE)]} {
     set atari_320xe [string trim $::env(MULTITINI_ATARI_320XE)]
     if {$machine ne "ATARI_XT" || $atari_320xe ni {0 1}} {
         error "MULTITINI_ATARI_320XE must be 0 or 1 and requires ATARI_XT"
+    }
+}
+if {[info exists ::env(MULTITINI_ATARI_VCOUNT_COMPAT)]} {
+    set atari_vcount_compat [string trim $::env(MULTITINI_ATARI_VCOUNT_COMPAT)]
+    if {$machine ne "ATARI_XT" || !$atari_320xe || $atari_vcount_compat ni {0 1}} {
+        error "MULTITINI_ATARI_VCOUNT_COMPAT must be 0 or 1 and requires the Atari 320XE build"
     }
 }
 if {[info exists ::env(MULTITINI_AMIGA_AGA_PAL)]} {
@@ -719,6 +726,10 @@ set build_generics "SHELL_BUILD_ID=32'h${git_id} C64_NTSC_MODE=1'b${c64_ntsc_mod
 if {$machine eq "ATARI_XT"} {
     lappend build_generics "ATARI_320XE=1'b${atari_320xe}"
     puts "ATARI_320XE=$atari_320xe"
+    if {$atari_vcount_compat} {
+        lappend build_generics "ATARI_VCOUNT_COMPAT=1'b1"
+        puts "ATARI_VCOUNT_COMPAT=1"
+    }
 }
 set_property generic $build_generics [get_filesets sources_1]
 update_compile_order -fileset sources_1

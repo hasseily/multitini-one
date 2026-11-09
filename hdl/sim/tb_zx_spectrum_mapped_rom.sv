@@ -15,6 +15,7 @@ module tb_zx_spectrum_mapped_rom;
 
     multitini_zx_spectrum_adapter dut (
         .core_clk(clk), .reset(reset), .core_reset_request(guest_reset), .pause_request(1'b0),
+        .tape_speed(2'd0), .stock_tape_rom(1'b0),
         .clear_load_error(1'b0), .input_code(16'd0), .input_value(16'd0),
         .input_valid(1'b0), .input_ready(), .load_data(load_data), .load_kind(8'h70),
         .load_valid(load_valid), .load_first(load_first), .load_last(load_last),

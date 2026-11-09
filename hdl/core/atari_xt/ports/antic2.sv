@@ -44,7 +44,8 @@ module antic2 #(
     parameter int LINE_CYCLES    = 114,
     parameter int LINES          = 262,
     parameter int DISPLAY_TOP    = 8,
-    parameter int DISPLAY_BOTTOM = 248
+    parameter int DISPLAY_BOTTOM = 248,
+    parameter bit VCOUNT_COMPAT = 1'b0
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -232,10 +233,16 @@ module antic2 #(
     assign px_collide = px_active || an_emitting;
 
     // ---- registers ---------------------------------------------------------
+    // Multitini One modification: optionally hold the last stable VCOUNT
+    // value on the one-cycle rollover spike. Only CPU reads use this value.
+    localparam logic [7:0] VCOUNT_ROLLOVER = 8'(LINES / 2);
+    wire [7:0] cpu_vcount = (VCOUNT_COMPAT && vcount == VCOUNT_ROLLOVER)
+                          ? (VCOUNT_ROLLOVER - 8'd1) : vcount;
+
     antic2_regs u_regs (
         .clk(clk), .rst(rst), .tick(tick),
         .cs(cs), .we(we), .addr(addr), .wdata(wdata),
-        .nmist_in(nmist), .vcount_in(vcount),
+        .nmist_in(nmist), .vcount_in(cpu_vcount),
         .dmactl(dmactl), .chactl(chactl),
         .dlist_lo_stb(dlist_lo_stb), .dlist_hi_stb(dlist_hi_stb),
         .dlist_val(dlist_val),
@@ -462,7 +469,9 @@ module antic2 #(
         .clk(clk), .rst(rst),
         .line_start(sched_line_start), .tick(tick), .hcount(hcount),
         .first_row(row_first), .is_char(md_is_char),
-        .is_display(pf_fetching),
+        // A mode can remain selected during vertical blank. Only visible
+        // lines start ordinary playfield fetches. The refresh schedule is separate.
+        .is_display(pf_fetching && px_active),
         .bytes_per_line(pf_bytes), .dma_start(pf_dma_start),
         .dma_stop(pf_dma_stop), .step(pf_step),
         // The OPERAND fetches belong to the INSTRUCTION, not to every row.

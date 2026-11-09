@@ -3412,6 +3412,7 @@ static mt_menu_view_t supervisor_menu_view(void)
         state.spectrum_ready = (shell_read(MT_REG_STATUS) & MT_STATUS_CORE_READY) != 0U;
         state.spectrum_boot_error = spectrum_boot_error;
         state.spectrum_tape_name = spectrum_content_tape_name();
+        state.spectrum_tape_config = spectrum_content_tape_config(&shell_link);
     } else if (supervisor.has_active && state.core_id == MT_ATARI_XT_CORE_ID) {
         state.services_ready = true;
         state.atari_xt_roms_loaded = atari_xt_content_roms_loaded();
@@ -3783,15 +3784,17 @@ static bool collect_d64_prg(void *context,
 
 static void sort_menu_files(void)
 {
+    const uint32_t leading_rows = MT_MENU_FILE_PARENT | MT_MENU_FILE_EJECT_DISK |
+        MT_MENU_FILE_EJECT_CARTRIDGE;
     size_t index;
     for (index = 1U; index < supervisor_menu_file_count; ++index) {
         mt_menu_file_t value = supervisor_menu_files[index];
         size_t position = index;
         while (position != 0U) {
             const mt_menu_file_t *const previous = &supervisor_menu_files[position - 1U];
-            const unsigned value_group = (value.cookie & MT_MENU_FILE_PARENT) != 0U ? 0U :
+            const unsigned value_group = (value.cookie & leading_rows) != 0U ? 0U :
                 ((value.cookie & MT_MENU_FILE_DIRECTORY) != 0U ? 1U : 2U);
-            const unsigned previous_group = (previous->cookie & MT_MENU_FILE_PARENT) != 0U ? 0U :
+            const unsigned previous_group = (previous->cookie & leading_rows) != 0U ? 0U :
                 ((previous->cookie & MT_MENU_FILE_DIRECTORY) != 0U ? 1U : 2U);
             if (previous_group < value_group ||
                 (previous_group == value_group && strcmp(previous->name, value.name) <= 0))
@@ -3863,7 +3866,7 @@ static bool media_browser_file_read_only(mt_menu_browser_t browser,
     const uint32_t core_id = supervisor.active.package.core_id;
     const mt_content_type_t type = mt_content_classify_for_core(core_id, info->name);
     if (type == MT_CONTENT_G64 || type == MT_CONTENT_ATARI_XT_ATR ||
-        type == MT_CONTENT_SPECTRUM_TAP) return true;
+        type == MT_CONTENT_SPECTRUM_TAP || type == MT_CONTENT_SPECTRUM_TZX) return true;
     if (type == MT_CONTENT_D64) {
         const size_t sectors = mt_c64_d64_sector_count(display_size);
         return sectors != 0U && info->size != sectors * MT_C64_D64_SECTOR_SIZE;
@@ -3905,27 +3908,43 @@ static void list_vectrex_browser(mt_menu_browser_t browser,
     supervisor_menu_file_count = 0U;
     supervisor_d64_prg_count = 0U;
     if (mt_media_browser_can_up(directory)) {
-        memcpy(supervisor_menu_files[0].name, "..", 3U);
-        supervisor_menu_files[0].size = 0U;
-        supervisor_menu_files[0].cookie = MT_MENU_FILE_DIRECTORY | MT_MENU_FILE_PARENT;
-        supervisor_menu_file_count = 1U;
+        supervisor_menu_files[supervisor_menu_file_count++] = (mt_menu_file_t){
+            .name = "..", .cookie = MT_MENU_FILE_DIRECTORY | MT_MENU_FILE_PARENT
+        };
     }
+    const bool atari = supervisor.has_active &&
+        supervisor.active.package.core_id == MT_ATARI_XT_CORE_ID;
+    const bool eject_cartridge = atari && browser == MT_MENU_BROWSER_CARTRIDGE;
+    if (atari && browser == MT_MENU_BROWSER_DRIVE8) {
+        supervisor_menu_files[supervisor_menu_file_count++] = (mt_menu_file_t){
+            .name = "Eject Disk", .cookie = MT_MENU_FILE_EJECT_DISK
+        };
+    } else if (eject_cartridge) {
+        supervisor_menu_files[supervisor_menu_file_count++] = (mt_menu_file_t){
+            .name = "Eject cartridge", .cookie = MT_MENU_FILE_EJECT_CARTRIDGE
+        };
+    }
+    const size_t leading_count = supervisor_menu_file_count;
     const mt_sd_status_t listed = browser == MT_MENU_BROWSER_DOCUMENTS || browser == MT_MENU_BROWSER_CONFIG ?
         mt_sd_storage_list(path, collect_menu_file, &browser).status :
         list_media_browser_files(path, browser, directory);
-    if (listed != MT_SD_OK) {
+    if (listed != MT_SD_OK && !eject_cartridge) {
         /* A partial list must never be interpreted relative to the old path. */
         supervisor_menu_file_count = 0U;
         mt_menu_close_browser(&supervisor_menu);
         set_supervisor_error("Could not open the media folder");
         return;
     }
+    /* Keep Atari cartridge recovery available even without a readable SD
+     * directory. Discard any partial list of files. */
+    if (listed != MT_SD_OK) supervisor_menu_file_count = leading_count;
     vectrex_media_browser = *directory;
     memcpy(vectrex_browser_path, path, strlen(path) + 1U);
     sort_menu_files();
     mt_menu_open_browser(&supervisor_menu, browser);
-    set_supervisor_status(supervisor_menu_file_count == 0U ?
-        "No matching files or folders" : "Enter opens; Backspace goes up; Esc closes");
+    if (listed != MT_SD_OK) set_supervisor_error("Could not open the media folder");
+    else set_supervisor_status(supervisor_menu_file_count == 0U ?
+            "No matching files or folders" : "Enter opens; Backspace goes up; Esc closes");
 }
 
 static void open_menu_browser(mt_menu_browser_t browser)
@@ -4481,6 +4500,9 @@ static void controller_preview_capture(void)
     }
     captured = requested;
     usb_hid_service_set_gamepad_preview(captured);
+    usb_hid_service_set_axis_tuning_slot(supervisor_menu.visible &&
+        supervisor_menu.gamepad_edit && supervisor_menu.gamepad_sticks ?
+        supervisor_menu.gamepad_slot : UINT8_MAX);
 }
 
 static void supervisor_controller_report(void *context, uint8_t slot, const mt_gamepad_state_t *raw)
@@ -4555,7 +4577,25 @@ static bool supervisor_controller_config(void *context, uint32_t core_id, uint8_
         controller_settings, core_id, &device->identity);
     if (saved == NULL && controller_settings != &persistent_settings)
         saved = mt_supervisor_settings_find_controller(&persistent_settings, core_id, &device->identity);
-    if (saved != NULL) { *config = saved->config; return true; }
+    if (saved != NULL) {
+        if (core_id != MT_ATARI_XT_CORE_ID || saved->config.atari_console_buttons_configured) {
+            *config = saved->config;
+            return true;
+        }
+        mt_controller_config_t defaults;
+        mt_controls_default(core_id, device, &defaults);
+        *config = saved->config;
+        for (unsigned action = MT_CONTROL_START; action <= MT_CONTROL_SELECT; ++action) {
+            const uint16_t source = mt_controls_binding(&defaults, action);
+            if (source == MT_CONTROL_SOURCE_NONE) continue;
+            bool occupied = false;
+            for (unsigned existing = 0U; existing < MT_CONTROL_COUNT; ++existing)
+                if (mt_controls_binding(config, existing) == source) occupied = true;
+            if (!occupied) mt_controls_bind(config, action, source);
+        }
+        config->atari_console_buttons_configured = true;
+        return true;
+    }
     if (core_id != MT_SUPERVISOR_CORE_ID && core_id != MT_SPECTRUM_CORE_ID &&
         core_id != MT_ATARI_XT_CORE_ID &&
         (persistent_settings.legacy_gamepad_pending & (1U << slot)) != 0U) {
@@ -4594,6 +4634,12 @@ static void load_machine_controller_settings(void)
 {
     log_controller_settings_load("Atari", mt_supervisor_atari_controls_load(&atari_controller_settings));
     log_controller_settings_load("Spectrum", mt_supervisor_spectrum_controls_load(&spectrum_controller_settings));
+    if (!mt_supervisor_axis_tuning_load(&persistent_settings, 0U))
+        xil_printf("[settings] extra axis tuning unavailable\r\n");
+    if (!mt_supervisor_axis_tuning_load(&atari_controller_settings, MT_ATARI_XT_CORE_ID))
+        xil_printf("[settings] Atari extra axis tuning unavailable\r\n");
+    if (!mt_supervisor_axis_tuning_load(&spectrum_controller_settings, MT_SPECTRUM_CORE_ID))
+        xil_printf("[settings] Spectrum extra axis tuning unavailable\r\n");
 }
 
 static int usb_sd_quiesce(void *context)
@@ -5249,7 +5295,6 @@ static bool menu_action_needs_core_progress(mt_menu_action_t action)
     case MT_MENU_ACTION_AMIGA_RELOAD:
     case MT_MENU_ACTION_SPECTRUM_RELOAD:
     case MT_MENU_ACTION_ATARI_XT_RELOAD:
-    case MT_MENU_ACTION_ATARI_XT_BOOT_DISK:
     case MT_MENU_ACTION_AMIGA_RETRY:
     case MT_MENU_ACTION_AMIGA_DISPLAY:
     case MT_MENU_ACTION_IIGS_PRAM:
@@ -6175,17 +6220,19 @@ static void handle_menu_action(mt_menu_action_t action)
         const char *const error = spectrum_boot_with_input(&supervisor.active);
         if (error != NULL) set_supervisor_error(error);
         else set_supervisor_status("Spectrum ROM loaded");
+    } else if (action.kind == MT_MENU_ACTION_SPECTRUM_TAPE_MODE) {
+        if (!supervisor.has_active || supervisor.active.package.core_id != MT_SPECTRUM_CORE_ID ||
+            (shell_read(MT_REG_STATUS) & MT_STATUS_CORE_READY) == 0U)
+            return;
+        const char *const error = spectrum_content_next_tape_mode(&shell_link);
+        if (error != NULL) set_supervisor_error(error);
+        else set_supervisor_status("Spectrum tape speed saved");
     } else if (action.kind == MT_MENU_ACTION_ATARI_XT_RELOAD) {
         if (!supervisor.has_active || supervisor.active.package.core_id != MT_ATARI_XT_CORE_ID)
             return;
         const char *const error = atari_xt_boot_with_input(&supervisor.active);
         if (error != NULL) set_supervisor_error(error);
         else set_supervisor_status("Atari system ROMs loaded");
-    } else if (action.kind == MT_MENU_ACTION_ATARI_XT_BOOT_DISK) {
-        if (shell_read(MT_REG_CORE_ID) != MT_ATARI_XT_CORE_ID) return;
-        const char *const error = atari_xt_restart_with_input(true);
-        if (error != NULL) set_supervisor_error(error);
-        else set_supervisor_status("Atari booting from D1:");
     } else if(action.kind==MT_MENU_ACTION_AMIGA_RELOAD || action.kind==MT_MENU_ACTION_AMIGA_RETRY) {
         usb_hid_service_set_core_ready(false);
         const int result=action.kind==MT_MENU_ACTION_AMIGA_RELOAD ? amiga_content_service_boot():amiga_content_service_retry();
@@ -6326,8 +6373,10 @@ static void handle_menu_action(mt_menu_action_t action)
         mt_supervisor_settings_t *controller_settings = controller_settings_for_core(controller_edit_core);
         const bool separate = controller_settings != &persistent_settings;
         const bool c64 = controller_edit_core == MT_C64_CORE_ID;
-        uint16_t previous_turbo[MT_GAMEPAD_SLOTS][3] = {{0U}};
-        bool turbo_changed = false;
+        mt_controller_config_t defaults;
+        mt_controls_default(controller_edit_core, NULL, &defaults);
+        const mt_controller_config_t *previous_configs[MT_GAMEPAD_SLOTS];
+        bool turbo_changed = false, axes_changed = false;
         settings_before_update = *controller_settings;
         if (separate && !mt_supervisor_settings_merge_controllers(controller_settings,
             &persistent_settings, controller_edit_core)) {
@@ -6337,16 +6386,21 @@ static void handle_menu_action(mt_menu_action_t action)
         }
         for (uint8_t slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot) {
             if (!controller_edit_devices[slot].connected) continue;
-            if (c64) {
-                const mt_controller_settings_profile_t *previous = mt_supervisor_settings_find_controller(
-                    &settings_before_update, controller_edit_core, &controller_edit_devices[slot].identity);
-                if (previous != NULL)
-                    memcpy(previous_turbo[slot], previous->config.extra_binding, sizeof(previous_turbo[slot]));
-                if (memcmp(previous_turbo[slot], supervisor_menu.gamepad_config[slot].extra_binding,
-                    sizeof(previous_turbo[slot])) != 0) turbo_changed = true;
+            const mt_controller_settings_profile_t *previous = mt_supervisor_settings_find_controller(
+                &settings_before_update, controller_edit_core, &controller_edit_devices[slot].identity);
+            const mt_controller_config_t *original = previous != NULL ? &previous->config : &defaults;
+            const mt_controller_config_t *draft = &supervisor_menu.gamepad_config[slot];
+            previous_configs[slot] = original;
+            if (c64 && memcmp(original->extra_binding, draft->extra_binding,
+                              sizeof(original->extra_binding)) != 0) turbo_changed = true;
+            for (unsigned axis = MT_GAMEPAD_AXIS_COUNT; axis < MT_INPUT_AXIS_COUNT; ++axis) {
+                const mt_gamepad_axis_config_t *before = &original->axis[axis];
+                const mt_gamepad_axis_config_t *after = &draft->axis[axis];
+                if (before->invert != after->invert || before->deadzone_percent != after->deadzone_percent ||
+                    before->sensitivity_percent != after->sensitivity_percent) axes_changed = true;
             }
             if (!mt_supervisor_settings_remember_controller(controller_settings, controller_edit_core,
-                &controller_edit_devices[slot].identity, &supervisor_menu.gamepad_config[slot])) {
+                &controller_edit_devices[slot].identity, draft)) {
                 *controller_settings = settings_before_update;
                 set_supervisor_error("Controller profile storage is full or invalid");
                 return;
@@ -6361,13 +6415,22 @@ static void handle_menu_action(mt_menu_action_t action)
         } else {
             saved = save_persistent_settings();
         }
-        if (saved && turbo_changed && !mt_supervisor_turbo_controls_save(controller_settings)) {
-            /* The shared file has committed. Keep those bindings and leave the
-             * editor open with the requested turbo bindings for a retry. */
+        const bool turbo_failed = saved && turbo_changed &&
+            !mt_supervisor_turbo_controls_save(controller_settings);
+        const bool axes_failed = saved && axes_changed &&
+            !mt_supervisor_axis_tuning_save(controller_settings, controller_edit_core);
+        if (turbo_failed || axes_failed) {
+            /* The base file committed. Apply the persisted changes and leave
+             * the complete draft open so the remaining writes can be retried. */
             for (uint8_t slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot) {
                 if (!controller_edit_devices[slot].connected) continue;
                 mt_controller_config_t committed = supervisor_menu.gamepad_config[slot];
-                memcpy(committed.extra_binding, previous_turbo[slot], sizeof(previous_turbo[slot]));
+                const mt_controller_config_t *previous = previous_configs[slot];
+                if (turbo_failed)
+                    memcpy(committed.extra_binding, previous->extra_binding, sizeof(committed.extra_binding));
+                if (axes_failed)
+                    for (unsigned axis = MT_GAMEPAD_AXIS_COUNT; axis < MT_INPUT_AXIS_COUNT; ++axis)
+                        committed.axis[axis] = previous->axis[axis];
                 supervisor_menu.gamepad_original[slot] = committed;
                 (void)mt_supervisor_settings_remember_controller(controller_settings, controller_edit_core,
                     &controller_edit_devices[slot].identity, &committed);
@@ -6377,7 +6440,9 @@ static void handle_menu_action(mt_menu_action_t action)
                     configs[slot] = committed;
             }
             (void)usb_hid_service_set_controller_configs(configs);
-            set_supervisor_error("Controls saved; turbo write failed. Retry Save changes");
+            set_supervisor_error(turbo_failed && axes_failed ? "Turbo and axis tuning writes failed. Retry Save changes" :
+                turbo_failed ? "Turbo bindings write failed. Retry Save changes" :
+                "Extra axis tuning write failed. Retry Save changes");
             return;
         }
         if (saved) {
@@ -6442,7 +6507,7 @@ static void handle_menu_action(mt_menu_action_t action)
             if (error != NULL) set_supervisor_error(error);
             else {
                 mt_menu_close_browser(&supervisor_menu);
-                set_supervisor_status("ATR mounted read-only. Select Boot D1: to restart.");
+                set_supervisor_status("ATR mounted read-only. Use Restart active core to boot.");
             }
             return;
         }
@@ -6666,7 +6731,19 @@ static void handle_menu_action(mt_menu_action_t action)
             if (error != NULL) set_supervisor_error(error);
             else {
                 mt_menu_close_browser(&supervisor_menu);
-                set_supervisor_status("Tape inserted. Close F12 and press F1 to play.");
+                const uint32_t config = spectrum_content_tape_config(&shell_link);
+                const bool tzx = mt_content_classify(name) == MT_CONTENT_SPECTRUM_TZX;
+                const uint32_t mode = config & MT_SPECTRUM_TAPE_MODE_MASK;
+                if (tzx) {
+                    set_supervisor_status(mode == MT_SPECTRUM_TAPE_FAST ?
+                        "TZX inserted. Start the loader, then press F1 for Fast (8x)." :
+                        "TZX inserted. Start the loader, then press F1 for Normal speed.");
+                } else {
+                    const bool instant = mode == MT_SPECTRUM_TAPE_INSTANT &&
+                        (config & MT_SPECTRUM_TAPE_STOCK_ROM) != 0U;
+                    set_supervisor_status(instant ? "Tape inserted. Start the stock Spectrum tape loader." :
+                        "Tape inserted. Start the tape loader, then press F1 to play.");
+                }
             }
         } else if (shell_read(MT_REG_CORE_ID) == MT_VECTREX_CORE_ID) {
             char name[MT_MEDIA_BROWSER_PATH_MAX + 1U];
@@ -6801,7 +6878,13 @@ static void handle_menu_action(mt_menu_action_t action)
         }
     } else if (action.kind == MT_MENU_ACTION_EJECT_DRIVE8) {
         if (shell_read(MT_REG_CORE_ID) == MT_ATARI_XT_CORE_ID) {
-            set_supervisor_outcome(atari_xt_disk_eject(), "Atari disk ejected", "Could not close Atari disk");
+            const bool mounted = atari_xt_disk_name() != NULL;
+            if (atari_xt_disk_eject()) {
+                mt_menu_close_browser(&supervisor_menu);
+                set_supervisor_status(mounted ? "Atari disk ejected" : "D1: is already empty");
+            } else {
+                set_supervisor_error("Could not close Atari disk");
+            }
             return;
         }
         if (c64_d64_service_eject() != 0)
@@ -6812,11 +6895,19 @@ static void handle_menu_action(mt_menu_action_t action)
             set_supervisor_status("Drive 8 ejected");
     } else if (action.kind == MT_MENU_ACTION_DETACH_CARTRIDGE) {
         if (shell_read(MT_REG_CORE_ID) == MT_ATARI_XT_CORE_ID) {
+            if (atari_xt_content_cart_name() == NULL && !atari_xt_content_cart_uncertain()) {
+                mt_menu_close_browser(&supervisor_menu);
+                set_supervisor_status("Atari cartridge slot is already empty");
+                return;
+            }
             usb_hid_service_set_core_ready(false);
             const char *const error = atari_xt_content_eject(&shell_link, iigs_transfer_progress);
             atari_xt_refresh_av();
             if (error != NULL) set_supervisor_error(error);
-            else set_supervisor_status("Atari cartridge ejected");
+            else {
+                mt_menu_close_browser(&supervisor_menu);
+                set_supervisor_status("Atari cartridge ejected");
+            }
         } else if (shell_read(MT_REG_CORE_ID) == MT_VECTREX_CORE_ID) {
             usb_hid_service_set_core_ready(false);
             const mt_vectrex_content_result_t result = vectrex_content_service_detach();

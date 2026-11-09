@@ -209,13 +209,18 @@ def platform_contract(image_hash, firmware_hash):
             "image_ps7_init_sha256": image_hash, "firmware_ps7_init_sha256": firmware_hash}
 
 
-def verify_atari_variant(directory, record, *, atari_320xe=False):
-    """Check the RAM variant in the sealed inputs and implemented generics."""
+def verify_atari_variant(directory, record, *, atari_320xe=False, atari_vcount_compat=False):
+    """Check Atari generics against the sealed inputs and requested variant."""
     configuration = record["configuration"]
     if record["machine"] != "ATARI_XT":
         require(not atari_320xe and "atari_320xe" not in configuration, "Atari 320XE requires ATARI_XT")
+        require(not atari_vcount_compat and "atari_vcount_compat" not in configuration,
+                "Atari VCOUNT compatibility requires ATARI_XT")
         return
+    require(not atari_vcount_compat or atari_320xe, "Atari VCOUNT compatibility requires 320 KiB")
     require(configuration.get("atari_320xe", False) is atari_320xe, "Wrong Atari RAM variant")
+    require(configuration.get("atari_vcount_compat", False) is atari_vcount_compat,
+            "Wrong Atari VCOUNT compatibility variant")
     report = Path(directory) / "reports/build_manifest.txt"
     generics = re.findall(r"^generic=(.*)$", report.read_text(), re.M)
     require(len(generics) == 1, "Missing or ambiguous Atari FPGA generics")
@@ -223,10 +228,17 @@ def verify_atari_variant(directory, record, *, atari_320xe=False):
     expected = str(int(atari_320xe))
     # Existing 64 KiB archives predate the generic and flag.
     require(variant == [f"1'b{expected}"] or (not atari_320xe and not variant), "Wrong Atari RAM generic")
+    compat = re.findall(r"(?:^|\s)ATARI_VCOUNT_COMPAT=(\S+)", generics[0])
+    expected_compat = str(int(atari_vcount_compat))
+    require(compat == [f"1'b{expected_compat}"] or (not atari_vcount_compat and not compat),
+            "Wrong Atari VCOUNT compatibility generic")
     for name in ("generate.tcl", "build.tcl"):
         settings = (Path(directory) / name).read_text()
         selection = re.findall(r"^set ::env\(MULTITINI_ATARI_320XE\) \{([^\r\n]*)\}\s*$", settings, re.M)
         require(selection == [expected] or (not variant and not selection), "Wrong Atari RAM build settings: " + name)
+        selection = re.findall(r"^set ::env\(MULTITINI_ATARI_VCOUNT_COMPAT\) \{([^\r\n]*)\}\s*$", settings, re.M)
+        require(selection == [expected_compat] or (not compat and not selection),
+                "Wrong Atari VCOUNT compatibility build settings: " + name)
     if atari_320xe:
         log = (Path(directory) / "build.log").read_text(errors="replace")
         census = re.findall(r"^ATARI_320XE_RAM_PASS stage=(\w+) array=(\w+) ramb36=(\d+) ramb18=(\d+)$", log, re.M)
@@ -245,14 +257,15 @@ def verify_atari_variant(directory, record, *, atari_320xe=False):
 
 def inspect_artifact(directory, machine, *, ntsc=False, gbc_psram=False,
                      genesis_pal=False, amiga_aga_pal=False, amiga_ap68040=False,
-                     atari_320xe=False, require_current_inputs=False):
+                     atari_320xe=False, atari_vcount_compat=False, require_current_inputs=False):
     """Reusable JSON-safe audit for an explicitly selected completed build."""
     import package_cpu1_video_test as package
     try:
         build = package.verify_hardware(Path(directory).resolve(), machine, ntsc=ntsc,
                                         gbc_psram=gbc_psram, genesis_pal=genesis_pal,
                                         amiga_aga_pal=amiga_aga_pal, amiga_ap68040=amiga_ap68040, reuse=True)
-        verify_atari_variant(directory, build["record"], atari_320xe=atari_320xe)
+        verify_atari_variant(directory, build["record"], atari_320xe=atari_320xe,
+                             atari_vcount_compat=atari_vcount_compat)
     except (OSError, KeyError, TypeError, tarfile.TarError, zipfile.BadZipFile,
             zlib.error, RuntimeError) as error:
         raise ValueError("Invalid FPGA artifact: " + str(error)) from error
@@ -262,6 +275,8 @@ def inspect_artifact(directory, machine, *, ntsc=False, gbc_psram=False,
                   bit=describe(build["bit"]), xsa=describe(build["xsa"]))
     if atari_320xe:
         result["atari_320xe"] = True
+    if atari_vcount_compat:
+        result["atari_vcount_compat"] = True
     if require_current_inputs:
         require_compatible_inputs(result)
     return result

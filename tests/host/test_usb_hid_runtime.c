@@ -1380,6 +1380,46 @@ static void test_shoulder_navigation(void)
     puts("PASS controller shoulders navigate menu sections without changing capture or gameplay");
 }
 
+static void test_axis_tuning_navigation_and_release(void)
+{
+    navigation_fixture_t fixture = {0};
+    usb_hid_service_init(NULL);
+    usb_hid_service_set_active_core(MT_C64_CORE_ID);
+    mt_menu_init(&fixture.menu, &fixture.view);
+    fixture.menu.visible = true;
+    usb_hid_service_set_keyboard_filter(navigate_menu, &fixture);
+    usb_hid_service_set_menu_capture(true);
+
+    const uint8_t slot = chord_controller(MT_CONTROLLER_TRANSPORT_XBOXONE, 0x7ffU, 1U);
+    mt_controller_config_t config = g_controller_config[slot];
+    config.axis[MT_GAMEPAD_AXIS_X].deadzone_percent = 30U;
+    assert(usb_hid_service_set_controller_config(slot, &config));
+    usb_hid_service_set_axis_tuning_slot(slot);
+    mt_gamepad_report_t report = {.buttons_valid = 1U, .buttons_mask = 0x7ffU, .axis_valid_mask = 1U};
+    report.logical_min[MT_GAMEPAD_AXIS_X] = INT16_MIN;
+    report.logical_max[MT_GAMEPAD_AXIS_X] = INT16_MAX;
+    report.axis[MT_GAMEPAD_AXIS_X] = 16000;
+    usb_gamepad_input_report(slot, &report, 8U, 0U);
+    assert(!fixture.held[slot][MT_MENU_HID_RIGHT]);
+    usb_gamepad_input_report(slot, &report, 2U, 0U);
+    assert(fixture.held[slot][MT_MENU_HID_RIGHT]);
+    report.buttons = 4U;
+    usb_gamepad_input_report(slot, &report, 8U, 0U);
+    assert(fixture.held[slot][MT_MENU_HID_RIGHT]);
+
+    report.buttons = 1U;
+    report.axis[MT_GAMEPAD_AXIS_X] = 9000;
+    usb_gamepad_input_report(slot, &report, 8U, 0U);
+    fixture.menu.visible = false;
+    usb_hid_service_set_axis_tuning_slot(UINT8_MAX);
+    usb_hid_service_set_menu_capture(false);
+    assert(g_release_guard[slot] != 0U);
+    report.buttons = 0U;
+    usb_gamepad_input_report(slot, &report, 8U, 0U);
+    assert(g_release_guard[slot] == 0U);
+    usb_gamepad_input_disconnect(slot);
+}
+
 static void test_iigs_input_transport(void)
 {
     mt_core_link_t link;
@@ -1559,6 +1599,7 @@ int main(void)
     test_menu_chord();
     test_menu_chord_guards();
     test_shoulder_navigation();
+    test_axis_tuning_navigation_and_release();
     test_iigs_input_transport();
     test_nes_input_transport();
     test_amiga_input_transport();

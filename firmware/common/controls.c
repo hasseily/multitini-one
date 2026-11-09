@@ -39,7 +39,9 @@ uint32_t mt_controls_action_mask(uint32_t core)
     case MT_IIGS_CORE_ID: return UINT16_C(0x007f) | BIT(MT_CONTROL_AXIS_X) | BIT(MT_CONTROL_AXIS_Y) | menu;
     case MT_AMIGA_CORE_ID: return UINT16_C(0x003f) | menu;
     case MT_SPECTRUM_CORE_ID:
-    case MT_ATARI_XT_CORE_ID: return directions | BIT(MT_CONTROL_A) | menu;
+        return directions | BIT(MT_CONTROL_A) | menu;
+    case MT_ATARI_XT_CORE_ID:
+        return directions | BIT(MT_CONTROL_A) | BIT(MT_CONTROL_START) | BIT(MT_CONTROL_SELECT) | menu;
     default: return core == 0U ? menu : 0U;
     }
 }
@@ -145,15 +147,39 @@ static uint16_t default_button(const mt_controller_device_t *device, unsigned bu
     return (uint16_t)(MT_CONTROL_SOURCE_BUTTON + button);
 }
 
+unsigned mt_controls_select_button(const mt_controller_device_t *device)
+{
+    if (device == NULL) return 8U;
+    if (device->identity.transport != MT_CONTROLLER_TRANSPORT_HID) return 6U;
+    /* Generic HID preserves button usages. Eight-button SNES pads put
+     * Select/Start after the face and shoulder buttons. Ten-button pads
+     * use HID buttons 9/10. */
+    const uint32_t present = device->buttons_present;
+    return (present & ~UINT32_C(0xff)) == 0U &&
+        (present & UINT32_C(0xc0)) == UINT32_C(0xc0) ? 6U : 8U;
+}
+
+mt_gamepad_axis_config_t mt_controls_default_axis(unsigned axis)
+{
+    const bool standard = axis < MT_GAMEPAD_AXIS_COUNT;
+    return (mt_gamepad_axis_config_t){
+        .source = standard ? (uint8_t)axis : MT_GAMEPAD_AXIS_OFF,
+        .deadzone_percent = standard ? 10U : 0U,
+        .sensitivity_percent = 100U,
+    };
+}
+
 void mt_controls_default(uint32_t core, const mt_controller_device_t *device,
                          mt_controller_config_t *config)
 {
     if (config == NULL) return;
     memset(config, 0, sizeof(*config));
-    for (unsigned i = 0U; i < MT_GAMEPAD_AXIS_COUNT; ++i) {
-        config->axis[i].source = (uint8_t)i;
-        config->axis[i].deadzone_percent = 10U;
-        config->axis[i].sensitivity_percent = 100U;
+    config->atari_console_buttons_configured = core == MT_ATARI_XT_CORE_ID;
+    for (unsigned i = 0U; i < MT_INPUT_AXIS_COUNT; ++i) {
+        const mt_gamepad_axis_config_t axis = mt_controls_default_axis(i);
+        config->axis[i].source = axis.source;
+        config->axis[i].deadzone_percent = axis.deadzone_percent;
+        config->axis[i].sensitivity_percent = axis.sensitivity_percent;
     }
     if (device != NULL && device->generic_axes) {
         config->assignment = MT_CONTROLLER_OFF;
@@ -166,10 +192,12 @@ void mt_controls_default(uint32_t core, const mt_controller_device_t *device,
     for (unsigned i = MT_CONTROL_A; i <= MT_CONTROL_Z; ++i)
         if ((actions & BIT(i)) != 0U) config->binding[i] = default_button(device, i - MT_CONTROL_A);
     const bool generic = device == NULL || device->identity.transport == MT_CONTROLLER_TRANSPORT_HID;
+    const unsigned select = core == MT_ATARI_XT_CORE_ID ?
+        mt_controls_select_button(device) : (generic ? 8U : 6U);
     if ((actions & BIT(MT_CONTROL_START)) != 0U)
-        config->binding[MT_CONTROL_START] = default_button(device, generic ? 9U : 7U);
+        config->binding[MT_CONTROL_START] = default_button(device, select + 1U);
     if ((actions & BIT(MT_CONTROL_SELECT)) != 0U)
-        config->binding[MT_CONTROL_SELECT] = default_button(device, generic ? 8U : 6U);
+        config->binding[MT_CONTROL_SELECT] = default_button(device, select);
     if ((actions & BIT(MT_CONTROL_AXIS_X)) != 0U) {
         config->binding[MT_CONTROL_AXIS_X] = MT_CONTROL_SOURCE_AXIS + MT_GAMEPAD_AXIS_X;
         config->binding[MT_CONTROL_AXIS_Y] = MT_CONTROL_SOURCE_AXIS + MT_GAMEPAD_AXIS_Y;
@@ -181,6 +209,7 @@ void mt_controls_default(uint32_t core, const mt_controller_device_t *device,
 bool mt_controls_config_valid(uint32_t core, const mt_controller_config_t *config)
 {
     if (config == NULL || config->assignment > MT_CONTROLLER_OFF || mt_controls_action_mask(core) == 0U ||
+        (config->atari_console_buttons_configured && core != MT_ATARI_XT_CORE_ID) ||
         ((core == MT_GBC_CORE_ID || core == MT_IIGS_CORE_ID) && config->assignment == MT_CONTROLLER_PORT2)) return false;
     const uint32_t actions = mt_controls_action_mask(core);
     for (unsigned i = 0U; i < MT_CONTROL_ACTION_COUNT; ++i) {
@@ -189,9 +218,10 @@ bool mt_controls_config_valid(uint32_t core, const mt_controller_config_t *confi
         if (source >= MT_CONTROL_SOURCE_COUNT || ((actions & BIT(i)) == 0U && source != 0U)) return false;
         if (source != 0U && (analog != mt_controls_source_is_analog((uint16_t)source))) return false;
     }
-    for (unsigned i = 0U; i < MT_GAMEPAD_AXIS_COUNT; ++i) {
+    for (unsigned i = 0U; i < MT_INPUT_AXIS_COUNT; ++i) {
         const mt_gamepad_axis_config_t *a = &config->axis[i];
-        if (a->source > MT_GAMEPAD_AXIS_OFF || a->invert > 1U || a->deadzone_percent > 50U ||
+        if ((i < MT_GAMEPAD_AXIS_COUNT ? a->source > MT_GAMEPAD_AXIS_OFF : a->source != MT_GAMEPAD_AXIS_OFF) ||
+            a->invert > 1U || a->deadzone_percent > 50U ||
             a->sensitivity_percent < 25U || a->sensitivity_percent > 200U) return false;
     }
     return true;
@@ -243,13 +273,15 @@ void mt_controls_migrate_legacy(uint32_t core, const mt_controller_device_t *dev
     /* Menu access intentionally migrates to identified Home, never Start. */
 }
 
-static int16_t tuned_axis(const mt_controller_config_t *config, const mt_gamepad_state_t *raw, unsigned axis)
+int16_t mt_controls_tuned_axis(const mt_controller_config_t *config,
+                               const mt_gamepad_state_t *raw, unsigned axis)
 {
-    if (axis >= MT_INPUT_AXIS_COUNT || (raw->axis_valid_mask & (1U << axis)) == 0U) return 0;
-    if (axis >= MT_GAMEPAD_AXIS_COUNT) return raw->axis[axis];
+    if (config == NULL || raw == NULL || axis >= MT_INPUT_AXIS_COUNT ||
+        (raw->axis_valid_mask & (1U << axis)) == 0U) return 0;
+    const bool relative = (raw->relative_mask & (1U << axis)) != 0U;
+    if (relative && axis >= MT_GAMEPAD_AXIS_COUNT) return raw->axis[axis];
     const mt_gamepad_axis_config_t *setting = &config->axis[axis];
     int32_t value = raw->axis[axis], sign = value < 0 ? -1 : 1;
-    const bool relative = (raw->relative_mask & (1U << axis)) != 0U;
     const bool trigger = !relative && (raw->trigger_mask & (1U << axis)) != 0U;
     int32_t magnitude = trigger ? value + 32768 : value * sign;
     const int32_t range = trigger ? 65535 : 32768;
@@ -283,7 +315,7 @@ static bool source_pressed(uint16_t source, const mt_controller_config_t *config
     const unsigned axis = mt_controls_source_axis(source);
     if (axis >= MT_INPUT_AXIS_COUNT || mt_controls_source_is_analog(source) ||
         (raw->axis_valid_mask & (1U << axis)) == 0U) return false;
-    const int32_t value = tuned_axis(config, raw, axis);
+    const int32_t value = mt_controls_tuned_axis(config, raw, axis);
     const int32_t threshold = (raw->relative_mask & (1U << axis)) != 0U ? 0 : held ? 8000 : 11000;
     const unsigned base = axis < MT_GAMEPAD_AXIS_COUNT ? MT_CONTROL_SOURCE_AXIS_NEG : MT_CONTROL_SOURCE_EXTRA_AXIS_NEG;
     return (((unsigned)source - base) & 1U) != 0U ? value > threshold : value < -threshold;
@@ -305,7 +337,7 @@ void mt_controls_evaluate(uint32_t core, const mt_controller_config_t *config,
     for (unsigned a = MT_CONTROL_AXIS_X; a <= MT_CONTROL_AXIS_Y; ++a) {
         const uint16_t source = config->binding[a];
         if (mt_controls_source_is_analog(source)) {
-            int16_t value = tuned_axis(config, raw, mt_controls_source_axis(source));
+            int16_t value = mt_controls_tuned_axis(config, raw, mt_controls_source_axis(source));
             if (a == MT_CONTROL_AXIS_X) out->x = value;
             else out->y = value == INT16_MIN ? INT16_MAX : (int16_t)-value;
         }
@@ -330,6 +362,48 @@ bool mt_controls_neutral(const mt_gamepad_state_t *raw)
         else if (raw->generic_axes) continue; /* Sliders may rest anywhere. */
         else if ((raw->trigger_mask & (1U << i)) != 0U) { if (raw->axis[i] > -24576) return false; }
         else if (raw->axis[i] < -8192 || raw->axis[i] > 8192) return false;
+    }
+    return true;
+}
+
+bool mt_controls_gameplay_neutral(uint32_t core, const mt_controller_config_t *config,
+                                  const mt_gamepad_state_t *raw)
+{
+    if (raw == NULL || !raw->connected) return true;
+    if (raw->generic_axes || !mt_controls_config_valid(core, config))
+        return mt_controls_neutral(raw);
+    if (raw->buttons != 0U || raw->extra_active != 0U || raw->hat < 8U) return false;
+    const uint32_t actions = mt_controls_action_mask(core);
+    for (unsigned action = MT_CONTROL_UP; action <= MT_CONTROL_AXIS_Y; ++action) {
+        if ((actions & BIT(action)) == 0U) continue;
+        const uint16_t source = mt_controls_binding(config, action);
+        unsigned axis = mt_controls_source_axis(source);
+        if (source >= MT_CONTROL_SOURCE_DPAD_STICK && source < MT_CONTROL_SOURCE_EXTRA_AXIS_NEG) {
+            const unsigned direction = (unsigned)source - MT_CONTROL_SOURCE_DPAD_STICK;
+            axis = config->axis[direction < 2U ? MT_GAMEPAD_AXIS_Y : MT_GAMEPAD_AXIS_X].source;
+            if (axis >= MT_GAMEPAD_AXIS_COUNT) continue;
+        }
+        if (axis >= MT_INPUT_AXIS_COUNT) continue;
+        const unsigned bit = 1U << axis;
+        if ((raw->axis_valid_mask & bit) == 0U) continue;
+        const bool relative = (raw->relative_mask & bit) != 0U;
+        const bool trigger = !relative && (raw->trigger_mask & bit) != 0U;
+        const int32_t value = raw->axis[axis];
+        /* A trigger is mechanically released at its low end, even if a
+         * custom direction binding treats that endpoint as active. */
+        if (trigger && value <= -24576) continue;
+        if (!mt_controls_source_is_analog(source)) {
+            if (source_pressed(source, config, raw, true)) return false;
+            continue;
+        }
+        if (relative) {
+            if (value != 0) return false;
+            continue;
+        }
+        const int32_t range = trigger ? 65535 : 32768;
+        const int32_t travel = trigger ? value + 32768 : value < 0 ? -value : value;
+        const int32_t dead = (int32_t)config->axis[axis].deadzone_percent * range / 100;
+        if (travel > 8192 && travel > dead) return false;
     }
     return true;
 }

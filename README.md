@@ -1,14 +1,15 @@
 # Multitini One
 
 Multitini One turns the Appletini ONE card into a stand-alone FPGA computer.
-It runs C64, Game Boy Color, Vectrex, Genesis / Mega Drive, Apple IIgs, NES and Amiga
-machines through a shared supervisor, menu, input, audio, storage and
-core-loading system. It does not use an Apple II host.
+It runs C64, Game Boy Color, Vectrex, Genesis / Mega Drive, Apple IIgs, NES,
+Amiga, ZX Spectrum and Atari 8-bit machines through a shared supervisor, menu,
+input, audio, storage and core-loading system. It does not use an Apple II host.
 
-The ZX Spectrum development core adds PAL 48K and 128K modes with USB
-keyboard, Kempston joystick and read-only TAP playback. Supply the ROM
-separately using the [Spectrum ROM setup](sd/multitini/cores/zx-spectrum/roms/readme.txt).
-See [Spectrum integration](docs/ZX_SPECTRUM.md) for build and test status.
+M0.8.2 adds ZX Spectrum 48K/128K with TAP and TZX playback, Atari 800XL and
+Compy Shop NTSC with ATR and XEX support, and an Amiga A1200 AGA + 68040
+variant. It also improves Apple IIgs floppy handling and shared controller
+setup. See the [M0.8.2 release notes](docs/RELEASE_M082.md) for installation,
+build identities and board test status.
 
 M0.8.1 fixes Amiga disk-swap stalls, mounts bare AmigaDOS and PFS3 HDF
 partitions, and shows a brief confirmation after saving a screenshot.
@@ -122,7 +123,8 @@ The C64 and GBC functional baselines are accepted. The retained older package co
 ARM firmware **20260917**, supervisor and C64 PAL/NTSC FPGA images **20260915**
 (ABI 0.10), and the unchanged PSRAM-enabled GBC image **20260913** (ABI 0.9).
 These build IDs intentionally differ. See
-[Current release](docs/CURRENT_RELEASE.md) for installation and exact contents.
+[the retained baseline](docs/CURRENT_RELEASE.md#retained-september-2026-baseline)
+for installation and exact contents.
 
 The owner confirms Ultima II starts through Mount & Run, reaches the
 second-disk prompt, and accepts a Player-disk swap. A clean Player disk works

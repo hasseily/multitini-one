@@ -21,7 +21,7 @@ def main() -> None:
         "ports/a8_core.sv", "multitini_atari_xt_keyboard.sv", "multitini_atari_xt_sio.sv",
         "multitini_atari_xt_adapter.sv"
     ))
-    benches = ("tb_atari_xt", "tb_atari_xt_sio", "tb_atari_xt_pm_dma")
+    benches = ("tb_atari_xt", "tb_atari_xt_sio", "tb_atari_xt_pm_dma", "tb_atari_xt_vcount")
     sources.extend(ROOT / "hdl/sim" / f"{name}.sv" for name in benches)
     shutil.copyfile(UPSTREAM / "hdl/palette/atari_ntsc.hex", build / "atari_ntsc.hex")
 

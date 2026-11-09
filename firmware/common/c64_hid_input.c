@@ -431,7 +431,8 @@ int mt_c64_hid_set_keyboard_layout(mt_c64_hid_input_t *input,
         (layout != MT_C64_KEYBOARD_LAYOUT_US_SYMBOLIC &&
          layout != MT_C64_KEYBOARD_LAYOUT_POSITIONAL &&
          layout != MT_C64_KEYBOARD_LAYOUT_PS2_PC &&
-         layout != MT_C64_KEYBOARD_LAYOUT_PS2_IIGS)) {
+         layout != MT_C64_KEYBOARD_LAYOUT_PS2_IIGS &&
+         layout != MT_C64_KEYBOARD_LAYOUT_PS2_ATARI)) {
         return -1;
     }
     input->keyboard_layout = layout;
@@ -505,6 +506,7 @@ int mt_c64_hid_input_poll(mt_c64_hid_input_t *input)
                 mapped = symbolic_mapping((uint8_t)usage, shifted, allow_transform, &mapping);
                 break;
             case MT_C64_KEYBOARD_LAYOUT_PS2_PC:
+            case MT_C64_KEYBOARD_LAYOUT_PS2_ATARI:
                 mapped = pc_mapping((uint8_t)usage, &mapping);
                 break;
             case MT_C64_KEYBOARD_LAYOUT_PS2_IIGS:
@@ -533,7 +535,17 @@ int mt_c64_hid_input_poll(mt_c64_hid_input_t *input)
         if (input->joystick_active[slot] != 0U) {
             const uint8_t player = input->player[slot] == 2U ?
                 (uint8_t)(input->joystick_port - 1U) : input->player[slot];
-            if (player < 2U) desired_joystick[player] |= input->joysticks[slot];
+            if (player < 2U) {
+                uint8_t state = input->joysticks[slot];
+                if (input->keyboard_layout == MT_C64_KEYBOARD_LAYOUT_PS2_ATARI) {
+                    /* The Atari maps Set 2 F1/F2 to its console buttons.
+                     * Merge both pads and the keyboard before emitting edges. */
+                    if (state & MT_ATARI_HID_START) bitmap_set(desired_scans, 0x05U);
+                    if (state & MT_ATARI_HID_SELECT) bitmap_set(desired_scans, 0x06U);
+                    state &= 0x1fU;
+                }
+                desired_joystick[player] |= state;
+            }
         }
     }
 

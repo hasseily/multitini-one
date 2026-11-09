@@ -33,7 +33,8 @@ typedef enum {
     MT_CONTENT_ATARI_XT_CART,
     MT_CONTENT_ATARI_XT_RAW_CART,
     MT_CONTENT_ATARI_XT_ATR,
-    MT_CONTENT_ATARI_XT_XEX
+    MT_CONTENT_ATARI_XT_XEX,
+    MT_CONTENT_SPECTRUM_TZX
 } mt_content_type_t;
 
 typedef enum {

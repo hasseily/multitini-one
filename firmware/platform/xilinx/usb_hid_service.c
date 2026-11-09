@@ -161,6 +161,7 @@ static mt_menu_chord_t g_menu_chord[MT_GAMEPAD_SLOTS];
 static uint8_t g_menu_navigation_guard[MT_GAMEPAD_SLOTS];
 static bool g_menu_capture;
 static bool g_gamepad_preview;
+static uint8_t g_axis_tuning_slot = UINT8_MAX;
 static mt_c64_hid_input_t g_c64_input;
 static mt_c64_keyboard_layout_t g_saved_c64_keyboard_layout;
 static mt_gameboy_hid_input_t g_gameboy_input;
@@ -669,6 +670,11 @@ static void deliver_gamepad(uint8_t index)
         if (actions & (UINT32_C(1) << MT_CONTROL_SELECT)) state |= 0x40U;
         if (actions & (UINT32_C(1) << MT_CONTROL_START)) state |= 0x80U;
         (void)mt_gameboy_hid_gamepad_report(&g_gameboy_input, index, player == 0U ? state : 0U);
+    } else if (g_active_core_id == MT_ATARI_XT_CORE_ID) {
+        uint8_t state = (uint8_t)(directions | (actions & (UINT32_C(1) << MT_CONTROL_A)));
+        if (actions & (UINT32_C(1) << MT_CONTROL_START)) state |= MT_ATARI_HID_START;
+        if (actions & (UINT32_C(1) << MT_CONTROL_SELECT)) state |= MT_ATARI_HID_SELECT;
+        (void)mt_c64_hid_assigned_report(&g_c64_input, index, player, state);
     } else {
         (void)mt_c64_hid_assigned_report(&g_c64_input, index, player,
             (uint8_t)(directions | (actions & 0x70U)));
@@ -704,17 +710,16 @@ static bool pad_active(const mt_gamepad_state_t *state)
     return !mt_controls_neutral(state);
 }
 
+static bool gameplay_pad_active(uint8_t slot)
+{
+    return !mt_controls_gameplay_neutral(g_active_core_id,
+        &g_controller_config[slot], &g_gamepads.raw[slot]);
+}
+
 static uint32_t menu_chord_buttons(uint8_t index)
 {
     if (g_devices[index].generic_axes) return 0U;
-    if (g_devices[index].identity.transport != MT_CONTROLLER_TRANSPORT_HID)
-        return UINT32_C(0xc0); /* Normalized Select and Start. */
-    /* Generic HID preserves button usages. Ten-button pads use 9/10;
-     * eight-button SNES pads use 7/8 after their four face and two shoulders. */
-    const uint32_t present = g_devices[index].buttons_present;
-    if ((present & ~UINT32_C(0xff)) == 0U &&
-        (present & UINT32_C(0xc0)) == UINT32_C(0xc0)) return UINT32_C(0xc0);
-    return UINT32_C(0x300);
+    return UINT32_C(3) << mt_controls_select_button(&g_devices[index]);
 }
 
 static void reset_menu_chord(uint8_t index)
@@ -770,11 +775,20 @@ static void controller_navigation(uint8_t index)
     /* A combined keyboard/axis interface owns this filter slot's physical
      * key state. Even an empty synthetic report would erase its held keys. */
     if (raw->generic_axes) return;
+    const bool tuning = index == g_axis_tuning_slot;
+    const uint16_t menu_source = mt_controls_binding(&g_controller_config[index], MT_CONTROL_MENU);
+    const bool menu_allowed = !tuning || (menu_source != MT_CONTROL_SOURCE_BUTTON + 2U &&
+        mt_controls_source_axis(menu_source) == MT_INPUT_AXIS_COUNT);
     const bool chord = g_menu_chord[index].state != MT_MENU_CHORD_IDLE;
-    const bool menu = !chord &&
+    const bool menu = !chord && menu_allowed &&
         (g_controller_output[index].actions & (UINT32_C(1) << MT_CONTROL_MENU)) != 0U;
-    const bool navigation = !raw->generic_axes && !chord && !menu && g_menu_navigation_guard[index] == 0U;
-    const uint8_t directions = navigation ? mt_gamepad_digital(raw) & 15U : 0U;
+    const bool navigation = !chord && !menu && g_menu_navigation_guard[index] == 0U;
+    /* Use the hat while tuning. Button 3 temporarily restores X/Y
+     * navigation for controllers that report their D-pad as axes. */
+    const bool axis_navigation = !tuning || (raw->buttons & 4U) != 0U;
+    uint8_t directions = 0U;
+    if (navigation)
+        directions = axis_navigation ? mt_gamepad_digital(raw) & 15U : mt_gamepad_hat_bits(raw->hat);
     if ((directions & 1U) != 0U) keys[count++] = 0x52U;
     if ((directions & 2U) != 0U) keys[count++] = 0x51U;
     if ((directions & 4U) != 0U) keys[count++] = 0x50U;
@@ -819,12 +833,12 @@ static void process_shared_report(uint8_t index, const mt_gamepad_report_t *repo
     mt_controls_evaluate(g_active_core_id, &g_controller_config[index],
                          &g_gamepads.raw[index], previous, &g_controller_output[index]);
     resolve_controller_players();
-    if (!pad_active(&g_gamepads.raw[index])) {
+    if (g_release_guard[index] != 0U && !gameplay_pad_active(index))
         g_release_guard[index] = 0U;
+    if (!pad_active(&g_gamepads.raw[index]))
         g_menu_navigation_guard[index] = 0U;
-    }
     poll_menu_chords();
-    if (g_action_handler != NULL && !g_gamepad_preview &&
+    if (g_action_handler != NULL && !g_gamepad_preview && index != g_axis_tuning_slot &&
         g_menu_chord[index].state == MT_MENU_CHORD_IDLE) {
         const uint32_t edges = g_controller_output[index].actions & ~previous;
         if (g_devices[index].generic_axes && (edges & (UINT32_C(1) << MT_CONTROL_MENU)))
@@ -1756,6 +1770,7 @@ void usb_hid_service_init(mt_core_link_t *link)
     memset(g_menu_navigation_guard, 0, sizeof(g_menu_navigation_guard));
     g_menu_capture = false;
     g_gamepad_preview = false;
+    g_axis_tuning_slot = UINT8_MAX;
     memset(g_slots, 0, sizeof(g_slots));
     memset(g_xinput_slots, 0, sizeof(g_xinput_slots));
     g_reports_total = 0U;
@@ -1880,18 +1895,20 @@ void usb_hid_service_set_active_core(uint32_t core_id)
     g_core_ready = 0U;
     clear_relative_inputs();
     /* These guests translate the shared Set 2 events from PC key positions. */
-    if (uses_pc_scancodes(core_id) && !uses_pc_scancodes(g_active_core_id)) {
-        g_saved_c64_keyboard_layout = g_c64_input.keyboard_layout;
-        g_c64_input.keyboard_layout = MT_C64_KEYBOARD_LAYOUT_PS2_PC;
-    } else if (!uses_pc_scancodes(core_id) && uses_pc_scancodes(g_active_core_id)) {
+    if (uses_pc_scancodes(core_id)) {
+        if (!uses_pc_scancodes(g_active_core_id))
+            g_saved_c64_keyboard_layout = g_c64_input.keyboard_layout;
+        g_c64_input.keyboard_layout = core_id == MT_ATARI_XT_CORE_ID ?
+            MT_C64_KEYBOARD_LAYOUT_PS2_ATARI : MT_C64_KEYBOARD_LAYOUT_PS2_PC;
+    } else if (uses_pc_scancodes(g_active_core_id)) {
         g_c64_input.keyboard_layout = g_saved_c64_keyboard_layout;
     }
     g_active_core_id = core_id;
-    for (uint8_t slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot) {
-        g_release_guard[slot] = pad_active(&g_gamepads.raw[slot]) ? 1U : 0U;
+    for (uint8_t slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot)
         reset_menu_chord(slot);
-    }
     refresh_controller_outputs(true, true);
+    for (uint8_t slot = 0U; slot < MT_GAMEPAD_SLOTS; ++slot)
+        g_release_guard[slot] = gameplay_pad_active(slot) ? 1U : 0U;
     if(g_active_core_id==MT_AMIGA_CORE_ID) {
         mt_amiga_hid_clear_mouse_motion(&g_amiga_input);
         mt_amiga_hid_mouse_report(&g_amiga_input,0,0,g_menu_capture ? 0U:mouse_buttons());
@@ -2179,7 +2196,7 @@ void usb_hid_service_set_menu_capture(bool captured)
     }
     for (uint8_t i = 0U; i < MT_GAMEPAD_SLOTS; ++i) {
         g_menu_navigation_guard[i] = captured && pad_active(&g_gamepads.raw[i]) ? 1U : 0U;
-        if (!captured) g_release_guard[i] = pad_active(&g_gamepads.raw[i]) ? 1U : 0U;
+        if (!captured) g_release_guard[i] = gameplay_pad_active(i) ? 1U : 0U;
         deliver_gamepad(i);
     }
 }
@@ -2208,6 +2225,11 @@ void usb_hid_service_get_gamepad_config(uint8_t slot, mt_gamepad_config_t *confi
 void usb_hid_service_set_gamepad_preview(bool preview)
 {
     g_gamepad_preview = preview;
+}
+
+void usb_hid_service_set_axis_tuning_slot(uint8_t slot)
+{
+    g_axis_tuning_slot = slot < MT_GAMEPAD_SLOTS ? slot : UINT8_MAX;
 }
 
 void usb_hid_service_set_controller_config_loader(mt_usb_controller_config_fn loader,
@@ -2267,7 +2289,7 @@ bool usb_hid_service_set_controller_configs(const mt_controller_config_t configs
         if (g_controller_config[slot].assignment != configs[slot].assignment)
             g_controller_player[slot] = UINT8_MAX;
         g_controller_config[slot] = configs[slot];
-        g_release_guard[slot] = pad_active(&g_gamepads.raw[slot]) ? 1U : 0U;
+        g_release_guard[slot] = gameplay_pad_active(slot) ? 1U : 0U;
         reset_menu_chord(slot);
     }
     refresh_controller_outputs(false, false);

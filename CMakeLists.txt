@@ -33,6 +33,7 @@ add_library(multitini_common STATIC
     firmware/common/content_type.c
     firmware/common/controls.c
     firmware/common/screenshot.c
+    firmware/common/spectrum_tzx.c
     firmware/common/core_frontend.c
     firmware/common/core_package.c
     firmware/common/core_link.c
@@ -103,6 +104,9 @@ add_executable(test_spectrum_content_service tests/host/test_spectrum_content_se
 target_include_directories(test_spectrum_content_service PRIVATE firmware/platform/xilinx tests/xilinx_stubs)
 target_link_libraries(test_spectrum_content_service PRIVATE multitini_common xilinx_spectrum_service_compile)
 add_test(NAME spectrum_content_service COMMAND test_spectrum_content_service)
+add_executable(test_spectrum_tzx tests/host/test_spectrum_tzx.c)
+target_link_libraries(test_spectrum_tzx PRIVATE multitini_common)
+add_test(NAME spectrum_tzx COMMAND test_spectrum_tzx)
 add_executable(test_atari_xt_content_service
     tests/host/test_atari_xt_content_service.c
     firmware/platform/xilinx/atari_xt_content_service.c)

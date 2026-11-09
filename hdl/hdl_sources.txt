@@ -264,6 +264,7 @@ core/zx_spectrum/ports/ym2149.sv
 core/zx_spectrum/ports/ula.sv
 core/zx_spectrum/multitini_zx_spectrum_keyboard.sv
 core/zx_spectrum/multitini_zx_spectrum_tape.sv
+core/zx_spectrum/multitini_zx_spectrum_tzx.sv
 core/zx_spectrum/multitini_zx_spectrum_adapter.sv
 
 [atari_xt]

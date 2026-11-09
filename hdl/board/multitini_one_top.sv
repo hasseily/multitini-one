@@ -10,6 +10,7 @@ module multitini_one_top #(
     parameter bit AMIGA_AGA_PAL = 1'b0,
     parameter bit AMIGA_AP68040 = 1'b0,
     parameter bit ATARI_320XE = 1'b0,
+    parameter bit ATARI_VCOUNT_COMPAT = 1'b0,
     // 0 = C64, 1 = GBC, 2 = supervisor, 3 = Vectrex, 4 = Genesis, 5 = Apple IIgs, 6 = NES, 7 = Amiga ECS.
     parameter integer ACTIVE_MACHINE = 2,
     parameter bit ENABLE_GBC_PSRAM = 1'b0
@@ -655,6 +656,9 @@ module multitini_one_top #(
     wire atari_sio_rd_select=reg_rd_addr=={4'd0,MT_REG_ATARI_SIO_STATUS} ||
         reg_rd_addr=={4'd0,MT_REG_ATARI_SIO_RX} || reg_rd_addr=={4'd0,MT_REG_ATARI_SIO_TX};
     wire [31:0] atari_sio_rdata;
+    wire spectrum_tape_wr_select = ACTIVE_MACHINE == 8 && reg_wr_addr == {4'd0, MT_REG_SPECTRUM_TAPE_CONFIG};
+    wire spectrum_tape_rd_select = ACTIVE_MACHINE == 8 && reg_rd_addr == {4'd0, MT_REG_SPECTRUM_TAPE_CONFIG};
+    wire [31:0] spectrum_tape_rdata;
     wire [31:0] display_rd_data=reg_rd_addr==16'h01d0 ? {25'd0,display_requested_multiplier,display_requested_mode} :
         reg_rd_addr==16'h01d4 ? {21'd0,display_hold,(display_error || display_bad_write),(display_busy || display_request),1'b0,display_active_multiplier,display_active_mode} :
         reg_rd_addr==16'h01d8 ? 32'h0000003f : 0;
@@ -904,9 +908,9 @@ module multitini_one_top #(
 
     always_comb begin
         control_wr_en = reg_wr_en && reg_wr_addr < 16'h1000 && !framebuffer_wr_select &&
-            !display_wr_select && !atari_sio_wr_select;
+            !display_wr_select && !atari_sio_wr_select && !spectrum_tape_wr_select;
         control_rd_en = reg_rd_en && reg_rd_addr < 16'h1000 && !framebuffer_rd_select &&
-            !display_rd_select && !atari_sio_rd_select;
+            !display_rd_select && !atari_sio_rd_select && !spectrum_tape_rd_select;
         ui_vram_wr_en = reg_wr_en &&
             ((reg_wr_addr >= MT_UI_VRAM_BANK0_OFFSET &&
               reg_wr_addr < MT_UI_VRAM_BANK0_OFFSET + MT_UI_VRAM_BANK_BYTES) ||
@@ -920,6 +924,7 @@ module multitini_one_top #(
                             MT_UI_LEGACY_VRAM_BANK_BYTES));
         reg_rd_data = amiga_host_rd_select ? amiga_host_status : amiga_block_rd_select ? amiga_block_rdata : uci_buffer_rd_select ? uci_buffer_data : display_rd_select ? display_rd_data : framebuffer_rd_select ? framebuffer_rd_data :
                       atari_sio_rd_select ? atari_sio_rdata :
+                      spectrum_tape_rd_select ? spectrum_tape_rdata :
                       reg_rd_addr < 16'h1000 ? control_rd_data : 32'd0;
         // Firmware holds the machine reset before PCAP. Its shared DMA
         // quiescence read also drains autonomous source rings, IIgs RAM and
@@ -2302,10 +2307,46 @@ module multitini_one_top #(
             wire [11:0] native_x,native_y;
             if (ACTIVE_MACHINE == 8) begin : g_zx_spectrum
                 assign c64_core_id=32'h5a585350;
+                reg [2:0] tape_config, tape_config_sent, tape_config_core;
+                reg tape_config_sent_valid;
+                wire [2:0] tape_config_received;
+                wire tape_core_resetn_control, tape_config_ready, tape_config_valid;
+                wire tape_config_pending = tape_core_resetn_control &&
+                    (!tape_config_sent_valid || tape_config != tape_config_sent);
+                assign spectrum_tape_rdata = MT_SPECTRUM_TAPE_SIGNATURE | MT_SPECTRUM_TAPE_TZX |
+                    {29'd0, tape_config};
+                always @(posedge control_clk) begin
+                    if (!control_aresetn) begin
+                        tape_config <= 0;
+                        tape_config_sent <= 0;
+                        tape_config_sent_valid <= 0;
+                    end else begin
+                        if (reg_wr_en && spectrum_tape_wr_select && reg_wr_strb[0])
+                            tape_config <= reg_wr_data[2:0];
+                        if (!tape_core_resetn_control) tape_config_sent_valid <= 0;
+                        else if (tape_config_pending && tape_config_ready) begin
+                            tape_config_sent <= tape_config;
+                            tape_config_sent_valid <= 1;
+                        end
+                    end
+                end
+                always @(posedge c64_clk) begin
+                    if (!c64_aresetn) tape_config_core <= 0;
+                    else if (tape_config_valid) tape_config_core <= tape_config_received;
+                end
+                cdc_bit_sync tape_core_reset_sync (
+                    .clk(control_clk), .resetn(control_aresetn),
+                    .din(c64_aresetn), .dout(tape_core_resetn_control));
+                multitini_async_mailbox #(.WIDTH(3)) tape_config_sync (
+                    .src_clk(control_clk), .src_resetn(control_aresetn),
+                    .src_data(tape_config), .src_valid(tape_config_pending), .src_ready(tape_config_ready),
+                    .dst_clk(c64_clk), .dst_resetn(c64_aresetn),
+                    .dst_data(tape_config_received), .dst_valid(tape_config_valid), .dst_ready(1'b1));
                 (* DONT_TOUCH = "yes" *) multitini_zx_spectrum_adapter machine_adapter(
                     .core_clk(c64_clk),.reset(!c64_aresetn),
                     .core_reset_request(c64_core_reset_request),.pause_request(core_menu_pause),
                     .clear_load_error(c64_load_error_clear),
+                    .tape_speed(tape_config_core[1:0]),.stock_tape_rom(tape_config_core[2]),
                     .input_code(c64_input_code),.input_value(c64_input_value),
                     .input_valid(c64_input_valid),.input_ready(c64_input_ready),
                     .load_kind(c64_load_kind),.load_offset(c64_load_offset),.load_total(c64_load_total),
@@ -2322,7 +2363,7 @@ module multitini_one_top #(
                 wire [17:0] sio_event_data;
                 wire [16:0] sio_reply_data;
                 (* DONT_TOUCH = "yes" *) multitini_atari_xt_adapter #(
-                    .EXTENDED_RAM(ATARI_320XE)) machine_adapter(
+                    .EXTENDED_RAM(ATARI_320XE), .VCOUNT_COMPAT(ATARI_VCOUNT_COMPAT)) machine_adapter(
                     .core_clk(c64_clk),.reset(!c64_aresetn),
                     .core_reset_request(c64_core_reset_request),.pause_request(core_menu_pause),
                     .clear_load_error(c64_load_error_clear),
@@ -2462,6 +2503,9 @@ module multitini_one_top #(
 
     generate if(ACTIVE_MACHINE!=9)begin : g_no_atari_sio
         assign atari_sio_rdata=32'd0;
+    end endgenerate
+    generate if (ACTIVE_MACHINE != 8) begin : g_no_spectrum_tape
+        assign spectrum_tape_rdata = 32'd0;
     end endgenerate
     generate if(!NATIVE_SOURCE_DDR)begin : g_no_source_ddr
         assign genesis_source_quiescent=1'b1;

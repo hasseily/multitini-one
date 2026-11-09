@@ -17,6 +17,8 @@
     "Expose PORTA directions, POKEY keyboard and PCM channel levels.",
     "Expose PIA CB2 and completed POKEY serial frames and accept standard-speed SIO replies.",
     "Limit ANTIC2 player/missile DMA reads and CPU steals to visible lines.",
+    "Prevent ANTIC2 from starting ordinary playfield DMA on vertical blank lines.",
+    "Allow a build to hide the one-cycle ANTIC2 VCOUNT rollover value from CPU reads.",
     "Expose effective PORTB pins for separate Compy Shop CPU and ANTIC RAM mapping."
   ],
   "files": [

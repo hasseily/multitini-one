@@ -27,7 +27,7 @@ def main() -> None:
     vhdl = [t80 / f"{name}.vhd" for name in ("T80_Pack", "T80_ALU", "T80_MCode", "T80_Reg", "T80", "T80pa")]
     sv = [machine / name for name in (
         "ports/ula.sv", "ports/ym2149.sv", "multitini_zx_spectrum_keyboard.sv",
-        "multitini_zx_spectrum_tape.sv", "multitini_zx_spectrum_adapter.sv"
+        "multitini_zx_spectrum_tzx.sv", "multitini_zx_spectrum_tape.sv", "multitini_zx_spectrum_adapter.sv"
     )]
 
     def tool(name):

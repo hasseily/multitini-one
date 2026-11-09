@@ -33,8 +33,10 @@ def selection_plan(images, reuse, build_id, output, reuse_from=None):
         variant = {"amiga_aga_pal": True} if name in {"amiga-aga", "amiga-aga-040"} else {}
         if name == "amiga-aga-040":
             variant["amiga_ap68040"] = True
-        if name == "atari-320xe":
+        if name in {"atari-320xe", "atari-320xe-compat"}:
             variant["atari_320xe"] = True
+        if name == "atari-320xe-compat":
+            variant["atari_vcount_compat"] = True
         if candidate is not None:
             try:
                 artifact = core_artifacts.inspect_artifact(candidate, machine,
@@ -124,14 +126,16 @@ def main(argv=None, *, default_images=None):
         machine, psram, pal = MATRIX[name]
         amiga_aga_pal = name in {"amiga-aga", "amiga-aga-040"}
         amiga_ap68040 = name == "amiga-aga-040"
-        atari_320xe = name == "atari-320xe"
+        atari_vcount_compat = name == "atari-320xe-compat"
+        atari_320xe = name == "atari-320xe" or atari_vcount_compat
         folder = output / name
         folder.mkdir(parents=True, exist_ok=False)
         (folder / "temp").mkdir()
         environment = dict(os.environ, TEMP=(folder / "temp").as_posix(), TMP=(folder / "temp").as_posix())
         # Remove inherited variant selections; every build names all applicable settings.
         for key in ("MULTITINI_GENESIS_PAL", "MULTITINI_ENABLE_GBC_PSRAM", "MULTITINI_C64_VIDEO_STANDARD",
-                    "MULTITINI_AMIGA_AGA_PAL", "MULTITINI_AMIGA_AP68040", "MULTITINI_ATARI_320XE"):
+                    "MULTITINI_AMIGA_AGA_PAL", "MULTITINI_AMIGA_AP68040",
+                    "MULTITINI_ATARI_320XE", "MULTITINI_ATARI_VCOUNT_COMPAT"):
             environment.pop(key, None)
         settings = {"MULTITINI_VIVADO_DIR": folder.as_posix(), "MULTITINI_MACHINE": machine,
                     "MULTITINI_BUILD_ID": args.build_id,
@@ -144,6 +148,7 @@ def main(argv=None, *, default_images=None):
         if amiga_aga_pal: settings["MULTITINI_AMIGA_AGA_PAL"] = "1"
         if amiga_ap68040: settings["MULTITINI_AMIGA_AP68040"] = "1"
         if machine == "ATARI_XT": settings["MULTITINI_ATARI_320XE"] = str(int(atari_320xe))
+        if atari_vcount_compat: settings["MULTITINI_ATARI_VCOUNT_COMPAT"] = "1"
         config = "".join(f"set ::env({key}) {{{value}}}\n" for key, value in settings.items())
         for kind, script in (("generate", "create_project"), ("build", "build_and_export_xsa")):
             (folder / f"{kind}.tcl").write_text(config +
@@ -155,6 +160,7 @@ def main(argv=None, *, default_images=None):
         if amiga_aga_pal: capture.append("--amiga-aga-pal")
         if amiga_ap68040: capture.append("--amiga-ap68040")
         if atari_320xe: capture.append("--atari-320xe")
+        if atari_vcount_compat: capture.append("--atari-vcount-compat")
         subprocess.run(list(map(str, capture)), cwd=ROOT, env=environment, check=True)
         record = json.loads((folder / "source-inputs.json").read_text())
         with zipfile.ZipFile(folder / "source-inputs.zip", "w", zipfile.ZIP_DEFLATED) as archive:
@@ -175,7 +181,8 @@ def main(argv=None, *, default_images=None):
                         "--output", str(folder / "source-inputs.json"), "--verify"], cwd=ROOT, check=True)
         artifact = core_artifacts.inspect_artifact(folder, machine, gbc_psram=psram, genesis_pal=pal,
                                                   amiga_aga_pal=amiga_aga_pal,
-                                                  amiga_ap68040=amiga_ap68040, atari_320xe=atari_320xe)
+                                                  amiga_ap68040=amiga_ap68040, atari_320xe=atari_320xe,
+                                                  atari_vcount_compat=atari_vcount_compat)
         core_artifacts.require_compatible_inputs(artifact)
         if int(artifact["build_id"], 16) != int(args.build_id, 16):
             raise ValueError("New FPGA image does not have its requested build ID: " + name)

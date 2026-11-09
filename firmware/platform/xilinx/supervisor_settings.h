@@ -22,6 +22,14 @@
 #define MT_TURBO_CONTROLS_PATH "0:/multitini/turbo_controls.bin"
 #define MT_TURBO_CONTROLS_JOURNAL_PATH "0:/multitini/turbo_controls.bin.mtj"
 #define MT_TURBO_CONTROLS_WIRE_SIZE (24U + MT_SETTINGS_MAX_CONTROLLER_PROFILES * 30U)
+#define MT_AXIS_TUNING_PATH "0:/multitini/axis_tuning.bin"
+#define MT_AXIS_TUNING_JOURNAL_PATH MT_AXIS_TUNING_PATH ".mtj"
+#define MT_ATARI_AXIS_TUNING_PATH "0:/multitini/atari_axis_tuning.bin"
+#define MT_ATARI_AXIS_TUNING_JOURNAL_PATH MT_ATARI_AXIS_TUNING_PATH ".mtj"
+#define MT_SPECTRUM_AXIS_TUNING_PATH "0:/multitini/spectrum_axis_tuning.bin"
+#define MT_SPECTRUM_AXIS_TUNING_JOURNAL_PATH MT_SPECTRUM_AXIS_TUNING_PATH ".mtj"
+#define MT_AXIS_TUNING_RECORD_SIZE (24U + (MT_INPUT_AXIS_COUNT - MT_GAMEPAD_AXIS_COUNT) * 4U)
+#define MT_AXIS_TUNING_WIRE_SIZE (24U + MT_SETTINGS_MAX_CONTROLLER_PROFILES * MT_AXIS_TUNING_RECORD_SIZE)
 #define MT_SETTINGS_MAX_PROFILES 16U
 #define MT_SETTINGS_MEDIA_NAME_MAX 96U
 #define MT_SETTINGS_MAX_CONTROLLER_PROFILES 64U
@@ -157,6 +165,10 @@ mt_settings_result_t mt_supervisor_settings_save(
 /* Separate journal: old schema-10 firmware ignores these new bindings. */
 bool mt_supervisor_turbo_controls_load(mt_supervisor_settings_t *settings);
 bool mt_supervisor_turbo_controls_save(const mt_supervisor_settings_t *settings);
+/* Call after loading the corresponding schema-10 base settings. The core ID
+ * selects the Atari, Spectrum, or shared controller settings scope. */
+bool mt_supervisor_axis_tuning_load(mt_supervisor_settings_t *settings, uint32_t core_id);
+bool mt_supervisor_axis_tuning_save(const mt_supervisor_settings_t *settings, uint32_t core_id);
 mt_settings_result_t mt_supervisor_atari_controls_load(mt_supervisor_settings_t *settings);
 mt_settings_result_t mt_supervisor_atari_controls_save(const mt_supervisor_settings_t *settings);
 mt_settings_result_t mt_supervisor_spectrum_controls_load(mt_supervisor_settings_t *settings);

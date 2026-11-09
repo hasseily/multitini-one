@@ -212,6 +212,24 @@ class ArtifactTests(unittest.TestCase):
         self.assertTrue(artifacts.inspect_artifact(self.directory, "ATARI_XT", atari_320xe=True)["atari_320xe"])
         with self.assertRaisesRegex(ValueError, "Wrong Atari RAM variant"):
             artifacts.inspect_artifact(self.directory, "ATARI_XT")
+        with self.assertRaisesRegex(ValueError, "Wrong Atari VCOUNT compatibility variant"):
+            artifacts.inspect_artifact(self.directory, "ATARI_XT", atari_320xe=True, atari_vcount_compat=True)
+
+        self.record["configuration"]["atari_vcount_compat"] = True
+        self.seal_sources()
+        with self.assertRaisesRegex(ValueError, "Wrong Atari VCOUNT compatibility generic"):
+            artifacts.inspect_artifact(self.directory, "ATARI_XT", atari_320xe=True, atari_vcount_compat=True)
+        manifest.write_text(manifest.read_text().rstrip() + " ATARI_VCOUNT_COMPAT=1'b1\n")
+        with self.assertRaisesRegex(ValueError, "Wrong Atari VCOUNT compatibility build settings"):
+            artifacts.inspect_artifact(self.directory, "ATARI_XT", atari_320xe=True, atari_vcount_compat=True)
+        for name in ("generate.tcl", "build.tcl"):
+            with (self.directory / name).open("a") as script:
+                script.write("set ::env(MULTITINI_ATARI_VCOUNT_COMPAT) {1}\n")
+        self.seal_sources()
+        compat = artifacts.inspect_artifact(self.directory, "ATARI_XT", atari_320xe=True, atari_vcount_compat=True)
+        self.assertTrue(compat["atari_vcount_compat"])
+        with self.assertRaisesRegex(ValueError, "Wrong Atari VCOUNT compatibility variant"):
+            artifacts.inspect_artifact(self.directory, "ATARI_XT", atari_320xe=True)
 
     def test_consistent_archives_cannot_omit_hdl_closure(self):
         del self.sources["hdl/core/demo.sv"]

@@ -5,7 +5,8 @@
 
 module multitini_atari_xt_adapter #(
     parameter string PALETTE_FILE = "atari_ntsc.hex",
-    parameter bit EXTENDED_RAM = 1'b0
+    parameter bit EXTENDED_RAM = 1'b0,
+    parameter bit VCOUNT_COMPAT = 1'b0
 ) (
     input  wire              core_clk, reset, core_reset_request, pause_request, clear_load_error,
     input  wire [15:0]       input_code, input_value,
@@ -257,7 +258,9 @@ module multitini_atari_xt_adapter #(
         antic_ram_q <= ram[antic_addr];
     end
 
-    multitini_atari_xt_machine #(.USE_ANTIC2(1'b1), .USE_320XE(EXTENDED_RAM)) machine (
+    multitini_atari_xt_machine #(
+        .USE_ANTIC2(1'b1), .USE_320XE(EXTENDED_RAM), .VCOUNT_COMPAT(VCOUNT_COMPAT)
+    ) machine (
         .clk(core_clk), .rst(machine_reset), .cold(machine_reset), .hold_cpu(pause_request),
         .tick(tick), .px_tick(pixel_tick), .tune(16'd0),
         .cpu_addr(cpu_addr), .cpu_wdata(cpu_out), .cpu_we(cpu_write),

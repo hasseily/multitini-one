@@ -6,9 +6,11 @@ The core needs both files before it starts.
 
 Put standard 8 KiB and 16 KiB cartridges in ../media/. Use .car files
 with a type 1 or 2 header, or raw .rom or .bin images for unbanked carts.
-Use the F12 Media menu to insert or eject a cartridge and restart the guest.
+In F12 Media, open Cartridge and choose a file or Eject cartridge.
+Inserting or ejecting restarts the guest.
 Put .atr disks and .xex executables in ../media/ as well. Disk D1: mounts
-an ATR read-only, Boot D1: restarts from it, and Run XEX launches a program.
+an ATR read-only and offers Eject Disk. Restart active core on the System
+tab restarts with the current media. Run XEX launches a program.
 
 This core uses modified Atari-XT HDL by ThrudTheBarbarian.
 Original source at https://github.com/ThrudTheBarbarian/fpga-xt

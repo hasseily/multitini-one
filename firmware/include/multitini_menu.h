@@ -30,6 +30,8 @@
 /* A Mount & Run row that loads its D64 program with the drive's LOAD"*". */
 #define MT_MENU_FILE_FIRST_PROGRAM UINT32_C(0x10000000)
 #define MT_MENU_FILE_READ_ONLY UINT32_C(0x08000000)
+#define MT_MENU_FILE_EJECT_DISK UINT32_C(0x04000000)
+#define MT_MENU_FILE_EJECT_CARTRIDGE UINT32_C(0x02000000)
 #define MT_MENU_TEXT_COLUMNS 95U
 #define MT_MENU_TEXT_ROWS 40U
 /* The content list leaves room for the shared header, help and footer. */
@@ -106,7 +108,7 @@ typedef enum {
     MT_MENU_ACTION_AMIGA_DISPLAY,
     MT_MENU_ACTION_SPECTRUM_RELOAD,
     MT_MENU_ACTION_ATARI_XT_RELOAD,
-    MT_MENU_ACTION_ATARI_XT_BOOT_DISK
+    MT_MENU_ACTION_SPECTRUM_TAPE_MODE
 } mt_menu_action_kind_t;
 
 typedef enum {
@@ -231,6 +233,7 @@ typedef struct {
     uint16_t gamepad_pending_source;
     uint64_t gamepad_capture_started;
     mt_gamepad_state_t gamepad_previous;
+    uint32_t gamepad_preview_actions;
     mt_controller_config_t gamepad_config[MT_GAMEPAD_SLOTS];
     mt_controller_config_t gamepad_original[MT_GAMEPAD_SLOTS];
     char gamepad_notice[160];

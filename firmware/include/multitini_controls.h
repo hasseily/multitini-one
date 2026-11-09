@@ -38,8 +38,10 @@ typedef struct {
     uint16_t binding[MT_CONTROL_COUNT];
     uint16_t extra_binding[3];
     /* Tuning belongs to each physical axis. Bindings select the source. */
-    mt_gamepad_axis_config_t axis[MT_GAMEPAD_AXIS_COUNT];
+    mt_gamepad_axis_config_t axis[MT_INPUT_AXIS_COUNT];
     uint8_t assignment;
+    /* Older Atari profiles have neither console button binding. */
+    bool atari_console_buttons_configured;
 } mt_controller_config_t;
 typedef struct {
     uint32_t actions;
@@ -56,6 +58,9 @@ uint16_t mt_controls_axis_source(unsigned axis, bool analog, bool positive);
 /* MT_INPUT_AXIS_COUNT means the source is not an individual axis. */
 unsigned mt_controls_source_axis(uint16_t source);
 bool mt_controls_source_is_analog(uint16_t source);
+/* Zero-based physical index; Start is the next button. */
+unsigned mt_controls_select_button(const mt_controller_device_t *device);
+mt_gamepad_axis_config_t mt_controls_default_axis(unsigned axis);
 void mt_controls_default(uint32_t core_id, const mt_controller_device_t *device,
                          mt_controller_config_t *config);
 bool mt_controls_config_valid(uint32_t core_id, const mt_controller_config_t *config);
@@ -66,10 +71,14 @@ bool mt_controls_identity_model_equal(const mt_controller_identity_t *a,
 void mt_controls_migrate_legacy(uint32_t core_id, const mt_controller_device_t *device,
                                const mt_gamepad_config_t *legacy,
                                mt_controller_config_t *config);
+int16_t mt_controls_tuned_axis(const mt_controller_config_t *config,
+                               const mt_gamepad_state_t *raw, unsigned axis);
 void mt_controls_evaluate(uint32_t core_id, const mt_controller_config_t *config,
                           const mt_gamepad_state_t *raw, uint32_t previous_actions,
                           mt_controls_output_t *output);
 bool mt_controls_neutral(const mt_gamepad_state_t *raw);
+bool mt_controls_gameplay_neutral(uint32_t core_id, const mt_controller_config_t *config,
+                                  const mt_gamepad_state_t *raw);
 uint16_t mt_controls_capture_source(const mt_gamepad_state_t *before,
                                     const mt_gamepad_state_t *now, bool analog);
 #endif

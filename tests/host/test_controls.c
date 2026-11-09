@@ -357,6 +357,19 @@ static void test_extended_axis_controls(void)
         raw.axis[axis] = -30000;
         mt_controls_evaluate(MT_VECTREX_CORE_ID, &config, &raw, 0U, &output);
         check(output.x == -30000, "extra absolute axes have unity gain without a dead zone");
+        config.axis[axis].invert = 1U;
+        config.axis[axis].deadzone_percent = 25U;
+        config.axis[axis].sensitivity_percent = 50U;
+        raw.axis[axis] = -8000;
+        mt_controls_evaluate(MT_VECTREX_CORE_ID, &config, &raw, 0U, &output);
+        check(output.x == 0, "extra absolute axes use the selected dead zone");
+        raw.axis[axis] = -24576;
+        mt_controls_evaluate(MT_VECTREX_CORE_ID, &config, &raw, 0U, &output);
+        check(output.x == 10922 && output.x == mt_controls_tuned_axis(&config, &raw, axis),
+              "extra absolute axes use gain and inversion in gameplay and preview");
+        raw.relative_mask = bit;
+        mt_controls_evaluate(MT_VECTREX_CORE_ID, &config, &raw, 0U, &output);
+        check(output.x == -24576, "extra relative motion bypasses absolute axis tuning");
     }
     config = empty_config(MT_GBC_CORE_ID);
     config.binding[MT_CONTROL_A] = MT_CONTROL_SOURCE_AXIS_NEG + 1U;
@@ -370,6 +383,40 @@ static void test_extended_axis_controls(void)
     config.binding[MT_CONTROL_A] = MT_CONTROL_SOURCE_AXIS_NEG;
     mt_controls_evaluate(MT_GBC_CORE_ID, &config, &raw, 0U, &output);
     check(output.actions == BIT(MT_CONTROL_A), "relative XY respects inversion");
+}
+
+static void test_gameplay_release(void)
+{
+    mt_controller_config_t config = empty_config(MT_VECTREX_CORE_ID);
+    mt_gamepad_state_t raw = neutral();
+    config.binding[MT_CONTROL_AXIS_X] = mt_controls_axis_source(MT_GAMEPAD_AXIS_X, true, false);
+    config.axis[MT_GAMEPAD_AXIS_X].deadzone_percent = 30U;
+    raw.axis_valid_mask = (uint16_t)(BIT(MT_GAMEPAD_AXIS_X) | BIT(MT_GAMEPAD_AXIS_RX));
+    raw.axis[MT_GAMEPAD_AXIS_X] = 9000;
+    raw.axis[MT_GAMEPAD_AXIS_RX] = 24000;
+    check(!mt_controls_neutral(&raw) && mt_controls_gameplay_neutral(MT_VECTREX_CORE_ID, &config, &raw),
+          "gameplay release ignores bound stick drift in the dead zone and unbound axes");
+    raw.axis[MT_GAMEPAD_AXIS_X] = 12000;
+    check(!mt_controls_gameplay_neutral(MT_VECTREX_CORE_ID, &config, &raw),
+          "gameplay release waits for a deflected bound analog stick");
+    config.binding[MT_CONTROL_AXIS_X] = 0U;
+    config.binding[MT_CONTROL_RIGHT] = mt_controls_axis_source(MT_GAMEPAD_AXIS_X, false, true);
+    config.axis[MT_GAMEPAD_AXIS_X].deadzone_percent = 0U;
+    config.axis[MT_GAMEPAD_AXIS_X].sensitivity_percent = 200U;
+    raw.axis[MT_GAMEPAD_AXIS_X] = 6500;
+    check(!mt_controls_gameplay_neutral(MT_VECTREX_CORE_ID, &config, &raw),
+          "gameplay release waits for a stick that still drives a digital action at high gain");
+    raw.axis[MT_GAMEPAD_AXIS_X] = 0;
+    raw.buttons = 1U;
+    check(!mt_controls_gameplay_neutral(MT_VECTREX_CORE_ID, &config, &raw),
+          "gameplay release still waits for held buttons");
+    raw.buttons = 0U;
+    raw.axis_valid_mask |= (uint16_t)BIT(MT_GAMEPAD_AXIS_Z);
+    raw.trigger_mask = (uint16_t)BIT(MT_GAMEPAD_AXIS_Z);
+    raw.axis[MT_GAMEPAD_AXIS_Z] = INT16_MIN;
+    config.binding[MT_CONTROL_RIGHT] = mt_controls_axis_source(MT_GAMEPAD_AXIS_Z, false, false);
+    check(mt_controls_gameplay_neutral(MT_VECTREX_CORE_ID, &config, &raw),
+          "a physically released trigger cannot leave the menu guard latched");
 }
 
 int main(void)
@@ -393,6 +440,7 @@ int main(void)
     test_capture_and_identity();
     test_legacy_axis_migration();
     test_extended_axis_controls();
+    test_gameplay_release();
     puts("PASS controls: all button sources, per-core defaults, capture, analog tuning and stable identities");
     return 0;
 }

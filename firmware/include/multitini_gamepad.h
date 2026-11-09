@@ -10,8 +10,8 @@ enum { MT_GAMEPAD_AXIS_X, MT_GAMEPAD_AXIS_Y, MT_GAMEPAD_AXIS_Z,
        MT_GAMEPAD_AXIS_RX, MT_GAMEPAD_AXIS_RY, MT_GAMEPAD_AXIS_RZ,
        MT_GAMEPAD_AXIS_COUNT };
 #define MT_GAMEPAD_AXIS_OFF MT_GAMEPAD_AXIS_COUNT
-/* The six persisted gamepad tuning entries remain unchanged. Extra axes are
- * live input capabilities, with fixed unity gain and no dead zone. */
+/* Legacy slot maps have six tuning entries. Shared controller profiles can
+ * also tune extra absolute axes. Extra relative axes use fixed unity gain. */
 enum { MT_INPUT_AXIS_SLIDER = MT_GAMEPAD_AXIS_COUNT, MT_INPUT_AXIS_DIAL,
        MT_INPUT_AXIS_WHEEL, MT_INPUT_AXIS_PAN, MT_INPUT_AXIS_COUNT };
 typedef struct {
