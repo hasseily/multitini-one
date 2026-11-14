@@ -412,24 +412,124 @@ def generate_sound() -> str:
 def generate_soundglu() -> str:
     text=NOTICE+upstream("rtl/soundglu.v")
     text=replace(text,"   output reg [7:0]  host_data_out,", "   output reg [7:0]  host_data_out,\n   output reg [7:0]  host_read_peek,\n   output wire       host_busy,")
-    text=replace(text,"   always @(posedge CLK_14M) begin", """   // A host access is pending or finishing until the GLU returns to idle.
-   assign host_busy = sound_cycle_state != ST_IDLE;
-   // Read-only view of the existing host register mux. External CPU bridge
-   // samples this before its commit edge, without speculative DOC accesses.
+    text=replace(text,"   output reg\t     ram_access,", "   output wire      ram_access,")
+    text=replace(text,"   output reg [15:0] sound_addr,", "   output wire [15:0] sound_addr,")
+    start=text.index("   localparam")
+    return normalize(text[:start]+"""   reg              ram_mode;
+   reg              auto_increment;
+   reg [3:0]        volume;
+   reg [15:0]       address_pointer;
+   reg [15:0]       active_address;
+   reg              pending;
+   reg              pending_write;
+   reg [7:0]        pending_data;
+   reg              finishing;
+   reg [1:0]        ram_read_delay;
+   reg [7:0]        read_data_reg;
+
+   wire host_commit = select && ph0_en;
+   wire host_data_commit = host_commit && host_addr == 1;
+   wire control_write = host_commit && wr && host_addr == 0;
+   wire service = pending && osc_en;
+
+   // Advance the CPU pointer at the slot and keep the old address stable
+   // until the DOC or synchronous sound RAM finishes the transfer.
+   assign sound_addr = finishing || (|ram_read_delay) ? active_address : address_pointer;
+   assign host_busy = pending || finishing || (|ram_read_delay);
+   // Keep the sound module's read mux on RAM until the issued byte arrives.
+   assign ram_access = ram_mode || (|ram_read_delay);
+
+   // The accelerated CPU samples this mux without committing another access.
    always @* begin
       case (host_addr)
-         0: host_read_peek={sound_cycle_state==ST_PENDING,ram_access,auto_increment,1'b1,volume};
-         1: host_read_peek=read_data_reg;
-         2: host_read_peek=sound_addr[7:0];
-         3: host_read_peek=sound_addr[15:8];
+         0: host_read_peek = {pending, ram_mode, auto_increment, 1'b1, volume};
+         1: host_read_peek = read_data_reg;
+         2: host_read_peek = address_pointer[7:0];
+         3: host_read_peek = address_pointer[15:8];
       endcase
    end
-   always @(posedge CLK_14M) begin""")
-    text=replace(text,"\t read_data_reg <= sound_data_in;",
-                 "\t // A write leaves the previous read in the CPU-visible latch.\n"
-                 "\t if (!sound_write_pending)\n"
-                 "\t   read_data_reg <= sound_data_in;")
-    return normalize(text)
+
+   always @(posedge CLK_14M) begin
+      if (reset) begin
+         ram_mode <= 0;
+         auto_increment <= 0;
+         volume <= 0;
+         address_pointer <= 0;
+         active_address <= 0;
+         pending <= 0;
+         pending_write <= 0;
+         pending_data <= 0;
+         finishing <= 0;
+         ram_read_delay <= 0;
+         read_data_reg <= 0;
+         host_data_out <= 0;
+         sound_data_out <= 0;
+         ram_wr <= 0;
+         doc_wr <= 0;
+         doc_host_en <= 0;
+      end else begin
+         finishing <= service;
+         ram_read_delay <= {ram_read_delay[0], 1'b0};
+         ram_wr <= 0;
+         doc_wr <= 0;
+         doc_host_en <= 0;
+
+         if (ram_read_delay[1])
+            read_data_reg <= sound_data_in;
+
+         if (service) begin
+            pending <= 0;
+            active_address <= address_pointer;
+            sound_data_out <= pending_data;
+            if (auto_increment)
+               address_pointer <= address_pointer + 16'd1;
+
+            // The control latch can switch the target before the next slot.
+            // A mode change on the write slot itself suppresses the write.
+            if (pending_write) begin
+               if (!(control_write && host_data_in[6] != ram_mode)) begin
+                  ram_wr <= ram_mode;
+                  doc_wr <= !ram_mode;
+                  doc_host_en <= !ram_mode;
+               end
+            end else if (ram_mode) begin
+               // The RAM serves the oscillator on osc_en, then reads the
+               // active CPU address on the next edge. Capture one edge later.
+               ram_read_delay <= 2'b01;
+            end else begin
+               read_data_reg <= sound_data_in;
+               doc_host_en <= 1;
+            end
+         end
+
+         if (select && !(wr && ph0_en))
+            host_data_out <= host_read_peek;
+
+         if (host_commit && wr) begin
+            case (host_addr)
+               0: begin
+                  ram_mode <= host_data_in[6];
+                  auto_increment <= host_data_in[5];
+                  volume <= host_data_in[3:0];
+               end
+               2: address_pointer[7:0] <= host_data_in;
+               3: address_pointer[15:8] <= host_data_in;
+               default: ;
+            endcase
+         end
+
+         // A pending access occupies one slot. A new write may replace it,
+         // but a busy read only returns the previous value with no side effect.
+         if (host_data_commit && (wr || !pending || service)) begin
+            pending <= 1;
+            pending_write <= wr;
+            if (wr)
+               pending_data <= host_data_in;
+         end
+      end
+   end
+endmodule // soundglu
+""")
 
 def generate_zipgs() -> str:
     text=NOTICE+upstream("rtl/zipgs_regs.sv")
@@ -1092,6 +1192,156 @@ def generate_es5503() -> str:
 \t      (sample_data_in != 0 &&
 \t       !(wr && host_en && reg_addr == {3'b101, current_osc} && !reg_data_in[0]))))
 \t   r_sample_data[current_osc] <= sample_data_in;""")
+    # A zero terminates playback without replacing the last nonzero DATA byte.
+    # A CPU halt in free-run still permits the next phase fetch, even while the
+    # oscillator is out of the scan. Its DATA holds until a pointer change.
+    text = replace(text, "reg [23:0]\t     accumulator [31:0];",
+                   """reg [23:0]\t     accumulator [31:0];
+   reg [31:0]        sample_zero;
+   reg [31:0]        hold_data;
+   reg [31:0]        final_fetch;""")
+    text = replace(text, "r_control[current_osc][0])};",
+                   "r_control[current_osc][0] && !final_fetch[current_osc])};")
+    text = replace(text, "4: r_table_ptr[reg_addr[4:0]] <= reg_data_in;",
+                   """4: begin
+\t      r_table_ptr[reg_addr[4:0]] <= reg_data_in;
+\t      hold_data[reg_addr[4:0]] <= 1'b0;
+\t      final_fetch[reg_addr[4:0]] <= 1'b0;
+\t   end""")
+    text = replace(text, "r_control[reg_addr[4:0]] <= reg_data_in;",
+                   """r_control[reg_addr[4:0]] <= reg_data_in;
+\t      if (!r_control[reg_addr[4:0]][0] && reg_data_in[2:0] == 3'b001) begin
+\t\t hold_data[reg_addr[4:0]] <= 1'b1;
+\t\t final_fetch[reg_addr[4:0]] <= 1'b1;
+\t      end""")
+    text = replace(text, "r_sample_data[reg_addr[4:0]] <= 'h80;",
+                   """r_sample_data[reg_addr[4:0]] <= 'h80;
+\t\t sample_zero[reg_addr[4:0]] <= 1'b0;
+\t\t hold_data[reg_addr[4:0]] <= 1'b0;
+\t\t final_fetch[reg_addr[4:0]] <= 1'b0;""")
+    text = replace(text, "r_sample_data[current_osc] == 8'h00", "sample_zero[current_osc]", count=3)
+    text = replace(text, "r_control[current_osc][1] ||\n\t\t\t\t\t     sample_zero[current_osc]);",
+                   """r_control[current_osc][1] ||
+\t\t\t\t\t     sample_zero[current_osc]);
+\t       if (sample_zero[current_osc] &&
+\t\t   (r_control[current_osc][2:1] == 2'd0 || r_control[current_osc][2:1] == 2'd3))
+\t\t  hold_data[current_osc] <= 1'b1;""")
+    text = replace(text, "r_sample_data[current_osc ^ 5'h01] <= 8'h80; // Prevent halt on the first scan",
+                   """r_sample_data[current_osc ^ 5'h01] <= 8'h80; // Prevent halt on the first scan
+\t\t     sample_zero[current_osc ^ 5'h01] <= 1'b0;
+\t\t     hold_data[current_osc ^ 5'h01] <= 1'b0;
+\t\t     final_fetch[current_osc ^ 5'h01] <= 1'b0;""")
+    text = replace(text, "else // All other modes\n\t      sound_out",
+                   "else if (sample_zero[current_osc])\n\t      sound_out <= 16'h0000;\n\t    else // All other modes\n\t      sound_out")
+    text = replace(text, """\t if (!refreshing &&
+\t     (!r_control[current_osc][0] ||
+\t      (sample_data_in != 0 &&
+\t       !(wr && host_en && reg_addr == {3'b101, current_osc} && !reg_data_in[0]))))
+\t   r_sample_data[current_osc] <= sample_data_in;""",
+                   """\t if (!refreshing) begin
+\t    if (!r_control[current_osc][0])
+\t       sample_zero[current_osc] <= sample_data_in == 8'h00;
+\t    if (final_fetch[current_osc])
+\t       final_fetch[current_osc] <= 1'b0;
+\t    if (sample_data_in != 8'h00 &&
+\t        (!hold_data[current_osc] || final_fetch[current_osc]) &&
+\t        !(wr && host_en && reg_addr == {3'b101, current_osc} &&
+\t          r_control[current_osc][0] && !reg_data_in[0]))
+\t       r_sample_data[current_osc] <= sample_data_in;
+\t end""")
+    text = replace(text, "for (i=0; i < 32; i=i+1) accumulator[i] <= 0;",
+                   """for (i=0; i < 32; i=i+1) accumulator[i] <= 0;
+\t sample_zero <= 0;
+\t hold_data <= 0;
+\t final_fetch <= 0;""")
+    text = replace(text, """   reg [31:0]\t     irq_pending;
+   reg [4:0]          irq_fifo [31:0];
+   reg [4:0]          irq_head;
+   reg [4:0]          irq_tail;
+   reg [4:0]          irq_last;""", "")
+    text = replace(text, "   assign irq = |irq_pending;", """   wire [7:0] oir;
+   wire host_control_write = wr && host_en && reg_addr[7:5] == 3'b101;
+   wire wave_end = osc_en && !refreshing && !r_control[current_osc][0] &&
+                   (accumulator_wrapped || sample_zero[current_osc]);
+   wire halted_zero = osc_en_d && !refreshing && r_control[current_osc][0] &&
+                      sample_zero[current_osc] && sample_data_in == 8'h00;
+
+   multitini_apple_iigs_doc_irq irq_controller(
+       .clk(CLK_14M),
+       .reset(reset),
+       .slot(osc_en),
+       .request(r_control[current_osc][3] && (wave_end || halted_zero)),
+       .request_osc(current_osc),
+       .cancel(host_control_write),
+       .cancel_osc(reg_addr[4:0]),
+       .ack(host_en && !wr && reg_addr == 8'he0),
+       .ack_value(data_out),
+       .oir(oir),
+       .irq(irq)
+   );""")
+    text = replace(text, """\t\t0: begin // OIR
+\t\t   data_out <= {~irq, 1'b1, irq ? irq_fifo[irq_head] : irq_last, 1'b1};
+\t\t   // The GLU captures data_out one clock before host_en. If a
+\t\t   // new IRQ arrived on that edge while the FIFO was empty,
+\t\t   // the captured byte showed empty and must not dequeue it.
+\t\t   if (irq && host_en && !data_out[7]) begin
+\t\t      irq_pending[irq_fifo[irq_head]] <= 1'b0;
+\t\t      irq_last <= irq_fifo[irq_head];
+\t\t      irq_head <= irq_head + 1'd1;
+\t\t   end
+\t\tend""", "\t\t0: data_out <= oir;")
+    text = replace(text, """
+\t       // IRQ handling
+\t       if (r_control[current_osc][3] && !irq_pending[current_osc]) begin
+\t\t  irq_pending[current_osc] <= 1;
+\t\t  irq_fifo[irq_tail] <= current_osc;
+\t\t  irq_tail <= irq_tail + 1'd1;
+\t       end""", "")
+    text = replace(text, """
+\t irq_pending <= 0;
+\t irq_head <= 0;
+\t irq_tail <= 0;
+\t irq_last <= 5'h1f;""", "")
+    # A halted odd swap oscillator reinforces the even oscillator's run.
+    # The even oscillator can do so only after fetching a zero on a prior run.
+    text = replace(text, """   wire [7:0] oir;
+   wire host_control_write""",
+                   """   wire [4:0] partner = current_osc ^ 5'd1;
+   wire odd_swap_halted = !current_osc[0] && r_control[partner][2:0] == 3'b111;
+   wire swap_can_start_partner = r_control[partner][0] &&
+                                r_control[current_osc][2:1] == 2'd3;
+   wire [7:0] oir;
+   wire host_control_write""")
+    text = replace(text, """\t       r_control[current_osc][0] <= (r_control[current_osc][1] ||
+\t\t\t\t\t     sample_zero[current_osc]);""",
+                   """\t       r_control[current_osc][0] <= sample_zero[current_osc] ||
+\t\t  (r_control[current_osc][1] &&
+\t\t   !(odd_swap_halted && r_control[current_osc][2:1] == 2'd1));""")
+    text = replace(text, """\t\t  // Swap occurs when the mode is 3 for both even and odd
+\t\t  if (r_control[current_osc][2:1] == 2'd3 &&
+\t\t      r_control[current_osc ^ 5'h01][0]) begin
+\t\t     r_control[current_osc ^ 5'h01][0] <= 1'b0;
+\t\t     r_sample_data[current_osc ^ 5'h01] <= 8'h80; // Prevent halt on the first scan
+\t\t     sample_zero[current_osc ^ 5'h01] <= 1'b0;
+\t\t     hold_data[current_osc ^ 5'h01] <= 1'b0;
+\t\t     final_fetch[current_osc ^ 5'h01] <= 1'b0;
+\t\t     accumulator[current_osc ^ 5'h01] <= 24'h0;
+\t\t  end
+""", "")
+    text = replace(text, """      if (osc_en) begin
+\t if (!r_control[current_osc][0] && !refreshing) begin""",
+                   """      if (osc_en) begin
+\t if (!refreshing && swap_can_start_partner &&
+\t     (wave_end || (r_control[current_osc][0] &&
+\t                   (current_osc[0] || sample_zero[current_osc])))) begin
+\t    r_control[partner][0] <= 1'b0;
+\t    r_sample_data[partner] <= 8'h80;
+\t    sample_zero[partner] <= 1'b0;
+\t    hold_data[partner] <= 1'b0;
+\t    final_fetch[partner] <= 1'b0;
+\t    accumulator[partner] <= 24'h0;
+\t end
+\t if (!r_control[current_osc][0] && !refreshing) begin""")
     return normalize(text)
 
 def generate_cpu() -> str:

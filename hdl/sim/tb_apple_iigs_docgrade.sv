@@ -37,6 +37,12 @@ module tb_apple_iigs_docgrade;
             8'h10: sample_data <= terminate_swap ? 8'h00 : 8'h32;
             8'h20: sample_data <= 8'h75;
             8'h30: sample_data <= 8'h00;
+            8'h40: sample_data <= sample_address[7:0] == 0 ? 8'h01 : sample_address[7:0];
+            8'h50: case (sample_address[7:0])
+                0: sample_data <= 8'h32;
+                1: sample_data <= 8'h7f;
+                default: sample_data <= 8'h00;
+            endcase
             default: sample_data <= 8'h80;
         endcase
     end
@@ -78,6 +84,7 @@ module tb_apple_iigs_docgrade;
     endtask
 
     logic [23:0] prior_phase;
+    logic [7:0] last_data;
     initial begin
         repeat (8) @(negedge clk);
         reset = 0;
@@ -147,7 +154,7 @@ module tb_apple_iigs_docgrade;
             $fatal(1, "M13 fixture: swap partner must already be running with a nonzero phase");
         terminate_swap = 1;
         do @(negedge clk);
-        while (!osc_en || doc.current_osc != 0 || doc.refreshing || doc.r_sample_data[0] != 0);
+        while (!osc_en || doc.current_osc != 0 || doc.refreshing || !doc.sample_zero[0]);
         prior_phase = doc.accumulator[1];
         @(negedge clk);
         if (doc.r_control[0][0] !== 1'b1 || doc.r_control[1][0] !== 1'b0)
@@ -170,7 +177,63 @@ module tb_apple_iigs_docgrade;
             $fatal(1, "M7: expected even sync wrap to reset odd mate phase from %06h, got %06h",
                    prior_phase, doc.accumulator[1]);
 
-        $display("PASS: DOCGRADE G3, X2, D7, M7 and M13 behavior through the sound GLU");
+        // D1: stop scanning oscillator 1, halt it, then restore the scan.
+        // Its first halted visit still fetches the next in-flight sample.
+        write_doc(8'ha0, 8'h01);
+        write_doc(8'ha1, 8'h01);
+        write_doc(8'h81, 8'h40);
+        write_doc(8'h21, 8'h02);
+        write_doc(8'ha1, 8'h00);
+        repeat (640) @(negedge clk);
+        write_doc(8'he1, 8'h00);
+        repeat (640) @(negedge clk);
+        host_access(1, SOUND_ADDRESS_LOW, 8'h61);
+        host_access(0, SOUND_DATA, 0);
+        last_data = host_peek;
+        if (last_data < 2 || last_data > 8'hfd)
+            $fatal(1, "D1 fixture: expected rising ramp during the scan, got %02h", last_data);
+        write_doc(8'ha1, 8'h01);
+        write_doc(8'he1, 8'h02);
+        repeat (160) @(negedge clk);
+        expect_doc(8'h61, last_data + 8'd1, "D1 final halted fetch");
+
+        // D6: the zero at the end of a free-run must halt playback without
+        // replacing its last nonzero DATA byte with zero or the table base.
+        write_doc(8'h81, 8'h50);
+        write_doc(8'ha1, 8'h00);
+        repeat (640) @(negedge clk);
+        expect_doc(8'ha1, 8'h01, "D6 zero halt");
+        expect_doc(8'h61, 8'h7f, "D6 last nonzero byte");
+
+        // M2: a halted odd swap oscillator keeps the even one-shot running.
+        write_doc(8'h80, 8'h40);
+        write_doc(8'h81, 8'h20);
+        write_doc(8'h00, 8'hff);
+        write_doc(8'h20, 8'hff);
+        write_doc(8'ha1, 8'h07);
+        write_doc(8'ha0, 8'h02);
+        repeat (1200) @(negedge clk);
+        expect_doc(8'ha0, 8'h02, "M2 one-shot paired with odd halted swap");
+        expect_doc(8'ha1, 8'h07, "M2 odd swap stays halted");
+
+        // M3: a CPU-halted even swap with a nonzero sample does not start
+        // its mate. M4: a zero halt in even swap does restart its odd mate.
+        write_doc(8'ha0, 8'h01);
+        write_doc(8'ha1, 8'h01);
+        write_doc(8'h80, 8'h20);
+        write_doc(8'ha0, 8'h07);
+        repeat (200) @(negedge clk);
+        expect_doc(8'ha1, 8'h01, "M3 explicit even swap halt");
+        write_doc(8'h80, 8'h30);
+        write_doc(8'ha0, 8'h06);
+        repeat (200) @(negedge clk);
+        expect_doc(8'ha0, 8'h07, "M4 even zero halt");
+        expect_doc(8'ha1, 8'h00, "M4 first mate start");
+        write_doc(8'ha1, 8'h01);
+        repeat (200) @(negedge clk);
+        expect_doc(8'ha1, 8'h00, "M4 repeat mate start");
+
+        $display("PASS: DOCGRADE G3, X2, D1, D6, D7, M2, M3, M4, M7, and M13 behavior through the sound GLU");
         $finish;
     end
 

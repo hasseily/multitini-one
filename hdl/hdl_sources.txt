@@ -202,6 +202,7 @@ core/apple_iigs/ports/mmu.sv
 ../third_party/apple-iigs/upstream/rtl/syncram.v | systemverilog
 core/apple_iigs/ports/sound.sv
 core/apple_iigs/ports/soundglu.sv
+core/apple_iigs/multitini_apple_iigs_doc_irq.sv
 core/apple_iigs/ports/es5503.sv
 ../third_party/apple-iigs/upstream/rtl/paddle_timer.v | systemverilog
 ../third_party/apple-iigs/upstream/rtl/video_timing.v | systemverilog

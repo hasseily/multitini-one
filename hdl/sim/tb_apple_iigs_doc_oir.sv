@@ -65,6 +65,18 @@ module tb_apple_iigs_doc_oir;
                    expected, irq_after, host_peek, irq);
     endtask
 
+    task automatic next_oir(input logic [7:0] expected);
+        // An acknowledged request drops the line before another oscillator
+        // can be presented. Don't treat the inactive byte as a request.
+        if (irq)
+            $fatal(1, "DOC did not release IRQ after the prior acknowledgement");
+        while (!irq)
+            @(negedge clk);
+        while (doc.irq_controller.presenting_slot)
+            @(negedge clk);
+        read_oir(expected, 0);
+    endtask
+
     task automatic start_osc(input logic [4:0] oscillator);
         doc_reg_write(8'ha0 + {3'b000, oscillator}, 8'h0a);
     endtask
@@ -91,17 +103,27 @@ module tb_apple_iigs_doc_oir;
         host_access(1, 2, 8'he0);
         read_oir(8'hff, 0);
 
+        // A CPU-halted, previously idle oscillator with IE enabled has no
+        // sample termination to report, even if its table begins with zero.
+        terminate_next_scan(32'h02);
+        doc_reg_write(8'ha1, 8'h09);
+        repeat (150) @(negedge clk);
+        host_access(1, 2, 8'he0);
+        read_oir(8'hff, 0);
+        terminators = 0;
+
         // Four one-shots finish in the same scan. The ROM 03 OIR reports
         // each oscillator and retains the last one with bit 7 set.
         for (int i = 1; i <= 4; i++)
             start_osc(5'(i));
         terminate_next_scan(32'h1e);
         repeat (300) @(negedge clk);
+        terminators = 0;
         host_access(1, 2, 8'he0);
-        read_oir(8'h43, 1);
-        read_oir(8'h45, 1);
-        read_oir(8'h47, 1);
-        read_oir(8'h49, 0);
+        read_oir(8'h43, 0);
+        next_oir(8'h45);
+        next_oir(8'h47);
+        next_oir(8'h49);
         read_oir(8'hc9, 0);
         read_oir(8'hc9, 0);
 
@@ -113,11 +135,12 @@ module tb_apple_iigs_doc_oir;
         repeat (300) @(negedge clk);
         terminate_next_scan(32'h1e);
         repeat (300) @(negedge clk);
+        terminators = 0;
         host_access(1, 2, 8'he0);
-        read_oir(8'h49, 1);
-        read_oir(8'h43, 1);
-        read_oir(8'h45, 1);
-        read_oir(8'h47, 0);
+        read_oir(8'h49, 0);
+        next_oir(8'h43);
+        next_oir(8'h45);
+        next_oir(8'h47);
         read_oir(8'hc7, 0);
 
         // On this capture edge, the GLU sees empty while oscillator 1
@@ -128,27 +151,54 @@ module tb_apple_iigs_doc_oir;
         terminators = 32'h02;
         do @(negedge clk);
         while (doc.current_osc != 5'd1 || doc.clk_phase != 3'd7 ||
-               clk_7m_en || doc.r_sample_data[1] != 8'h00);
+               clk_7m_en || !doc.sample_zero[1]);
         if (irq)
             $fatal(1, "Coincident DOC interrupt arrived before the GLU read");
         read_oir(8'hc7, 1);
+        terminators = 0;
         read_oir(8'h43, 0);
         read_oir(8'hc3, 0);
 
-        // All 32 oscillators can be pending. A full queue wraps its write
-        // pointer to its read pointer, but the pending flags keep IRQ live.
+        // A control write clears an oscillator waiting behind the presented
+        // request. Check both disabling IE and rewriting it as enabled.
+        for (int ie = 0; ie <= 1; ie++) begin
+            start_osc(1);
+            start_osc(2);
+            terminate_next_scan(32'h06);
+            repeat (300) @(negedge clk);
+            terminators = 0;
+            doc_reg_write(8'ha2, ie != 0 ? 8'h0b : 8'h03);
+            host_access(1, 2, 8'he0);
+            read_oir(8'h43, 0);
+            repeat (50) @(negedge clk);
+            read_oir(8'hc3, 0);
+        end
+
+        // A halted oscillator that still fetches zero can request again
+        // after its presented request is acknowledged.
+        doc_reg_write(8'ha1, 8'h08);
+        terminate_next_scan(32'h02);
+        repeat (300) @(negedge clk);
+        host_access(1, 2, 8'he0);
+        read_oir(8'h43, 0);
+        next_oir(8'h43);
         terminators = 0;
+        repeat (50) @(negedge clk);
+
+        // All 32 oscillators can be pending. Check full occupancy and order.
         doc_reg_write(8'he1, 8'h3e);
         for (int i = 0; i < 32; i++)
             start_osc(5'(i));
         terminate_next_scan(32'hffffffff);
         repeat (700) @(negedge clk);
+        terminators = 0;
         host_access(1, 2, 8'he0);
-        for (int i = 0; i < 32; i++)
-            read_oir(8'h41 + 8'(2 * i), i != 31);
+        read_oir(8'h41, 0);
+        for (int i = 1; i < 32; i++)
+            next_oir(8'h41 + 8'(2 * i));
         read_oir(8'hff, 0);
 
-        $display("PASS: DOC OIR reports oldest interrupt through the GLU, including concurrent enqueue and pointer wrap");
+        $display("PASS: DOC OIR presents requests in order through the GLU and releases IRQ between requests");
         $finish;
     end
 

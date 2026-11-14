@@ -15,11 +15,13 @@ import sys
 ROOT=Path(__file__).resolve().parents[1]
 UPSTREAM=ROOT/"third_party/apple-iigs/upstream"
 PORTS=ROOT/"hdl/core/apple_iigs/ports"
+DOC_IRQ=PORTS.parent/"multitini_apple_iigs_doc_irq.sv"
 
 def machine_sources() -> list[Path]:
     cpu=UPSTREAM/"rtl/65C816"
     result=[cpu/"P65C816_pkg.sv"]+sorted(path for path in cpu.glob("*") if path.suffix in (".sv",".v") and path.name not in ("P65C816_pkg.sv","P65C816.sv","mcode.sv"))
     result+=sorted(PORTS.glob("*.sv"))
+    result.append(DOC_IRQ)
     result += [UPSTREAM/"rtl"/relative for relative in ("syncram.v",
         "paddle_timer.v","video_timing.v",
         "scc_iigs_wrapper.v")]
@@ -29,7 +31,7 @@ def main() -> int:
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", type=Path, default=ROOT/"build/apple-iigs-import-tests")
     parser.add_argument("--skip-cpu", action="store_true", help="omit compiled CPU simulation")
-    parser.add_argument("--test",choices=("ports","stall","interrupts","mcode","boundaries","doc-oir","docgrade","scc"),action="append",help="run selected directed simulations")
+    parser.add_argument("--test",choices=("ports","stall","interrupts","mcode","boundaries","doc-oir","docgrade","sound-glu","scc"),action="append",help="run selected directed simulations")
     args=parser.parse_args()
     build=args.build_dir.resolve();build.mkdir(parents=True,exist_ok=True)
     runtime=Path(os.environ.get("MULTITINI_UCRT_BIN","C:/msys64/ucrt64/bin"))
@@ -52,7 +54,8 @@ def main() -> int:
         ROOT/"hdl/sim/tb_apple_iigs_ports.sv",ROOT/"hdl/sim/tb_apple_iigs_cpu_stall.sv",
         ROOT/"hdl/sim/tb_apple_iigs_interrupts.sv",ROOT/"hdl/sim/tb_apple_iigs_mcode.sv",
         ROOT/"hdl/sim/tb_apple_iigs_cpu_boundaries.sv",ROOT/"hdl/sim/tb_apple_iigs_doc_oir.sv",
-        ROOT/"hdl/sim/tb_apple_iigs_docgrade.sv",ROOT/"hdl/sim/tb_apple_iigs_scc.sv"]
+        ROOT/"hdl/sim/tb_apple_iigs_docgrade.sv",ROOT/"hdl/sim/tb_apple_iigs_sound_glu.sv",
+        ROOT/"hdl/sim/tb_apple_iigs_scc.sv"]
     def hashes():return {path.relative_to(ROOT).as_posix():hashlib.sha256(path.read_bytes()).hexdigest() for path in captured}
     before=hashes()
     verilator=tool("verilator_bin") if os.name=="nt" else tool("verilator")
@@ -73,7 +76,8 @@ def main() -> int:
             run([tool("make"),"-C",directory,"-f","V"+top+".mk","-j8"],top+"-compile")
         return executable
     run([verilator,"--lint-only","-Wno-fatal","--top-module","iigs","-I"+str(UPSTREAM/"rtl"),*sources],"machine-lint")
-    selected=args.test or (["ports","doc-oir","docgrade","scc"] if args.skip_cpu else ["ports","stall","interrupts","mcode","boundaries","doc-oir","docgrade","scc"])
+    peripheral_tests=["ports","doc-oir","docgrade","sound-glu","scc"]
+    selected=args.test or (peripheral_tests if args.skip_cpu else peripheral_tests+["stall","interrupts","mcode","boundaries"])
     checks=["complete machine source lint"]
     if "mcode" in selected:
         reference=build/"mcode_reference.sv"
@@ -91,17 +95,24 @@ def main() -> int:
         print(output.strip(),flush=True)
         checks += ["inferred BRAM latency/enable/write-first", "runtime ROM loading", "blank and restored PRAM"]
     if "doc-oir" in selected:
-        executable=compile_sim("tb_apple_iigs_doc_oir",[PORTS/"es5503.sv",PORTS/"soundglu.sv",ROOT/"hdl/sim/tb_apple_iigs_doc_oir.sv"])
+        executable=compile_sim("tb_apple_iigs_doc_oir",[DOC_IRQ,PORTS/"es5503.sv",PORTS/"soundglu.sv",ROOT/"hdl/sim/tb_apple_iigs_doc_oir.sv"])
         output=run([executable],"doc-oir-simulate")
         if "PASS:" not in output:raise ValueError("IIgs DOC OIR test did not report PASS")
-        print(output.strip(),flush=True);checks.append("DOC oscillator IRQ FIFO and host read/enqueue overlap through sound GLU")
+        print(output.strip(),flush=True);checks.append("DOC IRQ order, release, cancellation and host read overlap")
     if "docgrade" in selected:
         executable=compile_sim("tb_apple_iigs_docgrade",[
-            PORTS/"es5503.sv",PORTS/"soundglu.sv",ROOT/"hdl/sim/tb_apple_iigs_docgrade.sv"])
+            DOC_IRQ,PORTS/"es5503.sv",PORTS/"soundglu.sv",ROOT/"hdl/sim/tb_apple_iigs_docgrade.sv"])
         output=run([executable],"docgrade-simulate")
         if "PASS:" not in output:raise ValueError("IIgs DOCGRADE regression did not report PASS")
         print(output.strip(),flush=True)
-        checks.append("DOCGRADE G3, X2, D7, M7 and M13 behavior through the sound GLU")
+        checks.append("DOCGRADE G3, X2, D1, D6, D7, M2, M3, M4, M7 and M13 behavior through the sound GLU")
+    if "sound-glu" in selected:
+        executable=compile_sim("tb_apple_iigs_sound_glu",[PORTS/"soundglu.sv",
+            UPSTREAM/"rtl/syncram.v",ROOT/"hdl/sim/tb_apple_iigs_sound_glu.sv"])
+        output=run([executable],"sound-glu-simulate")
+        if "PASS:" not in output:raise ValueError("IIgs Sound GLU regression did not report PASS")
+        print(output.strip(),flush=True)
+        checks.append("Sound GLU pending access priority, pointer visibility and synchronous readback")
     if "scc" in selected:
         executable=compile_sim("tb_apple_iigs_scc",[
             PORTS/"scc8530.sv",PORTS/"rxuart.sv",PORTS/"txuart.sv",

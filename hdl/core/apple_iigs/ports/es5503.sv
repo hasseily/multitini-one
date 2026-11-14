@@ -60,11 +60,10 @@ module es5503
 
    // Oscillator state
    reg [23:0]	     accumulator [31:0];
-   reg [31:0]	     irq_pending;
-   reg [4:0]          irq_fifo [31:0];
-   reg [4:0]          irq_head;
-   reg [4:0]          irq_tail;
-   reg [4:0]          irq_last;
+   reg [31:0]        sample_zero;
+   reg [31:0]        hold_data;
+   reg [31:0]        final_fetch;
+
 
    // Accumulator adder / wrap detection
    wire [24:0]	     accumulator_sum;
@@ -95,7 +94,30 @@ module es5503
 
    assign accumulator_wrapped = accumulator_flip[17 + {2'b00, r_table_size[current_osc][2:0]}];
 
-   assign irq = |irq_pending;
+   wire [4:0] partner = current_osc ^ 5'd1;
+   wire odd_swap_halted = !current_osc[0] && r_control[partner][2:0] == 3'b111;
+   wire swap_can_start_partner = r_control[partner][0] &&
+                                r_control[current_osc][2:1] == 2'd3;
+   wire [7:0] oir;
+   wire host_control_write = wr && host_en && reg_addr[7:5] == 3'b101;
+   wire wave_end = osc_en && !refreshing && !r_control[current_osc][0] &&
+                   (accumulator_wrapped || sample_zero[current_osc]);
+   wire halted_zero = osc_en_d && !refreshing && r_control[current_osc][0] &&
+                      sample_zero[current_osc] && sample_data_in == 8'h00;
+
+   multitini_apple_iigs_doc_irq irq_controller(
+       .clk(CLK_14M),
+       .reset(reset),
+       .slot(osc_en),
+       .request(r_control[current_osc][3] && (wave_end || halted_zero)),
+       .request_osc(current_osc),
+       .cancel(host_control_write),
+       .cancel_osc(reg_addr[4:0]),
+       .ack(host_en && !wr && reg_addr == 8'he0),
+       .ack_value(data_out),
+       .oir(oir),
+       .irq(irq)
+   );
 
    integer	     i;
 
@@ -132,7 +154,7 @@ module es5503
 			    r_table_ptr[current_osc],
 			    r_table_size[current_osc][5:3],
 			    r_table_size[current_osc][2:0],
-			    r_control[current_osc][0])};
+			    r_control[current_osc][0] && !final_fetch[current_osc])};
 
       if (wr && host_en) begin
 `ifdef DEBUG_SOUND
@@ -150,13 +172,24 @@ module es5503
 	   end
 	   2: r_volume[reg_addr[4:0]] <= reg_data_in;
 	   // r_sample_data; read-only
-	   4: r_table_ptr[reg_addr[4:0]] <= reg_data_in;
+	   4: begin
+	      r_table_ptr[reg_addr[4:0]] <= reg_data_in;
+	      hold_data[reg_addr[4:0]] <= 1'b0;
+	      final_fetch[reg_addr[4:0]] <= 1'b0;
+	   end
 	   5: begin
 	      r_control[reg_addr[4:0]] <= reg_data_in;
+	      if (!r_control[reg_addr[4:0]][0] && reg_data_in[2:0] == 3'b001) begin
+		 hold_data[reg_addr[4:0]] <= 1'b1;
+		 final_fetch[reg_addr[4:0]] <= 1'b1;
+	      end
 	      if (r_control[reg_addr[4:0]][0] && !reg_data_in[0]) begin
 		 accumulator[reg_addr[4:0]] <= 0;
 		 // Don't halt on the next scan in case this was 8'h00
 		 r_sample_data[reg_addr[4:0]] <= 'h80;
+		 sample_zero[reg_addr[4:0]] <= 1'b0;
+		 hold_data[reg_addr[4:0]] <= 1'b0;
+		 final_fetch[reg_addr[4:0]] <= 1'b0;
 		 //log_keyon(reg_addr[4:0]);
 	      end
 	   end
@@ -175,17 +208,7 @@ module es5503
 	   5: data_out <= r_control[reg_addr[4:0]];
 	   6: data_out <= {1'b1, r_table_size[reg_addr[4:0]][6:0]};
 	   7: case (reg_addr[1:0])
-		0: begin // OIR
-		   data_out <= {~irq, 1'b1, irq ? irq_fifo[irq_head] : irq_last, 1'b1};
-		   // The GLU captures data_out one clock before host_en. If a
-		   // new IRQ arrived on that edge while the FIFO was empty,
-		   // the captured byte showed empty and must not dequeue it.
-		   if (irq && host_en && !data_out[7]) begin
-		      irq_pending[irq_fifo[irq_head]] <= 1'b0;
-		      irq_last <= irq_fifo[irq_head];
-		      irq_head <= irq_head + 1'd1;
-		   end
-		end
+		0: data_out <= oir;
 		1: data_out <= {2'b11, oscs_enabled, 1'b1};
 		// ADC; not implemented
 	      endcase // case (reg_addr[1:0])
@@ -193,15 +216,29 @@ module es5503
       end // else: !if(wr)
 
       if (osc_en) begin
+	 if (!refreshing && swap_can_start_partner &&
+	     (wave_end || (r_control[current_osc][0] &&
+	                   (current_osc[0] || sample_zero[current_osc])))) begin
+	    r_control[partner][0] <= 1'b0;
+	    r_sample_data[partner] <= 8'h80;
+	    sample_zero[partner] <= 1'b0;
+	    hold_data[partner] <= 1'b0;
+	    final_fetch[partner] <= 1'b0;
+	    accumulator[partner] <= 24'h0;
+	 end
 	 if (!r_control[current_osc][0] && !refreshing) begin
 	    //$display("Osc %d running", current_osc);
 	    // Accumulator/halt update
 	    accumulator[current_osc] <= accumulator_sum[23:0];
 
 	    // Halt the oscillator
-	    if (accumulator_wrapped || r_sample_data[current_osc] == 8'h00) begin
-	       r_control[current_osc][0] <= (r_control[current_osc][1] ||
-					     r_sample_data[current_osc] == 8'h00);
+	    if (accumulator_wrapped || sample_zero[current_osc]) begin
+	       r_control[current_osc][0] <= sample_zero[current_osc] ||
+		  (r_control[current_osc][1] &&
+		   !(odd_swap_halted && r_control[current_osc][2:1] == 2'd1));
+	       if (sample_zero[current_osc] &&
+		   (r_control[current_osc][2:1] == 2'd0 || r_control[current_osc][2:1] == 2'd3))
+		  hold_data[current_osc] <= 1'b1;
 
 	       if (r_control[current_osc][1]) // oneshot or swap; clear the oscillator
 		  accumulator[current_osc] <= 0;
@@ -215,22 +252,9 @@ module es5503
 		      !r_control[current_osc ^ 5'h01][1])
 		    accumulator[current_osc ^ 5'h01] <= 24'h0;
 
-		  // Swap occurs when the mode is 3 for both even and odd
-		  if (r_control[current_osc][2:1] == 2'd3 &&
-		      r_control[current_osc ^ 5'h01][0]) begin
-		     r_control[current_osc ^ 5'h01][0] <= 1'b0;
-		     r_sample_data[current_osc ^ 5'h01] <= 8'h80; // Prevent halt on the first scan
-		     accumulator[current_osc ^ 5'h01] <= 24'h0;
-		  end
 	       end
 
-	       // IRQ handling
-	       if (r_control[current_osc][3] && !irq_pending[current_osc]) begin
-		  irq_pending[current_osc] <= 1;
-		  irq_fifo[irq_tail] <= current_osc;
-		  irq_tail <= irq_tail + 1'd1;
-	       end
-	    end // if (accumulator_wrapped || r_sample_data[current_osc] == 8'h00)
+	    end // if (accumulator_wrapped || sample_zero[current_osc])
 
 	    // Output sample update
 	    if (r_control[current_osc][2:1] == 2'd2 && current_osc[0] == 1'd1) begin
@@ -239,6 +263,8 @@ module es5503
 	       if (current_osc != 5'd31) // Oscillator 31 has no partner for AM
 		 r_volume[next_osc] <= r_sample_data[current_osc] ^ 8'h80;
 	    end
+	    else if (sample_zero[current_osc])
+	      sound_out <= 16'h0000;
 	    else // All other modes
 	      sound_out <= $signed(r_sample_data[current_osc] ^ 8'h80) *
 			   $signed({8'b0, r_volume[current_osc]});
@@ -251,11 +277,17 @@ module es5503
       end // if (osc_en)
       else if (osc_en_d) begin
 	 // We're using a synchronous sound RAM, so the data comes in one cycle later
-	 if (!refreshing &&
-	     (!r_control[current_osc][0] ||
-	      (sample_data_in != 0 &&
-	       !(wr && host_en && reg_addr == {3'b101, current_osc} && !reg_data_in[0]))))
-	   r_sample_data[current_osc] <= sample_data_in;
+	 if (!refreshing) begin
+	    if (!r_control[current_osc][0])
+	       sample_zero[current_osc] <= sample_data_in == 8'h00;
+	    if (final_fetch[current_osc])
+	       final_fetch[current_osc] <= 1'b0;
+	    if (sample_data_in != 8'h00 &&
+	        (!hold_data[current_osc] || final_fetch[current_osc]) &&
+	        !(wr && host_en && reg_addr == {3'b101, current_osc} &&
+	          r_control[current_osc][0] && !reg_data_in[0]))
+	       r_sample_data[current_osc] <= sample_data_in;
+	 end
 
 	 if (current_osc == oscs_enabled && !refreshing) begin
 	    refreshing <= 1;
@@ -278,10 +310,9 @@ module es5503
 	 refreshing <= 0;
 	 current_refresh <= 0;
 	 for (i=0; i < 32; i=i+1) accumulator[i] <= 0;
-	 irq_pending <= 0;
-	 irq_head <= 0;
-	 irq_tail <= 0;
-	 irq_last <= 5'h1f;
+	 sample_zero <= 0;
+	 hold_data <= 0;
+	 final_fetch <= 0;
 	 sound_out <= 16'h0000;
       end
    end // always @ (posedge clk)
