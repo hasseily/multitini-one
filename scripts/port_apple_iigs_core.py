@@ -425,6 +425,10 @@ def generate_soundglu() -> str:
       endcase
    end
    always @(posedge CLK_14M) begin""")
+    text=replace(text,"\t read_data_reg <= sound_data_in;",
+                 "\t // A write leaves the previous read in the CPU-visible latch.\n"
+                 "\t if (!sound_write_pending)\n"
+                 "\t   read_data_reg <= sound_data_in;")
     return normalize(text)
 
 def generate_zipgs() -> str:
@@ -1050,6 +1054,44 @@ def generate_es5503() -> str:
                    "irq_fifo[irq_tail] <= current_osc;\n\t\t  irq_tail <= irq_tail + 1'd1;")
     text = replace(text, "irq_sp <= 0;\n\t irq_stack[0] <= 5'h1f;",
                    "irq_head <= 0;\n\t irq_tail <= 0;\n\t irq_last <= 5'h1f;")
+    # The unused E1 and wavetable size bits read as one (DOC ERS, register summary).
+    text = replace(text, "6: data_out <= r_table_size[reg_addr[4:0]];",
+                   "6: data_out <= {1'b1, r_table_size[reg_addr[4:0]][6:0]};")
+    text = replace(text, "data_out <= {2'b0, oscs_enabled, 1'b0};",
+                   "data_out <= {2'b11, oscs_enabled, 1'b1};")
+
+    # A swap end starts a halted partner and preserves the phase of a running one.
+    text = replace(text, "if (r_control[current_osc][2:1] == 2'd3) begin",
+                   "if (r_control[current_osc][2:1] == 2'd3 &&\n"
+                   "\t\t      r_control[current_osc ^ 5'h01][0]) begin")
+    text = replace(text, " <= 1'b0;   // Swap occurs even if partner is halted",
+                   " <= 1'b0;")
+    text = replace(text, """\t\t  // Sync occurs when the current oscillator is even and not 0,
+\t\t  // the mode is 2, and the previous oscillator is not halted.
+\t\t  // Halting the current oscillator was already handled above
+\t\t  if ((current_osc != 5'd0) && (current_osc[0] == 1'd0) && (r_control[current_osc - 1][1] == 1'b0))
+\t\t    accumulator[current_osc - 1] <= 24'h0;""", """\t\t  // A wrapping even sync oscillator resets its higher odd mate.
+\t\t  if (accumulator_wrapped && !current_osc[0] &&
+\t\t      r_control[current_osc][2:1] == 2'd2 &&
+\t\t      !r_control[current_osc ^ 5'h01][1])
+\t\t    accumulator[current_osc ^ 5'h01] <= 24'h0;""")
+
+    # A halted oscillator samples the table base. A zero there leaves DATA
+    # unchanged, and a simultaneous host key-on keeps its startup sample.
+    text = replace(text, "input [2:0]  res_index);",
+                   "input [2:0]  res_index,\n\t\t\t     input\t       halted);")
+    text = replace(text, "acc_bits = acc_shifted[15:0] & acc_mask;",
+                   "acc_bits = halted ? 16'd0 : acc_shifted[15:0] & acc_mask;")
+    text = replace(text, "r_table_size[current_osc][2:0])};",
+                   "r_table_size[current_osc][2:0],\n"
+                   "\t\t\t    r_control[current_osc][0])};")
+    text = replace(text, """\t if (!r_control[current_osc][0])
+\t   r_sample_data[current_osc] <= sample_data_in;""",
+                   """\t if (!refreshing &&
+\t     (!r_control[current_osc][0] ||
+\t      (sample_data_in != 0 &&
+\t       !(wr && host_en && reg_addr == {3'b101, current_osc} && !reg_data_in[0]))))
+\t   r_sample_data[current_osc] <= sample_data_in;""")
     return normalize(text)
 
 def generate_cpu() -> str:

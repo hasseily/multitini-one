@@ -108,7 +108,8 @@ module es5503
    function [15:0] mux_addr (input [23:0] acc,
 			     input [7:0]  tbl_ptr,
 			     input [2:0]  tbl_index,
-			     input [2:0]  res_index);
+			     input [2:0]  res_index,
+			     input	       halted);
       reg [7:0]				  ptr_mask;
       reg [15:0]			  acc_mask;
       reg [23:0]			  acc_shifted;
@@ -118,7 +119,7 @@ module es5503
 	  ptr_mask = 8'hff << tbl_index;
 	  acc_mask = (16'hffff >> (8 - tbl_index));
 	  acc_shifted = acc >> (9 + res_index - tbl_index);
-	  acc_bits = acc_shifted[15:0] & acc_mask;
+	  acc_bits = halted ? 16'd0 : acc_shifted[15:0] & acc_mask;
 	  ptr_bits = ({8'h0, tbl_ptr} & {8'h0, ptr_mask[7:0]}) << 8;
 
 	 mux_addr = acc_bits[15:0] | ptr_bits;
@@ -130,7 +131,8 @@ module es5503
 		   mux_addr(accumulator[current_osc],
 			    r_table_ptr[current_osc],
 			    r_table_size[current_osc][5:3],
-			    r_table_size[current_osc][2:0])};
+			    r_table_size[current_osc][2:0],
+			    r_control[current_osc][0])};
 
       if (wr && host_en) begin
 `ifdef DEBUG_SOUND
@@ -171,7 +173,7 @@ module es5503
 	   3: data_out <= r_sample_data[reg_addr[4:0]];
 	   4: data_out <= r_table_ptr[reg_addr[4:0]];
 	   5: data_out <= r_control[reg_addr[4:0]];
-	   6: data_out <= r_table_size[reg_addr[4:0]];
+	   6: data_out <= {1'b1, r_table_size[reg_addr[4:0]][6:0]};
 	   7: case (reg_addr[1:0])
 		0: begin // OIR
 		   data_out <= {~irq, 1'b1, irq ? irq_fifo[irq_head] : irq_last, 1'b1};
@@ -184,7 +186,7 @@ module es5503
 		      irq_head <= irq_head + 1'd1;
 		   end
 		end
-		1: data_out <= {2'b0, oscs_enabled, 1'b0};
+		1: data_out <= {2'b11, oscs_enabled, 1'b1};
 		// ADC; not implemented
 	      endcase // case (reg_addr[1:0])
 	 endcase // case (reg_addr[7:5])
@@ -207,15 +209,16 @@ module es5503
 	       if (r_control[current_osc][2]) begin // Sync/swap/AM
 		  accumulator[current_osc] <= 0;
 
-		  // Sync occurs when the current oscillator is even and not 0,
-		  // the mode is 2, and the previous oscillator is not halted.
-		  // Halting the current oscillator was already handled above
-		  if ((current_osc != 5'd0) && (current_osc[0] == 1'd0) && (r_control[current_osc - 1][1] == 1'b0))
-		    accumulator[current_osc - 1] <= 24'h0;
+		  // A wrapping even sync oscillator resets its higher odd mate.
+		  if (accumulator_wrapped && !current_osc[0] &&
+		      r_control[current_osc][2:1] == 2'd2 &&
+		      !r_control[current_osc ^ 5'h01][1])
+		    accumulator[current_osc ^ 5'h01] <= 24'h0;
 
 		  // Swap occurs when the mode is 3 for both even and odd
-		  if (r_control[current_osc][2:1] == 2'd3) begin
-		     r_control[current_osc ^ 5'h01][0] <= 1'b0;   // Swap occurs even if partner is halted
+		  if (r_control[current_osc][2:1] == 2'd3 &&
+		      r_control[current_osc ^ 5'h01][0]) begin
+		     r_control[current_osc ^ 5'h01][0] <= 1'b0;
 		     r_sample_data[current_osc ^ 5'h01] <= 8'h80; // Prevent halt on the first scan
 		     accumulator[current_osc ^ 5'h01] <= 24'h0;
 		  end
@@ -248,7 +251,10 @@ module es5503
       end // if (osc_en)
       else if (osc_en_d) begin
 	 // We're using a synchronous sound RAM, so the data comes in one cycle later
-	 if (!r_control[current_osc][0])
+	 if (!refreshing &&
+	     (!r_control[current_osc][0] ||
+	      (sample_data_in != 0 &&
+	       !(wr && host_en && reg_addr == {3'b101, current_osc} && !reg_data_in[0]))))
 	   r_sample_data[current_osc] <= sample_data_in;
 
 	 if (current_osc == oscs_enabled && !refreshing) begin

@@ -664,6 +664,7 @@ hdl/sim/tb_apple_iigs_mmu_state.sv,Multitini One,,GPL-3.0-only,sim-tested,Origin
 scripts/test_apple_iigs_mmu_state.py,Multitini One,,GPL-3.0-only,sim-tested,Original source-hashing MMU state runner
 hdl/sim/tb_apple_iigs_mmu_slots.sv,Multitini One,,GPL-3.0-only,sim-tested,Original hardware-reference MMU slots regression; no private ROM or game bytes
 hdl/sim/tb_apple_iigs_doc_oir.sv,Multitini One,,GPL-3.0-only,sim-tested,Original oscillator interrupt queue and GLU timing regression
+hdl/sim/tb_apple_iigs_docgrade.sv,Multitini One,,GPL-3.0-only,sim-tested,Original directed regressions for DOCGRADE observations without guest code or disk data
 hdl/sim/tb_apple_iigs_scc.sv,Multitini One,,GPL-3.0-only,sim-tested,Original SCC WR0 pointer and decoded WR9 reset regression through the production IIgs wrapper
 scripts/test_apple_iigs_mmu_slots.py,Multitini One,,GPL-3.0-only,sim-tested,Original source-hashing MMU slots runner
 third_party/mame_reference/import_manifest.json,Multitini One,,GPL-3.0-only,source-reviewed,Original pinned MAME reference subset and file hashes

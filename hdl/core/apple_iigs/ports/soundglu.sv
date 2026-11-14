@@ -63,7 +63,9 @@ module soundglu
 	 doc_host_en <= !ram_access;
 	 doc_wr <= !ram_access && sound_write_pending;
 	 ram_wr <= ram_access && sound_write_pending;
-	 read_data_reg <= sound_data_in;
+	 // A write leaves the previous read in the CPU-visible latch.
+	 if (!sound_write_pending)
+	   read_data_reg <= sound_data_in;
       end
       else if (sound_cycle_state == ST_FINISHING) begin
 	 doc_host_en <= 0;
