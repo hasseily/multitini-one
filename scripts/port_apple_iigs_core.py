@@ -1276,6 +1276,15 @@ def generate_es5503() -> str:
    reg [4:0]          irq_last;""", "")
     text = replace(text, "   assign irq = |irq_pending;", """   wire [7:0] oir;
    wire host_control_write = wr && host_en && reg_addr[7:5] == 3'b101;
+   reg cancel_pending;
+   reg [4:0] cancel_oscillator;
+   // Register the control write before the IRQ queue's indexed updates.
+   // The GLU commits after the current slot, so the next slot sees the cancel.
+   always @(posedge CLK_14M) begin
+      cancel_pending <= !reset && host_control_write;
+      if (host_control_write)
+         cancel_oscillator <= reg_addr[4:0];
+   end
    wire wave_end = osc_en && !refreshing && !r_control[current_osc][0] &&
                    (accumulator_wrapped || sample_zero[current_osc]);
    wire halted_zero = osc_en_d && !refreshing && r_control[current_osc][0] &&
@@ -1287,8 +1296,8 @@ def generate_es5503() -> str:
        .slot(osc_en),
        .request(r_control[current_osc][3] && (wave_end || halted_zero)),
        .request_osc(current_osc),
-       .cancel(host_control_write),
-       .cancel_osc(reg_addr[4:0]),
+       .cancel(cancel_pending),
+       .cancel_osc(cancel_oscillator),
        .ack(host_en && !wr && reg_addr == 8'he0),
        .ack_value(data_out),
        .oir(oir),

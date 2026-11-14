@@ -185,6 +185,30 @@ module tb_apple_iigs_doc_oir;
         terminators = 0;
         repeat (50) @(negedge clk);
 
+        // A control write on the repeat-request edge may leave it waiting
+        // for one clock. The registered cancel must clear it before service.
+        host_access(1, 2, 8'ha1);
+        do @(negedge clk);
+        while (doc.refreshing || doc.current_osc != 5'd1 || doc.clk_phase > 3'd2);
+        terminators = 32'h02;
+        host_select = 1;
+        host_write = 1;
+        host_address = 1;
+        host_data = 8'h01;
+        @(negedge clk);
+        host_select = 0;
+        while (!(doc_write && doc.halted_zero))
+            @(negedge clk);
+        @(negedge clk);
+        if (!doc.cancel_pending || !doc.irq_controller.waiting[1] || irq)
+            $fatal(1, "DOC control write did not capture a coincident repeat request to cancel");
+        @(negedge clk);
+        if (doc.irq_controller.waiting[1] || irq)
+            $fatal(1, "DOC registered cancel let the coincident repeat request survive");
+        terminators = 0;
+        host_access(1, 2, 8'he0);
+        read_oir(8'hc3, 0);
+
         // All 32 oscillators can be pending. Check full occupancy and order.
         doc_reg_write(8'he1, 8'h3e);
         for (int i = 0; i < 32; i++)
