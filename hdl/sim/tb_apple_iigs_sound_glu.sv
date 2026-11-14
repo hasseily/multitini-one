@@ -151,6 +151,29 @@ module tb_apple_iigs_sound_glu;
         if (busy || ram.ram[16'h2440] !== 8'h24 || doc_regs[8'h40] !== 8'h07)
             $fatal(1, "Sound GLU mode switch coincident with a write committed the write");
 
+        // A control transition on the next edge also blocks the write,
+        // because that is when the selected RAM or DOC consumes its strobe.
+        host_access(1, CONTROL, 8'h60);
+        set_address(16'h2440);
+        host_access(1, DATA, 8'hb6);
+        slot = 1;
+        @(negedge clk);
+        slot = 0;
+        host_access(1, CONTROL, 8'h20);
+        if (busy || ram.ram[16'h2440] !== 8'h24 || doc_regs[8'h40] !== 8'h07)
+            $fatal(1, "Sound GLU mode switch on the RAM write edge committed the write");
+        expect_pointer(16'h2441);
+
+        set_address(16'h0040);
+        host_access(1, DATA, 8'hb6);
+        slot = 1;
+        @(negedge clk);
+        slot = 0;
+        host_access(1, CONTROL, 8'h60);
+        if (busy || doc_regs[8'h40] !== 8'h07)
+            $fatal(1, "Sound GLU mode switch on the DOC write edge committed the write");
+        expect_pointer(16'h0041);
+
         // Both payload and address stay fixed during the one-edge DOC
         // write pulse while the CPU can already queue the next request.
         host_access(1, CONTROL, 8'h20);

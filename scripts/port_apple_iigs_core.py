@@ -414,6 +414,8 @@ def generate_soundglu() -> str:
     text=replace(text,"   output reg [7:0]  host_data_out,", "   output reg [7:0]  host_data_out,\n   output reg [7:0]  host_read_peek,\n   output wire       host_busy,")
     text=replace(text,"   output reg\t     ram_access,", "   output wire      ram_access,")
     text=replace(text,"   output reg [15:0] sound_addr,", "   output wire [15:0] sound_addr,")
+    text=replace(text,"   output reg\t     ram_wr,\n   output reg\t     doc_wr,\n   output reg\t     doc_host_en",
+                 "   output wire      ram_wr,\n   output wire      doc_wr,\n   output wire      doc_host_en")
     start=text.index("   localparam")
     return normalize(text[:start]+"""   reg              ram_mode;
    reg              auto_increment;
@@ -426,10 +428,14 @@ def generate_soundglu() -> str:
    reg              finishing;
    reg [1:0]        ram_read_delay;
    reg [7:0]        read_data_reg;
+   reg              ram_write_slot;
+   reg              doc_write_slot;
+   reg              doc_read_slot;
 
    wire host_commit = select && ph0_en;
    wire host_data_commit = host_commit && host_addr == 1;
    wire control_write = host_commit && wr && host_addr == 0;
+   wire mode_change = control_write && host_data_in[6] != ram_mode;
    wire service = pending && osc_en;
 
    // Advance the CPU pointer at the slot and keep the old address stable
@@ -438,6 +444,11 @@ def generate_soundglu() -> str:
    assign host_busy = pending || finishing || (|ram_read_delay);
    // Keep the sound module's read mux on RAM until the issued byte arrives.
    assign ram_access = ram_mode || (|ram_read_delay);
+   // The RAM and DOC latch writes on the edge after service. A mode change
+   // at that edge suppresses the write while the issued address stays put.
+   assign ram_wr = ram_write_slot && !mode_change;
+   assign doc_wr = doc_write_slot && !mode_change;
+   assign doc_host_en = doc_read_slot || doc_wr;
 
    // The accelerated CPU samples this mux without committing another access.
    always @* begin
@@ -464,15 +475,15 @@ def generate_soundglu() -> str:
          read_data_reg <= 0;
          host_data_out <= 0;
          sound_data_out <= 0;
-         ram_wr <= 0;
-         doc_wr <= 0;
-         doc_host_en <= 0;
+         ram_write_slot <= 0;
+         doc_write_slot <= 0;
+         doc_read_slot <= 0;
       end else begin
          finishing <= service;
          ram_read_delay <= {ram_read_delay[0], 1'b0};
-         ram_wr <= 0;
-         doc_wr <= 0;
-         doc_host_en <= 0;
+         ram_write_slot <= 0;
+         doc_write_slot <= 0;
+         doc_read_slot <= 0;
 
          if (ram_read_delay[1])
             read_data_reg <= sound_data_in;
@@ -487,10 +498,9 @@ def generate_soundglu() -> str:
             // The control latch can switch the target before the next slot.
             // A mode change on the write slot itself suppresses the write.
             if (pending_write) begin
-               if (!(control_write && host_data_in[6] != ram_mode)) begin
-                  ram_wr <= ram_mode;
-                  doc_wr <= !ram_mode;
-                  doc_host_en <= !ram_mode;
+               if (!mode_change) begin
+                  ram_write_slot <= ram_mode;
+                  doc_write_slot <= !ram_mode;
                end
             end else if (ram_mode) begin
                // The RAM serves the oscillator on osc_en, then reads the
@@ -498,7 +508,7 @@ def generate_soundglu() -> str:
                ram_read_delay <= 2'b01;
             end else begin
                read_data_reg <= sound_data_in;
-               doc_host_en <= 1;
+               doc_read_slot <= 1;
             end
          end
 
@@ -1193,8 +1203,8 @@ def generate_es5503() -> str:
 \t       !(wr && host_en && reg_addr == {3'b101, current_osc} && !reg_data_in[0]))))
 \t   r_sample_data[current_osc] <= sample_data_in;""")
     # A zero terminates playback without replacing the last nonzero DATA byte.
-    # A CPU halt in free-run still permits the next phase fetch, even while the
-    # oscillator is out of the scan. Its DATA holds until a pointer change.
+    # A CPU halt of an out-of-scan free-run oscillator keeps the pending
+    # phase fetch. One-shot control instead restores the table-base fetch.
     text = replace(text, "reg [23:0]\t     accumulator [31:0];",
                    """reg [23:0]\t     accumulator [31:0];
    reg [31:0]        sample_zero;
@@ -1210,7 +1220,12 @@ def generate_es5503() -> str:
 \t   end""")
     text = replace(text, "r_control[reg_addr[4:0]] <= reg_data_in;",
                    """r_control[reg_addr[4:0]] <= reg_data_in;
-\t      if (!r_control[reg_addr[4:0]][0] && reg_data_in[2:0] == 3'b001) begin
+\t      if (reg_data_in[2:1] == 2'd1) begin
+\t\t hold_data[reg_addr[4:0]] <= 1'b0;
+\t\t final_fetch[reg_addr[4:0]] <= 1'b0;
+\t      end
+\t      else if (!r_control[reg_addr[4:0]][0] && reg_data_in[2:0] == 3'b001 &&
+\t               reg_addr[4:0] > oscs_enabled) begin
 \t\t hold_data[reg_addr[4:0]] <= 1'b1;
 \t\t final_fetch[reg_addr[4:0]] <= 1'b1;
 \t      end""")
@@ -1310,6 +1325,8 @@ def generate_es5503() -> str:
    wire odd_swap_halted = !current_osc[0] && r_control[partner][2:0] == 3'b111;
    wire swap_can_start_partner = r_control[partner][0] &&
                                 r_control[current_osc][2:1] == 2'd3;
+   wire partner_zero_halted_free_run = r_control[partner][2:0] == 3'b001 &&
+                                      sample_zero[partner];
    wire [7:0] oir;
    wire host_control_write""")
     text = replace(text, """\t       r_control[current_osc][0] <= (r_control[current_osc][1] ||
@@ -1333,7 +1350,8 @@ def generate_es5503() -> str:
                    """      if (osc_en) begin
 \t if (!refreshing && swap_can_start_partner &&
 \t     (wave_end || (r_control[current_osc][0] &&
-\t                   (current_osc[0] || sample_zero[current_osc])))) begin
+\t                   ((current_osc[0] && !partner_zero_halted_free_run) ||
+\t                    (!current_osc[0] && sample_zero[current_osc]))))) begin
 \t    r_control[partner][0] <= 1'b0;
 \t    r_sample_data[partner] <= 8'h80;
 \t    sample_zero[partner] <= 1'b0;

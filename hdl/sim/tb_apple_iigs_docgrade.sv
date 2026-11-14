@@ -204,6 +204,33 @@ module tb_apple_iigs_docgrade;
         repeat (640) @(negedge clk);
         expect_doc(8'ha1, 8'h01, "D6 zero halt");
         expect_doc(8'h61, 8'h7f, "D6 last nonzero byte");
+        write_doc(8'ha1, 8'h03);
+        repeat (160) @(negedge clk);
+        expect_doc(8'h61, 8'h32, "D4 one-shot reads the table base after a mode change");
+
+        // M8: halting a scanned free-run exposes the table base before its
+        // next start. D1 above checks the distinct out-of-scan halt.
+        write_doc(8'h81, 8'h40);
+        write_doc(8'ha1, 8'h00);
+        repeat (640) @(negedge clk);
+        if (doc.r_sample_data[1] < 2)
+            $fatal(1, "M8 fixture: free-run must move past the first sample");
+        write_doc(8'ha1, 8'h01);
+        repeat (160) @(negedge clk);
+        expect_doc(8'h61, 8'h01, "M8 scanned halt reads the table base");
+
+        // X11: an odd swap oscillator does not restart a free-run that
+        // stopped on a zero. Scheduler visits continue while it stays halted.
+        write_doc(8'h80, 8'h50);
+        write_doc(8'h00, 8'h00);
+        write_doc(8'h20, 8'h02);
+        write_doc(8'ha0, 8'h08);
+        repeat (640) @(negedge clk);
+        expect_doc(8'ha0, 8'h09, "X11 free-run stopped on zero");
+        write_doc(8'ha1, 8'h07);
+        repeat (640) @(negedge clk);
+        expect_doc(8'ha0, 8'h09, "X11 zero halt persists with odd swap");
+        expect_doc(8'h60, 8'h7f, "X11 zero halt retains DATA");
 
         // M2: a halted odd swap oscillator keeps the even one-shot running.
         write_doc(8'h80, 8'h40);
@@ -233,7 +260,21 @@ module tb_apple_iigs_docgrade;
         repeat (200) @(negedge clk);
         expect_doc(8'ha1, 8'h00, "M4 repeat mate start");
 
-        $display("PASS: DOCGRADE G3, X2, D1, D6, D7, M2, M3, M4, M7, and M13 behavior through the sound GLU");
+        // M15: a one-shot's late change to halted odd swap starts its
+        // already halted one-shot mate.
+        write_doc(8'ha0, 8'h03);
+        write_doc(8'h80, 8'h40);
+        write_doc(8'h81, 8'h50);
+        write_doc(8'h01, 8'h00);
+        write_doc(8'h21, 8'h02);
+        write_doc(8'ha1, 8'h02);
+        repeat (400) @(negedge clk);
+        expect_doc(8'ha1, 8'h03, "M15 odd one-shot finished");
+        write_doc(8'ha1, 8'h07);
+        repeat (250) @(negedge clk);
+        expect_doc(8'ha0, 8'h02, "M15 late swap starts mate");
+
+        $display("PASS: DOCGRADE register, waveform, oscillator mode and Sound GLU checks");
         $finish;
     end
 

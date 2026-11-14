@@ -16,9 +16,9 @@ module soundglu
    output wire       host_busy,
    output wire [15:0] sound_addr,
    output reg [7:0]  sound_data_out,
-   output reg	     ram_wr,
-   output reg	     doc_wr,
-   output reg	     doc_host_en
+   output wire      ram_wr,
+   output wire      doc_wr,
+   output wire      doc_host_en
    );
 
    reg              ram_mode;
@@ -32,10 +32,14 @@ module soundglu
    reg              finishing;
    reg [1:0]        ram_read_delay;
    reg [7:0]        read_data_reg;
+   reg              ram_write_slot;
+   reg              doc_write_slot;
+   reg              doc_read_slot;
 
    wire host_commit = select && ph0_en;
    wire host_data_commit = host_commit && host_addr == 1;
    wire control_write = host_commit && wr && host_addr == 0;
+   wire mode_change = control_write && host_data_in[6] != ram_mode;
    wire service = pending && osc_en;
 
    // Advance the CPU pointer at the slot and keep the old address stable
@@ -44,6 +48,11 @@ module soundglu
    assign host_busy = pending || finishing || (|ram_read_delay);
    // Keep the sound module's read mux on RAM until the issued byte arrives.
    assign ram_access = ram_mode || (|ram_read_delay);
+   // The RAM and DOC latch writes on the edge after service. A mode change
+   // at that edge suppresses the write while the issued address stays put.
+   assign ram_wr = ram_write_slot && !mode_change;
+   assign doc_wr = doc_write_slot && !mode_change;
+   assign doc_host_en = doc_read_slot || doc_wr;
 
    // The accelerated CPU samples this mux without committing another access.
    always @* begin
@@ -70,15 +79,15 @@ module soundglu
          read_data_reg <= 0;
          host_data_out <= 0;
          sound_data_out <= 0;
-         ram_wr <= 0;
-         doc_wr <= 0;
-         doc_host_en <= 0;
+         ram_write_slot <= 0;
+         doc_write_slot <= 0;
+         doc_read_slot <= 0;
       end else begin
          finishing <= service;
          ram_read_delay <= {ram_read_delay[0], 1'b0};
-         ram_wr <= 0;
-         doc_wr <= 0;
-         doc_host_en <= 0;
+         ram_write_slot <= 0;
+         doc_write_slot <= 0;
+         doc_read_slot <= 0;
 
          if (ram_read_delay[1])
             read_data_reg <= sound_data_in;
@@ -93,10 +102,9 @@ module soundglu
             // The control latch can switch the target before the next slot.
             // A mode change on the write slot itself suppresses the write.
             if (pending_write) begin
-               if (!(control_write && host_data_in[6] != ram_mode)) begin
-                  ram_wr <= ram_mode;
-                  doc_wr <= !ram_mode;
-                  doc_host_en <= !ram_mode;
+               if (!mode_change) begin
+                  ram_write_slot <= ram_mode;
+                  doc_write_slot <= !ram_mode;
                end
             end else if (ram_mode) begin
                // The RAM serves the oscillator on osc_en, then reads the
@@ -104,7 +112,7 @@ module soundglu
                ram_read_delay <= 2'b01;
             end else begin
                read_data_reg <= sound_data_in;
-               doc_host_en <= 1;
+               doc_read_slot <= 1;
             end
          end
 

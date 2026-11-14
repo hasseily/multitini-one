@@ -98,6 +98,8 @@ module es5503
    wire odd_swap_halted = !current_osc[0] && r_control[partner][2:0] == 3'b111;
    wire swap_can_start_partner = r_control[partner][0] &&
                                 r_control[current_osc][2:1] == 2'd3;
+   wire partner_zero_halted_free_run = r_control[partner][2:0] == 3'b001 &&
+                                      sample_zero[partner];
    wire [7:0] oir;
    wire host_control_write = wr && host_en && reg_addr[7:5] == 3'b101;
    wire wave_end = osc_en && !refreshing && !r_control[current_osc][0] &&
@@ -179,7 +181,12 @@ module es5503
 	   end
 	   5: begin
 	      r_control[reg_addr[4:0]] <= reg_data_in;
-	      if (!r_control[reg_addr[4:0]][0] && reg_data_in[2:0] == 3'b001) begin
+	      if (reg_data_in[2:1] == 2'd1) begin
+		 hold_data[reg_addr[4:0]] <= 1'b0;
+		 final_fetch[reg_addr[4:0]] <= 1'b0;
+	      end
+	      else if (!r_control[reg_addr[4:0]][0] && reg_data_in[2:0] == 3'b001 &&
+	               reg_addr[4:0] > oscs_enabled) begin
 		 hold_data[reg_addr[4:0]] <= 1'b1;
 		 final_fetch[reg_addr[4:0]] <= 1'b1;
 	      end
@@ -218,7 +225,8 @@ module es5503
       if (osc_en) begin
 	 if (!refreshing && swap_can_start_partner &&
 	     (wave_end || (r_control[current_osc][0] &&
-	                   (current_osc[0] || sample_zero[current_osc])))) begin
+	                   ((current_osc[0] && !partner_zero_halted_free_run) ||
+	                    (!current_osc[0] && sample_zero[current_osc]))))) begin
 	    r_control[partner][0] <= 1'b0;
 	    r_sample_data[partner] <= 8'h80;
 	    sample_zero[partner] <= 1'b0;
