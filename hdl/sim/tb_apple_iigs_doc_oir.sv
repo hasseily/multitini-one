@@ -72,7 +72,7 @@ module tb_apple_iigs_doc_oir;
             $fatal(1, "DOC did not release IRQ after the prior acknowledgement");
         while (!irq)
             @(negedge clk);
-        while (doc.irq_controller.presenting_slot)
+        while (|doc.irq_controller.present_window)
             @(negedge clk);
         read_oir(expected, 0);
     endtask
@@ -143,8 +143,8 @@ module tb_apple_iigs_doc_oir;
         next_oir(8'h47);
         read_oir(8'hc7, 0);
 
-        // On this capture edge, the GLU sees empty while oscillator 1
-        // simultaneously queues an IRQ. The following read must see it.
+        // The GLU sees idle on the publication edge. The first active
+        // capture is still in the presentation window and does not ACK.
         terminators = 0;
         start_osc(1);
         host_access(1, 2, 8'he0);
@@ -156,6 +156,7 @@ module tb_apple_iigs_doc_oir;
             $fatal(1, "Coincident DOC interrupt arrived before the GLU read");
         read_oir(8'hc7, 1);
         terminators = 0;
+        read_oir(8'h43, 1);
         read_oir(8'h43, 0);
         read_oir(8'hc3, 0);
 

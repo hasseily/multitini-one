@@ -81,14 +81,17 @@ module tb_apple_iigs_sound_glu;
         ram.ram[16'h2441] = 8'h41;
         doc_regs[8'h40] = 8'h07;
 
-        host_access(1, CONTROL, 8'h60);
+        host_access(1, CONTROL, 8'h63);
+        host_access(0, CONTROL);
+        if (host_output !== 8'h7f || peek !== 8'h7f)
+            $fatal(1, "Sound GLU exposed the write-only volume DAC when idle");
         set_address(16'h12fe);
         host_access(0, DATA);
         if (!busy)
             $fatal(1, "Sound GLU returned early, before the next slot");
         host_access(0, CONTROL);
-        if (!host_output[7])
-            $fatal(1, "Sound GLU busy was clear before the next slot");
+        if (host_output !== 8'hff || peek !== 8'hff)
+            $fatal(1, "Sound GLU returned incorrect control bits while busy");
         // This second read does not add another operation or pointer step.
         host_access(0, DATA);
         finish_slot();

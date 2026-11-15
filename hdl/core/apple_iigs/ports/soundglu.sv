@@ -23,7 +23,6 @@ module soundglu
 
    reg              ram_mode;
    reg              auto_increment;
-   reg [3:0]        volume;
    reg [15:0]       address_pointer;
    reg [15:0]       active_address;
    reg              pending;
@@ -57,7 +56,8 @@ module soundglu
    // The accelerated CPU samples this mux without committing another access.
    always @* begin
       case (host_addr)
-         0: host_read_peek = {pending, ram_mode, auto_increment, 1'b1, volume};
+         // The write-only volume DAC reads back as ones.
+         0: host_read_peek = {pending, ram_mode, auto_increment, 5'b11111};
          1: host_read_peek = read_data_reg;
          2: host_read_peek = address_pointer[7:0];
          3: host_read_peek = address_pointer[15:8];
@@ -68,7 +68,6 @@ module soundglu
       if (reset) begin
          ram_mode <= 0;
          auto_increment <= 0;
-         volume <= 0;
          address_pointer <= 0;
          active_address <= 0;
          pending <= 0;
@@ -124,7 +123,6 @@ module soundglu
                0: begin
                   ram_mode <= host_data_in[6];
                   auto_increment <= host_data_in[5];
-                  volume <= host_data_in[3:0];
                end
                2: address_pointer[7:0] <= host_data_in;
                3: address_pointer[15:8] <= host_data_in;

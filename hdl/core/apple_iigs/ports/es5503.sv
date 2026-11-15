@@ -24,7 +24,7 @@
 
 // Multitini port, 2026-10-14: reproduced by scripts/port_apple_iigs_core.py.
 // DOC interrupt FIFO from MiSTer IIgs aa2cc3e (slaapliedje).
-module es5503
+module es5503 #(parameter RETENTION_DIV_BITS = 10)
    (input	      CLK_14M,
     input	      clk_7M_en,
     input	      reset,
@@ -64,6 +64,24 @@ module es5503
    reg [31:0]        hold_data;
    reg [31:0]        final_fetch;
 
+
+   // Check one word every 1024 DOC slots (~36 ms per full sweep).
+   reg [RETENTION_DIV_BITS-1:0] retention_div;
+   reg retention_tick;
+   reg [4:0] retention_osc;
+   reg [6:0] retention_age [31:0];
+   reg [31:0] retention_seen;
+   reg [31:0] retention_irq;
+   wire refresh_word = osc_en_d && !refreshing;
+   wire write_word = wr && host_en && reg_addr[7:5] != 3'b011 &&
+                     reg_addr[7:5] != 3'b111;
+   wire [6:0] age = retention_age[retention_osc];
+   wire [6:0] irq_age = retention_osc == 5'd31 ? 7'd2 :
+                        retention_osc >= 5'd29 ? 7'd4 :
+                        retention_osc >= 5'd24 ? 7'd8 :
+                        retention_osc >= 5'd16 ? 7'd20 : 7'd27;
+   wire [6:0] full_age = retention_osc == 5'd31 ? 7'd5 :
+                         retention_osc >= 5'd24 ? 7'd25 : 7'd100;
 
    // Accumulator adder / wrap detection
    wire [24:0]	     accumulator_sum;
@@ -120,7 +138,8 @@ module es5503
        .clk(CLK_14M),
        .reset(reset),
        .slot(osc_en),
-       .request(r_control[current_osc][3] && (wave_end || halted_zero)),
+       .request((r_control[current_osc][3] && (wave_end || halted_zero)) ||
+                (osc_en && !refreshing && retention_irq[current_osc])),
        .request_osc(current_osc),
        .cancel(cancel_pending),
        .cancel_osc(cancel_oscillator),
@@ -167,6 +186,50 @@ module es5503
 			    r_table_size[current_osc][2:0],
 			    r_control[current_osc][0] && !final_fetch[current_osc])};
 
+      retention_tick <= osc_en && (&retention_div);
+      if (osc_en)
+         retention_div <= retention_div + 1'b1;
+      if (retention_tick) begin
+         retention_osc <= retention_osc + 1'b1;
+         retention_seen[retention_osc] <= 1'b0;
+         if (retention_seen[retention_osc] ||
+             (refresh_word && current_osc == retention_osc) ||
+             (write_word && reg_addr[4:0] == retention_osc)) begin
+            retention_age[retention_osc] <= 0;
+         end else if (!(&age)) begin
+            retention_age[retention_osc] <= age + 1'b1;
+            if (age == 0) begin
+               r_freq_high[retention_osc] <= r_freq_high[retention_osc] | 8'h01;
+               r_sample_data[retention_osc] <= r_sample_data[retention_osc] | 8'h02;
+            end
+            if (age == irq_age) begin
+               // The unrefreshed oscillator word can acquire a pending IRQ.
+               // It can present it when the scan reaches this word again.
+               retention_irq[retention_osc] <= 1'b1;
+               r_control[retention_osc][3] <= 1'b1;
+               accumulator[retention_osc][15] <= 1'b1;
+            end
+            if (age == full_age) begin
+               r_freq_low[retention_osc] <= 8'hff;
+               r_freq_high[retention_osc] <= 8'hff;
+               r_volume[retention_osc] <= 8'hff;
+               r_sample_data[retention_osc] <= 8'hff;
+               r_table_ptr[retention_osc] <= 8'hff;
+               r_control[retention_osc] <= 8'hff;
+               r_table_size[retention_osc] <= 8'hff;
+               accumulator[retention_osc] <= 24'hffffff;
+            end
+         end
+      end
+      if (refresh_word) begin
+         retention_seen[current_osc] <= 1'b1;
+         retention_irq[current_osc] <= 1'b0;
+      end
+      if (write_word)
+         retention_seen[reg_addr[4:0]] <= 1'b1;
+      if (host_control_write)
+         retention_irq[reg_addr[4:0]] <= 1'b0;
+
       if (wr && host_en) begin
 `ifdef DEBUG_SOUND
 	 $display("%m: CPU write %h=%h", reg_addr, reg_data_in);
@@ -200,9 +263,11 @@ module es5503
 		 final_fetch[reg_addr[4:0]] <= 1'b1;
 	      end
 	      if (r_control[reg_addr[4:0]][0] && !reg_data_in[0]) begin
-		 accumulator[reg_addr[4:0]] <= 0;
-		 // Don't halt on the next scan in case this was 8'h00
-		 r_sample_data[reg_addr[4:0]] <= 'h80;
+		 // Outside the scan, a control write leaves phase and DATA intact.
+		 if (reg_addr[4:0] <= oscs_enabled) begin
+		    accumulator[reg_addr[4:0]] <= 0;
+		    r_sample_data[reg_addr[4:0]] <= 'h80;
+		 end
 		 sample_zero[reg_addr[4:0]] <= 1'b0;
 		 hold_data[reg_addr[4:0]] <= 1'b0;
 		 final_fetch[reg_addr[4:0]] <= 1'b0;
@@ -326,7 +391,15 @@ module es5503
 	 current_osc <= 0;
 	 refreshing <= 0;
 	 current_refresh <= 0;
-	 for (i=0; i < 32; i=i+1) accumulator[i] <= 0;
+	 retention_div <= 0;
+	 retention_tick <= 0;
+	 retention_osc <= 0;
+	 retention_seen <= '1;
+	 retention_irq <= 0;
+	 for (i=0; i < 32; i=i+1) begin
+	    retention_age[i] <= 0;
+	    accumulator[i] <= 0;
+	 end
 	 sample_zero <= 0;
 	 hold_data <= 0;
 	 final_fetch <= 0;

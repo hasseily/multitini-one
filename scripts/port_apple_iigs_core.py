@@ -419,7 +419,6 @@ def generate_soundglu() -> str:
     start=text.index("   localparam")
     return normalize(text[:start]+"""   reg              ram_mode;
    reg              auto_increment;
-   reg [3:0]        volume;
    reg [15:0]       address_pointer;
    reg [15:0]       active_address;
    reg              pending;
@@ -453,7 +452,8 @@ def generate_soundglu() -> str:
    // The accelerated CPU samples this mux without committing another access.
    always @* begin
       case (host_addr)
-         0: host_read_peek = {pending, ram_mode, auto_increment, 1'b1, volume};
+         // The write-only volume DAC reads back as ones.
+         0: host_read_peek = {pending, ram_mode, auto_increment, 5'b11111};
          1: host_read_peek = read_data_reg;
          2: host_read_peek = address_pointer[7:0];
          3: host_read_peek = address_pointer[15:8];
@@ -464,7 +464,6 @@ def generate_soundglu() -> str:
       if (reset) begin
          ram_mode <= 0;
          auto_increment <= 0;
-         volume <= 0;
          address_pointer <= 0;
          active_address <= 0;
          pending <= 0;
@@ -520,7 +519,6 @@ def generate_soundglu() -> str:
                0: begin
                   ram_mode <= host_data_in[6];
                   auto_increment <= host_data_in[5];
-                  volume <= host_data_in[3:0];
                end
                2: address_pointer[7:0] <= host_data_in;
                3: address_pointer[15:8] <= host_data_in;
@@ -1229,8 +1227,14 @@ def generate_es5503() -> str:
 \t\t hold_data[reg_addr[4:0]] <= 1'b1;
 \t\t final_fetch[reg_addr[4:0]] <= 1'b1;
 \t      end""")
-    text = replace(text, "r_sample_data[reg_addr[4:0]] <= 'h80;",
-                   """r_sample_data[reg_addr[4:0]] <= 'h80;
+    text = replace(text, """\t\t accumulator[reg_addr[4:0]] <= 0;
+\t\t // Don't halt on the next scan in case this was 8'h00
+\t\t r_sample_data[reg_addr[4:0]] <= 'h80;""",
+                   """\t\t // Outside the scan, a control write leaves phase and DATA intact.
+\t\t if (reg_addr[4:0] <= oscs_enabled) begin
+\t\t    accumulator[reg_addr[4:0]] <= 0;
+\t\t    r_sample_data[reg_addr[4:0]] <= 'h80;
+\t\t end
 \t\t sample_zero[reg_addr[4:0]] <= 1'b0;
 \t\t hold_data[reg_addr[4:0]] <= 1'b0;
 \t\t final_fetch[reg_addr[4:0]] <= 1'b0;""")
@@ -1369,6 +1373,94 @@ def generate_es5503() -> str:
 \t    accumulator[partner] <= 24'h0;
 \t end
 \t if (!r_control[current_osc][0] && !refreshing) begin""")
+    # The DOC's oscillator words are dynamic. A scan visit refreshes the
+    # word; host reads leave it alone. Fit coarse retention bands to the
+    # physical DOCTRACE measurements, which vary with chip and oscillator.
+    text = replace(text, "module es5503\n",
+                   "module es5503 #(parameter RETENTION_DIV_BITS = 10)\n")
+    text = replace(text, "   // Accumulator adder / wrap detection",
+                   """   // Check one word every 1024 DOC slots (~36 ms per full sweep).
+   reg [RETENTION_DIV_BITS-1:0] retention_div;
+   reg retention_tick;
+   reg [4:0] retention_osc;
+   reg [6:0] retention_age [31:0];
+   reg [31:0] retention_seen;
+   reg [31:0] retention_irq;
+   wire refresh_word = osc_en_d && !refreshing;
+   wire write_word = wr && host_en && reg_addr[7:5] != 3'b011 &&
+                     reg_addr[7:5] != 3'b111;
+   wire [6:0] age = retention_age[retention_osc];
+   wire [6:0] irq_age = retention_osc == 5'd31 ? 7'd2 :
+                        retention_osc >= 5'd29 ? 7'd4 :
+                        retention_osc >= 5'd24 ? 7'd8 :
+                        retention_osc >= 5'd16 ? 7'd20 : 7'd27;
+   wire [6:0] full_age = retention_osc == 5'd31 ? 7'd5 :
+                         retention_osc >= 5'd24 ? 7'd25 : 7'd100;
+
+   // Accumulator adder / wrap detection""")
+    text = replace(text, "       .request(r_control[current_osc][3] && (wave_end || halted_zero)),",
+                   """       .request((r_control[current_osc][3] && (wave_end || halted_zero)) ||
+                (osc_en && !refreshing && retention_irq[current_osc])),""")
+    text = replace(text, """      if (wr && host_en) begin
+\x60ifdef DEBUG_SOUND""",
+                   """      retention_tick <= osc_en && (&retention_div);
+      if (osc_en)
+         retention_div <= retention_div + 1'b1;
+      if (retention_tick) begin
+         retention_osc <= retention_osc + 1'b1;
+         retention_seen[retention_osc] <= 1'b0;
+         if (retention_seen[retention_osc] ||
+             (refresh_word && current_osc == retention_osc) ||
+             (write_word && reg_addr[4:0] == retention_osc)) begin
+            retention_age[retention_osc] <= 0;
+         end else if (!(&age)) begin
+            retention_age[retention_osc] <= age + 1'b1;
+            if (age == 0) begin
+               r_freq_high[retention_osc] <= r_freq_high[retention_osc] | 8'h01;
+               r_sample_data[retention_osc] <= r_sample_data[retention_osc] | 8'h02;
+            end
+            if (age == irq_age) begin
+               // The unrefreshed oscillator word can acquire a pending IRQ.
+               // It can present it when the scan reaches this word again.
+               retention_irq[retention_osc] <= 1'b1;
+               r_control[retention_osc][3] <= 1'b1;
+               accumulator[retention_osc][15] <= 1'b1;
+            end
+            if (age == full_age) begin
+               r_freq_low[retention_osc] <= 8'hff;
+               r_freq_high[retention_osc] <= 8'hff;
+               r_volume[retention_osc] <= 8'hff;
+               r_sample_data[retention_osc] <= 8'hff;
+               r_table_ptr[retention_osc] <= 8'hff;
+               r_control[retention_osc] <= 8'hff;
+               r_table_size[retention_osc] <= 8'hff;
+               accumulator[retention_osc] <= 24'hffffff;
+            end
+         end
+      end
+      if (refresh_word) begin
+         retention_seen[current_osc] <= 1'b1;
+         retention_irq[current_osc] <= 1'b0;
+      end
+      if (write_word)
+         retention_seen[reg_addr[4:0]] <= 1'b1;
+      if (host_control_write)
+         retention_irq[reg_addr[4:0]] <= 1'b0;
+
+      if (wr && host_en) begin
+\x60ifdef DEBUG_SOUND""")
+    text = replace(text, """\t current_refresh <= 0;
+\t for (i=0; i < 32; i=i+1) accumulator[i] <= 0;""",
+                   """\t current_refresh <= 0;
+\t retention_div <= 0;
+\t retention_tick <= 0;
+\t retention_osc <= 0;
+\t retention_seen <= '1;
+\t retention_irq <= 0;
+\t for (i=0; i < 32; i=i+1) begin
+\t    retention_age[i] <= 0;
+\t    accumulator[i] <= 0;
+\t end""")
     return normalize(text)
 
 def generate_cpu() -> str:

@@ -19,7 +19,8 @@ module multitini_apple_iigs_doc_irq (
     logic [4:0] prev_osc [32];
     logic [4:0] head, tail;
     logic [4:0] visible_osc;
-    logic presenting_slot, release_slot;
+    logic [1:0] present_window;
+    logic release_slot;
 
     wire cancel_waiting = cancel && waiting[cancel_osc];
     wire can_present = slot && !irq && !release_slot;
@@ -46,11 +47,11 @@ module multitini_apple_iigs_doc_irq (
             tail <= '0;
             visible_osc <= 5'd31;
             irq <= 1'b0;
-            presenting_slot <= 1'b0;
+            present_window <= '0;
             release_slot <= 1'b0;
         end else begin
             if (slot) begin
-                presenting_slot <= present_waiting || present_new;
+                present_window <= {present_window[0], present_waiting || present_new};
                 release_slot <= 1'b0;
             end
 
@@ -59,10 +60,10 @@ module multitini_apple_iigs_doc_irq (
                 irq <= 1'b1;
             end
 
-            // A read may return the presented request during its presenting
-            // slot, but can only clear it after that slot. Use the GLU's
-            // captured byte so a delayed read of idle status cannot clear IRQ.
-            if (ack && irq && !presenting_slot && ack_value == oir) begin
+            // The GLU sees the preceding DOC byte at each service edge.
+            // Protect both publication and the following slot, when a read
+            // can first fetch the new OIR byte. A stale idle byte never ACKs.
+            if (ack && irq && !(|present_window) && ack_value == oir) begin
                 irq <= 1'b0;
                 release_slot <= 1'b1;
             end

@@ -105,7 +105,7 @@ def main() -> int:
         output=run([executable],"docgrade-simulate")
         if "PASS:" not in output:raise ValueError("IIgs DOCGRADE regression did not report PASS")
         print(output.strip(),flush=True)
-        checks.append("DOCGRADE G3, X2, X11, D1, D4, D6, D7, M2, M3, M4, M7, M8, M13 and M15 behavior through the sound GLU")
+        checks.append("DOCGRADE register, oscillator mode, scan re-entry, retention and IRQ behavior through the sound GLU")
     if "sound-glu" in selected:
         executable=compile_sim("tb_apple_iigs_sound_glu",[PORTS/"soundglu.sv",
             UPSTREAM/"rtl/syncram.v",ROOT/"hdl/sim/tb_apple_iigs_sound_glu.sv"])

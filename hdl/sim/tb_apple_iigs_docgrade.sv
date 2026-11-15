@@ -19,7 +19,7 @@ module tb_apple_iigs_docgrade;
     wire [7:0] host_read, host_peek, doc_data_in, doc_data_out;
     wire [15:0] register_address;
     wire [16:0] sample_address;
-    wire host_busy, doc_write, doc_host_en, osc_en;
+    wire host_busy, doc_write, doc_host_en, osc_en, irq;
 
     soundglu glu(
         .CLK_14M(clk), .clk_7M_en(clk_7m_en), .ph0_en(host_select),
@@ -47,12 +47,14 @@ module tb_apple_iigs_docgrade;
         endcase
     end
 
-    es5503 doc(
+    localparam int RETENTION_DIV_BITS = 6;
+    localparam int RETENTION_SWEEP = 16 * 32 * (1 << RETENTION_DIV_BITS);
+    es5503 #(.RETENTION_DIV_BITS(RETENTION_DIV_BITS)) doc(
         .CLK_14M(clk), .clk_7M_en(clk_7m_en), .reset(reset), .wr(doc_write),
         .host_en(doc_host_en), .reg_addr(register_address[7:0]),
         .reg_data_in(doc_data_in), .sample_data_in(sample_data),
         .data_out(doc_data_out), .addr_out(sample_address),
-        .sound_out(), .ca(), .irq(), .osc_en(osc_en)
+        .sound_out(), .ca(), .irq(irq), .osc_en(osc_en)
     );
 
     // Start on a falling edge and allow the scheduled DOC slot to complete.
@@ -197,6 +199,24 @@ module tb_apple_iigs_docgrade;
         repeat (160) @(negedge clk);
         expect_doc(8'h61, last_data + 8'd1, "D1 final halted fetch");
 
+        // S6: a halt/start pair outside the scan leaves the last sample
+        // and phase intact until the oscillator is visited again.
+        write_doc(8'ha1, 8'h00);
+        repeat (640) @(negedge clk);
+        write_doc(8'he1, 8'h00);
+        repeat (160) @(negedge clk);
+        last_data = doc.r_sample_data[1];
+        prior_phase = doc.accumulator[1];
+        if (prior_phase == 0 || last_data == 8'h80)
+            $fatal(1, "S6 fixture: oscillator 1 must have a captured phase and ramp sample");
+        write_doc(8'ha1, 8'h03);
+        write_doc(8'ha1, 8'h00);
+        expect_doc(8'h61, last_data, "S6 unscanned start keeps DATA");
+        if (doc.accumulator[1] !== prior_phase)
+            $fatal(1, "S6 unscanned start changed the oscillator phase");
+        write_doc(8'ha1, 8'h01);
+        write_doc(8'he1, 8'h02);
+
         // D6: the zero at the end of a free-run must halt playback without
         // replacing its last nonzero DATA byte with zero or the table base.
         write_doc(8'h81, 8'h50);
@@ -274,12 +294,54 @@ module tb_apple_iigs_docgrade;
         repeat (250) @(negedge clk);
         expect_doc(8'ha0, 8'h02, "M15 late swap starts mate");
 
-        $display("PASS: DOCGRADE register, waveform, oscillator mode and Sound GLU checks");
+        // Reading a word does not refresh it. Scanning a halted word does.
+        write_doc(8'ha0, 8'h01);
+        write_doc(8'ha1, 8'h01);
+        write_doc(8'h20, 8'h20);
+        write_doc(8'he1, 8'h3e);
+        host_access(1, SOUND_ADDRESS_LOW, 8'he0);
+        repeat (64) host_access(0, SOUND_DATA, 0);
+        if (irq)
+            $fatal(1, "I12 fixture: previous requests did not drain");
+        write_doc(8'h1f, 8'h12);
+        write_doc(8'h3f, 8'h20);
+        write_doc(8'h5f, 8'h2a);
+        write_doc(8'hbf, 8'h09);
+        write_doc(8'he1, 8'h02);
+        repeat (4) begin
+            repeat (RETENTION_SWEEP) @(negedge clk);
+            expect_doc(8'h1f, 8'h12, "S7 retained low frequency before full decay");
+        end
+        expect_doc(8'h3f, 8'h21, "S7 partially aged excluded word");
+        expect_doc(8'h20, 8'h20, "S7 refreshed halted word");
+        if (irq)
+            $fatal(1, "I12: excluded oscillator must not present its request");
+        write_doc(8'he1, 8'h3e);
+        wait (irq);
+        if (doc.oir !== 8'h7f)
+            $fatal(1, "I12: aged oscillator 31 must request on re-entry, got %02h", doc.oir);
+        @(negedge clk);
+        host_access(1, SOUND_ADDRESS_LOW, 8'he0);
+        repeat (4) host_access(0, SOUND_DATA, 0);
+        if (irq)
+            $fatal(1, "I12: an acknowledged retention request must clear");
+        write_doc(8'he1, 8'h02);
+        repeat (8 * RETENTION_SWEEP) @(negedge clk);
+        expect_doc(8'h1f, 8'hff, "S7 fully aged frequency");
+        expect_doc(8'h5f, 8'hff, "S7 fully aged volume");
+        expect_doc(8'hbf, 8'hff, "S7 fully aged control");
+        expect_doc(8'h20, 8'h20, "S7 included word still refreshed");
+        write_doc(8'h5f, 8'h2a);
+        expect_doc(8'h5f, 8'h2a, "S7 host write restores the register byte");
+        repeat (8 * RETENTION_SWEEP) @(negedge clk);
+        expect_doc(8'h5f, 8'hff, "S7 unscanned word ages again after rewrite");
+
+        $display("PASS: DOCGRADE register, waveform, oscillator retention, IRQ and Sound GLU checks");
         $finish;
     end
 
     initial begin
-        #250000;
+        #8000000;
         $fatal(1, "DOCGRADE regression timed out");
     end
 endmodule
