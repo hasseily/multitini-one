@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "multitini_menu.h"
 #include "multitini_gameboy_interface.h"
+#include "multitini_genesis_interface.h"
 #include "multitini_vectrex_interface.h"
 
 #include <stdio.h>
@@ -282,7 +283,7 @@ static void test_gamepad_modal(void)
     mt_menu_init(&menu, &view);
     menu.visible = true; menu.page = MT_MENU_PAGE_INPUT;
     mt_menu_gamepad_begin(&menu, &view, configs);
-    check(menu.gamepad_slot == 4U, "editor starts with a connected controller, never a keyboard or empty input entry");
+    check(menu.gamepad_slot == 4U, "editor starts with a connected bindable device, never an empty input entry");
     (void)press(&menu, &view, MT_MENU_HID_RIGHT);
     check(menu.gamepad_slot == 8U, "controller selection skips disconnected entries");
     (void)press(&menu, &view, MT_MENU_HID_RIGHT);
@@ -439,10 +440,119 @@ static void test_gamepad_analog(void)
           "capture accounts for configured inversion so the just-moved direction triggers the assignment");
 }
 
+static void preview_key(mt_menu_view_t *view, unsigned key, bool held)
+{
+    if (held) view->gamepad_preview.keys[key / 8U] |= (uint8_t)(1U << (key % 8U));
+    else view->gamepad_preview.keys[key / 8U] &= (uint8_t)~(1U << (key % 8U));
+}
+
+static void test_keyboard_controller(void)
+{
+    mt_menu_t menu;
+    mt_menu_view_t view = {0};
+    mt_controller_config_t configs[MT_GAMEPAD_SLOTS];
+    mt_ui_frame_t frame;
+    view.active_core_id = "genesis";
+    view.gamepad_core_id = MT_GENESIS_CORE_ID;
+    view.gamepad_devices[2].connected = 1U;
+    view.gamepad_devices[2].keyboard = 1U;
+    view.gamepad_devices[2].generic_axes = 1U;
+    (void)snprintf(view.gamepad_devices[2].name, sizeof(view.gamepad_devices[2].name), "USB keyboard");
+    for (unsigned index = 0U; index < MT_GAMEPAD_SLOTS; ++index)
+        mt_controls_default(view.gamepad_core_id, &view.gamepad_devices[index], &configs[index]);
+    mt_menu_init(&menu, &view);
+    menu.visible = true;
+    mt_menu_gamepad_begin(&menu, &view, configs);
+    check(menu.gamepad_slot == 2U && menu.gamepad_config[2].assignment == MT_CONTROLLER_OFF,
+          "keyboard is selectable and starts without taking a player");
+    menu.gamepad_field = 1U;
+    (void)press(&menu, &view, MT_MENU_HID_RIGHT);
+    (void)press(&menu, &view, MT_MENU_HID_RIGHT);
+    check(menu.gamepad_config[2].assignment == MT_CONTROLLER_PORT1,
+          "keyboard can be assigned to a player");
+
+    neutral_preview(&menu, &view);
+    preview_key(&view, MT_MENU_HID_ENTER, true);
+    start_capture(&menu, &view, MT_CONTROL_UP);
+    (void)mt_menu_gamepad_update(&menu, &view);
+    check(!menu.gamepad_capture_armed, "held Enter that opens assignment cannot bind itself");
+    preview_key(&view, MT_MENU_HID_ENTER, false);
+    (void)mt_menu_gamepad_update(&menu, &view);
+    check(menu.gamepad_capture_armed, "releasing the opening keyboard key arms assignment");
+    preview_key(&view, MT_MENU_HID_UP, true);
+    (void)mt_menu_gamepad_update(&menu, &view);
+    check(!menu.gamepad_capture && menu.gamepad_config[2].binding[MT_CONTROL_UP] ==
+          mt_controls_key_source(MT_MENU_HID_UP), "arrow key captures as a controller direction");
+
+    start_capture(&menu, &view, MT_CONTROL_A);
+    neutral_preview(&menu, &view);
+    preview_key(&view, 0xe1U, true);
+    (void)mt_menu_gamepad_update(&menu, &view);
+    check(!menu.gamepad_capture && menu.gamepad_config[2].binding[MT_CONTROL_A] ==
+          mt_controls_key_source(0xe1U), "modifier key captures independently from ordinary keys");
+    start_capture(&menu, &view, MT_CONTROL_B);
+    neutral_preview(&menu, &view);
+    preview_key(&view, 0xe1U, true);
+    (void)mt_menu_gamepad_update(&menu, &view);
+    check(menu.gamepad_conflict, "duplicate keyboard key uses the normal conflict prompt");
+    (void)press(&menu, &view, MT_MENU_HID_ENTER);
+    check(menu.gamepad_config[2].binding[MT_CONTROL_A] == 0U &&
+          menu.gamepad_config[2].binding[MT_CONTROL_B] == mt_controls_key_source(0xe1U),
+          "confirming moves the key assignment to the requested action");
+
+    start_capture(&menu, &view, MT_CONTROL_A);
+    neutral_preview(&menu, &view);
+    preview_key(&view, MT_MENU_HID_DELETE, true);
+    (void)mt_menu_gamepad_update(&menu, &view);
+    check(menu.gamepad_capture && !menu.gamepad_conflict && menu.gamepad_config[2].binding[MT_CONTROL_A] == 0U,
+          "Delete remains an assignment command instead of binding itself");
+    (void)press(&menu, &view, MT_MENU_HID_DELETE);
+    check(!menu.gamepad_capture, "Delete clears the keyboard assignment and ends capture");
+    start_capture(&menu, &view, MT_CONTROL_START);
+    neutral_preview(&menu, &view);
+    preview_key(&view, MT_MENU_HID_ENTER, true);
+    (void)mt_menu_gamepad_update(&menu, &view);
+    check(menu.gamepad_config[2].binding[MT_CONTROL_START] == mt_controls_key_source(MT_MENU_HID_ENTER),
+          "a new Enter press can be bound after the opening key was released");
+
+    const unsigned commands = control_row(view.gamepad_core_id, MT_CONTROL_COUNT);
+    menu.gamepad_field = (uint8_t)(commands + 1U);
+    (void)press(&menu, &view, MT_MENU_HID_ENTER);
+    check(menu.gamepad_test, "keyboard tester opens normally");
+    (void)mt_menu_gamepad_update(&menu, &view);
+    (void)press(&menu, &view, MT_MENU_HID_ENTER);
+    check(menu.gamepad_test, "Enter is a keyboard test input rather than an exit command");
+    mt_menu_render(&menu, &view, &frame);
+    check(contains(&frame, "Keys held:") && contains(&frame, "Start"),
+          "keyboard tester shows held keys and their assigned actions");
+    (void)press(&menu, &view, MT_MENU_HID_ESCAPE);
+    check(!menu.gamepad_test && menu.gamepad_edit, "Escape returns from keyboard testing");
+    mt_menu_gamepad_saved(&menu);
+    check(!mt_menu_gamepad_dirty(&menu), "saved keyboard bindings become the menu baseline");
+
+    view.active_core_id = "vectrex";
+    view.gamepad_core_id = MT_VECTREX_CORE_ID;
+    for (unsigned index = 0U; index < MT_GAMEPAD_SLOTS; ++index)
+        mt_controls_default(view.gamepad_core_id, &view.gamepad_devices[index], &configs[index]);
+    neutral_preview(&menu, &view);
+    mt_menu_gamepad_begin(&menu, &view, configs);
+    menu.gamepad_field = control_row(view.gamepad_core_id, MT_CONTROL_AXIS_X);
+    (void)press(&menu, &view, MT_MENU_HID_ENTER);
+    check(!menu.gamepad_capture && strstr(menu.gamepad_notice, "no analog axis") != NULL,
+          "keyboard-only interface explains why an analog axis cannot be assigned");
+    menu.gamepad_wizard = true;
+    menu.gamepad_capture = true;
+    menu.gamepad_control = MT_CONTROL_X;
+    (void)press(&menu, &view, MT_MENU_HID_TAB);
+    check(menu.gamepad_control == MT_CONTROL_MENU, "keyboard Set all skips unavailable analog axes");
+    (void)press(&menu, &view, MT_MENU_HID_ESCAPE);
+}
+
 int main(void)
 {
     test_gamepad_modal();
     test_gamepad_analog();
+    test_keyboard_controller();
     test_document_actions();
     test_reader_modal();
     test_clock_modal();

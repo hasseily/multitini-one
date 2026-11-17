@@ -1121,6 +1121,123 @@ static void test_keyboard_screenshot(void)
     puts("PASS PrintScreen reaches system handler without losing held game keys");
 }
 
+static void test_keyboard_controller_transport(void)
+{
+    struct usbh_hubport ports[2];
+    struct usb_endpoint_descriptor endpoints[2];
+    struct usbh_hid hids[2];
+    usb_hid_service_init(NULL);
+    usb_hid_service_set_active_core(MT_GENESIS_CORE_ID);
+    hid_protocol_reject_mask = 0U;
+    hid_fixture_connect(&hid_live_fixtures[0], 0U, &ports[0], &endpoints[0], &hids[0]);
+    hid_fixture_connect(&hid_live_fixtures[5], 1U, &ports[1], &endpoints[1], &hids[1]);
+    assert(g_devices[0].connected && g_devices[0].keyboard);
+    assert(g_devices[1].connected && g_devices[1].keyboard);
+    assert(g_controller_config[0].assignment == MT_CONTROLLER_OFF && g_controller_player[0] == UINT8_MAX);
+    const uint8_t z[] = {0, 0, 0x1d, 0, 0, 0, 0, 0};
+    const uint8_t release[] = {0, 0, 0, 0, 0, 0, 0, 0};
+    hid_fixture_report(0U, z, sizeof(z));
+    assert(g_genesis_input.keyboard[0] == (1U << MT_GENESIS_BUTTON_A)); /* Original fallback. */
+    hid_fixture_report(0U, release, sizeof(release));
+    mt_controller_config_t config = g_controller_config[0];
+    config.assignment = MT_CONTROLLER_PORT2;
+    config.binding[MT_CONTROL_B] = mt_controls_key_source(0x1dU);
+    config.binding[MT_CONTROL_UP] = mt_controls_key_source(0xe1U);
+    assert(usb_hid_service_set_controller_config(0U, &config));
+    hid_fixture_report(0U, z, sizeof(z));
+    assert(g_controller_player[0] == 1U && g_controller_output[0].actions == (1U << MT_CONTROL_B));
+    assert(g_genesis_input.keyboard[0] == 0U); /* No fixed Z->A or player-one leak. */
+    assert(g_genesis_input.gamepad[0] == (1U << MT_GENESIS_BUTTON_B));
+    const uint8_t rollover[] = {0, 0, 1, 1, 1, 1, 1, 1};
+    hid_fixture_report(0U, rollover, sizeof(rollover));
+    assert(g_controller_output[0].actions == (1U << MT_CONTROL_B));
+    usb_hid_service_set_menu_capture(true);
+    assert(g_genesis_input.gamepad[0] == 0U);
+    usb_hid_service_set_menu_capture(false);
+    hid_fixture_report(0U, z, sizeof(z));
+    assert(g_genesis_input.gamepad[0] == 0U); /* Held key must release after closing menu. */
+    hid_fixture_report(0U, release, sizeof(release));
+    hid_fixture_report(0U, z, sizeof(z));
+    assert(g_genesis_input.gamepad[0] == (1U << MT_GENESIS_BUTTON_B));
+    const uint8_t shifted[] = {2, 0, 0, 0, 0, 0, 0, 0};
+    hid_fixture_report(0U, shifted, sizeof(shifted));
+    assert(g_controller_output[0].actions == (1U << MT_CONTROL_UP));
+    assert(g_gamepads.raw[1].keys[0xe1U / 8U] == 0U); /* Separate keyboard identity/state. */
+    usbh_hid_stop(&hids[0]);
+    assert(g_genesis_input.gamepad[0] == 0U);
+    assert(!g_devices[0].connected && g_devices[1].connected);
+
+    /* Composite report IDs preserve held keys across mouse-only reports. */
+    config = g_controller_config[1]; config.assignment = MT_CONTROLLER_PORT1;
+    config.binding[MT_CONTROL_A] = mt_controls_key_source(4U);
+    assert(usb_hid_service_set_controller_config(1U, &config));
+    const uint8_t a[] = {1, 0, 0, 4, 0, 0, 0, 0, 0};
+    const uint8_t mouse[] = {2, 0, 1, 0, 0};
+    hid_fixture_report(1U, a, sizeof(a));
+    assert(g_controller_output[1].actions == (1U << MT_CONTROL_A));
+    hid_fixture_report(1U, mouse, sizeof(mouse));
+    assert(g_controller_output[1].actions == (1U << MT_CONTROL_A));
+    usbh_hid_stop(&hids[1]);
+    assert(g_genesis_input.gamepad[1] == 0U);
+    puts("PASS keyboard controller boot/composite reports, Genesis routing, rollover and release guards");
+}
+
+static void open_keyboard_bound_menu(void *context, unsigned action)
+{
+    unsigned *events = context;
+    assert(action == MT_CONTROL_MENU);
+    ++*events;
+    usb_hid_service_set_menu_capture(true);
+}
+
+static void test_iigs_keyboard_controller_consumption(void)
+{
+    mt_core_link_t link;
+    struct usbh_hubport port;
+    struct usb_endpoint_descriptor endpoint;
+    struct usbh_hid hid;
+    mt_core_link_init(&link, NULL, input_read, input_write);
+    usb_hid_service_init(&link);
+    usb_hid_service_set_active_core(MT_IIGS_CORE_ID);
+    usb_hid_service_set_core_ready(true);
+    hid_protocol_reject_mask = 0U;
+    hid_fixture_connect(&hid_live_fixtures[0], 0U, &port, &endpoint, &hid);
+    mt_controller_config_t config = g_controller_config[0];
+    config.assignment = MT_CONTROLLER_PORT1;
+    config.binding[MT_CONTROL_A] = mt_controls_key_source(0x1dU);
+    config.binding[MT_CONTROL_B] = mt_controls_key_source(0xe1U);
+    config.binding[MT_CONTROL_MENU] = mt_controls_key_source(0x3aU);
+    assert(usb_hid_service_set_controller_config(0U, &config));
+
+    /* Assigned Z and Left Shift reach joystick buttons. The unbound A and
+     * Left Alt still reach the native Apple keyboard in the same report. */
+    const uint8_t mixed[] = {6U, 0U, 0x1dU, 4U, 0U, 0U, 0U, 0U};
+    hid_fixture_report(0U, mixed, sizeof(mixed));
+    assert(g_controller_output[0].actions == ((1U << MT_CONTROL_A) | (1U << MT_CONTROL_B)));
+    assert(g_iigs_input.emitted_buttons == 0x30U);
+    assert(!iigs_key_held(0U, 0x1dU) && !iigs_key_held(0U, 0xe1U));
+    assert(iigs_key_held(0U, 4U) && iigs_key_held(0U, 0xe2U));
+    const uint8_t released[] = {0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U};
+    hid_fixture_report(0U, released, sizeof(released));
+    assert(g_controller_output[0].actions == 0U && g_iigs_input.emitted_buttons == 0U);
+    assert(!iigs_key_held(0U, 4U) && !iigs_key_held(0U, 0xe2U));
+
+    /* Opening the menu from the controller action callback happens after
+     * the keyboard filter. The companion key must still be captured. */
+    unsigned menu_events = 0U;
+    usb_hid_service_set_controller_action_handler(open_keyboard_bound_menu, &menu_events);
+    const uint8_t menu_and_b[] = {0U, 0U, 0x3aU, 5U, 0U, 0U, 0U, 0U};
+    hid_fixture_report(0U, menu_and_b, sizeof(menu_and_b));
+    assert(menu_events == 1U && g_menu_capture);
+    assert(!iigs_key_held(0U, 0x3aU) && !iigs_key_held(0U, 5U));
+    assert(g_iigs_input.emitted_buttons == 0U);
+    hid_fixture_report(0U, released, sizeof(released));
+    usb_hid_service_set_menu_capture(false);
+    usb_hid_service_set_controller_action_handler(NULL, NULL);
+    usbh_hid_stop(&hid);
+    puts("PASS Apple IIgs keyboard bindings consume mapped keys/modifiers and capture menu companion keys");
+}
+
 typedef struct {
     mt_menu_t menu;
     mt_menu_view_t view;
@@ -1617,6 +1734,8 @@ int main(void)
     test_hid_report_protocol_fallback();
     test_hid_report_atomicity_and_nkro();
     test_keyboard_screenshot();
+    test_keyboard_controller_transport();
+    test_iigs_keyboard_controller_consumption();
     test_menu_chord();
     test_menu_chord_guards();
     test_shoulder_navigation();

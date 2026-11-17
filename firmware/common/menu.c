@@ -448,7 +448,25 @@ void mt_menu_gamepad_begin(mt_menu_t *menu, const mt_menu_view_t *view,
             if (view->gamepad_devices[index].connected) { menu->gamepad_slot = (uint8_t)index; break; }
     }
     (void)snprintf(menu->gamepad_notice, sizeof(menu->gamepad_notice),
-                   "Choose a game action, press Enter, then press the button or direction you want.");
+                   "Choose a game action, press Enter, then press the button, key or direction you want.");
+}
+
+static bool gamepad_keyboard_without_axes(const mt_menu_t *menu,
+                                           const mt_menu_view_t *view)
+{
+    const mt_controller_device_t *device = &view->gamepad_devices[menu->gamepad_slot];
+    return device->keyboard && device->axis_mask == 0U &&
+           view->gamepad_preview.axis_valid_mask == 0U;
+}
+
+static void gamepad_capture_keys(mt_gamepad_state_t *state)
+{
+    /* These keys operate the assignment screen. Enter and arrows remain
+     * available as controller inputs after the opening key is released. */
+    static const uint8_t reserved[] = { MT_MENU_HID_ESCAPE, MT_MENU_HID_BACKSPACE,
+        MT_MENU_HID_TAB, MT_MENU_HID_DELETE, MT_MENU_HID_F12, 0x46U };
+    for (unsigned i = 0U; i < sizeof(reserved); ++i)
+        state->keys[reserved[i] / 8U] &= (uint8_t)~(1U << (reserved[i] % 8U));
 }
 
 static void gamepad_start_capture(mt_menu_t *menu, const mt_menu_view_t *view,
@@ -458,15 +476,23 @@ static void gamepad_start_capture(mt_menu_t *menu, const mt_menu_view_t *view,
         (void)snprintf(menu->gamepad_notice, sizeof(menu->gamepad_notice), "Reconnect this controller before assigning a control.");
         return;
     }
+    if ((control == MT_CONTROL_AXIS_X || control == MT_CONTROL_AXIS_Y) &&
+        gamepad_keyboard_without_axes(menu, view)) {
+        (void)snprintf(menu->gamepad_notice, sizeof(menu->gamepad_notice),
+            "This keyboard has no analog axis. Assign Up, Down, Left and Right instead.");
+        return;
+    }
     menu->gamepad_control = (uint8_t)control;
     menu->gamepad_capture = true;
     menu->gamepad_conflict = false;
     menu->gamepad_pending_source = 0U;
     menu->gamepad_capture_armed = false;
     menu->gamepad_previous = view->gamepad_preview;
+    gamepad_capture_keys(&menu->gamepad_previous);
     menu->gamepad_capture_started = view->gamepad_now_ms;
     (void)snprintf(menu->gamepad_notice, sizeof(menu->gamepad_notice), "%s",
-        view->gamepad_preview.generic_axes ?
+        view->gamepad_devices[menu->gamepad_slot].keyboard ?
+        "Release all keys and controls before assigning an input." : view->gamepad_preview.generic_axes ?
         "Release the buttons and stop moving the controls before assigning an input." :
         "Release the buttons and center the sticks before assigning an input.");
 }
@@ -475,8 +501,11 @@ static void gamepad_next_capture(mt_menu_t *menu, const mt_menu_view_t *view)
 {
     if (menu->gamepad_wizard) {
         const uint32_t mask = mt_controls_action_mask(view->gamepad_core_id);
-        for (unsigned index = (unsigned)menu->gamepad_control + 1U; index <= MT_CONTROL_MENU; ++index)
+        for (unsigned index = (unsigned)menu->gamepad_control + 1U; index <= MT_CONTROL_MENU; ++index) {
+            if ((index == MT_CONTROL_AXIS_X || index == MT_CONTROL_AXIS_Y) &&
+                gamepad_keyboard_without_axes(menu, view)) continue;
             if ((mask & (1U << index)) != 0U) { gamepad_start_capture(menu, view, index); return; }
+        }
     }
     menu->gamepad_capture = menu->gamepad_wizard = menu->gamepad_conflict = false;
     (void)snprintf(menu->gamepad_notice, sizeof(menu->gamepad_notice), "Assignment updated. Choose Save changes to keep your edits.");
@@ -554,20 +583,22 @@ bool mt_menu_gamepad_update(mt_menu_t *menu, const mt_menu_view_t *view)
         return true;
     }
     if (menu->gamepad_conflict) return false;
+    mt_gamepad_state_t capture = view->gamepad_preview;
+    gamepad_capture_keys(&capture);
     if (!menu->gamepad_capture_armed) {
         const bool at_rest = gamepad_capture_at_rest(&menu->gamepad_previous,
-                                                    &view->gamepad_preview);
-        menu->gamepad_previous = view->gamepad_preview;
+                                                    &capture);
+        menu->gamepad_previous = capture;
         if (!at_rest) return false;
         menu->gamepad_capture_armed = true;
         (void)snprintf(menu->gamepad_notice, sizeof(menu->gamepad_notice), "%s",
             menu->gamepad_control == MT_CONTROL_AXIS_X || menu->gamepad_control == MT_CONTROL_AXIS_Y ?
             "Ready. Move the axis you want to use." :
-            "Ready. Press a button or D-pad direction, or move an axis.");
+            "Ready. Press a button, key or D-pad direction, or move an axis.");
         return true;
     }
     uint16_t source = mt_controls_capture_source(&menu->gamepad_previous,
-        &view->gamepad_preview, menu->gamepad_control == MT_CONTROL_AXIS_X || menu->gamepad_control == MT_CONTROL_AXIS_Y);
+        &capture, menu->gamepad_control == MT_CONTROL_AXIS_X || menu->gamepad_control == MT_CONTROL_AXIS_Y);
     /* Keep the arming position so slow slider movement can accumulate. */
     if (source == 0U) return false;
     const mt_controller_config_t *config = &menu->gamepad_config[menu->gamepad_slot];
@@ -646,7 +677,8 @@ static mt_menu_action_t gamepad_key(mt_menu_t *menu, const mt_menu_view_t *view,
         return action;
     }
     if (menu->gamepad_test) {
-        if (key == MT_MENU_HID_ESCAPE || key == MT_MENU_HID_BACKSPACE || key == MT_MENU_HID_ENTER) menu->gamepad_test = false;
+        if (key == MT_MENU_HID_ESCAPE || key == MT_MENU_HID_BACKSPACE ||
+            (key == MT_MENU_HID_ENTER && !view->gamepad_devices[menu->gamepad_slot].keyboard)) menu->gamepad_test = false;
         return action;
     }
     if (key == MT_MENU_HID_ESCAPE || key == MT_MENU_HID_BACKSPACE) {
@@ -725,6 +757,7 @@ static mt_menu_action_t gamepad_key(mt_menu_t *menu, const mt_menu_view_t *view,
             menu->gamepad_preview_actions = 0U;
             break;
         case 2U:
+            if (gamepad_keyboard_without_axes(menu, view)) return action;
             menu->gamepad_sticks = true;
             menu->gamepad_control = gamepad_next_axis(menu, view, MT_INPUT_AXIS_COUNT - 1U, 1);
             menu->gamepad_field = TUNE_AXIS;
@@ -1589,10 +1622,26 @@ static void render_gamepad(const mt_menu_t *menu, const mt_menu_view_t *view,
     char text[160], value[80];
     mt_ui_fill(frame, BODY_X, 6U, BODY_W, HELP_Y - 6U, MT_UI_COLOR_PANEL);
     field(frame, ITEM_X, 6U, ITEM_W, menu->gamepad_test ? "Test controller" : menu->gamepad_sticks ? "Axis tuning" : "Controllers", MT_UI_COLOR_TEXT, MT_UI_COLOR_PANEL);
-    (void)snprintf(text, sizeof(text), "Controller %u: %s%s  |  Now: %s", slot + 1U, device->name[0] != '\0' ? device->name : "None connected", device->connected ? "" : " (disconnected)", routing);
+    (void)snprintf(text, sizeof(text), "%s %u: %s%s  |  Now: %s", device->keyboard ? "Keyboard" : "Controller", slot + 1U, device->name[0] != '\0' ? device->name : "None connected", device->connected ? "" : " (disconnected)", routing);
     field(frame, ITEM_X, 8U, ITEM_W, text, device->connected ? MT_UI_COLOR_TEXT : MT_UI_COLOR_WARNING, MT_UI_COLOR_PANEL);
     if (menu->gamepad_test) {
         unsigned position = 0U;
+        if (device->keyboard) {
+            size_t used = (size_t)snprintf(text, sizeof(text), "Keys held:");
+            bool held = false;
+            for (unsigned key = 4U; key < 256U && used < sizeof(text); ++key) {
+                if ((view->gamepad_preview.keys[key / 8U] & (1U << (key % 8U))) == 0U ||
+                    mt_controls_key_source(key) == 0U) continue;
+                mt_controls_source_name(device, mt_controls_key_source(key), value, sizeof(value));
+                used += (size_t)snprintf(text + used, sizeof(text) - used, "%s%s", held ? ", " : " ", value);
+                held = true;
+            }
+            if (!held) (void)snprintf(text + used, sizeof(text) - used, " none");
+            field(frame, ITEM_X, LIST_Y, ITEM_W, text, MT_UI_COLOR_TEXT, MT_UI_COLOR_PANEL);
+            if (strlen(text) > ITEM_W)
+                field(frame, ITEM_X, LIST_Y + 1U, ITEM_W, text + ITEM_W, MT_UI_COLOR_TEXT, MT_UI_COLOR_PANEL);
+            position = 4U;
+        }
         const uint32_t present = device->buttons_present | view->gamepad_preview.buttons;
         for (unsigned button = 0U; button < 32U; ++button) {
             if ((present & (UINT32_C(1) << button)) == 0U) continue;
@@ -1631,7 +1680,9 @@ static void render_gamepad(const mt_menu_t *menu, const mt_menu_view_t *view,
             field(frame, ITEM_X + (index % 2U) * (ITEM_W / 2U), start + 4U + index / 2U, ITEM_W / 2U - 1U, text, MT_UI_COLOR_TEXT, MT_UI_COLOR_PANEL);
         }
         render_gamepad_output(menu, view, config, frame, start + 10U);
-        help_text(frame, "Press any controller control to test it. Game and navigation actions are paused. F12 or hold Select+Start for 0.5s to return; keyboard Enter/Escape also returns.");
+        help_text(frame, device->keyboard ?
+            "Press keys or controls to test them. Game and navigation actions are paused. Esc or F12 returns to assignments." :
+            "Press any controller control to test it. Game and navigation actions are paused. F12 or hold Select+Start for 0.5s to return; keyboard Enter/Escape also returns.");
         return;
     }
     if (menu->gamepad_sticks) {
@@ -1678,7 +1729,7 @@ static void render_gamepad(const mt_menu_t *menu, const mt_menu_view_t *view,
     for (unsigned index = 0U; index < command_start + 7U; ++index) {
         const char *label;
         bool enabled = true;
-        if (index == 0U) { label = "Controller"; (void)snprintf(value, sizeof(value), "%u: %s", slot + 1U, device->name[0] ? device->name : "None connected"); }
+        if (index == 0U) { label = "Controller"; (void)snprintf(value, sizeof(value), "%u: %s%s", slot + 1U, device->keyboard ? "Keyboard: " : "", device->name[0] ? device->name : "None connected"); }
         else if (index == 1U) {
             label = "Assign to";
             enabled = device->connected != 0U;
@@ -1689,11 +1740,14 @@ static void render_gamepad(const mt_menu_t *menu, const mt_menu_view_t *view,
             label = mt_controls_action_name(view->gamepad_core_id, control);
             mt_controls_source_name(device, mt_controls_binding(config, control), value, sizeof(value));
             enabled = device->connected != 0U;
+            if ((control == MT_CONTROL_AXIS_X || control == MT_CONTROL_AXIS_Y) &&
+                gamepad_keyboard_without_axes(menu, view)) enabled = false;
         } else {
             const unsigned command = index - command_start;
             label = commands[command];
             if (command == 4U || command == 5U) enabled = mt_menu_gamepad_dirty(menu);
             else if (command < 4U) enabled = device->connected != 0U;
+            if (command == 2U && gamepad_keyboard_without_axes(menu, view)) enabled = false;
             (void)snprintf(value, sizeof(value), "%s", command == 4U ? (enabled ? "Unsaved changes" : "Saved") : "Enter");
         }
         mt_menu_item_t item = {.label = label, .value = value, .enabled = enabled, .value_color = enabled ? MT_UI_COLOR_BLUE : MT_UI_COLOR_MUTED};

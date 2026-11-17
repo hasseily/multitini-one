@@ -39,6 +39,8 @@ typedef struct {
     uint8_t connected, hat, extra_active, generic_axes;
     uint16_t axis_valid_mask, trigger_mask, relative_mask;
     uint32_t buttons;
+    /* USB keyboard usages, including modifier usages 0xe0 through 0xe7. */
+    uint8_t keys[32];
     int16_t axis[MT_INPUT_AXIS_COUNT];
 } mt_gamepad_state_t;
 typedef struct {

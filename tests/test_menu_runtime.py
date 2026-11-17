@@ -795,6 +795,42 @@ static void stick_settings_accept_controller_navigation(void) {
     assert(!supervisor_menu.gamepad_sticks && supervisor_menu.gamepad_edit && supervisor_menu.visible);
     assert(!gamepad_preview && settings_writes == 0U && config_applies == 0U);
 }
+static void keyboard_capture_precedes_navigation(void) {
+    reset_fixture(true); connect_fixture(0U, 1U);
+    devices[0].keyboard = devices[0].generic_axes = 1U;
+    devices[0].buttons_present = 0U;
+    raw_controllers[0].generic_axes = 1U;
+    mt_controls_default(MT_GENESIS_CORE_ID, &devices[0], &controller_configs[0]);
+    const mt_menu_action_t edit = {MT_MENU_ACTION_EDIT_GAMEPADS, 0U, 0U, 0U};
+    controller_edit_action(edit);
+    supervisor_menu.gamepad_control = MT_CONTROL_A;
+    supervisor_menu.gamepad_capture = true;
+    supervisor_menu.gamepad_capture_started = now_ms;
+    const uint8_t enter = MT_MENU_HID_ENTER, right = MT_MENU_HID_RIGHT;
+    raw_controllers[0].keys[enter / 8U] = (uint8_t)(1U << (enter % 8U));
+    assert(supervisor_keyboard_filter(NULL, 0U, 0U, &enter, 1U));
+    assert(!supervisor_menu.gamepad_capture_armed);
+    memset(raw_controllers[0].keys, 0, sizeof(raw_controllers[0].keys));
+    assert(supervisor_keyboard_filter(NULL, 0U, 0U, NULL, 0U));
+    assert(supervisor_menu.gamepad_capture_armed);
+    const unsigned row = supervisor_menu.gamepad_field;
+    raw_controllers[0].keys[right / 8U] = (uint8_t)(1U << (right % 8U));
+    assert(supervisor_keyboard_filter(NULL, 0U, 0U, &right, 1U));
+    assert(!supervisor_menu.gamepad_capture && supervisor_menu.gamepad_field == row);
+    assert(supervisor_menu.gamepad_config[0].binding[MT_CONTROL_A] == mt_controls_key_source(right));
+    memset(raw_controllers[0].keys, 0, sizeof(raw_controllers[0].keys));
+    assert(supervisor_keyboard_filter(NULL, 0U, 0U, NULL, 0U));
+    supervisor_menu.gamepad_test = true;
+    supervisor_menu.gamepad_config[0].binding[MT_CONTROL_START] = mt_controls_key_source(enter);
+    raw_controllers[0].keys[enter / 8U] = (uint8_t)(1U << (enter % 8U));
+    assert(supervisor_keyboard_filter(NULL, 0U, 0U, &enter, 1U));
+    assert(supervisor_menu.gamepad_test);
+    memset(raw_controllers[0].keys, 0, sizeof(raw_controllers[0].keys));
+    (void)supervisor_keyboard_filter(NULL, 0U, 0U, NULL, 0U);
+    const uint8_t escape = MT_MENU_HID_ESCAPE;
+    (void)supervisor_keyboard_filter(NULL, 0U, 0U, &escape, 1U);
+    assert(!supervisor_menu.gamepad_test && supervisor_menu.visible);
+}
 static void menu_chord_does_not_assign_controller_controls(void) {
     reset_fixture(true); connect_fixture(0U, 1U);
     const mt_menu_action_t edit = {MT_MENU_ACTION_EDIT_GAMEPADS, 0U, 0U, 0U};
@@ -963,6 +999,7 @@ int main(int argc, char **argv) {
     else if (strcmp(argv[1], "screenshot-presenter") == 0) screenshot_waits_for_displayed_ui_commit();
     else if (strcmp(argv[1], "screenshot-feedback") == 0) screenshot_feedback_during_play();
     else if (strcmp(argv[1], "raw-capture") == 0) raw_capture_is_immediate_and_held_safe();
+    else if (strcmp(argv[1], "keyboard-capture") == 0) keyboard_capture_precedes_navigation();
     else if (strcmp(argv[1], "stick-navigation") == 0) stick_settings_accept_controller_navigation();
     else if (strcmp(argv[1], "capture-chord") == 0) menu_chord_does_not_assign_controller_controls();
     else if (strcmp(argv[1], "controller-profiles") == 0) controller_profiles_and_legacy_migration();
@@ -1081,6 +1118,9 @@ class MenuRuntimeTests(unittest.TestCase):
 
     def test_raw_capture_handles_quick_presses_before_navigation(self):
         self.run_scenario("raw-capture")
+
+    def test_keyboard_capture_handles_arrows_and_enter_before_navigation(self):
+        self.run_scenario("keyboard-capture")
 
     def test_stick_settings_allow_controller_navigation_without_applying_draft(self):
         self.run_scenario("stick-navigation")

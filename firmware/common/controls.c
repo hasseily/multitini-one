@@ -13,6 +13,21 @@
 #include <string.h>
 
 #define BIT(n) (UINT32_C(1) << (n))
+#define EXTRA_AXIS_END (MT_CONTROL_SOURCE_EXTRA_AXIS + MT_INPUT_AXIS_COUNT - MT_GAMEPAD_AXIS_COUNT)
+
+uint16_t mt_controls_key_source(unsigned usage)
+{
+    if (usage < 4U || usage > 0xe7U || usage == 0x45U || usage == 0x46U)
+        return MT_CONTROL_SOURCE_NONE;
+    return (uint16_t)(MT_CONTROL_SOURCE_KEY + usage);
+}
+
+unsigned mt_controls_source_key(uint16_t source)
+{
+    if (source < MT_CONTROL_SOURCE_KEY || source >= MT_CONTROL_SOURCE_COUNT) return 0U;
+    const unsigned usage = (unsigned)source - MT_CONTROL_SOURCE_KEY;
+    return mt_controls_key_source(usage) == source ? usage : 0U;
+}
 
 uint16_t mt_controls_binding(const mt_controller_config_t *config, unsigned action)
 {
@@ -92,7 +107,7 @@ unsigned mt_controls_source_axis(uint16_t source)
         return (unsigned)source - MT_CONTROL_SOURCE_AXIS;
     if (source >= MT_CONTROL_SOURCE_EXTRA_AXIS_NEG && source < MT_CONTROL_SOURCE_EXTRA_AXIS)
         return MT_GAMEPAD_AXIS_COUNT + ((unsigned)source - MT_CONTROL_SOURCE_EXTRA_AXIS_NEG) / 2U;
-    if (source >= MT_CONTROL_SOURCE_EXTRA_AXIS && source < MT_CONTROL_SOURCE_COUNT)
+    if (source >= MT_CONTROL_SOURCE_EXTRA_AXIS && source < EXTRA_AXIS_END)
         return MT_GAMEPAD_AXIS_COUNT + (unsigned)source - MT_CONTROL_SOURCE_EXTRA_AXIS;
     return MT_INPUT_AXIS_COUNT;
 }
@@ -100,7 +115,77 @@ unsigned mt_controls_source_axis(uint16_t source)
 bool mt_controls_source_is_analog(uint16_t source)
 {
     return (source >= MT_CONTROL_SOURCE_AXIS && source < MT_CONTROL_SOURCE_DPAD_STICK) ||
-        (source >= MT_CONTROL_SOURCE_EXTRA_AXIS && source < MT_CONTROL_SOURCE_COUNT);
+        (source >= MT_CONTROL_SOURCE_EXTRA_AXIS && source < EXTRA_AXIS_END);
+}
+
+static void key_source_name(unsigned usage, char *text, size_t capacity)
+{
+    const char *name = NULL;
+    if (usage >= 4U && usage <= 0x1dU) {
+        (void)snprintf(text, capacity, "Key %c", (int)('A' + usage - 4U)); return;
+    }
+    if (usage >= 0x1eU && usage <= 0x27U) {
+        (void)snprintf(text, capacity, "Key %c", usage == 0x27U ? '0' : (int)('1' + usage - 0x1eU)); return;
+    }
+    if ((usage >= 0x3aU && usage <= 0x44U) || (usage >= 0x68U && usage <= 0x73U)) {
+        (void)snprintf(text, capacity, "F%u", usage <= 0x44U ? usage - 0x39U : usage - 0x68U + 13U); return;
+    }
+    if (usage >= 0x59U && usage <= 0x62U) {
+        (void)snprintf(text, capacity, "Keypad %c", usage == 0x62U ? '0' : (int)('1' + usage - 0x59U)); return;
+    }
+    switch (usage) {
+    case 0x28U: name = "Enter"; break;
+    case 0x29U: name = "Escape"; break;
+    case 0x2aU: name = "Backspace"; break;
+    case 0x2bU: name = "Tab"; break;
+    case 0x2cU: name = "Space"; break;
+    case 0x2dU: name = "Minus"; break;
+    case 0x2eU: name = "Equals"; break;
+    case 0x2fU: name = "Left bracket"; break;
+    case 0x30U: name = "Right bracket"; break;
+    case 0x31U: name = "Backslash"; break;
+    case 0x32U: name = "Non-US hash"; break;
+    case 0x33U: name = "Semicolon"; break;
+    case 0x34U: name = "Quote"; break;
+    case 0x35U: name = "Backtick"; break;
+    case 0x36U: name = "Comma"; break;
+    case 0x37U: name = "Period"; break;
+    case 0x38U: name = "Slash"; break;
+    case 0x39U: name = "Caps Lock"; break;
+    case 0x47U: name = "Scroll Lock"; break;
+    case 0x48U: name = "Pause"; break;
+    case 0x49U: name = "Insert"; break;
+    case 0x4aU: name = "Home"; break;
+    case 0x4bU: name = "Page Up"; break;
+    case 0x4cU: name = "Delete"; break;
+    case 0x4dU: name = "End"; break;
+    case 0x4eU: name = "Page Down"; break;
+    case 0x4fU: name = "Right arrow"; break;
+    case 0x50U: name = "Left arrow"; break;
+    case 0x51U: name = "Down arrow"; break;
+    case 0x52U: name = "Up arrow"; break;
+    case 0x53U: name = "Num Lock"; break;
+    case 0x54U: name = "Keypad /"; break;
+    case 0x55U: name = "Keypad *"; break;
+    case 0x56U: name = "Keypad -"; break;
+    case 0x57U: name = "Keypad +"; break;
+    case 0x58U: name = "Keypad Enter"; break;
+    case 0x63U: name = "Keypad decimal"; break;
+    case 0x64U: name = "Non-US backslash"; break;
+    case 0x65U: name = "Menu key"; break;
+    case 0x67U: name = "Keypad ="; break;
+    case 0xe0U: name = "Left Control"; break;
+    case 0xe1U: name = "Left Shift"; break;
+    case 0xe2U: name = "Left Alt"; break;
+    case 0xe3U: name = "Left Windows"; break;
+    case 0xe4U: name = "Right Control"; break;
+    case 0xe5U: name = "Right Shift"; break;
+    case 0xe6U: name = "Right Alt"; break;
+    case 0xe7U: name = "Right Windows"; break;
+    default: break;
+    }
+    if (name != NULL) (void)snprintf(text, capacity, "%s", name);
+    else (void)snprintf(text, capacity, "HID key %02X", usage);
 }
 
 void mt_controls_source_name(const mt_controller_device_t *device, uint16_t source,
@@ -139,8 +224,10 @@ void mt_controls_source_name(const mt_controller_device_t *device, uint16_t sour
         const unsigned axis = mt_controls_source_axis(source);
         (void)snprintf(text, capacity, "%s %s", axes[axis],
             ((source - MT_CONTROL_SOURCE_EXTRA_AXIS_NEG) & 1U) != 0U ? "+" : "-");
-    } else if (source < MT_CONTROL_SOURCE_COUNT)
+    } else if (source < EXTRA_AXIS_END)
         (void)snprintf(text, capacity, "%s", axes[mt_controls_source_axis(source)]);
+    else if (mt_controls_source_key(source) != 0U)
+        key_source_name(mt_controls_source_key(source), text, capacity);
     else (void)snprintf(text, capacity, "Unavailable");
 }
 
@@ -186,7 +273,7 @@ void mt_controls_default(uint32_t core, const mt_controller_device_t *device,
         config->axis[i].deadzone_percent = axis.deadzone_percent;
         config->axis[i].sensitivity_percent = axis.sensitivity_percent;
     }
-    if (device != NULL && device->generic_axes) {
+    if (device != NULL && (device->generic_axes || device->keyboard)) {
         config->assignment = MT_CONTROLLER_OFF;
         return;
     }
@@ -220,7 +307,8 @@ bool mt_controls_config_valid(uint32_t core, const mt_controller_config_t *confi
     for (unsigned i = 0U; i < MT_CONTROL_ACTION_COUNT; ++i) {
         const unsigned source = mt_controls_binding(config, i);
         const bool analog = i == MT_CONTROL_AXIS_X || i == MT_CONTROL_AXIS_Y;
-        if (source >= MT_CONTROL_SOURCE_COUNT || ((actions & BIT(i)) == 0U && source != 0U)) return false;
+        if ((source >= EXTRA_AXIS_END && mt_controls_source_key((uint16_t)source) == 0U) ||
+            ((actions & BIT(i)) == 0U && source != 0U)) return false;
         if (source != 0U && (analog != mt_controls_source_is_analog((uint16_t)source))) return false;
     }
     for (unsigned i = 0U; i < MT_INPUT_AXIS_COUNT; ++i) {
@@ -249,7 +337,7 @@ void mt_controls_migrate_legacy(uint32_t core, const mt_controller_device_t *dev
                                const mt_gamepad_config_t *legacy, mt_controller_config_t *config)
 {
     mt_controls_default(core, device, config);
-    if (config == NULL || (device != NULL && device->generic_axes) || !mt_gamepad_config_valid(legacy)) return;
+    if (config == NULL || (device != NULL && (device->generic_axes || device->keyboard)) || !mt_gamepad_config_valid(legacy)) return;
     /* Tuning now belongs to a physical axis. Prioritize the old horizontal
      * and vertical controls when several old logical axes shared a source. */
     for (unsigned i = MT_GAMEPAD_AXIS_COUNT; i-- > 0U;) {
@@ -305,6 +393,8 @@ int16_t mt_controls_tuned_axis(const mt_controller_config_t *config,
 static bool source_pressed(uint16_t source, const mt_controller_config_t *config,
                            const mt_gamepad_state_t *raw, bool held)
 {
+    const unsigned usage = mt_controls_source_key(source);
+    if (usage != 0U) return (raw->keys[usage >> 3U] & (1U << (usage & 7U))) != 0U;
     if (source >= MT_CONTROL_SOURCE_DPAD_STICK && source < MT_CONTROL_SOURCE_EXTRA_AXIS_NEG) {
         const unsigned direction = (unsigned)source - MT_CONTROL_SOURCE_DPAD_STICK;
         const unsigned axis = config->axis[direction < 2U ? MT_GAMEPAD_AXIS_Y : MT_GAMEPAD_AXIS_X].source;
@@ -357,10 +447,18 @@ void mt_controls_evaluate(uint32_t core, const mt_controller_config_t *config,
     }
 }
 
+static bool keyboard_active(const mt_gamepad_state_t *raw)
+{
+    for (unsigned usage = 4U; usage <= 0xe7U; ++usage)
+        if (mt_controls_key_source(usage) != 0U &&
+            (raw->keys[usage >> 3U] & (1U << (usage & 7U))) != 0U) return true;
+    return false;
+}
+
 bool mt_controls_neutral(const mt_gamepad_state_t *raw)
 {
     if (raw == NULL || !raw->connected) return true;
-    if (raw->buttons != 0U || raw->extra_active != 0U || raw->hat < 8U) return false;
+    if (raw->buttons != 0U || raw->extra_active != 0U || raw->hat < 8U || keyboard_active(raw)) return false;
     for (unsigned i = 0U; i < MT_INPUT_AXIS_COUNT; ++i) {
         if ((raw->axis_valid_mask & (1U << i)) == 0U) continue;
         if ((raw->relative_mask & (1U << i)) != 0U) { if (raw->axis[i] != 0) return false; }
@@ -377,7 +475,7 @@ bool mt_controls_gameplay_neutral(uint32_t core, const mt_controller_config_t *c
     if (raw == NULL || !raw->connected) return true;
     if (raw->generic_axes || !mt_controls_config_valid(core, config))
         return mt_controls_neutral(raw);
-    if (raw->buttons != 0U || raw->extra_active != 0U || raw->hat < 8U) return false;
+    if (raw->buttons != 0U || raw->extra_active != 0U || raw->hat < 8U || keyboard_active(raw)) return false;
     const uint32_t actions = mt_controls_action_mask(core);
     for (unsigned action = MT_CONTROL_UP; action <= MT_CONTROL_AXIS_Y; ++action) {
         if ((actions & BIT(action)) == 0U) continue;
@@ -422,6 +520,14 @@ uint16_t mt_controls_capture_source(const mt_gamepad_state_t *before,
         for (unsigned i = 0U; i < 32U; ++i) if ((buttons & (UINT32_C(1) << i)) != 0U) return (uint16_t)(i + 1U);
         const unsigned hat = (unsigned)mt_gamepad_hat_bits(now->hat) & ~(unsigned)mt_gamepad_hat_bits(before->hat);
         for (unsigned i = 0U; i < 4U; ++i) if ((hat & (1U << i)) != 0U) return (uint16_t)(MT_CONTROL_SOURCE_HAT + i);
+        for (unsigned usage = 4U; usage <= 0xe7U; ++usage) {
+            const unsigned bit = 1U << (usage & 7U);
+            if ((now->keys[usage >> 3U] & bit) != 0U &&
+                (before->keys[usage >> 3U] & bit) == 0U) {
+                const uint16_t source = mt_controls_key_source(usage);
+                if (source != 0U) return source;
+            }
+        }
     }
     unsigned best = 0U; int32_t strength = 0;
     for (unsigned i = 0U; i < MT_INPUT_AXIS_COUNT; ++i) {

@@ -103,8 +103,9 @@ static void test_defaults_and_validation(void)
     for (unsigned source = 0U; source < MT_CONTROL_SOURCE_COUNT; ++source) {
         config.binding[MT_CONTROL_A] = (uint16_t)source;
         const bool whole_axis = (source >= 49U && source < 55U) || (source >= 67U && source < 71U);
-        check(mt_controls_config_valid(MT_GBC_CORE_ID, &config) == !whole_axis,
-              "digital actions accept buttons, directions and composite defaults but not whole axes");
+        const bool available = source < 71U || mt_controls_source_key((uint16_t)source) != 0U;
+        check(mt_controls_config_valid(MT_GBC_CORE_ID, &config) == (available && !whole_axis),
+              "digital actions accept valid digital sources and reject axes, holes and reserved keys");
         char text[48];
         mt_controls_source_name(&generic, (uint16_t)source, text, sizeof(text));
         check(text[0] != '\0', "all valid controller inputs have readable names");
@@ -290,7 +291,7 @@ static void test_extended_axis_controls(void)
     _Static_assert(MT_CONTROL_SOURCE_BUTTON == 1 && MT_CONTROL_SOURCE_HAT == 33 &&
         MT_CONTROL_SOURCE_AXIS_NEG == 37 && MT_CONTROL_SOURCE_AXIS == 49 &&
         MT_CONTROL_SOURCE_DPAD_STICK == 55 && MT_CONTROL_SOURCE_EXTRA_AXIS_NEG == 59 &&
-        MT_CONTROL_SOURCE_EXTRA_AXIS == 67 && MT_CONTROL_SOURCE_COUNT == 71,
+        MT_CONTROL_SOURCE_EXTRA_AXIS == 67 && MT_CONTROL_SOURCE_KEY == 0x100,
         "Saved binding identifiers must stay stable");
     const char *const names[] = {"Slider", "Dial", "Wheel", "Pan"};
     mt_controller_device_t generic = device(MT_CONTROLLER_TRANSPORT_HID);
@@ -428,6 +429,102 @@ static void test_gameplay_release(void)
           "a physically released trigger cannot leave the menu guard latched");
 }
 
+static void set_key(mt_gamepad_state_t *raw, unsigned usage, bool pressed)
+{
+    const uint8_t bit = (uint8_t)(1U << (usage & 7U));
+    if (pressed) raw->keys[usage >> 3U] |= bit;
+    else raw->keys[usage >> 3U] &= (uint8_t)~bit;
+}
+
+static void test_keyboard_controls(void)
+{
+    mt_controller_device_t keyboard = device(MT_CONTROLLER_TRANSPORT_HID);
+    keyboard.keyboard = 1U;
+    mt_controller_config_t config;
+    mt_controls_default(MT_GBC_CORE_ID, &keyboard, &config);
+    check(config.assignment == MT_CONTROLLER_OFF && mt_controls_config_valid(MT_GBC_CORE_ID, &config),
+          "a keyboard starts disabled with a valid profile");
+    for (unsigned action = 0U; action < MT_CONTROL_ACTION_COUNT; ++action)
+        check(mt_controls_binding(&config, action) == 0U, "a keyboard has no guessed controller bindings");
+    mt_gamepad_config_t legacy;
+    mt_gamepad_default_config(&legacy);
+    mt_controls_migrate_legacy(MT_GBC_CORE_ID, &keyboard, &legacy, &config);
+    check(config.assignment == MT_CONTROLLER_OFF && config.binding[MT_CONTROL_A] == 0U,
+          "legacy gamepad defaults cannot claim a keyboard");
+
+    check(mt_controls_key_source(3U) == 0U && mt_controls_key_source(0xe8U) == 0U &&
+          mt_controls_key_source(0x45U) == 0U && mt_controls_key_source(0x46U) == 0U,
+          "error usages, out-of-range usages and global shortcuts cannot be assigned");
+    check(mt_controls_source_key(MT_CONTROL_SOURCE_KEY) == 0U &&
+          mt_controls_source_key(MT_CONTROL_SOURCE_COUNT) == 0U &&
+          mt_controls_source_key(71U) == 0U,
+          "source holes and range endpoints cannot alias a key");
+
+    const unsigned usages[] = {4U, 0x1eU, 0x2cU, 0x52U, 0x60U, 0xe0U, 0xe1U, 0xe5U, 0xe7U};
+    const char *const names[] = {"Key A", "Key 1", "Space", "Up arrow", "Keypad 8",
+        "Left Control", "Left Shift", "Right Shift", "Right Windows"};
+    config.assignment = MT_CONTROLLER_PORT1;
+    mt_gamepad_state_t raw = neutral(), before = neutral();
+    mt_controls_output_t output;
+    for (unsigned index = 0U; index < sizeof(usages) / sizeof(usages[0]); ++index) {
+        const unsigned usage = usages[index];
+        const uint16_t source = mt_controls_key_source(usage);
+        check(source == MT_CONTROL_SOURCE_KEY + usage && mt_controls_source_key(source) == usage,
+              "keyboard bindings retain the full HID usage");
+        check(!mt_controls_source_is_analog(source) && mt_controls_source_axis(source) == MT_INPUT_AXIS_COUNT,
+              "key sources cannot index analog tuning arrays");
+        char text[48];
+        mt_controls_source_name(&keyboard, source, text, sizeof(text));
+        check(strcmp(text, names[index]) == 0, "common keys have readable names");
+        config.binding[MT_CONTROL_A] = source;
+        set_key(&raw, usage, true);
+        check(mt_controls_config_valid(MT_GBC_CORE_ID, &config), "a digital action accepts a keyboard source");
+        check(mt_controls_capture_source(&before, &raw, false) == source,
+              "keyboard presses and modifier presses capture their own usage");
+        check(mt_controls_capture_source(&raw, &raw, false) == 0U,
+              "a held key cannot bind another wizard step");
+        check(mt_controls_capture_source(&before, &raw, true) == 0U,
+              "analog capture ignores keyboard presses");
+        check(!mt_controls_neutral(&raw) && !mt_controls_gameplay_neutral(MT_GBC_CORE_ID, &config, &raw),
+              "a held keyboard control keeps release guards active");
+        mt_controls_evaluate(MT_GBC_CORE_ID, &config, &raw, 0U, &output);
+        check(output.actions == BIT(MT_CONTROL_A), "an assigned key reaches its game action");
+        set_key(&raw, usage, false);
+        mt_controls_evaluate(MT_GBC_CORE_ID, &config, &raw, output.actions, &output);
+        check(output.actions == 0U && mt_controls_neutral(&raw) &&
+              mt_controls_gameplay_neutral(MT_GBC_CORE_ID, &config, &raw),
+              "releasing a key releases the game action and the input guard");
+    }
+
+    set_key(&raw, 0x45U, true); set_key(&raw, 0x46U, true);
+    check(mt_controls_neutral(&raw) && mt_controls_capture_source(&before, &raw, false) == 0U,
+          "global menu and screenshot keys do not block or enter binding capture");
+    raw = neutral();
+    set_key(&raw, 4U, true);
+    raw.buttons = BIT(0U); raw.hat = 0U;
+    check(mt_controls_capture_source(&before, &raw, false) == MT_CONTROL_SOURCE_BUTTON,
+          "button capture retains priority over simultaneous keyboard and hat input");
+    raw.buttons = 0U;
+    check(mt_controls_capture_source(&before, &raw, false) == MT_CONTROL_SOURCE_HAT,
+          "hat capture retains priority over a simultaneous keyboard press");
+    raw.hat = 8U;
+    config.binding[MT_CONTROL_UP] = mt_controls_key_source(4U);
+    config.binding[MT_CONTROL_A] = mt_controls_key_source(5U);
+    mt_controls_evaluate(MT_GBC_CORE_ID, &config, &raw, 0U, &output);
+    check(output.actions == BIT(MT_CONTROL_UP) && output.y == INT16_MAX,
+          "keyboard directions drive digital joystick axes without aliasing a neighboring key");
+    raw.connected = 0U;
+    mt_controls_evaluate(MT_GBC_CORE_ID, &config, &raw, 0U, &output);
+    check(output.actions == 0U && mt_controls_neutral(&raw), "disconnect releases held keyboard controls");
+
+    config = empty_config(MT_VECTREX_CORE_ID);
+    config.binding[MT_CONTROL_AXIS_X] = mt_controls_key_source(4U);
+    check(!mt_controls_config_valid(MT_VECTREX_CORE_ID, &config), "whole analog axes reject keyboard sources");
+    char text[48];
+    mt_controls_source_name(&keyboard, mt_controls_key_source(0x80U), text, sizeof(text));
+    check(strcmp(text, "HID key 80") == 0, "uncommon keyboard usages retain a precise HID label");
+}
+
 int main(void)
 {
     mt_controller_config_t turbo = empty_config(MT_C64_CORE_ID);
@@ -450,6 +547,7 @@ int main(void)
     test_legacy_axis_migration();
     test_extended_axis_controls();
     test_gameplay_release();
-    puts("PASS controls: all button sources, per-core defaults, capture, analog tuning and stable identities");
+    test_keyboard_controls();
+    puts("PASS controls: buttons, keyboard sources, per-core defaults, capture, analog tuning and stable identities");
     return 0;
 }

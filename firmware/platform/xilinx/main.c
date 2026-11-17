@@ -5211,8 +5211,24 @@ static bool supervisor_keyboard_filter(void *context, uint8_t slot,
         memcpy(supervisor_menu_keys[slot], next, sizeof(next));
         return true;
     }
+    const bool key_capture = supervisor_menu.gamepad_edit &&
+        supervisor_menu.gamepad_slot == slot && supervisor_menu.gamepad_capture;
+    const bool key_test = supervisor_menu.gamepad_edit &&
+        supervisor_menu.gamepad_slot == slot && supervisor_menu.gamepad_test;
+    const bool key_conflict = key_capture && supervisor_menu.gamepad_conflict;
+    const bool key_wizard = key_capture && supervisor_menu.gamepad_wizard;
+    if (key_capture || key_test) {
+        const mt_menu_view_t view = supervisor_menu_view();
+        if (view.gamepad_devices[slot].keyboard && mt_menu_gamepad_update(&supervisor_menu, &view))
+            supervisor_menu_dirty = true;
+    }
     for (index = 0U; index < sizeof(menu_keys); ++index) {
         const uint8_t usage = menu_keys[index];
+        if ((key_capture || key_test) && usage != MT_MENU_HID_F12 &&
+            usage != MT_MENU_HID_ESCAPE && usage != MT_MENU_HID_BACKSPACE &&
+            !(key_capture && usage == MT_MENU_HID_DELETE) &&
+            !(key_wizard && usage == MT_MENU_HID_TAB) &&
+            !(key_conflict && usage == MT_MENU_HID_ENTER)) continue;
         const bool pressed = key_bitmap_get(next, usage);
         if (pressed != key_bitmap_get(supervisor_menu_keys[slot], usage)) {
             if (usage == MT_MENU_HID_F12 && pressed && amiga_display_holds_menu_closed()) {

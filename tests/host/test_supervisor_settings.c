@@ -904,7 +904,7 @@ static void test_controller_profiles(void)
     static const struct { unsigned offset; uint8_t value; } bad[] = {
         {V7_WIRE_SIZE, MT_SETTINGS_MAX_CONTROLLER_PROFILES + 1U}, {V7_WIRE_SIZE + 5U, 2U},
         {V7_WIRE_SIZE + 6U, 1U}, {POOL_OFFSET + 20U, 255U},
-        {POOL_OFFSET + 22U, 1U}, {POOL_OFFSET + 24U, MT_CONTROL_SOURCE_COUNT},
+        {POOL_OFFSET + 22U, 1U}, {POOL_OFFSET + 24U, 71U},
         {POOL_OFFSET + 88U, 4U}, {POOL_OFFSET + 89U, 1U},
         {POOL_OFFSET + 4U * RECORD_SIZE, 1U}
     };
@@ -1021,6 +1021,94 @@ static void test_controller_profiles(void)
     assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
     assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
     assert(memcmp(&loaded, &settings, sizeof(settings)) == 0);
+}
+
+static void test_keyboard_controller_profiles(void)
+{
+    enum { POOL_OFFSET = V7_WIRE_SIZE + 8U, RECORD_SIZE = 92U };
+    mt_supervisor_settings_t settings, loaded, before;
+    mt_controller_device_t pad = controller_device(1U, 0U);
+    mt_controller_device_t keyboard = {
+        .identity = {
+            .vendor_id = 0x046dU, .product_id = 0xc31cU,
+            .descriptor_hash = UINT32_C(0x7ab94c21), .serial_hash = 1234U,
+            .port_path = 2U, .transport = MT_CONTROLLER_TRANSPORT_HID,
+            .interface_id = 1U,
+        },
+        .connected = 1U, .keyboard = 1U, .home_button = UINT8_MAX,
+    };
+    mt_controller_config_t config;
+    uint8_t legacy_record[RECORD_SIZE];
+
+    reset_fake();
+    mt_supervisor_settings_defaults(&settings);
+    mt_controls_default(MT_GENESIS_CORE_ID, &pad, &config);
+    assert(mt_supervisor_settings_remember_controller(&settings,
+        MT_GENESIS_CORE_ID, &pad.identity, &config));
+    assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
+    memcpy(legacy_record, stored_file + POOL_OFFSET, sizeof(legacy_record));
+
+    /* A keyboard reserves no player until its own profile is enabled. */
+    mt_controls_default(MT_GENESIS_CORE_ID, &keyboard, &config);
+    assert(config.assignment == MT_CONTROLLER_OFF);
+    for (unsigned action = 0U; action < MT_CONTROL_ACTION_COUNT; ++action)
+        assert(mt_controls_binding(&config, action) == MT_CONTROL_SOURCE_NONE);
+    assert(mt_supervisor_settings_remember_controller(&settings,
+        MT_GENESIS_CORE_ID, &keyboard.identity, &config));
+    assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
+    const mt_controller_settings_profile_t *profile = mt_supervisor_settings_find_controller(
+        &loaded, MT_GENESIS_CORE_ID, &keyboard.identity);
+    assert(profile != NULL && profile->config.assignment == MT_CONTROLLER_OFF);
+
+    config.assignment = MT_CONTROLLER_PORT1;
+    config.binding[MT_CONTROL_UP] = mt_controls_key_source(0x52U);
+    config.binding[MT_CONTROL_A] = mt_controls_key_source(0x1dU);
+    config.binding[MT_CONTROL_B] = mt_controls_key_source(0xe1U);
+    config.binding[MT_CONTROL_START] = mt_controls_key_source(0x28U);
+    assert(mt_supervisor_settings_remember_controller(&settings,
+        MT_GENESIS_CORE_ID, &keyboard.identity, &config));
+    assert(mt_supervisor_settings_save(&settings).status == MT_SETTINGS_OK);
+    assert(stored_size == MT_SETTINGS_WIRE_SIZE);
+    assert(memcmp(legacy_record, stored_file + POOL_OFFSET, sizeof(legacy_record)) == 0);
+    /* Key sources use the existing two-byte field, without truncation. */
+    const uint8_t *record = stored_file + POOL_OFFSET + RECORD_SIZE;
+    assert(record[24U + MT_CONTROL_A * 2U] == 0x1dU &&
+           record[25U + MT_CONTROL_A * 2U] == 1U);
+    assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_OK);
+    assert(memcmp(&loaded, &settings, sizeof(settings)) == 0);
+    profile = mt_supervisor_settings_find_controller(&loaded,
+        MT_GENESIS_CORE_ID, &keyboard.identity);
+    assert(profile != NULL && profile->config.assignment == MT_CONTROLLER_PORT1);
+    assert(profile->config.binding[MT_CONTROL_UP] == mt_controls_key_source(0x52U) &&
+           profile->config.binding[MT_CONTROL_A] == mt_controls_key_source(0x1dU) &&
+           profile->config.binding[MT_CONTROL_B] == mt_controls_key_source(0xe1U) &&
+           profile->config.binding[MT_CONTROL_START] == mt_controls_key_source(0x28U));
+    keyboard.identity.port_path = 99U;
+    assert(mt_supervisor_settings_find_controller(&loaded,
+        MT_GENESIS_CORE_ID, &keyboard.identity) == profile);
+    keyboard.identity.serial_hash ^= 1U;
+    assert(mt_supervisor_settings_find_controller(&loaded,
+        MT_GENESIS_CORE_ID, &keyboard.identity) == NULL);
+
+    /* A key controls a digital direction or button, never a whole analog axis. */
+    before = loaded;
+    mt_controls_default(MT_VECTREX_CORE_ID, &keyboard, &config);
+    config.binding[MT_CONTROL_AXIS_X] = mt_controls_key_source(0x1dU);
+    assert(!mt_supervisor_settings_remember_controller(&loaded,
+        MT_VECTREX_CORE_ID, &keyboard.identity, &config));
+    assert(memcmp(&loaded, &before, sizeof(loaded)) == 0);
+
+    /* Valid CRC cannot make a reserved or unknown keyboard source acceptable. */
+    static const uint16_t invalid_sources[] = {71U, 0xffU, 0x100U, 0x103U, 0x145U, 0x146U, 0x1e8U};
+    for (unsigned i = 0U; i < sizeof(invalid_sources) / sizeof(invalid_sources[0]); ++i) {
+        const size_t offset = POOL_OFFSET + RECORD_SIZE + 24U + MT_CONTROL_A * 2U;
+        stored_file[offset] = (uint8_t)invalid_sources[i];
+        stored_file[offset + 1U] = (uint8_t)(invalid_sources[i] >> 8U);
+        update_stored_crc();
+        assert(mt_supervisor_settings_load(&loaded).status == MT_SETTINGS_CORRUPT);
+        assert(loaded.controller_profile_count == 0U);
+    }
 }
 
 static void test_extended_axis_profile_wire(void)
@@ -1352,6 +1440,7 @@ int main(void)
 {
     test_c64_relative_media_settings();
     test_extended_axis_profile_wire();
+    test_keyboard_controller_profiles();
     test_controller_profiles();
     test_gamepad_settings();
     test_genesis_settings();

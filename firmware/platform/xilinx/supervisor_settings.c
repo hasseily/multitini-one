@@ -1042,7 +1042,8 @@ bool mt_supervisor_turbo_controls_load(mt_supervisor_settings_t *settings)
         if (load_u32_le(r) != MT_C64_CORE_ID || r[20] > MT_CONTROLLER_TRANSPORT_PS4 || r[22] || r[23]) return false;
         for (unsigned n = 0; n < 3; ++n) {
             const uint16_t source = load_u16_le(r + 24U + 2U*n);
-            if (source >= MT_CONTROL_SOURCE_COUNT || mt_controls_source_is_analog(source)) return false;
+            if ((source >= MT_CONTROL_SOURCE_EXTRA_AXIS + 4U && mt_controls_source_key(source) == 0U) ||
+                mt_controls_source_is_analog(source)) return false;
         }
     }
     for (uint32_t i = 0; i < count; ++i) {

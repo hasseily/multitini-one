@@ -3,8 +3,8 @@
 USB1 accepts keyboards, mice, HID controllers and supported Xbox/PlayStation
 controllers through a hub. The binding list identifies HID interfaces; a
 composite device can have separate keyboard, mouse and controller interfaces.
-An interface is bindable when it advertises joystick/gamepad controls or a
-supported axis. Ordinary keyboard and consumer keys are not binding sources.
+An interface is bindable when it advertises keyboard keys, joystick/gamepad
+controls or a supported axis. Consumer/media keys are not binding sources.
 
 Supported axes are X, Y, Z, Rx, Ry, Rz, Slider, Dial, Wheel and horizontal Pan.
 The descriptor determines whether an axis reports an absolute position or
@@ -12,12 +12,29 @@ relative movement. Buttons belonging to a bindable application are available
 alongside its axes. Report IDs retain independent state, so a wheel report
 does not release held buttons or repeat earlier mouse movement.
 
-New mouse and other generic axis devices start with assignment Off and empty
-bindings. Select a player and assign the desired controls before using them
-as a controller. Their ordinary keyboard and IIgs mouse functions still work.
-They do not acquire a player automatically or use gamepad button shortcuts
+New keyboards, mice and other generic axis devices start with assignment Off
+and empty bindings. Select a player and assign the desired controls before
+using them as a controller. Their ordinary keyboard and IIgs mouse functions
+still work while controller assignment is Off. Enabled keyboard profiles use
+their selected player and bindings in Genesis, NES, Game Boy and Vectrex.
+Computer cores receive unbound keys; assigned keys are consumed as controls.
+These devices do not acquire a player automatically or use gamepad button shortcuts
 to navigate the menu. Existing profiles retain their bindings and saved
 tuning for the six standard axes.
+
+To use keyboard keys as a controller, open **Controls → Controllers**, choose
+the keyboard interface, and set **Assign to** to the desired player. Choose
+each game action, press Enter, release the opening key, then press the key to
+assign. Choose **Save changes** to apply the bindings for this core. Arrow
+keys, Enter and modifier keys can be assigned. Esc, Backspace, Delete and Tab
+operate the assignment screen; F12 and Print Screen keep their menu and
+screenshot functions. A keyboard's direction bindings also produce the full
+left/right/up/down values for cores with an analog joystick.
+
+The keyboard tester shows held keys and assigned actions. Enter remains a
+test input for a keyboard; use Esc or F12 to return. Keyboard-only interfaces
+have no analog axis to tune or assign. A combined keyboard/axis interface
+can use both its keys and its reported axes.
 
 The tester shows ten axes and distinguishes directions reported as a D-pad
 hat from those reported as X/Y. Many SNES-style pads use absolute X/Y for

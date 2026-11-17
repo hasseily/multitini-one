@@ -246,6 +246,16 @@ static int emit_active_input(void *context, uint16_t code, uint16_t value)
 static void submit_keyboard_state(uint8_t slot, uint8_t modifiers,
                                   const uint8_t *keys, size_t key_count)
 {
+    /* A configured keyboard uses its selected player instead of the fixed
+     * player-one shortcuts in console cores. Computer cores keep unbound keys. */
+    if (slot < MT_GAMEPAD_SLOTS && g_devices[slot].keyboard &&
+        g_controller_config[slot].assignment != MT_CONTROLLER_OFF &&
+        (g_active_core_id == MT_GENESIS_CORE_ID || g_active_core_id == MT_NES_CORE_ID ||
+         g_active_core_id == MT_GBC_CORE_ID || g_active_core_id == MT_VECTREX_CORE_ID)) {
+        modifiers = 0U;
+        keys = NULL;
+        key_count = 0U;
+    }
     if(g_active_core_id==MT_AMIGA_CORE_ID) {
         (void)mt_amiga_hid_keyboard_report(&g_amiga_input,slot,modifiers,keys,key_count);
         return;
@@ -1089,13 +1099,47 @@ static void submit_report(mt_hid_slot_t *slot);
 static void keyboard_report(mt_hid_slot_t *slot, uint8_t modifiers,
                             uint8_t *keys, size_t count)
 {
+    if (keys == NULL && count != 0U) return;
+    /* Ignore boot rollover/error reports as a whole, retaining held keys. */
+    for (size_t key = 0U; key < count; ++key)
+        if (keys[key] != 0U && keys[key] <= 3U) return;
     track_amiga_reset_keys(slot->input_slot,modifiers,keys,count);
+    const uint8_t index = slot->input_slot;
+    mt_gamepad_state_t *raw = &g_gamepads.raw[index];
+    if (g_devices[index].keyboard) {
+        memset(raw->keys, 0, sizeof(raw->keys));
+        raw->connected = 1U;
+        raw->generic_axes = g_devices[index].generic_axes;
+        for (size_t key = 0U; key < count; ++key)
+            if (keys[key] > 3U) raw->keys[keys[key] / 8U] |= (uint8_t)(1U << (keys[key] % 8U));
+        for (unsigned bit = 0U; bit < 8U; ++bit)
+            if (modifiers & (1U << bit)) raw->keys[(0xe0U + bit) / 8U] |= (uint8_t)(1U << bit);
+    }
+    /* The filter sees the complete raw keys before it handles navigation.
+     * It can capture a direction without also moving the assignment row. */
     const bool captured = g_keyboard_filter != NULL &&
         g_keyboard_filter(g_keyboard_filter_context, slot->input_slot, modifiers, keys, count);
-    if (captured) submit_keyboard_state(slot->input_slot, 0U, NULL, 0U);
+    if (g_devices[index].keyboard) {
+        const mt_gamepad_report_t report = { .generic_axes = raw->generic_axes };
+        process_shared_report(index, &report, UINT8_MAX, raw->extra_active);
+    }
+    if (captured || g_menu_capture) submit_keyboard_state(slot->input_slot, 0U, NULL, 0U);
     else {
-        for (size_t key = 0; key < count; ++key) if (keys[key] == 0x46U) keys[key] = 0U;
-        submit_keyboard_state(slot->input_slot, modifiers, keys, count);
+        uint8_t machine_keys[256];
+        size_t machine_count = 0U;
+        const bool assigned = g_devices[index].keyboard &&
+            g_controller_config[index].assignment != MT_CONTROLLER_OFF;
+        uint8_t consumed[32] = {0};
+        if (assigned)
+            for (unsigned action = 0U; action < MT_CONTROL_ACTION_COUNT; ++action) {
+                const unsigned usage = mt_controls_source_key(mt_controls_binding(&g_controller_config[index], action));
+                if (usage != 0U) consumed[usage / 8U] |= (uint8_t)(1U << (usage % 8U));
+            }
+        for (size_t key = 0U; key < count && machine_count < sizeof(machine_keys); ++key)
+            if (keys[key] != 0x46U && (consumed[keys[key] / 8U] & (1U << (keys[key] % 8U))) == 0U)
+                machine_keys[machine_count++] = keys[key];
+        modifiers &= (uint8_t)~consumed[0xe0U / 8U];
+        submit_keyboard_state(slot->input_slot, modifiers, machine_keys, machine_count);
     }
 }
 
@@ -1183,21 +1227,9 @@ static void report_complete(void *argument, int bytes)
         } else if (slot->keyboard != 0U && bytes >= 8) {
             const struct usb_hid_kbd_report *const keyboard =
                 (const struct usb_hid_kbd_report *)g_reports[index];
-            track_amiga_reset_keys(slot->input_slot,keyboard->modifier,keyboard->key,sizeof(keyboard->key));
-            const bool captured = g_keyboard_filter != NULL &&
-                g_keyboard_filter(g_keyboard_filter_context, slot->input_slot,
-                                  keyboard->modifier, keyboard->key,
-                                  sizeof(keyboard->key));
-            if (captured) {
-                submit_keyboard_state(slot->input_slot, 0U, NULL, 0U);
-            } else {
-                uint8_t machine_keys[sizeof(keyboard->key)];
-                memcpy(machine_keys, keyboard->key, sizeof(machine_keys));
-                for (size_t key = 0U; key < sizeof(machine_keys); ++key)
-                    if (machine_keys[key] == 0x46U) machine_keys[key] = 0U;
-                submit_keyboard_state(slot->input_slot, keyboard->modifier,
-                                      machine_keys, sizeof(machine_keys));
-            }
+            uint8_t machine_keys[sizeof(keyboard->key)];
+            memcpy(machine_keys, keyboard->key, sizeof(machine_keys));
+            keyboard_report(slot, keyboard->modifier, machine_keys, sizeof(machine_keys));
         } else if (slot->mouse != 0U && bytes >= 3) {
             slot->mouse_buttons = g_reports[index][0] & 7U;
             if(g_active_core_id==MT_AMIGA_CORE_ID)
@@ -1631,7 +1663,7 @@ static void parse_descriptor(mt_hid_slot_t *slot)
         slot->generic_axes = 1U;
     }
     slot->gamepad = descriptor_has_gamepad(slot) ? 1U : 0U;
-    if (slot->gamepad) {
+    if (slot->gamepad || slot->keyboard) {
         uint32_t buttons = 0U;
         uint16_t axes = 0U;
         for (uint32_t i = 0U; i < slot->report_info.report_item_count; ++i) {
@@ -1647,6 +1679,7 @@ static void parse_descriptor(mt_hid_slot_t *slot)
         identify_controller(slot->input_slot, slot->hid->hport, slot->hid->intf,
             MT_CONTROLLER_TRANSPORT_HID,
             identity_hash(UINT32_C(2166136261), g_descriptors[index], descriptor_length), buttons, axes, slot->generic_axes != 0U);
+        g_devices[slot->input_slot].keyboard = slot->keyboard;
     }
 }
 
@@ -1706,6 +1739,13 @@ void usbh_hid_run(struct usbh_hid *hid)
                 slot->generic_axes = 1U;
                 identify_controller(slot->input_slot, hid->hport, hid->intf,
                     MT_CONTROLLER_TRANSPORT_HID, UINT32_C(0x424f4f54), 7U, 3U, true);
+            } else if (boot_keyboard) {
+                slot->generic_axes = 1U;
+                /* Keep the descriptor identity when boot protocol is selected. */
+                if (!g_devices[slot->input_slot].connected)
+                    identify_controller(slot->input_slot, hid->hport, hid->intf,
+                        MT_CONTROLLER_TRANSPORT_HID, UINT32_C(0x424f4f54), 0U, 0U, true);
+                g_devices[slot->input_slot].keyboard = 1U;
             } else memset(&g_devices[slot->input_slot], 0, sizeof(g_devices[slot->input_slot]));
         }
     } else {
