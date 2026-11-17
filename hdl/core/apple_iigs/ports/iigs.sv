@@ -2740,6 +2740,7 @@ wire ready_out;
     );
 */
   sound snd(
+            .invert_local_7m(!rom_select),
             .ca(),
             .CLK_14M(CLK_14M),
             .clk_7M_en(clk_7M_en),

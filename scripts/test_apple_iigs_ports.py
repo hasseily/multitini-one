@@ -55,7 +55,7 @@ def main() -> int:
         ROOT/"hdl/sim/tb_apple_iigs_interrupts.sv",ROOT/"hdl/sim/tb_apple_iigs_mcode.sv",
         ROOT/"hdl/sim/tb_apple_iigs_cpu_boundaries.sv",ROOT/"hdl/sim/tb_apple_iigs_doc_oir.sv",
         ROOT/"hdl/sim/tb_apple_iigs_docgrade.sv",ROOT/"hdl/sim/tb_apple_iigs_sound_glu.sv",
-        ROOT/"hdl/sim/tb_apple_iigs_scc.sv"]
+        ROOT/"hdl/sim/tb_apple_iigs_sound_phase.sv",ROOT/"hdl/sim/tb_apple_iigs_scc.sv"]
     def hashes():return {path.relative_to(ROOT).as_posix():hashlib.sha256(path.read_bytes()).hexdigest() for path in captured}
     before=hashes()
     verilator=tool("verilator_bin") if os.name=="nt" else tool("verilator")
@@ -113,6 +113,13 @@ def main() -> int:
         if "PASS:" not in output:raise ValueError("IIgs Sound GLU regression did not report PASS")
         print(output.strip(),flush=True)
         checks.append("Sound GLU pending access priority, pointer visibility and synchronous readback")
+        executable=compile_sim("tb_apple_iigs_sound_phase",[
+            DOC_IRQ,PORTS/"es5503.sv",PORTS/"soundglu.sv",PORTS/"sound.sv",PORTS/"iir_filter.sv",
+            UPSTREAM/"rtl/syncram.v",ROOT/"hdl/sim/tb_apple_iigs_sound_phase.sv"])
+        output=run([executable],"sound-phase-simulate")
+        if "PASS:" not in output:raise ValueError("IIgs Sound GLU phase check did not report PASS")
+        print(output.strip(),flush=True)
+        checks.append("ROM 01/03 Sound GLU service phase and mode collision at stock host cadence")
     if "scc" in selected:
         executable=compile_sim("tb_apple_iigs_scc",[
             PORTS/"scc8530.sv",PORTS/"rxuart.sv",PORTS/"txuart.sv",

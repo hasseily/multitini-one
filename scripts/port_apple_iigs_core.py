@@ -388,6 +388,8 @@ wire floppy_timing_hold = EXTERNAL_CPU &&
     text=replace(text,"            .rs(scc_rs),", "            .rs(EXTERNAL_CPU ? addr_bef[1:0] : scc_rs),")
     text=replace(text,"            .wdata(scc_din),", "            .wdata(EXTERNAL_CPU ? cpu_dout : scc_din),")
     text=replace(text,"            .select(snd_strobe),", "            .select(EXTERNAL_CPU ? (native_snd_sel && bus_phi2) : snd_strobe),")
+    text=replace(text,"  sound snd(\n            .ca(),",
+                 "  sound snd(\n            .invert_local_7m(!rom_select),\n            .ca(),")
     text=replace(text,"            .wr(snd_rw),", "            .wr(EXTERNAL_CPU ? we : snd_rw),")
     text=replace(text,"            .host_addr(snd_addr),", "            .host_addr(EXTERNAL_CPU ? addr_bef[1:0] : snd_addr),")
     text=replace(text,"            .host_data_in(snd_din),", "            .host_data_in(EXTERNAL_CPU ? cpu_dout : snd_din),")
@@ -404,6 +406,16 @@ wire floppy_timing_hold = EXTERNAL_CPU &&
 
 def generate_sound() -> str:
     text=NOTICE+upstream("rtl/sound.v")
+    text=replace(text,"    input             clk_7M_en,\n", "    input             clk_7M_en,\n    input             invert_local_7m,\n")
+    text=replace(text,"   assign glu_data_in =",
+                 """   // The ROM 03 board uses the opposite local 7M phase. The GLU
+   // and DOC share it, so the RAM handoff stays on the same sound slot.
+   reg clk_7M_en_d;
+   always @(posedge CLK_14M) clk_7M_en_d <= !reset && clk_7M_en;
+   wire local_7M_en = invert_local_7m ? clk_7M_en_d : clk_7M_en;
+
+   assign glu_data_in =""")
+    text=replace(text,".clk_7M_en(clk_7M_en)",".clk_7M_en(local_7M_en)", count=2)
     text=replace(text,"    output [7:0]      host_data_out,", "    output [7:0]      host_data_out,\n    output [7:0]      host_read_peek,")
     text=replace(text,"    output [7:0]      host_read_peek,", "    output [7:0]      host_read_peek,\n    output            host_busy,")
     text=replace(text,"      .host_data_out(host_data_out),", "      .host_data_out(host_data_out),\n      .host_read_peek(host_read_peek),\n      .host_busy(host_busy),")
@@ -1137,6 +1149,10 @@ def generate_es5503() -> str:
     text = replace(text, "module es5503\n", NOTICE +
                    "// DOC interrupt FIFO from MiSTer IIgs aa2cc3e (slaapliedje).\n"
                    "module es5503\n")
+    text = replace(text, "\tclk_phase <= reset ? 3'b000 : clk_phase + 3'b001;",
+                   "\tclk_phase <= clk_phase + 3'b001;")
+    text = replace(text, "      if (clk_7M_en)\n\tclk_phase",
+                   "      if (reset)\n\tclk_phase <= 3'b000;\n      else if (clk_7M_en)\n\tclk_phase")
     text = replace(text, "    output [3:0]      ca,", "    output reg [3:0]  ca,")
     text = replace(text, "   reg [4:0]\t     irq_stack [31:0];\n   reg [4:0]\t     irq_sp;",
                    """   reg [4:0]          irq_fifo [31:0];

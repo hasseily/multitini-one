@@ -98,8 +98,10 @@ module es5503 #(parameter RETENTION_DIV_BITS = 10)
 
    always @(posedge CLK_14M) begin
       osc_en_d <= osc_en;
-      if (clk_7M_en)
-	clk_phase <= reset ? 3'b000 : clk_phase + 3'b001;
+      if (reset)
+	clk_phase <= 3'b000;
+      else if (clk_7M_en)
+	clk_phase <= clk_phase + 3'b001;
    end
 
    assign accumulator_sum = accumulator[current_osc] +

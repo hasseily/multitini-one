@@ -4,6 +4,7 @@
 module sound
    (input             CLK_14M,
     input             clk_7M_en,
+    input             invert_local_7m,
     input             ph0_en,
     input             select,
     input             reset,
@@ -37,6 +38,12 @@ module sound
    wire [15:0]       iir_sound_out_l;
    wire [15:0]       iir_sound_out_r;
 
+   // The ROM 03 board uses the opposite local 7M phase. The GLU
+   // and DOC share it, so the RAM handoff stays on the same sound slot.
+   reg clk_7M_en_d;
+   always @(posedge CLK_14M) clk_7M_en_d <= !reset && clk_7M_en;
+   wire local_7M_en = invert_local_7m ? clk_7M_en_d : clk_7M_en;
+
    assign glu_data_in = ram_select ? ram_data_out : doc_data_out;
    assign ram_addr    = osc_en ? doc_addr_out[15:0] : glu_addr_out;
 
@@ -61,7 +68,7 @@ module sound
    // BUGFIX: forward ph0_en into soundglu so doc_enable is clocked correctly
    soundglu glu
      (.CLK_14M(CLK_14M),
-      .clk_7M_en(clk_7M_en),
+      .clk_7M_en(local_7M_en),
       .ph0_en(ph0_en),
       .reset(reset),
       .select(select),
@@ -89,7 +96,7 @@ module sound
 
    es5503 doc(
       .CLK_14M(CLK_14M),
-      .clk_7M_en(clk_7M_en),
+      .clk_7M_en(local_7M_en),
       .reset(reset),
       .wr(doc_wr),
       .host_en(doc_host_en),
