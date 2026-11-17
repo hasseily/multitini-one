@@ -260,6 +260,70 @@ write/retry, PRAM, core switching, every display mode/effect and sustained
 accelerated operation.
 See `APPLE_IIGS_HARDWARE_TEST.md` for installation and the test procedure.
 
+## Vivado timing recovery
+
+Build only `apple-iigs` with an explicit build ID and a fresh output directory.
+Keep the standard routed result and the post-`opt_design` checkpoint from the
+same captured inputs. Record the Vivado version, job and thread counts, build
+ID, source capture and checkpoint hashes. Use an independent output directory
+for each trial. The 4D000878 project run logged up to eight CPUs for placement
+and routing. The isolated B4 and B4R7 trials logged up to two.
+
+1. Read the nominal routed timing summary and the worst paths by clock pair.
+   Record setup and hold slack, total negative slack, failing endpoints, logic
+   delay and route delay. Track the IIgs service, service-to-`apple_iigs_clk14`,
+   pixel and fabric groups separately. Check the clock requirements and path
+   coverage before adjusting implementation settings.
+2. Branch from the current build's post-opt checkpoint. Try the previous good
+   placement recipe as a baseline. Keep a placement with promising paths for
+   another route trial even if its first route has a worse overall WNS. If the
+   remaining paths are dominated by routing, use a small set of independent
+   reroutes from that placement. Increase temporary **setup** uncertainty for
+   the failing clock pair and use the other groups' slack to choose companion
+   margins. Larger margins can make routing worse. Use fresh placement if the
+   current placements consistently leave the same bad paths. Reserve local
+   replication for measured high-fanout nets on failing paths. Investigate RTL
+   if the same logic-limited path survives independent placements.
+3. Compare candidates after restoring nominal uncertainty in every group,
+   including the fabric margin carried by the post-opt checkpoint. Use the
+   Vivado log's `Command:` entries as the record of what ran. Check the
+   checkpoint and report hashes and the applicable package timing threshold
+   before selecting a candidate. The core-only package requires reported
+   setup WNS above `0.000 ns`. Run `scripts/repair_phos1_timing.py --signoff-only`
+   on the selected project, then run the normal artifact and package audits.
+   Retain the Tcl, journals, clock-pair reports and checkpoint lineage with
+   the signed-off package.
+
+### Worked example for 4D000878
+
+The standard route was at `-1.519 ns`. Replaying the 4D000877 recipe left
+16 failing pixel setup endpoints at `-0.106 ns`, with the failures clustered
+around framebuffer and video-reader addresses. Most of the delay was routing.
+The winning trial reused the current build's B4 placement sequence. Other
+placements, an incremental reference from 4D000877 and local video repairs
+gave worse results.
+
+- Run `place_design -directive EarlyBlockPlacement` from the current post-opt
+  checkpoint. The B4 trial used temporary setup uncertainty of
+  `0.250/0.150/0.100 ns` for service, service-to-native and pixel, respectively.
+- For B4R7, reopen B4 and apply `0.450/0.250/0.400 ns` in the same order.
+  Unroute, run `phys_opt_design -directive AggressiveExplore` and run
+  `route_design -directive Explore`. Restore the three temporary margins to
+  nominal, run post-route `phys_opt_design -directive AggressiveExplore`,
+  then clear the inherited `0.200 ns` fabric implementation margin and report
+  at nominal constraints. The archived wrapper accepted `ExtraTimingOpt` for
+  this reroute. The Tcl uses that argument only in the placement branch.
+- Full signoff reported `+0.007 ns` setup, `+0.056 ns` hold and `+1.250 ns`
+  pulse-width slack. The 4D000878 package includes the selected Tcl and logs
+  in `evidence/timing-workflow/` and `evidence/reports/repair/`. The wrappers
+  use release-specific paths and build IDs. Use the Tcl and logs as recipe
+  references. On 4D000877 the limiting path was service-to-native, and the
+  winning reroute used a pixel margin of `0.100 ns`. Its recipe left pixel
+  failures on 4D000878.
+
+See AMD's [Vivado timing closure methodology](https://docs.amd.com/r/2025.2-English/ug949-vivado-design-methodology)
+and [timing summary guidance](https://docs.amd.com/r/2025.2-English/ug906-vivado-design-analysis/Report-Timing-Summary).
+
 ## Reproduce the hardware package
 
 Use Vivado/Vitis 2025.2 and the installed ARM compiler. From this checkout:
