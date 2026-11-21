@@ -1,16 +1,17 @@
 # Current release
 
-## Multitini M0.8.2
+## Multitini M0.8.3
 
-The full public package is `Multitini-082.zip`. It pairs ARM firmware
-`M0.8.2` / `0x4D000802` (runtime ABI 0.28) with the FPGA images selected for
-M0.8.2dev13. Back up the SD card, merge the ZIP's `sd/` contents into the SD
+The full public package is `Multitini-083.zip`. It pairs ARM firmware
+`M0.8.3` / `0x4D000883` (runtime ABI 0.28) with IIgs FPGA `0x4D000878`,
+Amiga FPGA images `0x4D000871`, and the other retained M0.8.2 images.
+Back up the SD card, merge the ZIP's `sd/` contents into the SD
 root, and install `FIRMWARE-MULTITINI.BIN` through Golden Boot. Keep existing
 media, saves and settings. Supply your own system ROMs using the instructions
 under each core's `roms/` directory.
 
 The package uses timing-qualified FPGA images. Board acceptance of the
-assembled release is pending. See the [M0.8.2 release notes](RELEASE_M082.md)
+assembled release is pending. See the [M0.8.3 release notes](RELEASE_M083.md)
 for changes, installation details and FPGA build IDs.
 
 ## Retained September 2026 baseline

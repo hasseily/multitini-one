@@ -5,6 +5,11 @@ It runs C64, Game Boy Color, Vectrex, Genesis / Mega Drive, Apple IIgs, NES,
 Amiga, ZX Spectrum and Atari 8-bit machines through a shared supervisor, menu,
 input, audio, storage and core-loading system. It does not use an Apple II host.
 
+M0.8.3 adds saved keyboard controller bindings, 16 MiB Fast RAM and four CD32
+pad buttons on capable Amiga images, and Apple IIgs DOC and Sound GLU fixes.
+See the [M0.8.3 release notes](docs/RELEASE_M083.md) for installation, build
+identities and board test status.
+
 M0.8.2 adds ZX Spectrum 48K/128K with TAP and TZX playback, Atari 800XL and
 Compy Shop NTSC with ATR and XEX support, and an Amiga A1200 AGA + 68040
 variant. It also improves Apple IIgs floppy handling and shared controller
