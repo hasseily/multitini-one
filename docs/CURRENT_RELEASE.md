@@ -2,7 +2,9 @@
 
 ## Multitini M0.8.3
 
-The full public package is `Multitini-083.zip`. It pairs ARM firmware
+The install download is `Multitini-083.zip`, containing only firmware and SD
+files. Exact sources, licenses and build evidence are available separately in
+`Multitini-083-sources-and-build-evidence.zip`. The release pairs ARM firmware
 `M0.8.3` / `0x4D000883` (runtime ABI 0.28) with IIgs FPGA `0x4D000878`,
 Amiga FPGA images `0x4D000871`, and the other retained M0.8.2 images.
 Back up the SD card, merge the ZIP's `sd/` contents into the SD

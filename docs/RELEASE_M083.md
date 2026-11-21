@@ -58,9 +58,11 @@ images retain their own build IDs, ABI versions and original source evidence.
 | Atari Compy Shop (VCOUNT compatible) | `0x4D00086B` | 0.28 |
 | Amiga 600 ECS PAL, Amiga 1200 AGA PAL and Amiga 1200 AGA + 68040 | `0x4D000871` | 0.28 |
 
-The ZIP's `manifest.json` and `SHA256SUMS.txt` identify the selected files.
-`source.zip` and `evidence/` retain software sources, the original FPGA build
-inputs, timing reports and package checks. The IIgs image passed routed
+`Multitini-083.zip` contains only the firmware and SD files. The separate
+`Multitini-083-sources-and-build-evidence.zip` contains `manifest.json`,
+`SHA256SUMS.txt`, `source.zip` and `evidence/`, with the exact software sources,
+licenses, original FPGA inputs, timing reports and package checks. Each
+download has a separate SHA-256 checksum file. The IIgs image passed routed
 signoff with +0.007 ns setup and +0.056 ns hold slack. Its narrow margin and
 the selected timing-recovery recipe are recorded in the archived evidence.
 
@@ -77,7 +79,8 @@ sound-phase simulations passed. The DOCGRADE check is an HDL regression,
 separate from a complete guest DOCGRADE result. Amiga simulations passed for
 the adapter input FIFO, CD32 serial buttons, direct fire and mouse input, and
 AP68040 RAM with 16 MiB Fast RAM, the 2x CPU mode and burst reads. Source,
-platform, firmware and core payload audit evidence is retained in the ZIP.
+platform, firmware and core payload audit evidence is retained in the separate
+sources and build evidence download.
 
 Board acceptance of the assembled M0.8.3 package is pending. The keyboard
 bindings, Amiga 16 MiB RAM and CD32 controls, sustained DDR performance, and
